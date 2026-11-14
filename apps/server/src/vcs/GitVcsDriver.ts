@@ -1066,16 +1066,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       const indexId = yield* random.uuidV4();
       const tempIndexPath = path.join(gitCommonDir, `t3-checkpoint-index-${indexId}`);
       const hostEnv = yield* HostProcess.Environment;
-      const explicitObjects = hostEnv.GIT_OBJECT_DIRECTORY;
-      const sharedObjects =
-        explicitObjects === undefined
-          ? path.join(gitCommonDir, "objects")
-          : path.isAbsolute(explicitObjects)
-            ? explicitObjects
-            : path.resolve(
-                yield* fileSystem.realPath(input.cwd).pipe(Effect.orElseSucceed(() => input.cwd)),
-                explicitObjects,
-              );
+      // VcsProcess clears inherited object selectors, so every other command uses this store.
+      const sharedObjects = path.join(gitCommonDir, "objects");
       const quotedObjects = quoteGitPatchPath(sharedObjects);
       // Isolate bulk-checkin packs so cleanup cannot remove another Git writer's objects.
       const privateObjects = yield* Effect.acquireRelease(
@@ -1107,12 +1099,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         // A filter must not publish refs that depend on our disposable store.
         GIT_QUARANTINE_PATH: privateObjects,
         // Git accepts C-quoted alternate paths, including path-list separators.
-        GIT_ALTERNATE_OBJECT_DIRECTORIES: [
-          quotedObjects.startsWith('"') ? quotedObjects : `"${quotedObjects}"`,
-          ...(hostEnv.GIT_ALTERNATE_OBJECT_DIRECTORIES
-            ? [hostEnv.GIT_ALTERNATE_OBJECT_DIRECTORIES]
-            : []),
-        ].join(hostPlatform === "win32" ? ";" : ":"),
+        GIT_ALTERNATE_OBJECT_DIRECTORIES: quotedObjects.startsWith('"')
+          ? quotedObjects
+          : `"${quotedObjects}"`,
         GIT_AUTHOR_NAME: "T3 Code",
         GIT_AUTHOR_EMAIL: "t3code@users.noreply.github.com",
         GIT_COMMITTER_NAME: "T3 Code",

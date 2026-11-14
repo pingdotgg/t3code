@@ -456,47 +456,34 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
-it.effect.each([false, true])(
-  "checkpoint isolation respects an explicit object directory (relative=%s)",
-  (relative) =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const liveProcess = yield* VcsProcess.VcsProcess;
-      const driver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
-        Effect.provideService(VcsProcess.VcsProcess, {
-          // Every git child sees the host environment, as with an inherited process env.
-          run: (input) =>
-            HostProcess.Environment.pipe(
-              Effect.flatMap((env) => liveProcess.run({ ...input, env: { ...env, ...input.env } })),
-            ),
-        }),
-      );
-      const sandbox = yield* fs.makeTempDirectoryScoped({ prefix: "t3-explicit-objects-" });
-      const cwd = path.join(sandbox, "repo");
-      yield* fs.makeDirectory(cwd);
-      const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
-      const objects = path.join(sandbox, "objects");
-      yield* fs.rename(path.join(cwd, ".git/objects"), objects);
-      yield* Effect.gen(function* () {
-        yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
-        assert.strictEqual(
-          (yield* git(["show", `${checkpointRef}:file.txt`])).stdout,
-          "unstaged\n",
-        );
-        yield* git(["fsck", "--full"]);
-      }).pipe(
-        Effect.provideService(HostProcess.Environment, {
-          ...(yield* HostProcess.Environment),
-          GIT_OBJECT_DIRECTORY: relative ? "../objects" : objects,
-        }),
-      );
-      assert.isFalse(yield* fs.exists(path.join(cwd, ".git/objects")));
-      assert.deepEqual(
-        (yield* fs.readDirectory(objects)).filter((name) => name.startsWith("tmp_objdir-")),
-        [],
-      );
-    }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+it.effect("checkpoint capture ignores an inherited object directory", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const sandbox = yield* fs.makeTempDirectoryScoped({ prefix: "t3-inherited-objects-" });
+    const cwd = path.join(sandbox, "repo");
+    yield* fs.makeDirectory(cwd);
+    const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+    const unrelated = path.join(sandbox, "unrelated");
+    yield* git(["init", "--bare", unrelated]);
+    const unrelatedObjects = path.join(unrelated, "objects");
+    // VcsProcess clears inherited selectors from git children; only the driver sees this one.
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef }).pipe(
+      Effect.provideService(HostProcess.Environment, {
+        ...(yield* HostProcess.Environment),
+        GIT_OBJECT_DIRECTORY: unrelatedObjects,
+      }),
+    );
+    assert.strictEqual((yield* git(["show", `${checkpointRef}:file.txt`])).stdout, "unstaged\n");
+    assert.deepEqual(
+      (yield* fs.readDirectory(unrelatedObjects)).filter(
+        (name) => name !== "info" && name !== "pack",
+      ),
+      [],
+    );
+    yield* git(["fsck", "--full"]);
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
 it.effect.each(["sha1", "sha256"] as const)(
