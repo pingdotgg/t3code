@@ -595,21 +595,18 @@ export function showContextMenuFallback<T extends string>(
       submenuTriggerStack[level] = parentTrigger;
 
       requestAnimationFrame(() => {
-        // Keep the measured width independent of the submenu's initial position.
-        if (parentTrigger) {
-          menu.style.width = "max-content";
-          menu.style.maxWidth = "min(24rem, calc(100vw - 0.5rem))";
+        if (!parentTrigger) {
+          clampMenuPosition(menu, preferredLeft, preferredTop);
+          return;
         }
+        // A fixed menu near the right edge shrinks to the space left; measure its real width.
+        menu.style.width = "max-content";
+        menu.style.maxWidth = "min(24rem, calc(100vw - 0.5rem))";
         const { width } = menu.getBoundingClientRect();
-        const flipLeft = parentTrigger?.getBoundingClientRect().left;
-        const overflows = preferredLeft + width > window.innerWidth;
-        const shouldFlipLeft =
-          overflows && flipLeft !== undefined && flipLeft - 4 > window.innerWidth - preferredLeft;
-        clampMenuPosition(
-          menu,
-          shouldFlipLeft ? flipLeft - width - 4 : preferredLeft,
-          preferredTop,
-        );
+        const roomLeft = parentTrigger.getBoundingClientRect().left - 4;
+        const roomRight = window.innerWidth - preferredLeft;
+        const flipLeft = width > roomRight && roomLeft > roomRight;
+        clampMenuPosition(menu, flipLeft ? roomLeft - width : preferredLeft, preferredTop);
       });
     };
 

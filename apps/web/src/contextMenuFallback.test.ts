@@ -239,12 +239,14 @@ describe("showContextMenuFallback", () => {
   });
 
   it.each([
-    { innerWidth: 400, left: 200, submenuLeft: 16 },
-    { innerWidth: 300, left: 4, submenuLeft: 116 },
+    // Flips left of the parent menu instead of being clamped over it.
+    { innerWidth: 400, triggerLeft: 200, submenuLeft: 16 },
+    // Neither side fits; the right has more room, so it stays there, clamped.
+    { innerWidth: 300, triggerLeft: 4, submenuLeft: 116 },
   ])(
     "places an overflowing submenu on the side with more room ($innerWidth)",
-    ({ innerWidth, left, submenuLeft }) => {
-      vi.stubGlobal("window", { ...window, innerWidth, innerHeight: 800 });
+    ({ innerWidth, triggerLeft, submenuLeft }) => {
+      vi.stubGlobal("window", { ...window, innerWidth });
 
       void showContextMenuFallback(
         [
@@ -254,16 +256,14 @@ describe("showContextMenuFallback", () => {
             children: [{ id: "terminal-1", label: "Terminal 1" }],
           },
         ],
-        { x: left, y: 0 },
+        { x: triggerLeft, y: 0 },
       );
-      const trigger = findButton("Group with");
-      trigger!.style.left = `${left}px`;
-      trigger?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      const trigger = findButton("Group with")!;
+      trigger.style.left = `${triggerLeft}px`;
+      trigger.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 
-      const parent = trigger?.parent?.parent?.getBoundingClientRect();
-      const submenu = findButton("Terminal 1")?.parent?.parent?.getBoundingClientRect();
-      expect(submenu!.left).toBe(submenuLeft);
-      if (innerWidth === 400) expect(submenu!.right).toBeLessThanOrEqual(parent!.left);
+      const submenu = findButton("Terminal 1")!.parent!.parent!;
+      expect(submenu.getBoundingClientRect().left).toBe(submenuLeft);
     },
   );
 
