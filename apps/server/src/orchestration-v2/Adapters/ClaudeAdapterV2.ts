@@ -13274,6 +13274,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 return true;
               }
             }
+            for (const nativeThreadId of (yield* Ref.get(
+              lastProviderThreadByNativeThread,
+            )).keys()) {
+              if ((yield* owedWakeTasksForNativeThread(nativeThreadId)).length > 0) {
+                return true;
+              }
+            }
             for (const subagent of (yield* Ref.get(sessionSubagentsByTaskId)).values()) {
               if (subagent.task.status === "running") {
                 return true;
