@@ -701,7 +701,7 @@ export function remainingPercent(window: ServerProviderUsageWindow): number {
   return Math.round(100 - Math.max(0, Math.min(100, window.usedPercent)));
 }
 
-function resetMillis(window: ServerProviderUsageWindow): number | null {
+export function resetMillis(window: ServerProviderUsageWindow): number | null {
   if (window.resetsAt === undefined) return null;
   const at = Date.parse(window.resetsAt);
   return Number.isFinite(at) ? at : null;

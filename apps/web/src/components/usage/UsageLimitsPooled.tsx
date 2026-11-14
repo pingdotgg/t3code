@@ -52,6 +52,7 @@ import {
   formatDuration,
   formatResetsIn,
   resetCreditChoices,
+  suggestResetCredit,
 } from "@t3tools/shared/usageLimitsCopy";
 import { UsagePoolChart } from "./UsagePoolChart";
 import { poolHistoryKey, readPoolHistory, recordPoolReadings } from "./usagePoolHistory";
@@ -148,6 +149,7 @@ function SegmentPopover({
   account,
   window,
   reset,
+  poolMembers,
   now,
   redeem,
   onRedeem,
@@ -155,6 +157,7 @@ function SegmentPopover({
   readonly account: LimitAccount;
   readonly window: LimitPoolMember["window"];
   readonly reset: LimitPoolWindow["resets"][number] | undefined;
+  readonly poolMembers?: readonly LimitPoolMember[] | undefined;
   readonly now: number;
   readonly redeem: ReturnType<typeof useResetCredit> | null;
   readonly onRedeem: (choice: ResetCreditChoice) => void;
@@ -169,6 +172,7 @@ function SegmentPopover({
     account.environments.length > 0
       ? account.environments.map((environment) => environment.label).join(", ")
       : account.sourceLabel;
+  const suggestion = suggestResetCredit(account, window, poolMembers ?? [{ account, window }], now);
   const choices =
     redeem && account.redeem && account.limits.resetCredits?.availableCount
       ? resetCreditChoices(account.limits.resetCredits, account.redeem.input, now, true, m)
@@ -225,6 +229,28 @@ function SegmentPopover({
           </Row>
         ) : null}
       </div>
+      {suggestion ? (
+        <div className="flex flex-col gap-1 rounded-md border border-border/60 bg-muted/40 p-2">
+          <div className="flex items-center gap-1.5 font-medium text-foreground">
+            <TicketIcon className="size-3.5 shrink-0 text-foreground" aria-hidden />
+            <span>
+              <T>Reset advice:</T>
+            </span>
+            <span
+              className={cn(
+                "rounded px-1.5 py-0.5 text-3xs font-semibold uppercase tracking-wider",
+                suggestion.recommendation === "recommended" ||
+                  suggestion.recommendation === "expiring_soon"
+                  ? "bg-foreground/10 text-foreground font-semibold"
+                  : "bg-muted text-muted-foreground",
+              )}
+            >
+              {suggestion.actionLabel}
+            </span>
+          </div>
+          <span className="text-3xs text-muted-foreground leading-snug">{suggestion.reason}</span>
+        </div>
+      ) : null}
       {choices.length > 0 && redeem ? (
         <div className="flex flex-col gap-1.5 border-t border-border/60 pt-2.5 text-muted-foreground">
           {choices.map((choice) => (
@@ -322,6 +348,7 @@ function PoolSegment({
   readonly now: number;
   readonly index: number;
   readonly showAccountName: boolean;
+  readonly poolMembers?: readonly LimitPoolMember[] | undefined;
 }) {
   return account.redeem ? (
     <RedeemableSegment account={account} redeemAt={account.redeem} {...props} />
@@ -364,6 +391,7 @@ function SegmentTriggers({
   window,
   reset,
   redeem,
+  poolMembers,
   refillPercent,
   color,
   now,
@@ -377,7 +405,7 @@ function SegmentTriggers({
   readonly showAccountName: boolean;
 }) {
   const popover = use(SegmentPopoverContext) ?? undefined;
-  const payload: SegmentPayload = { account, window, reset, redeem };
+  const payload: SegmentPayload = { account, window, reset, redeem, poolMembers };
   const remaining = remainingPercent(window);
   const timeLeft = paceRemainingPercent(window, now);
   const [segmentRef, paceMark] = usePaceMark(timeLeft);
@@ -581,6 +609,7 @@ function PoolBar({
               now={now}
               index={position + 1}
               showAccountName={pool.columns.length > 1}
+              poolMembers={pool.members}
             />
           ) : pool.kind === "monthly" && member.account.limits.zeroSpendCap ? (
             <div
@@ -714,6 +743,19 @@ function PoolWindowCard({
         formatTime={formatTime}
       />
       <PoolBar pool={pool} color={color} now={now} />
+      {(() => {
+        const advice = pool.members
+          .filter((m) => m.window && (m.account.limits.resetCredits?.availableCount ?? 0) > 0)
+          .map((m) => suggestResetCredit(m.account, m.window!, pool.members, now))
+          .find(Boolean);
+        return advice ? (
+          <div className="flex items-center gap-2 rounded-md border border-border/50 bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground">
+            <TicketIcon className="size-3.5 shrink-0 text-foreground" aria-hidden />
+            <span className="font-medium text-foreground">{advice.actionLabel}:</span>
+            <span className="truncate">{advice.reason}</span>
+          </div>
+        ) : null;
+      })()}
       {description ? <p className="text-xs text-muted-foreground">{description}</p> : null}
     </div>
   );
