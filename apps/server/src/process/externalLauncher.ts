@@ -583,16 +583,6 @@ const resolveRevealTarget = Effect.fn("externalLauncher.resolveRevealTarget")(fu
       reason: "relative",
     });
   }
-  if (windowsBound) {
-    const segments = revealTarget.slice(path.parse(revealTarget).root.length).split(/[\\/]/);
-    if (segments.some((segment) => WINDOWS_AMBIGUOUS_SEGMENT.test(segment))) {
-      return yield* new ExternalLauncherRevealTargetError({
-        editor: "file-manager",
-        target,
-        reason: "windows-name",
-      });
-    }
-  }
   const exists = yield* fileSystem.exists(revealTarget).pipe(Effect.orElseSucceed(() => false));
   if (!exists) {
     return yield* new ExternalLauncherRevealTargetError({
@@ -603,6 +593,20 @@ const resolveRevealTarget = Effect.fn("externalLauncher.resolveRevealTarget")(fu
   }
   return revealTarget;
 });
+
+// `path` must use the target's own separator, so a WSL name holding `\` stays one segment.
+function rejectWindowsAmbiguousName(target: string, path: Path.Path) {
+  const segments = target.slice(path.parse(target).root.length).split(path.sep);
+  return segments.some((segment) => WINDOWS_AMBIGUOUS_SEGMENT.test(segment))
+    ? Effect.fail(
+        new ExternalLauncherRevealTargetError({
+          editor: "file-manager",
+          target,
+          reason: "windows-name",
+        }),
+      )
+    : Effect.void;
+}
 
 // Replacement managers can register under Directory, Drive, or Folder. Explorer
 // needs its /select argument passed verbatim through PowerShell because Node's
@@ -643,7 +647,7 @@ const resolveFileManagerRevealLaunch = Effect.fn("resolveFileManagerRevealLaunch
   command: string,
 ): Effect.fn.Return<
   EditorLaunch,
-  ExternalLauncherUnsupportedEditorError,
+  ExternalLauncherUnsupportedEditorError | ExternalLauncherRevealTargetError,
   FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
 > {
   if (platform === "darwin") {
@@ -653,6 +657,7 @@ const resolveFileManagerRevealLaunch = Effect.fn("resolveFileManagerRevealLaunch
   if (platform === "win32") {
     const path = yield* Path.Path.pipe(Effect.provide(NodePath.layerWin32));
     const windowsTarget = normalizeWindowsFileManagerPath(target);
+    yield* rejectWindowsAmbiguousName(windowsTarget, path);
     return {
       ...powerShellFileManagerLaunch(
         target,
@@ -673,6 +678,7 @@ const resolveFileManagerRevealLaunch = Effect.fn("resolveFileManagerRevealLaunch
       // WSL names may contain quotes that Explorer's /select cannot encode.
       // Open the parent through the shell so replacement managers still apply.
       const path = yield* Path.Path;
+      yield* rejectWindowsAmbiguousName(target, path);
       // .NET path parsing rejects characters that are legal in WSL filenames.
       const parent = resolveWslFileManagerPath(path.dirname(target), env.WSL_DISTRO_NAME);
       const source = explorerTarget.includes('"')
