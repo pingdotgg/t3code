@@ -6242,32 +6242,62 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.mapError(controlReadError(threadId)),
       );
 
-    // A live run fork shows its source's history through the fork run without copying it.
-    const shownByLiveFork = (threadId: ThreadId, runIdColumn: string) => sql`
-      EXISTS (
-        SELECT 1
-        FROM orchestration_v2_projection_threads AS fork
-        JOIN orchestration_v2_projection_runs AS fork_run
-          ON fork_run.run_id = json_extract(fork.payload_json, '$.forkedFrom.runId')
-        LEFT JOIN orchestration_v2_projection_runs AS item_run
-          ON item_run.run_id = ${sql.literal(runIdColumn)}
-        WHERE fork_run.thread_id = ${threadId}
-          AND fork.deleted_at IS NULL
-          AND json_extract(fork.payload_json, '$.forkedFrom.type') = 'run'
-          AND json_extract(fork.payload_json, '$.forkedFrom.threadId') = ${threadId}
-          AND json_extract(fork.payload_json, '$.lineage.sideChat') IS NOT 1
-          AND (${sql.literal(runIdColumn)} IS NULL OR item_run.ordinal <= fork_run.ordinal)
-      )
+    // A run fork shows its source's history through the fork run without copying it, and every
+    // run fork below it shows that history too. Returns the last source run live forks show, with
+    // and without `leavingForkId`.
+    const lastRunsShownByLiveForks = (threadId: ThreadId, leavingForkId: ThreadId) =>
+      sql<{ with_fork: number | null; without_fork: number | null }>`
+        WITH RECURSIVE showing(thread_id, deleted_at, through) AS (
+          SELECT fork.thread_id, fork.deleted_at, fork_run.ordinal
+          FROM orchestration_v2_projection_context_transfers AS transfer
+          JOIN orchestration_v2_projection_threads AS fork
+            ON fork.thread_id = transfer.target_thread_id
+          JOIN orchestration_v2_projection_runs AS fork_run
+            ON fork_run.run_id = json_extract(fork.payload_json, '$.forkedFrom.runId')
+          WHERE transfer.source_thread_id = ${threadId}
+            AND transfer.type = 'fork'
+            AND fork_run.thread_id = ${threadId}
+            AND json_extract(fork.payload_json, '$.forkedFrom.type') = 'run'
+            AND json_extract(fork.payload_json, '$.forkedFrom.threadId') = ${threadId}
+            AND json_extract(fork.payload_json, '$.lineage.sideChat') IS NOT 1
+          UNION
+          SELECT child.thread_id, child.deleted_at, showing.through
+          FROM showing
+          JOIN orchestration_v2_projection_context_transfers AS transfer
+            ON transfer.source_thread_id = showing.thread_id AND transfer.type = 'fork'
+          JOIN orchestration_v2_projection_threads AS child
+            ON child.thread_id = transfer.target_thread_id
+          WHERE json_extract(child.payload_json, '$.forkedFrom.type') = 'run'
+            AND json_extract(child.payload_json, '$.forkedFrom.threadId') = showing.thread_id
+            AND json_extract(child.payload_json, '$.lineage.sideChat') IS NOT 1
+        )
+        SELECT
+          MAX(through) AS with_fork,
+          MAX(CASE WHEN thread_id <> ${leavingForkId} THEN through END) AS without_fork
+        FROM showing
+        WHERE deleted_at IS NULL
+      `.pipe(Effect.map((rows) => rows[0] ?? { with_fork: null, without_fork: null }));
+
+    // A row with no run predates every run (-1), so any live fork shows it.
+    const runOrdinalBetween = (runIdColumn: string, from: number, through: number) => sql`
+      COALESCE((
+        SELECT run.ordinal FROM orchestration_v2_projection_runs AS run
+        WHERE run.run_id = ${sql.literal(runIdColumn)}
+      ), -1) BETWEEN ${from} AND ${through}
     `;
 
-    const getThreadAttachmentIds: ProjectionStoreV2Shape["getThreadAttachmentIds"] = (threadId) =>
-      Effect.all([
+    const runAttachmentIds = Effect.fn("ProjectionStore.runAttachmentIds")(function* (
+      threadId: ThreadId,
+      from: number,
+      through: number,
+    ) {
+      const [messages, renders, answerFiles] = yield* Effect.all([
         sql<{ id: string }>`
       SELECT DISTINCT json_extract(attachment.value, '$.id') AS id
       FROM orchestration_v2_projection_messages AS message,
         json_each(message.payload_json, '$.attachments') AS attachment
       WHERE message.thread_id = ${threadId}
-        AND NOT ${shownByLiveFork(threadId, "message.run_id")}
+        AND ${runOrdinalBetween("message.run_id", from, through)}
     `,
         sql<{ payload_json: string }>`
       SELECT item.payload_json
@@ -6277,7 +6307,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         AND (item.payload_json LIKE '%htmlRender%'
           OR item.payload_json LIKE ${`%${MCP_APP_OUTPUT_KEY}%`}
           OR item.payload_json LIKE '%preview_recording_stop%')
-        AND NOT ${shownByLiveFork(threadId, "item.run_id")}
+        AND ${runOrdinalBetween("item.run_id", from, through)}
     `,
         sql<{ id: string }>`
       SELECT DISTINCT json_extract(attachment.value, '$.id') AS id
@@ -6286,37 +6316,85 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         json_each(question.value) AS attachment
       WHERE item.thread_id = ${threadId}
         AND item.type = 'user_input_request'
-        AND NOT ${shownByLiveFork(threadId, "item.run_id")}
+        AND ${runOrdinalBetween("item.run_id", from, through)}
     `,
-        // A guest's waiting files are pending uploads that no message row holds yet.
-        sql<{ id: string }>`
-      SELECT DISTINCT json_extract(attachment.value, '$.id') AS id
-      FROM orchestration_v2_projection_threads AS thread,
-        json_each(thread.payload_json, '$.guestShare.messages') AS message,
-        json_each(message.value, '$.attachments') AS attachment
-      WHERE thread.thread_id = ${threadId}
-        AND json_extract(message.value, '$.status') = 'pending'
-    `,
-      ]).pipe(
-        Effect.map(([messages, renders, answerFiles, guestFiles]) => [
-          ...new Set([
-            ...messages.map((row) => row.id),
-            ...guestFiles.map((row) => row.id),
-            ...answerFiles.map((row) => row.id),
-            ...threadHtmlRenderAttachmentIds(
-              threadId,
-              renders.map((row) => {
-                const item = parseEncodedPayload(row.payload_json);
-                return {
-                  toolName: typeof item.toolName === "string" ? item.toolName : null,
-                  output: item.output,
-                };
-              }),
+      ]);
+      return [
+        ...messages.map((row) => row.id),
+        ...answerFiles.map((row) => row.id),
+        ...threadHtmlRenderAttachmentIds(
+          threadId,
+          renders.map((row) => {
+            const item = parseEncodedPayload(row.payload_json);
+            return {
+              toolName: typeof item.toolName === "string" ? item.toolName : null,
+              output: item.output,
+            };
+          }),
+        ),
+      ];
+    });
+
+    // Deleting a fork also frees what its deleted sources kept only for it.
+    const getThreadAttachmentIds: ProjectionStoreV2Shape["getThreadAttachmentIds"] = Effect.fn(
+      "ProjectionStore.getThreadAttachmentIds",
+    )(
+      function* (threadId) {
+        const deletedSources = yield* sql<{ thread_id: ThreadId }>`
+          WITH RECURSIVE source(thread_id) AS (
+            SELECT json_extract(thread.payload_json, '$.forkedFrom.threadId')
+            FROM orchestration_v2_projection_threads AS thread
+            WHERE thread.thread_id = ${threadId}
+              AND json_extract(thread.payload_json, '$.forkedFrom.type') = 'run'
+              AND json_extract(thread.payload_json, '$.lineage.sideChat') IS NOT 1
+            UNION
+            SELECT json_extract(thread.payload_json, '$.forkedFrom.threadId')
+            FROM orchestration_v2_projection_threads AS thread
+            JOIN source USING (thread_id)
+            WHERE thread.deleted_at IS NOT NULL
+              AND json_extract(thread.payload_json, '$.forkedFrom.type') = 'run'
+              AND json_extract(thread.payload_json, '$.lineage.sideChat') IS NOT 1
+          )
+          SELECT thread.thread_id
+          FROM source
+          JOIN orchestration_v2_projection_threads AS thread USING (thread_id)
+          WHERE thread.deleted_at IS NOT NULL
+        `;
+        const afterRun = (ordinal: number | null) => (ordinal === null ? -1 : ordinal + 1);
+        const own = yield* lastRunsShownByLiveForks(threadId, threadId);
+        const released = yield* Effect.forEach(deletedSources, ({ thread_id: source }) =>
+          lastRunsShownByLiveForks(source, threadId).pipe(
+            Effect.flatMap((shown) =>
+              shown.with_fork === null
+                ? Effect.succeed([])
+                : runAttachmentIds(source, afterRun(shown.without_fork), shown.with_fork),
             ),
+          ),
+        );
+        // A guest's waiting files are pending uploads that no message row holds yet.
+        const guestFiles = yield* sql<{ id: string }>`
+          SELECT DISTINCT json_extract(attachment.value, '$.id') AS id
+          FROM orchestration_v2_projection_threads AS thread,
+            json_each(thread.payload_json, '$.guestShare.messages') AS message,
+            json_each(message.value, '$.attachments') AS attachment
+          WHERE thread.thread_id = ${threadId}
+            AND json_extract(message.value, '$.status') = 'pending'
+        `;
+        return [
+          ...new Set([
+            ...(yield* runAttachmentIds(
+              threadId,
+              afterRun(own.with_fork),
+              Number.MAX_SAFE_INTEGER,
+            )),
+            ...guestFiles.map((row) => row.id),
+            ...released.flat(),
           ]),
-        ]),
-        Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })),
-      );
+        ];
+      },
+      (effect, threadId) =>
+        effect.pipe(Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause }))),
+    );
 
     const getMessagesById = Effect.fn("ProjectionStore.getMessagesById")(
       function* (threadId: ThreadId, messageIds: ReadonlyArray<MessageId>) {

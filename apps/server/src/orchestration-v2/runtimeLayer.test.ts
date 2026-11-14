@@ -47,6 +47,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -462,6 +463,7 @@ const layerProjectDeletionTest = Layer.mergeAll(
   RuntimeLayer.layer.pipe(Layer.provide(RuntimeLayer.layerProjectService)),
   RuntimeLayer.layerProjectService,
   RuntimeLayer.layerEventSink,
+  ProjectionStore.layer,
   ThreadCommandExecutor.layer,
 ).pipe(
   Layer.provide(
@@ -491,11 +493,11 @@ const layerProjectDeletionTest = Layer.mergeAll(
   Layer.provide(McpProviderSessions.layer),
   Layer.provide(SqlitePersistence.layerMemory),
   Layer.provide(layerCheckpointStoreTest),
-  Layer.provide(layerServerConfig),
+  Layer.provideMerge(layerServerConfig),
   Layer.provide(ServerSettings.layerTest()),
   Layer.provide(layerTestProviderInstanceRegistry),
   Layer.provide(layerGitWorkflowTest),
-  Layer.provide(layerPlatformTest),
+  Layer.provideMerge(layerPlatformTest),
 );
 
 it.layer(layerProjectDeletionTest)("project deletion during thread commands", (it) => {
@@ -993,6 +995,167 @@ it.layer(layerProjectDeletionTest)("project deletion during thread commands", (i
         assert.isNotNull((yield* orchestrator.getThreadProjection(parentId)).thread.deletedAt);
         assert.isNotNull((yield* orchestrator.getThreadProjection(sideChatId)).thread.deletedAt);
       }).pipe(Effect.ensuring(Effect.sync(() => lockSpy.mockRestore())));
+    }),
+  );
+
+  it.effect("deleted sources keep the html_render pages any live fork shows", () =>
+    Effect.gen(function* () {
+      const projects = yield* ProjectService.ProjectService;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const projectId = ProjectId.make("html-fork-project");
+      const sourceThreadId = ThreadId.make("html-fork-source");
+      const forkThreadId = ThreadId.make("html-fork-target");
+      yield* projects.create({
+        commandId: CommandId.make("html-fork-project"),
+        projectId,
+        title: "Page family",
+        workspaceRoot: "/work/html-fork",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("html-fork-create"),
+        threadId: sourceThreadId,
+        projectId,
+        title: "Page source",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const inherited = yield* writeHtmlRenderRun({
+        threadId: sourceThreadId,
+        key: "inherited",
+        ordinal: 1,
+      });
+      const fork = (sourceThreadId: ThreadId, runId: RunId, targetThreadId: ThreadId) =>
+        orchestrator.dispatch({
+          type: "thread.fork",
+          commandId: CommandId.make(`html-fork:${targetThreadId}`),
+          sourceThreadId,
+          targetThreadId,
+          sourcePoint: { type: "run", runId },
+          createdBy: "user",
+          creationSource: "web",
+        });
+      yield* fork(sourceThreadId, inherited.runId, forkThreadId);
+      const forkPage = yield* writeHtmlRenderRun({
+        threadId: forkThreadId,
+        key: "fork",
+        ordinal: 1,
+      });
+      const [first, second] = [ThreadId.make("html-fork-first"), ThreadId.make("html-fork-second")];
+      yield* fork(forkThreadId, forkPage.runId, first);
+      // Project deletion goes newest first, so it reaches `second` before `first`.
+      yield* TestClock.adjust("1 second");
+      yield* fork(forkThreadId, forkPage.runId, second);
+      const firstRun = yield* writeHtmlRenderRun({ threadId: first, key: "first", ordinal: 1 });
+      const later = yield* writeHtmlRenderRun({
+        threadId: sourceThreadId,
+        key: "later",
+        ordinal: 2,
+      });
+      const deleteThread = (threadId: ThreadId) =>
+        orchestrator.dispatch({
+          type: "thread.delete",
+          commandId: CommandId.make(`html-fork-delete:${threadId}`),
+          threadId,
+        });
+      const pagesOnDisk = Effect.gen(function* () {
+        yield* worker.drain();
+        return yield* Effect.forEach([inherited, forkPage, later], (page) =>
+          fileSystem.exists(page.pagePath),
+        );
+      });
+      yield* deleteThread(forkThreadId);
+      yield* deleteThread(sourceThreadId);
+      assert.deepEqual(yield* pagesOnDisk, [true, true, false]);
+
+      // `first`'s delete pauses after reading what to free. A fork of it and the project delete,
+      // which reaches `second`, must each wait on a lock it holds rather than decide on the same
+      // state; `blocked` hears each request for one.
+      const firstPlanned = yield* Deferred.make<void>();
+      const releaseFirst = yield* Deferred.make<void>();
+      const blocked = yield* Queue.unbounded<void>();
+      const readAttachmentIds = projections.getThreadAttachmentIds;
+      const attachmentSpy = vi
+        .spyOn(projections, "getThreadAttachmentIds")
+        .mockImplementation((threadId) =>
+          threadId === first
+            ? readAttachmentIds(threadId).pipe(
+                Effect.tap(() => Deferred.succeed(firstPlanned, undefined)),
+                Effect.tap(() => Deferred.await(releaseFirst)),
+              )
+            : readAttachmentIds(threadId),
+        );
+      const deletionHeld = yield* Ref.make(false);
+      const requestsHeld = (held: Effect.Effect<boolean>) =>
+        Effect.all([Deferred.isDone(firstPlanned), held]).pipe(
+          Effect.flatMap(([planned, isHeld]) =>
+            planned && isHeld ? Queue.offer(blocked, undefined) : Effect.void,
+          ),
+        );
+      const { withLock, withDeletionLock } = executor;
+      const observeLock: ThreadCommandExecutor.ThreadCommandExecutor["Service"]["withLock"] = (
+        key,
+        effect,
+      ) => requestsHeld(Effect.succeed(key === first)).pipe(Effect.andThen(withLock(key, effect)));
+      const observeDeletion: ThreadCommandExecutor.ThreadCommandExecutor["Service"]["withDeletionLock"] =
+        (effect) =>
+          requestsHeld(Ref.get(deletionHeld)).pipe(
+            Effect.andThen(
+              withDeletionLock(
+                Ref.set(deletionHeld, true).pipe(
+                  Effect.andThen(effect),
+                  Effect.ensuring(Ref.set(deletionHeld, false)),
+                ),
+              ),
+            ),
+          );
+      const lockSpy = vi.spyOn(executor, "withLock").mockImplementation(observeLock);
+      const deletionSpy = vi
+        .spyOn(executor, "withDeletionLock")
+        .mockImplementation(observeDeletion);
+      const forkOfDeleted = yield* Effect.gen(function* () {
+        const firstFiber = yield* deleteThread(first).pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Deferred.await(firstPlanned);
+        const forkFiber = yield* fork(first, firstRun.runId, ThreadId.make("html-fork-late")).pipe(
+          Effect.match({
+            onSuccess: () => "created",
+            onFailure: (error) => ("cause" in error ? String(error.cause) : error._tag),
+          }),
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Effect.raceFirst(Queue.take(blocked), Fiber.await(forkFiber));
+        const projectFiber = yield* projects
+          .delete({ commandId: CommandId.make("html-fork-project-delete"), projectId, force: true })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.raceFirst(Queue.take(blocked), Fiber.await(projectFiber));
+        yield* Deferred.succeed(releaseFirst, undefined);
+        yield* Fiber.join(firstFiber);
+        yield* Fiber.join(projectFiber);
+        return yield* Fiber.join(forkFiber);
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            lockSpy.mockRestore();
+            deletionSpy.mockRestore();
+            attachmentSpy.mockRestore();
+          }),
+        ),
+      );
+      assert.deepEqual(
+        { afterLastForks: yield* pagesOnDisk, forkOfDeleted },
+        { afterLastForks: [false, false, false], forkOfDeleted: `Thread ${first} was deleted.` },
+      );
     }),
   );
 });
@@ -2874,6 +3037,11 @@ const writeHtmlRenderRun = Effect.fn("test.writeHtmlRenderRun")(function* (input
   const runId = RunId.make(`html-fork-run:${input.key}`);
   const messageId = MessageId.make(`html-fork-message:${input.key}`);
   const attachmentId = createAttachmentId(input.threadId, "html")!;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const { attachmentsDir } = yield* ServerConfig.ServerConfig;
+  const pagePath = (yield* Path.Path).join(attachmentsDir, `${attachmentId}.html`);
+  yield* fileSystem.makeDirectory(attachmentsDir, { recursive: true });
+  yield* fileSystem.writeFileString(pagePath, "<p>Page</p>");
   yield* eventSink.write({
     events: [
       {
@@ -2955,67 +3123,10 @@ const writeHtmlRenderRun = Effect.fn("test.writeHtmlRenderRun")(function* (input
       },
     ],
   });
-  return { runId, attachmentId };
+  return { runId, pagePath };
 });
 
 it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
-  it.effect("deleting a source keeps the html_render page its live fork shows", () =>
-    Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const outbox = yield* EffectOutbox.EffectOutboxV2;
-      const sourceThreadId = ThreadId.make("html-fork-source");
-      const forkThreadId = ThreadId.make("html-fork-target");
-      yield* orchestrator.dispatch({
-        type: "thread.create",
-        commandId: CommandId.make("html-fork-create"),
-        threadId: sourceThreadId,
-        projectId: ProjectId.make("html-fork-project"),
-        title: "Page source",
-        modelSelection,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        branch: null,
-        worktreePath: null,
-        createdBy: "user",
-        creationSource: "web",
-      });
-      const inherited = yield* writeHtmlRenderRun({
-        threadId: sourceThreadId,
-        key: "inherited",
-        ordinal: 1,
-      });
-      yield* orchestrator.dispatch({
-        type: "thread.fork",
-        commandId: CommandId.make("html-fork-fork"),
-        sourceThreadId,
-        targetThreadId: forkThreadId,
-        sourcePoint: { type: "run", runId: inherited.runId },
-        createdBy: "user",
-        creationSource: "web",
-      });
-      const later = yield* writeHtmlRenderRun({
-        threadId: sourceThreadId,
-        key: "later",
-        ordinal: 2,
-      });
-      const deleteCommandId = CommandId.make("html-fork-delete-source");
-      yield* orchestrator.dispatch({
-        type: "thread.delete",
-        commandId: deleteCommandId,
-        threadId: sourceThreadId,
-      });
-      const cleaned = (yield* outbox.listByCommandId(deleteCommandId)).flatMap((effect) =>
-        effect.request.type === "attachment.cleanup" ? effect.request.attachmentIds : [],
-      );
-      assert.include(cleaned, later.attachmentId);
-      assert.notInclude(
-        cleaned,
-        inherited.attachmentId,
-        "deleted a page its live fork still shows",
-      );
-    }),
-  );
-
   it.effect("applies lifecycle commands idempotently and emits archive/removal shell deltas", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
