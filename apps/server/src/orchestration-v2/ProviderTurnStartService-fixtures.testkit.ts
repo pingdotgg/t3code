@@ -57,65 +57,14 @@ import * as RunExecutionService from "./RunExecutionService.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 
-export const isDomainEvent = Schema.is(OrchestrationV2DomainEvent);
+import {
+  isDomainEvent, type LocalCommandHarnessInput, layerWorktreeLocation,
+  makeHarnessUserMessage, managedWorktreesDir, normalize,
+} from "./ProviderTurnStartService-fixtures-env.testkit.ts";
 
+export { isDomainEvent, layerWorktreeLocation, managedWorktreesDir, normalize };
 
-export const managedWorktreesDir = "/tmp/provider-turn-start-worktrees";
-
-export const normalize = (target: string) => {
-  const parts: Array<string> = [];
-  for (const part of target.split("/")) {
-    if (part === "..") parts.pop();
-    else if (part !== "" && part !== ".") parts.push(part);
-  }
-  return `/${parts.join("/")}`;
-};
-
-export const layerWorktreeLocation = (worktreesDir = managedWorktreesDir) =>
-  Layer.mergeAll(
-    Path.layer,
-    Layer.mock(ServerConfig.ServerConfig)({ worktreesDir } as ServerConfig.ServerConfig["Service"]),
-    ServerSettings.layerTest(),
-  );
-
-
-export function makeLocalCommandHarness(input: {
-  readonly text: string;
-  readonly worktreePath?: string;
-  readonly worktreesDir?: string;
-  readonly workspaceRoot?: string;
-  readonly gitWorkflow?: GitWorkflow.GitWorkflowService["Service"];
-  readonly fileSystem?: FileSystem.FileSystem;
-  readonly previousNativeSession?: boolean;
-  readonly previousMessages?: ReadonlyArray<string>;
-  readonly logoutFailure?: string;
-  readonly openFailure?: unknown;
-  readonly ensureThreadFailure?: unknown;
-  readonly historyReadFailureAfterFallback?: unknown;
-  readonly resumeFailure?: ProviderAdapter.ProviderAdapterV2Error;
-  readonly interruptOpen?: boolean;
-  readonly interruptRunBeforeOpenFailure?: boolean;
-  readonly writeFailure?: unknown;
-  readonly failReadsAfterRunning?: boolean;
-  readonly previousTurn?: {
-    readonly runStatus: "failed" | "completed";
-    readonly turnStatus: "running" | "completed" | "interrupted";
-    readonly differentThread?: boolean;
-    readonly liveSession?: boolean;
-    readonly interruptFailure?: boolean;
-    readonly interruptCurrentRun?: boolean;
-  };
-  /**
-   * A side chat whose context targets this run, an earlier run that failed or was cancelled before
-   * the provider, or an earlier run that delivered it. `nativeForkFrom` plans a native fork of the
-   * parent. `switchedProvider` puts the earlier run and its context on another provider thread.
-   */
-  readonly sideChat?: {
-    readonly contextRun: "current" | "failed" | "cancelled" | "delivered";
-    readonly nativeForkFrom?: "idle" | "busy";
-    readonly switchedProvider?: boolean;
-  };
-}) {
+export function makeLocalCommandHarness(input: LocalCommandHarnessInput) {
   const settledRuns: Array<string> = [];
   const now = DateTime.makeUnsafe("2026-09-04T12:00:00Z");
   const threadId = ThreadId.make("thread-native-account-command");
@@ -163,20 +112,14 @@ export function makeLocalCommandHarness(input: {
     createdAt: now,
     updatedAt: now,
   };
-  const message: OrchestrationV2ThreadProjection["messages"][number] = {
-    id: messageId,
+  const message = makeHarnessUserMessage({
+    messageId,
     threadId,
     runId,
-    nodeId: rootNodeId,
-    role: "user",
+    rootNodeId,
     text: input.text,
-    attachments: [],
-    streaming: false,
-    createdBy: "user",
-    creationSource: "web",
-    createdAt: now,
-    updatedAt: now,
-  };
+    now,
+  });
   let projection: OrchestrationV2ThreadProjection = {
     thread: {
       id: threadId,

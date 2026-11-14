@@ -1,5 +1,3 @@
-// @effect-diagnostics preferSchemaOverJson:off
-// shared fixtures for ProviderEventIngestor (never imports the test file)
 import { assert, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -61,28 +59,25 @@ import {
   selectInheritedBackgroundTurnItems,
 } from "./RunExecutionService.ts";
 
-export const layerTestDatabase = SqlitePersistence.layerMemory;
 
+export const layerTestDatabase = SqlitePersistence.layerMemory;
 export const layerTestStores = Layer.merge(EventStore.layer, ProjectionStore.layer).pipe(
   Layer.provide(layerTestDatabase),
 );
+
 export const layerTestEventSink = EventSink.layer.pipe(
   Layer.provide(Layer.mergeAll(layerTestStores, layerTestDatabase)),
 );
+
 export const layerGit = GitVcsDriver.layer.pipe(
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "ingestor-git-" })),
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
-
 export const layerEmptyInstances = Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
   // @effect-diagnostics-next-line effectSucceedWithVoid:off - Optional instances require undefined rather than void.
   getInstance: () => Effect.succeed(undefined),
 });
-
-
-
-
 export const makeLayerTest = <E>(
   ingestorEventSink: Layer.Layer<EventSink.EventSinkV2, E>,
   instances = layerEmptyInstances,
@@ -109,22 +104,18 @@ export const makeLayerTest = <E>(
     ),
   );
 export const layerTest = makeLayerTest(layerTestEventSink);
-export const layer = it.layer(layerTest);
 
-
-
-
+// EventSink reports a lock that outlasted busy_timeout at BEGIN IMMEDIATE this way.
 export const lockTimeout = new EventSink.EventSinkWriteError({
   eventCount: 1,
   cause: new SqlError.SqlError({ reason: new SqlError.LockTimeoutError({ cause: null }) }),
 });
-
 export const constraintFailure = new EventSink.EventSinkWriteError({
   eventCount: 1,
   cause: new SqlError.SqlError({ reason: new SqlError.ConstraintError({ cause: null }) }),
 });
 
-
+/** The ingestor's next sink writes of `events` fail with `errors`, in order; the rest go through. */
 export const layerFailingWrites = (
   errors: ReadonlyArray<EventSink.EventSinkWriteError>,
   matches: (events: ReadonlyArray<OrchestrationV2DomainEvent>) => boolean = () => true,
@@ -150,7 +141,6 @@ export const layerFailingWrites = (
     ).pipe(Layer.provide(layerTestEventSink)),
   );
 
-
 export const makeSharedWorktree = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const git = yield* GitVcsDriver.GitVcsDriver;
@@ -171,17 +161,14 @@ export const makeSharedWorktree = Effect.gen(function* () {
     "-m",
     "initial",
   ]);
-  yield* command(repo, ["worktree", "add", "-b", "t3/src/orchestration-v2/ProviderEventIngestor-fixtures.testkit/makeSharedWorktree", worktreePath]);
+  yield* command(repo, ["worktree", "add", "-b", "t3/abcd1234", worktreePath]);
   return { repo, worktreePath, command };
 });
-
 export const modelSelection = {
   instanceId: ProviderInstanceId.make("codex"),
   model: "gpt-5.4",
 } satisfies ModelSelection;
-
 export const CODEX_DRIVER = ProviderDriverKind.make("codex");
-
 
 export function threadCreatedEvent(
   now: DateTime.Utc,
@@ -243,6 +230,7 @@ export function threadCreatedEvent(
   });
 }
 
+
 export const ingestCompletedProviderTurn = (
   guard: Pick<
     Parameters<ProviderEventIngestor.ProviderEventIngestorV2Shape["ingestNormalized"]>[0],
@@ -287,3 +275,7 @@ export const ingestCompletedProviderTurn = (
     const projection = yield* projectionStore.getThreadProjection(threadEvent.threadId);
     return { exit, providerTurnId, persisted: projection.providerTurns.map((turn) => turn.id) };
   });
+
+// Neither guard matches a stored run, so a guarded write correctly commits nothing.
+export const runId = RunId.make("run:locked");
+export const activeAttemptId = RunAttemptId.make("attempt:locked");
