@@ -1,7 +1,7 @@
-import * as Context from "effect/Context";
-import * as Layer from "effect/Layer";
 import * as NodeFs from "node:fs";
 import * as NodeTls from "node:tls";
+import * as Context from "effect/Context";
+import * as Layer from "effect/Layer";
 import type * as Config from "../workerd/Config.ts";
 
 export class Internet extends Context.Service<Internet, Config.Service>()(
@@ -31,11 +31,7 @@ const extraTrustedCertificates = (): string[] => {
   }
   // Split the bundle into individual certificates and add each individually:
   // https://github.com/cloudflare/miniflare/pull/587/files#r1271579671
-  return (
-    pem.match(
-      /-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g,
-    ) ?? []
-  );
+  return pem.match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g) ?? [];
 };
 
 export const InternetLive = Layer.sync(Internet, () => {
@@ -45,8 +41,7 @@ export const InternetLive = Layer.sync(Internet, () => {
   // https://github.com/capnproto/capnproto/blob/6e26d260d1d91e0465ca12bbb5230a1dfa28f00d/c%2B%2B/src/kj/compat/tls.c%2B%2B#L745
   // Unfortunately, this doesn't work on Windows. Luckily, Node exposes its own
   // bundled CA store's certificates, so we just use those.
-  const baseCertificates =
-    process.platform === "win32" ? Array.from(NodeTls.rootCertificates) : [];
+  const baseCertificates = process.platform === "win32" ? Array.from(NodeTls.rootCertificates) : [];
   return {
     name: "internet",
     get network() {
@@ -57,10 +52,7 @@ export const InternetLive = Layer.sync(Internet, () => {
         deny: [],
         tlsOptions: {
           trustBrowserCas: true,
-          trustedCertificates: [
-            ...baseCertificates,
-            ...extraTrustedCertificates(),
-          ],
+          trustedCertificates: [...baseCertificates, ...extraTrustedCertificates()],
         },
       };
     },

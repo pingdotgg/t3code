@@ -3,11 +3,17 @@ title: Setup
 description: Connect alchemy to GitHub — account, credentials, and profiles.
 ---
 
-Register the provider next to your cloud's:
+import PackageManagers from "../../../components/PackageManagers.astro";
+
+Install `@alchemy.run/github`:
+
+<PackageManagers add="@alchemy.run/github" />
+
+Then register the provider next to your cloud's:
 
 ```typescript
 // alchemy.run.ts
-import * as GitHub from "alchemy/GitHub";
+import * as GitHub from "@alchemy.run/github";
 
 providers: Layer.mergeAll(Cloudflare.providers(), GitHub.providers()),
 ```

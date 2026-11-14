@@ -1,3 +1,6 @@
+import type * as FileSystem from "effect/FileSystem";
+import type * as Layer from "effect/Layer";
+import type * as Path from "effect/Path";
 /**
  * `@alchemy.run/frontend-frameworks/vite` — plain-Vite integration
  * implementing framework-core's `Framework` service, for client-only sites
@@ -18,9 +21,6 @@
  * server output.
  */
 import type { Framework } from "../core/index.ts";
-import type * as FileSystem from "effect/FileSystem";
-import type * as Layer from "effect/Layer";
-import type * as Path from "effect/Path";
 import { layer } from "./Vite.ts";
 
 export {
