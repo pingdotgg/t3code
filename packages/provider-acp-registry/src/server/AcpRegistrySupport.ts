@@ -281,6 +281,12 @@ function parseUvxPackageSpec(packageSpec: string): ExactPackageSpec {
   };
 }
 
+// Installs under the earlier "npm" directory may lack native modules npm 12 refused to build.
+const NPM_PACKAGE_DIRECTORY = "npm-scripts";
+// A line of `npm config list`: a script setting some source defines, blank values included.
+const NPM_INSTALL_SCRIPT_SETTING =
+  /^(?:allow-scripts|strict-allow-scripts|dangerously-allow-all-scripts) = /mu;
+
 function packageManagerFor(distribution: AcpRegistryDistributionKind): "npm" | "uv" | undefined {
   return distribution === "npx" ? "npm" : distribution === "uvx" ? "uv" : undefined;
 }
@@ -352,7 +358,7 @@ export const acpRegistryManagedBinaryDirectories = Effect.fn("acpRegistryManaged
             installsDirectory,
             receipt.value.agentId,
             encodeURIComponent(receipt.value.agentVersion),
-            receipt.value.distribution === "npx" ? "npm" : "python",
+            receipt.value.distribution === "npx" ? NPM_PACKAGE_DIRECTORY : "python",
             ...(receipt.value.distribution === "npx" && input.platform === "win32" ? [] : ["bin"]),
           ) &&
         path.dirname(receipt.value.executablePath) === receipt.value.binDirectory &&
@@ -660,7 +666,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
   const agentInstallRoot = (agent: AcpRegistryAgent) =>
     path.join(installsDirectory, agent.id, encodeURIComponent(agent.version));
   const packageInstallRoot = (agent: AcpRegistryAgent, distribution: "npx" | "uvx") =>
-    path.join(agentInstallRoot(agent), distribution === "npx" ? "npm" : "python");
+    path.join(agentInstallRoot(agent), distribution === "npx" ? NPM_PACKAGE_DIRECTORY : "python");
   const packageBinDirectory = (agent: AcpRegistryAgent, distribution: "npx" | "uvx") =>
     distribution === "npx" && platform === "win32"
       ? packageInstallRoot(agent, distribution)
@@ -1221,6 +1227,23 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     },
   );
 
+  // npm 12 takes its allowlist from the first source that has one, so a blank effective value
+  // can hide a lower source's restriction: any defined setting, or a failed query, is a policy.
+  const npmHasInstallScriptPolicy = Effect.fn("AcpRegistryCatalog.npmHasInstallScriptPolicy")(
+    function* (managerPath: string, environment: NodeJS.ProcessEnv) {
+      // An inherited `json` or `long` setting would change the listing the matcher reads.
+      const listArgs = ["config", "list", "--global", "--no-long", "--no-json"];
+      return yield* runCommand(managerPath, listArgs, {
+        env: environment,
+        timeout: PACKAGE_QUERY_TIMEOUT,
+        truncatedOutputReason: "install_failed",
+      }).pipe(
+        Effect.map((output) => NPM_INSTALL_SCRIPT_SETTING.test(output)),
+        Effect.orElseSucceed(() => true),
+      );
+    },
+  );
+
   const ensureGlobalPackage = Effect.fn("AcpRegistryCatalog.ensureGlobalPackage")(function* (
     agent: AcpRegistryAgent,
     distribution: "npx" | "uvx",
@@ -1280,7 +1303,17 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     const managerDirectory = yield* managerBinDirectory(managerPath);
     const installEnvironment = withPreferredPath(packageEnvironment, managerDirectory, platform);
     if (distribution === "npx") {
-      yield* runCommand(managerPath, ["install", "--global", packageSpec], {
+      // npm 12 blocks dependency install scripts unless told otherwise, leaving native modules
+      // unbuilt. Restore the earlier default only where the user's npm sets no script policy.
+      // Queried without the managed prefix, which would also move npm's global npmrc.
+      const hasScriptPolicy = yield* npmHasInstallScriptPolicy(
+        managerPath,
+        withPreferredPath(environment, managerDirectory, platform),
+      );
+      const installArgs = hasScriptPolicy
+        ? ["install", "--global", packageSpec]
+        : ["install", "--global", "--dangerously-allow-all-scripts", packageSpec];
+      yield* runCommand(managerPath, installArgs, {
         env: installEnvironment,
         timeout: PACKAGE_INSTALL_TIMEOUT,
         truncatedOutputReason: "install_failed",

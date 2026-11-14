@@ -76,7 +76,7 @@ const makeFakeNpmToolchain = Effect.fn("AcpRegistrySupport.test.makeFakeNpmToolc
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const toolchainBin = path.join(rootDirectory, "fake-node", "bin");
-  const globalPrefix = path.join(rootDirectory, "tools", "example-agent", "1.2.3", "npm");
+  const globalPrefix = path.join(rootDirectory, "tools", "example-agent", "1.2.3", "npm-scripts");
   const globalBin = path.join(globalPrefix, "bin");
   const executablePath = path.join(globalBin, "example-agent");
   const npmPath = path.join(toolchainBin, "npm");
@@ -461,7 +461,69 @@ describe("AcpRegistrySupport", () => {
       expect(second.spawn.command).toBe(toolchain.executablePath);
       const npmCommands = yield* fileSystem.readFileString(toolchain.logPath);
       expect(npmCommands.match(/^install --global /gmu)).toHaveLength(1);
-      expect(npmCommands).toContain("install --global @example/acp@V1.2.3");
+      expect(npmCommands).toContain(
+        "install --global --dangerously-allow-all-scripts @example/acp@V1.2.3",
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
+        ),
+      ),
+    );
+  });
+
+  it.effect.each([
+    {
+      name: "a blank setting hides a lower one",
+      // What npm 12.2.2 prints for `allow-scripts=` in the user file over `allow-scripts=none`.
+      policy: {
+        FAKE_NPM_CONFIG_LIST: [
+          '; "global" config from /etc/npmrc',
+          "",
+          '; allow-scripts = ["none"] ; overridden by user',
+          "",
+          '; "user" config from /home/user/.npmrc',
+          "",
+          'allow-scripts = [""]',
+        ].join("\n"),
+      },
+    },
+    {
+      name: "only the global npmrc sets one",
+      policy: {
+        FAKE_NPM_GLOBAL_CONFIG_LIST: [
+          '; "global" config from /etc/npmrc',
+          "",
+          'allow-scripts = ["none"]',
+        ].join("\n"),
+      },
+    },
+  ])("leaves npm's script policy alone when $name", ({ policy }) => {
+    const agent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-script-policy-",
+      });
+      const toolchain = yield* makeFakeNpmToolchain(cacheDir);
+      const environment = {
+        ...toolchain.environment,
+        // Inherited JSON mode replaces the per-source listing with the effective values.
+        npm_config_json: "true",
+        ...policy,
+      };
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      }).pipe(Effect.provideService(HostProcess.Environment, environment));
+
+      yield* resolver.resolve(settings(), "/workspace", environment);
+
+      const npmCommands = yield* fileSystem.readFileString(toolchain.logPath);
+      expect(npmCommands.match(/^install .*$/gmu)).toEqual(["install --global @example/acp@1.2.3"]);
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -1824,7 +1886,7 @@ describe("acpRegistryManagedBinaryDirectories", () => {
       yield* install("kimi", "1.50.0", "linux-x86_64", "cmd");
       yield* install("kimi", "1.50.0", "darwin-aarch64");
       yield* install("other-agent", "0.2.0", "darwin-aarch64");
-      const globalBin = path.join(cacheDir, "tools", "gemini", "0.56.0", "npm", "bin");
+      const globalBin = path.join(cacheDir, "tools", "gemini", "0.56.0", "npm-scripts", "bin");
       const geminiCommand = path.join(globalBin, "gemini");
       const receiptsDirectory = path.join(cacheDir, "acp-registry", "package-installs");
       yield* fileSystem.makeDirectory(globalBin, { recursive: true });
@@ -1846,7 +1908,7 @@ describe("acpRegistryManagedBinaryDirectories", () => {
             "tools",
             "gemini",
             "0.56.0",
-            "npm",
+            "npm-scripts",
             "lib",
             "node_modules",
             "@google",

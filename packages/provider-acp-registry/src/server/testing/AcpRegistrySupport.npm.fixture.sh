@@ -9,6 +9,21 @@ if [ "$1" = "prefix" ] && [ "$2" = "--global" ]; then
   printf '%s\n' "$prefix"
   exit 0
 fi
+if [ "$1" = "config" ] && [ "$2" = "list" ]; then
+  case "${npm_config_json:-} $*" in
+    "true "*--no-json*) ;;
+    "true "*)
+      printf '{"allow-scripts":[""]}\n'
+      exit 0
+      ;;
+  esac
+  printf '%s\n' "$FAKE_NPM_CONFIG_LIST"
+  # npm reads its global npmrc from the prefix, so a redirected prefix hides the real one.
+  if [ -z "${npm_config_prefix:-}" ]; then
+    printf '%s\n' "${FAKE_NPM_GLOBAL_CONFIG_LIST:-}"
+  fi
+  exit 0
+fi
 if [ "$1" = "install" ] && [ "$2" = "--global" ]; then
   package_root="$prefix/lib/node_modules/@example/acp"
   executable="$prefix/bin/example-agent"
