@@ -30,9 +30,11 @@ import {
   useQuietThreadShell,
 } from "../state/entities";
 import {
+  draftModelSelectionApplies,
   hasExplicitComposerModelSelection,
   resolveNewDraftStartFromOrigin,
   resolveNewThreadModelSelectionOverride,
+  threadHasStarted,
 } from "../lib/chatThreadActions";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { readT3ProjectFile } from "../lib/t3ProjectFileDefaults";
@@ -139,7 +141,12 @@ export function createNewThreadHandler(router: AnyRouter) {
             : currentRouteTarget.draftId,
         )
       : null;
-    const composerActiveProvider = carrySourceComposer?.activeProvider ?? null;
+    const composerActiveProvider = draftModelSelectionApplies(
+      carrySourceComposer,
+      threadHasStarted(carrySourceShell),
+    )
+      ? (carrySourceComposer?.activeProvider ?? null)
+      : null;
     const composerModelSelection = composerActiveProvider
       ? (carrySourceComposer?.modelSelectionByProvider[composerActiveProvider] ?? null)
       : null;

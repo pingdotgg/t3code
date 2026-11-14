@@ -338,10 +338,9 @@ export interface SourceControlDefinition {
    */
   readonly repositorySelector?: (identity: RepositorySelectorIdentity) => string | null;
   /**
-   * For a host that spells one repository differently over SSH and on the web: the web spelling
-   * of the `host/path` key `normalizeGitRemoteUrl` made from a remote that names a host. Null when
-   * the key is not this host's. Persisted repository keys are built with it, so its output must
-   * not change.
+   * The key of a remote's lower case `host/path`, `.git` suffix kept, for a host that spells it
+   * apart from `normalizeGitRemoteUrl`: over SSH and the web, or with `.git` as part of the name.
+   * Null when the key is not this host's. Persisted keys are built with it: output must not change.
    */
   readonly repositoryKeyFromRemote?: (key: string) => string | null;
   /**
@@ -354,6 +353,15 @@ export interface SourceControlDefinition {
    * media itself, so it asks the server, whose driver for this host fetches it.
    */
   readonly mediaUrl?: (url: URL) => SourceControlMediaUrl | null;
+  /**
+   * A URL `mediaUrl` claims for the bytes of `path` at full commit `sha` in the repository at
+   * `repositoryUrl`. Null or absent when the host cannot serve one.
+   */
+  readonly rawFileUrl?: (input: {
+    readonly repositoryUrl: string;
+    readonly sha: string;
+    readonly path: string;
+  }) => string | null;
   readonly settings?: SourceControlHostSettingsSchema;
 }
 
@@ -795,9 +803,10 @@ export function makeSourceControlDefinitionRegistry(
     },
     repositoryKeyFromRemote: (remoteUrl) => {
       const key = normalizeGitRemoteUrl(remoteUrl);
-      if (parseGitRemoteRepository(remoteUrl) === null) return key;
+      const written = parseGitRemoteRepository(remoteUrl, { keepGitSuffix: true });
+      if (written === null) return key;
       for (const definition of definitions) {
-        const spelled = definition.repositoryKeyFromRemote?.(key);
+        const spelled = definition.repositoryKeyFromRemote?.(`${written.host}/${written.path}`);
         if (spelled != null) return spelled;
       }
       return key;
