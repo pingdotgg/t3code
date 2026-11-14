@@ -18,17 +18,22 @@ import {
   DialogPopup,
   DialogTitle,
 } from "../ui/dialog";
+
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`shell:${key}`, options);
 const installSteps: ReadonlyArray<{
   readonly stage: RelayClientInstallProgressStage;
   readonly label: string;
 }> = [
-  { stage: "checking", label: "Checking current installation" },
-  { stage: "waiting_for_lock", label: "Waiting for installer" },
-  { stage: "downloading", label: "Downloading relay client" },
-  { stage: "verifying", label: "Verifying download" },
-  { stage: "installing", label: "Installing relay client" },
-  { stage: "validating", label: "Validating executable" },
-  { stage: "activating", label: "Activating installation" },
+  { stage: "checking", label: "stage.checking" },
+  { stage: "waiting_for_lock", label: "stage.waitingForLock" },
+  { stage: "downloading", label: "stage.downloading" },
+  { stage: "verifying", label: "stage.verifying" },
+  { stage: "installing", label: "stage.installing" },
+  { stage: "validating", label: "stage.validating" },
+  { stage: "activating", label: "stage.activating" },
 ];
 
 export function RelayClientInstallDialog() {
@@ -64,9 +69,7 @@ export function RelayClientInstallDialog() {
           <div className="flex size-9 items-center justify-center rounded-lg border border-border/70 bg-muted/60">
             <DownloadIcon aria-hidden className="size-4.5 text-muted-foreground" />
           </div>
-          <DialogTitle>
-            {isInstalling ? "Installing relay client" : "Install relay client?"}
-          </DialogTitle>
+          <DialogTitle>{isInstalling ? td("stage.installing") : td("installQuestion")}</DialogTitle>
           <DialogDescription>
             {isInstalling
               ? "T3 Code is preparing this environment for secure access through T3 Connect."
@@ -78,14 +81,14 @@ export function RelayClientInstallDialog() {
             <div className="space-y-2.5">
               <div className="flex items-center justify-between gap-3 text-sm">
                 <p aria-live="polite" className="font-medium text-foreground">
-                  {activeStep?.label}
+                  {activeStep ? td(activeStep.label) : null}
                 </p>
                 <p className="shrink-0 tabular-nums text-muted-foreground">
                   {activeStepIndex + 1} of {installSteps.length}
                 </p>
               </div>
               <progress
-                aria-label="Relay client installation progress"
+                aria-label={td("progress")}
                 className="h-2 w-full appearance-none overflow-hidden rounded-full bg-muted [&::-moz-progress-bar]:rounded-full [&::-moz-progress-bar]:bg-primary [&::-webkit-progress-bar]:rounded-full [&::-webkit-progress-bar]:bg-muted [&::-webkit-progress-value]:rounded-full [&::-webkit-progress-value]:bg-primary"
                 max={installSteps.length}
                 value={activeStepIndex + 1}
@@ -96,7 +99,7 @@ export function RelayClientInstallDialog() {
             </div>
           ) : (
             <div className="rounded-xl border border-border/70 bg-muted/35 p-3">
-              <p className="text-sm font-medium text-foreground">Managed relay client</p>
+              <p className="text-sm font-medium text-foreground">{td("managedRelayClient")}</p>
               <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
                 T3 Code will download and install version{" "}
                 {view.status === "confirming" ? view.version : ""} locally.

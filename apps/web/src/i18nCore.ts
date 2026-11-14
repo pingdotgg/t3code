@@ -24,6 +24,8 @@ import enUsage from "../locales/en/usage.json";
 import zhHansUsage from "../locales/zh-Hans/usage.json";
 import enGuest from "../locales/en/guest.json";
 import zhHansGuest from "../locales/zh-Hans/guest.json";
+import enShell from "../locales/en/shell.json";
+import zhHansShell from "../locales/zh-Hans/shell.json";
 import { type UiLocale } from "@t3tools/contracts/settings";
 import i18next from "i18next";
 import { initReactI18next } from "react-i18next";
@@ -48,6 +50,7 @@ declare module "i18next" {
       device: typeof enDevice;
       usage: typeof enUsage;
       guest: typeof enGuest;
+      shell: typeof enShell;
     };
   }
 }
@@ -95,6 +98,7 @@ if (!i18next.isInitialized) {
         device: enDevice,
         usage: enUsage,
         guest: enGuest,
+        shell: enShell,
       },
       "zh-Hans": {
         settings: zhHansSettings,
@@ -110,6 +114,7 @@ if (!i18next.isInitialized) {
         device: zhHansDevice,
         usage: zhHansUsage,
         guest: zhHansGuest,
+        shell: zhHansShell,
       },
     },
     // Locale files are bundled per language, so nothing is fetched at runtime.

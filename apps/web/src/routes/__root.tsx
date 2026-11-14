@@ -59,6 +59,11 @@ import { readProject } from "../state/entities";
 import { getDesktopSnapShotBridge } from "../lib/desktopSnapShot";
 import { shouldResumeSnapShotSetupOnStartup } from "../lib/snapShotSetupResume";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`shell:${key}`, options);
+
 export const Route = createRootRoute({
   beforeLoad: async ({ location }) => {
     // Guest links open on the owner's tunnel host in a browser with no T3 session, and must
@@ -121,7 +126,7 @@ function RootRouteNotFoundView() {
           This link doesn't point to a page in {APP_DISPLAY_NAME}. Go home to choose a project or
           start a thread.
         </p>
-        <Button render={<Link to="/" replace />}>Go home</Button>
+        <Button render={<Link to="/" replace />}>{td("goHome")}</Button>
       </div>
     </main>
   );
@@ -240,7 +245,7 @@ function RootRouteErrorView({ error }: ErrorComponentProps) {
 
   return (
     <StandalonePage>
-      <StandalonePageHeader title="Something went wrong." description={message} />
+      <StandalonePageHeader title={td("somethingWentWrong")} description={message} />
 
       <div className="mt-5 flex flex-wrap gap-2">
         <Button size="sm" onClick={() => void router.invalidate()}>
@@ -268,7 +273,7 @@ function CopyErrorButton({ report }: { report: string }) {
   return (
     <Button size="sm" variant="outline" onClick={() => copyToClipboard(report)}>
       {isCopied ? <CheckIcon className="text-success" /> : <CopyIcon />}
-      {isCopied ? "Copied" : "Copy error"}
+      {isCopied ? td("copied") : td("copyError")}
     </Button>
   );
 }
@@ -282,7 +287,7 @@ function errorMessage(error: unknown): string {
     return error;
   }
 
-  return "An unexpected router error occurred.";
+  return td("unexpectedRouterError");
 }
 
 function errorDetails(error: unknown): string {
@@ -297,7 +302,7 @@ function errorDetails(error: unknown): string {
   try {
     return JSON.stringify(error, null, 2);
   } catch {
-    return "No additional error details are available.";
+    return td("noErrorDetails");
   }
 }
 
@@ -314,7 +319,7 @@ function errorReport(error: unknown, pathname: string): string {
   ];
   let cause = error instanceof Error ? error.cause : undefined;
   for (let depth = 0; cause !== undefined && depth < MAX_ERROR_CAUSE_DEPTH; depth += 1) {
-    lines.push("", "Caused by:", errorDetails(cause));
+    lines.push("", td("causedBy"), errorDetails(cause));
     cause = cause instanceof Error ? cause.cause : undefined;
   }
   return lines.join("\n");

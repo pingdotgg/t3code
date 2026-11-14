@@ -23,6 +23,11 @@ import {
   readAuthorizationRequest,
 } from "./ConnectAgentSurface";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`shell:${key}`, options);
+
 const isUnavailable = Schema.is(ConnectMcpApprovalUnavailableError);
 
 function readEnvironmentId(): EnvironmentId | null {
@@ -42,9 +47,7 @@ function connectTransport(
     if (Result.isFailure(result)) {
       return {
         kind: "error",
-        message: isUnavailable(result.failure)
-          ? result.failure.message
-          : "Could not reach this environment. Try again.",
+        message: isUnavailable(result.failure) ? result.failure.message : td("unreachable"),
       };
     }
     onEnvironment({
@@ -103,28 +106,23 @@ export function ApproveAgentSurface() {
   if (environmentId === null || transport === null) {
     return (
       <Message
-        title="This sign-in link is incomplete"
+        title={td("linkIncomplete")}
         description="Close this page and start the sign-in again from your agent."
       />
     );
   }
 
   if (framed) {
-    return (
-      <Message
-        title="Open this page in its own window"
-        description="For your safety, agent sign-ins cannot be approved inside another site."
-      />
-    );
+    return <Message title={td("ownWindowTitle")} description={td("ownWindowDetail")} />;
   }
 
   if (!isLoaded || (isSignedIn && session === null)) {
     return (
       <StandalonePage>
         <StandalonePageHeader
-          context="Agent sign-in"
-          title="Connecting to T3 Connect"
-          description="One moment while your account loads."
+          context={td("agentSignIn")}
+          title={td("connectingTitle")}
+          description={td("connectingDetail")}
         />
         <Spinner className="mt-6" size="lg" tone="muted" />
       </StandalonePage>
@@ -133,10 +131,7 @@ export function ApproveAgentSurface() {
 
   if (!isSignedIn) {
     return (
-      <Message
-        title="Sign in to approve"
-        description="Sign in to T3 Connect with the account this environment is linked to."
-      >
+      <Message title={td("signInToApprove")} description={td("signInToApproveDetail")}>
         <div className="mt-6">
           <Button type="button" onClick={openSignIn}>
             Sign in
@@ -192,7 +187,7 @@ function Message({
 }) {
   return (
     <StandalonePage>
-      <StandalonePageHeader context="Agent sign-in" title={title} description={description} />
+      <StandalonePageHeader context={td("agentSignIn")} title={title} description={description} />
       {children}
     </StandalonePage>
   );

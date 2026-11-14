@@ -32,20 +32,25 @@ import { RadioGroup } from "../ui/radio-group";
 import { Spinner } from "../ui/spinner";
 import { StandalonePage, StandalonePageHeader } from "../ui/standalone-page";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`shell:${key}`, options);
+
 export const accessConfig: Record<
   AuthMcpClientAccess,
   { readonly label: string; readonly description: string; readonly icon: LucideIcon }
 > = {
   "read-only": {
-    label: "Read only",
-    description: "Read projects and threads. Cannot start, message or change anything.",
+    label: "scopes.readOnly",
+    description: "scopes.readOnlyDetail",
     icon: EyeIcon,
   },
   ...runtimeModeConfig,
 };
 
 const ARM_DELAY_MS = 700;
-const UNSAFE_REDIRECT = "The environment returned an address this page will not open.";
+const UNSAFE_REDIRECT_KEY = "unsafeRedirect";
 
 function followRedirect(url: string): boolean {
   const safe = agentRedirectUrl(url);
@@ -62,7 +67,8 @@ type Loaded =
   | { readonly status: "invalid"; readonly message: string }
   | { readonly status: "ready"; readonly details: AuthMcpApprovalDetails };
 
-const UNREACHABLE = "Could not reach this environment. Try again.";
+const UNREACHABLE_KEY = "unreachable";
+const UNREACHABLE = () => td(UNREACHABLE_KEY);
 const isApprovalError = Schema.is(AuthMcpApprovalError);
 
 export type McpApprovalAnswer<A> =
@@ -101,7 +107,7 @@ function runApproval<A>(
         }),
       ),
     ),
-  ).catch((): McpApprovalAnswer<A> => ({ kind: "error", message: UNREACHABLE }));
+  ).catch((): McpApprovalAnswer<A> => ({ kind: "error", message: UNREACHABLE() }));
 }
 
 /** This environment's own page, approving with a code or this browser's session. */
@@ -166,7 +172,8 @@ export function McpConsent({
     void transport.load(authorization).then((answer) => {
       if (cancelled) return;
       if (answer.kind === "redirect") {
-        if (!followRedirect(answer.url)) setLoaded({ status: "invalid", message: UNSAFE_REDIRECT });
+        if (!followRedirect(answer.url))
+          setLoaded({ status: "invalid", message: td(UNSAFE_REDIRECT_KEY) });
         return;
       }
       setLoaded(
@@ -215,8 +222,8 @@ export function McpConsent({
       answer.kind === "error"
         ? answer.message
         : answer.kind === "redirect"
-          ? UNSAFE_REDIRECT
-          : "The sign-in could not continue.",
+          ? td(UNSAFE_REDIRECT_KEY)
+          : td("couldNotContinue"),
     );
   };
 
@@ -224,8 +231,8 @@ export function McpConsent({
     return (
       <StandalonePage>
         <ConnectAgentHeading
-          title="Checking the sign-in request"
-          description="One moment while this environment verifies the agent's request."
+          title={td("checkingRequest")}
+          description={td("checkingRequestDetail")}
         />
         <Spinner className="mt-6" size="lg" tone="muted" />
       </StandalonePage>
@@ -235,7 +242,7 @@ export function McpConsent({
   if (loaded.status === "invalid") {
     return (
       <StandalonePage>
-        <ConnectAgentHeading title="This sign-in cannot continue" description={loaded.message} />
+        <ConnectAgentHeading title={td("cannotContinue")} description={loaded.message} />
         <p className="mt-4 text-sm text-muted-foreground">
           Close this page and start the sign-in again from your agent.
         </p>
@@ -273,7 +280,7 @@ export function McpConsent({
         <dd className="min-w-0 break-words">
           {details.clientName} <span className="text-muted-foreground">· name set by the app</span>
         </dd>
-        <dt className="text-muted-foreground">Access goes to</dt>
+        <dt className="text-muted-foreground">{td("accessGoesTo")}</dt>
         <dd className="min-w-0 break-words font-medium">
           {details.redirectHost}
           {redirectsToThisComputer(details.redirectHost) ? (
@@ -289,7 +296,7 @@ export function McpConsent({
           )}
         </dd>
       </dl>
-      <p className="mt-2 text-xs text-muted-foreground">Only approve a sign-in you just started.</p>
+      <p className="mt-2 text-xs text-muted-foreground">{td("onlyApproveYours")}</p>
 
       <form
         className="mt-6 space-y-5"
@@ -311,7 +318,7 @@ export function McpConsent({
               disabled={pending !== null}
               nativeInput
               onChange={(event) => setPairingCode(event.currentTarget.value)}
-              placeholder="Paste a code"
+              placeholder={td("pasteCode")}
               spellCheck={false}
               value={pairingCode}
             />
@@ -324,13 +331,13 @@ export function McpConsent({
 
         {codeAccess ? (
           <p className="text-sm">
-            <span className="text-muted-foreground">Access</span>{" "}
-            <span className="font-medium">{accessConfig[codeAccess].label}</span>
+            <span className="text-muted-foreground">{td("access")}</span>{" "}
+            <span className="font-medium">{td(accessConfig[codeAccess].label)}</span>
           </p>
         ) : (
           <div className="space-y-2">
             <span id="connect-agent-access-label" className="text-sm font-medium">
-              What it may do
+              {td("whatItMayDo")}
             </span>
             <RadioGroup
               aria-labelledby="connect-agent-access-label"
@@ -362,10 +369,10 @@ export function McpConsent({
         <div className="flex flex-wrap gap-2">
           <Button disabled={!canApprove} type="submit">
             {pending === "approve"
-              ? "Approving…"
+              ? td("approving")
               : approveLevel === null
-                ? "Choose what it may do"
-                : `Approve ${accessConfig[approveLevel].label}`}
+                ? td("chooseScope")
+                : td("approveScope", { scope: td(accessConfig[approveLevel].label) })}
           </Button>
           <Button
             disabled={pending !== null}
@@ -373,7 +380,7 @@ export function McpConsent({
             type="button"
             variant="outline"
           >
-            {pending === "deny" ? "Denying…" : "Deny"}
+            {pending === "deny" ? td("denying") : td("deny")}
           </Button>
         </div>
       </form>
@@ -415,8 +422,10 @@ export function AccessOption({
   readonly description?: string | null;
 }) {
   const { label, icon: Icon } = accessConfig[access];
+  const translatedLabel = td(label);
   const detail =
-    disabledReason ?? (description === undefined ? accessConfig[access].description : description);
+    disabledReason ??
+    (description === undefined ? td(accessConfig[access].description) : description);
   return (
     <RadioPrimitive.Root
       value={access}
@@ -437,7 +446,7 @@ export function AccessOption({
         )}
       />
       <span className="min-w-0">
-        <span className="block text-sm font-medium text-foreground">{label}</span>
+        <span className="block text-sm font-medium text-foreground">{translatedLabel}</span>
         {detail === null ? null : (
           <span className="block text-xs text-muted-foreground">{detail}</span>
         )}
