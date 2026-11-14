@@ -5,6 +5,7 @@ import {
   type ProjectScript,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import * as Equal from "effect/Equal";
 const isScriptRunCommand = Schema.is(SCRIPT_RUN_COMMAND_PATTERN);
 
 export interface ProjectScriptInput {
@@ -100,6 +101,35 @@ export function nextProjectScriptId(name: string, existingIds: Iterable<string>)
   }
 
   return `${baseId}-${Date.now()}`.slice(0, MAX_SCRIPT_ID_LENGTH);
+}
+
+export function copyProjectScripts(
+  source: readonly ProjectScript[],
+  destination: readonly ProjectScript[],
+  existingIds: Iterable<string>,
+): ProjectScript[] {
+  const taken = new Set([...existingIds, ...destination.map((script) => script.id)]);
+  const matched = new Set<string>();
+  return source.map((script) => {
+    const previous = destination.find(
+      (candidate) =>
+        !matched.has(candidate.id) && candidate.name.toLowerCase() === script.name.toLowerCase(),
+    );
+    const id = previous?.id ?? nextProjectScriptId(script.name, taken);
+    matched.add(id);
+    taken.add(id);
+    return { ...script, id };
+  });
+}
+
+export function projectScriptContentsEqual(
+  left: readonly ProjectScript[],
+  right: readonly ProjectScript[],
+): boolean {
+  return Equal.equals(
+    left.map(({ id: _id, ...script }) => script),
+    right.map(({ id: _id, ...script }) => script),
+  );
 }
 
 export function primaryProjectScript(scripts: ReadonlyArray<ProjectScript>): ProjectScript | null {

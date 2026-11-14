@@ -6,7 +6,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
-import { ChevronDownIcon, PlusIcon } from "lucide-react";
+import { ChevronDownIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
 import { useState } from "react";
 import { useT3ProjectFileState } from "../../hooks/useT3ProjectFileScripts";
 import { useEnvironments } from "../../state/environments";
@@ -29,6 +29,8 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 import { ProjectActionsList } from "./ProjectActionsList";
+import { ProjectActionsSyncDialog } from "./ProjectActionsSyncDialog";
+import { projectScriptContentsEqual } from "../../projectScripts";
 import { useProjectScriptSettings } from "./useProjectScriptSettings";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { useSettingsScope } from "./SettingsScopeContext";
@@ -44,21 +46,30 @@ export function ProjectActionsSettings() {
   const scripts = target?.settings.defaultProjectScripts ?? [];
   const keybindings = representativeConfig?.keybindings ?? DEFAULT_RESOLVED_KEYBINDINGS;
   const mixed = targets.some(
-    (candidate) =>
-      JSON.stringify(candidate.settings.defaultProjectScripts) !== JSON.stringify(scripts),
+    (candidate) => !projectScriptContentsEqual(candidate.settings.defaultProjectScripts, scripts),
+  );
+  const differentIds = targets.some((candidate) =>
+    candidate.settings.defaultProjectScripts.some(
+      (script, index) => script.id !== scripts[index]?.id,
+    ),
   );
   const canWriteSettings = useScopedSettingsWriteAllowed();
   const [request, setRequest] = useState<ProjectScriptEditorRequest | null>(null);
-  const memberById = new Map(
-    isProjectScope ? scope.members.map((member) => [member.id, member]) : [],
-  );
+  const [syncOpen, setSyncOpen] = useState(false);
+  const syncGroup = isProjectScope ? scope.group : null;
+  const canSync =
+    syncGroup && new Set(syncGroup.memberProjects.map((member) => member.environmentId)).size > 1;
+  const members = isProjectScope ? scope.members : [];
   const { saving, persist, submit } = useProjectScriptSettings(
     targets.flatMap((candidate) => {
       const environment = environments.find(
         (entry) => entry.environmentId === candidate.environmentId,
       );
       if (!environment?.serverConfig) return [];
-      const member = candidate.projectId ? memberById.get(candidate.projectId) : undefined;
+      const member = members.find(
+        (entry) =>
+          entry.environmentId === candidate.environmentId && entry.id === candidate.projectId,
+      );
       return [
         {
           environmentId: candidate.environmentId,
@@ -70,7 +81,9 @@ export function ProjectActionsSettings() {
     }),
   );
 
-  const representativeMember = target?.projectId ? memberById.get(target.projectId) : undefined;
+  const representativeMember = members.find(
+    (entry) => entry.environmentId === target?.environmentId && entry.id === target?.projectId,
+  );
   const t3File = useT3ProjectFileState(
     representativeMember?.environmentId ?? EnvironmentId.make("none"),
     representativeMember?.workspaceRoot ?? null,
@@ -118,6 +131,17 @@ export function ProjectActionsSettings() {
         onResetOverride={() => void persist(() => null)}
         control={
           <div className="flex flex-wrap items-center gap-1.5">
+            {canSync ? (
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={saving || targets.length === 0}
+                onClick={() => setSyncOpen(true)}
+              >
+                <RefreshCwIcon />
+                Sync actions
+              </Button>
+            ) : null}
             {importableScripts.length > 0 ? (
               <Menu>
                 <MenuTrigger
@@ -171,10 +195,10 @@ export function ProjectActionsSettings() {
           </div>
         }
       />
-      {mixed ? (
+      {mixed || differentIds ? (
         <SettingsRow
-          title="Different actions across checkouts"
-          description="Narrow the selection above to one checkout to edit its list. Adding an action here adds it to every selected checkout."
+          title={mixed ? "Different actions across checkouts" : "Actions match across checkouts"}
+          description="Choose a checkout above to edit its actions and shortcuts. Adding an action here adds it to every selected checkout."
         />
       ) : (
         <ProjectActionsList
@@ -204,6 +228,13 @@ export function ProjectActionsSettings() {
           onClose={() => setRequest(null)}
         />
       )}
+      {syncOpen && syncGroup ? (
+        <ProjectActionsSyncDialog
+          group={syncGroup}
+          initialProjectKey={representativeMember?.physicalProjectKey ?? null}
+          onClose={() => setSyncOpen(false)}
+        />
+      ) : null}
     </SettingsSection>
   );
 }

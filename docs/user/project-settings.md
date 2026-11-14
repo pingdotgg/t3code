@@ -183,6 +183,11 @@ on each selected environment, and reset returns to the environment's shared list
 `t3.json` actions can be imported there. When a project has several checkouts on one environment,
 choose one in the scope line at the top to see or change only that checkout's settings.
 
+To copy an existing action list between environments, open **Settings → Projects → Actions →
+Sync actions** on web or desktop and choose the source checkout. This replaces the project's
+action lists on its other connected environments once; offline environments are skipped.
+Shortcuts aren't copied, and matching action names keep their destination shortcuts.
+
 Settings a repository can also declare in `t3.json`, such as the workspace for new threads,
 resolve in one order: a project override, then the environment setting, then `t3.json`, then the
 built-in default. Leave a setting on **Inherit** to let the next tier decide.
