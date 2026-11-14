@@ -138,8 +138,9 @@ const CODEX_CATALOG_REFRESH_TIMEOUT_MS = 3_000;
 const CODEX_CONFIG_PROBE_TIMEOUT_MS = 3_000;
 const CODEX_CATALOG_REFRESH_POLL = "100 millis" as const;
 const CODEX_CLIENT_NAME = "T3 Code";
-// Handshake plus account/models/skills requests can exceed the shared 10s probe budget.
-const CODEX_AUTH_PROBE_TIMEOUT_MS = 20_000;
+// Old machines can take ~25s to start app-server and answer initialize, before
+// account/models/skills discovery runs.
+export const CODEX_APP_SERVER_PROBE_TIMEOUT_MS = 60_000;
 const CODEX_DISCOVERY_MARGIN_MS = 250;
 // `codex-cli 0.159.0`, `codex-cli 0.160.0-alpha.1` or the npm CLI's bare `0.1.4161006`.
 // Keep a prerelease suffix so compatibility stays unknown for it, as it does for `initialize`.
@@ -968,7 +969,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
 
   const probeTimeoutMs = resolveProviderProbeTimeoutMs(
     "codex",
-    CODEX_AUTH_PROBE_TIMEOUT_MS,
+    CODEX_APP_SERVER_PROBE_TIMEOUT_MS,
     resolvedEnvironment,
   );
   const probeResult = yield* probe({
