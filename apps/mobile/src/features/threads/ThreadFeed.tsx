@@ -2782,12 +2782,14 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     readonly expandedWorkGroups: Record<string, boolean>;
     readonly expandedWorkRows: Record<string, boolean>;
     readonly expandedTurnIds: ReadonlySet<RunId>;
+    readonly interruptExpandedTurnId: RunId | null;
     readonly revealedMessageId: MessageId | null;
   }>({
     copiedRowId: null,
     expandedWorkGroups: {},
     expandedWorkRows: {},
     expandedTurnIds: new Set(),
+    interruptExpandedTurnId: null,
     revealedMessageId: null,
   });
   const { copiedRowId, expandedWorkGroups, expandedWorkRows, expandedTurnIds, revealedMessageId } =
@@ -3476,7 +3478,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     }
     return new Set(terminalIdsByTurn.values());
   })();
-  // An interrupted run unfolds; a run that is no longer latest folds back.
+  // An interrupted run unfolds and folds back once it is no longer latest;
+  // a run the user opened stays open.
   const [previousLatestRun, setPreviousLatestRun] = useState(props.latestRun);
   if (previousLatestRun !== props.latestRun) {
     setPreviousLatestRun(props.latestRun);
@@ -3484,17 +3487,22 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     const previous = previousLatestRun;
     if (latest && previous) {
       if (latest.runId !== previous.runId) {
-        if (expandedTurnIds.has(previous.runId)) {
+        if (interactionState.interruptExpandedTurnId === previous.runId) {
           setInteractionState((current) => {
             const next = new Set(current.expandedTurnIds);
             next.delete(previous.runId);
-            return { ...current, expandedTurnIds: next };
+            return { ...current, expandedTurnIds: next, interruptExpandedTurnId: null };
           });
         }
-      } else if (previous.status === "running" && latest.status === "interrupted") {
+      } else if (
+        previous.status === "running" &&
+        latest.status === "interrupted" &&
+        !expandedTurnIds.has(latest.runId)
+      ) {
         setInteractionState((current) => ({
           ...current,
           expandedTurnIds: new Set(current.expandedTurnIds).add(latest.runId),
+          interruptExpandedTurnId: latest.runId,
         }));
       }
     }
@@ -3645,7 +3653,12 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       } else {
         next.add(runId);
       }
-      return { ...current, expandedTurnIds: next };
+      return {
+        ...current,
+        expandedTurnIds: next,
+        interruptExpandedTurnId:
+          current.interruptExpandedTurnId === runId ? null : current.interruptExpandedTurnId,
+      };
     });
   };
 

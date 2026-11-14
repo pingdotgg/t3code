@@ -1123,6 +1123,103 @@ describe("MessagesTimeline messages", () => {
   });
 });
 
+describe("MessagesTimeline turn folds", () => {
+  const firstRun = RunId.make("run-1");
+  const secondRun = RunId.make("run-2");
+  const at = (second: number) => new Date(Date.parse(CREATED_AT) + second * 1000).toISOString();
+  const settled = [
+    message("First prompt", { runId: firstRun, inputIntent: "turn_start" }, "user-1"),
+    message(
+      "Interim progress note",
+      { role: "assistant", runId: firstRun, createdAt: at(2), updatedAt: at(2) },
+      "assistant-interim",
+    ),
+    message(
+      "Final reply",
+      { role: "assistant", runId: firstRun, createdAt: at(9), updatedAt: at(9) },
+      "assistant-final",
+    ),
+  ];
+  const nextRunStarted = {
+    entries: [
+      ...settled,
+      message(
+        "Follow-up",
+        { runId: secondRun, inputIntent: "turn_start", createdAt: at(20), updatedAt: at(20) },
+        "user-2",
+      ),
+    ],
+    isWorking: true,
+    latestRun: { runId: secondRun, status: "running", startedAt: at(21), completedAt: null },
+  } as const;
+  const running = {
+    isWorking: true,
+    latestRun: { runId: firstRun, status: "running", startedAt: at(0), completedAt: null },
+  } as const;
+  const interrupted = {
+    latestRun: { runId: firstRun, status: "interrupted", startedAt: at(0), completedAt: at(9) },
+  } as const;
+  const timeline = (
+    props: ReturnType<typeof baseProps>,
+    { entries = settled, ...extra }: Partial<TimelineProps> & { entries?: readonly Entry[] },
+  ) => <MessagesTimeline {...props} timelineEntries={[...entries]} {...extra} />;
+
+  it("keeps a turn the user expanded open when the next run starts", async () => {
+    const props = baseProps();
+    await using screen = await renderElement(
+      timeline(props, {
+        latestRun: { runId: firstRun, status: "completed", startedAt: at(0), completedAt: at(9) },
+      }),
+    );
+    expect(screen.text()).not.toContain("Interim progress note");
+    await click(screen.button(/^Worked for/));
+
+    await screen.rerender(timeline(props, nextRunStarted));
+
+    expect(screen.button(/^Worked for/).getAttribute("aria-expanded")).toBe("true");
+    expect(screen.text()).toContain("Interim progress note");
+  });
+
+  it("folds an interrupted turn it expanded once the next run starts", async () => {
+    const props = baseProps();
+    await using screen = await renderElement(timeline(props, running));
+    await screen.rerender(timeline(props, interrupted));
+    expect(screen.button(/^You stopped after/).getAttribute("aria-expanded")).toBe("true");
+
+    await screen.rerender(timeline(props, nextRunStarted));
+
+    expect(screen.button(/^Worked for/).getAttribute("aria-expanded")).toBe("false");
+    expect(screen.text()).not.toContain("Interim progress note");
+  });
+
+  it("keeps an interrupted turn that was already expanded open when the next run starts", async () => {
+    const props = baseProps();
+    rememberTimelinePosition(
+      props.routeThreadKey,
+      {
+        rowId: "user-1",
+        offsetWithinRow: 0,
+        scrollOffset: 0,
+        atEnd: true,
+        disclosures: {
+          runs: new Set([firstRun]),
+          workGroups: new Set(),
+          attempts: new Set(),
+          workGroupState: { scrollPositions: new Map(), expandedEntries: new Set() },
+        },
+      },
+      false,
+    );
+    await using screen = await renderElement(timeline(props, running));
+    await screen.rerender(timeline(props, interrupted));
+
+    await screen.rerender(timeline(props, nextRunStarted));
+
+    expect(screen.button(/^Worked for/).getAttribute("aria-expanded")).toBe("true");
+    expect(screen.text()).toContain("Interim progress note");
+  });
+});
+
 function usageLimitEntries(resetAt: string) {
   const threadId = ThreadId.make("usage-limit-thread");
   const at = DateTime.makeUnsafe(CREATED_AT);

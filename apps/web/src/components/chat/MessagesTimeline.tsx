@@ -554,9 +554,56 @@ const ConversationTimeline = memo(function ConversationTimeline({
     list.anchorVisibleContent({ key: anchorKey });
   };
 
+  // An interrupted run opens its fold and a newer run closes it again; a fold the
+  // user, a citation, or find opened stays open.
+  const [observedLatestRun, setObservedLatestRun] = useState({
+    identity: listIdentityKey,
+    runId: latestRun?.runId,
+    status: latestRun?.status,
+    interruptExpandedRunId: null as RunId | null,
+  });
+  if (
+    observedLatestRun.identity !== listIdentityKey ||
+    observedLatestRun.runId !== latestRun?.runId ||
+    observedLatestRun.status !== latestRun?.status
+  ) {
+    const previousRunId = observedLatestRun.runId;
+    const sameList = observedLatestRun.identity === listIdentityKey;
+    let interruptExpandedRunId = sameList ? observedLatestRun.interruptExpandedRunId : null;
+    if (sameList && latestRun && previousRunId !== undefined) {
+      if (latestRun.runId === previousRunId) {
+        if (
+          observedLatestRun.status === "running" &&
+          latestRun.status === "interrupted" &&
+          !expandedRunIds.has(latestRun.runId)
+        ) {
+          interruptExpandedRunId = latestRun.runId;
+          setExpandedRunIds((existing) => new Set(existing).add(latestRun.runId));
+        }
+      } else if (interruptExpandedRunId === previousRunId) {
+        interruptExpandedRunId = null;
+        setExpandedRunIds((existing) => {
+          if (!existing.has(previousRunId)) return existing;
+          const next = new Set(existing);
+          next.delete(previousRunId);
+          return next;
+        });
+      }
+    }
+    setObservedLatestRun({
+      identity: listIdentityKey,
+      runId: latestRun?.runId,
+      status: latestRun?.status,
+      interruptExpandedRunId,
+    });
+  }
+
   // Turn and attempt folds reveal later rows rather than growing their own row.
   const onToggleTurnFold = (runId: RunId) => {
     preserveDisclosurePosition(`turn-fold:${runId}`);
+    if (observedLatestRun.interruptExpandedRunId === runId) {
+      setObservedLatestRun((observed) => ({ ...observed, interruptExpandedRunId: null }));
+    }
     setExpandedRunIds((existing) => {
       const next = new Set(existing);
       if (next.has(runId)) {
@@ -594,43 +641,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
       return next;
     });
   };
-
-  // An interrupted run opens its fold; a newer run closes the previous run's.
-  const [observedLatestRun, setObservedLatestRun] = useState({
-    identity: listIdentityKey,
-    runId: latestRun?.runId,
-    status: latestRun?.status,
-  });
-  if (
-    observedLatestRun.identity !== listIdentityKey ||
-    observedLatestRun.runId !== latestRun?.runId ||
-    observedLatestRun.status !== latestRun?.status
-  ) {
-    setObservedLatestRun({
-      identity: listIdentityKey,
-      runId: latestRun?.runId,
-      status: latestRun?.status,
-    });
-    const previousRunId = observedLatestRun.runId;
-    if (
-      observedLatestRun.identity === listIdentityKey &&
-      latestRun &&
-      previousRunId !== undefined
-    ) {
-      if (latestRun.runId === previousRunId) {
-        if (observedLatestRun.status === "running" && latestRun.status === "interrupted") {
-          setExpandedRunIds((existing) => new Set(existing).add(latestRun.runId));
-        }
-      } else {
-        setExpandedRunIds((existing) => {
-          if (!existing.has(previousRunId)) return existing;
-          const next = new Set(existing);
-          next.delete(previousRunId);
-          return next;
-        });
-      }
-    }
-  }
 
   const preferredToolCallVisibility = useClientSettings((settings) => settings.toolCallVisibility);
   const screenReaderAnnouncements = useClientSettings(
