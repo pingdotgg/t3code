@@ -15,6 +15,7 @@ jobs:
     name: Publish PR comment
     if: github.event.workflow_run.event == 'pull_request'
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     concurrency:
       group: thread-transfer-report-${{ github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.id }}
       cancel-in-progress: true
