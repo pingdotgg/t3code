@@ -7,6 +7,7 @@ import {
   requiresDefaultBranchConfirmation,
 } from "@t3tools/client-runtime/state/vcs";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { WINDOWS_DRIVE_MOUNT_WARNING } from "@t3tools/shared/git";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import {
   CommonActions,
@@ -243,8 +244,9 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
     >
       <ListSection
         footer={
-          gitStatus.data?.onWindowsDriveMount
-            ? "This checkout is on a Windows drive, where WSL makes git and file operations 100 to 350 times slower. Clone it into your WSL home folder for full speed."
+          gitStatus.data?.onWindowsDriveMount ||
+          gitStatus.error?.includes(WINDOWS_DRIVE_MOUNT_WARNING)
+            ? WINDOWS_DRIVE_MOUNT_WARNING
             : undefined
         }
       >

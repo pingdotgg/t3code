@@ -297,6 +297,7 @@ describe("applyGitStatusStreamEvent", () => {
       isDefaultRef: false,
       refName: "feature/demo",
       hasWorkingTreeChanges: true,
+      onWindowsDriveMount: true,
       workingTree: {
         files: [{ path: "src/demo.ts", insertions: 1, deletions: 0 }],
         insertions: 1,

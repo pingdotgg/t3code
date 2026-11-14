@@ -112,6 +112,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { vcsActionManager, vcsEnvironment, vcsStatusRevalidation } from "~/state/vcs";
 import { randomUUID } from "~/lib/utils";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
+import { WINDOWS_DRIVE_MOUNT_WARNING } from "@t3tools/shared/git";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import {
   THREAD_DETAILS_PANEL_CHEVRON_CLASS,
@@ -1544,10 +1545,7 @@ export default function GitActionsControl({
         </p>
       )}
       {gitStatus?.onWindowsDriveMount && (
-        <p className="px-2 py-1.5 text-xs text-warning">
-          This checkout is on a Windows drive, where WSL makes git and file operations 100 to 350
-          times slower. Clone it into your WSL home folder for full speed.
-        </p>
+        <p className="px-2 py-1.5 text-xs text-warning">{WINDOWS_DRIVE_MOUNT_WARNING}</p>
       )}
       {isCleanAndBehind && (
         <p className="px-2 py-1.5 text-xs text-warning">Behind upstream. Pull/rebase first.</p>

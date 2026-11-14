@@ -10,6 +10,9 @@ import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
 
 export const WORKTREE_BRANCH_PREFIX = "t3";
+
+export const WINDOWS_DRIVE_MOUNT_WARNING =
+  "This checkout is on a Windows drive, where WSL makes git and file operations 100 to 350 times slower. Clone it into your WSL home folder for full speed.";
 const TEMP_WORKTREE_HEX_TOKEN = "[0-9a-f]{8}";
 const TEMP_WORKTREE_UUID_V4_TOKEN =
   "[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
@@ -357,6 +360,7 @@ function toLocalStatusPart(status: VcsStatusResult): VcsStatusLocalResult {
     isDefaultRef: status.isDefaultRef,
     refName: status.refName,
     hasWorkingTreeChanges: status.hasWorkingTreeChanges,
+    ...(status.onWindowsDriveMount ? { onWindowsDriveMount: true } : {}),
     workingTree: status.workingTree,
     ...(status.branchChanges ? { branchChanges: status.branchChanges } : {}),
   };

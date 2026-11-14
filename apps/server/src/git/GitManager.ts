@@ -53,6 +53,7 @@ import {
   resolveAutoFeatureBranchName,
   sanitizeBranchFragment,
   sanitizeFeatureBranchName,
+  WINDOWS_DRIVE_MOUNT_WARNING,
 } from "@t3tools/shared/git";
 import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 import {
@@ -1177,15 +1178,26 @@ export const make = Effect.gen(function* () {
     aheadOfDefaultCount: 0,
   };
   const readLocalStatus = Effect.fn("readLocalStatus")(function* (cwd: string) {
+    const onWindowsDriveMount = yield* isOnWslDriveMount(yield* canonicalizeExistingPath(cwd));
     const details = yield* gitCore
       .statusDetailsLocal(cwd, { includeDivergence: false, includeBranchChanges: true })
       .pipe(
         Effect.catchIf(isNotGitRepositoryError, () => Effect.succeed(nonRepositoryStatusDetails)),
+        // Git on a drive mount can outrun its timeout, so the failure has to carry the reason.
+        Effect.mapError((cause) =>
+          onWindowsDriveMount
+            ? new GitManagerError({
+                operation: "localStatus",
+                cwd,
+                detail: WINDOWS_DRIVE_MOUNT_WARNING,
+                cause,
+              })
+            : cause,
+        ),
       );
     const hostingProvider = details.isRepo
       ? yield* resolveHostingProvider(cwd, details.branch)
       : null;
-    const onWindowsDriveMount = yield* isOnWslDriveMount(yield* canonicalizeExistingPath(cwd));
 
     return {
       isRepo: details.isRepo,
