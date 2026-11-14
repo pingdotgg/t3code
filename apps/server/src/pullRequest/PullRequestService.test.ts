@@ -4419,6 +4419,43 @@ it.effect("keeps viewed files itself for a host that keeps none of its own", () 
   }),
 );
 
+it.effect("records shown revisions until the reader ticks the pushed version", () =>
+  Effect.gen(function* () {
+    const asked: Array<ReadonlyArray<string>> = [];
+    const revisions = new Map([
+      ["src/a.ts", "pushed-a"],
+      ["src/b.ts", "current-b"],
+    ]);
+    const service = yield* environmentViewedService(revisions, asked);
+
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [
+        { path: "src/a.ts", viewed: true, revision: "shown-a" },
+        { path: "src/b.ts", viewed: true },
+      ],
+    });
+    assert.deepStrictEqual(asked, [["src/b.ts"]]);
+    yield* service.invalidate({ reference: GITLAB_REFERENCE });
+    assert.deepStrictEqual((yield* service.filesViewed(GITLAB_REFERENCE)).files, [
+      { path: "src/a.ts", state: "dismissed" },
+      { path: "src/b.ts", state: "viewed" },
+    ]);
+
+    const reads = asked.length;
+    revisions.set("src/a.ts", "pushed-a-again");
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/a.ts", viewed: true, revision: "pushed-a-again" }],
+    });
+    assert.strictEqual(asked.length, reads);
+    assert.deepStrictEqual((yield* service.filesViewed(GITLAB_REFERENCE)).files, [
+      { path: "src/a.ts", state: "viewed" },
+      { path: "src/b.ts", state: "viewed" },
+    ]);
+  }),
+);
+
 it.effect("keeps a deleted file cleared, which the head has no version of at all", () =>
   Effect.gen(function* () {
     const service = yield* environmentViewedService(new Map(), []);
