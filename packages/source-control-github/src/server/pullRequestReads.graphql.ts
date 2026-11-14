@@ -277,20 +277,20 @@ export const RemovedFromMergeQueueEvent = Schema.Struct({
 export interface RemovedFromMergeQueueEvent extends Schema.Struct.Type<typeof RemovedFromMergeQueueEvent.fields> {}
 
 /** An item in a pull request timeline */
-export const PullRequestTimelineItemsOther = Schema.Struct({
+export const MergeQueueRemovalsNodesPullRequestTimelineItemsOther = Schema.Struct({
   __typename: GraphQL.otherTypename<Shared.Typename.PullRequestTimelineItems>()(["RemovedFromMergeQueueEvent"])
 })
-export interface PullRequestTimelineItemsOther extends Schema.Struct.Type<typeof PullRequestTimelineItemsOther.fields> {}
+export interface MergeQueueRemovalsNodesPullRequestTimelineItemsOther extends Schema.Struct.Type<typeof MergeQueueRemovalsNodesPullRequestTimelineItemsOther.fields> {}
 
 /** The connection type for PullRequestTimelineItems. */
-export const PullRequestTimelineItemsConnection = Schema.Struct({
+export const MergeQueueRemovalsPullRequestTimelineItemsConnection = Schema.Struct({
   /** A list of nodes. */
   nodes: Schema.NullOr(Schema.Array(Schema.NullOr(Schema.Union([
     RemovedFromMergeQueueEvent,
-    PullRequestTimelineItemsOther
+    MergeQueueRemovalsNodesPullRequestTimelineItemsOther
   ]))))
 })
-export interface PullRequestTimelineItemsConnection extends Schema.Struct.Type<typeof PullRequestTimelineItemsConnection.fields> {}
+export interface MergeQueueRemovalsPullRequestTimelineItemsConnection extends Schema.Struct.Type<typeof MergeQueueRemovalsPullRequestTimelineItemsConnection.fields> {}
 
 /** Represents a comparison between two commit revisions. */
 export const Comparison = Schema.Struct({
@@ -485,7 +485,7 @@ export const PullRequestCoreRepositoryPullRequestPullRequest = Schema.Struct({
   /** Returns the auto-merge request object if one exists for this pull request. */
   autoMergeRequest: Schema.NullOr(AutoMergeRequest),
   /** A list of events, comments, commits, etc. associated with the pull request. */
-  mergeQueueRemovals: Schema.optionalKey(PullRequestTimelineItemsConnection),
+  mergeQueueRemovals: Schema.optionalKey(MergeQueueRemovalsPullRequestTimelineItemsConnection),
   /** Check if the current viewer can update this object. */
   viewerCanUpdate: Schema.Boolean,
   /** Did the viewer author this comment. */
@@ -1256,20 +1256,20 @@ export const ReviewRequestedEvent = Schema.Struct({
 export interface ReviewRequestedEvent extends Schema.Struct.Type<typeof ReviewRequestedEvent.fields> {}
 
 /** An item in a pull request timeline */
-export const PullRequestTimelineItemsOther = Schema.Struct({
+export const RequestEventsNodesPullRequestTimelineItemsOther = Schema.Struct({
   __typename: GraphQL.otherTypename<Shared.Typename.PullRequestTimelineItems>()(["ReviewRequestedEvent"])
 })
-export interface PullRequestTimelineItemsOther extends Schema.Struct.Type<typeof PullRequestTimelineItemsOther.fields> {}
+export interface RequestEventsNodesPullRequestTimelineItemsOther extends Schema.Struct.Type<typeof RequestEventsNodesPullRequestTimelineItemsOther.fields> {}
 
 /** The connection type for PullRequestTimelineItems. */
-export const PullRequestTimelineItemsConnection = Schema.Struct({
+export const RequestEventsPullRequestTimelineItemsConnection = Schema.Struct({
   /** A list of nodes. */
   nodes: Schema.NullOr(Schema.Array(Schema.NullOr(Schema.Union([
     ReviewRequestedEvent,
-    PullRequestTimelineItemsOther
+    RequestEventsNodesPullRequestTimelineItemsOther
   ]))))
 })
-export interface PullRequestTimelineItemsConnection extends Schema.Struct.Type<typeof PullRequestTimelineItemsConnection.fields> {}
+export interface RequestEventsPullRequestTimelineItemsConnection extends Schema.Struct.Type<typeof RequestEventsPullRequestTimelineItemsConnection.fields> {}
 
 /** A repository pull request. */
 export const ReviewerCandidatesRepositoryPullRequestPullRequest = Schema.Struct({
@@ -1280,7 +1280,7 @@ export const ReviewerCandidatesRepositoryPullRequestPullRequest = Schema.Struct(
   /** A list of reviewer suggestions based on commit history and past review comments. */
   suggestedReviewers: Schema.Array(Schema.NullOr(SuggestedReviewer)),
   /** A list of events, comments, commits, etc. associated with the pull request. */
-  requestEvents: PullRequestTimelineItemsConnection
+  requestEvents: RequestEventsPullRequestTimelineItemsConnection
 })
 export interface ReviewerCandidatesRepositoryPullRequestPullRequest extends Schema.Struct.Type<typeof ReviewerCandidatesRepositoryPullRequestPullRequest.fields> {}
 
