@@ -199,6 +199,17 @@ struct Running {
     generation: u64,
 }
 
+/// One session-file call in flight. Dropped when the call ends or its future is dropped, so a
+/// cancelled call never keeps the helper up.
+struct Hold(Arc<Inner>);
+
+impl Drop for Hold {
+    fn drop(&mut self) {
+        let mut state = self.0.lock();
+        state.holds = state.holds.saturating_sub(1);
+    }
+}
+
 impl Helper {
     pub fn new(command: HelperCommand, instance_id: &str, driver: HostDriver) -> Self {
         Self {
@@ -270,6 +281,7 @@ impl Helper {
             state.holds += 1;
             writer
         };
+        let hold = Hold(self.inner.clone());
         let mut command = json!({
             "t": "fn", "driver": self.inner.driver.name, "instanceId": self.inner.instance_id,
             "name": name, "args": args,
@@ -278,7 +290,7 @@ impl Helper {
             command["configDir"] = json!(dir);
         }
         let result = self.inner.request(&writer, command, timeout).await;
-        self.inner.lock().holds -= 1;
+        drop(hold);
         self.stop_if_idle().await;
         result.map_err(|detail| ProviderError::Failed {
             operation: "claude_sdk",
@@ -821,6 +833,47 @@ mod tests {
             end.helper_error
                 .is_some_and(|d| d.contains("speaks protocol 99"))
         );
+    }
+
+    /// A session-file call whose future is dropped gives its hold back (review finding 5.3),
+    /// so the helper can stop when it is idle.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_dropped_function_call_releases_its_hold() {
+        let dir = std::env::temp_dir().join(format!("conn-host-hold-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // A host that never answers.
+        let fake = dir.join("host");
+        std::fs::write(
+            &fake,
+            "#!/bin/sh
+exec sleep 30
+",
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
+        let helper = Helper::new(
+            HelperCommand::from_path(&fake),
+            "claudeAgent",
+            plain_driver("claude"),
+        );
+        let call = helper.function(
+            "getSessionMessages",
+            json!([]),
+            None,
+            Duration::from_secs(30),
+        );
+        let cut = tokio::time::timeout(Duration::from_millis(100), call).await;
+        assert!(cut.is_err(), "the host never answers");
+        assert_eq!(
+            helper.inner.lock().holds,
+            0,
+            "the dropped call holds nothing"
+        );
+        helper.stop_if_idle().await;
+        assert_eq!(helper.pid(), None, "an idle helper stops");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test(flavor = "current_thread")]
