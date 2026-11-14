@@ -143,11 +143,15 @@ pub fn ensure_unlocked() -> Result<()> {
 
 pub fn animations_enabled() -> bool {
     // Electron handles the standard reduced-motion setting; also honor Hyprland's own switch.
-    request("j/getoption animations:enabled")
+    // Older Hyprland replies with {"int":0}; current Hyprland replies with {"bool":false}.
+    let Some(value) = request("j/getoption animations:enabled")
         .ok()
         .and_then(|reply| serde_json::from_str::<serde_json::Value>(&reply).ok())
-        .and_then(|value| value.get("int").and_then(serde_json::Value::as_i64))
-        != Some(0)
+    else {
+        return true;
+    };
+    value.get("int").and_then(serde_json::Value::as_i64) != Some(0)
+        && value.get("bool").and_then(serde_json::Value::as_bool) != Some(false)
 }
 pub fn windows() -> Result<Vec<Window>> {
     Ok(serde_json::from_str(&request("j/clients")?)?)
@@ -270,6 +274,51 @@ mod tests {
             next_event(&mut events, deadline).unwrap_err().to_string(),
             "Hyprland's event stream closed or returned an invalid event."
         );
+    }
+    #[test]
+    fn animations_follow_hyprland_int_and_bool_replies() {
+        let runtime = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(runtime.path().join("hypr/fixture")).unwrap();
+        // SAFETY: no other test reads the Hyprland session environment.
+        unsafe {
+            std::env::set_var("XDG_CURRENT_DESKTOP", "Hyprland");
+            std::env::set_var("XDG_RUNTIME_DIR", runtime.path());
+            std::env::set_var("HYPRLAND_INSTANCE_SIGNATURE", "fixture");
+            std::env::remove_var("FLATPAK_ID");
+            std::env::remove_var("SNAP");
+        }
+        let listener = std::os::unix::net::UnixListener::bind(
+            session_directory().unwrap().join(".socket.sock"),
+        )
+        .unwrap();
+        for (reply, enabled) in [
+            (
+                r#"{"option":"animations:enabled","int":0,"set":true}"#,
+                false,
+            ),
+            (
+                r#"{"option":"animations:enabled","bool":true,"set":true}"#,
+                true,
+            ),
+            (
+                r#"{"option":"animations:enabled","bool":false,"set":true}"#,
+                false,
+            ),
+        ] {
+            let actual = std::thread::scope(|scope| {
+                let server = scope.spawn(|| {
+                    let (mut socket, _) = listener.accept().unwrap();
+                    let mut request = [0; 64];
+                    let count = socket.read(&mut request).unwrap();
+                    assert_eq!(&request[..count], b"j/getoption animations:enabled");
+                    socket.write_all(reply.as_bytes()).unwrap();
+                });
+                let result = animations_enabled();
+                server.join().unwrap();
+                result
+            });
+            assert_eq!(actual, enabled, "{reply}");
+        }
     }
     #[test]
     fn rectangles_accept_negative_origins_not_invalid_sizes() {
