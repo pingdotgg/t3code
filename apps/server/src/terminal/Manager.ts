@@ -6,6 +6,9 @@ import {
   DEFAULT_TERMINAL_ID,
   DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
   retainedTerminalHistory,
+  TERMINAL_SEQUENCE_GROUND,
+  terminalSequenceEnd,
+  terminalSequenceStateAfter,
   TerminalCwdError,
   TerminalCwdNotDirectoryError,
   TerminalCwdNotFoundError,
@@ -888,6 +891,14 @@ interface TerminalHistoryPersistenceCursor {
   readonly fileBytes: number;
 }
 
+function countLineBreaks(data: string): number {
+  let lineBreaks = 0;
+  for (let index = data.indexOf("\n"); index !== -1; index = data.indexOf("\n", index + 1)) {
+    lineBreaks += 1;
+  }
+  return lineBreaks;
+}
+
 export class BoundedTerminalHistory {
   private readonly maxLines: number;
   private readonly maxBytes: number;
@@ -897,6 +908,8 @@ export class BoundedTerminalHistory {
   private lineBreaks = 0;
   // Reading the old string's tail on each append can force chunk concatenation.
   private lastCodeUnit: number | undefined;
+  // The terminal parser's state at the first retained code unit, which is where a replay starts.
+  private sequenceState = TERMINAL_SEQUENCE_GROUND;
   private cachedValue: string | null = "";
   private generation = 0;
   private appendedLength = 0;
@@ -961,10 +974,7 @@ export class BoundedTerminalHistory {
 
   private appendChunk(data: string): void {
     const byteLength = Buffer.byteLength(data);
-    let lineBreaks = 0;
-    for (let index = data.indexOf("\n"); index !== -1; index = data.indexOf("\n", index + 1)) {
-      lineBreaks += 1;
-    }
+    const lineBreaks = countLineBreaks(data);
     const previous = this.chunks.at(-1);
     if (previous && previous.data.length + data.length <= MAX_HISTORY_CHUNK_LENGTH) {
       previous.data += data;
@@ -981,6 +991,7 @@ export class BoundedTerminalHistory {
 
   private discardChunk(): void {
     const first = this.chunks[this.start]!;
+    this.sequenceState = terminalSequenceStateAfter(this.sequenceState, first.data);
     this.byteLength -= first.byteLength;
     this.lineBreaks -= first.lineBreaks;
     this.chunks[this.start++] = undefined;
@@ -992,6 +1003,7 @@ export class BoundedTerminalHistory {
       this.discardChunk();
       return;
     }
+    this.sequenceState = terminalSequenceStateAfter(this.sequenceState, first.data, 0, offset);
     first.data = first.data.slice(offset);
     first.byteLength -= byteLength;
     first.lineBreaks -= lineBreaks;
@@ -1039,6 +1051,12 @@ export class BoundedTerminalHistory {
       }
       this.trimChunk(offset, bytes, lineBreaks);
     }
+    // A cut inside a control sequence would replay the rest of it as text.
+    while (this.sequenceState !== TERMINAL_SEQUENCE_GROUND && this.start < this.chunks.length) {
+      const first = this.chunks[this.start]!;
+      const dropped = first.data.slice(0, terminalSequenceEnd(this.sequenceState, first.data));
+      this.trimChunk(dropped.length, Buffer.byteLength(dropped), countLineBreaks(dropped));
+    }
     if (
       this.start === this.chunks.length ||
       (this.start > 2_048 && this.start * 2 >= this.chunks.length)
@@ -1057,6 +1075,7 @@ export class BoundedTerminalHistory {
     this.byteLength = 0;
     this.lineBreaks = 0;
     this.lastCodeUnit = undefined;
+    this.sequenceState = TERMINAL_SEQUENCE_GROUND;
     this.cachedValue = "";
   }
 
@@ -1194,16 +1213,70 @@ function stripStringTerminator(value: string): string {
   return value;
 }
 
-function findStringTerminatorIndex(input: string, start: number): number | null {
+interface C1Effect {
+  /** ESC form of the sequence the code point starts, or "" when it returns to ground. */
+  readonly next: string;
+  /** Its 0x9A byte ran DECID, which replies with device attributes. */
+  readonly query: boolean;
+  /** What replays its visible effect from ground. */
+  readonly safe: string;
+}
+
+// Outside ground and OSC, libghostty parses a code point's UTF-8 bytes one at a time: 0x80-0x9F
+// act as C1 controls, the rest are dropped. Bytes left over after a return to ground print U+FFFD.
+function c1Effect(codePoint: number): C1Effect | undefined {
+  // A lone surrogate is encoded as U+FFFD, whose bytes are all dropped.
+  if (codePoint >= 0xd800 && codePoint <= 0xdfff) return undefined;
+  let next: string | undefined;
+  let query = false;
+  let safe = "";
+  for (let shift = codePoint > 0xffff ? 12 : codePoint > 0x7ff ? 6 : 0; shift >= 0; shift -= 6) {
+    const byte = 0x80 | ((codePoint >> shift) & 0x3f);
+    if (next === "") {
+      safe += "\ufffd";
+    } else if (next?.startsWith("\u001b]")) {
+      next += "\ufffd";
+    } else if (byte === 0x9b) {
+      next = "\u001b[";
+    } else if (byte === 0x9d) {
+      next = "\u001b]";
+    } else if (byte === 0x90) {
+      next = "\u001bP";
+    } else if (byte === 0x98 || byte === 0x9e || byte === 0x9f) {
+      next = "\u001b_";
+    } else if (byte < 0xa0) {
+      next = "";
+      query = byte === 0x9a;
+      // Any other C1 control but ST runs as ESC plus the byte less 0x40.
+      safe = query || byte === 0x9c ? "" : `\u001b${String.fromCharCode(byte - 0x40)}`;
+    }
+  }
+  return next === undefined ? undefined : { next, query, safe };
+}
+
+// BEL ends only OSC; inside DCS, PM and APC it is payload. Non-ASCII is the reverse: libghostty
+// keeps it inside OSC, while a C1 byte in it ends the other strings.
+function findStringEnd(
+  input: string,
+  start: number,
+  isOsc: boolean,
+): { end: number; c1?: { effect: C1Effect; index: number } } | null {
   for (let index = start; index < input.length; index += 1) {
     const codePoint = input.charCodeAt(index);
-    if (codePoint === 0x07 || codePoint === 0x9c || isControlSequenceCancel(codePoint)) {
-      return index + 1;
+    if ((isOsc && codePoint === 0x07) || isControlSequenceCancel(codePoint)) {
+      return { end: index + 1 };
     }
     // Like xterm.js, an ESC that does not start ST ends the string and begins the next sequence.
     if (codePoint === 0x1b) {
       if (index + 1 >= input.length) return null;
-      return input.charCodeAt(index + 1) === 0x5c ? index + 2 : index;
+      return { end: input.charCodeAt(index + 1) === 0x5c ? index + 2 : index };
+    }
+    if (codePoint >= 0x80 && !isOsc) {
+      const fullCodePoint = input.codePointAt(index) ?? codePoint;
+      const end = index + (fullCodePoint > 0xffff ? 2 : 1);
+      const effect = c1Effect(fullCodePoint);
+      if (effect) return { end, c1: { effect, index } };
+      index = end - 1;
     }
   }
   return null;
@@ -1249,6 +1322,8 @@ function sanitizeTerminalHistoryChunk(
   const pendingScanStart = Math.max(0, pendingControlSequence.length - 1);
   let visibleText = "";
   let index = 0;
+  // Set when a C1 code point began the sequence at `index`: the ESC form that stands in for it.
+  let c1Introducer = "";
 
   const append = (value: string) => {
     visibleText += value;
@@ -1257,29 +1332,68 @@ function sanitizeTerminalHistoryChunk(
   while (index < input.length) {
     const codePoint = input.charCodeAt(index);
 
-    if (codePoint === 0x1b) {
-      const nextCodePoint = input.charCodeAt(index + 1);
+    if (c1Introducer.length > 0 || codePoint === 0x1b) {
+      // Empty for a sequence the input introduces itself, which starts with ESC at `index`.
+      const prefix = c1Introducer;
+      c1Introducer = "";
+      const contentStart = prefix.length > 0 ? index : index + 2;
+      const nextCodePoint = (prefix || input).charCodeAt(prefix.length > 0 ? 1 : index + 1);
       if (Number.isNaN(nextCodePoint)) {
         return { visibleText, pendingControlSequence: input.slice(index) };
       }
 
       if (nextCodePoint === 0x5b) {
-        let cursor = index + 2;
+        let cursor = contentStart;
+        // Inside a CSI Ghostty executes 0x00-0x0F and ignores DEL and 0x10-0x1F, which it would
+        // print in ground state. None join the parameters; only executed ones survive a strip.
+        let body = "";
+        let executedControls = "";
         while (cursor < input.length) {
-          const cancelled = isControlSequenceCancel(input.charCodeAt(cursor));
-          if (cancelled || isCsiFinalByte(input.charCodeAt(cursor))) {
-            const sequence = input.slice(index, cursor + 1);
-            const body = input.slice(index + 2, cursor);
+          const cursorCodePoint = input.charCodeAt(cursor);
+          const cancelled = isControlSequenceCancel(cursorCodePoint);
+          if (cancelled || isCsiFinalByte(cursorCodePoint)) {
             if (cancelled || !shouldStripCsiSequence(body, input[cursor] ?? "")) {
-              append(sequence);
+              append(prefix + input.slice(index, cursor + 1));
+            } else {
+              append(executedControls);
             }
             index = cursor + 1;
             break;
           }
+          if (cursorCodePoint >= 0x80) {
+            const fullCodePoint = input.codePointAt(cursor) ?? cursorCodePoint;
+            const end = cursor + (fullCodePoint > 0xffff ? 2 : 1);
+            const c1 = c1Effect(fullCodePoint);
+            if (c1) {
+              // The CSI ends here undispatched, so it is kept only when the terminal is back in
+              // ground with nothing to answer.
+              if (c1.next.length === 0 && !c1.query) {
+                append(prefix + input.slice(index, end));
+              } else {
+                append(executedControls + c1.safe);
+              }
+              c1Introducer = c1.next;
+              index = end;
+              break;
+            }
+            cursor = end;
+            continue;
+          }
+          // An ESC abandons the CSI and starts the next sequence, which may be stripped.
+          if (cursorCodePoint === 0x1b) {
+            append(executedControls);
+            index = cursor;
+            break;
+          }
+          if (cursorCodePoint < 0x10) {
+            executedControls += input[cursor];
+          } else if (cursorCodePoint >= 0x20 && cursorCodePoint !== 0x7f) {
+            body += input[cursor];
+          }
           cursor += 1;
         }
         if (cursor >= input.length) {
-          return { visibleText, pendingControlSequence: input.slice(index) };
+          return { visibleText, pendingControlSequence: prefix + input.slice(index) };
         }
         continue;
       }
@@ -1290,22 +1404,32 @@ function sanitizeTerminalHistoryChunk(
         nextCodePoint === 0x5e ||
         nextCodePoint === 0x5f
       ) {
-        const terminatorIndex = findStringTerminatorIndex(
+        const stringEnd = findStringEnd(
           input,
-          Math.max(index + 2, pendingScanStart),
+          Math.max(contentStart, pendingScanStart),
+          nextCodePoint === 0x5d,
         );
-        if (terminatorIndex === null) {
-          return { visibleText, pendingControlSequence: input.slice(index) };
+        if (stringEnd === null) {
+          return { visibleText, pendingControlSequence: prefix + input.slice(index) };
         }
-        const sequence = input.slice(index, terminatorIndex);
-        const content = stripStringTerminator(input.slice(index + 2, terminatorIndex));
+        const { end, c1 } = stringEnd;
+        const content = stripStringTerminator(
+          prefix.slice(2) + input.slice(contentStart, c1?.index ?? end),
+        );
         const strip =
           (nextCodePoint === 0x5d && shouldStripOscSequence(content)) ||
           (nextCodePoint === 0x50 && shouldStripDcsSequence(content));
-        if (!strip) {
-          append(sequence);
+        if (c1 === undefined || (!strip && c1.effect.next.length === 0 && !c1.effect.query)) {
+          if (!strip) {
+            append(prefix + input.slice(index, end));
+          }
+        } else {
+          // ST stands in for a code point that cannot be replayed as it came.
+          const closed = strip ? "" : `${prefix}${input.slice(index, c1.index)}\u009c`;
+          append(closed + c1.effect.safe);
+          c1Introducer = c1.effect.next;
         }
-        index = terminatorIndex;
+        index = end;
         continue;
       }
 
@@ -1313,7 +1437,10 @@ function sanitizeTerminalHistoryChunk(
       if (escapeSequenceEndIndex === null) {
         return { visibleText, pendingControlSequence: input.slice(index) };
       }
-      append(input.slice(index, escapeSequenceEndIndex));
+      // ESC Z (DECID) is the legacy primary device attributes query.
+      if (nextCodePoint !== 0x5a) {
+        append(input.slice(index, escapeSequenceEndIndex));
+      }
       index = escapeSequenceEndIndex;
       continue;
     }
@@ -1325,7 +1452,7 @@ function sanitizeTerminalHistoryChunk(
     index = nextSequenceStart;
   }
 
-  return { visibleText, pendingControlSequence: "" };
+  return { visibleText, pendingControlSequence: c1Introducer };
 }
 
 function legacySafeThreadId(threadId: string): string {
@@ -2068,6 +2195,19 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     const info = yield* file.stat;
     const limit = BigInt(historyByteLimit);
     const offset = info.size > limit ? info.size - limit : 0n;
+    // The tail can start inside a control sequence; only the bytes before it say which.
+    const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
+    let sequenceState = TERMINAL_SEQUENCE_GROUND;
+    const skipped = new Uint8Array(Math.min(Number(offset), 64 * 1024));
+    for (let remaining = Number(offset); remaining > 0;) {
+      const read = Number(yield* file.read(skipped.subarray(0, remaining)));
+      if (read === 0) break;
+      remaining -= read;
+      sequenceState = terminalSequenceStateAfter(
+        sequenceState,
+        decoder.decode(skipped.subarray(0, read), { stream: true }),
+      );
+    }
     yield* file.seek(offset, "start");
     const bytes = new Uint8Array(Number(info.size - offset));
     let length = 0;
@@ -2081,8 +2221,15 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       // A tail read can start inside a UTF-8 code point. Skip its remaining bytes.
       while (start < length && ((bytes[start] ?? 0) & 0xc0) === 0x80) start += 1;
     }
+    sequenceState = terminalSequenceStateAfter(
+      sequenceState,
+      decoder.decode(bytes.subarray(0, start)),
+    );
+    const history = new TextDecoder("utf-8", { ignoreBOM: true }).decode(
+      bytes.subarray(start, length),
+    );
     return {
-      history: new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes.subarray(start, length)),
+      history: history.slice(terminalSequenceEnd(sequenceState, history)),
       truncated: offset > 0n,
     };
   });

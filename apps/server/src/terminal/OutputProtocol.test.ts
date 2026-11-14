@@ -101,7 +101,7 @@ describe("terminal output window", () => {
         assert.equal(yield* Queue.size(responses), 0);
         yield* write(0, { _tag: "Interrupt", requestId: "1" });
         assert.equal((yield* Queue.take(responses))._tag, "Exit");
-      }).pipe(Effect.provide(RpcSerialization.layerJson), Effect.scoped),
+      }).pipe(Effect.provide(RpcSerialization.layerJson)),
   );
 });
 
@@ -261,7 +261,7 @@ describe("terminal output stream", () => {
         assert.deepEqual(yield* takeChunk(healthy), [after]);
         assert.deepEqual(yield* takeChunk(stalled), [after]);
         assert.equal(yield* Queue.size(stalled), 0);
-      }).pipe(Effect.provide(RpcSerialization.layerJson), Effect.scoped),
+      }).pipe(Effect.provide(RpcSerialization.layerJson)),
   );
 
   it.effect("interrupts recovery while its subscription is still waiting", () =>
@@ -290,7 +290,7 @@ describe("terminal output stream", () => {
       yield* Fiber.interrupt(recovery);
       yield* Deferred.await(interrupted);
       assert.equal(publisher.listeners.size, 0);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("cleans listeners when cancelled during a successful acquisition handoff", () =>
@@ -324,7 +324,7 @@ describe("terminal output stream", () => {
         yield* Fiber.join(cancellation);
         assert.equal(publisher.listeners.size, 0);
       }
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("caps each delivered batch at the output window in UTF-8 bytes", () =>
@@ -349,7 +349,7 @@ describe("terminal output stream", () => {
         delivered += batch.length;
       }
       assert.equal(delivered, 1024);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("charges snapshot history but never overflows on one snapshot", () =>
@@ -367,6 +367,6 @@ describe("terminal output stream", () => {
       assert.equal(publisher.listeners.size, 1);
       yield* publisher.publish(snapshot(history));
       assert.equal(publisher.listeners.size, 0);
-    }).pipe(Effect.scoped),
+    }),
   );
 });
