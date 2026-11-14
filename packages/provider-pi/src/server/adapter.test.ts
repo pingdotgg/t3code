@@ -5151,6 +5151,40 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("reports a gateway 413 page as a non-retryable failure without its HTML", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({
+        type: "message_end",
+        message: {
+          role: "assistant",
+          stopReason: "error",
+          errorMessage:
+            "413 <html>\r\n<head><title>413 Request Entity Too Large</title></head>\r\n<body>\r\n<center><h1>413 Request Entity Too Large</h1></center>\r\n<hr><center>nginx</center>\r\n</body>\r\n</html>\r\n",
+        },
+      });
+      yield* fake.emit({ type: "agent_settled" });
+      const failed = yield* takeEvent(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "error" &&
+          event.turnItem.status === "failed",
+      );
+      assert.isTrue(failed.type === "turn_item.updated" && failed.turnItem.type === "error");
+      if (failed.type !== "turn_item.updated" || failed.turnItem.type !== "error") return;
+      assert.notInclude(failed.turnItem.failure.message, "<html>");
+      assert.strictEqual(failed.turnItem.failure.retryable, false);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("keeps the turn open and updates one retry row through final failure", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
