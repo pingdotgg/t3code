@@ -6,7 +6,8 @@ import {
   sessionGrantsScope,
 } from "@t3tools/contracts";
 import type { AsyncResult } from "effect/reactivity";
-import { environmentSession } from "~/state/session";
+import { environmentIdsKey } from "~/state/environmentAtomList";
+import { environmentSession, environmentSessionStatesAtom } from "~/state/session";
 import type {
   DesktopUpdateChannel,
   EnvironmentId,
@@ -20,7 +21,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { CircleArrowUpIcon } from "lucide-react";
-import { type ComponentProps, useRef, useState } from "react";
+import { type ComponentProps, type ReactNode, useId, useRef, useState } from "react";
 
 import { requestConfirmDialog } from "~/confirmDialog";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
@@ -46,6 +47,57 @@ const pendingUpdateEnvironmentIds = new Set<EnvironmentId>();
 
 export function serverUpdateStageLabel(stage: ServerUpdateStage): string {
   return UPDATE_STAGE_LABELS[stage];
+}
+
+const PAIR_AGAIN_FOR_UPDATES = "Pair again with a link that permits server updates.";
+
+function updatePermissionMessage(serverLabels: ReadonlyArray<string>): string {
+  return `${serverLabels.join(", ")} can't be updated from this connection. ${PAIR_AGAIN_FOR_UPDATES}`;
+}
+
+/**
+ * A disabled Button ignores pointer events, so the span carries the tooltip, keyboard focus,
+ * and a tap-to-toast fallback for touch screens where tooltips never open.
+ */
+function UpdatePermissionHint({
+  message,
+  descriptionId,
+  disabled,
+  children,
+}: {
+  readonly message: string;
+  readonly descriptionId: string;
+  readonly disabled: boolean;
+  readonly children: ReactNode;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            className="inline-flex"
+            {...(disabled
+              ? {
+                  tabIndex: 0,
+                  onClick: () =>
+                    toastManager.add({
+                      type: "warning",
+                      title: "Pair again to update",
+                      description: message,
+                    }),
+                }
+              : {})}
+          />
+        }
+      >
+        {children}
+        <span id={descriptionId} className="sr-only">
+          {message}
+        </span>
+      </TooltipTrigger>
+      <TooltipPopup side="top">{message}</TooltipPopup>
+    </Tooltip>
+  );
 }
 
 /** Why the environment's policy refuses server updates, read outside render. */
@@ -189,12 +241,30 @@ export function ServerUpdatesAction({
       managedUpdatesDenial(serverConfigs.get(target.environmentId)?.managedPolicy) === undefined &&
       !refusedCrossing(target, serverConfigs.get(target.environmentId)?.environment.serverVersion),
   );
+  const sessionStates = useAtomValue(
+    environmentSessionStatesAtom(environmentIdsKey(eligible.map((target) => target.environmentId))),
+  );
+  const permitted = eligible.filter((_, index) => canUpdateServer(sessionStates[index]!));
+  const denied = eligible.filter((_, index) => isUpdatePermissionDenied(sessionStates[index]!));
+  const descriptionId = useId();
   const handleUpdate = async () => {
     if (pending.current) return;
     pending.current = true;
     setIsPending(true);
     await settlePromise(async () => {
-      const available = eligible.filter(
+      const sessionOf = (target: ServerUpdateTarget) =>
+        appAtomRegistry.get(environmentSession.sessionStateAtom(target.environmentId));
+      const allowed = eligible.filter((target) => canUpdateServer(sessionOf(target)));
+      const skipped = eligible.filter((target) => isUpdatePermissionDenied(sessionOf(target)));
+      if (skipped.length > 0) {
+        toastManager.add({
+          type: "warning",
+          title:
+            skipped.length === 1 ? `${skipped[0]!.serverLabel} skipped` : "Some servers skipped",
+          description: updatePermissionMessage(skipped.map((target) => target.serverLabel)),
+        });
+      }
+      const available = allowed.filter(
         (target) => !pendingUpdateEnvironmentIds.has(target.environmentId),
       );
       const desktopTargets = available.filter((target) => target.selfUpdate === "desktop-managed");
@@ -211,16 +281,28 @@ export function ServerUpdatesAction({
     pending.current = false;
     setIsPending(false);
   };
-  return (
+  const disabled = isPending || permitted.length === 0;
+  const button = (
     <Button
       size={size}
       variant={variant}
       className={className}
-      disabled={isPending || eligible.length === 0}
+      disabled={disabled}
+      aria-describedby={denied.length > 0 ? descriptionId : undefined}
       onClick={() => void handleUpdate()}
     >
       {label}
     </Button>
+  );
+  if (denied.length === 0) return button;
+  return (
+    <UpdatePermissionHint
+      message={updatePermissionMessage(denied.map((target) => target.serverLabel))}
+      descriptionId={descriptionId}
+      disabled={permitted.length === 0}
+    >
+      {button}
+    </UpdatePermissionHint>
   );
 }
 
@@ -229,6 +311,13 @@ export function canUpdateServer(
 ): boolean {
   if (result._tag !== "Success" || !result.value.authenticated) return false;
   return sessionGrantsScope(result.value, AuthEnvironmentMaintainScope);
+}
+
+/** A settled session that lacks the grant, as opposed to one still loading or failing. */
+function isUpdatePermissionDenied(
+  result: AsyncResult.AsyncResult<AuthSessionState, unknown>,
+): boolean {
+  return result._tag === "Success" && !canUpdateServer(result);
 }
 
 export function ServerUpdateProgress({
@@ -273,7 +362,9 @@ export function ServerUpdateAction({
   const isDesktopAppUpdate = selfUpdate === "desktop-managed";
   const serverVersion = useServerConfigs().get(environmentId)?.environment.serverVersion;
   const sessionStateAtom = environmentSession.sessionStateAtom(environmentId);
-  const canUpdate = useAtomValue(sessionStateAtom, canUpdateServer);
+  const sessionState = useAtomValue(sessionStateAtom);
+  const canUpdate = canUpdateServer(sessionState);
+  const descriptionId = useId();
   const updatesDenial = managedUpdatesDenial(useManagedPolicy(environmentId));
   const update = useServerUpdate();
   const updatesInstall =
@@ -357,10 +448,43 @@ export function ServerUpdateAction({
         ? "Copy update command"
         : "Copy relaunch command"
       : label;
+  const permissionMessage =
+    manualCommand === null && isUpdatePermissionDenied(sessionState)
+      ? updatePermissionMessage([serverLabel])
+      : undefined;
   const onClick =
     manualCommand !== null
       ? () => copyToClipboard(manualCommand, { command: manualCommand })
       : () => void handleUpdate();
+
+  if (permissionMessage !== undefined) {
+    return (
+      <UpdatePermissionHint message={permissionMessage} descriptionId={descriptionId} disabled>
+        {appearance === "icon" ? (
+          <Button
+            size="icon-xs"
+            variant="ghost-muted"
+            className={className}
+            aria-label={`${actionLabel} for ${serverLabel}`}
+            aria-describedby={descriptionId}
+            disabled
+          >
+            <CircleArrowUpIcon className="size-3.5" />
+          </Button>
+        ) : (
+          <Button
+            size={size}
+            variant={variant}
+            className={className}
+            aria-describedby={descriptionId}
+            disabled
+          >
+            {actionLabel}
+          </Button>
+        )}
+      </UpdatePermissionHint>
+    );
+  }
 
   if (appearance === "icon") {
     return (
