@@ -91,13 +91,12 @@ const evaluate = async (url: string): Promise<ReadonlyArray<unknown>> => {
     Schedule,
   });
   const loaded = (await import(url)) as { readonly default?: unknown };
-  // A file may also export what it defines, which is how one that only gathers others' does it.
-  const exported =
-    typeof loaded.default === "function"
-      ? ((await loaded.default(api)) as unknown)
-      : loaded.default;
+  // A file may also export what it defines, which is how one passes on what another file made.
+  const exported = loaded.default;
   if (exported !== undefined && !Array.isArray(exported)) {
-    throw new Error("The default export is not a list of workflows.");
+    throw new Error(
+      "The default export is not a list of workflows. Call T3.workflow(…), or export a list of what it returned.",
+    );
   }
   return [...new Set([...registered, ...(exported ?? [])])];
 };
