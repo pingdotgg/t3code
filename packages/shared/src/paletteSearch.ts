@@ -202,14 +202,17 @@ function matchToken(
 ): TokenMatch | null {
   if (token.length === 0) return null;
   let best: TokenMatch | null = null;
-  const ownBoundary = !ALPHANUMERIC.test(token[0]!) && !SYMBOL.test(token[0]!);
+  let ownBoundary: boolean | undefined;
   for (
     let index = field.text.indexOf(token);
     index !== -1;
     index = field.text.indexOf(token, index + 1)
   ) {
     // A token that opens with punctuation (".ts") brings its own boundary, as in messages.
-    if (field.wordStarts[index] || ownBoundary) {
+    if (
+      field.wordStarts[index] ||
+      (ownBoundary ??= !ALPHANUMERIC.test(token[0]!) && !SYMBOL.test(token[0]!))
+    ) {
       // Whole when the match ends where a word ends: "t3c" is a prefix of
       // "t3code", ".ts" whole in "index.ts" but a prefix in "parser.tsx".
       const end = index + token.length;
@@ -275,9 +278,12 @@ function matchToken(
  * Allow them at its start ("t3co"), before three letters ("gomod"), or a whole word ("vscode").
  */
 function matchJoinedWords(field: SearchField, token: string): TokenMatch | null {
-  const firstWord = field.wordStarts.indexOf(1);
-  for (let start = 0; start < field.text.length; start++) {
-    if (!field.wordStarts[start] || field.text[start] !== token[0]) continue;
+  for (
+    let start = field.text.indexOf(token[0]!);
+    start !== -1;
+    start = field.text.indexOf(token[0]!, start + 1)
+  ) {
+    if (!field.wordStarts[start]) continue;
     const runs: SearchRange[] = [];
     let at = start;
     let rest = token;
@@ -300,7 +306,7 @@ function matchJoinedWords(field: SearchField, token: string): TokenMatch | null 
     if (
       last.end === wordEnd(field, last.start) ||
       last.end - last.start >= 3 ||
-      start === firstWord ||
+      start === field.wordStarts.indexOf(1) ||
       runs.slice(0, -1).every((run) => run.end - run.start >= 3)
     ) {
       return { score: JOINED_WORDS, start, end: last.end, letters: runs };
@@ -311,6 +317,8 @@ function matchJoinedWords(field: SearchField, token: string): TokenMatch | null 
 
 interface WeightedSearchField {
   readonly value: string;
+  /** `value` folded; set on first use, so fields kept across keystrokes fold once. */
+  prepared?: SearchField;
   readonly weight: number;
   /** Only a whole-word match counts, as for a short query against keywords. */
   readonly wholeWords?: boolean;
@@ -336,10 +344,19 @@ interface WeightedSearchField {
 interface SearchFieldsMatch {
   /** Roughly 0.3 (inside a word) to 1.5 (exact title). */
   readonly quality: number;
+  /**
+   * Every non-filler token has three or more characters and matched a whole word at full
+   * weight, before phrase bonuses. Optional filler words don't count either way.
+   */
+  readonly wholeWords: boolean;
   /** Every token matched at a word start, without a typo. */
   readonly strong: boolean;
   /** Source ranges matched in the first field, for highlighting. */
   readonly primaryRanges: ReadonlyArray<SearchRange>;
+}
+
+function preparedField(weighted: WeightedSearchField): SearchField {
+  return (weighted.prepared ??= prepareSearchField(weighted.value));
 }
 
 const FILLER_WORDS = new Set(["a", "an", "and", "for", "in", "of", "on", "the", "to", "with"]);
@@ -358,6 +375,25 @@ function mergeRanges(ranges: ReadonlyArray<SearchRange>): SearchRange[] {
   return merged;
 }
 
+// A keystroke scores every thread for one query, so its tokens are split once.
+let lastQuery:
+  | { readonly query: string; readonly tokens: string[]; readonly fillerOptional: boolean }
+  | undefined;
+
+function queryTokens(normalizedQuery: string) {
+  if (lastQuery?.query !== normalizedQuery) {
+    const tokens = normalizedQuery.split(" ").filter((token) => token.length > 0);
+    // A phrase-style query ("fix the sidebar") carries filler words a name may
+    // leave out; they count where they match but are not required.
+    lastQuery = {
+      query: normalizedQuery,
+      tokens,
+      fillerOptional: tokens.some((token) => !FILLER_WORDS.has(token)),
+    };
+  }
+  return lastQuery;
+}
+
 /**
  * Every query token must match some field. Quality is the mean of each token's
  * best weighted match, plus a bonus when the first field holds the whole query
@@ -369,36 +405,27 @@ function matchSearchFields(
   options?: { readonly typos?: boolean },
 ): SearchFieldsMatch | null {
   if (normalizedQuery.length === 0) return null;
-  const prepared = fields
-    .filter((field) => field.value.length > 0)
-    .map((field) => ({
-      field: prepareSearchField(field.value),
-      weight: field.weight,
-      wholeWords: field.wholeWords ?? false,
-      keyword: field.keyword ?? false,
-      context: field.context ?? false,
-      allowMidWord: field.midWord ?? false,
-    }));
-  const primary = fields[0]?.value ? prepared[0]?.field : undefined;
+  const primary = fields[0]?.value ? preparedField(fields[0]) : undefined;
   // An empty token would match everywhere, and loop forever in `matchToken`.
-  const tokens = normalizedQuery.split(" ").filter((token) => token.length > 0);
+  const { tokens, fillerOptional } = queryTokens(normalizedQuery);
   if (tokens.length === 0) return null;
-  // A phrase-style query ("fix the sidebar") carries filler words a name may
-  // leave out; they count where they match but are not required.
-  const fillerOptional = tokens.some((token) => !FILLER_WORDS.has(token));
   const primaryRanges: SearchRange[] = [];
   let total = 0;
   let counted = 0;
+  let notWhole = false;
   let strong = true;
   for (const token of tokens) {
     let best = 0;
     let bestPrimary: TokenMatch | null = null;
     let atWordStart = false;
-    for (const { field, weight, wholeWords, keyword, context, allowMidWord } of prepared) {
+    for (const weighted of fields) {
+      if (weighted.value.length === 0) continue;
+      const { weight, wholeWords, keyword, context, midWord } = weighted;
+      const field = preparedField(weighted);
       if (best >= weight && field !== primary && atWordStart) continue;
       const typos = (options?.typos ?? false) && !keyword;
       // Joined words only count in the name.
-      const match = matchToken(field, token, typos, field === primary, allowMidWord);
+      const match = matchToken(field, token, typos, field === primary, midWord ?? false);
       if (match === null || match.score < (wholeWords ? WHOLE_WORD : keyword ? 0.7 : 0)) continue;
       if (field === primary) bestPrimary = match;
       if (match.score >= 0.7 && !context) atWordStart = true;
@@ -412,6 +439,9 @@ function matchSearchFields(
     if (bestPrimary) primaryRanges.push(...(bestPrimary.letters ?? [bestPrimary]));
     total += best;
     counted += 1;
+    // Optional filler never decides the whole-word tier; a query of only filler never earns it.
+    if (FILLER_WORDS.has(token)) notWhole ||= !fillerOptional;
+    else notWhole ||= token.length < PICK_PREFIX_MIN_LENGTH || best < WHOLE_WORD;
   }
   let quality = total / counted;
   if (primary) {
@@ -420,6 +450,7 @@ function matchSearchFields(
   }
   return {
     quality,
+    wholeWords: !notWhole,
     strong,
     primaryRanges: mergeRanges(primaryRanges),
   };
@@ -514,6 +545,7 @@ function findMessageToken(
   text: string,
   folded: string,
   token: string,
+  firstOnly: boolean,
 ): { readonly at: ReadonlyArray<number>; readonly quality: number } | null {
   let quality = 0;
   let at: number[] = [];
@@ -538,7 +570,8 @@ function findMessageToken(
     if (found > quality) {
       quality = found;
       at = [index];
-    } else if (found === quality) {
+      if (firstOnly && quality === 1) return { at, quality };
+    } else if (!firstOnly && found === quality) {
       at.push(index);
     }
   }
@@ -590,10 +623,15 @@ export function messageMatcher(query: string): (text: string) => MessageMatch | 
     let quality = 1;
     const positions: Array<ReadonlyArray<number>> = [];
     for (const { token, folded: foldedToken, nonAscii, mustStartWord, grades } of tokens) {
-      let found = findMessageToken(text, plain, token);
+      let found = findMessageToken(text, plain, token, tokens.length === 1);
       // Accents typed or left out: "cafe" finds "Café", also after "cafeteria".
       if (found?.quality !== 1 && foldedToken.length > 0 && (nonAscii || NON_ASCII.test(text))) {
-        found = findMessageToken(text, (folded ??= foldInPlace(text)), foldedToken);
+        found = findMessageToken(
+          text,
+          (folded ??= foldInPlace(text)),
+          foldedToken,
+          tokens.length === 1,
+        );
       }
       if (found === null) return null;
       if (found.quality === MID_WORD && mustStartWord) return null;
@@ -801,6 +839,9 @@ function threadUsageBoost(thread: ThreadSearchSubject, now: number): number {
 
 const REFERENCE_PREFIX_MIN = 8;
 
+// A number is never cut short: ".../pull/2288" is not pull request 22889.
+const notCut = (text: string, end: number) => !DIGIT.test(text[end] ?? "");
+
 // IDs and URLs have many word starts, so field matching would let short queries hit every thread.
 // Require a long prefix, or any long part containing a digit. Both are ASCII; lowercasing suffices.
 function matchReference(
@@ -808,14 +849,8 @@ function matchReference(
   thread: ThreadSearchSubject,
 ): SearchFieldsMatch | null {
   if (normalizedQuery.length < REFERENCE_PREFIX_MIN) return null;
-  const references = [
-    ...(thread.id ? [thread.id] : []),
-    ...(thread.pullRequests ?? []).flatMap((pullRequest) => pullRequest.references ?? []),
-  ];
   const anywhere = DIGIT.test(normalizedQuery);
-  // A number is never cut short: ".../pull/2288" is not pull request 22889.
-  const notCut = (text: string, end: number) => !DIGIT.test(text[end] ?? "");
-  return references.some((reference) => {
+  const matches = (reference: string) => {
     const folded = reference.toLowerCase();
     const at = folded.indexOf(normalizedQuery);
     // A pasted link may go on past the reference: ".../pull/22889/files".
@@ -823,8 +858,10 @@ function matchReference(
       ? (at !== -1 && notCut(folded, at + normalizedQuery.length)) ||
           (normalizedQuery.startsWith(folded) && notCut(normalizedQuery, folded.length))
       : at === 0;
-  })
-    ? { quality: 0.6, strong: true, primaryRanges: [] }
+  };
+  return (thread.id && matches(thread.id)) ||
+    thread.pullRequests?.some((pullRequest) => pullRequest.references?.some(matches))
+    ? { quality: 0.6, wholeWords: false, strong: true, primaryRanges: [] }
     : null;
 }
 
@@ -861,6 +898,7 @@ export interface ThreadSearchMatch {
   readonly score: number;
   /** Match quality alone; see `rankSearchGroups`. */
   readonly quality: number;
+  readonly wholeWords: boolean;
   /** Every token matched at a word start; see `rankSearchGroups`. */
   readonly strong: boolean;
   /** Matched ranges in the title. */
@@ -885,9 +923,19 @@ export interface SearchMatchHint {
 }
 
 // Most threads' branches start with the app's own worktree prefix ("t3/", and
-// "t3code/" before it), so "t3 connect" would match nearly every thread.
+// "t3code/" before it, "t3-<hex>" when a "t3" branch blocks nested refs), so
+// "t3 connect" would match nearly every thread.
 // Only before more text, so typing "t3/" does not empty the list for a keystroke.
-const WORKTREE_BRANCH_PREFIX_PATTERN = new RegExp(`^(?:${WORKTREE_BRANCH_PREFIX}|t3code)/(?=\\S)`);
+const WORKTREE_BRANCH_PREFIX_PATTERN = new RegExp(
+  `^(?:(?:${WORKTREE_BRANCH_PREFIX}|t3code)/(?=\\S)|${WORKTREE_BRANCH_PREFIX}-(?=[0-9a-f]{8}$))`,
+);
+
+// The flat prefix anywhere in a query, while its hex is still being typed, so
+// "t3-abcd" and "connect t3-abcd1234" still reach the stripped branch field.
+const FLAT_BRANCH_QUERY_PREFIX_PATTERN = new RegExp(
+  `(^| )${WORKTREE_BRANCH_PREFIX}-(?=[0-9a-f]{1,8}(?: |$))`,
+  "g",
+);
 
 function searchableBranch(branch: string | null | undefined): string | null {
   return branch ? branch.replace(WORKTREE_BRANCH_PREFIX_PATTERN, "") : null;
@@ -934,6 +982,46 @@ function matchHint(
   return rest && rest !== normalizedQuery ? hintFor(rest) : undefined;
 }
 
+// A keystroke scores each thread's fields again, so they are listed once per subject.
+const threadFieldsCache = new WeakMap<ThreadSearchSubject, ReadonlyArray<WeightedSearchField>>();
+
+function threadSearchFields(thread: ThreadSearchSubject): ReadonlyArray<WeightedSearchField> {
+  const cached = threadFieldsCache.get(thread);
+  if (cached) return cached;
+  const fields: WeightedSearchField[] = [{ value: thread.title, weight: 1, midWord: true }];
+  for (const pullRequest of thread.pullRequests ?? []) {
+    fields.push({ value: `#${pullRequest.number}`, weight: 1 });
+    if (pullRequest.title) fields.push({ value: pullRequest.title, weight: 0.5 });
+  }
+  const branch = searchableBranch(thread.branch);
+  if (branch) fields.push({ value: branch, weight: 0.6 });
+  if (thread.projectTitle) {
+    fields.push({ value: thread.projectTitle, weight: 0.25, context: true });
+  }
+  if (thread.environmentLabel) {
+    fields.push({ value: thread.environmentLabel, weight: 0.25, context: true });
+  }
+  threadFieldsCache.set(thread, fields);
+  return fields;
+}
+
+let lastFieldQuery: { readonly query: string; readonly fieldQuery: string } | undefined;
+
+// Strip pull request prefixes and the worktree prefix so queries match the stored fields.
+function threadFieldQuery(normalizedQuery: string): string {
+  if (lastFieldQuery?.query !== normalizedQuery) {
+    lastFieldQuery = {
+      query: normalizedQuery,
+      fieldQuery: normalizedQuery
+        .replace(/^(?:pr|pull request|pull)\s*(?=#?\d)/, "")
+        .replace(/^#\s*/, "")
+        .replace(WORKTREE_BRANCH_PREFIX_PATTERN, "")
+        .replace(FLAT_BRANCH_QUERY_PREFIX_PATTERN, "$1"),
+    };
+  }
+  return lastFieldQuery.fieldQuery;
+}
+
 /**
  * Scores a thread for a normalized query, or null when it does not match.
  * Titles and pull request numbers count fully, pull request titles and
@@ -952,24 +1040,8 @@ export function scoreThreadSearch(
     readonly picks?: boolean;
   },
 ): ThreadSearchMatch | null {
-  const fields: WeightedSearchField[] = [{ value: thread.title, weight: 1, midWord: true }];
-  for (const pullRequest of thread.pullRequests ?? []) {
-    fields.push({ value: `#${pullRequest.number}`, weight: 1 });
-    if (pullRequest.title) fields.push({ value: pullRequest.title, weight: 0.5 });
-  }
-  const branch = searchableBranch(thread.branch);
-  if (branch) fields.push({ value: branch, weight: 0.6 });
-  if (thread.projectTitle) {
-    fields.push({ value: thread.projectTitle, weight: 0.25, context: true });
-  }
-  if (thread.environmentLabel) {
-    fields.push({ value: thread.environmentLabel, weight: 0.25, context: true });
-  }
-  // Strip pull request prefixes and the worktree prefix so queries match the stored fields.
-  const fieldQuery = normalizedQuery
-    .replace(/^(?:pr|pull request|pull)\s*(?=#?\d)/, "")
-    .replace(/^#\s*/, "")
-    .replace(WORKTREE_BRANCH_PREFIX_PATTERN, "");
+  const fields = threadSearchFields(thread);
+  const fieldQuery = threadFieldQuery(normalizedQuery);
   const fieldMatch = matchSearchFields(fieldQuery, fields, options);
   const referenceMatch = fieldMatch ? null : matchReference(normalizedQuery, thread);
   const match = fieldMatch ?? referenceMatch;
@@ -993,6 +1065,7 @@ export function scoreThreadSearch(
   return {
     score: match.quality * threadUsageBoost(thread, now),
     quality: match.quality,
+    wholeWords: match.wholeWords,
     // A thread's whole title never lifts its group over a command or project
     // of that name: every new thread is titled "New thread" for a while.
     groupQuality: Math.min(match.quality, WHOLE_NAME - 0.01),
@@ -1096,19 +1169,22 @@ export function rankSearchGroups<
     readonly pickedAt?: number;
     readonly pickedExactly?: boolean;
     readonly groupQuality?: number;
+    readonly wholeWords?: boolean;
   },
 >(
   groups: ReadonlyArray<{ readonly group: G; readonly items: ReadonlyArray<T> }>,
   score: (item: T, options: { readonly typos: boolean }, group: G) => M | null,
 ): Array<{ readonly group: G; readonly ranked: ReadonlyArray<RankedSearchItem<T, M>> }> {
   const rank = (typos: boolean) =>
-    groups.map(({ group, items }) => ({
-      group,
-      ranked: items.flatMap((item) => {
-        const match = score(item, { typos }, group);
-        return match === null ? [] : [{ item, match }];
-      }),
-    }));
+    groups.map(({ group, items }) => {
+      const options = { typos };
+      const ranked: Array<RankedSearchItem<T, M>> = [];
+      for (const item of items) {
+        const match = score(item, options, group);
+        if (match !== null) ranked.push({ item, match });
+      }
+      return { group, ranked };
+    });
   let ranked = rank(false);
   if (!ranked.some((entry) => entry.ranked.some(({ match }) => match.strong))) {
     ranked = rank(true);
@@ -1121,12 +1197,15 @@ export function rankSearchGroups<
       // A longer-query pick must not pass a whole-name match for the current query.
       const wordMatch = (match: M) => Math.min(matchClass(match.quality), 2);
       const exactPickAt = (match: M) => (match.pickedExactly ? (match.pickedAt ?? 0) : 0);
+      // Use reorders whole words or prefixes among themselves, never a prefix above a whole word.
+      const wholeWord = (match: M) => Number(match.wholeWords ?? match.quality >= WHOLE_WORD);
       const sorted = [...items].sort(
         (left, right) =>
           wordMatch(right.match) - wordMatch(left.match) ||
           exactPickAt(right.match) - exactPickAt(left.match) ||
           matchClass(right.match.quality) - matchClass(left.match.quality) ||
           (right.match.pickedAt ?? 0) - (left.match.pickedAt ?? 0) ||
+          wholeWord(right.match) - wholeWord(left.match) ||
           right.match.score - left.match.score,
       );
       const best = Math.max(

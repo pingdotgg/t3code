@@ -1,0 +1,138 @@
+---
+title: Websites
+description: Deploy Vite, Astro, Next.js, Nuxt, SvelteKit, TanStack Start, React Router, SolidStart, Waku, vinext, Octane, Vocs, or any static build to Cloud Run with GCP.Website.
+sidebar:
+  label: Overview
+  order: 1
+---
+
+import PackageManagers from "../../../../components/PackageManagers.astro";
+
+export const devDeps = "@alchemy.run/frontend-frameworks";
+
+`GCP.Website` deploys a frontend to Cloud Run. Each resource runs your
+framework's build, bakes the server and the static files into one Node
+image, and serves it from a public Cloud Run service. There is no
+Dockerfile and no adapter to install. Your framework's own config file
+loads as-is.
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as GCP from "@alchemy.run/gcp";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MySite",
+  { providers: GCP.providers(), state: GCP.state() },
+  Effect.gen(function* () {
+    const site = yield* GCP.Website.Astro("Website");
+    return { url: site.url };
+  }),
+);
+```
+
+`site.url` is the service's `https://….run.app` URL.
+
+## Install
+
+The build integration ships separately. It only runs at deploy time,
+so a dev dependency is enough:
+
+<PackageManagers dev={devDeps} />
+
+Docker has to be running when you deploy. The image is built on your
+machine.
+
+## Pick your framework
+
+| Framework | Resource | Guide |
+| --- | --- | --- |
+| React / Vite SPA | `Vite` | [React SPA](/gcp/frontend/vite-spa) |
+| Vue | `Vite` | [Vue](/gcp/frontend/vue) |
+| Any Vite app | `Vite` | [Vite](/gcp/frontend/vite) |
+| Foldkit | `Foldkit` | [Foldkit](/gcp/frontend/foldkit) |
+| Astro | `Astro` | [Astro](/gcp/frontend/astro) |
+| Next.js | `Nextjs` | [Next.js](/gcp/frontend/nextjs) |
+| vinext | `Vinext` | [vinext](/gcp/frontend/vinext) |
+| Nuxt | `Nuxt` | [Nuxt](/gcp/frontend/nuxt) |
+| SvelteKit | `SvelteKit` | [SvelteKit](/gcp/frontend/sveltekit) |
+| TanStack Start | `TanStackStart` | [TanStack Start](/gcp/frontend/tanstack-start) |
+| React Router | `ReactRouter` | [React Router](/gcp/frontend/react-router) |
+| SolidStart | `SolidStart` | [SolidStart](/gcp/frontend/solidstart) |
+| Waku | `Waku` | [Waku](/gcp/frontend/waku) |
+| Octane | `Octane` | [Octane](/gcp/frontend/octane) |
+| Vocs | `Vocs` | [Vocs](/gcp/frontend/vocs) |
+| Hugo, Zola, any static generator | `StaticSite` | [Static sites](/gcp/frontend/static-site) |
+
+Use the resource named after your framework. Use `Vite` for a
+client-only app. Use `StaticSite` for any build command that writes a
+directory of files.
+
+## Pass environment variables
+
+`env` sets the server's environment. Values can be Outputs from other
+resources:
+
+```typescript
+const site = yield* GCP.Website.Nuxt("Website", {
+  env: {
+    GREETING: "Hello from Cloud Run!",
+    API_URL: api.uri,
+  },
+});
+```
+
+Server code reads them from `process.env`.
+
+## Tune Cloud Run
+
+Every site takes the same Cloud Run settings:
+
+```typescript
+const site = yield* GCP.Website.Nextjs("Website", {
+  scaling: { minInstanceCount: 1 },
+  resources: { limits: { cpu: "1", memory: "1Gi" } },
+  timeout: "60s",
+});
+```
+
+`minInstanceCount: 1` keeps one instance warm, so the first visitor
+never waits for a cold start.
+
+## Make it private
+
+Sites are public by default. Set `public: false` to require a Google
+identity token, for an internal tool behind
+[IAP](https://cloud.google.com/iap) or a load balancer:
+
+```typescript
+const site = yield* GCP.Website.Vite("Admin", { public: false });
+```
+
+## Skip unchanged builds
+
+Alchemy hashes your project's files and skips the build and the image
+push when nothing changed. Limit the hash to the files that matter:
+
+```typescript
+const site = yield* GCP.Website.Astro("Website", {
+  memo: {
+    include: ["src/**", "public/**", "package.json", "astro.config.ts"],
+  },
+});
+```
+
+## Local development
+
+`alchemy dev` runs your framework's own dev server with hot reload and
+creates nothing in the cloud. `site.url` is the local address. Wrap the
+site in `Alchemy.remote()` to deploy it for real during dev.
+
+## Where next
+
+- [Astro](/gcp/frontend/astro) and [Next.js](/gcp/frontend/nextjs) —
+  both have runnable examples.
+- [Static sites](/gcp/frontend/static-site) — a build command, or a
+  public Cloud Storage bucket.
+- [Website reference](/providers/gcp/website) — every prop.

@@ -109,6 +109,7 @@ const V2SubagentGroup = memo(function V2SubagentGroup({
                 environmentId={ctx.activeThreadEnvironmentId}
                 providerInstanceId={item.providerInstanceId}
                 driver={item.driver}
+                remote={item.remoteChild}
                 status={agents.length === 1 ? status : undefined}
               />
             ))}

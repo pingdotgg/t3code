@@ -5,6 +5,10 @@ import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import {
   DEFAULT_TERMINAL_ID,
   DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
+  retainedTerminalHistory,
+  TERMINAL_SEQUENCE_GROUND,
+  terminalSequenceEnd,
+  terminalSequenceStateAfter,
   TerminalCwdError,
   TerminalCwdNotDirectoryError,
   TerminalCwdNotFoundError,
@@ -46,6 +50,7 @@ import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Equal from "effect/Equal";
@@ -55,19 +60,21 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
+import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { makeClaudeEnvironment } from "../provider/Drivers/ClaudeHome.ts";
-import { deriveProviderInstanceConfigMap } from "../provider/ProviderInstanceRegistryHydration.ts";
+import type { deriveProviderInstanceConfigMap } from "../provider/ProviderInstanceRegistryHydration.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { increment, terminalSessionsTotal } from "../observability/Metrics.ts";
-import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import { expandHomeVariable } from "@t3tools/provider-core/server/pathExpansion";
 import * as ProcessRunner from "../processRunner.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
 import * as NativeTelemetryClient from "../resourceTelemetry/NativeTelemetryClient.ts";
@@ -91,10 +98,18 @@ export {
 
 const DEFAULT_HISTORY_LINE_LIMIT = 5_000;
 const DEFAULT_HISTORY_BYTE_LIMIT = 8 * 1024 * 1024;
+// eCryptfs permits 143-byte names.
+const MAX_HISTORY_FILENAME_BYTES = 143;
 const MAX_HISTORY_CHUNK_LENGTH = 16 * 1024;
 const DEFAULT_PERSIST_DEBOUNCE_MS = 250;
 const DEFAULT_SUBPROCESS_POLL_INTERVAL_MS = 1_000;
 const MAX_SUBPROCESS_POLL_INTERVAL_MS = 60_000;
+// `ps` and WMI can take seconds on a loaded host and their tables are still
+// valid then; the timeout only ends a query that is truly stuck.
+const PROCESS_TABLE_QUERY_TIMEOUT = "15 seconds";
+// closeIdle queries while holding the thread lock, so it keeps a short budget
+// rather than stalling other operations on that thread behind a slow table.
+const CLOSE_IDLE_QUERY_TIMEOUT = { posix: "1 second", win32: "1500 millis" } as const;
 // Discover children started without terminal input or output.
 const QUIET_SUBPROCESS_SNAPSHOT_EVERY_TICKS = 30;
 const DEFAULT_PROCESS_KILL_GRACE_MS = 1_000;
@@ -155,12 +170,18 @@ class TerminalProcessSignalError extends Schema.TaggedError<TerminalProcessSigna
   }
 }
 
+export class TerminalCwdRecovery extends Context.Reference<
+  (error: TerminalCwdNotFoundError) => Effect.Effect<void, TerminalCwdNotFoundError>
+>("t3/terminal/TerminalCwdRecovery", { defaultValue: () => (error) => Effect.fail(error) }) {}
+
 export class TerminalManager extends Context.Service<
   TerminalManager,
   {
     readonly open: (
       input: TerminalOpenInput,
     ) => Effect.Effect<TerminalSessionSnapshot, TerminalError>;
+
+    readonly getShell: (input: TerminalObserveInput) => Effect.Effect<string, TerminalError>;
 
     /**
      * Attached viewers share one PTY sized to the smallest of them, so a narrow client
@@ -206,6 +227,8 @@ export class TerminalManager extends Context.Service<
 
     /** Omit terminalId to close all sessions for the thread. */
     readonly close: (input: TerminalCloseInput) => Effect.Effect<void, TerminalError>;
+
+    readonly closeOnSettle: (input: { readonly threadId: string }) => Effect.Effect<void>;
 
     readonly closeIdle: (input: {
       readonly threadId: string;
@@ -275,7 +298,7 @@ interface TerminalSessionState {
   pid: number | null;
   history: BoundedTerminalHistory;
   pendingHistoryControlSequence: string;
-  pendingProcessEvents: Array<PendingProcessEvent>;
+  pendingProcessEvents: Array<PendingProcessEvent | undefined>;
   pendingProcessEventIndex: number;
   processEventDrainRunning: boolean;
   exitCode: number | null;
@@ -286,11 +309,13 @@ interface TerminalSessionState {
   cols: number;
   rows: number;
   process: PtyAdapter.PtyProcess | null;
+  shell: string | null;
   unsubscribeData: (() => void) | null;
   unsubscribeExit: (() => void) | null;
   hasRunningSubprocess: boolean;
   childCommandLabel: string | null;
   runtimeEnv: Record<string, string> | null;
+  stopOnSettle: boolean;
 }
 
 interface TerminalGrid {
@@ -352,10 +377,9 @@ function normalizeChildCommandName(raw: string, platform: NodeJS.Platform): stri
   ) {
     trimmed = trimmed.slice(1, -1).trim();
   }
-  const firstToken = (trimmed.split(/\s+/)[0] ?? trimmed).trim();
-  if (firstToken.length === 0) return null;
+  // Process names and macOS `comm` paths can contain spaces ("Google Chrome").
   const separators = platform === "win32" ? /[\\/]/ : /\//;
-  const base = firstToken.split(separators).at(-1) ?? firstToken;
+  const base = (trimmed.split(separators).at(-1) ?? trimmed).trim();
   const withoutExe =
     platform === "win32" && base.toLowerCase().endsWith(".exe") ? base.slice(0, -4) : base;
   return withoutExe.length > 0 ? withoutExe : null;
@@ -551,6 +575,10 @@ function shellCandidateFromCommand(
   if (platform !== "win32" && shellName === "zsh") {
     return { shell: command, args: ["-o", "nopromptsp"] };
   }
+  // Login shells load ~/.bash_profile, matching macOS terminal startup.
+  if (platform === "darwin" && shellName === "bash") {
+    return { shell: command, args: ["-l"] };
+  }
   return { shell: command };
 }
 
@@ -675,8 +703,17 @@ interface TerminalProcessTableSnapshot {
   readonly commandById: ReadonlyMap<number, string>;
 }
 
-function subprocessSnapshotPollDelayMs(pollIntervalMs: number, failureCount: number): number {
-  return Math.min(pollIntervalMs * 2 ** failureCount, MAX_SUBPROCESS_POLL_INTERVAL_MS);
+// Idles at least four times as long as the last fallback query took, so a slow
+// process table never keeps the poll loop busy most of the time.
+function subprocessSnapshotPollDelayMs(
+  pollIntervalMs: number,
+  failureCount: number,
+  queryElapsedMs: number,
+): number {
+  return Math.min(
+    Math.max(pollIntervalMs * 2 ** failureCount, queryElapsedMs * 4),
+    MAX_SUBPROCESS_POLL_INTERVAL_MS,
+  );
 }
 
 function parsePosixProcessTable(stdout: string): TerminalProcessTableSnapshot {
@@ -764,6 +801,7 @@ const resolvePosixPsCommand = Effect.fn("terminal.resolvePosixPsCommand")(functi
 
 const posixProcessTableSnapshot = Effect.fn("terminal.posixProcessTableSnapshot")(function* (
   psCommand: string,
+  timeout: Duration.Input,
 ): Effect.fn.Return<
   TerminalProcessTableSnapshot,
   TerminalSubprocessCheckError,
@@ -774,7 +812,7 @@ const posixProcessTableSnapshot = Effect.fn("terminal.posixProcessTableSnapshot"
     .run({
       command: psCommand,
       args: ["-eo", "pid=,ppid=,comm="],
-      timeout: "1 second",
+      timeout,
       maxOutputBytes: 524_288,
       outputMode: "truncate",
       timeoutBehavior: "timedOutResult",
@@ -800,53 +838,65 @@ const posixProcessTableSnapshot = Effect.fn("terminal.posixProcessTableSnapshot"
   return parsePosixProcessTable(result.stdout);
 });
 
-const windowsProcessTableSnapshot = Effect.fn("terminal.windowsProcessTableSnapshot")(
-  function* (): Effect.fn.Return<
-    TerminalProcessTableSnapshot,
-    TerminalSubprocessCheckError,
-    ProcessRunner.ProcessRunner
-  > {
-    const processRunner = yield* ProcessRunner.ProcessRunner;
-    const command =
-      'Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object { Write-Output "$($_.ProcessId)|$($_.ParentProcessId)|$($_.Name)" }';
-    const result = yield* processRunner
-      .run({
-        command: "powershell.exe",
-        args: ["-NoProfile", "-NonInteractive", "-Command", command],
-        timeout: "1500 millis",
-        maxOutputBytes: 262_144,
-        outputMode: "truncate",
-        timeoutBehavior: "timedOutResult",
-      })
-      .pipe(
-        Effect.mapError(
-          (cause) => new TerminalSubprocessCheckError({ cause, command: "powershell" }),
-        ),
-      );
-    if (result.code !== 0 || result.timedOut || result.stdoutTruncated) {
-      return yield* new TerminalSubprocessCheckError({
-        command: "powershell",
-        exitCode: result.code,
-        timedOut: result.timedOut,
-        stdoutTruncated: result.stdoutTruncated,
-      });
-    }
-    const processes = result.stdout.split(/\r?\n/g).flatMap((line) => {
-      const [pidRaw, ppidRaw, name = ""] = line.trim().split("|", 3);
-      const pid = Number(pidRaw);
-      const ppid = Number(ppidRaw);
-      return Number.isInteger(pid) && pid > 0 && Number.isInteger(ppid)
-        ? [{ pid, ppid, name }]
-        : [];
+const windowsProcessTableSnapshot = Effect.fn("terminal.windowsProcessTableSnapshot")(function* (
+  timeout: Duration.Input,
+): Effect.fn.Return<
+  TerminalProcessTableSnapshot,
+  TerminalSubprocessCheckError,
+  ProcessRunner.ProcessRunner
+> {
+  const processRunner = yield* ProcessRunner.ProcessRunner;
+  const command =
+    'Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object { Write-Output "$($_.ProcessId)|$($_.ParentProcessId)|$($_.Name)" }';
+  const result = yield* processRunner
+    .run({
+      command: "powershell.exe",
+      args: ["-NoProfile", "-NonInteractive", "-Command", command],
+      timeout,
+      maxOutputBytes: 262_144,
+      outputMode: "truncate",
+      timeoutBehavior: "timedOutResult",
+    })
+    .pipe(
+      Effect.mapError(
+        (cause) => new TerminalSubprocessCheckError({ cause, command: "powershell" }),
+      ),
+    );
+  if (result.code !== 0 || result.timedOut || result.stdoutTruncated) {
+    return yield* new TerminalSubprocessCheckError({
+      command: "powershell",
+      exitCode: result.code,
+      timedOut: result.timedOut,
+      stdoutTruncated: result.stdoutTruncated,
     });
-    return processTableSnapshotFromProcesses(processes);
-  },
-);
+  }
+  const processes = result.stdout.split(/\r?\n/g).flatMap((line) => {
+    const [pidRaw, ppidRaw, name = ""] = line.trim().split("|", 3);
+    const pid = Number(pidRaw);
+    const ppid = Number(ppidRaw);
+    return Number.isInteger(pid) && pid > 0 && Number.isInteger(ppid) ? [{ pid, ppid, name }] : [];
+  });
+  return processTableSnapshotFromProcesses(processes);
+});
 
 interface TerminalHistoryChunk {
   data: string;
   byteLength: number;
   lineBreaks: number;
+}
+
+interface TerminalHistoryPersistenceCursor {
+  readonly generation: number;
+  readonly offset: number;
+  readonly fileBytes: number;
+}
+
+function countLineBreaks(data: string): number {
+  let lineBreaks = 0;
+  for (let index = data.indexOf("\n"); index !== -1; index = data.indexOf("\n", index + 1)) {
+    lineBreaks += 1;
+  }
+  return lineBreaks;
 }
 
 export class BoundedTerminalHistory {
@@ -858,7 +908,11 @@ export class BoundedTerminalHistory {
   private lineBreaks = 0;
   // Reading the old string's tail on each append can force chunk concatenation.
   private lastCodeUnit: number | undefined;
+  // The terminal parser's state at the first retained code unit, which is where a replay starts.
+  private sequenceState = TERMINAL_SEQUENCE_GROUND;
   private cachedValue: string | null = "";
+  private generation = 0;
+  private appendedLength = 0;
 
   constructor(maxLines: number, initial: string, maxBytes = DEFAULT_HISTORY_BYTE_LIMIT) {
     this.maxLines = maxLines;
@@ -868,6 +922,7 @@ export class BoundedTerminalHistory {
 
   append(text: string): void {
     if (text.length === 0) return;
+    this.appendedLength += text.length;
     this.cachedValue = null;
     if (this.maxBytes <= 0 || this.maxLines <= 0) {
       this.clear();
@@ -888,6 +943,8 @@ export class BoundedTerminalHistory {
       firstCode <= 0xdfff
     ) {
       // Joining a split surrogate changes its UTF-8 size from 3 to 4 bytes.
+      // The previous flush may have encoded the lone surrogate as a replacement character.
+      this.generation += 1;
       previous.data += text[0];
       previous.byteLength += 1;
       this.byteLength += 1;
@@ -917,10 +974,7 @@ export class BoundedTerminalHistory {
 
   private appendChunk(data: string): void {
     const byteLength = Buffer.byteLength(data);
-    let lineBreaks = 0;
-    for (let index = data.indexOf("\n"); index !== -1; index = data.indexOf("\n", index + 1)) {
-      lineBreaks += 1;
-    }
+    const lineBreaks = countLineBreaks(data);
     const previous = this.chunks.at(-1);
     if (previous && previous.data.length + data.length <= MAX_HISTORY_CHUNK_LENGTH) {
       previous.data += data;
@@ -937,6 +991,7 @@ export class BoundedTerminalHistory {
 
   private discardChunk(): void {
     const first = this.chunks[this.start]!;
+    this.sequenceState = terminalSequenceStateAfter(this.sequenceState, first.data);
     this.byteLength -= first.byteLength;
     this.lineBreaks -= first.lineBreaks;
     this.chunks[this.start++] = undefined;
@@ -948,6 +1003,7 @@ export class BoundedTerminalHistory {
       this.discardChunk();
       return;
     }
+    this.sequenceState = terminalSequenceStateAfter(this.sequenceState, first.data, 0, offset);
     first.data = first.data.slice(offset);
     first.byteLength -= byteLength;
     first.lineBreaks -= lineBreaks;
@@ -995,6 +1051,12 @@ export class BoundedTerminalHistory {
       }
       this.trimChunk(offset, bytes, lineBreaks);
     }
+    // A cut inside a control sequence would replay the rest of it as text.
+    while (this.sequenceState !== TERMINAL_SEQUENCE_GROUND && this.start < this.chunks.length) {
+      const first = this.chunks[this.start]!;
+      const dropped = first.data.slice(0, terminalSequenceEnd(this.sequenceState, first.data));
+      this.trimChunk(dropped.length, Buffer.byteLength(dropped), countLineBreaks(dropped));
+    }
     if (
       this.start === this.chunks.length ||
       (this.start > 2_048 && this.start * 2 >= this.chunks.length)
@@ -1006,12 +1068,47 @@ export class BoundedTerminalHistory {
   }
 
   clear(): void {
+    this.generation += 1;
+    this.appendedLength = 0;
     this.chunks = [];
     this.start = 0;
     this.byteLength = 0;
     this.lineBreaks = 0;
     this.lastCodeUnit = undefined;
+    this.sequenceState = TERMINAL_SEQUENCE_GROUND;
     this.cachedValue = "";
+  }
+
+  persistenceUpdate(previous?: TerminalHistoryPersistenceCursor) {
+    const offset = this.appendedLength;
+    let data: string | undefined;
+    if (previous?.generation === this.generation) {
+      let remaining = offset - previous.offset;
+      const tail: string[] = [];
+      for (let index = this.chunks.length - 1; remaining > 0 && index >= this.start; index -= 1) {
+        const chunk = this.chunks[index]!.data;
+        const suffix = chunk.slice(Math.max(0, chunk.length - remaining));
+        tail.push(suffix);
+        remaining -= suffix.length;
+      }
+      if (remaining === 0) data = tail.toReversed().join("");
+    }
+    // Keep the on-disk log bounded while amortizing compaction across new output.
+    // Readers already cap the plain-text tail by bytes and lines.
+    const append =
+      data !== undefined &&
+      previous !== undefined &&
+      previous.fileBytes + Buffer.byteLength(data) <= this.maxBytes * 2;
+    const output = append && data !== undefined ? data : this.value();
+    return {
+      data: output,
+      append,
+      cursor: {
+        generation: this.generation,
+        offset,
+        fileBytes: (append ? previous.fileBytes : 0) + Buffer.byteLength(output),
+      },
+    };
   }
 
   value(): string {
@@ -1067,6 +1164,10 @@ function isCsiFinalByte(codePoint: number): boolean {
   return codePoint >= 0x40 && codePoint <= 0x7e;
 }
 
+function isControlSequenceCancel(codePoint: number): boolean {
+  return codePoint === 0x18 || codePoint === 0x1a;
+}
+
 function shouldStripCsiSequence(body: string, finalByte: string): boolean {
   if (finalByte === "n") {
     return true;
@@ -1074,7 +1175,7 @@ function shouldStripCsiSequence(body: string, finalByte: string): boolean {
   if (finalByte === "R" && /^[0-9;?]*$/.test(body)) {
     return true;
   }
-  if (finalByte === "c" && /^[>0-9;?]*$/.test(body)) {
+  if (finalByte === "c" && /^[>=0-9;?]*$/.test(body)) {
     return true;
   }
   // Strip DECRQM/DECRPM query traffic to prevent echoed replies during replay; $ guards preserve setters.
@@ -1112,14 +1213,70 @@ function stripStringTerminator(value: string): string {
   return value;
 }
 
-function findStringTerminatorIndex(input: string, start: number): number | null {
+interface C1Effect {
+  /** ESC form of the sequence the code point starts, or "" when it returns to ground. */
+  readonly next: string;
+  /** Its 0x9A byte ran DECID, which replies with device attributes. */
+  readonly query: boolean;
+  /** What replays its visible effect from ground. */
+  readonly safe: string;
+}
+
+// Outside ground and OSC, libghostty parses a code point's UTF-8 bytes one at a time: 0x80-0x9F
+// act as C1 controls, the rest are dropped. Bytes left over after a return to ground print U+FFFD.
+function c1Effect(codePoint: number): C1Effect | undefined {
+  // A lone surrogate is encoded as U+FFFD, whose bytes are all dropped.
+  if (codePoint >= 0xd800 && codePoint <= 0xdfff) return undefined;
+  let next: string | undefined;
+  let query = false;
+  let safe = "";
+  for (let shift = codePoint > 0xffff ? 12 : codePoint > 0x7ff ? 6 : 0; shift >= 0; shift -= 6) {
+    const byte = 0x80 | ((codePoint >> shift) & 0x3f);
+    if (next === "") {
+      safe += "\ufffd";
+    } else if (next?.startsWith("\u001b]")) {
+      next += "\ufffd";
+    } else if (byte === 0x9b) {
+      next = "\u001b[";
+    } else if (byte === 0x9d) {
+      next = "\u001b]";
+    } else if (byte === 0x90) {
+      next = "\u001bP";
+    } else if (byte === 0x98 || byte === 0x9e || byte === 0x9f) {
+      next = "\u001b_";
+    } else if (byte < 0xa0) {
+      next = "";
+      query = byte === 0x9a;
+      // Any other C1 control but ST runs as ESC plus the byte less 0x40.
+      safe = query || byte === 0x9c ? "" : `\u001b${String.fromCharCode(byte - 0x40)}`;
+    }
+  }
+  return next === undefined ? undefined : { next, query, safe };
+}
+
+// BEL ends only OSC; inside DCS, PM and APC it is payload. Non-ASCII is the reverse: libghostty
+// keeps it inside OSC, while a C1 byte in it ends the other strings.
+function findStringEnd(
+  input: string,
+  start: number,
+  isOsc: boolean,
+): { end: number; c1?: { effect: C1Effect; index: number } } | null {
   for (let index = start; index < input.length; index += 1) {
     const codePoint = input.charCodeAt(index);
-    if (codePoint === 0x07 || codePoint === 0x9c) {
-      return index + 1;
+    if ((isOsc && codePoint === 0x07) || isControlSequenceCancel(codePoint)) {
+      return { end: index + 1 };
     }
-    if (codePoint === 0x1b && input.charCodeAt(index + 1) === 0x5c) {
-      return index + 2;
+    // Like xterm.js, an ESC that does not start ST ends the string and begins the next sequence.
+    if (codePoint === 0x1b) {
+      if (index + 1 >= input.length) return null;
+      return { end: input.charCodeAt(index + 1) === 0x5c ? index + 2 : index };
+    }
+    if (codePoint >= 0x80 && !isOsc) {
+      const fullCodePoint = input.codePointAt(index) ?? codePoint;
+      const end = index + (fullCodePoint > 0xffff ? 2 : 1);
+      const effect = c1Effect(fullCodePoint);
+      if (effect) return { end, c1: { effect, index } };
+      index = end - 1;
     }
   }
   return null;
@@ -1141,10 +1298,15 @@ function findEscapeSequenceEndIndex(input: string, start: number): number | null
   if (cursor >= input.length) {
     return null;
   }
+  // A second ESC restarts the sequence, so leave it for the next pass.
+  if (input.charCodeAt(cursor) === 0x1b) {
+    return cursor;
+  }
   return isEscapeFinalByte(input.charCodeAt(cursor)) ? cursor + 1 : start + 1;
 }
 
-const HISTORY_SEQUENCE_START = /[\u001b\u0090\u009b\u009d\u009e\u009f]/;
+// libghostty prints UTF-8 C1 code points (U+0080-U+009F) as text, so only ESC starts a sequence.
+const HISTORY_SEQUENCE_START = /\u001b/;
 const NEXT_HISTORY_SEQUENCE_START = new RegExp(HISTORY_SEQUENCE_START.source, "g");
 
 function sanitizeTerminalHistoryChunk(
@@ -1160,6 +1322,8 @@ function sanitizeTerminalHistoryChunk(
   const pendingScanStart = Math.max(0, pendingControlSequence.length - 1);
   let visibleText = "";
   let index = 0;
+  // Set when a C1 code point began the sequence at `index`: the ESC form that stands in for it.
+  let c1Introducer = "";
 
   const append = (value: string) => {
     visibleText += value;
@@ -1168,28 +1332,68 @@ function sanitizeTerminalHistoryChunk(
   while (index < input.length) {
     const codePoint = input.charCodeAt(index);
 
-    if (codePoint === 0x1b) {
-      const nextCodePoint = input.charCodeAt(index + 1);
+    if (c1Introducer.length > 0 || codePoint === 0x1b) {
+      // Empty for a sequence the input introduces itself, which starts with ESC at `index`.
+      const prefix = c1Introducer;
+      c1Introducer = "";
+      const contentStart = prefix.length > 0 ? index : index + 2;
+      const nextCodePoint = (prefix || input).charCodeAt(prefix.length > 0 ? 1 : index + 1);
       if (Number.isNaN(nextCodePoint)) {
         return { visibleText, pendingControlSequence: input.slice(index) };
       }
 
       if (nextCodePoint === 0x5b) {
-        let cursor = index + 2;
+        let cursor = contentStart;
+        // Inside a CSI Ghostty executes 0x00-0x0F and ignores DEL and 0x10-0x1F, which it would
+        // print in ground state. None join the parameters; only executed ones survive a strip.
+        let body = "";
+        let executedControls = "";
         while (cursor < input.length) {
-          if (isCsiFinalByte(input.charCodeAt(cursor))) {
-            const sequence = input.slice(index, cursor + 1);
-            const body = input.slice(index + 2, cursor);
-            if (!shouldStripCsiSequence(body, input[cursor] ?? "")) {
-              append(sequence);
+          const cursorCodePoint = input.charCodeAt(cursor);
+          const cancelled = isControlSequenceCancel(cursorCodePoint);
+          if (cancelled || isCsiFinalByte(cursorCodePoint)) {
+            if (cancelled || !shouldStripCsiSequence(body, input[cursor] ?? "")) {
+              append(prefix + input.slice(index, cursor + 1));
+            } else {
+              append(executedControls);
             }
             index = cursor + 1;
             break;
           }
+          if (cursorCodePoint >= 0x80) {
+            const fullCodePoint = input.codePointAt(cursor) ?? cursorCodePoint;
+            const end = cursor + (fullCodePoint > 0xffff ? 2 : 1);
+            const c1 = c1Effect(fullCodePoint);
+            if (c1) {
+              // The CSI ends here undispatched, so it is kept only when the terminal is back in
+              // ground with nothing to answer.
+              if (c1.next.length === 0 && !c1.query) {
+                append(prefix + input.slice(index, end));
+              } else {
+                append(executedControls + c1.safe);
+              }
+              c1Introducer = c1.next;
+              index = end;
+              break;
+            }
+            cursor = end;
+            continue;
+          }
+          // An ESC abandons the CSI and starts the next sequence, which may be stripped.
+          if (cursorCodePoint === 0x1b) {
+            append(executedControls);
+            index = cursor;
+            break;
+          }
+          if (cursorCodePoint < 0x10) {
+            executedControls += input[cursor];
+          } else if (cursorCodePoint >= 0x20 && cursorCodePoint !== 0x7f) {
+            body += input[cursor];
+          }
           cursor += 1;
         }
         if (cursor >= input.length) {
-          return { visibleText, pendingControlSequence: input.slice(index) };
+          return { visibleText, pendingControlSequence: prefix + input.slice(index) };
         }
         continue;
       }
@@ -1200,22 +1404,32 @@ function sanitizeTerminalHistoryChunk(
         nextCodePoint === 0x5e ||
         nextCodePoint === 0x5f
       ) {
-        const terminatorIndex = findStringTerminatorIndex(
+        const stringEnd = findStringEnd(
           input,
-          Math.max(index + 2, pendingScanStart),
+          Math.max(contentStart, pendingScanStart),
+          nextCodePoint === 0x5d,
         );
-        if (terminatorIndex === null) {
-          return { visibleText, pendingControlSequence: input.slice(index) };
+        if (stringEnd === null) {
+          return { visibleText, pendingControlSequence: prefix + input.slice(index) };
         }
-        const sequence = input.slice(index, terminatorIndex);
-        const content = stripStringTerminator(input.slice(index + 2, terminatorIndex));
+        const { end, c1 } = stringEnd;
+        const content = stripStringTerminator(
+          prefix.slice(2) + input.slice(contentStart, c1?.index ?? end),
+        );
         const strip =
           (nextCodePoint === 0x5d && shouldStripOscSequence(content)) ||
           (nextCodePoint === 0x50 && shouldStripDcsSequence(content));
-        if (!strip) {
-          append(sequence);
+        if (c1 === undefined || (!strip && c1.effect.next.length === 0 && !c1.effect.query)) {
+          if (!strip) {
+            append(prefix + input.slice(index, end));
+          }
+        } else {
+          // ST stands in for a code point that cannot be replayed as it came.
+          const closed = strip ? "" : `${prefix}${input.slice(index, c1.index)}\u009c`;
+          append(closed + c1.effect.safe);
+          c1Introducer = c1.effect.next;
         }
-        index = terminatorIndex;
+        index = end;
         continue;
       }
 
@@ -1223,48 +1437,11 @@ function sanitizeTerminalHistoryChunk(
       if (escapeSequenceEndIndex === null) {
         return { visibleText, pendingControlSequence: input.slice(index) };
       }
-      append(input.slice(index, escapeSequenceEndIndex));
+      // ESC Z (DECID) is the legacy primary device attributes query.
+      if (nextCodePoint !== 0x5a) {
+        append(input.slice(index, escapeSequenceEndIndex));
+      }
       index = escapeSequenceEndIndex;
-      continue;
-    }
-
-    if (codePoint === 0x9b) {
-      let cursor = index + 1;
-      while (cursor < input.length) {
-        if (isCsiFinalByte(input.charCodeAt(cursor))) {
-          const sequence = input.slice(index, cursor + 1);
-          const body = input.slice(index + 1, cursor);
-          if (!shouldStripCsiSequence(body, input[cursor] ?? "")) {
-            append(sequence);
-          }
-          index = cursor + 1;
-          break;
-        }
-        cursor += 1;
-      }
-      if (cursor >= input.length) {
-        return { visibleText, pendingControlSequence: input.slice(index) };
-      }
-      continue;
-    }
-
-    if (codePoint === 0x9d || codePoint === 0x90 || codePoint === 0x9e || codePoint === 0x9f) {
-      const terminatorIndex = findStringTerminatorIndex(
-        input,
-        Math.max(index + 1, pendingScanStart),
-      );
-      if (terminatorIndex === null) {
-        return { visibleText, pendingControlSequence: input.slice(index) };
-      }
-      const sequence = input.slice(index, terminatorIndex);
-      const content = stripStringTerminator(input.slice(index + 1, terminatorIndex));
-      const strip =
-        (codePoint === 0x9d && shouldStripOscSequence(content)) ||
-        (codePoint === 0x90 && shouldStripDcsSequence(content));
-      if (!strip) {
-        append(sequence);
-      }
-      index = terminatorIndex;
       continue;
     }
 
@@ -1275,14 +1452,12 @@ function sanitizeTerminalHistoryChunk(
     index = nextSequenceStart;
   }
 
-  return { visibleText, pendingControlSequence: "" };
+  return { visibleText, pendingControlSequence: c1Introducer };
 }
 
 function legacySafeThreadId(threadId: string): string {
   return threadId.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
-
-const MAX_FILE_NAME_BYTES = 255;
 
 function encodedHistoryThreadPart(threadId: string): string {
   return `terminal_${Base64Url.encode(threadId)}`;
@@ -1366,16 +1541,27 @@ function createTerminalSpawnEnv(
   for (const [key, value] of Object.entries(baseEnv)) {
     if (value === undefined) continue;
     if (shouldExcludeTerminalEnvKey(key)) continue;
+    if (platform === "win32") {
+      const normalizedKey = key.toUpperCase();
+      if (normalizedKey === "TERM_PROGRAM" || normalizedKey === "TERM_PROGRAM_VERSION") continue;
+    }
     spawnEnv[key] = value;
   }
+  // The server inherits its launcher's identity (e.g. Apple_Terminal); shells
+  // and tools inside the integrated terminal should see T3 Code instead.
+  spawnEnv.TERM_PROGRAM = "t3code";
+  spawnEnv.TERM_PROGRAM_VERSION = packageJson.version;
   if (runtimeEnv) {
     for (const [key, value] of Object.entries(runtimeEnv)) {
       const existingKey =
         platform === "win32"
           ? Object.keys(spawnEnv).find((candidate) => candidate.toLowerCase() === key.toLowerCase())
           : undefined;
-      spawnEnv[existingKey ?? key] =
-        key === "CODEX_HOME" || key === "CLAUDE_CONFIG_DIR" ? expandHomePath(value, home) : value;
+      spawnEnv[existingKey ?? key] = expandHomeVariable(
+        platform === "win32" ? key.toUpperCase() : key,
+        value,
+        home,
+      );
     }
   }
   if (!spawnEnv.COLORTERM && runtimeEnv?.COLORTERM === undefined) {
@@ -1442,6 +1628,7 @@ interface TerminalManagerOptions {
 export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
   "terminal.resolveProviderInstanceTerminalEnvironment",
 )(function* (input: {
+  readonly deriveProviderInstanceConfigMap: typeof deriveProviderInstanceConfigMap;
   readonly serverSettings: ServerSettings.ServerSettingsService["Service"];
   readonly path: Path.Path;
   readonly rawProviderInstanceId: string;
@@ -1451,7 +1638,7 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
   const settings = yield* input.serverSettings.getSettings.pipe(
     Effect.mapError((cause) => new TerminalProviderEnvironmentError({ providerInstanceId, cause })),
   );
-  const instance = deriveProviderInstanceConfigMap(settings)[providerInstanceId];
+  const instance = input.deriveProviderInstanceConfigMap(settings)[providerInstanceId];
   if (instance === undefined) {
     return yield* new TerminalProviderInstanceNotFoundError({ providerInstanceId });
   }
@@ -1481,7 +1668,9 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
 });
 
 /** @public */
-export const make = Effect.fn("TerminalManager.make")(function* () {
+export const make = Effect.fn("TerminalManager.make")(function* (
+  deriveConfigMap: typeof deriveProviderInstanceConfigMap,
+) {
   const { terminalLogsDir, providerStatusCacheDir, baseDir } = yield* ServerConfig.ServerConfig;
   const ptyAdapter = yield* PtyAdapter.PtyAdapter;
   const portDiscovery = yield* PortScanner.PortDiscovery;
@@ -1492,6 +1681,7 @@ export const make = Effect.fn("TerminalManager.make")(function* () {
     "terminal.resolveProviderInstanceEnvironment",
   )((rawProviderInstanceId: string, env: Record<string, string> | undefined) =>
     resolveProviderInstanceTerminalEnvironment({
+      deriveProviderInstanceConfigMap: deriveConfigMap,
       serverSettings,
       path,
       rawProviderInstanceId,
@@ -1551,54 +1741,74 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     },
   );
   // Share one process table per poll; per-terminal scans can exhaust PIDs on busy hosts.
-  const fallbackProcessTableSnapshot = (
-    platform === "win32"
-      ? windowsProcessTableSnapshot()
-      : posixProcessTableSnapshot(yield* resolvePosixPsCommand())
-  ).pipe(Effect.provideService(ProcessRunner.ProcessRunner, processRunner));
-  const fetchProcessTableSnapshot: Effect.Effect<
-    {
-      readonly snapshot: TerminalProcessTableSnapshot;
-      readonly snapshotSucceeded: boolean;
-    },
-    TerminalSubprocessCheckError
-  > = options.processTable
-    ? options.processTable.pipe(
-        Effect.map((entries) => ({
-          snapshot: processTableSnapshotFromProcesses(entries),
-          snapshotSucceeded: true,
-        })),
-        Effect.catch(() =>
-          fallbackProcessTableSnapshot.pipe(
-            Effect.map((snapshot) => ({ snapshot, snapshotSucceeded: false })),
+  // Timed on success and failure so the poll loop can pace the next query.
+  const posixPsCommand = platform === "win32" ? undefined : yield* resolvePosixPsCommand();
+  const fallbackProcessTableSnapshot = (timeout: Duration.Input) =>
+    (posixPsCommand === undefined
+      ? windowsProcessTableSnapshot(timeout)
+      : posixProcessTableSnapshot(posixPsCommand, timeout)
+    ).pipe(
+      Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
+      Effect.result,
+      Effect.timed,
+      Effect.map(([elapsed, snapshot]) => ({
+        snapshot,
+        queryElapsedMs: Duration.toMillis(elapsed),
+      })),
+    );
+  // `fallbackTimeout` only bounds the ps/WMI fallback; a native process table
+  // or custom inspector is unaffected.
+  const fetchProcessTableSnapshot = (
+    fallbackTimeout: Duration.Input,
+  ): Effect.Effect<{
+    readonly snapshot: Result.Result<TerminalProcessTableSnapshot, TerminalSubprocessCheckError>;
+    readonly snapshotSucceeded: boolean;
+    readonly queryElapsedMs: number;
+  }> =>
+    options.processTable
+      ? options.processTable.pipe(
+          Effect.map((entries) => ({
+            snapshot: Result.succeed(processTableSnapshotFromProcesses(entries)),
+            snapshotSucceeded: true,
+            queryElapsedMs: 0,
+          })),
+          Effect.catch(() =>
+            fallbackProcessTableSnapshot(fallbackTimeout).pipe(
+              Effect.map((fallback) => ({ ...fallback, snapshotSucceeded: false })),
+            ),
           ),
-        ),
-      )
-    : fallbackProcessTableSnapshot.pipe(
-        Effect.map((snapshot) => ({ snapshot, snapshotSucceeded: true })),
-      );
+        )
+      : fallbackProcessTableSnapshot(fallbackTimeout).pipe(
+          Effect.map((fallback) => ({
+            ...fallback,
+            snapshotSucceeded: Result.isSuccess(fallback.snapshot),
+          })),
+        );
   const customSubprocessInspector = options.subprocessInspector;
-  const acquireSubprocessInspector: Effect.Effect<
-    {
-      readonly inspector: TerminalSubprocessInspector;
-      readonly snapshotSucceeded: boolean;
-    },
-    TerminalSubprocessCheckError
-  > =
+  const acquireSubprocessInspector = (
+    fallbackTimeout: Duration.Input,
+  ): Effect.Effect<{
+    readonly inspector: Result.Result<TerminalSubprocessInspector, TerminalSubprocessCheckError>;
+    readonly snapshotSucceeded: boolean;
+    readonly queryElapsedMs: number;
+  }> =>
     customSubprocessInspector !== undefined
-      ? Effect.succeed({ inspector: customSubprocessInspector, snapshotSucceeded: true })
+      ? Effect.succeed({
+          inspector: Result.succeed(customSubprocessInspector),
+          snapshotSucceeded: true,
+          queryElapsedMs: 0,
+        })
       : Effect.map(
-          fetchProcessTableSnapshot,
-          ({
-            snapshot,
+          fetchProcessTableSnapshot(fallbackTimeout),
+          ({ snapshot, snapshotSucceeded, queryElapsedMs }) => ({
+            inspector: Result.map(
+              snapshot,
+              (table): TerminalSubprocessInspector =>
+                (terminalPid) =>
+                  Effect.succeed(deriveSubprocessInspectResult(table, terminalPid, platform)),
+            ),
             snapshotSucceeded,
-          }): {
-            readonly inspector: TerminalSubprocessInspector;
-            readonly snapshotSucceeded: boolean;
-          } => ({
-            inspector: (terminalPid) =>
-              Effect.succeed(deriveSubprocessInspectResult(snapshot, terminalPid, platform)),
-            snapshotSucceeded,
+            queryElapsedMs,
           }),
         );
   const subprocessPollIntervalMs =
@@ -1630,28 +1840,51 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       }
     });
 
-  // Nested subagent thread ids can encode past the filename limit. Only names that would not fit
-  // switch to hashed ids, so every history file that already exists keeps its path.
-  const historyPath = (threadId: string, terminalId: string) => {
-    const isDefault = terminalId === DEFAULT_TERMINAL_ID;
-    const encodedName = joinHistoryFileName(
-      encodedHistoryThreadPart(threadId),
-      isDefault ? null : Base64Url.encode(terminalId),
+  const encodedHistoryPath = (threadId: string, terminalId: string) =>
+    path.join(
+      logsDir,
+      joinHistoryFileName(
+        encodedHistoryThreadPart(threadId),
+        terminalId === DEFAULT_TERMINAL_ID ? null : Base64Url.encode(terminalId),
+      ),
     );
-    if (encodedName.length <= MAX_FILE_NAME_BYTES) {
-      return path.join(logsDir, encodedName);
-    }
+
+  const historyPath = (threadId: string, terminalId: string) => {
+    const encoded = encodedHistoryPath(threadId, terminalId);
+    if (path.basename(encoded).length <= MAX_HISTORY_FILENAME_BYTES) return encoded;
     return path.join(
       logsDir,
-      joinHistoryFileName(hashedHistoryThreadPart(threadId), isDefault ? null : hashId(terminalId)),
+      joinHistoryFileName(
+        hashedHistoryThreadPart(threadId),
+        terminalId === DEFAULT_TERMINAL_ID ? null : hashId(terminalId),
+      ),
     );
   };
 
   const legacyHistoryName = (threadId: string) => `${legacySafeThreadId(threadId)}.log`;
-  const legacyHistoryPath = (threadId: string) => path.join(logsDir, legacyHistoryName(threadId));
-  // Ids this long could never have been written under the legacy name.
-  const hasLegacyHistoryPath = (threadId: string) =>
-    Buffer.byteLength(legacyHistoryName(threadId)) <= MAX_FILE_NAME_BYTES;
+  // Legacy names in the current "terminal_" namespace would alias another thread's history,
+  // case-insensitively on some filesystems.
+  const hasLegacyHistoryName = (threadId: string) =>
+    !legacySafeThreadId(threadId).toLowerCase().startsWith("terminal_");
+
+  const historyPaths = (threadId: string, terminalId: string) => [
+    ...new Set([
+      historyPath(threadId, terminalId),
+      encodedHistoryPath(threadId, terminalId),
+      ...(terminalId === DEFAULT_TERMINAL_ID && hasLegacyHistoryName(threadId)
+        ? [path.join(logsDir, legacyHistoryName(threadId))]
+        : []),
+    ]),
+  ];
+
+  const historyExists = (filePath: string) => {
+    const name = path.basename(filePath);
+    // An oversized old path can itself fail on access. Directory entries also
+    // preserve migration of such histories on filesystems with a larger limit.
+    return name.length <= MAX_HISTORY_FILENAME_BYTES
+      ? fileSystem.exists(filePath)
+      : fileSystem.readDirectory(logsDir).pipe(Effect.map((entries) => entries.includes(name)));
+  };
 
   const readManagerState = SynchronizedRef.get(managerStateRef);
 
@@ -1887,6 +2120,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     yield* registerKillFiber(process, fiber);
   });
 
+  const persistedHistory = new WeakMap<BoundedTerminalHistory, TerminalHistoryPersistenceCursor>();
   const persistWorker = yield* makeKeyedCoalescingWorker<
     string,
     PersistHistoryRequest,
@@ -1907,9 +2141,19 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         return;
       }
 
+      const update = request.history.persistenceUpdate(
+        request.immediate ? undefined : persistedHistory.get(request.history),
+      );
+      if (update.append && update.data.length === 0) return;
+      // An append may partially succeed before failing. Retry from a full snapshot,
+      // never from an uncertain file offset.
+      persistedHistory.delete(request.history);
       yield* fileSystem
-        .writeFileString(historyPath(threadId, terminalId), request.history.value())
+        .writeFileString(historyPath(threadId, terminalId), update.data, {
+          flag: update.append ? "a" : "w",
+        })
         .pipe(
+          Effect.tap(() => Effect.sync(() => persistedHistory.set(request.history, update.cursor))),
           Effect.catch((error) =>
             Effect.logWarning("failed to persist terminal history", {
               threadId,
@@ -1956,6 +2200,19 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     const info = yield* file.stat;
     const limit = BigInt(historyByteLimit);
     const offset = info.size > limit ? info.size - limit : 0n;
+    // The tail can start inside a control sequence; only the bytes before it say which.
+    const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
+    let sequenceState = TERMINAL_SEQUENCE_GROUND;
+    const skipped = new Uint8Array(Math.min(Number(offset), 64 * 1024));
+    for (let remaining = Number(offset); remaining > 0;) {
+      const read = Number(yield* file.read(skipped.subarray(0, remaining)));
+      if (read === 0) break;
+      remaining -= read;
+      sequenceState = terminalSequenceStateAfter(
+        sequenceState,
+        decoder.decode(skipped.subarray(0, read), { stream: true }),
+      );
+    }
     yield* file.seek(offset, "start");
     const bytes = new Uint8Array(Number(info.size - offset));
     let length = 0;
@@ -1969,8 +2226,15 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       // A tail read can start inside a UTF-8 code point. Skip its remaining bytes.
       while (start < length && ((bytes[start] ?? 0) & 0xc0) === 0x80) start += 1;
     }
+    sequenceState = terminalSequenceStateAfter(
+      sequenceState,
+      decoder.decode(bytes.subarray(0, start)),
+    );
+    const history = new TextDecoder("utf-8", { ignoreBOM: true }).decode(
+      bytes.subarray(start, length),
+    );
     return {
-      history: new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes.subarray(start, length)),
+      history: history.slice(terminalSequenceEnd(sequenceState, history)),
       truncated: offset > 0n,
     };
   });
@@ -1980,105 +2244,95 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     terminalId: string,
   ) {
     const nextPath = historyPath(threadId, terminalId);
-    if (
-      yield* fileSystem
-        .exists(nextPath)
-        .pipe(
+    for (const sourcePath of historyPaths(threadId, terminalId)) {
+      const migrating = sourcePath !== nextPath;
+      const operation = migrating ? "migrate" : "read";
+      if (
+        !(yield* historyExists(sourcePath).pipe(
           Effect.mapError(
-            (cause) => new TerminalHistoryError({ operation: "read", threadId, terminalId, cause }),
+            (cause) => new TerminalHistoryError({ operation, threadId, terminalId, cause }),
           ),
-        )
-    ) {
-      const { history: raw, truncated } = yield* readHistoryTail(nextPath).pipe(
+        ))
+      )
+        continue;
+      const { history: raw, truncated } = yield* readHistoryTail(sourcePath).pipe(
         Effect.scoped,
         Effect.mapError(
-          (cause) => new TerminalHistoryError({ operation: "read", threadId, terminalId, cause }),
+          (cause) => new TerminalHistoryError({ operation, threadId, terminalId, cause }),
         ),
       );
       const history = new BoundedTerminalHistory(historyLineLimit, raw, historyByteLimit);
       const capped = history.value();
-      if (truncated || capped !== raw) {
-        yield* fileSystem
-          .writeFileString(nextPath, capped)
-          .pipe(
-            Effect.mapError(
-              (cause) =>
-                new TerminalHistoryError({ operation: "truncate", threadId, terminalId, cause }),
-            ),
-          );
+      if (migrating || truncated || capped !== raw) {
+        const write = Effect.gen(function* () {
+          const temporaryPath = yield* fileSystem.makeTempFileScoped({
+            directory: logsDir,
+            prefix: ".history-",
+          });
+          yield* fileSystem.writeFileString(temporaryPath, capped);
+          yield* fileSystem.rename(temporaryPath, nextPath);
+        }).pipe(
+          Effect.scoped,
+          Effect.mapError(
+            (cause) =>
+              new TerminalHistoryError({
+                operation: migrating ? "migrate" : "truncate",
+                threadId,
+                terminalId,
+                cause,
+              }),
+          ),
+        );
+        yield* migrating
+          ? write
+          : write.pipe(
+              Effect.catch((error) =>
+                Effect.logWarning("failed to compact terminal history", {
+                  threadId,
+                  terminalId,
+                  error,
+                }),
+              ),
+            );
+      }
+      if (migrating) {
+        yield* fileSystem.remove(sourcePath, { force: true }).pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("failed to remove legacy terminal history", {
+              threadId,
+              terminalId,
+              error,
+            }),
+          ),
+        );
       }
       return history;
     }
-
-    if (terminalId !== DEFAULT_TERMINAL_ID || !hasLegacyHistoryPath(threadId)) {
-      return new BoundedTerminalHistory(historyLineLimit, "", historyByteLimit);
-    }
-
-    const legacyPath = legacyHistoryPath(threadId);
-    if (
-      !(yield* fileSystem
-        .exists(legacyPath)
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new TerminalHistoryError({ operation: "migrate", threadId, terminalId, cause }),
-          ),
-        ))
-    ) {
-      return new BoundedTerminalHistory(historyLineLimit, "", historyByteLimit);
-    }
-
-    const { history: raw } = yield* readHistoryTail(legacyPath).pipe(
-      Effect.scoped,
-      Effect.mapError(
-        (cause) => new TerminalHistoryError({ operation: "migrate", threadId, terminalId, cause }),
-      ),
-    );
-    const history = new BoundedTerminalHistory(historyLineLimit, raw, historyByteLimit);
-    const capped = history.value();
-    yield* fileSystem
-      .writeFileString(nextPath, capped)
-      .pipe(
-        Effect.mapError(
-          (cause) =>
-            new TerminalHistoryError({ operation: "migrate", threadId, terminalId, cause }),
-        ),
-      );
-    yield* fileSystem.remove(legacyPath, { force: true }).pipe(
-      Effect.catch((cleanupError) =>
-        Effect.logWarning("failed to remove legacy terminal history", {
-          threadId,
-          error: cleanupError,
-        }),
-      ),
-    );
-    return history;
+    return new BoundedTerminalHistory(historyLineLimit, "", historyByteLimit);
   });
 
   const deleteHistory = Effect.fn("terminal.deleteHistory")(function* (
     threadId: string,
     terminalId: string,
   ) {
-    yield* fileSystem.remove(historyPath(threadId, terminalId), { force: true }).pipe(
-      Effect.catch((error) =>
-        Effect.logWarning("failed to delete terminal history", {
-          threadId,
-          terminalId,
-          error,
-        }),
-      ),
-    );
-    if (terminalId === DEFAULT_TERMINAL_ID && hasLegacyHistoryPath(threadId)) {
-      yield* fileSystem.remove(legacyHistoryPath(threadId), { force: true }).pipe(
-        Effect.catch((error) =>
-          Effect.logWarning("failed to delete terminal history", {
-            threadId,
-            terminalId,
-            error,
-          }),
+    yield* Effect.forEach(
+      historyPaths(threadId, terminalId),
+      (filePath) =>
+        Effect.gen(function* () {
+          if (yield* historyExists(filePath)) {
+            yield* fileSystem.remove(filePath, { force: true });
+          }
+        }).pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("failed to delete terminal history", {
+              threadId,
+              terminalId,
+              error,
+            }),
+          ),
         ),
-      );
-    }
+      { discard: true },
+    );
   });
 
   const deleteAllHistoryForThread = Effect.fn("terminal.deleteAllHistoryForThread")(function* (
@@ -2091,7 +2345,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     yield* Effect.forEach(
       entries.filter(
         (name) =>
-          name === `${legacySafeThreadId(threadId)}.log` ||
+          (hasLegacyHistoryName(threadId) && name === legacyHistoryName(threadId)) ||
           threadParts.some((part) => name === `${part}.log` || name.startsWith(`${part}_`)),
       ),
       (name) =>
@@ -2108,12 +2362,20 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   });
 
   const assertValidCwd = Effect.fn("terminal.assertValidCwd")(function* (cwd: string) {
-    const stats = yield* fileSystem.stat(cwd).pipe(
+    const stat = fileSystem.stat(cwd).pipe(
       Effect.catchTags({
         PlatformError: (cause) =>
           cause.reason._tag === "NotFound"
             ? new TerminalCwdNotFoundError({ cwd })
             : new TerminalCwdStatError({ cwd, cause }),
+      }),
+    );
+    const stats = yield* stat.pipe(
+      Effect.catchTags({
+        TerminalCwdNotFoundError: (error) =>
+          Effect.flatMap(TerminalCwdRecovery, (recover) =>
+            recover(error).pipe(Effect.andThen(stat)),
+          ),
       }),
     );
     if (stats.type !== "Directory") {
@@ -2199,9 +2461,12 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           return { type: "idle" } as const;
         }
 
+        session.pendingProcessEvents[session.pendingProcessEventIndex] = undefined;
         session.pendingProcessEventIndex += 1;
-        if (session.pendingProcessEventIndex >= session.pendingProcessEvents.length) {
-          session.pendingProcessEvents = [];
+        if (session.pendingProcessEventIndex * 2 >= session.pendingProcessEvents.length) {
+          session.pendingProcessEvents = session.pendingProcessEvents.slice(
+            session.pendingProcessEventIndex,
+          );
           session.pendingProcessEventIndex = 0;
         }
 
@@ -2329,7 +2594,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     index = 0,
     lastError: PtyAdapter.PtySpawnError | null = null,
   ): Effect.fn.Return<
-    { process: PtyAdapter.PtyProcess; shellLabel: string },
+    { process: PtyAdapter.PtyProcess; shell: string; shellLabel: string },
     PtyAdapter.PtySpawnError
   > {
     if (index >= shellCandidates.length) {
@@ -2372,6 +2637,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     if (attempt._tag === "Success") {
       return {
         process: attempt.success,
+        shell: candidate.shell,
         shellLabel: formatShellCandidate(candidate),
       };
     }
@@ -2400,6 +2666,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     const startingAt = yield* nowIso;
     yield* modifyManagerState((state) => {
       session.status = "starting";
+      session.shell = null;
       session.cwd = input.cwd;
       session.worktreePath = input.worktreePath ?? null;
       session.cols = input.cols;
@@ -2474,6 +2741,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             };
             yield* modifyManagerState((state) => {
               session.process = ptyProcess;
+              session.shell = spawnResult.shell;
               session.pid = processPid;
               session.status = "running";
               // onExit may replay an exit immediately; accept it before subscribing.
@@ -2626,39 +2894,29 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       }));
 
     if (runningSessions.length === 0) {
-      return true;
+      return { snapshotSucceeded: true, queryElapsedMs: 0 };
     }
     if (
       runningSessions.every(({ session }) => isQuiet(session)) &&
       skippedQuietTicks < QUIET_SUBPROCESS_SNAPSHOT_EVERY_TICKS - 1
     ) {
       skippedQuietTicks += 1;
-      return true;
+      return { snapshotSucceeded: true, queryElapsedMs: 0 };
     }
     skippedQuietTicks = 0;
 
-    const inspectorOption = yield* acquireSubprocessInspector.pipe(
-      Effect.asSome,
-      Effect.catch((reason) =>
-        Effect.logWarning("failed to snapshot processes for terminal subprocess polling", {
-          reason,
-        }).pipe(
-          Effect.as(
-            Option.none<{
-              readonly inspector: TerminalSubprocessInspector;
-              readonly snapshotSucceeded: boolean;
-            }>(),
-          ),
-        ),
-      ),
+    const { inspector, snapshotSucceeded, queryElapsedMs } = yield* acquireSubprocessInspector(
+      PROCESS_TABLE_QUERY_TIMEOUT,
     );
-
-    if (Option.isNone(inspectorOption)) {
+    if (Result.isFailure(inspector)) {
+      yield* Effect.logWarning("failed to snapshot processes for terminal subprocess polling", {
+        reason: inspector.failure,
+      });
       quietSessions = new WeakMap();
-      return false;
+      return { snapshotSucceeded: false, queryElapsedMs };
     }
 
-    const { inspector: subprocessInspector, snapshotSucceeded } = inspectorOption.value;
+    const subprocessInspector = inspector.success;
     const checkSubprocessActivity = Effect.fn("terminal.checkSubprocessActivity")(function* (
       candidate: (typeof runningSessions)[number],
     ) {
@@ -2754,7 +3012,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       discard: true,
     });
 
-    return snapshotSucceeded;
+    return { snapshotSucceeded, queryElapsedMs };
   });
 
   const hasRunningSessions = readManagerState.pipe(
@@ -2769,13 +3027,14 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       Effect.flatMap((active) =>
         active
           ? pollSubprocessActivity().pipe(
-              Effect.flatMap((snapshotSucceeded) => {
+              Effect.flatMap(({ snapshotSucceeded, queryElapsedMs }) => {
                 subprocessSnapshotFailureCount = snapshotSucceeded
                   ? 0
                   : Math.min(subprocessSnapshotFailureCount + 1, 30);
                 const delayMs = subprocessSnapshotPollDelayMs(
                   subprocessPollIntervalMs,
                   subprocessSnapshotFailureCount,
+                  queryElapsedMs,
                 );
                 return Effect.sleep(delayMs);
               }),
@@ -2859,11 +3118,13 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         cols,
         rows,
         process: null,
+        shell: null,
         unsubscribeData: null,
         unsubscribeExit: null,
         hasRunningSubprocess: false,
         childCommandLabel: null,
         runtimeEnv: normalizedRuntimeEnv(input.env),
+        stopOnSettle: input.stopOnSettle ?? false,
       };
 
       const createdSession = session;
@@ -2889,6 +3150,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     }
 
     const liveSession = existing.value;
+    if (input.stopOnSettle !== undefined) liveSession.stopOnSettle = input.stopOnSettle;
     const nextRuntimeEnv = normalizedRuntimeEnv(input.env);
     const currentRuntimeEnv = liveSession.runtimeEnv;
     const targetCols = input.cols ?? liveSession.cols;
@@ -2955,6 +3217,14 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       input.threadId,
       resolveLaunchInputEnvironment(input).pipe(Effect.flatMap(openLocked)),
     );
+
+  const getShell = Effect.fn("terminal.getShell")(function* (input: TerminalObserveInput) {
+    const session = yield* requireSession(input.threadId, input.terminalId);
+    if (session.status !== "running" || session.shell === null) {
+      return yield* new TerminalNotRunningError(input);
+    }
+    return session.shell;
+  });
 
   const openOrAttachForStream = Effect.fnUntraced(function* (requestedInput: TerminalAttachInput) {
     const terminalId = requestedInput.terminalId;
@@ -3200,20 +3470,41 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       registerCleanup,
     );
 
-  const attachOutputStream: TerminalManager["Service"]["attachOutputStream"] = (input, viewerId) =>
-    Stream.unwrap(
+  const attachOutputStream: TerminalManager["Service"]["attachOutputStream"] = (
+    input,
+    viewerId,
+  ) => {
+    const { maxHistoryBytes } = input;
+    const retained = (listener: (event: TerminalAttachStreamEvent) => Effect.Effect<void>) =>
+      maxHistoryBytes === undefined
+        ? listener
+        : (event: TerminalAttachStreamEvent) =>
+            listener(
+              "snapshot" in event
+                ? {
+                    ...event,
+                    snapshot: {
+                      ...event.snapshot,
+                      history: retainedTerminalHistory(event.snapshot.history, maxHistoryBytes),
+                    },
+                  }
+                : event,
+            );
+    return Stream.unwrap(
       Effect.acquireRelease(
         Effect.sync(() => retainViewerOnce(input, viewerId, null)),
         (release) => Effect.sync(release),
       ).pipe(
         Effect.as(
           terminalOutputStream(
-            (listener, registerCleanup) => attachStream(input, listener, registerCleanup, viewerId),
-            (listener, registerCleanup) => resyncStream(input, listener, registerCleanup),
+            (listener, registerCleanup) =>
+              attachStream(input, retained(listener), registerCleanup, viewerId),
+            (listener, registerCleanup) => resyncStream(input, retained(listener), registerCleanup),
           ),
         ),
       ),
     );
+  };
 
   const metadataEventFromTerminalEvent = (
     event: TerminalEvent,
@@ -3411,7 +3702,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           running.map((session) => [session.terminalId, terminalActivityMark(session)]),
         );
         // Inspect now so commands started after the last poll still protect their terminals.
-        const { inspector } = yield* acquireSubprocessInspector;
+        const { inspector: inspectorResult } = yield* acquireSubprocessInspector(
+          platform === "win32" ? CLOSE_IDLE_QUERY_TIMEOUT.win32 : CLOSE_IDLE_QUERY_TIMEOUT.posix,
+        );
+        const inspector = yield* Effect.fromResult(inspectorResult);
         yield* Effect.forEach(
           running,
           (session) =>
@@ -3435,8 +3729,26 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       ),
     );
 
+  const closeOnSettle = Effect.fn("terminal.closeOnSettle")(function* (input: {
+    readonly threadId: string;
+  }) {
+    yield* withThreadLock(
+      input.threadId,
+      Effect.gen(function* () {
+        const sessions = yield* sessionsForThread(input.threadId);
+        yield* Effect.forEach(
+          sessions.filter((session) => session.stopOnSettle),
+          (session) => closeSession(input.threadId, session.terminalId, false),
+          { discard: true },
+        );
+      }),
+    );
+    yield* closeIdle(input);
+  });
+
   return TerminalManager.of({
     open,
+    getShell,
     attachStream,
     attachOutputStream,
     observeStream,
@@ -3446,9 +3758,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     clear,
     close,
     closeIdle,
+    closeOnSettle,
     subscribe,
     subscribeMetadata,
   });
 });
 
-export const layer = Layer.effect(TerminalManager, make()).pipe(Layer.provide(ProcessRunner.layer));
+export const layer = (deriveConfigMap: typeof deriveProviderInstanceConfigMap) =>
+  Layer.effect(TerminalManager, make(deriveConfigMap)).pipe(Layer.provide(ProcessRunner.layer));

@@ -1,4 +1,4 @@
-import { render } from "../../../test/render";
+import { fakeTimers, render } from "../../../test/render";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
@@ -22,6 +22,8 @@ function pressEscape(): KeyboardEvent {
 it("confirms on the second click and disarms on Escape", async () => {
   const onConfirm = vi.fn();
   await using screen = await render(<MergeButton scopeKey="a" onConfirm={onConfirm} />);
+  // An armed action disarms after 3s, and a slow runner can take longer between two clicks.
+  using _timers = fakeTimers();
   const button = screen.getByRole("button");
 
   await userEvent.click(button);
@@ -76,3 +78,40 @@ it("stops swallowing Escape once the armed button unmounts", async () => {
   await screen.rerender(<ToolbarWithMergeButton shown />);
   await expect.element(screen.getByRole("button")).toHaveTextContent("Merge");
 });
+
+it.each(["merge", "enable-auto-merge"] as const)(
+  "keeps a blocked %s action reachable without arming or performing it",
+  async (primaryAction) => {
+    const perform = vi.fn(async () => true);
+    const { PullRequestPrimaryAction } = await import("./PullRequestDetailActions");
+    const control = (mergeBlockedReason: string | null) => (
+      <PullRequestPrimaryAction
+        pullRequestKey="owner/repo/7"
+        primaryAction={primaryAction}
+        mergeBlockedReason={mergeBlockedReason}
+        autoMergeArmed={false}
+        armedAutoMergeLabel="Auto-merge enabled"
+        pendingAutoMergeLabel="Auto-merge (squash)"
+        selectedMergeMethod="squash"
+        selectedMergeMethodLabel="Squash and merge"
+        statePresentation={null}
+        pendingAction={null}
+        perform={perform}
+        resolveConflicts={null}
+      />
+    );
+    await using screen = await render(control("Checking stack membership…"));
+    using _timers = fakeTimers();
+    const button = screen.getByRole("button");
+    await userEvent.tab();
+    await expect.element(button).toHaveFocus();
+    await expect.element(button).toHaveAccessibleDescription("Checking stack membership…");
+    await userEvent.keyboard("{Enter}{Enter} ");
+    expect(perform).not.toHaveBeenCalled();
+    await screen.rerender(control(null));
+    await userEvent.click(button);
+    expect(perform).not.toHaveBeenCalled();
+    await userEvent.click(button);
+    expect(perform).toHaveBeenCalledExactlyOnceWith(primaryAction, "squash");
+  },
+);

@@ -1,4 +1,4 @@
-import * as Prisma from "alchemy/Prisma";
+import * as Prisma from "@alchemy.run/prisma";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";

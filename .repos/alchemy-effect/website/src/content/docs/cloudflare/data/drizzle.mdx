@@ -3,29 +3,16 @@ title: Add Drizzle ORM
 description: Deploy a Cloudflare Worker with Drizzle queries, Hyperdrive connections, and reviewed, committed migrations on Neon or PlanetScale.
 ---
 
-import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+import PackageManagers from "../../../../components/PackageManagers.astro";
 
-export const drizzleDeps = `drizzle-orm@1.0.0-rc.5-ab785fc @effect/sql-pg pg`;
-export const drizzleDevDeps = `drizzle-kit@1.0.0-rc.5-ab785fc @types/pg`;
+export const drizzleDeps = `@alchemy.run/drizzle drizzle-orm@1.0.0-rc.5 @effect/sql-pg`;
+export const drizzleDevDeps = `drizzle-kit@1.0.0-rc.5`;
 
 This walkthrough connects a Worker to Postgres through Hyperdrive; [SQL](/sql) owns the portable client APIs. For Cloudflare's SQLite database, use [Drizzle on D1](/cloudflare/data/d1-drizzle).
 
 ## Install the client and generator
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code={`bun add ${drizzleDeps}\nbun add -d ${drizzleDevDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code={`npm install ${drizzleDeps}\nnpm install -D ${drizzleDevDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code={`pnpm add ${drizzleDeps}\npnpm add -D ${drizzleDevDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code={`yarn add ${drizzleDeps}\nyarn add -D ${drizzleDevDeps}`} lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers add={drizzleDeps} dev={drizzleDevDeps} />
 
 Keep the exact Drizzle prerelease pins together for the Effect integration; `drizzle-kit` is a development dependency.
 
@@ -95,7 +82,7 @@ Use [Neon's database configuration](/neon/guides/drizzle#feed-migrations-from-th
 
 ```typescript
 // src/Hyperdrive.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import { NeonDb } from "./Db.ts";
 
@@ -114,8 +101,8 @@ Hyperdrive pools the direct Neon origin; local development uses the pooled origi
 
 ```typescript
 // src/Api.ts
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Drizzle from "alchemy/Drizzle/Postgres";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Drizzle from "@alchemy.run/drizzle/Postgres";
 import * as Effect from "effect/Effect";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Hyperdrive } from "./Hyperdrive.ts";
@@ -141,15 +128,15 @@ export default class Api extends Cloudflare.Worker<Api>()(
 ) {}
 ```
 
-`nodejs_compat` enables the Node APIs used by `pg`, and `ConnectBinding` supplies the Worker's Hyperdrive binding. Queries yield directly as Effects and acquire their pool only within the request's [scope](/sql/effect-sql/lifecycle).
+`nodejs_compat` enables the Node socket and TLS APIs `@effect/sql-pg` uses, and `ConnectBinding` supplies the Worker's Hyperdrive binding. Queries yield directly as Effects and acquire their pool only within the request's [scope](/sql/effect-sql/lifecycle).
 
 ## Register the providers
 
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Neon from "alchemy/Neon";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Neon from "@alchemy.run/neon";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import Api from "./src/Api.ts";
@@ -240,8 +227,8 @@ Review each generated change before committing and deploy only those committed f
 
 ```diff lang="typescript"
 // alchemy.run.ts
--import * as Neon from "alchemy/Neon";
-+import * as Planetscale from "alchemy/Planetscale";
+-import * as Neon from "@alchemy.run/neon";
++import * as Planetscale from "@alchemy.run/planetscale";
 
 -    providers: Layer.mergeAll(Cloudflare.providers(), Neon.providers()),
 +    providers: Layer.mergeAll(Cloudflare.providers(), Planetscale.providers()),
@@ -253,7 +240,7 @@ Use the [PlanetScale guide](/planetscale/guides/drizzle) to export `PlanetscaleD
 
 ```typescript
 // src/Hyperdrive.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import { PlanetscaleDb } from "./Db.ts";
 
@@ -285,13 +272,13 @@ Select the MySQL resource variant in the [PlanetScale guide](/planetscale/guides
 ## Select the MySQL client
 
 ```sh
-bun add @effect/sql-mysql2 mysql2
+bun add @effect/sql-mysql2
 ```
 
 ```diff lang="typescript"
 // src/Api.ts
--import * as Drizzle from "alchemy/Drizzle/Postgres";
-+import * as Drizzle from "alchemy/Drizzle/MySQL";
+-import * as Drizzle from "@alchemy.run/drizzle/Postgres";
++import * as Drizzle from "@alchemy.run/drizzle/MySQL";
 
 -const db = yield* Drizzle.Postgres(hd.connectionString, { relations });
 +const db = yield* Drizzle.MySQL(hd.connectionString, { relations });
