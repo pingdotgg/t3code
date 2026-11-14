@@ -70,7 +70,26 @@ CREATE TABLE IF NOT EXISTS receipts (
   command_type TEXT NOT NULL,
   sequence     INTEGER NOT NULL
 );
+-- Rollbacks admitted and not yet committed or failed, so a restart can finish them (T3 keeps
+-- `provider-thread.rollback` in its effect outbox). `phase`: `admitted`; `provider`, the
+-- provider rollback was sent; `provider_done`, its answer is in `snapshot`.
+CREATE TABLE IF NOT EXISTS pending_rollbacks (
+  command_id TEXT PRIMARY KEY,
+  thread_id  TEXT NOT NULL,
+  request    TEXT NOT NULL,
+  phase      TEXT NOT NULL,
+  snapshot   TEXT
+);
 ";
+
+/// A rollback a previous process left pending (`pending_rollbacks`).
+pub(crate) struct PendingRollback {
+    pub(crate) command_id: String,
+    pub(crate) thread_id: String,
+    pub(crate) request: Value,
+    pub(crate) phase: String,
+    pub(crate) snapshot: Option<Value>,
+}
 
 /// The projection collections of `OrchestrationV2ThreadProjection`, in its field order.
 pub(crate) const COLLECTIONS: [&str; 15] = [
@@ -475,6 +494,55 @@ impl Store {
             })
             .map_err(err)?;
         keyed_rows(rows)
+    }
+
+    /// Rollbacks admitted and not yet committed or failed, in admission order.
+    pub(crate) fn pending_rollbacks(&self) -> StoreResult<Vec<PendingRollback>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT command_id, thread_id, request, phase, snapshot FROM pending_rollbacks
+                 ORDER BY rowid",
+            )
+            .map_err(err)?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                ))
+            })
+            .map_err(err)?;
+        rows.map(|row| {
+            let (command_id, thread_id, request, phase, snapshot) = row.map_err(err)?;
+            Ok(PendingRollback {
+                command_id,
+                thread_id,
+                request: parse(request)?,
+                phase,
+                snapshot: snapshot.map(parse).transpose()?,
+            })
+        })
+        .collect()
+    }
+
+    /// Moves a pending rollback to `phase`, with the provider's answer for `provider_done`.
+    pub(crate) fn set_rollback_phase(
+        &self,
+        command_id: &str,
+        phase: &str,
+        snapshot: Option<&Value>,
+    ) -> StoreResult<()> {
+        self.conn
+            .execute(
+                "UPDATE pending_rollbacks SET phase = ?2, snapshot = ?3 WHERE command_id = ?1",
+                rusqlite::params![command_id, phase, snapshot.map(Value::to_string)],
+            )
+            .map(drop)
+            .map_err(err)
     }
 
     /// Runs that were live when the store was last written: `(thread_id, run)`.
@@ -939,6 +1007,34 @@ impl Tx<'_> {
     /// Ends the write without committing. Sequences it took are given back: the store's
     /// counter only moves on a commit.
     pub(crate) fn rollback(self) {}
+
+    /// Records an admitted rollback until it commits or fails.
+    pub(crate) fn put_pending_rollback(
+        &self,
+        command_id: &str,
+        thread_id: &str,
+        request: &Value,
+    ) -> StoreResult<()> {
+        self.tx
+            .execute(
+                "INSERT OR REPLACE INTO pending_rollbacks (command_id, thread_id, request, phase)
+                 VALUES (?1, ?2, ?3, 'admitted')",
+                rusqlite::params![command_id, thread_id, request.to_string()],
+            )
+            .map(drop)
+            .map_err(err)
+    }
+
+    /// Forgets a rollback that committed or failed.
+    pub(crate) fn clear_pending_rollback(&self, command_id: &str) -> StoreResult<()> {
+        self.tx
+            .execute(
+                "DELETE FROM pending_rollbacks WHERE command_id = ?1",
+                [command_id],
+            )
+            .map(drop)
+            .map_err(err)
+    }
 
     // Raw access for the shell derivation in `shell.rs`.
     pub(crate) fn conn(&self) -> &Connection {

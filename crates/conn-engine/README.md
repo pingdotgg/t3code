@@ -84,6 +84,11 @@ all 23 are.
   repeats the provider rollback on every retry, which cuts a Codex thread again each time
   (`docs/status.md`, "Faults found in the T3 server"). Test:
   `a_failing_restore_rolls_the_provider_back_once`.
+  An admitted rollback stays in `pending_rollbacks` until it commits or fails. A restart runs
+  it again if the provider rollback was not sent, goes on from the file restore if its answer
+  was kept, and records a failure (`ROLLBACK_INTERRUPTED_MESSAGE`) if the server stopped in
+  between, where T3 would send the provider rollback again. Test:
+  `a_restart_finishes_or_fails_a_rollback_left_pending`.
 - **Fork** (`src/fork.rs`). `thread.fork` makes the fork thread and a pending `fork` transfer
   (`ThreadForkService.plan`). Its first turn forks the source's native thread from the source
   run's turn (`Session::fork_thread`) and consumes the transfer (`native_fork`). T3's portable

@@ -960,3 +960,103 @@ async fn a_failed_restore_leaves_the_live_session_on_its_thread() {
         "the turn continues the stored thread: {heads:?}"
     );
 }
+
+/// A store left with a rollback pending, as a crash leaves it (review finding 4.2): the
+/// previous process admitted the rollback and stopped with the provider rollback in flight.
+/// `phase` is what the store then says: `admitted` (sent nothing), `provider` (sent it, no
+/// answer), `provider_done` (its answer kept). A restart finishes the first and the last, as
+/// T3 requeues the effect, and records a failure for the middle one.
+#[tokio::test(flavor = "current_thread")]
+async fn a_restart_finishes_or_fails_a_rollback_left_pending() {
+    for phase in ["admitted", "provider", "provider_done"] {
+        let db = TempDb::new(&format!("rb-pending-{phase}"));
+        let repo = Repo::new(&format!("rb-pending-{phase}"));
+        let pending = || -> Vec<(String, String)> {
+            let conn = rusqlite::Connection::open(db.path()).unwrap();
+            let mut stmt = conn
+                .prepare("SELECT command_id, phase FROM pending_rollbacks")
+                .unwrap();
+            stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect()
+        };
+        let provider_thread = {
+            let (engine, _) = with_turns(
+                &db,
+                &repo,
+                FakeProvider::new("claudeAgent").with_control_delay(Duration::from_secs(60)),
+                create_worktree_thread(&repo),
+                &["write a.txt one", "write b.txt two", "write c.txt three"],
+            )
+            .await;
+            let p = projection(&engine, "t1").await;
+            dispatch(&engine, rollback("rb-1", &checkpoint_at(&p, 1), None)).await;
+            for _ in 0..250 {
+                if pending() == [("rb-1".to_owned(), "provider".to_owned())] {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            assert_eq!(pending(), [("rb-1".to_owned(), "provider".to_owned())]);
+            p["providerThreads"][0].clone()
+        };
+        let conn = rusqlite::Connection::open(db.path()).unwrap();
+        conn.execute(
+            "UPDATE pending_rollbacks SET phase = ?1, snapshot = ?2",
+            rusqlite::params![
+                phase,
+                (phase == "provider_done").then(|| provider_thread.to_string())
+            ],
+        )
+        .unwrap();
+        drop(conn);
+
+        let (engine, provider) = open_repo(&db, &repo);
+        let p = until(&engine, |p| {
+            p["runs"][2]["status"] == "rolled_back" || p["thread"]["rollbackFailure"].is_object()
+        })
+        .await;
+        assert!(pending().is_empty(), "{phase}: the row goes");
+        let statuses: Vec<_> = p["runs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["status"].as_str().unwrap().to_owned())
+            .collect();
+        if phase == "provider" {
+            assert_eq!(
+                p["thread"]["rollbackFailure"],
+                json!({"requestId": "rb-1", "message": crate::rollback::ROLLBACK_INTERRUPTED_MESSAGE}),
+                "{phase}"
+            );
+            assert_eq!(statuses, ["completed", "completed", "completed"], "{phase}");
+            assert_eq!(repo.read("c.txt").as_deref(), Some("three\n"), "{phase}");
+            assert!(provider.rollbacks.lock().unwrap().is_empty(), "{phase}");
+        } else {
+            assert!(
+                p["thread"]["rollbackFailure"].is_null(),
+                "{phase}: {}",
+                p["thread"]
+            );
+            assert_eq!(
+                statuses,
+                ["completed", "rolled_back", "rolled_back"],
+                "{phase}"
+            );
+            assert_eq!(repo.read("b.txt"), None, "{phase}: files restored");
+            assert_eq!(repo.read("c.txt"), None, "{phase}: files restored");
+            let sent = provider.rollbacks.lock().unwrap().clone();
+            let expected: &[&str] = if phase == "admitted" {
+                &["turn 1"]
+            } else {
+                &[]
+            };
+            assert_eq!(
+                sent, expected,
+                "{phase}: provider rollbacks after the restart"
+            );
+            assert_eq!(p["providerThreads"][0]["lastRunOrdinal"], 1, "{phase}");
+        }
+    }
+}

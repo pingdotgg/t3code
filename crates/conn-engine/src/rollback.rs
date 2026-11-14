@@ -25,7 +25,7 @@ use serde_json::{Value, json};
 
 use crate::commands::{CommandError, Effect, Outcome, live_thread, reject};
 use crate::engine::Inner;
-use crate::store::{Draft, StoreResult, Tx};
+use crate::store::{Draft, PendingRollback, StoreResult, Tx};
 
 /// `ROLLBACK_FAILED_MESSAGE`.
 pub(crate) const ROLLBACK_FAILED_MESSAGE: &str = "The provider could not roll back this conversation. Try again; if it keeps failing, check the provider and server logs.";
@@ -244,7 +244,7 @@ pub(crate) fn checkpoint_rollback(tx: &mut Tx<'_>, command: Value) -> Outcome {
         )
         .command(Some(&command_id)),
     )?;
-    Ok(vec![Effect::Rollback(RollbackRequest {
+    let request = RollbackRequest {
         thread_id,
         command_id,
         provider_thread_id: provider_thread["id"]
@@ -254,7 +254,10 @@ pub(crate) fn checkpoint_rollback(tx: &mut Tx<'_>, command: Value) -> Outcome {
         checkpoint_id: checkpoint_id.to_owned(),
         scope_id: scope_id.to_owned(),
         restore_files,
-    })])
+        resume_snapshot: None,
+    };
+    tx.put_pending_rollback(&request.command_id, &request.thread_id, &request.to_row())?;
+    Ok(vec![Effect::Rollback(request)])
 }
 
 /// The `provider-thread.rollback` effect.
@@ -266,6 +269,99 @@ pub(crate) struct RollbackRequest {
     pub(crate) checkpoint_id: String,
     pub(crate) scope_id: String,
     pub(crate) restore_files: Option<bool>,
+    /// The provider's answer a previous process stored before it stopped: the rollback goes on
+    /// from the file restore and sends no provider rollback.
+    pub(crate) resume_snapshot: Option<Value>,
+}
+
+impl RollbackRequest {
+    /// The request as `pending_rollbacks` keeps it.
+    fn to_row(&self) -> Value {
+        json!({
+            "providerThreadId": self.provider_thread_id,
+            "checkpointId": self.checkpoint_id,
+            "scopeId": self.scope_id,
+            "restoreFiles": self.restore_files,
+        })
+    }
+
+    fn from_row(pending: &PendingRollback) -> Option<Self> {
+        let text = |field: &str| pending.request[field].as_str().map(str::to_owned);
+        Some(Self {
+            thread_id: pending.thread_id.clone(),
+            command_id: pending.command_id.clone(),
+            provider_thread_id: text("providerThreadId")?,
+            checkpoint_id: text("checkpointId")?,
+            scope_id: text("scopeId")?,
+            restore_files: pending.request["restoreFiles"].as_bool(),
+            resume_snapshot: None,
+        })
+    }
+}
+
+/// The client message for a rollback a previous process stopped in after it sent the provider
+/// rollback: whether the provider rolled back is unknown, and a second provider rollback could
+/// cut its conversation again.
+pub(crate) const ROLLBACK_INTERRUPTED_MESSAGE: &str = "The server stopped during this rollback, after it asked the provider to roll back. The provider's conversation may already be rolled back, while the files and the turns here are not. Check the conversation before you try again.";
+
+/// What a restart does with a rollback a previous process left pending (T3 requeues
+/// `provider-thread.rollback` after a process loss, `EffectOutbox.reconcileAfterProcessLoss`).
+/// Before the provider rollback was sent, and after its answer was stored, the rollback runs
+/// again from that point; in between, sending it again could cut a Codex thread twice, so the
+/// rollback fails with [`ROLLBACK_INTERRUPTED_MESSAGE`].
+pub(crate) fn recover_pending(
+    tx: &mut Tx<'_>,
+    pending: PendingRollback,
+) -> StoreResult<Option<Effect>> {
+    let Some(mut request) = RollbackRequest::from_row(&pending) else {
+        eprintln!(
+            "conn-engine: dropped a pending rollback {} with a broken row",
+            pending.command_id
+        );
+        tx.clear_pending_rollback(&pending.command_id)?;
+        return Ok(None);
+    };
+    match (pending.phase.as_str(), pending.snapshot) {
+        ("admitted", _) => Ok(Some(Effect::Rollback(request))),
+        ("provider_done", Some(snapshot)) => {
+            request.resume_snapshot = Some(snapshot);
+            Ok(Some(Effect::Rollback(request)))
+        }
+        _ => {
+            write_rollback_failure(
+                tx,
+                &pending.thread_id,
+                &pending.command_id,
+                ROLLBACK_INTERRUPTED_MESSAGE,
+            )?;
+            Ok(None)
+        }
+    }
+}
+
+/// `checkpoint.rollback.fail`: forgets the pending rollback and sets `rollbackFailure` while
+/// the request is still the thread's.
+fn write_rollback_failure(
+    tx: &mut Tx<'_>,
+    tid: &str,
+    request_id: &str,
+    message: &str,
+) -> StoreResult<()> {
+    tx.clear_pending_rollback(request_id)?;
+    let Some(mut thread) = tx.thread(tid)? else {
+        return Ok(());
+    };
+    if thread["rollbackRequestId"] != request_id {
+        return Ok(());
+    }
+    let now = tx.now().to_owned();
+    thread["rollbackFailure"] = json!({"requestId": request_id, "message": message});
+    thread["updatedAt"] = json!(now);
+    tx.append(
+        Draft::new(tid, "thread.metadata-updated", thread)
+            .command(Some(&format!("{request_id}:rollback-failed"))),
+    )?;
+    Ok(())
 }
 
 /// `getCheckpointRollbackContext`.
@@ -430,7 +526,10 @@ impl Inner {
     /// recorded. The effect holds its thread's lane meanwhile, so no turn starts in between.
     pub(crate) async fn rollback(self: &Arc<Self>, request: RollbackRequest) {
         let mut attempt = 1;
-        let mut progress = RollbackProgress::default();
+        let mut progress = RollbackProgress {
+            provider: request.resume_snapshot.clone().map(|row| (row, None)),
+            ..RollbackProgress::default()
+        };
         let outcome = loop {
             match self.try_rollback(&request, &mut progress).await {
                 Ok(()) => break Ok(()),
@@ -474,22 +573,7 @@ impl Inner {
             message.to_owned(),
         );
         let written = self
-            .write(move |tx| {
-                let Some(mut thread) = tx.thread(&tid)? else {
-                    return Ok(());
-                };
-                if thread["rollbackRequestId"] != request_id.as_str() {
-                    return Ok(());
-                }
-                let now = tx.now().to_owned();
-                thread["rollbackFailure"] = json!({"requestId": request_id, "message": message});
-                thread["updatedAt"] = json!(now);
-                tx.append(
-                    Draft::new(&tid, "thread.metadata-updated", thread)
-                        .command(Some(&format!("{request_id}:rollback-failed"))),
-                )?;
-                Ok(())
-            })
+            .write(move |tx| write_rollback_failure(tx, &tid, &request_id, &message))
             .await;
         if let Err(e) = written {
             eprintln!("conn-engine: could not record a rollback failure: {e}");
@@ -545,6 +629,11 @@ impl Inner {
         } else {
             let live = self.rollback_session(&context).await?;
             live.touch(self.clock.now_millis());
+            // From here a restart cannot tell whether the provider rolled back.
+            let id = request.command_id.clone();
+            self.db(move |store| store.set_rollback_phase(&id, "provider", None))
+                .await
+                .map_err(RollbackFailure::Failed)?;
             let snapshot = live
                 .session()
                 .rollback_thread(RollbackThreadInput {
@@ -560,6 +649,14 @@ impl Inner {
                 .await
                 .map_err(|e| RollbackFailure::Failed(e.to_string()))?;
             let row = to_json(&snapshot.provider_thread);
+            let (id, stored) = (request.command_id.clone(), row.clone());
+            let kept = self
+                .db(move |store| store.set_rollback_phase(&id, "provider_done", Some(&stored)))
+                .await;
+            if let Err(e) = kept {
+                // A restart then records a failure instead of finishing the rollback.
+                eprintln!("conn-engine: could not keep a provider rollback's answer: {e}");
+            }
             progress.provider = Some((row.clone(), Some((live, snapshot.provider_thread))));
             row
         };
@@ -596,9 +693,10 @@ impl Inner {
             return Err(RollbackFailure::Failed("checkpoints are off".into()));
         }
 
-        let tid = request.thread_id.clone();
+        let (tid, command_id) = (request.thread_id.clone(), request.command_id.clone());
         let instance = context.provider_thread["providerInstanceId"].clone();
         self.write(move |tx| {
+            tx.clear_pending_rollback(&command_id)?;
             commit_rollback(
                 tx,
                 &tid,

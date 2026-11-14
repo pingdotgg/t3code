@@ -200,6 +200,7 @@ impl SqliteEngine {
         store.set_clock(config.clock.clone());
         store.generates_titles = config.title_generator.is_some();
         let unfinished = store.unfinished_runs()?;
+        let pending_rollbacks = store.pending_rollbacks()?;
         let mut tx = store.tx()?;
         for project in &config.projects {
             tx.ensure_project(
@@ -208,7 +209,12 @@ impl SqliteEngine {
                 &project.workspace_root,
             )?;
         }
+        // A rollback a previous process left pending goes first: it was admitted before the
+        // restart, and its lane holds the thread's next turn until it ends.
         let mut effects = vec![];
+        for pending in pending_rollbacks {
+            effects.extend(crate::rollback::recover_pending(&mut tx, pending)?);
+        }
         for (thread_id, run) in unfinished
             .iter()
             .filter(|(_, run)| commands::is_active(run))

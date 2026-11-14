@@ -489,6 +489,15 @@ Deliberate differences from the T3 server:
   server"). In that failure path Codex gets fewer `thread/rollback` requests from us than from
   T3. Nick decided this on 2026-11-14. Proof: `a_failing_restore_rolls_the_provider_back_once`,
   `a_failed_restore_leaves_the_live_session_on_its_thread`.
+- **A rollback a crash interrupts after the provider rollback was sent fails on restart.** The
+  store keeps each admitted rollback until it commits or fails (`pending_rollbacks`, with its
+  phase), as T3 keeps `provider-thread.rollback` in its effect outbox. On open, a rollback that
+  had not reached the provider runs again, and one whose provider answer was kept goes on from
+  the file restore; both end as in T3, which requeues the effect. A rollback that stopped
+  between sending the provider rollback and keeping its answer is recorded as failed, with a
+  message that says the provider may already have rolled back. T3 runs it again from the
+  provider rollback, which can cut a Codex thread twice. Proof:
+  `a_restart_finishes_or_fails_a_rollback_left_pending` (fails without the recovery).
 
 ## Faults found in the T3 server
 
