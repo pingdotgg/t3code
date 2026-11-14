@@ -457,6 +457,8 @@ function taskStatusForRun(
   switch (run === undefined ? undefined : runOutcome(run)) {
     case "queued":
       return "queued";
+    case "starting":
+      return "starting";
     case "waiting":
       return "waiting";
     case "completed":
@@ -469,7 +471,6 @@ function taskStatusForRun(
     case "interrupted":
       return "interrupted";
     case "preparing":
-    case "starting":
     case "running":
     case undefined:
       return "running";
@@ -1669,6 +1670,7 @@ const make = Effect.gen(function* () {
         .pipe(Effect.mapError(threadManagementFailure)));
     const workState =
       task.result !== null ? "result_available" : heldForRestart ? "working" : taskWorkState;
+    const runStatus = taskStatusForRun(taskResultRun ?? childRun);
     const status =
       task.result !== null
         ? taskStatusForRun(
@@ -1681,12 +1683,11 @@ const make = Effect.gen(function* () {
           )
         : workState === "result_available"
           ? // A cancelled task's finished turn settles it as interrupted.
-            task.cancelledRunId !== undefined &&
-            taskStatusForRun(taskResultRun ?? childRun) === "completed"
+            task.cancelledRunId !== undefined && runStatus === "completed"
             ? "interrupted"
-            : taskStatusForRun(taskResultRun ?? childRun)
-          : taskStatusForRun(taskResultRun ?? childRun) === "queued"
-            ? "queued"
+            : runStatus
+          : runStatus === "queued" || runStatus === "starting"
+            ? runStatus
             : "running";
     const derivedResult =
       task.result !== null
@@ -1877,7 +1878,9 @@ const make = Effect.gen(function* () {
   ): Effect.fn.Return<OrchestratorMcpDelegateTaskResult, OrchestratorMcpFailure> {
     const status: OrchestratorMcpDelegateTaskResult["status"] =
       task.result === null
-        ? "running"
+        ? (yield* remoteDelegation.runStatus(scope, task)) === "starting"
+          ? "starting"
+          : "running"
         : task.status === "completed" ||
             task.status === "failed" ||
             task.status === "cancelled" ||

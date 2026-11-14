@@ -3243,6 +3243,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
         const resolvePromptParts = Effect.fnUntraced(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
         ) {
+          if (turnInput.resume) return [];
           const text = (yield* providerMessageTextWithAttachmentPaths({
             text: turnInput.message.text,
             attachments: turnInput.message.attachments,
@@ -3547,6 +3548,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               ...turnInput,
               message: { ...turnInput.message, text: "/compact" },
             }),
+          resumeTurn: (input) => runtimeSession.startTurn(ProviderAdapter.resumeTurnInput(input)),
           startTurn: Effect.fn("OpencodeAdapter.startTurn")(
             function* (turnInput) {
               if (nativeStreamFailure !== null) {

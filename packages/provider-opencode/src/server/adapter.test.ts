@@ -203,6 +203,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
     text = "hello",
     startProviderThread: OrchestrationV2ProviderThread = providerThread,
     turnPolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy = policy,
+    resume = false,
     override: Partial<ProviderAdapter.ProviderAdapterV2TurnInput> = {},
   ) =>
     runtime.startTurn({
@@ -236,6 +237,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
       attemptId: RunAttemptId.make(`attempt-opencode-${suffix}`),
       rootNodeId: NodeId.make(`node-opencode-${suffix}`),
       providerThread: startProviderThread,
+      ...(resume ? { resume: true as const } : {}),
       message: {
         createdBy: "user",
         creationSource: "web",
@@ -267,6 +269,7 @@ describe("OpenCodeAdapterV2", () => {
     ["unknown", "prompt"],
     ["failure", "prompt"],
     ["unset", "prompt"],
+    ["unset", "resume"],
   ] as const)("normalizes reasoning variants for %s inventory at %s dispatch", ([kind, request]) =>
     Effect.gen(function* () {
       const suffix = `variant-${kind}-${request}`;
@@ -332,10 +335,16 @@ describe("OpenCodeAdapterV2", () => {
           ],
         },
       );
-      yield* harness.startTurn(request === "command" ? "/review staged changes" : "hello");
+      yield* harness.startTurn(
+        request === "command" ? "/review staged changes" : request === "resume" ? "" : "hello",
+        harness.providerThread,
+        harness.policy,
+        request === "resume",
+      );
       assert.equal(inputs.length, 1);
       const payload = inputs[0]!;
       assert.equal(payload.agent, "plan");
+      if (request === "resume") assert.deepEqual(payload.parts, []);
       if (kind === "supported" || kind === "unknown" || kind === "failure") {
         assert.equal(payload.variant, "medium");
       } else {
@@ -808,6 +817,7 @@ describe("OpenCodeAdapterV2", () => {
         "Background task completed.",
         harness.providerThread,
         harness.policy,
+        false,
         {
           runId: RunId.make("run-opencode-wake-2"),
           runOrdinal: 2,
