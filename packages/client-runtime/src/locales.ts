@@ -11,20 +11,24 @@ const NATIVE_LANGUAGE_NAMES: Readonly<Record<string, string>> = {
   "pt-BR": "Português (Brasil)",
   ru: "Русский",
   zh: "中文（简体）",
+  "zh-TW": "中文（繁體）",
 };
 
 export function nativeLanguageName(locale: string): string {
   return NATIVE_LANGUAGE_NAMES[locale] ?? locale;
 }
 
-// Our `zh` is Simplified, so Traditional tags only match an exact locale.
+// Our `zh` is Simplified, so Traditional tags fall back to `zh-TW`, never to `zh`.
 const TRADITIONAL_CHINESE = /^zh[-_](hant|tw|hk|mo)\b/;
 
 function matchSupportedLocale(tag: string, supported: ReadonlyArray<string>): string | undefined {
   const normalized = tag.trim().toLowerCase();
   const language = normalized.split(/[-_]/)[0];
   const exact = supported.find((locale) => locale.toLowerCase() === normalized);
-  if (exact || TRADITIONAL_CHINESE.test(normalized)) return exact;
+  if (exact) return exact;
+  if (TRADITIONAL_CHINESE.test(normalized)) {
+    return supported.find((locale) => locale.toLowerCase() === "zh-tw");
+  }
   return supported.find((locale) => locale.toLowerCase() === language);
 }
 
