@@ -427,6 +427,10 @@ export const AntigravityDriver: ProviderDriver<
     const usage = yield* makeAntigravityUsageProbe({
       profileDirectory,
       authMethod: auth.authMethod,
+      // Resolved per probe because the binary path's target can change.
+      credentialsInProfile: installation
+        .resolve(settings.binaryPath, processEnvironment)
+        .pipe(Effect.map((executable) => executable.harnessPath !== null)),
     }).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),

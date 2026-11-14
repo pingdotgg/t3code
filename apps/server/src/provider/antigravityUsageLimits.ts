@@ -207,9 +207,16 @@ function modelWindows(models: typeof Models.Type) {
   return [...windows.values()];
 }
 
-export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(function* (input: {
+export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(function* <
+  E,
+>(input: {
   readonly profileDirectory: string;
   readonly authMethod: AntigravitySettings["authMethod"];
+  /**
+   * False for the `agy` CLI, which keeps its sign-in outside the profile. A failure keeps the
+   * last answer, so a runtime that stops resolving is still read as the kind it was.
+   */
+  readonly credentialsInProfile: Effect.Effect<boolean, E>;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -222,6 +229,8 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
     | { fingerprint: string; account: string; accessToken: string; expiresAt: number }
     | undefined;
   let generation = 0;
+  // Outlives `clear`: signing out does not change which runtime is installed.
+  let credentialsInProfile = true;
 
   const request = (request: HttpClientRequest.HttpClientRequest) =>
     client.execute(request).pipe(
@@ -235,6 +244,18 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
     if (input.authMethod !== "oauth-personal" && input.authMethod !== "oauth-business") {
       return makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
+    }
+    credentialsInProfile = yield* input.credentialsInProfile.pipe(
+      Effect.orElseSucceed(() => credentialsInProfile),
+    );
+    if (!credentialsInProfile) {
+      // A leftover ACP token here can belong to another account than the CLI's.
+      cached = undefined;
+      return makeUnavailableUsageLimits({
+        checkedAt,
+        reason: "unsupported",
+        message: "Antigravity limits are unavailable when using the agy CLI.",
+      });
     }
     if (!(yield* fs.exists(tokenPath))) {
       cached = undefined;
