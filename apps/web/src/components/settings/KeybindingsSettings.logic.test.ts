@@ -169,6 +169,41 @@ describe("KeybindingsSettings.logic", () => {
     ).toBe("mod+m");
   });
 
+  it("records a letter key as its letter when the layout puts a punctuation symbol on it", () => {
+    const letterKey = {
+      key: ".",
+      code: "KeyH",
+      metaKey: false,
+      ctrlKey: true,
+      altKey: false,
+      shiftKey: false,
+    };
+    const punctuationKey = { ...letterKey, code: "Period" };
+
+    expect(keybindingFromKeyboardEvent(letterKey, "Linux x86_64")).toBe("mod+h");
+    expect(keybindingFromKeyboardEvent(letterKey, "Linux x86_64", { layoutCharacter: true })).toBe(
+      "mod+h",
+    );
+    expect(
+      keybindingFromKeyboardEvent(punctuationKey, "Linux x86_64", { layoutCharacter: true }),
+    ).toBe("mod+.");
+
+    const input = keybindingFromKeyboardEvent(letterKey, "Linux x86_64", { layoutCharacter: true });
+    assert(input);
+    const shortcut = parseKeybindingShortcut(input);
+    assert(shortcut);
+    expect(
+      resolveShortcutCommand(letterKey, [{ command: "thread.previous", shortcut }], {
+        platform: "Linux x86_64",
+      }),
+    ).toBe("thread.previous");
+    expect(
+      resolveShortcutCommand(punctuationKey, [{ command: "thread.previous", shortcut }], {
+        platform: "Linux x86_64",
+      }),
+    ).toBeNull();
+  });
+
   it("serializes shortcuts and when expressions for upserts", () => {
     expect(
       shortcutToKeybindingInput({

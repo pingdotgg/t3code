@@ -13,6 +13,7 @@ import {
 export {
   EVENT_CODE_SHORTCUT_KEYS,
   isMacPlatform,
+  letterKeyForLayoutSymbol,
   matchesKeybindingShortcut,
   matchesKeybindingShortcutModifiers,
   normalizeEventKey,

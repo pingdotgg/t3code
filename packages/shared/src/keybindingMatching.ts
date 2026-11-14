@@ -64,13 +64,29 @@ export function shortcutKeyFromEvent(
   // An unshifted "+" is a dedicated zoom key (German, Spanish, Nordic); Czech types it on Digit1.
   const isZoomPlus = layoutKey === "+" && !event.shiftKey && !event.altKey;
   if (isZoomPlus && !event.code?.startsWith("Digit")) return layoutKey;
+  const letterKey = letterKeyForLayoutSymbol(event);
+  if (letterKey) return letterKey;
   const physicalKey = event.code ? EVENT_CODE_SHORTCUT_KEYS[event.code] : undefined;
   return physicalKey ?? layoutKey;
 }
 
+// A layout can put a punctuation key's symbol on a letter key (custom XKB layouts type "."
+// on KeyH); the letter key resolves as its own letter so the two keys can't record or match
+// as the same shortcut. Alt-modified symbols (macOS Option glyphs) and an unshifted "+"
+// zoom key keep the layout symbol.
+export function letterKeyForLayoutSymbol(
+  event: Pick<ShortcutEventLike, "key" | "code" | "shiftKey" | "altKey">,
+): string | undefined {
+  const layoutKey = normalizeEventKey(event.key);
+  if (event.altKey || layoutKey.length !== 1) return undefined;
+  if (layoutKey === "+" && !event.shiftKey) return undefined;
+  if (/[\p{L}\p{N}]/u.test(layoutKey)) return undefined;
+  return event.code?.match(/^Key([A-Z])$/)?.[1]?.toLowerCase();
+}
+
 export function resolveEventKeys(event: ShortcutEventLike): Set<string> {
   const layoutKey = normalizeEventKey(event.key);
-  const keys = new Set([layoutKey]);
+  const keys = new Set<string>(letterKeyForLayoutSymbol(event) ? [] : [layoutKey]);
   const letterCode = event.code?.match(/^Key([A-Z])$/)?.[1];
   if (letterCode && !/^[a-z]$/.test(layoutKey)) {
     keys.add(letterCode.toLowerCase());

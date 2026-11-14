@@ -13,7 +13,11 @@ import {
   US_SHIFTED_TO_UNSHIFTED_KEYS,
 } from "@t3tools/shared/keybindings";
 
-import { shortcutConflictKey, shortcutKeyFromEvent } from "../../keybindings";
+import {
+  letterKeyForLayoutSymbol,
+  shortcutConflictKey,
+  shortcutKeyFromEvent,
+} from "../../keybindings";
 import { isMacPlatform } from "../../lib/utils";
 import { METRIC_OPTIONS, WINDOW_OPTIONS } from "../usage/usageShortcuts";
 
@@ -411,7 +415,11 @@ function recordedLayoutShortcutKey(
   // Normalize only US shifted glyphs at their US position. Other layouts can
   // produce the same glyph without Shift or at a different position.
   const unshiftedKey = event.shiftKey ? US_SHIFTED_TO_UNSHIFTED_KEYS.get(layoutKey) : undefined;
-  return unshiftedKey === physicalKey ? physicalKey : layoutKey;
+  if (unshiftedKey === physicalKey) return physicalKey;
+  // A layout symbol on a letter key records as that letter; the symbol belongs
+  // to the dedicated punctuation key that types it.
+  if (letterKeyForLayoutSymbol(event)) return physicalKey;
+  return layoutKey;
 }
 
 function normalizeShortcutKeyToken(key: string): string | null {

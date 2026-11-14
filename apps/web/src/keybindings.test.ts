@@ -783,6 +783,25 @@ describe("resolveShortcutCommand", () => {
       "diff.toggle",
     );
   });
+
+  it("keeps a letter key with a layout symbol apart from the dedicated punctuation key", () => {
+    const keybindings = compile([
+      { shortcut: modShortcut("h"), command: "thread.previous" },
+      { shortcut: modShortcut("."), command: "thread.next" },
+    ]);
+    // A layout can put "." on KeyH while the dedicated Period key still types ".".
+    const letterKey = event({ key: ".", code: "KeyH", ctrlKey: true });
+    const punctuationKey = event({ key: ".", code: "Period", ctrlKey: true });
+
+    assert.strictEqual(
+      resolveShortcutCommand(letterKey, keybindings, { platform: "Linux x86_64" }),
+      "thread.previous",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(punctuationKey, keybindings, { platform: "Linux x86_64" }),
+      "thread.next",
+    );
+  });
 });
 
 describe("isRichTextBoldShortcut", () => {
