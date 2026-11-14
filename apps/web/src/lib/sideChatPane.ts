@@ -1,3 +1,4 @@
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { OrchestrationV2ThreadShell, ScopedThreadRef } from "@t3tools/contracts";
 
 import type { ToolCallDiffTarget } from "../diffPanelStore";
@@ -18,14 +19,17 @@ export interface SideChatParentPanel {
   readonly runShellCommand: (command: string) => void;
 }
 
-/** Opens `thread` in its tab when it is a side chat of `parentRef`; false for any other thread. */
-export function openSideChatTab(
-  parentRef: ScopedThreadRef,
-  thread: Pick<OrchestrationV2ThreadShell, "id" | "lineage"> | null,
-): boolean {
-  if (thread?.lineage.sideChat !== true || thread.lineage.parentThreadId !== parentRef.threadId) {
-    return false;
-  }
-  useRightPanelStore.getState().openSideChat(parentRef, thread.id);
-  return true;
+/**
+ * Where opening `threadRef` should route. A side chat shows as a tab of its parent, so this opens
+ * that tab and returns the parent; any other thread returns `threadRef`.
+ */
+export function resolveThreadOpenRoute(
+  threadRef: ScopedThreadRef,
+  thread: Pick<OrchestrationV2ThreadShell, "lineage"> | null,
+): ScopedThreadRef {
+  const parentThreadId = thread?.lineage.sideChat === true ? thread.lineage.parentThreadId : null;
+  if (parentThreadId === null) return threadRef;
+  const parentRef = scopeThreadRef(threadRef.environmentId, parentThreadId);
+  useRightPanelStore.getState().openSideChat(parentRef, threadRef.threadId);
+  return parentRef;
 }
