@@ -75,6 +75,8 @@ const compact = (schema: Json, optional: boolean): Json => {
   for (const [key, value] of Object.entries(schema)) {
     if (key === "additionalProperties" && value === true) continue;
     if (SAFE_INTEGER_BOUNDS[key] === value) continue;
+    // Gemini takes string enums only; any other fails the whole request, so every turn.
+    if (key === "enum" && Array.isArray(value) && !value.every(Predicate.isString)) continue;
     result[key] =
       key === "properties" && Predicate.isObject(value)
         ? Object.fromEntries(

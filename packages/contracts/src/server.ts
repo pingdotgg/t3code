@@ -625,7 +625,7 @@ const EnvironmentThemeColors = Schema.Record(
 export const THEME_CSS_MAX_LENGTH = 20_000;
 
 const environmentThemeFields = {
-  version: Schema.optional(Schema.Literal(1)),
+  version: Schema.optional(Schema.Literal(1).annotate({ description: "Must be 1 when set." })),
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(48)),
   appearance: Schema.Literals(["light", "dark"]),
   /** Derive the palette from canvas/accent, then overlay colors; without them, colors is the palette. */
