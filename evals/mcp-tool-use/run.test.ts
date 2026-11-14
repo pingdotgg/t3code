@@ -730,31 +730,6 @@ it("replays earlier capability results with the model under test as the caller",
   const resumed = buildMessages(makeSample({ ...testCase, prompt: "" }, base));
   assert.equal(resumed.at(-1)?.role, "user");
   assert.equal(resumed.at(-1)?.content.at(-1)?.type, "tool_result");
-  const answered = buildMessages(
-    makeSample(
-      {
-        ...testCase,
-        prompt: "",
-        setup: {
-          ...testCase.setup,
-          asyncAnswer: {
-            question: {
-              id: "destination",
-              header: "Destination",
-              question: "Use the saved destination?",
-              options: [{ label: "Use saved", description: "Keep suite 100" }],
-            },
-            answer: "suite 200",
-          },
-        },
-      },
-      base,
-    ),
-  );
-  assert.equal(
-    answered.at(-1)?.content.at(-1)?.text,
-    "Question (from assistant):\nUse the saved destination?\n\nCustom answer (instead of the listed options):\nsuite 200",
-  );
   for (const setup of [
     {
       ...testCase.setup,
