@@ -39,7 +39,7 @@ vi.mock("./useUpdateEverything", () => ({
   useUpdateEverything: () => ({
     hasUpdates: mocks.hasUpdates,
     summary: "Update everything",
-    version: null,
+    version: mocks.update?.availableVersion ?? null,
     providerCount: 0,
     rows: mocks.rows,
     restarts: [],
@@ -148,6 +148,32 @@ describe("SidebarUpdatePill update everything", () => {
 
     await userEvent.keyboard("{Escape}");
     await vi.waitFor(() => expect(document.activeElement).toBe(button.element()));
+  });
+
+  it("makes the nightly changelog accessible inside the combined update dialog", async () => {
+    setup(nightlyUpdate(RELEASE_NOTES), {
+      hasUpdates: true,
+      rows: [
+        {
+          environmentId: null,
+          label: "This machine",
+          app: "this-app",
+          skipped: null,
+          providers: ["Claude"],
+        },
+      ],
+    });
+    await using screen = await render(<SidebarUpdatePill />);
+    await userEvent.click(screen.getByRole("button", { name: "Update everything" }));
+
+    const dialog = page.getByRole("alertdialog");
+    await expect
+      .element(dialog.getByRole("region", { name: "Nightly release notes" }))
+      .toBeVisible();
+    await expect.element(dialog.getByText("Faster sidebar.")).toBeVisible();
+    await expect
+      .element(dialog.getByRole("link", { name: "View release on GitHub" }))
+      .toBeVisible();
   });
 
   it("exposes the machines as a table with each value in its column", async () => {
