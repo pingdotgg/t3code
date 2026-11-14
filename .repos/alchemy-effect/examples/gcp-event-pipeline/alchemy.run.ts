@@ -1,5 +1,5 @@
+import * as GCP from "@alchemy.run/gcp";
 import * as Alchemy from "alchemy";
-import * as GCP from "alchemy/GCP";
 import * as Effect from "effect/Effect";
 import Drain from "./src/Drain.ts";
 import Ingest from "./src/Ingest.ts";

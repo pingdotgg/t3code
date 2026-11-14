@@ -9,7 +9,6 @@ import {
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import { createCanvasFrameSink, type DeviceFrameSink } from "./frame.ts";
-import { simulatorAvcConfig } from "./avcConfig.ts";
 import { type DeviceHubAccess, withDeviceHubQuery } from "./hubAccess.ts";
 import type { DevicePlatform } from "@t3tools/contracts";
 
@@ -75,6 +74,10 @@ const serveSimApiSchema = Schema.Struct({
 const decodeServeSimApi = Schema.decodeUnknownOption(serveSimApiSchema);
 const decodeWebRtcSettings = Schema.decodeUnknownOption(webRtcSettingsSchema);
 type WebRtcSettings = typeof webRtcSettingsSchema.Type;
+const decodeLeaseEnd = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ reason: Schema.String })),
+);
+const leaseEnded = (reason: string) => `Device lease ended: ${reason}`;
 const decodeTransportLocked = Schema.decodeUnknownOption(
   Schema.Struct({
     error: Schema.Literal("stream_transport_locked"),
@@ -250,7 +253,7 @@ export function scanAccessUnit(buf: Uint8Array): { isKey: boolean; sps: Uint8Arr
 }
 
 export type AvccChunk = {
-  readonly type: "description" | "keyframe" | "delta" | "seed";
+  readonly type: "description" | "keyframe" | "delta" | "seed" | "end";
   readonly payload: Uint8Array;
 };
 
@@ -259,6 +262,8 @@ const AVCC_TAGS: Record<number, AvccChunk["type"] | undefined> = {
   2: "keyframe",
   3: "delta",
   4: "seed",
+  // Simlock's final frame on a lease that ended, carrying `{ reason }`.
+  7: "end",
 };
 
 export class AvccDemuxer {
@@ -344,6 +349,23 @@ const HID_USAGE_BY_CODE: Readonly<Record<string, number>> = {
   ArrowLeft: 0x50,
   ArrowDown: 0x51,
   ArrowUp: 0x52,
+  NumpadDivide: 0x54,
+  NumpadMultiply: 0x55,
+  NumpadSubtract: 0x56,
+  NumpadAdd: 0x57,
+  NumpadEnter: 0x58,
+  Numpad1: 0x59,
+  Numpad2: 0x5a,
+  Numpad3: 0x5b,
+  Numpad4: 0x5c,
+  Numpad5: 0x5d,
+  Numpad6: 0x5e,
+  Numpad7: 0x5f,
+  Numpad8: 0x60,
+  Numpad9: 0x61,
+  Numpad0: 0x62,
+  NumpadDecimal: 0x63,
+  NumpadEqual: 0x67,
   ControlLeft: 0xe0,
   ShiftLeft: 0xe1,
   AltLeft: 0xe2,
@@ -700,6 +722,7 @@ export function createDeviceStreamClient(
       videoGeneration === feedGeneration &&
       controller === videoController;
     let retryDetail: string | undefined;
+    let leaseEnd: string | undefined;
     try {
       const response = await fetch(httpUrl(videoPath), {
         signal: videoController.signal,
@@ -764,7 +787,7 @@ export function createDeviceStreamClient(
               const configured = await configureDecoder(
                 {
                   codec: avcCodecString(chunk.payload),
-                  description: simulatorAvcConfig(chunk.payload),
+                  description: chunk.payload,
                 },
                 isCurrent,
               );
@@ -791,6 +814,11 @@ export function createDeviceStreamClient(
             case "delta":
               decode(chunk.type === "keyframe", chunk.payload);
               break;
+            case "end": {
+              const end = decodeLeaseEnd(decoder.decode(chunk.payload));
+              leaseEnd = Option.isSome(end) ? end.value.reason : "ended";
+              break;
+            }
           }
         }
       }
@@ -801,6 +829,7 @@ export function createDeviceStreamClient(
         : (cause as Error).message;
     }
     if (isCurrent()) {
+      if (leaseEnd !== undefined) return fail(leaseEnded(leaseEnd));
       controller = null;
       videoController.abort();
       closeDecoder();
@@ -1148,6 +1177,7 @@ export function createDeviceStreamClient(
       duoControl.clear();
       rotationCursor = null;
       if (stopped) return;
+      if (event.code === 4001) return fail(leaseEnded(event.reason || "ended"));
       events.onInputConnected(
         false,
         event.reason || (event.code === 1006 ? "input socket refused" : `closed ${event.code}`),

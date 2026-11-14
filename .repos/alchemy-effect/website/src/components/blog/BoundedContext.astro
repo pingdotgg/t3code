@@ -1,0 +1,133 @@
+---
+/**
+ * `<BoundedContext />` — a Domain model as a bounded context, and the Api as
+ * the only way in. HTTP, MCP and CLI clients all reach the model through
+ * `BankApi`, which exposes two commands and a view. The aggregate, the other
+ * view, the policy, the projection and the external system stay private.
+ */
+import DomainNode from "../domain/DomainNode.astro";
+import type { Kind } from "../domain/kinds.ts";
+
+const W = 900;
+const H = 420;
+const NW = 176;
+const NH = 46;
+
+const box = { x: 300, y: 12, w: W - 300 - 12, h: H - 24 };
+
+const clients: Array<{ label: string; type: string; y: number; icon: ReadonlyArray<string> }> = [
+  { label: "HTTP client", type: "toHttpApi", y: 112, icon: ["M3 5h18v14H3z", "M3 9h18", "M6 7h.01", "M9 7h.01"] },
+  { label: "Agent", type: "toMcp", y: 197, icon: ["M11 3l2 5.5L18.5 10.5 13 12.5 11 18l-2-5.5L3.5 10.5 9 8.5z", "M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z"] },
+  { label: "Terminal", type: "toCli", y: 282, icon: ["M4 17l6-6-6-6", "M12 19h8"] },
+];
+const api = { x: box.x - NW / 2, y: 197 };
+
+const exposed: Array<{ kind: Kind; label: string; y: number }> = [
+  { kind: "command", label: "DepositMoney", y: 112 },
+  { kind: "command", label: "WithdrawMoney", y: 197 },
+  { kind: "view", label: "AccountSummary", y: 282 },
+];
+const privateParts: Array<{ kind: Kind; label: string; y: number }> = [
+  { kind: "aggregate", label: "Account", y: 84 },
+  { kind: "view", label: "Statement", y: 148 },
+  { kind: "policy", label: "FraudReview", y: 212 },
+  { kind: "projection", label: "Ledger", y: 276 },
+  { kind: "external", label: "FraudCheck", y: 340 },
+];
+const exposedX = 530;
+const privateX = 730;
+
+const curve = (x1: number, y1: number, x2: number, y2: number) => {
+  const mx = (x1 + x2) / 2;
+  return `M${x1} ${y1}C${mx} ${y1} ${mx} ${y2} ${x2} ${y2}`;
+};
+---
+
+<figure class="bc not-content">
+  <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Clients reach the Bank model only through BankApi, which exposes two commands and a view">
+    <rect class="bc-box" x={box.x} y={box.y} width={box.w} height={box.h} rx="18" />
+    <text class="bc-title" x={box.x + 18} y={box.y + box.h - 16}>Bank · bounded context</text>
+    <text class="bc-col" x={exposedX} y={box.y + 32}>exposed</text>
+    <text class="bc-col" x={privateX + NW / 2 - 8} y={box.y + 32}>private</text>
+
+    {clients.map((c) => <path class="bc-edge" d={curve(16 + NW, c.y, api.x, api.y)} />)}
+    {exposed.map((e) => <path class="bc-edge" d={curve(api.x + NW, api.y, exposedX - NW / 2, e.y)} />)}
+
+    {
+      clients.map((c) => (
+        <g transform={`translate(16 ${c.y - NH / 2})`}>
+          <DomainNode kind="client" width={NW} height={NH} label={c.label} type={c.type} icon={c.icon} />
+        </g>
+      ))
+    }
+    <g transform={`translate(${api.x} ${api.y - NH / 2})`}>
+      <DomainNode kind="api" width={NW} height={NH} label="BankApi" type="the only way in" />
+    </g>
+    {
+      exposed.map((e) => (
+        <g transform={`translate(${exposedX - NW / 2} ${e.y - NH / 2})`}>
+          <DomainNode kind={e.kind} width={NW} height={NH} label={e.label} />
+        </g>
+      ))
+    }
+    {
+      privateParts.map((p) => (
+        <g class="bc-private" transform={`translate(${privateX - 8} ${p.y - NH / 2 + 6})`}>
+          <DomainNode kind={p.kind} width={NW - 16} height={NH - 12} label={p.label} />
+        </g>
+      ))
+    }
+  </svg>
+  <figcaption class="bc-cap">
+    Clients reach only what the Api lists. The aggregate, the policy, the projection and the external system stay inside,
+    free to change.
+  </figcaption>
+</figure>
+
+<style is:global>
+  .bc {
+    margin: 2rem 0;
+    padding: 12px 14px 10px;
+    background: var(--alc-bg-elev-1);
+    border: 1px solid var(--alc-hairline-2);
+    border-radius: 12px;
+  }
+  .bc svg {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+  .bc-box {
+    fill: color-mix(in srgb, var(--alc-accent) 5%, transparent);
+    stroke: var(--alc-accent);
+    stroke-width: 1.4;
+    stroke-dasharray: 6 5;
+  }
+  .bc-title {
+    font: 700 13px var(--alc-font-mono);
+    fill: var(--alc-fg-1);
+    text-anchor: start;
+  }
+  .bc-col {
+    font: 600 11px var(--alc-font-mono);
+    fill: var(--alc-fg-3);
+    text-anchor: middle;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .bc-edge {
+    fill: none;
+    stroke: var(--alc-accent);
+    stroke-width: 1.4;
+    stroke-opacity: 0.7;
+  }
+  .bc-private {
+    opacity: 0.5;
+  }
+  .bc-cap {
+    margin-top: 6px;
+    font: 13px/1.5 var(--alc-font-sans);
+    color: var(--alc-fg-3);
+    text-align: center;
+  }
+</style>

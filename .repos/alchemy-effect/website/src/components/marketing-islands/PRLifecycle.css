@@ -1,5 +1,6 @@
 /* PR preview lifecycle (landing page, "Review" stage). Windows use the
-   dark code surface in both themes; the tab bar follows the page theme. */
+   code surface, which follows the theme on marketing pages (see the light
+   palette in marketing.css); the tab bar follows the page theme. */
 
 .prf {
   /* CI colors from the brand palette: GitHub's "open = green, merged =
@@ -7,9 +8,9 @@
      the terracotta. Solid shades carry cream text; light shades are for
      icons and text on the dark windows. */
   --prf-open: #9fc06b;
-  --prf-open-solid: #4f6d35;
+  --prf-open-solid: #38511f;
   --prf-merged: #c4a2f0;
-  --prf-merged-solid: #7d4db8;
+  --prf-merged-solid: #5b3290;
   --prf-h: 420px;
   margin-top: 28px;
   font-family: var(--alc-font-sans);
@@ -18,17 +19,128 @@
 /* ---------- tabs ---------- */
 .prf-tabs-row {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 10px;
   margin-bottom: 16px;
+}
+.prf-tabs-row > .prf-play {
+  margin-bottom: 8px;
+}
+.prf-tabs-col {
+  flex: 1;
+  min-width: 0;
+}
+/* "Your machine" over the first two tabs, "CI/CD" over the rest. */
+.prf-groups {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 4px;
+  padding: 0 5px 6px;
+}
+/* Group headers: the label lights up while its steps play, and its line
+   fills as they go. This is the tab bar's progress indicator. */
+.prf-group {
+  position: relative;
+  padding: 0 4px 10px;
+  font-family: var(--alc-font-mono);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--alc-fg-3);
+  transition: color 240ms ease;
+}
+.prf-group + .prf-group {
+  margin-left: 8px;
+}
+.prf-group.is-active {
+  color: var(--alc-accent-text);
+  font-weight: 700;
+}
+.prf-group.is-done {
+  color: var(--alc-fg-1);
+}
+.prf-group__track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  border-radius: 4px;
+  background: var(--alc-hairline-3);
+  overflow: hidden;
+  transition: height 240ms ease;
+}
+.prf-group.is-active .prf-group__track {
+  height: 4px;
+}
+.prf-group__fill {
+  display: block;
+  height: 100%;
+  background: var(--alc-accent-text);
+  transform-origin: left;
+}
+
+/* How the current step's timing relates to a measured run. */
+.prf-timing {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: -4px 0 14px;
+  padding: 0 4px;
+  font-size: 13px;
+  color: var(--alc-fg-2);
+}
+.prf-timing__badge {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 9px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-family: var(--alc-font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.prf-timing__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.prf-timing--real .prf-timing__badge {
+  color: var(--alc-accent-text);
+}
+.prf-timing--real .prf-timing__dot {
+  animation: prf-pulse 1s ease-in-out infinite;
+}
+.prf-timing--scaled .prf-timing__badge {
+  color: #f5c97a;
+}
+.prf-timing--staged .prf-timing__badge {
+  color: var(--alc-fg-3);
+}
+.prf-timing__clock {
+  font-family: var(--alc-font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--alc-fg-1);
+  font-variant-numeric: tabular-nums;
+}
+.prf-timing__note {
+  flex: 1 1 320px;
+  min-width: 0;
 }
 .prf-tabs {
   flex: 1;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 4px;
-  /* Extra bottom room: the progress line runs below the highlight. */
-  padding: 4px 4px 13px;
+  padding: 4px;
   border: 1px solid var(--alc-hairline-2);
   border-radius: 12px;
   background: var(--alc-bg-elev-1);
@@ -37,7 +149,7 @@
 .prf-tabs__pill {
   position: absolute;
   top: 4px;
-  bottom: 13px;
+  bottom: 4px;
   z-index: 0;
   border-radius: 8px;
   background: var(--alc-bg);
@@ -95,10 +207,11 @@
 .prf-tab.is-done .prf-tab__num,
 .prf-tab.is-active .prf-tab__num {
   border-color: transparent;
-  background: var(--alc-accent);
-  color: var(--alc-fg-on-accent);
+  background: var(--alc-accent-text);
+  color: var(--alc-bg);
 }
 .prf-tabs__track {
+  display: none;
   position: absolute;
   left: 12px;
   right: 12px;
@@ -166,12 +279,12 @@
   min-width: 0;
   overflow: hidden;
   border-radius: 12px;
-  border: 1px solid rgba(232, 220, 192, 0.1);
+  border: 1px solid rgba(var(--alc-code-edge), 0.1);
   background: var(--alc-bg-code);
   color: var(--alc-code-var);
   box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.04) inset,
-    0 14px 40px rgba(0, 0, 0, 0.28);
+    0 1px 0 rgba(var(--alc-code-lift), 0.04) inset,
+    0 14px 40px var(--alc-code-shadow);
 }
 .prf-win__bar {
   flex: none;
@@ -179,8 +292,8 @@
   align-items: center;
   gap: 6px;
   padding: 10px 14px;
-  border-bottom: 1px solid rgba(232, 220, 192, 0.08);
-  background: rgba(255, 255, 255, 0.025);
+  border-bottom: 1px solid rgba(var(--alc-code-edge), 0.08);
+  background: rgba(var(--alc-code-lift), 0.025);
 }
 .prf-dot {
   width: 10px;
@@ -284,7 +397,7 @@
   translate: 0 -1px;
 }
 .prf-si--queued {
-  border: 1.5px solid rgba(232, 220, 192, 0.3);
+  border: 1.5px solid rgba(var(--alc-code-edge), 0.3);
   width: 12px;
   height: 12px;
   margin: 2px;
@@ -304,7 +417,7 @@
 }
 .prf-pr__head {
   padding: 16px 18px 14px;
-  border-bottom: 1px solid rgba(232, 220, 192, 0.08);
+  border-bottom: 1px solid rgba(var(--alc-code-edge), 0.08);
 }
 .prf-pr__title {
   font-size: 17px;
@@ -376,7 +489,7 @@
   font-size: 11.5px;
 }
 .prf-checks {
-  border: 1px solid rgba(232, 220, 192, 0.1);
+  border: 1px solid rgba(var(--alc-code-edge), 0.1);
   border-radius: 8px;
   overflow: hidden;
 }
@@ -388,7 +501,7 @@
   font-size: 12.5px;
 }
 .prf-checks > * + .prf-check {
-  border-top: 1px solid rgba(232, 220, 192, 0.08);
+  border-top: 1px solid rgba(var(--alc-code-edge), 0.08);
 }
 .prf-check__name {
   flex: 1;
@@ -408,7 +521,7 @@
   border-radius: 0;
 }
 .prf-comment {
-  border: 1px solid rgba(232, 220, 192, 0.12);
+  border: 1px solid rgba(var(--alc-code-edge), 0.12);
   border-radius: 8px;
   overflow: hidden;
 }
@@ -419,8 +532,8 @@
   padding: 8px 12px;
   font-size: 12.5px;
   color: var(--alc-fg-invert);
-  background: rgba(255, 255, 255, 0.03);
-  border-bottom: 1px solid rgba(232, 220, 192, 0.08);
+  background: rgba(var(--alc-code-lift), 0.03);
+  border-bottom: 1px solid rgba(var(--alc-code-edge), 0.08);
 }
 .prf-avatar {
   display: grid;
@@ -429,14 +542,14 @@
   height: 20px;
   border-radius: 50%;
   background: #14110d;
-  border: 1px solid rgba(232, 220, 192, 0.18);
+  border: 1px solid rgba(var(--alc-code-edge), 0.18);
 }
 .prf-avatar svg {
   display: block;
 }
 .prf-bot {
   padding: 0 6px;
-  border: 1px solid rgba(232, 220, 192, 0.25);
+  border: 1px solid rgba(var(--alc-code-edge), 0.25);
   border-radius: 999px;
   font-size: 10.5px;
   color: var(--alc-code-comment);
@@ -464,7 +577,7 @@
   font-size: 11px;
   padding: 1px 5px;
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(var(--alc-code-lift), 0.06);
   color: var(--alc-fg-invert);
 }
 .prf-mergebox {
@@ -519,7 +632,7 @@
   background: var(--prf-merged-solid);
 }
 .prf-event__icon--you {
-  background: var(--alc-terracotta);
+  background: #7a3a18;
   font-size: 9.5px;
   font-weight: 700;
 }
@@ -567,7 +680,7 @@
   flex: none;
   display: flex;
   flex-direction: column;
-  border: 1px solid rgba(232, 220, 192, 0.1);
+  border: 1px solid rgba(var(--alc-code-edge), 0.1);
   border-radius: 8px;
   overflow: hidden;
 }
@@ -578,12 +691,12 @@
   gap: 9px;
   padding: 10px 12px;
   color: var(--alc-fg-invert);
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(var(--alc-code-lift), 0.03);
   border-bottom: 1px solid transparent;
   transition: border-color 300ms ease;
 }
 .prf-job.is-expanded .prf-job__head {
-  border-bottom-color: rgba(232, 220, 192, 0.08);
+  border-bottom-color: rgba(var(--alc-code-edge), 0.08);
 }
 .prf-job__head .prf-muted {
   margin-left: auto;
@@ -623,10 +736,10 @@
   display: flex;
   flex-direction: column;
   margin: 0 10px 10px;
-  border: 1px solid rgba(232, 220, 192, 0.12);
+  border: 1px solid rgba(var(--alc-code-edge), 0.12);
   border-radius: 7px;
   overflow: hidden;
-  background: rgba(0, 0, 0, 0.18);
+  background: rgba(var(--alc-code-sink), 0.18);
   animation: prf-expand 460ms cubic-bezier(0.2, 0, 0, 1) both;
 }
 @keyframes prf-expand {
@@ -648,8 +761,8 @@
   font-family: var(--alc-font-mono);
   font-size: 12px;
   color: var(--alc-fg-invert);
-  background: rgba(255, 255, 255, 0.04);
-  border-bottom: 1px solid rgba(232, 220, 192, 0.08);
+  background: rgba(var(--alc-code-lift), 0.04);
+  border-bottom: 1px solid rgba(var(--alc-code-edge), 0.08);
 }
 .prf-xstep__chev {
   margin-left: auto;
@@ -671,7 +784,7 @@
   flex: none;
   width: 26px;
   text-align: right;
-  color: rgba(232, 220, 192, 0.3);
+  color: var(--alc-code-comment);
   user-select: none;
 }
 .prf-log__t {
@@ -690,7 +803,7 @@
   align-items: flex-end;
   gap: 6px;
   padding: 8px 12px 0;
-  background: rgba(0, 0, 0, 0.22);
+  background: rgba(var(--alc-code-sink), 0.22);
 }
 .prf-win__bar--tabs .prf-dot {
   margin-bottom: 11px;
@@ -751,7 +864,7 @@
   width: 9px;
   height: 9px;
   border-radius: 50%;
-  border: 1.5px solid rgba(232, 220, 192, 0.25);
+  border: 1.5px solid rgba(var(--alc-code-edge), 0.25);
   border-top-color: var(--alc-accent-bright);
   animation: prf-spin 700ms linear infinite;
 }
@@ -763,7 +876,7 @@
   margin: 8px 12px 0;
   padding: 5px 10px;
   border-radius: 6px;
-  background: rgba(0, 0, 0, 0.25);
+  background: rgba(var(--alc-code-sink), 0.25);
   font-family: var(--alc-font-mono);
   font-size: 11px;
   color: var(--alc-code-comment);
@@ -797,7 +910,7 @@
   margin: 8px 12px 8px;
   padding: 5px 10px;
   border-radius: 6px;
-  background: rgba(0, 0, 0, 0.25);
+  background: rgba(var(--alc-code-sink), 0.25);
   font-family: var(--alc-font-mono);
   font-size: 11px;
   color: var(--alc-fg-invert);
@@ -812,7 +925,7 @@
   margin-left: auto;
   padding: 1px 7px;
   border-radius: 999px;
-  background: rgba(232, 176, 74, 0.14);
+  background: color-mix(in srgb, var(--alc-warn) 10%, transparent);
   color: var(--alc-warn);
   font-family: var(--alc-font-sans);
   font-size: 10.5px;
@@ -912,7 +1025,7 @@
   padding: 9px 16px 12px;
   border-top: 1px solid rgba(42, 38, 32, 0.08);
   font-size: 11.5px;
-  color: rgba(42, 38, 32, 0.7);
+  color: #4e402c;
 }
 .prf-site__pulse {
   width: 7px;
@@ -939,6 +1052,130 @@
   font-size: 9px;
 }
 
+/* ---------- editor (edit, iterate locally) ---------- */
+.prf-edtabs {
+  flex: none;
+  display: flex;
+  border-bottom: 1px solid rgba(var(--alc-code-edge), 0.08);
+  font-family: var(--alc-font-mono);
+  font-size: 11px;
+}
+.prf-edtab {
+  padding: 6px 14px;
+  color: var(--alc-code-comment);
+  border-right: 1px solid rgba(var(--alc-code-edge), 0.08);
+}
+.prf-edtab.is-active {
+  color: var(--alc-fg-invert);
+  background: rgba(var(--alc-code-lift), 0.04);
+  box-shadow: inset 0 -2px 0 var(--alc-accent);
+}
+.prf-code {
+  padding: 10px 0;
+  font-family: var(--alc-font-mono);
+  font-size: 11.5px;
+  line-height: 1.75;
+  overflow: hidden;
+}
+.prf-code__line {
+  display: flex;
+  gap: 12px;
+  padding-right: 12px;
+  white-space: pre;
+  border-left: 2px solid transparent;
+}
+.prf-code__line.is-added {
+  border-left-color: var(--alc-accent);
+  background: color-mix(in srgb, var(--alc-accent) 9%, transparent);
+}
+.prf-code__line.is-lit {
+  border-left-color: var(--alc-code-type);
+  background: color-mix(in srgb, var(--alc-code-type) 12%, transparent);
+}
+.prf-code__n {
+  flex: none;
+  width: 24px;
+  text-align: right;
+  color: var(--alc-code-comment);
+  user-select: none;
+}
+.prf-code__t {
+  min-width: 0;
+  overflow: hidden;
+}
+.prf-code__t.is-error {
+  text-decoration: underline wavy var(--alc-danger);
+  text-decoration-thickness: 1.5px;
+  text-decoration-skip-ink: none;
+  text-underline-offset: 4px;
+}
+.prf-diag {
+  margin: 2px 12px 4px 38px;
+  padding: 6px 10px;
+  border-left: 2px solid var(--alc-danger);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--alc-danger) 12%, transparent);
+  color: var(--alc-fg-invert);
+  white-space: normal;
+  line-height: 1.5;
+}
+.prf-caret {
+  display: inline-block;
+  width: 7px;
+  height: 1.15em;
+  margin-left: 1px;
+  vertical-align: text-bottom;
+  background: var(--alc-accent-bright);
+  animation: prf-blink 1s steps(1) infinite;
+}
+@keyframes prf-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* ---------- agent transcript ---------- */
+.prf-agent {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+  padding: 12px 14px;
+  font-family: var(--alc-font-mono);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.prf-act__prompt {
+  margin-bottom: 10px;
+  padding: 6px 10px;
+  border: 1px solid rgba(var(--alc-code-edge), 0.12);
+  border-radius: 6px;
+  color: var(--alc-fg-invert);
+}
+.prf-act {
+  margin-bottom: 8px;
+}
+.prf-act__dot {
+  display: inline-block;
+  width: 1.4em;
+  color: var(--alc-accent-bright);
+}
+.prf-act__out {
+  margin-left: 1.4em;
+  padding-left: 10px;
+  border-left: 1px solid rgba(var(--alc-code-edge), 0.12);
+}
+.prf-act__row {
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.prf-act__msg {
+  padding-left: 1.4em;
+  color: var(--alc-fg-invert);
+  line-height: 1.5;
+}
+
 /* ---------- responsive ---------- */
 @media (max-width: 880px) {
   .prf-stage {
@@ -949,6 +1186,19 @@
   }
 }
 @media (max-width: 640px) {
+  .prf-groups {
+    display: none;
+  }
+  /* Without the headers, a line under the tabs shows progress. */
+  .prf-tabs__track {
+    display: block;
+  }
+  .prf-tabs {
+    padding-bottom: 13px;
+  }
+  .prf-tabs__pill {
+    bottom: 13px;
+  }
   .prf-tabs {
     display: flex;
     overflow-x: auto;
@@ -965,7 +1215,8 @@
   .prf-job__done,
   .prf-tabpage,
   .prf-btab.is-new,
-  .prf-btab.is-closing {
+  .prf-btab.is-closing,
+  .prf-caret {
     animation: none;
   }
   .prf-collapse,
