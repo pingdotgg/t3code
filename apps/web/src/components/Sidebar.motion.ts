@@ -15,9 +15,9 @@ function progress(animation: Animation) {
 export function createSidebarListMotion(parent: HTMLUListElement) {
   let positions: Map<HTMLElement, RowPosition> | null = null;
   let disposed = false;
-  const reducedMotion = parent.ownerDocument.defaultView?.matchMedia(
-    "(prefers-reduced-motion: reduce)",
-  );
+  const document = parent.ownerDocument;
+  const window = document.defaultView;
+  const reducedMotion = window?.matchMedia("(prefers-reduced-motion: reduce)");
   const running = new Map<HTMLElement, { animation: Animation; offset: number }>();
   const entering = new Map<HTMLElement, { animation: Animation; travel: number }>();
   const exiting = new Map<HTMLElement, Animation>();
@@ -117,6 +117,15 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
     );
   };
 
+  // Hidden documents freeze the animation timeline, so motion queued while minimized or
+  // occluded would replay on return. Resizes move the bottom-anchored shelves, which
+  // makes the cached positions stale.
+  const onVisibilityChange = () => {
+    if (document.visibilityState === "hidden") suspend();
+  };
+  document.addEventListener("visibilitychange", onVisibilityChange);
+  window?.addEventListener("resize", suspend);
+
   return {
     update(animate: boolean) {
       if (disposed) return;
@@ -151,6 +160,7 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
       const shouldAnimate =
         animate &&
         positions !== null &&
+        document.visibilityState === "visible" &&
         !reducedMotion?.matches &&
         fadeCount <= MAX_FADED_ROWS_PER_UPDATE;
       const movedDelta = new Map<HTMLElement, number>();
@@ -236,6 +246,7 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
     },
     release() {
       suspend();
+      if (document.visibilityState !== "visible") return;
       const origin = parent.getBoundingClientRect().top;
       released = new Map(
         Array.from(parent.children)
@@ -245,6 +256,8 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
     },
     suspend,
     dispose() {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window?.removeEventListener("resize", suspend);
       suspend();
       disposed = true;
     },
