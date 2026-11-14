@@ -264,6 +264,69 @@ const LOADERS: ReadonlyArray<{
 ];
 
 describe("authenticated environment HTTP requests", () => {
+  it.effect.each([
+    { name: "default", timeoutMs: undefined, deadline: 3_000 },
+    { name: "explicit", timeoutMs: 5_000, deadline: 5_000 },
+  ])("gives up on a stalled shell snapshot at the $name deadline", ({ timeoutMs, deadline }) =>
+    Effect.gen(function* () {
+      const requests = yield* Queue.unbounded<number>();
+      const harness = makeHarness((requestNumber) => {
+        Queue.offerUnsafe(requests, requestNumber);
+        return new Promise<Response>(() => {});
+      });
+      const load = yield* fetchEnvironmentShellSnapshot({
+        ...harness.input,
+        ...(timeoutMs === undefined ? {} : { timeoutMs }),
+      }).pipe(Effect.provide(harness.httpLayer), Effect.forkChild({ startImmediately: true }));
+
+      yield* Queue.take(requests);
+      yield* TestClock.adjust(deadline - 1);
+      expect(load.pollUnsafe()).toBeUndefined();
+      yield* TestClock.adjust("1 millis");
+
+      expect(yield* Fiber.await(load)).toMatchObject({
+        _tag: "Failure",
+        cause: {
+          reasons: [{ error: { _tag: "RemoteEnvironmentAuthTimeoutError", timeoutMs: deadline } }],
+        },
+      });
+    }),
+  );
+
+  it.effect("keeps a shell snapshot whose response has started past three seconds", () =>
+    Effect.gen(function* () {
+      const requests = yield* Queue.unbounded<number>();
+      let finishBody!: () => void;
+      const harness = makeHarness((requestNumber) => {
+        Queue.offerUnsafe(requests, requestNumber);
+        const body = new ReadableStream<Uint8Array>({
+          start: (controller) => {
+            finishBody = () => {
+              controller.enqueue(new TextEncoder().encode(JSON.stringify(SHELL)));
+              controller.close();
+            };
+          },
+        });
+        return new Response(body, { headers: { "content-type": "application/json" } });
+      });
+      const load = yield* fetchEnvironmentShellSnapshot(harness.input).pipe(
+        Effect.provide(harness.httpLayer),
+        Effect.forkChild({ startImmediately: true }),
+      );
+
+      yield* Queue.take(requests);
+      yield* TestClock.adjust("10 seconds");
+      expect(load.pollUnsafe()).toBeUndefined();
+      finishBody();
+
+      expect(yield* Fiber.await(load)).toMatchObject({
+        _tag: "Success",
+        value: { snapshotSequence: SHELL.snapshotSequence },
+      });
+      expect(harness.calls).toHaveLength(1);
+    }),
+  );
+
   it.effect.each(LOADERS)("rejects an invalid $name response", (loader) =>
     Effect.gen(function* () {
       const harness = makeHarness(() => Response.json({}));

@@ -11,6 +11,7 @@ import { HttpClient, HttpClientError, type HttpClientResponse } from "effect/htt
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import type { PreparedConnection } from "../connection/model.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
+import { RemoteEnvironmentAuthTimeoutError } from "../rpc/http.ts";
 import {
   executeAuthenticatedEnvironmentHttpRequest,
   withOrchestrationProtocolHeader,
@@ -34,10 +35,11 @@ export interface ShellHttpSnapshot extends DeferredShellSnapshot {
 
 export type ShellHttpAnswer = ShellHttpSnapshot | OrchestrationV2ShellResumable;
 
-// On timeout the socket asks the same server for the same full snapshot, so a
-// short deadline only throws the first build away. The socket fallback is for
-// setups where /api fails but /ws works, such as a proxy that blocks /api.
+// On timeout the socket asks the same server for the same full snapshot, so a short
+// deadline throws a slow server's build away. A proxy that stalls /api while /ws works
+// sends no response at all, which the shorter header deadline catches.
 const DEFAULT_SHELL_SNAPSHOT_TIMEOUT_MS = 20_000;
+const SHELL_SNAPSHOT_HEADERS_TIMEOUT_MS = 3_000;
 
 export const fetchEnvironmentShellSnapshot = Effect.fn(
   "clientRuntime.state.fetchEnvironmentShellSnapshot",
@@ -51,6 +53,7 @@ export const fetchEnvironmentShellSnapshot = Effect.fn(
     readonly timeoutMs?: number;
   } & ShellSnapshotOptions,
 ) {
+  const headersTimeoutMs = input.timeoutMs ?? SHELL_SNAPSHOT_HEADERS_TIMEOUT_MS;
   const endpoint = {
     query: {
       ...(input.omitIdleSubagents === true ? { omitIdleSubagents: "1" } : {}),
@@ -64,14 +67,26 @@ export const fetchEnvironmentShellSnapshot = Effect.fn(
     method: "GET",
     url: (urls) => urls.shellSnapshot(endpoint),
     timeoutMs: input.timeoutMs ?? DEFAULT_SHELL_SNAPSHOT_TIMEOUT_MS,
-    request: ({ client, headers }) =>
+    request: ({ client, headers, requestUrl }) =>
       client
         .shellSnapshot({
           headers: withOrchestrationProtocolHeader(headers),
           ...endpoint,
           responseMode: "response-only",
         })
-        .pipe(Effect.flatMap(decodeShellSnapshotResponse)),
+        .pipe(
+          Effect.timeoutOrElse({
+            duration: headersTimeoutMs,
+            orElse: () =>
+              Effect.fail(
+                new RemoteEnvironmentAuthTimeoutError({
+                  requestUrl,
+                  timeoutMs: headersTimeoutMs,
+                }),
+              ),
+          }),
+          Effect.flatMap(decodeShellSnapshotResponse),
+        ),
   });
 });
 
