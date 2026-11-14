@@ -21,7 +21,7 @@ use std::time::Duration;
 
 use conn_contract::from_json;
 use conn_provider::{
-    EnsureThreadInput, InterruptInput, ProviderEvent, RuntimeRequestResponse, Session, TurnInput,
+    EnsureThreadInput, InterruptInput, ProviderEvent, RuntimeRequestResponse, Session,
 };
 use conn_provider_support::ids::FixedEnv;
 use serde_json::{Value, json};
