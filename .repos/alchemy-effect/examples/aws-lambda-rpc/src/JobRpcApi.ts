@@ -1,43 +1,31 @@
 import { Effect, Layer, Schema } from "effect";
-import {
-  Rpc,
-  RpcGroup,
-  RpcSerialization,
-  RpcServer,
-} from "effect/rpc";
+import { Rpc, RpcGroup, RpcSerialization, RpcServer } from "effect/rpc";
 import { Job, JobId } from "./Job.ts";
 import { JobNotifications } from "./JobNotifications.ts";
 import { JobStorage } from "./JobStorage.ts";
 
-export class JobNotFound extends Schema.TaggedClass<JobNotFound>()(
-  "JobNotFound",
-  { jobId: JobId },
-) {}
+export class JobNotFound extends Schema.TaggedClass<JobNotFound>()("JobNotFound", {
+  jobId: JobId,
+}) {}
 
-export class GetJobFailed extends Schema.TaggedClass<GetJobFailed>()(
-  "GetJobFailed",
-  { message: Schema.String },
-) {}
+export class GetJobFailed extends Schema.TaggedClass<GetJobFailed>()("GetJobFailed", {
+  message: Schema.String,
+}) {}
 
-export class PutJobFailed extends Schema.TaggedClass<PutJobFailed>()(
-  "PutJobFailed",
-  { message: Schema.String },
-) {}
+export class PutJobFailed extends Schema.TaggedClass<PutJobFailed>()("PutJobFailed", {
+  message: Schema.String,
+}) {}
 
 const getJob = Rpc.make("getJob", {
   success: Job,
   error: Schema.Union([JobNotFound, GetJobFailed]),
-  payload: {
-    jobId: JobId,
-  },
+  payload: { jobId: JobId },
 });
 
 const createJob = Rpc.make("createJob", {
   success: JobId,
   error: PutJobFailed,
-  payload: {
-    content: Schema.String,
-  },
+  payload: { content: Schema.String },
 });
 
 export class JobRpcs extends RpcGroup.make(getJob, createJob) {}
@@ -50,12 +38,7 @@ export const JobRpcsLive = JobRpcs.toLayer(
     return {
       getJob: ({ jobId }) =>
         jobService.getJob(jobId).pipe(
-          Effect.mapError(
-            (error) =>
-              new GetJobFailed({
-                message: error.message,
-              }),
-          ),
+          Effect.mapError((error) => new GetJobFailed({ message: error.message })),
           Effect.flatMap((job) =>
             job ? Effect.succeed(job) : Effect.fail(new JobNotFound({ jobId })),
           ),
@@ -63,20 +46,10 @@ export const JobRpcsLive = JobRpcs.toLayer(
       createJob: ({ content }) =>
         Effect.gen(function* () {
           const jobId = crypto.randomUUID();
-          const job = yield* jobService.putJob({
-            id: jobId,
-            content,
-          });
+          const job = yield* jobService.putJob({ id: jobId, content });
           yield* notifications.notifyJobCreated(job);
           return job.id;
-        }).pipe(
-          Effect.mapError(
-            (error) =>
-              new PutJobFailed({
-                message: error.message,
-              }),
-          ),
-        ),
+        }).pipe(Effect.mapError((error) => new PutJobFailed({ message: error.message }))),
     };
   }),
 );

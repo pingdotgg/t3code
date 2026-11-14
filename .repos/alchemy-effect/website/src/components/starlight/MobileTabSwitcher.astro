@@ -6,42 +6,21 @@
  * is how you move between hubs.
  *
  * A disclosure (<details>), not a native <select>, so brand marks and
- * the More-menu category headings render exactly like the desktop
- * dropdown. Picking a product navigates to that hub's landing page.
+ * the category headings render like the desktop dropdowns. Picking a
+ * product navigates to that hub's landing page.
  */
-import { DOCS_TABS, activeTab } from "../../docs-tabs";
+import { DOCS_TABS, DOCS_TAB_GROUPS, activeTab, groupTabs } from "../../docs-tabs";
 import { TAB_ICONS } from "../../docs-icons";
 
 const current = activeTab(Astro.url.pathname);
 
-/**
- * Mobile taxonomy. The desktop More ▾ categories only classify the
- * overflow residents; here the whole tab list renders at once, so the
- * grouping is redesigned — e.g. PlanetScale, Neon, and Prisma belong
- * under Data next to SQL, not in the ungrouped primary run.
- */
-const MOBILE_GROUPS: { heading?: string; labels: string[] }[] = [
-  { labels: ["Core", "CLI"] },
-  { heading: "Clouds", labels: ["Cloudflare", "AWS"] },
-  { heading: "Data", labels: ["PlanetScale", "Neon", "Prisma", "SQL"] },
-  { heading: "Containers", labels: ["Docker", "Kubernetes"] },
-  { heading: "Observability", labels: ["Axiom"] },
-  { heading: "Source & CI", labels: ["GitHub", "Git"] },
-  { heading: "Toolchain", labels: ["Command"] },
-  { heading: "Meta", labels: ["Reference", "Blog", "Compare"] },
+// Same taxonomy as the desktop dropdowns (docs-tabs.ts), so a new hub
+// lands in the right category on both without a second list to update.
+const grouped: { heading?: string; tabs: typeof DOCS_TABS }[] = [
+  { tabs: DOCS_TABS.filter((tab) => tab.slot === "start") },
+  ...DOCS_TAB_GROUPS.map((group) => ({ heading: group.label, tabs: groupTabs(group) })),
+  { heading: "Meta", tabs: DOCS_TABS.filter((tab) => tab.slot === "end") },
 ];
-
-const byLabel = new Map(DOCS_TABS.map((tab) => [tab.label, tab]));
-const grouped = MOBILE_GROUPS.map((group) => ({
-  heading: group.heading,
-  tabs: group.labels.flatMap((label) => byLabel.get(label) ?? []),
-})).filter((group) => group.tabs.length > 0);
-
-// Any tab the taxonomy doesn't name still renders (trailing, ungrouped)
-// so a newly added provider can never silently vanish from mobile.
-const covered = new Set(MOBILE_GROUPS.flatMap((group) => group.labels));
-const leftover = DOCS_TABS.filter((tab) => !covered.has(tab.label));
-if (leftover.length > 0) grouped.push({ heading: "More", tabs: leftover });
 ---
 
 <details class="alc-switcher">
@@ -107,11 +86,11 @@ if (leftover.length > 0) grouped.push({ heading: "More", tabs: leftover });
 </details>
 
 <style>
-  /* Mobile-only: the desktop tab bar owns product navigation there. */
+  /* Below 72rem only: wider viewports get the header tab bar. */
   .alc-switcher {
     margin: 0 0 0.75rem;
   }
-  @media (min-width: 50rem) {
+  @media (min-width: 72rem) {
     .alc-switcher {
       display: none;
     }

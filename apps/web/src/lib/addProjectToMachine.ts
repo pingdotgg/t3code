@@ -3,54 +3,26 @@ import {
   runAtomCommand,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId, ProjectCloneSnapshot, ProjectId } from "@t3tools/contracts";
+import { scopedProjectKey } from "@t3tools/client-runtime/environment";
+import type {
+  EnvironmentId,
+  ProjectCloneSnapshot,
+  ProjectId,
+  ScopedProjectRef,
+} from "@t3tools/contracts";
+import { create } from "zustand";
 
-import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { appAtomRegistry } from "../rpc/atomRegistry";
-import { environmentProjectClonesAtom } from "../state/projectClones";
+import { suggestAppAccessForRemote } from "../components/sourceControlAppAccessToast";
+import { environmentProjectClonesAtom, silenceProjectCloneToasts } from "../state/projectClones";
 import { projectEnvironment } from "../state/projects";
 import { sourceControlEnvironment } from "../state/sourceControl";
-
-export type CloneProtocol = "ssh" | "https";
 
 /** Matches the server's read cap: a larger file would arrive truncated. */
 export const COPYABLE_FILE_MAX_BYTES = 1024 * 1024;
 
-const SCP_LIKE_URL = /^(?:[^@/\s]+@)?([^:/\s]+):(?!\/)(.+)$/;
-const SSH_URL = /^ssh:\/\/(?:[^@/\s]+@)?([^:/\s]+)(:\d+)?\/(.+)$/;
-const HTTPS_URL = /^https?:\/\/(?:[^@/\s]+@)?([^:/\s]+)(:\d+)?\/(.+)$/;
-
-function parseCloneUrl(
-  url: string,
-): { protocol: CloneProtocol; host: string; path: string; customPort: boolean } | null {
-  const trimmed = url.trim();
-  const ssh = SSH_URL.exec(trimmed);
-  if (ssh) return { protocol: "ssh", host: ssh[1]!, path: ssh[3]!, customPort: !!ssh[2] };
-  const https = HTTPS_URL.exec(trimmed);
-  if (https) return { protocol: "https", host: https[1]!, path: https[3]!, customPort: !!https[2] };
-  const scp = SCP_LIKE_URL.exec(trimmed);
-  if (scp) return { protocol: "ssh", host: scp[1]!, path: scp[2]!, customPort: false };
-  return null;
-}
-
-export function cloneUrlProtocol(url: string): CloneProtocol | null {
-  return parseCloneUrl(url)?.protocol ?? null;
-}
-
-/**
- * Rewrites a clone URL to the other protocol, because the target machine may
- * only have SSH keys or only an HTTPS credential helper. Returns null when the
- * URL cannot be rewritten safely, such as a custom port.
- */
-export function cloneUrlForProtocol(url: string, protocol: CloneProtocol): string | null {
-  const parsed = parseCloneUrl(url);
-  if (!parsed) return null;
-  if (parsed.protocol === protocol) return url.trim();
-  if (parsed.customPort) return null;
-  return protocol === "ssh"
-    ? `git@${parsed.host}:${parsed.path}`
-    : `https://${parsed.host}/${parsed.path}`;
-}
+/** The server lists at most this many ignored files, so one pick never exceeded it. */
+export const COPIED_FILES_MAX_COUNT = 200;
 
 const DEFAULT_COPIED_FILE_NAME = /^(?:\.env(?:\..+)?|\.envrc|\.dev\.vars)$/;
 
@@ -79,7 +51,7 @@ function failureMessage(result: Parameters<typeof squashAtomCommandFailure>[0]):
 
 /**
  * Resolves when the clone finishes, or null once it is removed. A failed or
- * cancelled clone keeps waiting, since its toast offers a retry.
+ * cancelled clone keeps waiting, since the composer offers a retry.
  */
 function waitForClone(environmentId: EnvironmentId, projectId: ProjectId) {
   return new Promise<ProjectCloneSnapshot | null>((resolve) => {
@@ -102,13 +74,37 @@ function waitForClone(environmentId: EnvironmentId, projectId: ProjectId) {
   });
 }
 
+export type ProjectFileCopy =
+  | { readonly phase: "copying" }
+  | { readonly phase: "failed"; readonly title: string; readonly failures: ReadonlyArray<string> };
+
+/** Ignored-file copies still owed to a cloned project, keyed by its scoped project key. */
+const useFileCopies = create<{ copies: Readonly<Record<string, ProjectFileCopy>> }>(() => ({
+  copies: {},
+}));
+
+function setFileCopy(key: string, copy: ProjectFileCopy | null) {
+  useFileCopies.setState(({ copies }) => {
+    const { [key]: _previous, ...rest } = copies;
+    return { copies: copy === null ? rest : { ...rest, [key]: copy } };
+  });
+}
+
+/** The composer holds sends until the copy lands, and shows a failed copy until dismissed. */
+export function useProjectFileCopy(ref: ScopedProjectRef | null): ProjectFileCopy | null {
+  return useFileCopies((state) => (ref ? (state.copies[scopedProjectKey(ref)] ?? null) : null));
+}
+
+export function dismissProjectFileCopy(ref: ScopedProjectRef) {
+  setFileCopy(scopedProjectKey(ref), null);
+}
+
 /**
- * Clones a project onto another machine, then copies the chosen ignored files
- * from the source. The client relays the files because the two servers never
- * talk to each other. Resolves once the clone starts; the clone toast shows
- * progress and a second toast reports the copied files.
+ * Clones onto another machine, then relays the chosen ignored files, since the
+ * two servers never talk. Resolves with the cloning project once it starts; the
+ * caller opens it, and its composer shows progress, so nothing toasts.
  */
-export async function addProjectToMachine(input: AddProjectToMachineInput): Promise<void> {
+export async function addProjectToMachine(input: AddProjectToMachineInput): Promise<ProjectId> {
   // Read first, so the copy reflects the files as they were when the user asked.
   const reads = await Promise.all(
     input.files.map(async (relativePath) => {
@@ -126,6 +122,11 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
     }),
   );
 
+  const requestedRef = { environmentId: input.target.environmentId, projectId: input.projectId };
+  const requestedKey = scopedProjectKey(requestedRef);
+  // Marked before the start request, since the clone list can arrive before its reply.
+  silenceProjectCloneToasts(requestedRef);
+  if (reads.length > 0) setFileCopy(requestedKey, { phase: "copying" });
   const started = await runAtomCommand(
     appAtomRegistry,
     sourceControlEnvironment.startProjectClone,
@@ -141,14 +142,31 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
     },
     { label: "Add project to machine", reportFailure: false },
   );
-  if (started._tag === "Failure") throw new Error(failureMessage(started));
-  if (input.files.length === 0) return;
+  if (started._tag === "Failure") {
+    setFileCopy(requestedKey, null);
+    throw new Error(failureMessage(started));
+  }
+  // The server clones for the existing project when one already owns the empty destination.
+  const { projectId } = started.value;
+  const targetRef = { environmentId: input.target.environmentId, projectId };
+  const copyKey = scopedProjectKey(targetRef);
+  if (projectId !== input.projectId) {
+    silenceProjectCloneToasts(targetRef);
+    if (reads.length > 0) {
+      setFileCopy(copyKey, { phase: "copying" });
+      setFileCopy(requestedKey, null);
+    }
+  }
+  void suggestAppAccessForRemote(input.target.environmentId, input.remoteUrl);
+  if (reads.length === 0) return projectId;
 
   void (async () => {
-    const clone = await waitForClone(input.target.environmentId, input.projectId);
-    if (!clone) return;
+    const clone = await waitForClone(input.target.environmentId, projectId);
+    if (!clone) {
+      setFileCopy(copyKey, null);
+      return;
+    }
     const failed: Array<string> = [];
-    let copied = 0;
     for (const read of reads) {
       if (!("contents" in read)) {
         failed.push(`${read.relativePath}: ${read.error}`);
@@ -171,23 +189,17 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
       );
       if (written._tag === "Failure")
         failed.push(`${read.relativePath}: ${failureMessage(written)}`);
-      else copied += 1;
     }
-    const noun = (count: number) => (count === 1 ? "file" : "files");
-    toastManager.add(
-      stackedThreadToast(
-        failed.length === 0
-          ? {
-              type: "success",
-              title: `Copied ${copied} ${noun(copied)} to ${input.target.label}`,
-              description: reads.map((read) => read.relativePath).join(", "),
-            }
-          : {
-              type: "error",
-              title: `Could not copy ${failed.length} ${noun(failed.length)} to ${input.target.label}`,
-              description: failed.join("\n"),
-            },
-      ),
+    setFileCopy(
+      copyKey,
+      failed.length === 0
+        ? null
+        : {
+            phase: "failed",
+            title: `Could not copy ${failed.length} ${failed.length === 1 ? "file" : "files"} to ${input.target.label}`,
+            failures: failed,
+          },
     );
   })();
+  return projectId;
 }

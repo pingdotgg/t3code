@@ -1,86 +1,74 @@
 import { describe, expect, it } from "vite-plus/test";
+import type { ThreadStructureTurnItem } from "@t3tools/client-runtime/state/shell";
 import { OrchestrationV2ProviderTurnTokenUsage } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { formatContextWindowCompactionMessage } from "../components/chat/ContextWindowMeter.logic";
+import { formatContextWindowCompactionMessage } from "../components/chat/compaction.logic";
 import * as DateTime from "effect/DateTime";
 import {
   ContextTransferId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderThreadId,
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
 import { makeThreadProjectionFixture } from "../test-fixtures";
-import { shouldOfferResumeCompaction } from "../components/chat/ContextWindowMeter.logic";
 import {
   deriveLatestContextWindowSnapshot,
-  formatContextWindowTokens,
   latestProviderTurnTokenUsage,
-} from "./contextWindow";
+  shouldOfferResumeCompaction,
+} from "@t3tools/client-runtime/state/context-window";
 
 const decodeTokenUsage = Schema.decodeSync(OrchestrationV2ProviderTurnTokenUsage);
 
+const compactionEntry = (providerThreadId: string | null) =>
+  ({
+    item: {
+      id: "compaction-1" as never,
+      threadId: "thread-1" as never,
+      runId: null,
+      nodeId: null,
+      providerThreadId: providerThreadId as never,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      status: "completed",
+      title: null,
+      startedAt: null,
+      completedAt: null,
+      updatedAt: DateTime.makeUnsafe("2026-06-20T00:00:00.000Z"),
+      type: "compaction",
+      driver: null,
+      beforeTokenCount: 10_000,
+      afterTokenCount: 2_000,
+    },
+  }) satisfies { item: ThreadStructureTurnItem };
+
 describe("V2 context window presentation", () => {
   it("uses retained compaction token data when available", () => {
-    const snapshot = deriveLatestContextWindowSnapshot([
-      {
-        item: {
-          id: "compaction-1" as never,
-          threadId: "thread-1" as never,
-          runId: null,
-          nodeId: null,
-          providerThreadId: null,
-          providerTurnId: null,
-          nativeItemRef: null,
-          parentItemId: null,
-          ordinal: 1,
-          status: "completed",
-          title: null,
-          startedAt: null,
-          completedAt: null,
-          updatedAt: DateTime.makeUnsafe("2026-06-20T00:00:00.000Z"),
-          type: "compaction",
-          driver: null,
-          beforeTokenCount: 10_000,
-          afterTokenCount: 2_000,
-        },
-      },
-    ]);
+    const snapshot = deriveLatestContextWindowSnapshot([compactionEntry(null)]);
     expect(snapshot?.usedTokens).toBe(2_000);
     expect(snapshot?.totalProcessedTokens).toBe(10_000);
   });
 
-  it("prefers current provider usage and preserves ACP cost", () => {
-    const snapshot = deriveLatestContextWindowSnapshot([], undefined, {
-      contextUsage: {
-        usedTokens: 2_500,
-        maxTokens: 10_000,
-        cost: { amount: 0.42, currency: "USD" },
-      },
-      updatedAt: DateTime.makeUnsafe("2026-08-23T00:00:00.000Z"),
-    });
-
-    expect(snapshot).toMatchObject({
-      usedTokens: 2_500,
-      maxTokens: 10_000,
-      remainingTokens: 7_500,
-      usedPercentage: 25,
-      cost: { amount: 0.42, currency: "USD" },
-    });
-  });
-
-  it("formats compact token values", () => {
-    expect(formatContextWindowTokens(1_500)).toBe("1.5k");
-  });
-
-  it.each([
-    [999_499, "999k"],
-    [999_500, "1m"],
-    [999_999, "1m"],
-    [1_000_000, "1m"],
-    [1_100_000, "1.1m"],
-  ])("formats %d tokens as %s at the million boundary", (tokens, expected) => {
-    expect(formatContextWindowTokens(tokens)).toBe(expected);
+  it("ignores a retired provider thread's compaction after a provider switch", () => {
+    const activeProviderThread = {
+      id: ProviderThreadId.make("acp-thread"),
+      contextUsage: null,
+      updatedAt: DateTime.makeUnsafe("2026-10-19T12:10:00.000Z"),
+    };
+    const retired = compactionEntry(ProviderThreadId.make("pi-thread"));
+    const current = compactionEntry(ProviderThreadId.make("acp-thread"));
+    expect(deriveLatestContextWindowSnapshot([retired], null, activeProviderThread)).toBeNull();
+    expect(
+      deriveLatestContextWindowSnapshot([current], null, activeProviderThread)?.usedTokens,
+    ).toBe(2_000);
+    // Items without a provider thread predate the split and stay visible.
+    expect(
+      deriveLatestContextWindowSnapshot([compactionEntry(null)], null, activeProviderThread)
+        ?.usedTokens,
+    ).toBe(2_000);
   });
 });
 
@@ -101,33 +89,22 @@ describe("live provider-turn usage (#8144)", () => {
     expect(snapshot?.remainingTokens).toBe(158_000);
     expect(snapshot?.usedPercentage).toBe(21);
     expect(snapshot?.autoCompactThreshold).toBe(150_000);
-    expect(
-      formatContextWindowCompactionMessage("Claude Sonnet 4.6", snapshot?.autoCompactThreshold),
-    ).toBe("Compacts automatically at about 150,000 tokens.");
-  });
-
-  it("handles a report without a known context window", () => {
-    const snapshot = deriveLatestContextWindowSnapshot([], {
-      usedTokens: 42_000,
-      updatedAt: "2026-08-27T00:00:00.000Z",
-    });
-    expect(snapshot?.maxTokens).toBeNull();
-    expect(snapshot?.usedPercentage).toBeNull();
-    expect(snapshot?.autoCompactThreshold).toBeNull();
-    expect(formatContextWindowCompactionMessage(null, snapshot?.autoCompactThreshold)).toBe(
-      "Context compacts automatically when needed.",
+    expect(formatContextWindowCompactionMessage(snapshot?.autoCompactThreshold)).toBe(
+      "Compacts automatically at about 150,000 tokens.",
     );
   });
 });
 
 describe("latestProviderTurnTokenUsage", () => {
   it("picks the newest report, not the last turn in snapshot order", () => {
+    const providerThreadId = ProviderThreadId.make("provider-thread");
     const usage = (usedTokens: number, updatedAt: string) => ({
+      providerThreadId,
       tokenUsage: { usedTokens, updatedAt },
     });
     const latest = latestProviderTurnTokenUsage([
       usage(300_000, "2026-06-20T12:00:00.000Z"),
-      {},
+      { providerThreadId },
       usage(90_000, "2026-06-20T09:00:00.000Z"),
     ]);
     expect(latest?.usedTokens).toBe(300_000);
@@ -190,13 +167,45 @@ describe("latestProviderTurnTokenUsage", () => {
 
   it("replaces inherited usage with the fork's own report", () => {
     const tokenUsage = { usedTokens: 42_000, updatedAt: "2026-10-19T12:10:00.000Z" };
-    expect(latestProviderTurnTokenUsage([{ tokenUsage }], forkProjection())).toEqual(tokenUsage);
+    expect(
+      latestProviderTurnTokenUsage(
+        [{ providerThreadId: ProviderThreadId.make("provider-thread"), tokenUsage }],
+        forkProjection(),
+      ),
+    ).toEqual(tokenUsage);
+  });
+
+  it("prefers the active provider thread's older report over a newer retired one", () => {
+    const turns = [
+      {
+        providerThreadId: ProviderThreadId.make("pi-thread"),
+        tokenUsage: decodeTokenUsage({
+          usedTokens: 180_000,
+          maxTokens: 200_000,
+          updatedAt: "2026-10-19T12:10:00.000Z",
+        }),
+      },
+      {
+        providerThreadId: ProviderThreadId.make("acp-thread"),
+        tokenUsage: decodeTokenUsage({
+          usedTokens: 12_000,
+          maxTokens: 200_000,
+          updatedAt: "2026-10-19T11:00:00.000Z",
+        }),
+      },
+    ];
+    const liveUsage = latestProviderTurnTokenUsage(turns, null, {
+      id: ProviderThreadId.make("acp-thread"),
+      contextUsage: null,
+    });
+    expect(liveUsage?.usedTokens).toBe(12_000);
   });
 
   it.each([0, 42_000])(
     "prefers target provider-thread usage of %d tokens over inherited usage",
     (usedTokens) => {
       const providerThread = {
+        id: ProviderThreadId.make("provider-thread"),
         contextUsage: {
           usedTokens,
           maxTokens: 200_000,

@@ -5,14 +5,13 @@ import type {
   ProjectId,
   WorktreeSubmodules,
 } from "@t3tools/contracts";
+import type { ThreadStructureRuntime } from "@t3tools/client-runtime/state/shell";
 import * as Schema from "effect/Schema";
-import { isTemporaryWorktreeBranch, sanitizeNewRefName } from "@t3tools/shared/git";
-import { toSortableTimestamp } from "../lib/threadSort";
-export {
-  dedupeRemoteBranchesWithLocalMatches,
-  deriveLocalBranchNameFromRemoteRef,
-  sanitizeNewRefName,
-} from "@t3tools/shared/git";
+import { sanitizeNewRefName } from "@t3tools/shared/git";
+import { workspaceRelativeFilePath } from "@t3tools/shared/path";
+import { toSortableTimestamp } from "@t3tools/client-runtime/state/thread-sort";
+import { deriveCanInterruptRunningThread } from "../session-logic";
+export { deriveLocalBranchNameFromRemoteRef, sanitizeNewRefName } from "@t3tools/shared/git";
 
 export interface EnvironmentOption {
   environmentId: EnvironmentId;
@@ -59,9 +58,8 @@ export function resolveEnvironmentOptionLabel(input: {
 export function shouldShowEnvironmentIndicator(input: {
   activeEnvironment: Pick<EnvironmentOption, "isPrimary"> | null;
   canPickEnvironment: boolean;
-  serverUpdateAvailable?: boolean;
 }): boolean {
-  if (input.canPickEnvironment || input.serverUpdateAvailable) return true;
+  if (input.canPickEnvironment) return true;
   return input.activeEnvironment !== null && !input.activeEnvironment.isPrimary;
 }
 
@@ -71,20 +69,16 @@ export function shouldShowComposerContextStrip(input: {
   hasActiveProject: boolean;
   isGitRepo: boolean;
   showEnvironmentIndicator: boolean;
-  hostsRestingComposerControls: boolean;
-  serverUpdateAvailable?: boolean;
 }): boolean {
+  // A new thread always shows the strip, since it names the permissions the first send uses.
   return (
     input.hasActiveProject &&
     (input.isDraftHeroState ||
-      input.persistInActiveThreads ||
-      input.serverUpdateAvailable === true) &&
-    (input.isGitRepo || input.showEnvironmentIndicator || input.hostsRestingComposerControls)
+      (input.persistInActiveThreads && (input.isGitRepo || input.showEnvironmentIndicator)))
   );
 }
 
-// Labels collapse to icons when the strip's content no longer fits. A small
-// hysteresis on the way back out keeps the boundary from flapping.
+// Hysteresis prevents labels and icons from flapping at the width boundary.
 const CONTEXT_STRIP_COMPACT_EXPAND_HYSTERESIS_PX = 16;
 
 export function resolveContextStripLabelsCompact(input: {
@@ -115,7 +109,7 @@ export function resolveLockedWorkspaceLabel(
   activeWorktreePath: string | null,
   effectiveEnvMode: EnvMode,
 ): string {
-  if (activeWorktreePath) return "Worktree";
+  if (activeWorktreePath) return activeWorktreePath.split(/[\\/]/).findLast(Boolean) ?? "Worktree";
   return effectiveEnvMode === "worktree" ? resolveEnvModeLabel("worktree") : "Local checkout";
 }
 
@@ -205,6 +199,46 @@ export function resolveBranchToolbarValue(input: {
   return currentGitBranch ?? activeThreadBranch;
 }
 
+export interface BranchHold {
+  readonly branch: string | null;
+  readonly environmentId: EnvironmentId;
+  /**
+   * Each checkout the thread can show before it catches up, with the branch its status reported
+   * before the switch. A move from a worktree to the project root lists both.
+   */
+  readonly checkouts: ReadonlyArray<{ readonly cwd: string; readonly replaces: string | null }>;
+}
+
+/**
+ * A finished checkout's branch stays on screen until status reports any change, because the status
+ * stream and the RPC reply are not ordered and showing status first would flip back to the old branch.
+ */
+export function isBranchHoldCurrent(
+  hold: BranchHold,
+  current: {
+    readonly canonicalBranch: string | null;
+    readonly environmentId: EnvironmentId;
+    readonly cwd: string | null;
+  },
+): boolean {
+  return (
+    hold.environmentId === current.environmentId &&
+    hold.checkouts.some(
+      (checkout) => checkout.cwd === current.cwd && checkout.replaces === current.canonicalBranch,
+    )
+  );
+}
+
+/**
+ * The base a New worktree thread gets without the user picking one. Only a listed ref qualifies:
+ * during a clone the status names an unborn HEAD that no ref backs.
+ */
+export function resolveDefaultWorktreeBaseBranch(
+  refs: ReadonlyArray<Pick<VcsRef, "name" | "isDefault" | "current">>,
+): string | null {
+  return (refs.find((ref) => ref.isDefault) ?? refs.find((ref) => ref.current))?.name ?? null;
+}
+
 export function resolveBranchTriggerLabel(input: {
   activeWorktreePath: string | null;
   effectiveEnvMode: EnvMode;
@@ -238,53 +272,48 @@ export function resolveBranchToolbarPrBranch(input: {
   return input.activeThreadBranch === input.resolvedActiveBranch ? input.activeThreadBranch : null;
 }
 
-export function resolveCheckoutBranchMismatch(input: {
+export function resolveLocalCheckoutBranchMismatch(input: {
   effectiveEnvMode: EnvMode;
   activeWorktreePath: string | null;
   activeThreadBranch: string | null;
   currentGitBranch: string | null;
-}) {
+}): { threadBranch: string; currentBranch: string } | null {
   const { effectiveEnvMode, activeWorktreePath, activeThreadBranch, currentGitBranch } = input;
-  const isLocalCheckout = effectiveEnvMode === "local" && activeWorktreePath === null;
-  const isEstablishedWorktree = effectiveEnvMode === "worktree" && activeWorktreePath !== null;
-  if (!isLocalCheckout && !isEstablishedWorktree) {
+  if (effectiveEnvMode !== "local" || activeWorktreePath !== null) {
     return null;
   }
   if (!activeThreadBranch || !currentGitBranch || activeThreadBranch === currentGitBranch) {
     return null;
   }
-  // Cached status can predate the automatic rename of a temporary worktree branch.
-  if (
-    isEstablishedWorktree &&
-    !isTemporaryWorktreeBranch(activeThreadBranch) &&
-    isTemporaryWorktreeBranch(currentGitBranch)
-  ) {
-    return null;
-  }
-  return {
-    threadBranch: activeThreadBranch,
-    currentBranch: currentGitBranch,
-    // Restoring a worktree checkout could switch the branch for sibling threads.
-    canRestoreThreadBranch: isLocalCheckout,
-  };
+  return { threadBranch: activeThreadBranch, currentBranch: currentGitBranch };
 }
 
 export function resolveBranchSelectionTarget(input: {
   activeProjectCwd: string;
+  activeProjectCheckoutRoot?: string | undefined;
   activeWorktreePath: string | null;
   refName: Pick<VcsRef, "isDefault" | "worktreePath">;
 }): {
   checkoutCwd: string;
   nextWorktreePath: string | null;
   reuseExistingWorktree: boolean;
+  staysInActiveCheckout: boolean;
 } {
   const { activeProjectCwd, activeWorktreePath, refName } = input;
 
   if (refName.worktreePath) {
+    // Until the project's checkout root loads, a checkout containing the project counts as its own.
+    const isProjectCheckout =
+      input.activeProjectCheckoutRoot === undefined
+        ? workspaceRelativeFilePath(activeProjectCwd, refName.worktreePath) !== null
+        : workspaceRelativeFilePath(input.activeProjectCheckoutRoot, refName.worktreePath) === ".";
+    const nextWorktreePath = isProjectCheckout ? null : refName.worktreePath;
     return {
       checkoutCwd: refName.worktreePath,
-      nextWorktreePath: refName.worktreePath === activeProjectCwd ? null : refName.worktreePath,
+      nextWorktreePath,
       reuseExistingWorktree: true,
+      // Listed refs can predate a checkout made outside the picker, so only Git can confirm this one.
+      staysInActiveCheckout: nextWorktreePath === activeWorktreePath,
     };
   }
 
@@ -295,7 +324,19 @@ export function resolveBranchSelectionTarget(input: {
     checkoutCwd: nextWorktreePath ?? activeProjectCwd,
     nextWorktreePath,
     reuseExistingWorktree: false,
+    staysInActiveCheckout: nextWorktreePath === activeWorktreePath,
   };
+}
+
+export function isWorktreeChangeBlocked(input: {
+  runtime: ThreadStructureRuntime | null;
+  currentWorktreePath: string | null;
+  nextWorktreePath: string | null;
+}): boolean {
+  return (
+    input.nextWorktreePath !== input.currentWorktreePath &&
+    deriveCanInterruptRunningThread(true, input.runtime)
+  );
 }
 
 export function shouldIncludeBranchPickerItem(input: {

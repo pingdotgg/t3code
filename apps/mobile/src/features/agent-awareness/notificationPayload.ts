@@ -41,7 +41,11 @@ function encodeThreadDeepLink(input: {
   if (input.environmentId.length === 0 || input.threadId.length === 0) {
     return null;
   }
-  return `/threads/${encodeURIComponent(input.environmentId)}/${encodeURIComponent(input.threadId)}`;
+  try {
+    return `/threads/${encodeURIComponent(input.environmentId)}/${encodeURIComponent(input.threadId)}`;
+  } catch {
+    return null;
+  }
 }
 
 function normalizeThreadDeepLink(value: string): string | null {
@@ -104,11 +108,11 @@ export function routeAgentNotificationResponseOnce(input: {
   if (responseId && input.handledResponseIds.has(responseId)) {
     return;
   }
-  if (responseId) {
-    input.handledResponseIds.add(responseId);
-  }
   const deepLink = extractAgentNotificationDeepLink(input.response);
   if (deepLink) {
     input.navigate(deepLink);
+  }
+  if (responseId) {
+    input.handledResponseIds.add(responseId);
   }
 }

@@ -1,5 +1,5 @@
-import { createMiniflareFromRolldown } from "../../../../cloudflare-test-tools/src/miniflare/miniflare.ts";
 import { describe, expect, it } from "vitest";
+import { createMiniflareFromRolldown } from "../../../../cloudflare-test-tools/src/miniflare/miniflare.ts";
 import { buildFixture } from "./utils/build-fixture.ts";
 
 describe("process.env", async () => {
@@ -32,9 +32,7 @@ describe("process.env", async () => {
     await using miniflare = await createMiniflareFromRolldown(built.output, {
       compatibilityDate: "2025-07-01",
     });
-    expect(await miniflare.fetchText("/globalthis-node-env")).toBe(
-      "production",
-    );
+    expect(await miniflare.fetchText("/globalthis-node-env")).toBe("production");
   });
 
   it("does not inject a global process object when only process.env is stubbed", async () => {

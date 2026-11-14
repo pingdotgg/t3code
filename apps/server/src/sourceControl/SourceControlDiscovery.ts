@@ -4,13 +4,20 @@ import {
   type VcsDriverKind,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ServerConfig from "../config.ts";
+import { refreshPathFromLoginShell } from "../os-jank.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
-import { detailFromCause, firstNonEmptyLine } from "@t3tools/source-control-core/server/discovery";
+import {
+  detailFromCause,
+  failedProbeHint,
+  firstNonEmptyLine,
+} from "@t3tools/source-control-core/server/discovery";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 
 interface DiscoveryProbe {
@@ -64,29 +71,25 @@ export class SourceControlDiscovery extends Context.Service<
   }
 >()("t3/sourceControl/SourceControlDiscovery") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const process = yield* VcsProcess.VcsProcess;
   const sourceControlProviders = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  // Discovery re-reads the login shell so a tool installed since launch
+  // resolves here and in every later spawn. Thread views, the palette and
+  // mobile also run discovery, so one interactive shell serves a short window.
+  const refreshPath = yield* refreshPathFromLoginShell().pipe(
+    Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    Effect.cachedWithTTL(Duration.seconds(10)),
+  );
 
   const probe = <Kind extends VcsDriverKind>(
-    input: DiscoveryProbe & { readonly kind: Kind },
+    input: VcsProbe & { readonly kind: Kind },
   ): Effect.Effect<DiscoveryProbeResult<Kind>> => {
     const executable = input.executable;
     const versionArgs = input.versionArgs;
-
-    if (!executable || !versionArgs) {
-      return Effect.succeed({
-        kind: input.kind,
-        label: input.label,
-        implemented: input.implemented,
-        status: "missing" as const,
-        version: Option.none<string>(),
-        installHint: input.installHint,
-        detail: Option.some(input.installHint),
-      } satisfies DiscoveryProbeResult<Kind>);
-    }
 
     return process
       .run({
@@ -115,28 +118,34 @@ export const make = Effect.gen(function* () {
             }) satisfies DiscoveryProbeResult<Kind>,
         ),
         Effect.catch((cause) =>
-          Effect.succeed({
-            kind: input.kind,
-            label: input.label,
-            executable,
-            implemented: input.implemented,
-            status: "missing" as const,
-            version: Option.none<string>(),
-            installHint: input.installHint,
-            detail: detailFromCause(cause),
-          } satisfies DiscoveryProbeResult<Kind>),
+          Effect.gen(function* () {
+            const installHint = yield* failedProbeHint(input, cause);
+            return {
+              kind: input.kind,
+              label: input.label,
+              executable,
+              implemented: input.implemented,
+              status: "missing" as const,
+              version: Option.none<string>(),
+              installHint,
+              detail: detailFromCause(cause),
+            } satisfies DiscoveryProbeResult<Kind>;
+          }),
         ),
       );
   };
 
   return SourceControlDiscovery.of({
-    discover: Effect.all({
-      versionControlSystems: Effect.all(
-        VCS_PROBES.map((entry) => probe(entry)) as ReadonlyArray<Effect.Effect<VcsDiscoveryItem>>,
-        { concurrency: "unbounded" },
-      ),
-      sourceControlProviders: sourceControlProviders.discover,
-    }),
+    discover: Effect.andThen(
+      refreshPath,
+      Effect.all({
+        versionControlSystems: Effect.all(
+          VCS_PROBES.map((entry) => probe(entry)) as ReadonlyArray<Effect.Effect<VcsDiscoveryItem>>,
+          { concurrency: "unbounded" },
+        ),
+        sourceControlProviders: sourceControlProviders.discover,
+      }),
+    ),
   });
 });
 

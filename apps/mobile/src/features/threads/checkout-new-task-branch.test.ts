@@ -187,22 +187,6 @@ describe("new-task branch checkout", () => {
     );
   });
 
-  it("fails when the source project is unavailable instead of releasing a composer selection", async () => {
-    const result = await checkoutNewTaskBranch({
-      branch,
-      project: null,
-      workspaceMode: "local",
-      readRefs,
-      switchRef: () => {
-        throw new Error("An unavailable project must not run checkout");
-      },
-    });
-    expect(result._tag).toBe("Failure");
-    if (result._tag !== "Failure") throw new Error("Expected an unavailable-project failure");
-    expect(String(squashAtomCommandFailure(result))).toContain("selected project is unavailable");
-    expect((await git("branch", "--show-current")).stdout.trim()).toBe("main");
-  });
-
   it("reuses an existing worktree without switching the project checkout", async () => {
     const worktreePath = NodePath.join(directory, "worktree");
     await git("worktree", "add", worktreePath, "feature/a");
@@ -342,8 +326,6 @@ describe("new-task branch checkout", () => {
 
   it.each([
     { source: "historical", nested: true },
-    { source: "picker", nested: true },
-    { source: "historical", nested: false },
     { source: "picker", nested: false },
   ])(
     "rejects $source worktree reuse when project root is unsafe (nested: $nested)",

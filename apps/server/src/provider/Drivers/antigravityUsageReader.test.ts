@@ -1,9 +1,8 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off - Effect's File.Info has no ctime or sub-millisecond mtime, which the cache tests compare.
 import * as NodeFSP from "node:fs/promises";
-import * as NodeSqlite from "node:sqlite";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, describe, it, vi } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -11,7 +10,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
-import * as Tracer from "effect/Tracer";
+
+import { parseRateTable, priceUsage } from "../../usage/usagePricing.ts";
 
 import { makeAntigravityUsageCache, readAntigravityUsage } from "./antigravityUsageReader.ts";
 
@@ -72,6 +72,145 @@ const records = (result: Effect.Success<ReturnType<typeof readAntigravityUsage>>
   result.files.flatMap((file) => file.records);
 
 describe("readAntigravityUsage", () => {
+  it.effect("learns numeric models from offline metadata and refreshes cached resolutions", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fs = yield* FileSystem.FileSystem;
+      const dir = yield* tempDir;
+      const cache = makeAntigravityUsageCache();
+      yield* seedDatabase(path.join(dir, "a-usage.db"), (db) =>
+        Effect.gen(function* () {
+          yield* createTables(db);
+          for (const [idx, id] of [9001, 9002, 1319].entries()) {
+            yield* db.run("INSERT INTO steps VALUES (?, ?)", [
+              idx,
+              new Uint8Array(protoBytes(9, [...protoNumber(1, id), ...protoNumber(2, 10)])),
+            ]);
+          }
+        }),
+      );
+      const first = yield* readAntigravityUsage(dir, 0, cache);
+      assert.strictEqual(records(first)[0]?.model, "antigravity-model-9001");
+      const evidence = path.join(dir, "z-names.db");
+      yield* seedDatabase(evidence, (db) =>
+        Effect.gen(function* () {
+          yield* createTables(db);
+          for (const [idx, [id, name]] of (
+            [
+              [9001, "Gemini 9.1 Flash (High)"],
+              [9002, "Gemini default"],
+              [1319, "Gemini 9.2 Flash"],
+            ] as const
+          ).entries()) {
+            yield* db.run("INSERT INTO gen_metadata VALUES (?, ?)", [
+              idx,
+              new Uint8Array(
+                protoBytes(1, [
+                  ...protoNumber(3, id),
+                  ...protoText(19, "gemini-default"),
+                  ...protoText(21, name),
+                ]),
+              ),
+            ]);
+          }
+        }),
+      );
+      const next = yield* readAntigravityUsage(dir, 0, cache);
+      assert.deepStrictEqual(
+        records(next).map(({ model, rateModel }) => [model, rateModel]),
+        [
+          ["gemini-9.1-flash-high", "gemini-9.1-flash"],
+          ["antigravity-model-9002", undefined],
+          ["gemini-9.2-flash", undefined],
+        ],
+      );
+      assert.deepStrictEqual(records(yield* readAntigravityUsage(dir, 0, cache)), records(next));
+      yield* fs.remove(evidence);
+      assert.deepStrictEqual(records(yield* readAntigravityUsage(dir, 0, cache)), records(first));
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps explicit model evidence separate from retries and conflicting names", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const dir = yield* tempDir;
+      yield* seedDatabase(path.join(dir, "conflicts.db"), (db) =>
+        Effect.gen(function* () {
+          yield* createTables(db);
+          for (const [idx, name] of ["Gemini 9.1 Flash", "Gemini 9.2 Flash"].entries()) {
+            yield* db.run("INSERT INTO gen_metadata VALUES (?, ?)", [
+              idx,
+              new Uint8Array(
+                protoBytes(1, [
+                  ...protoNumber(3, 1319),
+                  ...protoText(19, name),
+                  ...protoBytes(4, [
+                    ...protoNumber(1, 1319),
+                    ...protoNumber(2, 10),
+                    ...protoText(11, `r-${idx}`),
+                  ]),
+                  ...protoBytes(
+                    17,
+                    protoBytes(2, [...protoNumber(1, 1026), ...protoNumber(2, 12)]),
+                  ),
+                ]),
+              ),
+            ]);
+          }
+          for (const [idx, id] of [1319, 9003].entries()) {
+            yield* db.run("INSERT INTO steps VALUES (?, ?)", [
+              10 + idx,
+              new Uint8Array(
+                protoBytes(9, [
+                  ...protoNumber(1, id),
+                  ...protoNumber(2, 10),
+                  ...(idx === 0 ? protoText(11, "r-0") : []),
+                ]),
+              ),
+            ]);
+          }
+          yield* db.run("INSERT INTO steps VALUES (?, ?)", [
+            2,
+            new Uint8Array(protoBytes(9, [...protoNumber(1, 1319), ...protoNumber(2, 10)])),
+          ]);
+          yield* db.run("INSERT INTO gen_metadata VALUES (?, ?)", [
+            3,
+            new Uint8Array(
+              protoBytes(1, [
+                ...protoText(19, "Gemini 9.3 Flash"),
+                ...protoBytes(17, protoBytes(2, [...protoNumber(1, 9004), ...protoNumber(2, 10)])),
+              ]),
+            ),
+          ]);
+          yield* db.run("INSERT INTO steps VALUES (?, ?)", [
+            4,
+            new Uint8Array([
+              ...protoBytes(24, protoText(12, "Claude 5.5 Opus (Thinking)")),
+              ...protoBytes(9, [...protoNumber(1, 9005), ...protoNumber(2, 10)]),
+            ]),
+          ]);
+        }),
+      );
+      const result = yield* readAntigravityUsage(dir, 0);
+      assert.deepStrictEqual(result.errors, []);
+      assert.deepStrictEqual(
+        records(result)
+          .map(({ model }) => model)
+          .sort(),
+        [
+          "gemini-9.1-flash",
+          "antigravity-model-9003",
+          "antigravity-model-1319",
+          "claude-opus-4-6",
+          "gemini-9.2-flash",
+          "claude-opus-4-6",
+          "antigravity-model-9004",
+          "claude-opus-5-5-thinking",
+        ].sort(),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect(
     "deduplicates Antigravity generation and step usage while preserving retry model and token buckets",
     () =>
@@ -160,6 +299,113 @@ describe("readAntigravityUsage", () => {
       assert.deepStrictEqual(
         records(result).map((record) => record.model),
         ["gemini-3-pro", "claude-opus-4-6"],
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("prices Antigravity effort and routing variants at their base model", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const dir = yield* tempDir;
+      yield* seedDatabase(path.join(dir, "variants.db"), (db) =>
+        Effect.gen(function* () {
+          yield* createTables(db);
+          yield* db.run("INSERT INTO gen_metadata VALUES (?, ?)", [
+            0,
+            new Uint8Array(protoBytes(1, protoText(19, "Gemini 3.7 Flash Control"))),
+          ]);
+          yield* db.run("INSERT INTO steps VALUES (?, ?)", [
+            0,
+            new Uint8Array(protoBytes(9, protoNumber(2, 10))),
+          ]);
+          yield* db.run("INSERT INTO steps VALUES (?, ?)", [
+            1,
+            new Uint8Array(protoBytes(9, [...protoNumber(1, 1319), ...protoNumber(2, 11)])),
+          ]);
+          yield* db.run("INSERT INTO steps VALUES (?, ?)", [
+            2,
+            new Uint8Array(protoBytes(9, [...protoNumber(1, 1132), ...protoNumber(2, 12)])),
+          ]);
+          // A model-less step that only learns its model by merging with a named generation.
+          yield* db.run("INSERT INTO steps VALUES (?, ?)", [
+            5,
+            new Uint8Array(protoBytes(9, [...protoNumber(2, 100), ...protoText(11, "response")])),
+          ]);
+          yield* db.run("INSERT INTO gen_metadata VALUES (?, ?)", [
+            3,
+            new Uint8Array(
+              protoBytes(1, [
+                ...protoText(19, "Gemini 3.8 Flash High"),
+                ...protoBytes(4, [...protoNumber(2, 100), ...protoText(11, "response")]),
+              ]),
+            ),
+          ]);
+        }),
+      );
+      const result = yield* readAntigravityUsage(dir, 0);
+      assert.deepStrictEqual(result.errors, []);
+      assert.deepStrictEqual(
+        records(result).map((record) => [record.model, record.rateModel]),
+        [
+          ["gemini-3.7-flash-control", "gemini-3.7-flash"],
+          ["gemini-3.8-flash-medium", "gemini-3.8-flash"],
+          ["gemini-3.5-flash-high", "gemini-3.5-flash"],
+          ["gemini-3.8-flash-high", "gemini-3.8-flash"],
+        ],
+      );
+      const table = parseRateTable({
+        "gemini-3.7-flash": { input_cost_per_token: 0.75e-6, output_cost_per_token: 3.75e-6 },
+        "gemini-3.8-flash": { input_cost_per_token: 0.75e-6, output_cost_per_token: 3.75e-6 },
+        "gemini-3.5-flash": { input_cost_per_token: 0.5e-6, output_cost_per_token: 3e-6 },
+      });
+      const priced = records(result).map((record) => priceUsage(table, record));
+      assert.deepStrictEqual(
+        priced.map(({ costSource }) => costSource),
+        Array(4).fill("modelPriced"),
+      );
+      for (const [index, expected] of [7.5e-6, 8.25e-6, 6e-6, 75e-6].entries()) {
+        assert.closeTo(priced[index]!.costUsd, expected, 1e-12);
+      }
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("prices ACP effort variants at the base model rate", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const dir = yield* tempDir;
+      yield* seedDatabase(path.join(dir, "effort.db"), (db) =>
+        Effect.gen(function* () {
+          yield* createTables(db);
+          for (const [idx, name] of [
+            "gemini-4-argon-high",
+            "gemini-4-argon",
+            "gemini-3.7-flash-safety-le",
+            "gemini-3-flash-agent",
+            "gemini-3-flash",
+            "gemini-default",
+          ].entries()) {
+            yield* db.run("INSERT INTO gen_metadata VALUES (?, ?)", [
+              idx,
+              new Uint8Array(protoBytes(1, protoText(19, name))),
+            ]);
+            yield* db.run("INSERT INTO steps VALUES (?, ?)", [
+              idx,
+              new Uint8Array(protoBytes(9, protoNumber(2, 10 + idx))),
+            ]);
+          }
+        }),
+      );
+      const result = yield* readAntigravityUsage(dir, 0);
+      assert.deepStrictEqual(
+        records(result).map(({ model, rateModel }) => [model, rateModel]),
+        [
+          ["gemini-4-argon-high", "gemini-4-argon"],
+          ["gemini-4-argon", undefined],
+          ["gemini-3.7-flash-safety-le", "gemini-3.7-flash"],
+          ["gemini-3-flash-agent", "gemini-3.5-flash"],
+          ["gemini-3-flash", "gemini-3-flash-preview"],
+          ["gemini-default", undefined],
+        ],
       );
     }).pipe(Effect.provide(NodeServices.layer)),
   );
@@ -311,65 +557,6 @@ describe("readAntigravityUsage", () => {
       ]),
     );
 
-  it.effect("reuses an unchanged Antigravity database instead of decoding it again", () =>
-    Effect.gen(function* () {
-      const path = yield* Path.Path;
-      const dir = yield* tempDir;
-      const db = yield* openDatabase(path.join(dir, "session-1.db"));
-      yield* db.exec("CREATE TABLE gen_metadata (idx INTEGER, data BLOB)");
-      yield* db.run("INSERT INTO gen_metadata VALUES (?, ?)", [0, antigravityGeneration("r-1")]);
-      const cache = makeAntigravityUsageCache();
-      assert.deepStrictEqual((yield* readAntigravityUsage(dir, 0, cache)).errors, []);
-
-      yield* db.exec("BEGIN EXCLUSIVE");
-      assert.strictEqual((yield* readAntigravityUsage(dir, 0)).errors.length, 1);
-      const cached = yield* readAntigravityUsage(dir, 0, cache);
-      assert.deepStrictEqual(cached.errors, []);
-      assert.deepStrictEqual(
-        records(cached).map((record) => record.dedupeKey),
-        ["antigravity:11:r-1"],
-      );
-      yield* db.exec("ROLLBACK");
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("rereads an Antigravity database rewritten with its size and mtime restored", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const pathService = yield* Path.Path;
-      const dir = yield* tempDir;
-      const path = pathService.join(dir, "session-1.db");
-      yield* seedDatabase(path, (db) =>
-        Effect.gen(function* () {
-          yield* db.exec("CREATE TABLE gen_metadata (idx INTEGER, data BLOB)");
-          yield* db.run("INSERT INTO gen_metadata VALUES (?, ?)", [
-            0,
-            antigravityGeneration("r-1"),
-          ]);
-        }),
-      );
-      yield* fileSystem.utimes(path, 1780000000, 1780000000);
-      const cache = makeAntigravityUsageCache();
-      assert.deepStrictEqual((yield* readAntigravityUsage(dir, 0, cache)).errors, []);
-
-      // ctime has the kernel's timestamp granularity, which can be a few
-      // milliseconds, so repeat the forged rewrite until it lands on a later tick
-      // than the cached read, as any real rewrite does.
-      const stat = () => Effect.promise(() => NodeFSP.stat(path));
-      const cached = yield* stat();
-      do {
-        yield* fileSystem.writeFile(path, new Uint8Array(cached.size));
-        yield* fileSystem.utimes(path, 1780000000, 1780000000);
-      } while ((yield* stat()).ctimeMs === cached.ctimeMs);
-      const restored = yield* stat();
-      assert.strictEqual(restored.size, cached.size);
-      assert.strictEqual(restored.mtimeMs, cached.mtimeMs);
-      const next = yield* readAntigravityUsage(dir, 0, cache);
-      assert.deepStrictEqual(next.errors, [path]);
-      assert.deepStrictEqual(records(next), []);
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
-
   it.effect("rereads an Antigravity database when only its WAL changed", () =>
     Effect.gen(function* () {
       const pathService = yield* Path.Path;
@@ -444,103 +631,8 @@ describe("readAntigravityUsage", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  const recordReads = Effect.gen(function* () {
-    const reads: Array<{ sql: string; rows: number }> = [];
-    const all = NodeSqlite.StatementSync.prototype.all;
-    yield* Effect.acquireRelease(
-      Effect.sync(() =>
-        vi.spyOn(NodeSqlite.StatementSync.prototype, "all").mockImplementation(function (
-          this: NodeSqlite.StatementSync,
-          ...params
-        ) {
-          const result = all.apply(this, params);
-          reads.push({ sql: this.sourceSQL, rows: result.length });
-          return result;
-        }),
-      ),
-      (spy) => Effect.sync(() => spy.mockRestore()),
-    );
-    return reads;
-  });
-
   const stepUsage = (responseId: string) =>
     new Uint8Array(protoBytes(9, [...protoNumber(2, 10), ...protoText(11, responseId)]));
-
-  it.effect("reads one Antigravity generation or one page of steps per statement", () =>
-    Effect.gen(function* () {
-      const path = yield* Path.Path;
-      const dir = yield* tempDir;
-      yield* seedDatabase(path.join(dir, "session-1.db"), (db) =>
-        Effect.gen(function* () {
-          yield* db.exec(
-            "CREATE TABLE `gen_metadata` (`idx` integer,`data` blob,`size` integer NOT NULL DEFAULT 0,PRIMARY KEY (`idx`))",
-          );
-          yield* db.exec(
-            "CREATE TABLE `steps` (`idx` integer,`step_type` integer NOT NULL DEFAULT 0,`status` integer NOT NULL DEFAULT 0,`metadata` blob,PRIMARY KEY (`idx`))",
-          );
-          yield* db.exec("CREATE INDEX `idx_steps_status` ON `steps`(`status`)");
-          yield* db.exec("CREATE INDEX `idx_steps_step_type` ON `steps`(`step_type`)");
-          yield* db.exec("BEGIN");
-          for (let idx = 0; idx < 3; idx++) {
-            yield* db.run("INSERT INTO gen_metadata (idx, data) VALUES (?, ?)", [
-              idx,
-              antigravityGeneration(`g-${idx}`),
-            ]);
-          }
-          for (let idx = 0; idx < 250; idx++) {
-            yield* db.run("INSERT INTO steps (idx, metadata) VALUES (?, ?)", [
-              idx,
-              idx >= 75 && idx < 175 ? null : stepUsage(`s-${idx}`),
-            ]);
-          }
-          yield* db.exec("COMMIT");
-        }),
-      );
-      const reads = yield* recordReads;
-      const spans: Tracer.NativeSpan[] = [];
-      const tracer = Tracer.make({
-        span: (options) => {
-          const span = new Tracer.NativeSpan(options);
-          spans.push(span);
-          return span;
-        },
-      });
-      const result = yield* readAntigravityUsage(dir, 0).pipe(
-        Effect.provideService(Tracer.Tracer, tracer),
-      );
-      assert.deepStrictEqual(result.errors, []);
-      assert.deepStrictEqual(
-        records(result).map((record) => record.dedupeKey),
-        [
-          ...Array.from({ length: 75 }, (_, idx) => `antigravity:11:s-${idx}`),
-          ...Array.from({ length: 75 }, (_, idx) => `antigravity:11:s-${idx + 175}`),
-          ...Array.from({ length: 3 }, (_, idx) => `antigravity:11:g-${idx}`),
-        ],
-      );
-      assert.isTrue(spans.some((span) => span.name === "sqlite"));
-      assert.deepStrictEqual(
-        spans.flatMap((span) => {
-          const query = span.attributes.get("db.query.text");
-          return typeof query === "string" && query.includes("rowid > ?") ? [query] : [];
-        }),
-        [],
-      );
-      for (const [table, total, most] of [
-        ["steps", 250, 64],
-        ["gen_metadata", 3, 1],
-      ] as const) {
-        const rows = reads
-          .filter((read) => read.sql.includes(`FROM ${table} `))
-          .map((read) => read.rows);
-        assert.strictEqual(
-          rows.reduce((sum, count) => sum + count, 0),
-          total,
-          table,
-        );
-        assert.isAtMost(Math.max(...rows), most, table);
-      }
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
 
   it.effect("returns Antigravity records in idx order however the rows are stored", () =>
     Effect.gen(function* () {
