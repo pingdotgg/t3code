@@ -221,6 +221,60 @@ describe("ssh tunnel scripts", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
+  it.live("reports only the failed launch's own output, not an earlier launch's log", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-launch-log-" });
+      const target = { alias: "devbox", hostname: "devbox", username: null, port: null };
+      const stateDir = NodePath.join(home, ".t3", "ssh-launch", yield* remoteStateKey(target));
+      const bin = NodePath.join(home, "bin");
+      yield* fs.makeDirectory(stateDir, { recursive: true });
+      yield* fs.makeDirectory(bin);
+      yield* fs.writeFileString(NodePath.join(stateDir, "server.log"), "EARLIER_LAUNCH\n");
+      // The new server exits without output. Readiness then fails after a process from the
+      // earlier launch writes through the log descriptor it still holds (fd 3).
+      yield* fs.writeFileString(
+        NodePath.join(bin, "node"),
+        '#!/bin/sh\n[ "$1" = - ] || exit 0\ncat >/dev/null\ncase "$2" in\n  */port) echo 37731 ;;\n  37731) { printf "EARLIER_PROCESS\\n" >&3; } 2>/dev/null; exit 1 ;;\n  *) exit 1 ;;\nesac\n',
+        { mode: 0o755 },
+      );
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const remoteShell = ChildProcessSpawner.make((command) => {
+        if (command._tag !== "StandardCommand") return spawner.spawn(command);
+        return spawner.spawn(
+          ChildProcess.make(
+            "sh",
+            [
+              "-c",
+              'exec 3>>"$1/server.log"; exec sh -s -- "$2"',
+              "sh",
+              stateDir,
+              launchStateKey(command) ?? "",
+            ],
+            {
+              ...command.options,
+              env: { HOME: home, PATH: `${bin}:${process.env.PATH ?? ""}` },
+              extendEnv: false,
+            },
+          ),
+        );
+      });
+      const result = yield* SshTunnel.launchOrReuseRemoteServer(target, undefined, {
+        nodeScriptPath: "/unused/server.ts",
+      }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, remoteShell),
+        Effect.result,
+      );
+      assert.isTrue(Result.isFailure(result));
+      if (!Result.isFailure(result)) return;
+      assert.isTrue(isSshCommandError(result.failure));
+      if (!isSshCommandError(result.failure)) return;
+      assert.include(result.failure.stderr, "It wrote nothing to");
+      assert.notInclude(result.failure.stderr, "EARLIER_LAUNCH");
+      assert.notInclude(result.failure.stderr, "EARLIER_PROCESS");
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it("rejects archive versions that are not a single exact version segment", () => {
     for (const archiveVersion of [
       "../other",
