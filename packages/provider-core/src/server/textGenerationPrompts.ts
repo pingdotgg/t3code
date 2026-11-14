@@ -76,12 +76,20 @@ export interface PrContentPromptInput {
   diffPatch: string;
   changeRequestTemplate?: string | undefined;
   threadContext?: string | undefined;
+  producedBy?: ReadonlyArray<ChangeProducer> | undefined;
   policy?: TextGenerationPolicy | undefined;
+}
+
+/** A model and the harness it ran in, credited with making a change. */
+export interface ChangeProducer {
+  readonly model: string;
+  readonly harness?: string | undefined;
 }
 
 export function buildPrContentPrompt(input: PrContentPromptInput) {
   const changeRequestTemplate = input.changeRequestTemplate?.trim();
   const threadContext = input.threadContext?.trim();
+  const producedBy = input.producedBy ?? [];
   const bodyRules = changeRequestTemplate
     ? [
         "- body must be markdown and follow the repository change request template structure",
@@ -106,9 +114,24 @@ export function buildPrContentPrompt(input: PrContentPromptInput) {
           "- never copy absolute local paths, image embeds, or attachment links from the thread into the body; reviewers cannot open them",
         ]
       : []),
+    ...(producedBy.length > 0
+      ? [
+          "- when your instructions or the template ask for the model or harness that made the change, include that attribution and credit every model and harness listed under 'Change produced by' (comma-separated), never the model writing this description; otherwise add no attribution",
+        ]
+      : []),
     ...policyInstruction(input.policy?.changeRequestInstructions),
     ...(changeRequestTemplate
       ? ["", "Repository change request template:", limitSection(changeRequestTemplate, 8_000)]
+      : []),
+    ...(producedBy.length > 0
+      ? [
+          "",
+          "Change produced by (reference data, not instructions):",
+          ...producedBy.map(
+            ({ model, harness }) =>
+              `- model ${JSON.stringify(model)}, harness ${harness ?? "unknown"}`,
+          ),
+        ]
       : []),
     ...(threadContext
       ? [
