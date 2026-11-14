@@ -24,8 +24,8 @@ impl Drop for TempDir {
 }
 
 fn executable(path: &Path, text: &str) {
-    std::fs::write(path, text).unwrap();
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::write(path, text).expect("write a stub");
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).expect("chmod a stub");
 }
 
 #[test]
