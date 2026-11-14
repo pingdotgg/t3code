@@ -267,7 +267,7 @@ impl<E: Env> Mapper<E> {
             Some("inherit") if owner.is_none() => Some(root_model),
             Some("inherit") | None => None,
             Some(m) if m.trim().is_empty() => None,
-            Some(m) => Some(m.to_string()),
+            Some(m) => Some(crate::catalog::resolve_slug(m)),
         };
         let effort = input
             .get("effort")
@@ -437,7 +437,7 @@ impl<E: Env> Mapper<E> {
     pub(super) fn on_child_frame(&mut self, frame: Inbound, parent: &str, out: &mut Vec<Out>) {
         let Some(task_id) = self.subagents.by_tool.get(parent).cloned() else {
             if let Inbound::Assistant(msg) = &frame {
-                let model = msg.message.model.as_deref().unwrap_or("");
+                let model = msg.message.model.as_deref().unwrap_or("").trim();
                 if !model.is_empty()
                     && model != "<synthetic>"
                     && !self.subagents.launches.contains_key(parent)
@@ -445,7 +445,7 @@ impl<E: Env> Mapper<E> {
                     self.subagents.remember_launch(
                         parent,
                         Launch {
-                            model: Some(model.to_string()),
+                            model: Some(crate::catalog::resolve_slug(model)),
                             effort: None,
                             owner_tool_use_id: None,
                         },
@@ -472,7 +472,12 @@ impl<E: Env> Mapper<E> {
         out: &mut Vec<Out>,
     ) {
         let now = self.env.now();
-        let model = msg.message.model.clone().unwrap_or_default();
+        let raw = msg.message.model.as_deref().unwrap_or_default().trim();
+        let model = if raw.is_empty() || raw == "<synthetic>" {
+            raw.to_string()
+        } else {
+            crate::catalog::resolve_slug(raw)
+        };
         let Some(sub) = self.subagents.by_task.get(task_id) else {
             return;
         };
@@ -529,6 +534,11 @@ impl<E: Env> Mapper<E> {
                         input: input.clone(),
                         ordinal: sub.next_ordinal(),
                         started_at: now.clone(),
+                        presentation: super::presentation::for_tool_use(
+                            name,
+                            id,
+                            msg.tool_use_meta.as_ref(),
+                        ),
                     };
                     sub.tools.insert(id.clone(), call.clone());
                     sub.tool_order.push(id.clone());

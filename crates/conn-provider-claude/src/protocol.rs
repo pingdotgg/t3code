@@ -463,6 +463,9 @@ pub struct AssistantMsg {
     /// The prompts this frame answers.
     #[serde(default)]
     pub user_message_uuids: Option<Vec<String>>,
+    /// Per MCP `tool_use`: `id`, `display_name`, `server_display_name`, `icon_url`.
+    #[serde(default)]
+    pub tool_use_meta: Option<Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]

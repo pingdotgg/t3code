@@ -6,6 +6,7 @@
 //! `finalizeActiveTurn`). Known differences are listed in the crate README.
 
 mod notices;
+mod presentation;
 mod subagents;
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -75,6 +76,88 @@ pub struct Mapper<E: Env> {
     policy_asks: Option<bool>,
     /// Plan mode with `approvalPolicy: "never"`: every forwarded tool request is denied.
     plan_without_approvals: bool,
+    /// The CLI process's `modelUsage` at its last result (`context.modelLedger`): per model,
+    /// input (with cache) and output tokens. Empty at a process start; `None` once it went
+    /// backwards. At most [`LEDGER_MODELS`] models.
+    ledger: Option<Vec<(String, Ledger)>>,
+    /// The ledger growth of the result being handled (`resultLedgerUsage`).
+    result_growth: Option<Ledger>,
+}
+
+/// Input and output tokens (`ClaudeLedgerUsage`).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub(crate) struct Ledger {
+    input: u64,
+    output: u64,
+}
+
+impl Ledger {
+    /// `addClaudeLedgerUsage`: unknown when either side is.
+    fn add(left: Option<Self>, right: Option<Self>) -> Option<Self> {
+        Some(Self {
+            input: left?.input + right?.input,
+            output: left?.output + right?.output,
+        })
+    }
+}
+
+const LEDGER_MODELS: usize = 16;
+
+/// `claudeModelLedger`: unknown when absent, empty, or an entry lacks its counts.
+fn model_ledger(model_usage: Option<&Value>) -> Option<Vec<(String, Ledger)>> {
+    let models = model_usage?.as_object()?;
+    if models.is_empty() {
+        return None;
+    }
+    models
+        .iter()
+        .take(LEDGER_MODELS)
+        .map(|(model, entry)| {
+            let count = |key: &str| {
+                entry
+                    .get(key)
+                    .and_then(Value::as_f64)
+                    .filter(|n| n.is_finite() && *n >= 0.0)
+            };
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let round = |n: f64| n.round() as u64;
+            let input = round(count("inputTokens")?);
+            let output = round(count("outputTokens")?);
+            let cache = count("cacheReadInputTokens").map_or(0, round)
+                + count("cacheCreationInputTokens").map_or(0, round);
+            Some((
+                model.clone(),
+                Ledger {
+                    input: input + cache,
+                    output,
+                },
+            ))
+        })
+        .collect()
+}
+
+/// `claudeLedgerDelta`: unknown without a baseline or when a counter goes backwards.
+fn ledger_delta(
+    previous: Option<&[(String, Ledger)]>,
+    current: Option<&[(String, Ledger)]>,
+) -> Option<Ledger> {
+    let (previous, current) = (previous?, current?);
+    let find = |list: &[(String, Ledger)], model: &str| {
+        list.iter().find(|(m, _)| m == model).map(|(_, l)| *l)
+    };
+    for (model, before) in previous {
+        let after = find(current, model)?;
+        if after.input < before.input || after.output < before.output {
+            return None;
+        }
+    }
+    let mut growth = Ledger::default();
+    for (model, after) in current {
+        let before = find(previous, model).unwrap_or_default();
+        growth.input += after.input - before.input;
+        growth.output += after.output - before.output;
+    }
+    Some(growth)
 }
 
 impl<E: Env> std::fmt::Debug for Mapper<E> {
@@ -106,6 +189,7 @@ pub(crate) struct ToolCall {
     input: Value,
     ordinal: u32,
     started_at: String,
+    presentation: presentation::Presentation,
 }
 
 struct Turn {
@@ -148,6 +232,8 @@ struct Turn {
     limits: LimitState,
     /// Usage of segments a steer cut short.
     steered_usage: Option<Usage>,
+    /// Ledger growth of the segments a steer cut short (`steeredLedgerUsage`).
+    steered_ledger: Option<Ledger>,
     had_subagents: bool,
 }
 
@@ -209,7 +295,14 @@ impl<E: Env> Mapper<E> {
             context_windows: HashMap::new(),
             policy_asks: None,
             plan_without_approvals: false,
+            ledger: Some(Vec::new()),
+            result_growth: None,
         }
+    }
+
+    /// A new CLI process: its `modelUsage` starts from nothing (`modelLedger: new Map()`).
+    pub fn new_process(&mut self) {
+        self.ledger = Some(Vec::new());
     }
 
     /// `requiresClaudeApproval` from the query policy. Unset, the live permission mode decides
@@ -356,6 +449,7 @@ impl<E: Env> Mapper<E> {
             compaction: None,
             limits: LimitState::default(),
             steered_usage: None,
+            steered_ledger: Some(Ledger::default()),
             had_subagents: false,
         };
         let mut out = Vec::new();
@@ -601,7 +695,7 @@ impl<E: Env> Mapper<E> {
                     if name == "TodoWrite" {
                         todos.push((id.clone(), notices::todo_steps(input)));
                     }
-                    start_tool(turn, id, name, input, &now, out);
+                    start_tool(turn, id, name, input, msg.tool_use_meta.as_ref(), &now, out);
                 }
                 Block::ToolResult { .. } | Block::Other => {}
             }
@@ -883,6 +977,16 @@ impl<E: Env> Mapper<E> {
     }
 
     fn on_result(&mut self, msg: ResultMsg, out: &mut Vec<Out>) {
+        // Growth of the process ledger, measured once per result as it arrives.
+        let ledger = model_ledger(msg.model_usage.as_ref());
+        let growth = ledger_delta(self.ledger.as_deref(), ledger.as_deref());
+        // A ledger that went backwards cannot anchor the next turn's growth.
+        self.ledger = if growth.is_none() && self.ledger.is_some() {
+            None
+        } else {
+            ledger
+        };
+        self.result_growth = growth;
         // A result that reports a context window not seen before refreshes the usage row.
         let mut new_window = false;
         if let Some(Value::Object(models)) = &msg.model_usage {
@@ -920,6 +1024,7 @@ impl<E: Env> Mapper<E> {
                     None => usage.clone(),
                 });
             }
+            turn.steered_ledger = Ledger::add(turn.steered_ledger, growth);
             // A steer cut this segment short; the turn goes on with the steer.
             for item_id in turn.stream_order.clone() {
                 complete_stream(turn, &item_id, None, "interrupted", &now, out);
@@ -1080,12 +1185,15 @@ impl<E: Env> Mapper<E> {
             (Some(steered), Some(last)) => Some(steered.plus(&last)),
             (steered, last) => last.or(steered),
         };
+        let ledger =
+            result.and_then(|_| Ledger::add(turn.steered_ledger, self.result_growth.take()));
         provider_turn["turnTokenUsage"] = turn_token_usage(
             &turn.models,
             result,
             usage.as_ref(),
             completed,
             turn.had_subagents || self.subagents.any_running(),
+            ledger,
         );
         emit(
             out,
@@ -1161,7 +1269,15 @@ impl<E: Env> Mapper<E> {
             && req.tool_name != "AskUserQuestion"
             && !self.subagents.owns_tool(&tool_use_id)
         {
-            start_tool(turn, &tool_use_id, &req.tool_name, &req.input, &now, out);
+            start_tool(
+                turn,
+                &tool_use_id,
+                &req.tool_name,
+                &req.input,
+                None,
+                &now,
+                out,
+            );
         }
         if req.tool_name == "AskUserQuestion" {
             let questions = user_input_questions(&req.input);
@@ -1942,7 +2058,15 @@ pub fn classify_tool(name: &str) -> (&'static str, &'static str) {
     }
 }
 
-fn start_tool(turn: &mut Turn, id: &str, name: &str, input: &Value, now: &str, out: &mut Vec<Out>) {
+fn start_tool(
+    turn: &mut Turn,
+    id: &str,
+    name: &str,
+    input: &Value,
+    tool_use_meta: Option<&Value>,
+    now: &str,
+    out: &mut Vec<Out>,
+) {
     if turn.tools.contains_key(id) || name == "Agent" {
         return;
     }
@@ -1951,6 +2075,7 @@ fn start_tool(turn: &mut Turn, id: &str, name: &str, input: &Value, now: &str, o
         input: input.clone(),
         ordinal: ordinal(turn, id),
         started_at: now.to_string(),
+        presentation: presentation::for_tool_use(name, id, tool_use_meta),
     };
     turn.tools.insert(id.to_string(), call.clone());
     turn.tool_order.push(id.to_string());
@@ -2018,7 +2143,8 @@ pub(crate) fn tool_artifacts(
         "id": ids::turn_item_from_item(DRIVER, id), "threadId": scope.thread_id, "runId": scope.run_id,
         "nodeId": node_id, "providerThreadId": scope.provider_thread_id,
         "providerTurnId": scope.provider_turn_id, "nativeItemRef": native_ref,
-        "parentItemId": null, "ordinal": call.ordinal, "status": status, "title": null,
+        "parentItemId": null, "ordinal": call.ordinal, "status": status,
+        "title": presentation::title(&call.name, &call.input, &call.presentation),
         "startedAt": call.started_at, "completedAt": completed_at, "updatedAt": now,
     });
     item.extend(base.as_object().cloned().unwrap_or_default());
@@ -2055,9 +2181,16 @@ pub(crate) fn tool_artifacts(
         }
         "web_search" => {
             item.insert("type".into(), json!("web_search"));
+            presentation::web_search_fields(&call.name, &call.input, output.as_ref(), &mut item);
         }
         _ => {
             item.insert("type".into(), json!("dynamic_tool"));
+            if let Some(icon) = &call.presentation.icon {
+                item.insert("toolIcon".into(), icon.clone());
+            }
+            if let Some(source) = &call.presentation.source {
+                item.insert("toolSource".into(), source.clone());
+            }
             item.insert("toolName".into(), json!(call.name));
             item.insert("input".into(), call.input.clone());
             if let Some(output) = output {
@@ -2281,14 +2414,16 @@ fn elicitation_acceptance(req: &Elicitation) -> Option<Value> {
     empty.then(|| json!({"action": "accept", "content": {}}))
 }
 
-/// `normalizeClaudeTurnTokenUsage` (`provider/ClaudeTurnTokenUsage.ts`) without the
-/// process-wide ledger (`otherUsage`) and steered segments.
+/// `normalizeClaudeTurnTokenUsage` (`provider/ClaudeTurnTokenUsage.ts`). `ledger` is the
+/// process ledger's growth over the turn's results; what the result leaves out (subagents,
+/// compaction) becomes `otherUsage`.
 fn turn_token_usage(
     models: &[String],
     result: Option<&ResultMsg>,
     usage_total: Option<&Usage>,
     completed: bool,
     has_subagents: bool,
+    ledger: Option<Ledger>,
 ) -> Value {
     let mut usage = json!({"usageScope": "main_agent", "hasSubagents": has_subagents});
     if !models.is_empty() {
@@ -2314,6 +2449,14 @@ fn turn_token_usage(
     }
     usage["inputTokens"] = json!(u.input_total());
     usage["outputTokens"] = json!(u.output_tokens);
+    if let Some(ledger) =
+        ledger.filter(|l| l.input >= u.input_total() && l.output >= u.output_tokens)
+    {
+        usage["otherUsage"] = json!({
+            "inputTokens": ledger.input - u.input_total(),
+            "outputTokens": ledger.output - u.output_tokens,
+        });
+    }
     usage["usageStatus"] = json!(if completed && success {
         "complete"
     } else {

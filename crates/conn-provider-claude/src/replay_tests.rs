@@ -201,7 +201,7 @@ fn replay(name: &str, runtime_mode: &str) -> Replay {
 /// - runtime request and plan ids end in a random uuid: renamed `REQ<n>` in order.
 /// - `threadId: null` (Rust `Option`) vs an absent key (TS) on `provider_turn.updated`.
 /// - TS-only fields: `nativeMetadata` (attachment budget), `goal`, `pendingBackgroundWork`,
-///   `turnTokenUsage.otherUsage` (side-model usage), `failureItemOrdinal`.
+///   `failureItemOrdinal`.
 /// - TS emits `provider_turn.updated` again with unchanged usage after `message_delta`; equal
 ///   consecutive usage updates are folded.
 /// - TS re-sends an unchanged provider thread when Claude's background-task roster changes
@@ -239,12 +239,6 @@ fn normalize(events: &[Value]) -> Vec<Value> {
             thread.remove("nativeMetadata");
             thread.remove("goal");
             thread.remove("pendingBackgroundTasks");
-        }
-        if let Some(usage) = event
-            .pointer_mut("/providerTurn/turnTokenUsage")
-            .and_then(Value::as_object_mut)
-        {
-            usage.remove("otherUsage");
         }
         if event["type"] == "provider_turn.updated" && out.last() == Some(&event) {
             continue;

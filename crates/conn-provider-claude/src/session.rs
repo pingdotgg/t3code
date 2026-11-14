@@ -1155,6 +1155,7 @@ impl ClaudeSession {
             let mut state = inner.lock();
             state.generation += 1;
             let generation = state.generation;
+            state.mapper.new_process();
             state.live = Some(Live {
                 query: handle.clone(),
                 generation,
