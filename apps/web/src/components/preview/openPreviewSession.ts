@@ -45,7 +45,9 @@ export async function openPreviewSession<E>(
       ...(input.url === undefined ? {} : { url: input.url }),
       viewport: input.viewport ?? defaults.viewport,
       profileId: input.profileId ?? defaults.profileId,
-      ...(runtime === undefined || runtime === "desktop" ? {} : { runtime }),
+      ...(runtime === undefined || runtime === "desktop"
+        ? {}
+        : { runtime, zoomFactor: defaults.zoomFactor, colorScheme: defaults.appearance }),
     },
   });
   if (result._tag === "Failure") {
