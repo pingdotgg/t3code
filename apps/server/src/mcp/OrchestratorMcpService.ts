@@ -2295,8 +2295,10 @@ const make = Effect.gen(function* () {
                     existing.projectId,
                   ),
                 }),
-            // Resending the loaded mode would undo a mode change committed since the load.
-            ...(threadMode === storedThreadMode ? {} : { threadMode }),
+            // A mode only derived from the binding, resent unchanged, would undo one committed since the load.
+            ...(input.freshSession === undefined && threadMode === storedThreadMode
+              ? {}
+              : { threadMode }),
           })
           .pipe(
             Effect.provideService(DispatchModeLimit, limits),

@@ -3588,11 +3588,16 @@ describe("OrchestratorMcpService provider resolution", () => {
           scheduledTaskId: existing.id,
           bindToCurrentThread: false,
         });
-        assert.deepEqual(yield* Ref.get(saved), [{ type: "root" }]);
-        // An unchanged mode is left to the server, so a change committed since the load survives.
+        yield* mcp.updateScheduledTask(client, {
+          scheduledTaskId: existing.id,
+          freshSession: false,
+        });
+        assert.deepEqual(yield* Ref.get(saved), [{ type: "root" }, { type: "root" }]);
+        // A derived, unchanged mode is left to the server so a change committed since the load
+        // survives; an explicit freshSession is always sent.
         assert.deepEqual(
           (yield* Ref.get(inputs)).map((input) => input.threadMode),
-          [undefined],
+          [undefined, "new_thread"],
         );
       }),
     );
