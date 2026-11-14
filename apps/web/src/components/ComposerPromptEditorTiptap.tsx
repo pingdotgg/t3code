@@ -89,6 +89,7 @@ import {
   pmToFlat,
   serializeEditorDoc,
   serializeSelection,
+  shiftPastAddedBlankLines,
   skillChipReplacements,
   splitOrLiftListItem,
   surroundSelectionWithMark,
@@ -1623,7 +1624,14 @@ function ComposerPromptEditorTiptapInner(
         },
       );
     }
-    selectMarkdownOffset(editor, normalizedExpandedCursor);
+    selectMarkdownOffset(
+      editor,
+      shiftPastAddedBlankLines(
+        value,
+        serializeEditorDoc(editor.state.doc).value,
+        normalizedExpandedCursor,
+      ),
+    );
     const map = serializeEditorDoc(editor.state.doc);
     if (isFocused) scrollTiptapCaretIntoView(editor);
     if (pendingCitation) {
@@ -1696,7 +1704,14 @@ function ComposerPromptEditorTiptapInner(
     const boundedCursor = clampEditorCursor(snapshotRef.current.value, nextCursor);
     const expandedCursor =
       exactExpandedCursor ?? expandEditorCursor(snapshotRef.current.value, boundedCursor);
-    selectMarkdownOffset(editor, expandedCursor);
+    selectMarkdownOffset(
+      editor,
+      shiftPastAddedBlankLines(
+        snapshotRef.current.value,
+        serializeEditorDoc(editor.state.doc).value,
+        expandedCursor,
+      ),
+    );
     scrollTiptapCaretIntoView(editor);
     if (boundedCursor === snapshotRef.current.cursor) return;
     snapshotRef.current = {

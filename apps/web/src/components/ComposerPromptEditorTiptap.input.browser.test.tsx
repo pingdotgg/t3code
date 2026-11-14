@@ -521,6 +521,18 @@ it("keeps the caret inside unknown dollar text across rich and plain remounts", 
   expect(serializeEditorDoc(editor.state.doc).value).toBe("echo $HOXYME now");
 });
 
+it.each([
+  ["- item\npara", "- item\n\nparaX"],
+  ["> quote\npara", "> quote\n\nparaX"],
+])("keeps the caret at the end of %j when loading adds a blank line", async (value, typed) => {
+  await using screen = await mountEditor(value);
+  const { editor } = screen;
+  await act(async () => {
+    editor.commands.insertContent("X");
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(typed);
+});
+
 async function focusAt(editor: Editor, position: number | "end") {
   // ProseMirror rewrites the DOM caret 20ms after focus. Run that now, or it
   // can undo the first key before ProseMirror reads the native move.

@@ -990,7 +990,7 @@ export function buildTiptapContent(
     | { rule: string }
     | { heading: { level: number; space: string; inline: InlineJson[] } }
     | { quote: { prefix: string; inline: InlineJson[] } }
-    | { line: DocLine }
+    | { line: DocLine; source: string }
   )[] = [];
   const restoreSources = (line: string) =>
     line.split(sentinel).reduce((joined, piece, index) => {
@@ -1004,6 +1004,7 @@ export function buildTiptapContent(
     if (index === 0 && literal) {
       entries.push({
         line: { list: null, inline: [textJsonForSpan(literal, []), ...buildInline(line)] },
+        source: literal + line,
       });
       continue;
     }
@@ -1026,7 +1027,7 @@ export function buildTiptapContent(
       }
       const quote = blockSyntax ? /^(>[ \t]*)([^\n]*)$/.exec(line) : null;
       if (quote) entries.push({ quote: { prefix: quote[1]!, inline: buildInline(quote[2]!) } });
-      else entries.push({ line: buildDocLine(line) });
+      else entries.push({ line: buildDocLine(line), source: line });
       continue;
     }
     const language = restoreSources(opening.language);
@@ -1077,7 +1078,23 @@ export function buildTiptapContent(
     });
     openQuote = null;
   };
-  for (const entry of entries) {
+  const lazyTarget = (entry: (typeof entries)[number] | undefined) =>
+    !entry ? null : "quote" in entry ? "quote" : "line" in entry && entry.line.list ? "list" : null;
+  for (const [index, entry] of entries.entries()) {
+    const next = entries[index + 1];
+    if (
+      "line" in entry &&
+      entry.source === "" &&
+      next &&
+      "line" in next &&
+      !next.line.list &&
+      needsBlankLineBetween(lazyTarget(entries[index - 1]), {
+        empty: next.source === "",
+        indented: /^[ \t]/.test(next.source),
+      })
+    ) {
+      continue;
+    }
     if ("quote" in entry) {
       flushLists();
       if (openQuote && openQuote.prefix !== entry.quote.prefix) flushQuote();
@@ -1225,11 +1242,37 @@ function pushBreakRun(acc: RichAccumulator, position?: number): void {
   acc.md += 1;
 }
 
-// Separate prose from quotes to avoid lazy continuation; an empty paragraph already separates them.
-function needsBlankLineAfterQuote(previous: ProseMirrorNode, block: ProseMirrorNode): boolean {
-  return (
-    previous.type.name === "blockquote" && block.type.name === "paragraph" && block.content.size > 0
-  );
+// Markdown folds a paragraph line into the quote or list right above it, so the serializer writes
+// a blank line between them and the parser drops it. An empty paragraph is that line already, and
+// an indented line after a list continues the item on purpose.
+function needsBlankLineBetween(
+  previous: "quote" | "list" | null,
+  paragraph: { empty: boolean; indented: boolean },
+): boolean {
+  if (!previous || paragraph.empty) return false;
+  return previous === "quote" || !paragraph.indented;
+}
+
+function lazyContinuationTarget(block: ProseMirrorNode): "quote" | "list" | null {
+  if (block.type.name === "blockquote") return "quote";
+  return LIST_NODE_NAMES.has(block.type.name) ? "list" : null;
+}
+
+// Loading a draft can add the blank line Markdown needs after a quote or list. Moves an offset in
+// `value` to the same text in `serialized`.
+export function shiftPastAddedBlankLines(
+  value: string,
+  serialized: string,
+  offset: number,
+): number {
+  if (value === serialized) return offset;
+  let shift = 0;
+  for (let index = 0; index < offset; index += 1) {
+    while (value[index] !== serialized[index + shift] && serialized[index + shift] === "\n") {
+      shift += 1;
+    }
+  }
+  return Math.min(serialized.length, offset + shift);
 }
 
 // Blank-line runs own no document characters; offsets clamp to the paragraph start.
@@ -1676,7 +1719,17 @@ function serializeDoc(doc: ProseMirrorNode): RichDocMap {
   let pmBlockStart = 0;
   blocks.forEach((block, blockIndex) => {
     if (blockIndex > 0 && !isTrailingLineAfterRule(doc, blockIndex)) pushBreakRun(acc);
-    if (blockIndex > 0 && needsBlankLineAfterQuote(blocks[blockIndex - 1]!, block)) {
+    const first = block.firstChild;
+    if (
+      blockIndex > 0 &&
+      block.type.name === "paragraph" &&
+      needsBlankLineBetween(lazyContinuationTarget(blocks[blockIndex - 1]!), {
+        // A CRLF blank line keeps its "\r".
+        empty: !first || (block.childCount === 1 && first.text === "\r"),
+        // Checks the first node, not textContent, which skips a leading chip.
+        indented: Boolean(first?.isText && !first.marks.length && /^[ \t]/.test(first.text!)),
+      })
+    ) {
       pushBlankLineRun(acc, pmBlockStart + 1);
     }
     if (LIST_NODE_NAMES.has(block.type.name)) {
