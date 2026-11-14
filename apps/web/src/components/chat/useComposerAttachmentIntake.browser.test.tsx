@@ -152,33 +152,13 @@ it.each(["thread", "session"] as const)(
     };
     const targetKey = composerTargetKey(target);
 
-    // Wider than the 2000 px limit, so the real compression re-encodes it.
-    const canvas = new OffscreenCanvas(2200, 20);
-    canvas.getContext("2d")!.fillRect(0, 0, 2200, 20);
-    const screenshot = new File([await canvas.convertToBlob({ type: "image/png" })], "shot.png", {
-      type: "image/png",
+    const compressing = deferred<void>();
+    const resumeCompression = deferred<void>();
+    compression.prepare.mockReset().mockImplementation(async (file: File) => {
+      compressing.resolve();
+      await resumeCompression.promise;
+      return compress(file);
     });
-    const real = await vi.importActual<typeof import("../../lib/imageCompression")>(
-      "../../lib/imageCompression",
-    );
-    const previousCompression = compression.prepare.getMockImplementation();
-    using _compression = {
-      [Symbol.dispose]: () => {
-        compression.prepare.mockReset();
-        if (previousCompression) compression.prepare.mockImplementation(previousCompression);
-      },
-    };
-    compression.prepare.mockReset().mockImplementation(real.prepareImageForAttachment);
-    const decoding = deferred<void>();
-    const resumeDecode = deferred<void>();
-    const decode = globalThis.createImageBitmap.bind(globalThis);
-    using _decode = vi
-      .spyOn(globalThis, "createImageBitmap")
-      .mockImplementation(async (...args) => {
-        decoding.resolve();
-        await resumeDecode.promise;
-        return decode(...args);
-      });
 
     const input = {
       activeThreadId: threadId,
@@ -213,8 +193,8 @@ it.each(["thread", "session"] as const)(
         }}
       />,
     );
-    const attaching = intake.addComposerAttachments([screenshot]);
-    await decoding.promise;
+    const attaching = intake.addComposerAttachments([pastedImage()]);
+    await compressing.promise;
 
     if (kind === "session") {
       discardComposerDraft(target);
@@ -224,7 +204,7 @@ it.each(["thread", "session"] as const)(
       discardComposerDraft(target);
     }
     await act(async () => {
-      resumeDecode.resolve();
+      resumeCompression.resolve();
       await attaching;
     });
 
