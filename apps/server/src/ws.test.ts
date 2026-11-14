@@ -1203,6 +1203,7 @@ it.effect("access changes made while the snapshot loads reach the client after i
               Layer.mock(ServerEnvironment.ServerEnvironment)({}),
               Layer.mock(EnvironmentAuth.EnvironmentAuth)({
                 listPairingLinks: () => Effect.succeed([]),
+                listConnectDevices: () => Effect.succeed([]),
                 // Another client revokes a session after the snapshot read it.
                 listClientSessions: () =>
                   PubSub.publish(sessionChanges, {
@@ -1245,6 +1246,18 @@ it.effect("access changes made while the snapshot loads reach the client after i
       revision: 2,
       type: "clientRemoved",
       payload: { sessionId: revokedElsewhere },
+    });
+    yield* server.write(0, { _tag: "Ack", requestId });
+    assert.equal((yield* Queue.take(responses)).type, "pairingLinkRemoved");
+    yield* server.write(0, { _tag: "Ack", requestId });
+
+    // Device trust has no incremental event, so a change re-sends the whole snapshot.
+    yield* PubSub.publish(pairingChanges, { type: "connectDevicesChanged" });
+    assert.deepEqual(yield* Queue.take(responses), {
+      version: 1,
+      revision: 4,
+      type: "snapshot",
+      payload: { pairingLinks: [], clientSessions: [], connectDevices: [] },
     });
     yield* server.write(0, { _tag: "Interrupt", requestId, interruptors: [] });
   }).pipe(
