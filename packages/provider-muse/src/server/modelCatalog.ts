@@ -1,3 +1,4 @@
+import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import type { SendUserTurnOptions } from "@muse-code/sdk";
 import { ModelCapabilities, ServerProviderModel } from "@t3tools/contracts";
 import { MuseSettings } from "../settings.ts";
@@ -10,6 +11,9 @@ import {
   MuseSdkError,
   type MuseSdkHost,
 } from "./sdk.ts";
+
+export const resolveMuseStartupTimeoutMs = (environment?: NodeJS.ProcessEnv) =>
+  resolveProviderProbeTimeoutMs("muse", 8_000, environment);
 
 type MuseReasoningEffort = NonNullable<SendUserTurnOptions<never>["reasoningEffort"]>;
 
@@ -111,7 +115,7 @@ export const discoverMuseModels = Effect.fn("discoverMuseModels")(function* (
         ...(environment ? { environment } : {}),
         ...(cwd ? { cwd } : {}),
         readOnly: true,
-        startupTimeoutMs: 8_000,
+        startupTimeoutMs: resolveMuseStartupTimeoutMs(environment),
       },
       createHost,
     ),

@@ -30,12 +30,14 @@ import type { Preferences } from "../../persistence/mobile-preferences";
 import { makeRelayDeviceRegistrationRequest } from "./registrationPayload";
 import {
   __resetAgentAwarenessRemoteRegistrationForTest,
+  agentAwarenessNotificationsReady,
   getAgentAwarenessRegistrationStatus,
   refreshActiveLiveActivityRemoteRegistration,
   refreshAgentAwarenessRegistration,
   registerLiveActivityPushToken,
   releaseAgentAwarenessRelayTokenProvider,
   setAgentAwarenessRelayTokenProvider,
+  subscribeAgentAwarenessRegistrationStatus,
   updateAgentAwarenessRegistrationPreferences,
   type AgentAwarenessRegistrationError,
 } from "./remoteRegistration";
@@ -709,6 +711,115 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       );
     },
   );
+
+  const stubAndroidDeviceRelay = () => {
+    vi.spyOn(Platform, "OS", "get").mockReturnValue("android");
+    vi.spyOn(Platform, "Version", "get").mockReturnValue(36);
+    const registrations: Array<{
+      readonly preferences: { readonly notificationsEnabled: boolean };
+    }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init);
+      if (request.url.endsWith("/v1/client/dpop-token")) {
+        return Response.json({
+          access_token: "relay-dpop-token",
+          issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+          token_type: "DPoP",
+          expires_in: 300,
+          scope: "mobile:registration",
+        });
+      }
+      if (request.url.endsWith("/v1/mobile/devices")) {
+        registrations.push(await request.json());
+      }
+      return Response.json({ ok: true });
+    });
+    Constants.expoConfig!.extra = { relay: { url: "https://relay.example.test" } };
+    return registrations;
+  };
+
+  it.effect("does not report notifications ready when its push token lookup fails", () => {
+    const registrations = stubAndroidDeviceRelay();
+    vi.mocked(Notifications.getDevicePushTokenAsync).mockRejectedValue(
+      new Error("Default FirebaseApp is not initialized"),
+    );
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"), "user-a");
+
+    return Effect.gen(function* () {
+      yield* runBackgroundOperations();
+
+      // Live Activities register with their own tokens, so the device stays registered.
+      expect(getAgentAwarenessRegistrationStatus()).toBe("registered");
+      expect(agentAwarenessNotificationsReady()).toBe(false);
+      expect(registrations).toMatchObject([{ preferences: { notificationsEnabled: true } }]);
+      expect(registrations[0]).not.toHaveProperty("pushToken");
+
+      const onStatusChange = vi.fn();
+      subscribeAgentAwarenessRegistrationStatus(onStatusChange);
+      const listener = vi.mocked(Notifications.addPushTokenListener).mock.calls.at(-1)![0];
+      listener({ type: "android", data: "fcm-token" } as never);
+      yield* runBackgroundOperations();
+
+      expect(agentAwarenessNotificationsReady()).toBe(true);
+      expect(onStatusChange).toHaveBeenCalled();
+    }).pipe(
+      Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
+      Effect.provide(layerRelayTest),
+    );
+  });
+
+  it.effect("keeps notifications enabled when a refresh cannot read the push token", () => {
+    const registrations = stubAndroidDeviceRelay();
+    vi.mocked(Notifications.getDevicePushTokenAsync).mockResolvedValue({
+      type: "android",
+      data: "fcm-token",
+    });
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"), "user-a");
+
+    return Effect.gen(function* () {
+      yield* runBackgroundOperations();
+      expect(registrations).toMatchObject([{ preferences: { notificationsEnabled: true } }]);
+      expect(getAgentAwarenessRegistrationStatus()).toBe("registered");
+
+      vi.mocked(Notifications.getDevicePushTokenAsync).mockRejectedValueOnce(
+        new Error("SERVICE_NOT_AVAILABLE"),
+      );
+      yield* refreshAgentAwarenessRegistration();
+
+      expect(registrations).toMatchObject([{ preferences: { notificationsEnabled: true } }]);
+      expect(agentAwarenessNotificationsReady()).toBe(true);
+
+      // A lookup that started before a rotation must not replace the rotated token.
+      let resolveStaleLookup: (token: { type: "android"; data: string }) => void = () => {};
+      let markLookupStarted: () => void = () => {};
+      const lookupStarted = new Promise<void>((resolve) => {
+        markLookupStarted = resolve;
+      });
+      vi.mocked(Notifications.getDevicePushTokenAsync).mockImplementationOnce(() => {
+        markLookupStarted();
+        return new Promise((resolve) => {
+          resolveStaleLookup = resolve;
+        });
+      });
+      const staleRefresh = yield* Effect.forkChild(refreshAgentAwarenessRegistration());
+      yield* Effect.promise(() => lookupStarted);
+      const listener = vi.mocked(Notifications.addPushTokenListener).mock.calls.at(-1)![0];
+      listener({ type: "android", data: "rotated-fcm-token" } as never);
+      yield* runBackgroundOperations();
+      resolveStaleLookup({ type: "android", data: "fcm-token" });
+      yield* Fiber.join(staleRefresh);
+      vi.mocked(Notifications.getDevicePushTokenAsync).mockRejectedValueOnce(
+        new Error("SERVICE_NOT_AVAILABLE"),
+      );
+      yield* refreshAgentAwarenessRegistration();
+
+      expect(registrations.at(-1)).toMatchObject({ pushToken: "rotated-fcm-token" });
+    }).pipe(
+      Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
+      Effect.provide(layerRelayTest),
+    );
+  });
+
   it.effect.each(["blocked", "unavailable"] as const)(
     "keeps Android push delivery registered when the alert channel is %s",
     (channelState) => {

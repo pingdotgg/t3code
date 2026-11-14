@@ -21,6 +21,11 @@ export const SERVICE_UNIT_ENV = "T3_BOOT_SERVICE_UNIT";
 export const SERVICE_STOP_MARKER_FILE = ".service-stopping";
 /** Marks a repointed unit whose service still runs the old version; launcher startup clears it. */
 export const SERVICE_RESTART_PENDING_FILE = ".restart-pending";
+/** Held by a Windows launcher while it runs: Task Scheduler tracks only the task's console host. */
+export const SERVICE_LAUNCHER_LOCK_FILE = "service-launcher.lock";
+/** Held by a launcher while it has, or is about to start, a server: an SSH launch waits for that
+    server instead of starting its own. Released while the launcher idles. */
+export const SERVICE_SERVING_LOCK_FILE = "service-serving.lock";
 
 const unquoteSystemdValue = (raw: string) =>
   (raw.startsWith('"') && raw.endsWith('"')
@@ -31,21 +36,68 @@ const unquoteSystemdValue = (raw: string) =>
 const unescapeXmlText = (value: string) =>
   value.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
 
-export function serviceUnitBaseDirOf(contents: string): string | undefined {
-  const systemd = /^Environment=T3CODE_HOME=(.*)$/m.exec(contents)?.[1];
+const unquoteWindowsArgument = (raw: string) =>
+  unescapeXmlText(raw).replace(/(\\+)$/, (slashes) => slashes.slice(slashes.length / 2));
+
+/** Whether Task Scheduler's copy of a task is disabled as a whole, not one of its triggers. */
+export const serviceTaskIsDisabled = (taskXml: string): boolean =>
+  /<Settings>[\s\S]*?<\/Settings>/.exec(taskXml)?.[0].includes("<Enabled>false</Enabled>") === true;
+
+/** A task as Task Scheduler should hold it while its service must stay stopped. */
+export const disabledServiceTask = (taskXml: string): string =>
+  serviceTaskIsDisabled(taskXml)
+    ? taskXml
+    : taskXml.replace("  </Settings>", "    <Enabled>false</Enabled>\n  </Settings>");
+
+export function serviceUnitEnvironmentValueOf(
+  contents: string,
+  name: "T3CODE_HOME" | "T3CODE_INSTALL_BIN_DIR",
+): string | undefined {
+  const systemd = new RegExp(`^Environment=${name}=(.*)$`, "m").exec(contents)?.[1];
   if (systemd !== undefined) return unquoteSystemdValue(systemd.trim());
-  const plist = /<key>T3CODE_HOME<\/key>\s*<string>([^<]*)<\/string>/.exec(contents)?.[1];
+  const plist = new RegExp(`<key>${name}</key>\\s*<string>([^<]*)</string>`).exec(contents)?.[1];
   return plist === undefined ? undefined : unescapeXmlText(plist);
 }
 
-/** The executable an installed unit or plist starts: the launcher's runtime. */
+export function serviceUnitBaseDirOf(contents: string): string | undefined {
+  const unix = serviceUnitEnvironmentValueOf(contents, "T3CODE_HOME");
+  if (unix !== undefined) return unix;
+  const task = /<Arguments>[^<]* "--base-dir" "([^"]*)"/.exec(contents)?.[1];
+  return task === undefined ? undefined : unquoteWindowsArgument(task);
+}
+
+/**
+ * The user unit directory a systemd manager reads, from its UnitPath property. The persistent
+ * control directory identifies the manager's config root despite UnitPath overrides.
+ */
+export function systemdUnitDirectoryOf(unitPath: ReadonlyArray<string>): string | undefined {
+  const controlDirectory = unitPath.find(
+    (directory) =>
+      directory.startsWith("/") &&
+      directory.endsWith("/systemd/user.control") &&
+      unitPath.includes(directory.slice(0, -".control".length)),
+  );
+  return controlDirectory?.slice(0, -".control".length);
+}
+
+/** The file systemd or launchd appends the service's output to. */
+export function serviceUnitLogPathOf(contents: string): string | undefined {
+  const systemd = /^StandardOutput=append:(.*)$/m.exec(contents)?.[1];
+  if (systemd !== undefined) return unquoteSystemdValue(systemd.trim());
+  const plist = /<key>StandardOutPath<\/key>\s*<string>([^<]*)<\/string>/.exec(contents)?.[1];
+  return plist === undefined ? undefined : unescapeXmlText(plist);
+}
+
+/** The executable an installed unit, plist, or task starts: the launcher's runtime. */
 export function serviceUnitProgramOf(contents: string): string | undefined {
   const systemd = /^ExecStart=("(?:\\.|[^"\\])*"|\S+)/m.exec(contents)?.[1];
   if (systemd !== undefined) return unquoteSystemdValue(systemd);
   const plist = /<key>ProgramArguments<\/key>\s*<array>\s*<string>([^<]*)<\/string>/.exec(
     contents,
   )?.[1];
-  return plist === undefined ? undefined : unescapeXmlText(plist);
+  if (plist !== undefined) return unescapeXmlText(plist);
+  const task = /<Arguments>--headless "([^"]*)"/.exec(contents)?.[1];
+  return task === undefined ? undefined : unquoteWindowsArgument(task);
 }
 
 export interface PendingServiceUpdate {
@@ -93,6 +145,10 @@ export type ServiceLauncherParentMessage =
   | {
       readonly type: "committed";
       readonly updateId: string;
+    }
+  | {
+      /** Shut down as on SIGTERM, which Windows cannot deliver. */
+      readonly type: "stop";
     };
 
 const SEMVER_NUMBER = "(?:0|[1-9]\\d*)";
@@ -309,6 +365,7 @@ export function decodeServiceLauncherParentMessage(
   if (value.type === "update-accepted" && typeof value.updateId === "string") {
     return { type: value.type, updateId: value.updateId };
   }
+  if (value.type === "stop") return { type: value.type };
   return value.type === "committed" && typeof value.updateId === "string"
     ? { type: value.type, updateId: value.updateId }
     : undefined;
