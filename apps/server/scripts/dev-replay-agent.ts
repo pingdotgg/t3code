@@ -60,6 +60,11 @@ export const SCENARIOS = [
     file: `${FIXTURES}/acp_elicitation/registry_transcript.ndjson`,
   },
   {
+    id: "text-question",
+    name: "Text question",
+    file: "./dev-replay/text_question_transcript.ndjson",
+  },
+  {
     id: "multi-turn",
     name: "Multi turn",
     file: `${FIXTURES}/multi_turn/registry_transcript.ndjson`,
