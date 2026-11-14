@@ -26,20 +26,14 @@ type Lane = "network-heavy" | "network" | "quota" | "distributed";
 const alchemyDir = resolve(import.meta.dir, "..");
 const awsTestDir = resolve(alchemyDir, "test", "AWS");
 
-const isTestFile = (name: string) =>
-  name.endsWith(".test.ts") || name.endsWith(".test.tsx");
+const isTestFile = (name: string) => name.endsWith(".test.ts") || name.endsWith(".test.tsx");
 
-const isTypeScriptFile = (name: string) =>
-  name.endsWith(".ts") || name.endsWith(".tsx");
+const isTypeScriptFile = (name: string) => name.endsWith(".ts") || name.endsWith(".tsx");
 
 const walk = (directory: string): string[] =>
   readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const path = resolve(directory, entry.name);
-    return entry.isDirectory()
-      ? walk(path)
-      : isTypeScriptFile(entry.name)
-        ? [path]
-        : [];
+    return entry.isDirectory() ? walk(path) : isTypeScriptFile(entry.name) ? [path] : [];
   });
 
 const resolveLocalImport = (from: string, specifier: string) => {
@@ -48,13 +42,7 @@ const resolveLocalImport = (from: string, specifier: string) => {
   const base = resolve(dirname(from), specifier);
   const candidates = extname(base)
     ? [base, base.replace(/\.js$/, ".ts"), base.replace(/\.jsx$/, ".tsx")]
-    : [
-        base,
-        `${base}.ts`,
-        `${base}.tsx`,
-        resolve(base, "index.ts"),
-        resolve(base, "index.tsx"),
-      ];
+    : [base, `${base}.ts`, `${base}.tsx`, resolve(base, "index.ts"), resolve(base, "index.tsx")];
 
   return candidates.find(
     (candidate) =>
@@ -70,23 +58,19 @@ const reverseImports = new Map<string, Set<string>>();
 const lambdaSources = new Set<string>();
 const networkSources = new Set<string>();
 
-const importPattern =
-  /(?:from\s*|import\s*\(|new\s+URL\s*\()\s*["']([^"']+)["']/g;
+const importPattern = /(?:from\s*|import\s*\(|new\s+URL\s*\()\s*["']([^"']+)["']/g;
 
 const isEc2ResourceModule = (specifier: string) =>
-  specifier === "@/AWS/EC2" ||
-  /^@\/AWS\/EC2\/(?:Vpc|Network)(?:\.ts)?$/.test(specifier);
+  specifier === "@/AWS/EC2" || /^@\/AWS\/EC2\/(?:Vpc|Network)(?:\.ts)?$/.test(specifier);
 
-const escapeRegExp = (value: string) =>
-  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 // Keep executable tokens while masking comments and string/template contents.
 // This prevents prose such as "AWS Partner Network (...)" from becoming a
 // scarce-capacity seed. Imports are parsed separately from the original text.
 const maskCommentsAndStrings = (source: string) => {
-  const chars = [...source];
-  let state: "code" | "line" | "block" | "single" | "double" | "template" =
-    "code";
+  const chars = Array.from(source);
+  let state: "code" | "line" | "block" | "single" | "double" | "template" = "code";
 
   for (let index = 0; index < chars.length; index++) {
     const char = chars[index];
@@ -159,8 +143,7 @@ const createsVpc = (source: string) => {
   const ec2Namespaces = new Set<string>();
   const awsNamespaces = new Set<string>();
 
-  const namedImportPattern =
-    /import\s*\{([\s\S]*?)\}\s*from\s*["']([^"']+)["']/g;
+  const namedImportPattern = /import\s*\{([\s\S]*?)\}\s*from\s*["']([^"']+)["']/g;
   for (const match of source.matchAll(namedImportPattern)) {
     const [, bindings, specifier] = match;
     if (isEc2ResourceModule(specifier)) {
@@ -183,8 +166,7 @@ const createsVpc = (source: string) => {
     }
   }
 
-  const namespaceImportPattern =
-    /import\s*\*\s*as\s*(\w+)\s*from\s*["']([^"']+)["']/g;
+  const namespaceImportPattern = /import\s*\*\s*as\s*(\w+)\s*from\s*["']([^"']+)["']/g;
   for (const match of source.matchAll(namespaceImportPattern)) {
     const [, alias, specifier] = match;
     if (isEc2ResourceModule(specifier)) ec2Namespaces.add(alias);
@@ -199,30 +181,20 @@ const createsVpc = (source: string) => {
 
   const targets = [
     ...[...resourceCalls].map(escapeRegExp),
-    ...[...ec2Namespaces].map(
-      (alias) => `${escapeRegExp(alias)}\\.(?:Vpc|Network)`,
-    ),
-    ...[...awsNamespaces].map(
-      (alias) => `${escapeRegExp(alias)}\\.EC2\\.(?:Vpc|Network)`,
-    ),
+    ...[...ec2Namespaces].map((alias) => `${escapeRegExp(alias)}\\.(?:Vpc|Network)`),
+    ...[...awsNamespaces].map((alias) => `${escapeRegExp(alias)}\\.EC2\\.(?:Vpc|Network)`),
   ];
   const code = maskCommentsAndStrings(source);
   if (/\bcreate(?:Default)?Vpc\s*\(/.test(code)) return true;
   if (targets.length === 0) return false;
-  return new RegExp(`\\b(?:${targets.join("|")})(?:<[^>]+>)?\\s*\\(`).test(
-    code,
-  );
+  return new RegExp(`\\b(?:${targets.join("|")})(?:<[^>]+>)?\\s*\\(`).test(code);
 };
 
 for (const file of files) {
   const source = readFileSync(file, "utf8");
 
   // Lambda fixtures use either the focused module or the AWS namespace.
-  if (
-    /@\/AWS\/Lambda(?:["'/]|$)|AWS\.Lambda\.Function(?:<[^>]+>)?\s*\(/.test(
-      source,
-    )
-  ) {
+  if (/@\/AWS\/Lambda(?:["'/]|$)|AWS\.Lambda\.Function(?:<[^>]+>)?\s*\(/.test(source)) {
     lambdaSources.add(file);
   }
 
@@ -274,9 +246,7 @@ const networkHeavyPaths = new Set([
 const networkHeavy = tests.filter(
   (file) => networkReachable.has(file) && networkHeavyPaths.has(file),
 );
-const network = tests.filter(
-  (file) => networkReachable.has(file) && !networkHeavyPaths.has(file),
-);
+const network = tests.filter((file) => networkReachable.has(file) && !networkHeavyPaths.has(file));
 const networkSet = new Set([...networkHeavy, ...network]);
 
 const quota = tests.filter(
@@ -287,9 +257,7 @@ const quota = tests.filter(
       lambdaReachable.has(file)),
 );
 const quotaSet = new Set(quota);
-const distributed = tests.filter(
-  (file) => !networkSet.has(file) && !quotaSet.has(file),
-);
+const distributed = tests.filter((file) => !networkSet.has(file) && !quotaSet.has(file));
 
 const lanes: Record<Lane, string[]> = {
   "network-heavy": networkHeavy,
@@ -311,12 +279,7 @@ if (command === "inventory") {
         overlap:
           [...networkHeavy, ...network, ...quota, ...distributed].length -
           new Set([...networkHeavy, ...network, ...quota, ...distributed]).size,
-        covered: new Set([
-          ...networkHeavy,
-          ...network,
-          ...quota,
-          ...distributed,
-        ]).size,
+        covered: new Set([...networkHeavy, ...network, ...quota, ...distributed]).size,
       },
       null,
       2,
@@ -332,9 +295,7 @@ if (
   command === "list-distributed"
 ) {
   const lane = command.slice("list-".length) as Lane;
-  process.stdout.write(
-    `${lanes[lane].map((file) => relative(alchemyDir, file)).join("\n")}\n`,
-  );
+  process.stdout.write(`${lanes[lane].map((file) => relative(alchemyDir, file)).join("\n")}\n`);
   process.exit(0);
 }
 
@@ -354,9 +315,7 @@ const lane = command as Lane;
 const testFiles = lanes[lane].map((file) => relative(alchemyDir, file));
 const args = process.argv.slice(3);
 
-process.stderr.write(
-  `AWS ${lane} lane: ${testFiles.length}/${tests.length} files\n`,
-);
+process.stderr.write(`AWS ${lane} lane: ${testFiles.length}/${tests.length} files\n`);
 
 const child = Bun.spawn(["bun", "alchemy-test", ...testFiles, ...args], {
   cwd: alchemyDir,

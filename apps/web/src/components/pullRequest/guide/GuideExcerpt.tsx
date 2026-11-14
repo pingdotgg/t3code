@@ -31,12 +31,9 @@ import {
   toViewerSide,
 } from "../PullRequestReviewAnnotation";
 import type { PendingReviewComment } from "../pullRequestReviewStore";
-import {
-  excerptExpansionOldContents,
-  excerptRows,
-  fileDiffRows,
-  rowsToPatch,
-} from "@t3tools/client-runtime/review-guide-tour";
+import { excerptRows, fileDiffRows, rowsToPatch } from "@t3tools/client-runtime/review-guide-tour";
+import type { PullRequestCompletionScope } from "../PullRequestMarkdownTextarea";
+import { excerptLoader } from "./GuideExcerpt.logic";
 import { GuideNoteMarker } from "./GuideNotes";
 import { GuideProse } from "./GuideProse";
 
@@ -55,6 +52,7 @@ export interface ExcerptCommenting {
   readonly canComment: boolean;
   /** The host anchors a comment to a range of lines rather than to its last one. */
   readonly rangeComments: boolean;
+  readonly completionScope: PullRequestCompletionScope | null;
   readonly pending: ReadonlyArray<PendingReviewComment>;
   readonly onComment: (comment: {
     readonly path: string;
@@ -97,30 +95,6 @@ function excerptSlice(file: FileDiffMetadata | null, excerpt: PullRequestReviewG
     deletions: new Set(shown.flatMap((row) => (row.oldLine === null ? [] : [row.oldLine]))),
   };
   return { fileDiff, rows: shown, shown: shown.length, total: rows.length, drawn };
-}
-
-// Other hunks shift old-side context; expand against an excerpt-matching old side.
-function excerptLoader(
-  excerpt: PullRequestReviewGuideExcerpt,
-  sliceRows: ExcerptSlice["rows"],
-  loadDiffFiles: FileDiffContentsLoader,
-): FileDiffContentsLoader | null {
-  if (sliceRows.some((row) => row.hunk !== sliceRows[0]?.hunk)) {
-    return null;
-  }
-  return async (fileDiff) => {
-    const loaded = await loadDiffFiles(fileDiff);
-    const oldContents = excerptExpansionOldContents(loaded.newFile.contents, sliceRows);
-    if (oldContents === null) return loaded;
-    return {
-      newFile: loaded.newFile,
-      oldFile: {
-        name: loaded.oldFile?.name ?? loaded.newFile.name,
-        contents: oldContents,
-        cacheKey: `${loaded.newFile.cacheKey ?? loaded.newFile.name}:excerpt:${excerpt.side}:${excerpt.start}-${excerpt.end}`,
-      },
-    };
-  };
 }
 
 export function GuideExcerpt({
@@ -204,7 +178,7 @@ function ExcerptDiff({
   onOpenFile: (path: string) => void;
 }) {
   const resolvedTheme = useRenderedAppearance();
-  const loadExcerptFiles = excerptLoader(excerpt, slice.rows, loadDiffFiles);
+  const loadExcerptFiles = excerptLoader(excerpt, file, slice.rows, loadDiffFiles);
 
   const annotations = (() => {
     const groups = new Map<string, DiffLineAnnotation<ExcerptAnnotation>>();
@@ -323,6 +297,7 @@ function ExcerptDiff({
                 kind="draft"
                 rangeLabel={`${excerpt.path}:${getReviewPositionAnchor(draft.position).line}`}
                 text=""
+                completionScope={commenting.canComment ? commenting.completionScope : null}
                 placeholder={
                   commenting.canComment ? "Add a comment…" : "Ask the agent about these lines…"
                 }

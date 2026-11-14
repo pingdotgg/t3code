@@ -73,8 +73,8 @@
 
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
-import { fileURLToPath } from "node:url";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, "..", "..");
@@ -154,10 +154,7 @@ const SETTLE = Number(args.settle ?? 25);
 // Retries for the bootstrap step, which can transiently 404/500 while the
 // freshly-deployed store worker's HTTP endpoint comes up.
 const BOOT_RETRIES = Number(args["boot-retries"] ?? 3);
-const GROUP =
-  typeof args.group === "string"
-    ? (args.group as "sequential" | "jump")
-    : undefined;
+const GROUP = typeof args.group === "string" ? (args.group as "sequential" | "jump") : undefined;
 
 const RESET = "\x1b[0m";
 const BOLD = "\x1b[1m";
@@ -168,13 +165,10 @@ const CYAN = "\x1b[36m";
 
 function banner(msg: string) {
   const line = "─".repeat(Math.min(78, msg.length + 4));
-  console.log(
-    `\n${CYAN}${line}\n  ${BOLD}${msg}${RESET}${CYAN}\n${line}${RESET}`,
-  );
+  console.log(`\n${CYAN}${line}\n  ${BOLD}${msg}${RESET}${CYAN}\n${line}${RESET}`);
 }
 
-const sleep = (seconds: number) =>
-  new Promise((r) => setTimeout(r, seconds * 1000));
+const sleep = (seconds: number) => new Promise((r) => setTimeout(r, seconds * 1000));
 
 if (!PROFILE) {
   console.error(
@@ -235,12 +229,7 @@ const stageDir = (stage: Stage) => path.join(TEST_DIR, stage.dir);
  * the app itself uses the remote store, so this is safe.)
  */
 function clearLocalBootstrapState(stage: Stage) {
-  const dir = path.join(
-    stageDir(stage),
-    ".alchemy",
-    "state",
-    "CloudflareStateStore",
-  );
+  const dir = path.join(stageDir(stage), ".alchemy", "state", "CloudflareStateStore");
   try {
     fs.rmSync(dir, { recursive: true, force: true });
   } catch {
@@ -258,6 +247,7 @@ function alc(stage: Stage, subArgs: string[]) {
 
 function extractUrl(output: string): string | undefined {
   // Strip ANSI so the regex matches output rendered through the CLI reporter.
+  // oxlint-disable-next-line no-control-regex
   const clean = output.replace(/\x1b\[[0-9;]*m/g, "");
   const match = clean.match(/https:\/\/[a-z0-9.-]+\.workers\.dev[^\s"')]*/i);
   return match?.[0];
@@ -270,6 +260,7 @@ const NOISE = /tsconfig|is available|npm_|Run `bun add`/i;
 const MEANINGFUL =
   /StateStoreError|BadRequest|AuthError|Decode error|Transport error|HttpClientError|ERROR \(#|not found|Unauthorized|Forbidden|version not ready/i;
 function extractError(output: string): string {
+  // oxlint-disable-next-line no-control-regex
   const clean = output.replace(/\x1b\[[0-9;]*m/g, "");
   const lines = clean
     .split("\n")
@@ -283,10 +274,7 @@ function extractError(output: string): string {
     if (m?.[1] && !NOISE.test(m[1])) return m[1].slice(0, 240);
   }
   const line = lines.find(
-    (l) =>
-      MEANINGFUL.test(l) &&
-      !NOISE.test(l) &&
-      !/^_tag:|^\[cause\]:|^"~effect/.test(l),
+    (l) => MEANINGFUL.test(l) && !NOISE.test(l) && !/^_tag:|^\[cause\]:|^"~effect/.test(l),
   );
   return (line ?? "unknown error").slice(0, 240);
 }
@@ -306,14 +294,10 @@ async function verify(url: string, expectedMarker: string): Promise<void> {
       if (res.ok) {
         const body = (await res.json()) as { marker?: string };
         if (body.marker === expectedMarker) {
-          console.log(
-            `${GREEN}✓ live worker serves marker "${body.marker}"${RESET}`,
-          );
+          console.log(`${GREEN}✓ live worker serves marker "${body.marker}"${RESET}`);
           return;
         }
-        throw new Error(
-          `marker mismatch: got "${body.marker}", expected "${expectedMarker}"`,
-        );
+        throw new Error(`marker mismatch: got "${body.marker}", expected "${expectedMarker}"`);
       }
       lastErr = new Error(`HTTP ${res.status}`);
     } catch (err) {
@@ -322,7 +306,7 @@ async function verify(url: string, expectedMarker: string): Promise<void> {
     await new Promise((r) => setTimeout(r, Math.min(1000 * attempt, 5000)));
   }
   throw new Error(
-    `verification failed for ${url} (expected marker "${expectedMarker}"): ${lastErr}`,
+    `verification failed for ${url} (expected marker "${expectedMarker}"): ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`,
   );
 }
 
@@ -372,21 +356,12 @@ async function alcRetry(
  * first (idempotent; handles both up- and down-grades), which keeps the deploy
  * non-interactive. Both bootstrap and deploy retry on transient errors.
  */
-async function deployAndVerify(
-  stage: Stage,
-  alchemyStage: string,
-): Promise<void> {
+async function deployAndVerify(stage: Stage, alchemyStage: string): Promise<void> {
   await ensureInstalled(stage);
 
   const cloudflareCommand =
-    stage.kind === "workspace"
-      ? ["provider", "cloudflare"]
-      : ["cloudflare"];
-  await alcRetry(
-    stage,
-    [...cloudflareCommand, "bootstrap", "--profile", PROFILE!],
-    "bootstrap",
-  );
+    stage.kind === "workspace" ? ["provider", "cloudflare"] : ["cloudflare"];
+  await alcRetry(stage, [...cloudflareCommand, "bootstrap", "--profile", PROFILE!], "bootstrap");
 
   const dep = await alcRetry(
     stage,
@@ -404,14 +379,7 @@ async function deployAndVerify(
 }
 
 async function destroyApp(stage: Stage, alchemyStage: string) {
-  const r = await alc(stage, [
-    "destroy",
-    "--yes",
-    "--stage",
-    alchemyStage,
-    "--profile",
-    PROFILE!,
-  ]);
+  const r = await alc(stage, ["destroy", "--yes", "--stage", alchemyStage, "--profile", PROFILE!]);
   if (r.code !== 0) {
     console.error(
       `${RED}warning: destroy failed (stage ${alchemyStage}) — clean up manually.${RESET}`,
@@ -429,17 +397,9 @@ async function destroyApp(stage: Stage, alchemyStage: string) {
  */
 async function teardownStore(reason: string) {
   console.log(`${YELLOW}↺ tearing down state store (${reason})${RESET}`);
-  const r = await alc(LATEST, [
-    "provider",
-    "cloudflare",
-    "teardown",
-    "--profile",
-    PROFILE!,
-  ]);
+  const r = await alc(LATEST, ["provider", "cloudflare", "teardown", "--profile", PROFILE!]);
   if (r.code !== 0) {
-    console.error(
-      `${RED}warning: state store teardown failed — remove it manually.${RESET}`,
-    );
+    console.error(`${RED}warning: state store teardown failed — remove it manually.${RESET}`);
   }
   // Let the worker DELETION propagate on workers.dev before anything redeploys
   // the same-named worker — otherwise the fresh bootstrap sees the old version.
@@ -531,15 +491,11 @@ async function runEdge(edge: Edge): Promise<EdgeResult> {
 
   const steps: StepResult[] = [];
 
-  const deployStep = await tryStep(`deploy ${from.dir}`, () =>
-    deployAndVerify(from, EDGE_STAGE),
-  );
+  const deployStep = await tryStep(`deploy ${from.dir}`, () => deployAndVerify(from, EDGE_STAGE));
   steps.push(deployStep);
 
   if (deployStep.status === "ok") {
-    steps.push(
-      await tryStep(`upgrade → ${to.dir}`, () => deployAndVerify(to, EDGE_STAGE)),
-    );
+    steps.push(await tryStep(`upgrade → ${to.dir}`, () => deployAndVerify(to, EDGE_STAGE)));
   } else {
     steps.push({
       name: `upgrade → ${to.dir}`,
@@ -589,7 +545,11 @@ async function main() {
     console.log(`${mark}  [${r.group}] ${r.label}${tag}`);
     for (const s of r.steps) {
       const sym =
-        s.status === "ok" ? `${GREEN}✓${RESET}` : s.status === "skip" ? `${YELLOW}∅${RESET}` : `${RED}✗${RESET}`;
+        s.status === "ok"
+          ? `${GREEN}✓${RESET}`
+          : s.status === "skip"
+            ? `${YELLOW}∅${RESET}`
+            : `${RED}✗${RESET}`;
       console.log(`        ${sym} ${s.name}${s.error ? ` — ${s.error}` : ""}`);
     }
   }

@@ -159,6 +159,7 @@ function layerFor(input: {
   ) => Effect.Effect<HttpClientResponse.HttpClientResponse>;
 }) {
   return ApnsDeliveries.layer.pipe(
+    Layer.provideMerge(NodeCryptoLayer.layerMac),
     Layer.provide(ApnsClient.layer),
     Layer.provide(ApnsProviderTokens.layer),
     Layer.provide(ApnsDeliveryQueue.layer.pipe(Layer.provide(NodeCryptoLayer.layer))),
@@ -393,6 +394,7 @@ describe("ApnsDeliveries", () => {
             preferences_json: disabledPreferences,
           },
           aggregate: inputAggregate,
+          state: { ...state, phase: "waiting_for_input" },
           nowMs: 5_000,
         });
 
@@ -452,6 +454,7 @@ describe("ApnsDeliveries", () => {
           preferences_json: notificationsDisabledPreferences,
         },
         aggregate: inputAggregate,
+        state: { ...state, phase: "waiting_for_input" },
         nowMs: 5_000,
       });
 
@@ -497,6 +500,7 @@ describe("ApnsDeliveries", () => {
             remote_started_at: null,
           },
           aggregate: inputAggregate,
+          state: { ...state, phase: "waiting_for_input" },
           nowMs: 5_000,
         });
 
@@ -523,6 +527,74 @@ describe("ApnsDeliveries", () => {
       }).pipe(Effect.provide(layerFor({ attempts, queuedJobs })));
     },
   );
+
+  it.effect("push-only alerts describe the published thread, never a stale aggregate row", () => {
+    const queuedJobs: Array<SignedApnsDeliveryJob> = [];
+    const pushOnly = {
+      ...target,
+      push_token: "apns-device-token",
+      push_to_start_token: null,
+      activity_push_token: null,
+      remote_started_at: null,
+    };
+    const completed = { ...state, phase: "completed" as const };
+    const doneAggregate: RelayAgentActivityAggregateState = {
+      ...aggregate,
+      activeCount: 0,
+      activities: [{ ...aggregate.activities[0]!, phase: "completed", status: "Done" }],
+    };
+
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      yield* deliveries.sendForTarget({
+        target: pushOnly,
+        aggregate: doneAggregate,
+        state: completed,
+        nowMs: 5_000,
+      });
+      yield* deliveries.sendForTarget({
+        target: pushOnly,
+        aggregate: doneAggregate,
+        state: null,
+        nowMs: 6_000,
+      });
+      const unrelated: RelayAgentActivityState = {
+        ...state,
+        threadId: "other-thread" as RelayAgentActivityState["threadId"],
+        threadTitle: "Other thread",
+        projectTitle: "Other project",
+        deepLink: "/threads/env/other-thread",
+      };
+      yield* deliveries.sendForTarget({
+        target: pushOnly,
+        aggregate: doneAggregate,
+        state: unrelated,
+        nowMs: 7_000,
+      });
+      yield* deliveries.sendForTarget({
+        target: pushOnly,
+        aggregate: doneAggregate,
+        state: { ...unrelated, phase: "waiting_for_input" },
+        nowMs: 8_000,
+      });
+
+      expect(queuedJobs.map((job) => job.payload)).toMatchObject([
+        {
+          kind: "push_notification",
+          notification: { title: "Thread", body: "Done: Project", threadId: "thread" },
+        },
+        {
+          kind: "push_notification",
+          notification: {
+            title: "Other thread",
+            body: "Input: Other project",
+            threadId: "other-thread",
+            deepLink: "/threads/env/other-thread",
+          },
+        },
+      ]);
+    }).pipe(Effect.provide(layerFor({ attempts: [], queuedJobs })));
+  });
 
   it.effect("queues bounded alert notification payloads", () => {
     const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
@@ -553,6 +625,13 @@ describe("ApnsDeliveries", () => {
           remote_started_at: null,
         },
         aggregate: inputAggregate,
+        state: {
+          ...state,
+          projectTitle: longTitle,
+          threadTitle: longTitle,
+          phase: "waiting_for_input",
+          deepLink: "https://example.test/not-an-app-link",
+        },
         nowMs: 5_000,
       });
 
@@ -588,7 +667,7 @@ describe("ApnsDeliveries", () => {
       });
       return Effect.gen(function* () {
         const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
-        const result = yield* deliveries.processSignedJob(signedEnd);
+        const result = yield* deliveries.processSignedJob(yield* signedEnd);
         expect(result.ok).toBe(true);
         expect(requests).toHaveLength(sends ? 1 : 0);
         if (sends) {
@@ -650,7 +729,7 @@ describe("ApnsDeliveries", () => {
 
     return Effect.gen(function* () {
       const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
-      const result = yield* deliveries.processSignedJob(signed);
+      const result = yield* deliveries.processSignedJob(yield* signed);
 
       expect(result.kind).toBe("push_notification");
       expect(result.ok).toBe(true);
@@ -715,7 +794,7 @@ describe("ApnsDeliveries", () => {
 
     return Effect.gen(function* () {
       const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
-      const result = yield* deliveries.processSignedJob(signed);
+      const result = yield* deliveries.processSignedJob(yield* signed);
 
       expect(result).toMatchObject({
         kind: "push_notification",
@@ -762,7 +841,7 @@ describe("ApnsDeliveries", () => {
 
     return Effect.gen(function* () {
       const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
-      const result = yield* deliveries.processSignedJob(signed);
+      const result = yield* deliveries.processSignedJob(yield* signed);
 
       expect(result).toMatchObject({
         kind: "live_activity_update",
@@ -830,7 +909,7 @@ describe("ApnsDeliveries", () => {
 
     return Effect.gen(function* () {
       const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
-      const result = yield* deliveries.processSignedJob(signed);
+      const result = yield* deliveries.processSignedJob(yield* signed);
 
       expect(result).toMatchObject({
         kind: "live_activity_update",
@@ -896,7 +975,7 @@ describe("ApnsDeliveries", () => {
 
     return Effect.gen(function* () {
       const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
-      const result = yield* Effect.exit(deliveries.processSignedJob(signed));
+      const result = yield* Effect.exit(deliveries.processSignedJob(yield* signed));
 
       expect(result._tag).toBe("Failure");
       if (result._tag === "Failure") {
@@ -952,7 +1031,7 @@ describe("ApnsDeliveries", () => {
 
     return Effect.gen(function* () {
       const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
-      const result = yield* deliveries.processSignedJob(signed);
+      const result = yield* deliveries.processSignedJob(yield* signed);
 
       expect(result.kind).toBe("push_notification");
       expect(result.ok).toBe(false);
@@ -1012,7 +1091,7 @@ describe("ApnsDeliveries", () => {
 
     return Effect.gen(function* () {
       const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
-      const result = yield* deliveries.processSignedJob(signed);
+      const result = yield* deliveries.processSignedJob(yield* signed);
 
       expect(result.kind).toBe("live_activity_update");
       expect(result.ok).toBe(false);
@@ -1437,7 +1516,7 @@ describe("signed APNs registration metadata", () => {
     });
     return Effect.gen(function* () {
       const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
-      const result = yield* deliveries.processSignedJob(signed);
+      const result = yield* deliveries.processSignedJob(yield* signed);
       expect(result.ok).toBe(true);
       expect(requests).toHaveLength(1);
       expect(requests[0]?.url).toBe(
