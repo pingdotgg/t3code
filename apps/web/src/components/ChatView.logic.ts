@@ -1294,7 +1294,7 @@ export function snapshotComposerSend(contents: ComposerSendContents) {
 
 export type ComposerSendSnapshot = ReturnType<typeof snapshotComposerSend>;
 
-/** Timeline activity survives a remount without making setup sends busy. */
+/** Derived from the persisted run phase, so a starting run still reads as work after a reload. */
 export function deriveTimelineWorking(input: {
   readonly phase: SessionPhase;
   readonly isSendBusy: boolean;
