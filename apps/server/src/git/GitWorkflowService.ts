@@ -51,6 +51,7 @@ export class GitWorkflowService extends Context.Service<
     ) => Effect.Effect<VcsStatusResult, GitManagerServiceError>;
     readonly localStatus: (
       input: VcsStatusInput,
+      options?: GitManager.GitLocalStatusOptions,
     ) => Effect.Effect<VcsStatusLocalResult, GitManagerServiceError>;
     readonly currentBranch: (cwd: string) => Effect.Effect<string | null, GitManagerServiceError>;
     readonly upstreamDivergence: (cwd: string) => Effect.Effect<
@@ -336,11 +337,11 @@ export const make = Effect.gen(function* () {
         ),
       );
     }),
-    localStatus: Effect.fn("GitWorkflowService.localStatus")(function (input) {
+    localStatus: Effect.fn("GitWorkflowService.localStatus")(function (input, options) {
       return detectGitRepositoryForStatus("GitWorkflowService.localStatus", input.cwd).pipe(
         Effect.flatMap((isGitRepository) =>
           isGitRepository
-            ? gitManager.localStatus(input)
+            ? gitManager.localStatus(input, options)
             : Effect.succeed(nonRepositoryLocalStatus()),
         ),
       );
