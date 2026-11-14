@@ -10,9 +10,10 @@ export type MobileApplicationActiveWakeup = Extract<
 export function mobileApplicationActiveWakeup(
   backgroundedAtMs: number | null,
   activeAtMs: number,
-): MobileApplicationActiveWakeup {
-  return backgroundedAtMs !== null &&
-    activeAtMs - backgroundedAtMs >= MOBILE_LONG_BACKGROUND_AFTER_MS
+): MobileApplicationActiveWakeup | null {
+  // iOS goes inactive without suspending for Control Center, alerts, and the app switcher.
+  if (backgroundedAtMs === null) return null;
+  return activeAtMs - backgroundedAtMs >= MOBILE_LONG_BACKGROUND_AFTER_MS
     ? "application-active-long"
     : "application-active-probe";
 }

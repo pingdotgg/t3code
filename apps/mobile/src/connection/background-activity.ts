@@ -113,9 +113,9 @@ export const layerReporter = Layer.effectDiscard(
       Stream.runForEach(() => report),
       Effect.forkScoped,
     );
-    yield* Effect.sync(requestReport).pipe(
-      Effect.repeat(Schedule.spaced(`${REPORT_INTERVAL_MS} millis`)),
-      Effect.forkScoped,
-    );
+    yield* Effect.sync(() => {
+      // An inactive app is still on screen, so it keeps its lease; a backgrounded one lets it lapse.
+      if (appState !== "background") requestReport();
+    }).pipe(Effect.repeat(Schedule.spaced(`${REPORT_INTERVAL_MS} millis`)), Effect.forkScoped);
   }),
 );
