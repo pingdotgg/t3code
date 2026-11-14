@@ -742,6 +742,25 @@ it.effect("follows a checkout made outside the driver after refs were cached", (
   ).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("includes a newly created external branch after refs were cached", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const cwd = yield* makeTmpDir();
+      const { initialBranch } = yield* initRepoWithCommit(cwd);
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      yield* driver.listRefs({ cwd });
+
+      yield* git(cwd, ["switch", "-c", "feature/outside"]);
+
+      const refs = (yield* driver.listRefs({ cwd })).refs;
+      const previous = refs.find((ref) => ref.name === initialBranch);
+      assert.isTrue(refs.find((ref) => ref.name === "feature/outside")?.current);
+      assert.isFalse(previous?.current);
+      assert.isNull(previous?.worktreePath ?? null);
+    }),
+  ).pipe(Effect.provide(layerTest)),
+);
+
 it.effect.each(["on a branch", "detached", "unborn"] as const)(
   "reads only the repository root for review requests that ignore the branch when %s",
   (state) =>
