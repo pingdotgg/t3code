@@ -12,6 +12,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as HttpRouter from "effect/http/HttpRouter";
@@ -122,16 +123,15 @@ const serveApart = (descriptor: ExecutionEnvironmentDescriptor) =>
   );
 
 it.effect("routes peer reads to readers and sees uncommitted link updates", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const context = yield* layerLinkingEnvironment(
-        laptop,
-        ServerSecretStore.layer,
-        layerReaderDatabase,
-      ).pipe(Layer.build);
-      const links = Context.get(context, PeerLinks.PeerLinks);
-      const sql = Context.get(context, SqlClient.SqlClient);
-      yield* sql`
+  Effect.gen(function* () {
+    const context = yield* layerLinkingEnvironment(
+      laptop,
+      ServerSecretStore.layer,
+      layerReaderDatabase,
+    ).pipe(Layer.build);
+    const links = Context.get(context, PeerLinks.PeerLinks);
+    const sql = Context.get(context, SqlClient.SqlClient);
+    yield* sql`
       INSERT INTO peer_environment_links (
         environment_id, secret_name, label, urls_json, access, linked_at, expires_at, fenced
       ) VALUES (
@@ -139,27 +139,26 @@ it.effect("routes peer reads to readers and sees uncommitted link updates", () =
         '2026-01-01T00:00:00.000Z', '2026-01-02T00:00:00.000Z', 1
       )
     `;
-      const { queries, trace } = traceSqlRouting();
-      yield* links.list.pipe(trace);
-      expect(Option.getOrThrow(yield* links.get(box.environmentId).pipe(trace)).label).toBe("Box");
-      const reads = queries.filter(({ query }) =>
-        query.includes("SELECT * FROM peer_environment_links"),
-      );
-      expect(reads).toHaveLength(2);
-      expect(reads.map((row) => row.connection)).toEqual(["reader", "reader"]);
-      yield* sql.withTransaction(
-        Effect.gen(function* () {
-          yield* sql`UPDATE peer_environment_links SET label = 'Uncommitted box'`;
-          expect(Option.getOrThrow(yield* links.get(box.environmentId)).label).toBe(
-            "Uncommitted box",
-          );
-          expect((yield* links.list)[0]?.label).toBe("Uncommitted box");
-        }),
-      );
-      expect(yield* links.unlink(box.environmentId)).toBe(true);
-      expect(yield* links.list).toEqual([]);
-    }),
-  ),
+    const { queries, trace } = traceSqlRouting();
+    yield* links.list.pipe(trace);
+    expect(Option.getOrThrow(yield* links.get(box.environmentId).pipe(trace)).label).toBe("Box");
+    const reads = queries.filter(({ query }) =>
+      query.includes("SELECT * FROM peer_environment_links"),
+    );
+    expect(reads).toHaveLength(2);
+    expect(reads.map((row) => row.connection)).toEqual(["reader", "reader"]);
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`UPDATE peer_environment_links SET label = 'Uncommitted box'`;
+        expect(Option.getOrThrow(yield* links.get(box.environmentId)).label).toBe(
+          "Uncommitted box",
+        );
+        expect((yield* links.list)[0]?.label).toBe("Uncommitted box");
+      }),
+    );
+    expect(yield* links.unlink(box.environmentId)).toBe(true);
+    expect(yield* links.list).toEqual([]);
+  }),
 );
 
 it.effect("links with a pairing code, and the peer holds its agents to the limits they carry", () =>
@@ -389,6 +388,62 @@ it.effect("never sends a link's token to an address that stops answering as that
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
+it.effect("lists a peer asleep at every address as unreachable within one probe budget", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const b = yield* serveB(box);
+      // Another address of the same machine, asleep too.
+      const wake = yield* Deferred.make<void>();
+      const elsewhere = yield* serveRaw(() =>
+        Deferred.await(wake).pipe(Effect.as(HttpServerResponse.empty({ status: 503 }))),
+      );
+      yield* Effect.addFinalizer(() => Deferred.succeed(wake, undefined));
+      const a = yield* makeA(laptop);
+      const pairing = yield* b.auth.issuePairingCredential();
+      yield* a.links.link({
+        url: b.url,
+        alternateUrls: [elsewhere],
+        pairingCode: pairing.credential,
+        access: "auto",
+      });
+
+      yield* Ref.set(b.asleep, true);
+      const listing = yield* a.links.list.pipe(Effect.forkScoped);
+      yield* Queue.take(b.unanswered);
+      yield* TestClock.adjust(Duration.seconds(3));
+      const listed = yield* Fiber.join(listing);
+      expect(listed.map((link) => link.status)).toEqual(["unreachable"]);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("lists a peer as reachable at another address while its first one sleeps", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const b = yield* serveB(box);
+      const described = yield* HttpClient.get(`${b.url}/.well-known/t3/environment`).pipe(
+        Effect.flatMap((response) => response.text),
+        Effect.provide(FetchHttpClient.layer),
+      );
+      // Another address of the same machine that answers.
+      const elsewhere = yield* serveRaw(() =>
+        Effect.succeed(HttpServerResponse.text(described, { contentType: "application/json" })),
+      );
+      const a = yield* makeA(laptop);
+      const pairing = yield* b.auth.issuePairingCredential();
+      yield* a.links.link({
+        url: b.url,
+        alternateUrls: [elsewhere],
+        pairingCode: pairing.credential,
+        access: "auto",
+      });
+
+      yield* Ref.set(b.asleep, true);
+      expect((yield* a.links.list).map((link) => link.status)).toEqual(["reachable"]);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
 it.effect("cancelling a descriptor probe aborts its request and leaves later resolves fresh", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -508,6 +563,37 @@ it.effect("a linked peer that is renamed shows its new name", () =>
       expect(Option.map(storedAfterList, (link) => link.label)).toEqual(Option.some("Box Studio"));
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect(
+  "a link forgotten while it resolves says it is not linked, not that it lost its credential",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const b = yield* serveB(box);
+        const beforeGet = yield* Ref.make<Effect.Effect<void>>(Effect.void);
+        const racing = Layer.effect(
+          ServerSecretStore.ServerSecretStore,
+          Effect.map(ServerSecretStore.make, (store) =>
+            ServerSecretStore.ServerSecretStore.of({
+              ...store,
+              get: (name) =>
+                Ref.getAndSet(beforeGet, Effect.void).pipe(
+                  Effect.flatten,
+                  Effect.andThen(store.get(name)),
+                ),
+            }),
+          ),
+        );
+        const a = yield* makeA(laptop, racing);
+        const pairing = yield* b.auth.issuePairingCredential();
+        yield* a.links.link({ url: b.url, pairingCode: pairing.credential, access: "auto" });
+
+        yield* Ref.set(beforeGet, Effect.orDie(Effect.asVoid(a.links.unlink(box.environmentId))));
+        const forgotten = yield* probe(a).pipe(Effect.flip);
+        expect(forgotten.message).toContain("not linked to");
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("tells the agent to link again once the peer revokes the link or it expires", () =>
@@ -685,7 +771,7 @@ it.effect("linking a picked machine that answers nowhere names it and links noth
         .pipe(Effect.flip);
       expect(failed.reason).toBe("unreachable");
       expect(failed.message).toBe(
-        `This environment could not reach Box at ${impostor.url}, http://192.168.1.20:3773.`,
+        `This environment could not reach Box: ${new URL(impostor.url).origin} answered as another environment, Impostor. http://192.168.1.20:3773 is plain http, which would send the link's credentials unencrypted. Use its https address, or its Tailscale address.`,
       );
       expect(yield* a.links.list).toEqual([]);
       expect(yield* linkedSessions(impostor)).toEqual([]);
@@ -702,6 +788,29 @@ it.effect("linking a picked machine that answers nowhere names it and links noth
         .pipe(Effect.flip);
       expect(refused.message).toContain("could not reach Box");
       expect(refused.message).toContain("plain http");
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.live("linking an address with nothing listening says so, unlike one that is not T3 Code", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const closed = yield* Effect.scoped(
+        serveRaw(() => Effect.succeed(HttpServerResponse.empty({ status: 404 }))),
+      );
+      const notT3 = yield* serveRaw(() =>
+        Effect.succeed(
+          HttpServerResponse.text("<h1>Not Found</h1>", { status: 404, contentType: "text/html" }),
+        ),
+      );
+      const a = yield* makeA(laptop);
+      const linking = (url: string) =>
+        a.links.link({ url, pairingCode: "unused", access: "auto" }).pipe(Effect.flip);
+      expect((yield* linking(closed)).message).toBe(`${closed} did not answer (ECONNREFUSED).`);
+      expect((yield* linking(notT3)).message).toBe(
+        `${notT3} answered, but not as a T3 Code environment this version understands.`,
+      );
+      expect(yield* a.links.list).toEqual([]);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

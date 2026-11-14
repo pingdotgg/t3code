@@ -18,6 +18,7 @@ import {
 } from "@t3tools/contracts";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -38,8 +39,11 @@ import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSession
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import {
+  ProviderAdapterTurnStartError,
   type ProviderAdapterV2Error,
   type ProviderAdapterV2Event,
+  type ProviderAdapterV2TurnInput,
+  ProviderCompactionUnsupportedError,
   ProviderAdapterV2RuntimePolicy,
 } from "@t3tools/provider-core/server/ProviderAdapter";
 import {
@@ -316,6 +320,8 @@ const runKiroScript = Effect.fn("runKiroScript")(function* (input: {
       model: string,
       options?: ModelSelection["options"],
     ) => Effect.Effect<void, ProviderAdapterV2Error>;
+    /** Runs T3's compact action as turn `ordinal`. */
+    readonly compact: (ordinal: number) => Effect.Effect<void, ProviderAdapterV2Error>;
     readonly interrupt: (
       providerTurnId: ProviderTurnId,
     ) => Effect.Effect<void, ProviderAdapterV2Error>;
@@ -390,10 +396,15 @@ const runKiroScript = Effect.fn("runKiroScript")(function* (input: {
     });
     const providerThread = yield* session.ensureThread({ threadId, modelSelection, runtimePolicy });
     const now = yield* DateTime.now;
-    const startTurnOn = (ordinal: number, model: string, options?: ModelSelection["options"]) => {
+    const turnInput = (
+      ordinal: number,
+      model: string,
+      options?: ModelSelection["options"],
+      text = "Say hello",
+    ): ProviderAdapterV2TurnInput => {
       const suffix = `${threadId}:${ordinal}`;
       const turnSelection = { instanceId, model, ...(options === undefined ? {} : { options }) };
-      return session.startTurn({
+      return {
         appThread: {
           createdBy: "user",
           creationSource: "web",
@@ -428,17 +439,26 @@ const runKiroScript = Effect.fn("runKiroScript")(function* (input: {
           createdBy: "user",
           creationSource: "web",
           messageId: MessageId.make(`message:${suffix}`),
-          text: "Say hello",
+          text,
           attachments: [],
         },
         modelSelection: turnSelection,
         runtimePolicy,
-      });
+      };
     };
+    const startTurnOn = (ordinal: number, model: string, options?: ModelSelection["options"]) =>
+      session.startTurn(turnInput(ordinal, model, options));
+    const compact = (ordinal: number) =>
+      session.compactThread === undefined
+        ? Effect.die("Kiro adapter does not offer compactThread")
+        : session.compactThread(
+            turnInput(ordinal, modelSelection.model, input.options, "/compact"),
+          );
     yield* input.drive({
       events: session.events,
       startTurn: startTurnOn(1, modelSelection.model, input.options),
       startTurnOn,
+      compact,
       interrupt: (providerTurnId) => session.interruptTurn({ providerThread, providerTurnId }),
       respond: (requestId, decision) => session.respondToRuntimeRequest({ requestId, decision }),
     });
@@ -460,7 +480,7 @@ const terminalStatus = (events: ReadonlyArray<ProviderAdapterV2Event>) => {
 };
 
 describe("KiroAdapterV2", () => {
-  it.effect("opens a session on a deployment that advertises no Kiro extensions", () =>
+  it.effect("opens a session and refuses compaction on a deployment with no Kiro extensions", () =>
     runKiroScript({
       scenario: "no-extensions",
       frames: [
@@ -476,12 +496,20 @@ describe("KiroAdapterV2", () => {
         }),
         answer("session/prompt", { stopReason: "end_turn" }),
       ],
-      drive: ({ events, startTurn }) =>
+      drive: ({ events, startTurn, compact }) =>
         Effect.gen(function* () {
           yield* startTurn;
           assert.equal(terminalStatus(yield* collectTurn(events)), "completed");
+          // `_kiro/session/compact` is not advertised, so T3 must not send it.
+          const compacted = yield* Effect.exit(compact(2));
+          const error = Exit.isFailure(compacted) ? Cause.squash(compacted.cause) : undefined;
+          assert.instanceOf(error, ProviderAdapterTurnStartError);
+          assert.instanceOf(
+            (error as ProviderAdapterTurnStartError).cause,
+            ProviderCompactionUnsupportedError,
+          );
         }),
-    }).pipe(Effect.provide(testLayer), Effect.scoped),
+    }).pipe(Effect.provide(testLayer)),
   );
 
   it.effect("switches back to Kiro's default model after a named one", () =>
@@ -529,7 +557,7 @@ describe("KiroAdapterV2", () => {
             assert.equal(terminalStatus(yield* collectTurn(events)), "completed");
           }
         }),
-    }).pipe(Effect.provide(testLayer), Effect.scoped),
+    }).pipe(Effect.provide(testLayer)),
   );
 
   it.effect("sets the thread's effort once the model write advertises it, and after a switch", () =>
@@ -610,7 +638,7 @@ describe("KiroAdapterV2", () => {
             assert.equal(terminalStatus(yield* collectTurn(events)), "completed");
           }
         }),
-    }).pipe(Effect.provide(testLayer), Effect.scoped),
+    }).pipe(Effect.provide(testLayer)),
   );
 
   it.effect("waits for Kiro to advertise the model before setting its effort", () =>
@@ -660,7 +688,7 @@ describe("KiroAdapterV2", () => {
           yield* startTurnOn(1, "claude-opus-5.5", reasoning("high"));
           assert.equal(terminalStatus(yield* collectTurn(events)), "completed");
         }),
-    }).pipe(Effect.provide(testLayer), Effect.scoped),
+    }).pipe(Effect.provide(testLayer)),
   );
 
   it.effect("never sends an effort level the model does not offer", () =>
@@ -716,7 +744,7 @@ describe("KiroAdapterV2", () => {
             assert.equal(terminalStatus(yield* collectTurn(events)), "completed");
           }
         }),
-    }).pipe(Effect.provide(testLayer), Effect.scoped),
+    }).pipe(Effect.provide(testLayer)),
   );
 
   it.effect("answers a stale 'this session' approval with Kiro's allow_once", () =>
@@ -777,7 +805,7 @@ describe("KiroAdapterV2", () => {
           yield* respond(yield* Deferred.await(pending), "acceptForSession");
           assert.equal(terminalStatus(yield* Fiber.join(turn)), "completed");
         }),
-    }).pipe(Effect.provide(testLayer), Effect.scoped),
+    }).pipe(Effect.provide(testLayer)),
   );
 
   it.effect("sends a model Kiro does not list, and fails with Kiro's own message", () =>
@@ -827,7 +855,7 @@ describe("KiroAdapterV2", () => {
           }
           assert.include(terminal.failure.message, "'claude-opus-9' is not available");
         }),
-    }).pipe(Effect.provide(testLayer), Effect.scoped),
+    }).pipe(Effect.provide(testLayer)),
   );
 });
 
@@ -893,7 +921,7 @@ describe("KiroAdapterV2 agents", () => {
           yield* startTurnOn(2, "claude-opus-5.5", agent("spec"));
           assert.equal(terminalStatus(yield* collectTurn(events)), "completed");
         }),
-    }).pipe(Effect.provide(testLayer), Effect.scoped),
+    }).pipe(Effect.provide(testLayer)),
   );
 
   it.effect("puts Kiro default back after an agent switch moved the session off it", () =>
@@ -929,7 +957,7 @@ describe("KiroAdapterV2 agents", () => {
           yield* startTurn;
           assert.equal(terminalStatus(yield* collectTurn(events)), "completed");
         }),
-    }).pipe(Effect.provide(testLayer), Effect.scoped),
+    }).pipe(Effect.provide(testLayer)),
   );
 
   it.effect("keeps the session's agent when the thread's agent no longer exists", () =>
@@ -956,7 +984,7 @@ describe("KiroAdapterV2 agents", () => {
           yield* startTurn;
           assert.equal(terminalStatus(yield* collectTurn(events)), "completed");
         }),
-    }).pipe(Effect.provide(testLayer), Effect.scoped),
+    }).pipe(Effect.provide(testLayer)),
   );
 });
 
@@ -1320,7 +1348,7 @@ describe("KiroAdapterV2 MCP tools", () => {
             );
           }),
       });
-    }).pipe(Effect.provide(testLayer), Effect.scoped),
+    }).pipe(Effect.provide(testLayer)),
   );
 });
 
@@ -1375,7 +1403,7 @@ describe("KiroAdapterV2 unknown model", () => {
             assert.equal(terminal.failure.code, "-32000");
           }),
       });
-    }).pipe(Effect.provide(testLayer), Effect.scoped),
+    }).pipe(Effect.provide(testLayer)),
   );
 });
 

@@ -90,6 +90,15 @@ it("keeps a dialog raised while the activity is replaced", () => {
   expect(current.container.textContent).toContain("Shared content imported");
 });
 
+it("tells a replaced alert it was dismissed", () => {
+  mountHost();
+  const onDismiss = vi.fn();
+  act(() => Dialog.alert("Older", undefined, [{ text: "OK" }], { onDismiss }));
+  act(() => Dialog.alert("Newer", undefined, [{ text: "OK" }]));
+
+  expect(onDismiss).toHaveBeenCalledOnce();
+});
+
 it("ignores a late action from a dialog that a newer one replaced", () => {
   const { container } = mountHost();
   const olderAction = vi.fn();
