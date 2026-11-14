@@ -91,6 +91,8 @@ vi.mock("../state/environments", () => ({
 }));
 vi.mock("../hooks/useSettings", () => ({
   updateClientSettings: vi.fn(),
+  getClientSettings: () => ({ ...DEFAULT_CLIENT_SETTINGS, ...mocks.settings }),
+  isClientSettingsHydrated: () => true,
   useClientSettingsHydrated: () => true,
   useClientSettings: (selector?: (settings: Record<string, unknown>) => unknown) => {
     const settings = { ...DEFAULT_CLIENT_SETTINGS, ...mocks.settings };
@@ -128,6 +130,7 @@ vi.mock("@t3tools/client-runtime/voice-input", async (importOriginal) => ({
         acceleration: "auto",
         modelUnloadTimeout: "min_15",
         gpuDevices: [],
+        benchmarkTier: "cpu",
       };
     }),
   downloadEnvironmentSpeechModel: (_prepared: PreparedConnection, modelId: string) =>
@@ -253,7 +256,6 @@ function Probe(props: {
     projectName: props.projectName,
     cleanup: props.cleanup,
     ownerKey: "draft",
-    draftText: mocks.draft,
     readDraft: () => ({
       text: mocks.draft,
       selection: { start: mocks.draft.length, end: mocks.draft.length },

@@ -37,16 +37,12 @@ import {
 type SelectDescriptor = Extract<ProviderOptionDescriptor, { type: "select" }>;
 type BooleanDescriptor = Extract<ProviderOptionDescriptor, { type: "boolean" }>;
 
-/** Codex service tiers, Claude's Fast mode, and Ultracode sit in the footer, not the column. */
+/** Service tiers, Claude's Fast mode, and Ultracode sit in the footer, not the column. */
 function splitSpeed(
-  provider: TraitsSelectionInput["provider"],
   selects: ReadonlyArray<SelectDescriptor>,
   toggles: ReadonlyArray<BooleanDescriptor>,
 ) {
-  const speedSelect =
-    provider === "codex"
-      ? (selects.find((descriptor) => descriptor.id === "serviceTier") ?? null)
-      : null;
+  const speedSelect = selects.find((descriptor) => descriptor.id === "serviceTier") ?? null;
   const fastToggle = toggles.find((descriptor) => descriptor.id === "fastMode") ?? null;
   const ultracodeToggle = toggles.find((descriptor) => descriptor.id === "ultracode") ?? null;
   return {
@@ -69,11 +65,10 @@ type ColumnControl =
  * such as an agent's session mode, sit below as one row each.
  */
 function columnControls(
-  provider: TraitsSelectionInput["provider"],
   selects: ReadonlyArray<SelectDescriptor>,
   toggles: ReadonlyArray<BooleanDescriptor>,
 ) {
-  const { columnSelects, columnToggles } = splitSpeed(provider, selects, toggles);
+  const { columnSelects, columnToggles } = splitSpeed(selects, toggles);
   const controls: ReadonlyArray<ColumnControl> = [
     ...columnSelects.map((descriptor) => ({ kind: "select" as const, descriptor })),
     ...columnToggles.map((descriptor) => ({ kind: "boolean" as const, descriptor })),
@@ -101,7 +96,6 @@ export function describeComposerEffort(
       : null;
   const primary = visibility.primarySelectDescriptor;
   const display = buildTraitsTriggerDisplay({
-    provider: traits.provider,
     descriptors: visibility.descriptors,
     primarySelectDescriptorId: primary?.id ?? null,
     ultrathinkPromptControlled: visibility.ultrathinkPromptControlled,
@@ -110,8 +104,8 @@ export function describeComposerEffort(
   });
   // The same reasoning control the column lists, wherever the agent put it among its options.
   const reasoning =
-    columnControls(traits.provider, visibility.selectDescriptors, visibility.booleanDescriptors)
-      .effort?.descriptor ?? null;
+    columnControls(visibility.selectDescriptors, visibility.booleanDescriptors).effort
+      ?.descriptor ?? null;
   const ultrathink = visibility.ultrathinkPromptControlled && reasoning === primary;
   const glyph =
     reasoning?.type === "select"
@@ -257,11 +251,7 @@ function EffortLevels(props: {
   defaultModelSelection: ModelSelection | null;
 }) {
   const traits = useTraitsSelection(props.traits);
-  const { effort, others } = columnControls(
-    props.traits.provider,
-    traits.selectDescriptors,
-    traits.booleanDescriptors,
-  );
+  const { effort, others } = columnControls(traits.selectDescriptors, traits.booleanDescriptors);
   if (traits.modelIsUnavailable) {
     return (
       <>
@@ -532,11 +522,7 @@ export function ComposerEffortColumn(props: {
   const visibility = props.traits ? getTraitsSectionVisibility(props.traits) : null;
   const controls =
     props.traits && visibility
-      ? columnControls(
-          props.traits.provider,
-          visibility.selectDescriptors,
-          visibility.booleanDescriptors,
-        )
+      ? columnControls(visibility.selectDescriptors, visibility.booleanDescriptors)
       : null;
   return (
     <>
@@ -604,7 +590,6 @@ function SpeedSegment(props: {
 function SpeedControl(props: { traits: TraitsSelectionInput }) {
   const traits = useTraitsSelection(props.traits);
   const { speedSelect, fastToggle } = splitSpeed(
-    props.traits.provider,
     traits.selectDescriptors,
     traits.booleanDescriptors,
   );
@@ -641,11 +626,7 @@ function SpeedControl(props: { traits: TraitsSelectionInput }) {
 
 function UltracodeControl(props: { traits: TraitsSelectionInput }) {
   const traits = useTraitsSelection(props.traits);
-  const { ultracodeToggle } = splitSpeed(
-    props.traits.provider,
-    traits.selectDescriptors,
-    traits.booleanDescriptors,
-  );
+  const { ultracodeToggle } = splitSpeed(traits.selectDescriptors, traits.booleanDescriptors);
   if (traits.modelIsUnavailable || !ultracodeToggle) return null;
   const on = ultracodeToggle.currentValue === true;
   return (

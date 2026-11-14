@@ -1,5 +1,4 @@
 import {
-  ProviderDriverKind,
   ProviderInstanceId,
   type ProviderOptionDescriptor,
   type SelectProviderOptionDescriptor,
@@ -35,7 +34,6 @@ describe("buildTraitsTriggerDisplay", () => {
 
     expect(
       buildTraitsTriggerDisplay({
-        provider: ProviderDriverKind.make("pi"),
         descriptors: [descriptor],
         primarySelectDescriptorId: descriptor.id,
         ultrathinkPromptControlled: false,
