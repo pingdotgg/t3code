@@ -141,6 +141,11 @@ export interface McpInvocationScope {
   readonly client: McpClientCaller | undefined;
   /** False while the Linked environments beta is off here; `/mcp` reads it per request. */
   readonly linkedEnvironments?: boolean;
+  /**
+   * The origin this `/mcp` request reached, e.g. a T3 Connect tunnel. Hosted clients cannot
+   * see the URL they were configured with, so links they must fetch carry it. Unset in-process.
+   */
+  readonly origin?: string | undefined;
 }
 
 /**
