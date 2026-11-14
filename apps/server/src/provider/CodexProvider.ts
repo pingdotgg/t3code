@@ -887,7 +887,7 @@ function codexLoginCommand(
   platform: NodeJS.Platform,
 ) {
   const quote = (value: string) =>
-    `'${value.replaceAll("'", platform === "win32" ? "''" : "'\\''")}'`;
+    `'${platform === "win32" ? value.replaceAll(/['\u2018-\u201b]/g, "$&$&") : value.replaceAll("'", "'\\''")}'`;
   const binary = binaryPath === "codex" ? "codex" : quote(binaryPath);
   if (platform === "win32") {
     return `${codexHome ? `$env:CODEX_HOME = ${quote(codexHome)}; ` : ""}& ${binary} login`;

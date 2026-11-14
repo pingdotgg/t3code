@@ -571,7 +571,7 @@ it.layer(
     it.effect("includes the configured CODEX_HOME in the login command", () =>
       Effect.gen(function* () {
         const status = yield* checkCodexProviderStatus(
-          decodeCodexSettings({ homePath: "/srv/codex-work" }),
+          decodeCodexSettings({ homePath: String.raw`C:\Users\Work’s account\.codex` }),
           () =>
             Effect.succeed(
               makeCodexProbeSnapshot({
@@ -580,11 +580,14 @@ it.layer(
             ),
           {},
         ).pipe(
-          Effect.provideService(HostProcess.Platform, "linux"),
-          Effect.provide(NodePath.layerPosix),
+          Effect.provideService(HostProcess.Platform, "win32"),
+          Effect.provide(NodePath.layerWin32),
         );
 
-        assert.include(status.message ?? "", "`CODEX_HOME='/srv/codex-work' codex login`");
+        assert.include(
+          status.message ?? "",
+          String.raw`$env:CODEX_HOME = 'C:\Users\Work’’s account\.codex'; & codex login`,
+        );
       }),
     );
 
