@@ -36,6 +36,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
@@ -350,14 +351,18 @@ const dispatchMessage = Effect.fn("EnvironmentCommands.dispatchMessage")(functio
   }
 });
 
+export class ThreadLaunchUnansweredError extends Schema.TaggedError<ThreadLaunchUnansweredError>()(
+  "ThreadLaunchUnansweredError",
+  { message: Schema.String },
+) {}
+
 // Interrupting a launch would cancel the server handler mid-launch, so the deadline bounds only
-// the wait and the launch keeps running; the error says the message may still arrive.
+// the wait and the launch keeps running; the server may still create the thread.
 const THREAD_LAUNCH_TIMEOUT = "2 minutes";
 
 const launchThread = Effect.fn("EnvironmentCommands.launchThread")(function* (
   input: EnvironmentRpcInput<typeof ORCHESTRATION_V2_WS_METHODS.launchThread>,
 ) {
-  const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
   const answer = yield* Effect.forkDetach(
     request(ORCHESTRATION_V2_WS_METHODS.launchThread, input),
     {
@@ -369,9 +374,9 @@ const launchThread = Effect.fn("EnvironmentCommands.launchThread")(function* (
       duration: THREAD_LAUNCH_TIMEOUT,
       orElse: () =>
         Effect.fail(
-          new EnvironmentRpcUnavailableError({
-            environmentId: supervisor.target.environmentId,
-            message: `${supervisor.target.label} did not confirm the message within 2 minutes. It may still arrive; check the thread before sending it again.`,
+          new ThreadLaunchUnansweredError({
+            message:
+              "The server did not confirm this message. It may still arrive; check the thread before sending it again.",
           }),
         ),
     }),

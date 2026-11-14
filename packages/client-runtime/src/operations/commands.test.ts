@@ -505,7 +505,7 @@ describe("V2 environment commands", () => {
       expect(sendFiber.pollUnsafe()).toBeUndefined();
       yield* TestClock.adjust("1 second");
 
-      expect((yield* Fiber.join(sendFiber))._tag).toBe("EnvironmentRpcUnavailableError");
+      expect((yield* Fiber.join(sendFiber))._tag).toBe("ThreadLaunchUnansweredError");
       // The server commits a launch in several steps, so the late request keeps running.
       expect(interrupted).toBe(false);
     }).pipe(Effect.provide(layerTestRandom)),

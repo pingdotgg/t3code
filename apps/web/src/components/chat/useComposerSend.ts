@@ -32,7 +32,10 @@ import {
   ProviderInteractionMode,
   RuntimeMode,
 } from "@t3tools/contracts";
-import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
+import {
+  deriveThreadTitleSeed,
+  ThreadLaunchUnansweredError,
+} from "@t3tools/client-runtime/operations";
 import { wasBootstrapThreadDeleted } from "@t3tools/client-runtime/errors";
 import {
   declinePendingApprovals,
@@ -51,6 +54,7 @@ import {
 import { createModelSelection } from "@t3tools/shared/model";
 import { type SetStateAction, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
+import * as Schema from "effect/Schema";
 import { useNavigate } from "@tanstack/react-router";
 import {
   isAtomCommandInterrupted,
@@ -263,6 +267,8 @@ interface ComposerSendInput {
   /** Links a checked-out pull request to its thread; best effort, failures only logged. */
   readonly linkCheckoutPullRequest: (threadRef: ScopedThreadRef, url: string) => void;
 }
+
+const isThreadLaunchUnanswered = Schema.is(ThreadLaunchUnansweredError);
 
 const notifyQueuedSubmitNotSent = () =>
   toastManager.add(
@@ -1419,14 +1425,16 @@ export function useComposerSend(input: ComposerSendInput) {
     }
 
     if (failure !== null) {
+      const failureError = squashAtomCommandFailure(failure);
+      // An unanswered launch may still create the thread, so the draft stays promoted to it.
       if (isLocalDraftThread && draftId && draftThread) {
-        restoreFailedDraftThread(
-          draftId,
-          draftThread,
-          wasBootstrapThreadDeleted(squashAtomCommandFailure(failure))
-            ? newThreadId()
-            : threadIdForSend,
-        );
+        if (!isThreadLaunchUnanswered(failureError)) {
+          restoreFailedDraftThread(
+            draftId,
+            draftThread,
+            wasBootstrapThreadDeleted(failureError) ? newThreadId() : threadIdForSend,
+          );
+        }
         clearBackgroundDraftSubmissionByRef(scopeThreadRef(environmentId, threadIdForSend));
       }
       // Only an acknowledged send replaces its optimistic row, so a failed one leaves here.
@@ -1481,10 +1489,9 @@ export function useComposerSend(input: ComposerSendInput) {
         }
       }
       if (!isAtomCommandInterrupted(failure)) {
-        const error = squashAtomCommandFailure(failure);
         setThreadError(
           threadIdForSend,
-          error instanceof Error ? error.message : "Failed to send message.",
+          failureError instanceof Error ? failureError.message : "Failed to send message.",
         );
         if (
           draftId &&
@@ -1497,7 +1504,8 @@ export function useComposerSend(input: ComposerSendInput) {
                 submissionIntent === "background"
                   ? "Background task failed"
                   : "Could not start thread",
-              description: error instanceof Error ? error.message : "Failed to send message.",
+              description:
+                failureError instanceof Error ? failureError.message : "Failed to send message.",
               actionProps: {
                 children: "Open draft",
                 onClick: () => {
