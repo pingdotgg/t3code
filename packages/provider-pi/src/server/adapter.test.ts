@@ -2274,41 +2274,64 @@ describe("PiAdapterV2", () => {
         modelSelection: modelSelection("default"),
         runtimePolicy,
       });
-      const failed = yield* makeFakePi;
-      const replacement = yield* makeFakePi;
-      let spawnCount = 0;
-      const fake = {
-        ...replacement,
-        spawner: ChildProcessSpawner.make((command) => {
-          spawnCount++;
-          return (spawnCount === 1 ? failed : replacement).spawner.spawn(command);
-        }),
-      };
-      const { runtime, takeEvent } = yield* openRuntime(
-        fake,
-        "default",
-        THREAD_ID,
-        SESSION_ID,
-        undefined,
-        undefined,
-        FAKE_SESSION_FILE,
-      );
-      assert.include(failed.lastSpawn().args, "--session");
-      yield* failed.closeStdout;
-      replacement.queueState({ sessionFile: "/fake/default-session.jsonl" });
-      const resumed = yield* runtime.resumeThread({ providerThread: persisted });
-      assert.equal(spawnCount, 2);
-      assert.notInclude(replacement.lastSpawn().args, "--session");
-      assert.include(replacement.lastSpawn().args, "--extension");
-      const switched = replacement.allRequests().find((r) => r.type === "switch_session");
-      assert.equal(switched?.sessionPath, FAKE_SESSION_FILE);
-      assert.equal(resumed.nativeThreadRef?.nativeId, FAKE_SESSION_FILE);
-      yield* startTurn(runtime, resumed);
-      yield* replacement.takeRequest("prompt");
-      yield* replacement.emit({ type: "agent_start" });
-      yield* replacement.emit({ type: "agent_settled" });
-      const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
-      assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "completed");
+      // A cleared ref takes the new_session path, which must also run the recovery.
+      for (const providerThread of [persisted, { ...persisted, nativeThreadRef: null }]) {
+        const failed = yield* makeFakePi;
+        const replacement = yield* makeFakePi;
+        // The transport fails stdin and events together; awaiting this orders registration after both.
+        const transportDown = yield* Deferred.make<void>();
+        let spawnCount = 0;
+        const fake = {
+          ...replacement,
+          spawner: ChildProcessSpawner.make((command) => {
+            spawnCount++;
+            if (spawnCount > 1) return replacement.spawner.spawn(command);
+            // Exits at once so the transport is already down before registration runs.
+            return failed.spawner.spawn(command).pipe(
+              Effect.map((child) =>
+                ChildProcessSpawner.makeHandle({
+                  ...child,
+                  exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+                  stdin: child.stdin.pipe(
+                    Sink.ensuring(Deferred.succeed(transportDown, undefined)),
+                  ),
+                }),
+              ),
+            );
+          }),
+        };
+        yield* failed.closeStdout;
+        const { runtime, takeEvent } = yield* openRuntime(
+          fake,
+          "default",
+          THREAD_ID,
+          SESSION_ID,
+          undefined,
+          undefined,
+          FAKE_SESSION_FILE,
+        );
+        assert.include(failed.lastSpawn().args, "--session");
+        yield* Deferred.await(transportDown);
+        replacement.queueState({ sessionFile: "/fake/default-session.jsonl" });
+        const resumed = yield* runtime.resumeThread({ providerThread });
+        assert.equal(spawnCount, 2);
+        assert.notInclude(replacement.lastSpawn().args, "--session");
+        assert.include(replacement.lastSpawn().args, "--extension");
+        const switched = replacement.allRequests().find((r) => r.type === "switch_session");
+        if (providerThread.nativeThreadRef === null) {
+          assert.isUndefined(switched);
+          assert.notEqual(resumed.nativeThreadRef?.nativeId, FAKE_SESSION_FILE);
+        } else {
+          assert.equal(switched?.sessionPath, FAKE_SESSION_FILE);
+          assert.equal(resumed.nativeThreadRef?.nativeId, FAKE_SESSION_FILE);
+        }
+        yield* startTurn(runtime, resumed);
+        yield* replacement.takeRequest("prompt");
+        yield* replacement.emit({ type: "agent_start" });
+        yield* replacement.emit({ type: "agent_settled" });
+        const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
+        assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "completed");
+      }
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 

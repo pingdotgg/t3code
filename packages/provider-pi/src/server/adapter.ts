@@ -2894,8 +2894,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           const needsNewSession = resumeId == null && registrationAttempted;
           registrationAttempted = true;
           // This probe replaces switch_session as a resume's first request, so it keeps the lifecycle deadline.
+          // It also recovers a failed spawn session before lifecycleRequest offers to its dead queue.
           let stateData =
-            resumeId != null
+            resumeId != null || initialActivationPending
               ? yield* request({ type: "get_state" }, PI_SESSION_TIMEOUT_MS)
               : undefined;
           const liveSessionFile = recordString(stateData, "sessionFile");
