@@ -198,6 +198,9 @@ import {
   findNewTaskDraftKeys,
   flushComposerDrafts,
   getComposerDraftSnapshot,
+  addComposerPendingMedia,
+  keepPendingComposerMedia,
+  removeComposerDraftAttachment,
   mergeComposerDraftContentState,
   migrateLegacyNewTaskDraft,
   modelOptionMemoryAtom,
@@ -1061,6 +1064,36 @@ describe("mobile composer drafts", () => {
     );
     expect(overflowRejected).toBe(0);
     expect(appAtomRegistry.get(composerDraftsAtom)[draftKey]?.attachments).toHaveLength(101);
+  });
+
+  it("releases picked media whose placeholder was removed while it processed", async () => {
+    const outboxLoad = vi.spyOn(threadOutboxManager, "load").mockResolvedValue(true);
+    onTestFinished(() => outboxLoad.mockRestore());
+    const cleanup = Promise.withResolvers<void>();
+    composerAttachmentCleanupMocks.remove.mockImplementationOnce(async () => {
+      cleanup.resolve();
+    });
+    const video = (id: string) => ({
+      id,
+      type: "file" as const,
+      name: `${id}.mov`,
+      mimeType: "video/quicktime",
+      sizeBytes: 42,
+      fileUri: `file:///documents/t3-composer-attachments/${id}.mov`,
+    });
+    const draftKey = "thread-pending-media";
+    appAtomRegistry.set(composerDraftsAtom, { [draftKey]: { text: "", attachments: [] } });
+    addComposerPendingMedia(draftKey, [video("kept"), video("removed")]);
+
+    removeComposerDraftAttachment(draftKey, "removed");
+
+    expect(keepPendingComposerMedia(draftKey, [video("kept"), video("removed")])).toEqual([
+      video("kept"),
+    ]);
+    await cleanup.promise;
+    expect(composerAttachmentCleanupMocks.remove).toHaveBeenCalledExactlyOnceWith(
+      video("removed").fileUri,
+    );
   });
 
   it("drops duplicate attachments, releases their files, and keeps them on restore", async () => {

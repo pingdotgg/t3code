@@ -160,7 +160,7 @@ describe("composer file attachments", () => {
     });
 
     it.each(["image/heic", "image/heif", undefined])(
-      "renders a %s photo to JPEG natively and previews the rendered file",
+      "renders a %s photo to JPEG natively and previews the picker copy",
       async (mimeType) => {
         mocks.pickMedia.mockResolvedValue({
           canceled: false,
@@ -181,7 +181,7 @@ describe("composer file attachments", () => {
               mimeType: "image/jpeg",
               sizeBytes: 4,
               dataUrl: `data:image/jpeg;base64,${rendered.base64}`,
-              previewUri: rendered.uri,
+              previewUri: photo.uri,
             },
           ],
           error: null,
@@ -248,12 +248,14 @@ describe("composer file attachments", () => {
           name: "IMG_9280.png",
           mimeType: "image/png",
           sizeBytes: last.width * last.height * 4,
-          previewUri: `file:///cache/fitted-${last.width}x${last.height}.png`,
+          previewUri: photo.uri,
         }),
       );
       expect(image!.sizeBytes).toBeLessThanOrEqual(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES);
       expect(mocks.delete).toHaveBeenCalledWith("file:///cache/fitted-1397x2000.png");
-      expect(mocks.delete).not.toHaveBeenCalledWith(image!.previewUri);
+      expect(mocks.delete).toHaveBeenCalledWith(
+        `file:///cache/fitted-${last.width}x${last.height}.png`,
+      );
     });
 
     it("measures the picker file instead of trusting the reported size", async () => {
@@ -362,8 +364,17 @@ describe("composer file attachments", () => {
         uri.endsWith("clip.mov") ? video.fileSize : 3,
       );
 
-      const result = await pickComposerMedia({ existingCount: 0, maxVideoBytes: 50 * 1024 * 1024 });
+      const onPicked = vi.fn();
+      const result = await pickComposerMedia({
+        existingCount: 0,
+        maxVideoBytes: 50 * 1024 * 1024,
+        onPicked,
+      });
 
+      expect(onPicked).toHaveBeenCalledWith([
+        expect.objectContaining({ id: "attachment-id", type: "image", previewUri: image.uri }),
+        expect.objectContaining({ id: "attachment-id", type: "file", fileUri: video.uri }),
+      ]);
       expect(mocks.pickMedia).toHaveBeenCalledWith(
         expect.objectContaining({
           mediaTypes: ["images", "videos"],

@@ -39,7 +39,7 @@ import {
 } from "@t3tools/contracts";
 
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
-import { composerContextImportsAtom } from "../../state/use-composer-drafts";
+import { composerContextImportsAtom, composerDraftBusy } from "../../state/use-composer-drafts";
 import { abortComposerDraftOperations } from "../../state/composerDraftOperations";
 import { composerContextSendBlockReason } from "../../lib/composerContext";
 import { ComposerInlineControl } from "../../components/ComposerToolbar";
@@ -94,7 +94,6 @@ import { idleShareFlagAtom, idleShareImportPhaseAtom } from "./incomingShareImpo
 import { newTaskFlowKey } from "./new-task-flow-state";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ConnectionStatusDot } from "../connection/ConnectionStatusDot";
-import { appAtomRegistry } from "../../state/atom-registry";
 
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 
@@ -585,7 +584,7 @@ export function NewTaskDraftScreen(props: {
       return null;
     }
     const draft = getComposerDraftSnapshot(draftKey);
-    if (appAtomRegistry.get(composerContextImportsAtom)[draftKey]) return null;
+    if (composerDraftBusy(draftKey)) return null;
     const modelSelection =
       resolveSelectableModelSelection(
         selectedEnvironmentServerConfig,
