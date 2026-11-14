@@ -167,6 +167,12 @@ export function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconNa
         return "zap";
     }
   }
+  if (workEntry.itemType === "system_notice") {
+    return workEntry.structuredPayload?.type === "system_notice" &&
+      workEntry.structuredPayload.level === "info"
+      ? "zap"
+      : "circle-alert";
+  }
   if (workEntry.itemType === "user_input_request" || workEntry.itemType === "approval_request") {
     return "message-circle";
   }
@@ -192,44 +198,59 @@ export function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconNa
   return workToneIcon(workEntry.tone).iconName;
 }
 
+// Look past the visible label so long destinations and inline delimiters can close.
+// This is bounded lookahead, not document-wide Markdown parity: a closing delimiter
+// or reference definition beyond this prefix remains unresolved by the parser.
+export const THOUGHT_PREVIEW_SOURCE_MAX_LENGTH = 8_192;
+export const THOUGHT_PREVIEW_MAX_LENGTH = 2_048;
+
 /** Compact reasoning keeps formulas while flattening other Markdown into label text. */
 export function remarkThoughtPreview(fallback: string) {
   return (tree: Root) => {
     const children: RootContent[] = [];
-    let run: string[] = [];
-    const append = (value: string) => {
-      run.push(value);
-    };
+    let remaining = THOUGHT_PREVIEW_MAX_LENGTH;
+    let fragments: string[] = [];
     const flush = () => {
-      if (run.length === 0) return;
-      children.push({ type: "text", value: run.join("").replace(/\s+/g, " ") });
-      run = [];
+      if (fragments.length === 0) return;
+      children.push({ type: "text", value: fragments.join("").replace(/\s+/g, " ") });
+      fragments = [];
+    };
+    const take = (value: string) => {
+      const text = value.slice(0, remaining);
+      remaining = text.length < value.length ? 0 : remaining - text.length;
+      // A cut here or at the source limit must not leave half a surrogate pair.
+      return text.replace(/[\uD800-\uDBFF]$/, "");
+    };
+    const append = (value: string) => {
+      fragments.push(take(value));
     };
     const visit = (node: Root | RootContent) => {
-      if (node.type === "html" || node.type === "definition") return;
+      if (remaining === 0 || node.type === "html" || node.type === "definition") return;
       if (node.type === "math" || node.type === "inlineMath") {
         flush();
+        const value = take(node.value);
         children.push({
           type: "inlineMath",
-          value: node.value,
+          value,
           position: node.position,
           data: {
             hName: "code",
             hProperties: { className: ["language-math", "math-inline"] },
-            hChildren: [{ type: "text", value: node.value }],
+            hChildren: [{ type: "text", value }],
           },
         });
       } else if ("alt" in node) append(node.alt ?? "");
       else if ("value" in node) append(node.value);
       else if ("children" in node) {
-        node.children.forEach((child, index) => {
+        for (const [index, child] of node.children.entries()) {
+          if (remaining === 0) break;
           if (
             index &&
             ["root", "blockquote", "list", "listItem", "table", "tableRow"].includes(node.type)
           )
             append(" ");
           visit(child);
-        });
+        }
       } else if (node.type === "break") append(" ");
     };
     visit(tree);
