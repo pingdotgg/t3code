@@ -339,6 +339,53 @@ it.effect("launches an installed editor with platform-safe arguments", () =>
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.effect.skipIf(windowsHost)("opens and reveals a home-relative path in the home folder", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+    for (const name of ["code", "open", "idea"]) {
+      const filePath = path.join(binDir, name);
+      yield* fileSystem.writeFileString(filePath, "#!/bin/sh\n");
+      yield* fileSystem.chmod(filePath, 0o755);
+    }
+
+    const spawned: ChildProcess.StandardCommand[] = [];
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      yield* launcher.launchEditor({ editor: "vscode", cwd: "~/notes/todo.md:3" });
+      yield* launcher.launchEditor({
+        editor: "idea",
+        cwd: "~/notes/todo.md:3",
+        projectRoot: "~/notes",
+      });
+      yield* launcher.launchEditor({
+        editor: "file-manager",
+        cwd: "~/notes/todo.md",
+        reveal: true,
+      });
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          platform: "darwin",
+          env: { PATH: binDir },
+          onSpawn: (command) => spawned.push(command),
+        }),
+      ),
+      Effect.provideService(HostProcess.HomeDirectory, "/Users/t3"),
+    );
+
+    assert.deepEqual(
+      spawned.map((command) => [command.command, ...command.args]),
+      [
+        ["code", "--goto", "/Users/t3/notes/todo.md:3"],
+        ["idea", "/Users/t3/notes", "--line", "3", "/Users/t3/notes/todo.md"],
+        ["open", "-R", "/Users/t3/notes/todo.md"],
+      ],
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.live.skipIf(!windowsHost)("opens Windows folders through the default shell handler", () =>
   Effect.gen(function* () {
     let spawned: ChildProcess.StandardCommand | undefined;

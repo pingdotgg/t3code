@@ -730,7 +730,12 @@ const launchEditor = Effect.fn("externalLauncher.launchEditor")(function* (
   input: LaunchEditorInput,
   hasStockFolderVerb: Effect.Effect<boolean>,
 ) {
-  const launch = yield* resolveEditorLaunch(input);
+  // Clients send `~/` host paths as written, and launches run without a shell to expand them.
+  const home = yield* HostProcess.HomeDirectory;
+  const cwd = expandHomePath(input.cwd, home);
+  const projectRoot =
+    input.projectRoot === undefined ? undefined : expandHomePath(input.projectRoot, home);
+  const launch = yield* resolveEditorLaunch({ ...input, cwd, projectRoot });
   if (input.editor === "file-manager" && input.reveal === true) {
     const platform = yield* HostProcess.Platform;
     if (
