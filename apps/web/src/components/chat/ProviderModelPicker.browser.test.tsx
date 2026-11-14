@@ -176,6 +176,76 @@ it("keeps a docked picker open after a pick and hands focus to that model's effo
   await expect.element(search).not.toBeInTheDocument();
 });
 
+it("folds an aggregator's vendors into sections that open on click and stay searchable", async () => {
+  const instanceId = ProviderInstanceId.make("opencode");
+  const entries = deriveProviderInstanceEntries([
+    {
+      instanceId,
+      driver: ProviderDriverKind.make("opencode"),
+      enabled: true,
+      installed: true,
+      version: null,
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-01-01T00:00:00.000Z",
+      models: [],
+      slashCommands: [],
+      skills: [],
+    },
+  ]);
+  const options = new Map([
+    [
+      instanceId,
+      [
+        { slug: "anthropic/claude-sonnet", name: "Claude Sonnet", subProvider: "Anthropic" },
+        { slug: "openai/gpt-pro", name: "GPT Pro", subProvider: "OpenAI" },
+      ],
+    ],
+  ]);
+
+  function Picker() {
+    const [model, setModel] = useState("anthropic/claude-sonnet");
+    return (
+      <ProviderModelPicker
+        environmentId={null}
+        activeInstanceId={instanceId}
+        model={model}
+        lockedProvider={null}
+        instanceEntries={entries}
+        modelOptionsByInstance={options}
+        triggerAriaLabel="Choose model"
+        onInstanceModelChange={(_, selected) => setModel(selected)}
+        effortColumn={[]}
+      />
+    );
+  }
+
+  await using screen = await render(<Picker />);
+  await screen.getByRole("button", { name: "Choose model" }).click();
+  const gptPro = page.getByRole("option", { name: /GPT Pro/ });
+  await expect
+    .element(page.getByRole("option", { name: /Claude Sonnet.*Anthropic/ }))
+    .toBeVisible();
+  await expect.element(gptPro).not.toBeInTheDocument();
+
+  await userEvent.keyboard("gpt");
+  await expect.element(gptPro).toBeVisible();
+  await userEvent.clear(page.getByPlaceholder("Search models..."));
+  await expect.element(gptPro).not.toBeInTheDocument();
+
+  const openAiSection = page.getByRole("option", { name: /^OpenAI/ });
+  await expect.element(openAiSection).toHaveAttribute("aria-expanded", "false");
+  await openAiSection.click();
+  await expect.element(gptPro).toBeVisible();
+  await expect.element(openAiSection).toHaveAttribute("aria-expanded", "true");
+
+  await gptPro.click();
+  await expect
+    .element(page.getByRole("option", { name: /^Anthropic/ }))
+    .toHaveAttribute("aria-expanded", "true");
+  await expect.element(page.getByRole("option", { name: /Claude Sonnet/ })).toBeVisible();
+});
+
 it("opens on the active provider when every favorite belongs to a disabled provider", async () => {
   const entries = deriveProviderInstanceEntries(
     ["Codex", "Claude"].map((name) => ({
