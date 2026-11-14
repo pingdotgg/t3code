@@ -164,6 +164,7 @@ import {
   SelectableMarkdownText,
   type MarkdownFileContextMenu,
   type MarkdownImageRenderer,
+  type MarkdownImageRequest,
   type MarkdownImageSourceResolver,
   type MarkdownLinkCustomization,
   type NativeMarkdownTextStyle,
@@ -1091,8 +1092,6 @@ function ThreadMediaVisibility(props: { readonly children: ReactNode }) {
 
 /** The reply a link sits in; a file it cites may be where the agent worked before writing it. */
 type MarkdownLinkReply = Pick<OrchestrationV2ProjectedTurnItem, "sourceThreadId" | "sourceItemId">;
-
-const EMPTY_RUN_FOLDERS: ReadonlyArray<never> = [];
 
 function feedRowRunId(row: ThreadFeedRow): RunId | null {
   if (row.type === "message") return row.message.runId;
@@ -2914,8 +2913,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     // A v1 link names no environment, so it falls back to this message's.
     return scopeThreadRef(props.environmentId, link.threadId);
   };
-  // The file a chat link names: in the lookup root, else in the one other project that has it.
-  // The lookup root is the thread's folder, or the folder the link's row ran in.
+  // The file a chat link names: in this workspace, else in the one other project that has it.
+  // `lookupRoot` is this workspace, or the folder the link's row ran in.
   const findFileLinkTarget = async (
     linkPath: string,
     path: string,
@@ -3132,8 +3131,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     threadId: props.threadId,
     workspaceRoot: props.workspaceRoot ?? null,
   });
-  // `folder` is a row's own run folder when it differs from the thread's; every file
-  // action resolves there so a tap, the context menu, and its paths agree.
+  // Every file action resolves in `folder`, so a tap, the context menu, and its paths agree.
   const markdownLinkHandlersIn = (folder: string | undefined): MarkdownLinkHandlers => ({
     fileEmbedLabel: (href, standalone) =>
       markdownFileEmbedLabel(
@@ -3238,8 +3236,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     },
   });
   const markdownLinkHandlers = markdownLinkHandlersIn(undefined);
-  // `folder` is a row's own run folder when it differs from the thread's, as for its links.
-  const renderMarkdownImageIn = (image: Parameters<MarkdownImageRenderer>[0], folder?: string) => {
+  const renderMarkdownImage = (image: MarkdownImageRequest, folder?: string) => {
     const workspaceRoot = folder ?? props.workspaceRoot;
     const media = resolveMarkdownMediaPreview(image.href, {
       environmentId: props.environmentId,
@@ -3324,8 +3321,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       />
     );
   };
-  const renderMarkdownImage: MarkdownImageRenderer = (image) => renderMarkdownImageIn(image);
-  const renderViewedImageIn = (image: Parameters<MarkdownImageRenderer>[0], folder?: string) => {
+  const renderViewedImage = (image: MarkdownImageRequest, folder?: string) => {
     const workspaceRoot = folder ?? props.workspaceRoot;
     const viewedImage = resolveViewedImageAsset(image.href, {
       threadId: props.threadId,
@@ -3355,21 +3351,19 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       />
     ) : null;
   };
-  const renderViewedImage: MarkdownImageRenderer = (image) => renderViewedImageIn(image);
   const markdownStyles = useMarkdownStyles();
-  const renderReasoningIn = (text: string, folder?: string) => (
+  const renderReasoning = (text: string, folder?: string) => (
     <AssistantMarkdownContent
       markdown={text}
       environmentId={props.environmentId}
       markdownStyles={markdownStyles.assistant}
       linkHandlers={folder === undefined ? markdownLinkHandlers : markdownLinkHandlersIn(folder)}
       renderImage={
-        folder === undefined ? renderMarkdownImage : (image) => renderMarkdownImageIn(image, folder)
+        folder === undefined ? renderMarkdownImage : (image) => renderMarkdownImage(image, folder)
       }
       skills={props.skills}
     />
   );
-  const renderReasoning = (text: string) => renderReasoningIn(text);
   const reviewCommentColors = useReviewCommentColors();
   const unsettledTurnId = threadFeedRunIsUnsettled(props.latestRun) ? props.latestRun.runId : null;
   const compactionLabelsByEntryId = useMemo(
@@ -3471,7 +3465,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       props.worktreeSetup || props.setupWorkingStartedAt ? setupAnchorIndex : undefined,
   });
   const rowFolders = timelineRowFolders(
-    `${runFoldersSignature(props.runs ?? EMPTY_RUN_FOLDERS, props.runFolders)}`,
+    `${runFoldersSignature(props.runs, props.runFolders)}`,
     `${receiptFoldersSignature(groupedFeed, feedRowPreviousFolder)}`,
   );
   // A row's own run folder when it differs from the thread's.
@@ -3479,26 +3473,17 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     const folder = timelineRowFolder(rowFolders, feedRowRunId(entry), entry.id)?.cwd;
     return folder === props.workspaceRoot ? undefined : folder;
   };
-  // A row in the thread's folder reuses the thread's renderers, so it renders as before.
-  const rowRenderersFor = (entry: ThreadFeedRow) => {
+  // A row that ran in another folder replaces the thread's folder and renderers with its own.
+  const rowFolderRenderers = (entry: ThreadFeedRow) => {
     const folder = rowFolderOf(entry);
-    return folder === undefined
-      ? {
-          workspaceRoot: props.workspaceRoot,
-          markdownLinkHandlers,
-          renderMarkdownImage,
-          renderViewedImage,
-          renderReasoning,
-        }
-      : {
-          workspaceRoot: folder,
-          markdownLinkHandlers: markdownLinkHandlersIn(folder),
-          renderMarkdownImage: (image: Parameters<MarkdownImageRenderer>[0]) =>
-            renderMarkdownImageIn(image, folder),
-          renderViewedImage: (image: Parameters<MarkdownImageRenderer>[0]) =>
-            renderViewedImageIn(image, folder),
-          renderReasoning: (text: string) => renderReasoningIn(text, folder),
-        };
+    if (folder === undefined) return undefined;
+    return {
+      workspaceRoot: folder,
+      markdownLinkHandlers: markdownLinkHandlersIn(folder),
+      renderMarkdownImage: (image: MarkdownImageRequest) => renderMarkdownImage(image, folder),
+      renderViewedImage: (image: MarkdownImageRequest) => renderViewedImage(image, folder),
+      renderReasoning: (text: string) => renderReasoning(text, folder),
+    };
   };
   const { contentInsetEndAdjustment } = props;
   const attachList = (list: LegendListRef | null) => {
@@ -3842,7 +3827,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             onOpenTurnDiff,
             onPressPreview,
             onPlaybackStart: onInlinePlaybackStart,
-            ...rowRenderersFor(info.item),
+            markdownLinkHandlers,
+            renderMarkdownImage,
+            renderViewedImage,
+            renderReasoning,
             iconSubtleColor,
             replyActionSize,
             screenColor,
@@ -3857,6 +3845,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             contentWidth,
             threadTitle: props.threadTitle,
             skills: props.skills,
+            workspaceRoot: props.workspaceRoot,
+            ...rowFolderRenderers(info.item),
             workflowOpening,
           })}
           {props.worktreeSetup && info.index === setupAnchorIndex ? (

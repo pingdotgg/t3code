@@ -35,7 +35,9 @@ export interface ThreadMoveMember {
   readonly nextOrdinal: number;
 }
 
-export interface ThreadMovePlanInput {
+const DETACH_REASON = "Workspace changed.";
+
+export const planThreadMove = Effect.fn("ThreadMovePlan.planThreadMove")(function* (input: {
   readonly command: OrchestrationV2ThreadProjectMoveCommand;
   /** The named thread first, then the members that move with it. */
   readonly members: ReadonlyArray<ThreadMoveMember>;
@@ -44,13 +46,7 @@ export interface ThreadMovePlanInput {
   readonly receipt: ThreadMoveReceiptInput;
   readonly now: DateTime.Utc;
   readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
-}
-
-const DETACH_REASON = "Workspace changed.";
-
-export const planThreadMove = Effect.fn("ThreadMovePlan.planThreadMove")(function* (
-  input: ThreadMovePlanInput,
-) {
+}) {
   const { command, now } = input;
   const events: Array<OrchestrationV2DomainEvent> = [];
   const effects: Array<PendingOrchestrationEffectV2> = [];

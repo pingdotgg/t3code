@@ -139,7 +139,24 @@ const setup = Effect.fnUntraced(function* () {
     assert.equal(agent, subagentsAt === "new" ? agentLine : "");
     assert.deepEqual(writes, Array(rows).fill(newFolder));
   });
-  return { fs, record, run, expectLayout, oldDir, newDir, oldFile, newFile, oldSubs, newSubs };
+  const faultAt = (at?: string, fault = "denied", written = 0) => {
+    const fail = (file: string, method?: string) =>
+      fault === "lost" ? Effect.die("process lost") : Effect.fail(errno("EACCES", file, method));
+    const faultedRename = at === "transcript" ? oldFile : at === "subagents" ? oldSubs : undefined;
+    return FileSystem.FileSystem.of({
+      ...fs,
+      readFileString: (file, encoding) =>
+        at === "read" ? fail(file, "open") : fs.readFileString(file, encoding),
+      rename: (from, to) => (from === faultedRename ? fail(from) : fs.rename(from, to)),
+      writeFileString: (file, data, options) =>
+        at === "record"
+          ? fs
+              .writeFileString(file, data.slice(0, written), options)
+              .pipe(Effect.andThen(fail(file, "open")))
+          : fs.writeFileString(file, data, options),
+    });
+  };
+  return { fs, record, run, expectLayout, faultAt, oldDir, newDir, newFile, oldSubs, newSubs };
 });
 
 it.effect("supersedes an occupant and a stale subagent folder in the new folder's storage", () =>
@@ -242,33 +259,18 @@ it.effect.each([
   "relocates and records the storage folder: $name",
   ({ committed = true, at, fault, written = 0 }) =>
     Effect.gen(function* () {
-      const { fs, oldFile, oldSubs, record, run, expectLayout } = yield* setup();
-      let faulty = at !== undefined;
-      const fail = (file: string, method?: string) =>
-        fault === "lost" ? Effect.die("process lost") : Effect.fail(errno("EACCES", file, method));
-      const faultedRename =
-        at === "transcript" ? oldFile : at === "subagents" ? oldSubs : undefined;
-      const flaky = FileSystem.FileSystem.of({
-        ...fs,
-        rename: (from, to) => (faulty && from === faultedRename ? fail(from) : fs.rename(from, to)),
-        writeFileString: (file, data, options) =>
-          faulty && at === "record"
-            ? fs
-                .writeFileString(file, data.slice(0, written), options)
-                .pipe(Effect.andThen(fail(file, "open")))
-            : fs.writeFileString(file, data, options),
-      });
-      const outcome = Effect.exit(run(flaky, committed));
-      if (faulty) {
-        assert.equal((yield* outcome)._tag, "Failure");
+      const { fs, record, run, expectLayout, faultAt } = yield* setup();
+      if (at !== undefined) {
+        const faulted = yield* Effect.exit(run(faultAt(at, fault, written), committed));
+        assert.equal(faulted._tag, "Failure");
         yield* expectLayout(
           at === "transcript" ? "old" : "new",
           at === "record" ? "new" : "old",
           at === "record" ? record.slice(0, written) : "",
           0,
         );
-        faulty = false;
       }
+      const outcome = Effect.exit(run(fs, committed));
 
       assert.equal((yield* outcome)._tag, committed ? "Success" : "Failure");
       const fragment = written === 0 ? "" : `${record.slice(0, written)}\n`;
@@ -284,25 +286,10 @@ it.effect.each(["read", "transcript", "subagents", "record"] as const)(
   "records the folder the transcript is in when the last attempt is denied at the %s",
   (at) =>
     Effect.gen(function* () {
-      const { fs, oldFile, oldSubs, record, run, expectLayout } = yield* setup();
-      const faultedRename =
-        at === "transcript" ? oldFile : at === "subagents" ? oldSubs : undefined;
-      const denied = FileSystem.FileSystem.of({
-        ...fs,
-        readFileString: (file, encoding) =>
-          at === "read"
-            ? Effect.fail(errno("EACCES", file, "open"))
-            : fs.readFileString(file, encoding),
-        rename: (from, to) =>
-          from === faultedRename ? Effect.fail(errno("EACCES", from)) : fs.rename(from, to),
-        writeFileString: (file, data, options) =>
-          at === "record"
-            ? Effect.fail(errno("EACCES", file, "open"))
-            : fs.writeFileString(file, data, options),
-      });
+      const { record, run, expectLayout, faultAt } = yield* setup();
       const moved = at === "subagents" || at === "record";
 
-      const outcome = yield* Effect.exit(run(denied, true, true));
+      const outcome = yield* Effect.exit(run(faultAt(at), true, true));
 
       assert.equal(outcome._tag, moved ? "Success" : "Failure");
       yield* expectLayout(

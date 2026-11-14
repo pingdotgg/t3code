@@ -53,159 +53,151 @@ export function claudeProjectDirName(folder: string, environment: NodeJS.Process
   return `${name.slice(0, 200)}-${Math.abs(hash).toString(36)}`;
 }
 
+type RelocationRequest = Extract<
+  EffectOutbox.OrchestrationEffectRequestV2,
+  { readonly type: "provider-session.relocate-storage" }
+>;
+
 // Claude Code 2.1.319's relocateSessionTranscript; the SDK has no relocation call.
-const relocateClaudeTranscript = Effect.fn("ClaudeSessionRelocation.relocateTranscript")(
-  function* (input: {
-    readonly environment: NodeJS.ProcessEnv;
-    readonly sessionId: string;
-    readonly oldFolder: string;
-    readonly newFolder: string;
-    readonly lastAttempt: boolean;
-  }) {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const platform = yield* HostProcess.Platform;
-    const configDir =
-      input.environment.CLAUDE_CONFIG_DIR ?? path.join(yield* HostProcess.HomeDirectory, ".claude");
-    const projectsDir = path.join(configDir.normalize("NFC"), "projects");
-    const projectDir = (folder: string) =>
-      path.join(projectsDir, claudeProjectDirName(folder, input.environment));
-    const resolveFolder = (folder: string) =>
-      fileSystem.realPath(folder).pipe(
-        Effect.orElseSucceed(() => path.resolve(folder)),
-        Effect.map((resolved) => (platform === "darwin" ? resolved.normalize("NFC") : resolved)),
+const relocateClaudeTranscript = Effect.fn("ClaudeSessionRelocation.relocateTranscript")(function* (
+  environment: NodeJS.ProcessEnv,
+  request: RelocationRequest,
+  lastAttempt: boolean,
+) {
+  const { nativeSessionId: sessionId, oldFolder, newFolder } = request;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const platform = yield* HostProcess.Platform;
+  const configDir =
+    environment.CLAUDE_CONFIG_DIR ?? path.join(yield* HostProcess.HomeDirectory, ".claude");
+  const projectsDir = path.join(configDir.normalize("NFC"), "projects");
+  const projectDir = (folder: string) =>
+    path.join(projectsDir, claudeProjectDirName(folder, environment));
+  const resolveFolder = (folder: string) =>
+    fileSystem.realPath(folder).pipe(
+      Effect.orElseSucceed(() => path.resolve(folder)),
+      Effect.map((resolved) => (platform === "darwin" ? resolved.normalize("NFC") : resolved)),
+    );
+  const setAside = Effect.fnUntraced(function* (destination: string) {
+    const now = yield* DateTime.now;
+    const aside = `${destination}.superseded-${DateTime.toEpochMillis(now)}`;
+    return yield* fileSystem.rename(destination, aside).pipe(
+      Effect.andThen(
+        fileSystem.utimes(aside, DateTime.toDate(now), DateTime.toDate(now)).pipe(Effect.ignore),
+      ),
+      Effect.as(aside),
+      Effect.catchIf(isNotFound, () => Effect.undefined),
+    );
+  });
+  const restore = (aside: string | undefined, destination: string) =>
+    aside === undefined ? Effect.void : fileSystem.rename(aside, destination).pipe(Effect.ignore);
+  const removeTree = (target: string) =>
+    fileSystem.remove(target, { recursive: true, force: true }).pipe(Effect.ignore);
+  const copyDirectory: CopyDirectory = Effect.fnUntraced(function* (from: string, to: string) {
+    yield* fileSystem.makeDirectory(to, { recursive: true, mode: 0o700 });
+    for (const entry of yield* fileSystem.readDirectoryEntries(from)) {
+      yield* (entry.type === "Directory" ? copyDirectory : fileSystem.copyFile)(
+        path.join(from, entry.name),
+        path.join(to, entry.name),
       );
-    const setAside = Effect.fnUntraced(function* (destination: string) {
-      const now = yield* DateTime.now;
-      const aside = `${destination}.superseded-${DateTime.toEpochMillis(now)}`;
-      return yield* fileSystem.rename(destination, aside).pipe(
-        Effect.andThen(
-          fileSystem.utimes(aside, DateTime.toDate(now), DateTime.toDate(now)).pipe(Effect.ignore),
-        ),
-        Effect.as(aside),
-        Effect.catchIf(isNotFound, () => Effect.undefined),
-      );
-    });
-    const restore = (aside: string | undefined, destination: string) =>
-      aside === undefined ? Effect.void : fileSystem.rename(aside, destination).pipe(Effect.ignore);
-    const copyDirectory: CopyDirectory = Effect.fnUntraced(function* (from: string, to: string) {
-      yield* fileSystem.makeDirectory(to, { recursive: true, mode: 0o700 });
-      for (const entry of yield* fileSystem.readDirectoryEntries(from)) {
-        yield* (entry.type === "Directory" ? copyDirectory : fileSystem.copyFile)(
-          path.join(from, entry.name),
-          path.join(to, entry.name),
-        );
-      }
-    });
-    const renameWithFallbacks = (from: string, to: string) =>
-      fileSystem.rename(from, to).pipe(
-        Effect.catch((error) => {
-          const code = errnoCode(error);
-          if (code === "EEXIST" || code === "EPERM" || code === "EBUSY" || code === "ENOTEMPTY") {
-            return setAside(to).pipe(
-              Effect.orElseSucceed(() => undefined),
-              Effect.flatMap((aside) =>
-                fileSystem.rename(from, to).pipe(Effect.tapError(() => restore(aside, to))),
-              ),
-            );
-          }
-          if (code !== "EXDEV") return Effect.fail(error);
-          return fileSystem.copyFile(from, to).pipe(
-            Effect.catchIf(
-              (copyError) => ["EISDIR", "ENOTSUP", "EPERM"].includes(errnoCode(copyError) ?? ""),
-              () =>
-                Effect.flatMap(setAside(to), (aside) =>
-                  copyDirectory(from, to).pipe(
-                    Effect.tapError(() =>
-                      aside === undefined
-                        ? Effect.void
-                        : fileSystem
-                            .remove(to, { recursive: true, force: true })
-                            .pipe(Effect.ignore, Effect.andThen(restore(aside, to))),
-                    ),
-                  ),
-                ),
-            ),
-            // One rename takes the copied source off its path, so a repeated move cannot copy a
-            // partly removed source over the complete destination.
-            Effect.andThen(setAside(from)),
+    }
+  });
+  const renameWithFallbacks = (from: string, to: string) =>
+    fileSystem.rename(from, to).pipe(
+      Effect.catch((error) => {
+        const code = errnoCode(error);
+        if (code === "EEXIST" || code === "EPERM" || code === "EBUSY" || code === "ENOTEMPTY") {
+          return setAside(to).pipe(
+            Effect.orElseSucceed(() => undefined),
             Effect.flatMap((aside) =>
-              aside === undefined
-                ? Effect.void
-                : fileSystem.remove(aside, { recursive: true, force: true }).pipe(Effect.ignore),
+              fileSystem.rename(from, to).pipe(Effect.tapError(() => restore(aside, to))),
             ),
           );
-        }),
-      );
+        }
+        if (code !== "EXDEV") return Effect.fail(error);
+        return fileSystem.copyFile(from, to).pipe(
+          Effect.catchIf(
+            (copyError) => ["EISDIR", "ENOTSUP", "EPERM"].includes(errnoCode(copyError) ?? ""),
+            () =>
+              Effect.flatMap(setAside(to), (aside) =>
+                copyDirectory(from, to).pipe(
+                  Effect.tapError(() =>
+                    aside === undefined
+                      ? Effect.void
+                      : Effect.andThen(removeTree(to), restore(aside, to)),
+                  ),
+                ),
+              ),
+          ),
+          // One rename takes the copied source off its path, so a repeated move cannot copy a
+          // partly removed source over the complete destination.
+          Effect.andThen(setAside(from)),
+          Effect.flatMap((aside) => (aside === undefined ? Effect.void : removeTree(aside))),
+        );
+      }),
+    );
 
-    const relocatedCwd = yield* resolveFolder(input.newFolder);
-    const oldDir = projectDir(yield* resolveFolder(input.oldFolder));
-    const newDir = projectDir(relocatedCwd);
-    const oldFile = path.join(oldDir, `${input.sessionId}.jsonl`);
-    const newFile = path.join(newDir, `${input.sessionId}.jsonl`);
-    const record = encodeJson({ type: "relocated", sessionId: input.sessionId, relocatedCwd });
-    const sourcePresent = yield* fileSystem.exists(oldFile);
-    if (!sourcePresent && !(yield* fileSystem.exists(newFile))) return;
-    // Read before the move, so a transcript that cannot be read stays in the folder on record.
-    const contents = yield* fileSystem.readFileString(sourcePresent ? oldFile : newFile);
-    if (sourcePresent && oldDir !== newDir) {
-      yield* fileSystem.makeDirectory(newDir, { recursive: true, mode: 0o700 });
-      const [from, to] = yield* Effect.all([fileSystem.stat(oldDir), fileSystem.stat(newDir)]);
-      const sameDirectory = from.dev === to.dev && Equal.equals(from.ino, to.ino);
-      const superseded = sameDirectory ? undefined : yield* setAside(newFile);
-      yield* renameWithFallbacks(oldFile, newFile).pipe(
-        Effect.tapError(() => restore(superseded, newFile)),
-      );
-    }
-    // As the SDK does, read which session a transcript belongs to from its first sessionId.
-    const owner = Arr.findFirst(contents.split("\n"), (line) => decodeSessionRecord(line));
-    if (!sourcePresent && Option.getOrUndefined(owner)?.sessionId !== input.sessionId) {
-      return yield* new ClaudeSessionRelocationError({ reason: "foreign-session", path: newFile });
-    }
-    // The transcript is in the new folder from here on. An attempt that is not repeated goes on
-    // past a failed step below, so the caller records the folder the transcript is in.
-    const unlessLastAttempt = <E>(step: Effect.Effect<void, E>) =>
-      input.lastAttempt ? Effect.ignore(step) : step;
-    if (oldDir !== newDir) {
-      yield* renameWithFallbacks(
-        path.join(oldDir, input.sessionId),
-        path.join(newDir, input.sessionId),
-      ).pipe(
-        Effect.catchIf(isNotFound, () => Effect.void),
+  const relocatedCwd = yield* resolveFolder(newFolder);
+  const oldDir = projectDir(yield* resolveFolder(oldFolder));
+  const newDir = projectDir(relocatedCwd);
+  const oldFile = path.join(oldDir, `${sessionId}.jsonl`);
+  const newFile = path.join(newDir, `${sessionId}.jsonl`);
+  const record = encodeJson({ type: "relocated", sessionId, relocatedCwd });
+  const sourcePresent = yield* fileSystem.exists(oldFile);
+  if (!sourcePresent && !(yield* fileSystem.exists(newFile))) return;
+  // Read before the move, so a transcript that cannot be read stays in the folder on record.
+  const contents = yield* fileSystem.readFileString(sourcePresent ? oldFile : newFile);
+  if (sourcePresent && oldDir !== newDir) {
+    yield* fileSystem.makeDirectory(newDir, { recursive: true, mode: 0o700 });
+    const [from, to] = yield* Effect.all([fileSystem.stat(oldDir), fileSystem.stat(newDir)]);
+    const sameDirectory = from.dev === to.dev && Equal.equals(from.ino, to.ino);
+    const superseded = sameDirectory ? undefined : yield* setAside(newFile);
+    yield* renameWithFallbacks(oldFile, newFile).pipe(
+      Effect.tapError(() => restore(superseded, newFile)),
+    );
+  }
+  // As the SDK does, read which session a transcript belongs to from its first sessionId.
+  const owner = Arr.findFirst(contents.split("\n"), (line) => decodeSessionRecord(line));
+  if (!sourcePresent && Option.getOrUndefined(owner)?.sessionId !== sessionId) {
+    return yield* new ClaudeSessionRelocationError({ reason: "foreign-session", path: newFile });
+  }
+  // The transcript is in the new folder from here on. An attempt that is not repeated goes on
+  // past a failed step below, so the caller records the folder the transcript is in.
+  const unlessLastAttempt = <E>(step: Effect.Effect<void, E>) =>
+    lastAttempt ? Effect.ignore(step) : step;
+  if (oldDir !== newDir) {
+    yield* renameWithFallbacks(path.join(oldDir, sessionId), path.join(newDir, sessionId)).pipe(
+      Effect.catchIf(isNotFound, () => Effect.void),
+      Effect.tapError((cause) =>
+        Effect.logWarning("orchestration-v2.claude-relocation.subagent-folder-failed", { cause }),
+      ),
+      unlessLastAttempt,
+    );
+  }
+  // Like Claude, end a torn last line before appending; a whole last line that is the record
+  // needs only its newline.
+  const tail = `\n${contents}`;
+  if (!tail.endsWith(`\n${record}\n`)) {
+    yield* fileSystem
+      .writeFileString(
+        newFile,
+        tail.endsWith(`\n${record}`) ? "\n" : `${/[^\n]$/.test(contents) ? "\n" : ""}${record}\n`,
+        { flag: "a" },
+      )
+      .pipe(
         Effect.tapError((cause) =>
-          Effect.logWarning("orchestration-v2.claude-relocation.subagent-folder-failed", { cause }),
+          Effect.logWarning("orchestration-v2.claude-relocation.record-failed", { cause }),
         ),
         unlessLastAttempt,
       );
-    }
-    // Like Claude, end a torn last line before appending; a whole last line that is the record
-    // needs only its newline.
-    const tail = `\n${contents}`;
-    if (!tail.endsWith(`\n${record}\n`)) {
-      yield* fileSystem
-        .writeFileString(
-          newFile,
-          tail.endsWith(`\n${record}`) ? "\n" : `${/[^\n]$/.test(contents) ? "\n" : ""}${record}\n`,
-          { flag: "a" },
-        )
-        .pipe(
-          Effect.tapError((cause) =>
-            Effect.logWarning("orchestration-v2.claude-relocation.record-failed", { cause }),
-          ),
-          unlessLastAttempt,
-        );
-    }
-  },
-);
+  }
+});
 
 export const relocateClaudeSessionStorage = Effect.fn(
   "ClaudeSessionRelocation.relocateSessionStorage",
 )(function* (
   threadId: ThreadId,
-  request: Extract<
-    EffectOutbox.OrchestrationEffectRequestV2,
-    { readonly type: "provider-session.relocate-storage" }
-  >,
+  request: RelocationRequest,
   /** True when the caller does not run a failed relocation again. */
   lastAttempt = false,
 ) {
@@ -221,13 +213,9 @@ export const relocateClaudeSessionStorage = Effect.fn(
   if (claudeConfigDirRefusal(path, environment) !== undefined) {
     return yield* new ClaudeSessionRelocationError({ reason: "relative-config-dir" });
   }
-  yield* relocateClaudeTranscript({
-    environment,
-    sessionId: request.nativeSessionId,
-    oldFolder: request.oldFolder,
-    newFolder: request.newFolder,
-    lastAttempt,
-  }).pipe(Effect.annotateLogs({ threadId }));
+  yield* relocateClaudeTranscript(environment, request, lastAttempt).pipe(
+    Effect.annotateLogs({ threadId }),
+  );
   const { providerThreads } =
     yield* (yield* ThreadManagementService.ThreadManagementService).getThreadRecords(threadId, [
       "providerThreads",

@@ -47,26 +47,6 @@ export interface ThreadMoveProbes {
   readonly hasBackgroundWork: (threadId: ThreadId) => Effect.Effect<boolean, ThreadMoveError>;
 }
 
-export type ThreadMoveDestination =
-  | { readonly _tag: "project"; readonly project: Project }
-  | {
-      readonly _tag: "new-project";
-      readonly folder: string;
-      readonly nestedIn: Project | undefined;
-    }
-  /** `project` is No project, undefined when it does not exist yet. */
-  | { readonly _tag: "scratch"; readonly project: Project | undefined };
-
-export type ThreadMoveDecision =
-  | ThreadMoveResult
-  | {
-      readonly _tag: "move";
-      readonly destination: ThreadMoveDestination;
-      readonly members: ReadonlyArray<ThreadMoveShell>;
-      /** What the receipt says about the folder left; null when the thread leaves a project root. */
-      readonly leaving: Omit<Confirm, "_tag"> | null;
-    };
-
 export interface ThreadMoveDecisionInput {
   readonly request: ThreadMoveInput;
   readonly threads: ReadonlyArray<ThreadMoveShell>;
@@ -82,7 +62,7 @@ const CLAUDE_DRIVER = ProviderDriverKind.make("claudeAgent");
 // Claude Code resumes a session by id from any folder only from this version on.
 const CLAUDE_MIN_VERSION = "2.1.223";
 
-const refused = (reason: string, named?: Pick<Refused, "thread" | "projects">): Refused => ({
+export const refused = (reason: string, named?: Pick<Refused, "thread" | "projects">): Refused => ({
   _tag: "refused",
   reason,
   ...named,
@@ -188,6 +168,7 @@ export const decideThreadMove = Effect.fn("ThreadMoveDestination.decideThreadMov
         return refused("Scratch folders are unavailable on this server.");
       }
       if (inNoProject) return refused("This thread is already in No project.");
+      // `project` is No project, undefined when it does not exist yet.
       const project = matchProject(scratchRoot, projectsAt(scratchRoot));
       return project !== undefined && "_tag" in project
         ? project

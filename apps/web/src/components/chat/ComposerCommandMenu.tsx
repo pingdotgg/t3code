@@ -28,7 +28,7 @@ import {
   UserRoundIcon,
   type LucideIcon,
 } from "lucide-react";
-import { Fragment, memo, useLayoutEffect, useRef, useState } from "react";
+import { memo, useLayoutEffect, useRef, useState } from "react";
 
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
 import { cn } from "~/lib/utils";
@@ -129,6 +129,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
   onSelect: (item: ComposerCommandItem) => void;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
+  const firstItem = props.items[0];
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the highlighted menu item's DOM node into view
   useLayoutEffect(() => {
@@ -164,34 +165,27 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
             className="max-h-72 min-h-0 scroll-pb-6"
           >
             <CommandGroup>
-              {props.items.map((item, index) => {
-                const group = item.type === "folder-destination" ? item.group : null;
-                const previous = props.items[index - 1];
-                const startsGroup =
-                  group !== null &&
-                  (previous?.type !== "folder-destination" || previous.group !== group);
-                return (
-                  <Fragment key={item.id}>
-                    {startsGroup ? (
-                      <div
-                        role="presentation"
-                        className="px-2 pt-2 pb-1 font-medium text-secondary-label text-xs"
-                      >
-                        {group}
-                      </div>
-                    ) : null}
-                    <ComposerCommandMenuItem
-                      optionId={composerSuggestionOptionId(props.listId, item.id)}
-                      item={item}
-                      triggerKind={props.triggerKind}
-                      resolvedTheme={props.resolvedTheme}
-                      isActive={props.activeItemId === item.id}
-                      onHighlight={props.onHighlightedItemChange}
-                      onSelect={props.onSelect}
-                    />
-                  </Fragment>
-                );
-              })}
+              {/* The rows of the `/cd` pane share one group, which the first row names. */}
+              {firstItem?.type === "folder-destination" ? (
+                <div
+                  role="presentation"
+                  className="px-2 pt-2 pb-1 font-medium text-secondary-label text-xs"
+                >
+                  {firstItem.group}
+                </div>
+              ) : null}
+              {props.items.map((item) => (
+                <ComposerCommandMenuItem
+                  key={item.id}
+                  optionId={composerSuggestionOptionId(props.listId, item.id)}
+                  item={item}
+                  triggerKind={props.triggerKind}
+                  resolvedTheme={props.resolvedTheme}
+                  isActive={props.activeItemId === item.id}
+                  onHighlight={props.onHighlightedItemChange}
+                  onSelect={props.onSelect}
+                />
+              ))}
             </CommandGroup>
           </CommandList>
         ) : (

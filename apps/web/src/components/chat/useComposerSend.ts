@@ -580,16 +580,14 @@ export function useComposerSend(input: ComposerSendInput) {
       // The composer opens the destination pane for a bare `/cd`; this is what is left when it
       // cannot, such as during a running turn.
       if (folderMove.command === "cd" && folderMove.path === null) {
-        notifyMove({
+        return notifyMove({
           type: "info",
           title: "Choose a destination",
           description: "Type a project name or a folder path after /cd.",
         });
-        return;
       }
       if (folderMove.command === "no" && folderMove.path !== null) {
-        refuseFolderMove("Usage: /no, with nothing after it.");
-        return;
+        return refuseFolderMove("Usage: /no, with nothing after it.");
       }
       sendInFlightRef.current = true;
       await runThreadMove(
@@ -603,15 +601,9 @@ export function useComposerSend(input: ComposerSendInput) {
         },
         (question) => {
           closeMoveToast();
+          const currentFolder = activeThread.worktreePath ?? activeProject?.workspaceRoot ?? null;
           // No mounted dialog host counts as a no.
-          return (
-            requestConfirmDialog(
-              threadMoveConfirmMessage(
-                question,
-                activeThread.worktreePath ?? activeProject?.workspaceRoot ?? null,
-              ),
-            ) ?? Promise.resolve(false)
-          );
+          return requestConfirmDialog(threadMoveConfirmMessage(question, currentFolder)) ?? false;
         },
       )
         .then((outcome) => {

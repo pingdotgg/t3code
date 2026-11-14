@@ -16,6 +16,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
+import { idleThreadProjection, liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 
 export const createdAt = DateTime.makeUnsafe("2026-01-01T00:00:00.000Z");
@@ -35,35 +36,21 @@ export function threadCreated(input: {
   const { threadId } = input;
   const providerInstanceId = input.providerInstanceId ?? ProviderInstanceId.make("codex");
   const payload: OrchestrationV2AppThread = {
-    createdBy: "user",
-    creationSource: "web",
-    id: threadId,
+    ...idleThreadProjection(liveThreadShell(threadId)).thread,
     projectId: input.projectId,
-    title: threadId,
     providerInstanceId,
     modelSelection: { instanceId: providerInstanceId, model: "gpt-5" },
-    runtimeMode: "full-access",
-    interactionMode: "default",
     branch: input.branch ?? null,
     worktreePath: input.worktreePath,
     ...(input.branchPullRequest === undefined
       ? {}
       : { branchPullRequest: input.branchPullRequest }),
-    activeProviderThreadId: null,
     lineage: {
       parentThreadId: input.parent ?? null,
       relationshipToParent: input.kind === "side" ? "fork" : (input.kind ?? null),
       rootThreadId: input.parent ?? threadId,
       ...(input.kind === "side" ? { sideChat: true } : {}),
     },
-    forkedFrom: null,
-    createdAt,
-    updatedAt: createdAt,
-    archivedAt: null,
-    settledOverride: null,
-    settledAt: null,
-    lastVisitedAt: null,
-    deletedAt: null,
   };
   return {
     id: EventId.make(`created:${threadId}`),

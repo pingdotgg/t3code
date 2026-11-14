@@ -12,7 +12,7 @@ export interface TimelineRowFolders {
 
 /** Live runs follow page folders, so they win; the string keeps rows stable across run events. */
 export function runFoldersSignature(
-  runs: ReadonlyArray<RunFolder>,
+  runs: ReadonlyArray<RunFolder> = [],
   runFolders: ReadonlyArray<RunFolder> = [],
 ): string {
   return JSON.stringify(

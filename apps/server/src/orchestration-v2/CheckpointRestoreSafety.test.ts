@@ -3,6 +3,7 @@ import { assert, it } from "@effect/vitest";
 import {
   CheckpointId,
   CheckpointScopeId,
+  NodeId,
   ProjectId,
   ProviderInstanceId,
   ProviderSessionId,
@@ -61,10 +62,19 @@ it.effect.each([
     const checkpointId = CheckpointId.make("restore-checkpoint");
     const scopeId = CheckpointScopeId.make("restore-scope");
     const runId = RunId.make("restore-run");
+    const rootNodeId = NodeId.make("restore-root-node");
     const run = {
       id: runId,
       ordinal: 1,
+      rootNodeId,
       ...(owner.startsWith("legacy") ? {} : { cwd: owner.startsWith("moved") ? sibling : cwd }),
+    };
+    // A run in the other folder: a baseline resolves through the run whose root node it carries.
+    const otherRun = {
+      id: RunId.make("restore-other-run"),
+      ordinal: 0,
+      rootNodeId: NodeId.make("restore-other-root-node"),
+      cwd: owner.startsWith("moved") ? cwd : sibling,
     };
     const targetRunId = owner.endsWith("baseline") ? null : runId;
     const calls: string[] = [];
@@ -104,6 +114,7 @@ it.effect.each([
         id: checkpointId,
         scopeId,
         runId: targetRunId,
+        nodeId: rootNodeId,
         status: "ready",
         appRunOrdinal: null,
       },
@@ -127,7 +138,9 @@ it.effect.each([
             getCheckpointRollbackContext: () => Effect.succeed(projection),
             getThreadRecords: (_threadId, _fields, filter) =>
               Effect.succeed({
-                runs: filter?.runIds === undefined || filter.runIds.includes(runId) ? [run] : [],
+                runs: [otherRun, run].filter(
+                  (candidate) => filter?.runIds?.includes(candidate.id) ?? true,
+                ),
               } as never),
             getShellSnapshot: () =>
               Effect.succeed({

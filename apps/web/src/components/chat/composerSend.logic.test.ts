@@ -18,7 +18,6 @@ import {
   referencedThreadContexts,
   runThreadMove,
   folderMoveMenuBlockReason,
-  slashMenuRowText,
   splitInlineCode,
   threadMoveConfirmMessage,
 } from "./composerSend.logic";
@@ -137,6 +136,10 @@ describe("approvalRedirectNotice", () => {
   });
 });
 
+// The toast and the slash menu give a draft the same sentence.
+const draftReason =
+  "Press Esc, then pick the project in the heading above the composer before the first message.";
+
 it("folderMoveBlockReason refuses locally in a local draft and with context", () => {
   const ready = {
     supported: true,
@@ -145,28 +148,8 @@ it("folderMoveBlockReason refuses locally in a local draft and with context", ()
     requestPending: false,
     textOnly: true,
   };
-  // The toast and the slash menu get a draft the same sentence.
-  const draftReason =
-    "Press Esc, then pick the project in the heading above the composer before the first message.";
   expect(folderMoveBlockReason({ ...ready, isLocalDraftThread: true })).toBe(draftReason);
-  expect(
-    folderMoveMenuBlockReason({
-      isLocalDraftThread: true,
-      editingQueuedMessage: false,
-      requestPending: false,
-      running: false,
-    }),
-  ).toBe(draftReason);
   expect(folderMoveBlockReason({ ...ready, textOnly: false })).toMatch(/attachments/);
-});
-
-it("slashMenuRowText drops the final period of a reason and keeps an inner one", () => {
-  expect(slashMenuRowText("This thread is still working. Try again when the turn ends.")).toBe(
-    "This thread is still working. Try again when the turn ends",
-  );
-  expect(slashMenuRowText("Move this thread to another folder")).toBe(
-    "Move this thread to another folder",
-  );
 });
 
 it("folderMoveMenuBlockReason names the first thing that blocks a move", () => {
@@ -184,7 +167,7 @@ it("folderMoveMenuBlockReason names the first thing that blocks a move", () => {
     /pending question/,
   );
   expect(folderMoveMenuBlockReason({ ...free, running: true, isLocalDraftThread: true })).toBe(
-    "Press Esc, then pick the project in the heading above the composer before the first message.",
+    draftReason,
   );
 });
 

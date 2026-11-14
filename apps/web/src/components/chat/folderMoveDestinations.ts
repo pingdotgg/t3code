@@ -5,16 +5,11 @@ import {
 import {
   appendBrowsePathSegment,
   ensureBrowseDirectoryPath,
+  findProjectByPath,
   normalizeProjectPathForComparison,
 } from "@t3tools/client-runtime/state/projects";
 import type { FilesystemBrowseEntry } from "@t3tools/contracts";
 import { scoreQueryMatch } from "@t3tools/shared/searchRanking";
-
-/** What Enter does on a row of the `/cd` destination pane. */
-type FolderMoveAction =
-  | { readonly kind: "move"; readonly path: string }
-  | { readonly kind: "no-project" }
-  | { readonly kind: "open"; readonly query: string };
 
 export interface FolderMoveRow {
   readonly id: string;
@@ -26,7 +21,11 @@ export interface FolderMoveRow {
   readonly isProject: boolean;
   /** The thread's own folder, which a badge marks. Enter opens it like any other folder. */
   readonly isCurrent?: true | undefined;
-  readonly action: FolderMoveAction;
+  /** What Enter does on the row. */
+  readonly action:
+    | { readonly kind: "move"; readonly path: string }
+    | { readonly kind: "no-project" }
+    | { readonly kind: "open"; readonly query: string };
 }
 
 interface DestinationProject {
@@ -170,11 +169,9 @@ export function folderMoveFolderRows(input: {
   const typed = folderMoveQueryPath(input.query);
   const browse = getFilesystemBrowsePath(typed, input.platform);
   const projects = destinationProjects(input.projects, input.currentFolder);
-  const projectAt = (folder: string) =>
-    projects.find((project) => samePath(project.workspaceRoot, folder));
   const rows: Array<FolderMoveRow> = [];
   if (browse.filterQuery === "" && input.unreadable !== true) {
-    const project = projectAt(input.directoryFullPath);
+    const project = findProjectByPath(projects, input.directoryFullPath);
     const isCurrent =
       input.currentFolder !== null && samePath(input.directoryFullPath, input.currentFolder);
     if (project !== undefined) {
@@ -203,7 +200,7 @@ export function folderMoveFolderRows(input: {
     });
   }
   const folders = input.entries.map((entry): FolderMoveRow => {
-    const project = projectAt(entry.fullPath);
+    const project = findProjectByPath(projects, entry.fullPath);
     if (project !== undefined) {
       return {
         ...projectRow(project),
@@ -212,11 +209,9 @@ export function folderMoveFolderRows(input: {
       };
     }
     // The thread's own folder is no destination, so it opens; it keeps the project icon when it
-    // is a project root, which `projectAt` leaves out.
+    // is a project root, which the destination projects leave out.
     const isCurrent = input.currentFolder !== null && samePath(entry.fullPath, input.currentFolder);
-    const isRoot =
-      isCurrent &&
-      input.projects.some((candidate) => samePath(candidate.workspaceRoot, entry.fullPath));
+    const isRoot = isCurrent && findProjectByPath(input.projects, entry.fullPath) !== undefined;
     return {
       id: `folder-move:folder:${entry.fullPath}`,
       group: "Folders",

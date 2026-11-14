@@ -2229,28 +2229,18 @@ it.effect.each([
           capturedAt: now,
         },
       });
-      yield* projections.apply(
-        runCreated({
-          id: firstRunId,
-          threadId,
-          ordinal: 1,
-          providerInstanceId: instanceId,
-          providerThreadId,
-          rootNodeId: firstNodeId,
-          cwd,
-          occurredAt: now,
-        }),
-      );
-      if (laterRun) {
+      const runs = [
+        { id: firstRunId, rootNodeId: firstNodeId, cwd },
+        ...(laterRun ? [{ id: runId, rootNodeId: nodeId, cwd: process.cwd() }] : []),
+      ];
+      for (const [index, run] of runs.entries()) {
         yield* projections.apply(
           runCreated({
-            id: runId,
+            ...run,
             threadId,
-            ordinal: 2,
+            ordinal: index + 1,
             providerInstanceId: instanceId,
             providerThreadId,
-            rootNodeId: nodeId,
-            cwd: process.cwd(),
             occurredAt: now,
           }),
         );

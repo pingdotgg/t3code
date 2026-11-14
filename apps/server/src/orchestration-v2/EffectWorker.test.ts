@@ -436,19 +436,15 @@ it.effect("moves scheduled tasks after a failed store write while the task keeps
           ManagedPolicy.layerTest(),
           Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
           Layer.mock(ThreadManagementService.ThreadManagementService)({
-            sendToThread: (input) =>
-              Ref.update(sends, (all) => [...all, input.projectId]).pipe(
-                Effect.andThen(
-                  input.projectId === to
-                    ? Effect.succeed({} as never)
-                    : Effect.fail(
-                        new ThreadManagementService.ThreadManagementThreadNotFoundError({
-                          projectId: input.projectId,
-                          threadId: input.threadId,
-                        }),
-                      ),
-                ),
-              ),
+            sendToThread: ({ projectId, threadId }) =>
+              Effect.gen(function* () {
+                yield* Ref.update(sends, (all) => [...all, projectId]);
+                if (projectId === to) return {} as never;
+                return yield* new ThreadManagementService.ThreadManagementThreadNotFoundError({
+                  projectId,
+                  threadId,
+                });
+              }),
             getThreadShell: () => Ref.get(shell) as never,
           }),
           Layer.mock(SecretRequests.SecretRequests)({}),
@@ -502,15 +498,6 @@ it.effect("moves scheduled tasks after a failed store write while the task keeps
       `.pipe(Effect.map((rows) => rows[0]?.project_id));
       const statusOf = (effectId: string) =>
         outbox.get(effectId).pipe(Effect.map((effect) => Option.getOrUndefined(effect)?.status));
-      const enqueueMove = (effectId: string) =>
-        outbox.enqueue([
-          {
-            id: effectId,
-            commandId: CommandId.make(`command:${effectId}`),
-            threadId,
-            request: { type: "scheduled-tasks.move", threadIds: [threadId], projectId: to },
-          },
-        ]);
       const firesToThread = Effect.gen(function* () {
         yield* tasks.runNow({ id: task.id });
         const listed = yield* listedUnder;
@@ -523,7 +510,14 @@ it.effect("moves scheduled tasks after a failed store write while the task keeps
       `;
       for (const recovers of [false, true]) {
         const effectId = `effect:task-move:${recovers ? "retried" : "exhausted"}`;
-        yield* enqueueMove(effectId);
+        yield* outbox.enqueue([
+          {
+            id: effectId,
+            commandId: CommandId.make(`command:${effectId}`),
+            threadId,
+            request: { type: "scheduled-tasks.move", threadIds: [threadId], projectId: to },
+          },
+        ]);
         assert.isTrue(yield* worker.runOnce());
         assert.equal(yield* statusOf(effectId), "pending");
         assert.equal(yield* listedUnder, from);

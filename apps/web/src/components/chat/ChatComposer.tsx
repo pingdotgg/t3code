@@ -1129,8 +1129,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     items: composerMenuItems,
     isLoading: isComposerMenuLoading,
     emptyState: composerMenuEmptyState,
-    footer: composerMenuFooter,
-    folderBrowse,
+    folderMove: folderMoveMenu,
   } = useComposerMenuItems({
     composerTrigger,
     environmentId,
@@ -1166,13 +1165,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     highlightedItemId: composerHighlightedItemId,
     currentSearchKey: composerMenuSearchKey,
     highlightedSearchKey: composerHighlightedSearchKey,
-    // Enter on a typed path moves there, so no row is chosen until the user picks one. A typed
-    // project name has no folder to move to, so its first match is chosen.
     highlightFirst:
       composerTrigger?.kind !== "folder" ||
       folderMoveHighlightsFirstRow({
         query: composerTrigger.query,
-        isBrowsing: folderBrowse.isBrowsing,
+        isBrowsing: folderMoveMenu.isBrowsing,
       }),
   });
   const activeComposerMenuItem =
@@ -2142,10 +2139,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (trigger?.kind !== "folder") return;
     const completion = folderMoveTabCompletion({
       query: trigger.query,
-      platform: folderBrowse.platform,
+      platform: folderMoveMenu.platform,
       highlighted:
         activeComposerMenuItem?.type === "folder-destination" ? activeComposerMenuItem : null,
-      entries: folderBrowse.entries,
+      entries: folderMoveMenu.entries,
     });
     if (completion === null) return;
     const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, completion, {
@@ -3605,7 +3602,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           : "Searching workspace files..."
                     : composerMenuEmptyState
                   : composerSuggestionsVisible
-                    ? (composerMenuFooter ?? "")
+                    ? (folderMoveMenu.footer ?? "")
                     : ""}
               </div>
               {composerSuggestionsVisible && (
@@ -3622,7 +3619,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         ? `Working in ${gitCwd}`
                         : undefined
                     }
-                    footer={composerMenuFooter ?? undefined}
+                    footer={folderMoveMenu.footer ?? undefined}
                     activeItemId={activeComposerMenuItem?.id ?? null}
                     onHighlightedItemChange={onComposerMenuItemHighlightedStable}
                     onSelect={onSelectComposerItemStable}

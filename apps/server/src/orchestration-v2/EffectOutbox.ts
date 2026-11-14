@@ -420,25 +420,6 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
         Effect.mapError((cause) => new EffectOutboxError({ operation, cause })),
       );
 
-    const unsettledEffectIds: EffectOutboxV2Shape["unsettledEffectIds"] = ({
-      threadIds,
-      effectType,
-    }) =>
-      threadIds.length === 0
-        ? Effect.succeed([])
-        : sql<{ readonly effect_id: string }>`
-            SELECT effect_id
-            FROM orchestration_v2_effect_outbox
-            WHERE thread_id IN ${sql.in(threadIds)}
-              AND effect_type = ${effectType}
-              AND status IN ('pending', 'running')
-          `.pipe(
-            NodeSqliteClient.readOnly,
-            Effect.map((rows) => rows.map(({ effect_id }) => effect_id)),
-            Effect.mapError(
-              (cause) => new EffectOutboxError({ operation: "unsettled-effect-ids", cause }),
-            ),
-          );
     const service: EffectOutboxV2Shape = {
       enqueue: Effect.fn("EffectOutbox.enqueue")(
         function* (effects) {
@@ -531,8 +512,24 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
         },
         Effect.mapError((cause) => new EffectOutboxError({ operation: "cancel-unsettled", cause })),
       ),
-      hasUnsettled: (input) => Effect.map(unsettledEffectIds(input), (ids) => ids.length > 0),
-      unsettledEffectIds,
+      hasUnsettled: (input) =>
+        Effect.map(service.unsettledEffectIds(input), (ids) => ids.length > 0),
+      unsettledEffectIds: ({ threadIds, effectType }) =>
+        threadIds.length === 0
+          ? Effect.succeed([])
+          : sql<{ readonly effect_id: string }>`
+              SELECT effect_id
+              FROM orchestration_v2_effect_outbox
+              WHERE thread_id IN ${sql.in(threadIds)}
+                AND effect_type = ${effectType}
+                AND status IN ('pending', 'running')
+            `.pipe(
+              NodeSqliteClient.readOnly,
+              Effect.map((rows) => rows.map(({ effect_id }) => effect_id)),
+              Effect.mapError(
+                (cause) => new EffectOutboxError({ operation: "unsettled-effect-ids", cause }),
+              ),
+            ),
       signalCancellations: Effect.fn("EffectOutbox.signalCancellations")(function* (effectIds) {
         yield* Effect.forEach(
           effectIds,

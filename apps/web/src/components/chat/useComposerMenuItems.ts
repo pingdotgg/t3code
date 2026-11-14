@@ -456,16 +456,5 @@ export function useComposerMenuItems({
       : "No matching command.";
   })();
 
-  return {
-    items,
-    isLoading,
-    emptyState,
-    /** A message below the rows of the `/cd` pane, or null. */
-    footer: composerTriggerKind === "folder" ? folderMove.footer : null,
-    folderBrowse: {
-      entries: folderMove.entries,
-      platform: folderMove.platform,
-      isBrowsing: folderMove.isBrowsing,
-    },
-  };
+  return { items, isLoading, emptyState, folderMove };
 }

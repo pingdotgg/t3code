@@ -355,9 +355,7 @@ export const layer: Layer.Layer<
               target: rollbackTarget,
               providerThreadTurns,
             });
-      if (input.restoreFiles !== false) {
-        yield* checkpoints.restore({ scope: restoreScope, checkpoint });
-      }
+      if (restoreFiles) yield* checkpoints.restore({ scope: restoreScope, checkpoint });
       for (const [cwd, stale] of Map.groupBy(staleCheckpoints, runCwd)) {
         if (!(yield* fileSystem.exists(cwd))) continue;
         const drop = checkpoints.deleteStaleRefs({ scope: { ...scope, cwd }, checkpoints: stale });

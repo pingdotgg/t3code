@@ -1,6 +1,7 @@
 import { expect, it } from "vite-plus/test";
 
 import {
+  type FolderMoveRow,
   folderMoveCannotRead,
   folderMoveFolderRows,
   folderMoveHighlightsFirstRow,
@@ -29,7 +30,35 @@ const threads = [
   { projectId: "gamma", updatedAt: "2026-02-01T00:00:00.000Z" },
   { projectId: "gamma", updatedAt: "2026-04-01T00:00:00.000Z" },
 ];
+const entries = [
+  { name: "docs", fullPath: "/repos/docs" },
+  { name: "beta", fullPath: "/repos/beta" },
+  { name: "drafts", fullPath: "/repos/drafts" },
+];
 const labels = (rows: ReadonlyArray<{ label: string }>) => rows.map((row) => row.label);
+
+/** The project rows for an empty query from no known folder, with `input` on top. */
+const projectRows = (input: Partial<Parameters<typeof folderMoveProjectRows>[0]>) =>
+  folderMoveProjectRows({
+    projects,
+    threads,
+    currentFolder: null,
+    inNoProject: false,
+    query: "",
+    ...input,
+  });
+
+/** The folder rows for `/repos/` and its entries from no known folder, with `input` on top. */
+const folderRows = (input: Partial<Parameters<typeof folderMoveFolderRows>[0]>) =>
+  folderMoveFolderRows({
+    projects,
+    currentFolder: null,
+    query: "/repos/",
+    platform: "MacIntel",
+    directoryFullPath: "/repos",
+    entries,
+    ...input,
+  });
 
 it("reads the destination without one pair of quotes", () => {
   expect(folderMoveQueryPath(' "/a b/c" ')).toBe("/a b/c");
@@ -38,13 +67,7 @@ it("reads the destination without one pair of quotes", () => {
 });
 
 it("lists the other projects by recent thread activity, then No project", () => {
-  const rows = folderMoveProjectRows({
-    projects,
-    threads,
-    currentFolder: "/repos/alpha",
-    inNoProject: false,
-    query: "",
-  });
+  const rows = projectRows({ currentFolder: "/repos/alpha" });
   expect(labels(rows)).toEqual(["gamma", "beta", "No project"]);
   expect(rows[0]).toMatchObject({
     description: "/repos/gamma",
@@ -53,37 +76,14 @@ it("lists the other projects by recent thread activity, then No project", () => 
   expect(rows.at(-1)?.action).toEqual({ kind: "no-project" });
 
   // In a worktree of alpha the thread's folder is not alpha's root, so alpha stays.
-  const fromWorktree = folderMoveProjectRows({
-    projects,
-    threads,
-    currentFolder: "/worktrees/alpha-1",
-    inNoProject: true,
-    query: "",
-  });
+  const fromWorktree = projectRows({ currentFolder: "/worktrees/alpha-1", inNoProject: true });
   expect(labels(fromWorktree)).toEqual(["gamma", "beta", "alpha"]);
 });
 
 it("filters projects by title and root, with the exact title first", () => {
   const named = [...projects, project("gam", "/repos/other")];
-  const rows = folderMoveProjectRows({
-    projects: named,
-    threads,
-    currentFolder: null,
-    inNoProject: false,
-    query: "gam",
-  });
-  expect(labels(rows)).toEqual(["gam", "gamma"]);
-  expect(
-    labels(
-      folderMoveProjectRows({
-        projects,
-        threads,
-        currentFolder: null,
-        inNoProject: false,
-        query: "repos/be",
-      }),
-    ),
-  ).toEqual(["beta"]);
+  expect(labels(projectRows({ projects: named, query: "gam" }))).toEqual(["gam", "gamma"]);
+  expect(labels(projectRows({ query: "repos/be" }))).toEqual(["beta"]);
 });
 
 it("makes the first row active for a typed project name only", () => {
@@ -93,21 +93,8 @@ it("makes the first row active for a typed project name only", () => {
   expect(folderMoveHighlightsFirstRow({ query: "./harn", isBrowsing: true })).toBe(false);
 });
 
-const entries = [
-  { name: "docs", fullPath: "/repos/docs" },
-  { name: "beta", fullPath: "/repos/beta" },
-  { name: "drafts", fullPath: "/repos/drafts" },
-];
-
 it("offers the browsed folder, its parent, project roots first, then folders", () => {
-  const rows = folderMoveFolderRows({
-    projects,
-    currentFolder: "/repos/alpha",
-    query: "~/repos/",
-    platform: "MacIntel",
-    directoryFullPath: "/repos",
-    entries,
-  });
+  const rows = folderRows({ currentFolder: "/repos/alpha", query: "~/repos/" });
   expect(labels(rows)).toEqual(["Use this folder", "..", "beta", "docs", "drafts"]);
   expect(rows.map((row) => row.action)).toEqual([
     { kind: "move", path: "/repos" },
@@ -119,22 +106,15 @@ it("offers the browsed folder, its parent, project roots first, then folders", (
   expect(rows.map((row) => row.isProject)).toEqual([false, false, true, false, false]);
 
   // A typed name filters on the server's entries, and the folder itself is not offered.
-  const filtered = folderMoveFolderRows({
-    projects,
-    currentFolder: null,
+  const filtered = folderRows({
     query: '"/repos/d',
-    platform: "MacIntel",
-    directoryFullPath: "/repos",
     entries: entries.filter((entry) => entry.name.startsWith("d")),
   });
   expect(labels(filtered)).toEqual(["..", "docs", "drafts"]);
 
   // A browsed folder that is a project root moves there at once.
-  const atRoot = folderMoveFolderRows({
-    projects,
-    currentFolder: null,
+  const atRoot = folderRows({
     query: "/repos/beta/",
-    platform: "MacIntel",
     directoryFullPath: "/repos/beta",
     entries: [],
   });
@@ -143,12 +123,8 @@ it("offers the browsed folder, its parent, project roots first, then folders", (
 
 it("marks the thread's own folder as current, with the project icon on a project root", () => {
   const browse = (currentFolder: string) =>
-    folderMoveFolderRows({
-      projects,
+    folderRows({
       currentFolder,
-      query: "/repos/",
-      platform: "MacIntel",
-      directoryFullPath: "/repos",
       entries: [{ name: "alpha", fullPath: "/repos/alpha" }, ...entries],
     });
   // The current project root sorts with the projects, opens instead of moving, and is current.
@@ -176,15 +152,7 @@ it("marks the thread's own folder as current, with the project icon on a project
 
 it("does not offer to use a folder the server may not read, and keeps the parent row", () => {
   const locked = (folder: string) =>
-    folderMoveFolderRows({
-      projects,
-      currentFolder: null,
-      query: `${folder}/`,
-      platform: "MacIntel",
-      directoryFullPath: folder,
-      entries: [],
-      unreadable: true,
-    });
+    folderRows({ query: `${folder}/`, directoryFullPath: folder, entries: [], unreadable: true });
   expect(labels(locked("/repos/locked"))).toEqual([".."]);
   // The server refuses a project root it may not read like any other folder.
   expect(labels(locked("/repos/beta"))).toEqual([".."]);
@@ -200,26 +168,25 @@ it("stops waiting for a listing once the session may not read files", () => {
 });
 
 it("says when a typed path or project name matches nothing", () => {
-  const noMatch = (query: string, shown: typeof entries, rowCount: number) =>
+  const noMatch = (
+    query: string,
+    shown: typeof entries,
+    rowCount: number,
+    input: Partial<Parameters<typeof folderMoveNoMatchText>[0]> = {},
+  ) =>
     folderMoveNoMatchText({
       query,
       platform: "MacIntel",
       directoryFullPath: "/repos",
       entries: shown,
       rowCount,
+      ...input,
     });
   // The parent row is still listed, and it does not count as a match.
   expect(noMatch("~/repos/zzz", [], 1)).toBe("No folder at /repos/zzz.");
   // The sentence joins with the parent's own separator.
-  expect(
-    folderMoveNoMatchText({
-      query: "C:\\repos\\zzz",
-      platform: "Win32",
-      directoryFullPath: "C:\\repos",
-      entries: [],
-      rowCount: 1,
-    }),
-  ).toBe("No folder at C:\\repos\\zzz.");
+  const windows = { platform: "Win32", directoryFullPath: "C:\\repos" };
+  expect(noMatch("C:\\repos\\zzz", [], 1, windows)).toBe("No folder at C:\\repos\\zzz.");
   expect(noMatch("~/repos/d", entries, 3)).toBeNull();
   // A folder with no subfolder is not a failed match.
   expect(noMatch("~/repos/", [], 2)).toBeNull();
@@ -229,20 +196,12 @@ it("says when a typed path or project name matches nothing", () => {
   expect(noMatch("no", [], 1)).toBeNull();
   expect(noMatch("", [], 0)).toBeNull();
   // Nothing is said before the server answers.
-  expect(
-    folderMoveNoMatchText({
-      query: "~/repos/zzz",
-      platform: "MacIntel",
-      directoryFullPath: null,
-      entries: [],
-      rowCount: 0,
-    }),
-  ).toBeNull();
+  expect(noMatch("~/repos/zzz", [], 0, { directoryFullPath: null })).toBeNull();
 });
 
 it("completes Tab to the highlighted folder or to the common prefix", () => {
   const visible = entries.filter((entry) => entry.name.startsWith("d"));
-  const complete = (query: string, shown = visible, highlighted = null) =>
+  const complete = (query: string, shown = visible, highlighted: FolderMoveRow | null = null) =>
     folderMoveTabCompletion({ query, platform: "MacIntel", highlighted, entries: shown });
   expect(complete("/repos/d", [{ name: "docs", fullPath: "/repos/docs" }])).toBe("/repos/docs/");
   expect(complete("/repos/d", [...visible, { name: "dry", fullPath: "/repos/dry" }])).toBeNull();
@@ -253,19 +212,6 @@ it("completes Tab to the highlighted folder or to the common prefix", () => {
     ]),
   ).toBe("/repos/draft-");
   expect(complete("alp")).toBeNull();
-  const [row] = folderMoveProjectRows({
-    projects,
-    threads,
-    currentFolder: null,
-    inNoProject: true,
-    query: "beta",
-  });
-  expect(
-    folderMoveTabCompletion({
-      query: "beta",
-      platform: "MacIntel",
-      highlighted: row ?? null,
-      entries: [],
-    }),
-  ).toBe("/repos/beta/");
+  const [row] = projectRows({ inNoProject: true, query: "beta" });
+  expect(complete("beta", [], row ?? null)).toBe("/repos/beta/");
 });

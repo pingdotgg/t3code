@@ -14,6 +14,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
+import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import {
   member,
   moved,
@@ -21,6 +22,7 @@ import {
   namedThread,
   needsProject,
   refusal,
+  threadCreated,
 } from "./ThreadMove.testkit.ts";
 import {
   collectMoveSet,
@@ -58,27 +60,17 @@ const thread = (
     readonly deleted?: boolean;
   },
 ): ThreadMoveShell => ({
-  id: ThreadId.make(id),
-  title: id,
-  projectId: ProjectId.make(projectId),
-  worktreePath,
-  providerInstanceId: ProviderInstanceId.make("claudeAgent"),
-  lineage: {
-    parentThreadId: extra?.parent === undefined ? null : ThreadId.make(extra.parent),
-    relationshipToParent: extra?.kind === "side" ? "fork" : (extra?.kind ?? null),
-    rootThreadId: ThreadId.make(extra?.parent ?? id),
-    ...(extra?.kind === "side" ? { sideChat: true } : {}),
-  },
+  ...threadCreated({
+    threadId: ThreadId.make(id),
+    projectId: ProjectId.make(projectId),
+    worktreePath,
+    providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+    parent: extra?.parent === undefined ? undefined : ThreadId.make(extra.parent),
+    kind: extra?.kind,
+  }).payload,
   deletedAt: extra?.deleted === true ? DateTime.makeUnsafe(0) : null,
 });
 
-const sessions = {
-  supportsMultipleProviderThreadsPerSession: false,
-  supportsModelSwitchInSession: true,
-  supportsProviderSwitchingViaHandoff: true,
-  supportsRuntimeModeSwitchInSession: false,
-  pendingRequestsSurviveRestart: false,
-};
 const provider = (
   driver: string,
   version: string | null,
@@ -86,7 +78,7 @@ const provider = (
   configDir?: string,
 ): ThreadMoveProviderInstance => ({
   driver: ProviderDriverKind.make(driver),
-  capabilities: { sessions: { ...sessions, supportsFolderMove } },
+  capabilities: { sessions: { ...CodexProviderCapabilitiesV2.sessions, supportsFolderMove } },
   version,
   environment: configDir === undefined ? {} : { CLAUDE_CONFIG_DIR: configDir },
 });
@@ -174,12 +166,10 @@ type Options = Partial<ThreadMoveDecisionInput> & {
 };
 type Setup = Options | ((world: World) => Options);
 type Records = Effect.Success<ReturnType<ThreadMoveProbes["threadRecords"]>>;
-type Flags = Pick<ThreadMoveInput, "addProject" | "confirm">;
 
-const request = (threadId: string, destination: string | null, flags?: Flags) => ({
+const request = (threadId: string, destination: string | null) => ({
   threadId: ThreadId.make(threadId),
   destination,
-  ...flags,
 });
 
 const idle = { runs: [], runtimeRequests: [] };
@@ -282,6 +272,8 @@ it.layer(NodeServices.layer)("decideThreadMove", (it) => {
       refusal(/^Cannot read `.*locked-parent\/child`\.$/),
     ],
     ["a file is refused", "afile", refusal("No folder at `")],
+    ["a side chat is refused, naming its parent", "projB", member("t1", "side chat"), "t1-side"],
+    ["a subagent is refused, naming its parent", "projB", member("t1", "subagent"), "t1-sub"],
   ])("/cd %s", ([, typed, expected, threadId = "t1"]) =>
     Effect.gen(function* () {
       const world = yield* makeWorld;
@@ -322,17 +314,6 @@ it.layer(NodeServices.layer)("decideThreadMove", (it) => {
     Effect.gen(function* () {
       const world = yield* makeWorld;
       expect(yield* decide(world, request(threadId, null), setup)).toMatchObject(expected);
-    }),
-  );
-
-  it.effect.each([
-    ["t1-side", "side chat"],
-    ["t1-sub", "subagent"],
-  ] as const)("refuses a %s as the target and names its parent", ([threadId, kind]) =>
-    Effect.gen(function* () {
-      const world = yield* makeWorld;
-      const result = yield* decide(world, request(threadId, world.at("projB")));
-      expect(result).toMatchObject(member("t1", kind));
     }),
   );
 
@@ -484,26 +465,12 @@ it.layer(NodeServices.layer)("decideThreadMove", (it) => {
     }),
   );
 
-  it.effect.each<readonly [string, Flags, Setup, (at: World["at"]) => object]>([
-    ["asks for the project before the confirmation", {}, {}, (at) => needsProject(at("plain"))],
-    [
-      "asks for the confirmation once the project question is answered",
-      { addProject: true },
-      {},
-      (at) => ({ _tag: "confirm", from: at("W"), to: at("plain") }),
-    ],
-    [
-      "moves to a new project with both answers",
-      { addProject: true, confirm: true },
-      {},
-      (at) => ({ _tag: "move", destination: { _tag: "new-project", folder: at("plain") } }),
-    ],
-    ["refuses a busy member first", {}, records("t2-side", running), () => member("t2-side")],
-  ])("from a worktree to a folder with no project, %s", ([, flags, setup, expected]) =>
+  it.effect("from a worktree to a folder with no project, refuses a busy member first", () =>
     Effect.gen(function* () {
       const world = yield* makeWorld;
-      const result = yield* decide(world, request("t2", world.at("plain"), flags), setup);
-      expect(result).toMatchObject(expected(world.at));
+      const busyMember = records("t2-side", running);
+      const result = yield* decide(world, request("t2", world.at("plain")), busyMember);
+      expect(result).toMatchObject(member("t2-side"));
     }),
   );
 });

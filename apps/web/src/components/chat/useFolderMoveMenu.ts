@@ -2,7 +2,6 @@ import {
   filterFilesystemBrowseEntries,
   getFilesystemBrowsePath,
 } from "@t3tools/client-runtime/state/filesystem";
-import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import type { EnvironmentId, FilesystemBrowseEntry } from "@t3tools/contracts";
 
 import { useProjects, useThreadShells } from "~/state/entities";
@@ -59,10 +58,8 @@ export function useFolderMoveMenu(input: {
     : NO_ENTRIES;
   // An older server omits the flag and lists a folder it may not read as an empty one.
   const unreadable = listing.data?.unreadable === true;
-  const scratchRoot = presentation?.serverConfig?.scratchWorkspaceRoot ?? null;
   const environmentProjects = projects.filter(
-    (project) =>
-      project.environmentId === input.environmentId && !isScratchProject(project, scratchRoot),
+    (project) => project.environmentId === input.environmentId && !project.isScratch,
   );
   const rows = !active
     ? []
@@ -87,7 +84,6 @@ export function useFolderMoveMenu(input: {
         });
   const cannotRead =
     browse.isBrowsing && folderMoveCannotRead({ unreadable, listingError: listing.error, access });
-  const cannotReadText = `Cannot read ${listing.data?.parentPath ?? browse.directoryPath}.`;
   const noMatch = active
     ? folderMoveNoMatchText({
         query: input.query ?? "",
@@ -97,6 +93,9 @@ export function useFolderMoveMenu(input: {
         rowCount: rows.length,
       })
     : null;
+  const problem = cannotRead
+    ? `Cannot read ${listing.data?.parentPath ?? browse.directoryPath}.`
+    : noMatch;
   return {
     items: rows.map((row): ComposerCommandItem => ({
       ...row,
@@ -105,14 +104,12 @@ export function useFolderMoveMenu(input: {
     isLoading: browse.isBrowsing && !cannotRead && listing.data === null && rows.length === 0,
     emptyState:
       input.disabledReason ??
-      (cannotRead
-        ? cannotReadText
-        : (noMatch ??
-          (browse.isBrowsing
-            ? "No matching folders."
-            : "No other project. Type a path to move to a folder."))),
+      problem ??
+      (browse.isBrowsing
+        ? "No matching folders."
+        : "No other project. Type a path to move to a folder."),
     /** A message below the rows. The menu shows `emptyState` instead when it has no row. */
-    footer: rows.length === 0 ? null : cannotRead ? cannotReadText : noMatch,
+    footer: rows.length === 0 ? null : problem,
     /** The folders the typed name matches, for Tab completion. */
     entries,
     platform,

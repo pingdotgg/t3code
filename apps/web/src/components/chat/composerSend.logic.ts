@@ -87,20 +87,13 @@ export function approvalRedirectNotice(input: {
 
 /*
  * Why a move cannot happen, as full sentences: a toast, a pane hint, and a pane footer show
- * them as they are. A slash menu row shows one through `slashMenuRowText`.
+ * them as they are. A slash menu row shows one without its final period.
  */
 const DRAFT_CHOOSES_PROJECT =
   "Press Esc, then pick the project in the heading above the composer before the first message.";
 const QUEUED_EDIT_OPEN = "Save or cancel the queued message edit first.";
 const REQUEST_PENDING = "Answer the pending question or approval first.";
 const THREAD_STILL_WORKING = "This thread is still working. Try again when the turn ends.";
-/** The server refuses `/no` from No project with the same sentence. */
-export const THREAD_ALREADY_IN_NO_PROJECT = "This thread is already in No project.";
-
-/** A slash menu row ends with no period, like the rows around it. */
-export function slashMenuRowText(sentence: string): string {
-  return sentence.replace(/\.$/u, "");
-}
 
 export function folderMoveBlockReason(input: {
   readonly supported: boolean;
@@ -139,7 +132,7 @@ export function splitInlineCode(text: string): ReadonlyArray<InlineCodePart> {
 }
 
 /** `offset` is where the part starts in the text, so it identifies the part when rendering. */
-export interface InlineCodePart {
+interface InlineCodePart {
   readonly code: boolean;
   readonly text: string;
   readonly offset: number;
@@ -159,13 +152,13 @@ export function folderMoveMenuBlockReason(input: {
   return null;
 }
 
-export type ThreadMoveQuestion = Extract<ThreadMoveResult, { _tag: "needs-project" | "confirm" }>;
+type ThreadMoveQuestion = Extract<ThreadMoveResult, { _tag: "needs-project" | "confirm" }>;
 type ThreadMoveOutcome = Extract<ThreadMoveResult, { _tag: "moved" | "refused" }>;
 
 export async function runThreadMove(
   input: ThreadMoveInput,
   move: (input: ThreadMoveInput) => Promise<ThreadMoveResult>,
-  ask: (question: ThreadMoveQuestion) => Promise<boolean>,
+  ask: (question: ThreadMoveQuestion) => Promise<boolean> | boolean,
 ): Promise<ThreadMoveOutcome | null> {
   const result = await move(input);
   if (result._tag === "moved" || result._tag === "refused") return result;

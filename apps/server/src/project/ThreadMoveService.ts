@@ -40,6 +40,7 @@ import * as ProjectService from "./ProjectService.ts";
 import {
   collectMoveSet,
   decideThreadMove,
+  refused,
   type ThreadMoveProbes,
   type ThreadMoveProviderInstance,
 } from "./ThreadMoveDestination.ts";
@@ -52,9 +53,6 @@ export class ThreadMoveService extends Context.Service<
   }
 >()("t3/project/ThreadMoveService") {}
 
-type Refused = Extract<ThreadMoveResult, { _tag: "refused" }>;
-
-const refused = (reason: string): Refused => ({ _tag: "refused", reason });
 const destinationGone = refused("The destination project no longer exists.");
 
 export const make = Effect.gen(function* () {

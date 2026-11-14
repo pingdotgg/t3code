@@ -1648,10 +1648,7 @@ function inheritedRunFork(thread: Pick<OrchestrationV2AppThread, "forkedFrom" | 
 
 type RunFolder = Pick<OrchestrationV2Run, "id" | "cwd" | "repositoryRoot">;
 
-function runFoldersFor(
-  runs: ReadonlyArray<RunFolder>,
-  runIds: ReadonlySet<RunId | null>,
-): { readonly runFolders?: ReadonlyArray<RunFolder> } {
+function runFoldersFor(runs: ReadonlyArray<RunFolder>, runIds: ReadonlySet<RunId | null>) {
   const runFolders = runs.flatMap((run) =>
     run.cwd === undefined || !runIds.has(run.id)
       ? []

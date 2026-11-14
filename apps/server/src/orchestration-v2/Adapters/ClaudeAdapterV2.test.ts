@@ -2624,7 +2624,11 @@ describe("ClaudeAdapterV2 attachments", () => {
 });
 
 describe("ClaudeAdapterV2 native fork", () => {
-  it.effect("forks a session from its original directory after the workspace root changes", () =>
+  it.effect.each([
+    { from: "the session cwd", folder: "/workspace" },
+    { from: "its record", recorded: "/repo/a", history: "/repo/h", folder: "/repo/a" },
+    { from: "run history", history: "/repo/a", folder: "/repo/a" },
+  ])("forks a session from its original directory and records its folder from $from", (row) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -2746,7 +2750,11 @@ describe("ClaudeAdapterV2 native fork", () => {
       const now = yield* DateTime.now;
       const providerTurnId = ProviderTurnId.make("provider-turn-claude-source");
       const forkedProviderThread = yield* runtime.forkThread({
-        sourceProviderThread,
+        sourceProviderThread: {
+          ...sourceProviderThread,
+          ...(row.recorded === undefined ? {} : { nativeStorageFolder: row.recorded }),
+        },
+        ...(row.history === undefined ? {} : { sourceNativeStorageFolder: row.history }),
         sourceProviderTurns: [
           {
             id: providerTurnId,
@@ -2788,7 +2796,9 @@ describe("ClaudeAdapterV2 native fork", () => {
       assert.include(forkedTranscript, "inherited answer");
       assert.equal(forkedProviderThread.forkedFrom?.providerThreadId, sourceProviderThread.id);
       assert.equal(forkedProviderThread.forkedFrom?.providerTurnId, providerTurnId);
-      assert.equal(forkedProviderThread.nativeStorageFolder, "/workspace");
+      // Only a head lookup in the same storage finds the forked transcript's last message.
+      assert.isString(forkedProviderThread.nativeMetadata?.forkHeadMessageId);
+      assert.equal(forkedProviderThread.nativeStorageFolder, row.folder);
 
       yield* runtime.startTurn({
         appThread: {
@@ -2862,7 +2872,7 @@ describe("ClaudeAdapterV2 native fork", () => {
   );
 });
 
-function makeFakeClaudeCli(answerSetServers = true, onPrompt?: (content: unknown) => void) {
+function makeFakeClaudeCli(answerSetServers = true) {
   const spawns: Array<SpawnOptions> = [];
   const controlRequests: Array<object> = [];
   const stdins: Array<NodeStream.PassThrough> = [];
@@ -2888,7 +2898,6 @@ function makeFakeClaudeCli(answerSetServers = true, onPrompt?: (content: unknown
       for (let end = pending.indexOf("\n"); end >= 0; end = pending.indexOf("\n")) {
         const frame = JSON.parse(pending.slice(0, end));
         pending = pending.slice(end + 1);
-        if (frame.type === "user") onPrompt?.(frame.message.content);
         if (frame.type !== "control_request") continue;
         controlRequests.push(frame.request);
         const setServers = frame.request.subtype === "mcp_set_servers";
@@ -3420,9 +3429,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly freshQueueOnReopen?: boolean;
     readonly forkSession?: ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerShape["forkSession"];
     readonly allocateSessionId?: Effect.Effect<string>;
+    readonly offer?: (message: SDKUserMessage) => Effect.Effect<void>;
     readonly promptSuggestions?: boolean;
     readonly onUsageLimits?: ClaudeAdapterV2.ClaudeAdapterV2Options["onUsageLimits"];
-    readonly offer?: ClaudeAdapterV2.ClaudeAgentSdkQuerySession["offer"];
   }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -3524,18 +3533,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   ),
                 ),
               );
-              const offer = (message: SDKUserMessage, onQueued?: () => void) =>
-                Effect.sync(() => {
-                  offeredMessages.push(message);
-                }).pipe(
-                  Effect.andThen(changes.notify),
-                  Effect.andThen(options?.offer?.(message, onQueued) ?? Effect.void),
-                );
               if (options?.freshQueueOnReopen === true && processQueues.length > 0) {
                 processQueues.push(processMessages);
                 return {
                   messages,
-                  offer,
+                  offer: (message: SDKUserMessage) =>
+                    Effect.sync(() => {
+                      offeredMessages.push(message);
+                    }).pipe(Effect.andThen(changes.notify)),
                   setModel: () => Effect.void,
                   applyFlagSettings: () => Effect.void,
                   setPermissionMode: (mode) =>
@@ -3557,7 +3562,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               processQueues.push(sdkMessages);
               return {
                 messages,
-                offer,
+                offer: (message) =>
+                  Effect.sync(() => {
+                    offeredMessages.push(message);
+                  }).pipe(
+                    Effect.andThen(changes.notify),
+                    Effect.andThen(options?.offer?.(message) ?? Effect.void),
+                  ),
                 setModel: (model) =>
                   Effect.sync(() => {
                     liveSelectionChanges.push({ model });
@@ -3700,74 +3711,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       providerTurnOrdinal,
       ...extra,
     });
-
-  it.effect.each([
-    { name: "its record", recorded: "/repo/a", history: "/repo/h" },
-    { name: "run history", history: "/repo/a" },
-  ])("forks a session created in the old root, found from $name", ({ recorded, history }) =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const configDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-old-root-" });
-        const sessionId = "22222222-2222-4222-8222-222222222222";
-        const projectDir = path.join(configDir, "projects", "-repo-a");
-        const question = "cccccccc-0000-4000-8000-000000000001";
-        yield* fileSystem.makeDirectory(projectDir, { recursive: true });
-        const entry = (type: string, uuid: string, parent: string | null, content: unknown) =>
-          JSON.stringify({
-            type,
-            uuid,
-            parentUuid: parent,
-            message: { role: type, content },
-            sessionId,
-            cwd: "/repo/a",
-            isSidechain: false,
-            timestamp: "2026-11-01T00:00:00.000Z",
-          });
-        yield* fileSystem.writeFileString(
-          path.join(projectDir, `${sessionId}.jsonl`),
-          [
-            entry("user", question, null, "Remember the number 42."),
-            entry("assistant", "cccccccc-0000-4000-8000-000000000002", question, [
-              { type: "text", text: "Noted." },
-            ]),
-          ].join("\n"),
-        );
-        const harness = yield* makeWakeHarnessWithOptions({
-          environment: { ...process.env, CLAUDE_CONFIG_DIR: configDir },
-          forkSession: (yield* ClaudeAdapterV2.ClaudeAgentSdkQueryRunner).forkSession,
-        });
-        const forked = yield* harness.runtime.forkThread({
-          sourceProviderThread: {
-            ...harness.providerThread,
-            nativeThreadRef: { ...harness.providerThread.nativeThreadRef!, nativeId: sessionId },
-            ...(recorded === undefined ? {} : { nativeStorageFolder: recorded }),
-          },
-          targetThreadId: ThreadId.make("thread-claude-storage-folder-root-edit-fork"),
-          ...(history === undefined ? {} : { sourceNativeStorageFolder: history }),
-        });
-
-        const forkedId = forked.nativeThreadRef?.nativeId;
-        assert.isString(forkedId);
-        assert.notEqual(forkedId, sessionId);
-        assert.include(
-          yield* fileSystem.readFileString(path.join(projectDir, `${forkedId}.jsonl`)),
-          "Remember the number 42.",
-        );
-        // Only a head lookup in the same storage finds the forked transcript's last message.
-        assert.isString(forked.nativeMetadata?.forkHeadMessageId);
-        assert.equal(forked.nativeStorageFolder, "/repo/a");
-      }).pipe(
-        Effect.provide(ClaudeAdapterV2.layerQueryRunner.pipe(Layer.provide(PortScanner.layerTest))),
-        Effect.provideService(
-          ProviderEventLoggers.ProviderEventLoggers,
-          ProviderEventLoggers.NoOpProviderEventLoggers,
-        ),
-        Effect.provide(layerClaudeTestServices),
-      ),
-    ),
-  );
 
   it.effect("resumes the session a /clear selected after the Claude process is replaced", () =>
     Effect.gen(function* () {
@@ -6665,7 +6608,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ordinal: number,
           modelSelection: ModelSelection,
           cwd = CLAUDE_TEST_RUNTIME_POLICY.cwd,
-          continuation = false,
         ) =>
           makeClaudeTestTurnInput({
             threadId: harness.threadId,
@@ -6677,9 +6619,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             providerTurnOrdinal: ordinal,
             modelSelection,
             runtimePolicy: { ...CLAUDE_TEST_RUNTIME_POLICY, cwd },
-            ...(continuation
-              ? { messageCreatedBy: "agent", messageCreationSource: "provider" }
-              : {}),
           });
         const settle = Effect.gen(function* () {
           yield* harness.offerAndWait(turnOneResult);
@@ -6723,7 +6662,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           turn(6, { ...normal, model: "claude-haiku-4-5-20251001" }),
           turn(7, { ...normal, model: "claude-sonnet-4-6" }, "/new-workspace"),
           turn(8, normal, "/new-workspace"),
-          turn(9, CLAUDE_TEST_RESTART_MODEL_SELECTION, "/new-workspace", true),
         ]) {
           const refused = yield* harness.runtime.startTurn(refusedTurn).pipe(Effect.result);
           assert.equal(refused._tag, "Failure");

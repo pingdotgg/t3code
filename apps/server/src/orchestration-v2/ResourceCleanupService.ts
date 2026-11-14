@@ -69,15 +69,12 @@ export const layer = Layer.effect(
             ),
           );
       }),
-      moveScheduledTasks: Effect.fn("ResourceCleanupService.moveScheduledTasks")(function (input) {
-        return scheduledTasks
-          .moveThreadTasks(input)
-          .pipe(
-            Effect.mapError(
-              (cause) => new ResourceCleanupError({ operation: "scheduled-tasks", cause }),
-            ),
-          );
-      }),
+      moveScheduledTasks: Effect.fn("ResourceCleanupService.moveScheduledTasks")(
+        (input) => scheduledTasks.moveThreadTasks(input),
+        Effect.mapError(
+          (cause) => new ResourceCleanupError({ operation: "scheduled-tasks", cause }),
+        ),
+      ),
       cleanupTerminals: Effect.fn("ResourceCleanupService.cleanupTerminals")(function (
         threadId: string,
       ) {

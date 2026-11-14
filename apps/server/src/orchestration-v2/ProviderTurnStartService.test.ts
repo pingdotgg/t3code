@@ -70,7 +70,6 @@ import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts"
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
-import * as KeyedLock from "@t3tools/shared/KeyedLock";
 
 const isDomainEvent = Schema.is(OrchestrationV2DomainEvent);
 
@@ -424,7 +423,6 @@ function makeLocalCommandHarness(input: {
     readonly threadRuntimeMode?: OrchestrationV2ThreadProjection["thread"]["runtimeMode"];
     readonly parentRunCwd?: string;
     readonly relocation?: Deferred.Deferred<void>;
-    readonly moveDuringFork?: boolean;
     readonly parentStorageFolder?: string;
   };
 }) {
@@ -620,14 +618,6 @@ function makeLocalCommandHarness(input: {
       ? {}
       : { nativeStorageFolder: input.sideChat.parentStorageFolder }),
   };
-  const movedParent = {
-    ...parentProviderThread,
-    nativeStorageFolder: "/repo/side-chat-parent-moved",
-  };
-  const movedAgainParent = {
-    ...parentProviderThread,
-    nativeStorageFolder: "/repo/side-chat-parent-moved-again",
-  };
   const parentProviderTurn = (ordinal: number, attemptRunId: RunId) => ({
     attempt: {
       ...projection.attempts[0]!,
@@ -735,7 +725,7 @@ function makeLocalCommandHarness(input: {
     relocation === undefined ? [] : ["relocate-parent"];
   const relocationsAtFork: Array<ReadonlyArray<string>> = [];
   // The thread locks the service runs under, so a test can take the parent's lock itself.
-  let locks: KeyedLock.KeyedLock<ThreadId> | undefined;
+  let locks: ThreadCommandExecutor.ThreadCommandExecutor["Service"] | undefined;
   const threadLocks = Effect.suspend(() =>
     locks === undefined
       ? Effect.die("the service has not built its thread locks")
@@ -750,7 +740,15 @@ function makeLocalCommandHarness(input: {
       }),
     ),
   );
-  let moveAttempted = false;
+  // Whether the service held the parent's lock at each relocation check and at the fork.
+  const parentLockedAt: Array<readonly ["check" | "fork", boolean]> = [];
+  const recordParentLock = (step: "check" | "fork") =>
+    Effect.map(
+      Effect.flatMap(threadLocks, (held) => held.activeKeys),
+      (lockedThreads) => {
+        parentLockedAt.push([step, lockedThreads.includes(parentThreadId)]);
+      },
+    );
   if (input.sideChat !== undefined) {
     const earlierRunId = RunId.make("side-chat-earlier-run");
     projection = {
@@ -989,7 +987,7 @@ function makeLocalCommandHarness(input: {
     },
   };
   const forkThread = vi.fn((_fork: ProviderAdapter.ProviderAdapterV2ForkThreadInput) =>
-    Effect.sync(() => {
+    Effect.map(recordParentLock("fork"), () => {
       relocationsAtFork.push(pendingRelocations);
       return sideChatThread;
     }),
@@ -1136,13 +1134,12 @@ function makeLocalCommandHarness(input: {
   );
   const layer = Layer.merge(
     ProviderTurnStart.layer,
-    Layer.effect(
-      ThreadCommandExecutor.ThreadCommandExecutor,
-      Effect.map(KeyedLock.make<ThreadId>(), (made) => {
-        locks = made;
-        return made;
+    // The service provides itself this same layer, and one build memoizes it into one lock.
+    Layer.effectDiscard(
+      Effect.map(ThreadCommandExecutor.ThreadCommandExecutor, (shared) => {
+        locks = shared;
       }),
-    ),
+    ).pipe(Layer.provide(ThreadCommandExecutor.layer)),
   ).pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -1173,42 +1170,27 @@ function makeLocalCommandHarness(input: {
         }),
         Layer.mock(EventStore.EventStoreV2)({ read: readEvents }),
         Layer.mock(EffectOutbox.EffectOutboxV2)({
-          unsettledEffectIds: () =>
-            Effect.gen(function* () {
-              const ids = pendingRelocations;
-              // The move tries to commit while the fork holds the source lock, so it lands after.
-              if (
-                input.sideChat?.moveDuringFork === true &&
-                !moveAttempted &&
-                (yield* Effect.flatMap(threadLocks, (held) => held.activeKeys)).includes(
-                  parentThreadId,
-                )
-              ) {
-                moveAttempted = true;
-                yield* Effect.forkChild(commitMove);
-              }
-              return ids;
-            }),
+          unsettledEffectIds: () => Effect.map(recordParentLock("check"), () => pendingRelocations),
           awaitSettled: (effectId) => {
-            const settle = (
-              relocated: Deferred.Deferred<void>,
-              moved: (typeof parentRecords)["providerThreads"][number],
-            ) =>
+            const settle = (relocated: Deferred.Deferred<void>, nativeStorageFolder: string) =>
               Deferred.await(relocated).pipe(
                 Effect.map(() => {
                   pendingRelocations = pendingRelocations.filter((id) => id !== effectId);
-                  parentRecords = { ...parentRecords, providerThreads: [moved] };
+                  parentRecords = {
+                    ...parentRecords,
+                    providerThreads: [{ ...parentProviderThread, nativeStorageFolder }],
+                  };
                 }),
               );
             if (effectId === "relocate-parent-again") {
               return Deferred.succeed(relocationAgainAwaited, undefined).pipe(
-                Effect.andThen(settle(relocationAgain, movedAgainParent)),
+                Effect.andThen(settle(relocationAgain, "/repo/side-chat-parent-moved-again")),
               );
             }
             return relocation === undefined
               ? Effect.void
               : Deferred.succeed(relocationAwaited, undefined).pipe(
-                  Effect.andThen(settle(relocation, movedParent)),
+                  Effect.andThen(settle(relocation, "/repo/side-chat-parent-moved")),
                 );
           },
         }),
@@ -1302,6 +1284,7 @@ function makeLocalCommandHarness(input: {
     relocationAgainAwaited,
     commitMove,
     relocationsAtFork,
+    parentLockedAt,
     interruptTurn,
     tryHandlePromptCommand,
     events,
@@ -1623,16 +1606,6 @@ effectIt.effect.each([
     }),
 );
 
-const forkHarness = (
-  sideChat: Partial<NonNullable<Parameters<typeof makeLocalCommandHarness>[0]["sideChat"]>> = {},
-  driver = "claudeAgent",
-) =>
-  makeLocalCommandHarness({
-    text: "What is the main thread doing?",
-    driver: ProviderDriverKind.make(driver),
-    sideChat: { contextRun: "current", nativeForkFrom: "idle", ...sideChat },
-  });
-
 effectIt.effect.each([
   { nativeForkFrom: "idle", forks: true, transferStatus: "consumed", handoffIds: [] },
   {
@@ -1702,20 +1675,25 @@ effectIt.effect.each([
   },
   { driver: "codex", relocation: "settles" },
   {
-    sideChat: { moveDuringFork: true, parentStorageFolder: "/repo/parent-recorded" },
+    sideChat: { parentStorageFolder: "/repo/parent-recorded" },
     folder: "/repo/parent-recorded",
     recorded: true,
   },
-  { sideChat: { moveDuringFork: true }, folder: "/repo/side-chat-parent", eventReads: 1 },
   { relocation: "hangs", willRetry: true },
   { relocation: "hangs" },
 ])("forks a Claude parent from its session's storage folder: %j", (row) =>
   Effect.gen(function* () {
     const settled = yield* Deferred.make<void>();
-    const harness = forkHarness(
-      { ...row.sideChat, ...(row.relocation === undefined ? {} : { relocation: settled }) },
-      row.driver ?? "claudeAgent",
-    );
+    const harness = makeLocalCommandHarness({
+      text: "What is the main thread doing?",
+      driver: ProviderDriverKind.make(row.driver ?? "claudeAgent"),
+      sideChat: {
+        contextRun: "current",
+        nativeForkFrom: "idle",
+        ...row.sideChat,
+        ...(row.relocation === undefined ? {} : { relocation: settled }),
+      },
+    });
 
     const start = yield* Effect.forkChild(
       Effect.exit(row.willRetry === true ? harness.startWithRetry : harness.start),
@@ -1749,6 +1727,13 @@ effectIt.effect.each([
     expect(harness.relocationsAtFork.at(-1)).toEqual(
       hangs ? undefined : row.driver === "codex" ? ["relocate-parent"] : [],
     );
+    if (!hangs && row.driver !== "codex") {
+      // Moves commit under the source's lock, so none lands between the last check and the fork.
+      expect(harness.parentLockedAt.slice(-2)).toEqual([
+        ["check", true],
+        ["fork", true],
+      ]);
+    }
     expect(harness.readEvents).toHaveBeenCalledTimes(row.eventReads ?? 0);
     expect(harness.projection().runs.at(-1)?.status).toBe(
       hangs ? (row.willRetry === true ? "starting" : "failed") : "running",

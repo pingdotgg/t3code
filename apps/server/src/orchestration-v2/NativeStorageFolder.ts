@@ -13,17 +13,12 @@ import type * as EventStore from "./EventStore.ts";
 
 // Scopes in commit order; a run's latest scope wins.
 function nativeStorageFolder(input: {
-  readonly providerThread: Pick<
-    OrchestrationV2ProviderThread,
-    "id" | "nativeThreadRef" | "nativeStorageFolder"
-  >;
+  readonly providerThread: OrchestrationV2ProviderThread;
   readonly runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "ordinal" | "cwd">>;
   readonly attempts: ReadonlyArray<
     Pick<OrchestrationV2RunAttempt, "runId" | "providerThreadId" | "nativeThreadId">
   >;
-  readonly checkpointScopes: ReadonlyArray<
-    Pick<OrchestrationV2CheckpointScope, "kind" | "runId" | "providerThreadId" | "cwd">
-  >;
+  readonly checkpointScopes: ReadonlyArray<OrchestrationV2CheckpointScope>;
 }): string | undefined {
   const { providerThread } = input;
   if (providerThread.nativeStorageFolder !== undefined) return providerThread.nativeStorageFolder;
