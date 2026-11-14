@@ -817,6 +817,14 @@ export const make = Effect.gen(function* () {
     }
   });
 
+  const readHeadBranch = Effect.fn("VcsStatusBroadcaster.readHeadBranch")(function* (cwd: string) {
+    const observation = ++branchObservation;
+    const refName = yield* workflow.currentBranch(cwd);
+    // A null branch is a detached HEAD or a checkout that is gone, such as a removed worktree.
+    const isRepo = refName !== null || (yield* workflow.repositoryRoot(cwd)) !== null;
+    return { observation, refName, isRepo };
+  });
+
   // Keep cache invalidation serialized with detailed reads and refreshes.
   const refreshBranchStatusCore = Effect.fn("VcsStatusBroadcaster.refreshBranchStatusCore")(
     (cwd: string) =>
@@ -826,17 +834,10 @@ export const make = Effect.gen(function* () {
           if (detailedSubscribers.has(cwd)) {
             const local = yield* getOrLoadLocalStatusUnlocked(cwd);
             return (
-              branches.get(cwd) ?? {
-                refName: local.refName,
-                isRepo: local.isRepo,
-                revision: branches.get(cwd)?.revision ?? 0,
-              }
+              branches.get(cwd) ?? { refName: local.refName, isRepo: local.isRepo, revision: 0 }
             );
           }
-          const observation = ++branchObservation;
-          const refName = yield* workflow.currentBranch(cwd);
-          // A null branch is a detached HEAD or a checkout that is gone, such as a removed worktree.
-          const isRepo = refName !== null || (yield* workflow.repositoryRoot(cwd)) !== null;
+          const { observation, refName, isRepo } = yield* readHeadBranch(cwd);
           // HEAD cannot certify working-tree totals, even when it has not moved.
           localRefreshResults.delete(cwd);
           yield* workflow.invalidateLocalStatus(cwd);
@@ -847,11 +848,7 @@ export const make = Effect.gen(function* () {
           if (detailedSubscribers.has(cwd)) {
             const local = yield* loadLocalStatus(cwd, { publish: true });
             return (
-              branches.get(cwd) ?? {
-                refName: local.refName,
-                isRepo: local.isRepo,
-                revision: branches.get(cwd)?.revision ?? 0,
-              }
+              branches.get(cwd) ?? { refName: local.refName, isRepo: local.isRepo, revision: 0 }
             );
           }
           yield* publishBranch(cwd, { refName, isRepo }, observation);
@@ -1020,9 +1017,7 @@ export const make = Effect.gen(function* () {
       const { refName, isRepo } = yield* refreshBranchStatusCore(cwd);
       return { refName, isRepo };
     }
-    const observation = ++branchObservation;
-    const refName = yield* workflow.currentBranch(cwd);
-    const isRepo = refName !== null || (yield* workflow.repositoryRoot(cwd)) !== null;
+    const { observation, refName, isRepo } = yield* readHeadBranch(cwd);
     yield* publishBranch(cwd, { refName, isRepo }, observation);
     yield* refreshBranchStatusCore(cwd).pipe(
       Effect.catchCause((cause) =>
