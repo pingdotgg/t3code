@@ -858,7 +858,24 @@ describe("pools", () => {
     ).toEqual(["weekly", "weekly:secondary"]);
   });
 
-  it("weights pooled Codex quota and resets by each account's plan capacity", () => {
+  it.each([
+    {
+      driver: "codex",
+      plans: ["ChatGPT Pro 200 Subscription", "ChatGPT Plus Subscription"],
+      planWindow: { ...weekly, id: "secondary" },
+      // Pro 20x holds 20 of the pool's 21 capacity parts.
+      remaining: 5,
+      bigRestores: 95,
+    },
+    {
+      driver: "claudeAgent",
+      plans: ["Claude Max Subscription", "Claude Pro Subscription"],
+      planWindow: window,
+      // Max holds 5 of the pool's 6 session capacity parts.
+      remaining: 17,
+      bigRestores: 83,
+    },
+  ])("weights pooled $driver quota and resets by each account's plan capacity", (row) => {
     const [pool] = collectLimitPools(
       collectLimitAccounts(
         new Map([
@@ -872,16 +889,16 @@ describe("pools", () => {
                   {
                     ...source,
                     accounts: [
-                      ["pro", "ChatGPT Pro 200 Subscription", 100],
-                      ["plus", "ChatGPT Plus Subscription", 0],
+                      ["big", row.plans[0], 100],
+                      ["small", row.plans[1], 0],
                     ].map(([id, plan, usedPercent]) => ({
                       id: String(id),
                       email: `${id}@example.com`,
-                      driver: ProviderDriverKind.make("codex"),
+                      driver: ProviderDriverKind.make(row.driver),
                       plan: String(plan),
                       usageLimits: {
                         checkedAt,
-                        windows: [{ ...weekly, id: "secondary", usedPercent: Number(usedPercent) }],
+                        windows: [{ ...row.planWindow, usedPercent: Number(usedPercent) }],
                       },
                     })),
                   },
@@ -893,15 +910,11 @@ describe("pools", () => {
       ),
       now,
     );
-    const [pooledWeekly] = pool?.windows ?? [];
-    // Pro 20x holds 20 of the pool's 21 capacity parts.
-    expect(pooledWeekly?.remainingPercent).toBe(5);
+    const [pooled] = pool?.windows ?? [];
+    expect(pooled?.remainingPercent).toBe(row.remaining);
     expect(
-      pooledWeekly?.resets.map(({ member, restoresPercent }) => [
-        member.account.email,
-        restoresPercent,
-      ]),
-    ).toContainEqual(["pro@example.com", 95]);
+      pooled?.resets.map(({ member, restoresPercent }) => [member.account.email, restoresPercent]),
+    ).toContainEqual(["big@example.com", row.bigRestores]);
   });
 
   it("pools windows by id across accounts and orders resets by when they land", () => {
