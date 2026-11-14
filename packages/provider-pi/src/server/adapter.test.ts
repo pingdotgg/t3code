@@ -3887,24 +3887,28 @@ describe("PiAdapterV2", () => {
         );
         yield* fake.takeRequest("get_state");
       }
-      yield* fake.emit({
-        type: "extension_ui_request",
-        id: "ui-cmd",
-        method: "notify",
-        message: "Command finished\nwith details",
-        notifyType: "info",
-      });
-      const notice = yield* takeEvent(
-        (event) =>
-          (event.type === "turn_item.updated" && event.turnItem.type === "system_notice") ||
-          event.type === "turn.terminal",
-      );
-      assert.isTrue(
-        notice.type === "turn_item.updated" &&
-          notice.turnItem.type === "system_notice" &&
-          notice.turnItem.status === "completed" &&
-          notice.turnItem.message === "Command finished\nwith details",
-      );
+      for (const notifyType of ["info", "warning", "error", undefined, "unknown"] as const) {
+        yield* fake.emit({
+          type: "extension_ui_request",
+          id: "ui-cmd",
+          method: "notify",
+          message: "Command finished\nwith details",
+          ...(notifyType === undefined ? {} : { notifyType }),
+        });
+        const notice = yield* takeEvent(
+          (event) =>
+            (event.type === "turn_item.updated" && event.turnItem.type === "system_notice") ||
+            event.type === "turn.terminal",
+        );
+        assert.isTrue(
+          notice.type === "turn_item.updated" &&
+            notice.turnItem.type === "system_notice" &&
+            notice.turnItem.status === "completed" &&
+            notice.turnItem.level ===
+              (notifyType === "warning" || notifyType === "error" ? notifyType : "info") &&
+            notice.turnItem.message === "Command finished\nwith details",
+        );
+      }
       assert.equal(runtime.providerSession.status, "running");
       yield* fake.emit({ type: "response", command: "prompt", success: true, data });
       const terminal = yield* takeEvent((event) => event.type === "turn.terminal");

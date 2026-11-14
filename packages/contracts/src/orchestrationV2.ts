@@ -1569,6 +1569,9 @@ export const OrchestrationV2UserMessageInputIntent = Schema.Literals([
 export type OrchestrationV2UserMessageInputIntent =
   typeof OrchestrationV2UserMessageInputIntent.Type;
 
+/** Notices without a level predate it and are warnings. */
+const OrchestrationV2SystemNoticeLevel = Schema.Literals(["info", "warning", "error"]);
+
 /** A same-harness model or effort change that took effect with this message. */
 export const OrchestrationV2ModelSwitch = Schema.Struct({
   from: ModelSelection,
@@ -1817,6 +1820,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("system_notice"),
     message: Schema.String,
+    level: Schema.optional(OrchestrationV2SystemNoticeLevel),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -2697,6 +2701,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("system_notice"),
     message: Schema.String,
+    level: Schema.optional(OrchestrationV2SystemNoticeLevel),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
