@@ -51,6 +51,7 @@ import * as AntigravityUsage from "../provider/Drivers/AntigravityUsage.ts";
 import * as ProviderHostLive from "../provider/ProviderHostLive.ts";
 import { totalTokens, type UsageRecord } from "@t3tools/provider-core/server/usage";
 import * as UsageService from "./UsageService.ts";
+import { DESKTOP_HOST_SCOPE_ENV, physicalSourceIdOf } from "./usageTranscriptReader.ts";
 import * as MuseSdk from "../../../../packages/provider-muse/src/server/sdk.ts";
 import { MuseUsageHome } from "@t3tools/provider-muse/server";
 import { makeScanCacheWriter, SCAN_CACHE_FILE_NAME } from "./usageScanCache.ts";
@@ -1437,6 +1438,39 @@ describe("UsageService", () => {
       assert.deepStrictEqual(museSources(refreshed), [
         [NodePath.join(museHome, "sessions"), "ok", undefined],
       ]);
+    }),
+  );
+
+  it.effect("identifies a transcript directory created after the server first read usage", () =>
+    Effect.gen(function* () {
+      const { home, settings } = yield* setup;
+      const scope = "0123456789abcdef0123456789abcdef";
+      const dir = NodePath.join(home, "pi", "sessions");
+      yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        const piFingerprint = (summary: UsageSummary) =>
+          summary.sources.find((source) => source.fingerprint.provider === "pi")?.fingerprint;
+        const missing = piFingerprint(yield* service.readSummary(WINDOW));
+        assert.strictEqual(missing?.resolvedHomePath, dir);
+        assert.isUndefined(missing?.physicalSourceId);
+        yield* Effect.promise(() => NodeFSP.mkdir(dir, { recursive: true }));
+        assert.strictEqual(
+          piFingerprint(yield* service.readSummary(WINDOW))?.physicalSourceId,
+          physicalSourceIdOf(scope, yield* Effect.promise(() => NodeFSP.realpath(dir))),
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          layerService({
+            prefix: "usage-physical-source-created",
+            home,
+            settings,
+            // The native Windows server reads identity from realpath alone.
+            platform: "win32",
+            environment: { [DESKTOP_HOST_SCOPE_ENV]: scope },
+          }),
+        ),
+      );
     }),
   );
 
