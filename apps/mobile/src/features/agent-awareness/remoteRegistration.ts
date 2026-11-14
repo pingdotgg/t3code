@@ -105,11 +105,15 @@ export type AgentAwarenessRegistrationStatus = "unknown" | "pending" | "register
 let registrationStatus: AgentAwarenessRegistrationStatus = "unknown";
 const registrationStatusListeners = new Set<() => void>();
 
-function setRegistrationStatus(next: AgentAwarenessRegistrationStatus): void {
-  if (registrationStatus === next) {
+function setRegistrationStatus(
+  next: AgentAwarenessRegistrationStatus,
+  withPushToken = registeredWithPushToken,
+): void {
+  if (registrationStatus === next && registeredWithPushToken === withPushToken) {
     return;
   }
   registrationStatus = next;
+  registeredWithPushToken = withPushToken;
   for (const listener of registrationStatusListeners) {
     listener();
   }
@@ -423,8 +427,7 @@ const registerDeviceWithRelay = Effect.fn("remoteRegistration.registerDeviceWith
     persisted.signature === signature &&
     !needsAndroidReplay
   ) {
-    registeredWithPushToken = Boolean(payload.pushToken);
-    setRegistrationStatus("registered");
+    setRegistrationStatus("registered", Boolean(payload.pushToken));
     return;
   }
 
@@ -440,8 +443,7 @@ const registerDeviceWithRelay = Effect.fn("remoteRegistration.registerDeviceWith
     return;
   }
   if (body.platform === "android") androidDeviceReplayedAt = yield* Clock.currentTimeMillis;
-  registeredWithPushToken = Boolean(payload.pushToken);
-  setRegistrationStatus("registered");
+  setRegistrationStatus("registered", Boolean(payload.pushToken));
   yield* Effect.promise(() =>
     saveAgentAwarenessRegistrationRecord({
       identity,

@@ -37,6 +37,7 @@ import {
   registerLiveActivityPushToken,
   releaseAgentAwarenessRelayTokenProvider,
   setAgentAwarenessRelayTokenProvider,
+  subscribeAgentAwarenessRegistrationStatus,
   updateAgentAwarenessRegistrationPreferences,
   type AgentAwarenessRegistrationError,
 } from "./remoteRegistration";
@@ -752,6 +753,15 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       expect(agentAwarenessNotificationsReady()).toBe(false);
       expect(registrations).toMatchObject([{ preferences: { notificationsEnabled: true } }]);
       expect(registrations[0]).not.toHaveProperty("pushToken");
+
+      const onStatusChange = vi.fn();
+      subscribeAgentAwarenessRegistrationStatus(onStatusChange);
+      const listener = vi.mocked(Notifications.addPushTokenListener).mock.calls.at(-1)![0];
+      listener({ type: "android", data: "fcm-token" } as never);
+      yield* runBackgroundOperations();
+
+      expect(agentAwarenessNotificationsReady()).toBe(true);
+      expect(onStatusChange).toHaveBeenCalled();
     }).pipe(
       Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
       Effect.provide(layerRelayTest),
