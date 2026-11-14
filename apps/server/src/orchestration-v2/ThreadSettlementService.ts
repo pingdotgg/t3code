@@ -173,8 +173,9 @@ export function isAutoSettlementCandidate(
   // Settling ends a watch, which would silently drop a reviewer's later comments.
   if (pendingTasks.some(isPullRequestWatchTask)) return false;
   if (threadHasQueuedTurnStart(thread, nowMs)) return false;
-  // Interrupted runs must keep the same snooze protection the sidebar shows.
-  return !isSnoozed(thread, nowMs);
+  // Snoozed threads stay candidates so a merged or closed PR can still settle them.
+  // Inactivity waits for the wake inside resolveAutoSettlementAt.
+  return true;
 }
 
 /** Match client effectiveSnoozed so agents and sidebar agree. */
@@ -245,6 +246,8 @@ export function resolveAutoSettlementAt(input: {
   if (pullRequest !== null && pullRequestSettles(thread, pullRequest, input.autoSettleOnMerge)) {
     return DateTime.makeUnsafe(activityAtMs);
   }
+  // Hide-until-later outranks inactivity: the wake restarts that clock.
+  if (isSnoozed(thread, input.nowMs)) return null;
   const hasPullRequest =
     hasOpenLink ||
     pullRequest !== null ||
@@ -360,10 +363,12 @@ export const make = Effect.gen(function* () {
       if (nowMs - readAtMs >= QUIET_SYNC_INTERVAL_MS) quietOpenReadAt.delete(key);
     }
     // Merge events resweep all candidates because unlinked threads settle through branch lookup.
+    // Subagents settle without resolveAutoSettlementAt, so keep the prior snooze park for them.
     const candidates = threads.filter(
       (thread) =>
         (automaticSettlementEnabled || thread.lineage.relationshipToParent === "subagent") &&
-        isAutoSettlementCandidate(thread, nowMs),
+        isAutoSettlementCandidate(thread, nowMs) &&
+        (thread.lineage.relationshipToParent !== "subagent" || !isSnoozed(thread, nowMs)),
     );
 
     // Runs per candidate thread, thousands per sweep on busy servers; the sweep owns the span.
