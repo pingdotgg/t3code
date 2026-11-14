@@ -1,0 +1,45 @@
+import type * as mi from "@distilled.cloud/aws/iot-managed-integrations";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+
+/**
+ * Request for {@link StartDeviceDiscovery}.
+ */
+export interface StartDeviceDiscoveryRequest extends mi.StartDeviceDiscoveryRequest {}
+
+/**
+ * Runtime binding for `iotmanagedintegrations:StartDeviceDiscovery`
+ * (account-level).
+ *
+ * Starts a discovery scan for devices reachable through a controller
+ * (`ZWAVE`/`ZIGBEE`), a cloud-to-cloud connector (`CLOUD`), or a custom
+ * protocol. Provide the implementation with
+ * `Effect.provide(AWS.IoTManagedIntegrations.StartDeviceDiscoveryHttp)`.
+ *
+ * ### Discovering Devices
+ * **Example:** Start a Zigbee Discovery Scan
+ * ```typescript
+ * // init — account-level binding takes no resource
+ * const startDiscovery = yield* IoTManagedIntegrations.StartDeviceDiscovery();
+ *
+ * // runtime
+ * const { Id } = yield* startDiscovery({
+ *   DiscoveryType: "ZIGBEE",
+ *   ControllerIdentifier: controllerManagedThingId,
+ * });
+ * ```
+ *
+ * @binding
+ */
+export interface StartDeviceDiscovery extends Binding.Service<
+  StartDeviceDiscovery,
+  "AWS.IoTManagedIntegrations.StartDeviceDiscovery",
+  () => Effect.Effect<
+    (
+      request: StartDeviceDiscoveryRequest,
+    ) => Effect.Effect<mi.StartDeviceDiscoveryResponse, mi.StartDeviceDiscoveryError>
+  >
+> {}
+export const StartDeviceDiscovery = Binding.Service<StartDeviceDiscovery>(
+  "AWS.IoTManagedIntegrations.StartDeviceDiscovery",
+);

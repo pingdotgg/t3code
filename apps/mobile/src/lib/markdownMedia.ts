@@ -5,7 +5,7 @@ import {
 import {
   audioMimeTypeFromExtension,
   mediaMimeTypeFromExtension,
-} from "@t3tools/shared/filePreview";
+} from "@t3tools/shared/mediaPreview";
 import { splitFilePathPosition } from "@t3tools/shared/fileLinks";
 import { parseMarkdownFileLink } from "@t3tools/shared/markdownLinks";
 import {
@@ -17,7 +17,7 @@ import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { normalizeNativeMarkdownUrl, resolveMarkdownLinkPresentation } from "./markdownLinks";
 import { resolveMobileMarkdownMediaSource } from "./markdownMediaSource";
 
-import type { FilePreviewSource } from "../components/FilePreviewModal";
+import type { FilePreviewSource } from "../components/ui/FilePreviewModal";
 import type { MediaVideoPreviewSource } from "./videoPreviewSource";
 import type { MediaActionsSource } from "./mediaActionsSource";
 

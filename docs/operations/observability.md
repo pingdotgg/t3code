@@ -57,11 +57,17 @@ The `TraceRecord`, `EffectTraceRecord`, and `OtlpTraceRecord` schemas live in
 `packages/shared/src/observability.ts`.
 
 SQL statement spans (named `sqlite`) and `sql.transaction` spans carry `db.connection` and
-`db.lock_wait_ms`. `db.connection` is `writer` for the main connection, which runs on the event loop,
-or `reader` for the read-only connection in a worker thread. `db.lock_wait_ms` is the part of the
+`db.lock_wait_ms`. `db.connection` is `writer` for the read-write connection or `reader` for a
+read-only one. For a database file both run in worker threads; an in-memory database has only a
+writer, on the event loop. `db.lock_wait_ms` is the part of the
 span spent waiting for that connection, behind other SQL. That wait does not block the event loop,
 so subtract it before you blame a slow span on the query. Statements inside a transaction use its
 connection and do not carry these attributes.
+
+An MCP request over HTTP has a `McpHttpServer.authenticateRequest` span that covers only admitting
+it: the credential check, the mode limit, and the Linked environments gate. The request runs after
+it, under the `McpServer.…/<method>` span, and each tool call has its own `mcp.tool.<name>` span
+that times it. That span's attributes name the tool, never its arguments.
 
 DPoP proof failures include the safe `environment.dpop.failure_code` span
 attribute. A `time_window` failure means that a signed proof was too old or too
@@ -151,7 +157,7 @@ You do not need any extra env vars. Just run the app normally and inspect `serve
 Examples:
 
 ```bash
-npx t3
+t3
 ```
 
 ```bash
@@ -186,7 +192,7 @@ Default Grafana login:
 
 For endpoint settings and startup precedence, see the
 [user telemetry guide](../user/telemetry.md#export-diagnostics-to-your-own-receiver).
-In a worktree, use `vp run dev` instead of `npx t3` to keep state isolated.
+In a worktree, use `vp run dev` instead of `t3` to keep state isolated.
 
 ```bash
 export T3CODE_OTLP_TRACES_URL=http://localhost:4318/v1/traces
@@ -207,7 +213,7 @@ export T3CODE_TRACE_TIMING_ENABLED=true
 CLI:
 
 ```bash
-npx t3
+t3
 ```
 
 Monorepo web/server dev:
@@ -642,7 +648,11 @@ reports `dev` from a development bundle.
 Attributes specific to T3 Code use the `t3code.` prefix. The UI runs as `t3code-web` in both a
 browser and the desktop window, since it is the same code, and `t3code.client.surface` is `desktop`
 or `web`. The server's `t3code.server.managed_by` is `desktop` when the desktop app launched it and
-`standalone` otherwise.
+`standalone` otherwise. The desktop main process reports `t3code.desktop.mode` as `development` or
+`packaged` (formerly `service.mode`; dashboards filtering on that key must switch). Node processes
+also report the semantic `process.runtime.name`, `process.runtime.version`, and
+`process.runtime.description`, and UI traces report `browser.language`, `user_agent.original`, and,
+in Chromium, `browser.platform`, `browser.mobile`, and `browser.brands`.
 
 Every resource also carries a `service.instance.id`: random per process for the server and desktop,
 per page load for the UI, and the Expo session on mobile. A `service.instance.id` in

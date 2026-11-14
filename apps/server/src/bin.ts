@@ -1,10 +1,36 @@
-/**
- * Every ACP agent spawns `t3 acp-mcp-bridge` while opening its session, and terminal-fallback
- * agents run `t3 acp-mcp-call` per tool call, so their startup sits on first-message latency.
- * They and Codex's managed-token helper dispatch before the full CLI module graph (seconds
- * of evaluation) loads; everything else defers to the real CLI in ./binCli.ts.
- */
+// @effect-diagnostics nodeBuiltinImport:off -- The service launcher starts before the CLI runtime.
+import * as NodeModule from "node:module";
+import * as NodeSea from "node:sea";
+import * as NodeURL from "node:url";
+
 import { isEntrypoint } from "./entrypoint.ts";
+
+// Loads the CLI outside the launcher's module graph. Packaged builds embed it as a raw asset.
+async function loadCliMain(): Promise<typeof import("./binMain.ts")> {
+  if (!NodeSea.isSea()) return import("./binMain.ts");
+
+  // Keep the executable's module URL so the CLI finds the web client and native packages beside it.
+  const require = NodeModule.createRequire(import.meta.url);
+  // require() resolves links in the executable path, such as a Windows junction.
+  const cliUrl = NodeURL.pathToFileURL(require.resolve(process.execPath)).href;
+  const hook = NodeModule.registerHooks({
+    load(url, context, next) {
+      if (url !== cliUrl) return next(url, context);
+      return {
+        format: "module",
+        source: new Uint8Array(NodeSea.getRawAsset("binMain.mjs")),
+        shortCircuit: true,
+      };
+    },
+  });
+  try {
+    return require(process.execPath) as typeof import("./binMain.ts");
+  } finally {
+    hook.deregister();
+  }
+}
+
+function ignoreOutputError(): void {}
 
 if (
   isEntrypoint({
@@ -13,21 +39,22 @@ if (
     runtimeMain: import.meta.main,
   })
 ) {
-  const command = process.argv[2];
-  // Guard sockets before either dispatch path can load outbound-capable modules.
-  const { ignoreMacosTypeOfServiceEinval } = await import("./outboundHttp.ts");
-  ignoreMacosTypeOfServiceEinval();
-  if (command === "__managed-chatgpt-token") {
-    const { runManagedChatGptTokenCli } = await import("./cli/managedChatGptToken.ts");
-    await runManagedChatGptTokenCli(process.argv.slice(3));
-  } else if (command === "acp-mcp-bridge" || command === "acp-mcp-call") {
-    const { runAcpMcpCliFastPath } = await import("./mcp/AcpMcpStdioBridge.ts");
-    await runAcpMcpCliFastPath(command, process.argv.slice(3));
+  // Logs go to stdout and stderr, which may be a closed desktop launcher pipe or a log file on
+  // a full disk. Node emits a failed write as an unhandled stream error that crashes the process
+  // and skips shutdown, so drop the line instead.
+  process.stdout.on("error", ignoreOutputError);
+  process.stderr.on("error", ignoreOutputError);
+
+  // The launcher owns shutdown until its child exits, so it bypasses the Effect CLI runtime.
+  // A service unit passes nothing, or on Windows the launcher's own flags; help and anything
+  // else go through the full CLI.
+  const launcher =
+    process.argv[2] === "__service-launcher" ? await import("./cli/serviceLauncher.ts") : undefined;
+  const launcherOptions = launcher?.parseServiceLauncherArgs(process.argv.slice(3));
+  if (launcher !== undefined && launcherOptions !== undefined) {
+    await launcher.runServiceLauncherCli(launcherOptions);
   } else {
-    // Windows desktop launches without stdin; attach before reading, except on fast paths using pipes.
-    const { attachConsoleStdin } = await import("./cli/consoleStdin.ts");
-    attachConsoleStdin();
-    const { runCli } = await import("./binCli.ts");
-    runCli();
+    const { runCliCommand } = await loadCliMain();
+    await runCliCommand();
   }
 }

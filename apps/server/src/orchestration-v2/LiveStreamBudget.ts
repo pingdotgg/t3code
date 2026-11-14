@@ -172,7 +172,6 @@ export const makeLiveStreamBudget = Effect.fn("makeLiveStreamBudget")(function* 
           }),
           Effect.forkScoped,
         );
-        // @effect-diagnostics-next-line returnEffectInGen:off - Stream.fromPull needs the pull effect as its result.
         return Effect.gen(function* () {
           // RpcServer requests the next batch after ACK; dequeueing does not end delivery.
           release(inFlight);
@@ -240,17 +239,6 @@ const retainLiveStream = Effect.fn("LiveStreamBudget.retainLiveStream")(function
   );
   return Stream.fromQueue(queue);
 });
-
-export const bufferLiveStream = <A extends object, E, R>(
-  source: Stream.Stream<A, E, R>,
-  limits?: LiveStreamLimits,
-) =>
-  Stream.unwrap(
-    Effect.gen(function* () {
-      const budget = yield* makeLiveStreamBudget(limits);
-      return budget.deliver(yield* retainLiveStream(source, budget));
-    }),
-  );
 
 /** Coalesce queued full states; delivered states stay charged until the next pull ACKs them. */
 export const bufferLatestLiveStream = <A extends { readonly sequence: number }, E, R>(
@@ -341,11 +329,6 @@ type ReplayLiveInput<A extends { readonly sequence: number }, E, R> = {
   readonly afterSequence?: number;
   readonly filter?: (event: A) => boolean;
 };
-
-export const replayAndBufferLiveEvents = <A extends { readonly sequence: number }, E, R>(
-  input: ReplayLiveInput<A, E, R>,
-  limits?: LiveStreamLimits,
-) => replayAndBufferProjectedLiveEvents({ ...input, project: (event: A) => event }, limits);
 
 export const replayAndBufferProjectedLiveEvents = <
   A extends { readonly sequence: number },
