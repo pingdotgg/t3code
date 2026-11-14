@@ -13096,6 +13096,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               next.add(turnInput.providerTurnId);
               return next;
             });
+            const stopStartedAt = yield* Clock.currentTimeMillis;
             if (!(yield* Deferred.isDone(existing.closed))) {
               yield* existing.query.interrupt.pipe(
                 Effect.timeoutOption("10 seconds"),
@@ -13108,8 +13109,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               );
               yield* existing.query.close.pipe(Effect.ignore);
             }
+            // A restart must end within ProviderSessionManager's interrupt timeout, so it shares one budget.
+            const confirmWaitMs =
+              turnInput.endOnTimeout === true
+                ? Math.max(
+                    0,
+                    CLAUDE_STOP_CONFIRM_TIMEOUT_MS -
+                      ((yield* Clock.currentTimeMillis) - stopStartedAt),
+                  )
+                : CLAUDE_STOP_CONFIRM_TIMEOUT_MS;
             const closed = yield* Deferred.await(existing.closed).pipe(
-              Effect.timeoutOption(CLAUDE_STOP_CONFIRM_TIMEOUT_MS),
+              Effect.timeoutOption(confirmWaitMs),
             );
             if (Option.isSome(closed)) {
               return;

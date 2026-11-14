@@ -12873,6 +12873,59 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("ends the turn for a restart when the query never confirms the Stop", () =>
+    Effect.gen(function* () {
+      // The CLI never answers the interrupt, and the default close leaves the query running.
+      const interruptStarted = yield* Deferred.make<void>();
+      const harness = yield* makeWakeHarnessWithOptions({
+        interrupt: Deferred.succeed(interruptStarted, undefined).pipe(Effect.andThen(Effect.never)),
+      });
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("unconfirmed-stop"),
+          text: "Work until stopped",
+          attachments: [],
+        }),
+      );
+      yield* harness.until(() =>
+        harness.events.some(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+        ),
+      );
+      const active = harness.events.find(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+      );
+      if (active?.type !== "provider_turn.updated")
+        return yield* Effect.die("Missing running native turn");
+      const stop = yield* harness.runtime
+        .interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId: active.providerTurn.id,
+          endOnTimeout: true,
+        })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(interruptStarted);
+      yield* TestClock.adjust("11 seconds");
+      yield* Fiber.join(stop);
+      assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "interrupted");
+      assert.lengthOf(harness.terminalEvents(), 1);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("preserves settled background work until an explicit stop", () =>
     Effect.gen(function* () {
       let closes = 0;
