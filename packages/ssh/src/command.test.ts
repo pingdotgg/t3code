@@ -77,8 +77,6 @@ describe("ssh command", () => {
     );
   });
 
-  // T3 always supplies its own command or only forwards ports, so a host alias's
-  // RemoteCommand and RequestTTY must be overridden on the command line.
   it.effect("overrides an alias's RemoteCommand and RequestTTY", () =>
     Effect.sync(() => {
       assert.deepEqual(
