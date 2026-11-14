@@ -88,10 +88,6 @@ export const RELAY_HTTP_ROUTER_CONFIG = {
   maxParamLength: 512,
 } as const;
 
-const decodeManagedTunnelRecoveryProof = Schema.decodeUnknownEffect(
-  RelayManagedEndpointRecoveryProofPayload,
-);
-
 const appendRelayCredentialResponseHeaders = HttpEffect.appendPreResponseHandler(
   (_request, response) =>
     Effect.succeed(
@@ -397,11 +393,7 @@ export const layerDpopClientAuth = Layer.effect(
           return yield* relayAuthInvalidError("invalid_bearer");
         }
         const token = readHttpAuthorizationCredential(credential);
-        const now = yield* DateTime.now;
-        const verified = yield* relayTokens.verifyDpopAccessToken({
-          token,
-          nowEpochSeconds: Math.floor(now.epochMilliseconds / 1_000),
-        });
+        const verified = yield* relayTokens.verifyDpopAccessToken({ token });
         if (!verified) {
           return yield* relayAuthInvalidError("invalid_bearer");
         }
@@ -588,18 +580,13 @@ export const verifyEnvironmentTunnelRecoveryProof = Effect.fn(
   "relay.api.server.verifyEnvironmentTunnelRecoveryProof",
 )(function* (input: EnvironmentTunnelRecoveryProofInput) {
   const config = yield* RelayConfiguration.RelayConfiguration;
-  const now = yield* DateTime.now;
-  const verified = yield* verifyRelayJwt({
+  const verified = yield* verifyRelayJwt(RelayManagedEndpointRecoveryProofPayload, {
     publicKey: input.environmentPublicKey,
     token: input.proof,
     typ: RELAY_MANAGED_TUNNEL_RECOVERY_TYP,
     issuer: `t3-env:${input.environmentId}`,
     audience: normalizeRelayIssuer(config.relayIssuer),
-    nowEpochSeconds: Math.floor(now.epochMilliseconds / 1_000),
-  }).pipe(
-    Effect.flatMap(decodeManagedTunnelRecoveryProof),
-    Effect.mapError(() => new HttpApiError.Unauthorized({})),
-  );
+  }).pipe(Effect.mapError(() => new HttpApiError.Unauthorized({})));
 
   if (
     verified.environmentId !== input.environmentId ||
