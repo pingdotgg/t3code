@@ -1,5 +1,12 @@
-import { MousePointer2Icon, PaintbrushIcon, PlusIcon, XIcon } from "lucide-react";
-import { ChevronDown, ChevronUp } from "lucide";
+import {
+  MousePointer2Icon,
+  PaintbrushIcon,
+  PlusIcon,
+  XIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+  ChevronUpIcon,
+} from "lucide-react";
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import {
   applyThemeColorPreview,
@@ -22,14 +29,15 @@ import {
   type ThemeColorRole,
   type ThemeDefinition,
 } from "../../themePalette";
+import { useViewportSize } from "../../hooks/useViewportSize";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
-import { MorphIcon } from "~/components/MorphIcon";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { getThemeRoleLabel, ThemeColorField } from "./ThemeColorPicker";
+import { ThemeCssEditor } from "./ThemeCssEditor";
 import {
   clearThemeInspectorHover,
   clearThemeInspectorHighlights,
@@ -271,30 +279,34 @@ function getManagedEditorColors(
   );
 }
 
+const PANEL_MARGIN = 8;
+const PANEL_MIN_WIDTH = 280;
+const PANEL_MIN_HEIGHT = 220;
+
+/** Keeps the panel horizontally inside the viewport. Vertically only its header must stay
+ * visible, so users can park the panel low to see the app behind it. */
 function clampPanelPosition(
-  panel: HTMLElement | null,
+  viewport: { readonly width: number; readonly height: number },
   x: number,
   y: number,
-  widthOverride?: number,
+  width: number,
 ) {
-  const margin = 8;
-  // The caller passes a width when it has just shrunk the panel: the DOM
-  // still reports the old one until React commits.
-  const width = widthOverride ?? panel?.offsetWidth ?? 0;
+  const maxX = Math.max(PANEL_MARGIN, viewport.width - width - PANEL_MARGIN);
+  const maxY = Math.max(PANEL_MARGIN, viewport.height - 48);
   return {
-    x: Math.min(Math.max(x, margin), Math.max(margin, window.innerWidth - width - margin)),
-    y: Math.min(Math.max(y, margin), Math.max(margin, window.innerHeight - 48)),
+    x: Math.min(Math.max(x, PANEL_MARGIN), maxX),
+    y: Math.min(Math.max(y, PANEL_MARGIN), maxY),
   };
 }
+
+const readWindowViewport = () => ({ width: window.innerWidth, height: window.innerHeight });
 
 // Kept out of the component: the compiler cannot lower a throw inside try/catch.
 function retireMergedTheme(retired: ThemeDefinition, mergeTarget: ThemeDefinition) {
   try {
     removeCustomTheme(retired.id);
   } catch (cause) {
-    // The merge already persisted. Leaving it while the edited theme
-    // survives would collide on every retry, so the target goes back to
-    // its pre-merge palettes before the failure surfaces.
+    // Restore the pre-merge target on retirement failure; leaving the persisted merge would collide on retry.
     try {
       updateCustomTheme(mergeTarget);
     } catch {}
@@ -338,16 +350,25 @@ export function ThemeEditorPanel({
     Record<ThemeAppearance, boolean>
   >({ light: false, dark: false });
   const [shouldRegenerateGuidedColors, setShouldRegenerateGuidedColors] = useState(false);
+  const [css, setCss] = useState("");
+  const [cssOpen, setCssOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isMinimized, setIsMinimized] = useState(false);
   const [roleQuery, setRoleQuery] = useState("");
   const [isInspecting, setIsInspecting] = useState(false);
   const [selectedRole, setSelectedRole] = useState<ThemeColorRole | null>(null);
   const [usageCount, setUsageCount] = useState<number | null>(null);
-  const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
+  // The rendered width is CSS-sized unless the user resized the panel, so the position
+  // remembers the width measured at the last drag or resize.
+  const [position, setPosition] = useState<{ x: number; y: number; width: number } | null>(null);
   const [size, setSize] = useState<{ width: number; height: number } | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
-  const dragOffsetRef = useRef<{ dx: number; dy: number } | null>(null);
+  const colorEditSnapshotRef = useRef<{
+    colorsByAppearance: ThemeEditorColorsByAppearance;
+    simpleColorsDirtyByAppearance: Record<ThemeAppearance, boolean>;
+    shouldRegenerateGuidedColors: boolean;
+  } | null>(null);
+  const dragOffsetRef = useRef<{ dx: number; dy: number; width: number } | null>(null);
   const resizeStartRef = useRef<{
     pointerX: number;
     pointerY: number;
@@ -356,35 +377,7 @@ export function ThemeEditorPanel({
     width: number;
     height: number;
   } | null>(null);
-  useEffect(() => {
-    if (!open) return;
-    const clamp = () => {
-      const margin = 8;
-      let clampedWidth: number | undefined;
-      let clampedHeight: number | undefined;
-      setSize((current) => {
-        if (!current) return current;
-        clampedWidth = Math.max(280, Math.min(current.width, window.innerWidth - margin * 2));
-        clampedHeight = Math.max(220, Math.min(current.height, window.innerHeight - margin * 2));
-        return { width: clampedWidth, height: clampedHeight };
-      });
-      setPosition((current) => {
-        if (!current) return current;
-        const clamped = clampPanelPosition(panelRef.current, current.x, current.y, clampedWidth);
-        const height = isMinimized
-          ? (panelRef.current?.offsetHeight ?? 0)
-          : (clampedHeight ?? panelRef.current?.offsetHeight ?? 0);
-        const maxY = Math.max(margin, window.innerHeight - height - margin);
-        return { x: clamped.x, y: Math.min(clamped.y, maxY) };
-      });
-    };
-    window.addEventListener("resize", clamp);
-    return () => window.removeEventListener("resize", clamp);
-  }, [isMinimized, open]);
-
-  // Seeded during render so the first open commit already holds this
-  // session's draft; seeding in an effect would preview the previous
-  // session's colors for a frame.
+  // Seed during render so the first open frame cannot preview the previous session's colors.
   const [seededOpen, setSeededOpen] = useState(false);
   if (seededOpen !== open) {
     setSeededOpen(open);
@@ -406,13 +399,13 @@ export function ThemeEditorPanel({
 
       setName(editingTheme?.label ?? seedName ?? "");
       setActiveAppearance(nextAppearance);
-      // Themes saved by the guided editor carry the managed flag; anything else
-      // (imports, hand-edited files, older saves) opens in advanced mode so
-      // guided regeneration cannot silently discard hand-tuned colors.
+      // Open unmanaged themes in advanced mode to preserve imported or hand-tuned colors.
       setIsAdvanced(sourceTheme !== null && sourceTheme.managed !== true);
       setSimpleColorsDirtyByAppearance({ light: false, dark: false });
       setShouldRegenerateGuidedColors(sourceTheme !== null && sourceTheme.managed !== true);
       setColorsByAppearance(nextColors);
+      setCss(sourceTheme?.css ?? "");
+      setCssOpen(Boolean(sourceTheme?.css));
       setSelectedRole(null);
       setUsageCount(null);
       setIsInspecting(false);
@@ -431,6 +424,8 @@ export function ThemeEditorPanel({
             (theme.id === nameTargetId || theme.label.trim().toLowerCase() === normalizedName),
         ) ?? null);
   const takenAppearances = mergeTarget ? getThemeModes(mergeTarget) : [];
+  // A merge keeps the target's CSS when this draft has none.
+  const cssForSave = css.trim() ? css : (mergeTarget?.css ?? "");
   const editableAppearances = editingTheme ? getThemeModes(editingTheme) : null;
 
   const appearanceLockReason = (appearance: ThemeAppearance): string | null => {
@@ -443,7 +438,6 @@ export function ThemeEditorPanel({
     return null;
   };
 
-  // Moves off a palette the merge target already has, once per target change.
   const mergeKey =
     isEditing || mergeTarget === null ? null : `${mergeTarget.id}:${takenAppearances.join(",")}`;
   const [appliedMergeKey, setAppliedMergeKey] = useState<string | null>(null);
@@ -458,11 +452,13 @@ export function ThemeEditorPanel({
     }
   }
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- applies the edited colors to the document as a live theme preview while the editor is open
   useEffect(() => {
     if (!open) return;
-    applyThemeColorPreview(colorsByAppearance[activeAppearance], activeAppearance);
-  }, [activeAppearance, colorsByAppearance, open]);
+    applyThemeColorPreview(colorsByAppearance[activeAppearance], activeAppearance, cssForSave);
+  }, [activeAppearance, colorsByAppearance, cssForSave, open]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores the document theme when the editor closes or unmounts
   useEffect(() => {
     if (!open) return;
     return () => {
@@ -492,6 +488,25 @@ export function ThemeEditorPanel({
       }));
     }
     if (isAdvanced) setShouldRegenerateGuidedColors(true);
+  };
+
+  // A color edit also rewrites derived roles, so cancelling restores the whole snapshot rather than
+  // replaying the previous value through updateColor.
+  const startColorEdit = () => {
+    colorEditSnapshotRef.current = {
+      colorsByAppearance,
+      simpleColorsDirtyByAppearance,
+      shouldRegenerateGuidedColors,
+    };
+  };
+
+  const cancelColorEdit = () => {
+    const snapshot = colorEditSnapshotRef.current;
+    colorEditSnapshotRef.current = null;
+    if (!snapshot) return;
+    setColorsByAppearance(snapshot.colorsByAppearance);
+    setSimpleColorsDirtyByAppearance(snapshot.simpleColorsDirtyByAppearance);
+    setShouldRegenerateGuidedColors(snapshot.shouldRegenerateGuidedColors);
   };
 
   const selectThemeRole = (role: ThemeColorRole, reveal = false) => {
@@ -534,6 +549,7 @@ export function ThemeEditorPanel({
     : [];
   const selectedHighlightRolesKey = selectedHighlightRoles.join(",");
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- highlights role usage in the DOM, refreshed by a MutationObserver and resize and scroll listeners
   useEffect(() => {
     clearThemeInspectorHighlights();
     if (!open || selectedRole === null || isInspecting) return;
@@ -541,10 +557,7 @@ export function ThemeEditorPanel({
     const highlightedRoles = selectedHighlightRolesKey.split(",") as Array<ThemeColorRole>;
     const refreshHighlights = () => setUsageCount(highlightThemeRoleUsage(highlightedRoles));
     refreshHighlights();
-    // A refresh snapshots computed styles for the whole tree twice, so it is
-    // throttled rather than run per frame: a streaming reply or a virtualized
-    // list mutates the DOM continuously and would otherwise stall the main
-    // thread for as long as the inspector is open.
+    // Each refresh snapshots the whole tree twice; throttle streaming and virtualization mutations.
     const MIN_REFRESH_INTERVAL_MS = 500;
     let refreshFrame: number | null = null;
     let refreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -597,6 +610,7 @@ export function ThemeEditorPanel({
     };
   }, [isInspecting, open, selectedHighlightRolesKey, selectedRole]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- document pointer, click and key listeners that drive the inspect-mode hover overlay
   useEffect(() => {
     if (!open || !isInspecting) {
       clearThemeInspectorHover();
@@ -751,6 +765,13 @@ export function ThemeEditorPanel({
       return;
     }
 
+    if (mergeTarget?.css && css.trim() && mergeTarget.css !== css) {
+      setError(
+        `“${mergeTarget.label}” has different custom CSS. Use the same CSS or pick another name.`,
+      );
+      return;
+    }
+
     try {
       const colorsForSave = !isAdvanced
         ? {
@@ -786,6 +807,7 @@ export function ThemeEditorPanel({
               ...Object.fromEntries(editedModes.map((mode) => [mode, colorsForSave[mode]])),
             },
             ...(mergeTarget.managed === true && !isAdvanced ? { managed: true } : {}),
+            ...(cssForSave ? { css: cssForSave } : {}),
           }),
           ...(mergeTarget.collection ? { collection: mergeTarget.collection } : {}),
         });
@@ -805,6 +827,7 @@ export function ThemeEditorPanel({
               ? { variants: { [variantAppearance]: colorsForSave[variantAppearance] } }
               : {}),
             ...(isAdvanced ? {} : { managed: true }),
+            ...(cssForSave ? { css: cssForSave } : {}),
           }),
           ...(editingTheme.collection ? { collection: editingTheme.collection } : {}),
         });
@@ -828,6 +851,7 @@ export function ThemeEditorPanel({
               [activeAppearance]: colorsForSave[activeAppearance],
             },
             ...(mergeTarget.managed === true && !isAdvanced ? { managed: true } : {}),
+            ...(cssForSave ? { css: cssForSave } : {}),
           }),
           ...(mergeTarget.collection ? { collection: mergeTarget.collection } : {}),
         });
@@ -839,6 +863,7 @@ export function ThemeEditorPanel({
             appearance: activeAppearance,
             colors: colorsForSave[activeAppearance],
             ...(isAdvanced ? {} : { managed: true }),
+            ...(cssForSave ? { css: cssForSave } : {}),
           }),
         );
       }
@@ -891,8 +916,7 @@ export function ThemeEditorPanel({
 
   const renderAppearanceButton = (appearance: ThemeAppearance) => {
     const lockReason = appearanceLockReason(appearance);
-    // A locked mode stays hoverable so the tooltip can say why it is off;
-    // a real disabled attribute would swallow the pointer events.
+    // Use aria-disabled so locked modes remain hoverable for explanatory tooltips.
     const button = (
       <Toggle aria-disabled={lockReason !== null} value={appearance}>
         {appearance === "light" ? "Light" : "Dark"}
@@ -971,6 +995,8 @@ export function ThemeEditorPanel({
           key={family.id}
           label={family.label}
           onChange={updateColor}
+          onEditCancel={cancelColorEdit}
+          onEditStart={startColorEdit}
           onSelect={selectThemeRole}
           onToggleSelected={toggleThemeRole}
           role={family.role}
@@ -1010,6 +1036,8 @@ export function ThemeEditorPanel({
           <ThemeColorField
             key={role}
             onChange={updateColor}
+            onEditCancel={cancelColorEdit}
+            onEditStart={startColorEdit}
             onSelect={selectThemeRole}
             onToggleSelected={toggleThemeRole}
             role={role}
@@ -1022,20 +1050,39 @@ export function ThemeEditorPanel({
     );
   };
 
-  const clampPosition = (x: number, y: number) => clampPanelPosition(panelRef.current, x, y);
+  // Geometry is stored as the user left it and fitted to the current viewport here, so a
+  // window that shrinks and grows back returns the panel to where it was.
+  const viewport = useViewportSize();
+  const shownSize = size && {
+    width: Math.max(PANEL_MIN_WIDTH, Math.min(size.width, viewport.width - PANEL_MARGIN * 2)),
+    height: Math.max(PANEL_MIN_HEIGHT, Math.min(size.height, viewport.height - PANEL_MARGIN * 2)),
+  };
+  const shownPosition =
+    position &&
+    clampPanelPosition(viewport, position.x, position.y, shownSize?.width ?? position.width);
 
   const handleDragPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if ((event.target as HTMLElement).closest("button, input, a")) return;
     const rect = panelRef.current?.getBoundingClientRect();
     if (!rect) return;
-    dragOffsetRef.current = { dx: event.clientX - rect.x, dy: event.clientY - rect.y };
+    dragOffsetRef.current = {
+      dx: event.clientX - rect.x,
+      dy: event.clientY - rect.y,
+      width: rect.width,
+    };
     event.currentTarget.setPointerCapture(event.pointerId);
   };
 
   const handleDragPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     const offset = dragOffsetRef.current;
     if (!offset) return;
-    setPosition(clampPosition(event.clientX - offset.dx, event.clientY - offset.dy));
+    const next = clampPanelPosition(
+      readWindowViewport(),
+      event.clientX - offset.dx,
+      event.clientY - offset.dy,
+      offset.width,
+    );
+    setPosition({ ...next, width: offset.width });
   };
 
   const endDrag = () => {
@@ -1046,10 +1093,10 @@ export function ThemeEditorPanel({
     const rect = panelRef.current?.getBoundingClientRect();
     if (!rect) return;
     event.preventDefault();
-    // The grip drags the bottom-right corner, so the top-left must hold
-    // still; the default parking spot is anchored bottom-right and would
-    // slide, so it converts to an explicit position first.
-    if (position === null) setPosition(clampPosition(rect.x, rect.y));
+    // Resize from where the panel is drawn, so a position clamped after the window shrank, or bottom-right
+    // parking, can't make the top-left corner slide.
+    const next = clampPanelPosition(readWindowViewport(), rect.x, rect.y, rect.width);
+    setPosition({ ...next, width: rect.width });
     resizeStartRef.current = {
       pointerX: event.clientX,
       pointerY: event.clientY,
@@ -1064,15 +1111,15 @@ export function ThemeEditorPanel({
   const handleResizePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     const start = resizeStartRef.current;
     if (!start) return;
-    const margin = 8;
-    const MIN_WIDTH = 280;
-    const MIN_HEIGHT = 220;
-    const maxWidth = Math.max(MIN_WIDTH, window.innerWidth - margin - start.left);
-    const maxHeight = Math.max(MIN_HEIGHT, window.innerHeight - margin - start.top);
+    const maxWidth = Math.max(PANEL_MIN_WIDTH, window.innerWidth - PANEL_MARGIN - start.left);
+    const maxHeight = Math.max(PANEL_MIN_HEIGHT, window.innerHeight - PANEL_MARGIN - start.top);
     setSize({
-      width: Math.min(Math.max(start.width + event.clientX - start.pointerX, MIN_WIDTH), maxWidth),
+      width: Math.min(
+        Math.max(start.width + event.clientX - start.pointerX, PANEL_MIN_WIDTH),
+        maxWidth,
+      ),
       height: Math.min(
-        Math.max(start.height + event.clientY - start.pointerY, MIN_HEIGHT),
+        Math.max(start.height + event.clientY - start.pointerY, PANEL_MIN_HEIGHT),
         maxHeight,
       ),
     });
@@ -1094,9 +1141,11 @@ export function ThemeEditorPanel({
       ref={panelRef}
       role="dialog"
       style={{
-        ...(position ? { left: position.x, top: position.y } : {}),
-        ...(size ? { width: size.width } : {}),
-        ...(size && !isMinimized ? { height: size.height, maxHeight: "calc(100dvh - 1rem)" } : {}),
+        ...(shownPosition ? { left: shownPosition.x, top: shownPosition.y } : {}),
+        ...(shownSize ? { width: shownSize.width } : {}),
+        ...(shownSize && !isMinimized
+          ? { height: shownSize.height, maxHeight: "calc(100dvh - 1rem)" }
+          : {}),
       }}
     >
       <div
@@ -1151,7 +1200,7 @@ export function ThemeEditorPanel({
           variant="ghost"
           onClick={() => setIsMinimized(!isMinimized)}
         >
-          <MorphIcon icon={isMinimized ? ChevronUp : ChevronDown} />
+          {isMinimized ? <ChevronUpIcon /> : <ChevronDownIcon />}
         </Button>
         <Button
           aria-label="Close the theme editor"
@@ -1176,6 +1225,26 @@ export function ThemeEditorPanel({
             <div className="space-y-3">
               {renderColorsHeader()}
               {renderColorFields()}
+            </div>
+            <div className="space-y-2">
+              <Button
+                aria-expanded={cssOpen}
+                size="xs"
+                variant="ghost"
+                onClick={() => setCssOpen(!cssOpen)}
+              >
+                {cssOpen ? <ChevronDownIcon /> : <ChevronRightIcon />}
+                Custom CSS
+              </Button>
+              {cssOpen ? (
+                <>
+                  <p className="text-xs text-muted-foreground">
+                    Saved with this theme and included when you export it. Web and desktop only.
+                    Rules that load remote files are ignored.
+                  </p>
+                  <ThemeCssEditor value={css} onChange={setCss} />
+                </>
+              ) : null}
             </div>
           </div>
           <div className="flex items-center justify-end gap-2 border-t border-border/70 px-3 py-2">

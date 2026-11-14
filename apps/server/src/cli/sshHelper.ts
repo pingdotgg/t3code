@@ -6,7 +6,10 @@ import * as NodeHttp from "node:http";
 import * as NodeNet from "node:net";
 
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import { Argument, Command } from "effect/cli";
+
+import * as DesktopUpdateMarker from "../desktopUpdate/DesktopUpdateMarker.ts";
 
 const canBind = (port: number) =>
   new Promise<boolean>((resolve) => {
@@ -18,8 +21,7 @@ const canBind = (port: number) =>
     });
   });
 
-// macOS lets the bind above succeed while another process listens on
-// *:<port>, so also skip any port that already answers on loopback.
+// macOS permits this bind over a wildcard listener, so also check loopback connectivity.
 const answersOnLoopback = (port: number) =>
   new Promise<boolean>((resolve) => {
     const socket = NodeNet.connect({ port, host: "127.0.0.1" });
@@ -99,7 +101,7 @@ const runtimePort = Command.make("runtime-port", {
   Command.withHandler(({ runtimeFile }) =>
     Effect.sync(() => {
       try {
-        // @effect-diagnostics-next-line preferSchemaOverJson:off - mirrors the shell snippet's loose parse.
+        // @effect-diagnostics-next-line globalJsonInEffect:off - mirrors the shell snippet's loose parse.
         const runtime = JSON.parse(NodeFS.readFileSync(runtimeFile, "utf8")) as {
           pid?: unknown;
           port?: unknown;
@@ -125,7 +127,22 @@ const runtimePort = Command.make("runtime-port", {
   ),
 );
 
+const updateRemaining = Command.make("update-remaining", {
+  markerFile: Argument.String("marker-file"),
+}).pipe(
+  Command.withHandler(({ markerFile }) =>
+    DesktopUpdateMarker.DesktopUpdateMarker.use((marker) => marker.remainingWait(markerFile)).pipe(
+      Effect.flatMap((remaining) =>
+        Effect.sync(() => {
+          process.stdout.write(Option.match(remaining, { onNone: () => "", onSome: String }));
+        }),
+      ),
+    ),
+  ),
+  Command.provide(DesktopUpdateMarker.layer),
+);
+
 export const sshHelperCommand = Command.make("__ssh-helper").pipe(
   Command.unlisted,
-  Command.withSubcommands([pickPort, waitReady, runtimePort]),
+  Command.withSubcommands([pickPort, waitReady, runtimePort, updateRemaining]),
 );

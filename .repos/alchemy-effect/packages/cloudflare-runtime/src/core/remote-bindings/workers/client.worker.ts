@@ -34,9 +34,7 @@ export default class Client extends WorkerEntrypoint<unknown, Props> {
         };
         return new Proxy(
           (...args: Array<unknown>) => {
-            const method = getRpcProperty() as (
-              ...args: Array<unknown>
-            ) => unknown;
+            const method = getRpcProperty() as (...args: Array<unknown>) => unknown;
             return Reflect.apply(method, undefined, args);
           },
           {
@@ -54,10 +52,7 @@ export type ProxyMetadata = {
 };
 
 export function makeFetch(bindingName: string, extraHeaders?: Headers) {
-  return async (
-    input: RequestInfo | URL,
-    init?: RequestInit,
-  ): Promise<Response> => {
+  return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const request = new Request(input, init);
 
     const proxiedHeaders = new Headers(extraHeaders);
@@ -88,10 +83,7 @@ export function makeFetch(bindingName: string, extraHeaders?: Headers) {
  *
  * Intercepts `.fetch()` to use plain HTTP; forwards other accesses to capnweb.
  */
-export function makeRemoteProxyStub(
-  bindingName: string,
-  metadata?: ProxyMetadata,
-): Fetcher {
+export function makeRemoteProxyStub(bindingName: string, metadata?: ProxyMetadata): Fetcher {
   const url = new URL("ws://stub");
   url.searchParams.set("MF-Binding", bindingName);
   if (metadata) {

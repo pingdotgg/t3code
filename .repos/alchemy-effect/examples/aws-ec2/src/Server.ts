@@ -1,10 +1,9 @@
-import * as AWS from "alchemy/AWS";
-import { SQSQueueEventSource } from "alchemy/Server/SQSQueueEventSource";
+import * as AWS from "@alchemy.run/aws";
+import { SQSQueueEventSource } from "@alchemy.run/aws/Server/SQSQueueEventSource";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Stream from "effect/Stream";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as Layer from "effect/Layer";
 import { Network, NetworkLive } from "./Network.ts";
 
 export default class Server extends AWS.EC2.Instance<Server>()(
@@ -28,8 +27,13 @@ export default class Server extends AWS.EC2.Instance<Server>()(
       visibilityTimeout: "60 seconds",
     });
 
-    yield* AWS.SQS.consumeQueueMessages(queue, (stream) =>
-      stream.pipe(Stream.mapEffect(Effect.logInfo), Stream.runDrain),
+    yield* AWS.SQS.consumeQueueMessages(
+      queue,
+      Effect.fn(function* (event) {
+        for (const record of event.Records) {
+          yield* Effect.logInfo(record);
+        }
+      }),
     );
 
     const sendMessage = yield* AWS.SQS.SendMessage(queue);
@@ -67,9 +71,7 @@ export default class Server extends AWS.EC2.Instance<Server>()(
         return HttpServerResponse.text("Not found", { status: 404 });
       }).pipe(
         Effect.catch(() =>
-          Effect.succeed(
-            HttpServerResponse.text("Internal server error", { status: 500 }),
-          ),
+          Effect.succeed(HttpServerResponse.text("Internal server error", { status: 500 })),
         ),
       ),
     };
