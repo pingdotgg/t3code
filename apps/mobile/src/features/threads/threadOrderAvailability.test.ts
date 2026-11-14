@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   generateSpreadPinOrderKeys,
   pinOrderKeyBetween,
+  sortActiveThreadsByOrderKey,
 } from "@t3tools/client-runtime/state/thread-sort";
 import type { EnvironmentId } from "@t3tools/contracts";
 
@@ -71,11 +72,12 @@ function referenceAvailability(
   ordered: readonly OrderRow[],
   allThreads: readonly OrderRow[],
   writable: ReadonlySet<EnvironmentId>,
+  section: "pinned" | "active" = "pinned",
 ) {
   const planner = createThreadMovePlanner({
     ordered,
     allThreads,
-    section: "pinned",
+    section,
     reorderableEnvironmentIds: writable,
   });
   const answers = new Map<string, { canMoveUp: boolean; canMoveDown: boolean }>();
@@ -89,21 +91,21 @@ function referenceAvailability(
   return answers;
 }
 
-function randomCase(rng: () => number) {
+function randomCase(rng: () => number, pinned: boolean) {
   const rowCount = 1 + Math.floor(rng() * 9);
   const rows: OrderRow[] = [];
   for (let index = 0; index < rowCount; index += 1) {
     const environment = rng() < 0.75 ? "env-w" : "env-x";
     const key = KEY_POOL[Math.floor(rng() * KEY_POOL.length)] ?? null;
     const id = rng() < 0.4 ? `t:${index}` : `t${index}`;
-    rows.push(makeRow(id, environment, key, true));
+    rows.push(makeRow(id, environment, key, pinned));
   }
   const hidden: OrderRow[] = [];
   const hiddenCount = Math.floor(rng() * 4);
   for (let index = 0; index < hiddenCount; index += 1) {
     const key = KEY_POOL[Math.floor(rng() * KEY_POOL.length)] ?? null;
     const id = rng() < 0.4 ? `h:${index}` : `h${index}`;
-    hidden.push(makeRow(id, rng() < 0.75 ? "env-w" : "env-x", key, true));
+    hidden.push(makeRow(id, rng() < 0.75 ? "env-w" : "env-x", key, pinned));
   }
   return { ordered: rows, allThreads: [...rows, ...hidden] };
 }
@@ -112,24 +114,82 @@ const WRITABLE = new Set<EnvironmentId>(["env-w" as EnvironmentId]);
 
 describe("computeThreadMoveAvailability matches the reference planner", () => {
   it("agrees across randomized sections (keys, holes, non-writable rows, hidden keys)", () => {
-    for (let seed = 1; seed <= 4_000; seed += 1) {
-      const rng = makeRng(seed);
-      const { ordered, allThreads } = randomCase(rng);
+    for (const section of ["pinned", "active"] as const) {
+      for (let seed = 1; seed <= 4_000; seed += 1) {
+        const rng = makeRng(seed);
+        const { ordered, allThreads } = randomCase(rng, section === "pinned");
+        const batch = computeThreadMoveAvailability({
+          ordered,
+          allThreads,
+          section,
+          reorderableEnvironmentIds: WRITABLE,
+        });
+        const reference = referenceAvailability(ordered, allThreads, WRITABLE, section);
+        for (const [id, answer] of reference) {
+          expect(
+            batch.get(id) ?? { canMoveUp: false, canMoveDown: false },
+            `${section} seed ${seed} row ${id} ordered=${ordered
+              .map(
+                (row) =>
+                  `${row.id}:${row.pinOrderKey ?? row.activeOrderKey ?? "-"}:${row.environmentId}`,
+              )
+              .join(",")}`,
+          ).toEqual(answer);
+        }
+      }
+    }
+  });
+
+  it("reorders writable rows past a frozen keyless row only on its sorted side", () => {
+    const active = [
+      makeRow("frozen", "env-x", null, false),
+      makeRow("a", "env-w", "m", false),
+      makeRow("b", "env-w", "t", false),
+    ];
+    const planner = createThreadMovePlanner({
+      ordered: active,
+      section: "active",
+      reorderableEnvironmentIds: WRITABLE,
+    });
+    const assignments = planner("env-w:b", "up");
+    expect(assignments?.map(({ id }) => id)).toEqual(["env-w:b"]);
+    const assignedKeys = new Map(assignments?.map(({ id, orderKey }) => [id, orderKey]));
+    const resorted = sortActiveThreadsByOrderKey(
+      active.map((row) => ({
+        ...row,
+        activeOrderKey: assignedKeys.get(`${row.environmentId}:${row.id}`) ?? row.activeOrderKey,
+      })),
+    );
+    expect(resorted.map((row) => row.id)).toEqual(["frozen", "b", "a"]);
+    // Keyed Active rows always sort after keyless ones, so nothing may move above it.
+    expect(planner("env-w:a", "up")).toBeNull();
+
+    // Keyless Pinned rows sort last, so nothing may move below it.
+    const pinned = [
+      makeRow("a", "env-w", "m", true),
+      makeRow("b", "env-w", "t", true),
+      makeRow("frozen", "env-x", null, true),
+    ];
+    const pinnedPlanner = createThreadMovePlanner({
+      ordered: pinned,
+      section: "pinned",
+      reorderableEnvironmentIds: WRITABLE,
+    });
+    expect(pinnedPlanner("env-w:b", "down")).toBeNull();
+    expect(pinnedPlanner("env-w:b", "up")?.map(({ id }) => id)).toEqual(["env-w:b"]);
+
+    for (const [section, rows] of [
+      ["active", active],
+      ["pinned", pinned],
+    ] as const) {
       const batch = computeThreadMoveAvailability({
-        ordered,
-        allThreads,
-        section: "pinned",
+        ordered: rows,
+        section,
         reorderableEnvironmentIds: WRITABLE,
       });
-      const reference = referenceAvailability(ordered, allThreads, WRITABLE);
-      for (const [id, answer] of reference) {
-        expect(
-          batch.get(id) ?? { canMoveUp: false, canMoveDown: false },
-          `seed ${seed} row ${id} ordered=${ordered
-            .map((row) => `${row.id}:${row.pinOrderKey ?? "-"}:${row.environmentId}`)
-            .join(",")}`,
-        ).toEqual(answer);
-      }
+      expect(Object.fromEntries(batch)).toEqual(
+        Object.fromEntries(referenceAvailability(rows, rows, WRITABLE, section)),
+      );
     }
   });
 
