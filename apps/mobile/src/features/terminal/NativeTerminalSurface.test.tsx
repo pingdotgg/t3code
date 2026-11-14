@@ -1,7 +1,7 @@
 import {
   applyTerminalAttachStreamEvent,
   EMPTY_TERMINAL_BUFFER_STATE,
-  terminalOutputText,
+  terminalOutputReplay,
 } from "@t3tools/client-runtime/state/terminal";
 import { act, useImperativeHandle, useLayoutEffect, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
@@ -16,9 +16,17 @@ const mocks = vi.hoisted(() => ({
   mounts: vi.fn(),
   unmounts: vi.fn(),
   write: vi.fn(async (_data: string, _reset: boolean) => {}),
+  paste: (_text: string) => {},
 }));
 
-function RawView({ ref: nativeRef, initialBuffer, onResize }: NativeTerminalSurfaceProps) {
+function RawView({ ref: nativeRef, initialBuffer, onResize, onPaste }: NativeTerminalSurfaceProps) {
+  useLayoutEffect(() => {
+    mocks.paste = (text) =>
+      onPaste?.({ nativeEvent: { text } } as NativeSyntheticEvent<{ text: string }>);
+    return () => {
+      mocks.paste = () => {};
+    };
+  }, [onPaste]);
   useImperativeHandle(nativeRef, () => ({ writeOutput: mocks.write }));
   useLayoutEffect(() => {
     mocks.mounts();
@@ -63,6 +71,7 @@ function setup(revision: number | null) {
   mocks.write.mockResolvedValue(undefined);
   mocks.mounts.mockClear();
   mocks.unmounts.mockClear();
+  mocks.paste = () => {};
   const document = { nodeType: 9, addEventListener() {}, removeEventListener() {} };
   const container = {
     nodeType: 1,
@@ -81,6 +90,11 @@ function setup(revision: number | null) {
     async render(
       state: typeof EMPTY_TERMINAL_BUFFER_STATE,
       terminalKey = "environment:thread:term-1",
+      input: {
+        isRunning?: boolean;
+        readOnly?: boolean;
+        onPaste?: (text: string) => void;
+      } = {},
     ) {
       await act(async () => {
         root.render(
@@ -92,11 +106,12 @@ function setup(revision: number | null) {
                 ? null
                 : (revision ?? 0) >= 1
                   ? ""
-                  : terminalOutputText(state.output)
+                  : terminalOutputReplay(state.output)
             }
             isRunning
             onInput={() => {}}
             onResize={() => {}}
+            {...input}
           />,
         );
       });
@@ -148,6 +163,37 @@ it.each([null, 1])(
     } else {
       expect(mocks.write).not.toHaveBeenCalled();
       expect(mocks.initialBuffers).toEqual(["retained", "ined-new"]);
+      // An older binary recreates its emulator unless the next buffer extends the last one.
+      // The buffer is full here, so the erase must not push the earlier output out.
+      let cleared = applyTerminalAttachStreamEvent(
+        state,
+        { type: "output", threadId: "thread", terminalId: "term-1", data: "\u001b[?1049h" },
+        16,
+      );
+      await harness.render(cleared);
+      cleared = applyTerminalAttachStreamEvent(
+        cleared,
+        { type: "cleared", threadId: "thread", terminalId: "term-1" },
+        16,
+      );
+      await harness.render(cleared);
+      expect(mocks.initialBuffers.slice(2)).toEqual([
+        "ined-new\u001b[?1049h",
+        "ined-new\u001b[?1049h\u001b[H\u001b[2J\u001b[3J",
+      ]);
     }
   },
 );
+
+it("forwards a native paste only while the terminal is writable and running", async () => {
+  await using harness = setup(1);
+  const pasted: string[] = [];
+  const onPaste = (text: string) => pasted.push(text);
+  await harness.render(EMPTY_TERMINAL_BUFFER_STATE, undefined, { onPaste });
+  mocks.paste("one\ntwo");
+  await harness.render(EMPTY_TERMINAL_BUFFER_STATE, undefined, { onPaste, readOnly: true });
+  mocks.paste("read-only");
+  await harness.render(EMPTY_TERMINAL_BUFFER_STATE, undefined, { onPaste, isRunning: false });
+  mocks.paste("exited");
+  expect(pasted).toEqual(["one\ntwo"]);
+});

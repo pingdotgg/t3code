@@ -1,20 +1,35 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import type { ManagedUpdatesPolicy } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
+import * as TestConsole from "effect/testing/TestConsole";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { afterEach, vi } from "vite-plus/test";
 
-import { prunePinnedRuntimes } from "../cloud/pinnedRuntime.ts";
+import packageJson from "../../package.json" with { type: "json" };
+import * as BootService from "../cloud/bootService.ts";
+import {
+  pinnedRuntimePaths,
+  prunePinnedRuntimes,
+  resolveLauncherPath,
+} from "../cloud/pinnedRuntime.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ProcessRunner from "../processRunner.ts";
-import { repointLauncher, resolveLauncherPath, resolveNewestVersion } from "./update.ts";
+import {
+  repointLauncher,
+  resolveMirrorVersion,
+  resolveNewestVersion,
+  runUpdate,
+} from "./update.ts";
 
 // lsof listing one process, so prune sees a process list in which no runtime is running.
 const unrelatedLsof = ProcessRunner.ProcessRunner.of({
@@ -56,6 +71,130 @@ it.effect("authenticates each release page until the requested channel is found"
   }),
 );
 
+it.effect("reads the newest version from the update feed file a mirror publishes", () =>
+  Effect.gen(function* () {
+    const requested: string[] = [];
+    const mirror = {
+      organization: "Example Corp",
+      feedUrl: "https://updates.example.com/t3code/?token=abc",
+    };
+    const resolve = (
+      channel: "stable" | "nightly" | "preview",
+      platform: NodeJS.Platform,
+      arch: string,
+      feed: string,
+    ) =>
+      resolveMirrorVersion(mirror, channel).pipe(
+        Effect.map((version): string => version),
+        Effect.catchTags({ CliUpdateError: (error) => Effect.succeed(`error: ${error.reason}`) }),
+        Effect.provideService(HostProcess.Platform, platform),
+        Effect.provideService(HostProcess.Architecture, arch),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            requested.push(request.url);
+            return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(feed)));
+          }),
+        ),
+      );
+
+    assert.equal(
+      yield* resolve("stable", "darwin", "arm64", "version: 1.4.0\nfiles: []\n"),
+      "1.4.0",
+    );
+    assert.equal(
+      yield* resolve("nightly", "linux", "arm64", "version: '1.5.0-nightly.20261101.2'\n"),
+      "1.5.0-nightly.20261101.2",
+    );
+    assert.deepStrictEqual(requested, [
+      "https://updates.example.com/t3code/latest-mac.yml?token=abc",
+      "https://updates.example.com/t3code/nightly-linux-arm64.yml?token=abc",
+    ]);
+    // A feed for the wrong track is not trusted to mean the requested one.
+    assert.include(
+      yield* resolve("stable", "win32", "x64", "version: 1.5.0-nightly.20261101.2\n"),
+      "Could not read latest.yml from Example Corp's update mirror.",
+    );
+    assert.include(yield* resolve("preview", "win32", "x64", ""), "has no preview builds");
+  }),
+);
+
+it.layer(NodeServices.layer)("t3 update under a managed policy", (it) => {
+  const runWithPolicy = (
+    updates: ManagedUpdatesPolicy,
+    input: { readonly channel?: "stable" | "nightly"; readonly requestedVersion?: string } = {},
+    httpClient = HttpClient.make(() => Effect.die("unexpected release lookup")),
+  ) =>
+    runUpdate({
+      baseDir: "/unused",
+      logsDir: "/unused",
+      serverRuntimeStatePath: "/unused",
+      channel: input.channel,
+      requestedVersion: input.requestedVersion,
+      allowDowngrade: false,
+      assumeYes: true,
+    }).pipe(
+      Effect.flip,
+      Effect.provide(
+        Layer.mergeAll(
+          ManagedPolicy.layerTest({
+            schemaVersion: 1,
+            organization: "Example Corp",
+            limits: { updates },
+          }),
+          // Refusals happen before the update touches the network, the service, or a process.
+          Layer.mock(BootService.BootService, {}),
+          Layer.mock(ProcessRunner.ProcessRunner, {}),
+          Layer.succeed(HttpClient.HttpClient, httpClient),
+        ),
+      ),
+    );
+
+  it.effect("refuses to update when updates are off", () =>
+    Effect.gen(function* () {
+      const error = yield* runWithPolicy({ mode: "off" });
+      assert.equal(error.message, "Example Corp manages T3 Code updates.");
+    }),
+  );
+
+  it.effect("refuses nightly releases when the policy disallows them", () =>
+    Effect.gen(function* () {
+      const byChannel = yield* runWithPolicy(
+        { mode: "auto", allowNightly: false },
+        { channel: "nightly" },
+      );
+      const byVersion = yield* runWithPolicy(
+        { mode: "auto", allowNightly: false },
+        { channel: "stable", requestedVersion: "1.2.0-nightly.20261028.1" },
+      );
+      for (const error of [byChannel, byVersion]) {
+        assert.equal(
+          error.message,
+          "Example Corp manages T3 Code updates. Only stable releases can be installed.",
+        );
+      }
+    }),
+  );
+
+  it.effect("looks for updates on the policy's mirror, never the public releases", () =>
+    Effect.gen(function* () {
+      const requested: string[] = [];
+      const error = yield* runWithPolicy(
+        { mode: "auto", feedUrl: "https://updates.example.com/t3code" },
+        { channel: "stable" },
+        HttpClient.make((request) => {
+          requested.push(new URL(request.url).origin);
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(request, new Response("", { status: 404 })),
+          );
+        }),
+      );
+      assert.include(error.message, "from Example Corp's update mirror");
+      assert.deepStrictEqual(requested, ["https://updates.example.com"]);
+    }),
+  );
+});
+
 it.layer(NodeServices.layer)("t3 update launcher", (it) => {
   it.effect("repoints a symlink that lives in a runtime versions tree", () =>
     Effect.gen(function* () {
@@ -80,7 +219,7 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
 
       assert.deepStrictEqual(Option.getOrUndefined(repointed), launcher);
       assert.equal(yield* fs.readLink(launcher), newExe);
-    }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
+    }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
   );
 
   it.effect.each([
@@ -146,7 +285,7 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
         yield* fs.realPath(launcher),
         yield* fs.realPath(path.join(root, "runtime/versions/2.0.0/t3")),
       );
-    }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
+    }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
   );
 
   const launcherFixture = Effect.fnUntraced(function* () {
@@ -177,7 +316,7 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
       });
 
       assert.equal(yield* fs.readFileString(launchersFile), `\n${launcher}\n`);
-    }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
+    }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
   );
 
   it.effect("fails instead of repointing a launcher it cannot record", () =>
@@ -195,7 +334,7 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
 
       assert.isTrue(Exit.isFailure(result));
       assert.equal(yield* fs.readLink(launcher), oldExe);
-    }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
+    }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
   );
 
   it.effect.each(["recording", "repointing"] as const)(
@@ -231,7 +370,7 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
           .split("\n")
           .includes(launcher);
         assert.isFalse(repointed && !recorded);
-      }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
+      }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
   );
 
   it.effect("leaves a plain copy or a foreign symlink alone", () =>
@@ -264,22 +403,23 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
       }
       assert.equal(yield* fs.readLink(foreign), elsewhere);
       assert.equal(yield* fs.readLink(otherLauncher), otherHome);
-    }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
+    }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
   );
 
   it.effect("finds the launcher a bare command name resolved to on PATH", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
+      const delimiter = (yield* HostProcess.Platform) === "win32" ? ";" : ":";
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-" });
       const launcher = path.join(root, "bin/t3");
       yield* fs.makeDirectory(path.dirname(launcher), { recursive: true });
-      yield* fs.writeFileString(launcher, "");
+      yield* fs.writeFileString(launcher, "", { mode: 0o755 });
 
       const bare = yield* resolveLauncherPath.pipe(
         Effect.provideService(HostProcess.InvokedAs, "t3"),
         Effect.provideService(HostProcess.Environment, {
-          PATH: `${path.join(root, "missing")}:${path.join(root, "bin")}`,
+          PATH: [path.join(root, "missing"), path.join(root, "bin")].join(delimiter),
         }),
         Effect.provideService(HostProcess.WorkingDirectory, root),
       );
@@ -297,6 +437,98 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
       assert.equal(bare, launcher);
       assert.equal(relative, launcher);
       assert.equal(absent, undefined);
-    }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
+    }),
+  );
+});
+
+// Without terminals, update skips its restart prompt whatever runs the test.
+const withoutTerminals = Effect.acquireRelease(
+  Effect.sync(() =>
+    [process.stdin, process.stdout].map((stream) => {
+      const descriptor = Object.getOwnPropertyDescriptor(stream, "isTTY");
+      Object.defineProperty(stream, "isTTY", { configurable: true, value: false });
+      return { stream, descriptor };
+    }),
+  ),
+  (saved) =>
+    Effect.sync(() => {
+      for (const { stream, descriptor } of saved) {
+        if (descriptor === undefined) Reflect.deleteProperty(stream, "isTTY");
+        else Object.defineProperty(stream, "isTTY", descriptor);
+      }
+    }),
+);
+
+it.layer(NodeServices.layer)("t3 update with a background service", (it) => {
+  it.effect("names the version a service with a pending restart still runs", () =>
+    Effect.gen(function* () {
+      yield* withoutTerminals;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-" });
+      const version = packageJson.version;
+      const runtime = pinnedRuntimePaths(path, baseDir, version, "linux");
+      yield* fs.makeDirectory(runtime.versionDir, { recursive: true });
+      yield* fs.writeFileString(runtime.entryPath, "");
+      yield* fs.writeFileString(runtime.sentinelPath, `${version}\n`);
+      const unitPath = path.join(baseDir, "t3code.service");
+      const logPath = path.join(baseDir, "boot-service.log");
+      // An earlier `t3 update` pointed the service at this version without restarting it.
+      const service = Layer.mock(BootService.BootService, {
+        status: Effect.succeed<BootService.BootServiceStatus>({
+          supported: true,
+          installed: true,
+          current: false,
+          installedVersion: version,
+          installedBaseDir: baseDir,
+          problems: ["restart-pending"],
+          unitPath,
+          logPath,
+        }),
+        install: () => Effect.succeed({ program: [runtime.entryPath], baseDir, unitPath, logPath }),
+      });
+      vi.spyOn(BootService, "layer").mockReturnValue(service);
+      const runner = ProcessRunner.ProcessRunner.of({
+        run: (input) =>
+          input.args?.includes("--version") === true
+            ? unrelatedLsof
+                .run(input)
+                .pipe(Effect.map((result) => ({ ...result, stdout: `t3 v${version}\n` })))
+            : unrelatedLsof.run(input),
+      });
+
+      const output = yield* runUpdate({
+        baseDir,
+        logsDir: baseDir,
+        serverRuntimeStatePath: path.join(baseDir, "server-runtime.json"),
+        channel: undefined,
+        requestedVersion: version,
+        allowDowngrade: false,
+        assumeYes: false,
+      }).pipe(
+        Effect.andThen(TestConsole.logLines),
+        Effect.map((lines) => lines.join("\n")),
+        Effect.provide(
+          Layer.mergeAll(
+            service,
+            Layer.succeed(ProcessRunner.ProcessRunner, runner),
+            ManagedPolicy.layerTest(),
+            Layer.succeed(
+              HttpClient.HttpClient,
+              HttpClient.make(() => Effect.die("unexpected release lookup")),
+            ),
+            Layer.fresh(TestConsole.layer),
+          ),
+        ),
+      );
+
+      assert.include(
+        output,
+        `Background service still running the version before ${version}. Run \`t3 service restart\` when you are ready to switch it to ${version}.`,
+      );
+    }).pipe(
+      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.provideService(HostProcess.Environment, { PATH: "" }),
+    ),
   );
 });
