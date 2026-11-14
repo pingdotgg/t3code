@@ -76,6 +76,7 @@ it.effect("preserves installed status after probes and cleans failed agent activ
           owners.push(/const owner = "([^"]+)"/.exec(script)?.[1] ?? "");
           output = JSON.stringify({
             nodePath: "/node",
+            hostPlatform: "darwin",
             platforms: [{ platform: "ios", available: true }],
             hubPort: 1234,
             helpers: { serveSimAxSettings: null, serveSimCli: null },
@@ -220,6 +221,7 @@ it.effect("releases the forward of a bootstrap interrupted before its hub answer
           ? ""
           : JSON.stringify({
               nodePath: "/node",
+              hostPlatform: "darwin",
               platforms: [{ platform: "ios", available: true }],
               hubPort: 1234,
               helpers: { serveSimAxSettings: null, serveSimCli: null },
@@ -319,8 +321,9 @@ it.effect("lists Android devices without probing the host again once it reports 
               ? "Pixel_8\n"
               : JSON.stringify({
                   nodePath: "/node",
+                  hostPlatform: "linux",
                   platforms: [
-                    { platform: "ios", available: true },
+                    { platform: "ios", available: false },
                     { platform: "android", available: androidInstalled },
                   ],
                   hubPort: 1234,
@@ -420,6 +423,7 @@ it.effect(
           if (forwarding && ++forwardSpawns > 1) hubAnswers = true;
           const output = JSON.stringify({
             nodePath: "/node",
+            hostPlatform: "darwin",
             platforms: [{ platform: "ios", available: true }],
             hubPort: 1234,
             helpers: { serveSimAxSettings: null, serveSimCli: null },

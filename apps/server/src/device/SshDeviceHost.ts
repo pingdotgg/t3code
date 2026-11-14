@@ -1,5 +1,6 @@
 import {
   type DeviceHostSummary,
+  type DevicePlatform,
   DevicePlatformAvailability,
   DeviceToolVersions,
   deviceToolInstallMessage,
@@ -48,6 +49,7 @@ const Probe = Schema.Struct({
 });
 const Started = Schema.Struct({
   ...Probe.fields,
+  hostPlatform: Schema.String,
   hubPort: Schema.Int,
   daemonPort: Schema.optionalKey(Schema.Int),
   token: Schema.optionalKey(Schema.String),
@@ -379,15 +381,23 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
         origin: hubOrigin,
         http,
         run,
-        // Keep probing negative reports so tooling installed after connecting is still found.
-        platformAvailable: (platform) =>
-          Effect.suspend(() =>
-            summary.platforms.some((p) => p.platform === platform && p.available)
-              ? Effect.succeed(true)
-              : platformAvailability(platform).pipe(
-                  Effect.map((availability) => availability.available),
-                ),
-          ),
+        // Keep probing negative reports so an SDK installed after connecting is still found.
+        availablePlatforms: Effect.gen(function* () {
+          const isAvailable = (platform: DevicePlatform) =>
+            summary.platforms.some(
+              (candidate) => candidate.platform === platform && candidate.available,
+            );
+          if (
+            !isAvailable("android") ||
+            (remote.hostPlatform === "darwin" && !isAvailable("ios"))
+          ) {
+            const refreshed = yield* provide(probe(config, owner)).pipe(Effect.result);
+            if (refreshed._tag === "Success") {
+              summary = { ...summary, platforms: refreshed.success.platforms };
+            }
+          }
+          return { ios: isAvailable("ios"), android: isAvailable("android") };
+        }),
       }),
       ...(remote.daemonPort !== undefined &&
       remote.token !== undefined &&

@@ -446,6 +446,9 @@ const diagnose = (
   platform: NodeJS.Platform = "darwin",
 ) =>
   LocalDeviceHost.__testing.platformReason("android").pipe(
+    Effect.provideService(ProcessRunner.ProcessRunner, {
+      run: () => Effect.die("Android SDK availability must not run commands"),
+    }),
     Effect.provideService(HostProcess.Environment, environment),
     Effect.provideService(HostProcess.Platform, platform),
     Effect.provideService(
@@ -679,7 +682,7 @@ it.effect.each([
   }),
 );
 
-it.effect("keeps local Android and iOS available without ffmpeg", () =>
+it.live("requires usable iOS tools while keeping Android available without ffmpeg", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-ffmpeg-" });
@@ -710,9 +713,7 @@ it.effect("keeps local Android and iOS available without ffmpeg", () =>
         HttpClient.HttpClient,
         HttpClient.make(() => Effect.die(new Error("Readiness must not make network requests"))),
       ),
-      Effect.provideService(ProcessRunner.ProcessRunner, {
-        run: () => Effect.die("Platform availability must not probe emulator video"),
-      }),
+      Effect.provide(ProcessRunner.layer),
     );
     expect((yield* onTestHost(host.summary)).platforms).toEqual([
       { platform: "ios", available: true },
@@ -722,6 +723,21 @@ it.effect("keeps local Android and iOS available without ffmpeg", () =>
       platform: "android",
       available: true,
     });
+    expect(yield* onTestHost(host.platformAvailability("ios"))).toEqual({
+      platform: "ios",
+      available: true,
+    });
+    yield* fs.writeFileString(`${baseDir}/bin/xcrun`, "#!/bin/sh\nexit 1\n");
+    expect((yield* onTestHost(host.summary)).platforms).toEqual([
+      {
+        platform: "ios",
+        available: false,
+        reason:
+          "iOS Simulator tools were not found. Install Xcode and select it with xcode-select.",
+      },
+      { platform: "android", available: true },
+    ]);
+    yield* fs.writeFileString(`${baseDir}/bin/xcrun`, "#!/bin/sh\nexit 0\n");
     expect(yield* onTestHost(host.platformAvailability("ios"))).toEqual({
       platform: "ios",
       available: true,
