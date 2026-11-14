@@ -7,8 +7,8 @@ import * as Schema from "effect/Schema";
 
 import {
   recordClaudeAgentSdkReplayTranscript,
-  CLAUDE_AGENT_SDK_REPLAY_PROTOCOL,
-} from "../src/orchestration-v2/Adapters/ClaudeAdapterV2.testkit.ts";
+} from "../src/orchestration-v2/Adapters/ClaudeAdapterV2-part5.testkit.ts";
+import { CLAUDE_AGENT_SDK_REPLAY_PROTOCOL } from "../src/orchestration-v2/Adapters/ClaudeAdapterV2-part2.testkit.ts";
 import { claudeRuntimeQueryPolicyForRuntimePolicy } from "../src/orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type { RuntimePolicyV2Override } from "../src/orchestration-v2/RuntimePolicy.ts";
