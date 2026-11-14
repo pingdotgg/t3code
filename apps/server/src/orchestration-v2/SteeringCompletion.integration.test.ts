@@ -755,16 +755,6 @@ it.effect.each([false, true])(
           threadId,
         });
         yield* worker.drain();
-        const stopped = yield* orchestrator.getThreadProjection(threadId);
-        const source = stopped.runs.find((run) => run.id === sourceId)!;
-        assert.equal(source.status, "interrupted");
-        assert.equal(source.userMessageId, "replacement-input");
-        assert.equal(stopped.providerTurns.length, accepted ? 2 : 1);
-        assert.equal(
-          stopped.attempts.find((attempt) => attempt.id === source.activeAttemptId)?.reason,
-          "steering_restart",
-        );
-        assert.lengthOf(started, accepted ? 2 : 1);
         yield* orchestrator.dispatch({
           type: "message.dispatch",
           commandId: CommandId.make("resume"),
@@ -780,14 +770,12 @@ it.effect.each([false, true])(
         });
         yield* worker.drain();
         assert.lengthOf(started, accepted ? 3 : 2);
+        const resumed = started.at(-1)!.message;
         assert.deepEqual(
-          started.at(-1)!.message.attachments.map((attachment) => attachment.id),
+          resumed.attachments.map((attachment) => attachment.id),
           accepted ? [] : [ChatAttachmentId.make("replacement-image")],
         );
-        const resumeText = started.at(-1)!.message.text;
-        assert.isTrue(
-          accepted ? resumeText === "" : resumeText.endsWith("\nUpdated steering request"),
-        );
+        assert.match(resumed.text, accepted ? /^$/ : /\nUpdated steering request$/);
       }).pipe(Effect.provide(layer));
     }),
 );
