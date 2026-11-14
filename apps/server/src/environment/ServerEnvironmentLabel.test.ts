@@ -30,12 +30,13 @@ const neverExits = ChildProcessSpawner.make(() =>
   ),
 );
 
-it.effect("falls back to the hostname when hostnamectl never answers", () =>
+// Without /etc/machine-info the label comes from hostnamectl, which waits on D-Bus.
+const linuxLabelWithoutPrettyHostname = (environment: NodeJS.ProcessEnv) =>
   Effect.gen(function* () {
-    // Without /etc/machine-info the label comes from hostnamectl, which waits on D-Bus.
     const label = yield* resolveServerEnvironmentLabel({ cwdBaseName: "project" }).pipe(
       Effect.provideService(HostProcess.Platform, "linux"),
       Effect.provideService(HostProcess.Hostname, "devbox"),
+      Effect.provideService(HostProcess.Environment, environment),
       Effect.provide(
         Layer.mergeAll(
           FileSystem.layerNoop({ exists: () => Effect.succeed(false) }),
@@ -47,6 +48,24 @@ it.effect("falls back to the hostname when hostnamectl never answers", () =>
       Effect.forkChild,
     );
     yield* TestClock.adjust("5 seconds");
-    assert.equal(yield* Fiber.join(label), "devbox");
+    return yield* Fiber.join(label);
+  });
+
+it.effect("falls back to the hostname when hostnamectl never answers", () =>
+  Effect.gen(function* () {
+    assert.equal(yield* linuxLabelWithoutPrettyHostname({}), "devbox");
+  }),
+);
+
+it.effect("names a WSL backend apart from the Windows hostname it inherits", () =>
+  Effect.gen(function* () {
+    assert.equal(
+      yield* linuxLabelWithoutPrettyHostname({ WSL_DISTRO_NAME: "Ubuntu-24.04" }),
+      "WSL (Ubuntu-24.04)",
+    );
+    assert.equal(
+      yield* linuxLabelWithoutPrettyHostname({ WSL_INTEROP: "/run/WSL/8_interop" }),
+      "WSL",
+    );
   }),
 );

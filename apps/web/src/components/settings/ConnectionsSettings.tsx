@@ -86,6 +86,8 @@ import {
   supportsDesktopAppUpdate,
 } from "~/versionSkew";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
+import { useCloudLinkState } from "~/cloud/cloudLinkState";
+import { isManagedTunnelActive } from "~/cloud/t3ConnectState";
 import { RemoveT3ConnectEnvironmentDialog } from "../clerk/RemoveT3ConnectEnvironmentDialog";
 import { authEnvironment } from "~/state/auth";
 import { environmentCatalog } from "~/connection/catalog";
@@ -139,6 +141,7 @@ import { ITEM_ROW_CLASSNAME } from "./itemRows";
 import {
   CloudLinkRow,
   CloudRemoteEnvironmentRows,
+  LocalBackendConnectRow,
   SavedBackendListRow,
 } from "./SavedEnvironmentRows";
 import { AddEnvironmentDialog } from "./AddEnvironmentDialog";
@@ -240,6 +243,7 @@ function AccessSettings() {
       view="access"
       accessEnvironmentId={accessEnvironmentId}
       accessEnvironmentPicker={picker}
+      onSelectAccessEnvironment={setSelectedEnvironmentId}
     />
   );
 }
@@ -248,10 +252,12 @@ function ConnectionsSettingsContent({
   view,
   accessEnvironmentId,
   accessEnvironmentPicker = null,
+  onSelectAccessEnvironment,
 }: {
   readonly view: "environments" | "access";
   readonly accessEnvironmentId: EnvironmentId | null;
   readonly accessEnvironmentPicker?: ReactNode;
+  readonly onSelectAccessEnvironment?: (environmentId: EnvironmentId) => void;
 }) {
   const desktopBridge = window.desktopBridge;
   const { environments } = useEnvironments();
@@ -277,6 +283,18 @@ function ConnectionsSettingsContent({
   const listedEnvironments = savedEnvironments.filter(
     (environment) => !isDesktopLocalConnectionTarget(environment.entry.target),
   );
+  // A WSL backend runs its own server and needs its own T3 Connect link; point to it from the host.
+  const accessLinkState = useCloudLinkState(accessEnvironmentId).data;
+  const desktopLocalBackends =
+    isPrimaryAccess &&
+    desktopBridge !== undefined &&
+    accessLinkState !== null &&
+    isManagedTunnelActive(accessLinkState, undefined)
+      ? savedEnvironments.filter(
+          (environment) =>
+            environment.entry.enabled && isDesktopLocalConnectionTarget(environment.entry.target),
+        )
+      : [];
   const savedUpdateStates = useAtomValue(
     environmentUpdateStatesAtom(
       environmentIdsKey(savedEnvironments.map(({ environmentId }) => environmentId)),
@@ -1311,6 +1329,16 @@ function ConnectionsSettingsContent({
                 }
               />
             ) : null}
+            {onSelectAccessEnvironment
+              ? desktopLocalBackends.map((environment) => (
+                  <LocalBackendConnectRow
+                    key={environment.environmentId}
+                    environmentId={environment.environmentId}
+                    label={environment.label}
+                    onSelect={onSelectAccessEnvironment}
+                  />
+                ))
+              : null}
             {accessEnvironment ? (
               <details className="group px-3 sm:px-4">
                 <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-md text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring [&::-webkit-details-marker]:hidden">

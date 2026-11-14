@@ -1,14 +1,13 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 
-import { isDesktopLocalConnectionTarget } from "../../connection/desktopLocal";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { resolveAccessEnvironmentId } from "./ConnectionsSettings.logic";
 import { settingsScopeEnvironmentLabel } from "./settingsScopeAxis";
 
 /**
  * The environments Sharing & access manages, the one `requested` resolves to, and its name.
- * The MCP wizard uses the same, so both name an environment alike. A requested environment
- * always counts, so a thread on a second WSL backend opens on that backend.
+ * The MCP wizard uses the same, so both name an environment alike. A desktop-local WSL backend
+ * is its own environment with its own access, so it is listed too.
  */
 export function useAccessEnvironment(requested: EnvironmentId | null) {
   const { environments } = useEnvironments();
@@ -17,7 +16,7 @@ export function useAccessEnvironment(requested: EnvironmentId | null) {
     (environment) =>
       environment.environmentId === primaryEnvironmentId ||
       environment.environmentId === requested ||
-      (environment.entry.enabled && !isDesktopLocalConnectionTarget(environment.entry.target)),
+      environment.entry.enabled,
   );
   const environmentId = resolveAccessEnvironmentId({
     primaryEnvironmentId,

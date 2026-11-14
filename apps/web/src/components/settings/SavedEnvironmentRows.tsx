@@ -51,6 +51,8 @@ import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { isElectron } from "~/env";
 import { useT3ConnectTurnOn } from "~/cloud/useT3ConnectTurnOn";
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
+import { useCloudLinkState } from "~/cloud/cloudLinkState";
+import { isManagedTunnelActive } from "~/cloud/t3ConnectState";
 import { useManagedTunnelUsage } from "~/cloud/managedRelayState";
 import { useT3ConnectAccountPage } from "../clerk/T3ConnectAccountPages";
 import { TunnelLimitAlert, TunnelUsageMeter } from "../cloud/TunnelUsage";
@@ -800,6 +802,30 @@ export function CloudLinkRow({
       environmentId={environmentId}
       canManageRelay={canManageRelay}
       connectDeviceApproval={connectDeviceApproval}
+    />
+  );
+}
+
+export function LocalBackendConnectRow({
+  environmentId,
+  label,
+  onSelect,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+  readonly onSelect: (environmentId: EnvironmentId) => void;
+}) {
+  const linkState = useCloudLinkState(environmentId).data;
+  if (linkState === null || isManagedTunnelActive(linkState, undefined)) return null;
+  return (
+    <SettingsRow
+      title={`${label} is not on T3 Connect`}
+      description="T3 Connect links one environment at a time. Link this machine too so your other devices can reach it."
+      control={
+        <Button size="sm" variant="outline" onClick={() => onSelect(environmentId)}>
+          Set up
+        </Button>
+      }
     />
   );
 }

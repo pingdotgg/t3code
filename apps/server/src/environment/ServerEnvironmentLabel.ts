@@ -152,6 +152,14 @@ const runFriendlyLabelCommand = Effect.fn("runFriendlyLabelCommand")(function* (
   return normalizeLabel(result.value.stdout);
 });
 
+// WSL inherits the Windows hostname, so without this a Windows host and its WSL backend share one name.
+function resolveWslLabel(platform: NodeJS.Platform, environment: NodeJS.ProcessEnv): string | null {
+  if (platform !== "linux") return null;
+  const distro = normalizeLabel(environment.WSL_DISTRO_NAME);
+  if (distro) return `WSL (${distro})`;
+  return normalizeLabel(environment.WSL_INTEROP) ? "WSL" : null;
+}
+
 const resolveFriendlyHostLabel = Effect.fn("resolveFriendlyHostLabel")(function* () {
   const platform = yield* HostProcess.Platform;
   if (platform === "darwin") {
@@ -187,6 +195,11 @@ export const resolveServerEnvironmentLabel = Effect.fn("resolveServerEnvironment
   const friendlyHostLabel = yield* resolveFriendlyHostLabel();
   if (friendlyHostLabel) {
     return friendlyHostLabel;
+  }
+
+  const wslLabel = resolveWslLabel(yield* HostProcess.Platform, yield* HostProcess.Environment);
+  if (wslLabel) {
+    return wslLabel;
   }
 
   const hostname = normalizeLabel(yield* HostProcess.Hostname);
