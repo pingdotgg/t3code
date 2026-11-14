@@ -1082,13 +1082,16 @@ function ThreadDetailBody(
     flexGrow: 0,
   }));
   // Questions overlay the composer on iOS; an approval sits above it, so it gives up its height.
-  const approvalHeightStyle = useAnimatedStyle(() => ({
-    maxHeight: derivePendingUserInputMaxHeight({
+  const pendingApprovalMaxHeight = useDerivedValue(() =>
+    derivePendingUserInputMaxHeight({
       windowHeight: screenAreaHeight,
       keyboardHeight: keyboardStickyEnabled ? -keyboardTranslation.value : 0,
       navigationHeaderHeight,
       composerOverlapHeight,
     }),
+  );
+  const approvalHeightStyle = useAnimatedStyle(() => ({
+    maxHeight: pendingApprovalMaxHeight.value,
     flexGrow: 0,
   }));
   // The usage panel stacks with the composer and any approval card, so it gets
@@ -1795,6 +1798,7 @@ function ThreadDetailBody(
                             <PendingApprovalCard
                               canOperateThread={props.canOperateThread}
                               approval={props.activePendingApproval}
+                              maxHeight={pendingApprovalMaxHeight}
                               respondingApprovalId={props.respondingApprovalId}
                               onRespond={props.onRespondToApproval}
                             />
