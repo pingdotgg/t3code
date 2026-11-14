@@ -132,6 +132,7 @@ export function ThreadSubagentGroup(props: {
     };
   });
   const grouped = agents.length > 1;
+  const visibleAvatarCount = agents.length <= 4 ? agents.length : 3;
   const label = `${agents.length} subagents`;
   const summary = summarizeSubagentStatuses(agents.map((agent) => agent.status));
   const expanded = props.expandedRows[props.anchorKey] ?? false;
@@ -150,14 +151,16 @@ export function ThreadSubagentGroup(props: {
           className="min-h-14 flex-row items-center gap-3 rounded-lg py-2 active:bg-subtle"
         >
           <View className="flex-row items-center">
-            {agents.slice(0, 3).map((agent, index) => (
+            {agents.slice(0, visibleAvatarCount).map((agent, index) => (
               <View key={agent.item.id} style={{ marginLeft: index === 0 ? 0 : -7 }}>
                 <SubagentAvatar item={agent.item} config={configOf(agent.item)} />
               </View>
             ))}
-            {agents.length > 3 ? (
+            {agents.length > visibleAvatarCount ? (
               <View className="-ml-2 h-7 w-7 items-center justify-center rounded-full border border-border bg-card">
-                <Text className="text-2xs text-foreground-muted">+{agents.length - 3}</Text>
+                <Text className="text-2xs text-foreground-muted">
+                  +{agents.length - visibleAvatarCount}
+                </Text>
               </View>
             ) : null}
           </View>
