@@ -27,14 +27,12 @@ describe("Workflow name validation", () => {
     expect(isValidWorkflowName(value as string)).toBe(false);
   });
 
-  it.for([
-    "abc",
-    "NAME_123-hello",
-    "a-valid-string",
-    "w".repeat(MAX_WORKFLOW_NAME_LENGTH),
-  ])("should accept valid names", (value, { expect }) => {
-    expect(isValidWorkflowName(value as string)).toBe(true);
-  });
+  it.for(["abc", "NAME_123-hello", "a-valid-string", "w".repeat(MAX_WORKFLOW_NAME_LENGTH)])(
+    "should accept valid names",
+    (value, { expect }) => {
+      expect(isValidWorkflowName(value as string)).toBe(true);
+    },
+  );
 });
 
 describe("Workflow instance ID validation", () => {
@@ -50,14 +48,12 @@ describe("Workflow instance ID validation", () => {
     expect(isValidWorkflowInstanceId(value as string)).toBe(false);
   });
 
-  it.for([
-    "abc",
-    "NAME_123-hello",
-    "a-valid-string",
-    "w".repeat(MAX_WORKFLOW_INSTANCE_ID_LENGTH),
-  ])("should accept valid IDs", (value, { expect }) => {
-    expect(isValidWorkflowInstanceId(value as string)).toBe(true);
-  });
+  it.for(["abc", "NAME_123-hello", "a-valid-string", "w".repeat(MAX_WORKFLOW_INSTANCE_ID_LENGTH)])(
+    "should accept valid IDs",
+    (value, { expect }) => {
+      expect(isValidWorkflowInstanceId(value as string)).toBe(true);
+    },
+  );
 });
 
 describe("Addressable Workflow instance ID validation", () => {

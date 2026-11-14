@@ -26,6 +26,10 @@ function deferredReads() {
       pending.shift()?.(status);
       await Promise.resolve();
     },
+    resolveLast: async (status: string) => {
+      pending.pop()?.(status);
+      await Promise.resolve();
+    },
     get count() {
       return pending.length;
     },
@@ -66,6 +70,21 @@ describe("makePermissionStatusAtom", () => {
     unmount();
     flush();
     expect(native.listeners.size).toBe(0);
+  });
+
+  it("keeps the newest read when an older one settles last", async () => {
+    const reads = deferredReads();
+    const atom = makePermissionStatusAtom({ label: "test", initial: "checking", read: reads.read });
+    const { registry, flush } = makeRegistry();
+    const unmount = registry.mount(atom);
+
+    for (const listener of native.listeners) listener("active");
+    await reads.resolveLast("available");
+    await reads.resolveNext("unavailable");
+    expect(registry.get(atom)).toBe("available");
+
+    unmount();
+    flush();
   });
 
   it("stores a request's outcome", () => {
