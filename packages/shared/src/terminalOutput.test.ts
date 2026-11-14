@@ -264,4 +264,10 @@ describe("terminalOutputSpans", () => {
     expect(spans.at(-1)?.style).toBeNull();
     expect(spans.map((span) => span.text).join("")).toBe("xy".repeat(50));
   });
+
+  it("gives badge text at least 3:1 on the dark palette's coloured backgrounds", () => {
+    const text = normalizeTerminalOutput("\u001b[42m PASS \u001b[1;37;41m FAIL ").text;
+    const spans = terminalOutputSpans(text, TERMINAL_PALETTES.dark);
+    expect(spans.map((span) => span.style?.color)).toEqual(["#1f2328", "#1f2328"]);
+  });
 });
