@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Linux relaunch must spawn outside Chromium's launcher.
+import * as NodeChildProcess from "node:child_process";
+
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -173,9 +176,27 @@ export const make = ElectronApp.of({
       Electron.app.exit(code);
     });
   }),
-  relaunch: Effect.fn("ElectronApp.relaunch")(function (options) {
-    return Effect.sync(() => {
+  relaunch: Effect.fn("ElectronApp.relaunch")(function* (options) {
+    if ((yield* HostProcess.Platform) !== "linux") {
       Electron.app.relaunch(options);
+      return;
+    }
+    // Electron's Linux relauncher sets irreversible no_new_privs, so pkexec fails in the new app.
+    // The shell waits for EOF on stdin, which comes when this process exits and frees its lock.
+    const execPath = options.execPath ?? (yield* HostProcess.ExecutablePath);
+    const args = options.args ?? (yield* HostProcess.Arguments).slice(1);
+    yield* Effect.sync(() => {
+      try {
+        NodeChildProcess.spawn(
+          "/bin/sh",
+          ["-c", 'cat >/dev/null; exec "$@" </dev/null', "t3code-relaunch", execPath, ...args],
+          { detached: true, stdio: ["pipe", "ignore", "ignore"] },
+        )
+          .on("error", () => Electron.app.relaunch(options))
+          .unref();
+      } catch {
+        Electron.app.relaunch(options);
+      }
     });
   }),
   setPath: Effect.fn("ElectronApp.setPath")(function (name, path) {

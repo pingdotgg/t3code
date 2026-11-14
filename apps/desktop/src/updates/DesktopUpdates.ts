@@ -33,6 +33,7 @@ import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopState from "../app/DesktopState.ts";
+import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as IpcChannels from "../ipc/channels.ts";
@@ -374,6 +375,7 @@ export const make = Effect.gen(function* () {
   const pool = yield* DesktopBackendPool.DesktopBackendPool;
   const sshEnvironment = yield* DesktopSshEnvironment.DesktopSshEnvironment;
   const desktopState = yield* DesktopState.DesktopState;
+  const electronApp = yield* ElectronApp.ElectronApp;
   const electronUpdater = yield* ElectronUpdater.ElectronUpdater;
   const electronWindow = yield* ElectronWindow.ElectronWindow;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
@@ -870,10 +872,13 @@ export const make = Effect.gen(function* () {
             ],
             { concurrency: "unbounded" },
           );
+          // electron-updater restarts a .deb install with app.relaunch(), which leaves the new
+          // app unable to run pkexec for the next update; ElectronApp.relaunch does not.
           yield* electronUpdater.quitAndInstall({
             isSilent: true,
-            isForceRunAfter: true,
+            isForceRunAfter: !isDebPackage,
           });
+          if (isDebPackage) yield* electronApp.relaunch({});
           return { accepted: true, completed: false, failed: false };
         }).pipe(
           Effect.catchTags({

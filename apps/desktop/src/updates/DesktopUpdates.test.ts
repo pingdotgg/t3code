@@ -698,6 +698,49 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
+  it.effect("relaunches a .deb install through ElectronApp only after it succeeds", () =>
+    Effect.gen(function* () {
+      const installSteps = (
+        quitAndInstall?: Effect.Effect<void, ElectronUpdater.ElectronUpdaterQuitAndInstallError>,
+      ) => {
+        const harness = makeHarness({
+          platform: "linux",
+          packageType: "deb",
+          ...(quitAndInstall ? { quitAndInstall } : {}),
+        });
+        return Effect.scoped(
+          Effect.gen(function* () {
+            const updates = yield* DesktopUpdates.DesktopUpdates;
+            yield* updates.configure;
+            harness.emit("update-downloaded", { version: "1.2.4" });
+            yield* flushCallbacks;
+            yield* updates.install;
+            return harness.installSteps.filter((step) => step !== "startBackend");
+          }),
+        ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+      };
+
+      assert.deepEqual(yield* installSteps(), [
+        "closeSshTunnels",
+        "quitAndInstall:noRunAfter",
+        "relaunch",
+      ]);
+      assert.deepEqual(
+        yield* installSteps(
+          Effect.fail(
+            new ElectronUpdater.ElectronUpdaterQuitAndInstallError({
+              channel: "latest",
+              isSilent: true,
+              isForceRunAfter: false,
+              cause: new Error("Command pkexec exited with code 127"),
+            }),
+          ),
+        ),
+        ["closeSshTunnels", "quitAndInstall:noRunAfter"],
+      );
+    }),
+  );
+
   it.effect("keeps the disabled primary stopped when quitAndInstall fails", () => {
     const harness = makeHarness({
       backendDesiredRunning: false,
