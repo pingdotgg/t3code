@@ -24,6 +24,11 @@ import {
   type ThemeVariants,
 } from "@t3tools/shared/themePalettes";
 import {
+  themeAccentWithContrast,
+  themeColorChannels,
+  themeColorContrastRatio,
+} from "@t3tools/shared/themeContrast";
+import {
   CONTEXT_CHIP_ACCENTS,
   contextChipColorVariable,
   type ContextChipAccentKind,
@@ -437,9 +442,10 @@ export function getStandardThemeColors(appearance: ThemeAppearance): ThemeColors
   return (standardLightThemeColors ??= decodeThemeColors(T3_CODE_LIGHT_THEME_COLORS));
 }
 
-// index.css paints the light bubble a step darker than the shared palette mobile uses.
+// index.css paints the light bubble a step darker, and error text one red step deeper so it
+// reads at 4.5:1, than the shared palette mobile uses.
 const STANDARD_WEB_PAINTED_COLORS: Record<ThemeAppearance, Partial<ThemeColors>> = {
-  light: { messageSurface: "#ebebed" },
+  light: { messageSurface: "#ebebed", error: "oklch(0.577 0.245 27.325)" },
   dark: { canvas: "#000000", messageSurface: "#1e1e1e" },
 };
 
@@ -1650,6 +1656,26 @@ export function getThemeColorVariable(role: ThemeColorRole): string {
 
 export const THEME_PREVIEW_ID = "__preview";
 
+/** `error` doubles as destructive text, so it must read on the surfaces that text sits on. */
+export function withReadableThemeText(colors: ThemeColors): ThemeColors {
+  const surfaces = [colors.canvas, colors.surface];
+  if (surfaces.some((surface) => themeColorChannels(surface) === null)) return colors;
+  const readable = themeAccentWithContrast(colors.error, surfaces);
+  const minimumContrast = (color: string) =>
+    Math.min(...surfaces.map((surface) => themeColorContrastRatio(color, surface)));
+  return {
+    ...colors,
+    error: minimumContrast(readable) >= minimumContrast(colors.error) ? readable : colors.error,
+  };
+}
+
+const DESTRUCTIVE_FILL_VARIABLE = "--app-theme-destructive-fill";
+
+/** Solid destructive fills carry white labels, so they get their own `error` that white reads on. */
+export function destructiveFillColor(colors: ThemeColors): string {
+  return themeAccentWithContrast(colors.error, ["#ffffff"]);
+}
+
 /** Callers must restore the stored theme with refreshTheme when the draft closes. */
 export function applyThemeColorPreview(
   colors: ThemeColors,
@@ -1662,7 +1688,9 @@ export function applyThemeColorPreview(
 
   root.dataset.themeId = THEME_PREVIEW_ID;
   root.classList.toggle("dark", appearance === "dark");
-  for (const [role, value] of Object.entries(colors) as Array<[ThemeColorRole, string]>) {
+  const readable = withReadableThemeText(colors);
+  root.style.setProperty(DESTRUCTIVE_FILL_VARIABLE, destructiveFillColor(colors));
+  for (const [role, value] of Object.entries(readable) as Array<[ThemeColorRole, string]>) {
     if (isThemeColor(value)) root.style.setProperty(APP_THEME_VARIABLES[role], value);
   }
   applyContextChipVariables(root, colors);
@@ -1684,7 +1712,9 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
     root.dataset.themeId = palette.id;
     const mode = appearance ?? legacyThemeMode(theme) ?? palette.appearance;
     const colors = getThemeColorsForMode(palette, mode) ?? palette.colors;
-    for (const [role, value] of Object.entries(colors) as Array<[ThemeColorRole, string]>) {
+    const readable = withReadableThemeText(colors);
+    root.style.setProperty(DESTRUCTIVE_FILL_VARIABLE, destructiveFillColor(colors));
+    for (const [role, value] of Object.entries(readable) as Array<[ThemeColorRole, string]>) {
       root.style.setProperty(APP_THEME_VARIABLES[role], value);
     }
     applyContextChipVariables(root, colors);
@@ -1692,6 +1722,7 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
   }
 
   delete root.dataset.themeId;
+  root.style.removeProperty(DESTRUCTIVE_FILL_VARIABLE);
   for (const variable of Object.values(APP_THEME_VARIABLES)) {
     root.style.removeProperty(variable);
   }

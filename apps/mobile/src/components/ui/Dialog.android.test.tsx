@@ -38,7 +38,7 @@ vi.mock("../../features/settings/appearance/AppearancePreferencesProvider", () =
 vi.mock("../../features/settings/appearance/useScaledTextRole", () => ({
   useScaledTextRole: () => ({}),
 }));
-vi.mock("../../lib/mobileTheme", () => ({ themeColorWithContrast: () => "#ffffff" }));
+vi.mock("@t3tools/shared/themeContrast", () => ({ themeColorWithContrast: () => "#ffffff" }));
 
 import * as Dialog from "./Dialog.android";
 
