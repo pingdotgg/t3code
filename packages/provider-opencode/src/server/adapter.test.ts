@@ -3208,6 +3208,62 @@ describe("OpenCodeAdapterV2", () => {
     }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
+  it.effect("reports an unanswered session abort as an interrupt timeout", () =>
+    Effect.gen(function* () {
+      const events = asyncEventStream();
+      const abortCalled = promiseGate<void>();
+      let abortCalls = 0;
+      const harness = yield* makeOpenCodeRuntimeHarness("abort-timeout", "root", {
+        event: {
+          subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+            options.signal?.addEventListener("abort", () => events.close(), { once: true });
+            return { stream: events.stream };
+          },
+        },
+        session: {
+          create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+          get: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+          promptAsync: async () => ({ data: true }),
+          status: async () => ({ data: { root: { type: "busy" } } }),
+          messages: async () => ({ data: [] }),
+          children: async () => ({ data: [] }),
+          abort: async (_input: unknown, options?: { readonly signal?: AbortSignal }) => {
+            // Only the Stop request hangs; session teardown still gets an answer.
+            if (++abortCalls > 1) return { data: true };
+            abortCalled.resolve();
+            await new Promise<void>((_resolve, reject) =>
+              options?.signal?.addEventListener("abort", () => reject(options.signal!.reason), {
+                once: true,
+              }),
+            );
+            return { data: true };
+          },
+        },
+        mcp: { add: async () => ({ data: true }) },
+      });
+      yield* harness.startTurn();
+      const snapshot = yield* harness.runtime.readThreadSnapshot({
+        providerThread: harness.providerThread,
+      });
+      const turn = snapshot.providerTurns.at(-1)!;
+      const interrupt = yield* harness.runtime
+        .interruptTurn({ providerThread: harness.providerThread, providerTurnId: turn.id })
+        .pipe(Effect.flip, Effect.forkScoped);
+      yield* Effect.promise(() => abortCalled.promise);
+      yield* TestClock.adjust("10 seconds");
+
+      const error = yield* Fiber.join(interrupt);
+      assert.strictEqual(error._tag, "ProviderAdapterInterruptTimeoutError");
+      assert.deepInclude(error, {
+        providerThreadId: harness.providerThread.id,
+        providerTurnId: turn.id,
+      });
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
   it.effect("fails an active turn when the OpenCode event stream ends cleanly", () =>
     Effect.gen(function* () {
       const nativeEvents = asyncEventStream();
