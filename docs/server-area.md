@@ -232,12 +232,28 @@ that list.
   answers (`effect-client.mjs`); `textgen-diff.mjs` (a check step) runs T3's own code and
   ours against one loopback stub: 102 comparisons of answers, request method, path, headers
   and body bytes, prompts, thread contexts, sanitized titles and the model order.
-- **Differences left on purpose.** The transport headers Node's fetch adds (`accept`,
-  `accept-language`, `accept-encoding`, `sec-fetch-mode`, `user-agent: node`, keep-alive) are
-  not sent. No managed policy, so no allow-list refusal. The model cache is capped at 32
-  lists. Titles: no fork source section, no linked pull request or issue context
-  (`ThreadTitleLinks.ts`), assistant citation links are not turned into plain text, no
-  fallback to another model when the chosen one is unusable.
+- **Headers.** Each request carries what Node's fetch adds for the T3 server: `accept: */*`,
+  `accept-language: *`, `sec-fetch-mode: cors`, `user-agent: node`, `accept-encoding: gzip,
+  deflate`, `connection: keep-alive` (this client still opens one connection per request).
+  A gzip or deflate answer (zlib or raw) is decoded off the runtime thread; more than 8 MiB
+  after decoding reads as an answer it could not read. `textgen-diff.mjs` compares all
+  headers but `host` and `content-length`, and has gzip, deflate and raw deflate answers.
+- **Title context.** Assistant quotes (`[Assistant quote](t3-citation://v1/...)`) become their
+  text and comment (`assistantCitationsToPlainText`, `text_generation/citations.rs`).
+- **Fallback.** None is needed here: T3 falls back to another model only when the chosen
+  title model is an agent provider that cannot run, and its fallbacks are agent providers.
+  A chosen text generator is always used as it is, in both servers.
+- **Differences left on purpose.** No managed policy, so no allow-list refusal. The model
+  cache is capped at 32 lists. Titles: no fork source section (it needs the engine's fork
+  chain with run ordinals, `ThreadTitleRegenerationService.forkSource`), no linked pull
+  request or issue context (`ThreadTitleLinks.ts`: needs the source control link lookup of
+  each host, which `conn-source-control` does not have yet).
+- **Managed policy (mapped, not built).** The T3 server reads `/etc/t3code/policy.json` on
+  Linux (`/Library/Application Support/T3Code/policy.json` on macOS; the Windows registry),
+  `apps/server/src/policy/` (about 2,900 lines with tests): locked settings, provider allow
+  lists and limits, a runtime-mode ceiling, update rules and `limits.webhookTasks`. It applies
+  in a container when the image has that file. Not built: it is not small, and whether Orbit
+  images will carry one is Nick's call.
 
 ### Other uses of text generation in the T3 server
 

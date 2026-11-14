@@ -18,9 +18,9 @@ Source: the T3 server at `conn.pin`. `S/` means `apps/server/src/`, `C/` means
 | scheduledTasks.setEnabled | S/ws.ts:2298 | Pauses or resumes; plans the next run from now | same | orchestration:operate | nothing |
 | scheduledTasks.delete | S/ws.ts:2302 | Removes a task and its webhook deliveries | same | orchestration:operate | nothing |
 | scheduledTasks.runNow | S/ws.ts:2306 | Runs a task at once: a new thread, or a queued message in its bound thread | same | orchestration:operate | engine |
-| scheduledTasks.rotateWebhookToken | S/ws.ts:2310 | New URL token for a webhook task | same | orchestration:operate | outside service (the relay that carries webhook calls) |
-| scheduledTasks.listWebhookDeliveries | S/ws.ts:2322 | The logged webhook requests of a task | SQLite `scheduled_task_webhook_deliveries` | orchestration:operate | outside service |
-| scheduledTasks.getWebhookDelivery | S/ws.ts:2326 | One logged request with headers, body and rendered prompt | same | orchestration:operate | outside service |
+| scheduledTasks.rotateWebhookToken | S/ws.ts:2310 | New URL token for a webhook task | same | orchestration:operate | nothing (served here; the relay is not built) |
+| scheduledTasks.listWebhookDeliveries | S/ws.ts:2322 | The logged webhook requests of a task | SQLite `scheduled_task_webhook_deliveries` | orchestration:operate | nothing (served here) |
+| scheduledTasks.getWebhookDelivery | S/ws.ts:2326 | One logged request with headers, body and rendered prompt | same | orchestration:operate | nothing (served here) |
 | schedule_task | S/mcp/toolkits/orchestrator/handlers.ts:88 | Creates (`startsThreads`) or with `scheduledTaskId` updates (`writes`) a task | as above | `either(startsThreads, writes)` | engine |
 | list_scheduled_tasks | same file:125 | The caller's project's tasks, or all outside a thread | as above | `reads` | nothing |
 | delete_scheduled_task | same file:132 | Deletes a task the caller may change | as above | `writes` | nothing |
@@ -34,7 +34,8 @@ its bound thread's queue. Run ids: `scheduled-task:<id>:<startMs>:<trigger>` and
 `scheduled-task-message:<...>`. Webhooks: 60 requests a minute per task, 20 queued per task,
 50 + 20 + 20 deliveries kept per task, bodies logged up to 64 KiB with secret headers and query
 values redacted (`S/scheduledTasks/ScheduledTaskService.ts:82-92`). The signing secret is
-stored in the `scheduled_tasks` row (`webhook_secret`), in clear text.
+stored in the `scheduled_tasks` row (`webhook_secret`), in clear text. This server serves the
+three webhook methods and the route (`crates/conn-features/README.md`, "Webhook tasks").
 
 Rules used for the tables:
 

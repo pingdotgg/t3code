@@ -149,8 +149,8 @@ See [`fixtures/README.md`](fixtures/README.md) for every scenario and which need
 | `conn-terminal`         | Shells on PTYs: sessions, scrollback, viewers (`terminal.*`)          |
 | `conn-source-control`   | Source control hosts (GitHub, GitLab, ...): discovery, sign-in, stars, repositories; later pull requests |
 | `conn-server`           | Binary: HTTP, `/ws` session, pairing, method table, handlers          |
-| `conn-support`          | Helpers several crates share: time, hex, base64, HMAC, atomic writes, v4 ids |
-| `conn-features`         | Scheduled tasks and the Conn-only areas beside the engine; see its README |
+| `conn-support`          | Helpers several crates share: time, hex, base64, SHA-256 and HMAC, atomic writes, v4 ids, the T3 secret store, URL text |
+| `conn-features`         | Scheduled tasks (webhook tasks too) and the Conn-only areas beside the engine; see its README |
 
 Dependencies point one way: `conn-server` → `conn-engine` → `conn-provider` → `conn-contract`;
 `conn-provider-claude` → `conn-provider`; `conn-server` → `conn-wire`. `conn-wire` and
@@ -295,6 +295,11 @@ T3 adds on top (`apps/server/src/ws.ts`): the `/ws` URL must carry `orchestratio
   stripped. See [Status](#status) for its memory.
 - **rusqlite** with `bundled` SQLite for the event store; `tokio::process` for provider CLIs;
   `getrandom` and `sha2` for credentials.
+- **flate2** (`rust_backend`: miniz_oxide) decodes text generator answers sent gzip or
+  deflate encoded, which the T3 server's `fetch` asks for and this server now asks for too.
+- **Settings secrets** live in the T3 server's secret store, `<state>/secrets/<name>.bin`
+  (0700 folder, 0600 files); `settings.json` holds `••••••` in their place
+  (`docs/conn-only-areas.md`, "Settings secrets").
 - No `async-trait`, no `futures`: traits return `BoxFuture`, streams are `tokio::sync::mpsc`.
 
 ## What clients need (read from the code)
@@ -391,7 +396,7 @@ to the socket.
 
 ## Status
 
-**Coverage:** 99 of 236 methods (20 of 33 streams), from the method table at startup. Every
+**Coverage:** 102 of 236 methods (20 of 33 streams), from the method table at startup. Every
 registered method checks the scope the T3 server requires (`src/scopes.rs`, its table
 generated). `assets.createUrl`, `terminal.open` and `terminal.attach` also get the contract's
 length, pattern and range limits before decode (`src/limits.rs`, its table generated). Every registered method but two has a run that decodes its answer with the real
