@@ -75,10 +75,8 @@ const isSpecialPurposeIpv4Address = (parts: readonly number[]): boolean =>
 
 export const isLocalLoopbackHost = (host: string): boolean => {
   const normalized = normalizeHostname(host);
-  if (normalized === "localhost" || normalized.endsWith(".localhost") || normalized === "::1")
-    return true;
-  const ipv4 = parseIpv4Address(normalized) ?? parseIpv4MappedIpv6Address(normalized);
-  return ipv4?.[0] === 127;
+  if (normalized === "localhost" || normalized === "::1") return true;
+  return parseIpv4Address(normalized)?.[0] === 127;
 };
 
 /** MagicDNS or fd7a:115c:a1e0::/48 identifies Tailscale; shared 100.64.0.0/10 addresses alone do not. */
@@ -99,6 +97,7 @@ export const isPrivateNetworkHost = (host: string): boolean => {
   if (
     normalized === "::" ||
     isLocalLoopbackHost(normalized) ||
+    normalized.endsWith(".localhost") ||
     normalized.endsWith(".local") ||
     normalized === "home.arpa" ||
     normalized.endsWith(".home.arpa") ||
