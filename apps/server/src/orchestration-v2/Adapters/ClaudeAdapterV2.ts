@@ -10470,10 +10470,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
             return;
           }
-          const notificationSummary =
-            isNotification && typeof message.summary === "string" && message.summary.length > 0
-              ? message.summary
+          const handbackText =
+            isNotification && message.status === "completed"
+              ? ((yield* Ref.get(sessionSubagentsByTaskId)).get(message.task_id)?.handbackText ??
+                null)
               : null;
+          const notificationSummary =
+            handbackText ??
+            (isNotification && typeof message.summary === "string" && message.summary.length > 0
+              ? message.summary
+              : null);
           if (isPendingTaskNotification) {
             yield* recordWakeReport(
               wakeInput.nativeThreadId,
