@@ -186,7 +186,7 @@ const SLIM_MENU_ACTIONS: MenuAction[] = [
 ];
 
 const SNOOZED_MENU_ACTIONS: MenuAction[] = [
-  { id: "unsnooze", title: "Wake thread", image: "clock" },
+  { id: "unsnooze", title: "Wake thread", image: "bell.badge" },
   { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
 ];
 
@@ -851,8 +851,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     snoozable: canSnooze(thread, { now: snoozeGateNow }),
     snoozed: snoozedRow,
   });
+  // Snoozed rows keep the presets too: their menu offers Reschedule.
   const snoozePresets = resolveThreadListV2SnoozePresets({
     secondary: swipeActions.secondary,
+    snoozed: snoozedRow,
     now: props.snoozePresetMinute || snoozeGateNow,
     presets: props.snoozePresets,
   });
@@ -963,7 +965,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     if (snoozedRow) {
       return layoutThreadListV2RowMenuActions({
         nested,
-        direct: [...direct, SNOOZED_MENU_ACTIONS[0]!],
+        direct: [
+          ...direct,
+          SNOOZED_MENU_ACTIONS[0]!,
+          { id: "snooze", title: "Reschedule", image: "clock", subactions: snoozePresetActions },
+        ],
         reorder: [],
         pin: [],
         secondary: [
@@ -1111,7 +1117,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     if (swipeActions.primary === "unsnooze") {
       return {
         accessibilityLabel: `Wake ${thread.title} now`,
-        icon: "clock" as const,
+        icon: "bell.badge" as const,
         label: "Wake",
         onPress: handleUnsnooze,
       };
