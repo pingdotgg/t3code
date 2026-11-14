@@ -1,7 +1,7 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ProjectId, ScopedThreadRef } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { ChartNoAxesColumnIcon, PlusIcon, SettingsIcon, SquareDashedIcon } from "lucide-react";
+import { ChartNoAxesColumnIcon, SettingsIcon, SquareDashedIcon } from "lucide-react";
 import { useEffect, useEffectEvent, useLayoutEffect, useRef } from "react";
 
 import { useBrowserDefaults } from "../browser/browserDefaults";
@@ -25,8 +25,6 @@ import {
 import { isElectron } from "../env";
 import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "../workspaceTitlebar";
-import { Button } from "../components/ui/button";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useScratchProject } from "../hooks/useScratchProject";
@@ -51,7 +49,6 @@ import {
 } from "../threadlessSurfaces";
 import { toggleThreadTerminalPane } from "./openRules";
 import { requestLayoutSurfacePlacement } from "./surfaceSync";
-import { openLayoutNewTab } from "./layoutActions";
 import { LayoutLearningTips } from "./LayoutOnboarding";
 import { beginLayoutTabDrag } from "./layoutDrag";
 import { useLayoutPane } from "./layoutPaneContext";
@@ -63,6 +60,7 @@ import {
   LAYOUT_TAB_SLOT_CLASS,
   LayoutPaneTab,
   LayoutPaneTabStrip,
+  LayoutNewTabButton,
   LayoutTabCloseButton,
   showLayoutTabMenu,
   useLayoutPaneSiblingTabs,
@@ -442,7 +440,6 @@ function WorkspaceWayBackHint() {
 
 function LauncherTabNotch({ tabId }: { tabId: string | null }) {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const shortcut = shortcutLabelForCommand(keybindings, "tab.new");
   const siblingTabs = useLayoutPaneSiblingTabs();
   return (
     <PaneNotch>
@@ -473,25 +470,7 @@ function LauncherTabNotch({ tabId }: { tabId: string | null }) {
           <LayoutPaneTab key={tab.id} tab={tab} />
         ))}
       </LayoutPaneTabStrip>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              variant="bare"
-              size="icon-xs"
-              data-pane-notch-add=""
-              aria-label="New tab"
-              onClick={() => {
-                if (tabId !== null) useLayoutStore.getState().focusTab(tabId);
-                openLayoutNewTab();
-              }}
-            />
-          }
-        >
-          <PlusIcon />
-        </TooltipTrigger>
-        <TooltipPopup side="bottom">New tab{shortcut ? ` (${shortcut})` : ""}</TooltipPopup>
-      </Tooltip>
+      <LayoutNewTabButton tabId={tabId} />
     </PaneNotch>
   );
 }

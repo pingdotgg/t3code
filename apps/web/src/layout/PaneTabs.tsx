@@ -16,6 +16,7 @@ import {
   ChartNoAxesColumnIcon,
   GitForkIcon,
   PanelRightIcon,
+  PlusIcon,
   SettingsIcon,
   SquareDashedIcon,
   SquarePenIcon,
@@ -45,7 +46,7 @@ import { previewBridge } from "../components/preview/previewBridge";
 import { useThreadActionMenu } from "../hooks/useThreadActionMenu";
 
 import { ProjectFavicon } from "../components/ProjectFavicon";
-import { ContentButton } from "../components/ui/button";
+import { Button, ContentButton } from "../components/ui/button";
 import { cn } from "../lib/utils";
 import { requestSideChatComposerFocus } from "../lib/workspaceFocus";
 import { PANE_GHOST_TAB_TITLE_CLASS, PANE_INACTIVE_TAB_TITLE_CLASS } from "../components/PaneNotch";
@@ -80,7 +81,12 @@ import {
   type LayoutState,
   type LayoutTab,
 } from "./layoutModel";
-import { closeLayoutTabByUser, closeOtherLayoutTabsByUser, splitLayoutTab } from "./layoutActions";
+import {
+  closeLayoutTabByUser,
+  closeOtherLayoutTabsByUser,
+  openLayoutNewTab,
+  splitLayoutTab,
+} from "./layoutActions";
 import { beginLayoutTabDrag } from "./layoutDrag";
 import { useLayoutPane } from "./layoutPaneContext";
 import { isScrollingWorkspacesEnabled } from "./layoutBehavior";
@@ -870,6 +876,32 @@ export function LayoutTabCloseButton({ tabId, title }: { tabId: string; title: s
         <XIcon aria-hidden className="size-3" />
       </TooltipTrigger>
       <TooltipPopup side="bottom">Close tab{shortcut ? ` (${shortcut})` : ""}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+export function LayoutNewTabButton({ tabId }: { tabId: string | null }) {
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const shortcut = shortcutLabelForCommand(keybindings, "tab.new");
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            variant="bare"
+            size="icon-xs"
+            data-pane-notch-add=""
+            aria-label="New tab"
+            onClick={() => {
+              if (tabId !== null) useLayoutStore.getState().focusTab(tabId);
+              openLayoutNewTab();
+            }}
+          />
+        }
+      >
+        <PlusIcon />
+      </TooltipTrigger>
+      <TooltipPopup side="bottom">New tab{shortcut ? ` (${shortcut})` : ""}</TooltipPopup>
     </Tooltip>
   );
 }
