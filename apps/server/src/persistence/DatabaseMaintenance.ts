@@ -33,9 +33,13 @@ export class DatabaseInUseError extends Schema.TaggedError<DatabaseInUseError>()
     cause: Schema.Defect(),
     pid: Schema.optional(Schema.Int),
     serviceManaged: Schema.optional(Schema.Boolean),
+    otherMachine: Schema.optional(Schema.String),
   },
 ) {
   override get message() {
+    if (this.otherMachine !== undefined) {
+      return `A T3 Code server on another machine (${this.otherMachine}) has this database open. Stop it on ${this.otherMachine} before repairing the database.`;
+    }
     if (this.pid !== undefined) {
       return `Stop T3 Code server process ${this.pid}${this.serviceManaged ? "" : ", which the background service did not start,"} before repairing the database.`;
     }

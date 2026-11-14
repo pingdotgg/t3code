@@ -5,6 +5,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { formatHostForUrl, isWildcardHost } from "@t3tools/shared/hostClassification";
 import packageJson from "../package.json" with { type: "json" };
 import type * as ServerConfig from "./config.ts";
@@ -12,6 +13,8 @@ import type * as ServerConfig from "./config.ts";
 export const PersistedServerRuntimeState = Schema.Struct({
   version: Schema.Literal(1),
   pid: Schema.Int,
+  // The machine `pid` belongs to; a T3 home on a shared filesystem is read by others. Absent from older servers.
+  hostname: Schema.optional(Schema.String),
   ownerId: Schema.optional(Schema.String),
   host: Schema.optional(Schema.String),
   privateNetworkOnly: Schema.optional(Schema.Boolean),
@@ -61,7 +64,9 @@ const runtimeOriginForConfig = (
   return `http://${hostname}:${port}`;
 };
 
-export const makePersistedServerRuntimeState = (input: {
+export const makePersistedServerRuntimeState = Effect.fn(
+  "serverRuntimeState.makePersistedServerRuntimeState",
+)(function* (input: {
   readonly config: Pick<
     ServerConfig.ServerConfig["Service"],
     "host" | "privateNetworkOnly" | "devUrl"
@@ -69,10 +74,12 @@ export const makePersistedServerRuntimeState = (input: {
   readonly port: number;
   readonly serviceManaged?: boolean;
   readonly managedPolicy?: PersistedServerRuntimeState["managedPolicy"];
-}): Effect.Effect<PersistedServerRuntimeState> =>
-  Effect.map(DateTime.now, (now) => ({
-    version: 1,
+}) {
+  const now = yield* DateTime.now;
+  return {
+    version: 1 as const,
     pid: process.pid,
+    hostname: yield* HostProcess.Hostname,
     ...(input.config.host ? { host: input.config.host } : {}),
     ...(input.config.privateNetworkOnly ? { privateNetworkOnly: true } : {}),
     port: input.port,
@@ -82,7 +89,8 @@ export const makePersistedServerRuntimeState = (input: {
     ...(input.serviceManaged ? { serviceManaged: true } : {}),
     serverVersion: packageJson.version,
     ...(input.managedPolicy === undefined ? {} : { managedPolicy: input.managedPolicy }),
-  }));
+  } satisfies PersistedServerRuntimeState;
+});
 
 export const persistServerRuntimeState = (input: {
   readonly path: string;
@@ -138,6 +146,18 @@ export const isProcessAlive = (pid: number): boolean => {
     return error instanceof Error && "code" in error && error.code === "EPERM";
   }
 };
+
+/**
+ * The recorded machine when it is not this one. Its PID and loopback origin mean nothing
+ * here. A hostname can also change under a running server, so this alone does not prove
+ * the server is elsewhere.
+ */
+export const runtimeStateOtherMachine = Effect.fn("serverRuntimeState.runtimeStateOtherMachine")(
+  function* (state: Pick<PersistedServerRuntimeState, "hostname">) {
+    const hostname = yield* HostProcess.Hostname;
+    return state.hostname !== undefined && state.hostname !== hostname ? state.hostname : undefined;
+  },
+);
 
 export const readPersistedServerRuntimeState = Effect.fn(
   "serverRuntimeState.readPersistedServerRuntimeState",

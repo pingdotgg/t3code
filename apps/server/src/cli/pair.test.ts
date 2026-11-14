@@ -429,6 +429,63 @@ describe("t3 pair", () => {
     ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
+  it.effect(
+    "names the other machine for a shared home, unless the server answers as this home",
+    () =>
+      withDescriptorServer((origin) =>
+        Effect.gen(function* () {
+          const baseDir = NodeFS.mkdtempSync(
+            NodePath.join(NodeOS.tmpdir(), "t3-pair-shared-home-"),
+          );
+          const statePath = NodePath.join(baseDir, "userdata", "server-runtime.json");
+          // The worst case: the other machine's PID is alive here and its port answers as a T3 server.
+          yield* persistServerRuntimeState({
+            path: statePath,
+            state: {
+              ...(yield* makePersistedServerRuntimeState({
+                config: { host: "127.0.0.1", devUrl: undefined },
+                port: Number(new URL(origin).port),
+              })),
+              hostname: "other-machine",
+            },
+          });
+
+          const error = yield* provideCliTestLayers(
+            runCli(["pair", "--base-dir", baseDir]).pipe(Effect.flip),
+          );
+          const rendered = String(
+            typeof error === "object" && error !== null && "cause" in error ? error.cause : error,
+          );
+          assert.include(rendered, "runs on another machine (other-machine)");
+          assert.include(rendered, statePath);
+          assert.notInclude(rendered, "No running T3 Code server found.");
+
+          // A hostname that changed under a running server: it still serves this home's environment.
+          NodeFS.writeFileSync(
+            NodePath.join(baseDir, "userdata", "environment-id"),
+            `${testDescriptor.environmentId}\n`,
+          );
+          const output = yield* captureStdout(runCli(["pair", "--base-dir", baseDir]));
+          assert.include(output, `Pairing URL: ${origin}/pair#token=`);
+        }),
+      ).pipe(
+        Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        Effect.provideService(HostProcess.Environment, {
+          ...process.env,
+          [SERVICE_LAUNCHER_CONTEXT_ENV]: JSON.stringify({
+            protocol: SERVICE_LAUNCHER_PROTOCOL,
+            childVersion: packageJson.version,
+          }),
+        }),
+        Effect.provideService(ServiceLauncherClient.ServiceLauncherHostProcess, {
+          connected: false,
+          send: () => false,
+          on: () => undefined,
+          off: () => undefined,
+        }),
+      ),
+  );
+
   // regression: #10516 minting opens the target database with this checkout's
   // migrations, so a worktree must never fall back to the live install.
   it.effect("does not fall back to the shared home from a linked worktree", () =>
