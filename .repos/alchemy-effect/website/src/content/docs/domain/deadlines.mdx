@@ -1,0 +1,163 @@
+---
+title: Deadlines
+description: Give a waiting process a time limit with a scheduled command, and let the aggregate decide whether the deadline or the action wins.
+---
+
+import DAG from "../../../components/DAG.astro";
+
+A saga that waits needs a deadline. A large transfer waits for a support agent's approval, and expires if nobody approves it within 24 hours. Schedule a command for the deadline, and let the aggregate decide whichever comes first.
+
+## Declare a command that reports the deadline
+
+A scheduled command fires when nobody is waiting for its answer, so it never rejects. It reports a fact, and records nothing when the fact no longer applies.
+
+```typescript
+// packages/domain/src/Transfer/ExpireTransfer.command.ts
+import * as Domain from "@alchemy.run/domain";
+import { TransferFailed } from "./FailTransfer.command.ts";
+import { TransferId } from "./Transfer.id.ts";
+
+/**
+ * The approval window closed. Scheduled by `TransferApprovalDeadline`; it
+ * reports a fact, so it never rejects, and it records nothing if the transfer
+ * was approved in time.
+ */
+export class ExpireTransfer extends Domain.Command("ExpireTransfer", {
+  target: TransferId,
+  events: [TransferFailed],
+}) {}
+```
+
+## Schedule it
+
+A policy schedules the command when the waiting starts.
+
+```typescript
+// packages/domain/src/Transfer/TransferApprovalDeadline.policy.ts
+import * as Domain from "@alchemy.run/domain";
+import * as Effect from "effect/Effect";
+import { ExpireTransfer } from "./ExpireTransfer.command.ts";
+import { TransferRequested } from "./RequestTransfer.command.ts";
+import { Transfer } from "./Transfer.aggregate.ts";
+
+/** How long a support agent has to approve a large transfer. */
+export const APPROVAL_WINDOW = "24 hours";
+
+/**
+ * Whenever a transfer needs approval, expire it if nobody approves it in time.
+ * The Transfer decides the race: approval and expiry are commands on the same
+ * instance, so exactly one of them wins.
+ */
+export class TransferApprovalDeadline extends Domain.Policy("TransferApprovalDeadline", {
+  from: Transfer,
+  on: [TransferRequested],
+}) {}
+
+export const TransferApprovalDeadlineLive = TransferApprovalDeadline.toLayer(
+  Effect.gen(function* () {
+    const transfers = yield* Transfer;
+    return Effect.fn(function* ({ source, event }) {
+      if (!event.needsApproval) return;
+      yield* transfers.schedule(source, new ExpireTransfer(), { after: APPROVAL_WINDOW }).pipe(
+        // A redelivery after the window closed: the expiry already ran.
+        Effect.catchTag("AlreadyExecuted", () => Effect.void),
+      );
+    });
+  }),
+);
+```
+
+The schedule is durable: it fires even if everything restarted in between. Scheduling again with the same command id replaces the earlier one.
+
+A scheduled command takes its command id like any other command, so it runs once. Scheduling an id the transfer already handled fails with `AlreadyExecuted`, because that command would never run again. Here it means the policy ran a second time for the same event, after the expiry fired, so there's nothing to do.
+
+## Let the aggregate decide the race
+
+Approval and expiry are both commands to the same transfer. One may come from a support agent at any moment, the other from the schedule after 24 hours.
+
+<DAG
+  nodes={[
+    { id: "agent", label: "Support agent", type: "approves", kind: "client", col: 0, row: 0 },
+    { id: "schedule", label: "Schedule", type: "set by the policy", col: 0, row: 2 },
+    { id: "approve", label: "ApproveTransfer", type: "any time", kind: "command", col: 1, row: 0 },
+    { id: "expire", label: "ExpireTransfer", type: "after 24 hours", kind: "command", col: 1, row: 2 },
+    { id: "transfer", label: "Transfer", type: "one at a time", kind: "aggregate", col: 2, row: 1 },
+  ]}
+  edges={[
+    { from: "agent", to: "approve" },
+    { from: "schedule", to: "expire", dashed: true },
+    { from: "approve", to: "transfer" },
+    { from: "expire", to: "transfer" },
+  ]}
+  caption="Both commands reach the same transfer, which handles one at a time."
+/>
+
+The transfer handles one command at a time, so whichever arrives first changes its state, and its `decide` turns the other away. Approval is only accepted while the transfer is awaiting approval:
+
+```typescript title="packages/domain/src/Transfer/Transfer.aggregate.ts"
+ApproveTransfer: Effect.fn(function* (s, _, { id }) {
+  const approvedBy = yield* CurrentActor;
+  if (approvedBy._tag !== "Agent") return yield* new NotPermitted();
+  if (s._tag !== "AwaitingApproval") return yield* new NotAwaitingApproval();
+```
+
+Expiry fails the transfer only if it's still waiting, and records nothing otherwise:
+
+```typescript title="packages/domain/src/Transfer/Transfer.aggregate.ts"
+ExpireTransfer: (s, _, { id }) =>
+  s._tag === "AwaitingApproval"
+    ? [new TransferFailed({ transferId: id, reason: "not approved in time" })]
+    : [],
+```
+
+So an approved transfer ignores its expiry, and an expired transfer rejects a late approval with `NotAwaitingApproval`.
+
+## Cancel it
+
+When the deadline no longer applies, cancel it. Schedule the command with a command id you can name again, and unschedule it by that id:
+
+```typescript
+// when the waiting starts
+yield* transfers.schedule(source, new ExpireTransfer(), {
+  after: APPROVAL_WINDOW,
+  commandId: `expire:${source.id}`,
+});
+
+// when the transfer is approved
+yield* transfers.unschedule(source, `expire:${source.id}`);
+```
+
+`schedule` returns a `ScheduleReceipt` with the command id and when the command is due (`at`), so code that schedules without its own id can still cancel by `receipt.commandId`.
+
+Unscheduling is durable, like scheduling. Once it succeeds, the command never fires, even when a story's clock passes its time. When there was nothing to cancel, it fails and says why: `AlreadyExecuted` when the command already ran, `AlreadyCancelled` when it was cancelled before, and `NotScheduled` when nothing was scheduled with that id.
+
+A policy cancels after the approval is recorded, so the expiry can still arrive in between. Keep the guard in `decide` for that case. A policy can also run again for the same event, and then finds the expiry already cancelled:
+
+```typescript
+yield* transfers.unschedule(source, `expire:${source.id}`).pipe(
+  Effect.catchTag(["AlreadyExecuted", "AlreadyCancelled"], () => Effect.void),
+);
+```
+
+## Test it with the clock
+
+A story has its own clock. `Story.clock` moves it, and any scheduled command that's now due fires.
+
+```typescript title="packages/domain/test/deadlines.test.ts"
+// A minute before the deadline, nothing has happened.
+Story.clock("2026-01-02T08:59:00Z"),
+Story.then(transfer),
+// At the deadline, the transfer expires.
+Story.clock("2026-01-02T09:00:00Z"),
+Story.then(transfer, new TransferFailed({ transferId: transfer.id, reason: "not approved in time" })),
+// Approval now comes too late.
+Story.provide(CurrentActor, agent("support-7")),
+Story.when(transfer, new ApproveTransfer()),
+Story.rejected(new NotAwaitingApproval()),
+```
+
+`Story.then(transfer)` with no events checks that nothing new was recorded.
+
+:::note
+Scheduling is covered in [Command](/domain/command#send-it-later). A [saga](/domain/saga) waits for the decision.
+:::

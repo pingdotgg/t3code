@@ -1,0 +1,38 @@
+import type * as eks from "@distilled.cloud/aws/eks";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+
+/**
+ * Runtime binding for `eks:DescribeAddonVersions`.
+ *
+ * Reads the add-on catalog — which add-ons (and versions) are available, per Kubernetes version.
+ * `eks:DescribeAddonVersions` is granted on `*` — the operation is account-scoped and takes no resource.
+ * Provide the implementation with
+ * `Effect.provide(AWS.EKS.DescribeAddonVersionsHttp)`.
+ * ### Version Catalogs
+ * **Example:** Find Compatible vpc-cni Versions
+ * ```typescript
+ * // init
+ * const describeAddonVersions = yield* AWS.EKS.DescribeAddonVersions();
+ *
+ * // runtime
+ * const { addons } = yield* describeAddonVersions({
+ *   addonName: "vpc-cni",
+ *   kubernetesVersion: "1.31",
+ * });
+ * ```
+ *
+ * @binding
+ */
+export interface DescribeAddonVersions extends Binding.Service<
+  DescribeAddonVersions,
+  "AWS.EKS.DescribeAddonVersions",
+  () => Effect.Effect<
+    (
+      request?: eks.DescribeAddonVersionsRequest,
+    ) => Effect.Effect<eks.DescribeAddonVersionsResponse, eks.DescribeAddonVersionsError>
+  >
+> {}
+export const DescribeAddonVersions = Binding.Service<DescribeAddonVersions>(
+  "AWS.EKS.DescribeAddonVersions",
+);

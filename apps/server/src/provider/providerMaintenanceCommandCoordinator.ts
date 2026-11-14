@@ -35,13 +35,13 @@ export const makeProviderMaintenanceCommandCoordinator = Effect.fn(
       return next;
     });
 
-  const withCommandLock: ProviderMaintenanceCommandCoordinatorShape<E>["withCommandLock"] = ({
-    targetKey,
-    lockKey,
-    onQueued,
-    run,
-  }) =>
-    Effect.gen(function* () {
+  const withCommandLock: ProviderMaintenanceCommandCoordinatorShape<E>["withCommandLock"] =
+    Effect.fn("providerMaintenanceCommandCoordinator.withCommandLock")(function* ({
+      targetKey,
+      lockKey,
+      onQueued,
+      run,
+    }) {
       const acquired = yield* acquireTarget(targetKey);
       if (!acquired) {
         return yield* Effect.fail(input.makeAlreadyRunningError(targetKey));
