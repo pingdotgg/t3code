@@ -41,6 +41,7 @@ import {
   isTemporaryWorktreeBranch,
 } from "@t3tools/shared/git";
 
+import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import { parseGitCloneProgressLine } from "../project/gitCloneProgress.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -216,6 +217,8 @@ export class ThreadLaunchService extends Context.Service<
       void,
       ThreadLaunchBaseRefError | ThreadLaunchBranchConflictError | ThreadLaunchNotRepositoryError
     >;
+    /** True only when the project's folder is known not to be a Git repository. */
+    readonly isNonGitProject: (projectId: ProjectId) => Effect.Effect<boolean>;
     readonly retryPreparation: (
       input: ThreadLaunchPreparationInput,
     ) => Effect.Effect<
@@ -244,6 +247,7 @@ const make = Effect.gen(function* () {
   const cloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
   const terminals = yield* TerminalManager.TerminalManager;
   const git = yield* GitWorkflow.GitWorkflowService;
+  const checkpointStore = yield* CheckpointStore.CheckpointStore;
   const setupScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -426,6 +430,20 @@ const make = Effect.gen(function* () {
         branch,
         conflictingBranch,
       });
+  });
+
+  const isNonGitProject: ThreadLaunchService["Service"]["isNonGitProject"] = Effect.fn(
+    "ThreadLaunchService.isNonGitProject",
+  )(function* (projectId) {
+    const project = yield* projects
+      .getById(projectId)
+      .pipe(Effect.orElseSucceed(() => Option.none()));
+    if (Option.isNone(project)) return false;
+    // Unlike `git.repositoryRoot`, this fails on a repository Git cannot read, which is not "no repository".
+    return yield* checkpointStore.isGitRepository(project.value.workspaceRoot).pipe(
+      Effect.map((isRepository) => !isRepository),
+      Effect.orElseSucceed(() => false),
+    );
   });
 
   const prepareInBackground = Effect.fn("ThreadLaunchService.prepareInBackground")(function* (
@@ -1133,6 +1151,26 @@ const make = Effect.gen(function* () {
         const initialBranch = yield* launchBranch(workspaceStrategy, project.workspaceRoot);
         const initialWorktreePath =
           workspaceStrategy.type === "existing_worktree" ? workspaceStrategy.worktreePath : null;
+        const initialMessage =
+          input.initialMessage === undefined
+            ? undefined
+            : {
+                messageId:
+                  input.initialMessage.messageId ??
+                  (yield* ids.allocate
+                    .message({ threadId: candidateThreadId, ordinal: 1 })
+                    .pipe(Effect.mapError(mapError(input, "dispatch-message", candidateThreadId)))),
+                text: input.initialMessage.text,
+                ...(input.initialMessage.scheduledTaskId === undefined
+                  ? {}
+                  : { scheduledTaskId: input.initialMessage.scheduledTaskId }),
+                ...(input.initialMessage.senderThreadId === undefined
+                  ? {}
+                  : { senderThreadId: input.initialMessage.senderThreadId }),
+                attachments: input.initialMessage.attachments,
+                ...(input.initialMessage.context ? { context: input.initialMessage.context } : {}),
+                ...(input.generateTitle === true ? { titleSeed: input.title } : {}),
+              };
         const claimDispatch =
           input.reuseExistingThread === true
             ? threads.dispatch({
@@ -1161,6 +1199,9 @@ const make = Effect.gen(function* () {
                   : { delegatedFrom: input.delegatedFrom }),
                 createdBy: input.createdBy,
                 creationSource: input.creationSource,
+                ...(initialMessage === undefined
+                  ? {}
+                  : { initialMessage: { ...initialMessage, workspaceStrategy } }),
               });
         const claimed = yield* claimDispatch.pipe(
           Effect.mapError(
@@ -1180,53 +1221,43 @@ const make = Effect.gen(function* () {
         let runId: RunId | null = null;
         let messageSequence: number | undefined;
         let messageWasAlreadyAccepted = false;
-        if (input.initialMessage !== undefined) {
-          const messageCommandId = CommandId.make(`${input.commandId}:initial-message`);
-          const messageReceipt = yield* readReceipt(input, messageCommandId);
-          messageWasAlreadyAccepted = Option.isSome(messageReceipt);
-          const messageId =
-            input.initialMessage.messageId ??
-            (yield* ids.allocate
-              .message({ threadId, ordinal: 1 })
-              .pipe(Effect.mapError(mapError(input, "dispatch-message", threadId))));
-          const dispatched = yield* threads
-            .dispatch({
-              type: "message.dispatch",
-              commandId: messageCommandId,
-              threadId,
-              messageId,
-              text: input.initialMessage.text,
-              ...(input.initialMessage.scheduledTaskId === undefined
-                ? {}
-                : { scheduledTaskId: input.initialMessage.scheduledTaskId }),
-              ...(input.initialMessage.senderThreadId === undefined
-                ? {}
-                : { senderThreadId: input.initialMessage.senderThreadId }),
-              attachments: input.initialMessage.attachments,
-              ...(input.initialMessage.context ? { context: input.initialMessage.context } : {}),
-              ...(input.generateTitle === true ? { titleSeed: input.title } : {}),
-              modelSelection: input.modelSelection,
-              dispatchMode: { type: "defer_start", workspaceStrategy },
-              createdBy: input.createdBy,
-              creationSource: input.creationSource,
-            })
-            .pipe(
-              // An agent's launch can land on a thread that a replay, or a concurrent
-              // launch with the same key, created with broader modes. The orchestrator
-              // refuses the message under the thread's lock; the user's own clients
-              // launch into their own drafts, whatever modes those hold.
-              input.createdBy === "agent"
-                ? Effect.provideService(DispatchModeLimit, {
-                    runtimeMode: input.runtimeMode,
-                    interactionMode: input.interactionMode,
-                  })
-                : (effect) => effect,
-              Effect.mapError(mapError(input, "dispatch-message", threadId)),
-            );
+        if (initialMessage !== undefined) {
+          // A new thread's claim carries its first message. A reused thread, or a replayed
+          // claim that carried none, takes it in a command of its own.
+          let accepted = claimed;
+          if (!claimed.storedEvents.some((stored) => stored.event.type === "run.created")) {
+            const messageCommandId = CommandId.make(`${input.commandId}:initial-message`);
+            const messageReceipt = yield* readReceipt(input, messageCommandId);
+            messageWasAlreadyAccepted = Option.isSome(messageReceipt);
+            accepted = yield* threads
+              .dispatch({
+                ...initialMessage,
+                type: "message.dispatch",
+                commandId: messageCommandId,
+                threadId,
+                modelSelection: input.modelSelection,
+                dispatchMode: { type: "defer_start", workspaceStrategy },
+                createdBy: input.createdBy,
+                creationSource: input.creationSource,
+              })
+              .pipe(
+                // An agent's launch can land on a thread that a replay, or a concurrent
+                // launch with the same key, created with broader modes. The orchestrator
+                // refuses the message under the thread's lock; the user's own clients
+                // launch into their own drafts, whatever modes those hold.
+                input.createdBy === "agent"
+                  ? Effect.provideService(DispatchModeLimit, {
+                      runtimeMode: input.runtimeMode,
+                      interactionMode: input.interactionMode,
+                    })
+                  : (effect) => effect,
+                Effect.mapError(mapError(input, "dispatch-message", threadId)),
+              );
+          }
           // A concurrent retry can read no receipt and still replay the dispatch.
-          messageWasAlreadyAccepted ||= dispatched.replayed === true;
-          messageSequence = dispatched.sequence;
-          const runCreated = dispatched.storedEvents.find(
+          messageWasAlreadyAccepted ||= accepted.replayed === true;
+          messageSequence = accepted.sequence;
+          const runCreated = accepted.storedEvents.find(
             (stored) => stored.event.type === "run.created",
           );
           runId = runCreated?.event.type === "run.created" ? runCreated.event.payload.id : null;
@@ -1369,7 +1400,13 @@ const make = Effect.gen(function* () {
     );
   });
 
-  return ThreadLaunchService.of({ launch, checkWorktreeBase, retryPreparation, prepareRun });
+  return ThreadLaunchService.of({
+    launch,
+    checkWorktreeBase,
+    isNonGitProject,
+    retryPreparation,
+    prepareRun,
+  });
 });
 
 export const layer = Layer.effect(ThreadLaunchService, make);
