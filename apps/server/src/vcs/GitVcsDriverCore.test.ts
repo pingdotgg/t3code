@@ -7406,7 +7406,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       { location: "root", conflict: true, encoding: "utf16le", markerSize: 10 },
       { location: "root", conflict: true, encoding: "utf16le", large: true },
     ])(
-      "rejects selected-file merge commits without mutation ($location, conflict: $conflict, $encoding, marker size: $markerSize, large: $large)",
+      "rejects selected-file merge commits without mutation ($location, conflict: $conflict, $encoding)",
       ({ location, conflict, encoding, markerSize, large }) =>
         Effect.gen(function* () {
           let cwd = yield* makeTmpDir();
