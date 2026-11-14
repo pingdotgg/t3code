@@ -860,6 +860,62 @@ it.effect("keeps the macOS VS Code Insiders bundle out of stable VS Code", () =>
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.effect.each([
+  {
+    platform: "darwin",
+    scripts: "Library/Application Support/JetBrains/Toolbox/scripts",
+    suffix: "",
+  },
+  { platform: "linux", scripts: ".local/share/JetBrains/Toolbox/scripts", suffix: "" },
+  { platform: "win32", scripts: "JetBrains/Toolbox/scripts", suffix: ".cmd" },
+  {
+    platform: "win32",
+    scripts: "JetBrains/Toolbox/scripts",
+    suffix: ".cmd",
+    install: "Programs/IntelliJ IDEA/bin/idea64.exe",
+  },
+] as const)(
+  "discovers a numbered JetBrains Toolbox script on $platform",
+  ({ platform, scripts, suffix, ...row }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-toolbox-numbered-" });
+      const dir = path.join(home, scripts);
+      yield* fs.makeDirectory(dir, { recursive: true });
+      for (const name of ["idea10", "idea2"]) {
+        yield* fs.writeFileString(path.join(dir, `${name}${suffix}`), "#!/bin/sh\n");
+        yield* fs.chmod(path.join(dir, `${name}${suffix}`), 0o755);
+      }
+      const install = "install" in row ? path.join(home, row.install) : undefined;
+      if (install) {
+        yield* fs.makeDirectory(path.dirname(install), { recursive: true });
+        yield* fs.writeFileString(install, "");
+      }
+
+      const editor = EDITORS.find((editor) => editor.id === "idea")!;
+      const resolved = yield* resolveEditorCommand(editor, {
+        HOME: home,
+        LOCALAPPDATA: home,
+        PATH: path.join(home, "empty"),
+        PATHEXT: ".COM;.EXE;.BAT;.CMD",
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, platform),
+        // Keep IDEs installed on the host out of system locations such as /Applications.
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          stat: (file) =>
+            fs.stat(file.startsWith(`${home}${path.sep}`) ? file : path.join(home, "missing")),
+        }),
+      );
+
+      assert.deepEqual(
+        resolved,
+        Option.some({ command: install ?? path.join(dir, `idea2${suffix}`), baseArgs: [] }),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 for (const { platform, installPath, onPath } of [
   { platform: "darwin", installPath: ".local/bin/agy", onPath: true },
   { platform: "linux", installPath: ".local/bin/agy", onPath: false },
