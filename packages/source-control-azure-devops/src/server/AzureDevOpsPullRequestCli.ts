@@ -97,8 +97,26 @@ export class AzureDevOpsReviewerNameError extends Schema.TaggedError<AzureDevOps
   }
 }
 
+export class AzureDevOpsDescriptionFileError extends Schema.TaggedError<AzureDevOpsDescriptionFileError>()(
+  "AzureDevOpsDescriptionFileError",
+  {
+    command: Schema.Literal("az"),
+    cwd: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  get detail(): string {
+    return "Could not write the pull request description to a temporary file.";
+  }
+
+  override get message(): string {
+    return `Azure CLI failed in updatePullRequest: ${this.detail}`;
+  }
+}
+
 export type AzureDevOpsPullRequestCliError =
   | AzureDevOpsCli.AzureDevOpsCliError
+  | AzureDevOpsDescriptionFileError
   | AzureDevOpsPullRequestReadError
   | AzureDevOpsPullRequestIncompleteError
   | AzureDevOpsReviewerNameError
@@ -358,6 +376,23 @@ export const make = Effect.gen(function* () {
             );
       }),
     );
+
+  const writeDescriptionFile = Effect.fn("AzureDevOpsPullRequestCli.writeDescriptionFile")(
+    function* (cwd: string, body: string) {
+      const file = yield* fileSystem.makeTempFileScoped({
+        prefix: "t3code-pr-body-",
+        suffix: ".md",
+      });
+      yield* fileSystem.writeFileString(file, body);
+      return file;
+    },
+    (effect, cwd) =>
+      effect.pipe(
+        Effect.mapError(
+          (cause) => new AzureDevOpsDescriptionFileError({ command: "az", cwd, cause }),
+        ),
+      ),
+  );
 
   /** Azure's items route requires a leading slash. */
   const toItemPath = (path: string) => (path.startsWith("/") ? path : `/${path}`);
@@ -769,27 +804,28 @@ export const make = Effect.gen(function* () {
       },
     ),
 
-    updatePullRequest: Effect.fn("AzureDevOpsPullRequestCli.updatePullRequest")(function (input) {
-      return azure
-        .execute({
-          cwd: input.cwd,
-          args: [
-            "repos",
-            "pr",
-            "update",
-            ...detectArgs,
-            "--id",
-            String(input.number),
-            // One argv entry preserves leading dashes and multi-string descriptions.
-            ...(input.title === undefined ? [] : [`--title=${input.title}`]),
-            ...(input.body === undefined ? [] : [`--description=${input.body}`]),
-            "--only-show-errors",
-            "--output",
-            "json",
-          ],
-        })
-        .pipe(Effect.asVoid);
-    }),
+    updatePullRequest: Effect.fn("AzureDevOpsPullRequestCli.updatePullRequest")(function* (input) {
+      const descriptionFile =
+        input.body === undefined ? undefined : yield* writeDescriptionFile(input.cwd, input.body);
+      yield* azure.execute({
+        cwd: input.cwd,
+        args: [
+          "repos",
+          "pr",
+          "update",
+          ...detectArgs,
+          "--id",
+          String(input.number),
+          // `--flag=value` keeps a leading-dash title one value.
+          ...(input.title === undefined ? [] : [`--title=${input.title}`]),
+          // cmd.exe ends a Windows az.cmd line at a newline, so the description goes by file.
+          ...(descriptionFile === undefined ? [] : [`--description=@${descriptionFile}`]),
+          "--only-show-errors",
+          "--output",
+          "json",
+        ],
+      });
+    }, Effect.scoped),
   });
 });
 
