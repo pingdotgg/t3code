@@ -28,6 +28,7 @@ import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/c
 import type { AsyncResult } from "effect/reactivity";
 import {
   effectiveSnoozed,
+  hasUnseenRunFailure,
   type ThreadSnoozeShell,
 } from "@t3tools/client-runtime/state/thread-settled";
 import {
@@ -807,16 +808,6 @@ export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
   return completedAt > lastVisitedAt;
 }
 
-/** Unopened threads' failures still count as unseen, unlike completions. */
-function hasUnseenFailure(thread: ThreadStatusInput): boolean {
-  if (thread.latestRun?.status !== "failed") return false;
-  if (!thread.lastVisitedAt) return true;
-  const completedAt = Date.parse(thread.latestRun.completedAt ?? "");
-  const lastVisitedAt = Date.parse(thread.lastVisitedAt);
-  if (Number.isNaN(completedAt) || Number.isNaN(lastVisitedAt)) return true;
-  return completedAt > lastVisitedAt;
-}
-
 // Suppress trailing double-click navigation; keyboard and synthetic clicks use detail 0.
 export function isTrailingDoubleClick(detail: number): boolean {
   return detail > 1;
@@ -996,10 +987,9 @@ export function resolveSidebarRowStatus(
   thread: ThreadStatusInput & SidebarThreadStatusInput,
 ): SidebarThreadStatus {
   const status = resolveSidebarThreadStatus(thread);
-  // Only a failed run's completion dates a failure; runtime.updatedAt also moves on renames.
-  // A runtime failure with no failed run, such as a session failing before any run, stays.
+  // A runtime failure without a failed run has nothing to date it, so it stays.
   if (status !== "failed" || thread.latestRun?.status !== "failed") return status;
-  return hasUnseenFailure(thread) ? status : "ready";
+  return hasUnseenRunFailure(thread) ? status : "ready";
 }
 
 /** What the window title says the open thread is doing, in the words its announcer uses. */
@@ -1288,7 +1278,7 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
-  if (hasUnseenFailure(thread)) {
+  if (hasUnseenRunFailure(thread)) {
     return {
       label: "Failed",
       colorClass: "text-red-600 dark:text-red-300/90",

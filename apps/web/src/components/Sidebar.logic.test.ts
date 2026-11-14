@@ -350,32 +350,14 @@ describe("resolveSidebarRowStatus", () => {
     latestRun: { ...makeLatestRun(), status: "failed" as const },
   };
 
-  it("clears a failure once opened, without showing Done, and shows the next failure", () => {
+  it("settles a failure the user opened to ready, without showing Done", () => {
     expect(resolveSidebarRowStatus({ ...failed, lastVisitedAt: undefined })).toBe("failed");
 
     const opened = { ...failed, lastVisitedAt: "2026-03-09T10:06:00.000Z" };
     expect(resolveSidebarRowStatus(opened)).toBe("ready");
     expect(hasUnseenCompletion(opened)).toBe(false);
-
-    const failedAgain = {
-      ...opened,
-      latestRun: { ...opened.latestRun, completedAt: "2026-03-09T10:10:00.000Z" },
-    };
-    expect(resolveSidebarRowStatus(failedAgain)).toBe("failed");
-  });
-
-  it("keeps an undated failure unseen, so later thread updates cannot revive or hide it", () => {
-    const visitedAfter = "2026-03-09T10:06:00.000Z";
-    const noCompletedAt = {
-      ...failed,
-      latestRun: { ...failed.latestRun, completedAt: null },
-    };
-    expect(resolveSidebarRowStatus({ ...noCompletedAt, lastVisitedAt: visitedAfter })).toBe(
-      "failed",
-    );
-
-    const noRun = { ...failed, latestRun: null };
-    expect(resolveSidebarRowStatus({ ...noRun, lastVisitedAt: visitedAfter })).toBe("failed");
+    // A runtime failure without a failed run has no date, so a visit cannot settle it.
+    expect(resolveSidebarRowStatus({ ...opened, latestRun: null })).toBe("failed");
   });
 });
 
