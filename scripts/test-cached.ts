@@ -16,7 +16,6 @@ const { values, positionals } = NodeUtil.parseArgs({
     "group-size": { type: "string", default: "1" },
     concurrency: { type: "string", default: "1" },
     shard: { type: "string" },
-    report: { type: "string" },
     "verify-hits": { type: "string", default: "0" },
     uncached: { type: "string", multiple: true, default: [] },
     help: { type: "boolean", short: "h" },
@@ -88,7 +87,7 @@ const result = NodeChildProcess.spawnSync(
 if (result.error) throw result.error;
 const cacheRunMs = performance.now() - started;
 process.exitCode = result.status ?? 1;
-if (values.report || verifyHits > 0) {
+if (verifyHits > 0) {
   const cacheRoot =
     process.env.VITE_CACHE_PATH || NodePath.join(root, "node_modules/.vite/task-cache");
   const summaryFiles = NodeFS.readdirSync(cacheRoot, { withFileTypes: true })
@@ -130,18 +129,6 @@ if (values.report || verifyHits > 0) {
       });
       if (audit.status !== 0) process.exitCode = audit.status ?? 1;
     }
-  }
-  const report = {
-    shard: values.shard,
-    files,
-    cacheRunMs,
-    exitCode: result.status,
-    summary,
-    verification,
-  };
-  if (values.report) {
-    NodeFS.mkdirSync(NodePath.dirname(values.report), { recursive: true });
-    NodeFS.writeFileSync(values.report, `${JSON.stringify(report, null, 2)}\n`);
   }
   if (process.env.GITHUB_STEP_SUMMARY) {
     const remote = hits.filter((task) => task.result.CacheHit?.source === "Remote").length;
