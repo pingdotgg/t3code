@@ -2409,6 +2409,7 @@ it.layer(
       variable: "CODEX_HOME",
       config: { homePath: "/configured/codex", shadowHomePath: "/configured/codex-shadow" },
       expectedHome: "/configured/codex-shadow",
+      expectedSqliteHome: "/configured/codex",
     },
     {
       name: "Claude home",
@@ -2417,27 +2418,67 @@ it.layer(
       config: { homePath: "/configured/claude" },
       expectedHome: "/configured/claude",
     },
-  ])("prefers $name over the instance environment", ({ driver, variable, config, expectedHome }) =>
+  ])(
+    "prefers $name over the instance environment",
+    ({ driver, variable, config, expectedHome, expectedSqliteHome }) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const serverSettings = yield* ServerSettings.ServerSettingsService;
+        const environment = yield* TerminalManager.resolveProviderInstanceTerminalEnvironment({
+          deriveProviderInstanceConfigMap,
+          serverSettings,
+          fileSystem: yield* FileSystem.FileSystem,
+          path,
+          rawProviderInstanceId: "configured_home",
+          env: undefined,
+        });
+
+        expect(environment[variable]).toBe(path.resolve(expectedHome));
+        expect(environment.CODEX_SQLITE_HOME).toBe(
+          expectedSqliteHome && path.resolve(expectedSqliteHome),
+        );
+      }).pipe(
+        Effect.provide(
+          ServerSettings.layerTest({
+            providerInstances: {
+              [ProviderInstanceId.make("configured_home")]: {
+                driver: ProviderDriverKind.make(driver),
+                environment: [
+                  { name: variable, value: "~/.environment-account", sensitive: false },
+                ],
+                config,
+              },
+            },
+          }),
+        ),
+      ),
+  );
+
+  it.effect("routes a shadow terminal's SQLite to the instance environment CODEX_HOME", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const environment = yield* TerminalManager.resolveProviderInstanceTerminalEnvironment({
         deriveProviderInstanceConfigMap,
         serverSettings,
+        fileSystem: yield* FileSystem.FileSystem,
         path,
-        rawProviderInstanceId: "configured_home",
+        rawProviderInstanceId: "environment_home",
         env: undefined,
-      });
+      }).pipe(Effect.provideService(HostProcess.Environment, {}));
 
-      expect(environment[variable]).toBe(path.resolve(expectedHome));
+      expect(environment.CODEX_HOME).toBe(path.resolve("/configured/environment-shadow"));
+      expect(environment.CODEX_SQLITE_HOME).toBe(path.resolve("/configured/environment-codex"));
     }).pipe(
       Effect.provide(
         ServerSettings.layerTest({
           providerInstances: {
-            [ProviderInstanceId.make("configured_home")]: {
-              driver: ProviderDriverKind.make(driver),
-              environment: [{ name: variable, value: "~/.environment-account", sensitive: false }],
-              config,
+            [ProviderInstanceId.make("environment_home")]: {
+              driver: ProviderDriverKind.make("codex"),
+              environment: [
+                { name: "CODEX_HOME", value: "/configured/environment-codex", sensitive: false },
+              ],
+              config: { shadowHomePath: "/configured/environment-shadow" },
             },
           },
         }),

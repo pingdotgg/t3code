@@ -4,14 +4,18 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as NodeSqlite from "node:sqlite";
 
 import { CodexSettings } from "@t3tools/contracts";
 import {
   CodexShadowHomeEntryConflictError,
   CodexShadowHomePathConflictError,
+  CodexShadowHomeSqliteConflictError,
+  codexHomeEnvironment,
   materializeCodexShadowHome,
   resolveCodexHomeLayout,
 } from "./CodexHomeLayout.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 const decodeCodexSettingsValue = Schema.decodeSync(CodexSettings);
 
@@ -36,6 +40,15 @@ const writeTextFile = Effect.fn("CodexHomeLayout.test.writeTextFile")(function* 
   const path = yield* Path.Path;
   yield* fileSystem.makeDirectory(path.dirname(filePath), { recursive: true });
   yield* fileSystem.writeFileString(filePath, contents);
+});
+
+const makeShadowLayout = Effect.fn("CodexHomeLayout.test.makeShadowLayout")(function* () {
+  const sharedHome = yield* makeTempDir("t3code-codex-shared-");
+  const shadowHome = yield* makeTempDir("t3code-codex-shadow-");
+  const layout = yield* resolveCodexHomeLayout(
+    decodeCodexSettings({ homePath: sharedHome, shadowHomePath: shadowHome }),
+  );
+  return { sharedHome, shadowHome, layout };
 });
 
 it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
@@ -83,15 +96,15 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
             decodeCodexSettings({ homePath: sharedHome, shadowHomePath: shadowHome }),
           );
 
-          yield* materializeCodexShadowHome(layout);
+          yield* materializeCodexShadowHome(layout, {});
           expect(yield* fileSystem.readFileString(shadowMetadata)).toBe("shadow Finder metadata");
           yield* fileSystem.remove(shadowMetadata);
-          yield* materializeCodexShadowHome(layout);
+          yield* materializeCodexShadowHome(layout, {});
           expect(yield* fileSystem.exists(shadowMetadata)).toBe(false);
 
           yield* writeTextFile(shadowMetadata, "shadow Finder metadata");
-          yield* materializeCodexShadowHome(layout);
-          yield* materializeCodexShadowHome(layout);
+          yield* materializeCodexShadowHome(layout, {});
+          yield* materializeCodexShadowHome(layout, {});
 
           expect(yield* fileSystem.readFileString(sharedMetadata)).toBe("shared Finder metadata");
           expect(yield* fileSystem.readFileString(shadowMetadata)).toBe("shadow Finder metadata");
@@ -137,7 +150,7 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
             }),
           );
 
-          yield* materializeCodexShadowHome(layout);
+          yield* materializeCodexShadowHome(layout, {});
 
           const sessionsTarget = yield* fileSystem.readLink(path.join(shadowHome, "sessions"));
           const configTarget = yield* fileSystem.readLink(path.join(shadowHome, "config.toml"));
@@ -187,7 +200,7 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
             }),
           );
 
-          yield* materializeCodexShadowHome(layout);
+          yield* materializeCodexShadowHome(layout, {});
 
           expect(yield* fileSystem.readLink(shadowLock)).toBe(sharedLock);
         }),
@@ -215,7 +228,7 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
             }),
           );
 
-          yield* materializeCodexShadowHome(layout);
+          yield* materializeCodexShadowHome(layout, {});
 
           const locksTarget = yield* fileSystem.readLink(shadowLocks);
           const sharedLockExists = yield* fileSystem.exists(
@@ -250,11 +263,11 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
             }),
           );
 
-          yield* materializeCodexShadowHome(layout);
+          yield* materializeCodexShadowHome(layout, {});
           expect(yield* fileSystem.exists(threadLock)).toBe(true);
 
           yield* fileSystem.remove(threadLock);
-          yield* materializeCodexShadowHome(layout);
+          yield* materializeCodexShadowHome(layout, {});
           expect(yield* fileSystem.readLink(shadowLocks)).toBe(
             path.join(sharedHome, "thread-writer-locks"),
           );
@@ -287,7 +300,7 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
             }),
           );
 
-          yield* materializeCodexShadowHome(layout);
+          yield* materializeCodexShadowHome(layout, {});
 
           const configTarget = yield* fileSystem.readLink(path.join(shadowHome, "config.toml"));
           const logLinkResult = yield* fileSystem
@@ -317,7 +330,7 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
           }),
         );
 
-        const error = yield* materializeCodexShadowHome(layout).pipe(Effect.flip);
+        const error = yield* materializeCodexShadowHome(layout, {}).pipe(Effect.flip);
 
         expect(error).toBeInstanceOf(CodexShadowHomePathConflictError);
         expect(error).toMatchObject({
@@ -348,7 +361,7 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
             }),
           );
 
-          const error = yield* materializeCodexShadowHome(layout).pipe(Effect.flip);
+          const error = yield* materializeCodexShadowHome(layout, {}).pipe(Effect.flip);
 
           expect(error).toBeInstanceOf(CodexShadowHomeEntryConflictError);
           expect(error).toMatchObject({
@@ -362,6 +375,240 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
             `Cannot create Codex shadow home entry 'config.toml' because '${path.join(shadowHome, "config.toml")}' already exists and is not a symlink.`,
           );
         }),
+    );
+  });
+
+  describe("SQLite routing", () => {
+    it.effect.skipIf(!symlinksSupported)(
+      "keeps SQLite out of a fresh shadow and routes it to the shared home",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const { sharedHome, shadowHome, layout } = yield* makeShadowLayout();
+          yield* writeTextFile(path.join(sharedHome, "state_5.sqlite"), "db");
+          yield* writeTextFile(path.join(sharedHome, "state_5.sqlite-wal"), "wal");
+
+          const environment = yield* materializeCodexShadowHome(layout, { KEEP: "1" });
+
+          expect(environment).toEqual({ KEEP: "1", CODEX_SQLITE_HOME: sharedHome });
+          const shadowEntries = yield* fileSystem.readDirectory(shadowHome);
+          expect(shadowEntries.filter((entry) => entry.includes(".sqlite"))).toEqual([]);
+        }),
+    );
+
+    it.effect.skipIf(!symlinksSupported)(
+      "accepts legacy SQLite links with empty or index-only sidecars",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const { sharedHome, shadowHome, layout } = yield* makeShadowLayout();
+          yield* writeTextFile(path.join(sharedHome, "state_5.sqlite"), "db");
+          yield* fileSystem.symlink(
+            path.join(sharedHome, "state_5.sqlite"),
+            path.join(shadowHome, "state_5.sqlite"),
+          );
+          yield* writeTextFile(path.join(shadowHome, "state_5.sqlite-wal"), "");
+          yield* writeTextFile(path.join(shadowHome, "state_5.sqlite-shm"), "index");
+
+          const environment = yield* materializeCodexShadowHome(layout, {});
+
+          expect(environment.CODEX_SQLITE_HOME).toBe(sharedHome);
+          expect(yield* fileSystem.readLink(path.join(shadowHome, "state_5.sqlite"))).toBe(
+            path.join(sharedHome, "state_5.sqlite"),
+          );
+        }),
+    );
+
+    it.effect.skipIf(!symlinksSupported)(
+      "refuses a shadow WAL holding data for a linked database without touching it",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const { sharedHome, shadowHome, layout } = yield* makeShadowLayout();
+          const shadowWal = path.join(shadowHome, "state_5.sqlite-wal");
+          yield* writeTextFile(path.join(sharedHome, "state_5.sqlite"), "db");
+          yield* fileSystem.symlink(
+            path.join(sharedHome, "state_5.sqlite"),
+            path.join(shadowHome, "state_5.sqlite"),
+          );
+          yield* writeTextFile(shadowWal, "uncheckpointed frames");
+
+          const error = yield* materializeCodexShadowHome(layout, {}).pipe(Effect.flip);
+
+          expect(error).toBeInstanceOf(CodexShadowHomeSqliteConflictError);
+          expect(error).toMatchObject({ entryName: "state_5.sqlite-wal" });
+          expect(yield* fileSystem.readFileString(shadowWal)).toBe("uncheckpointed frames");
+          expect(yield* fileSystem.exists(path.join(shadowHome, "sessions"))).toBe(false);
+          expect(
+            yield* materializeCodexShadowHome(layout, { CODEX_SQLITE_HOME: " /elsewhere " }),
+          ).toEqual({ CODEX_SQLITE_HOME: "/elsewhere" });
+        }),
+    );
+
+    it.effect.skipIf(!symlinksSupported)(
+      "keeps a shadow's own databases on POSIX and refuses only one the shared home also has",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const { sharedHome, shadowHome, layout } = yield* makeShadowLayout();
+          yield* writeTextFile(path.join(shadowHome, "state_5.sqlite"), "private db");
+          yield* writeTextFile(path.join(shadowHome, "state_5.sqlite-wal"), "private wal");
+
+          expect((yield* codexHomeEnvironment(layout, {})).CODEX_SQLITE_HOME).toBe(shadowHome);
+
+          yield* writeTextFile(path.join(sharedHome, "goals_1.sqlite"), "shared db");
+          yield* writeTextFile(path.join(sharedHome, "goals_1.sqlite-wal"), "shared wal");
+          const environment = yield* materializeCodexShadowHome(layout, {});
+          expect(environment.CODEX_SQLITE_HOME).toBe(shadowHome);
+          expect(yield* fileSystem.readLink(path.join(shadowHome, "goals_1.sqlite"))).toBe(
+            path.join(sharedHome, "goals_1.sqlite"),
+          );
+          expect(yield* fileSystem.exists(path.join(shadowHome, "goals_1.sqlite-wal"))).toBe(false);
+          expect(yield* fileSystem.readFileString(path.join(shadowHome, "state_5.sqlite"))).toBe(
+            "private db",
+          );
+
+          yield* writeTextFile(path.join(sharedHome, "state_5.sqlite"), "shared db");
+          const error = yield* codexHomeEnvironment(layout, {}).pipe(Effect.flip);
+          expect(error).toBeInstanceOf(CodexShadowHomeSqliteConflictError);
+        }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
+    );
+
+    it.effect.skipIf(!symlinksSupported)(
+      "refuses on Windows to link shared databases into a shadow that has its own",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const { sharedHome, shadowHome, layout } = yield* makeShadowLayout();
+          yield* writeTextFile(path.join(shadowHome, "state_5.sqlite"), "private db");
+          yield* writeTextFile(path.join(shadowHome, "state_5.sqlite-wal"), "private wal");
+
+          // With no shared databases there is nothing to link, so the shadow keeps its own.
+          expect((yield* materializeCodexShadowHome(layout, {})).CODEX_SQLITE_HOME).toBe(
+            shadowHome,
+          );
+
+          yield* writeTextFile(path.join(sharedHome, "goals_1.sqlite"), "shared db");
+          yield* writeTextFile(path.join(sharedHome, "goals_1.sqlite-wal"), "shared wal");
+          const error = yield* materializeCodexShadowHome(layout, {}).pipe(Effect.flip);
+
+          expect(error).toBeInstanceOf(CodexShadowHomeSqliteConflictError);
+          expect(error).toMatchObject({
+            sharedHomePath: sharedHome,
+            effectiveHomePath: shadowHome,
+            entryName: "state_5.sqlite",
+            sharedEntryName: "goals_1.sqlite",
+          });
+          expect(error.message).toContain(shadowHome);
+          expect(error.message).toContain(sharedHome);
+          expect(yield* fileSystem.exists(path.join(shadowHome, "goals_1.sqlite"))).toBe(false);
+          expect(yield* fileSystem.readFileString(path.join(shadowHome, "state_5.sqlite"))).toBe(
+            "private db",
+          );
+          expect(
+            yield* fileSystem.readFileString(path.join(shadowHome, "state_5.sqlite-wal")),
+          ).toBe("private wal");
+          expect(
+            yield* fileSystem.readFileString(path.join(sharedHome, "goals_1.sqlite-wal")),
+          ).toBe("shared wal");
+          expect(
+            yield* materializeCodexShadowHome(layout, { CODEX_SQLITE_HOME: sharedHome }),
+          ).toEqual({ CODEX_SQLITE_HOME: sharedHome });
+        }).pipe(Effect.provideService(HostProcess.Platform, "win32")),
+    );
+
+    it.effect.skipIf(!symlinksSupported)(
+      "refuses on Windows a shadow that keeps its own database beside a dangling legacy link",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const { sharedHome, shadowHome, layout } = yield* makeShadowLayout();
+          yield* writeTextFile(path.join(shadowHome, "state_5.sqlite"), "private db");
+          yield* fileSystem.symlink(
+            path.join(sharedHome, "goals_1.sqlite"),
+            path.join(shadowHome, "goals_1.sqlite"),
+          );
+
+          const error = yield* materializeCodexShadowHome(layout, {}).pipe(Effect.flip);
+
+          expect(error).toMatchObject({
+            _tag: "CodexShadowHomeSqliteConflictError",
+            entryName: "state_5.sqlite",
+            sharedEntryName: "goals_1.sqlite",
+          });
+          expect(yield* fileSystem.exists(path.join(sharedHome, "goals_1.sqlite"))).toBe(false);
+        }).pipe(Effect.provideService(HostProcess.Platform, "win32")),
+    );
+
+    it.effect.skipIf(!symlinksSupported)(
+      "does not link a database the shared home gains after the Windows check",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const { sharedHome, shadowHome, layout } = yield* makeShadowLayout();
+          yield* writeTextFile(path.join(shadowHome, "state_5.sqlite"), "private db");
+          let checked = false;
+          const environment = yield* materializeCodexShadowHome(layout, {}).pipe(
+            Effect.provideService(FileSystem.FileSystem, {
+              ...fileSystem,
+              readDirectory: (directory, options) =>
+                directory === sharedHome && !checked
+                  ? fileSystem.readDirectory(directory, options).pipe(
+                      Effect.tap(() => {
+                        checked = true;
+                        return fileSystem.writeFileString(
+                          path.join(sharedHome, "goals_1.sqlite"),
+                          "shared db",
+                        );
+                      }),
+                    )
+                  : fileSystem.readDirectory(directory, options),
+            }),
+          );
+
+          expect(checked).toBe(true);
+          expect(environment.CODEX_SQLITE_HOME).toBe(shadowHome);
+          expect(yield* fileSystem.exists(path.join(shadowHome, "goals_1.sqlite"))).toBe(false);
+        }).pipe(Effect.provideService(HostProcess.Platform, "win32")),
+    );
+
+    it.effect.skipIf(!symlinksSupported || HostProcess.Platform.defaultValue() === "win32")(
+      "keeps one WAL for a shared database a POSIX shadow opens through its link",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const { sharedHome, shadowHome, layout } = yield* makeShadowLayout();
+          yield* writeTextFile(path.join(shadowHome, "state_5.sqlite"), "");
+          const sharedDb = new NodeSqlite.DatabaseSync(path.join(sharedHome, "goals_1.sqlite"));
+          sharedDb.exec(
+            "PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; CREATE TABLE goals(id); INSERT INTO goals VALUES (1);",
+          );
+
+          const environment = yield* materializeCodexShadowHome(layout, {});
+          const sqliteHome = environment.CODEX_SQLITE_HOME ?? "";
+          expect(sqliteHome).toBe(shadowHome);
+          const shadowDb = new NodeSqlite.DatabaseSync(path.join(sqliteHome, "goals_1.sqlite"));
+          shadowDb.exec("INSERT INTO goals VALUES (2);");
+          const shadowCount = shadowDb.prepare("SELECT count(*) AS count FROM goals").get();
+          const sharedCount = sharedDb.prepare("SELECT count(*) AS count FROM goals").get();
+          const shadowEntries = yield* fileSystem.readDirectory(shadowHome);
+          shadowDb.close();
+          sharedDb.close();
+
+          expect(shadowCount?.count).toBe(2);
+          expect(sharedCount?.count).toBe(2);
+          expect(shadowEntries.filter((entry) => entry.startsWith("goals_1.sqlite"))).toEqual([
+            "goals_1.sqlite",
+          ]);
+        }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
     );
   });
 });

@@ -69,7 +69,10 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
-import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
+import {
+  codexHomeEnvironment,
+  resolveCodexHomeLayout,
+} from "../provider/Drivers/CodexHomeLayout.ts";
 import { makeClaudeEnvironment } from "../provider/Drivers/ClaudeHome.ts";
 import type { deriveProviderInstanceConfigMap } from "../provider/ProviderInstanceRegistryHydration.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -1630,6 +1633,7 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
 )(function* (input: {
   readonly deriveProviderInstanceConfigMap: typeof deriveProviderInstanceConfigMap;
   readonly serverSettings: ServerSettings.ServerSettingsService["Service"];
+  readonly fileSystem: FileSystem.FileSystem;
   readonly path: Path.Path;
   readonly rawProviderInstanceId: string;
   readonly env: Record<string, string> | undefined;
@@ -1647,11 +1651,43 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
   if (instance.driver === "codex") {
     const config = decodeCodexSettings(instance.config ?? {});
     if (Option.isSome(config)) {
-      const layout = yield* resolveCodexHomeLayout(config.value).pipe(
-        Effect.provideService(Path.Path, input.path),
-      );
+      const hostEnvironment = yield* HostProcess.Environment;
+      // A shadow shares the instance environment's CODEX_HOME, as the provider resolves it.
+      const environmentHome = (yield* mergeProviderInstanceEnvironment(
+        instance.environment,
+        hostEnvironment,
+      )).CODEX_HOME;
+      const layout = yield* resolveCodexHomeLayout(
+        config.value.shadowHomePath.trim() &&
+          !config.value.homePath.trim() &&
+          environmentHome?.trim()
+          ? { ...config.value, homePath: environmentHome }
+          : config.value,
+      ).pipe(Effect.provideService(Path.Path, input.path));
       if (layout.effectiveHomePath)
         resolved = { ...resolved, CODEX_HOME: layout.effectiveHomePath };
+      if (layout.mode === "authOverlay") {
+        const sqliteEnvironment = yield* codexHomeEnvironment(layout, {
+          ...hostEnvironment,
+          ...resolved,
+        }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new TerminalProviderEnvironmentError({
+                providerInstanceId,
+                ...(cause._tag === "CodexShadowHomeSqliteConflictError"
+                  ? { detail: cause.message }
+                  : {}),
+                cause,
+              }),
+          ),
+          Effect.provideService(FileSystem.FileSystem, input.fileSystem),
+          Effect.provideService(Path.Path, input.path),
+        );
+        if (sqliteEnvironment.CODEX_SQLITE_HOME) {
+          resolved = { ...resolved, CODEX_SQLITE_HOME: sqliteEnvironment.CODEX_SQLITE_HOME };
+        }
+      }
     }
   } else if (instance.driver === "claudeAgent") {
     const config = decodeClaudeSettings(instance.config ?? {});
@@ -1676,6 +1712,7 @@ export const make = Effect.fn("TerminalManager.make")(function* (
   const portDiscovery = yield* PortScanner.PortDiscovery;
   const nativeTelemetry = yield* NativeTelemetryClient.NativeTelemetryClient;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const resolveProviderInstanceEnvironment = Effect.fn(
     "terminal.resolveProviderInstanceEnvironment",
@@ -1683,6 +1720,7 @@ export const make = Effect.fn("TerminalManager.make")(function* (
     resolveProviderInstanceTerminalEnvironment({
       deriveProviderInstanceConfigMap: deriveConfigMap,
       serverSettings,
+      fileSystem,
       path,
       rawProviderInstanceId,
       env,

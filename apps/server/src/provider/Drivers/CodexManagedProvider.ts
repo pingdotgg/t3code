@@ -7,6 +7,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Option from "effect/Option";
 import { ChildProcessSpawner } from "effect/process";
@@ -27,10 +28,15 @@ import {
   type ProviderDriverCreateInput,
   type ProviderInstance,
 } from "@t3tools/provider-core/server/driver";
-import { codexContinuationIdentity } from "./CodexHomeLayout.ts";
+import {
+  CodexShadowHomeSqliteConflictError,
+  codexContinuationIdentity,
+} from "./CodexHomeLayout.ts";
 import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
 import { HttpClient } from "effect/http";
 const DRIVER = ProviderDriverKind.make("codex");
+const isProviderSetupError = Schema.is(ProviderSetupError);
+const isCodexShadowHomeSqliteConflictError = Schema.is(CodexShadowHomeSqliteConflictError);
 
 export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(function* (
   input: ProviderDriverCreateInput<CodexSettings>,
@@ -179,11 +185,16 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
             : {}),
         }),
       ),
-      Effect.catch(() =>
-        runtime.auth.read.pipe(
+      Effect.catch((cause) => {
+        const sqliteConflict =
+          isProviderSetupError(cause) && isCodexShadowHomeSqliteConflictError(cause.cause)
+            ? cause.cause
+            : undefined;
+        return runtime.auth.read.pipe(
           Effect.orElseSucceed(() => Option.none()),
           Effect.map((current) => ({
             ...base,
+            ...(sqliteConflict ? { status: "error" as const } : {}),
             installed: true,
             version: executable.value.version,
             models: [],
@@ -204,10 +215,12 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
             ...(Option.isSome(current) && current.value.scopes.includes("chatgpt.tokens.use.direct")
               ? { usageLimits }
               : {}),
-            message: "Could not check Codex right now. Retry, or reconnect in provider settings.",
+            message:
+              sqliteConflict?.message ??
+              "Could not check Codex right now. Retry, or reconnect in provider settings.",
           })),
-        ),
-      ),
+        );
+      }),
       Effect.scoped,
     );
   }).pipe(

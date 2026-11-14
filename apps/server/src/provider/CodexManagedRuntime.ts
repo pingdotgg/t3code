@@ -91,7 +91,7 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
       environmentId,
       profileKey,
     ]);
-    yield* materializeCodexShadowHome(homeLayout).pipe(
+    const homeEnvironment = yield* materializeCodexShadowHome(homeLayout, options.environment).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
       Effect.mapError(
@@ -100,6 +100,7 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
             instanceId: options.instanceId,
             operation: "runtime",
             detail: cause.message,
+            cause,
           }),
       ),
     );
@@ -115,7 +116,7 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
     );
     // Ambient CLI overrides cannot redirect a T3-owned token to a different provider.
     const environment: NodeJS.ProcessEnv = {
-      ...options.environment,
+      ...homeEnvironment,
       CODEX_HOME: homePath,
     };
     delete environment.ACCESS_TOKEN;
