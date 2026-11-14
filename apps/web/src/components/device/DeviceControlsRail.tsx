@@ -34,6 +34,11 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import type { DeviceStreamHandle, DeviceViewControls } from "./DeviceStreamView";
 import type { DeviceControls } from "./useDeviceControls";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`device:${key}`, options);
+
 export function DeviceControlsRail(props: {
   platform: DevicePlatform;
   hostKind: DeviceHostSummary["kind"] | undefined;
@@ -56,14 +61,14 @@ export function DeviceControlsRail(props: {
   const nextAppearance = settings?.appearance === "dark" ? "light" : "dark";
   return (
     <aside
-      aria-label="Device controls"
+      aria-label={td("rail.controls")}
       data-layout="rail"
       className="pointer-events-none absolute inset-y-0 right-0 z-10 flex w-14 flex-col items-center gap-2 overflow-y-auto [justify-content:safe_center] py-3 pr-2 [scrollbar-width:none]"
     >
       <div className="pointer-events-auto flex shrink-0 flex-col items-center gap-1 overflow-y-auto rounded-full border border-border/50 bg-background/80 p-2 shadow-sm [scrollbar-width:none]">
         <RailButton
           tooltipSide={popupSide}
-          label="Home"
+          label={td("rail.home")}
           disabled={inputDisabled}
           onClick={() => handle?.pressButton("home")}
         >
@@ -73,7 +78,7 @@ export function DeviceControlsRail(props: {
           <>
             <RailButton
               tooltipSide={popupSide}
-              label="Back"
+              label={td("rail.back")}
               disabled={inputDisabled}
               onClick={() => handle?.pressButton("back")}
             >
@@ -81,7 +86,7 @@ export function DeviceControlsRail(props: {
             </RailButton>
             <RailButton
               tooltipSide={popupSide}
-              label="Recents"
+              label={td("rail.recents")}
               disabled={inputDisabled}
               onClick={() => handle?.pressButton("recents")}
             >
@@ -94,7 +99,7 @@ export function DeviceControlsRail(props: {
                     <Button
                       size="icon-sm"
                       variant="ghost"
-                      aria-label="Rotate device"
+                      aria-label={td("rail.rotate")}
                       disabled={controls.disabled}
                     />
                   }
@@ -121,7 +126,7 @@ export function DeviceControlsRail(props: {
         ) : props.hostKind === "simlock" ? null : (
           <RailButton
             tooltipSide={popupSide}
-            label="Rotate device"
+            label={td("rail.rotate")}
             disabled={inputDisabled || !!view.keyboard?.attached}
             onClick={() => handle?.rotate()}
           >
@@ -145,8 +150,8 @@ export function DeviceControlsRail(props: {
                   <Button
                     size="icon-sm"
                     variant="ghost"
-                    aria-label="Device text size"
-                    title="Device text size"
+                    aria-label={td("rail.textSize")}
+                    title={td("rail.textSize")}
                     disabled={controls.disabled || !settings?.textSize}
                   />
                 }
@@ -168,15 +173,15 @@ export function DeviceControlsRail(props: {
                 >
                   {(
                     [
-                      ["small", "Small"],
-                      ["default", "Default"],
-                      ["large", "Large"],
-                      ["extra-large", "Extra large"],
+                      ["small", "textSize.small"],
+                      ["default", "textSize.default"],
+                      ["large", "textSize.large"],
+                      ["extra-large", "textSize.extraLarge"],
                     ] as const
                   ).map(([value, label]) => (
                     <MenuRadioItem key={value} value={value}>
                       <span className="flex items-center gap-2">
-                        <span className="flex-1">{label}</span>
+                        <span className="flex-1">{td(label)}</span>
                         <MenuRadioItemIndicator />
                       </span>
                     </MenuRadioItem>
@@ -186,7 +191,7 @@ export function DeviceControlsRail(props: {
             </Menu>
             <RailButton
               tooltipSide={popupSide}
-              label="Device tools"
+              label={td("rail.tools")}
               pressed={props.toolsOpen}
               onClick={props.onTools}
             >
@@ -197,7 +202,9 @@ export function DeviceControlsRail(props: {
         {props.hostKind === "simlock" ? null : (
           <RailButton
             tooltipSide={popupSide}
-            label={props.screenshotPending ? "Capturing screenshot" : "Save screenshot"}
+            label={
+              props.screenshotPending ? td("rail.capturingScreenshot") : td("rail.saveScreenshot")
+            }
             disabled={!view.streaming || props.screenshotPending}
             onClick={props.onScreenshot}
           >
@@ -210,8 +217,8 @@ export function DeviceControlsRail(props: {
               <Button
                 size="icon-sm"
                 variant="ghost"
-                aria-label="More device actions"
-                title="More device actions"
+                aria-label={td("rail.moreActions")}
+                title={td("rail.moreActions")}
               />
             }
           >
@@ -229,14 +236,14 @@ export function DeviceControlsRail(props: {
             <MenuSeparator />
             <MenuItem variant="destructive" onClick={props.onPowerOff}>
               <Power />
-              {props.hostKind === "simlock" ? "Return device to the pool" : "Power off device"}
+              {props.hostKind === "simlock" ? td("rail.returnToPool") : td("rail.powerOff")}
             </MenuItem>
           </MenuPopup>
         </Menu>
         <RailDivider />
         <RailButton
           tooltipSide={popupSide}
-          label="3D view"
+          label={td("rail.view3d")}
           pressed={view.phone}
           disabled={!view.streaming || !!view.phoneUnavailableReason}
           description={view.phoneUnavailableReason ?? undefined}
@@ -246,7 +253,7 @@ export function DeviceControlsRail(props: {
         </RailButton>
         <RailButton
           tooltipSide={popupSide}
-          label="Flat view"
+          label={td("rail.viewFlat")}
           pressed={!view.phone}
           disabled={!view.streaming}
           onClick={view.showFlat}
@@ -256,7 +263,7 @@ export function DeviceControlsRail(props: {
         {view.keyboard ? (
           <RailButton
             tooltipSide={popupSide}
-            label={view.keyboard.attached ? "Detach Magic Keyboard" : "Attach Magic Keyboard"}
+            label={view.keyboard.attached ? td("rail.detachKeyboard") : td("rail.attachKeyboard")}
             pressed={view.keyboard.attached}
             onClick={view.keyboard.toggle}
           >
@@ -264,7 +271,7 @@ export function DeviceControlsRail(props: {
           </RailButton>
         ) : null}
         {view.phone ? (
-          <RailButton tooltipSide={popupSide} label="Restore 3D view" onClick={view.resetView}>
+          <RailButton tooltipSide={popupSide} label={td("rail.restore3d")} onClick={view.resetView}>
             <Maximize />
           </RailButton>
         ) : null}

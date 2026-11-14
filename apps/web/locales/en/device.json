@@ -1,0 +1,131 @@
+{
+  "tools": "Tools",
+  "closeTools": "Close tools",
+  "section": {
+    "hostDiagnostics": "Host diagnostics",
+    "app": "App",
+    "simulator": "Simulator",
+    "emulator": "Emulator",
+    "accessibility": "Accessibility",
+    "pushNotification": "Push notification",
+    "location": "Location",
+    "permissions": "Permissions"
+  },
+  "row": {
+    "foreground": "Foreground",
+    "appearance": "Appearance",
+    "textSize": "Text size",
+    "liquidGlass": "Liquid Glass",
+    "colorFilter": "Color filter",
+    "orientation": "Orientation",
+    "network": "Network"
+  },
+  "textSize": {
+    "small": "Small",
+    "default": "Default",
+    "large": "Large",
+    "extraLarge": "Extra large"
+  },
+  "colorFilter": {
+    "grayscale": "Grayscale",
+    "redGreen": "Red / green (protanopia)",
+    "greenRed": "Green / red (deuteranopia)",
+    "blueYellow": "Blue / yellow (tritanopia)"
+  },
+  "orientation": {
+    "portrait": "Portrait",
+    "landscapeLeft": "Landscape left",
+    "upsideDown": "Upside down",
+    "landscapeRight": "Landscape right"
+  },
+  "permission": {
+    "camera": "Camera",
+    "microphone": "Microphone",
+    "photos": "Photos",
+    "contacts": "Contacts",
+    "calendar": "Calendar",
+    "reminders": "Reminders",
+    "location": "Location",
+    "notifications": "Notifications",
+    "motion": "Motion",
+    "mediaLibrary": "Media library",
+    "faceId": "Face ID",
+    "physicalActivity": "Physical activity",
+    "one": "Permission"
+  },
+  "appearance": {
+    "light": "Light",
+    "dark": "Dark"
+  },
+  "liquidGlass": {
+    "clear": "Clear",
+    "tinted": "Tinted"
+  },
+  "a11y": {
+    "reduceMotion": "Reduce Motion",
+    "increaseContrast": "Increase Contrast",
+    "reduceTransparency": "Reduce Transparency",
+    "showBorders": "Show Borders",
+    "voiceOver": "VoiceOver",
+    "overlayFrames": "Overlay element frames"
+  },
+  "appUrlPlaceholder": "https://… or myapp://",
+  "bundleIdPlaceholder": "Bundle ID to launch",
+  "packageNamePlaceholder": "Package name to launch",
+  "launch": "Launch",
+  "rotateTo": "Rotate to…",
+  "alertTextPlaceholder": "Alert text",
+  "openAppFirst": "Open an app first.",
+  "unknown": "Unknown",
+  "latitude": "Latitude",
+  "longitude": "Longitude",
+  "locationPreset": "Location preset",
+  "presetEllipsis": "Preset…",
+  "appIdPlaceholder": "App ID",
+  "noEvents": "No events yet.",
+  "rail": {
+    "controls": "Device controls",
+    "home": "Home",
+    "back": "Back",
+    "recents": "Recents",
+    "rotate": "Rotate device",
+    "textSize": "Device text size",
+    "tools": "Device tools",
+    "capturingScreenshot": "Capturing screenshot",
+    "saveScreenshot": "Save screenshot",
+    "moreActions": "More device actions",
+    "returnToPool": "Return device to the pool",
+    "powerOff": "Power off device",
+    "view3d": "3D view",
+    "viewFlat": "Flat view",
+    "detachKeyboard": "Detach Magic Keyboard",
+    "attachKeyboard": "Attach Magic Keyboard",
+    "restore3d": "Restore 3D view"
+  },
+  "toolbar": {
+    "title": "Browser device toolbar",
+    "preset": "Browser device preset",
+    "responsive": "Responsive",
+    "standard": "Standard",
+    "dimensions": "Viewport dimensions",
+    "width": "Viewport width",
+    "height": "Viewport height",
+    "lockAspectRatio": "Lock viewport aspect ratio",
+    "unlockAspectRatio": "Unlock viewport aspect ratio",
+    "rotateViewport": "Rotate viewport",
+    "close": "Close device toolbar"
+  },
+  "page": {
+    "title": "Browser page",
+    "copiedText": "The page copied text",
+    "sendFilesFailed": "Could not send the files to the page",
+    "releaseControl": "Release control",
+    "takeControl": "Take control",
+    "pdfDocument": "PDF document",
+    "leaveHint": "Press Shift+Escape to leave the browser page.",
+    "chooseFiles": "Choose files for the page",
+    "dialog": "Browser dialog",
+    "dialogResponse": "Dialog response",
+    "takeControlToRespond": "Take control to respond."
+  }
+}
