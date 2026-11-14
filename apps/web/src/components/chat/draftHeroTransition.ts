@@ -37,12 +37,8 @@ export async function waitForDraftHeroTransition(): Promise<void> {
   ]);
 }
 
-/**
- * Applies a composer layout change. On a mobile viewport with motion allowed, `update` runs once
- * inside a view transition, committed synchronously so the new snapshot shows it, and the returned
- * promise resolves once it has run. Otherwise `update` runs inline with no flush, so its state
- * updates batch with the caller's, and nothing is returned. A failing update never blocks the caller.
- */
+// Only a mobile view transition flushes `update` (its new snapshot must show it) and returns a
+// promise; otherwise it runs inline so its state batches with the caller's. Errors never block.
 export function runMobileComposerTransition(
   update: () => void,
   options: { active: boolean; durationMs: number },

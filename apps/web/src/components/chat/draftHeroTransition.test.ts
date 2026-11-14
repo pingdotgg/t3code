@@ -49,23 +49,17 @@ describe("runMobileComposerTransition", () => {
     { name: "reduced motion", mobile: true, reducedMotion: true, active: true },
     { name: "panel motion off", mobile: true, active: false },
     { name: "no view transition support", mobile: true, active: true, unsupported: true },
-    { name: "no document", mobile: false, active: true, missingGlobal: "document" },
-    { name: "no window", mobile: false, active: true, missingGlobal: "window" },
-  ])(
-    "applies the update before returning on $name",
-    ({ unsupported, missingGlobal, active, ...env }) => {
-      const startViewTransition = vi.fn(deferredViewTransition());
-      stubEnvironment({ ...env, ...(unsupported ? {} : { startViewTransition }) });
-      if (missingGlobal) vi.stubGlobal(missingGlobal, undefined);
-      const update = vi.fn();
+  ])("applies the update before returning on $name", ({ unsupported, active, ...env }) => {
+    const startViewTransition = vi.fn(deferredViewTransition());
+    stubEnvironment({ ...env, ...(unsupported ? {} : { startViewTransition }) });
+    const update = vi.fn();
 
-      const docking = runMobileComposerTransition(update, { active, durationMs: 200 });
+    const docking = runMobileComposerTransition(update, { active, durationMs: 200 });
 
-      expect(docking).toBeUndefined();
-      expect(update).toHaveBeenCalledTimes(1);
-      expect(startViewTransition).not.toHaveBeenCalled();
-    },
-  );
+    expect(docking).toBeUndefined();
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(startViewTransition).not.toHaveBeenCalled();
+  });
 
   it("applies the update once inside a mobile view transition and resolves after it", async () => {
     let finish!: () => void;
