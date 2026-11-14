@@ -283,6 +283,8 @@ ordering, not the guide's layout or which files it covers.
 Tick a file off in the **Code** tab once you have read it and it collapses; the toolbar keeps a
 running count. A tick belongs to the pull request rather than to a commit, so scoping the tab to a
 single commit keeps them. A file pushed to after you cleared it comes back marked **Changed**.
+To take read files out of the list and file tree, turn on **Hide viewed files** in the toolbar;
+a **Changed** file stays in view.
 
 On GitHub these are GitHub's own viewed marks, so a review carries between T3 Code and github.com
 in either direction. Forgejo, GitLab, Bitbucket, Azure DevOps, and Cursor Origin expose no record

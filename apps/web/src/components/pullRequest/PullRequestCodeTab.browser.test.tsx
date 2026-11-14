@@ -85,7 +85,12 @@ vi.mock(import("./usePullRequestFilesViewed"), async () => {
         enabled: viewedPaths !== null,
         isViewed: (path: string) => viewedPaths?.has(path) === true,
         isStale: () => false,
-        setViewed: () => {},
+        setViewed: (path: string, viewed: boolean) => {
+          const next = new Set(mocks.viewedPaths);
+          if (viewed) next.add(path);
+          else next.delete(path);
+          deliverViewedPaths(next);
+        },
         truncated: false,
         error: null,
         refresh: () => {},
@@ -163,12 +168,12 @@ const detail: PullRequestDetailView = {
 };
 
 function setup({ paged }: { paged: boolean }) {
-  window.localStorage.removeItem("t3code.diffHideTestFiles");
   __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
   mocks.paged = paged;
   mocks.diffCommits = [];
   mocks.viewedPaths = null;
   mocks.viewedListeners.clear();
+  localStorage.clear();
 }
 
 const tab = (
@@ -176,12 +181,13 @@ const tab = (
   revealRequest: { readonly path: string; readonly nonce: number } | null = null,
   revealUrl?: string,
   onRevealSettled?: (url: string) => void,
+  tabDetail: PullRequestDetailView = detail,
 ) => (
   <PullRequestCodeTab
     scrollerRef={() => {}}
     environmentId={EnvironmentId.make("environment")}
-    reference={detail}
-    detail={detail}
+    reference={tabDetail}
+    detail={tabDetail}
     selectedCommitOid={null}
     onSelectedCommitChange={() => {}}
     onRefresh={() => {}}
@@ -265,7 +271,6 @@ it("pages forward to a file asked for that is not loaded yet, then scrolls to it
   __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: true });
   using _preferences = {
     [Symbol.dispose]() {
-      window.localStorage.removeItem("t3code.diffHideTestFiles");
       __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
     },
   };
@@ -286,6 +291,80 @@ it("pages forward to a file asked for that is not loaded yet, then scrolls to it
   await expectFileHeaderShown(screen, container, "early-0.ts");
   await screen.rerender(tab(0, { path: "early-0.ts", nonce: 1 }, url, settled));
   await expectFileHeaderShown(screen, container, "late.test.ts");
+});
+
+it("hides viewed files and shows them again", async () => {
+  setup({ paged: true });
+  mocks.viewedPaths = new Set(["early-0.ts"]);
+  await using screen = await render(tab(0), { container: pagedContainer() });
+  await expect.element(screen.getByText("early-0.ts", { exact: true }).first()).toBeVisible();
+  const hideViewed = screen.getByRole("button", { name: "Hide viewed files" });
+
+  await hideViewed.click();
+
+  await expect.element(screen.getByText("early-0.ts", { exact: true })).not.toBeInTheDocument();
+  await expect.element(screen.getByText("early-2.ts", { exact: true }).first()).toBeVisible();
+  await hideViewed.click();
+  await expect.element(screen.getByText("early-0.ts", { exact: true }).first()).toBeVisible();
+});
+
+it("keeps the Hide viewed files toggle while its saved filter is on and nothing is viewed", async () => {
+  setup({ paged: true });
+  mocks.viewedPaths = new Set();
+  localStorage.setItem("t3code.pullRequestHideViewedFiles", "true");
+  await using screen = await render(tab(0), { container: pagedContainer() });
+  await screen.getByRole("button", { name: "Hide viewed files" }).click();
+
+  await vi.waitFor(() =>
+    expect(localStorage.getItem("t3code.pullRequestHideViewedFiles")).toBe("false"),
+  );
+});
+
+it("marks a Shift-clicked range viewed after the first file of it was hidden", async () => {
+  setup({ paged: true });
+  mocks.viewedPaths = new Set(["early-0.ts"]);
+  const container = document.createElement("div");
+  container.className = "h-[500px] w-[400px]";
+  await using screen = await render(tab(0), { container });
+  await screen.getByRole("button", { name: "Hide viewed files" }).click();
+  await expect.element(screen.getByText("early-10.ts", { exact: true }).first()).toBeVisible();
+
+  await screen.getByRole("checkbox", { name: "Viewed" }).first().click();
+  await expect.element(screen.getByText("early-10.ts", { exact: true })).not.toBeInTheDocument();
+  await screen
+    .getByRole("checkbox", { name: "Viewed" })
+    .nth(1)
+    .click({ modifiers: ["Shift"] });
+
+  await expect.element(screen.getByText("early-11.ts", { exact: true })).not.toBeInTheDocument();
+});
+
+it("keeps conversations reachable when every file is hidden", async () => {
+  setup({ paged: false });
+  mocks.viewedPaths = new Set(["a.ts"]);
+  const threadDetail: PullRequestDetailView = {
+    ...detail,
+    reviewThreads: [
+      {
+        id: "thread",
+        path: "a.ts",
+        line: 1,
+        side: "right",
+        isResolved: false,
+        isOutdated: false,
+        comments: [],
+      },
+    ],
+  };
+  const container = document.createElement("div");
+  container.className = "h-[500px] w-[400px]";
+  await using screen = await render(tab(0, null, undefined, undefined, threadDetail), {
+    container,
+  });
+  await screen.getByRole("button", { name: "Hide viewed files" }).click();
+  await expect.element(screen.getByText("All files are hidden.")).toBeVisible();
+
+  await expect.element(screen.getByText("Conversations not on the current diff")).toBeVisible();
 });
 
 it("never requests the diff of a selected commit the pull request no longer has", async () => {
