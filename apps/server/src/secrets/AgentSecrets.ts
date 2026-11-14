@@ -23,17 +23,17 @@ export class AgentSecretError extends Schema.TaggedError<AgentSecretError>()("Ag
   override get message(): string {
     switch (this.reason) {
       case "unshared_vault":
-        return "Vault not shared with agents. Ask the user to add it in Settings → Secrets → Agent vaults on this environment.";
+        return "Vault not shared with agents on this environment. Call secret_list for the shared vaults, or ask the user to add this one in Settings → Secrets → Agent vaults (Secret providers do not apply).";
       case "invalid_reference":
         return "Use an op://vault/item/field reference from secret_list (optionally /section/field).";
       case "invalid_environment":
         return "Use ordinary environment variable names, not OP_*, SSH_*, PATH, HOME, SHELL, USER, or PWD. Values must not contain NUL.";
       case "missing_token":
-        return "Set this vault's service-account token in Settings → Secrets → Agent vaults.";
+        return "This vault has no service-account token on this environment. Ask the user to set it in Settings → Secrets → Agent vaults; an op sign-in or Secret provider does not substitute.";
       case "missing_binary":
-        return "Required executable missing on the server PATH. Install the 1Password CLI (op); SSH keys also need ssh-agent and ssh-add.";
+        return "Required executable missing on this environment's PATH. Ask the user to install the 1Password CLI (op) on this machine; no op sign-in or desktop app is needed. SSH keys also need ssh-agent and ssh-add.";
       case "op_failed":
-        return "1Password could not read this vault or item. Check the reference with secret_list, then ask the user to check the vault's token, read permissions, and network in Settings → Secrets. Raw diagnostics withheld.";
+        return "1Password could not read this vault or item. Check the reference with secret_list, then ask the user to check the vault's service-account token, read permissions, and network in Settings → Secrets → Agent vaults. Raw diagnostics withheld.";
       case "invalid_output":
         return "1Password returned invalid or oversized output. Raw output withheld.";
       case "process_failed":

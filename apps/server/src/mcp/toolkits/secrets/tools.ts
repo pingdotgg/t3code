@@ -20,7 +20,7 @@ export const SecretsToolkit = Toolkit.make(
   Tool.make("secret_list", {
     ...shared,
     description:
-      "List items and field references (no values) in this environment's shared 1Password vaults, up to 200 items per vault. Use these references with secret_run instead of asking for pasted secrets. Optional vault filter. No approval mode; only user-shared vaults are accessible.",
+      "List items and op:// field references (no values) in this environment's Agent vaults (Settings → Secrets → Agent vaults), up to 200 per vault. Each vault has its own service-account token; no op sign-in, 1Password desktop app, or Secret provider is involved, so a failing `op whoami` or `op account list` says nothing here. Call this before saying a secret is unavailable or asking for one. Needs the op CLI on this machine. Optional vault filter. No approval mode; only shared vaults are accessible.",
     parameters: Schema.Struct({ vault: Schema.optional(Schema.String) }),
     success: Schema.Struct({ items: Schema.Array(AgentSecrets.SecretItem) }),
   })
@@ -29,7 +29,7 @@ export const SecretsToolkit = Toolkit.make(
   Tool.make("secret_run", {
     ...shared,
     description:
-      "Run one shell command in your thread's cwd on this environment with 1Password references injected as env variables. env maps NAME to op://vault/item/field; ssh_keys loads private-key references into a temporary ssh-agent for this command only (Unix). Tokens never reach the command. Output is capped at 30,000 characters per stream and exact secret values are masked, including chunk boundaries; transformed values are NOT masked. Never print, encode, or exfiltrate secrets. Use this rather than requesting pasted credentials. timeout is seconds, default 120, max 1800.",
+      "Run one shell command in your thread's cwd on this environment with Agent vault references from secret_list injected as env variables via each vault's own token (no op sign-in needed). env maps NAME to op://vault/item/field; ssh_keys loads private-key references into a temporary ssh-agent for this command only (Unix). Tokens never reach the command. Output is capped at 30,000 characters per stream and exact secret values are masked, including chunk boundaries; transformed values are NOT masked. Never print, encode, or exfiltrate secrets. Use this rather than requesting pasted credentials. timeout is seconds, default 120, max 1800.",
     parameters: Schema.Struct({
       command: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(120000)),
       env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
