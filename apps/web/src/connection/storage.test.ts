@@ -2,7 +2,7 @@ import {
   ConnectionTransientError,
   PrimaryConnectionTarget,
 } from "@t3tools/client-runtime/connection";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, TurnItemId } from "@t3tools/contracts";
 import { ConnectionCatalogDocument, Persistence } from "@t3tools/client-runtime/platform";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -12,6 +12,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { afterEach, vi } from "vite-plus/test";
 
+import { makeThreadProjectionFixture } from "../test-fixtures";
 import * as ConnectionStorage from "./storage";
 
 const emptyCatalog = {
@@ -192,6 +193,95 @@ describe("IndexedDB connection closed without a close event", () => {
         const loaded = yield* cache.loadThread(EnvironmentId.make("env"), ThreadId.make("thread"));
         expect(Option.isNone(loaded)).toBe(true);
         expect(open).toHaveBeenCalledTimes(2);
+      }).pipe(Effect.provide(ConnectionStorage.layer));
+    }),
+  );
+});
+
+describe("thread cache records in IndexedDB", () => {
+  const environmentId = EnvironmentId.make("environment-1");
+  const output = "a command output that should reach the disk once";
+
+  const stubDatabase = (values: Map<IDBValidKey, unknown>) => {
+    const settle = <T extends EventTarget>(request: T) => {
+      queueMicrotask(() => request.dispatchEvent(new Event("success")));
+      return request;
+    };
+    const database = Object.assign(new EventTarget(), {
+      close: vi.fn(),
+      transaction: () => {
+        const transaction = new EventTarget();
+        return Object.assign(transaction, {
+          error: null,
+          objectStore: () => ({
+            get: (key: IDBValidKey) =>
+              settle(Object.assign(new EventTarget(), { result: values.get(key), error: null })),
+            put: (value: unknown, key: IDBValidKey) => {
+              values.set(key, value);
+              queueMicrotask(() => transaction.dispatchEvent(new Event("complete")));
+            },
+          }),
+        });
+      },
+    }) as unknown as IDBDatabase;
+    vi.stubGlobal("window", {});
+    vi.stubGlobal("indexedDB", {
+      open: () => {
+        const request = Object.assign(new EventTarget(), { result: database, error: null });
+        queueMicrotask(() => request.dispatchEvent(new Event("success")));
+        return request;
+      },
+    });
+  };
+
+  it.effect("saves each item once and loads it as one object", () =>
+    Effect.gen(function* () {
+      const values = new Map<IDBValidKey, unknown>();
+      stubDatabase(values);
+      const fixture = makeThreadProjectionFixture();
+      const threadId = fixture.thread.id;
+      const at = fixture.updatedAt;
+      const item = {
+        id: TurnItemId.make("command"),
+        type: "command_execution" as const,
+        threadId,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: "completed" as const,
+        title: null,
+        input: "pwd",
+        output,
+        exitCode: 0,
+        startedAt: at,
+        completedAt: at,
+        updatedAt: at,
+      };
+      const projection = {
+        ...fixture,
+        turnItems: [item],
+        visibleTurnItems: [
+          {
+            position: 0,
+            visibility: "local" as const,
+            sourceThreadId: threadId,
+            sourceItemId: item.id,
+            item,
+          },
+        ],
+      };
+      yield* Effect.gen(function* () {
+        const cache = yield* Persistence.EnvironmentCacheStore;
+        yield* cache.saveThread(environmentId, { snapshotSequence: 2, projection });
+        const raw = [...values.values()][0] as string;
+        expect(raw.split(output).length - 1).toBe(1);
+        const loaded = Option.getOrThrow(yield* cache.loadThread(environmentId, threadId));
+        expect(loaded.projection.turnItems).toEqual([item]);
+        expect(loaded.projection.visibleTurnItems[0]!.item).toBe(loaded.projection.turnItems[0]);
       }).pipe(Effect.provide(ConnectionStorage.layer));
     }),
   );

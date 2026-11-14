@@ -47,9 +47,17 @@ import {
   StoredOrchestrationThreadSnapshot,
   decodeOrDiscardOrchestrationCache,
 } from "../platform/orchestrationCache.ts";
+import {
+  decodeStoredThreadSnapshot,
+  makeStoredThreadSnapshotEncoder,
+} from "../platform/threadCacheEncoding.ts";
 import * as RpcSession from "../rpc/session.ts";
 import { v2Now, v2Projection, v2ThreadId } from "./orchestrationV2TestFixtures.ts";
-import { onThreadRequestsResolved, type ThreadRequestsResolved } from "./threadRequests.ts";
+import {
+  derivePendingThreadRequests,
+  onThreadRequestsResolved,
+  type ThreadRequestsResolved,
+} from "./threadRequests.ts";
 import { EMPTY_THREAD_HISTORY_META } from "./threadHistoryMerge.ts";
 import * as ThreadHistoryController from "./threadHistoryController.ts";
 import {
@@ -463,6 +471,123 @@ describe("EnvironmentThreads", () => {
         expect(yield* Ref.get(h.lastSubscribeAfterSequence)).toBe(CACHED_SNAPSHOT_SEQUENCE);
       }),
   );
+
+  describe("a pending question in a saved record", () => {
+    const newerItem = (id: string, ordinal: number): OrchestrationV2TurnItem => ({
+      id: TurnItemId.make(id),
+      threadId: THREAD_ID,
+      runId: null,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal,
+      status: "completed",
+      title: null,
+      startedAt: v2Now,
+      completedAt: v2Now,
+      updatedAt: v2Now,
+      type: "command_execution",
+      input: "pwd",
+      output: "done",
+      exitCode: 0,
+    });
+    const rowOf = (item: OrchestrationV2TurnItem, position: number) => ({
+      position,
+      visibility: "local" as const,
+      sourceThreadId: THREAD_ID,
+      sourceItemId: item.id,
+      item,
+    });
+    const roundTrip = (projection: OrchestrationV2ThreadProjection) =>
+      Effect.gen(function* () {
+        const raw = Option.getOrThrow(
+          yield* makeStoredThreadSnapshotEncoder({ format: "compact" })({
+            environmentId: TARGET.environmentId,
+            threadId: THREAD_ID,
+            snapshot: { snapshotSequence: CACHED_SNAPSHOT_SEQUENCE, projection },
+          }),
+        );
+        const stored = yield* decodeStoredThreadSnapshot(raw);
+        return { raw: JSON.parse(raw), snapshot: stored.snapshot };
+      });
+    const newer = newerItem("newer", 2);
+    const newest = newerItem("newest", 3);
+
+    // The compact record leaves visible items out of `turnItems`, and the card check reads them.
+    it.effect.each([
+      [
+        "inside the visible window",
+        [QUESTION_CARD, newer],
+        [rowOf(QUESTION_CARD, 0), rowOf(newer, 1)],
+        true,
+      ],
+      ["older than the window", [newer, QUESTION_CARD], [rowOf(newer, 0)], true],
+      [
+        "older than the window, with items after it",
+        [newer, QUESTION_CARD, newest],
+        [rowOf(newer, 0), rowOf(newest, 1)],
+        false,
+      ],
+    ] as const)(
+      "stays answerable without a refetch when its card is %s",
+      ([, turnItems, rows, compact]) =>
+        Effect.gen(function* () {
+          const projection = {
+            ...PROJECTION_WITH_QUESTION,
+            turnItems: [...turnItems],
+            visibleTurnItems: [...rows],
+          };
+          const stored = yield* roundTrip(projection);
+          expect(stored.raw.snapshot.turnItemsOmitLocalVisible).toBe(compact);
+          const h = yield* makeHarness({
+            loadCached: Effect.succeedSome(stored.snapshot),
+            completionMarker: true,
+          });
+          yield* Queue.offer(h.inputs, synchronized());
+          const state = yield* awaitThreadState(h.observed, (value) => value.status === "live");
+          expect(yield* Ref.get(h.loaderCalls)).toBe(0);
+          const loaded = Option.getOrThrow(state.data);
+          expect(loaded).toEqual(projection);
+          expect(
+            derivePendingThreadRequests(loaded).userInputs.map((input) => input.requestId),
+          ).toEqual([PENDING_QUESTION.id]);
+          for (const row of loaded.visibleTurnItems) {
+            expect(loaded.turnItems).toContain(row.item);
+          }
+        }),
+    );
+
+    it.effect("is fetched again when the record has no card for it", () =>
+      Effect.gen(function* () {
+        const stored = yield* roundTrip({
+          ...PROJECTION_WITH_QUESTION,
+          turnItems: [newer],
+          visibleTurnItems: [rowOf(newer, 0)],
+        });
+        const h = yield* makeHarness({
+          loadCached: Effect.succeedSome(stored.snapshot),
+          httpSnapshot: {
+            _tag: "present",
+            snapshot: {
+              snapshotSequence: CACHED_SNAPSHOT_SEQUENCE,
+              projection: PROJECTION_WITH_QUESTION,
+            },
+          },
+          completionMarker: true,
+        });
+        yield* Queue.offer(h.inputs, synchronized());
+        const state = yield* awaitThreadState(h.observed, (value) => value.status === "live");
+        expect(yield* Ref.get(h.loaderCalls)).toBe(1);
+        expect(
+          derivePendingThreadRequests(Option.getOrThrow(state.data)).userInputs.map(
+            (input) => input.requestId,
+          ),
+        ).toEqual([PENDING_QUESTION.id]);
+      }),
+    );
+  });
 
   it.effect("discards an oversized version-4 cache and requests a fresh bounded snapshot", () =>
     Effect.gen(function* () {
