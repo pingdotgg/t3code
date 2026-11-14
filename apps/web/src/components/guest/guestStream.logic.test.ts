@@ -218,12 +218,12 @@ describe("applyGuestStreamEvent", () => {
         hasMoreHistory: false,
       },
     });
-    expect(itemIds(historyPlaced)).toEqual(["u1"]);
+    expect(historyPlaced.awaitingRowIds.size).toBe(0);
+    // The row is outside the reconnect's window again; the Sent bubble must not come back.
     const reconnected = apply(
       [{ type: "view", view: { ...view, messages: [sent] } }, snapshot(4)],
       historyPlaced,
     );
-    expect(itemIds(reconnected)).toEqual([]);
     expect(
       unplacedGuestMessages(
         reconnected.view!.messages,
@@ -231,7 +231,6 @@ describe("applyGuestStreamEvent", () => {
         reconnected.awaitingRowIds,
       ),
     ).toEqual([]);
-    expect(historyPlaced.awaitingRowIds.has(waiting.id)).toBe(false);
   });
 });
 

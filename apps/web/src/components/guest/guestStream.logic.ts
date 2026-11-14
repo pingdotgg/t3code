@@ -102,13 +102,12 @@ export function applyGuestStreamEvent(
     case "history-page": {
       // A snapshot since the request replaced the thread and its cursor.
       if (state.projection === null || state.historyCursor !== event.cursor) return state;
-      const projection = mergeOlderHistoryIntoProjection(state.projection, event.page.items);
       return {
         ...state,
-        projection,
+        projection: mergeOlderHistoryIntoProjection(state.projection, event.page.items),
         awaitingRowIds: withoutPlaced(
           state.awaitingRowIds,
-          projection.visibleTurnItems.map((row) => row.item),
+          event.page.items.map((row) => row.item),
         ),
         historyCursor: event.page.hasMoreHistory ? event.page.nextCursor : null,
       };
