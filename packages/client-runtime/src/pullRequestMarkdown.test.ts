@@ -1,3 +1,7 @@
+import type { Root, RootContent } from "mdast";
+import remarkGfm from "remark-gfm";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -153,6 +157,85 @@ describe("pull request body segmentation", () => {
     expect(splitPullRequestBody(body)).toEqual([
       { id: "markdown:0", kind: "markdown", text: body, sourceOffset: 0 },
     ]);
+  });
+});
+
+describe("reference links around lifted media", () => {
+  const recording =
+    "https://github.com/user-attachments/assets/2f8c1a90-1b2c-4d5e-8f90-abcdef123456";
+  const parser = unified().use(remarkParse).use(remarkGfm);
+  const prose = (segments: ReadonlyArray<PullRequestBodySegment>): string[] =>
+    segments.flatMap((segment) =>
+      segment.kind === "markdown"
+        ? [segment.text]
+        : segment.kind === "table"
+          ? segment.rows.flat().flatMap((cell) => prose(cell.segments))
+          : [],
+    );
+  // Each segment renders as its own document; the first definition of a label wins, as in mdast-util-to-hast.
+  const referenceLinks = (body: string) =>
+    prose(splitPullRequestBody(body)).flatMap((text) => {
+      const definitions = new Map<string, string>();
+      const references: Array<{ identifier: string; text: string }> = [];
+      const visit = (node: Root | RootContent) => {
+        if (node.type === "definition" && !definitions.has(node.identifier)) {
+          definitions.set(node.identifier, node.url);
+        }
+        if (node.type === "linkReference") {
+          references.push({
+            identifier: node.identifier,
+            text: node.children.map((child) => ("value" in child ? child.value : "")).join(""),
+          });
+        }
+        if ("children" in node) node.children.forEach(visit);
+      };
+      visit(parser.parse(text));
+      return references.map((reference) => [reference.text, definitions.get(reference.identifier)]);
+    });
+
+  it.each([
+    [
+      "use, then media, then definition",
+      `See [the docs][guide].\n\n${recording}\n\n[guide]: https://example.com/docs`,
+    ],
+    [
+      "definition, then media, then use",
+      `[guide]: https://example.com/docs\n\n${recording}\n\nSee [the docs][guide].`,
+    ],
+    ...["\n", "\r\n", "\r"].map((lineEnding) => [
+      `a definition wrapped over quoted lines with ${JSON.stringify(lineEnding)}`,
+      `> [guide]:${lineEnding}> https://example.com/docs${lineEnding}> "The guide"\n\n${recording}\n\nSee [the docs][guide].`,
+    ]),
+    [
+      "a use inside a media table cell",
+      `<table><tr><td>\n\nSee [the docs][guide].\n\n</td><td>\n\n${recording}\n\n</td></tr></table>\n\n[guide]: https://example.com/docs`,
+    ],
+  ])("resolves a reference defined across a video: %s", (_case, body) => {
+    expect(referenceLinks(body)).toEqual([["the docs", "https://example.com/docs"]]);
+  });
+
+  it("keeps the body's first definition of a label, wherever the media falls", () => {
+    expect(
+      referenceLinks(
+        `[guide]: https://example.com/first\n\n${recording}\n\nSee [the docs][guide].\n\n[GUIDE]: https://example.com/second`,
+      ),
+    ).toEqual([["the docs", "https://example.com/first"]]);
+  });
+
+  it("leaves a definition shown in code as code", () => {
+    expect(
+      referenceLinks(
+        `\`\`\`md\n[guide]: https://example.com/docs\n\`\`\`\n\n${recording}\n\nSee [the docs][guide].`,
+      ),
+    ).toEqual([]);
+  });
+
+  it("still writes a task tick back to its place in the body", () => {
+    const body = `[guide]: https://example.com/docs\n\n${recording}\n\n- [ ] Read [the docs][guide]`;
+    const segment = splitPullRequestBody(body).at(-1)!;
+    if (segment.kind !== "markdown") throw new Error("expected prose last");
+    const marker = segment.text.indexOf("[ ]");
+    expect(body.slice(segment.sourceOffset + marker)).toBe("[ ] Read [the docs][guide]");
   });
 });
 

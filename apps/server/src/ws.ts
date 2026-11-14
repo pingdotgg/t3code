@@ -3207,12 +3207,16 @@ export const layerWsRpc = (
         [WS_METHODS.vcsCreateRef]: (input) =>
           gitWorkflow.createRef(input).pipe(
             Effect.tap(() => (input.switchRef === true ? recordBranch(input.cwd) : Effect.void)),
-            Effect.tap(() => refreshGitStatus(input.cwd)),
+            Effect.tap(() =>
+              input.switchRef
+                ? vcsStatusBroadcaster.refreshAfterCheckout(input.cwd)
+                : refreshGitStatus(input.cwd),
+            ),
           ),
         [WS_METHODS.vcsSwitchRef]: (input) =>
           gitWorkflow.switchRef(input).pipe(
             Effect.tap(() => recordBranch(input.cwd)),
-            Effect.tap(() => refreshGitStatus(input.cwd)),
+            Effect.tap(() => vcsStatusBroadcaster.refreshAfterCheckout(input.cwd)),
           ),
         [WS_METHODS.vcsInit]: (input) =>
           vcsProvisioning.initRepository(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
