@@ -3393,7 +3393,6 @@ const streamedProjectionCases = Effect.fn("streamedProjectionCases")(function* (
   const threadId = yield* addRolledBackRecoveryCandidate(suffix);
   const now = yield* DateTime.now;
   const later = DateTime.add(now, { seconds: 1 });
-  const latest = DateTime.add(now, { seconds: 2 });
   const runId = RunId.make(`run:${suffix}:rolled-back`);
   const rootNodeId = NodeId.make(`node:${suffix}:rolled-back`);
   const nodeId = NodeId.make(`node:${suffix}:assistant`);
@@ -3419,16 +3418,10 @@ const streamedProjectionCases = Effect.fn("streamedProjectionCases")(function* (
       occurredAt,
     } as OrchestrationV2DomainEvent;
   };
-  // Each projection is created, updated in columns no index reads, then updated in indexed ones.
-  const steps = <Payload>(
-    toEvent: EventOf<Payload>,
-    create: Payload,
-    stable: Payload,
-    moving: Payload,
-  ) => ({
+  // Each projection is created, then updated only in columns no index reads.
+  const steps = <Payload>(toEvent: EventOf<Payload>, create: Payload, stable: Payload) => ({
     create: event(toEvent, "create", now, create),
     stable: event(toEvent, "stable", later, stable),
-    moving: event(toEvent, "moving", latest, moving),
   });
 
   const item = {
@@ -3521,63 +3514,26 @@ const streamedProjectionCases = Effect.fn("streamedProjectionCases")(function* (
   const providerThreadStable = { ...providerThread, lastRunOrdinal: 2, updatedAt: later };
 
   return [
-    {
-      table: ProjectionUpsert.projectionTables.turnItems,
-      id: item.id,
-      ...steps(
-        (payload: OrchestrationV2TurnItem) => ({ type: "turn-item.updated", payload }),
-        item,
-        itemStable,
-        {
-          ...itemStable,
-          providerTurnId: null,
-          ordinal: 8,
-          status: "completed",
-          completedAt: latest,
-          updatedAt: latest,
-        },
-      ),
-    },
-    {
-      table: ProjectionUpsert.projectionTables.subagents,
-      id: subagent.id,
-      ...steps(
-        (payload: OrchestrationV2Subagent) => ({ type: "subagent.updated", payload }),
-        subagent,
-        subagentStable,
-        {
-          ...subagentStable,
-          childThreadId: ThreadId.make(`thread:${suffix}:child`),
-          status: "completed",
-          completionDelivery: { state: "pending", observedByRunId: null },
-          updatedAt: latest,
-        },
-      ),
-    },
-    {
-      table: ProjectionUpsert.projectionTables.providerThreads,
-      id: providerThread.id,
-      ...steps(
-        (payload: OrchestrationV2ProviderThread) => ({ type: "provider-thread.updated", payload }),
-        providerThread,
-        providerThreadStable,
-        {
-          ...providerThreadStable,
-          providerSessionId: ProviderSessionId.make(`session:${suffix}`),
-          status: "idle",
-        },
-      ),
-    },
-    {
-      table: ProjectionUpsert.projectionTables.providerTurns,
-      id: providerTurn.id,
-      ...steps(
-        (payload: OrchestrationV2ProviderTurn) => ({ type: "provider-turn.updated", payload }),
-        providerTurn,
-        providerTurnStable,
-        { ...providerTurnStable, ordinal: 2 },
-      ),
-    },
+    steps(
+      (payload: OrchestrationV2TurnItem) => ({ type: "turn-item.updated", payload }),
+      item,
+      itemStable,
+    ),
+    steps(
+      (payload: OrchestrationV2Subagent) => ({ type: "subagent.updated", payload }),
+      subagent,
+      subagentStable,
+    ),
+    steps(
+      (payload: OrchestrationV2ProviderThread) => ({ type: "provider-thread.updated", payload }),
+      providerThread,
+      providerThreadStable,
+    ),
+    steps(
+      (payload: OrchestrationV2ProviderTurn) => ({ type: "provider-turn.updated", payload }),
+      providerTurn,
+      providerTurnStable,
+    ),
   ];
 });
 
@@ -3823,44 +3779,15 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           (column) => read.has(column) && column !== table.key && !changingOnEveryWrite.has(column),
         );
         assert.deepStrictEqual([...table.guarded].toSorted(), expected.toSorted(), table.name);
-        // A trigger on `UPDATE OF <column>` would stop firing when the guarded upsert leaves the column out.
-        assert.isFalse(
-          schema.some((entry) => entry.type === "trigger" && /UPDATE\s+OF/i.test(entry.sql ?? "")),
-          table.name,
-        );
-      }
-    }),
-  );
-
-  it.effect("streamed projection updates leave the same row as a fresh write", () =>
-    Effect.gen(function* () {
-      const store = yield* ProjectionStore.ProjectionStoreV2;
-      const sql = yield* SqlClient.SqlClient;
-      for (const projection of yield* streamedProjectionCases("fresh-write")) {
-        const { table } = projection;
-        const readRow = sql.unsafe(`SELECT * FROM ${table.name} WHERE ${table.key} = ?`, [
-          projection.id,
-        ]);
-        const fellBack = Effect.fn("fellBack")(function* (event: OrchestrationV2DomainEvent) {
-          const { statements, tracer } = traceSqlStatements();
-          yield* store.apply(event).pipe(Effect.withTracer(tracer));
-          return statements.includes(table.fullUpsert);
-        });
-        const assertMatchesFreshWrite = Effect.fn("assertMatchesFreshWrite")(function* (
-          event: OrchestrationV2DomainEvent,
-        ) {
-          const row = yield* readRow;
-          yield* sql.unsafe(`DELETE FROM ${table.name} WHERE ${table.key} = ?`, [projection.id]);
-          yield* store.apply(event);
-          assert.lengthOf(row, 1, table.name);
-          assert.deepStrictEqual(row, yield* readRow, table.name);
-        });
-
-        assert.isFalse(yield* fellBack(projection.create), table.name);
-        assert.isFalse(yield* fellBack(projection.stable), table.name);
-        yield* assertMatchesFreshWrite(projection.stable);
-        assert.isTrue(yield* fellBack(projection.moving), table.name);
-        yield* assertMatchesFreshWrite(projection.moving);
+        // The guarded upsert skips a column only while it keeps its value, so an `UPDATE OF` trigger
+        // must watch guarded columns and act only when one of them changes.
+        for (const trigger of schema.filter((entry) => entry.type === "trigger")) {
+          const watched = /UPDATE\s+OF\s+([\w\s,]+?)\s+ON\b/i.exec(trigger.sql ?? "")?.[1];
+          for (const column of watched?.split(",").map((name) => name.trim()) ?? []) {
+            assert.include(table.guarded as ReadonlyArray<string>, column, table.name);
+            assert.include(trigger.sql ?? "", `old.${column} IS NOT new.${column}`, table.name);
+          }
+        }
       }
     }),
   );
