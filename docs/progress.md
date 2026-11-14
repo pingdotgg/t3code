@@ -59,3 +59,10 @@
 - Why: since every Claude provider lists the Auto levels (#6), the old "lists an Auto model" check matched every Claude instance. Plain `claudeAgent` shares account A's usage with `claudeAuto` and comes first in the registry, so Auto sent turns to it and the orchestrator never got the routing prompt. hub2 ran upstream nightly (DB schema 89); the fork stopped at 85, so it could not run there.
 - Numbers: autoModel 12/12 (the same-account case failed before the fix), ClaudeProvider + ProviderRegistry 80/80, web Auto tests 7/7; typecheck of contracts, shared, server and web clean (21 s server on hub2). Fork build 59 s on hub2.
 - Next: link hub and deploy the same branch there; rebuild the desktop app on the PC.
+
+## 2026-11-14: Auto threads stop showing a false "Context handoff pending"
+
+- What: the shared pending-handoff check (web and mobile) resolves an Auto selection the way the server does, keeping the thread's current model while it fits, before deciding a handoff is coming.
+- Why: in the real hub2 UI, every Auto thread showed "Context handoff pending: Sonnet 5.5 (AB) → Auto Low (CL)" after each turn, while the server log showed the next message stay on `claudeAutoB` (sticky).
+- Numbers: handoff + contextWindow tests 39/39 (the new case failed before); client-runtime, web and mobile typecheck clean. Deployed on hub2 as a web-only build (51 s), no restart.
+- Next: link hub and run the same checks there; rebuild the PC desktop app.

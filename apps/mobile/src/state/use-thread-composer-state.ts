@@ -321,12 +321,14 @@ export function useThreadComposerState(input: {
   const selectedThread = selectedThreadShell;
   const modelSelection = selectedDraft.modelSelection ?? selectedThread?.modelSelection ?? null;
   const serverConfig = selectedEnvironmentRuntime?.serverConfig;
+  const nowMinuteMs = useNowMinuteMs();
   const pendingHandoff = resolvePendingHandoff(
     selectedThreadProjection?.projection,
     isModelSelectionUnavailable(serverConfig, modelSelection, selectedThread?.projectId ?? null)
       ? null
       : modelSelection,
     serverConfig?.providers ?? [],
+    nowMinuteMs,
   );
   const runtimeMode = selectedDraft.runtimeMode ?? selectedThread?.runtimeMode ?? null;
   // Plan mode is not offered to users; every send runs in build mode.
@@ -447,7 +449,6 @@ export function useThreadComposerState(input: {
           now,
         })
       : null;
-  const nowMinuteMs = useNowMinuteMs();
   const compactTokens =
     selectedDraft.freshContext === true
       ? null
