@@ -3,8 +3,7 @@
 T3 Code writes some text for you: thread titles, commit messages, pull request titles and
 descriptions, branch names, and voice transcript cleanup. Pick the model for this in
 **Settings → Threads → Text generation model**. **Settings → Source control** and
-**Settings → Voice** can each pick a different one. Thread titles use each thread's own model
-unless you turn on **Title model**.
+**Settings → Voice** can each pick a different one.
 
 A disabled provider never writes this text. When the chosen one is off, T3 Code uses another
 enabled provider, or tells you none is available.

@@ -27,7 +27,6 @@ import * as ProjectStore from "./ProjectStore.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 
 import { formatThreadTitleContext } from "@t3tools/provider-core/server/threadTitleContext";
-import { withoutContextHandoff } from "./ContextHandoffDelivery.ts";
 export { formatThreadTitleContext } from "@t3tools/provider-core/server/threadTitleContext";
 
 export class ThreadTitleRegenerationService extends Context.Service<
@@ -175,16 +174,12 @@ const make = Effect.gen(function* () {
           message === undefined
             ? { message: "", attachments: [] }
             : {
-                message: isAttachmentOnlyBootstrapPrompt(message.text)
-                  ? ""
-                  : withoutContextHandoff(message.text),
+                message: isAttachmentOnlyBootstrapPrompt(message.text) ? "" : message.text,
                 attachments: message.attachments,
               };
       } else {
         context = formatThreadTitleContext(
-          projection.messages
-            .filter((message) => !message.streaming)
-            .map((message) => ({ ...message, text: withoutContextHandoff(message.text) })),
+          projection.messages.filter((message) => !message.streaming),
         );
       }
       if (context.message.length === 0 && context.attachments.length === 0) {
@@ -215,7 +210,7 @@ const make = Effect.gen(function* () {
         ...(input.kind.type === "regenerate" ? { previousTitle: projection.thread.title } : {}),
         ...(inherited === undefined ? {} : { forkSource: inherited }),
         instructions: settings.threadTitleInstructions,
-        modelSelection: settings.threadTitleModelSelection ?? projection.thread.modelSelection,
+        modelSelection: settings.textGenerationModelSelection,
         projectId: projection.thread.projectId,
       });
       const generatedTitle = result.title.trim();

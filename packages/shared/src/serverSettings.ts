@@ -609,9 +609,6 @@ export function applyServerSettingsPatch(
     ...(patch.speechPostProcessingModelSelection !== undefined
       ? { speechPostProcessingModelSelection: patch.speechPostProcessingModelSelection }
       : {}),
-    ...(patch.threadTitleModelSelection !== undefined
-      ? { threadTitleModelSelection: patch.threadTitleModelSelection }
-      : {}),
     ...(patch.defaultProjectScripts !== undefined
       ? { defaultProjectScripts: patch.defaultProjectScripts }
       : {}),

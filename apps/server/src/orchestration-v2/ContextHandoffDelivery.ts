@@ -16,13 +16,6 @@ import {
 export const withInlineContext = (context: string, userText: string): string =>
   context === "" ? userText : `${context}\n\nUser message:\n${userText}`;
 
-/** The user's own text from a prompt `withInlineContext` built; anything else is returned as is. */
-export const withoutContextHandoff = (text: string): string => {
-  if (!text.startsWith("Context handoff (")) return text;
-  const marker = text.lastIndexOf("\n\nUser message:\n");
-  return marker === -1 ? text : text.slice(marker + "\n\nUser message:\n".length);
-};
-
 /** Persist around injection; ambiguous delivery requires a fresh native thread. Call unsent if refused before prompt consumption. */
 export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextHandoffs")(
   function* <InjectError = never, PersistError = never, BudgetError = never>(input: {
