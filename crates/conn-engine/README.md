@@ -215,8 +215,8 @@ server crate and an `Engine` method for a page.
 - `cargo test -p conn-engine`: commands, streams, restart, families, reads, titles, observer.
 - `tools/t3-fixture-replay/check.mjs`: T3's own testkit fixtures through this engine and the
   Claude, Codex and Grok providers on stand-ins, judged by T3's own assertions (the vitest file
-  is placed in the monorepo for the run and removed; only the scenario runner is mocked). 51 of
-  159 variants pass (Claude 25, Codex 25, Grok 1); `expected-failures.txt` lists the rest by
+  is placed in the monorepo for the run and removed; only the scenario runner is mocked). 60 of
+  159 variants pass (Claude 25, Codex 25, Grok 10); `expected-failures.txt` lists the rest by
   cause. The Rust half is `examples/t3_fixture_replay.rs`. T3's replay gate
   (`release_replay_gate`) holds the stub `codex` and the fake SDK host before a labelled
   frame through files in the scenario folder; the ACP stub has none yet. About 3 minutes; `--only <fixture>/<driver>` runs one,

@@ -280,11 +280,11 @@ CONN_MONOREPO=/path/to/conn node crates/conn-provider-acp/tools/capture-ts-event
   call and an approval each; no turn, request or reply is left behind.
 - **Fixture replay (`crates/conn-engine/tools/t3-fixture-replay`, in `tools/check.sh`):** the
   engine runs T3's Grok fixtures with this provider on a stub `grok` that runs T3's own ACP
-  replay agent, and T3's assertions judge the result. Grok 1 of 15 (`turn_interrupt`): frames
-  are equal for the 10 non-background variants; the assertions fail on an engine difference
-  (buffered delivery, 9 variants) and on the background work this crate lacks. Each variant is
-  listed with its cause. The driver sets `text_flush_interval: None`, as T3's test clock holds
-  the 50 ms flush.
+  replay agent, and T3's assertions judge the result. Grok 10 of 15: frames are equal for the
+  10 non-background variants, and since the engine delivers streamed text as T3 does and
+  lists messages in T3's order, all 10 pass. The 5 others need the background work and
+  subagents this crate lacks. Each variant is listed with its cause. The driver sets
+  `text_flush_interval: None`, as T3's test clock holds the 50 ms flush.
 - Unit tests: frame parsing and key order, the matcher, the prompt texts against T3's own
   functions (`testdata/instructions.json`), the policy rules, the diff format, the compaction
   marks.

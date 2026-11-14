@@ -56,7 +56,7 @@ settings; about 140 MiB for the `claude` program alone).
 | --- | --- |
 | RPC methods | 99 of 236 served; 99 have a run that the real client's decoders accept |
 | Engine commands | 43 of 56 |
-| T3 testkit fixtures through this engine | 51 of 159 variants pass T3's own assertions (Claude 25 of 34, Codex 25 of 25, Grok 1 of 15; the other 85 are providers this server does not offer) |
+| T3 testkit fixtures through this engine | 60 of 159 variants pass T3's own assertions (Claude 25 of 34, Codex 25 of 25, Grok 10 of 15; the other 85 are providers this server does not offer) |
 | HTTP routes | 13 of 57 |
 | `/mcp` tools | 33 of 87 |
 | Providers | Claude, Codex and Grok, of the 10 the T3 server has without Pi |
