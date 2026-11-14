@@ -341,6 +341,8 @@ export const make = Effect.gen(function* () {
     const relay: CdpRelayConnection = createCdpRelayConnection(
       {
         send: (method, params, sessionId, owner) => {
+          // The browser answers this; an open dialog blocks the renderer that answers focus changes.
+          if (method === "Page.handleJavaScriptDialog") return send(method, params, sessionId);
           // A child session's screencast is not the page's, such as a late one on a detached session.
           const stream =
             sessionId === undefined && method === "Page.startScreencast"
