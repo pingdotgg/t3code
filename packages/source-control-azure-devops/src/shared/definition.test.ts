@@ -171,6 +171,16 @@ describe("Azure DevOps repository keys", () => {
       const link = parse(url)!;
       expect(link.repository, url).toBe("example/sample%20(beta)/_git/sample%20(beta)");
       expect(definition.isChangeRequestInRepository(identity, link), url).toBe(true);
+      expect(
+        definition.isChangeRequestInRepository(
+          {
+            ...identity,
+            canonicalKey: "dev.azure.com/example/sample%20%28beta%29/_git/sample%20%28beta%29",
+          },
+          link,
+        ),
+        url,
+      ).toBe(true);
     }
     // Links stored before keys had one spelling still resolve to their project.
     expect(

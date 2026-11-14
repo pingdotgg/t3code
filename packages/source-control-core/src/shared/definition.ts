@@ -517,7 +517,7 @@ export function isChangeRequestInProjectRepository(
   const repository = projectRepositoryPath(identity);
   return (
     repository !== null &&
-    repository.toLowerCase() === link.repository.toLowerCase() &&
+    canonicalRepositoryPath(repository) === canonicalRepositoryPath(link.repository) &&
     isChangeRequestOnProjectHost(projectHost, identity, link)
   );
 }

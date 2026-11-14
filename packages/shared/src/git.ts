@@ -126,7 +126,8 @@ const stripGitSuffix = (path: string) => path.replace(/\.git$/i, "");
 
 function canonicalPathSegment(segment: string): string {
   try {
-    return encodeURIComponent(decodeURIComponent(segment)).toLowerCase();
+    // Lowercase before encoding: lowercasing the escape `%C3%84` never reaches the `Ä` it names.
+    return encodeURIComponent(decodeURIComponent(segment).toLowerCase()).toLowerCase();
   } catch {
     return segment.toLowerCase();
   }
