@@ -362,7 +362,7 @@ describe("azureCliInvocation", () => {
     AzureDevOpsCli.azureCliInvocation().pipe(
       Effect.provideService(HostProcess.Platform, "win32"),
       Effect.provideService(HostProcess.Environment, { PATH: "C:\\tools" }),
-      Effect.provideService(SpawnExecutableResolution, () => launcher),
+      Effect.provideService(SpawnExecutableResolution, async () => launcher),
       Effect.provideService(AzureCliInstallLocation, () => install),
     );
 
