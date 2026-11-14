@@ -1283,6 +1283,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     cloudOnly: true,
   },
   {
+    id: "mcp-url",
+    localEnvironmentOnly: true,
+    title: "MCP URL",
+    to: "/settings/access",
+    targetId: "connections-environment",
+    searchTerms: ["outside agents chatgpt claude codex hosted bot oauth server address copy"],
+  },
+  {
     id: "connect-device-approval",
     title: "Require approval for new devices",
     to: "/settings/access",

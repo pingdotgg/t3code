@@ -10,6 +10,7 @@ import {
 import {
   BearerConnectionTarget,
   ConnectionTransientError,
+  PrimaryConnectionTarget,
   RelayConnectionTarget,
   type SupervisorConnectionState,
 } from "./model.ts";
@@ -17,6 +18,7 @@ import {
   connectionStatusText,
   connectionStatusTitle,
   environmentMcpUrl,
+  localEnvironmentMcpUrl,
   presentConnectionState,
 } from "./presentation.ts";
 
@@ -117,6 +119,33 @@ describe("connection presentation", () => {
         relayHttpBaseUrl: "https://tunnel.example.test",
       }),
     ).toBe("https://tunnel.example.test/mcp");
+  });
+
+  it("offers loopback and https, but never a plain-http LAN address", () => {
+    const primary = new PrimaryConnectionTarget({
+      environmentId: TARGET.environmentId,
+      label: "This machine",
+      httpBaseUrl: "http://127.0.0.1:3773",
+      wsBaseUrl: "ws://127.0.0.1:3773",
+    });
+    const entry: ConnectionCatalogEntry = {
+      ...ENTRY,
+      target: primary,
+      profile: Option.none(),
+    };
+
+    expect(localEnvironmentMcpUrl({ entry })).toBe("http://127.0.0.1:3773/mcp");
+
+    const lan: ConnectionCatalogEntry = {
+      ...entry,
+      target: new PrimaryConnectionTarget({
+        environmentId: TARGET.environmentId,
+        label: "This machine",
+        httpBaseUrl: "http://192.168.4.53:3773",
+        wsBaseUrl: "ws://192.168.4.53:3773",
+      }),
+    };
+    expect(localEnvironmentMcpUrl({ entry: lan })).toBeNull();
   });
 
   it("distinguishes initial connection, reconnect, and retry errors", () => {
