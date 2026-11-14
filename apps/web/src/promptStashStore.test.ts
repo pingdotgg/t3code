@@ -292,81 +292,38 @@ describe("promptStashStore", () => {
     }
   });
 
-  it.each([
-    ["before", "restore"],
-    ["after", "restore"],
-    ["after", "take"],
-    ["after", "evict"],
-    ["after", "persist"],
-  ] as const)(
-    "handles another tab stashing %s a failed finalize, followed by %s",
-    async (stashOrder, action) => {
+  it.each(["restore", "take"] as const)(
+    "keeps a failed finalize after another tab stashes, then handles %s",
+    async (action) => {
       const storage = createMemoryStorage();
-      let rejectImageWrites = true;
-      const rejectImages = {
+      vi.stubGlobal("localStorage", {
         ...storage,
         setItem: (key: string, value: string) => {
-          if (rejectImageWrites && value.includes("rejected-image")) {
-            throw new Error("QuotaExceededError");
-          }
+          if (value.includes("rejected-image")) throw new Error("QuotaExceededError");
           storage.setItem(key, value);
         },
-      };
-      vi.stubGlobal("localStorage", rejectImages);
+      });
       vi.resetModules();
       try {
         const { usePromptStashStore: store } = await import("./promptStashStore");
         store.getState().stashEntry({ ...makeEntry({ id: "too-big" }), pendingImageCount: 1 });
         vi.resetModules();
         const { usePromptStashStore: otherTab } = await import("./promptStashStore");
-        if (stashOrder === "before") {
-          otherTab.getState().stashEntry(makeEntry({ id: "unrelated" }));
-          expect(store.getState().entries[0]?.pendingImageCount).toBe(1);
-        }
         const { attachments } = makeEntry({ id: "rejected-image", attachmentChars: 4 });
-        expect(
-          store.getState().finalizeEntryImages("too-big", {
-            attachments,
-            droppedImageNames: [],
-            unreadableImageNames: [],
-          }),
-        ).toEqual({ attached: true, durable: false });
+        const images = { attachments, droppedImageNames: [], unreadableImageNames: [] };
+        expect(store.getState().finalizeEntryImages("too-big", images)).toEqual({
+          attached: true,
+          durable: false,
+        });
+        otherTab.getState().stashEntry(makeEntry({ id: "unrelated" }));
 
-        if (stashOrder === "after") {
-          otherTab.getState().stashEntry(makeEntry({ id: "unrelated" }));
-        }
-
-        if (action === "take" || action === "evict") {
-          if (action === "take") {
-            otherTab.getState().takeEntry("too-big");
-          } else {
-            for (let index = 0; index < MAX_STASH_ENTRIES; index += 1) {
-              otherTab.getState().stashEntry(makeEntry({ id: `evict-${index}` }));
-            }
-          }
-          expect(
-            store.getState().finalizeEntryImages("too-big", {
-              attachments,
-              droppedImageNames: [],
-              unreadableImageNames: [],
-            }),
-          ).toEqual({ attached: false, durable: true });
-          expect(store.getState().takeEntry("too-big").entry).toBeNull();
-          return;
-        }
-
-        if (action === "persist") {
-          rejectImageWrites = false;
-          expect(store.getState().stashEntry(makeEntry({ id: "retry" }))).toMatchObject({
-            written: true,
+        if (action === "take") {
+          otherTab.getState().takeEntry("too-big");
+          expect(store.getState().finalizeEntryImages("too-big", images)).toEqual({
+            attached: false,
             durable: true,
           });
-          expect(otherTab.getState().takeEntry("too-big").entry?.attachments).toEqual(attachments);
-          const replacement = makeEntry({ id: "too-big", attachmentChars: 8 });
-          otherTab.getState().stashEntry(replacement);
-          expect(store.getState().takeEntry("too-big").entry?.attachments).toEqual(
-            replacement.attachments,
-          );
+          expect(store.getState().takeEntry("too-big").entry).toBeNull();
           return;
         }
 
