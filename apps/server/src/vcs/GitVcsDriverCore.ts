@@ -3632,28 +3632,18 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return stdout.trim();
   });
 
-  // Overlapping reads of the same paths share one listing instead of each walking the tree; the
-  // result is never kept, so a later read lists again.
-  const untrackedListings = yield* Cache.makeWith(
-    (key: string) => {
-      const [cwd = "", ...pathArgs] = key.split("\0");
-      return executeGit(
-        "GitVcsDriver.review.listUntracked",
-        cwd,
-        ["ls-files", "--others", "--exclude-standard", "-z", "--", ...pathArgs],
-        { maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES },
-      );
-    },
-    { capacity: STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY, timeToLive: () => Duration.zero },
-  );
-
   const prepareUntrackedReviewIndexOrReason = Effect.fn("prepareUntrackedReviewIndex")(function* (
     cwd: string,
     pathArgs: ReadonlyArray<string>,
     onlyPath: string | undefined,
     allowPartial: boolean,
   ) {
-    const untracked = yield* Cache.get(untrackedListings, [cwd, ...pathArgs].join("\0")).pipe(
+    const untracked = yield* executeGit(
+      "GitVcsDriver.review.listUntracked",
+      cwd,
+      ["ls-files", "--others", "--exclude-standard", "-z", "--", ...pathArgs],
+      { maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES },
+    ).pipe(
       Effect.catchTags({
         GitCommandError: (error) =>
           Effect.succeed({
