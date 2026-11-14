@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
 import { FileExplorerPane } from "./FileExplorerPane";
@@ -54,6 +55,12 @@ describe("FileExplorerPane", () => {
         expect(screen.container.querySelector("aside")!.getBoundingClientRect().width).toBe(
           expected,
         );
+        (screen.getByRole("separator").element() as HTMLElement).focus();
+        await userEvent.keyboard("{End}");
+        await expect
+          .element(screen.getByRole("separator"))
+          .toHaveAttribute("aria-valuenow", String(max));
+        expect(screen.container.querySelector("aside")!.getBoundingClientRect().width).toBe(max);
       } finally {
         if (previous === null) localStorage.removeItem(STORAGE_KEY);
         else localStorage.setItem(STORAGE_KEY, previous);
