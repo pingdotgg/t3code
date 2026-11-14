@@ -251,6 +251,47 @@ export function resolveProviderUsageLimits(
   );
 }
 
+/** A provider with no login of its own, such as a custom endpoint, spends from the accounts linked sources report for its driver. */
+export function resolveProviderLimitPool(
+  instanceId: ProviderInstanceId,
+  providers: readonly ServerProvider[],
+  sources: UsageLimitSourceSnapshots,
+  now: number,
+): LimitPool | undefined {
+  const selected = providers.find((provider) => provider.instanceId === instanceId);
+  if (!selected || accountKey(selected.driver, selected.auth.email, selected.usageLimits)) {
+    return undefined;
+  }
+  const accounts = new Map<string, LimitAccount>();
+  for (const source of sources) {
+    for (const account of source.accounts) {
+      if (account.driver !== selected.driver || limitsNotice(account.usageLimits) !== null) {
+        continue;
+      }
+      const key =
+        accountKey(account.driver, account.email, account.usageLimits) ??
+        `${source.id}:${account.id}`;
+      const seen = accounts.get(key);
+      if (seen && Date.parse(seen.limits.checkedAt) >= Date.parse(account.usageLimits.checkedAt)) {
+        continue;
+      }
+      accounts.set(key, {
+        key,
+        driver: account.driver,
+        displayName: account.email ? null : hubAccountName(account),
+        email: account.email,
+        plan: account.plan,
+        accentColor: undefined,
+        environments: [],
+        sourceLabel: source.label,
+        redeem: null,
+        limits: account.usageLimits,
+      });
+    }
+  }
+  return collectLimitPools([...accounts.values()], now)[0];
+}
+
 // Include every enabled login, even unreadable workspaces.
 function accountKeyResolver(reports: Iterable<AccountReport>) {
   const workspaces = new Map<string, Set<string>>();
