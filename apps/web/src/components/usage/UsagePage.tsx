@@ -210,6 +210,7 @@ export function UsagePage() {
     environments,
     selectedEnvironments,
     shown,
+    isPartial,
     isWaitingLong,
     refresh,
   } = useUsage(window, selectedEnvironmentIds, hiddenProviders);
@@ -371,6 +372,7 @@ export function UsagePage() {
             onSelectionChange={setSelectedEnvironmentIds}
             showUsageStatus={!showingLimits}
             refreshing={refreshingUsage}
+            isPartial={isPartial}
             duplicateSources={merged.duplicateSources}
             contractMismatches={merged.contractMismatches}
             onOpenModelPrices={() => setPriceDialog({})}
@@ -1099,7 +1101,7 @@ function UsageCoverageNotice({
   }
 
   return (
-    <div className="flex flex-col gap-1 border-t border-border px-2 py-2 text-xs text-muted-foreground wrap-break-word">
+    <div className="flex flex-col gap-1 border-t border-border px-2 py-2 text-xs text-muted-foreground">
       {failed.map((environment) => (
         <span key={environment.label}>
           {environment.label}: {environment.error}
@@ -1127,6 +1129,7 @@ function UsageEnvironmentFilter({
   onSelectionChange,
   showUsageStatus,
   refreshing,
+  isPartial,
   duplicateSources,
   contractMismatches,
   onOpenModelPrices,
@@ -1137,6 +1140,7 @@ function UsageEnvironmentFilter({
   readonly onSelectionChange: (ids: ReadonlySet<EnvironmentId> | null) => void;
   readonly showUsageStatus: boolean;
   readonly refreshing: boolean;
+  readonly isPartial: boolean;
   readonly duplicateSources: readonly string[];
   readonly contractMismatches: MergedUsage["contractMismatches"];
   readonly onOpenModelPrices: () => void;
@@ -1169,7 +1173,7 @@ function UsageEnvironmentFilter({
           )}
         </span>
       </MenuTrigger>
-      <MenuPopup align="start" className="w-72">
+      <MenuPopup align="start">
         <MenuCheckboxItem
           checked={allSelected}
           closeOnClick={false}
@@ -1231,6 +1235,11 @@ function UsageEnvironmentFilter({
         })}
         {environments.length === 0 ? (
           <p className="px-2 py-2 text-xs text-muted-foreground">No environments connected.</p>
+        ) : null}
+        {showUsageStatus && isPartial ? (
+          <p className="px-2 py-2 text-xs text-muted-foreground">
+            Totals are partial while selected environments scan.
+          </p>
         ) : null}
         {showUsageStatus ? (
           <UsageCoverageNotice

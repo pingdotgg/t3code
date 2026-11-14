@@ -84,6 +84,7 @@ export interface UsageView {
   readonly selectedEnvironments: readonly EnvironmentUsageStatus[];
   readonly isPending: boolean;
   readonly shown: { readonly window: UsageSummaryInput; readonly merged: MergedUsage } | null;
+  readonly isPartial: boolean;
   readonly isWaitingLong: boolean;
   readonly refresh: (input?: UsageSummaryInput) => Promise<void>;
 }
@@ -258,6 +259,7 @@ export function useUsage(
     selectedEnvironments,
     isPending,
     shown,
+    isPartial: settled && stillReporting > 0,
     isWaitingLong,
     refresh,
   };
