@@ -27,6 +27,25 @@ describe("normalizeGitRemoteUrl", () => {
     expect(normalizeGitRemoteUrl("ssh://git@github.com/T3Tools/T3Code")).toBe(
       "github.com/t3tools/t3code",
     );
+    expect(normalizeGitRemoteUrl("https://github.com/T3Tools/T3Code.git?view=compact")).toBe(
+      "github.com/t3tools/t3code",
+    );
+    expect(normalizeGitRemoteUrl("https://github.com/T3Tools/T3Code.git#section")).toBe(
+      "github.com/t3tools/t3code",
+    );
+    expect(normalizeGitRemoteUrl("ssh://git@code.example.test/owner/repo.git.git")).toBe(
+      normalizeGitRemoteUrl("git@code.example.test:owner/repo.git.git"),
+    );
+  });
+
+  it.each([
+    "git@[2001:db8::1]:team/repo.git",
+    "[2001:db8::1]:team/repo.git",
+    "git@[2001:DB8:0::1]:team/repo.git",
+  ])("canonicalizes an IPv6 SCP remote like its SSH URL: %s", (remote) => {
+    expect(normalizeGitRemoteUrl(remote)).toBe(
+      normalizeGitRemoteUrl("ssh://git@[2001:db8::1]/team/repo.git"),
+    );
   });
 
   it("preserves nested group paths for providers like GitLab", () => {

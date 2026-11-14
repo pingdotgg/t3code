@@ -3,14 +3,19 @@ import type * as NodeWorkerThreads from "node:worker_threads";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as SqlError from "effect/sql/SqlError";
 import * as Statement from "effect/sql/Statement";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import type * as Tracer from "effect/Tracer";
 import { vi } from "vite-plus/test";
 
@@ -19,6 +24,7 @@ import * as SqliteClient from "./nodeSqliteClient.ts";
 const startedWorkers = vi.hoisted((): Array<NodeWorkerThreads.Worker> => []);
 const silentWorkers = vi.hoisted(() => ({ on: false, readyOnTerminate: false }));
 const failingWorkers = vi.hoisted(() => ({ message: undefined as string | undefined }));
+const checkpointWorkers = vi.hoisted((): Array<NodeWorkerThreads.Worker> => []);
 
 vi.mock("node:worker_threads", async (importOriginal) => {
   const actual = await importOriginal<typeof NodeWorkerThreads>();
@@ -32,6 +38,7 @@ vi.mock("node:worker_threads", async (importOriginal) => {
             : args) as ConstructorParameters<typeof actual.Worker>),
       );
       startedWorkers.push(this);
+      if (args[1]?.workerData?.frames !== undefined) checkpointWorkers.push(this);
     }
     override terminate() {
       // A "ready" already queued when termination starts reaches the parent before "exit".
@@ -168,6 +175,91 @@ const makeTempDatabase = Effect.gen(function* () {
   return { filename, other };
 });
 
+it.effect.each([false, true])("batches worker results without losing rows (reader=%s)", (reader) =>
+  Effect.gen(function* () {
+    const { filename } = yield* makeTempDatabase;
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const route = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        reader ? effect.pipe(SqliteClient.readOnly) : effect;
+      yield* route(sql`SELECT 1`);
+      const worker = startedWorkers
+        .filter((candidate) => !checkpointWorkers.includes(candidate))
+        .at(-1)!;
+      const batches: Array<ReadonlyArray<unknown>> = [];
+      const record = (reply: { rows?: ReadonlyArray<unknown> }) => {
+        if (Array.isArray(reply.rows) && reply.rows.length > 0) batches.push(reply.rows);
+      };
+      worker.prependListener("message", record);
+      yield* Effect.gen(function* () {
+        const text = "x".repeat(16 * 1024);
+        const query = sql<{ n: number; text: string }>`
+          WITH RECURSIVE sequence(n) AS (
+            SELECT 1 UNION ALL SELECT n + 1 FROM sequence WHERE n < 300
+          ) SELECT n, ${text} AS text FROM sequence
+        `;
+        const rows = yield* reader ? route(query.values) : query;
+        assert.equal(rows.length, 300);
+        for (const [index, row] of rows.entries()) {
+          assert.deepEqual(row, reader ? [index + 1, text] : { n: index + 1, text });
+        }
+        assert.isAbove(batches.length, 1);
+        for (const batch of batches) {
+          assert.isAtMost(batch.length, 16_384);
+          assert.isAtMost(batch.length * text.length * 2, 8 * 1024 * 1024);
+        }
+        batches.length = 0;
+        const narrow = sql<{ n: number }>`
+          WITH RECURSIVE sequence(n) AS (
+            SELECT 1 UNION ALL SELECT n + 1 FROM sequence WHERE n < 10000
+          ) SELECT n FROM sequence
+        `;
+        const narrowRows = yield* reader ? route(narrow.values) : narrow;
+        assert.equal(narrowRows.length, 10_000);
+        assert.deepEqual(narrowRows.at(-1), reader ? [10_000] : { n: 10_000 });
+        assert.equal(batches.length, 1);
+      }).pipe(Effect.ensuring(Effect.sync(() => worker.off("message", record))));
+    }).pipe(
+      Effect.provide(SqliteClient.layer({ filename, writerWorker: true, readerWorker: true })),
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("reuses a worker query after an iterator constraint failure", () =>
+  Effect.gen(function* () {
+    const { filename } = yield* makeTempDatabase;
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`CREATE TABLE unique_entries(name TEXT UNIQUE)`;
+      const insert = (name: string) =>
+        sql<{ name: string }>`INSERT INTO unique_entries VALUES (${name}) RETURNING name`;
+      yield* insert("first");
+      const error = yield* insert("first").pipe(Effect.flip);
+      assert.equal(error.reason._tag, "UniqueViolation");
+      assert.deepEqual(yield* insert("second"), [{ name: "second" }]);
+    }).pipe(Effect.provide(SqliteClient.layer({ filename, writerWorker: true })));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("commits on the worker writer after a returning write timed out on a lock", () =>
+  Effect.gen(function* () {
+    const { filename, other } = yield* makeTempDatabase;
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`PRAGMA busy_timeout = 0`;
+      yield* Effect.sync(() => other.exec("BEGIN IMMEDIATE"));
+      const error = yield* sql`UPDATE counters SET value = 1 WHERE id = 1 RETURNING value`.pipe(
+        Effect.flip,
+      );
+      assert.equal(error.reason._tag, "LockTimeoutError");
+      yield* Effect.sync(() => other.exec("COMMIT"));
+
+      yield* sql.withTransaction(sql`UPDATE counters SET value = 2 WHERE id = 1`);
+      assert.deepEqual(yield* sql`SELECT value FROM counters WHERE id = 1`.values, [[2]]);
+    }).pipe(Effect.provide(SqliteClient.layer({ filename, writerWorker: true })));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("keeps another connection from committing between a transaction's read and write", () =>
   Effect.gen(function* () {
     const { filename, other } = yield* makeTempDatabase;
@@ -218,7 +310,7 @@ it.effect("waits for another process's lock while the database opens", () =>
     yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       assert.deepEqual(yield* sql`SELECT COUNT(*) FROM entries`.values, [[0]]);
-    }).pipe(Effect.provide(SqliteClient.layer({ filename, checkpointWorker: true })));
+    }).pipe(Effect.provide(SqliteClient.layer({ filename, writerWorker: true })));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
@@ -238,6 +330,52 @@ it.effect("reports a transaction blocked by another writer as a lock timeout", (
       assert.deepEqual(yield* read, [[0]]);
     }).pipe(Effect.provide(SqliteClient.layer({ filename })));
   }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("lets the event loop run while a write waits for another connection's lock", () =>
+  Effect.gen(function* () {
+    const { filename, other } = yield* makeTempDatabase;
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`PRAGMA busy_timeout = 5000`;
+      yield* Effect.sync(() => other.exec("BEGIN IMMEDIATE"));
+      const write = yield* Effect.forkChild(
+        sql`UPDATE counters SET value = value + 1 WHERE id = 1`,
+        { startImmediately: true },
+      );
+      // A writer on the event loop sleeps in SQLite's busy handler here, so this commit
+      // cannot run until that write has already timed out.
+      yield* eventLoopTurn;
+      yield* Effect.sync(() => other.exec("UPDATE counters SET value = 10 WHERE id = 1; COMMIT"));
+      yield* Fiber.join(write);
+      assert.deepEqual(yield* sql`SELECT value FROM counters WHERE id = 1`.values, [[11]]);
+    }).pipe(Effect.provide(SqliteClient.layer({ filename, writerWorker: true })));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("finishes a write already sent to the writer before its caller is interrupted", () =>
+  Effect.gen(function* () {
+    const { filename, other } = yield* makeTempDatabase;
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`PRAGMA busy_timeout = 5000`;
+      yield* Effect.sync(() => other.exec("BEGIN IMMEDIATE"));
+      const write = yield* Effect.forkChild(
+        sql`UPDATE counters SET value = value + 1 WHERE id = 1`,
+        { startImmediately: true },
+      );
+      yield* eventLoopTurn;
+      const interrupted = yield* Effect.forkChild(Fiber.interrupt(write), {
+        startImmediately: true,
+      });
+      yield* eventLoopTurn;
+      // The write is waiting in the worker for the lock, so the interrupt has to wait too.
+      assert.isUndefined(interrupted.pollUnsafe());
+      yield* Effect.sync(() => other.exec("COMMIT"));
+      yield* Fiber.join(interrupted);
+      assert.deepEqual(yield* sql`SELECT value FROM counters WHERE id = 1`.values, [[1]]);
+    }).pipe(Effect.provide(SqliteClient.layer({ filename, writerWorker: true })));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect("lets the writer commit while a read-only transaction is open", () =>
@@ -285,6 +423,80 @@ it.effect("serves another read while a read-only transaction is open", () =>
           }),
         )
         .pipe(SqliteClient.readOnly);
+    }),
+  ),
+);
+
+it.effect("gives a queued read the first reader that frees up", () =>
+  withReaderClient((sql) =>
+    Effect.gen(function* () {
+      const holders = yield* Effect.forEach([0, 1, 2, 3], () =>
+        Effect.gen(function* () {
+          const held = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          const fiber = yield* sql
+            .withTransaction(
+              countEntries(sql).pipe(
+                Effect.andThen(Deferred.succeed(held, undefined)),
+                Effect.andThen(Deferred.await(release)),
+              ),
+            )
+            .pipe(SqliteClient.readOnly, Effect.forkChild);
+          yield* Deferred.await(held);
+          return { fiber, release };
+        }),
+      );
+      const cancelled = yield* Effect.uninterruptibleMask((restore) =>
+        SqliteClient.readOnly(restore(sql.withTransaction(countEntries(sql)))),
+      ).pipe((effect) => Effect.forkChild(effect, { startImmediately: true }));
+      yield* Fiber.interrupt(cancelled);
+      const cancelledRead = yield* Effect.uninterruptibleMask((restore) =>
+        SqliteClient.readOnly(restore(countEntries(sql))),
+      ).pipe((effect) => Effect.forkChild(effect, { startImmediately: true }));
+      yield* Fiber.interrupt(cancelledRead);
+      const queuedSpan = yield* Deferred.make<Tracer.Span>();
+      const observeQueued: Statement.Transformer = (statement, _sql, _fiber, span) =>
+        Deferred.succeed(queuedSpan, span).pipe(Effect.as(statement));
+      const queued = yield* countEntries(sql).pipe(
+        Effect.provideService(Statement.CurrentTransformer, observeQueued),
+        Effect.provideService(Statement.SpanPropagationEnabled, true),
+        SqliteClient.readOnly,
+        (effect) => Effect.forkChild(effect, { startImmediately: true }),
+      );
+      // Masked read-only work keeps its cancellation pending and still runs once a reader frees up.
+      let maskedRan = 0;
+      const maskedRuns = yield* Effect.forEach(
+        [
+          Effect.scoped(
+            Effect.flatMap(sql.reserve, (connection) =>
+              connection.executeUnprepared("SELECT 1", [], undefined),
+            ),
+          ).pipe(Effect.asVoid),
+          sql.withTransaction(countEntries(sql)).pipe(Effect.asVoid),
+        ],
+        (effect) =>
+          effect.pipe(
+            Effect.andThen(Effect.sync(() => maskedRan++)),
+            Effect.uninterruptible,
+            SqliteClient.readOnly,
+            (masked) => Effect.forkChild(masked, { startImmediately: true }),
+          ),
+      );
+      const interrupting = yield* Effect.forEach(maskedRuns, (fiber) =>
+        Effect.forkChild(Fiber.interrupt(fiber), { startImmediately: true }),
+      );
+      yield* TestClock.adjust("1 second");
+      yield* Deferred.succeed(holders[1]!.release, undefined);
+      yield* Fiber.join(holders[1]!.fiber);
+      // Pinned to the first reader it saw, this read would wait for that reader's transaction.
+      assert.equal(yield* Fiber.join(queued), 1);
+      assert.equal((yield* Deferred.await(queuedSpan)).attributes.get("db.lock_wait_ms"), 1000);
+      for (const { fiber, release } of [holders[0]!, holders[2]!, holders[3]!]) {
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(fiber);
+      }
+      yield* Effect.forEach(interrupting, Fiber.join);
+      assert.equal(maskedRan, 2);
     }),
   ),
 );
@@ -408,6 +620,24 @@ it.effect("uses the writer when the reader cannot open the database", () =>
   ),
 );
 
+it.effect("fails with a typed SqlError when the database file is not SQLite", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-sqlite-notadb-" });
+    const filename = path.join(directory, "state.sqlite");
+    yield* fs.writeFileString(filename, "not a db\n");
+
+    const exit = yield* Layer.build(SqliteClient.layer({ filename, writerWorker: true })).pipe(
+      Effect.exit,
+    );
+
+    assert.isTrue(Exit.isFailure(exit));
+    if (Exit.isFailure(exit)) assert.isTrue(SqlError.isSqlError(Cause.squash(exit.cause)));
+    if (Exit.isFailure(exit)) assert.isFalse(Cause.hasDies(exit.cause));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("finishes masked database cleanup after its caller is interrupted", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -490,4 +720,63 @@ it.effect.each([
         masked ? [[1], [2]] : [[2]],
       );
     }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" }))),
+);
+
+it.effect("keeps writes moving while an outside reader pins the WAL, then trims the WAL", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-sqlite-pinned-wal-" });
+    const filename = path.join(directory, "state.sqlite");
+    // Stands in for `sqlite3 statev2.sqlite` or a backup script reading the database.
+    const outside = yield* Effect.acquireRelease(
+      Effect.sync(() => new NodeSqlite.DatabaseSync(filename)),
+      (db) =>
+        Effect.sync(() => {
+          if (db.isTransaction) db.exec("COMMIT");
+          db.close();
+        }),
+    );
+    outside.exec("PRAGMA journal_mode = WAL; CREATE TABLE blobs(data BLOB NOT NULL)");
+    const walSize = fs.stat(`${filename}-wal`).pipe(
+      Effect.map((info) => Number(info.size)),
+      Effect.orDie,
+    );
+    const limit = 8 * 1024 * 1024;
+    const payload = new Uint8Array(1024 * 1024).fill(7);
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql.unsafe(`PRAGMA journal_size_limit = ${limit}`);
+      yield* sql`INSERT INTO blobs VALUES (${payload})`;
+      outside.exec("BEGIN");
+      outside.prepare("SELECT COUNT(*) FROM blobs").get();
+      for (let write = 0; write < 24; write++) yield* sql`INSERT INTO blobs VALUES (${payload})`;
+      assert.isAbove(yield* walSize, limit);
+      outside.exec("COMMIT");
+      const checkpointer = checkpointWorkers.at(-1)!;
+      const caughtUp = Effect.callback<void>((resume) => {
+        const onMessage = (message: { type?: unknown; log?: unknown; checkpointed?: unknown }) => {
+          if (
+            message?.type === "checked" &&
+            typeof message.log === "number" &&
+            message.log > 0 &&
+            message.log === message.checkpointed
+          ) {
+            resume(Effect.void);
+          }
+        };
+        checkpointer.on("message", onMessage);
+        checkpointer.ref();
+        return Effect.sync(() => {
+          checkpointer.off("message", onMessage);
+          checkpointer.unref();
+        });
+      });
+      // The worker checkpoints the released frames; the next write restarts the WAL at the limit.
+      yield* Effect.all([caughtUp, sql`DELETE FROM blobs WHERE rowid = 1`], { concurrency: 2 });
+      yield* sql`DELETE FROM blobs WHERE rowid = 2`;
+      assert.isAtMost(yield* walSize, limit);
+      assert.deepEqual(yield* sql`SELECT COUNT(*) FROM blobs`.values, [[23]]);
+    }).pipe(Effect.provide(SqliteClient.layer({ filename, writerWorker: true })));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
