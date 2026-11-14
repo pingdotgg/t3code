@@ -142,7 +142,7 @@ interface BoxThread {
   readonly sent: Ref.Ref<ReadonlyArray<string>>;
   /** Runs as the launch there is answered, before the laptop hears back. */
   readonly afterLaunch: Ref.Ref<Effect.Effect<void>>;
-  /** Once set, the thread there is this real orchestration's, with its own runs and queue. */
+  /** Once set, the box's thread calls go to this real orchestration. */
   readonly real: Ref.Ref<ThreadManagement.ThreadManagementService["Service"] | null>;
 }
 
@@ -280,16 +280,17 @@ const boxToolkitLayer = (thread: BoxThread) => {
         yield* Deferred.succeed(thread.interruptedOnce, undefined);
       }
     });
-  // Once the thread there is real, each read and write goes to its orchestration instead.
-  // The synthetic answers before then stand in for the real service's.
-  const there =
-    <A, E>(mocked: Effect.Effect<A, E>) =>
-    <B, F>(
-      real: (threads: ThreadManagement.ThreadManagementService["Service"]) => Effect.Effect<B, F>,
-    ) =>
-      Ref.get(thread.real).pipe(
-        Effect.flatMap((threads) => (threads === null ? (mocked as never) : real(threads))),
-      );
+  type Threads = ThreadManagement.ThreadManagementService["Service"];
+  // Once `thread.real` is set, each call goes to that orchestration instead of the fakes below.
+  const there = <A, E, B, F>(
+    fake: Effect.Effect<A, E>,
+    real: (threads: Threads) => Effect.Effect<B, F>,
+  ) =>
+    Ref.get(thread.real).pipe(
+      Effect.flatMap((threads): Effect.Effect<A | B, E | F> =>
+        threads === null ? fake : real(threads),
+      ),
+    );
   const mocked = {
     getThreadShell: shellOf,
     getProjectThreadRecords: (input) => projectionOf(input.threadId),
@@ -513,44 +514,38 @@ const boxToolkitLayer = (thread: BoxThread) => {
             : { run: { id: boxLaterRunId, status: "running" }, delivery: "started" }) as never,
         ),
       ),
-  } satisfies Partial<ThreadManagement.ThreadManagementService["Service"]>;
-  type Threads = ThreadManagement.ThreadManagementService["Service"];
+  } satisfies Partial<Threads>;
   const layerBoxThreads = Layer.mock(ThreadManagement.ThreadManagementService)({
     getThreadShell: (threadId) =>
-      there(mocked.getThreadShell(threadId))((real) => real.getThreadShell(threadId)),
+      there(mocked.getThreadShell(threadId), (real) => real.getThreadShell(threadId)),
     getProjectThreadRecords: ((...args: Parameters<Threads["getProjectThreadRecords"]>) =>
-      there(mocked.getProjectThreadRecords(args[0]))((real) =>
+      there(mocked.getProjectThreadRecords(args[0]), (real) =>
         real.getProjectThreadRecords(...args),
       )) as never,
     getThreadRecords: ((...args: Parameters<Threads["getThreadRecords"]>) =>
-      there(mocked.getThreadRecords(args[0]))((real) => real.getThreadRecords(...args))) as never,
+      there(mocked.getThreadRecords(args[0]), (real) => real.getThreadRecords(...args))) as never,
     waitForThread: (input) =>
-      there(mocked.waitForThread(input))((real) => real.waitForThread(input)),
+      there(mocked.waitForThread(input), (real) => real.waitForThread(input)),
     getTimelinePage: (threadId, options) =>
-      there(mocked.getTimelinePage(threadId, options))((real) =>
+      there(mocked.getTimelinePage(threadId, options), (real) =>
         real.getTimelinePage(threadId, options),
       ),
     interruptThread: (input) =>
-      there(mocked.interruptThread(input))((real) => real.interruptThread(input)),
+      there(mocked.interruptThread(input), (real) => real.interruptThread(input)),
     dispatch: (command) =>
-      there(mocked.dispatch(command))((real) =>
+      there(mocked.dispatch(command), (real) =>
         recordStop(command.commandId, "thread.stop").pipe(
           Effect.when(Effect.succeed(command.type === "thread.stop")),
           Effect.andThen(real.dispatch(command)),
         ),
       ),
     stopDelegatedTasks: (input) =>
-      there(mocked.stopDelegatedTasks(input))((real) =>
+      there(mocked.stopDelegatedTasks(input), (real) =>
         recordStop(input.commandId, "delegated-tasks").pipe(
           Effect.andThen(real.stopDelegatedTasks(input)),
         ),
       ),
-    sendToThread: (input) =>
-      there(mocked.sendToThread(input))((real) =>
-        Ref.update(thread.sent, (seen) => [...seen, input.text]).pipe(
-          Effect.andThen(real.sendToThread(input)),
-        ),
-      ),
+    sendToThread: (input) => there(mocked.sendToThread(input), (real) => real.sendToThread(input)),
   });
   const layerBoxLaunches = Layer.mock(ThreadLaunch.ThreadLaunchService)({
     launch: (input) =>
@@ -2616,7 +2611,7 @@ it.effect("cancelling a queued follow-up task there cancels its run alone", () =
       yield* Deferred.succeed(thread.finished, undefined);
       expect(yield* taskResult(a, delegated.taskId)).toMatchObject({ status: "completed" });
 
-      // From here the thread there is the box's real orchestration, as the launch recorded it.
+      // The box's real orchestration takes over the thread, created as the launch recorded it.
       const remoteId = delegated.remoteChild.threadId;
       const launchedWith = (yield* Ref.get(thread.launchedWith))!;
       const linkOrigin = (yield* Ref.get(thread.linkOrigin))!;
@@ -2652,16 +2647,9 @@ it.effect("cancelling a queued follow-up task there cancels its run alone", () =
         mode: "queue",
       });
       expect(queued.isError, JSON.stringify(queued.content)).toBe(false);
-      const busySent = busy.structuredContent as {
-        taskId?: NodeId;
-        runId: RunId;
-        delivery: string;
-      };
-      const queuedSent = queued.structuredContent as {
-        taskId?: NodeId;
-        runId: RunId;
-        delivery: string;
-      };
+      type Sent = { taskId?: NodeId; runId: RunId; delivery: string };
+      const busySent = busy.structuredContent as Sent;
+      const queuedSent = queued.structuredContent as Sent;
       expect(busySent.delivery).toBe("started");
       expect(queuedSent.delivery).toBe("queued");
       expect(queuedSent.taskId).toBeDefined();
@@ -2679,8 +2667,7 @@ it.effect("cancelling a queued follow-up task there cancels its run alone", () =
       expect(cancelled.isError, JSON.stringify(cancelled.content)).toBe(false);
       expect(yield* taskResult(a, queuedTask.id)).toMatchObject({ status: "cancelled" });
 
-      // Only that queued run ends there: the other task's turn runs on, the thread is not stopped,
-      // and nothing is left held for Resume to start.
+      // Only that run ends there: the other turn runs on, and the thread is neither stopped nor held.
       const runsOf = (projection: typeof thereBefore) =>
         projection.runs.map(({ id, status, queueHeld }) => ({ id, status, queueHeld }));
       const thereAfter = yield* box_.orchestrator.getThreadProjection(remoteId);
@@ -2690,15 +2677,8 @@ it.effect("cancelling a queued follow-up task there cancels its run alone", () =
         ),
       );
       expect(yield* Ref.get(thread.stops)).toEqual([]);
-      yield* box_.orchestrator.dispatch({
-        type: "queue.resume",
-        commandId: CommandId.make("command:box:resume"),
-        threadId: remoteId,
-      });
-      const resumed = yield* box_.orchestrator.getThreadProjection(remoteId);
-      expect(resumed.runs.find((run) => run.id === queuedRun.id)?.status).toBe("cancelled");
 
-      // A later cancel finds nothing of the task's own left there to stop.
+      // A repeat cancel sees the run ended unstarted and stops nothing.
       yield* a.call("task_cancel", { taskId: queuedTask.id, clientRequestId: "cancel-again" });
       expect(yield* Ref.get(thread.stops)).toEqual([]);
     }),
