@@ -320,6 +320,35 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AntigravityAuth"
     }),
   );
 
+  it.effect("does not blame the network when the runtime never answers initialize", () =>
+    Effect.gen(function* () {
+      const initializing = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        beforeInitialize: Deferred.succeed(initializing, undefined).pipe(
+          Effect.andThen(Effect.never),
+        ),
+      });
+      yield* harness.auth.controller.start(owner);
+      yield* Deferred.await(initializing);
+      const blamesNetwork = /reach(ed)? Google|network|ipv6/i;
+
+      yield* TestClock.adjust("90 seconds");
+      const stalled = yield* harness.auth.controller.subscribe(owner).pipe(
+        Stream.filter((state) => state.message !== "Starting Google sign-in."),
+        Stream.runHead,
+        Effect.map(Option.getOrThrow),
+      );
+      assert.equal(stalled.phase, "starting");
+      assert.notMatch(stalled.message ?? "", blamesNetwork);
+      assert.match(stalled.message ?? "", /not started|stuck/i);
+
+      yield* TestClock.adjust("210 seconds");
+      const failed = yield* phase(harness.auth, "failed");
+      assert.notMatch(failed.message ?? "", blamesNetwork);
+      assert.match(failed.message ?? "", /not respond|may not run/i);
+    }),
+  );
+
   it.effect("keeps the expired message once the Google link was shown", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();

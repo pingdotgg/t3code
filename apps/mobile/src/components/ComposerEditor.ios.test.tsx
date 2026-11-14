@@ -118,6 +118,7 @@ vi.mock("./ui/AppText", () => ({ AppText: ({ children }: { children?: ReactNode 
 vi.mock("./ComposerContextSheet", () => ({ ComposerContextSheet: () => null }));
 vi.mock("../features/threads/useOpenLinkedThread", () => ({ useOpenLinkedThread: () => vi.fn() }));
 vi.mock("../state/peerLinks", () => ({ useLinkedEnvironments: () => [] }));
+vi.mock("../state/model-mentions", () => ({ useModelMentions: () => [] }));
 vi.mock("../state/preferences", async () => {
   const { Atom } = await import("effect/reactivity");
   return { mobilePreferencesAtom: Atom.make({ _tag: "Initial" }) };
