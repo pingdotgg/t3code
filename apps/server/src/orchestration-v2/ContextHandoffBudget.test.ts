@@ -24,6 +24,7 @@ import {
   historyResponseItems,
   selectHistory,
   selectLoadedHistory,
+  minHistoricalMessageCost,
   historicalMessage,
   jsonEscapedByteLength,
 } from "@t3tools/provider-core/server/handoffBudget";
@@ -249,7 +250,7 @@ describe("handoff budget", () => {
       budget: 16_000,
       candidates: candidates.map((candidate) => ({
         itemId: candidate.itemId,
-        minTextLength: candidate.text.length,
+        minCost: minHistoricalMessageCost(candidate, candidate.text.length),
       })),
     };
     const all = selectHistory({ ...input, messages: candidates });
@@ -270,6 +271,27 @@ describe("handoff budget", () => {
         messages: [withoutAnswer[0]!, withoutAnswer[1]!, ...withoutAnswer.slice(-256)],
       }),
       selectHistory({ ...input, messages: withoutAnswer }),
+    );
+  });
+
+  it("settles from the newest page once older candidates cannot fit", () => {
+    const candidates = [
+      message("bulk:user", "user", "Run the bulk pass."),
+      ...Array.from({ length: 3_000 }, (_, index) =>
+        message(`bulk:${index}`, "assistant", `Working on module ${index % 10}`.padEnd(220)),
+      ),
+    ];
+    const input = {
+      coverage: "Recover",
+      budget: 16_000,
+      candidates: candidates.map((candidate) => ({
+        itemId: candidate.itemId,
+        minCost: minHistoricalMessageCost(candidate, candidate.text.length),
+      })),
+    };
+    assert.deepEqual(
+      selectLoadedHistory({ ...input, messages: [candidates[0]!, ...candidates.slice(-256)] }),
+      selectHistory({ ...input, messages: candidates }),
     );
   });
 

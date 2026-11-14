@@ -186,7 +186,7 @@ export function historicalMessage(
   };
 }
 
-function historicalMessageHeader(message: OrchestrationV2HistoricalMessage): string {
+function historicalMessageHeader(message: Omit<OrchestrationV2HistoricalMessage, "text">): string {
   return `[Historical ${message.role}; ${message.kind}; thread=${message.threadId}; run=${message.runId ?? "imported"}; item=${message.itemId}; provider-thread=${message.providerThreadId ?? "none"}; status=${message.status}${message.runStatus === undefined ? "" : `; run-status=${message.runStatus}`}]`;
 }
 
@@ -274,13 +274,27 @@ const RESPONSE_ENVELOPE_BYTES = {
 };
 const MIN_MESSAGE_COST = Math.min(RESPONSE_ENVELOPE_BYTES.user, RESPONSE_ENVELOPE_BYTES.assistant);
 
-function messageCost(message: OrchestrationV2HistoricalMessage): number {
-  const rendered =
-    jsonEscapedByteLength(historicalMessageHeader(message)) +
-    2 +
-    jsonEscapedByteLength(message.text) +
-    2;
+function messageCostFor(
+  message: Omit<OrchestrationV2HistoricalMessage, "text">,
+  textBytes: number,
+): number {
+  const rendered = jsonEscapedByteLength(historicalMessageHeader(message)) + 2 + textBytes + 2;
   return Math.max(rendered + RESPONSE_ENVELOPE_BYTES[message.role] + 1, rendered + 4);
+}
+
+function messageCost(message: OrchestrationV2HistoricalMessage): number {
+  return messageCostFor(message, jsonEscapedByteLength(message.text));
+}
+
+/**
+ * A lower bound on a message's cost before its text is read. `minTextLength` must not exceed
+ * the text's `length`; a missing run status only shortens the header.
+ */
+export function minHistoricalMessageCost(
+  message: Omit<OrchestrationV2HistoricalMessage, "text" | "runStatus">,
+  minTextLength: number,
+): number {
+  return messageCostFor(message, minTextLength);
 }
 
 export function historyCost(
@@ -308,7 +322,7 @@ export function selectHistory(input: {
     ...input,
     candidates: input.messages.map((message) => ({
       itemId: message.itemId,
-      minTextLength: message.text.length,
+      minCost: messageCost(message),
     })),
   });
   if (selected.missingItemIds !== undefined) throw new Error("Every candidate is loaded.");
@@ -323,8 +337,8 @@ export function selectHistory(input: {
 export function selectLoadedHistory(input: {
   readonly candidates: ReadonlyArray<{
     readonly itemId: OrchestrationV2HistoricalMessage["itemId"];
-    /** At most the message's `text.length`. */
-    readonly minTextLength: number;
+    /** At most the message's cost; see `minHistoricalMessageCost`. */
+    readonly minCost: number;
   }>;
   readonly messages: ReadonlyArray<OrchestrationV2HistoricalMessage>;
   readonly coverage: string;
@@ -357,8 +371,7 @@ export function selectLoadedHistory(input: {
     input.budget -
     // Reserve both counters and the ID list at maximum width so the final context cannot exceed the budget.
     historyCost([], contextFor(itemIds.length, maxOmitted, widestIds));
-  const fits = (candidate: (typeof candidates)[number]) =>
-    candidate.minTextLength + MIN_MESSAGE_COST <= remaining;
+  const fits = (candidate: (typeof candidates)[number]) => candidate.minCost <= remaining;
   const tryAdd = (message: OrchestrationV2HistoricalMessage | undefined) => {
     if (message === undefined || selected.has(message.itemId) || message.text.length > remaining)
       return;
@@ -374,7 +387,7 @@ export function selectLoadedHistory(input: {
     const candidate = candidates[index]!;
     const message = loaded.get(candidate.itemId);
     if (message !== undefined) tryAdd(message);
-    // A message costs at least its text plus an envelope; `remaining` only shrinks from here.
+    // `remaining` only shrinks from here, so a candidate that cannot fit now never will.
     else if (fits(candidate))
       return {
         missingItemIds: candidates

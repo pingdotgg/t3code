@@ -344,6 +344,17 @@ export interface ProjectionRuntimeResponseContext {
   readonly session: OrchestrationV2ThreadProjection["providerSessions"][number] | undefined;
 }
 
+/** A handoff history item's header fields and a lower bound on its text length, read without decoding it. */
+export interface HandoffHistoryCandidate {
+  readonly itemId: TurnItemId;
+  readonly threadId: ThreadId;
+  readonly runId: RunId | null;
+  readonly providerThreadId: ProviderThreadId | null;
+  readonly kind: OrchestrationV2TurnItem["type"];
+  readonly status: OrchestrationV2TurnItem["status"];
+  readonly minTextLength: number;
+}
+
 export interface ProjectionRecordFilter {
   readonly providerThreadIds?: ReadonlyArray<ProviderThreadId>;
   readonly providerTurnAttemptIds?: ReadonlyArray<RunAttemptId>;
@@ -683,10 +694,7 @@ export interface ProjectionStoreV2Shape {
     limit: number,
   ) => Effect.Effect<
     {
-      readonly candidates: ReadonlyArray<{
-        readonly itemId: TurnItemId;
-        readonly minTextLength: number;
-      }>;
+      readonly candidates: ReadonlyArray<HandoffHistoryCandidate>;
       readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
     },
     ProjectionStoreV2Error
@@ -5232,18 +5240,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             'run_interrupt_result','file_change','proposed_plan')
           AND ${runIds === undefined ? sql`1` : sql`run_id IN (SELECT value FROM json_each(${encodeIdList(runIds)}))`}`;
         type Row = PayloadRow & { readonly turnItemId: TurnItemId; readonly ordinal: number };
-        // Character counts never exceed a string's UTF-16 length, so these stay lower bounds.
-        const candidates = yield* sql<{
-          readonly itemId: TurnItemId;
-          readonly minTextLength: number;
-        }>`
-          SELECT turn_item_id AS "itemId", COALESCE(CASE type
-            WHEN 'command_execution' THEN length(json_extract(payload_json, '$.input'))
+        // Character counts never exceed a string's UTF-16 length, so these stay lower bounds of
+        // historicalText; 23 and 13 are the fixed command and file-change wrappers.
+        const candidates = yield* sql<HandoffHistoryCandidate>`
+          SELECT turn_item_id AS "itemId", thread_id AS "threadId", run_id AS "runId",
+            provider_thread_id AS "providerThreadId", type AS "kind", status,
+            COALESCE(CASE type
+            WHEN 'command_execution' THEN 23 + length(json_extract(payload_json, '$.input'))
               + COALESCE(length(json_extract(payload_json, '$.output')), 0)
             WHEN 'error' THEN length(json_extract(payload_json, '$.failure.message'))
             WHEN 'run_interrupt_result' THEN length(json_extract(payload_json, '$.message'))
             WHEN 'proposed_plan' THEN length(json_extract(payload_json, '$.markdown'))
-            WHEN 'file_change' THEN 0
+            WHEN 'file_change' THEN 13
             ELSE length(json_extract(payload_json, '$.text'))
           END, 0) AS "minTextLength"
           FROM orchestration_v2_projection_turn_items

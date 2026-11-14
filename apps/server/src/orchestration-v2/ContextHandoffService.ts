@@ -24,10 +24,11 @@ import {
   renderHistory,
   selectHistory,
   selectLoadedHistory,
+  minHistoricalMessageCost,
 } from "@t3tools/provider-core/server/handoffBudget";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { createOrchestrationV2TurnItemVisibility } from "@t3tools/shared/orchestrationV2Timeline";
-import type { ProjectionStoreV2Shape } from "./ProjectionStore.ts";
+import type { HandoffHistoryCandidate, ProjectionStoreV2Shape } from "./ProjectionStore.ts";
 
 export class ContextHandoffPrepareError extends Schema.TaggedError<ContextHandoffPrepareError>()(
   "ContextHandoffPrepareError",
@@ -548,7 +549,18 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
         });
       const prefix = historical(input.items);
       const candidatesOf = (messages: ReadonlyArray<OrchestrationV2HistoricalMessage>) =>
-        messages.map((message) => ({ itemId: message.itemId, minTextLength: message.text.length }));
+        messages.map((message) => ({
+          itemId: message.itemId,
+          minCost: minHistoricalMessageCost(message, message.text.length),
+        }));
+      const pageCandidates = (candidates: ReadonlyArray<HandoffHistoryCandidate>) =>
+        candidates.map(({ minTextLength, ...candidate }) => ({
+          itemId: candidate.itemId,
+          minCost: minHistoricalMessageCost(
+            { ...candidate, role: candidate.kind === "user_message" ? "user" : "assistant" },
+            minTextLength,
+          ),
+        }));
       const select = (
         candidates: Parameters<typeof selectLoadedHistory>[0]["candidates"],
         messages: ReadonlyArray<OrchestrationV2HistoricalMessage>,
@@ -576,7 +588,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
         const page = yield* input.readHistory
           .page(HANDOFF_HISTORY_PAGE)
           .pipe(Effect.mapError(readFailed));
-        candidates = [...candidates, ...page.candidates];
+        candidates = [...candidates, ...pageCandidates(page.candidates)];
         loaded = [...prefix, ...historical(page.items)];
       }
       const order = new Map(candidates.map((candidate, index) => [candidate.itemId, index]));
