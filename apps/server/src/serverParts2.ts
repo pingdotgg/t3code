@@ -255,7 +255,7 @@ export const layerMakeRoutes = Layer.mergeAll(
   // Links agents ask for: shown in a thread from /mcp, answered over WebSocket.
   Layer.provide(PeerLinkRequests.layer),
   // Share the service so HTTP/WS clients single-flight reads and invalidate each other's cached patches.
-  Layer.provide(layerPullRequestService),
+  Layer.provide(Layer.suspend(() => layerPullRequestService)),
   // The same activity instance RunExecutionService reports to, by layer memoization.
   Layer.provide(
     ServerBrowser.layer.pipe(
@@ -271,8 +271,8 @@ export const layerMakeRoutes = Layer.mergeAll(
     ),
   ),
   Layer.provide(PreviewAutomationBroker.layer),
-  Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(layerDesktopAppUpdate))),
-  Layer.provide(layerCommandReadiness),
+  Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(Layer.suspend(() => layerDesktopAppUpdate)))),
+  Layer.provide(Layer.suspend(() => layerCommandReadiness)),
   Layer.provide(ServerHttp.layerBrowserApiCors),
   Layer.provide(ServerHttp.layerHttpCompression),
 );
