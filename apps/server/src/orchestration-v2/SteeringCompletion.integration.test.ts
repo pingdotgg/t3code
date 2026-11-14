@@ -1394,7 +1394,14 @@ it.effect("starts a steer that missed the turn on the saved next-turn selection"
   }),
 );
 
-it.effect.each(["complete", "stop-before-decline", "stop-after-decline", "queued-model"] as const)(
+const declinedSteerCases = [
+  "complete",
+  "stop-before-decline",
+  "stop-after-decline",
+  "queued-model",
+  "agent-edited",
+] as const;
+it.effect.each(declinedSteerCases)(
   "persists a declined steer without blocking the worker: %s",
   (timing) =>
     Effect.gen(function* () {
@@ -1466,21 +1473,68 @@ it.effect.each(["complete", "stop-before-decline", "stop-after-decline", "queued
           ).pipe(Effect.asVoid, Effect.orDie);
         }
         const messageId = MessageId.make("message:declined");
-        yield* orchestrator.dispatch({
-          type: "message.dispatch",
-          commandId: CommandId.make("steer"),
-          threadId,
-          messageId,
-          text: "follow up",
-          attachments: [],
-          ...(timing === "queued-model" ? { modelSelection: steerSelection } : {}),
-          dispatchMode: { type: "steer_active", targetRunId: first.runId },
-          createdBy: "user",
-          creationSource: "web",
-        });
+        if (timing === "agent-edited") {
+          yield* Effect.forEach([MessageId.make("message:held"), messageId], (id) =>
+            orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`queue:${id}`),
+              threadId,
+              messageId: id,
+              text: id,
+              attachments: [],
+              dispatchMode: { type: "queue_after_active" },
+              createdBy: "user",
+              creationSource: "web",
+            }),
+          );
+          const { runs } = yield* orchestrator.getThreadProjection(threadId);
+          const held = runs.find((run) => run.userMessageId === MessageId.make("message:held"))!;
+          const queuedRunId = runs.find((run) => run.userMessageId === messageId)!.id;
+          // A Stop held the user's queue and a provider wake started past it.
+          yield* (yield* EventSink.EventSinkV2).write({
+            events: [
+              {
+                id: EventId.make("hold-queue"),
+                type: "run.updated",
+                threadId,
+                runId: held.id,
+                occurredAt: yield* DateTime.now,
+                payload: { ...held, queueHeld: true },
+              },
+            ],
+          });
+          yield* orchestrator.dispatch({
+            type: "queued-run.edit",
+            commandId: CommandId.make("agent-edit"),
+            threadId,
+            runId: queuedRunId,
+            text: "follow up",
+            editor: { createdBy: "agent", creationSource: "mcp" },
+          });
+          yield* orchestrator.dispatch({
+            type: "queued-message.promote-to-steer",
+            commandId: CommandId.make("steer"),
+            threadId,
+            queuedRunId,
+            targetRunId: first.runId,
+          });
+        } else {
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make("steer"),
+            threadId,
+            messageId,
+            text: "follow up",
+            attachments: [],
+            ...(timing === "queued-model" ? { modelSelection: steerSelection } : {}),
+            dispatchMode: { type: "steer_active", targetRunId: first.runId },
+            createdBy: "user",
+            creationSource: "web",
+          });
+        }
         yield* worker.drain();
         const pending = yield* orchestrator.getThreadProjection(threadId);
-        const queued = pending.runs.find(
+        const queued = pending.runs.findLast(
           (run) => run.userMessageId === messageId && run.id !== first.runId,
         );
         const effects = yield* (yield* EffectOutbox.EffectOutboxV2).listByCommandId(
@@ -1527,6 +1581,31 @@ it.effect.each(["complete", "stop-before-decline", "stop-after-decline", "queued
           assert.equal(started.length, 1);
           return;
         }
+        if (timing === "agent-edited") {
+          assert.isTrue(queued?.queueHeld);
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make("wake"),
+            threadId,
+            messageId: MessageId.make("message:wake"),
+            text: "wake",
+            attachments: [],
+            dispatchMode: { type: "queue_after_active" },
+            createdBy: "agent",
+            creationSource: "provider",
+          });
+        }
+        const nextStarted = yield* orchestrator.streamDomainEvents.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "run.updated" &&
+              event.payload.id !== first.runId &&
+              event.payload.status === "starting",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
         const settled = yield* orchestrator.streamDomainEvents.pipe(
           Stream.filter(
             (event) =>
@@ -1556,9 +1635,17 @@ it.effect.each(["complete", "stop-before-decline", "stop-after-decline", "queued
         });
         yield* Fiber.join(settled);
         yield* worker.drain();
+        // The run-update listener releases unattended holds, then starts the next queued run.
+        yield* Fiber.join(nextStarted);
         yield* orchestrator.resumeQueuedRuns;
         yield* worker.drain();
         assert.equal(started.length, 2);
+        if (timing === "agent-edited") {
+          assert.equal(started[1]?.message.messageId, MessageId.make("message:wake"));
+          const after = yield* orchestrator.getThreadProjection(threadId);
+          assert.isTrue(after.runs.find((run) => run.id === queued?.id)?.queueHeld);
+          return;
+        }
         assert.equal(started[1]?.message.messageId, messageId);
         assert.equal(started[1]?.runId, queued?.id);
       }).pipe(Effect.provide(layer));

@@ -7452,6 +7452,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               .map((candidate) => candidate.queuePosition ?? candidate.ordinal),
           ) + 1;
       }
+      const queuedBy = projection.runs.find(
+        (candidate) =>
+          candidate.userMessageId === command.messageId && candidate.queuedBy !== undefined,
+      )?.queuedBy;
       const run: OrchestrationV2Run = {
         id: runId,
         threadId: command.threadId,
@@ -7463,6 +7467,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         rootNodeId,
         activeAttemptId: attemptId,
         status: "queued",
+        ...(queuedBy === undefined ? {} : { queuedBy }),
         ...(steerWhenReadyRunId === undefined ? {} : { steerWhenReadyRunId }),
         ...(worktreeMissingRun !== undefined ||
         (heldRunsToRelease.length === 0 &&
