@@ -197,6 +197,7 @@ import type {
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { threadContextAttachment } from "~/lib/threadContextAttachment";
+import { takeSideChatDraft } from "~/lib/sideChatPane";
 import {
   type ComposerCommandItem,
   ComposerCommandMenu,
@@ -1883,6 +1884,137 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     };
   };
 
+  const blurMobileComposerAfterSend = () => {
+    if (!isSoftwareKeyboardOpen) return;
+    if (composerBlurFrameRef.current !== null) {
+      window.cancelAnimationFrame(composerBlurFrameRef.current);
+      composerBlurFrameRef.current = null;
+    }
+    const activeElement = document.activeElement;
+    if (activeElement instanceof HTMLElement) {
+      activeElement.blur();
+    }
+    setIsComposerFocused(false);
+  };
+
+  const shouldBlurMobileComposerOnSubmit = () => {
+    if (!isSoftwareKeyboardOpen) return false;
+    if (isSendBusy || submissionBlocked || environmentUnavailable !== null || phase === "running") {
+      return false;
+    }
+    if (activePendingProgress) {
+      return activePendingProgress.isLastQuestion && Boolean(activePendingResolvedAnswers);
+    }
+    return composerSendState.hasSendableContent;
+  };
+
+  const submitComposerRef = useRef<
+    (dispatchMode?: ComposerDispatchMode, submissionIntent?: ComposerSubmissionIntent) => void
+  >(() => {});
+  const submitComposer = (
+    event?: { preventDefault: () => void },
+    dispatchMode?: ComposerDispatchMode,
+    submissionIntent?: ComposerSubmissionIntent,
+  ) => {
+    if (voiceInputActive) {
+      event?.preventDefault();
+      submitAfterDictation(() => submitComposerRef.current(dispatchMode, submissionIntent));
+      return false;
+    }
+    if (submissionBlocked || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
+      event?.preventDefault();
+      return false;
+    }
+    // A send while a pasted image is still compressing would strand that image:
+    // the turn snapshot wouldn't include it, and it would surface in the *next*
+    // draft instead.
+    if (activeThreadId && countPreparingComposerImages(attachmentTargetKey) > 0) {
+      event?.preventDefault();
+      toastManager.add({
+        type: "info",
+        title: "Still compressing a pasted image.",
+        description: "Send again once its thumbnail appears.",
+      });
+      return false;
+    }
+    if (pendingDraftWork.has(attachmentTargetKey)) {
+      event?.preventDefault();
+      toastManager.add({
+        type: "info",
+        title: "Still bringing attached context into this message.",
+        description: "Send again once its chip resolves.",
+      });
+      return false;
+    }
+    // An empty draft has nothing to send; Enter does what the Resume thread button does.
+    if (showResumeAction && !activePendingProgress) {
+      event?.preventDefault();
+      if (isSendBusy || environmentUnavailable !== null) return false;
+      onResume();
+      return true;
+    }
+    const submission = submitComposerDraft({
+      prompt: promptRef.current,
+      submissionTarget,
+      event,
+      onSend: (sendEvent) => {
+        providerInputRejectedRef.current = false;
+        onSend(
+          sendEvent,
+          dispatchMode ??
+            resolveComposerDispatchMode({
+              running: phase === "running" || phase === "connecting",
+              alternateModifier: false,
+              activeTurnDefault: followUpBehavior,
+              canSteer,
+            }),
+          submissionIntent,
+        );
+        return !providerInputRejectedRef.current;
+      },
+    });
+    setComposerSubmissionError(submission.validationMessage);
+    if (!submission.didDispatch) return false;
+    onTypingGuardSend();
+    if (shouldBlurMobileComposerOnSubmit()) {
+      blurMobileComposerAfterSend();
+    }
+    return true;
+  };
+  const submitComposerStable = useStableCallback(submitComposer);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the committed submission handler to the asynchronous dictation completion
+  useLayoutEffect(() => {
+    submitComposerRef.current = (mode, intent) => submitComposerStable(undefined, mode, intent);
+  }, [submitComposerStable]);
+  useDictationSubmissionShortcut({
+    enabled: voiceInputActive && !speechInput.preparing,
+    formRef: composerFormRef,
+    onKeyDown: (event) => {
+      const intent = composerSubmissionIntentForKey({
+        event,
+        keybindings,
+        isSoftwareKeyboardOpen,
+        isDraftThread: routeKind === "draft",
+        isRunning: phase === "running" || phase === "connecting",
+        sendShortcut: settings.sendShortcut,
+        prompt: promptRef.current,
+      });
+      if (!intent) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      submitComposer(
+        undefined,
+        resolveComposerDispatchMode({
+          running: phase === "running" || phase === "connecting",
+          alternateModifier: intent === "alternate",
+          canSteer,
+          activeTurnDefault: followUpBehavior,
+        }),
+        intent,
+      );
+    },
+  });
+
   const { onUsageLimitsCommand } = props;
   const onSelectComposerItem = (item: ComposerCommandItem) => {
     if (composerSelectLockRef.current) return;
@@ -1932,13 +2064,29 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
       if (item.command === "side" || item.command === "btw") {
         if (props.sideChatDisabledReason) return;
+        const openImmediately =
+          !isEditingQueuedMessage &&
+          snapshot.value.slice(0, trigger.rangeStart).trim() === "" &&
+          snapshot.value.slice(trigger.rangeEnd).trim() === "";
+        const replacement = `/${item.command} `;
+        const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+          snapshot.value,
+          trigger.rangeEnd,
+          replacement,
+        );
         const applied = applyPromptReplacement(
           trigger.rangeStart,
-          trigger.rangeEnd,
-          `/${item.command} `,
-          { expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd) },
+          replacementRangeEnd,
+          replacement,
+          {
+            expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
+            focusEditorAfterReplace: !openImmediately,
+          },
         );
-        if (applied) setComposerHighlightedItemId(null);
+        if (applied) {
+          setComposerHighlightedItemId(null);
+          if (openImmediately) submitComposer();
+        }
         return;
       }
       return;
@@ -2091,136 +2239,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setComposerHighlightedItemId(nextItem?.id ?? null);
   };
 
-  const blurMobileComposerAfterSend = () => {
-    if (!isSoftwareKeyboardOpen) return;
-    if (composerBlurFrameRef.current !== null) {
-      window.cancelAnimationFrame(composerBlurFrameRef.current);
-      composerBlurFrameRef.current = null;
-    }
-    const activeElement = document.activeElement;
-    if (activeElement instanceof HTMLElement) {
-      activeElement.blur();
-    }
-    setIsComposerFocused(false);
-  };
-
-  const shouldBlurMobileComposerOnSubmit = () => {
-    if (!isSoftwareKeyboardOpen) return false;
-    if (isSendBusy || submissionBlocked || environmentUnavailable !== null || phase === "running") {
-      return false;
-    }
-    if (activePendingProgress) {
-      return activePendingProgress.isLastQuestion && Boolean(activePendingResolvedAnswers);
-    }
-    return composerSendState.hasSendableContent;
-  };
-
-  const submitComposerRef = useRef<
-    (dispatchMode?: ComposerDispatchMode, submissionIntent?: ComposerSubmissionIntent) => void
-  >(() => {});
-  const submitComposer = (
-    event?: { preventDefault: () => void },
-    dispatchMode?: ComposerDispatchMode,
-    submissionIntent?: ComposerSubmissionIntent,
-  ) => {
-    if (voiceInputActive) {
-      event?.preventDefault();
-      submitAfterDictation(() => submitComposerRef.current(dispatchMode, submissionIntent));
-      return false;
-    }
-    if (submissionBlocked || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
-      event?.preventDefault();
-      return false;
-    }
-    // A send while a pasted image is still compressing would strand that image:
-    // the turn snapshot wouldn't include it, and it would surface in the *next*
-    // draft instead.
-    if (activeThreadId && countPreparingComposerImages(attachmentTargetKey) > 0) {
-      event?.preventDefault();
-      toastManager.add({
-        type: "info",
-        title: "Still compressing a pasted image.",
-        description: "Send again once its thumbnail appears.",
-      });
-      return false;
-    }
-    if (pendingDraftWork.has(attachmentTargetKey)) {
-      event?.preventDefault();
-      toastManager.add({
-        type: "info",
-        title: "Still bringing attached context into this message.",
-        description: "Send again once its chip resolves.",
-      });
-      return false;
-    }
-    // An empty draft has nothing to send; Enter does what the Resume thread button does.
-    if (showResumeAction && !activePendingProgress) {
-      event?.preventDefault();
-      if (isSendBusy || environmentUnavailable !== null) return false;
-      onResume();
-      return true;
-    }
-    const submission = submitComposerDraft({
-      prompt: promptRef.current,
-      submissionTarget,
-      event,
-      onSend: (sendEvent) => {
-        providerInputRejectedRef.current = false;
-        onSend(
-          sendEvent,
-          dispatchMode ??
-            resolveComposerDispatchMode({
-              running: phase === "running" || phase === "connecting",
-              alternateModifier: false,
-              activeTurnDefault: followUpBehavior,
-              canSteer,
-            }),
-          submissionIntent,
-        );
-        return !providerInputRejectedRef.current;
-      },
-    });
-    setComposerSubmissionError(submission.validationMessage);
-    if (!submission.didDispatch) return false;
-    onTypingGuardSend();
-    if (shouldBlurMobileComposerOnSubmit()) {
-      blurMobileComposerAfterSend();
-    }
-    return true;
-  };
-  const submitComposerStable = useStableCallback(submitComposer);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the committed submission handler to the asynchronous dictation completion
-  useLayoutEffect(() => {
-    submitComposerRef.current = (mode, intent) => submitComposerStable(undefined, mode, intent);
-  }, [submitComposerStable]);
-  useDictationSubmissionShortcut({
-    enabled: voiceInputActive && !speechInput.preparing,
-    formRef: composerFormRef,
-    onKeyDown: (event) => {
-      const intent = composerSubmissionIntentForKey({
-        event,
-        keybindings,
-        isSoftwareKeyboardOpen,
-        isDraftThread: routeKind === "draft",
-        isRunning: phase === "running" || phase === "connecting",
-        sendShortcut: settings.sendShortcut,
-        prompt: promptRef.current,
-      });
-      if (!intent) return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      submitComposer(
-        undefined,
-        resolveComposerDispatchMode({
-          running: phase === "running" || phase === "connecting",
-          alternateModifier: intent === "alternate",
-          canSteer,
-          activeTurnDefault: followUpBehavior,
-        }),
-        intent,
-      );
-    },
-  });
   const handleSubmitMessage = (event: React.MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     submitComposer(
@@ -2658,6 +2676,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return inserted;
   };
   const insertComposerTextAtEndStable = useStableCallback(insertComposerTextAtEnd);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a new side chat's composer takes the parent's typing and focus in one frame
+  useEffect(() => {
+    if (!activeThreadId) return;
+    const frame = window.requestAnimationFrame(() => {
+      const text = takeSideChatDraft(activeThreadId);
+      if (text === null) return;
+      if (text) insertComposerTextAtEndStable(text);
+      composerEditorRef.current?.focusAtEnd();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeThreadId, insertComposerTextAtEndStable]);
 
   const insertComposerFolders = async (
     folders: File[],

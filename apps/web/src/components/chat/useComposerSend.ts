@@ -243,7 +243,9 @@ interface ComposerSendInput {
   readonly anchorNewTurn: TimelineFollow["anchorNewTurn"];
   readonly acknowledgeActiveThreadWoke: () => void;
   /** Resolves true once the side chat started and got the prompt. */
-  readonly onSideChat?: ((prompt: string) => Promise<boolean>) | undefined;
+  readonly onSideChat?:
+    | ((prompt: string, takeDraft?: () => string) => Promise<boolean>)
+    | undefined;
   /** Refuses `/side` with this reason and keeps the draft. */
   readonly sideChatDisabledReason: string | null;
   readonly handleNewThreadInActiveProject: () => void;
@@ -517,16 +519,23 @@ export function useComposerSend(input: ComposerSendInput) {
         );
         return;
       }
-      const started = await onSideChat(sideChatCommand.prompt);
       // Clear only what was sent; the user may have edited the draft or left meanwhile.
-      if (
-        started &&
-        currentRouteThreadKeyRef.current === routeThreadKey &&
-        promptRef.current === promptAtSend
-      ) {
+      const clearSent = () => {
+        if (currentRouteThreadKeyRef.current !== routeThreadKey) return "";
+        const current = promptRef.current;
+        if (!current.startsWith(promptAtSend)) return "";
         promptRef.current = "";
         setComposerDraftPrompt(composerDraftTarget, "");
         composerRef.current?.resetCursorState();
+        return current.slice(promptAtSend.length).trimStart();
+      };
+      // After a bare /side, what the user types while the side chat starts is its question.
+      if (sideChatCommand.prompt === "") {
+        await onSideChat("", clearSent);
+        return;
+      }
+      if ((await onSideChat(sideChatCommand.prompt)) && promptRef.current === promptAtSend) {
+        clearSent();
       }
       return;
     }
