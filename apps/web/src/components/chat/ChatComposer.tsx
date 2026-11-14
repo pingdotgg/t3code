@@ -3587,6 +3587,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     // Switching threads lands focus here, so the label names the thread.
                     ariaLabel={activeThread ? `Message ${activeThread.title}` : "Message"}
                     suggestionListId={composerSuggestionListId}
+                    suggestionsOpen={composerMenuOpen}
                     activeSuggestionId={
                       composerSuggestionListVisible && activeComposerMenuItem
                         ? composerSuggestionOptionId(

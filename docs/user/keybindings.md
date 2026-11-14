@@ -125,12 +125,13 @@ Join modifiers and a key with `+`, such as `mod+shift+d` or `ctrl+l`.
 
 Available context keys are `terminalFocus`, `terminalOpen`, `previewFocus`,
 `previewOpen`, `rightPanelOpen`, `modelPickerOpen`, `usagePageOpen`, `composerFocus`,
-`draftThreadRoute`, `turnRunning`, `editableFocus`, `isWeb`, and `isDesktop`.
+`draftThreadRoute`, `turnRunning`, `editableFocus`, `listFocus`, `isWeb`, and `isDesktop`.
 `rightPanelOpen` applies only to `rightPanel.new` and is true while the right panel is
 open; the default `mod+t` uses it to open the panel's new-tab menu.
 `draftThreadRoute` is true on a draft thread, including a restored draft, until it is first sent.
 `editableFocus` is true while a text field, the composer, or another editor has
-the keyboard. `isWeb` is true in a browser tab. `isDesktop` is true in the
+the keyboard. `listFocus` is true while a search field with a result list, such
+as the command palette or the composer's suggestion menu, has the keyboard. `isWeb` is true in a browser tab. `isDesktop` is true in the
 desktop app. Unknown keys evaluate to `false`.
 
 `mod+1` through `mod+9` jump to the first nine threads, and to models while the
@@ -189,6 +190,18 @@ through the pages you have visited, like a browser's back and forward buttons.
 `chat.newLocal` skips that chooser. Both use your
 [new-thread defaults](./thread-sidebar.md#start-a-thread). `chat.newWithoutProject`
 (`mod+alt+n`) starts a thread [without a project](./thread-sidebar.md#start-without-a-project).
+
+`list.previous` and `list.next` move the highlight in result lists, such as the
+command palette, pickers, and composer suggestions. They default to Up Arrow
+and Down Arrow, which always keep working. They only act while `listFocus` is
+true. For Emacs-style keys, rebind them:
+
+```json
+[
+  { "key": "ctrl+p", "command": "list.previous", "when": "listFocus" },
+  { "key": "ctrl+n", "command": "list.next", "when": "listFocus" }
+]
+```
 
 ## Reserved shortcuts
 
