@@ -163,6 +163,34 @@ describe("thread workflows", () => {
       ["loading", "Queued message is still loading."],
     ]);
   });
+
+  it.each([
+    ["codex", undefined, null],
+    ["opencode", true, null],
+    ["opencode", false, "Goal commands must run as a separate turn."],
+    ["pi", undefined, "Goal commands must run as a separate turn."],
+  ])(
+    "lets a queued goal steer a %s session (native goals %s)",
+    (driver, supportsNativeGoals, reason) => {
+      const state = deriveThreadQueueWorkflowState({
+        thread: { id: "thread", activeProviderThreadId: null },
+        runs: [{ id: "goal", status: "queued", userMessageId: "message-goal", ordinal: 1 }],
+        messages: [{ id: "message-goal", text: "/goal finish the refactor", attachments: [] }],
+        providerTurns: [],
+        providerThreads: [],
+        providerSessions: [
+          {
+            id: "session",
+            driver,
+            status: "running",
+            capabilities: { turns: { supportsNativeGoals } },
+          },
+        ],
+      } as never);
+
+      expect(state.queuedRuns[0]?.steerRejectionReason).toBe(reason);
+    },
+  );
   it.each(["completed", "interrupted", "cancelled", "failed"])(
     "allows sending a held message after a %s turn without a live session",
     (status) => {

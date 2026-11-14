@@ -4,6 +4,7 @@ import {
   type OrchestrationV2ProviderCapabilities,
   orchestrationV2SteerRejectionReason,
   isCompactionCommandMessage,
+  parseGoalCommand,
 } from "@t3tools/contracts";
 import { copySorted } from "@t3tools/shared/Array";
 
@@ -139,10 +140,26 @@ export function getUserQueuedThreadRuns(
   );
 }
 
+function steerRejectionReason(
+  message: { readonly text: string; readonly attachments: ReadonlyArray<ChatAttachment> },
+  runsNativeGoals: boolean,
+): string | null {
+  const reason = orchestrationV2SteerRejectionReason(message);
+  if (reason !== null || runsNativeGoals || parseGoalCommand(message) === null) return reason;
+  return "Goal commands must run as a separate turn.";
+}
+
 export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQueueWorkflowState {
   const activeRun = resolveActiveThreadRun(projection);
   const session = resolveThreadProviderSession(projection);
   const capabilities = session?.capabilities.turns;
+  // Mirrors the server's goalDriverFor: elsewhere a goal cannot stop the turn, so it cannot steer.
+  const runsNativeGoals =
+    session === null ||
+    session.driver === "codex" ||
+    session.driver === "claudeAgent" ||
+    ((session.driver === "opencode" || session.driver === "antigravity") &&
+      capabilities?.supportsNativeGoals === true);
   const activeMessage = projection.messages.find(
     (message) => message.id === activeRun?.userMessageId,
   );
@@ -169,10 +186,10 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
       steerRejectionReason:
         message === undefined
           ? "Queued message is still loading."
-          : orchestrationV2SteerRejectionReason({
-              text: message.text,
-              attachments: message.attachments ?? [],
-            }),
+          : steerRejectionReason(
+              { text: message.text, attachments: message.attachments ?? [] },
+              runsNativeGoals,
+            ),
       messageId: run.userMessageId,
       ...(message?.context ? { context: message.context } : {}),
       ...(message ? { message } : {}),
