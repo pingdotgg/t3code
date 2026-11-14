@@ -5,9 +5,14 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProjectId,
+  ScheduledTaskId,
+  type ScheduledTask,
 } from "@t3tools/contracts";
 import {
+  createDraft,
+  editDraft,
   scheduledTaskDefaultModel,
+  scheduledTaskWorktreeBaseRef,
   DEFAULT_SCHEDULE,
   scheduleDraftForTask,
   scheduleFromDraft,
@@ -206,4 +211,63 @@ it("rejects dedupe keys without valid request placeholders", () => {
   expect(
     scheduleFromDraft({ ...DEFAULT_SCHEDULE, mode: "webhook", coalesceKey: "{{body.bad" }),
   ).toBeNull();
+});
+
+describe("scheduled task worktree base", () => {
+  const ref = (name: string, isDefault = false, isRemote = false) => ({
+    name,
+    isDefault,
+    isRemote,
+  });
+  const rootTask = {
+    id: ScheduledTaskId.make("task"),
+    title: "Review issues",
+    prompt: "Review open issues",
+    enabled: true,
+    schedule: { type: "interval", everyMs: 60_000 },
+    projectId: ProjectId.make("project"),
+    threadId: null,
+    workspaceStrategy: { type: "root" },
+    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    createdBy: "user",
+    creationSource: "mobile",
+    createdAt: "2026-09-17T00:00:00.000Z",
+    updatedAt: "2026-09-17T00:00:00.000Z",
+    nextRunAt: null,
+    lastRunAt: null,
+    lastRunStatus: "never",
+    lastRunError: null,
+    runCount: 0,
+  } satisfies ScheduledTask;
+
+  it("leaves the base automatic for new tasks and tasks without a worktree", () => {
+    expect(createDraft(ProjectId.make("project"), null).baseRef).toBe("");
+    expect(editDraft(rootTask).baseRef).toBe("");
+    expect(
+      editDraft({ ...rootTask, workspaceStrategy: { type: "worktree", baseRef: "release" } })
+        .baseRef,
+    ).toBe("release");
+  });
+
+  it("starts an automatic base from the project's default branch", () => {
+    expect(scheduledTaskWorktreeBaseRef("", [ref("feature"), ref("master", true)])).toBe("master");
+    expect(scheduledTaskWorktreeBaseRef(" ", [ref("origin/develop", true, true)])).toBe(
+      "origin/develop",
+    );
+  });
+
+  it("falls back to main or master when the remote records no default", () => {
+    expect(scheduledTaskWorktreeBaseRef("", [ref("feature"), ref("master")])).toBe("master");
+    expect(scheduledTaskWorktreeBaseRef("", [ref("origin/master", false, true)])).toBe(
+      "origin/master",
+    );
+    expect(scheduledTaskWorktreeBaseRef("", [ref("master"), ref("main")])).toBe("main");
+    expect(scheduledTaskWorktreeBaseRef("", [])).toBe("main");
+  });
+
+  it("keeps a base the user picked", () => {
+    expect(scheduledTaskWorktreeBaseRef(" release ", [ref("master", true)])).toBe("release");
+  });
 });

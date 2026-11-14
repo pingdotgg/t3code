@@ -26,7 +26,11 @@ import {
   useScheduledTaskDestinationLabel,
   useScheduledTaskEditor,
 } from "./scheduled-task-editor";
-import { moveDraftToThread, unbindDraftFromThread } from "./scheduledTaskDraft";
+import {
+  moveDraftToThread,
+  scheduledTaskWorktreeBaseRef,
+  unbindDraftFromThread,
+} from "./scheduledTaskDraft";
 
 function MissingTaskDraft() {
   return (
@@ -148,7 +152,11 @@ export function ScheduledTaskBranchPickerRouteScreen() {
       title="Base branch"
       project={project}
       branches={visibleBranches}
-      selectedBranchName={editor.draft.baseRef}
+      selectedBranchName={
+        editor.draft.baseRef.trim() || debouncedQuery.trim() || branches.data === null
+          ? editor.draft.baseRef
+          : scheduledTaskWorktreeBaseRef("", branches.refs)
+      }
       query={query}
       onQueryChange={setQuery}
       loading={
