@@ -25,7 +25,7 @@ export function discardComposerDraft(target: ComposerThreadTarget): void {
   const discardsSession = typeof target === "string";
 
   const claim = ThreadUndo.begin("discard", key);
-  // Keyed like the composer's attachment target; a late compression would otherwise recreate the draft.
+  // Same key as the composer's attachment target; a late compression would recreate the draft.
   cancelPreparingComposerImages(composerTargetKey(target));
   if (discardsSession) {
     store.clearDraftThread(target);
