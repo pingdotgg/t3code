@@ -1,11 +1,44 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import type { CursorConfigureOptions } from "@cursor/sdk";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
+import * as Path from "effect/Path";
 import { vi } from "vite-plus/test";
 
 import * as CursorSdk from "./CursorSdk.ts";
 
+const sdkDefaults = vi.hoisted(() => ({ useHttp1ForAgent: undefined as boolean | undefined }));
+
+// Holds the SDK's process-wide default the way it does: only keys present change, null clears.
+vi.mock("./sdk.ts", () => ({
+  loadCursorSdk: () => ({
+    Cursor: {
+      configure: ({ local }: CursorConfigureOptions) => {
+        if (local !== undefined && "useHttp1ForAgent" in local) {
+          sdkDefaults.useHttp1ForAgent = local.useHttp1ForAgent ?? undefined;
+        }
+      },
+    },
+  }),
+  loadCursorSqlite: () => ({}),
+}));
+
+const withHost = (environment: NodeJS.ProcessEnv, home: string) =>
+  Effect.provide(
+    Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(HostProcess.Environment, environment),
+      Layer.succeed(HostProcess.HomeDirectory, home),
+    ),
+  );
+
 // Shaped like the SDK's minified class: the constructor is not named after the error.
+// @effect-diagnostics-next-line extendsNativeError:off - mimics the Cursor SDK's own native Error class.
 class o extends Error {
   override name = "WriteIterableClosedError";
 }
@@ -26,12 +59,27 @@ const rejectThroughGuard = (reason: unknown) =>
       for (const listener of others) process.on("unhandledRejection", listener);
     }
     return exit.mock.calls;
-  }).pipe(Effect.scoped);
+  }).pipe(Effect.scoped, withHost({}, "/nonexistent-home"));
 
 describe("CursorSdk unhandled rejection guard", () => {
   it.effect("keeps the server running when the SDK writes to a closed stream", () =>
     Effect.gen(function* () {
       assert.deepStrictEqual(yield* rejectThroughGuard(new o("WritableIterable is closed")), []);
+    }),
+  );
+
+  it.effect("keeps the server running when the SDK writes after its request stream ended", () =>
+    Effect.gen(function* () {
+      // Shaped like `ConnectError.from(e, Code.Aborted)` from the SDK's connect-node body pump.
+      const cause = Object.assign(new Error("write after end"), {
+        code: "ERR_STREAM_WRITE_AFTER_END",
+      });
+      const reason = Object.assign(new Error("[aborted] write after end", { cause }), {
+        name: "ConnectError",
+        code: 10,
+        rawMessage: "write after end",
+      });
+      assert.deepStrictEqual(yield* rejectThroughGuard(reason), []);
     }),
   );
 
@@ -41,5 +89,89 @@ describe("CursorSdk unhandled rejection guard", () => {
         [1],
       ]);
     }),
+  );
+
+  it.effect("still exits on aborted requests other than a write after end", () =>
+    Effect.gen(function* () {
+      const cause = Object.assign(new Error("socket hang up"), { code: "ECONNRESET" });
+      const reason = Object.assign(new Error("[aborted] socket hang up", { cause }), {
+        name: "ConnectError",
+        code: 10,
+      });
+      assert.deepStrictEqual(yield* rejectThroughGuard(reason), [[1]]);
+    }),
+  );
+});
+
+const http1 = JSON.stringify({ network: { useHttp1ForAgent: true } });
+
+describe("CursorSdk agent transport", () => {
+  it.effect.each([
+    {
+      name: "when set in CURSOR_CONFIG_DIR over XDG_CONFIG_HOME",
+      env: { CURSOR_CONFIG_DIR: "config", XDG_CONFIG_HOME: "xdg" },
+      file: "config/cli-config.json",
+      text: http1,
+      expected: true,
+    },
+    {
+      name: "when set in XDG_CONFIG_HOME",
+      env: { XDG_CONFIG_HOME: "xdg" },
+      file: "xdg/cursor/cli-config.json",
+      text: http1,
+      expected: true,
+    },
+    {
+      name: "when set in the home directory",
+      env: {},
+      file: "home/.cursor/cli-config.json",
+      text: http1,
+      expected: true,
+    },
+    {
+      name: "when it is off",
+      env: {},
+      file: "home/.cursor/cli-config.json",
+      text: JSON.stringify({ network: { useHttp1ForAgent: false } }),
+      expected: undefined,
+    },
+    {
+      name: "when the file is damaged",
+      env: {},
+      file: "home/.cursor/cli-config.json",
+      text: "{",
+      expected: undefined,
+      warns: true,
+    },
+    { name: "when there is no file", env: {}, file: undefined, text: "", expected: undefined },
+  ])("follows the Cursor CLI's HTTP/1.1 setting $name", ({ env, file, text, expected, warns }) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-cursor-cli-config-" });
+      if (file !== undefined) {
+        yield* fileSystem.makeDirectory(path.dirname(path.join(root, file)), { recursive: true });
+        yield* fileSystem.writeFileString(path.join(root, file), text);
+      }
+      const environment = Object.fromEntries(
+        Object.entries(env).map(([key, directory]) => [key, path.join(root, directory)]),
+      );
+      const warnings: Array<unknown> = [];
+      const captureWarnings = Logger.make(({ logLevel, message }) => {
+        if (logLevel === "Warn") warnings.push(message);
+      });
+      yield* Effect.gen(function* () {
+        const sdk = Context.get(yield* Layer.build(CursorSdk.layer), CursorSdk.CursorSdk);
+        assert.isUndefined(sdkDefaults.useHttp1ForAgent);
+        sdk.load();
+        assert.strictEqual(sdkDefaults.useHttp1ForAgent, expected);
+      }).pipe(
+        Effect.scoped,
+        withHost(environment, path.join(root, "home")),
+        Effect.provide(Logger.layer([captureWarnings], { mergeWithExisting: false })),
+      );
+      assert.isUndefined(sdkDefaults.useHttp1ForAgent);
+      assert.lengthOf(warnings, warns ? 1 : 0);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

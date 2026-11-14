@@ -1,18 +1,20 @@
+import { createRequire } from "node:module";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import { createRequire } from "node:module";
 import { toOutputFile, type BuildOutput } from "./BuildOutput.ts";
 import { DeployTargetError, type DeployTarget } from "./DeployTarget.ts";
-import { pinNodeServeModule, type NodeServeEntryOptions } from "./NodeServe.ts";
+import {
+  pinNodeServeModule,
+  staticAssetPathSource,
+  type NodeServeEntryOptions,
+} from "./NodeServe.ts";
 
 /** Fetch entry emitted for Neon Functions; no listening socket is created. */
 export const NEON_SERVE_ENTRY_FILE_NAME = "serve-neon.mjs";
 
 /** Generate a Node 24 Fetch module from a framework's portable handler description. */
-export const makeNeonServeEntrySource = (
-  options: NodeServeEntryOptions,
-): string => {
+export const makeNeonServeEntrySource = (options: NodeServeEntryOptions): string => {
   const handler = options.handler;
   return `import * as fs from "node:fs";
 import * as path from "node:path";
@@ -22,7 +24,7 @@ ${handler?.kind === "node" ? 'import { toFetchHandler } from "srvx/node";' : ""}
 ${handler?.imports ?? ""}
 const handle = ${handler === undefined ? "undefined" : handler.kind === "node" ? `toFetchHandler((request, response) => { Promise.resolve((${handler.expr})(request, response)).catch(error => response.destroy(error)); })` : handler.expr};
 const client = ${options.clientDirExpression ?? "undefined"};
-const mime = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".json": "application/json", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".ico": "image/x-icon", ".webp": "image/webp", ".avif": "image/avif", ".woff": "font/woff", ".woff2": "font/woff2", ".txt": "text/plain; charset=utf-8", ".xml": "application/xml", ".wasm": "application/wasm", ".pdf": "application/pdf" };
+${staticAssetPathSource(options.assetBasePath)}const mime = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".json": "application/json", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".ico": "image/x-icon", ".webp": "image/webp", ".avif": "image/avif", ".woff": "font/woff", ".woff2": "font/woff2", ".txt": "text/plain; charset=utf-8", ".xml": "application/xml", ".wasm": "application/wasm", ".pdf": "application/pdf" };
 const within = (root, file) => file === root || file.startsWith(root + path.sep);
 const lookup = (pathname, directoryIndex = true) => {
   if (client === undefined) return;
@@ -59,18 +61,19 @@ export default {
       let pathname;
       try { pathname = decodeURIComponent(url.pathname); } catch { return new Response("Bad Request", { status: 400 }); }
       if (pathname.includes("\\0") || pathname.includes("\\\\")) return new Response("Bad Request", { status: 400 });
-      if (request.method === "GET" || request.method === "HEAD") {
-        const found = lookup(pathname, handle === undefined || pathname !== "/")${options.htmlHandling === "drop-trailing-slash" ? ' ?? (!path.extname(pathname) ? lookup(pathname + ".html") : undefined)' : ""};
+      const staticPath = staticPathFor(pathname);
+      if ((request.method === "GET" || request.method === "HEAD") && staticPath !== undefined) {
+        const found = lookup(staticPath, ${options.serveRootIndex ? "true" : 'handle === undefined || staticPath !== "/"'})${options.htmlHandling === "drop-trailing-slash" ? ' ?? (!path.extname(staticPath) ? lookup(staticPath + ".html") : undefined)' : ""};
         if (found) return serve(found, request);
 ${options.notFoundHandling === "spa" ? '        const fallback = lookup("/index.html");\n        if (fallback) return serve(fallback, request);' : ""}
       }
+${options.notFoundHandling === "404-page" ? '      if ((request.method === "GET" || request.method === "HEAD") && staticPath !== undefined) {\n        const missing = lookup("/404.html");\n        if (missing) return serve(missing, request, 404);\n      }' : ""}
       if (handle) {
         const response = await handle(request);
         if (request.method !== "HEAD" || response.body === null) return response;
         await response.body.cancel();
         return new Response(null, { status: response.status, statusText: response.statusText, headers: response.headers });
       }
-${options.notFoundHandling === "404-page" ? '      if (request.method === "GET" || request.method === "HEAD") {\n        const missing = lookup("/404.html");\n        if (missing) return serve(missing, request, 404);\n      }' : ""}
       return new Response(request.method === "HEAD" ? null : "Not Found", { status: 404 });
     } catch (error) {
       console.error("Neon website request failed", error);
@@ -89,23 +92,15 @@ export const finishNeonOutput = (output: BuildOutput) =>
     const entry = output.serverModules?.[0];
     if (entry?.name.endsWith(NEON_SERVE_ENTRY_FILE_NAME)) return output;
     if (!output.distDirectory || !entry || !output.nodeServe) {
-      return yield* Effect.fail(
-        new DeployTargetError({
-          platform: "neon",
-          message:
-            "The framework did not provide a portable Node handler description for Neon.",
-        }),
-      );
+      return yield* new DeployTargetError({
+        platform: "neon",
+        message: "The framework did not provide a portable Node handler description for Neon.",
+      });
     }
-    const name = path.join(
-      path.dirname(entry.name),
-      NEON_SERVE_ENTRY_FILE_NAME,
-    );
+    const name = path.join(path.dirname(entry.name), NEON_SERVE_ENTRY_FILE_NAME);
     let source = makeNeonServeEntrySource(output.nodeServe);
     if (output.nodeServe.handler?.kind === "node") {
-      const adapter = yield* Effect.try(() =>
-        createRequire(import.meta.url).resolve("srvx/node"),
-      );
+      const adapter = yield* Effect.try(() => createRequire(import.meta.url).resolve("srvx/node"));
       const bundle = yield* Effect.tryPromise(() =>
         import("esbuild").then((esbuild) =>
           esbuild.build({
@@ -124,19 +119,14 @@ export const finishNeonOutput = (output: BuildOutput) =>
         "neon-node-adapter.mjs",
       );
       yield* fs.writeFile(adapterPath, bundle.outputFiles[0]!.contents);
-      source = source.replace(
-        'from "srvx/node"',
-        'from "./neon-node-adapter.mjs"',
-      );
+      source = source.replace('from "srvx/node"', 'from "./neon-node-adapter.mjs"');
     }
     yield* fs.writeFileString(path.join(output.distDirectory, name), source);
     const module = yield* toOutputFile(name, source);
     const result = pinNodeServeModule(
       {
         ...output,
-        serverModules: output.serverModules?.filter(
-          (item) => item.name !== entry.name,
-        ),
+        serverModules: output.serverModules?.filter((item) => item.name !== entry.name),
       },
       module,
     );
@@ -162,8 +152,7 @@ export const makeNeonTarget = <T extends DeployTarget>(node: T): T => ({
   platform: "neon",
   ...(node.build
     ? {
-        build: (context) =>
-          node.build!(context).pipe(Effect.flatMap(finishNeonOutput)),
+        build: (context) => node.build!(context).pipe(Effect.flatMap(finishNeonOutput)),
       }
     : {}),
   ...(node.finish
