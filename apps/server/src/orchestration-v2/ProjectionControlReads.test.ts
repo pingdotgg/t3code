@@ -14,12 +14,18 @@ import {
   RuntimeRequestId,
   ThreadId,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2StoredEvent,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
@@ -295,10 +301,30 @@ it.effect.each(storageCases)(
               }),
           } as never),
       });
+      // Each pull is announced, so a second pull proves Stop judged the first event.
+      const pulls = yield* Queue.unbounded<void>();
+      const committed = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
+      const layerEvents = Layer.mock(EventSink.EventSinkV2)({
+        latestSequence: () => Effect.succeed(0),
+        stream: () =>
+          Stream.fromEffectRepeat(
+            Queue.offer(pulls, undefined).pipe(Effect.andThen(Queue.take(committed))),
+          ),
+      });
       yield* Effect.gen(function* () {
         const control = yield* ProviderTurnControlService.ProviderTurnControlServiceV2;
         const reply = yield* RuntimeRequestService.RuntimeRequestServiceV2;
-        yield* control.interrupt({ threadId, providerThreadId, providerTurnId, providerSessionId });
+        const interrupt = control.interrupt({
+          threadId,
+          providerThreadId,
+          providerTurnId,
+          providerSessionId,
+        });
+        // The provider never reports the turn settled, so Stop returns at the bound.
+        const unconfirmed = yield* Effect.forkChild(interrupt);
+        yield* Queue.take(pulls);
+        yield* TestClock.adjust("2 seconds");
+        yield* Fiber.join(unconfirmed);
         yield* control.steer({
           threadId,
           providerThreadId,
@@ -332,20 +358,42 @@ it.effect.each(storageCases)(
           "Failure",
         );
         assert.lengthOf(calls, 3);
-        const turn = context.providerTurn!;
-        yield* store.apply({
+        const confirmed = yield* Effect.forkChild(interrupt);
+        yield* Queue.take(pulls);
+        const ingest = (sequence: number, event: OrchestrationV2DomainEvent) =>
+          store
+            .apply(event)
+            .pipe(Effect.andThen(Queue.offer(committed, { sequence, commandId: null, event })));
+        yield* ingest(1, {
           id: EventId.make("control:turn-completed"),
           type: "provider-turn.updated",
           threadId,
           occurredAt: now,
-          payload: { ...turn, status: "completed", completedAt: now },
+          payload: { ...context.providerTurn!, status: "completed", completedAt: now },
         });
-        yield* control.interrupt({ threadId, providerThreadId, providerTurnId, providerSessionId });
-        assert.deepEqual(calls, ["interrupt", "Use the smaller fix.", "reply", "interrupt"]);
+        // A settled provider turn is not enough; Stop waits for its attempt to finalize.
+        yield* Queue.take(pulls);
+        assert.isUndefined(confirmed.pollUnsafe());
+        yield* ingest(2, {
+          id: EventId.make("control:attempt-completed"),
+          type: "run-attempt.updated",
+          threadId,
+          occurredAt: now,
+          payload: { ...context.attempt!, status: "completed", completedAt: now },
+        });
+        yield* Fiber.join(confirmed);
+        yield* interrupt;
+        assert.deepEqual(calls, [
+          "interrupt",
+          "Use the smaller fix.",
+          "reply",
+          "interrupt",
+          "interrupt",
+        ]);
       }).pipe(
         Effect.provide(
           Layer.merge(ProviderTurnControlService.layer, RuntimeRequestService.layer).pipe(
-            Layer.provide(layerSessions),
+            Layer.provide(Layer.merge(layerSessions, layerEvents)),
           ),
         ),
       );

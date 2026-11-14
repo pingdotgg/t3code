@@ -36,9 +36,10 @@ export function invalidate(kind: string, threadKey: string) {
 }
 
 export type ThreadUndoStep =
-  | { readonly action: "unsettle" }
+  | { readonly action: "unsettle"; readonly restoreUnsettledAt?: string | null }
   | { readonly action: "unsnooze" }
   | { readonly action: "pin"; readonly orderKey?: string }
+  | { readonly action: "reorderActive"; readonly orderKey: string }
   | { readonly action: "snooze"; readonly snoozedUntil: string };
 
 export type ThreadUndoPlan = readonly [ThreadUndoStep, ...ThreadUndoStep[]];
@@ -48,6 +49,8 @@ export function planThreadUndo(
   thread?: {
     readonly pinnedAt?: string | null;
     readonly pinOrderKey?: string | null;
+    readonly activeOrderKey?: string | null;
+    readonly unsettledAt?: string | null;
     readonly snoozedUntil?: string | null;
   } | null,
 ): ThreadUndoPlan {
@@ -62,7 +65,18 @@ export function planThreadUndo(
       ? [{ action: "snooze" as const, snoozedUntil: thread.snoozedUntil }]
       : [];
   if (action === "unpin") return [pin, ...snooze];
-  return [{ action: "unsettle" }, ...(thread?.pinnedAt != null ? [pin] : []), ...snooze];
+  // Settling clears a manual active position; pinned threads are placed by their pin instead.
+  const placement: ThreadUndoStep[] =
+    thread?.pinnedAt != null
+      ? [pin]
+      : thread?.activeOrderKey != null
+        ? [{ action: "reorderActive", orderKey: thread.activeOrderKey }]
+        : [];
+  const unsettle: ThreadUndoStep =
+    thread == null
+      ? { action: "unsettle" }
+      : { action: "unsettle", restoreUnsettledAt: thread.unsettledAt ?? null };
+  return [unsettle, ...placement, ...snooze];
 }
 
 export async function executeThreadUndo<Result>(

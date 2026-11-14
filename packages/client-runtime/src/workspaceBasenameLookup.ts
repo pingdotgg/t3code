@@ -1,3 +1,4 @@
+import { FILESYSTEM_METADATA_BATCH_LIMIT } from "@t3tools/contracts";
 import {
   isAbsolutePath,
   isWindowsAbsolutePath,
@@ -134,4 +135,103 @@ export function pickProjectLinkMatch(
     return match === null ? [] : [resolveWorkspaceFilePath(match, root)];
   });
   return matches.length === 1 ? (matches[0] ?? null) : null;
+}
+
+const AGENT_DIRECTORY_SEARCH_LIMIT = 4;
+
+/**
+ * The file a bare name cites in the latest folder the agent worked in that has one of that name.
+ * Folders are searched one at a time: the latest usually has it, and each search walks a tree.
+ */
+export async function findAgentDirectoryMatch(
+  relativePath: string,
+  directories: ReadonlyArray<string>,
+  searchRoot: (root: string) => Promise<{
+    readonly root: string;
+    readonly entries: ReadonlyArray<WorkspaceEntryCandidate>;
+  }>,
+): Promise<string | null> {
+  for (const directory of directories.slice(0, AGENT_DIRECTORY_SEARCH_LIMIT)) {
+    const match = pickProjectLinkMatch(relativePath, [await searchRoot(directory)]);
+    if (match !== null) return match;
+  }
+  return null;
+}
+
+// A quoted string or a comment is one token, so `cd` inside either is not read as a command.
+const SHELL_TOKEN = /(?<![^\s;&|()])#[^\n]*|"[^"]*"|'[^']*'|[;&|()\n]|[ \t]+|[^\s;&|()"']+/g;
+const SHELL_NAME = /(?:^|\/)(?:ba|z|da)?sh$/;
+const CD_OPTION = /^-[LPe@]*$|^--$/;
+
+/** The operands of the `cd` commands in `script`, in order, through `sh -c "<script>"`. */
+function cdOperands(script: string): Array<string> {
+  const operands: Array<string> = [];
+  let words: Array<string> = [];
+  let wordOpen = false;
+  const endCommand = () => {
+    const [name = "", ...rest] = words;
+    if (name === "cd") {
+      const operand = rest.find((word) => !CD_OPTION.test(word));
+      if (operand !== undefined) operands.push(operand);
+    } else if (SHELL_NAME.test(name)) {
+      const inner = rest[rest.findIndex((word) => /^-[a-z]*c$/.test(word)) + 1];
+      if (inner !== undefined && /^(["']).*\1$/s.test(inner)) {
+        operands.push(...cdOperands(inner.slice(1, -1)));
+      }
+    }
+    words = [];
+    wordOpen = false;
+  };
+  for (const [token] of script.matchAll(SHELL_TOKEN)) {
+    // A here-document's body is data, and where it ends is the shell's to say.
+    if (!/^["'#]/.test(token) && token.includes("<<")) break;
+    if (/^[;&|()\n]/.test(token)) endCommand();
+    else if (/^[ \t]/.test(token) || (!wordOpen && token.startsWith("#"))) wordOpen = false;
+    else if (wordOpen) words[words.length - 1] += token;
+    else {
+      words.push(token);
+      wordOpen = true;
+    }
+  }
+  endCommand();
+  return operands;
+}
+
+function literalDirectory(operand: string): string | null {
+  const path = /^["']/.test(operand) ? operand.slice(1, -1) : operand;
+  // The shell would expand these, and only it knows to what.
+  if (!isAbsolutePath(path) || /[$`*?[\]{}"']/.test(path)) return null;
+  return path.includes("\\") && !isWindowsAbsolutePath(path) ? null : path;
+}
+
+interface TimelineItemSource {
+  readonly sourceThreadId: string;
+  readonly sourceItemId: string;
+}
+
+/**
+ * The folders the commands above `reply` in a thread's timeline changed into, the latest first.
+ * A reply cites paths relative to where the agent worked, which no project has to be rooted at.
+ * Rows below the reply, a fork's own commands under an inherited one included, came after it.
+ */
+export function agentWorkingDirectories(
+  items: ReadonlyArray<
+    TimelineItemSource & { readonly item: { readonly type: string; readonly input?: unknown } }
+  >,
+  reply: TimelineItemSource,
+): ReadonlyArray<string> {
+  const directories = new Set<string>();
+  const replyIndex = items.findIndex(
+    (row) => row.sourceThreadId === reply.sourceThreadId && row.sourceItemId === reply.sourceItemId,
+  );
+  for (let index = replyIndex - 1; index >= 0; index--) {
+    const item = items[index]?.item;
+    if (item?.type !== "command_execution" || typeof item.input !== "string") continue;
+    for (const operand of cdOperands(item.input).reverse()) {
+      const directory = literalDirectory(operand);
+      if (directory !== null) directories.add(directory);
+      if (directories.size === FILESYSTEM_METADATA_BATCH_LIMIT) return [...directories];
+    }
+  }
+  return [...directories];
 }
