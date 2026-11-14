@@ -9,17 +9,33 @@ import {
   resolveProjectProviderInstanceEnabled,
   type ThreadContextRecord,
 } from "@t3tools/contracts";
-import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import {
+  scopedThreadKey,
+  scopeProjectRef,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import { isTriagePrompt, replaceTriagePlaybookLink } from "@t3tools/shared/triagePrompt";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { toastManager } from "../ui/toast";
+import { flushSync } from "react-dom";
+import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
 } from "@t3tools/client-runtime/state/project-grouping";
 import { useComposerDraftStore, DraftId } from "../../composerDraftStore";
 import { type EnvironmentPresentation, useEnvironmentProviders } from "../../state/environments";
+import { currentClientMetadata } from "../../connection/platform";
 import { useProjects } from "../../state/entities";
+import { serverEnvironment } from "../../state/server";
+import { useAtomCommand } from "../../state/use-atom-command";
 import type { DraftSessionState } from "../../composerDraftStore";
+import { loadBalancingSendWarning } from "./composerSend.logic";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { draftFanoutSelectionsAtom } from "./chatViewSend";
 
 interface DraftEnvironmentRoutingInput {
   readonly draftId: DraftId | null;
@@ -45,7 +61,8 @@ interface DraftEnvironmentRoutingInput {
 /**
  * Which machine an unsent draft runs on: automatic load balancing across the
  * project's machines, or a manual switch, which may first open a scratch
- * project on the target machine.
+ * project on the target machine. A triage draft takes its session along: the
+ * target machine prepares one, and the playbook link follows.
  */
 export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) {
   const {
@@ -68,13 +85,16 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
   } = input;
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const getDraftSession = useComposerDraftStore((store) => store.getDraftSession);
+  const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
+  const setPrompt = useComposerDraftStore((store) => store.setPrompt);
+  const prepareTriage = useAtomCommand(serverEnvironment.prepareTriage, { reportFailure: false });
   const setLogicalProjectDraftThreadId = useComposerDraftStore(
     (store) => store.setLogicalProjectDraftThreadId,
   );
   const allProjects = useProjects();
   const { openScratchProject } = useScratchProject();
   const needsLoadBalancing = automaticEnvironment && !draftThread?.loadBalancedEnvironmentId;
-  const loadBalancingCandidates = needsLoadBalancing
+  const loadBalancingCandidates = automaticEnvironment
     ? logicalProjectEnvironments
         .filter((candidate) => {
           const environment = environmentById.get(candidate.environmentId);
@@ -108,9 +128,76 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
         .map((candidate) => candidate.environmentId)
     : [];
   const loadBalancing = useLoadBalancedEnvironment(
-    loadBalancingCandidates,
+    needsLoadBalancing ? loadBalancingCandidates : [],
     loadBalancingSettings.loadBalancingWeights,
   );
+  const readRouting = useStableCallback(() => ({ input, loadBalancingCandidates }));
+  const refreshBeforeSend = () => {
+    if (
+      !automaticEnvironment ||
+      !draftId ||
+      !draftThread?.loadBalancedEnvironmentId ||
+      draftThread.promotedTo ||
+      composerHasAttachments
+    )
+      return null;
+    const originalDraft = getDraftSession(draftId);
+    const composerDraft = useComposerDraftStore.getState().getComposerDraft(draftId);
+    return loadBalancing.refreshSelection(loadBalancingCandidates).then((environmentId) => {
+      const current = readRouting();
+      if (
+        current.input.draftId !== draftId ||
+        !current.input.automaticEnvironment ||
+        current.input.composerHasAttachments ||
+        current.input.activeProjectKey !== activeProjectKey ||
+        current.input.selectedProvider !== selectedProvider ||
+        current.input.activeProviderInstanceId !== activeProviderInstanceId ||
+        current.input.loadBalancingSettings.loadBalancingWeights !==
+          loadBalancingSettings.loadBalancingWeights ||
+        current.loadBalancingCandidates.join("\n") !== loadBalancingCandidates.join("\n") ||
+        getDraftSession(draftId) !== originalDraft ||
+        useComposerDraftStore.getState().getComposerDraft(draftId) !== composerDraft
+      )
+        return false;
+      const target = current.input.logicalProjectEnvironments.find(
+        (candidate) => candidate.environmentId === environmentId,
+      );
+      if (!target?.projectId) {
+        toastManager.add({
+          type: "warning",
+          ...loadBalancingSendWarning({
+            pending: false,
+            threadContexts: referencedThreadContexts,
+            candidateEnvironmentIds: loadBalancingCandidates,
+          }),
+        });
+        return false;
+      }
+      const projectRef = scopeProjectRef(target.environmentId, target.projectId);
+      if (originalDraft && target.environmentId !== originalDraft.environmentId) {
+        appAtomRegistry.set(
+          draftFanoutSelectionsAtom(
+            scopedThreadKey(scopeThreadRef(target.environmentId, originalDraft.threadId)),
+          ),
+          appAtomRegistry.get(
+            draftFanoutSelectionsAtom(
+              scopedThreadKey(scopeThreadRef(originalDraft.environmentId, originalDraft.threadId)),
+            ),
+          ),
+        );
+      }
+      // The send must read the target project's composer and provider context after retargeting.
+      flushSync(() =>
+        setDraftThreadContext(draftId, {
+          projectRef,
+          environmentSelection: "auto",
+          loadBalancedEnvironmentId: target.environmentId,
+          branch: originalDraft?.branch ?? null,
+        }),
+      );
+      return true;
+    });
+  };
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- writes the resolved load-balanced environment into the draft store once the async pick settles
   useEffect(() => {
     if (!needsLoadBalancing || loadBalancing.pending || !draftId || sendInFlightRef.current) return;
@@ -133,7 +220,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     setDraftThreadContext,
   ]);
   const onAutoEnvironment = () => {
-    if (envLocked || !draftId) return;
+    if (envLocked || !draftId || sendInFlightRef.current) return;
     if (composerHasAttachments) {
       toastManager.add({
         type: "warning",
@@ -209,7 +296,8 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     const request = { environmentId: target.environmentId, scope: environmentChangeScope };
     environmentChangeRef.current = request;
     setBusyEnvironmentChange(null);
-    const retarget = (project: (typeof allProjects)[number]) => {
+    // `triagePrompt` is the prompt the target machine prepared for a triage draft.
+    const retarget = (project: (typeof allProjects)[number], triagePrompt?: string) => {
       const currentDraft = getDraftSession(draftId);
       if (
         environmentChangeRef.current !== request ||
@@ -221,6 +309,12 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
         currentDraft.projectId !== originalDraft.projectId
       )
         return;
+      if (triagePrompt !== undefined) {
+        // Read now, so text typed while the machine prepared the session is kept.
+        const prompt = getComposerDraft(draftId)?.prompt ?? "";
+        const nextPrompt = replaceTriagePlaybookLink(prompt, triagePrompt);
+        if (nextPrompt !== prompt) setPrompt(draftId, nextPrompt);
+      }
       const projectRef = scopeProjectRef(target.environmentId, project.id);
       if (activeProjectIsScratch) {
         setLogicalProjectDraftThreadId(
@@ -241,27 +335,52 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       if (environmentChangeRef.current === request) environmentChangeRef.current = null;
       setBusyEnvironmentChange((busy) => (busy === request ? null : busy));
     };
-    if (target.projectId !== null) {
-      const project = allProjects.find(
-        (project) =>
-          project.environmentId === target.environmentId && project.id === target.projectId,
-      );
-      if (project) retarget(project);
+    const knownProject = allProjects.find(
+      (project) =>
+        project.environmentId === target.environmentId && project.id === target.projectId,
+    );
+    // The playbook and context files exist only on the machine that prepared them.
+    const followsTriage = isTriagePrompt(getComposerDraft(draftId)?.prompt ?? "");
+    if (target.projectId !== null && !(knownProject && followsTriage)) {
+      if (knownProject) retarget(knownProject);
       finish();
       return;
     }
+    const prepareTriagePrompt = async () => {
+      const prepared = await prepareTriage({
+        environmentId: target.environmentId,
+        input: { client: currentClientMetadata() },
+      });
+      if (prepared._tag === "Success") return prepared.value.prompt;
+      if (!isAtomCommandInterrupted(prepared)) {
+        const error = squashAtomCommandFailure(prepared);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not switch machine",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+      return null;
+    };
+    const switchMachine = async () => {
+      const triagePrompt = followsTriage ? await prepareTriagePrompt() : undefined;
+      if (triagePrompt === null) return;
+      const project =
+        knownProject ??
+        (await openScratchProject(target.environmentId, "Could not switch machine"));
+      if (project) retarget(project, triagePrompt);
+    };
     setBusyEnvironmentChange(request);
-    void openScratchProject(target.environmentId, "Could not switch machine")
-      .then((project) => {
-        if (project) retarget(project);
-      })
-      .finally(finish);
+    void switchMachine().finally(finish);
   };
   const onEnvironmentChangeStable = useStableCallback(onEnvironmentChange);
 
   return {
     needsLoadBalancing,
     loadBalancing,
+    refreshBeforeSend,
     onAutoEnvironmentStable,
     autoEnvironmentLabel,
     isEnvironmentChanging,

@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - Owns Playwright resources outside the Effect runtime.
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off -- Owns Playwright resources and their idle timer outside the Effect runtime.
 import { INCOGNITO_BROWSER_PROFILE_ID } from "@t3tools/contracts";
 import { constVoid } from "effect/Function";
 import * as NodeFSP from "node:fs/promises";
@@ -14,6 +14,43 @@ const requirePlaywright = NodeModule.createRequire(import.meta.url);
 const loadPlaywright = () =>
   requirePlaywright("playwright-core") as typeof import("playwright-core");
 
+const BADGE_STUB = `if (typeof WorkerNavigator === "function") for (const name of ["setAppBadge", "clearAppBadge"]) WorkerNavigator.prototype[name] = () => Promise.resolve();`;
+
+interface CdpSession {
+  send(method: string, params?: object): Promise<unknown>;
+  createChildSession(...args: ReadonlyArray<unknown>): CdpSession;
+}
+
+// The headless shell binds no BadgeService for service workers and kills the renderer of a
+// worker that calls navigator.setAppBadge. Playwright resumes each worker itself, so the stub
+// can only go in ahead of that resume through its in-process session; without it nothing is stubbed.
+const stubWorkerBadges = (client: Browser | BrowserContext) => {
+  const { _connection: connection } = client as unknown as {
+    readonly _connection?: {
+      readonly toImpl?: (
+        client: unknown,
+      ) =>
+        | { readonly _session?: CdpSession; readonly _browser?: { readonly _session?: CdpSession } }
+        | undefined;
+    };
+  };
+  const impl = connection?.toImpl?.(client);
+  const root = impl?._browser?._session ?? impl?._session;
+  if (!root) return;
+  const createChildSession = root.createChildSession.bind(root);
+  root.createChildSession = (...args) => {
+    const session = createChildSession(...args);
+    const send = session.send.bind(session);
+    session.send = (method, params) => {
+      if (method === "Runtime.runIfWaitingForDebugger") {
+        void send("Runtime.evaluate", { expression: BADGE_STUB }).catch(constVoid);
+      }
+      return send(method, params);
+    };
+    return session;
+  };
+};
+
 interface Options {
   readonly profilesDir: string;
   readonly executable: () => Promise<string>;
@@ -26,6 +63,8 @@ interface Options {
   ) => Promise<{ readonly path: string; readonly release: () => Promise<void> } | undefined>;
   readonly diagnose?: (executable: string, cause: unknown) => Promise<unknown>;
   readonly env?: NodeJS.ProcessEnv;
+  /** Closes the shared browser once it has held no context for this long. */
+  readonly idleBrowserMs?: number;
   readonly onContextClose?: (context: BrowserContext) => void;
 }
 
@@ -80,6 +119,8 @@ export class ServerBrowserContexts {
   private readonly clearing = new Map<string, Promise<void>>();
   private browser: Promise<Browser> | undefined;
   private closing: Promise<void> | undefined;
+  private idleTimer: ReturnType<typeof setTimeout> | undefined;
+  private pendingSharedContexts = 0;
 
   constructor(options: Options) {
     this.options = options;
@@ -123,6 +164,7 @@ export class ServerBrowserContexts {
         const browser = await this.launch(executable, (executablePath) =>
           chromium.launch({ ...options, executablePath }),
         );
+        stubWorkerBadges(browser);
         browser.on("disconnected", () => {
           if (this.browser === launched) this.browser = undefined;
         });
@@ -134,6 +176,37 @@ export class ServerBrowserContexts {
       });
     }
     return this.browser;
+  }
+
+  private async sharedContext(options?: Parameters<Browser["newContext"]>[0]) {
+    clearTimeout(this.idleTimer);
+    this.pendingSharedContexts++;
+    const launched = this.sharedBrowser();
+    try {
+      const context = await (await launched).newContext(options);
+      context.on("close", () => this.retireWhenIdle(launched));
+      return context;
+    } finally {
+      this.pendingSharedContexts--;
+      this.retireWhenIdle(launched);
+    }
+  }
+
+  private retireWhenIdle(launched: Promise<Browser>) {
+    const delay = this.options.idleBrowserMs;
+    if (delay === undefined || this.closing || this.pendingSharedContexts > 0) return;
+    clearTimeout(this.idleTimer);
+    this.idleTimer = setTimeout(() => void this.retire(launched), delay);
+    this.idleTimer.unref();
+  }
+
+  private async retire(launched: Promise<Browser>) {
+    const browser = await launched.catch(() => undefined);
+    if (!browser || this.browser !== launched || this.pendingSharedContexts > 0) return;
+    if (browser.contexts().length > 0) return;
+    // Cleared first, so a request during the close launches a fresh browser.
+    this.browser = undefined;
+    await browser.close().catch(constVoid);
   }
 
   contextFor(profileId: string, isolationKey?: string): Promise<BrowserContext> {
@@ -166,20 +239,21 @@ export class ServerBrowserContexts {
   private async createContext(profileId: string, isolationKey?: string) {
     const contextOptions = { viewport: { width: 1280, height: 800 }, deviceScaleFactor: 2 };
     if (isolationKey !== undefined || profileId === INCOGNITO_BROWSER_PROFILE_ID) {
-      const browser = await this.sharedBrowser();
-      return browser.newContext(contextOptions);
+      return this.sharedContext(contextOptions);
     }
     const directory = this.profileDirectory(profileId);
     await NodeFSP.mkdir(directory, { recursive: true });
     const { executable, ...options } = await this.launchOptions();
     const { chromium } = loadPlaywright();
-    return this.launch(executable, (executablePath) =>
+    const context = await this.launch(executable, (executablePath) =>
       chromium.launchPersistentContext(directory, {
         ...options,
         ...contextOptions,
         executablePath,
       }),
     );
+    stubWorkerBadges(context);
+    return context;
   }
 
   private profileDirectory(profileId: string) {
@@ -192,10 +266,15 @@ export class ServerBrowserContexts {
 
   async scratchPage() {
     if (this.closing) throw new Error("The preview browser is closed.");
-    const context = await (await this.sharedBrowser()).newContext();
-    const page = await context.newPage();
-    page.once("close", () => void context.close().catch(constVoid));
-    return page;
+    const context = await this.sharedContext();
+    try {
+      const page = await context.newPage();
+      page.once("close", () => void context.close().catch(constVoid));
+      return page;
+    } catch (cause) {
+      await context.close().catch(constVoid);
+      throw cause;
+    }
   }
 
   async connectDesktopPage(endpoint: string) {
@@ -237,6 +316,7 @@ export class ServerBrowserContexts {
   }
 
   private async dispose() {
+    clearTimeout(this.idleTimer);
     await Promise.allSettled(
       [...this.contexts.values()].map(async (pending) => (await pending).close()),
     );
