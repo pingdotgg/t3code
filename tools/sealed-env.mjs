@@ -15,5 +15,6 @@ export function sealedEnv(dir) {
   const env = Object.fromEntries(
     Object.entries(process.env).filter(([name]) => !TOKEN_VARIABLES.test(name)),
   );
-  return { ...env, HOME: home };
+  // The Claude status probe would run this machine's `claude` (and its login) at start.
+  return { ...env, HOME: home, CONN_CLAUDE_STATUS_PROBE: "off" };
 }

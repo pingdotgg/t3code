@@ -26,9 +26,11 @@ use crate::{
 
 pub fn register(table: &mut MethodTable, deps: &Deps) {
     table.unary("server.probe", |_, _: Value| async { Ok(json!({})) });
-    // Activity drives background scheduling, which this server does not have.
-    table.unary("server.reportClientActivity", |_, _: Value| async {
-        Ok(Value::Null)
+    // Activity leases gate the periodic provider probe (`BackgroundPolicy`).
+    let status = deps.provider_status.clone();
+    table.unary("server.reportClientActivity", move |_, input: Value| {
+        status.report_activity(&input);
+        async { Ok(Value::Null) }
     });
     // No server browser here; the profiles have no use.
     table.unary("preview.reportProfiles", |_, _: Value| async {

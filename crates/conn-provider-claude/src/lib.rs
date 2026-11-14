@@ -20,6 +20,7 @@ pub mod mapper;
 pub mod ordered;
 pub mod protocol;
 pub mod session;
+pub mod status;
 mod tail;
 
 /// Locks a std mutex. A poisoned lock means a thread panicked while it held the lock: a bug.
@@ -57,6 +58,8 @@ pub struct ClaudeProvider {
     config: ClaudeConfig,
     /// One SDK host for all sessions; it runs only while a query is open.
     helper: Helper,
+    /// The entry the last status probe built; `None` before the first one.
+    status: std::sync::Mutex<Option<Value>>,
 }
 
 impl std::fmt::Debug for ClaudeProvider {
@@ -74,7 +77,30 @@ impl ClaudeProvider {
             instance_id,
             config,
             helper,
+            status: std::sync::Mutex::new(None),
         }
+    }
+
+    /// The instance settings for the status probe: the stored `providerInstances` entry, and
+    /// this provider's own launch configuration where the entry says nothing.
+    fn status_settings(&self, instance: Option<&Value>) -> status::StatusSettings {
+        let mut settings = status::StatusSettings::from_instance(instance);
+        let config = instance.and_then(|i| i.get("config"));
+        if config
+            .and_then(|c| c["binaryPath"].as_str())
+            .is_none_or(|b| b.trim().is_empty())
+        {
+            settings.binary_path = self.config.binary.to_string_lossy().into_owned();
+        }
+        if settings.home_path.is_empty()
+            && let Some(home) = &self.config.home_path
+        {
+            settings.home_path = home.to_string_lossy().into_owned();
+        }
+        if settings.environment.is_empty() {
+            settings.environment = self.config.instance_env.clone();
+        }
+        settings
     }
 
     pub fn config(&self) -> &ClaudeConfig {
@@ -104,7 +130,54 @@ impl Provider for ClaudeProvider {
     }
 
     fn server_provider_entry(&self, checked_at: &str) -> Option<Value> {
-        Some(server_provider_entry(self.instance_id.as_str(), checked_at))
+        let probed = lock(&self.status).clone();
+        Some(probed.unwrap_or_else(|| pending_entry(self.instance_id.as_str(), checked_at)))
+    }
+
+    /// `checkClaudeProviderStatus` with this instance's settings: `claude --version`, then
+    /// the capabilities probe in the SDK host (which starts for it and stops again).
+    fn refresh_status(&self, instance: Option<Value>) -> BoxFuture<'_, ()> {
+        Box::pin(async move {
+            if !self.config.status_probe {
+                return;
+            }
+            let settings = self.status_settings(instance.as_ref());
+            let config_dir = launch::config_dir(
+                &ClaudeConfig {
+                    home_path: (!settings.home_path.is_empty())
+                        .then(|| launch::expand_home(&settings.home_path)),
+                    ..ClaudeConfig::default()
+                },
+                &serde_json::Map::new(),
+            );
+            // Claude's user and managed settings: only the entrypoint and the API base URL.
+            let (entrypoint, base_url) = tokio::task::spawn_blocking(move || {
+                (
+                    launch::settings_entrypoint(&config_dir),
+                    launch::settings_env_value(&config_dir, "ANTHROPIC_BASE_URL"),
+                )
+            })
+            .await
+            .unwrap_or_default();
+            let input = status::ProbeInput {
+                instance_id: self.instance_id.as_str(),
+                settings: &settings,
+                host_env: conn_support::login_env::child_env(),
+                settings_entrypoint: entrypoint,
+                settings_base_url: base_url,
+                cwd: self.config.status_cwd.clone(),
+                checked_at: conn_support::time::now_iso(),
+            };
+            let helper = &self.helper;
+            let entry = status::check(input, |options, extra, timeout| async move {
+                helper
+                    .function("probeCapabilities", json!([options, extra]), None, timeout)
+                    .await
+                    .map_err(|e| e.to_string())
+            })
+            .await;
+            *lock(&self.status) = Some(entry);
+        })
     }
 
     fn open_session(
@@ -244,6 +317,32 @@ pub fn capabilities() -> Value {
             "nativeRequestIds": "strong",
         },
         "runtimePolicy": {"enforcement": "native"},
+    })
+}
+
+/// `makePendingClaudeProvider`: the entry before the first status probe finished.
+pub fn pending_entry(instance_id: &str, checked_at: &str) -> Value {
+    json!({
+        "displayName": "Claude",
+        "showInteractionModeToggle": true,
+        "reportsContextWindow": true,
+        "enabled": true,
+        "installed": false,
+        "version": null,
+        "status": "warning",
+        "auth": {"status": "unknown"},
+        "setup": {"canAuthenticate": false, "canInstall": false},
+        "checkedAt": checked_at,
+        "message": "Claude provider status has not been checked in this session yet.",
+        "models": catalog::provider_models(),
+        "slashCommands": [],
+        "skills": [],
+        "instanceId": instance_id,
+        "driver": DRIVER,
+        "continuation": {"groupKey": format!(
+            "claude:home:{}",
+            launch::config_dir(&ClaudeConfig::default(), &serde_json::Map::new()).to_string_lossy()
+        )},
     })
 }
 

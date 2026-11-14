@@ -10,6 +10,10 @@ fn main() {
     let mut claude = ClaudeConfig {
         // `conn-files` stores attachments here; the CLI may read them.
         attachments_dir: Some(options.state_dir.join("attachments")),
+        // T3 runs its Claude status probe in its state folder.
+        status_cwd: Some(options.state_dir.clone()),
+        // Checks turn the probe off, so they never run this machine's `claude`.
+        status_probe: std::env::var_os("CONN_CLAUDE_STATUS_PROBE").is_none_or(|v| v != "off"),
         // The engine closes idle sessions (`--session-idle-timeout`), one rule for all.
         idle_timeout: None,
         // T3's text after the runtime instructions when the session has `t3-code`.
