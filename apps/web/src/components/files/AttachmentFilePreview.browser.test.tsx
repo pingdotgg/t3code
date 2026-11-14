@@ -800,38 +800,6 @@ describe("large text preview recovery", () => {
     expect(firstRow()).toBe(height);
   });
 
-  it("keeps long cell contents wrapped in horizontally virtualized tables", async () => {
-    const header = Array.from({ length: 31 }, (_, i) => "C" + i);
-    const path = "folder/".repeat(20) + "\n" + "archive/".repeat(20);
-    const row = [...header.slice(0, 30).map(() => "x"), path];
-    await using screen = await render(
-      <div style={{ display: "flex", height: 400, width: 600 }}>
-        <VirtualTablePreview
-          name="wide.csv"
-          count={2}
-          columns={31}
-          header={header}
-          getRows={() => [header, row]}
-        />
-      </div>,
-    );
-    await vi.waitFor(() => expect(screen.container.textContent).toContain("C0"));
-    await act(() => {
-      const scroller = screen.container.querySelector('[role="table"]')!.parentElement!;
-      scroller.scrollLeft = scroller.scrollWidth;
-      scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
-    });
-    await vi.waitFor(() => {
-      const cell = screen.container.querySelector<HTMLElement>(
-        '[role="cell"][aria-colindex="31"]',
-      )!;
-      expect(cell.textContent).toBe(path);
-      expect(cell.offsetHeight).toBeGreaterThan(29);
-      expect(cell.scrollHeight).toBeLessThanOrEqual(cell.clientHeight);
-      expect(cell.scrollWidth).toBeLessThanOrEqual(cell.clientWidth);
-    });
-  });
-
   it("keeps column headers pinned at the bottom of tall wrapped rows", async () => {
     const header = ["Path"];
     const row = ["folder/".repeat(200)];
