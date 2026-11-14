@@ -539,19 +539,24 @@ const formGone = {
   SessionNotFoundError: () => Effect.void,
 };
 
-const agentPaths = (rules: ReadonlyArray<Rule>, planPolicy?: RulesPolicy) =>
+const isPathRule = (entry: Rule) =>
+  entry.action === "edit" || entry.action === "external_directory";
+
+const agentPaths = (rules: ReadonlyArray<Rule>) =>
+  rules.filter((entry) => isPathRule(entry) && entry.effect === "allow" && entry.resource !== "*");
+
+// Replayed in order after plan's edit deny, so a later native deny still beats an earlier allow.
+const planPaths = (rules: ReadonlyArray<Rule>, policy: RulesPolicy) =>
   rules
     .filter(
       (entry) =>
-        ((entry.effect === "allow" && entry.resource !== "*") ||
-          (planPolicy !== undefined &&
-            (entry.action === "external_directory" ||
-              entry.effect === "deny" ||
-              (entry.effect === "ask" && entry.resource !== "*")))) &&
-        (entry.action === "edit" || entry.action === "external_directory"),
+        isPathRule(entry) &&
+        (entry.action === "external_directory" ||
+          entry.resource !== "*" ||
+          entry.effect === "deny"),
     )
     .map((entry) =>
-      planPolicy?.runtimeMode === "full-access" && entry.effect === "ask"
+      policy.runtimeMode === "full-access" && entry.effect === "ask"
         ? { ...entry, effect: "allow" as const }
         : entry,
     );
@@ -3700,6 +3705,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     });
 
     const agentRules = new Map<string, ReadonlyMap<string, ReadonlyArray<Rule>>>();
+    const staleAgentRules = new Set<string>();
     const reconnect = Effect.gen(function* () {
       // Release the borrow on every failure, including reconnect interruption, so spawned servers can idle-stop.
       const scope = yield* Scope.make();
@@ -3720,13 +3726,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       };
       currentScope = scope;
       yield* Scope.close(previous, Exit.void);
-      // model.list waits for native config plugins; agent.list can return builtins before they load.
-      yield* Effect.forEach(
-        agentRules.keys(),
-        (directory) =>
-          client.model.list({ location: { directory } }).pipe(Effect.timeout("5 seconds")),
-        { discard: true },
-      );
+      // A restarted server may load a changed native config; re-read permissions on next use.
+      for (const directory of agentRules.keys()) staleAgentRules.add(directory);
       agentRules.clear();
       // A restarted server forgot T3's MCP servers; the next turn adds them again.
       // The gap may have started a pending prompt unseen, so none may set a later wake's boundary.
@@ -3914,6 +3915,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     ) {
       let known = agentRules.get(directory);
       if (known === undefined) {
+        if (staleAgentRules.delete(directory)) {
+          // model.list waits for native config plugins; agent.list can return builtins before they load.
+          yield* readModels(directory);
+        }
         // A fresh server lists no agents for its first moments, like its models.
         const listed = yield* client.agent.list({ location: { directory } }).pipe(
           Effect.repeat({
@@ -3936,7 +3941,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const plan = policy.interactionMode === "plan";
       const nativeRules = yield* rulesForAgents(thread.directory, [thread.agent]);
       const paths = plan
-        ? agentPaths(yield* rulesForAgents(thread.directory, [thread.agent, "plan"]), policy)
+        ? planPaths(yield* rulesForAgents(thread.directory, [thread.agent, "plan"]), policy)
         : policy.runtimeMode === "auto" || policy.runtimeMode === "full-access"
           ? []
           : agentPaths(nativeRules);

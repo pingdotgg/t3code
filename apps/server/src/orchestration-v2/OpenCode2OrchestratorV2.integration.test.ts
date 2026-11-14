@@ -669,10 +669,8 @@ describe("OpenCode 2 through the orchestrator", () => {
 
         cut: "session.step.streamed.5",
         hold: "session.text.ended.3",
-        reconnect: (parent, directory) => [
+        reconnect: (parent) => [
           out("event.subscribe"),
-          out("model.list", { "location[directory]": directory }),
-          reply("model.list", { location: { directory }, data: [] }),
           out("session.active"),
           reply("session.active", { data: {} }),
 
@@ -769,8 +767,6 @@ describe("OpenCode 2 through the orchestrator", () => {
           cut: "session.step.started.3",
           reconnect: (parent, directory) => [
             out("event.subscribe"),
-            out("model.list", { "location[directory]": directory }),
-            reply("model.list", { location: { directory }, data: [] }),
 
             out("session.active"),
             reply("session.active", { data: {} }),
@@ -802,6 +798,8 @@ describe("OpenCode 2 through the orchestrator", () => {
               ],
               cursor: {},
             }),
+            out("model.list", { "location[directory]": directory }),
+            reply("model.list", { location: { directory }, data: [] }),
             out("agent.list", "<any>"),
             reply("agent.list", agentList(directory)),
             out("session.prompt", { sessionID: parent, id: "<any>", text: "<any>" }),
