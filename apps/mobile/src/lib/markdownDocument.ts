@@ -442,6 +442,113 @@ export function markdownWithTableBreaks(markdown: string): string {
   return transformNativeMarkdown(markdown, undefined, true);
 }
 
+// Matches up to where a backslash escapes a heading, quote, list or thematic break marker.
+const BLOCK_MARKER =
+  /^(?:\d{1,9}(?=[.)])|(?=[#>+-]|\*(?:[ \t\r\n]|$)|([*_])(?:[ \t]*\1){2,}[ \t]*(?:\r?\n|$)))/;
+
+/**
+ * md4c draws an image that follows text on its line as a 20pt glyph; give each its own paragraph.
+ * Only root and blockquote paragraphs: the renderer places block slots nowhere else, so a split
+ * image elsewhere would render natively instead of through `renderers.image`.
+ */
+export function markdownWithBlockImages(markdown: string): string {
+  if (!markdown.includes("![")) return markdown;
+  const edits: MarkdownEdit[] = [];
+  const visit = (node: MarkdownNode) => {
+    if (node.type === "root" || node.type === "blockquote") return node.children.forEach(visit);
+    if (node.type !== "paragraph") return;
+    const start = node.position?.start.offset;
+    const end = node.position?.end.offset;
+    if (start === undefined || end === undefined) return;
+    if (
+      markdown.slice(start, end).includes("||") ||
+      node.children.some(
+        (child) =>
+          child.type === "inlineCode" &&
+          /^`{3,}[^\r\n]*[\r\n]/.test(
+            markdown.slice(child.position?.start.offset, child.position?.end.offset),
+          ),
+      )
+    )
+      return;
+    // Repeating the quote markers keeps the new paragraphs inside the quote.
+    const prefix = markdown.slice(markdown.lastIndexOf("\n", start - 1) + 1, start);
+    const markers = prefix.replace(/[^>\s]/g, " ");
+    const paragraphBreak = `\n${markers.trimEnd()}\n${markers}`;
+    const quotePrefix = prefix
+      .split(">")
+      .slice(0, -1)
+      .reduceRight((suffix, _part, index) => `(?: {0,${index > 0 ? 4 : 3}}>${suffix})?`, "");
+    const separator = `[ \\t]*(?:\\\\?\\r?\\n${quotePrefix}[ \\t]*)?`;
+    const beforeImage = new RegExp(`(?:^|[^ \\t])(${separator})$`);
+    const afterImage = new RegExp(`^${separator}`);
+    const editCount = edits.length;
+    let previousEnd = start;
+    for (const [index, child] of node.children.entries()) {
+      if (child.type !== "image" && child.type !== "imageReference") continue;
+      const imageStart = child.position?.start.offset;
+      const imageEnd = child.position?.end.offset;
+      if (imageStart === undefined || imageEnd === undefined) continue;
+      if (
+        /(?:^|\n)[ \t>]*(?:=+|-+|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})[ \t]*$/.test(
+          markdown.slice(start, imageStart),
+        )
+      ) {
+        edits.length = editCount;
+        return;
+      }
+      // Each break replaces the spaces, hard break and line prefix it lands on.
+      const before = beforeImage.exec(markdown.slice(start, imageStart))![1]!;
+      if (imageStart > previousEnd)
+        edits.push({ start: imageStart - before.length, end: imageStart, content: paragraphBreak });
+      if (imageEnd < end) {
+        const after = afterImage.exec(markdown.slice(imageEnd, end))![0];
+        previousEnd = imageEnd + after.length;
+        edits.push({ start: imageEnd, end: previousEnd, content: paragraphBreak });
+        // The text after the image now starts a paragraph, where a leading marker would open a block.
+        const suffix = markdown.slice(previousEnd, end);
+        const definition = /^\[(?:\\.|[^\]\\])*\](?=:)/.exec(suffix);
+        if (definition) {
+          const offset = previousEnd + definition[0].length;
+          if (
+            !node.children.some(
+              (sibling) =>
+                sibling.type === "text" &&
+                sibling.position?.start.offset !== undefined &&
+                sibling.position.end.offset !== undefined &&
+                sibling.position.start.offset <= offset &&
+                offset < sibling.position.end.offset,
+            )
+          ) {
+            edits.length = editCount;
+            return;
+          }
+          edits.push({ start: offset, end: offset, content: "\\" });
+        }
+        const next = node.children[index + 1];
+        const literal =
+          next?.type === "text" && next.position?.end.offset !== previousEnd
+            ? /^(?:`{3,}|~{3,})/.exec(suffix)?.[0]
+            : undefined;
+        if (literal) {
+          edits.push({
+            start: previousEnd,
+            end: previousEnd + literal.length,
+            content: [...literal].map((character) => `\\${character}`).join(""),
+          });
+        }
+        const marker = BLOCK_MARKER.exec(suffix);
+        if (marker) {
+          const offset = previousEnd + marker[0].length;
+          edits.push({ start: offset, end: offset, content: "\\" });
+        }
+      }
+    }
+  };
+  visit(parser.parse(markdown));
+  return applyMarkdownEdits(markdown, edits);
+}
+
 // `>` covers a destination continued on a blockquote line.
 const WINDOWS_DESTINATION = /\](?:\(|:)[\s>]*<?(?:[A-Za-z]:[\\/]|\\\\)/;
 
