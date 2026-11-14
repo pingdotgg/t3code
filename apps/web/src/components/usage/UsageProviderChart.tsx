@@ -30,7 +30,6 @@ interface UsageProviderChartProps {
   readonly hours: readonly string[];
   readonly hourly: readonly HourlyTotals[];
   readonly metric: UsageChartMetric;
-  readonly referenceTime: string | undefined;
   readonly resolution: "day" | "hour";
   readonly timeZone: string;
   readonly hour12: boolean;
@@ -195,26 +194,28 @@ function buildChart(
   metric: UsageChartMetric,
   providers: readonly UsageProviderKind[],
   loadingProviders: ReadonlySet<UsageProviderKind>,
+  lastInProgress: boolean,
 ) {
   const columns = buildPeriodColumns(periods, byPeriod, metric);
   const scale = chartScale(columns, loadingProviders);
   const stepX = periods.length < 2 ? 0 : VIEW_WIDTH / (periods.length - 1);
   const paths = providers.map((provider) => {
     const slot = PROVIDER_ORDER.indexOf(provider);
-    const line = curvePath(
-      smoothCurve(
-        columns.map((column, periodIndex) => ({
-          x: periodIndex * stepX,
-          y: valueToY(column.bands[slot]?.value ?? 0, scale.max),
-        })),
-      ),
+    const segments = smoothCurve(
+      columns.map((column, periodIndex) => ({
+        x: periodIndex * stepX,
+        y: valueToY(column.bands[slot]?.value ?? 0, scale.max),
+      })),
     );
+    // The segment into a period in progress is drawn dotted, since its value can still rise.
+    const settled = lastInProgress ? segments.slice(0, -1) : segments;
     return {
       provider,
       loading: loadingProviders.has(provider),
       total: columns.reduce((sum, column) => sum + (column.bands[slot]?.value ?? 0), 0),
-      line,
-      area: areaPath(line),
+      line: curvePath(settled),
+      pendingLine: curvePath(segments.slice(settled.length)),
+      area: areaPath(curvePath(segments)),
     };
   });
 
@@ -413,7 +414,6 @@ export function UsageProviderChart({
   hours,
   hourly,
   metric,
-  referenceTime,
   resolution,
   timeZone,
   hour12,
@@ -423,12 +423,15 @@ export function UsageProviderChart({
   const byPeriod = new Map(
     totals.map((entry) => ["hourStart" in entry ? entry.hourStart : entry.day, entry]),
   );
+  // An hourly window ends with the hour in progress.
+  const latestHour = resolution === "hour" ? periods.at(-1) : undefined;
   const { columns, scale, paths, stepX } = buildChart(
     periods,
     byPeriod,
     metric,
     providers,
     loadingProviders,
+    latestHour !== undefined,
   );
 
   const toY = (value: number) => valueToY(value, scale.max);
@@ -438,8 +441,8 @@ export function UsageProviderChart({
   const formatPeriod = (period: string) =>
     resolution === "hour" ? formatHourShort(period, timeZone, hour12) : formatDayShort(period);
   const formatTooltipPeriod = (period: string) =>
-    resolution === "hour" && referenceTime !== undefined
-      ? formatRelativeHourShort(period, referenceTime, timeZone, hour12)
+    latestHour !== undefined
+      ? formatRelativeHourShort(period, latestHour, timeZone, hour12)
       : formatPeriod(period);
 
   return (
@@ -495,16 +498,24 @@ export function UsageProviderChart({
               fillOpacity={0.12}
             />
           ))}
-          {paths.map(({ provider, loading, line }) => (
-            <path
+          {paths.map(({ provider, loading, line, pendingLine }) => (
+            <g
               key={provider}
-              d={line}
               className={seriesClassName(loading)}
               fill="none"
               stroke={PROVIDER_PRESENTATION[provider].color}
               strokeWidth={2}
-              vectorEffect="non-scaling-stroke"
-            />
+            >
+              <path d={line} vectorEffect="non-scaling-stroke" />
+              {pendingLine === "" ? null : (
+                <path
+                  d={pendingLine}
+                  strokeDasharray="1 5"
+                  strokeLinecap="round"
+                  vectorEffect="non-scaling-stroke"
+                />
+              )}
+            </g>
           ))}
         </UsageChartPlot>
       </div>

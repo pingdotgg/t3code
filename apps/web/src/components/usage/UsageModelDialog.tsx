@@ -29,7 +29,6 @@ export interface UsageChartWindow {
   readonly hours: readonly string[];
   readonly resolution: "day" | "hour";
   readonly timeZone: string;
-  readonly referenceTime: string | undefined;
   readonly hour12: boolean;
 }
 
@@ -105,7 +104,6 @@ export function UsageModelDialog({
               hours={chartWindow.hours}
               hourly={usage.hourly}
               metric={costUnknown ? "tokens" : metric}
-              referenceTime={chartWindow.referenceTime}
               resolution={chartWindow.resolution}
               timeZone={chartWindow.timeZone}
               hour12={chartWindow.hour12}

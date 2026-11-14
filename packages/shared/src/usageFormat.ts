@@ -168,7 +168,7 @@ function hourOptions(hour12: boolean): Intl.DateTimeFormatOptions {
 
 function formatHour(formatter: Intl.DateTimeFormat, date: Date, hour12: boolean): string {
   if (hour12) return formatter.format(date);
-  // Rolling buckets can start between whole hours, but their labels always name the hour.
+  // Labels name the hour; a bucket starts off it only across a half-hour DST shift.
   return formatter
     .formatToParts(date)
     .map((part) => (part.type === "hour" ? `${part.value}:00` : part.value))
@@ -274,17 +274,20 @@ export function makeWindow(
   }
   const untilDay = format.format(now);
   if (resolution === "hour") {
-    const untilTimeMs = Math.floor(now.getTime() / 60_000) * 60_000;
-    const sinceTimeMs = untilTimeMs - 24 * HOUR_MS;
-    const sinceTime = new Date(sinceTimeMs);
-    const untilTime = new Date(untilTimeMs);
+    // Clock hours in the viewer's zone: the hour in progress and the 23 before it. Zone offsets
+    // are whole minutes, so stepping back the local minute lands on the hour.
+    const minute = Number(
+      new Intl.DateTimeFormat("en-US", { timeZone, minute: "numeric" }).format(now),
+    );
+    const hourStartMs = (Math.floor(now.getTime() / 60_000) - minute) * 60_000;
+    const sinceTime = new Date(hourStartMs - 23 * HOUR_MS);
     return {
       sinceDay: UsageDay.make(format.format(sinceTime)),
-      untilDay: UsageDay.make(format.format(untilTime)),
+      untilDay: UsageDay.make(untilDay),
       timeZone,
       resolution,
       sinceTime: sinceTime.toISOString(),
-      untilTime: untilTime.toISOString(),
+      untilTime: new Date(hourStartMs + HOUR_MS).toISOString(),
     };
   }
   // Use calendar arithmetic in UTC; fixed millisecond subtraction crosses DST days incorrectly.
