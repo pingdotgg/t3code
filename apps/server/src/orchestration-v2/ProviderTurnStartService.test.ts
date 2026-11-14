@@ -41,6 +41,7 @@ import {
 } from "../workspace/workspaceLease.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import {
+  detachedWorktreeRef,
   layerThreadWorktreeRestore,
   ThreadWorktreeRestore,
 } from "../workspace/restoreMissingWorktree.ts";
@@ -164,6 +165,7 @@ function startWithMissingWorktree(
         Layer.mock(GitWorkflow.GitWorkflowService)({
           pruneWorktrees,
           createWorktree,
+          hasCommit: () => Effect.succeed(false),
           listLocalBranchNames,
         }),
         Layer.mock(ProjectService.ProjectService)({
@@ -287,6 +289,7 @@ const layerRestoreLeaseTest = layerThreadWorktreeRestore.pipe(
       } as never),
       layerWorktreeLocation(),
       Layer.mock(GitWorkflow.GitWorkflowService)({
+        hasCommit: () => Effect.succeed(false),
         pruneWorktrees: () => Effect.void,
         createWorktree: restoreLeaseCreateWorktree,
         listLocalBranchNames: () => Effect.succeed(["feature/restore"]),
@@ -1082,6 +1085,7 @@ function makeLocalCommandHarness(input: {
           : Layer.succeed(FileSystem.FileSystem, input.fileSystem),
         input.gitWorkflow === undefined
           ? Layer.mock(GitWorkflow.GitWorkflowService)({
+              hasCommit: () => Effect.succeed(false),
               pruneWorktrees: () => Effect.void,
               listLocalBranchNames: () => Effect.succeed(["feature/restore"]),
               createWorktree,
@@ -1228,6 +1232,8 @@ effectIt.effect(
       yield* git(workspaceRoot, ["tag", "origin/feature/restore", threadTip]);
 
       const expectedTips = {
+        // Storage cleanup removed a checkout detached away from the thread branch.
+        "cleaned-detached": { tip: baseTip, file: null, upstream: null, base: "" },
         retained: { tip: threadTip, file: "thread.txt", upstream: null, base: "" },
         // A failed removal can leave the folder behind with only dependencies inside.
         leftover: { tip: threadTip, file: "thread.txt", upstream: null, base: "" },
@@ -1274,13 +1280,16 @@ effectIt.effect(
         if (scenario === "detached-no-remote") {
           yield* git(workspaceRoot, ["remote", "remove", "origin"]);
         }
+        if (scenario === "cleaned-detached") {
+          yield* git(workspaceRoot, ["update-ref", detachedWorktreeRef(worktreePath), baseTip]);
+        }
         yield* fileSystem.remove(worktreePath, { recursive: true });
         if (scenario === "leftover") {
           yield* fileSystem.makeDirectory(path.join(worktreePath, "node_modules"), {
             recursive: true,
           });
         }
-        if (scenario !== "retained" && scenario !== "leftover") {
+        if (scenario !== "cleaned-detached" && scenario !== "retained" && scenario !== "leftover") {
           yield* git(workspaceRoot, ["worktree", "prune"]);
           yield* git(workspaceRoot, ["branch", "-D", "feature/restore"]);
         }
@@ -1296,7 +1305,12 @@ effectIt.effect(
         const open = harness.open.getMockImplementation()!;
         harness.open.mockImplementation(() =>
           Effect.gen(function* () {
-            expect(yield* git(worktreePath, ["branch", "--show-current"])).toBe("feature/restore");
+            expect(yield* git(worktreePath, ["branch", "--show-current"])).toBe(
+              scenario === "cleaned-detached" ? "" : "feature/restore",
+            );
+            expect(
+              yield* git(workspaceRoot, ["for-each-ref", detachedWorktreeRef(worktreePath)]),
+            ).toBe("");
             expect(yield* git(worktreePath, ["rev-parse", "HEAD"])).toBe(expected.tip);
             for (const file of ["thread.txt", "project.txt"]) {
               expect(yield* fileSystem.exists(path.join(worktreePath, file))).toBe(

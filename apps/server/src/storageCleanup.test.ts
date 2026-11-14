@@ -16,6 +16,7 @@ import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/sql/SqlClient";
 import {
   DEFAULT_SERVER_SETTINGS,
+  GitCommandError,
   type WorktreeKeepWhen,
   type StorageCleanupSettings,
   type TerminalMetadataStreamEvent,
@@ -35,6 +36,7 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import { CodexProviderCapabilitiesV2 } from "./orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { ServerActivation } from "./serverActivation.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
+import { detachedWorktreeRef } from "./workspace/restoreMissingWorktree.ts";
 import { describe, expect, it } from "@effect/vitest";
 import {
   EventId,
@@ -352,6 +354,7 @@ const cleanupFixture = (
     let storedWorktreePaths: string[] = [worktree];
     let projectRoots = [repo];
     let editBeforeRemoval = false;
+    let failRemoval: "before-deleting" | "after-deleting" | null = null;
     let openSessionCwd: string | null = null;
     let sessionLive = true;
     let sessionLiveChecks = 0;
@@ -377,6 +380,16 @@ const cleanupFixture = (
               (input.args.includes("remove") || input.args.includes("--porcelain"))
             )
               yield* fs.writeFileString(`${worktree}/tracked.txt`, "late edit\n");
+            if (failRemoval !== null && input.args.includes("remove")) {
+              if (failRemoval === "after-deleting") yield* git.execute(input);
+              failRemoval = null;
+              return yield* new GitCommandError({
+                operation: input.operation,
+                command: "git worktree remove",
+                cwd: input.cwd,
+                detail: "removal failed",
+              });
+            }
             return yield* git.execute(input);
           }),
         statusDetailsLocal: (...args) => {
@@ -493,6 +506,9 @@ const cleanupFixture = (
         terminalListener?.({ type: "snapshot", terminals }) ?? Effect.void,
       editBeforeRemoval: () => {
         editBeforeRemoval = true;
+      },
+      failRemoval: (when: NonNullable<typeof failRemoval>) => {
+        failRemoval = when;
       },
       fs,
       worktree,
@@ -2811,8 +2827,6 @@ describe("storage cleanup reports and local file policies", () => {
       Effect.gen(function* () {
         const { service, fs, repo, worktree, command, fullStatusCalls } = yield* cleanupFixture();
         const changed = { outcome: "kept", reason: "Repository or branch changed" };
-        yield* command(worktree, ["checkout", "--detach"]);
-        expect((yield* service.runNow).entries[0]).toMatchObject(changed);
         yield* command(worktree, ["switch", "--orphan", "other"]);
         expect((yield* service.runNow).entries[0]).toMatchObject(changed);
         yield* command(worktree, ["tag", "feature", "feature"]);
@@ -2838,6 +2852,77 @@ describe("storage cleanup reports and local file policies", () => {
         yield* fs.writeFileString(`${worktree}/.git`, gitFile);
         expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "removed" });
         expect(fullStatusCalls()).toBe(0);
+      }),
+    ),
+  );
+  it.live("removes a detached worktree only when nothing is held by that checkout alone", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, repo, worktree, command } = yield* cleanupFixture();
+        const changed = { outcome: "kept", reason: "Repository or branch changed" };
+        yield* fs.writeFileString(`${worktree}/tracked.txt`, "feature\n");
+        yield* command(worktree, ["commit", "-am", "feature"]);
+        yield* command(worktree, ["checkout", "--detach"]);
+        yield* command(worktree, ["commit", "--allow-empty", "-m", "empty"]);
+        expect((yield* service.runNow).entries[0]).toMatchObject(changed);
+        yield* command(worktree, ["commit", "--allow-empty", "-m", "second"]);
+        yield* command(worktree, ["branch", "other"]);
+        // Each leaves a clean tree with HEAD on a branch; the first command stops partway.
+        const paused = [
+          [
+            ["cherry-pick", "other"],
+            ["cherry-pick", "--abort"],
+          ],
+          [
+            ["cherry-pick", "other~1", "other"],
+            ["commit", "--allow-empty", "-m", "picked"],
+            ["branch", "-f", "picked"],
+            ["cherry-pick", "--abort"],
+          ],
+          [
+            ["revert", "--no-commit", "other"],
+            ["revert", "--abort"],
+          ],
+          [
+            ["merge", "-s", "ours", "--no-commit", "other"],
+            ["merge", "--abort"],
+          ],
+          [
+            ["checkout", "--detach", "other"],
+            ["rebase", "--exec", "false", "main"],
+            ["rebase", "--abort"],
+          ],
+          [
+            ["bisect", "start"],
+            ["bisect", "reset"],
+          ],
+        ];
+        for (const steps of paused) {
+          yield* command(worktree, ["checkout", "--detach", "main"]);
+          for (const args of steps.slice(0, -1)) yield* command(worktree, args).pipe(Effect.ignore);
+          expect((yield* service.runNow).entries[0], steps[0]!.join(" ")).toMatchObject(changed);
+          yield* command(worktree, steps.at(-1)!);
+        }
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "removed" });
+        // The saved branch holds other files, so restoration needs the detached commit.
+        const recorded = yield* command(repo, ["rev-parse", detachedWorktreeRef(worktree), "main"]);
+        expect(new Set(recorded.stdout.trim().split("\n")).size).toBe(1);
+      }),
+    ),
+  );
+  it.live("keeps a detached commit recorded only when a failed removal left no checkout", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture();
+        const { service, repo, worktree, command } = fixture;
+        yield* command(worktree, ["checkout", "--detach"]);
+        const recorded = command(repo, ["for-each-ref", detachedWorktreeRef(worktree)]);
+        fixture.failRemoval("before-deleting");
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "failed" });
+        expect((yield* recorded).stdout).toBe("");
+        fixture.failRemoval("after-deleting");
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "failed" });
+        expect((yield* recorded).stdout).not.toBe("");
       }),
     ),
   );

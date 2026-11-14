@@ -55,6 +55,7 @@ import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { isNonRepositoryGitStderr } from "./vcs/GitVcsDriverCore.ts";
 import { removeLinkedWorktree } from "./vcs/worktreeRemoval.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
+import { detachedWorktreeRef } from "./workspace/restoreMissingWorktree.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { isNetworkPath } from "@t3tools/shared/path";
@@ -99,6 +100,16 @@ const ORPHAN_WORKTREE_GRACE_MS = 60 * 60 * 1_000;
 
 const sentence = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 const REPORT_ENTRY_LIMIT = 200;
+// The per-worktree files `git status` reads to report an operation in progress.
+const PAUSED_OPERATION_STATE = [
+  "rebase-merge",
+  "rebase-apply",
+  "sequencer",
+  "CHERRY_PICK_HEAD",
+  "REVERT_HEAD",
+  "MERGE_HEAD",
+  "BISECT_LOG",
+];
 const isGitCommandError = Schema.is(GitCommandError);
 const errorCode = (error: PlatformError) =>
   error.cause instanceof Error && "code" in error.cause ? error.cause.code : undefined;
@@ -702,9 +713,27 @@ const make = Effect.gen(function* () {
     // Detached HEAD exits 1; full refs avoid shortening when a tag shares the branch name.
     const head = yield* read(["symbolic-ref", "--quiet", "HEAD"], 1);
     if (head === null) return true;
-    const ref = head.exitCode === 0 ? head.stdout.trim() : "";
-    const name = ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length).trim() : null;
-    return name !== branch;
+    if (head.exitCode === 0) {
+      const ref = head.stdout.trim();
+      const name = ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length).trim() : null;
+      return name !== branch;
+    }
+    // Removal keeps branches but drops a detached HEAD and any operation paused on it.
+    const admin = yield* read(["rev-parse", "--absolute-git-dir"]);
+    if (admin === null) return true;
+    const directory = admin.stdout.replace(/\r?\n$/, "");
+    for (const state of PAUSED_OPERATION_STATE) {
+      if (yield* fs.exists(path.join(directory, state))) return true;
+    }
+    const unreachable = yield* read([
+      "rev-list",
+      "--max-count=1",
+      "HEAD",
+      "--not",
+      "--branches",
+      "--remotes",
+    ]);
+    return unreachable === null || unreachable.stdout.trim() !== "";
   });
 
   // Git status and non-forced worktree removal both skip assume-unchanged and skip-worktree files.
@@ -1528,6 +1557,23 @@ const make = Effect.gen(function* () {
               const changes = yield* localChangesReason(worktreePath, settings);
               if (changes !== null) return keep(changes);
             }
+            const attached = yield* git.execute({
+              operation: "StorageCleanup.detachedHead",
+              cwd: worktreePath,
+              args: ["symbolic-ref", "--quiet", "HEAD"],
+              allowNonZeroExit: true,
+            });
+            // A branch cannot bring a detached checkout back, so restoration reads its commit here.
+            const detachedRef = detachedWorktreeRef(worktreePath);
+            const recordDetached = (commit: string | null) =>
+              cleanupGit(
+                project.workspaceRoot,
+                commit === null
+                  ? ["update-ref", "-d", detachedRef]
+                  : ["update-ref", detachedRef, commit],
+                "git update-ref",
+              );
+            yield* recordDetached(attached.exitCode === 0 ? null : head.commitSha);
             yield* removeLinkedWorktree({
               operation: "StorageCleanup.cleanupGit",
               cwd: project.workspaceRoot,
@@ -1536,7 +1582,15 @@ const make = Effect.gen(function* () {
               force: submodules.force,
               execute: git.execute,
               run: (args) => cleanupGit(project.workspaceRoot, [...args], "git worktree remove"),
-            });
+            }).pipe(
+              // A removal that fails with the checkout already gone still needs the commit.
+              Effect.onError(() =>
+                fs.exists(path.join(worktreePath, ".git")).pipe(
+                  Effect.flatMap((exists) => (exists ? recordDetached(null) : Effect.void)),
+                  Effect.ignore,
+                ),
+              ),
+            );
             entries.push({ ...entry, outcome: "removed", reason: sentence(removalReason), bytes });
             yield* gitManager.invalidateStatus(project.workspaceRoot);
             // Preserve branch/path so ProviderTurnStartService can recreate the checkout on resume.
