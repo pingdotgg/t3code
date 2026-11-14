@@ -3062,6 +3062,31 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("lowercases a capitalized Conventional Commits description", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const subjects = ["ci: Run E2E on pull requests", "feat(web)!: A new layout"];
+      const queued = [...subjects];
+
+      const { manager } = yield* makeManager({
+        serverSettings: { sourceControlWritingStyle: { mode: "conventional_commits" as const } },
+        textGeneration: {
+          generateCommitMessage: () => Effect.succeed({ subject: queued.shift() ?? "", body: "" }),
+        },
+      });
+
+      const committed: Array<string> = [];
+      for (const [index] of subjects.entries()) {
+        NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), `change ${index}\n`);
+        yield* runStackedAction(manager, { cwd: repoDir, action: "commit" });
+        committed.push((yield* runGit(repoDir, ["log", "-1", "--pretty=%s"])).stdout.trim());
+      }
+
+      expect(committed).toEqual(["ci: run E2E on pull requests", "feat(web)!: a new layout"]);
+    }),
+  );
+
   it.effect("includes CLAUDE.md for Claude writers only when it differs from AGENTS.md", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
