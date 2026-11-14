@@ -10,6 +10,11 @@ if [ "$1" = "prefix" ] && [ "$2" = "--global" ]; then
   exit 0
 fi
 if [ "$1" = "install" ] && [ "$2" = "--global" ]; then
+  if [ -n "$FAKE_NPM_INSTALL_FAILURE_LINES" ]; then
+    yes 'npm notice resolving example dependency' | head -n "$FAKE_NPM_INSTALL_FAILURE_LINES" >&2
+    printf '%s\n' 'npm error see the complete log for details' >&2
+    exit 1
+  fi
   package_root="$prefix/lib/node_modules/@example/acp"
   executable="$prefix/bin/example-agent"
   mkdir -p "$package_root" "$prefix/bin"
