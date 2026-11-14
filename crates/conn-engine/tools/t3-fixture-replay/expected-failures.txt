@@ -26,11 +26,11 @@ plan_questions/grok                  engine: buffered delivery stores streaming 
 grok_prompt_error/grok               engine: buffered delivery stores streaming assistant rows
 grok_auto_blocked_command/grok       engine: buffered delivery stores streaming assistant rows
 queued_turn/grok                     engine: buffered delivery stores streaming assistant rows; then clock: as queued_turn/codex
-grok_subagent_lineage/grok           provider: Grok subagents are not built (crates/conn-provider-acp README)
-grok_background_bash/grok            driver: finish_held_run (no replay gate in acp-stub.mjs); provider: Grok background tasks are not built
-grok_background_bash_fast_wake/grok  driver: finish_held_run; provider: Grok background tasks are not built
-grok_background_subagent/grok        driver: finish_held_run; provider: Grok background tasks and subagents are not built
-grok_monitor/grok                    driver: finish_held_run; provider: Grok monitors are not built
+grok_subagent_lineage/grok           engine: assertBaseProjection fails (not yet told apart from the buffered delivery difference); frames and adapter events are equal in the provider's own replay
+grok_background_bash/grok            driver: finish_held_run and release_replay_gate are not in the replay driver (the provider replays it equal in its own test)
+grok_background_bash_fast_wake/grok  driver: finish_held_run
+grok_background_subagent/grok        driver: finish_held_run and release_replay_gate
+grok_monitor/grok                    driver: finish_held_run and release_replay_gate
 
 # --- Codex provider: subagents are not built (conn-provider-codex README) ---
 subagent/codex                      provider: Codex subagents (collabAgentToolCall, child threads) are not built
