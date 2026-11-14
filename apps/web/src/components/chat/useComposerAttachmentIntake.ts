@@ -17,7 +17,7 @@ import {
   composerFileMatchesReattachMarker,
   composerFileNeedsReattach,
 } from "../../composerDraftStore";
-import { type ComposerPromptEditorHandle } from "../ComposerPromptEditor";
+import { type ComposerPromptEditorHandle } from "../ComposerPromptEditorTiptap";
 import { type PendingUserInput } from "../../session-logic";
 import {
   changeQuestionAttachmentPreparation,
@@ -25,7 +25,10 @@ import {
 } from "../../questionAttachments";
 import {
   classifyComposerAttachmentFile,
+  composerFileAttachmentMimeType,
+  composerImageSourceKey,
   normalizeComposerImageFileMimeType,
+  rememberComposerImageSource,
 } from "./composerAttachmentFiles";
 import {
   fileAttachmentTooLargeMessage,
@@ -45,9 +48,9 @@ import {
 import { requestConfirmDialog } from "~/confirmDialog";
 import { toastManager } from "../ui/toast";
 import { type RefObject, useRef } from "react";
-import { videoMimeType } from "../../types";
 import {
   addPreparingComposerImages,
+  getPreparingComposerImages,
   isPreparingComposerImage,
   removePreparingComposerImages,
 } from "./preparingComposerImages";
@@ -63,7 +66,6 @@ export function useComposerAttachmentIntake(input: {
   readonly pendingUserInputs: ReadonlyArray<PendingUserInput>;
   readonly supportsQuestionAttachments: boolean;
   readonly isLiteralPendingAnswer: boolean;
-  readonly isConnecting: boolean;
   readonly projectSelectionRequired: boolean;
   readonly questionAttachmentTarget: DraftId | null;
   readonly attachmentTargetKey: string;
@@ -91,7 +93,6 @@ export function useComposerAttachmentIntake(input: {
     pendingUserInputs,
     supportsQuestionAttachments,
     isLiteralPendingAnswer,
-    isConnecting,
     projectSelectionRequired,
     questionAttachmentTarget,
     attachmentTargetKey,
@@ -142,7 +143,6 @@ export function useComposerAttachmentIntake(input: {
     const imageAttachmentsGetChips =
       !options?.skipImageInlineChip &&
       (options?.selection !== undefined ||
-        isConnecting ||
         pendingUserInputs.length > 0 ||
         projectSelectionRequired ||
         stripInlineContextReferences(promptRef.current).trim().length > 0);
@@ -162,10 +162,7 @@ export function useComposerAttachmentIntake(input: {
     for (const file of files) {
       const attachmentKind = classifyComposerAttachmentFile(file);
       const fileMimeType =
-        attachmentKind === "file"
-          ? (videoMimeType({ name: file.name, mimeType: file.type }) ??
-            (file.type || "application/octet-stream"))
-          : file.type;
+        attachmentKind === "file" ? composerFileAttachmentMimeType(file) : file.type;
       const matchingReattachMarker =
         attachmentKind === "file"
           ? reattachMarkers.find(
@@ -247,13 +244,21 @@ export function useComposerAttachmentIntake(input: {
     }
     if (acceptedImages.length === 0) return insertedAny;
 
+    // The store drops a repeated image only after compressing it, so a likely repeat prepares
+    // without a tile instead of flashing one. Only the store decides it is a duplicate.
+    const imageSourceKeys = new Set(
+      [...composerImagesRef.current, ...getPreparingComposerImages(attachmentTargetKey)].map(
+        (image) => composerImageSourceKey(image.file),
+      ),
+    );
     // The draft image reuses its placeholder's id and thumbnail so the strip tile stays exactly
     // as it is when the compressed file replaces it.
-    const preparingImages = acceptedImages.map((file) => ({
-      id: randomUUID(),
-      name: file.name || "image",
-      file,
-    }));
+    const preparingImages = acceptedImages.map((file) => {
+      const sourceKey = composerImageSourceKey(file);
+      const hidden = imageSourceKeys.has(sourceKey);
+      imageSourceKeys.add(sourceKey);
+      return { id: randomUUID(), name: file.name || "image", file, hidden };
+    });
     addPreparingComposerImages(attachmentTargetKey, preparingImages);
     if (questionAttachmentTarget)
       changeQuestionAttachmentPreparation(questionAttachmentTarget, acceptedImages.length);
@@ -278,7 +283,8 @@ export function useComposerAttachmentIntake(input: {
         );
         continue;
       }
-      inheritComposerImageThumbnail(file, result.file);
+      await inheritComposerImageThumbnail(file, result.file);
+      rememberComposerImageSource(file, result.file);
       compressed.push({ id, file: result.file });
     }
     const questionDiscarded =

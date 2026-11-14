@@ -1,40 +1,58 @@
+import { deriveProviderInstanceConfigMap } from "../provider/ProviderInstanceRegistryHydration.ts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   DEFAULT_TERMINAL_ID,
+  ProjectId,
+  ThreadId,
+  TerminalCwdNotFoundError,
   type TerminalAttachStreamEvent,
   type TerminalEvent,
   type TerminalOpenInput,
-  type TerminalRestartInput,
   ProviderDriverKind,
   ProviderInstanceId,
+  retainedTerminalHistory,
+  terminalSequenceEnd,
+  terminalSequenceStateAfter,
   TerminalProviderInstanceNotFoundError,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Path from "effect/Path";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Ref from "effect/Ref";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
+import * as TestClock from "effect/testing/TestClock";
 import { expect, vi } from "vite-plus/test";
 
-import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
-import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as ProjectService from "../project/ProjectService.ts";
+import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as TerminalManager from "./Manager.ts";
+import * as GitWorkflowService from "../git/GitWorkflowService.ts";
+import { makePrepareTerminalLaunch } from "../workspace/restoreMissingWorktree.ts";
+import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import { terminalOutputStream } from "./OutputProtocol.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
+import packageJson from "../../package.json" with { type: "json" };
 
 vi.mock("effect/SynchronizedRef", async (importOriginal) => {
   const original = await importOriginal<typeof SynchronizedRef>();
@@ -207,17 +225,6 @@ function openInput(overrides: Partial<TerminalOpenInput> = {}): TerminalOpenInpu
   };
 }
 
-function restartInput(overrides: Partial<TerminalRestartInput> = {}): TerminalRestartInput {
-  return {
-    threadId: "thread-1",
-    terminalId: DEFAULT_TERMINAL_ID,
-    cwd: process.cwd(),
-    cols: 100,
-    rows: 24,
-    ...overrides,
-  };
-}
-
 const historyLogPath = (logsDir: string, threadId = "thread-1") =>
   Effect.service(Path.Path).pipe(
     Effect.map(({ join }) => join(logsDir, `terminal_${Base64Url.encode(threadId)}.log`)),
@@ -332,7 +339,6 @@ function retainedHistory(text: string, maxLines: number, maxBytes = Infinity): s
   if (terminated) lines.pop();
   const retained = lines.slice(Math.max(0, lines.length - maxLines)).join("\n");
   const capped = terminated ? `${retained}\n` : retained;
-  if (Buffer.byteLength(capped) <= maxBytes) return capped;
   const points = Array.from(capped);
   let start = points.length;
   let bytes = 0;
@@ -342,7 +348,11 @@ function retainedHistory(text: string, maxLines: number, maxBytes = Infinity): s
     bytes += next;
     start -= 1;
   }
-  return points.slice(start).join("");
+  const kept = points.slice(start).join("");
+  if (maxLines <= 0 || maxBytes <= 0) return kept;
+  // A cut inside a control sequence drops the rest of that sequence too.
+  const state = terminalSequenceStateAfter(0, text, 0, text.length - kept.length);
+  return kept.slice(terminalSequenceEnd(state, kept));
 }
 
 it("preserves line and byte limits across arbitrary chunks, Unicode, ANSI sequences, and clear", () => {
@@ -360,6 +370,10 @@ it("preserves line and byte limits across arbitrary chunks, Unicode, ANSI sequen
     "\u001b[31m",
     "\u001b[0m",
     "\u001b]8;;url\u0007",
+    "\u001b]0;",
+    "\u001bP",
+    "\u0007",
+    "\u001b\\",
     "\ud83d",
     "\ude80",
   ];
@@ -370,7 +384,8 @@ it("preserves line and byte limits across arbitrary chunks, Unicode, ANSI sequen
 
   for (const maxBytes of [0, 3, 8, 64, Infinity]) {
     for (const maxLines of [0, 1, 3, 5, 5_000]) {
-      let expected = retainedHistory("before\ninitial\n", maxLines, maxBytes);
+      let full = "before\ninitial\n";
+      let expected = retainedHistory(full, maxLines, maxBytes);
       const history = new TerminalManager.BoundedTerminalHistory(
         maxLines,
         "before\ninitial\n",
@@ -381,15 +396,30 @@ it("preserves line and byte limits across arbitrary chunks, Unicode, ANSI sequen
       for (let step = 0; step < 300; step += 1) {
         if (step % 73 === 0) {
           history.clear();
-          expected = "";
-          expect(history.value()).toBe(expected);
+          full = "";
+          expect(history.value()).toBe("");
         }
         const chunk = nextFragment() + nextFragment();
         history.append(chunk);
-        expected = retainedHistory(expected + chunk, maxLines, maxBytes);
+        full += chunk;
+        expected = retainedHistory(full, maxLines, maxBytes);
         expect(history.value()).toBe(expected);
       }
     }
+  }
+});
+
+it("does not retain the tail of a control sequence whose introducer was trimmed", () => {
+  for (const [text, maxBytes, retained] of [
+    ["prefix\u001b[31mOK", 6, "OK"],
+    ["prefix\u001b]0;HIDDEN\u0007OK", 10, "OK"],
+    ["prefix\u001b]0;🙂HIDDEN\u0007OK", 9, "OK"],
+    // libghostty leaves every string but OSC at the emoji's second byte, so HELLO was visible.
+    ["prefix\u001bP🙂HELLO\u001b\\OK", 9, "HELLO\u001b\\OK"],
+  ] as const) {
+    expect(new TerminalManager.BoundedTerminalHistory(5_000, text, maxBytes).value()).toBe(
+      retained,
+    );
   }
 });
 
@@ -411,10 +441,134 @@ it("bounds long partial lines and joins surrogate pairs across chunk boundaries"
   }
 });
 
+it("restores bounded history across append compaction, clears and split Unicode", () => {
+  const maxBytes = 64;
+  const history = new TerminalManager.BoundedTerminalHistory(3, "", maxBytes);
+  let cursor: ReturnType<typeof history.persistenceUpdate>["cursor"] | undefined;
+  let persisted = "";
+  let compactions = 0;
+  const flush = () => {
+    const update = history.persistenceUpdate(cursor);
+    if (!update.append) compactions += 1;
+    const encoded = Buffer.from(update.data).toString();
+    persisted = update.append ? persisted + encoded : encoded;
+    cursor = update.cursor;
+    expect(Buffer.byteLength(persisted)).toBeLessThanOrEqual(maxBytes * 2);
+    expect(retainedHistory(persisted, 3, maxBytes)).toBe(Buffer.from(history.value()).toString());
+  };
+  for (let index = 0; index < 100; index += 1) {
+    history.append(`line ${index} 名\n`);
+    flush();
+  }
+  expect(compactions).toBeGreaterThan(1);
+  expect(compactions).toBeLessThan(50);
+  history.clear();
+  flush();
+  expect(persisted).toBe("");
+  history.append("\ud83d");
+  flush();
+  history.append("\ude80");
+  flush();
+  expect(persisted).toBe("🚀");
+  // More output than the retained window between flushes must replace the file.
+  history.append("z".repeat(maxBytes * 3));
+  flush();
+  expect(persisted).toBe("z".repeat(maxBytes));
+});
+
 it.layer(
-  Layer.merge(NodeServices.layer, ProcessRunner.layer.pipe(Layer.provide(NodeServices.layer))),
+  Layer.mergeAll(
+    NodeServices.layer,
+    NodeCrypto.layer,
+    ProcessRunner.layer.pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  ),
   { excludeTestServices: true },
 )("TerminalManager", (it) => {
+  it.effect.each([
+    { method: "open", location: "managed" },
+    { method: "attach", location: "managed" },
+    { method: "open", location: "subdirectory" },
+    { method: "open", location: "unmanaged" },
+    { method: "open", location: "no-worktree" },
+  ] as const)(
+    "recovers $method with a $location cwd without a cleanup gap",
+    ({ method, location }) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { manager, ptyAdapter, baseDir } = yield* createManager();
+        const worktreesDir = path.join(baseDir, "worktrees");
+        const worktreePath =
+          location === "unmanaged"
+            ? path.join(baseDir, "missing")
+            : path.join(worktreesDir, "project", "feature");
+        const cwd = location === "subdirectory" ? path.join(worktreePath, "src") : worktreePath;
+        const cleanupQueued = yield* Deferred.make<Fiber.Fiber<void>>();
+        let creations = 0;
+        const prepareLaunch = yield* makePrepareTerminalLaunch(() =>
+          Effect.succeed({
+            id: ThreadId.make("thread-1"),
+            projectId: ProjectId.make("project-1"),
+            worktreePath: location === "no-worktree" ? null : worktreePath,
+            branch: "feature",
+          }),
+        ).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.mock(ServerConfig.ServerConfig)({
+                worktreesDir,
+              } as ServerConfig.ServerConfig["Service"]),
+              ServerSettings.layerTest(),
+              Layer.mock(ProjectService.ProjectService)({
+                getById: () => Effect.succeedSome({ workspaceRoot: baseDir } as never),
+              }),
+              Layer.mock(GitWorkflowService.GitWorkflowService)({
+                pruneWorktrees: () => Effect.void,
+                listLocalBranchNames: () => Effect.succeed(["feature"]),
+                createWorktree: () =>
+                  Effect.gen(function* () {
+                    creations++;
+                    yield* fs.makeDirectory(cwd, { recursive: true }).pipe(Effect.orDie);
+                    const cleanup = yield* withWorkspaceLease(
+                      worktreePath,
+                      Effect.sync(() => {
+                        assert.equal(ptyAdapter.spawnInputs.length, 1);
+                      }),
+                    ).pipe(Effect.forkChild({ startImmediately: true }));
+                    yield* Deferred.succeed(cleanupQueued, cleanup);
+                    return {} as never;
+                  }),
+              }),
+            ),
+          ),
+        );
+        const input = openInput({
+          cwd,
+          worktreePath: location === "subdirectory" ? null : worktreePath,
+        });
+        const launch = prepareLaunch(input).pipe(
+          Effect.flatMap(({ input, recover }) =>
+            (method === "attach"
+              ? manager.attachStream(input, () => Effect.void).pipe(Effect.asVoid)
+              : manager.open(input).pipe(Effect.asVoid)
+            ).pipe(Effect.provideService(TerminalManager.TerminalCwdRecovery, recover)),
+          ),
+        );
+        if (location === "unmanaged" || location === "no-worktree") {
+          const error = yield* launch.pipe(Effect.flip);
+          assert.deepEqual(error, new TerminalCwdNotFoundError({ cwd }));
+          assert.equal(creations, 0);
+          assert.equal(ptyAdapter.spawnInputs.length, 0);
+          return;
+        }
+        yield* launch;
+        yield* Fiber.join(yield* Deferred.await(cleanupQueued));
+        assert.equal(creations, 1);
+        assert.equal(ptyAdapter.spawnInputs.length, 1);
+        assert.isTrue(yield* fs.exists(cwd));
+      }),
+  );
+
   it.effect("spawns lazily and reuses running terminal per thread", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
@@ -457,6 +611,133 @@ it.layer(
     }),
   );
 
+  // Which client owns the shared PTY size is left open by the issue, so this only asserts
+  // that every attached renderer is told the grid the PTY actually has.
+  it.effect("tells every attached stream the shared PTY size when attaches disagree", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      const wideEvents: TerminalAttachStreamEvent[] = [];
+      const narrowEvents: TerminalAttachStreamEvent[] = [];
+      const stopWide = yield* manager.attachStream(openInput({ cols: 130, rows: 15 }), (event) =>
+        Effect.sync(() => {
+          wideEvents.push(event);
+        }),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(stopWide));
+      const stopNarrow = yield* manager.attachStream(openInput({ cols: 54, rows: 15 }), (event) =>
+        Effect.sync(() => {
+          narrowEvents.push(event);
+        }),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(stopNarrow));
+
+      const spawned = ptyAdapter.spawnInputs[0]!;
+      const ptySize = ptyAdapter.processes[0]!.resizeCalls.at(-1) ?? {
+        cols: spawned.cols,
+        rows: spawned.rows,
+      };
+      const lastReportedSize = (events: ReadonlyArray<TerminalAttachStreamEvent>) => {
+        for (const event of events.toReversed()) {
+          const source: Record<string, unknown> =
+            event.type === "snapshot" ? event.snapshot : event;
+          if (typeof source.cols === "number" && typeof source.rows === "number") {
+            return { cols: source.cols, rows: source.rows };
+          }
+        }
+        return null;
+      };
+
+      expect({
+        wide: lastReportedSize(wideEvents),
+        narrow: lastReportedSize(narrowEvents),
+      }).toEqual({ wide: ptySize, narrow: ptySize });
+    }),
+  );
+
+  it.effect("gives the PTY back to the remaining viewer when the narrowest one detaches", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      const restored = yield* Deferred.make<void>();
+      const stopWide = yield* manager.attachStream(
+        openInput({ cols: 130, rows: 15 }),
+        (event) =>
+          event.type === "activity" && event.cols === 130 && event.rows === 15
+            ? Deferred.succeed(restored, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+        undefined,
+        "wide",
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(stopWide));
+      const stopNarrow = yield* manager.attachStream(
+        openInput({ cols: 54, rows: 15 }),
+        () => Effect.void,
+        undefined,
+        "narrow",
+      );
+      const process = ptyAdapter.processes[0]!;
+
+      yield* manager.resize(
+        { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID, cols: 80, rows: 12 },
+        "narrow",
+      );
+      // A resize from a client with no attached stream cannot override attached viewers.
+      yield* manager.resize({
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        cols: 200,
+        rows: 50,
+      });
+      expect(process.resizeCalls.at(-1)).toEqual({ cols: 80, rows: 12 });
+
+      stopNarrow();
+      yield* Deferred.await(restored);
+      expect(process.resizeCalls.at(-1)).toEqual({ cols: 130, rows: 15 });
+    }),
+  );
+
+  // Client retries resend the first attach's size, which a later resize may have replaced.
+  it.effect("keeps a viewer's resized grid when the same viewer attaches again", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      const restored = yield* Deferred.make<void>();
+      const stopWide = yield* manager.attachStream(
+        openInput({ cols: 130, rows: 15 }),
+        (event) =>
+          event.type === "activity" && event.cols === 130 && event.rows === 15
+            ? Deferred.succeed(restored, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+        undefined,
+        "wide",
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(stopWide));
+      const stopFirst = yield* manager.attachStream(
+        openInput({ cols: 54, rows: 15 }),
+        () => Effect.void,
+        undefined,
+        "phone",
+      );
+      const process = ptyAdapter.processes[0]!;
+      yield* manager.resize(
+        { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID, cols: 100, rows: 15 },
+        "phone",
+      );
+
+      const stopRetry = yield* manager.attachStream(
+        { ...openInput({ cols: 54, rows: 15 }), resume: true },
+        () => Effect.void,
+        undefined,
+        "phone",
+      );
+      expect(process.resizeCalls.at(-1)).toEqual({ cols: 100, rows: 15 });
+
+      stopRetry();
+      stopFirst();
+      yield* Deferred.await(restored);
+      expect(process.resizeCalls.at(-1)).toEqual({ cols: 130, rows: 15 });
+      expect(ptyAdapter.spawnInputs).toHaveLength(1);
+    }),
+  );
+
   it.effect("resumed attaches after close never respawn until the terminal is reopened", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
@@ -492,14 +773,6 @@ it.layer(
       yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
       expect((yield* Ref.get(attachEvents)).map((event) => event.type)).toEqual(["closed"]);
       expect(ptyAdapter.spawnInputs).toHaveLength(0);
-
-      const restarted = yield* manager.restart(restartInput());
-      expect(restarted.status).toBe("running");
-      expect((yield* Ref.get(attachEvents)).map((event) => event.type)).toEqual([
-        "closed",
-        "restarted",
-      ]);
-      expect(ptyAdapter.spawnInputs).toHaveLength(1);
     }),
   );
 
@@ -622,34 +895,224 @@ it.layer(
     }),
   );
 
-  it.effect("closes only a thread's idle shells, ignoring a helper forked from the shell", () =>
+  it.effect(
+    "closes idle shells and opted-in actions on settlement without stopping other commands",
+    () =>
+      Effect.gen(function* () {
+        const { manager, ptyAdapter } = yield* createManager(5, {
+          processTable: Effect.succeed([
+            { pid: 9000, ppid: 1, name: "zsh" },
+            { pid: 100, ppid: 9000, name: "zsh" },
+            { pid: 9001, ppid: 1, name: "zsh" },
+            { pid: 200, ppid: 9001, name: "node" },
+            { pid: 9002, ppid: 1, name: "zsh" },
+            { pid: 300, ppid: 9002, name: "zsh" },
+            { pid: 301, ppid: 300, name: "sleep" },
+            { pid: 9003, ppid: 1, name: "zsh" },
+            { pid: 9004, ppid: 1, name: "zsh" },
+            { pid: 400, ppid: 9004, name: "node" },
+          ]),
+        }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+        yield* manager.open(openInput({ terminalId: "idle" }));
+        yield* manager.open(openInput({ terminalId: "dev-server" }));
+        yield* manager.open(openInput({ terminalId: "subshell" }));
+        yield* manager.open(openInput({ threadId: "thread-2", stopOnSettle: true }));
+        yield* manager.open(openInput({ terminalId: "managed-dev", stopOnSettle: true }));
+
+        yield* manager.closeIdle({ threadId: "thread-1" });
+
+        expect(ptyAdapter.processes.map((process) => process.killed)).toEqual([
+          true,
+          false,
+          false,
+          false,
+          false,
+        ]);
+        yield* manager.open(openInput({ terminalId: "managed-dev", stopOnSettle: false }));
+        yield* manager.closeOnSettle({ threadId: "thread-1" });
+        expect(ptyAdapter.processes[4]?.killed).toBe(false);
+        yield* manager.open(openInput({ terminalId: "managed-dev", stopOnSettle: true }));
+        yield* manager.closeOnSettle({ threadId: "thread-1" });
+        expect(ptyAdapter.processes.map((process) => process.killed)).toEqual([
+          true,
+          false,
+          false,
+          false,
+          true,
+        ]);
+      }),
+  );
+
+  it.effect("labels a running command by its whole process name, spaces included", () =>
     Effect.gen(function* () {
-      const { manager, ptyAdapter } = yield* createManager(5, {
+      const { manager } = yield* createManager(5, {
+        subprocessPollIntervalMs: 1_000,
+        processKillGraceMs: 0,
         processTable: Effect.succeed([
           { pid: 9000, ppid: 1, name: "zsh" },
-          { pid: 100, ppid: 9000, name: "zsh" },
-          { pid: 9001, ppid: 1, name: "zsh" },
-          { pid: 200, ppid: 9001, name: "node" },
-          { pid: 9002, ppid: 1, name: "zsh" },
-          { pid: 300, ppid: 9002, name: "zsh" },
-          { pid: 301, ppid: 300, name: "sleep" },
-          { pid: 9003, ppid: 1, name: "zsh" },
+          { pid: 200, ppid: 9000, name: "Google Chrome" },
         ]),
-      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
-      yield* manager.open(openInput({ terminalId: "idle" }));
-      yield* manager.open(openInput({ terminalId: "dev-server" }));
-      yield* manager.open(openInput({ terminalId: "subshell" }));
-      yield* manager.open(openInput({ threadId: "thread-2" }));
+      }).pipe(Effect.provide(layerWithHostPlatform("darwin")));
+      const label = yield* Deferred.make<string>();
+      const unsubscribe = yield* manager.subscribe((event) =>
+        event.type === "activity"
+          ? Deferred.succeed(label, event.label).pipe(Effect.asVoid)
+          : Effect.void,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+      yield* manager.open(openInput());
+      yield* TestClock.adjust("1 second");
 
-      yield* manager.closeIdle({ threadId: "thread-1" });
+      expect(yield* Deferred.await(label)).toBe("Google Chrome");
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
 
-      expect(ptyAdapter.processes.map((process) => process.killed)).toEqual([
-        true,
-        false,
-        false,
-        false,
-      ]);
-    }),
+  // Answers process-table queries after `queryDuration`, honoring the caller's
+  // timeout the way ProcessRunner's `timedOutResult` mode does.
+  const slowProcessTable = (
+    platform: "linux" | "win32",
+    queryDuration: Duration.Input,
+    queries: Array<{ start: number; end?: number }>,
+    started: ReadonlyArray<Deferred.Deferred<void>>,
+  ): ProcessRunner.ProcessRunner["Service"] => ({
+    run: (input) =>
+      Effect.gen(function* () {
+        const query: { start: number; end?: number } = { start: yield* Clock.currentTimeMillis };
+        queries.push(query);
+        const deferred = started[queries.length - 1];
+        if (deferred) yield* Deferred.succeed(deferred, undefined);
+        const completed = yield* Effect.sleep(queryDuration).pipe(
+          Effect.timeoutOption(input.timeout ?? "1 hour"),
+        );
+        query.end = yield* Clock.currentTimeMillis;
+        return {
+          stdout: Option.isNone(completed)
+            ? ""
+            : platform === "win32"
+              ? "100|9000|node.exe\n"
+              : "  100  9000 node\n",
+          stderr: "",
+          code: Option.isSome(completed) ? ChildProcessSpawner.ExitCode(0) : null,
+          timedOut: Option.isNone(completed),
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          stdoutInvalidUtf8: false,
+          stderrInvalidUtf8: false,
+        };
+      }),
+  });
+
+  const createFallbackManager = (
+    platform: "linux" | "win32",
+    runner: ProcessRunner.ProcessRunner["Service"],
+  ) =>
+    createManager(5, { subprocessPollIntervalMs: 1_000, processKillGraceMs: 0 }).pipe(
+      Effect.provideService(ProcessRunner.ProcessRunner, runner),
+      Effect.provide(layerWithHostPlatform(platform)),
+    );
+
+  it.effect.each(["linux", "win32"] as const)(
+    "reports activity from a slow but successful %s process-table query",
+    (platform) =>
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const queries: Array<{ start: number; end?: number }> = [];
+        const { manager, getEvents } = yield* createFallbackManager(
+          platform,
+          slowProcessTable(platform, "5 seconds", queries, [started]),
+        );
+
+        yield* manager.open(openInput());
+        yield* TestClock.adjust("1 second");
+        yield* Deferred.await(started);
+        yield* TestClock.adjust("5 seconds");
+
+        expect(
+          (yield* getEvents).some(
+            (event) =>
+              event.type === "activity" && event.hasRunningSubprocess && event.label === "node",
+          ),
+        ).toBe(true);
+        yield* manager.close({ threadId: "thread-1" });
+      }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("idles at least as long as a slow process-table query took before the next", () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const queries: Array<{ start: number; end?: number }> = [];
+      const { manager } = yield* createFallbackManager(
+        "linux",
+        slowProcessTable("linux", "5 seconds", queries, [started]),
+      );
+
+      yield* manager.open(openInput());
+      yield* TestClock.adjust("1 second");
+      yield* Deferred.await(started);
+      yield* TestClock.adjust("5 seconds");
+      yield* TestClock.adjust(Duration.millis(19_999));
+
+      expect(queries).toHaveLength(1);
+      yield* TestClock.adjust("1 millis");
+      const [slow, next] = queries;
+      expect(next?.start).toBe(slow!.end! + 20_000);
+      yield* manager.close({ threadId: "thread-1" });
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("ends a hung process-table query and paces the retry", () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const queries: Array<{ start: number; end?: number }> = [];
+      const { manager } = yield* createFallbackManager(
+        "win32",
+        slowProcessTable("win32", "1 day", queries, [started]),
+      );
+
+      yield* manager.open(openInput());
+      yield* TestClock.adjust("1 second");
+      yield* Deferred.await(started);
+      yield* TestClock.adjust("2 minutes");
+      yield* TestClock.adjust("2 minutes");
+
+      const [hung, next] = queries;
+      expect(hung!.end! - hung!.start).toBe(15_000);
+      expect(next!.start - hung!.end!).toBe(60_000);
+      yield* manager.close({ threadId: "thread-1" });
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect.each([
+    ["linux", 1_000],
+    ["win32", 1_500],
+  ] as const)(
+    "bounds closeIdle's %s query so other operations on the thread still run",
+    ([platform, budgetMs]) =>
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const queries: Array<{ start: number; end?: number }> = [];
+        const { manager, ptyAdapter } = yield* createFallbackManager(
+          platform,
+          slowProcessTable(platform, "1 day", queries, [started]),
+        );
+        yield* manager.open(openInput());
+
+        const closing = yield* manager
+          .closeIdle({ threadId: "thread-1" })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(started);
+        const resizing = yield* manager
+          .resize({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID, cols: 80, rows: 30 })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* TestClock.adjust(Duration.millis(budgetMs));
+
+        expect(closing.pollUnsafe()).toBeDefined();
+        expect(resizing.pollUnsafe()).toBeDefined();
+        expect(queries[0]!.end! - queries[0]!.start).toBe(budgetMs);
+        expect(ptyAdapter.processes[0]!.resizeCalls).toEqual([{ cols: 80, rows: 30 }]);
+        expect(ptyAdapter.processes[0]!.killed).toBe(false);
+        yield* manager.close({ threadId: "thread-1" });
+      }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("keeps terminals that get input or output while closeIdle checks them", () =>
@@ -734,12 +1197,230 @@ it.layer(
     }),
   );
 
+  it.effect("restores a log tail that starts inside a control sequence without its remainder", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      for (const [persisted, restored] of [
+        ["\u001b]0;x\u0007ABCD", "ABCD"],
+        ["名\u001b]0;名\u0007ABCD", "ABCD"],
+        ["\u001b]0;x\u0007\u001b[31mABCD", "ABCD"],
+      ] as const) {
+        const { manager, logsDir } = yield* createManager(5, { historyByteLimit: 8 });
+        const path = yield* historyLogPath(logsDir);
+        yield* fs.makeDirectory(logsDir, { recursive: true });
+        yield* fs.writeFileString(path, persisted);
+        expect((yield* manager.open(openInput())).history).toBe(restored);
+        expect(yield* fs.readFileString(path)).toBe(restored);
+      }
+    }),
+  );
+
+  it.effect("persists small terminal updates without rewriting the retained history", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const writes = yield* Queue.unbounded<number>();
+      const maxBytes = 64 * 1024;
+      const { manager, ptyAdapter, logsDir } = yield* createManager(5_000, {
+        historyByteLimit: maxBytes,
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          writeFileString: (path, data, options) =>
+            fs
+              .writeFileString(path, data, options)
+              .pipe(
+                Effect.tap(() =>
+                  data.length > 0 ? Queue.offer(writes, Buffer.byteLength(data)) : Effect.void,
+                ),
+              ),
+        }),
+      );
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0]!;
+      process.emitData("a".repeat(maxBytes));
+      let written = yield* Queue.take(writes);
+      for (let index = 0; index < 16; index += 1) {
+        process.emitData("b".repeat(1024));
+        written += yield* Queue.take(writes);
+      }
+      expect(written).toBeLessThan(maxBytes * 2);
+      const expected = "a".repeat(maxBytes - 16 * 1024) + "b".repeat(16 * 1024);
+      const persisted = yield* fs.readFileString(yield* historyLogPath(logsDir));
+      expect(Buffer.byteLength(persisted)).toBe(maxBytes + 16 * 1024);
+      for (const failure of [undefined, "write", "rename"] as const) {
+        let failed = false;
+        const fail = () => {
+          failed = true;
+          return Effect.fail(
+            PlatformError.systemError({
+              _tag: "Unknown",
+              module: "FileSystem",
+              method: failure === "write" ? "writeFileString" : "rename",
+              cause: { code: "ENOSPC" },
+            }),
+          );
+        };
+        const recovered = yield* createManager(5_000, { historyByteLimit: maxBytes }).pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            writeFileString: (file, data, options) =>
+              failure === "write" && !failed && data === expected
+                ? fs.writeFileString(file, "partial", options).pipe(Effect.andThen(fail))
+                : fs.writeFileString(file, data, options),
+            rename: (from, to) => (failure === "rename" && !failed ? fail() : fs.rename(from, to)),
+          }),
+        );
+        const recoveredPath = yield* historyLogPath(recovered.logsDir);
+        yield* fs.makeDirectory(recovered.logsDir, { recursive: true });
+        yield* fs.writeFileString(recoveredPath, persisted);
+        const snapshot = yield* recovered.manager.open(openInput());
+        expect(snapshot.status).toBe("running");
+        expect(snapshot.history).toBe(expected);
+        expect(failed).toBe(failure !== undefined);
+        expect(yield* fs.readFileString(recoveredPath)).toBe(
+          failure === undefined ? expected : persisted,
+        );
+        expect(yield* fs.readDirectory(recovered.logsDir)).toHaveLength(1);
+      }
+      yield* manager.close({ threadId: "thread-1" });
+      expect((yield* manager.open(openInput())).history).toBe(expected);
+      expect(yield* fs.readFileString(yield* historyLogPath(logsDir))).toBe(expected);
+    }),
+  );
+
+  it.effect("rewrites history after an append fails partway through", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const writes = yield* Queue.unbounded<void>();
+      let failAppend = false;
+      const { manager, ptyAdapter, logsDir } = yield* createManager().pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          writeFileString: (path, data, options) => {
+            if (options?.flag === "a" && failAppend) {
+              failAppend = false;
+              return fs.writeFileString(path, data.slice(0, 1), options).pipe(
+                // The file cannot also be a parent directory: fail after the partial append.
+                Effect.andThen(fs.writeFileString(`${path}/missing`, data)),
+                Effect.ensuring(Queue.offer(writes, undefined)),
+              );
+            }
+            return fs
+              .writeFileString(path, data, options)
+              .pipe(
+                Effect.tap(() => (data.length > 0 ? Queue.offer(writes, undefined) : Effect.void)),
+              );
+          },
+        }),
+      );
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0]!;
+      process.emitData("start:");
+      yield* Queue.take(writes);
+      failAppend = true;
+      process.emitData("middle");
+      yield* Queue.take(writes);
+      expect(failAppend).toBe(false);
+      process.emitData(":end");
+      yield* Queue.take(writes);
+      expect(yield* fs.readFileString(yield* historyLogPath(logsDir))).toBe("start:middle:end");
+      yield* manager.close({ threadId: "thread-1" });
+    }),
+  );
+
+  it.effect("releases delivered output while the process queue stays busy", () =>
+    Effect.gen(function* () {
+      // Observe retained payloads, since delivery and bounded history alone cannot detect a leak.
+      let readState: Effect.Effect<unknown> = Effect.void;
+      const makeRef = vi.mocked(SynchronizedRef.make).getMockImplementation()!;
+      using _capture = vi.spyOn(SynchronizedRef, "make").mockImplementation(<A>(value: A) =>
+        makeRef(value).pipe(
+          Effect.tap((ref) =>
+            Effect.sync(() => {
+              if (typeof value === "object" && value !== null && "sessions" in value) {
+                readState = SynchronizedRef.get(ref);
+              }
+            }),
+          ),
+        ),
+      );
+      const { manager, ptyAdapter } = yield* createManager(5, { historyByteLimit: 1024 });
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0]!;
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const measured = yield* Deferred.make<void>();
+      const finish = yield* Deferred.make<void>();
+      const drained = yield* Deferred.make<void>();
+      yield* Effect.addFinalizer(() => Deferred.succeed(finish, undefined));
+      yield* Effect.addFinalizer(() => Deferred.succeed(release, undefined));
+      const chunkBytes = 64 * 1024;
+      const chunkCount = 256;
+      let delivered = 0;
+      const unsubscribe = yield* manager.subscribe((event) =>
+        Effect.gen(function* () {
+          if (event.type !== "output") return;
+          delivered += 1;
+          expect(event.data).toBe(
+            delivered === 1
+              ? "start"
+              : (delivered === 2
+                  ? "queued-a"
+                  : delivered === 3
+                    ? "queued-b"
+                    : `${delivered - 3}`
+                ).padEnd(chunkBytes, "x"),
+          );
+          if (delivered === 1) {
+            yield* Deferred.succeed(entered, undefined);
+            yield* Deferred.await(release);
+          }
+          if (delivered === chunkCount) {
+            yield* Deferred.succeed(measured, undefined);
+            yield* Deferred.await(finish);
+          } else if (delivered < chunkCount) {
+            process.emitData(`${delivered}`.padEnd(chunkBytes, "x"));
+          } else if (delivered === chunkCount + 2) {
+            yield* Deferred.succeed(drained, undefined);
+          }
+        }),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+      process.emitData("start");
+      yield* Deferred.await(entered);
+      process.emitData("queued-a".padEnd(chunkBytes, "x"));
+      process.emitData("queued-b".padEnd(chunkBytes, "x"));
+      yield* Deferred.succeed(release, undefined);
+      yield* Deferred.await(measured);
+
+      const state = (yield* readState) as {
+        sessions: ReadonlyMap<
+          string,
+          { pendingProcessEvents: ReadonlyArray<{ data?: string } | undefined> }
+        >;
+      };
+      const retained = [...state.sessions.values()].flatMap(
+        (session) => session.pendingProcessEvents,
+      );
+      const retainedBytes = retained.reduce(
+        (bytes, event) => bytes + (event?.data?.length ?? 0),
+        0,
+      );
+      expect(delivered).toBe(chunkCount);
+      expect(retainedBytes).toBeLessThanOrEqual(2 * chunkBytes);
+      expect(retained.length).toBeLessThanOrEqual(4);
+      yield* Deferred.succeed(finish, undefined);
+      yield* Deferred.await(drained);
+    }),
+  );
+
   it.effect("retains plain Unicode and control characters around a split query", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
       yield* manager.open(openInput());
       const process = ptyAdapter.processes[0]!;
-      const before = "café\t界🙂\u0007\u009c\u0085";
+      // Mojibake like "â€\u009d" (for ”) carries C1 code points that libghostty prints as text.
+      const before = "café\t界🙂\u0007\u009c\u0085 â€\u009d Ð\u0090 \u009e\u009f\u009b6n";
       const after = "e\u0301\r\n";
 
       process.emitData(before);
@@ -761,19 +1442,92 @@ it.layer(
 
       process.emitData("prompt ");
       process.emitData("\u001b[?2026$p\u001b[?2026;2$y\u001b[>q\u001b[?u\u001b[?31u");
+      process.emitData("\u001b[=c\u001b[=0c\u001bZ");
       process.emitData("\u001bP$q m\u001b\\\u001bP1$r0m\u001b\\");
       process.emitData("\u001bP+q544e\u001b\\\u001bP1+r544e=1b\u001b\\");
-      process.emitData("\u0090$q m\u009c\u00901$r0m\u009c");
-      process.emitData("\u0090+q544e\u009c\u00901+r544e=1b\u009c");
+      // BEL is DCS payload, not a terminator: only ST ends the string.
+      process.emitData("\u001bP$qm\u0007hidden\u001b\\\u001bP+q544e\u0007hidden\u001b\\");
       process.emitData('\u001b[!p\u001b["p\u001b[4 q\u001b[u');
+      process.emitData("\u001b]0;x\u001b\u001b[?2026$p");
       process.emitData("done\n");
 
       yield* manager.close({ threadId: "thread-1" });
 
       const reopened = yield* manager.open(openInput());
-      expect(reopened.history.startsWith('prompt \u001b[!p\u001b["p\u001b[4 q\u001b[udone\n')).toBe(
-        true,
-      );
+      expect(
+        reopened.history.startsWith(
+          'prompt \u001b[!p\u001b["p\u001b[4 q\u001b[u\u001b]0;x\u001bdone\n',
+        ),
+      ).toBe(true);
+    }),
+  );
+
+  // Ghostty executes 0x00-0x0F inside a CSI and ignores DEL and 0x10-0x1F; none change the query.
+  it.effect.each([
+    { name: "NUL in DA", data: "A\u001b[0\u0000cB", history: "AB" },
+    { name: "DEL in DA", data: "A\u001b[0\u007fcB", history: "AB" },
+    { name: "NUL in DECRQM", data: "A\u001b[?2026\u0000$pB", history: "AB" },
+    { name: "CR in DSR", data: "AB\u001b[5\rnC", history: "AB\rC" },
+    { name: "DLE in DSR", data: "AB\u001b[5\u0010nC", history: "ABC" },
+    // Ghostty reads non-ASCII there as UTF-8 bytes: it drops é and runs 0x80-0x9F as C1 controls.
+    { name: "é in DA", data: "A\u001b[0écB", history: "AB" },
+    { name: "DECID byte in a CSI", data: "A\u001b[嚠B", history: "A\ufffdB" },
+    {
+      name: "C1 DCS then C1 CSI in DSR",
+      data: "A\u001b[\u0090\u009b6nB",
+      history: "A\u001bP\u009cB",
+    },
+    { name: "ESC in DSR", data: "A\u001b[5\u001b[6nB", history: "AB" },
+  ])(
+    "strips a query with an embedded control but keeps what the terminal ran ($name)",
+    ({ data, history }) =>
+      Effect.gen(function* () {
+        const { manager, ptyAdapter } = yield* createManager();
+        yield* manager.open(openInput());
+        ptyAdapter.processes[0]!.emitData(data);
+        yield* manager.close({ threadId: "thread-1" });
+
+        const reopened = yield* manager.open(openInput());
+        const restored = reopened.history.replaceAll("\u0000", "");
+        expect(restored.split("\u001b[?1049h")[0]).toBe(history);
+      }),
+  );
+
+  // Ghostty aborts a CSI at a non-ASCII code point and prints it and what follows.
+  it.effect("keeps a CSI interrupted by non-ASCII text in history", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      ptyAdapter.processes[0]!.emitData("A\u001b[界nB");
+      yield* manager.close({ threadId: "thread-1" });
+
+      const reopened = yield* manager.open(openInput());
+      expect(reopened.history.split("\u001b[?1049h")[0]).toBe("A\u001b[界nB");
+    }),
+  );
+
+  it.effect.each([
+    { name: "OSC", sequence: "\u001b]0;unfinished" },
+    { name: "DCS", sequence: "\u001bPunfinished" },
+    { name: "PM", sequence: "\u001b^unfinished" },
+    { name: "APC", sequence: "\u001b_unfinished" },
+    { name: "CSI", sequence: "\u001b[5" },
+  ])("keeps output after a cancelled $name sequence in history", ({ sequence }) =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(10);
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0]!;
+      // A new escape sequence also aborts one, as in xterm.js; keep it last so CAN cannot end it.
+      for (const cancel of ["\u0018", "\u001a", "\u001b[0m"]) {
+        process.emitData(sequence);
+        process.emitData(cancel);
+        process.emitData("next line\n");
+        process.emitData(`${sequence}${cancel}next line\n`);
+      }
+      yield* manager.close({ threadId: "thread-1" });
+
+      const reopened = yield* manager.open(openInput());
+      expect(reopened.history.match(/next line/g)).toHaveLength(6);
     }),
   );
 
@@ -791,15 +1545,30 @@ it.layer(
       process.emitData("\u001bP$q ");
       process.emitData("m\u001b");
       process.emitData("\\after ");
-      process.emitData("\u009b?3");
+      process.emitData("\u001b[?3");
       process.emitData("1uafter ");
-      process.emitData("\u0090+q544e");
-      process.emitData("\u009cafter\n");
+      process.emitData("\u001bP+q544e");
+      process.emitData("\u001b\\after\n");
 
       yield* manager.close({ threadId: "thread-1" });
 
       const reopened = yield* manager.open(openInput());
       assert.equal(reopened.history, "before after after after after\n");
+    }),
+  );
+
+  it.effect("keeps a decoded U+009C inside a stripped OSC query out of history", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0]!;
+      // libghostty receives UTF-8 (c2 9c), which is OSC payload; only ESC \ ends this string.
+      process.emitData("A\u001b]11;?\u009cHIDDEN\u001b\\B\n");
+      // A DCS string does end at U+009C there, so the text after it stays visible.
+      process.emitData("C\u001bP$qm\u009cSHOWN\u001b\\D\n");
+      yield* manager.close({ threadId: "thread-1" });
+
+      expect((yield* manager.open(openInput())).history).toMatch(/^AB\nCSHOWN\u001b\\D\n/);
     }),
   );
 
@@ -817,16 +1586,16 @@ it.layer(
       yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
       const sequences = [
         { prefix: `\u001b]52;c;${"YWJj".repeat(16_384)}\u001b`, terminator: "\\" },
-        { prefix: `\u0090q${"?".repeat(65_536)}`, terminator: "\u009c" },
+        { prefix: `\u001bPq${"?".repeat(65_536)}`, terminator: "\u001b\\" },
       ];
-      const stripped = "\u001b]11;?\u0007\u0090$q m\u009c";
-      const preserved = "\u001b[31m\u009d52;c;YWJj\u009c";
+      const stripped = "\u001b]11;?\u0007\u001bP$q m\u001b\\";
+      const preserved = "\u001b[31m\u001b]52;c;YWJj\u0007";
       const expected =
         sequences.map(({ prefix, terminator }) => prefix + terminator + preserved).join("") +
         "done\n";
 
       // Counts reads of strings larger than one emitted chunk, so rescanning the
-      // pending prefix on every chunk (#23817) shows up as quadratic work.
+      // pending prefix on every chunk shows up as quadratic work.
       const charCodeAt = String.prototype.charCodeAt;
       let largeStringReads = 0;
       yield* Effect.gen(function* () {
@@ -909,7 +1678,7 @@ it.layer(
 
   it.effect("keeps reading and deleting history at an encoded path that already fit", () =>
     Effect.gen(function* () {
-      const threadId = "x".repeat(120);
+      const threadId = "x".repeat(48);
       const { manager, logsDir } = yield* createManager();
       const fs = yield* FileSystem.FileSystem;
       const logPath = yield* historyLogPath(logsDir, threadId);
@@ -924,6 +1693,180 @@ it.layer(
       yield* manager.close({ threadId, deleteHistory: true });
       expect(yield* fs.exists(logPath)).toBe(false);
       expect(yield* fs.readDirectory(logsDir)).toEqual([]);
+    }),
+  );
+
+  it.effect.each([
+    {
+      label: "delegated setup",
+      threadId:
+        "thread:delegated-task:command%3Amcp%3A00000000-0000-4000-8000-000000000000%3Adelegate-task%3Aexample-r4-workspace-prepare-engine3",
+      terminalId: "setup-setup-worktree-2",
+    },
+    { label: "long thread", threadId: "t".repeat(400), terminalId: DEFAULT_TERMINAL_ID },
+    { label: "Unicode thread", threadId: "项目😀".repeat(60), terminalId: "setup" },
+    { label: "long terminal", threadId: "short", terminalId: "t".repeat(128) },
+    { label: "142-byte boundary", threadId: "t".repeat(48), terminalId: "s".repeat(48) },
+    { label: "144-byte boundary", threadId: "t".repeat(49), terminalId: "s".repeat(48) },
+  ])("persists $label history with a 143-byte filename limit", ({ threadId, terminalId }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const check = (filePath: string) =>
+        Buffer.byteLength(path.basename(filePath)) <= 143
+          ? Effect.void
+          : Effect.fail(
+              PlatformError.systemError({
+                _tag: "Unknown",
+                module: "FileSystem",
+                method: "access",
+                pathOrDescriptor: filePath,
+                cause: { code: "ENAMETOOLONG" },
+              }),
+            );
+      const limited = FileSystem.FileSystem.of({
+        ...fs,
+        exists: (filePath) => Effect.andThen(check(filePath), fs.exists(filePath)),
+        open: (filePath, options) => Effect.andThen(check(filePath), fs.open(filePath, options)),
+        writeFileString: (filePath, data, options) =>
+          Effect.andThen(check(filePath), fs.writeFileString(filePath, data, options)),
+        remove: (filePath, options) =>
+          Effect.andThen(check(filePath), fs.remove(filePath, options)),
+      });
+      const { manager, ptyAdapter, logsDir } = yield* createManager().pipe(
+        Effect.provideService(FileSystem.FileSystem, limited),
+      );
+      yield* manager.open(openInput({ threadId, terminalId }));
+      ptyAdapter.processes[0]!.emitData("setup output\n");
+      yield* manager.close({ threadId, terminalId });
+      const names = yield* fs.readDirectory(logsDir);
+      expect(names).toHaveLength(1);
+      expect(Buffer.byteLength(names[0]!)).toBeLessThanOrEqual(143);
+      expect((yield* manager.open(openInput({ threadId, terminalId }))).history).toBe(
+        "setup output\n",
+      );
+      const otherThread = `${threadId}-other`;
+      expect((yield* manager.open(openInput({ threadId: otherThread, terminalId }))).history).toBe(
+        "",
+      );
+      ptyAdapter.processes[2]!.emitData("other output\n");
+      yield* manager.close({ threadId: otherThread, terminalId });
+      expect(yield* fs.readDirectory(logsDir)).toHaveLength(2);
+      yield* manager.close({ threadId, terminalId, deleteHistory: true });
+      expect(yield* fs.readDirectory(logsDir)).toHaveLength(1);
+      yield* manager.close({ threadId: otherThread, deleteHistory: true });
+      expect(yield* fs.readDirectory(logsDir)).toEqual([]);
+    }),
+  );
+
+  it.effect.each([
+    { source: "encoded", terminalId: DEFAULT_TERMINAL_ID },
+    { source: "encoded", terminalId: "setup-setup-worktree-2" },
+    { source: "sanitized", terminalId: DEFAULT_TERMINAL_ID },
+  ])("migrates oversized $source history for $terminalId", ({ source, terminalId }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { manager, logsDir } = yield* createManager();
+      const threadId = "m".repeat(100);
+      const oldPath =
+        source === "encoded"
+          ? path.join(
+              logsDir,
+              `terminal_${Base64Url.encode(threadId)}${terminalId === DEFAULT_TERMINAL_ID ? "" : `_${Base64Url.encode(terminalId)}`}.log`,
+            )
+          : path.join(logsDir, `${threadId}.log`);
+      yield* fs.writeFileString(oldPath, "old output\n");
+      expect((yield* manager.open(openInput({ threadId, terminalId }))).history).toBe(
+        "old output\n",
+      );
+      const names = yield* fs.readDirectory(logsDir);
+      expect(names).toHaveLength(1);
+      expect(Buffer.byteLength(names[0]!)).toBeLessThanOrEqual(143);
+      expect(yield* fs.exists(oldPath)).toBe(false);
+      expect(yield* fs.readFileString(path.join(logsDir, names[0]!))).toBe("old output\n");
+      yield* manager.close({ threadId, terminalId, deleteHistory: true });
+      expect(yield* fs.readDirectory(logsDir)).toEqual([]);
+    }),
+  );
+
+  it.effect.each(["terminal", "thread"] as const)(
+    "deletes compact and older encoded history when closing a %s",
+    (scope) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { manager, logsDir } = yield* createManager();
+        const threadId = "d".repeat(100);
+        const terminalId = "setup-setup-worktree-2";
+        yield* manager.open(openInput({ threadId, terminalId }));
+        yield* manager.close({ threadId, terminalId });
+        const oldPath = path.join(
+          logsDir,
+          `terminal_${Base64Url.encode(threadId)}_${Base64Url.encode(terminalId)}.log`,
+        );
+        yield* fs.writeFileString(oldPath, "stale copy\n");
+        yield* fs.writeFileString(path.join(logsDir, "unrelated.log"), "keep\n");
+        if (scope === "terminal") {
+          yield* manager.close({ threadId, terminalId, deleteHistory: true });
+        } else {
+          yield* manager.close({ threadId, deleteHistory: true });
+        }
+        expect(yield* fs.readDirectory(logsDir)).toEqual(["unrelated.log"]);
+      }),
+  );
+
+  it.effect("prefers bounded history over a stale encoded copy", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter, logsDir } = yield* createManager();
+      const fs = yield* FileSystem.FileSystem;
+      const threadId = "p".repeat(100);
+      yield* manager.open(openInput({ threadId }));
+      ptyAdapter.processes[0]!.emitData("current\n");
+      yield* manager.close({ threadId });
+      const oldPath = yield* historyLogPath(logsDir, threadId);
+      yield* fs.writeFileString(oldPath, "stale\n");
+
+      expect((yield* manager.open(openInput({ threadId }))).history).toBe("current\n");
+      yield* manager.close({ threadId, terminalId: DEFAULT_TERMINAL_ID, deleteHistory: true });
+      expect(yield* fs.readDirectory(logsDir)).toEqual([]);
+    }),
+  );
+
+  it.effect("retains encoded history if migration cannot write the bounded file", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      let failNextWrite = true;
+      const limited = FileSystem.FileSystem.of({
+        ...fs,
+        writeFileString: (filePath, data, options) => {
+          if (!failNextWrite) return fs.writeFileString(filePath, data, options);
+          failNextWrite = false;
+          return fs.writeFileString(filePath, "partial").pipe(
+            Effect.andThen(
+              Effect.fail(
+                PlatformError.systemError({
+                  _tag: "Unknown",
+                  module: "FileSystem",
+                  method: "writeFileString",
+                  cause: { code: "ENOSPC" },
+                }),
+              ),
+            ),
+          );
+        },
+      });
+      const { manager, logsDir } = yield* createManager().pipe(
+        Effect.provideService(FileSystem.FileSystem, limited),
+      );
+      const threadId = "f".repeat(100);
+      const oldPath = yield* historyLogPath(logsDir, threadId);
+      yield* fs.writeFileString(oldPath, "preserve me\n");
+
+      expect(Exit.isFailure(yield* Effect.exit(manager.open(openInput({ threadId }))))).toBe(true);
+      expect(yield* fs.readFileString(oldPath)).toBe("preserve me\n");
+      expect(yield* fs.readDirectory(logsDir)).toHaveLength(1);
+      expect((yield* manager.open(openInput({ threadId }))).history).toBe("preserve me\n");
     }),
   );
 
@@ -979,6 +1922,61 @@ it.layer(
         ).toBe(true);
       }
     }),
+  );
+
+  it.effect(
+    "writes completion syntax for the fallback shell instead of the configured fish shell",
+    () =>
+      Effect.gen(function* () {
+        const env = { SHELL: "/missing/fish" };
+        const { manager, ptyAdapter, baseDir } = yield* createManager(5, { env }).pipe(
+          Effect.provide(layerWithHostPlatform("linux")),
+        );
+        ptyAdapter.spawnFailures.push(new Error("spawn fish ENOENT"));
+        const written = yield* Deferred.make<void>();
+        const terminals = TerminalManager.TerminalManager.of({
+          ...manager,
+          write: (input) =>
+            manager.write(input).pipe(Effect.tap(() => Deferred.succeed(written, undefined))),
+        });
+        const runner = yield* ProjectSetupScriptRunner.make.pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.succeed(TerminalManager.TerminalManager, terminals),
+              Layer.mock(ProjectService.ProjectService)({}),
+              Layer.mock(ProjectionStore.ProjectionStoreV2)({
+                getThreadShell: () => Effect.succeed(null),
+              }),
+              ServerSettings.layerTest(),
+              Layer.succeed(HostProcess.Platform, "linux"),
+              Layer.succeed(HostProcess.Environment, env),
+            ),
+          ),
+        );
+        yield* runner.runForThread({
+          threadId: "thread-setup-fallback",
+          worktreePath: baseDir,
+          project: {
+            id: ProjectId.make("project-setup-fallback"),
+            workspaceRoot: baseDir,
+            scripts: [
+              {
+                id: "setup",
+                name: "Setup",
+                command: "echo setup-ready",
+                icon: "play",
+                runOnWorktreeCreate: true,
+              },
+            ],
+          },
+          observeCompletion: {},
+        });
+        const process = ptyAdapter.processes[0]!;
+        process.emitData("\x1b[?2004h");
+        yield* Deferred.await(written);
+        const command = process.writes[0]!;
+        expect(command).toContain('"$?"');
+      }),
   );
 
   it.effect("preserves Windows Path casing when appending managed ACP binaries", () =>
@@ -1074,6 +2072,62 @@ it.layer(
     }),
   );
 
+  it.effect("closes an idle cmd fallback before rejecting its completion wrapper", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter, baseDir } = yield* createManager(5, {
+        env: { SystemRoot: "C:\\Windows" },
+        subprocessInspector: () =>
+          Effect.succeed({
+            hasRunningSubprocess: false,
+            childCommand: null,
+            processIds: [],
+          }),
+      }).pipe(Effect.provide(layerWithHostPlatform("win32")));
+      ptyAdapter.spawnFailures.push(
+        new Error("spawn pwsh ENOENT"),
+        new Error("spawn WindowsPowerShell ENOENT"),
+        new Error("spawn powershell ENOENT"),
+      );
+      const runner = yield* ProjectSetupScriptRunner.make.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.succeed(TerminalManager.TerminalManager, manager),
+            Layer.mock(ProjectService.ProjectService)({}),
+            Layer.mock(ProjectionStore.ProjectionStoreV2)({
+              getThreadShell: () => Effect.succeed(null),
+            }),
+            ServerSettings.layerTest(),
+          ),
+        ),
+      );
+      const error = yield* runner
+        .runForThread({
+          threadId: "thread-cmd-fallback",
+          worktreePath: baseDir,
+          project: {
+            id: ProjectId.make("project-cmd-fallback"),
+            workspaceRoot: baseDir,
+            scripts: [
+              {
+                id: "setup",
+                name: "Setup",
+                command: "echo setup-ready",
+                icon: "play",
+                runOnWorktreeCreate: true,
+              },
+            ],
+          },
+          observeCompletion: {},
+        })
+        .pipe(Effect.flip);
+
+      expect(error._tag).toBe("ProjectSetupScriptUnsupportedShellError");
+      expect(ptyAdapter.spawnInputs.at(-1)?.shell).toBe("C:\\Windows\\System32\\cmd.exe");
+      expect(ptyAdapter.processes[0]?.writes).toEqual([]);
+      expect(ptyAdapter.processes[0]?.killed).toBe(true);
+    }),
+  );
+
   it.effect("turns off fish terminal queries unless the user chose query-term", () =>
     Effect.gen(function* () {
       for (const [platform, env, runtimeEnv, expected] of [
@@ -1145,6 +2199,51 @@ it.layer(
         expect.soft(fishFeatures, JSON.stringify({ platform, env, runtimeEnv })).toEqual(expected);
       }
     }),
+  );
+
+  it.effect.each([
+    {
+      platform: "linux",
+      parentEnv: { TERM_PROGRAM: "Apple_Terminal", TERM_PROGRAM_VERSION: "455" },
+      runtimeEnv: { TERM_PROGRAM: "", TERM_PROGRAM_VERSION: "custom-version" },
+    },
+    {
+      platform: "win32",
+      parentEnv: { term_program: "Apple_Terminal", Term_Program_Version: "455" },
+      runtimeEnv: { Term_Program: "", term_program_version: "custom-version" },
+    },
+  ] as const)(
+    "identifies as T3 Code unless the terminal env overrides it on $platform",
+    ({ platform, parentEnv, runtimeEnv }) =>
+      Effect.gen(function* () {
+        const originalEnv = { ...parentEnv };
+        const env = Object.freeze(parentEnv);
+        const { manager, ptyAdapter } = yield* createManager(5, { env }).pipe(
+          Effect.provide(layerWithHostPlatform(platform)),
+        );
+
+        yield* manager.open(openInput());
+        yield* manager.open(openInput({ terminalId: "override", env: runtimeEnv }));
+
+        expect(ptyAdapter.spawnInputs).toHaveLength(2);
+        for (const [index, expected] of [
+          { TERM_PROGRAM: "t3code", TERM_PROGRAM_VERSION: packageJson.version },
+          { TERM_PROGRAM: "", TERM_PROGRAM_VERSION: "custom-version" },
+        ].entries()) {
+          const spawnEnv = ptyAdapter.spawnInputs[index]!.env;
+          for (const [key, value] of Object.entries(expected)) {
+            expect
+              .soft(
+                Object.entries(spawnEnv)
+                  .filter(([candidate]) => candidate.toUpperCase() === key)
+                  .map(([, entryValue]) => entryValue),
+                `${index === 0 ? "default" : "override"} ${key}`,
+              )
+              .toEqual([value]);
+          }
+        }
+        expect(env).toEqual(originalEnv);
+      }),
   );
 
   it.effect("filters app runtime env variables from terminal sessions", () =>
@@ -1238,6 +2337,20 @@ it.layer(
     }),
   );
 
+  it.effect("expands a provider home named in any case on Windows", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const home = yield* HostProcess.HomeDirectory;
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: { GROK_HOME: "C:\\inherited-grok" },
+      });
+
+      yield* manager.open(openInput({ env: { grok_home: "~/.grok-work" } }));
+
+      expect(ptyAdapter.spawnInputs[0]?.env.GROK_HOME).toBe(path.join(home, ".grok-work"));
+    }).pipe(Effect.provide(layerWithHostPlatform("win32"))),
+  );
+
   it.effect("fails closed when a provider instance is missing", () =>
     Effect.gen(function* () {
       const providerInstanceId = ProviderInstanceId.make("deleted_instance");
@@ -1287,6 +2400,7 @@ it.layer(
       const path = yield* Path.Path;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const environment = yield* TerminalManager.resolveProviderInstanceTerminalEnvironment({
+        deriveProviderInstanceConfigMap,
         serverSettings,
         path,
         rawProviderInstanceId: "configured_home",
@@ -1328,85 +2442,6 @@ it.layer(
     }),
   );
 
-  it.effect("restarts with current provider secrets and clears bounded history", () =>
-    Effect.gen(function* () {
-      const serverSettings = yield* ServerSettings.ServerSettingsService;
-      const path = yield* Path.Path;
-      const providerInstanceId = ProviderInstanceId.make("codex_restart");
-      const { manager, ptyAdapter, logsDir } = yield* createManager(2, {
-        historyByteLimit: 8,
-        resolveProviderInstanceEnvironment: (rawProviderInstanceId, env) =>
-          TerminalManager.resolveProviderInstanceTerminalEnvironment({
-            serverSettings,
-            path,
-            rawProviderInstanceId,
-            env,
-          }),
-      });
-      const homePath = path.join(logsDir, "codex");
-      const updateSecret = (value: string) =>
-        serverSettings.updateSettings({
-          providerInstances: {
-            [providerInstanceId]: {
-              driver: ProviderDriverKind.make("codex"),
-              config: { homePath },
-              environment: [{ name: "PROVIDER_SECRET", value, sensitive: true }],
-            },
-          },
-        });
-      const input = {
-        providerInstanceId,
-        env: { CLIENT_FLAG: "1", PROVIDER_SECRET: "client-value" },
-      };
-      const outputProcessed = yield* Deferred.make<void>();
-      const unsubscribe = yield* manager.subscribe((event) =>
-        event.type === "output"
-          ? Deferred.succeed(outputProcessed, undefined).pipe(Effect.asVoid)
-          : Effect.void,
-      );
-      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
-
-      yield* updateSecret("first-secret");
-      yield* manager.restart(restartInput(input));
-      const firstProcess = ptyAdapter.processes[0]!;
-      expect(ptyAdapter.spawnInputs[0]?.env.PROVIDER_SECRET).toBe("first-secret");
-      firstProcess.emitData("discarded\nold-one\nold-two\n");
-      yield* Deferred.await(outputProcessed);
-      expect((yield* manager.open(openInput(input))).history).toBe("old-two\n");
-
-      yield* updateSecret("second-secret");
-      const restarted = yield* manager.restart(restartInput(input));
-
-      expect(firstProcess.killed).toBe(true);
-      expect(ptyAdapter.spawnInputs).toHaveLength(2);
-      expect(ptyAdapter.spawnInputs[1]?.env).toMatchObject({
-        PROVIDER_SECRET: "second-secret",
-        CODEX_HOME: homePath,
-        CLIENT_FLAG: "1",
-      });
-      expect(restarted.history).toBe("");
-      expect(restarted.status).toBe("running");
-      expect(restarted).not.toHaveProperty("env");
-      expect(restarted).not.toHaveProperty("providerInstanceId");
-      const logPath = yield* historyLogPath(logsDir);
-      expect(yield* readFileString(logPath)).toBe("");
-
-      ptyAdapter.processes[1]!.emitData("discarded again\nnew-one\nnew-two\n");
-      yield* manager.close({ threadId: "thread-1" });
-      expect(yield* readFileString(logPath)).toBe("new-two\n");
-    }).pipe(
-      Effect.provide(
-        ServerSettings.layer.pipe(
-          Layer.provide(ServerSecretStore.layer),
-          Layer.provide(SqlitePersistence.layerMemory),
-          Layer.provide(
-            ServerConfig.layerTest(process.cwd(), { prefix: "t3code-terminal-provider-restart-" }),
-          ),
-        ),
-      ),
-    ),
-  );
-
   it.effect("attaches to a running provider terminal without resolving the provider again", () =>
     Effect.gen(function* () {
       const providerInstanceId = ProviderInstanceId.make("codex_work");
@@ -1437,6 +2472,25 @@ it.layer(
     }),
   );
 
+  it.effect("starts bash as a login shell on macOS only", () =>
+    Effect.gen(function* () {
+      for (const [platform, shell, args] of [
+        ["darwin", "/bin/bash", ["-l"]],
+        ["darwin", "/opt/homebrew/bin/bash", ["-l"]],
+        ["linux", "/bin/bash", undefined],
+        ["win32", "C:\\Program Files\\Git\\bin\\bash.exe", undefined],
+        ["darwin", "/bin/zsh", ["-o", "nopromptsp"]],
+        ["linux", "/bin/zsh", ["-o", "nopromptsp"]],
+        ["win32", "pwsh.exe", ["-NoLogo"]],
+      ] as const) {
+        const { manager, ptyAdapter } = yield* createManager(5, {
+          shellResolver: () => shell,
+        }).pipe(Effect.provide(layerWithHostPlatform(platform)));
+        yield* manager.open(openInput());
+        expect.soft(ptyAdapter.spawnInputs[0]?.args, `${platform} ${shell}`).toEqual(args);
+      }
+    }),
+  );
   it.effect("removes terminal metadata subscriptions when initial delivery fails", () =>
     Effect.gen(function* () {
       const { manager } = yield* createManager();
@@ -1492,7 +2546,7 @@ it.layer(
         { type: "snapshot", snapshot: { status: "running", pid: ptyAdapter.processes[0]?.pid } },
       ]);
       expect(ptyAdapter.processes).toHaveLength(1);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("resyncs bounded history and follows close/reopen across a stalled stream", () =>
@@ -1566,7 +2620,105 @@ it.layer(
       ptyAdapter.processes.at(-1)!.emitData("new session only\n");
       expect(yield* pull).toMatchObject([{ type: "output", data: "new session only\n" }]);
       expect(ptyAdapter.spawnInputs).toHaveLength(4);
-    }).pipe(Effect.scoped),
+    }),
+  );
+
+  it.effect.each([
+    { recovered: true, label: "after recovery" },
+    { recovered: false, label: "when cancelled before recovery" },
+  ])("keeps a stalled viewer's size until its attach stream ends ($label)", ({ recovered }) =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      const restored = yield* Deferred.make<void>();
+      const stopWide = yield* manager.attachStream(
+        openInput({ cols: 130, rows: 15 }),
+        (event) =>
+          event.type === "activity" && event.cols === 130 && event.rows === 15
+            ? Deferred.succeed(restored, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+        undefined,
+        "wide",
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(stopWide));
+      const process = ptyAdapter.processes[0]!;
+
+      yield* Effect.gen(function* () {
+        const pull = yield* Stream.toPull(
+          manager.attachOutputStream(openInput({ cols: 54, rows: 15 }), "narrow"),
+        );
+        expect(yield* pull).toMatchObject([{ type: "snapshot" }]);
+        expect(process.resizeCalls.at(-1)).toEqual({ cols: 54, rows: 15 });
+        // Overflow releases the inner subscription before any recovery pull.
+        yield* publishPastOutputBudget(manager, process);
+        yield* manager.resize(
+          { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID, cols: 50, rows: 12 },
+          "narrow",
+        );
+        expect(process.resizeCalls.at(-1)).toEqual({ cols: 50, rows: 12 });
+        if (!recovered) return;
+
+        expect(yield* pull).toMatchObject([{ type: "snapshot" }]);
+        yield* manager.resize(
+          { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID, cols: 48, rows: 12 },
+          "narrow",
+        );
+        expect(process.resizeCalls.at(-1)).toEqual({ cols: 48, rows: 12 });
+      }).pipe(Effect.scoped);
+
+      yield* Deferred.await(restored);
+      expect(process.resizeCalls.at(-1)).toEqual({ cols: 130, rows: 15 });
+    }),
+  );
+
+  it.effect("sends bounded attach streams only the history the client retains", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      const maxHistoryBytes = 9;
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0]!;
+      const published = yield* Deferred.make<void>();
+      const unsubscribe = yield* manager.subscribe((event) =>
+        event.type === "output" && event.data === "yz\n"
+          ? Deferred.succeed(published, undefined).pipe(Effect.asVoid)
+          : Effect.void,
+      );
+      process.emitData("aaaa\nx名😀");
+      process.emitData("yz\n");
+      yield* Deferred.await(published);
+      unsubscribe();
+
+      const full = yield* Stream.toPull(manager.attachOutputStream(openInput(), "full"));
+      const bounded = yield* Stream.toPull(
+        manager.attachOutputStream({ ...openInput(), maxHistoryBytes }, "bounded"),
+      );
+      const expectRetained = Effect.fnUntraced(function* () {
+        const [fullEvents, boundedEvents] = [yield* full, yield* bounded];
+        const fullSnapshot = fullEvents.at(-1);
+        if (fullSnapshot?.type !== "snapshot") throw new Error("Expected a full snapshot");
+        expect(boundedEvents.at(-1)).toEqual({
+          ...fullSnapshot,
+          snapshot: {
+            ...fullSnapshot.snapshot,
+            history: retainedTerminalHistory(fullSnapshot.snapshot.history, maxHistoryBytes),
+          },
+        });
+        return fullSnapshot.snapshot.history;
+      });
+
+      expect(yield* expectRetained()).toBe("aaaa\nx名😀yz\n");
+      // The cap starts inside 名, so the tail begins at the next code point.
+      expect(retainedTerminalHistory("aaaa\nx名😀yz\n", maxHistoryBytes)).toBe("😀yz\n");
+      process.emitData("after\n");
+      expect(yield* full).toEqual(yield* bounded);
+
+      yield* publishPastOutputBudget(manager, process);
+      expect(yield* expectRetained()).toMatch(/last\n$/);
+
+      process.emitExit({ exitCode: 0, signal: 0 });
+      expect(yield* full).toEqual(yield* bounded);
+      yield* manager.attachStream({ ...openInput(), restartIfNotRunning: true }, () => Effect.void);
+      yield* expectRetained();
+    }),
   );
 
   it.effect("does not replay in-flight output already included in an observer snapshot", () =>
@@ -1603,7 +2755,7 @@ it.layer(
       expect(observed.filter((event) => event.type === "output")).toMatchObject([
         { data: "after\n" },
       ]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("observes terminal history and live output without changing the process", () =>

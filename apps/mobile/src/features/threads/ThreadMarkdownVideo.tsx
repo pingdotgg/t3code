@@ -1,3 +1,4 @@
+import { MISSING_FILE_ACCESS_MESSAGE } from "@t3tools/client-runtime/state/assets";
 import { createContext, useContext } from "react";
 import { MediaVideoPlayer } from "../../components/MediaVideoPlayer";
 import { useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
@@ -12,6 +13,8 @@ export const ThreadMediaVisibleContext = createContext(false);
 export function ThreadMarkdownVideo(props: {
   readonly source: MediaVideoPreviewSource;
   readonly thumbnailVisible?: boolean;
+  readonly onPlaybackStart?: () => void;
+  readonly borderRadius?: number;
 }) {
   const { source } = props;
   const feedVisible = useContext(ThreadMediaVisibleContext);
@@ -38,8 +41,16 @@ export function ThreadMarkdownVideo(props: {
       name={source.name}
       thumbnailKey={thumbnailKey}
       thumbnailVisible={visible}
+      visible={visible}
+      onPlaybackStart={props.onPlaybackStart}
       unavailable={"resource" in source && asset._tag === "Failure"}
+      unavailableDetail={
+        asset._tag === "Failure" && asset.reason === "missing-file-access"
+          ? MISSING_FILE_ACCESS_MESSAGE
+          : undefined
+      }
       actionsSource={source.actionsSource}
+      borderRadius={props.borderRadius}
     />
   );
 }
