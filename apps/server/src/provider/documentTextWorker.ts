@@ -119,8 +119,10 @@ function* xstringText(node: XmlNode): Generator<string, void> {
   yield node.children
     .filter((child) => typeof child === "string")
     .join("")
-    .replaceAll(/_x005F_(x[\dA-F]{4}_)|_x([\dA-F]{4})_/gi, (_, literal?: string, hex?: string) =>
-      literal ? `_${literal}` : String.fromCharCode(Number.parseInt(hex!, 16)),
+    .replaceAll(
+      /_x005[Ff]_(x[\dA-Fa-f]{4}_)|_x([\dA-Fa-f]{4})_/g,
+      (_, literal?: string, hex?: string) =>
+        literal ? `_${literal}` : String.fromCharCode(Number.parseInt(hex!, 16)),
     );
 }
 function* paragraphs(node: XmlNode): Generator<TextPart, void> {
