@@ -277,6 +277,8 @@ struct MessageDispatch {
     steer_follow_up_of_run_id: Option<String>,
     restart_continuation_of_run_id: Option<String>,
     title_seed: Option<String>,
+    /// A wake the server queued (`{ source, outcome, summary }`): shown as a notice.
+    notification: Option<Value>,
 }
 
 /// How a message reaches the thread, after the busy-thread rules.
@@ -481,6 +483,9 @@ fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
     if let Some(context) = &c.context {
         message["context"] = context.clone();
     }
+    if let Some(notification) = &c.notification {
+        message["notification"] = notification.clone();
+    }
     tx.append(draft("message.updated", message))?;
     let item_id = format!("turn-item:{}", c.message_id);
     let existing_item = tx.entity(&c.thread_id, "turnItems", &item_id)?;
@@ -576,6 +581,32 @@ fn user_message_item(
     });
     if let Some(context) = &c.context {
         item["context"] = context.clone();
+    }
+    match &c.notification {
+        Some(notification) => as_notice(item, notification),
+        None => item,
+    }
+}
+
+/// The turn item of a message that carries a `notification`: the client shows a notice with
+/// its source, outcome and summary instead of a user message (`notificationTurnItem`).
+fn as_notice(mut item: Value, notification: &Value) -> Value {
+    if let Value::Object(fields) = &mut item {
+        for key in [
+            "createdBy",
+            "creationSource",
+            "messageId",
+            "inputIntent",
+            "text",
+            "attachments",
+            "context",
+        ] {
+            fields.remove(key);
+        }
+        fields.insert("type".into(), json!("notification"));
+        for key in ["source", "outcome", "summary"] {
+            fields.insert(key.into(), notification[key].clone());
+        }
     }
     item
 }
@@ -722,6 +753,9 @@ pub(crate) fn start_next_queued(
         item["status"] = json!("completed");
         item["completedAt"] = json!(now);
         item["updatedAt"] = json!(now);
+        if message["notification"].is_object() && item["type"] == "user_message" {
+            item = as_notice(item, &message["notification"]);
+        }
         tx.append(draft("turn-item.updated", item))?;
     }
     run["status"] = json!("starting");
@@ -913,6 +947,10 @@ fn queued_message_promote_to_steer(tx: &mut Tx<'_>, command: Value) -> Outcome {
         steer_follow_up_of_run_id: None,
         restart_continuation_of_run_id: None,
         title_seed: None,
+        notification: message
+            .get("notification")
+            .filter(|v| v.is_object())
+            .cloned(),
     };
     let mut effects = steer_into(tx, &dispatch, &target)?;
     // The item records that it came from the queue.

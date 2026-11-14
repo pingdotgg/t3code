@@ -181,6 +181,15 @@ function differences(a, b, path = "") {
     : [`${path}: ${JSON.stringify(a)} vs ${JSON.stringify(b)}`];
 }
 
+/** JSON with object keys sorted: key order carries no meaning. */
+function canonical(value) {
+  return JSON.stringify(value, (_, v) =>
+    v && typeof v === "object" && !Array.isArray(v)
+      ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, v[k]]))
+      : v,
+  );
+}
+
 function outcome(reply) {
   if (reply.error !== undefined)
     return { kind: "rpc-error", code: reply.error.code, message: reply.error.message };
@@ -223,6 +232,19 @@ for (const name of implemented) {
   report(`tools/list ${name}`, ts !== undefined && JSON.stringify(ts) === JSON.stringify(rust));
 }
 
+/**
+ * The provider both servers run: the T3 server lists every driver it has, the Conn Server only
+ * Claude here, so the shapes compare that entry and the values its models.
+ */
+const claudeOnly = (value) => ({
+  ...value,
+  providers: value.providers.filter((p) => p.providerInstanceId === "claudeAgent"),
+});
+const claudeModels = (value) =>
+  value.providers
+    .filter((p) => p.providerInstanceId === "claudeAgent")
+    .map((p) => ({ models: p.models, omittedModels: p.omittedModels ?? 0 }));
+
 /** What a search found, in order: ids differ between servers, titles and sources do not. */
 const searchOrder = (value) => value.matches.map((match) => [match.title, match.source]);
 
@@ -236,7 +258,13 @@ const steps = [
   ],
   ["t3_project_read", (c) => ({ projectId: c.projectId })],
   ["t3_environment_read", () => ({})],
-  ["orchestrator_capabilities", () => ({})],
+  ["orchestrator_capabilities", () => ({}), undefined, { view: claudeOnly, same: claudeModels }],
+  [
+    "orchestrator_capabilities",
+    () => ({ search: "haiku 4.5" }),
+    undefined,
+    { view: claudeOnly, same: claudeModels },
+  ],
   ["t3_thread_list", () => ({ allProjects: true })],
   ["t3_thread_list", () => ({})],
   // A worktree thread without a message starts no turn, so it runs without --model too.
@@ -428,9 +456,12 @@ for (const [tool, input, after, options] of run) {
     report(`${label}: both fail with ${ts.code}`, true);
     continue;
   }
-  const diff = differences(shape(rust.value), shape(ts.value)).filter((d) => !ACCEPTED.has(d));
+  const view = options?.view ?? ((value) => value);
+  const diff = differences(shape(view(rust.value)), shape(view(ts.value))).filter(
+    (d) => !ACCEPTED.has(d),
+  );
   if (options?.same !== undefined) {
-    const [a, b] = [options.same(ts.value), options.same(rust.value)].map((v) => JSON.stringify(v));
+    const [a, b] = [options.same(ts.value), options.same(rust.value)].map(canonical);
     if (a !== b) diff.push(`values differ: T3 ${a} / Conn ${b}`);
   }
   report(

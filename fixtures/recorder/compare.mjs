@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // Usage: compare.mjs <scenario a> <scenario b> [tag prefix ...] (default: the VCS area).
+// A scenario is a name in ../sessions or a path to a recording (`<dir>/<name>.ndjson`).
 // Pairs calls by tag and normalized payload and diffs their first answers; exits 1 on a
 // difference. Payloads only one side sent are counted, not failed: client timing varies.
 import * as NodeFS from "node:fs";
@@ -19,7 +20,10 @@ const wanted = prefixes.length
 
 /** Each call of a wanted tag: its payload and its first answer. */
 function calls(scenario) {
-  const lines = NodeFS.readFileSync(NodePath.join(sessions, `${scenario}.ndjson`), "utf8")
+  const file = scenario.endsWith(".ndjson")
+    ? scenario
+    : NodePath.join(sessions, `${scenario}.ndjson`);
+  const lines = NodeFS.readFileSync(file, "utf8")
     .split("\n")
     .filter(Boolean)
     .map((l) => JSON.parse(l));
@@ -55,6 +59,8 @@ function normalize(value, key = "") {
   if (/^(sha|id|headRef|baseRef)$/.test(key) && /^[0-9a-f]{40}$/.test(value)) return "<sha>";
   return value
     .replace(/\/(private\/)?var\/folders\/[^"]*?\/(conn-(rec|rust)-[A-Za-z0-9]+)/g, "<tmp>")
+    // The recorder's own TypeScript server names its scratch project plain `project`.
+    .replace(/<tmp>\/project\b/g, "<tmp>/<project>")
     .replace(/\b(ts|rust)-project\b/g, "<project>")
     .replace(/index [0-9a-f]{7,}\.\.[0-9a-f]{7,}/g, "index <blobs>");
 }

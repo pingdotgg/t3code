@@ -783,6 +783,12 @@ impl Inner {
             "threadId": thread_id,
             "messageId": message_id,
             "text": detail.unwrap_or_else(|| "Background task completed.".to_owned()),
+            // `ProviderContinuationService`'s default: the client shows a notice.
+            "notification": {
+                "source": {"kind": "background_task"},
+                "outcome": "updated",
+                "summary": "Background activity updated",
+            },
             "attachments": [],
             "dispatchMode": {"type": "queue_after_active"},
             "createdBy": "agent",

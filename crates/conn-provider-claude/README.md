@@ -13,7 +13,7 @@ in the Conn monorepo at the pinned commit.
 | ------------------ | --------------------------------------------------------------------------------------- |
 | `helper`           | The `claude` driver of the SDK host (`conn_provider_support::sdk_host`), with T3's key order |
 | `launch`           | The `query()` option object, its environment, the runtime policy → permission mode       |
-| `catalog`          | `compileClaudeModelSelection` over T3's bundled catalog (`model_catalog.json`, generated) |
+| `catalog`          | `compileClaudeModelSelection` over T3's bundled catalog (`model_catalog.json`, generated), and the models with their options that clients are offered |
 | `ordered`          | JSON with T3's key order for what the SDK writes to the CLI verbatim                    |
 | `protocol`         | Typed SDK messages; unknown kinds and changed shapes fall back to raw JSON              |
 | `mapper`           | Pure state machine: SDK messages → `ProviderEvent`s and callback answers                |

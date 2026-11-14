@@ -2148,6 +2148,36 @@ async fn a_continuation_request_runs_a_provider_turn_after_the_run() {
     assert_eq!(wake["createdBy"], "agent");
     assert_eq!(wake["creationSource"], "provider");
     assert_eq!(wake["text"], "Background task completed.");
+    // `ProviderContinuationService`: the wake carries its default notification, and the
+    // client shows it as a notice (a `notification` turn item), not as a user message.
+    let notice = json!({
+        "source": {"kind": "background_task"},
+        "outcome": "updated",
+        "summary": "Background activity updated",
+    });
+    assert_eq!(
+        wake["notification"], notice,
+        "the wake message names its notification"
+    );
+    let wake_id = wake["id"].as_str().unwrap();
+    let items: Vec<&Value> = p["turnItems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|item| item["id"] == format!("turn-item:{wake_id}"))
+        .collect();
+    assert_eq!(items.len(), 1, "one turn item for the wake: {items:?}");
+    let item = items[0];
+    assert_eq!(item["type"], "notification", "{item}");
+    assert_eq!(item["source"], notice["source"]);
+    assert_eq!(item["outcome"], "updated");
+    assert_eq!(item["summary"], "Background activity updated");
+    assert_eq!(item["status"], "completed");
+    assert!(item.get("text").is_none(), "a notice has no text: {item}");
+    assert!(
+        item.get("messageId").is_none(),
+        "a notice names no message: {item}"
+    );
     assert_eq!(p["messages"][3]["text"], "continued");
 }
 

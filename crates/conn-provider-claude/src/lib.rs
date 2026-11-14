@@ -244,14 +244,6 @@ pub fn capabilities() -> Value {
     })
 }
 
-/// Models offered before the CLI is asked. T3 reads the live list from the CLI's
-/// `initialize` answer (`models`); this static list keeps the picker usable until then.
-pub const MODELS: &[(&str, &str)] = &[
-    ("claude-sonnet-5-5", "Claude Sonnet 5.5"),
-    ("claude-opus-5-5", "Claude Opus 5.5"),
-    ("claude-haiku-5-5", "Claude Haiku 5.5"),
-];
-
 /// The `ServerProvider` entry (`packages/contracts/src/server.ts`) a client needs to offer
 /// Claude in its model picker and enable Send: enabled, installed, `status: "ready"`.
 /// It belongs in `ServerConfig.providers`, which `subscribeServerConfig` delivers.
@@ -266,10 +258,8 @@ pub fn server_provider_entry(instance_id: &str, checked_at: &str) -> Value {
         "status": "ready",
         "auth": {"status": "unknown"},
         "checkedAt": checked_at,
-        "models": MODELS
-            .iter()
-            .map(|(slug, name)| json!({"slug": slug, "name": name, "isCustom": false, "capabilities": null}))
-            .collect::<Vec<_>>(),
+        // T3 filters its catalog by the CLI's version; this server offers every model in it.
+        "models": catalog::provider_models(),
         "slashCommands": [],
         "skills": [],
     })
@@ -287,5 +277,36 @@ mod tests {
         ));
         assert_eq!(provider.driver(), DRIVER);
         assert_eq!(provider.instance_id().as_str(), "claudeAgent");
+    }
+
+    /// The picker offers what the T3 server offers: every model of its bundled catalog, with
+    /// the option descriptors that give the effort menu, and the legacy models.
+    #[test]
+    fn the_provider_entry_offers_t3s_catalog_models() {
+        let entry = server_provider_entry("claudeAgent", "2026-11-14T00:00:00.000Z");
+        let models = entry["models"].as_array().expect("models is a list");
+        let slugs: Vec<&str> = models.iter().filter_map(|m| m["slug"].as_str()).collect();
+        assert!(slugs.contains(&"claude-haiku-5-5"), "{slugs:?}");
+        assert!(
+            slugs.contains(&"claude-haiku-4-5"),
+            "the legacy Haiku is offered: {slugs:?}"
+        );
+        let haiku = models
+            .iter()
+            .find(|m| m["slug"] == "claude-haiku-5-5")
+            .expect("Haiku 5.5 is listed");
+        assert_eq!(haiku["name"], "Claude Haiku 5.5");
+        assert_eq!(haiku["isCustom"], false);
+        let effort = haiku["capabilities"]["optionDescriptors"]
+            .as_array()
+            .and_then(|d| d.iter().find(|d| d["id"] == "effort"))
+            .expect("Haiku 5.5 has an effort selector");
+        assert_eq!(effort["type"], "select");
+        let decoded: Result<conn_contract::ServerProvidersItemItem, _> =
+            conn_contract::from_json(entry);
+        assert!(
+            decoded.is_ok(),
+            "the entry decodes as a ServerProvider: {decoded:?}"
+        );
     }
 }

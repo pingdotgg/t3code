@@ -349,6 +349,11 @@ async function rustPermission(ctx) {
   await ctx.shotAlways("approval");
   await approve.click();
   await waitTurnEnd(ctx);
+  // The approved command ran: its output is the reply.
+  await ctx.page
+    .getByText(/^conn-recording\.?$/)
+    .last()
+    .waitFor({ timeout: 30_000 });
   await ctx.shotAlways("permission");
 }
 
@@ -447,30 +452,55 @@ function both(run) {
   };
 }
 
+/** A long text answer: a turn that runs long enough to send a follow-up into. */
+const COUNT_PROMPT =
+  "Without using any tool, write the numbers from 1 to 150, one number per line, nothing else.";
+
+/**
+ * Waits until `locator` shows, and approves every tool prompt on the way: the host's own Claude
+ * settings, or the model's choice of a tool, may still ask.
+ */
+async function approveUntilVisible(ctx, locator, timeout = 180_000) {
+  const deadline = Date.now() + timeout;
+  while (!(await locator.isVisible().catch(() => false))) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${locator}`);
+    const approve = ctx.page.getByRole("button", { name: /^(Approve|Allow once)$/ }).first();
+    if (await approve.isVisible().catch(() => false)) {
+      ctx.log("approving a tool prompt");
+      await approve.click().catch(() => {});
+    }
+    await ctx.page.waitForTimeout(300);
+  }
+}
+
 /** A message sent while a turn runs: the client's default follow-up (steer, else queue). */
 const followUp = both(async (ctx, _target, projectName) => {
   await rustHaikuDraft(ctx, null, projectName);
-  await send(ctx, "Count from 1 to 150, one number per line, nothing else.");
-  await stopButton(ctx).first().waitFor({ state: "visible", timeout: 30_000 });
+  await send(ctx, COUNT_PROMPT);
+  // The fake provider ends its turn at once: there the message goes into the next turn.
+  if (!ctx.fake) await stopButton(ctx).first().waitFor({ state: "visible", timeout: 30_000 });
   const box = ctx.page.locator("[contenteditable=true]").first();
   await box.click();
   await ctx.page.keyboard.type("Then reply with exactly: follow-up done");
   await ctx.page.keyboard.press("Enter");
   await settle(ctx, 800, 5_000);
   await ctx.shotAlways("follow-up-sent");
-  await ctx.page
-    .getByText(/^follow-up done\.?$/i)
-    .last()
-    .waitFor({ timeout: 120_000 });
+  await approveUntilVisible(ctx, ctx.page.getByText(/^(echo: .*)?follow-up done\.?$/i).last());
   await waitTurnEnd(ctx);
+  // A background task the CLI finished wakes the thread: the client shows a notice, as with
+  // the T3 server, not a message from the agent.
+  if (sentOut(ctx, "Background task completed.")) {
+    await ctx.page.getByText("Background activity updated").first().waitFor({ timeout: 15_000 });
+  }
   await ctx.shotAlways("follow-up-done");
 });
 
 /** A message queued explicitly (the composer's alternate send) while a turn runs. */
 const queued = both(async (ctx, _target, projectName) => {
   await rustHaikuDraft(ctx, null, projectName);
-  await send(ctx, "Count from 1 to 150, one number per line, nothing else.");
-  await stopButton(ctx).first().waitFor({ state: "visible", timeout: 30_000 });
+  await send(ctx, COUNT_PROMPT);
+  // The fake provider ends its turn at once: there the message goes into the next turn.
+  if (!ctx.fake) await stopButton(ctx).first().waitFor({ state: "visible", timeout: 30_000 });
   const box = ctx.page.locator("[contenteditable=true]").first();
   await box.click();
   await ctx.page.keyboard.type("Reply with exactly: queued done");
@@ -478,10 +508,7 @@ const queued = both(async (ctx, _target, projectName) => {
   await ctx.page.keyboard.press("ControlOrMeta+Enter");
   await settle(ctx, 800, 5_000);
   await ctx.shotAlways("queued-while-running");
-  await ctx.page
-    .getByText(/^queued done\.?$/i)
-    .last()
-    .waitFor({ timeout: 120_000 });
+  await approveUntilVisible(ctx, ctx.page.getByText(/^(echo: .*)?queued done\.?$/i).last());
   await waitTurnEnd(ctx);
   await ctx.shotAlways("queued-done");
 });
@@ -953,6 +980,10 @@ async function rustMcp(ctx) {
   ) {
     throw new Error("no t3_thread_list tool row reached the client");
   }
+  // The tool answered with the thread list, not an error.
+  if (!sentOut(ctx, "currentThreadId")) {
+    throw new Error("t3_thread_list returned no thread list");
+  }
   await ctx.shotAlways("mcp-tool");
 }
 
@@ -982,13 +1013,479 @@ async function rustSubagent(ctx) {
     .waitFor({ timeout: 60_000 });
   await ctx.shotAlways("subagent-parent");
   const parentUrl = ctx.page.url();
-  await ctx.page.getByText("Echo check", { exact: true }).first().click();
+  // The client folds a finished turn's work log ("Worked for 13s"); the subagent row is in it.
+  const row = ctx.page.getByText("Echo check", { exact: true }).first();
+  if (!(await row.isVisible().catch(() => false))) {
+    await ctx.page.getByText(/^Worked for /).last().click();
+  }
+  await row.click();
   await ctx.page.waitForURL((u) => u.href !== parentUrl, { timeout: 15_000 });
   await settle(ctx, 2000, 15_000);
   if (!decodeURIComponent(ctx.page.url()).includes("thread:subagent:")) {
     throw new Error(`the row opened ${ctx.page.url()}, not a child thread`);
   }
   await ctx.shotAlways("subagent-child");
+}
+
+/** The last non-null `worktreePath` the server sent, or null. */
+function lastWorktreePath(ctx) {
+  let found = null;
+  for (const l of ctx.cap.lines) {
+    if (l.dir !== "out") continue;
+    for (const m of JSON.stringify(l.frame).matchAll(/"worktreePath":"([^"]+)"/g)) found = m[1];
+  }
+  return found;
+}
+
+/** Switches the open composer to "New worktree" in its run context menu. */
+async function pickNewWorktree(ctx) {
+  await ctx.page
+    .getByRole("button", { name: /^Run context/ })
+    .first()
+    .click();
+  await ctx.page
+    .getByRole("menuitemradio", { name: /New worktree/ })
+    .first()
+    .click();
+  await settle(ctx, 1000, 10_000);
+}
+
+/** Opens the thread's Changes (diff) panel and waits until `file` is listed. */
+async function openChanges(ctx, file) {
+  const changes = ctx.page.locator("button", { hasText: /^Changes/ }).locator("visible=true").first();
+  // A right panel that shows a file hides the thread details, where Changes is.
+  if (!(await changes.isVisible().catch(() => false))) {
+    await ctx.page.getByRole("button", { name: "Toggle thread details panel" }).first().click();
+  }
+  await changes.click();
+  await ctx.page.getByText(file).locator("visible=true").first().waitFor({ timeout: 30_000 });
+  await settle(ctx, 2000, 15_000);
+}
+
+/** Expands `file` in the open diff panel by its chevron and waits until `text` shows. */
+async function expandDiffFile(ctx, file, text) {
+  const name = await ctx.page.getByText(file).locator("visible=true").last().boundingBox();
+  await ctx.page.mouse.click(name.x - 40, name.y + name.height / 2);
+  await ctx.page.getByText(text).locator("visible=true").first().waitFor({ timeout: 30_000 });
+  await settle(ctx, 1500, 15_000);
+}
+
+/** Opens the right panel's file tree, if it is not open yet. */
+async function openFileTree(ctx) {
+  const search = ctx.page.getByPlaceholder("Search files").locator("visible=true");
+  if (await search.isVisible().catch(() => false)) return;
+  await ctx.page.getByRole("button", { name: "Toggle right panel" }).first().click();
+  await settle(ctx, 1000, 10_000);
+  if (await search.isVisible().catch(() => false)) return;
+  // An empty right panel offers its surfaces ("Open a surface"); pick Files.
+  await ctx.page.getByText("Files", { exact: true }).locator("visible=true").first().click();
+  await search.waitFor({ timeout: 15_000 });
+}
+
+/** Clicks `file` in the open file tree and waits until `text` shows in the viewer. */
+async function openFromTree(ctx, file, text) {
+  const tree = ctx.page.getByPlaceholder("Search files").locator("visible=true");
+  await tree.waitFor({ timeout: 15_000 });
+  const item = ctx.page.getByRole("treeitem", { name: file, exact: true }).first();
+  const row = (await item.count())
+    ? item
+    : ctx.page.getByText(file, { exact: true }).locator("visible=true").last();
+  await row.waitFor({ timeout: 30_000 });
+  const from = ctx.cap.lines.length;
+  await row.click();
+  // Selecting a file row opens it (`projects.readFile`); a click may only focus the tree.
+  if (!(await waitRequest(ctx, "projects.readFile", from, 5_000).then(() => true, () => false))) {
+    ctx.log(`no read after a click on ${file}; pressing Enter`);
+    await ctx.page.keyboard.press("Enter");
+    await waitRequest(ctx, "projects.readFile", from, 10_000);
+  }
+  await ctx.page.getByText(text).locator("visible=true").first().waitFor({ timeout: 30_000 });
+  await settle(ctx, 1500, 15_000);
+}
+
+/**
+ * A worktree thread where the agent writes a file: the file lands in the worktree, not the
+ * project root; the file tree opens it and a tracked file; the diff panel shows the change.
+ */
+async function rustWorktreeFiles(ctx) {
+  const target = await pairRust(ctx);
+  await rustHaikuDraft(ctx, "Full access");
+  await pickNewWorktree(ctx);
+  const note = "written in the worktree";
+  await send(
+    ctx,
+    `Use your Write tool to create the file wt-note.txt in the current directory with exactly this one line: ${note}. Then reply with exactly: wt done`,
+  );
+  const worktree = await waitFor(ctx, () => lastWorktreePath(ctx), "a worktree path");
+  ctx.log(`worktree ${worktree}`);
+  if (ctx.fake) {
+    // The fake provider runs no tools: stand in for the agent's write.
+    NodeFS.writeFileSync(NodePath.join(worktree, "wt-note.txt"), `${note}\n`);
+  }
+  await approveUntilVisible(
+    ctx,
+    ctx.page.getByText(/^(echo: .*)?wt done\.?$/i).last(),
+  );
+  await waitTurnEnd(ctx);
+  const written = NodePath.join(worktree, "wt-note.txt");
+  if (!NodeFS.existsSync(written)) throw new Error(`the agent wrote no ${written}`);
+  if (NodeFS.existsSync(NodePath.join(target.project, "wt-note.txt"))) {
+    throw new Error("the file landed in the project root, not in the worktree");
+  }
+  await ctx.shotAlways("worktree-written");
+  await openFileTree(ctx);
+  await openFromTree(ctx, "README.md", "scratch");
+  await ctx.shotAlways("worktree-tracked-file");
+  await openFromTree(ctx, "wt-note.txt", note);
+  await ctx.shotAlways("worktree-new-file");
+  await openChanges(ctx, "wt-note.txt");
+  await expandDiffFile(ctx, "wt-note.txt", note);
+  await ctx.shotAlways("worktree-diff");
+}
+
+/** Polls `get` until it returns a value. */
+async function waitFor(ctx, get, what, timeout = 60_000) {
+  const deadline = Date.now() + timeout;
+  for (;;) {
+    const value = await get();
+    if (value) return value;
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    await ctx.page.waitForTimeout(200);
+  }
+}
+
+/** A git repo with one commit at `dir`. */
+function makeRepo(dir) {
+  NodeFS.mkdirSync(dir, { recursive: true });
+  NodeFS.writeFileSync(NodePath.join(dir, "README.md"), "# scratch\n");
+  const git = (...a) =>
+    NodeChildProcess.execFileSync(
+      "git",
+      ["-c", "user.name=rec", "-c", "user.email=rec@example.com", "-c", "commit.gpgsign=false", ...a],
+      { cwd: dir, stdio: "ignore" },
+    );
+  git("init", "-q", "-b", "main");
+  git("add", ".");
+  git("commit", "-qm", "init");
+}
+
+/**
+ * A project added while the server runs (`conn-server project add`, as Orbit does): a thread in
+ * it, then the review (diff) panel shows its branch's changes.
+ */
+async function rustReviewAdded(ctx) {
+  const target = await pairRust(ctx);
+  const added = NodePath.join(target.root, "added-project");
+  makeRepo(added);
+  prepareVcsRepo(added);
+  ctx.log(ctx.rustCli(target, "project", "add", added, "--title", "added-project").trim());
+  await ctx.page.goto(`${ctx.server.origin}/`);
+  await settle(ctx, 3000, 30_000);
+  await rustHaikuDraft(ctx, null, "added-project");
+  await send(ctx, "Reply with exactly: review ok");
+  await waitTurnEnd(ctx);
+  await ctx.page
+    .getByText(/^(echo: Reply with exactly: )?review ok\.?$/i)
+    .last()
+    .waitFor({ timeout: 30_000 });
+  await openChanges(ctx, "notes.txt");
+  await expandDiffFile(ctx, "README.md", "An uncommitted line.");
+  await ctx.shotAlways("review-added-project");
+}
+
+/** The secret values this scenario stores; they must never reach a client. */
+const SEED_KEY = "tg-seed-secret-4a7f1c";
+const HUB_KEY = "hub-secret-9b2e6d";
+
+/**
+ * Settings secrets: a text generator saved with an API key (seeded on disk) and a usage hub
+ * whose key the client stores. Toggling the generator's Enable switch, and reloads, must keep
+ * both real values on disk and show clients only the marker.
+ */
+async function rustSecrets(ctx) {
+  const target = await ctx.startRustServer(undefined, (project) => {
+    const state = NodePath.join(NodePath.dirname(project), "state");
+    NodeFS.mkdirSync(state, { recursive: true });
+    NodeFS.writeFileSync(
+      NodePath.join(state, "settings.json"),
+      JSON.stringify({
+        textGenerators: {
+          seed: {
+            kind: "openaiCompatible",
+            label: "Seed generator",
+            baseUrl: "http://127.0.0.1:9/v1",
+            apiKey: SEED_KEY,
+            enabled: true,
+          },
+        },
+      }),
+    );
+  });
+  await pairTarget(ctx, target);
+  const settingsFile = NodePath.join(target.root, "state", "settings.json");
+  const onDisk = () => JSON.parse(NodeFS.readFileSync(settingsFile, "utf8"));
+  const environmentId = (await (await fetch(`${target.origin}/.well-known/t3/environment`)).json())
+    .environmentId;
+  const page = `${ctx.server.origin}/settings/providers?machine=${environmentId}`;
+  const leaked = () =>
+    ctx.cap.lines.some((l) => {
+      const text = JSON.stringify(l.frame ?? l.unparsed);
+      return text.includes(SEED_KEY) || (l.dir === "out" && text.includes(HUB_KEY));
+    });
+  const updates = () => ctx.cap.lines.filter((l) => l.frame?.tag === "server.updateSettings").length;
+
+  await ctx.page.goto(page);
+  await settle(ctx, 3000, 30_000);
+  await ctx.page.getByText("Seed generator").first().waitFor({ timeout: 30_000 });
+
+  // Store a secret from the client: a usage hub's management key.
+  let before = updates();
+  await ctx.page.getByRole("button", { name: "Add hub" }).first().click();
+  const dialog = ctx.page.getByRole("dialog");
+  await dialog.getByPlaceholder("https://hub.example.ts.net:8318").fill("http://127.0.0.1:9");
+  await dialog.getByLabel("Management key").fill(HUB_KEY);
+  await dialog.getByRole("button", { name: "Add hub", exact: true }).click();
+  await waitFor(ctx, () => updates() > before, "server.updateSettings for the hub");
+  await settle(ctx, 1500, 15_000);
+  const hubId = Object.keys(onDisk().usageLimitSources ?? {})[0];
+  if (onDisk().usageLimitSources?.[hubId]?.managementKey !== HUB_KEY) {
+    throw new Error(`the hub key on disk is ${JSON.stringify(onDisk().usageLimitSources)}`);
+  }
+
+  await ctx.page.reload();
+  await settle(ctx, 3000, 30_000);
+  await ctx.page.getByText("127.0.0.1:9").first().waitFor({ timeout: 30_000 });
+
+  // Toggle a non-secret field of the generator that holds a secret.
+  const toggle = ctx.page.getByRole("switch", { name: "Enable Seed generator" });
+  await toggle.waitFor({ timeout: 15_000 });
+  if ((await toggle.getAttribute("aria-checked")) !== "true") {
+    throw new Error("the seeded generator does not show as enabled");
+  }
+  before = updates();
+  await toggle.click();
+  await waitFor(ctx, () => updates() > before, "server.updateSettings for the toggle");
+  await settle(ctx, 1500, 15_000);
+  await ctx.page.reload();
+  await settle(ctx, 3000, 30_000);
+  const after = ctx.page.getByRole("switch", { name: "Enable Seed generator" });
+  await after.waitFor({ timeout: 15_000 });
+  if ((await after.getAttribute("aria-checked")) !== "false") {
+    throw new Error("the toggle did not stay off after a reload");
+  }
+  await ctx.shotAlways("secrets-after-toggle");
+
+  const disk = onDisk();
+  ctx.log(`on disk: generator enabled ${disk.textGenerators?.seed?.enabled}`);
+  if (disk.textGenerators?.seed?.apiKey !== SEED_KEY) {
+    throw new Error(`the generator key on disk is now ${JSON.stringify(disk.textGenerators?.seed?.apiKey)}`);
+  }
+  if (disk.textGenerators?.seed?.enabled !== false) throw new Error("enabled is not false on disk");
+  if (disk.usageLimitSources?.[hubId]?.managementKey !== HUB_KEY) {
+    throw new Error("the hub key on disk changed");
+  }
+  if (leaked()) throw new Error("a stored secret reached the client");
+  // The client holds the marker for both, after the last reload.
+  const last = [...ctx.cap.lines].reverse().find((l) => {
+    const t = JSON.stringify(l.frame);
+    return l.dir === "out" && t.includes('"textGenerators"') && t.includes('"usageLimitSources"');
+  });
+  const text = JSON.stringify(last?.frame ?? {});
+  if (!/"apiKey":"••••••"/.test(text) || !/"managementKey":"••••••"/.test(text)) {
+    throw new Error("the client does not hold the secret marker");
+  }
+  // The edit dialog shows the key as saved, not empty and not the value.
+  await ctx.page.getByRole("button", { name: "More actions for Seed generator" }).click();
+  await ctx.page.getByRole("menuitem", { name: "Edit" }).click();
+  const key = ctx.page.getByRole("dialog").getByLabel(/API key/).first();
+  await key.waitFor({ timeout: 15_000 });
+  ctx.log(`edit dialog key field: value ${JSON.stringify(await key.inputValue())}, placeholder ${JSON.stringify(await key.getAttribute("placeholder"))}`);
+  if ((await key.inputValue()).includes(SEED_KEY)) throw new Error("the dialog shows the key");
+  await ctx.shotAlways("secrets-edit-dialog");
+  await ctx.page.keyboard.press("Escape");
+}
+
+/** The model button of the open composer. */
+const modelButton = (ctx) =>
+  ctx.page
+    .getByRole("button", { name: /^(Claude|GPT|Codex|Haiku|Sonnet|Opus)/ })
+    .locator("visible=true")
+    .first();
+
+/**
+ * Two turns in one thread with a model switch between them. The second turn's model is
+ * `CONN_RECORDER_SWITCH_MODEL` (default "Haiku 4.5", so a live run stays on Haiku): the client
+ * must send it, the server must keep it on the thread, and, with a real CLI, Claude's own
+ * session log must name it.
+ */
+async function rustModelSwitch(ctx) {
+  const target = await pairRust(ctx);
+  await rustHaikuDraft(ctx, null);
+  await rustMessage(ctx, "first model");
+  const label = process.env.CONN_RECORDER_SWITCH_MODEL ?? "Haiku 4.5";
+  const from = ctx.cap.lines.length;
+  await modelButton(ctx).click();
+  await ctx.page.getByPlaceholder("Search models...").fill(label);
+  await ctx.page
+    .getByRole("option", { name: new RegExp(label.replace(/\./g, "\\.")) })
+    .first()
+    .click();
+  await ctx.page.keyboard.press("Escape");
+  await send(ctx, "Reply with exactly: second model");
+  await waitTurnEnd(ctx);
+  // The reply, or the API's refusal of the new model: either way the turn ran on it.
+  const reply = ctx.page.getByText(/^(echo: Reply with exactly: )?second model\.?$/i).last();
+  const refused = ctx.page.getByText(/API Error: .*claude-/).last();
+  await reply.or(refused).waitFor({ timeout: 30_000 });
+  const apiRefused = !(await reply.isVisible().catch(() => false));
+  const sent = ctx.cap.lines
+    .slice(from)
+    .filter((l) => l.dir === "in" && l.frame?._tag === "Request")
+    .map((l) => JSON.stringify(l.frame.payload))
+    .join("\n");
+  const slug = /"model":"(claude-[a-z0-9-]+)"/.exec(sent)?.[1];
+  ctx.log(`the client sent model ${slug}`);
+  if (!slug || slug === "claude-haiku-5-5") throw new Error("the client did not send the new model");
+  await waitOut(ctx, `"model":"${slug}"`, from);
+  if (apiRefused) {
+    const error = await refused.innerText();
+    ctx.log(`the API refused the new model: ${error}`);
+    if (!error.includes(slug)) throw new Error(`the second turn did not run on ${slug}: ${error}`);
+  } else if (!ctx.fake) {
+    // Claude's session log names the model of each answer.
+    const real = NodeFS.realpathSync(target.project);
+    const dir = NodePath.join(
+      process.env.HOME,
+      ".claude/projects",
+      real.replace(/[^A-Za-z0-9-]/g, "-"),
+    );
+    const models = NodeFS.readdirSync(dir)
+      .filter((f) => f.endsWith(".jsonl"))
+      .flatMap((f) => NodeFS.readFileSync(NodePath.join(dir, f), "utf8").split("\n"))
+      .flatMap((l) => (/"model":"(claude-[a-z0-9-]+)"/.exec(l) ?? []).slice(1));
+    ctx.log(`models in Claude's session log: ${[...new Set(models)].join(", ")}`);
+    if (models.at(-1) !== slug) throw new Error(`the second turn ran on ${models.at(-1)}`);
+  }
+  await ctx.shotAlways("model-switched");
+}
+
+/** One turn, then archive the thread from the sidebar, see it gone, and restore it. */
+async function rustArchive(ctx) {
+  await pairRust(ctx);
+  await rustHaikuDraft(ctx, null);
+  await rustMessage(ctx, "archive me");
+  const title = "Reply with exactly: archive me";
+  // The sidebar row comes first in the page; the thread header repeats the title.
+  const row = () => ctx.page.getByText(title, { exact: false }).locator("visible=true").first();
+  await row().waitFor({ timeout: 30_000 });
+  await row().click({ button: "right" });
+  const menu = ctx.page.locator("[data-context-menu]");
+  if (!(await menu.first().waitFor({ timeout: 3_000 }).then(() => true, () => false))) {
+    // Headless Chromium's right click does not reach the row's handler here.
+    ctx.log("no context menu after a right click; dispatching contextmenu");
+    const box = await row().boundingBox();
+    await row().dispatchEvent("contextmenu", {
+      bubbles: true,
+      clientX: box.x + 10,
+      clientY: box.y + 5,
+      button: 2,
+    });
+  }
+  await menu.first().waitFor({ timeout: 5_000 });
+  // The web build draws its own context menu of plain buttons.
+  await ctx.page
+    .locator("[data-context-menu] button", { hasText: /^Archive/ })
+    .first()
+    .click();
+  const confirm = ctx.page.getByRole("button", { name: /^(Archive|OK|Confirm)$/ });
+  await confirm
+    .first()
+    .waitFor({ timeout: 3_000 })
+    .then(
+      () => confirm.first().click(),
+      () => {},
+    );
+  await waitRequest(ctx, "orchestration.archiveThread").catch(() => {});
+  await row().waitFor({ state: "detached", timeout: 30_000 });
+  await ctx.shotAlways("archived");
+  await ctx.page.goto(`${ctx.server.origin}/settings/archived`);
+  await settle(ctx, 3000, 30_000);
+  const archived = ctx.page.getByText(title, { exact: false }).first();
+  await archived.waitFor({ timeout: 30_000 });
+  await ctx.shotAlways("archived-list");
+  await ctx.page.getByRole("button", { name: /^Unarchive/ }).first().click();
+  // The settings page lies over the app, whose sidebar shows the restored row again.
+  await ctx.page.getByText("No archived threads").first().waitFor({ timeout: 30_000 });
+  await ctx.page.goto(`${ctx.server.origin}/`);
+  await settle(ctx, 3000, 30_000);
+  await row().waitFor({ timeout: 30_000 });
+  await ctx.shotAlways("restored");
+}
+
+/**
+ * A second client (its own browser context, same session) on the same thread: it opens the
+ * thread while the first client's turn runs, sees it running, and sees the reply arrive live.
+ */
+async function rustTwoClients(ctx) {
+  await pairRust(ctx);
+  await rustHaikuDraft(ctx, null);
+  await rustMessage(ctx, "first client ready");
+  const threadUrl = ctx.page.url();
+  const second = await ctx.browser.newContext({
+    viewport: { width: 1400, height: 900 },
+    // The paired environments' credentials live in IndexedDB.
+    storageState: await ctx.context.storageState({ indexedDB: true }),
+  });
+  try {
+    const other = await second.newPage();
+    ctx.other = other;
+    await other.goto(threadUrl);
+    await other.getByText(/^(echo: Reply with exactly: )?first client ready\.?$/i).last().waitFor({ timeout: 60_000 });
+    await send(ctx, ctx.fake ? "Reply with exactly: seen by both" : `${COUNT_PROMPT.replace("150", "60")} Then a last line: seen by both`);
+    // The second client sees the turn run, without a reload.
+    await other
+      .getByRole("button", { name: /^(Stop generation|Stopping)$/ })
+      .first()
+      .waitFor({ state: "visible", timeout: 30_000 })
+      .catch(() => ctx.log("the second client did not show the running state (the turn may be too short)"));
+    await other.getByText(/seen by both\.?$/i).last().waitFor({ timeout: 120_000 });
+    await waitTurnEnd(ctx);
+    await ctx.page.getByText(/seen by both\.?$/i).last().waitFor({ timeout: 30_000 });
+    const first = await ctx.shotAlways("first-client");
+    await other.screenshot({ path: first.replace("first-client", "second-client") });
+  } finally {
+    await second.close();
+  }
+}
+
+/** After a Stop during a tool call, the same thread takes the next message. */
+async function rustStopThenContinue(ctx) {
+  await rustStop(ctx);
+  await send(ctx, "Reply with exactly: after stop ok");
+  await approveUntilVisible(ctx, ctx.page.getByText(/^(echo: Reply with exactly: )?after stop ok\.?$/i).last());
+  await waitTurnEnd(ctx);
+  await ctx.shotAlways("after-stop-turn");
+}
+
+/**
+ * Memory of the server and its SDK host across a Claude session: connected, during a turn,
+ * after three turns, and after the session closed. Start the server with
+ * `CONN_SESSION_IDLE_TIMEOUT=1` so the idle session closes within about a minute.
+ */
+async function rustMemory(ctx) {
+  await rustTurn(ctx);
+  for (let i = 1; i <= 2; i++) await rustMessage(ctx, `memory turn ${i + 1}`);
+  const after = ctx.memory(ctx.rust, "after-3-turns");
+  ctx.log(`memory KB after-3-turns ${JSON.stringify(after)}`);
+  const deadline = Date.now() + 240_000;
+  let now = after;
+  while (now.hostRss > 0 && Date.now() < deadline) {
+    await ctx.page.waitForTimeout(5_000);
+    now = ctx.memory(ctx.rust, "waiting-for-close");
+  }
+  ctx.log(`memory KB after-session-closed ${JSON.stringify(now)}`);
+  if (now.hostRss > 0) throw new Error("the SDK host still runs after the idle timeout");
+  await ctx.shotAlways("memory");
 }
 
 export const SCENARIOS = {
@@ -1021,4 +1518,12 @@ export const SCENARIOS = {
   "rust-worktree": rustWorktree,
   "rust-mcp": rustMcp,
   "rust-subagent": rustSubagent,
+  "rust-worktree-files": rustWorktreeFiles,
+  "rust-review-added": rustReviewAdded,
+  "rust-secrets": rustSecrets,
+  "rust-model-switch": rustModelSwitch,
+  "rust-archive": rustArchive,
+  "rust-two-clients": rustTwoClients,
+  "rust-stop-continue": rustStopThenContinue,
+  "rust-memory": rustMemory,
 };
