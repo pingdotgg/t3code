@@ -463,6 +463,28 @@ it.effect("gives a queued read the first reader that frees up", () =>
         SqliteClient.readOnly,
         (effect) => Effect.forkChild(effect, { startImmediately: true }),
       );
+      // Masked read-only work keeps its cancellation pending and still runs once a reader frees up.
+      let maskedRan = 0;
+      const maskedRuns = yield* Effect.forEach(
+        [
+          Effect.scoped(
+            Effect.flatMap(sql.reserve, (connection) =>
+              connection.executeUnprepared("SELECT 1", [], undefined),
+            ),
+          ).pipe(Effect.asVoid),
+          sql.withTransaction(countEntries(sql)).pipe(Effect.asVoid),
+        ],
+        (effect) =>
+          effect.pipe(
+            Effect.andThen(Effect.sync(() => maskedRan++)),
+            Effect.uninterruptible,
+            SqliteClient.readOnly,
+            (masked) => Effect.forkChild(masked, { startImmediately: true }),
+          ),
+      );
+      const interrupting = yield* Effect.forEach(maskedRuns, (fiber) =>
+        Effect.forkChild(Fiber.interrupt(fiber), { startImmediately: true }),
+      );
       yield* TestClock.adjust("1 second");
       yield* Deferred.succeed(holders[1]!.release, undefined);
       yield* Fiber.join(holders[1]!.fiber);
@@ -473,6 +495,8 @@ it.effect("gives a queued read the first reader that frees up", () =>
         yield* Deferred.succeed(release, undefined);
         yield* Fiber.join(fiber);
       }
+      yield* Effect.forEach(interrupting, Fiber.join);
+      assert.equal(maskedRan, 2);
     }),
   ),
 );

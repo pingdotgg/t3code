@@ -895,19 +895,17 @@ const make = Effect.fn("makeWithDatabase")(function* (
   }));
   let activeWriter: ConnectionOwner | undefined;
   // Callers must run route uninterruptibly and pass `claimed` a finalizer that runs `release` once.
-  // Standalone reads pass their own `restore`: readOnly's may have been captured inside a mask.
+  // Waits use the caller's `restore`, not readOnly's, which may have been captured outside a mask.
   const route = (
     claimed: (release: Effect.Effect<void>) => Effect.Effect<void>,
-    restore?: typeof Effect.interruptible,
+    restore: typeof Effect.interruptible,
   ) =>
     Effect.withFiber((fiber): Effect.Effect<Target, SqlError> => {
-      const readOnlyRestore = Context.get(fiber.context, ReadOnly);
-      if (readers.length === 0 || readerPool.unavailable || readOnlyRestore === undefined) {
+      if (readers.length === 0 || readerPool.unavailable || !Context.get(fiber.context, ReadOnly)) {
         return writer;
       }
-      const admit = restore ?? fiber.getRef(TransactionAcquire)?.restore ?? readOnlyRestore;
       const claim = Effect.andThen(
-        admit(readerAdmission.take(1)),
+        restore(readerAdmission.take(1)),
         Effect.suspend(() => {
           // Holding a permit leaves a slot idle; the lowest wins, so idle slots never start a worker.
           const reader = readers.find((slot) => !slot.claimed)!;
@@ -925,14 +923,16 @@ const make = Effect.fn("makeWithDatabase")(function* (
         // A scheduler yield after taking the permit must not precede its release finalizer.
         Effect.provideService(claim, Scheduler.PreventSchedulerYield, true),
         (reader) =>
-          Effect.flatMap(reader.acquire, (readerConnection) =>
-            readerConnection === undefined
-              ? writer
-              : Effect.succeed<Target>({
-                  name: "reader",
-                  lock: reader.lock,
-                  connection: readerConnection,
-                }),
+          Effect.flatMap(
+            Effect.provideService(reader.acquire, ReadOnly, restore),
+            (readerConnection) =>
+              readerConnection === undefined
+                ? writer
+                : Effect.succeed<Target>({
+                    name: "reader",
+                    lock: reader.lock,
+                    connection: readerConnection,
+                  }),
           ),
       );
     });
@@ -995,39 +995,37 @@ const make = Effect.fn("makeWithDatabase")(function* (
       Scope.addFinalizer(Context.getUnsafe(fiber.context, Scope.Scope), release),
     );
   // Started before routing, so lock wait includes waiting for reader admission.
-  const transactionAcquirer = Effect.withFiber((routing) => {
-    const start = routing.getRef(Clock.Clock).monotonicTimeNanosUnsafe();
-    return Effect.uninterruptible(route(claimedUntilScopeCloses)).pipe(
-      Effect.flatMap((target) =>
-        Effect.uninterruptibleMask((restore) => {
-          const fiber = Fiber.getCurrent()!;
-          const scope = Context.getUnsafe(fiber.context, Scope.Scope);
-          const clock = fiber.getRef(Clock.Clock);
-          const pending = fiber.getRef(TransactionAcquire);
-          const ownerAtWaitStart = target.name === "writer" ? activeWriter : undefined;
-          const owner = target.name === "writer" ? connectionOwner(fiber) : undefined;
-          const acquire = Effect.tap((pending?.restore ?? restore)(target.lock.take(1)), () => {
-            if (target.name === "writer") activeWriter = owner;
-            if (pending !== undefined) {
-              pending.acquired = acquired(target, clock, start);
-              pending.ownerAtWaitStart = ownerAtWaitStart;
-            }
-            return Scope.addFinalizer(
-              scope,
-              Effect.sync(() => {
-                if (target.name === "writer" && activeWriter === owner) activeWriter = undefined;
-              }).pipe(Effect.andThen(target.lock.release(1))),
-            );
-          });
-          return Effect.as(
-            // A scheduler yield after taking the permit must not precede its release finalizer.
-            Effect.provideService(acquire, Scheduler.PreventSchedulerYield, true),
-            target.connection,
+  const transactionAcquirer = Effect.uninterruptibleMask((maskRestore) =>
+    Effect.withFiber((fiber) => {
+      const start = fiber.getRef(Clock.Clock).monotonicTimeNanosUnsafe();
+      const pending = fiber.getRef(TransactionAcquire);
+      const restore = pending?.restore ?? maskRestore;
+      return Effect.flatMap(route(claimedUntilScopeCloses, restore), (target) => {
+        const scope = Context.getUnsafe(fiber.context, Scope.Scope);
+        const clock = fiber.getRef(Clock.Clock);
+        const ownerAtWaitStart = target.name === "writer" ? activeWriter : undefined;
+        const owner = target.name === "writer" ? connectionOwner(fiber) : undefined;
+        const acquire = Effect.tap(restore(target.lock.take(1)), () => {
+          if (target.name === "writer") activeWriter = owner;
+          if (pending !== undefined) {
+            pending.acquired = acquired(target, clock, start);
+            pending.ownerAtWaitStart = ownerAtWaitStart;
+          }
+          return Scope.addFinalizer(
+            scope,
+            Effect.sync(() => {
+              if (target.name === "writer" && activeWriter === owner) activeWriter = undefined;
+            }).pipe(Effect.andThen(target.lock.release(1))),
           );
-        }),
-      ),
-    );
-  });
+        });
+        return Effect.as(
+          // A scheduler yield after taking the permit must not precede its release finalizer.
+          Effect.provideService(acquire, Scheduler.PreventSchedulerYield, true),
+          target.connection,
+        );
+      });
+    }),
+  );
 
   const client = yield* Client.make({
     driver: "node:sqlite",
