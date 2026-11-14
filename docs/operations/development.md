@@ -66,6 +66,9 @@ The first start in a worktree seeds its empty database from a read-only copy of
 and dev starts with an empty database. `--no-seed` or `T3CODE_DEV_SEED=0` skips seeding.
 To copy a larger source, run `vp run migrate-dev-db` with dev stopped. It may use
 substantial disk space before pruning.
+The first start in any checkout also builds the native resource monitor with Cargo when
+`native/resource-monitor/target` has no binary. Without Rust, dev starts with a warning
+and no process telemetry; install Rust and run `vp run build:resource-monitor`.
 Never run a development server against the live `~/.t3/userdata`.
 See [test data](../../AGENTS.md#test-data) for copying a consistent database snapshot.
 

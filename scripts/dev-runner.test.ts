@@ -438,6 +438,69 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       });
     });
 
+    it.effect.each([
+      { built: "release", cargoFails: false, expectBuild: false },
+      { built: "debug", cargoFails: false, expectBuild: false },
+      { built: undefined, cargoFails: false, expectBuild: true },
+      { built: undefined, cargoFails: true, expectBuild: true },
+    ] as const)(
+      "builds the resource monitor only when it is missing: built=$built cargoFails=$cargoFails",
+      ({ built, cargoFails, expectBuild }) =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const spawned: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }> =
+            [];
+          const warnings: Array<string> = [];
+          const spawnerLayer = Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make((command) => {
+              const spawn = command as unknown as {
+                readonly command: string;
+                readonly args: ReadonlyArray<string>;
+              };
+              spawned.push({ command: spawn.command, args: spawn.args });
+              return spawn.command === "cargo" && cargoFails
+                ? Effect.succeed(mockProcess(101))
+                : Effect.succeed(mockProcess(0));
+            }),
+          );
+
+          yield* runDevRunnerWithInput(devServerInput).pipe(
+            Effect.provide([
+              emptyConfigLayer,
+              netServiceLayer,
+              spawnerLayer,
+              Logger.layer([
+                Logger.make((options) => {
+                  if (options.logLevel === "Warn") warnings.push(String(options.message));
+                }),
+              ]),
+            ]),
+            Effect.provideService(FileSystem.FileSystem, {
+              ...fs,
+              exists: (file) =>
+                NodePath.basename(file) === "t3-resource-monitor"
+                  ? Effect.succeed(
+                      built !== undefined && NodePath.basename(NodePath.dirname(file)) === built,
+                    )
+                  : fs.exists(file),
+            }),
+            Effect.provideService(HostProcess.Platform, "linux"),
+          );
+
+          const cargo = spawned.filter((spawn) => spawn.command === "cargo");
+          assert.lengthOf(cargo, expectBuild ? 1 : 0);
+          if (expectBuild) {
+            assert.includeMembers([...cargo[0]!.args], ["build", "--locked", "--release"]);
+            assert.isTrue(cargo[0]!.args.at(-1)!.endsWith("Cargo.toml"));
+          }
+          assert.lengthOf(warnings, cargoFails ? 1 : 0);
+          if (cargoFails) assert.include(warnings[0]!, "vp run build:resource-monitor");
+          // A failed build never blocks dev.
+          assert.equal(spawned.at(-1)?.command, "vp");
+        }),
+    );
+
     it.effect("ignores an ambient T3CODE_HOME when no home is resolved", () =>
       Effect.gen(function* () {
         const env = yield* createDevRunnerEnv({
