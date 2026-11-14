@@ -382,7 +382,7 @@ export function isSidebarToggleShortcut(
   keybindings: ResolvedKeybindingsConfig,
   options?: ShortcutMatchOptions,
 ): boolean {
-  // Ctrl+letter is a control character the terminal needs (tmux's prefix is Ctrl+B); Cmd never reaches it.
+  // A focused terminal owns Ctrl chords, such as tmux's Ctrl+B prefix; Cmd never reaches it.
   if (event.ctrlKey && options?.context?.terminalFocus) return false;
   return matchesCommandShortcut(event, keybindings, "sidebar.toggle", options);
 }
