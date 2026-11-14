@@ -489,6 +489,7 @@ describe("instance-scoped model selection", () => {
     const driver = ProviderDriverKind.make("codex");
     const providers = [provider({ provider: driver, instanceId, models: ["gpt-5.6-sol"] })];
     const state = deriveEffectiveComposerModelState({
+      threadStarted: false,
       draft: {
         activeProvider: instanceId,
         modelSelectionByProvider: {
@@ -523,6 +524,7 @@ describe("instance-scoped model selection", () => {
     ]);
     const providers = [provider({ provider: driver, instanceId, models: ["auto-smart"] })];
     const state = deriveEffectiveComposerModelState({
+      threadStarted: false,
       draft: null,
       providers,
       selectedProvider: driver,
@@ -552,6 +554,7 @@ describe("instance-scoped model selection", () => {
     ]);
     const providers = [provider({ provider: driver, instanceId, models: [] })];
     const state = deriveEffectiveComposerModelState({
+      threadStarted: false,
       draft: {
         activeProvider: instanceId,
         modelSelectionByProvider: { [instanceId]: draftSelection },
@@ -584,6 +587,7 @@ describe("instance-scoped model selection", () => {
       { activeProvider: instanceId, modelSelectionByProvider: { [instanceId]: saved } },
     ]) {
       const state = deriveEffectiveComposerModelState({
+        threadStarted: false,
         draft,
         providers,
         selectedProvider: driver,
@@ -616,6 +620,7 @@ describe("instance-scoped model selection", () => {
       },
     ]) {
       const state = deriveEffectiveComposerModelState({
+        threadStarted: false,
         draft,
         providers,
         selectedProvider: driver,
@@ -727,6 +732,7 @@ describe("instance-scoped model selection", () => {
       { id: "agent", value: "build" },
     ]);
     const state = deriveEffectiveComposerModelState({
+      threadStarted: false,
       draft: null,
       providers,
       selectedProvider: driver,
@@ -780,6 +786,7 @@ describe("instance-scoped model selection", () => {
       threadModelSelection: ReturnType<typeof createModelSelection> | null,
     ) => {
       const state = deriveEffectiveComposerModelState({
+        threadStarted: false,
         draft: null,
         providers,
         selectedProvider: driver,
@@ -832,6 +839,7 @@ describe("instance-scoped model selection", () => {
       { id: "effort", value: "max" },
     ]);
     const state = deriveEffectiveComposerModelState({
+      threadStarted: false,
       draft: {
         activeProvider: instanceId,
         modelSelectionByProvider: { [instanceId]: draftSelection },
@@ -869,6 +877,7 @@ describe("instance-scoped model selection", () => {
       provider({ provider: driver, instanceId: kimiInstanceId, models: [kimiModel] }),
     ];
     const state = deriveEffectiveComposerModelState({
+      threadStarted: false,
       draft: {
         activeProvider: kimiInstanceId,
         modelSelectionByProvider: {
@@ -1089,6 +1098,7 @@ describe("default model settings and new-thread composer parity", () => {
       };
       // ChatView builds the local draft with the project default as its thread selection.
       const composer = deriveEffectiveComposerModelState({
+        threadStarted: false,
         draft: null,
         providers,
         selectedProvider: driver,
@@ -1188,6 +1198,7 @@ describe("composer fallback to another instance of the same driver", () => {
     const selectedInstanceId = selection.selectedProviderEntry!.instanceId;
     const selectedProvider = selection.selectedProviderEntry!.driverKind;
     const state = deriveEffectiveComposerModelState({
+      threadStarted: false,
       draft: input.draft ?? null,
       providers: input.providers,
       selectedProvider,
