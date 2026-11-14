@@ -1,3 +1,4 @@
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as NodePath from "@effect/platform-node/NodePath";
 import {
   EDITORS,
@@ -33,6 +34,7 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { makeStaleWhileRevalidate } from "../environment/staleWhileRevalidate.ts";
+import { WindowsVerbatimSpawn } from "./windowsVerbatimSpawn.ts";
 export {
   ExternalLauncherError,
   ExternalLauncherBrowserSpawnError,
@@ -138,6 +140,8 @@ function parseTargetPathAndPosition(target: string): Option.Option<TargetPathAnd
 function resolveCommandEditorArgs(
   editor: (typeof EDITORS)[number],
   target: string,
+  isDirectory: boolean,
+  projectRoot: string | undefined,
 ): ReadonlyArray<string> {
   const parsedTarget = parseTargetPathAndPosition(target);
 
@@ -145,11 +149,15 @@ function resolveCommandEditorArgs(
     case "direct-path":
       return [target];
     case "goto":
-      return Option.isSome(parsedTarget) ? ["--goto", target] : [target];
+      if (Option.isSome(parsedTarget)) return ["--goto", target];
+      // Without a window flag, VS Code's window settings may replace the user's last active window.
+      return isDirectory ? ["--new-window", target] : [target];
     case "line-column":
       return Option.match(parsedTarget, {
         onNone: () => [target],
         onSome: ({ path, line, column }) => [
+          // Only positioned targets get the root: a folder target would open as a second project.
+          ...(projectRoot === undefined ? [] : [projectRoot]),
           "--line",
           line,
           // JetBrains IDEs count `--column` from 0; targets count columns from 1.
@@ -177,8 +185,12 @@ function escapePowerShellStringLiteral(input: string): string {
   return `'${input.replaceAll("'", "''")}'`;
 }
 
+function resolveWindowsRoot(env: NodeJS.ProcessEnv): string {
+  return env.SYSTEMROOT || env.windir || String.raw`C:\Windows`;
+}
+
 function resolvePowerShellPath(env: NodeJS.ProcessEnv = {}): string {
-  return `${env.SYSTEMROOT || env.windir || String.raw`C:\Windows`}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
+  return `${resolveWindowsRoot(env)}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
 }
 
 function resolveWslPowerShellPath(): string {
@@ -476,18 +488,28 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   }
 
   if (editorDef.commands) {
-    const { command, baseArgs } = Option.getOrElse(
-      yield* resolveEditorCommand(editorDef, env),
-      () => ({
+    const resolved = yield* resolveEditorCommand(editorDef, env);
+    if (Option.isNone(resolved)) {
+      return yield* new ExternalLauncherCommandNotFoundError({
+        editor: editorDef.id,
         command: editorDef.commands[0],
-        baseArgs: "baseArgs" in editorDef ? editorDef.baseArgs : [],
-      }),
-    );
+      });
+    }
+    const { command, baseArgs } = resolved.value;
+    const isDirectory =
+      editorDef.launchStyle === "goto" &&
+      (yield* (yield* FileSystem.FileSystem).stat(input.cwd).pipe(
+        Effect.map((info) => info.type === "Directory"),
+        Effect.orElseSucceed(() => false),
+      ));
     return {
       editor: editorDef.id,
       target: input.cwd,
       command,
-      args: [...baseArgs, ...resolveCommandEditorArgs(editorDef, input.cwd)],
+      args: [
+        ...baseArgs,
+        ...resolveCommandEditorArgs(editorDef, input.cwd, isDirectory, input.projectRoot),
+      ],
     };
   }
 
@@ -500,21 +522,22 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     return yield* new ExternalLauncherUnsupportedEditorError({ editor: input.editor });
   }
 
+  const target = expandHomePath(input.cwd, yield* HostProcess.HomeDirectory);
   if (input.reveal === true) {
-    return yield* resolveFileManagerRevealLaunch(input.cwd, platform, env, command);
+    return yield* resolveFileManagerRevealLaunch(target, platform, env, command);
   }
 
   return {
     editor: editorDef.id,
-    target: input.cwd,
+    target,
     command,
     args:
       command === "explorer.exe" && env.WSL_DISTRO_NAME !== undefined
-        ? [resolveWslFileManagerPath(input.cwd, env.WSL_DISTRO_NAME)]
+        ? [resolveWslFileManagerPath(target, env.WSL_DISTRO_NAME)]
         : platform === "win32"
           ? // Explorer interprets / as a switch and silently opens a fallback folder.
-            [normalizeWindowsFileManagerPath(input.cwd)]
-          : [input.cwd],
+            [normalizeWindowsFileManagerPath(target)]
+          : [target],
   };
 });
 
@@ -647,18 +670,67 @@ const tryRevealLinuxItem = Effect.fn("externalLauncher.tryRevealLinuxItem")(
   }),
 );
 
+// Stock Windows answers "none"; any other verb may be a replacement file manager, which only
+// the PowerShell reveal honors. Reading stdout is about 600 ms faster than spawner.string here.
+const hasStockWindowsFolderVerb = Effect.fn("externalLauncher.hasStockWindowsFolderVerb")(
+  function* () {
+    const env = yield* readBrowserLaunchEnv;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const handle = yield* spawner.spawn(
+      ChildProcess.make(
+        `${resolveWindowsRoot(env)}\\System32\\reg.exe`,
+        ["query", "HKCR\\Directory\\shell", "/ve"],
+        { stdin: "ignore", stderr: "ignore" },
+      ),
+    );
+    const [stdout, exitCode] = yield* Effect.all(
+      [handle.stdout.pipe(Stream.decodeText(), Stream.mkString), handle.exitCode],
+      { concurrency: "unbounded" },
+    );
+    return exitCode === 0 && /REG_SZ\s+none\s*$/im.test(stdout);
+  },
+  Effect.scoped,
+  Effect.timeout("2 seconds"),
+  Effect.orElseSucceed(() => false),
+);
+
+// Explorer parses /select itself, so it needs the argument verbatim rather than Node's quoting.
+const revealWindowsItem = Effect.fn("externalLauncher.revealWindowsItem")(function* (
+  target: string,
+) {
+  const command = `${resolveWindowsRoot(yield* readBrowserLaunchEnv)}\\explorer.exe`;
+  const args = [`/select,"${normalizeWindowsFileManagerPath(target)}"`];
+  yield* (yield* WindowsVerbatimSpawn)(command, args).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ExternalLauncherEditorSpawnError({
+          editor: "file-manager",
+          target,
+          command,
+          args,
+          cause,
+        }),
+    ),
+  );
+});
+
 const launchEditor = Effect.fn("externalLauncher.launchEditor")(function* (
   input: LaunchEditorInput,
+  hasStockFolderVerb: Effect.Effect<boolean>,
 ) {
   const launch = yield* resolveEditorLaunch(input);
-  if (
-    input.editor === "file-manager" &&
-    input.reveal === true &&
-    launch.command === "xdg-open" &&
-    (yield* HostProcess.Platform) === "linux" &&
-    (yield* tryRevealLinuxItem(launch.target))
-  ) {
-    return;
+  if (input.editor === "file-manager" && input.reveal === true) {
+    const platform = yield* HostProcess.Platform;
+    if (
+      platform === "linux" &&
+      launch.command === "xdg-open" &&
+      (yield* tryRevealLinuxItem(launch.target))
+    ) {
+      return;
+    }
+    if (platform === "win32" && (yield* hasStockFolderVerb)) {
+      return yield* revealWindowsItem(launch.target);
+    }
   }
   yield* launchEditorProcess(launch);
 });
@@ -819,6 +891,12 @@ export const make = Effect.gen(function* () {
     ),
     EDITOR_DISCOVERY_CACHE_TTL,
   );
+  const cachedStockWindowsFolderVerb = yield* makeStaleWhileRevalidate(
+    hasStockWindowsFolderVerb().pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    ),
+    EDITOR_DISCOVERY_CACHE_TTL,
+  );
 
   // Forwarders retain the underlying launcher and discovery spans.
   return ExternalLauncher.of({
@@ -836,7 +914,9 @@ export const make = Effect.gen(function* () {
     ),
     launchEditor: Effect.fnUntraced(
       function* (input) {
-        return yield* provideCommandResolutionServices(launchEditor(input));
+        return yield* provideCommandResolutionServices(
+          launchEditor(input, cachedStockWindowsFolderVerb),
+        );
       },
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     ),

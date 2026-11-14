@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./pullRequestAnchor": {
+      "types": "./src/pullRequestAnchor.ts",
+      "import": "./src/pullRequestAnchor.ts"
+    },
     "./changedFileKind": {
       "types": "./src/changedFileKind.ts",
       "import": "./src/changedFileKind.ts"
@@ -30,6 +34,10 @@
     "./themePalettes": {
       "types": "./src/themePalettes.ts",
       "import": "./src/themePalettes.ts"
+    },
+    "./themeCss": {
+      "types": "./src/themeCss.ts",
+      "import": "./src/themeCss.ts"
     },
     "./themePreview": {
       "types": "./src/themePreview.ts",
@@ -94,6 +102,10 @@
     "./shell": {
       "types": "./src/shell.ts",
       "import": "./src/shell.ts"
+    },
+    "./envTrampoline": {
+      "types": "./src/envTrampoline.ts",
+      "import": "./src/envTrampoline.ts"
     },
     "./semver": {
       "types": "./src/semver.ts",
@@ -243,6 +255,10 @@
       "types": "./src/keybindings.ts",
       "import": "./src/keybindings.ts"
     },
+    "./keybindingMatching": {
+      "types": "./src/keybindingMatching.ts",
+      "import": "./src/keybindingMatching.ts"
+    },
     "./threadTranscript": {
       "types": "./src/threadTranscript.ts",
       "import": "./src/threadTranscript.ts"
@@ -258,6 +274,14 @@
     "./composerTrigger": {
       "types": "./src/composerTrigger.ts",
       "import": "./src/composerTrigger.ts"
+    },
+    "./triagePrompt": {
+      "types": "./src/triagePrompt.ts",
+      "import": "./src/triagePrompt.ts"
+    },
+    "./pullRequestComposerTrigger": {
+      "types": "./src/pullRequestComposerTrigger.ts",
+      "import": "./src/pullRequestComposerTrigger.ts"
     },
     "./composerInlineTokens": {
       "types": "./src/composerInlineTokens.ts",
@@ -354,6 +378,10 @@
     "./testing/symlinks": {
       "types": "./src/testing/symlinks.ts",
       "import": "./src/testing/symlinks.ts"
+    },
+    "./databaseMigrationLog": {
+      "types": "./src/databaseMigrationLog.ts",
+      "import": "./src/databaseMigrationLog.ts"
     },
     "./httpReadiness": {
       "types": "./src/httpReadiness.ts",
@@ -530,6 +558,10 @@
     "./cloneUrl": {
       "types": "./src/cloneUrl.ts",
       "import": "./src/cloneUrl.ts"
+    },
+    "./speech": {
+      "types": "./src/speech.ts",
+      "import": "./src/speech.ts"
     }
   },
   "scripts": {

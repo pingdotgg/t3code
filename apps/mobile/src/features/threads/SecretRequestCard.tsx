@@ -4,6 +4,7 @@ import {
   secretRequestAnswerInput,
   secretRequestDisplay,
   secretRequestFailureMessage,
+  secretRequestLink,
   secretRequestPrivacyNote,
   secretRequestReference,
   secretRequestSources,
@@ -25,8 +26,10 @@ import { View, type ColorValue } from "react-native";
 
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
+import { SecretTextInput } from "../../components/ui/SecretTextInput";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { Button } from "../../components/ui/Button";
 import { Chip } from "../../components/ui/Chip";
 
@@ -118,6 +121,7 @@ function PendingSecretRequestForm(props: {
     }
   };
   const draft = source === null ? secret : reference;
+  const link = secretRequestLink(item);
 
   return (
     <View className="mb-3 gap-3 rounded-[20px] border border-border bg-card-alt p-4">
@@ -129,6 +133,22 @@ function PendingSecretRequestForm(props: {
           </Text>
         ) : null}
       </View>
+      {link !== null ? (
+        <View className="gap-1.5">
+          <Button
+            label={`Open ${link.host}`}
+            tone="secondary"
+            fullWidth
+            onPress={() => void tryOpenExternalUrl(link.href, "secret-request")}
+          />
+          {/* A link found in the reason is already shown there. */}
+          {item.url !== undefined ? (
+            <Text selectable className="font-mono text-xs text-foreground-muted">
+              {item.url}
+            </Text>
+          ) : null}
+        </View>
+      ) : null}
       {sources.length > 0 ? (
         <View className="flex-row flex-wrap gap-2">
           <Chip
@@ -157,21 +177,13 @@ function PendingSecretRequestForm(props: {
         </View>
       ) : null}
       {source === null ? (
-        <TextInput
+        <SecretTextInput
           accessibilityLabel={item.label}
           placeholder={item.placeholder ?? SECRET_REQUEST_DEFAULT_PLACEHOLDER}
           value={secret}
           onChangeText={setSecret}
           editable={!submitting}
-          secureTextEntry
-          autoCorrect={false}
-          autoCapitalize="none"
-          autoComplete="off"
-          textContentType="none"
-          importantForAutofill="no"
-          spellCheck={false}
-          returnKeyType="done"
-          onSubmitEditing={save}
+          onSubmitEditing={(value) => void send({ type: "save", secret: value })}
         />
       ) : (
         <TextInput
