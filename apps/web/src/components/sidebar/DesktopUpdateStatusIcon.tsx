@@ -92,8 +92,11 @@ function DesktopUpdateDownloadingIcon({ percent }: { readonly percent: number | 
 function DesktopUpdateDownloadedIcon() {
   return (
     <span className="relative grid size-4 place-items-center">
-      <RotateCwIcon className="size-4" />
-      <span className="absolute -right-1 -bottom-1 grid size-2.5 place-items-center rounded-full bg-foreground text-background ring-2 ring-background">
+      {/* Start the arc (lucide's first path) 15 units in, past the stretch that runs under the
+          badge, so it ends in its own round cap about 2px from the badge. Covering it with a
+          ring instead left its tip peeking out and painted the ring over the button surface. */}
+      <RotateCwIcon className="size-4 [&>path:first-child]:[stroke-dasharray:100] [&>path:first-child]:[stroke-dashoffset:-15]" />
+      <span className="absolute -right-1 -bottom-1 grid size-2.5 place-items-center rounded-full bg-foreground text-background">
         <CheckIcon className="size-2" strokeWidth={3} />
       </span>
     </span>
