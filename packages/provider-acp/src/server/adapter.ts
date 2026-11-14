@@ -236,6 +236,13 @@ export interface AcpAdapterV2ExtensionContext {
     readonly sessionId: string;
     readonly failure: OrchestrationV2ProviderFailure;
   }) => Effect.Effect<void>;
+  /** Starts a subagent the agent announced without a spawn tool call. */
+  readonly startSubagent: (notice: {
+    readonly sessionId: string;
+    readonly childSessionId: string;
+    readonly title: string;
+    readonly model: string | null;
+  }) => Effect.Effect<void>;
   readonly finishSubagent: (notice: {
     readonly sessionId: string;
     readonly childSessionId: string;
@@ -1460,6 +1467,8 @@ interface ActiveAcpTurn {
   readonly toolStartedAt: Map<string, DateTime.Utc>;
   readonly subagents: Map<string, ActiveAcpSubagent>;
   readonly subagentsBySessionId: Map<string, ActiveAcpSubagent>;
+  /** Subagents projected from a spawn notice before any tool call claimed them. */
+  readonly noticeSubagents: Set<ActiveAcpSubagent>;
   readonly pendingSubagentNotifications: Map<string, Array<EffectAcpSchema.SessionNotification>>;
   readonly toolCallIdsByBackgroundTaskId: Map<string, string>;
   /** Command ACKs register null; terminal results wait here for prompt settlement. */
@@ -4113,7 +4122,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             ? undefined
             : extractSubagentUpdate(toolCall);
           if (subagentUpdate !== undefined) {
-            yield* emitSubagent(context, subagentUpdate);
+            // A spawn notice can precede its tool call; the tool result's child id finds that row.
+            const awaitsNoticeRow =
+              subagentUpdate.childSessionId === null &&
+              subagentUpdate.status === "running" &&
+              !context.subagents.has(subagentUpdate.nativeTaskId) &&
+              [...context.noticeSubagents].some(
+                (subagent) => subagent.task.title === subagentUpdate.title,
+              );
+            if (!awaitsNoticeRow) yield* emitSubagent(context, subagentUpdate);
             if (followsAgentWorkState) yield* syncNativeChildren(context);
             if (subagentUpdate.suppressNormalTool !== false) {
               yield* rearmDeferredFinalize(context);
@@ -6249,6 +6266,32 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           return true;
         });
 
+        const startSubagentFromNotice = Effect.fnUntraced(function* (notice: {
+          readonly childSessionId: string;
+          readonly title: string;
+          readonly model: string | null;
+        }) {
+          const context = yield* Ref.get(activeTurn);
+          if (context === null || context.finalized) return;
+          if (context.subagentsBySessionId.has(notice.childSessionId)) return;
+          // A spawn tool's subagent learns its child session only from the tool result.
+          for (const subagent of context.subagents.values()) {
+            if (subagent.childSessionId === null && subagent.task.title === notice.title) return;
+          }
+          yield* emitSubagent(context, {
+            nativeTaskId: notice.childSessionId,
+            prompt: notice.title,
+            title: notice.title,
+            model: notice.model,
+            status: "running",
+            childSessionId: notice.childSessionId,
+            result: null,
+            suppressNormalTool: true,
+          });
+          const subagent = context.subagentsBySessionId.get(notice.childSessionId);
+          if (subagent !== undefined) context.noticeSubagents.add(subagent);
+        });
+
         const finishSubagentFromNotice = Effect.fnUntraced(function* (notice: {
           readonly childSessionId: string;
           readonly status: "completed" | "failed" | "cancelled";
@@ -6963,6 +7006,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               requestUserInput,
               captureProposedPlan,
               lastProposedPlanMarkdown,
+              startSubagent: (notice) =>
+                runRuntimeCallbackAtGeneration(
+                  handlerGeneration,
+                  Effect.gen(function* () {
+                    if (yield* Ref.get(stoppedRunQuarantine)) return;
+                    if ((yield* Ref.get(activeSessionId)) !== notice.sessionId) return;
+                    yield* startSubagentFromNotice(notice);
+                  }),
+                ).pipe(Effect.asVoid),
               finishSubagent: (notice) =>
                 runRuntimeCallbackAtGeneration(
                   handlerGeneration,
@@ -8433,6 +8485,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               toolStartedAt: new Map(),
               subagents: new Map(),
               subagentsBySessionId: new Map(),
+              noticeSubagents: new Set(),
               pendingSubagentNotifications: new Map(),
               toolCallIdsByBackgroundTaskId: new Map(),
               backgroundCommands: new Map(),
