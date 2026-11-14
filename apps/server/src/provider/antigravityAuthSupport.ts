@@ -257,7 +257,12 @@ const linkAntigravityUserSkills = Effect.fn("linkAntigravityUserSkills")(functio
   ] as const) {
     yield* Effect.gen(function* () {
       // The harness creates these folders itself, and mkdir fails on a dangling link.
-      if (!(yield* fs.exists(target))) {
+      // Windows access() succeeds on a dangling junction, so exists() cannot vet the target.
+      const targetIsDirectory = yield* fs.stat(target).pipe(
+        Effect.map((info) => info.type === "Directory"),
+        Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(false)),
+      );
+      if (!targetIsDirectory) {
         const linked = yield* fs.readLink(link).pipe(
           Effect.as(true),
           Effect.orElseSucceed(() => false),
