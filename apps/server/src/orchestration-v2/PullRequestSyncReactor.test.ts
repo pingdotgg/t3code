@@ -1962,6 +1962,28 @@ describe("PullRequestSyncReactor", () => {
       }),
   );
 
+  // What `az repos pr` prints for one pull request: indented JSON whose `url` is the REST
+  // address, with every attribute the response left unset as null.
+  const azurePullRequestJson = (pullRequestId: number) =>
+    JSON.stringify(
+      {
+        closedDate: null,
+        createdBy: { displayName: "Sam Example", uniqueName: "sam@example.com" },
+        pullRequestId,
+        repository: {
+          name: "repository",
+          project: { name: "project", state: "wellFormed", url: null },
+          url: "https://dev.azure.com/organization/a7573007/_apis/git/repositories/3411ebc1",
+          webUrl: null,
+        },
+        status: "active",
+        title: "Fix the thing",
+        url: `https://dev.azure.com/organization/a7573007/_apis/git/repositories/3411ebc1/pullRequests/${pullRequestId}`,
+      },
+      null,
+      2,
+    );
+
   it.effect.each([
     {
       name: "a plain create",
@@ -2087,6 +2109,26 @@ describe("PullRequestSyncReactor", () => {
       input:
         "printf '%s\\n' 'https://github.com/owner/repository/pull/120'; gh pr create --fill > /dev/null",
       output: "https://github.com/owner/repository/pull/120",
+      linked: [],
+    },
+    {
+      name: "an Azure DevOps pull request after a push",
+      input: 'git push -u origin feature 2>&1 && az repos pr create --title "Fix the thing"',
+      output: `To https://dev.azure.com/organization/project/_git/repository\n * [new branch]      feature -> feature\n${azurePullRequestJson(42)}\n`,
+      linked: [42],
+    },
+    {
+      name: "an existing Azure DevOps pull request shown beside a create that printed nothing",
+      input: 'az repos pr show --id "$PR_ID" && az repos pr create --title test --output none',
+      output: azurePullRequestJson(42),
+      linked: [],
+    },
+    {
+      name: "an existing GitHub pull request printed beside GitHub and Azure DevOps creates",
+      input:
+        "gh pr view --json url --jq .url && az repos pr create --title test --output none && gh pr create --fill",
+      output:
+        "https://github.com/owner/repository/pull/120\nhttps://github.com/owner/repository/pull/124\n",
       linked: [],
     },
   ])("links what the command created: $name", ({ input, output, linked }) =>
