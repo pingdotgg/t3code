@@ -1,4 +1,4 @@
-import { assert, describe, it } from "@effect/vitest";
+import { assert, describe, it, vi } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CheckpointId,
@@ -53,6 +53,7 @@ import {
   type PiAdapterV2Options,
 } from "./adapter.ts";
 import { makePiRpcConnection, type PiRpcRecord } from "./rpc.ts";
+import * as PiRpc from "./rpc.ts";
 import { loadMcpBridge } from "./mcpBridge.testkit.ts";
 import { PI_T3_SERVICE_TIER_COMMAND } from "./mcpExtensionSource.ts";
 import { turnItemOutputText } from "../../../client-runtime/src/work-log/itemDetail.ts";
@@ -167,7 +168,7 @@ interface FakePi {
   readonly setCompacting: (compacting: boolean) => void;
   readonly deferNextState: () => void;
   readonly resolveDeferredState: (data: unknown) => Effect.Effect<void>;
-  readonly failNextState: () => void;
+  readonly failNextState: (count?: number) => void;
   readonly failNextThinking: () => void;
   readonly deferNextLifecycle: (
     type: "switch_session" | "new_session" | "fork" | "prompt" | "abort",
@@ -226,7 +227,7 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
   const allRequests: Array<PiRpcRecord> = [];
   let deferState = false;
   let deferredStateRequest: PiRpcRecord | undefined;
-  let failState = false;
+  let stateFailuresRemaining = 0;
   let failThinking = false;
   let vetoSwitch = false;
   let vetoNewSession = false;
@@ -270,8 +271,8 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
     };
     switch (record["type"]) {
       case "get_state":
-        if (failState) {
-          failState = false;
+        if (stateFailuresRemaining > 0) {
+          stateFailuresRemaining--;
           return { ...base, success: false, error: "state unavailable" };
         }
         return {
@@ -452,8 +453,8 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
           data,
         });
       }),
-    failNextState: () => {
-      failState = true;
+    failNextState: (count = 1) => {
+      stateFailuresRemaining = count;
     },
     deferNextLifecycle: (type) => {
       deferredLifecycle = type;
@@ -4405,6 +4406,295 @@ describe("PiAdapterV2", () => {
       );
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
+
+  describe("session approval lifetime", () => {
+    const prompt = (id: string) => ({
+      type: "extension_ui_request",
+      method: "confirm",
+      title: "Run project extensions?",
+      message: "This project has .pi/extensions.",
+      id,
+    });
+    const setup = Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const takeApproval = takeEvent((event) => event.type === "runtime_request.updated").pipe(
+        Effect.map((event) => {
+          assert.equal(event.type, "runtime_request.updated");
+          if (event.type !== "runtime_request.updated") throw new Error("Expected approval event");
+          return event.runtimeRequest;
+        }),
+      );
+      const grant = Effect.gen(function* () {
+        yield* fake.emit(prompt("grant"));
+        const pending = yield* takeApproval;
+        yield* runtime.respondToRuntimeRequest({
+          requestId: pending.id,
+          decision: "acceptForSession",
+        });
+        assert.equal((yield* fake.takeRequest("extension_ui_response"))["confirmed"], true);
+        assert.equal((yield* takeApproval).status, "resolved");
+      });
+      const askAgain = Effect.gen(function* () {
+        yield* fake.emit(prompt("ask-again"));
+        // A leaked grant answers Pi directly instead of emitting a pending request.
+        return yield* Effect.race(
+          takeApproval.pipe(Effect.map((request) => request.status)),
+          fake.takeRequest("extension_ui_response").pipe(Effect.as("automatic" as const)),
+        );
+      });
+      return { fake, runtime, providerThread, takeEvent, takeApproval, grant, askAgain };
+    });
+    const rollbackTarget = {
+      type: "thread_start" as const,
+      checkpointId: CheckpointId.make("checkpoint-pi-approvals"),
+      appRunOrdinal: 0 as const,
+    };
+
+    it.effect.each(["new session", "switch", "rollback", "empty rollback"] as const)(
+      "revokes grants and cancels native dialogs at %s",
+      (boundary) =>
+        Effect.gen(function* () {
+          const { fake, runtime, providerThread, takeApproval, grant, askAgain } = yield* setup;
+          yield* grant;
+          yield* fake.emit({
+            type: "extension_ui_request",
+            method: "input",
+            id: "pending",
+            title: "Name",
+          });
+          const pending = yield* takeApproval;
+          if (boundary === "new session") {
+            yield* runtime.ensureThread({
+              threadId: ThreadId.make("thread-pi-new"),
+              modelSelection: modelSelection("default"),
+              runtimePolicy,
+            });
+          } else if (boundary === "switch") {
+            fake.queueState({ sessionFile: "/fake/other.jsonl" });
+            yield* runtime.resumeThread({
+              providerThread: {
+                ...providerThread,
+                nativeThreadRef: {
+                  driver: PI_PROVIDER,
+                  nativeId: "/fake/other.jsonl",
+                  strength: "strong",
+                },
+              },
+            });
+          } else {
+            yield* runtime.rollbackThread({
+              providerThread,
+              target: rollbackTarget,
+              providerThreadTurns:
+                boundary === "empty rollback"
+                  ? []
+                  : [
+                      {
+                        id: ProviderTurnId.make("discarded-turn"),
+                        providerThreadId: providerThread.id,
+                        nodeId: NodeId.make("discarded-node"),
+                        runAttemptId: null,
+                        nativeTurnRef: {
+                          driver: PI_PROVIDER,
+                          nativeId: "user-entry",
+                          strength: "strong",
+                        },
+                        ordinal: 1,
+                        status: "completed",
+                        startedAt: null,
+                        completedAt: null,
+                      },
+                    ],
+            });
+          }
+          // The next dialog bounds the check: missing cancellation fails without a timeout.
+          yield* fake.emit({
+            type: "extension_ui_request",
+            method: "input",
+            id: "marker",
+            title: "Next",
+          });
+          const cancelled = yield* takeApproval;
+          assert.equal(cancelled.status, "cancelled");
+          assert.equal(cancelled.id, pending.id);
+          assert.equal((yield* fake.takeRequest("extension_ui_response"))["cancelled"], true);
+          assert.equal((yield* takeApproval).nativeRequestRef?.nativeId, "marker");
+          assert.equal(
+            (yield* Effect.result(
+              runtime.respondToRuntimeRequest({
+                requestId: pending.id,
+                decision: "acceptForSession",
+              }),
+            ))._tag,
+            "Failure",
+          );
+          assert.equal(yield* askAgain, "pending");
+        }).pipe(Effect.scoped, Effect.provide(layerTest)),
+    );
+
+    it.effect.each(["switch", "rollback"] as const)(
+      "revokes grants answered during a %s lifecycle hook",
+      (boundary) =>
+        Effect.gen(function* () {
+          const { fake, runtime, providerThread, takeEvent, takeApproval, grant, askAgain } =
+            yield* setup;
+          const command = boundary === "switch" ? "switch_session" : "fork";
+          fake.deferNextLifecycle(command);
+          const operation = yield* (
+            boundary === "switch"
+              ? runtime.resumeThread({ providerThread })
+              : runtime.rollbackThread({
+                  providerThread,
+                  target: rollbackTarget,
+                  providerThreadTurns: [
+                    {
+                      id: ProviderTurnId.make("discarded-turn"),
+                      providerThreadId: providerThread.id,
+                      nodeId: NodeId.make("discarded-node"),
+                      runAttemptId: null,
+                      nativeTurnRef: {
+                        driver: PI_PROVIDER,
+                        nativeId: "user-entry",
+                        strength: "strong",
+                      },
+                      ordinal: 1,
+                      status: "completed",
+                      startedAt: null,
+                      completedAt: null,
+                    },
+                  ],
+                })
+          ).pipe(Effect.forkScoped);
+          const request = yield* fake.takeRequest(command);
+          yield* grant;
+          assert.equal(yield* askAgain, "pending");
+          const destination = yield* takeEvent(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "approval_request" &&
+              event.turnItem.nativeItemRef?.nativeId === "ask-again",
+          );
+          if (
+            destination.type !== "turn_item.updated" ||
+            destination.turnItem.type !== "approval_request"
+          )
+            return;
+          yield* runtime.respondToRuntimeRequest({
+            requestId: destination.turnItem.requestId,
+            decision: "acceptForSession",
+          });
+          assert.equal((yield* fake.takeRequest("extension_ui_response"))["confirmed"], true);
+          assert.equal((yield* takeApproval).status, "resolved");
+          fake.queueState({ sessionFile: "/fake/other.jsonl" });
+          yield* fake.emit({
+            type: "response",
+            id: request["id"],
+            command,
+            success: true,
+            data: { cancelled: false },
+          });
+          yield* Fiber.join(operation);
+          assert.equal(yield* askAgain, "pending");
+        }).pipe(Effect.scoped, Effect.provide(layerTest)),
+    );
+
+    it.effect(
+      "does not resolve a cancelled dialog or restore its grant after an in-flight answer",
+      () =>
+        Effect.gen(function* () {
+          const sending = yield* Deferred.make<void>();
+          const releaseSend = yield* Deferred.make<void>();
+          const makeConnection = PiRpc.makePiRpcConnection;
+          // send completes at enqueue, so holding fake stdin would not pause the adapter response.
+          yield* Effect.acquireRelease(
+            Effect.sync(() =>
+              vi.spyOn(PiRpc, "makePiRpcConnection").mockImplementation((options) =>
+                makeConnection(options).pipe(
+                  Effect.map((connection) => ({
+                    ...connection,
+                    send: (record) =>
+                      Effect.gen(function* () {
+                        if (record["id"] === "late" && record["confirmed"] === true) {
+                          yield* Deferred.succeed(sending, undefined);
+                          yield* Deferred.await(releaseSend);
+                        }
+                        yield* connection.send(record);
+                      }),
+                  })),
+                ),
+              ),
+            ),
+            (spy) => Effect.sync(() => spy.mockRestore()),
+          );
+          const { fake, runtime, providerThread, takeApproval, askAgain } = yield* setup;
+          yield* fake.emit(prompt("late"));
+          const pending = yield* takeApproval;
+          const response = yield* runtime
+            .respondToRuntimeRequest({
+              requestId: pending.id,
+              decision: "acceptForSession",
+            })
+            .pipe(Effect.forkScoped);
+          yield* Deferred.await(sending);
+          yield* runtime.rollbackThread({
+            providerThread,
+            target: rollbackTarget,
+            providerThreadTurns: [],
+          });
+          yield* Deferred.succeed(releaseSend, undefined);
+          yield* Fiber.join(response);
+          let wireResponse = yield* fake.takeRequest("extension_ui_response");
+          if (wireResponse["cancelled"] === true)
+            wireResponse = yield* fake.takeRequest("extension_ui_response");
+          assert.equal(wireResponse["confirmed"], true);
+          assert.equal((yield* takeApproval).status, "cancelled");
+          assert.equal(yield* askAgain, "pending");
+        }).pipe(Effect.scoped, Effect.provide(layerTest)),
+    );
+
+    it.effect.each(["settled", "failed probe", "unreadable", "missing identity"] as const)(
+      "keeps a verified grant, then asks again after identity changes via %s",
+      (path) =>
+        Effect.gen(function* () {
+          const { fake, runtime, providerThread, takeEvent, grant, askAgain } = yield* setup;
+          yield* grant;
+          for (const ordinal of [1, 2]) {
+            yield* startTurn(
+              runtime,
+              providerThread,
+              "default",
+              [],
+              "/extension-command",
+              undefined,
+              ordinal,
+            );
+            yield* fake.takeRequest("prompt");
+            if (ordinal === 2) {
+              const sessionFile = path === "missing identity" ? undefined : "/fake/other.jsonl";
+              // The command's idle probe and the settle probe each read state once.
+              if (path === "unreadable") fake.failNextState(2);
+              else for (const _ of [1, 2]) fake.queueState({ sessionFile });
+            }
+            if (path === "failed probe") fake.failNextState();
+            if (path === "settled") {
+              yield* fake.emit({ type: "agent_start" });
+              yield* fake.emit({ type: "agent_settled" });
+            } else {
+              yield* fake.emit({ type: "response", command: "prompt", success: true });
+            }
+            const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
+            assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "completed");
+            assert.equal(yield* askAgain, ordinal === 1 ? "automatic" : "pending");
+          }
+        }).pipe(Effect.scoped, Effect.provide(layerTest)),
+    );
+  });
 
   it.effect.each(["Name", "   "])(
     "keeps input placeholder text answerable with title '%s'",

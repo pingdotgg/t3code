@@ -808,6 +808,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             ready: yield* Deferred.make<void, ProviderAdapter.ProviderAdapterProtocolError>(),
           };
           extensionStatusReset = reset;
+          sessionApprovals.clear();
           return yield* Effect.gen(function* () {
             // RPC responses bypass the pump. Reset after all earlier native notifications.
             if (
@@ -1882,7 +1883,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         };
       });
 
-      const finalizeTurn = Effect.fnUntraced(function* (state: PiThreadState, readUsage = true) {
+      const finalizeTurn = Effect.fnUntraced(function* (
+        state: PiThreadState,
+        readUsage = true,
+        stateData: Option.Option<unknown> = Option.none(),
+      ) {
         const turn = state.activeTurn;
         if (turn === null) return;
         state.activeTurn = null;
@@ -1907,6 +1912,19 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         // Stop clears Pi's queue, so an unread steer was dropped; otherwise Pi read it before settling.
         for (const messageId of turn.unreadSteers.splice(0)) {
           yield* emitSteerStatus(turn, messageId, interrupted ? "cancelled" : "completed");
+        }
+        if (sessionApprovals.size > 0) {
+          // Native commands can switch sessions without an adapter lifecycle request.
+          const liveState = !readUsage
+            ? undefined
+            : Option.isSome(stateData)
+              ? stateData.value
+              : yield* request({ type: "get_state" }, 2_000).pipe(
+                  Effect.orElseSucceed(() => undefined),
+                );
+          const nativeId = recordString(liveState, "sessionFile");
+          if (nativeId === undefined || nativeId !== state.providerThread.nativeThreadRef?.nativeId)
+            sessionApprovals.clear();
         }
         const treeRefs =
           turn.stopTreeRefs !== undefined ? turn.stopTreeRefs : yield* captureTurnTreeRefs();
@@ -2590,7 +2608,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               (recordNumber(data, "pendingMessageCount") ?? 0) === 0
             ) {
               turn.settleWhenIdle = false;
-              if (state !== null) yield* finalizeTurn(state);
+              if (state !== null) yield* finalizeTurn(state, true, Option.some(data));
             }
             return;
           }
@@ -2811,6 +2829,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           lastNativeThreadId = resumeId ?? lastNativeThreadId;
           // Failed lifecycle operations can still change native sessions; invalidate bindings and defaults.
           threadState = null;
+          sessionApprovals.clear();
+          yield* cancelPendingPrompts(yield* DateTime.now);
           appliedModel = null;
           appliedThinking = null;
           appliedSessionName = null;
@@ -3397,9 +3417,16 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               id: pending.nativeRequestId,
               ...response,
             });
+            // Registration or rollback can cancel this request while send is pending.
+            if (pendingPrompts.get(String(requestInput.requestId)) !== pending) return;
             pendingPrompts.delete(String(requestInput.requestId));
             if (pending.expirationFiber !== null) yield* Fiber.interrupt(pending.expirationFiber);
-            if (pending.method === "confirm" && requestInput.decision === "acceptForSession") {
+            // A pending lifecycle request may land in another native session; grant nothing during it.
+            if (
+              pending.method === "confirm" &&
+              requestInput.decision === "acceptForSession" &&
+              extensionStatusReset === null
+            ) {
               sessionApprovals.add(pending.approvalKey);
             }
             const resolvedAt = yield* DateTime.now;
@@ -3542,6 +3569,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               return yield* protocolError("Cannot roll back while native Pi work awaits a turn");
             }
             const boundary = piForkBoundary(rollbackInput);
+            sessionApprovals.clear();
+            yield* cancelPendingPrompts(yield* DateTime.now);
             if (boundary.type === "nothing") {
               return piThreadSnapshot(state.providerThread);
             }
