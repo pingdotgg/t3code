@@ -243,22 +243,23 @@ function ProviderAccount({
   const usesCredentials =
     provider.driver === "antigravity" &&
     (provider.auth.type === "gemini-api-key" || provider.auth.type === "agent-platform");
-  const status =
-    active || state?.phase === "failed" || state?.phase === "cancelled"
-      ? state.message
-      : !provider.enabled
-        ? "Turned off"
-        : signedIn
-          ? "Signed in"
-          : isDiscovering
-            ? "Discovering sign-in methods…"
-            : needsExternalSetup
-              ? "No in-app sign-in advertised. Follow the provider's docs to finish setup."
-              : !provider.installed
-                ? "Not installed"
-                : usesCredentials
-                  ? "Connect to load models"
-                  : "Not signed in";
+  const showsFlow = active || state?.phase === "failed" || state?.phase === "cancelled";
+  const turnedOff = !showsFlow && !provider.enabled;
+  const status = showsFlow
+    ? state.message
+    : turnedOff
+      ? "Turned off"
+      : signedIn
+        ? "Signed in"
+        : isDiscovering
+          ? "Discovering sign-in methods…"
+          : needsExternalSetup
+            ? "No in-app sign-in advertised. Follow the provider's docs to finish setup."
+            : !provider.installed
+              ? "Not installed"
+              : usesCredentials
+                ? "Connect to load models"
+                : "Not signed in";
   // A provider with several sign-in methods picks one from a menu on the same control.
   const methodActions: MenuAction[] = methods.map((method) => ({
     id: `method:${method.id}`,
@@ -402,10 +403,18 @@ function ProviderAccount({
         className={
           stacked
             ? "min-h-16 items-start gap-3 px-4 py-3"
-            : "min-h-16 flex-row items-center gap-3 px-4 py-3"
+            : turnedOff
+              ? "min-h-14 flex-row items-center gap-3 px-4 py-1.5"
+              : "min-h-16 flex-row items-center gap-3 px-4 py-3"
         }
       >
-        <ProviderAccountSummary key={email} name={name} status={status} email={email} />
+        <ProviderAccountSummary
+          key={email}
+          name={name}
+          status={status}
+          email={email}
+          inline={turnedOff && !stacked}
+        />
         {trailing}
       </View>
       {interaction?.type === "deviceCode" ||
@@ -511,15 +520,25 @@ function ProviderAccountSummary({
   name,
   status,
   email,
+  inline,
 }: {
   readonly name: string;
   readonly status: string | null | undefined;
   readonly email: string | undefined;
+  /** Puts a short status beside the name, so the row is one line tall. */
+  readonly inline: boolean;
 }) {
   const [revealed, setRevealed] = useState(false);
+  const layout = inline
+    ? "min-w-0 shrink grow flex-row items-center gap-3"
+    : "min-w-0 shrink grow gap-0.5";
   const content = (
     <>
-      <Text textRole="body" className="text-foreground" numberOfLines={1}>
+      <Text
+        textRole="body"
+        className={inline ? "min-w-0 shrink grow text-foreground" : "text-foreground"}
+        numberOfLines={1}
+      >
         {name}
       </Text>
       <Text accessibilityLiveRegion="polite" textRole="footnote" className="text-foreground-muted">
@@ -532,7 +551,7 @@ function ProviderAccountSummary({
       <View
         accessible
         accessibilityLabel={[name, status].filter(Boolean).join(", ")}
-        className="min-w-0 shrink grow gap-0.5"
+        className={layout}
       >
         {content}
       </View>
@@ -544,7 +563,7 @@ function ProviderAccountSummary({
       accessibilityLabel={[name, status, revealed ? email : null].filter(Boolean).join(", ")}
       accessibilityHint={revealed ? "Hides the account email" : "Reveals the account email"}
       onPress={() => setRevealed((value) => !value)}
-      className="min-w-0 shrink grow gap-0.5"
+      className={layout}
     >
       {content}
     </Pressable>
