@@ -90,7 +90,9 @@ import { T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH } from "@t3tools/prov
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { PreviewControlsToolkit } from "../../mcp/toolkits/previewControls/tools.ts";
 import { HtmlToolkit } from "../../mcp/toolkits/html/tools.ts";
+import { MessageToolkit } from "../../mcp/toolkits/message/tools.ts";
 import { EnvironmentToolkit } from "../../mcp/toolkits/environment/tools.ts";
+import { ThemeToolkit } from "../../mcp/toolkits/theme/tools.ts";
 import { ProjectToolkit } from "../../mcp/toolkits/project/tools.ts";
 import { WorktreeToolkit } from "../../mcp/toolkits/worktree/tools.ts";
 import { ThreadToolkit } from "../../mcp/toolkits/thread/tools.ts";
@@ -109,6 +111,7 @@ import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderInstallationGate from "../../provider/ProviderInstallationGate.ts";
 import { ClaudeOrchestratorReplayHarness } from "./ClaudeAdapterV2.testkit.ts";
+import { withInlineContext } from "../ContextHandoffDelivery.ts";
 import { provideDeterministicTestRuntime } from "../testkit/DeterministicRuntime.ts";
 import { runOrchestratorV2Scenario } from "../testkit/OrchestratorScenario.ts";
 import { layerProviderReplay } from "../testkit/ProviderReplayHarness.ts";
@@ -660,8 +663,10 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       ...Object.values(WorktreeToolkit.tools),
       ...Object.values(ProjectToolkit.tools),
       ...Object.values(EnvironmentToolkit.tools),
+      ...Object.values(ThemeToolkit.tools),
       ...Object.values(PreviewControlsToolkit.tools),
       ...Object.values(HtmlToolkit.tools),
+      ...Object.values(MessageToolkit.tools),
     ]
       .filter((tool) => Context.get(tool.annotations, Tool.Readonly))
       .map((tool) => `mcp__t3-code__${tool.name}`)
@@ -5483,6 +5488,55 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  // regression: #34393 a provider switch replayed a $skill from the handoff history
+  it.effect("dispatches only skills from the user's text, not from inline handoff history", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const homePath = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skill-handoff-" });
+      const directory = path.join(homePath, "skills", "review");
+      yield* fs.makeDirectory(directory, { recursive: true });
+      yield* fs.writeFileString(
+        path.join(directory, "SKILL.md"),
+        "---\nname: review\n---\nFollow the review instructions.\n",
+      );
+      const harness = yield* makeWakeHarnessWithOptions({
+        settings: { ...DEFAULT_CLAUDE_SETTINGS, homePath },
+      });
+      const history = "Context handoff:\n[Historical user; user_message]\n$review the diff";
+      const text = withInlineContext(history, "continue");
+      yield* harness.runtime.startTurn({
+        ...makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("skill-handoff"),
+          text,
+          attachments: [],
+          runtimePolicy: { ...CLAUDE_TEST_RUNTIME_POLICY, cwd: homePath },
+        }),
+        inlineContextLength: text.length - "continue".length,
+      });
+
+      const content = harness.offeredMessages[0]?.message.content;
+      const blocks =
+        typeof content === "string"
+          ? [content]
+          : (content ?? []).map((block) => (block.type === "text" ? block.text : ""));
+      assert.isFalse(blocks.some((text) => text.startsWith("/review")));
+      assert.include(blocks.join("\n"), "$review the diff");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   // regression: #15475 MCP title arriving after the tool starts must survive to completion
   it.effect.each([
     { isError: false, title: "Check weather" },
@@ -9057,6 +9111,18 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       environment: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: "300000" },
       threshold: 267_000,
     },
+    {
+      autoCompactWindow: "",
+      model: "claude-opus-5-5",
+      userSettings: '{"autoCompactWindow":400000,"autoCompactEnabled":false}',
+      threshold: undefined,
+    },
+    {
+      autoCompactWindow: "400000",
+      model: "claude-opus-5-5",
+      environment: { DISABLE_AUTO_COMPACT: "1" },
+      threshold: undefined,
+    },
   ])(
     "ignores stale snapshots after compaction and reports threshold $autoCompactWindow for $model",
     ({
@@ -11444,6 +11510,201 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         ),
       ),
     ),
+  );
+
+  // Claude 2.1.323 wakes a session per Monitor event with only init, assistant and a
+  // task-notification result; just the Monitor's end sends a task_notification frame.
+  it.effect.each([
+    { monitorWake: "ends with its own result", laterWake: "ends with its own result" },
+    { monitorWake: "ends with its own result", laterWake: "is absorbed by a user turn" },
+    { monitorWake: "is absorbed by a user turn", laterWake: "is absorbed by a user turn" },
+  ] as const)(
+    "tags a Claude Monitor event wake as a monitor update (it $monitorWake, later wake $laterWake)",
+    ({ monitorWake, laterWake }) =>
+      Effect.gen(function* () {
+        const absorbed = laterWake === "is absorbed by a user turn";
+        const monitorWakeAbsorbed = monitorWake === "is absorbed by a user turn";
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const taskId = "bi5kfx7xp";
+        const toolUseId = "toolu_monitor_events";
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-monitor-event"),
+            text: "Watch the mutation run and report each survivor.",
+            attachments: [],
+          }),
+        );
+        for (const frame of [
+          claudeSdkFrame({
+            type: "assistant",
+            message: {
+              model: "claude-sonnet-4-6",
+              id: "msg_monitor_events",
+              type: "message",
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: toolUseId,
+                  name: "Monitor",
+                  input: { description: "line monitor", command: "./mutate.sh" },
+                },
+              ],
+              stop_reason: null,
+              stop_sequence: null,
+              usage: { input_tokens: 1, output_tokens: 1 },
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000000901",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: taskId,
+            tool_use_id: toolUseId,
+            description: "line monitor",
+            is_backgrounded: true,
+            task_type: "local_bash",
+            uuid: "00000000-0000-4000-8000-000000000902",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          claudeSdkFrame({
+            type: "user",
+            message: {
+              role: "user",
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: toolUseId,
+                  content: `Monitor started (task ${taskId}). You will be notified on each event.`,
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000000903",
+            session_id: WAKE_NATIVE_SESSION,
+            tool_use_result: { taskId, persistent: false },
+          }),
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000904", result: "STARTED" }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* harness.awaitTerminal(1);
+
+        yield* harness.offerAndWait(wakeTurnInit);
+        yield* harness.offerAndWait(
+          makeAssistantTextFrame({
+            uuid: "00000000-0000-4000-8000-000000000905",
+            text: "Covered. Waiting for the rest.",
+          }),
+        );
+        yield* harness.awaitContinuation(1);
+
+        const notification = harness.continuationRequests[0]?.notification;
+        assert.deepEqual(
+          { source: notification?.source, outcome: notification?.outcome },
+          { source: { kind: "monitor" }, outcome: "updated" },
+        );
+
+        let settled = 1;
+        // Claude folds a prompt into the wake turn it already opened, so one result ends both.
+        const absorbWithUserTurn = Effect.fnUntraced(function* (result: SDKMessage) {
+          settled += 1;
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make(`attempt-claude-monitor-event-user-${settled}`),
+              text: "Any survivors yet?",
+              attachments: [],
+              providerTurnOrdinal: settled,
+            }),
+          );
+          yield* harness.until(() => harness.offeredMessages.length === settled);
+          yield* Queue.offer(harness.sdkMessages, result);
+          yield* harness.awaitTerminal(settled);
+        });
+        const monitorWakeResult = makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000906",
+          result: "Covered. Waiting for the rest.",
+          ...(monitorWakeAbsorbed ? {} : { origin: { kind: "task-notification" } as const }),
+        });
+        if (monitorWakeAbsorbed) yield* absorbWithUserTurn(monitorWakeResult);
+        else yield* harness.offerAndWait(monitorWakeResult);
+
+        // A wake buffered behind the queued Monitor continuation must not run under its tag.
+        for (const frame of [
+          claudeSdkFrame({
+            type: "system",
+            subtype: "init",
+            uuid: "00000000-0000-4000-8000-000000000907",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          makeAssistantTextFrame({
+            uuid: "00000000-0000-4000-8000-000000000908",
+            text: "Scheduled answer.",
+          }),
+        ]) {
+          yield* harness.offerAndWait(frame);
+        }
+        const laterResult = makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000909",
+          result: absorbed ? "No survivors yet." : "Scheduled answer.",
+        });
+        if (absorbed) yield* absorbWithUserTurn(laterResult);
+        else yield* harness.offerAndWait(laterResult);
+        const assistantTexts = () =>
+          harness.events.flatMap((event) =>
+            event.type === "message.updated" && event.message.role === "assistant"
+              ? [event.message.text]
+              : [],
+          );
+        const startContinuation = (attempt: string, providerTurnOrdinal: number) =>
+          harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make(attempt),
+              text: "Background task completed.",
+              attachments: [],
+              providerTurnOrdinal,
+              messageCreatedBy: "agent",
+              messageCreationSource: "provider",
+            }),
+          );
+        yield* startContinuation("attempt-claude-monitor-event-2", settled + 1);
+        yield* harness.awaitTerminal(settled + 1);
+        assert.notInclude(assistantTexts(), "Scheduled answer.");
+        yield* harness.awaitContinuation(2);
+        // With no result of its own in the buffer, the later wake reads as another Monitor event.
+        assert.equal(
+          harness.continuationRequests[1]?.notification?.source.kind,
+          absorbed ? "monitor" : undefined,
+        );
+
+        yield* startContinuation("attempt-claude-monitor-event-3", settled + 2);
+        yield* harness.awaitTerminal(settled + 2);
+        assert.equal(harness.terminalEvents()[settled + 1]?.status, "completed");
+        assert.include(assistantTexts(), "Scheduled answer.");
+        assert.lengthOf(harness.continuationRequests, 2);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
   );
 
   const scheduleWakeupFrames = (input: {

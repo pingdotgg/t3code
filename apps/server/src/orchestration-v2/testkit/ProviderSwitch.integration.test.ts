@@ -2004,8 +2004,9 @@ describe("orchestration v2 provider switching", () => {
         yield* Deferred.await(started);
         yield* Fiber.join(toolCallRunning);
 
-        const runFailed = yield* awaitEvent(
-          (event) => event.type === "run.updated" && event.payload.status === "failed",
+        // The handoff itself is not a failure: the run completes once the session closes.
+        const runSettled = yield* awaitEvent(
+          (event) => event.type === "run.updated" && event.payload.status === "waiting",
         );
         yield* orchestrator.dispatch({
           type: "thread.metadata.update",
@@ -2016,9 +2017,11 @@ describe("orchestration v2 provider switching", () => {
           expectedWorktreePath: null,
         });
         yield* worker.drain();
-        yield* Fiber.join(runFailed);
+        yield* Fiber.join(runSettled);
+        yield* worker.drain();
 
         const projection = yield* orchestrator.getThreadProjection(scenarioThreadId);
+        assert.equal(projection.runs.at(-1)?.status, "completed");
         const toolCall = projection.turnItems.find((item) => item.id === toolCallId);
         assert.equal(toolCall?.status, "interrupted");
         assert.isNotNull(toolCall?.completedAt);
@@ -3415,6 +3418,138 @@ describe("orchestration v2 provider switching", () => {
           ),
         );
       }),
+  );
+
+  it.live("keeps the user's conversation after a scheduled fresh run in the same thread", () =>
+    Effect.gen(function* () {
+      const cwd = yield* checkpointWorkspace("scheduled-fresh-user-chat");
+      const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+      const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+        makeTestAdapter({
+          instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+          driver: CLAUDE_DRIVER,
+          capabilities: ClaudeProviderCapabilitiesV2,
+          modelSelection: CLAUDE_MODEL_SELECTION,
+          responseByRunOrdinal: {},
+          capturedTurns,
+          nativeThreadGeneration: yield* Ref.make(0),
+        }),
+      ]);
+      const threadId = ThreadId.make("thread:scheduled-fresh-user-chat");
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const send = (name: string, scheduled: boolean) =>
+          orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`command:scheduled-fresh-user-chat:${name}`),
+            threadId,
+            messageId: MessageId.make(`message:scheduled-fresh-user-chat:${name}`),
+            text: name,
+            attachments: [],
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            dispatchMode: { type: "queue_after_active" },
+            ...(scheduled
+              ? {
+                  scheduledTaskId: ScheduledTaskId.make("scheduled-fresh-user-chat"),
+                  freshContext: true,
+                }
+              : {}),
+          });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("command:scheduled-fresh-user-chat:create"),
+          threadId,
+          projectId: ProjectId.make("project:scheduled-fresh-user-chat"),
+          title: "User chat with a fresh-session schedule",
+          modelSelection: CLAUDE_MODEL_SELECTION,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+        });
+        const eventSink = yield* EventSink.EventSinkV2;
+        for (const [name, scheduled] of [
+          ["user-first", false],
+          ["scheduled", true],
+          ["user-second", false],
+          ["compaction", false],
+          ["scheduled-after-compaction", true],
+          ["user-third", false],
+        ] as const) {
+          if (name === "compaction") {
+            // The user's run compacts, so later dispatches no longer read the first scheduled run's message.
+            const run = (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)!;
+            const compactedAt = yield* DateTime.now;
+            yield* eventSink.write({
+              events: [
+                {
+                  id: EventId.make("event:scheduled-fresh-user-chat:compaction"),
+                  type: "turn-item.updated",
+                  threadId,
+                  runId: run.id,
+                  nodeId: run.rootNodeId!,
+                  occurredAt: compactedAt,
+                  payload: {
+                    id: TurnItemId.make("item:scheduled-fresh-user-chat:compaction"),
+                    threadId,
+                    runId: run.id,
+                    nodeId: run.rootNodeId,
+                    providerThreadId: null,
+                    providerTurnId: null,
+                    nativeItemRef: null,
+                    parentItemId: null,
+                    ordinal: 1_000,
+                    status: "completed",
+                    title: null,
+                    startedAt: compactedAt,
+                    completedAt: compactedAt,
+                    updatedAt: compactedAt,
+                    type: "compaction",
+                    driver: CLAUDE_DRIVER,
+                  },
+                },
+              ],
+            });
+            continue;
+          }
+          yield* send(name, scheduled);
+          yield* worker.drain();
+          yield* waitForIdle(threadId);
+        }
+        const turns = yield* Ref.get(capturedTurns);
+        const turnFor = (name: string) => turns.find((turn) => turn.text.endsWith(name));
+        assert.notEqual(
+          turnFor("scheduled")!.nativeThreadId,
+          turnFor("user-first")!.nativeThreadId,
+        );
+        // The scheduled run's fresh session must not replace the user's conversation.
+        assert.equal(turnFor("user-second")!.nativeThreadId, turnFor("user-first")!.nativeThreadId);
+        assert.equal(turnFor("user-third")!.nativeThreadId, turnFor("user-first")!.nativeThreadId);
+      }).pipe(
+        Effect.provide(
+          ProviderReplayHarness.layerWithRegistry(
+            {
+              name: "scheduled-fresh-user-chat",
+              runtimePolicyOverride: {
+                cwd,
+                approvalPolicy: "never",
+                sandboxPolicy: {
+                  type: "readOnly",
+                  access: { type: "fullAccess" },
+                  networkAccess: false,
+                },
+              },
+            },
+            layerRegistry,
+          ),
+        ),
+      );
+    }),
   );
 
   it.live("keeps the thread a queued fresh run reserved for that run", () =>

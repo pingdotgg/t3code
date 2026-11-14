@@ -251,6 +251,14 @@ export interface AcpAdapterV2ExtensionContext {
   }) => Effect.Effect<void>;
   /** For compactions reported outside ACP `compaction_update`. */
   readonly markSessionCompacted: (sessionId: string) => Effect.Effect<void>;
+  /**
+   * For agents that hold `session/prompt` past their foreground work on ACP v1. An idle settles
+   * the run only after a `running` report during it, so an earlier prompt's idle cannot.
+   */
+  readonly reportForegroundWork: (notice: {
+    readonly sessionId: string;
+    readonly state: "running" | "idle";
+  }) => Effect.Effect<void>;
   readonly requestUserInput: (
     input: AcpAdapterV2UserInputRequest,
     requestContext: EffectAcpProtocol.AcpRequestContext,
@@ -1482,6 +1490,8 @@ interface ActiveAcpTurn {
   readonly promptWireSettled: Deferred.Deferred<void, never>;
   /** Completed once `session/prompt` is the runtime's active prompt. */
   readonly promptDispatched: Deferred.Deferred<void, never>;
+  /** Frees the runtime for the next prompt while the agent still holds this one's response. */
+  readonly foregroundIdle: Deferred.Deferred<void>;
   /** Clock millis just before `session/prompt` was handed to the runtime. */
   promptSentAt: number | null;
   /** Completed when an update after dispatch matches `cancelAfterPromptStarts.isStart`. */
@@ -6967,6 +6977,27 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   handlerGeneration,
                   markSessionCompacted(sessionId),
                 ).pipe(Effect.asVoid),
+              reportForegroundWork: (notice) =>
+                runRuntimeCallbackAtGeneration(
+                  handlerGeneration,
+                  Effect.gen(function* () {
+                    if (yield* Ref.get(stoppedRunQuarantine)) return;
+                    const context = yield* Ref.get(activeTurn);
+                    if (
+                      context === null ||
+                      context.finalized ||
+                      context.interrupted ||
+                      context.nativeThreadId !== notice.sessionId
+                    )
+                      return;
+                    if (notice.state === "running") {
+                      context.workAccepted = true;
+                    } else if (context.workAccepted) {
+                      yield* Deferred.succeed(context.foregroundIdle, undefined);
+                      yield* finalizeTurn(context, "completed");
+                    }
+                  }),
+                ).pipe(Effect.asVoid),
               applyBackgroundTaskMutation: (incoming) =>
                 runRuntimeCallbackAtGeneration(
                   handlerGeneration,
@@ -8418,6 +8449,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               workAccepted: false,
               promptWireSettled,
               promptDispatched,
+              foregroundIdle: yield* Deferred.make<void>(),
               promptSentAt: null,
               promptStarted,
               promptUsage: undefined,
@@ -8564,7 +8596,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 ? undefined
                 : yield* flavor.watchPromptOutcome(requestedSessionId);
             const promptGeneration = yield* Ref.get(runtimeCallbackGeneration);
-            const promptOptions = { dispatched: context.promptDispatched };
+            const promptOptions = {
+              dispatched: context.promptDispatched,
+              released: context.foregroundIdle,
+            };
             context.promptSentAt = yield* Clock.currentTimeMillis;
             if (promptInactivityTimeoutMillis !== undefined) {
               context.inactivityWatchdog = yield* watchPromptInactivity(

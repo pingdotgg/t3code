@@ -269,7 +269,16 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
     (input) => input.action === "list" || input.action === "read",
     McpToolAccess.reads((input) =>
       Effect.gen(function* () {
-        const { projection } = yield* readThread(input.threadId, ["runs", "messages"]);
+        const { threads, projection: queued } = yield* readThread(input.threadId, ["runs"], {
+          runStatuses: ["queued"],
+        });
+        const messages = yield* threads
+          .getMessagesById(
+            queued.thread.id,
+            queued.runs.map((run) => run.userMessageId),
+          )
+          .pipe(Effect.mapError(unavailable));
+        const projection = { runs: queued.runs, messages: [...messages.values()] };
         if (input.action === "list") {
           const runs = queuedRunsInDeliveryOrder(projection);
           const cursor = input.cursor ?? 0;

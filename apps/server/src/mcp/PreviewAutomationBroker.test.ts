@@ -18,8 +18,10 @@ import {
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
+import * as Queue from "effect/Queue";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import { PreviewBrowserRootError } from "../preview/PreviewBrowserHost.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
@@ -948,6 +950,54 @@ it.effect("fails requests assigned to the stream that is replaced", () =>
       timeoutMs: 15_000,
     });
   }),
+);
+
+it.effect(
+  "keeps another thread's request alive when one request times out on the shared server browser",
+  () =>
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const clientId = SERVER_BROWSER_AUTOMATION_CLIENT_ID;
+      const delivered = yield* Queue.unbounded<RoutedRequest>();
+      const requests = requestsFrom(
+        yield* broker.connect(makeHost({ clientId }), { preferred: true }),
+      );
+      yield* Stream.runForEach(requests, (request) => Queue.offer(delivered, request)).pipe(
+        Effect.forkScoped,
+      );
+      yield* Effect.yieldNow;
+      const otherScope = {
+        ...scope,
+        requestNamespace: "provider-session-2",
+        thread: {
+          threadId: ThreadId.make("thread-2"),
+          providerSessionId: "provider-session-2",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+        },
+      };
+
+      const otherWait = yield* broker
+        .invoke<string>({ scope: otherScope, operation: "waitFor", input: {}, timeoutMs: 40_000 })
+        .pipe(Effect.result, Effect.forkScoped);
+      const otherRequest = yield* Queue.take(delivered);
+      // The browser never answers this one, as when it waits behind the thread's own running action.
+      const stalled = yield* broker
+        .invoke<string>({ scope, operation: "evaluate", input: {} })
+        .pipe(Effect.flip, Effect.forkScoped);
+      yield* Queue.take(delivered);
+
+      yield* TestClock.adjust("16 seconds");
+      expect((yield* Fiber.join(stalled))._tag).toBe("PreviewAutomationTimeoutError");
+
+      yield* broker.respond({
+        clientId,
+        connectionId: otherRequest.connectionId,
+        requestId: otherRequest.requestId,
+        ok: true,
+        result: "ready",
+      });
+      expect(yield* Fiber.join(otherWait)).toEqual(Result.succeed("ready"));
+    }),
 );
 
 it.effect("accepts responses only from the host that received the request", () =>

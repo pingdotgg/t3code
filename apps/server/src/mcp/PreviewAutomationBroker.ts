@@ -662,7 +662,11 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
         // The enclosing operation owns the span for this inline handler.
         onNone: Effect.fnUntraced(function* () {
           // Never replay possibly applied actions; slow metadata reads must not evict the host.
-          if (input.updateCurrentTab !== false) {
+          // The in-process server browser is shared by every thread and cannot hang its stream.
+          if (
+            input.updateCurrentTab !== false &&
+            connection.clientId !== SERVER_BROWSER_AUTOMATION_CLIENT_ID
+          ) {
             yield* disconnect(connection.clientId, connection.queue, true);
           }
           return yield* new PreviewAutomationTimeoutError(requestContext);

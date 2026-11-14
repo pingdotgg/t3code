@@ -11,6 +11,7 @@ import {
   ProviderInstanceId,
   ProviderThreadId,
   ProviderTurnId,
+  ScheduledTaskId,
   ThreadId,
   TurnItemId,
   type ModelSelection,
@@ -511,6 +512,7 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
   onSteer: (
     turn: ProviderAdapter.ProviderAdapterV2SteerInput,
   ) => Effect.Effect<void, ProviderAdapter.ProviderAdapterV2Error> = () => Effect.void,
+  extraAdapters: ReadonlyArray<ProviderAdapter.ProviderAdapterV2["Service"]> = [],
 ) {
   const driver = ProviderDriverKind.make(nativeGoals === undefined ? "codex" : "opencode");
   const cwd = yield* checkpointWorkspace(name);
@@ -647,7 +649,7 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
   };
   const layer = ProviderReplayHarness.layerWithRegistry(
     { name },
-    ProviderAdapterRegistry.layerSingle(adapter),
+    ProviderAdapterRegistry.layerFromAdapters([adapter, ...extraAdapters]),
     { runEffectWorker: false },
   );
   const startFirstTurn = Effect.gen(function* () {
@@ -2156,6 +2158,193 @@ it.effect("steers a promoted queued message with the selection it was queued wit
       assert.deepEqual(projection.thread.modelSelection, composerSelection);
     }).pipe(Effect.provide(layer));
   }),
+);
+
+it.effect("steers a promoted scheduled delivery with the thread's current selection", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { started, steered, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
+        "promote-scheduled-selection",
+      );
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = yield* startFirstTurn;
+        // Bound scheduled tasks send like ScheduledTaskService: no model of their own.
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("scheduled"),
+          threadId,
+          messageId: MessageId.make("message:scheduled"),
+          scheduledTaskId: ScheduledTaskId.make("task:scheduled"),
+          text: "scheduled",
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const queuedRun = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => run.status === "queued",
+        )!;
+        assert.deepEqual(queuedRun.modelSelection, runSelection);
+        yield* orchestrator.dispatch({
+          type: "thread.model-selection.set",
+          commandId: CommandId.make("select-composer"),
+          threadId,
+          modelSelection: composerSelection,
+        });
+        yield* orchestrator.dispatch({
+          type: "queued-message.promote-to-steer",
+          commandId: CommandId.make("promote"),
+          threadId,
+          queuedRunId: queuedRun.id,
+          targetRunId: started[0]!.runId,
+        });
+        yield* worker.drain();
+
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(steered, ["scheduled"]);
+        assert.deepEqual(projection.thread.modelSelection, composerSelection);
+      }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
+
+const claudeSelection = {
+  instanceId: ProviderInstanceId.make("claudeAgent"),
+  model: "claude-test",
+};
+const claudeAdapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
+  instanceId: claudeSelection.instanceId,
+  driver: ProviderDriverKind.make("claudeAgent"),
+  getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
+  planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
+  openSession: () => Effect.die("the Claude instance never starts a turn here"),
+};
+
+// Queues a scheduled delivery behind the Codex turn, stops that turn (Stop holds the queue), then
+// switches the thread to Claude: a thread changes instance only while no run is active.
+const scheduledDeliveryAfterClaudeSwitch = (name: string, text: string) =>
+  Effect.gen(function* () {
+    const harness = yield* nextTurnSelectionHarness(
+      name,
+      false,
+      true,
+      Effect.void,
+      true,
+      undefined,
+      undefined,
+      [claudeAdapter],
+    );
+    const queueAndSwitch = Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = yield* harness.startFirstTurn;
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("scheduled"),
+        threadId,
+        messageId: MessageId.make("message:scheduled"),
+        scheduledTaskId: ScheduledTaskId.make("task:scheduled"),
+        text,
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const queuedRun = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+        (run) => run.status === "queued",
+      )!;
+      assert.equal(queuedRun.providerInstanceId, instanceId);
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const first = harness.started[0]!;
+      yield* orchestrator.dispatch({
+        type: "run.interrupt",
+        commandId: CommandId.make("stop"),
+        threadId,
+        runId: first.runId,
+        holdQueue: true,
+      });
+      yield* worker.drain();
+      const stopped = (yield* orchestrator.getThreadProjection(threadId)).runs;
+      assert.equal(stopped.find((run) => run.id === first.runId)?.status, "interrupted");
+      const held = stopped.find((run) => run.id === queuedRun.id);
+      assert.equal(held?.status, "queued");
+      assert.isTrue(held?.queueHeld);
+      yield* orchestrator.dispatch({
+        type: "thread.model-selection.set",
+        commandId: CommandId.make("select-claude"),
+        threadId,
+        modelSelection: claudeSelection,
+      });
+      return { threadId, queuedRun };
+    });
+    return { ...harness, queueAndSwitch };
+  });
+
+it.effect("checks an edited scheduled /goal against the thread's current provider", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { layer, queueAndSwitch } = yield* scheduledDeliveryAfterClaudeSwitch(
+        "edit-scheduled-goal",
+        "scheduled",
+      );
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const { threadId, queuedRun } = yield* queueAndSwitch;
+        const editError = yield* orchestrator
+          .dispatch({
+            type: "queued-run.edit",
+            commandId: CommandId.make("edit"),
+            threadId,
+            runId: queuedRun.id,
+            text: "/goal pause",
+          })
+          .pipe(Effect.flip);
+
+        assert.match(String(editError.cause), /Claude goals cannot be paused or resumed/);
+        assert.equal(
+          (yield* orchestrator.getThreadProjection(threadId)).messages.find(
+            (message) => message.id === queuedRun.userMessageId,
+          )?.text,
+          "scheduled",
+        );
+      }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
+
+it.effect("checks a queued scheduled /goal against the thread's current provider at start", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { started, layer, queueAndSwitch } = yield* scheduledDeliveryAfterClaudeSwitch(
+        "start-scheduled-goal",
+        "/goal pause",
+      );
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const { threadId, queuedRun } = yield* queueAndSwitch;
+        yield* orchestrator.dispatch({
+          type: "queue.resume",
+          commandId: CommandId.make("resume"),
+          threadId,
+        });
+        yield* orchestrator.resumeQueuedRuns;
+        yield* worker.drain();
+
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        const failure = projection.turnItems.find(
+          (item) => item.type === "error" && item.runId === queuedRun.id,
+        );
+        assert.equal(started.length, 1);
+        assert.equal(projection.runs.find((run) => run.id === queuedRun.id)?.status, "failed");
+        assert.equal(
+          failure?.type === "error" ? failure.failure.code : null,
+          "queued_start_failed",
+        );
+      }).pipe(Effect.provide(layer));
+    }),
+  ),
 );
 
 it.effect("marks the model switch on a promoted message that restarts the turn", () =>

@@ -13,6 +13,8 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   retainedTerminalHistory,
+  terminalSequenceEnd,
+  terminalSequenceStateAfter,
   TerminalProviderInstanceNotFoundError,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -337,7 +339,6 @@ function retainedHistory(text: string, maxLines: number, maxBytes = Infinity): s
   if (terminated) lines.pop();
   const retained = lines.slice(Math.max(0, lines.length - maxLines)).join("\n");
   const capped = terminated ? `${retained}\n` : retained;
-  if (Buffer.byteLength(capped) <= maxBytes) return capped;
   const points = Array.from(capped);
   let start = points.length;
   let bytes = 0;
@@ -347,7 +348,11 @@ function retainedHistory(text: string, maxLines: number, maxBytes = Infinity): s
     bytes += next;
     start -= 1;
   }
-  return points.slice(start).join("");
+  const kept = points.slice(start).join("");
+  if (maxLines <= 0 || maxBytes <= 0) return kept;
+  // A cut inside a control sequence drops the rest of that sequence too.
+  const state = terminalSequenceStateAfter(0, text, 0, text.length - kept.length);
+  return kept.slice(terminalSequenceEnd(state, kept));
 }
 
 it("preserves line and byte limits across arbitrary chunks, Unicode, ANSI sequences, and clear", () => {
@@ -365,6 +370,10 @@ it("preserves line and byte limits across arbitrary chunks, Unicode, ANSI sequen
     "\u001b[31m",
     "\u001b[0m",
     "\u001b]8;;url\u0007",
+    "\u001b]0;",
+    "\u001bP",
+    "\u0007",
+    "\u001b\\",
     "\ud83d",
     "\ude80",
   ];
@@ -375,7 +384,8 @@ it("preserves line and byte limits across arbitrary chunks, Unicode, ANSI sequen
 
   for (const maxBytes of [0, 3, 8, 64, Infinity]) {
     for (const maxLines of [0, 1, 3, 5, 5_000]) {
-      let expected = retainedHistory("before\ninitial\n", maxLines, maxBytes);
+      let full = "before\ninitial\n";
+      let expected = retainedHistory(full, maxLines, maxBytes);
       const history = new TerminalManager.BoundedTerminalHistory(
         maxLines,
         "before\ninitial\n",
@@ -386,15 +396,30 @@ it("preserves line and byte limits across arbitrary chunks, Unicode, ANSI sequen
       for (let step = 0; step < 300; step += 1) {
         if (step % 73 === 0) {
           history.clear();
-          expected = "";
-          expect(history.value()).toBe(expected);
+          full = "";
+          expect(history.value()).toBe("");
         }
         const chunk = nextFragment() + nextFragment();
         history.append(chunk);
-        expected = retainedHistory(expected + chunk, maxLines, maxBytes);
+        full += chunk;
+        expected = retainedHistory(full, maxLines, maxBytes);
         expect(history.value()).toBe(expected);
       }
     }
+  }
+});
+
+it("does not retain the tail of a control sequence whose introducer was trimmed", () => {
+  for (const [text, maxBytes, retained] of [
+    ["prefix\u001b[31mOK", 6, "OK"],
+    ["prefix\u001b]0;HIDDEN\u0007OK", 10, "OK"],
+    ["prefix\u001b]0;🙂HIDDEN\u0007OK", 9, "OK"],
+    // libghostty leaves every string but OSC at the emoji's second byte, so HELLO was visible.
+    ["prefix\u001bP🙂HELLO\u001b\\OK", 9, "HELLO\u001b\\OK"],
+  ] as const) {
+    expect(new TerminalManager.BoundedTerminalHistory(5_000, text, maxBytes).value()).toBe(
+      retained,
+    );
   }
 });
 
@@ -1172,6 +1197,24 @@ it.layer(
     }),
   );
 
+  it.effect("restores a log tail that starts inside a control sequence without its remainder", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      for (const [persisted, restored] of [
+        ["\u001b]0;x\u0007ABCD", "ABCD"],
+        ["名\u001b]0;名\u0007ABCD", "ABCD"],
+        ["\u001b]0;x\u0007\u001b[31mABCD", "ABCD"],
+      ] as const) {
+        const { manager, logsDir } = yield* createManager(5, { historyByteLimit: 8 });
+        const path = yield* historyLogPath(logsDir);
+        yield* fs.makeDirectory(logsDir, { recursive: true });
+        yield* fs.writeFileString(path, persisted);
+        expect((yield* manager.open(openInput())).history).toBe(restored);
+        expect(yield* fs.readFileString(path)).toBe(restored);
+      }
+    }),
+  );
+
   it.effect("persists small terminal updates without rewriting the retained history", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -1426,6 +1469,15 @@ it.layer(
     { name: "NUL in DECRQM", data: "A\u001b[?2026\u0000$pB", history: "AB" },
     { name: "CR in DSR", data: "AB\u001b[5\rnC", history: "AB\rC" },
     { name: "DLE in DSR", data: "AB\u001b[5\u0010nC", history: "ABC" },
+    // Ghostty reads non-ASCII there as UTF-8 bytes: it drops é and runs 0x80-0x9F as C1 controls.
+    { name: "é in DA", data: "A\u001b[0écB", history: "AB" },
+    { name: "DECID byte in a CSI", data: "A\u001b[嚠B", history: "A\ufffdB" },
+    {
+      name: "C1 DCS then C1 CSI in DSR",
+      data: "A\u001b[\u0090\u009b6nB",
+      history: "A\u001bP\u009cB",
+    },
+    { name: "ESC in DSR", data: "A\u001b[5\u001b[6nB", history: "AB" },
   ])(
     "strips a query with an embedded control but keeps what the terminal ran ($name)",
     ({ data, history }) =>
@@ -1439,6 +1491,19 @@ it.layer(
         const restored = reopened.history.replaceAll("\u0000", "");
         expect(restored.split("\u001b[?1049h")[0]).toBe(history);
       }),
+  );
+
+  // Ghostty aborts a CSI at a non-ASCII code point and prints it and what follows.
+  it.effect("keeps a CSI interrupted by non-ASCII text in history", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      ptyAdapter.processes[0]!.emitData("A\u001b[界nB");
+      yield* manager.close({ threadId: "thread-1" });
+
+      const reopened = yield* manager.open(openInput());
+      expect(reopened.history.split("\u001b[?1049h")[0]).toBe("A\u001b[界nB");
+    }),
   );
 
   it.effect.each([

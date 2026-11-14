@@ -228,6 +228,8 @@ interface ActiveTurn {
   readonly input: TurnOwner;
   providerTurn: OrchestrationV2ProviderTurn;
   readonly texts: Map<string, OpenBlock>;
+  /** The last assistant text this turn completed. */
+  answer: string | undefined;
   readonly tools: Map<string, { readonly name: string; input: Record<string, unknown> }>;
   readonly startedAt: Map<string, DateTime.Utc>;
   readonly ordinals: Map<string, number>;
@@ -280,7 +282,10 @@ interface SubagentCall {
   agent: string | undefined;
   model: string | null;
   background: boolean;
-  joined: SubagentCall | undefined;
+  /** The child's turn this call prompted or steered; unset until that turn starts. */
+  run: number | undefined;
+  /** That turn's last text once it ended, which OpenCode sends as the run's report. */
+  answer: string | undefined;
   child: ThreadState | undefined;
   status: OrchestrationV2Subagent["status"];
   result: string | null;
@@ -1132,6 +1137,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       if (completed) turn.texts.delete(nativeId);
       else turn.texts.set(nativeId, entry);
       if (entry.text.length === 0) return;
+      if (completed && kind === "text") turn.answer = entry.text;
       const status = completed ? "completed" : "running";
       const completedAt = completed ? updatedAt : null;
       const nodeKind = kind === "text" ? "assistant_message" : "reasoning";
@@ -1488,6 +1494,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       input: owner,
       providerTurn,
       texts: new Map(),
+      answer: undefined,
       tools: new Map(),
       startedAt: new Map(),
       ordinals: new Map(),
@@ -1987,13 +1994,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         updatedAt: now,
       };
       const previous = threads.get(childId);
-      // Repeated subagent calls steer the same run; OpenCode reports it once for every joined call.
-      if (previous?.active !== undefined) {
-        call.joined = [...call.state.calls.values()].findLast(
-          (candidate) =>
-            candidate !== call && candidate.child === previous && candidate.joined === undefined,
-        );
-      }
+      // A call to a running child steers that run; OpenCode reports it once for all its calls.
+      if (previous?.active !== undefined) call.run = previous.subagent?.turns;
       const subagent = {
         call,
         appThread,
@@ -2059,6 +2061,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const subagent = child.subagent;
       if (subagent === undefined || child.active !== undefined) return;
       subagent.turns += 1;
+      for (const call of callsAttachedTo(child)) call.run ??= subagent.turns;
       const startedAt = yield* DateTime.now;
       const nativeTurnId = `${child.sessionId}:turn:${subagent.turns}`;
       const rootNodeId = idAllocator.derive.nodeFromProviderItem({
@@ -2249,6 +2252,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       // Subagent turns are runless; their calls own settlement.
       if (state.subagent !== undefined) {
         const call = state.subagent.call;
+        for (const attached of callsAttachedTo(state)) {
+          if (attached.run === state.subagent.turns) attached.answer = turn.answer;
+        }
         if (!call.background && terminal.status !== "completed") {
           yield* settleCall(call, terminal.status);
         }
@@ -2637,7 +2643,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         agent: undefined,
         model: null,
         background: false,
-        joined: undefined,
+        run: undefined,
+        answer: undefined,
         child: undefined,
         status: "running",
         result: null,
@@ -3019,11 +3026,28 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const childId = stringField(payload.metadata, "childID");
       if (stringField(payload.metadata, "source") !== "subagent" || childId === undefined) return;
       strays.delete(childId);
-      const call = [...state.calls.values()].find(
+      const open = [...state.calls.values()].filter(
         (candidate) => candidate.child?.sessionId === childId,
       );
-      const calls = [...state.calls.values()].filter(
-        (candidate) => candidate === call || (call !== undefined && candidate.joined === call),
+      const output = subagentOutput(payload.text);
+      const started = open
+        .flatMap((candidate) =>
+          candidate.run === undefined ? [] : [{ call: candidate, run: candidate.run }],
+        )
+        .sort((a, b) => a.run - b.run);
+      // The report names only the child, and reports arrive in order. So it belongs to the oldest
+      // open run, unless that run ended with a different text: then its own report is lost.
+      const next = started.find(
+        (candidate) => candidate.call.answer === undefined || candidate.call.answer === output,
+      );
+      const written = next?.call.answer === output ? next.run : undefined;
+      const call = written === undefined ? open[0] : next?.call;
+      const calls =
+        call?.run === undefined
+          ? open.slice(0, 1)
+          : open.filter((candidate) => candidate.run === call.run);
+      const lost = started.flatMap((candidate) =>
+        written !== undefined && candidate.run < written ? [candidate.call] : [],
       );
       const outcome = reportOutcome(stringField(payload.metadata, "state"));
       state.reports.set(inboxId, {
@@ -3044,7 +3068,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           : outcome === "cancelled"
             ? "cancelled"
             : "completed";
-      for (const each of calls) yield* settleCall(each, status, subagentOutput(payload.text));
+      for (const each of lost) yield* settleCall(each, "completed", each.answer);
+      for (const each of calls) yield* settleCall(each, status, output);
     });
 
     const holderOf = (sessionId: string) => {

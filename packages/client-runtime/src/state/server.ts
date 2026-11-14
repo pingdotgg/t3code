@@ -489,11 +489,13 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
     const persist = Effect.fn("EnvironmentServerConfigState.persist")(function* (
       config: ServerConfig,
     ) {
-      // A cached stall would read as a fresh freeze on the next launch.
+      // A cached stall would read as a fresh freeze on the next launch, and
+      // serverTime changes every connect, which would rewrite the cache each time.
       const {
         environmentThemes: _themes,
         usageLimitSources: _sources,
         lastEventLoopStall: _stall,
+        serverTime: _serverTime,
         ...cacheable
       } = config;
       if (lastPersisted !== undefined && sameCacheValue(lastPersisted, cacheable)) {

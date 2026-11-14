@@ -35,6 +35,10 @@
       "types": "./src/themePalettes.ts",
       "import": "./src/themePalettes.ts"
     },
+    "./themeCss": {
+      "types": "./src/themeCss.ts",
+      "import": "./src/themeCss.ts"
+    },
     "./themePreview": {
       "types": "./src/themePreview.ts",
       "import": "./src/themePreview.ts"
@@ -98,6 +102,10 @@
     "./shell": {
       "types": "./src/shell.ts",
       "import": "./src/shell.ts"
+    },
+    "./envTrampoline": {
+      "types": "./src/envTrampoline.ts",
+      "import": "./src/envTrampoline.ts"
     },
     "./semver": {
       "types": "./src/semver.ts",
