@@ -4901,25 +4901,23 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("reports staged file counts on unborn HEAD without failing", () =>
+    it.effect("reports net file counts from the empty tree on unborn HEAD", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         const driver = yield* GitVcsDriver.GitVcsDriver;
         yield* driver.initRepo({ cwd });
-        yield* git(cwd, ["config", "user.email", "test@test.com"]);
-        yield* git(cwd, ["config", "user.name", "Test"]);
         yield* writeTextFile(cwd, "initial.ts", "// first file\n");
         yield* git(cwd, ["add", "initial.ts"]);
+        yield* writeTextFile(cwd, "initial.ts", "// edited after staging\n");
+        const index = yield* git(cwd, ["ls-files", "--stage"]);
 
-        const status = yield* driver.statusDetails(cwd);
+        const status = yield* driver.statusDetailsLocal(cwd);
 
         assert.equal(status.isRepo, true);
-        assert.equal(status.workingTree.files.length, 1);
-        const file = status.workingTree.files[0];
-        if (file) {
-          assert.equal(file.path, "initial.ts");
-          assert.equal(file.insertions, 1);
-        }
+        assert.deepStrictEqual(status.workingTree.files, [
+          { path: "initial.ts", insertions: 1, deletions: 0 },
+        ]);
+        assert.equal(yield* git(cwd, ["ls-files", "--stage"]), index);
       }),
     );
   });
