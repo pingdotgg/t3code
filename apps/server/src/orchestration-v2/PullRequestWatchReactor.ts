@@ -605,8 +605,16 @@ export const make = Effect.gen(function* () {
       threadTails.delete(group.key);
     }
     const reference = referenceOf(group);
-    // Invalidate cached reads before using the newer fingerprint; clients receive no notification.
-    if (fingerprint !== null) yield* pullRequests.invalidate({ reference });
+    const policyChanged =
+      last !== undefined &&
+      group.targets.some(
+        (target) =>
+          (target.watch.remarksPolicyRevision ?? 0) > 0 && !last.watches.has(watchKey(target)),
+      );
+    // Refresh host reads for a changed policy or a fingerprint-driven read.
+    if (policyChanged || fingerprint !== null) {
+      yield* pullRequests.invalidate({ reference });
+    }
     const [detailRead, activityRead] = yield* Effect.all(
       [
         Effect.exit(pullRequests.detail({ ...reference, allowStale: false })),

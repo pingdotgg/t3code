@@ -5124,14 +5124,18 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         });
 
         let reads = 0;
+        let invalidations = 0;
         const host = Layer.mergeAll(
           NodeServices.layer,
           NodeCrypto.layer,
           Layer.mock(PullRequestService.PullRequestService)({
-            // The host reports the same fingerprint throughout, so only the deadline can prompt a read.
+            // The host reports the same fingerprint throughout.
             watchFingerprint: () =>
               Effect.succeed(fingerprinted ? { status: "quiet", remarks: "none" } : null),
-            invalidate: () => Effect.void,
+            invalidate: () =>
+              Effect.sync(() => {
+                invalidations++;
+              }),
             detail: () =>
               Effect.sync(() => {
                 reads++;
@@ -5177,6 +5181,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
 
         // The notice clears the deadline, so the watch returns to its quiet cadence.
         const readsAfterNotice = reads;
+        const invalidationsAfterNotice = invalidations;
         yield* TestClock.adjust("2 minutes");
         yield* sweep;
         assert.equal(reads, readsAfterNotice);
@@ -5192,6 +5197,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         });
         yield* sweep;
         assert.equal(reads, readsAfterNotice + 1);
+        assert.equal(invalidations, invalidationsAfterNotice + 1);
 
         yield* orchestrator.dispatch({
           type: "thread.pull-request.watch",
