@@ -379,7 +379,8 @@ export const azureCliInvocation = Effect.fn("AzureDevOpsCli.invocation")(functio
     return { command: "az", args: [] } satisfies AzureCliInvocation;
   }
   const resolveExecutable = yield* SpawnExecutableResolution;
-  const launcher = resolveExecutable("az", "win32", yield* HostProcess.Environment);
+  const env = yield* HostProcess.Environment;
+  const launcher = yield* Effect.promise(async () => resolveExecutable("az", "win32", env));
   const installFor = yield* AzureCliInstallLocation;
   const install = launcher === undefined ? undefined : installFor(launcher);
   // Unrecognized installs (pipx's Scripts\az.exe) keep the launcher and today's decode.
