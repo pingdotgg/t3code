@@ -28,6 +28,28 @@ describe("pullRequestSyncKey", () => {
     expect(pullRequestSyncKey({ ...reference, repository: "other" }, identity)).toBeNull();
     expect(pullRequestSyncKey({ ...reference, host: "unrelated.test" }, identity)).toBeNull();
   });
+  it("keys a port-qualified link to an SSH checkout's host, which names no web port", () => {
+    for (const [provider, repository] of [
+      ["gitlab", "g/r"],
+      ["github", "o/r"],
+    ] as const) {
+      const identity = (remoteUrl: string) => ({
+        canonicalKey: `code.example/${repository}`,
+        provider: SourceControlProviderKind.make(provider),
+        displayName: repository,
+        locator: { source: "git-remote" as const, remoteName: "origin", remoteUrl },
+      });
+      const link = { ...reference, host: "code.example:8443", repository };
+      expect(pullRequestSyncKey(link, identity(`git@code.example:${repository}.git`))).toEqual({
+        host: "code.example",
+        repository,
+        number: 7,
+      });
+      expect(
+        pullRequestSyncKey(link, identity(`https://code.example:9443/${repository}.git`))?.host,
+      ).toBe("code.example:8443");
+    }
+  });
   it("normalizes complete hosted aliases without requiring a checkout", () => {
     expect(
       pullRequestSyncKey({
