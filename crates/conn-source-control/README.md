@@ -164,6 +164,12 @@ Deviations:
   `GIT_WORK_TREE`, ...), as every `git` child does (`unsetInheritedRepositoryEnv`). T3 adds a
   trace2 variable only to a `git` call that reports hook progress, and a clone does not.
 - The error's `cause` is not sent; clients read `detail`.
+- **A clone needs `filesystem:write` too** (a deliberate difference, `STRICTER` in
+  `crates/conn-server/src/scopes.rs`). A clone creates its folder and the missing parents at
+  any path the caller names, which is a filesystem write. T3 asks only `source-control:write`
+  (see `docs/status.md`, "Faults found in the T3 server"). A client paired with
+  `source-control:write` but without `filesystem:write` can no longer clone; the owner's
+  clients hold both.
 
 ## What the next steps need
 

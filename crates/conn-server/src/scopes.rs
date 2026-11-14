@@ -4,6 +4,10 @@
 //! `packages/contracts/src/clientRpcPermissions.ts`. The rules that read the payload stay by
 //! hand in [`from_payload`]; a test holds their list to the T3 server's.
 //!
+//! [`STRICTER`] is a short hand-written list of methods that need more than the T3 server
+//! asks: deliberate differences, each with its reason. A test holds each entry to a superset of
+//! the generated scope, so it can only add a need.
+//!
 //! `MethodTable` refuses to register a method without an entry here and checks the scope
 //! before every call, so a handler cannot skip the decision. T3 leaves no method unguarded:
 //! `server.probe` and the connect-time streams need `orchestration:read` like the rest.
@@ -22,6 +26,7 @@ const SETTINGS_WRITE: &str = "settings:write";
 const PROVIDERS_MANAGE: &str = "providers:manage";
 const ACCESS_WRITE: &str = "access:write";
 const SOURCE_CONTROL_WRITE: &str = "source-control:write";
+const FILESYSTEM_WRITE: &str = "filesystem:write";
 
 mod generated;
 
@@ -37,6 +42,17 @@ const HAND_PAYLOAD_RULES: [&str; 6] = [
     "projects.mutate",
     "server.retryResourceTelemetry",
     "server.updateSettings",
+];
+
+/// Methods that need more scopes than the T3 server asks, on purpose. Each entry lists every
+/// scope the method needs, its generated scope included.
+const STRICTER: &[(&str, &[&str])] = &[
+    // A clone creates a folder and its parents at any path the caller names, such as
+    // `~/.ssh`: a filesystem write. The T3 server asks only `source-control:write`.
+    (
+        "sourceControl.cloneRepository",
+        &[SOURCE_CONTROL_WRITE, FILESYSTEM_WRITE],
+    ),
 ];
 
 /// Whether `tag` has an entry.
@@ -58,9 +74,11 @@ pub fn check(tag: &str, ctx: &CallContext, payload: &Value) -> Result<(), Failur
     let Some(principal) = &ctx.principal else {
         return Ok(());
     };
-    let missing = match from_payload(tag, payload) {
-        Some(scopes) => scopes.into_iter().find(|s| !principal.has_scope(s)),
-        None => {
+    let stricter = STRICTER.iter().find(|(t, _)| *t == tag);
+    let missing = match (stricter, from_payload(tag, payload)) {
+        (Some((_, scopes)), _) => scopes.iter().copied().find(|s| !principal.has_scope(s)),
+        (None, Some(scopes)) => scopes.into_iter().find(|s| !principal.has_scope(s)),
+        (None, None) => {
             let (_, scope) = SCOPES[SCOPES
                 .binary_search_by_key(&tag, |(t, _)| t)
                 .unwrap_or_else(|_| panic!("`{tag}` has no entry in the scope table"))];
@@ -289,6 +307,38 @@ mod tests {
             conn_contract::methods().len(),
             "scopes/generated.rs and the contract come from different Conn commits: \
              run tools/gen-upstream.mjs"
+        );
+    }
+
+    /// A stricter rule only adds scopes, and a clone needs a filesystem write.
+    #[test]
+    fn stricter_rules_add_to_the_generated_scope() {
+        for (tag, scopes) in STRICTER {
+            let generated = SCOPES
+                .iter()
+                .find(|(t, _)| t == tag)
+                .map(|(_, s)| *s)
+                .unwrap_or_else(|| panic!("`{tag}` is not a method"));
+            assert!(scopes.contains(&generated), "`{tag}` drops {generated}");
+            assert!(
+                !PAYLOAD_RULES.contains(tag),
+                "`{tag}` has a payload rule too"
+            );
+        }
+        let clone = "sourceControl.cloneRepository";
+        let error = denied(&["source-control:write"], clone, json!({})).unwrap();
+        assert_eq!(error["_tag"], "EnvironmentAuthorizationError");
+        assert_eq!(error["requiredPermission"], "filesystem:write");
+        assert_eq!(error["requiredScope"], "orchestration:operate");
+        let error = denied(&["filesystem:write"], clone, json!({})).unwrap();
+        assert_eq!(error["requiredPermission"], "source-control:write");
+        assert!(
+            denied(
+                &["source-control:write", "filesystem:write"],
+                clone,
+                json!({})
+            )
+            .is_none()
         );
     }
 
