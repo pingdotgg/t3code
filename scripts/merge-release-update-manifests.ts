@@ -16,11 +16,31 @@ interface ReleaseUpdateManifestMerge {
   readonly output: string;
 }
 
-function incomplete(platform: string, detail: string): Error {
-  return new Error(`Incomplete ${platform} updater manifests: ${detail}.`);
+function pairArchitectures(
+  platformLabel: string,
+  arm64: ReadonlyMap<string, string>,
+  x64: ReadonlyMap<string, string>,
+): ReadonlyArray<{ readonly channel: string; readonly arm64: string; readonly x64: string }> {
+  const channels = new Set([...arm64.keys(), ...x64.keys()]);
+  if (channels.size === 0) {
+    throw new Error(
+      `Incomplete ${platformLabel} updater manifests: no architecture manifests found.`,
+    );
+  }
+  return [...channels].toSorted().map((channel) => {
+    const arm64Manifest = arm64.get(channel);
+    const x64Manifest = x64.get(channel);
+    if (arm64Manifest === undefined || x64Manifest === undefined) {
+      const missing = arm64Manifest === undefined ? "arm64" : "x64";
+      throw new Error(
+        `Incomplete ${platformLabel} updater manifests: ${channel} is missing its ${missing} manifest.`,
+      );
+    }
+    return { channel, arm64: arm64Manifest, x64: x64Manifest };
+  });
 }
 
-export function planReleaseUpdateManifestMerges(
+function planReleaseUpdateManifestMerges(
   fileNames: ReadonlyArray<string>,
 ): ReadonlyArray<ReleaseUpdateManifestMerge> {
   const macArm64 = new Map<string, string>();
@@ -29,7 +49,7 @@ export function planReleaseUpdateManifestMerges(
   const winX64 = new Map<string, string>();
 
   for (const fileName of fileNames) {
-    if (fileName.startsWith("builder-debug-")) continue;
+    if (fileName.startsWith("builder-debug")) continue;
 
     const macArm64Match = /^(.+)-mac\.yml$/u.exec(fileName);
     if (macArm64Match?.[1] !== undefined) {
@@ -47,46 +67,26 @@ export function planReleaseUpdateManifestMerges(
     }
   }
 
-  const plans: ReleaseUpdateManifestMerge[] = [];
-  const macChannels = new Set([...macArm64.keys(), ...macX64.keys()]);
-  if (macChannels.size === 0) throw incomplete("macOS", "no architecture manifests found");
-  for (const channel of [...macChannels].toSorted()) {
-    const arm64 = macArm64.get(channel);
-    const x64 = macX64.get(channel);
-    if (arm64 === undefined || x64 === undefined) {
-      throw incomplete(
-        "macOS",
-        `${channel} is missing its ${arm64 === undefined ? "arm64" : "x64"} manifest`,
-      );
-    }
-    plans.push({
-      platform: "mac",
-      primary: arm64,
-      secondary: x64,
-      output: arm64,
-    });
-  }
-
-  const winChannels = new Set([...winArm64.keys(), ...winX64.keys()]);
-  if (winChannels.size === 0) throw incomplete("Windows", "no architecture manifests found");
-  for (const channel of [...winChannels].toSorted()) {
-    const arm64 = winArm64.get(channel);
-    const x64 = winX64.get(channel);
-    if (arm64 === undefined || x64 === undefined) {
-      throw incomplete(
-        "Windows",
-        `${channel} is missing its ${arm64 === undefined ? "arm64" : "x64"} manifest`,
-      );
-    }
-    plans.push({
-      platform: "win",
-      primary: x64,
-      secondary: arm64,
-      output: `${channel}.yml`,
-    });
-  }
-
-  return plans;
+  // electron-builder names the macOS arm64 manifest without an arch suffix,
+  // so the merged macOS feed keeps that name; Windows gets `<channel>.yml`.
+  return [
+    ...pairArchitectures("macOS", macArm64, macX64).map(
+      ({ arm64, x64 }): ReleaseUpdateManifestMerge => ({
+        platform: "mac",
+        primary: arm64,
+        secondary: x64,
+        output: arm64,
+      }),
+    ),
+    ...pairArchitectures("Windows", winArm64, winX64).map(
+      ({ channel, arm64, x64 }): ReleaseUpdateManifestMerge => ({
+        platform: "win",
+        primary: x64,
+        secondary: arm64,
+        output: `${channel}.yml`,
+      }),
+    ),
+  ];
 }
 
 export const mergeReleaseUpdateManifestFiles = Effect.fn("mergeReleaseUpdateManifestFiles")(
