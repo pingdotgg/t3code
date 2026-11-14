@@ -108,3 +108,35 @@ it("leaves dialog, unrelated input and question button shortcuts alone while the
   expect(stash().element().textContent).toContain("second prompt");
   await expect.element(editor()).toHaveValue("Unsent draft");
 });
+
+it("leaves keys that drive an IME composition in the composer to the IME", async () => {
+  await using _screen = await render(<Composer />);
+  const textarea = editor().element();
+  await focus(textarea);
+
+  for (const key of [
+    { key: "ArrowDown" },
+    { key: "ArrowUp" },
+    { key: "Enter" },
+    { key: "Escape" },
+    { key: "Backspace", ctrlKey: true },
+  ]) {
+    const event = new KeyboardEvent("keydown", {
+      ...key,
+      isComposing: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    await act(async () => {
+      textarea.dispatchEvent(event);
+    });
+    expect(event.defaultPrevented, key.key).toBe(false);
+  }
+
+  expect(stash().element().textContent).toContain("first prompt");
+  expect(stash().element().textContent).toContain("second prompt");
+  await expect.element(editor()).toHaveValue("Unsent draft");
+
+  await press("{Enter}");
+  await expect.element(editor()).toHaveValue("first prompt");
+});
