@@ -2074,8 +2074,7 @@ it.effect("starts and finishes a delegated task without reading the parent's his
 
     // Start and finish read the task's own records, so their VM steps, which are deterministic,
     // must stay flat on a copy with a long parent history. Left out: the counts that number the
-    // task and its wake, which walk one index, and provider turn history, whose read has no
-    // index on the attempt and walks the thread's turn rows without decoding them.
+    // task and its wake, which walk one index.
     const copyPath = "file:/delegated-task-reads?vfs=memdb";
     using copy = new NodeSqlite.DatabaseSync(copyPath);
     yield* sql`VACUUM INTO ${copyPath}`;
@@ -2118,6 +2117,7 @@ it.effect("starts and finishes a delegated task without reading the parent's his
     addHistory("runs", "run_id");
     addHistory("run_attempts", "attempt_id", ["run_id"]);
     addHistory("messages", "message_id");
+    addHistory("provider_turns", "provider_turn_id", ["run_attempt_id"]);
     assert.isAtMost(readSteps(), shortSteps * 1.1);
   }).pipe(Effect.provide(layerTest)),
 );
