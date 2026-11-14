@@ -16,6 +16,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
 import * as ProjectCloneTracker from "./ProjectCloneTracker.ts";
+import { ProjectConflictError } from "./ProjectService.ts";
 import { parseGitCloneProgressLine } from "./gitCloneProgress.ts";
 
 const projectId = ProjectId.make("project-1");
@@ -282,6 +283,35 @@ describe("ProjectCloneTracker", () => {
     }).pipe(Effect.provide(harness.layer));
   });
 
+  it.effect("clones for the project that already owns the empty destination", () => {
+    const owner = ProjectId.make("project-stranded");
+    const harness = makeHarness();
+    const hooks: ProjectCloneTracker.ProjectCloneHooks = {
+      ...harness.hooks,
+      createProject: (input) =>
+        Effect.fail(
+          new ProjectConflictError({
+            projectId: input.projectId,
+            workspaceRoot: input.workspaceRoot,
+            conflictingProjectId: owner,
+          }),
+        ),
+    };
+    return Effect.gen(function* () {
+      const tracker = yield* ProjectCloneTracker.ProjectCloneTracker;
+      const result = yield* tracker.start(startInput, hooks);
+      expect(result.projectId).toBe(owner);
+      yield* Effect.yieldNow;
+      expect(yield* tracker.get(owner)).toMatchObject({
+        projectId: owner,
+        destinationPath: "/workspace/t3code",
+        phase: "done",
+      });
+      expect(harness.cloned).toEqual([owner]);
+      expect(yield* tracker.get(projectId)).toBeNull();
+    }).pipe(Effect.provide(harness.layer));
+  });
+
   it.effect("does not create a project when the clone cannot be prepared", () => {
     const harness = makeHarness();
     const layer = ProjectCloneTracker.layer.pipe(
@@ -313,6 +343,9 @@ describe("parseGitCloneProgressLine", () => {
     expect(
       parseGitCloneProgressLine("Receiving objects:  45% (4500/10000), 12.30 MiB | 5.00 MiB/s"),
     ).toEqual({ stage: "receiving", percent: 45, detail: "12.30 MiB | 5.00 MiB/s" });
+    expect(
+      parseGitCloneProgressLine("Receiving objects: 100% (5/5), 40.00 MiB | 1.40 MiB/s, done."),
+    ).toEqual({ stage: "receiving", percent: 100, detail: "40.00 MiB | 1.40 MiB/s" });
     expect(parseGitCloneProgressLine("Resolving deltas: 100% (700/700), done.")).toEqual({
       stage: "resolving",
       percent: 100,

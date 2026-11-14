@@ -5,6 +5,7 @@ import {
   isRuntimeModeAbove,
   parseMcpApprovalCode,
 } from "@t3tools/contracts";
+import { isLoopbackHost } from "@t3tools/shared/preview";
 
 /**
  * The picker's access, lowered to a managed ceiling: the user's choice, else Auto for a typed
@@ -43,5 +44,22 @@ export function resolveApprovalDecision(input: {
   const { csrfToken, oneClickAccess } = input.details;
   return csrfToken !== undefined && (oneClickAccess ?? []).includes(input.access)
     ? { _tag: "browser-session", access: input.access, csrfToken }
+    : null;
+}
+
+/**
+ * The address to send the window to after a decision, or null. Only https, or http on this
+ * computer, can carry a sign-in to an agent; anything else, such as `javascript:`, is refused.
+ */
+export function agentRedirectUrl(url: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  return parsed.protocol === "https:" ||
+    (parsed.protocol === "http:" && isLoopbackHost(parsed.hostname))
+    ? parsed.toString()
     : null;
 }
