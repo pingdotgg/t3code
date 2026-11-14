@@ -420,6 +420,9 @@ Third}`;
       '<!DOCTYPE x [<!ENTITY external SYSTEM "file:///etc/passwd">]><x>&external;</x>',
       '<html><body><p title="<!--">x</p><!DOCTYPE x [<!ENTITY e "boom">]><b title="-->">&e;</b></body></html>',
       '<html><body><p title="<![CDATA[">x</p><!DOCTYPE x [<!ENTITY e "boom">]><b title="]]>">&e;</b></body></html>',
+      '<!DOC<!DOCTYPE a>TYPE x [<!EN<!DOCTYPE a>TITY e "boom">]><x>&e;</x>',
+      '<?test <![CDATA[ ?><!DOCTYPE html [<!ENTITY e "boom">]><html><body><pre><![CDATA[x]]></pre></body></html>',
+      '<?test <!-- ?><!DOCTYPE html [<!ENTITY e "boom">]><html><body><!-- x --></body></html>',
       "<html><body>" + "<!--".repeat(80_000) + "</body></html>",
       "<html><body>" + "<![CDATA[".repeat(80_000) + "</body></html>",
     ]) {

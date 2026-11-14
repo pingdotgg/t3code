@@ -33,13 +33,13 @@ const namespacePrefixes: Record<string, string> = {
 };
 function parseXml(source: string): XmlNode {
   // EPUB XHTML commonly declares an external DTD: discard it without resolving it. Any other
-  // declaration is rejected, but CDATA and comments are literal text and pass through untouched.
+  // declaration is rejected; CDATA, comments and processing instructions pass through untouched.
   let declares = false;
   source = source.replaceAll(
-    /<!\[CDATA\[[\s\S]*?(?:]]>|$)|<!--[\s\S]*?(?:-->|$)|(<!DOCTYPE\s+[^<>[\]]*>)|(<!\s*(?:DOCTYPE|ENTITY))/gi,
+    /<\?[\s\S]*?(?:\?>|$)|<!\[CDATA\[[\s\S]*?(?:]]>|$)|<!--[\s\S]*?(?:-->|$)|(<!DOCTYPE\s+[^<>[\]]*>)|(<!\s*(?:DOCTYPE|ENTITY))/gi,
     (markup, externalDoctype?: string, declaration?: string) => {
       if (declaration) declares = true;
-      return externalDoctype ? "" : markup;
+      return externalDoctype ? " " : markup;
     },
   );
   if (source.length > 8 * 1024 * 1024 || declares || XMLValidator.validate(source) !== true)
@@ -406,8 +406,9 @@ export async function openEpub(archive: JSZip): Promise<OfficeWorkerResult> {
     const chapter = parseXml(await entry.async("string"));
     pages.push({
       title:
-        text(find(chapter, "title")[0] ?? find(chapter, "h1")[0] ?? chapter).slice(0, 120) ||
-        `Chapter ${pages.length + 1}`,
+        text(find(chapter, "title")[0] ?? find(chapter, "h1")[0] ?? chapter)
+          .trim()
+          .slice(0, 120) || `Chapter ${pages.length + 1}`,
       html: await epubHtml(chapter, archive, path),
     });
   }
