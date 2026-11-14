@@ -4,23 +4,17 @@ import { AGENT_DEVICE_VERSION, DEVICE_HUB_VERSION } from "./DeviceToolchain.ts";
 export const quoteRemoteArg = (value: string) => `'${value.replaceAll("'", "'\"'\"'")}'`;
 
 export const NODE_MINIMUM = "22.12";
+export const SYMLINK_HINT = "Windows SSH account needs symbolic-link permission or Developer Mode.";
 const [nodeMajor, nodeMinor] = NODE_MINIMUM.split(".");
 // Shared by the SSH shell setup and the remote script, so it must not contain single quotes.
 const nodeSupported = `((version) => { const [major, minor] = version.split(".").map(Number); return major > ${nodeMajor} || (major === ${nodeMajor} && minor >= ${nodeMinor}); })`;
-
 // Shells drop NUL, and Git for Windows sh drops CR, while reading script source.
 const printfEscaped = (value: string) =>
   value.replaceAll("\\", "\\\\").replaceAll("\r", "\\0015").replaceAll("\0", "\\0000");
-
-interface RemoteDeviceOptions {
-  readonly nodeBootstrap?: boolean;
-}
-
-/** Send shell syntax over stdin so the SSH login shell never reinterprets it. */
 export const remoteDeviceCommand = (
   script: string,
   stdin?: string,
-  options?: RemoteDeviceOptions,
+  options?: { readonly nodeBootstrap?: boolean },
 ) => ({
   remoteCommandArgs: ["sh", "-s"],
   stdin:
@@ -30,9 +24,9 @@ export const remoteDeviceCommand = (
       : `printf %b ${quoteRemoteArg(printfEscaped(stdin))} | { ${script}; }\n`),
 });
 
-export const remoteDeviceEnvironment = (
-  options?: RemoteDeviceOptions,
-) => `export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
+export const remoteDeviceEnvironment = (options?: {
+  readonly nodeBootstrap?: boolean;
+}) => `export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
 export PATH="$PATH:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin"
 ${options?.nodeBootstrap ? `node -e 'process.exit(${nodeSupported}(process.versions.node) ? 0 : 1)' 2>/dev/null || export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"` : ""}
 if [ -z "$ANDROID_HOME" ]; then
@@ -71,8 +65,6 @@ const root = path.join(os.homedir(), '.t3', 'device');
 const state = path.join(root, 'hosts', owner);
 const nodeSupported = ${nodeSupported};
 const run = (command, args, options = {}) => spawnSync(command, args, { encoding: 'utf8', timeout: 30000, ...options });
-// Windows cannot spawn npm.cmd directly. Keep npm paired with a compatible Node,
-// including lifecycle children, without putting paths or arguments in a shell.
 const runNpm = (args, options) => {
   if (process.platform !== 'win32') return run('npm', args, options);
   const env = { ...process.env, ...options?.env };
@@ -98,15 +90,9 @@ const runNpm = (args, options) => {
     const nodes = [...new Set([...(fs.existsSync(sibling) ? [sibling] : []), process.execPath])];
     for (const node of nodes) {
       const version = node === process.execPath ? null : run(node, ['-p', 'process.versions.node']);
-      if (version && (version.error || version.status !== 0)) {
-        failures.push('Node at ' + node + ': ' + commandFailure(version));
-        continue;
-      }
+      if (version && (version.error || version.status !== 0)) { failures.push('Node at ' + node + ': ' + commandFailure(version)); continue; }
       const nodeVersion = version ? version.stdout.trim() : process.versions.node;
-      if (!nodeSupported(nodeVersion) || !semver.satisfies(nodeVersion, npm.engines.node)) {
-        failures.push('npm ' + npm.version + ' at ' + entry + ' requires Node ' + npm.engines.node + '; found ' + nodeVersion + ' at ' + node);
-        continue;
-      }
+      if (!nodeSupported(nodeVersion) || !semver.satisfies(nodeVersion, npm.engines.node)) { failures.push('npm ' + npm.version + ' at ' + entry + ' requires Node ' + npm.engines.node + '; found ' + nodeVersion + ' at ' + node); continue; }
       const pairedOptions = { ...options, env: { ...env, PATH: path.dirname(node) + path.delimiter + inheritedPath } };
       const probe = run(node, [entry, '--version'], pairedOptions);
       if (probe.error || probe.status !== 0) { failures.push('npm at ' + entry + ': npm probe failed: ' + commandFailure(probe)); continue; }
@@ -172,6 +158,7 @@ async function acquireLock(lock, complete = () => false) {
       fs.symlinkSync(token, lock);
       return () => { if (owner() === token) fs.unlinkSync(lock); };
     } catch (error) {
+      if (process.platform === 'win32' && error.code === 'EPERM') throw Error(${JSON.stringify(SYMLINK_HINT)});
       if (error.code !== 'EEXIST') throw error;
       if (complete()) return null;
       const previous = owner();

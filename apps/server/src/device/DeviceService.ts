@@ -78,7 +78,7 @@ import * as SecretResolverLayer from "../secrets/SecretResolver.ts";
 import { requireSettingsSecret } from "../secrets/settingsSecretValue.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 import * as SshDeviceHost from "./SshDeviceHost.ts";
-import { NODE_MINIMUM } from "./sshDeviceScript.ts";
+import { NODE_MINIMUM, SYMLINK_HINT } from "./sshDeviceScript.ts";
 import * as EasDeviceHost from "./EasDeviceHost.ts";
 import * as SimlockDeviceHost from "./SimlockDeviceHost.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -98,7 +98,6 @@ const sshProbeDiagnostics = [
   [/^No compatible Node/u, `this host has no npm compatible with Node ${NODE_MINIMUM}+.`],
   [/^npm probe failed/u, "npm failed to run on this host."],
 ] as const;
-
 const sshProbeFailureMessage = (error: DeviceHost.DeviceHostError): string => {
   const windows = SshDeviceHost.isSshWindowsHostError(error.cause) ? error.cause : null;
   const cause = windows ? windows.cause : error.cause;
@@ -111,6 +110,7 @@ const sshProbeFailureMessage = (error: DeviceHost.DeviceHostError): string => {
     return "Could not connect to this host over SSH.";
 
   const lines = cause.exitCode === 1 ? cause.stderr.split(/\r?\n/u).map((line) => line.trim()) : [];
+  if (lines.includes(SYMLINK_HINT)) return SYMLINK_HINT;
   const known = sshProbeDiagnostics.find(([pattern]) => lines.some((line) => pattern.test(line)));
   if (known) return `Connected over SSH, but ${known[1]}`;
   if (windows) return windows.message;
@@ -121,7 +121,8 @@ const sshProbeFailureMessage = (error: DeviceHost.DeviceHostError): string => {
 const isToolchainInstallError = Schema.is(DeviceToolchainInstallError);
 
 const actionableHostFailure = (error: DeviceHost.DeviceHostError): string | undefined => {
-  if (error.step === "probe") return sshProbeFailureMessage(error);
+  const message = sshProbeFailureMessage(error);
+  if (error.step === "probe" || message === SYMLINK_HINT) return message;
   if (isToolchainInstallError(error.cause) && error.cause.reason === "npm_not_found")
     return error.cause.message;
   return undefined;

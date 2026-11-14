@@ -15,6 +15,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
 import { SshCommandError } from "@t3tools/ssh/errors";
+import { SYMLINK_HINT } from "./sshDeviceScript.ts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Deferred from "effect/Deferred";
@@ -472,27 +473,29 @@ describe("device setup consent", () => {
       ],
       ["No compatible Node C:/private", "this host has no npm compatible with Node 22.12+."],
       ["npm probe failed: C:/private EACCES SIGTERM", "npm failed to run on this host."],
-    ].map(([diagnostic, expected]) => ({
+      [SYMLINK_HINT, SYMLINK_HINT, "start"],
+    ].map(([diagnostic, expected, step = "probe"]) => ({
       name: `a Windows host reporting ${diagnostic}`,
       exitCode: 1,
       stderr: `private diagnostics\n${diagnostic}`,
-      expected: `Connected over SSH, but ${expected}`,
+      expected: step === "probe" ? `Connected over SSH, but ${expected}` : expected,
+      step,
     })),
   ])(
     "reports SSH probe failure on $name through readiness and host status",
-    ({ exitCode, stderr, expected }) =>
+    ({ exitCode, stderr, expected, ...options }) =>
       Effect.gen(function* () {
+        const step = "step" in options ? options.step : "probe";
+        const cause = new SshCommandError({
+          command: ["ssh", "private arguments"],
+          exitCode,
+          stderr,
+          message: "private diagnostics",
+        });
         const failure = new DeviceHost.DeviceHostError({
           hostId: LOCAL_DEVICE_HOST_ID,
-          step: "probe",
-          cause: new SshDeviceHost.SshWindowsHostError({
-            cause: new SshCommandError({
-              command: ["ssh", "private arguments"],
-              exitCode,
-              stderr,
-              message: "private diagnostics",
-            }),
-          }),
+          step,
+          cause: step === "probe" ? new SshDeviceHost.SshWindowsHostError({ cause }) : cause,
         });
         const { service, settings } = yield* fixture(Effect.void, undefined, false, failure);
         yield* Ref.update(settings, (current) => ({

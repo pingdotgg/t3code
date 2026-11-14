@@ -15,11 +15,11 @@ import {
   remoteDeviceCommand,
   remoteDeviceEnvironment,
   remoteDeviceScript,
+  SYMLINK_HINT,
 } from "./sshDeviceScript.ts";
 
 const exec = NodeUtil.promisify(NodeChildProcess.execFile);
 const windowsHost = HostProcess.Platform.defaultValue() === "win32";
-
 const writeNpmPackage = async (directory: string, version: string, nodeEngine: string) => {
   const root = NodePath.join(directory, "node_modules/npm");
   await NodeFSP.mkdir(NodePath.join(root, "bin"), { recursive: true });
@@ -39,28 +39,25 @@ const writeNpmPackage = async (directory: string, version: string, nodeEngine: s
     { recursive: true },
   );
 };
-
 const writeNodeRuntime = async (directory: string) => {
   await NodeFSP.copyFile(process.execPath, NodePath.join(directory, "node.exe"));
   if (!windowsHost) await NodeFSP.symlink("node.exe", NodePath.join(directory, "node"));
 };
-
-/** Runs a remote device command through the host's native login shell, as sshd would. */
-const runThroughLoginShell = (command: ReturnType<typeof remoteDeviceCommand>) =>
-  NodeChildProcess.spawnSync(
+it("passes bootstrap code through the remote login shell without reinterpreting quotes", () => {
+  const value = "spaces 'single' \"double\" $HOME `literal`\nsecond line";
+  const command = remoteDeviceCommand(
+    "exec node",
+    `process.stdout.write(${JSON.stringify(value)});`,
+    {
+      nodeBootstrap: true,
+    },
+  );
+  const result = NodeChildProcess.spawnSync(
     windowsHost ? "powershell.exe" : "sh",
     windowsHost
       ? ["-NoProfile", "-NonInteractive", "-Command", command.remoteCommandArgs.join(" ")]
       : ["-c", command.remoteCommandArgs.join(" ")],
     { input: command.stdin, encoding: "utf8", timeout: 10000 },
-  );
-
-it("passes bootstrap code through the remote login shell without reinterpreting quotes", () => {
-  const value = "spaces 'single' \"double\" $HOME `literal`\nsecond line";
-  const result = runThroughLoginShell(
-    remoteDeviceCommand("exec node", `process.stdout.write(${JSON.stringify(value)});`, {
-      nodeBootstrap: true,
-    }),
   );
   expect(result.error).toBeUndefined();
   expect(result.stderr).toBe("");
@@ -203,6 +200,7 @@ if (args[0] === 'install') { console.error('fixture registry unavailable'); proc
 else console.log(require('../package.json').version);`;
       await NodeFSP.writeFile(npm, npmFixture);
       type NpmArgs = [path?: string, node?: string, key?: "PATH" | "Path", sibling?: string];
+      let denyLock = false;
       const invoke = async (
         mode: "probe" | "start",
         ...[npmPath = "", nodeVersion, pathKey = "PATH", siblingVersion]: NpmArgs
@@ -213,6 +211,7 @@ else console.log(require('../package.json').version);`;
           `Object.defineProperty(process, 'platform', { value: 'win32' });
 ${nodeVersion ? `Object.defineProperty(process.versions, 'node', { value: ${JSON.stringify(nodeVersion)} });` : ""}
 require('node:os').homedir = () => ${JSON.stringify(home)};
+if (${denyLock}) require('node:fs').symlinkSync = () => { throw Object.assign(Error('fixture symlink blocked'), { code: 'EPERM' }); };
 const childProcess = require('node:child_process');
 const originalSpawnSync = childProcess.spawnSync;
 childProcess.spawnSync = (command, args, options) => command.endsWith('adb.exe')
@@ -256,27 +255,26 @@ childProcess.spawnSync = (command, args, options) => command.endsWith('adb.exe')
           .trim()
           .split("\n")
           .map((line) => JSON.parse(line));
+        const prefix = expect.stringContaining(home);
+        const packageSpec = `expo-device-hub@${DEVICE_HUB_VERSION}`;
         expect(recent).toEqual(
           [
             ["--version"],
             ["--version"],
-            [
-              "install",
-              "--prefix",
-              expect.stringContaining(home),
-              "--no-fund",
-              "--no-audit",
-              `expo-device-hub@${DEVICE_HUB_VERSION}`,
-            ],
+            ["install", "--prefix", prefix, "--no-fund", "--no-audit", packageSpec],
           ].map((args) => ({ node: runtime, childNode: runtime, args })),
         );
       };
       await checkNpm(node);
+      await NodeFSP.writeFile(calls, "");
+      denyLock = true;
+      await rejects(invoke("start"), SYMLINK_HINT);
+      expect(await NodeFSP.readFile(calls, "utf8")).toBe("");
+      denyLock = false;
       const competitor = NodePath.join(home, "Competing runtime");
       await NodeFSP.mkdir(competitor);
       await writeNodeRuntime(competitor);
       await checkNpm(node, competitor, undefined, "Path");
-
       await writeNpmPackage(NodePath.dirname(node), "10.0.0", "^18.17.0 || >=20.0.0");
       await checkNpm(node, "", "22.12.0");
       await writeNpmPackage(NodePath.dirname(node), "11.0.0", "^20.17.0 || >=22.13.0");
@@ -286,15 +284,14 @@ childProcess.spawnSync = (command, args, options) => command.endsWith('adb.exe')
           `No compatible Node 22.12+ and npm pair: npm 11.0.0 at ${npm} requires Node ^20.17.0 || >=22.13.0; found 22.12.0 at ${node}`,
         );
       }
-      for (const [method, code, message, prefix, modes] of [
-        ["error", 17, "fixture npm configuration invalid", "npm probe failed: ", ["probe"]],
-        ["log", 19, "fixture stdout-only failure", "", ["probe", "start"]],
+      for (const [method, code, message, prefix, mode] of [
+        ["error", 17, "fixture npm configuration invalid", "npm probe failed: ", "probe"],
+        ["log", 19, "fixture stdout-only failure", "", "probe"],
+        ["log", 19, "fixture stdout-only failure", "", "start"],
       ] as const) {
         const source = `console.${method}('${message}'); process.exitCode = ${code};`;
         await NodeFSP.writeFile(npm, source);
-        for (const mode of modes) {
-          await rejects(invoke(mode), `${prefix}exit code ${code}: ${message}`);
-        }
+        await rejects(invoke(mode), `${prefix}exit code ${code}: ${message}`);
       }
       await rejects(invoke("probe", "", "18.0.0"), `Found 18.0.0 at ${node}.`);
       await NodeFSP.rm(npm);
@@ -337,7 +334,6 @@ childProcess.spawnSync = (command, args, options) => command.endsWith('adb.exe')
   })();
   return running;
 });
-
 it.effect.each([{ supported: true }, { supported: false }])(
   "preserves a working SSH Node/npm pair and replaces an old Node: supported=$supported",
   ({ supported }) =>
@@ -374,7 +370,6 @@ it.effect.each([{ supported: true }, { supported: false }])(
     }),
   { skip: windowsHost },
 );
-
 it.effect("finds Android Studio Java for a non-interactive SSH session", () =>
   Effect.gen(function* () {
     if ((yield* HostProcess.Platform) === "win32") return;
