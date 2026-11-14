@@ -753,10 +753,16 @@ fn a_credential_counts_idle_time_the_wall_clock_shows_after_a_freeze() {
     credentials.jump_wall(Duration::from_secs(2 * 60 * 60));
     assert!(credentials.resolve(&token).is_some(), "2 hours: alive");
     credentials.jump_wall(Duration::from_secs(3 * 24 * 60 * 60));
-    assert!(credentials.resolve(&token).is_none(), "3 days: idle too long");
+    assert!(
+        credentials.resolve(&token).is_none(),
+        "3 days: idle too long"
+    );
     assert!(credentials.resolve(&token).is_none(), "stays expired");
     credentials.touch("t");
-    assert!(credentials.resolve(&token).is_some(), "the thread's next run");
+    assert!(
+        credentials.resolve(&token).is_some(),
+        "the thread's next run"
+    );
 }
 
 #[test]

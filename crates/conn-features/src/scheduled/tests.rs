@@ -1590,9 +1590,17 @@ mod clock_jumps {
             let woke = env.clock.now_ms();
             settle().await;
             expected += 1;
-            assert_eq!(launches.load(Ordering::SeqCst), expected, "+{jump}s: one run");
+            assert_eq!(
+                launches.load(Ordering::SeqCst),
+                expected,
+                "+{jump}s: one run"
+            );
             let listed = service.find(&task.id).await.expect("task");
-            let next = listed.next_run_at.as_deref().and_then(parse_iso).expect("next");
+            let next = listed
+                .next_run_at
+                .as_deref()
+                .and_then(parse_iso)
+                .expect("next");
             assert!(
                 (woke + 5 * 60_000..=env.clock.now_ms() + 5 * 60_000).contains(&next),
                 "+{jump}s: planned from the wake"
@@ -1627,12 +1635,18 @@ mod clock_jumps {
         settle().await;
         assert_eq!(launches.load(Ordering::SeqCst), 1, "missed, not run");
         let listed = service.find(&task.id).await.expect("task");
-        assert_eq!(listed.next_run_at.as_deref(), Some("2026-07-05T09:00:00.000Z"));
+        assert_eq!(
+            listed.next_run_at.as_deref(),
+            Some("2026-07-05T09:00:00.000Z")
+        );
         assert_eq!(
             listed.last_run_error.as_deref(),
             Some("Missed a scheduled run because the server was not running at that time.")
         );
-        assert_eq!(listed.run_count, 1, "the missed days are not counted as runs");
+        assert_eq!(
+            listed.run_count, 1,
+            "the missed days are not counted as runs"
+        );
     }
 
     /// The monotonic clock stood still. The timer wakes when its monotonic sleep ends, at
@@ -1654,7 +1668,8 @@ mod clock_jumps {
             settle().await;
             // Frozen one minute into the 10-minute sleep; the wall clock jumps past the run.
             tokio::time::advance(Duration::from_secs(MIN)).await;
-            env.clock.set(env.clock.now_ms() + i64::try_from(jump * 1000).expect("ms"));
+            env.clock
+                .set(env.clock.now_ms() + i64::try_from(jump * 1000).expect("ms"));
             settle().await;
             assert_eq!(launches.load(Ordering::SeqCst), 0, "+{jump}s: still asleep");
             tokio::time::advance(Duration::from_secs(9 * MIN)).await;
@@ -1678,8 +1693,15 @@ mod clock_jumps {
         env.clock.set(ms("2026-07-01T09:05:00.000Z"));
         tokio::time::advance(Duration::from_secs(9 * MIN)).await;
         settle().await;
-        assert_eq!(launches.load(Ordering::SeqCst), 0, "recorded missed, not run");
+        assert_eq!(
+            launches.load(Ordering::SeqCst),
+            0,
+            "recorded missed, not run"
+        );
         let listed = service.find(&task.id).await.expect("task");
-        assert_eq!(listed.next_run_at.as_deref(), Some("2026-07-02T09:00:00.000Z"));
+        assert_eq!(
+            listed.next_run_at.as_deref(),
+            Some("2026-07-02T09:00:00.000Z")
+        );
     }
 }

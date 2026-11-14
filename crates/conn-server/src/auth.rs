@@ -1318,7 +1318,10 @@ mod tests {
         let code = fresh_code(PAIRING_CODE_TTL_MS);
         let startup_code = fresh_code(STARTUP_PAIRING_CODE_TTL_MS);
         let rpc_ticket = ticket();
-        assert!(pairing(&fresh_code(PAIRING_CODE_TTL_MS)), "a fresh code pairs");
+        assert!(
+            pairing(&fresh_code(PAIRING_CODE_TTL_MS)),
+            "a fresh code pairs"
+        );
         assert!(store.authenticate_ticket(&ticket(), "rpc").is_some());
         jump_wall(10 * MIN);
         assert!(!pairing(&code), "a 5-minute code after 10 minutes");

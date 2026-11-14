@@ -544,8 +544,14 @@ mod tests {
         };
         assert!(status.wants_at("grok", false, &wall(30)));
         for jump in [10 * 60, 2 * 3600, 3 * 86_400] {
-            assert!(!status.wants_at("grok", false, &wall(jump)), "wall +{jump}s");
-            assert!(!status.wants_at("grok", false, &mono(jump)), "monotonic +{jump}s");
+            assert!(
+                !status.wants_at("grok", false, &wall(jump)),
+                "wall +{jump}s"
+            );
+            assert!(
+                !status.wants_at("grok", false, &mono(jump)),
+                "monotonic +{jump}s"
+            );
         }
         let stepped_back = Mark {
             wall_ms: taken.wall_ms - 3_600_000,
@@ -598,8 +604,7 @@ mod tests {
             _instance: Option<Value>,
             _defer: bool,
         ) -> conn_provider::BoxFuture<'_, bool> {
-            self.calls
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Box::pin(async { false })
         }
     }
