@@ -164,6 +164,28 @@ describe("ACP Registry probe", () => {
     ]);
   });
 
+  it("displays the full command advertised by a legacy terminal auth method", () => {
+    const methods = normalizeAcpRegistryAuthMethods(
+      [
+        {
+          id: "legacy-login",
+          name: "Terminal login",
+          type: "terminal",
+          args: ["/venv/bin/vibe-acp", "--setup"],
+          _meta: {
+            "terminal-auth": {
+              command: "/venv/bin/python3",
+              args: ["/venv/bin/vibe-acp", "--setup"],
+            },
+          },
+        },
+      ],
+      { command: "/managed/agent", args: ["--acp"] },
+    );
+
+    expect(methods[0]?.command).toBe("/venv/bin/python3 /venv/bin/vibe-acp --setup");
+  });
+
   it("omits unsafe truncated auth commands instead of publishing broken shell", () => {
     const methods = normalizeAcpRegistryAuthMethods(
       [

@@ -22,6 +22,7 @@ import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 import * as ProviderAuthFlow from "@t3tools/provider-core/server/providerAuthFlow";
 import {
   acpRegistrySetupClientCapabilities,
+  acpRegistryTerminalAuthInvocation,
   normalizeAcpRegistryAuthMethods,
   normalizeAcpRegistryWebUrl,
 } from "./probe.ts";
@@ -191,10 +192,11 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
       );
     const exited = yield* Deferred.make<number>();
     const output = yield* Queue.sliding<string>(64);
+    const invocation = acpRegistryTerminalAuthInvocation(method, resolved.spawn);
     const process = yield* pty.value
       .spawn({
-        shell: resolved.spawn.command,
-        args: [...resolved.spawn.args, ...(method.args ?? [])],
+        shell: invocation.command,
+        args: [...invocation.args],
         cwd: options.cwd,
         cols: 80,
         rows: 24,

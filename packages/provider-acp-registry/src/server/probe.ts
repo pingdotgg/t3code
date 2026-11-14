@@ -20,6 +20,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
@@ -115,6 +116,24 @@ function shellDisplayToken(token: string): string {
   return SHELL_SAFE_TOKEN.test(token) ? token : `'${token.replaceAll("'", `'\\''`)}'`;
 }
 
+const decodeLegacyTerminalAuth = Schema.decodeUnknownOption(
+  Schema.Struct({
+    command: Schema.NonEmptyString,
+    args: Schema.optional(Schema.Array(Schema.String)),
+  }),
+);
+
+export function acpRegistryTerminalAuthInvocation(
+  method: Extract<EffectAcpSchema.AuthMethod, { readonly type: "terminal" }>,
+  spawn: AcpRegistryAuthSpawnContext,
+) {
+  // Legacy metadata names a complete invocation, which can use a different executable.
+  return Option.match(decodeLegacyTerminalAuth(method._meta?.["terminal-auth"]), {
+    onSome: ({ command, args }) => ({ command, args: args ?? [] }),
+    onNone: () => ({ command: spawn.command, args: [...spawn.args, ...(method.args ?? [])] }),
+  });
+}
+
 function terminalAuthCommand(
   method: Extract<EffectAcpSchema.AuthMethod, { readonly type: "terminal" }>,
   spawn: AcpRegistryAuthSpawnContext,
@@ -122,7 +141,8 @@ function terminalAuthCommand(
   const environmentPrefix = Object.entries(method.env ?? {}).map(
     ([name, value]) => `${name}=${shellDisplayToken(value)}`,
   );
-  const command = [spawn.command, ...spawn.args, ...(method.args ?? [])].map(shellDisplayToken);
+  const invocation = acpRegistryTerminalAuthInvocation(method, spawn);
+  const command = [invocation.command, ...invocation.args].map(shellDisplayToken);
   const displayCommand = [...environmentPrefix, ...command].join(" ");
   return displayCommand.length <= MAX_COMMAND_LINE_LENGTH ? displayCommand : undefined;
 }

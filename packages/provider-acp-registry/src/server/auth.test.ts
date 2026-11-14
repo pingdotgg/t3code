@@ -318,6 +318,29 @@ it.effect(
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
+it.effect("runs the full command advertised by a legacy terminal auth method", () =>
+  Effect.gen(function* () {
+    const h = yield* makeHarness({
+      id: "legacy-login",
+      name: "Terminal login",
+      type: "terminal",
+      args: ["/venv/bin/vibe-acp", "--setup"],
+      _meta: {
+        "terminal-auth": {
+          command: "/venv/bin/python3",
+          args: ["/venv/bin/vibe-acp", "--setup"],
+        },
+      },
+    });
+    yield* h.controller.start("owner", Effect.void, "legacy-login");
+    yield* h.phase("waiting");
+    assert.deepInclude(h.terminalSpawn(), {
+      shell: "/venv/bin/python3",
+      args: ["/venv/bin/vibe-acp", "--setup"],
+    });
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("cancels the login PTY and rejects further terminal input", () =>
   Effect.gen(function* () {
     const h = yield* makeHarness(terminalMethod);
