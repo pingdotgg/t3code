@@ -223,6 +223,9 @@ for (const name of implemented) {
   report(`tools/list ${name}`, ts !== undefined && JSON.stringify(ts) === JSON.stringify(rust));
 }
 
+/** What a search found, in order: ids differ between servers, titles and sources do not. */
+const searchOrder = (value) => value.matches.map((match) => [match.title, match.source]);
+
 // Per-server state the calls refer to: project and thread ids differ.
 const context = [{}, {}];
 const steps = [
@@ -248,9 +251,94 @@ const steps = [
       workspaceStrategy: { type: "worktree", baseRef: "HEAD", branch: "parity/worktree" },
       clientRequestId: "parity-worktree",
     }),
-    undefined,
+    (c, v) => (c.idleThreadId = v.threadId),
     { noTurn: true },
   ],
+  // t3_thread_organize on the idle worktree thread: every action, then the refusals.
+  ...[
+    "pin",
+    "unpin",
+    "settle",
+    "unsettle",
+    "mark_unread",
+    "archive",
+    "unarchive",
+    "unsnooze",
+  ].map((action) => ["t3_thread_organize", (c) => ({ threadId: c.idleThreadId, action })]),
+  [
+    "t3_thread_organize",
+    (c) => ({ threadId: c.idleThreadId, action: "snooze", snoozedUntil: "2099-01-01T00:00:00.000Z" }),
+  ],
+  ["t3_thread_organize", (c) => ({ threadId: c.idleThreadId, action: "unsnooze" })],
+  ["t3_thread_organize", (c) => ({ threadId: c.idleThreadId, action: "snooze" })],
+  [
+    "t3_thread_organize",
+    (c) => ({ threadId: c.idleThreadId, action: "snooze", snoozedUntil: "2001-01-01T00:00:00.000Z" }),
+  ],
+  [
+    "t3_thread_organize",
+    (c) => ({ threadId: c.idleThreadId, action: "snooze", snoozedUntil: "not a date" }),
+  ],
+  ["t3_thread_organize", () => ({ action: "pin" })],
+  ["t3_thread_organize", () => ({ threadId: "thread:none", action: "pin" })],
+  ["t3_thread_organize", (c) => ({ threadId: c.idleThreadId, action: "bogus" })],
+  // t3_queue on the idle thread: an empty queue, then each write on a run that is not queued.
+  ["t3_queue", (c) => ({ threadId: c.idleThreadId, action: "list" })],
+  ["t3_queue", (c) => ({ threadId: c.idleThreadId, action: "list", cursor: 5, limit: 1 })],
+  ["t3_queue", (c) => ({ threadId: c.idleThreadId, action: "read" })],
+  ["t3_queue", (c) => ({ threadId: c.idleThreadId, action: "read", queuedRunId: "run:none" })],
+  ["t3_queue", (c) => ({ threadId: c.idleThreadId, action: "cancel" })],
+  ["t3_queue", (c) => ({ threadId: c.idleThreadId, action: "cancel", queuedRunId: "run:none" })],
+  ["t3_queue", (c) => ({ threadId: c.idleThreadId, action: "edit", queuedRunId: "run:none" })],
+  [
+    "t3_queue",
+    (c) => ({ threadId: c.idleThreadId, action: "edit", queuedRunId: "run:none", text: "x" }),
+  ],
+  [
+    "t3_queue",
+    (c) => ({ threadId: c.idleThreadId, action: "reorder", queuedRunId: "run:none", beforeRunId: null }),
+  ],
+  ["t3_queue", (c) => ({ threadId: c.idleThreadId, action: "reorder", queuedRunId: "run:none" })],
+  [
+    "t3_queue",
+    (c) => ({ threadId: c.idleThreadId, action: "promote_to_steer", queuedRunId: "run:none" }),
+  ],
+  [
+    "t3_queue",
+    (c) => ({
+      threadId: c.idleThreadId,
+      action: "promote_to_steer",
+      queuedRunId: "run:none",
+      targetRunId: "run:none",
+    }),
+  ],
+  ["t3_queue", () => ({ threadId: "thread:none", action: "list" })],
+  ["t3_queue", () => ({ action: "list" })],
+  ["t3_queue", (c) => ({ threadId: c.idleThreadId, action: "list", limit: 0 })],
+  ["t3_queue", (c) => ({ threadId: c.idleThreadId, action: "list", cursor: -1 })],
+  ["t3_queue", (c) => ({ threadId: c.idleThreadId, action: "list", limit: 1.5 })],
+  ["t3_queue", (c) => ({ threadId: c.idleThreadId, action: "list", limit: "2" })],
+  ["t3_queue", () => ({ threadId: 5, action: "list" })],
+  ["t3_queue", () => ({ action: 5 })],
+  ["send_to_user", () => ({ message: 5 })],
+  ["t3_thread_wait", () => ({ threadId: true })],
+  ["t3_thread_list", () => ({ allProjects: "yes" })],
+  ["t3_thread_list", () => ({ statuses: "running" })],
+  ["t3_thread_configure", () => ({ modelSelection: "x" })],
+  ["t3_thread_read", () => ({ threadId: "thread:none", view: 5 })],
+  ["t3_thread_read", () => ({ threadId: "thread:none", view: "bogus" })],
+  // t3_thread_configure: read, then set the model on the same provider instance.
+  ["t3_thread_configure", (c) => ({ threadId: c.idleThreadId })],
+  [
+    "t3_thread_configure",
+    (c) => ({
+      threadId: c.idleThreadId,
+      modelSelection: { instanceId: "claudeAgent", model: "claude-sonnet-5-5" },
+    }),
+  ],
+  ["t3_thread_configure", (c) => ({ threadId: c.idleThreadId })],
+  ["t3_thread_configure", () => ({ threadId: "thread:none" })],
+  ["t3_thread_configure", () => ({})],
   [
     "t3_thread_launch",
     (c) => ({
@@ -288,11 +376,20 @@ const steps = [
   ],
   ["t3_thread_read", (c) => ({ threadId: c.threadId })],
   ["t3_thread_search", () => ({ query: "Parity renamed" })],
+  ...[{ query: "Parity worktree" }, { query: "parity", limit: 1 }, { query: "nothing matches this" }].map(
+    (input) => ["t3_thread_search", () => input, undefined, { same: searchOrder }],
+  ),
+  ["t3_thread_search", () => ({ query: " a " })],
+  ["t3_thread_search", () => ({ query: "q".repeat(201) })],
   ["t3_thread_read", () => ({ threadId: "thread:none" })],
   ["t3_thread_list", () => ({ bogus: 1 })],
   ["delegate_task", () => ({ task: "x" })],
   ["task_status", () => ({ taskId: "task:none" })],
   ["task_cancel", () => ({ taskId: "task:none" })],
+  // send_to_user acts as the calling thread; its argument check runs first.
+  ["send_to_user", () => ({ message: "hi" })],
+  ["send_to_user", () => ({ message: "" })],
+  ["send_to_user", () => ({ message: "x".repeat(4001) })],
 ];
 // The steps that launch a thread (a model turn on the T3 server) or act on it.
 const onLaunchedThread = (tool, input, options) =>
@@ -302,7 +399,7 @@ const run = noModel
   ? steps.filter(([tool, input, , options]) => !onLaunchedThread(tool, input, options))
   : steps;
 if (noModel) console.log(`no model: skipped ${steps.length - run.length} steps on a launched thread`);
-for (const [tool, input, after] of run) {
+for (const [tool, input, after, options] of run) {
   const results = await Promise.all(
     sessions.map(async (session, i) => {
       const reply = await session.callTool(tool, input(context[i]));
@@ -332,6 +429,10 @@ for (const [tool, input, after] of run) {
     continue;
   }
   const diff = differences(shape(rust.value), shape(ts.value)).filter((d) => !ACCEPTED.has(d));
+  if (options?.same !== undefined) {
+    const [a, b] = [options.same(ts.value), options.same(rust.value)].map((v) => JSON.stringify(v));
+    if (a !== b) diff.push(`values differ: T3 ${a} / Conn ${b}`);
+  }
   report(
     `${label}${diff.length === 0 ? "" : `\n       ${diff.join("\n       ")}`}`,
     diff.length === 0,

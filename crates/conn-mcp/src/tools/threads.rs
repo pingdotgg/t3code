@@ -268,30 +268,38 @@ fn items_within_budget(
     }
 }
 
-const SNIPPET_CHARS: usize = 240;
-
-/// Title, branch, project title, then message text, in active non-subagent threads.
+/// `searchThreads` (`ThreadSearch.ts`): title hits first, then message hits from the
+/// engine's index (one per thread, outside the title hits), with a fifth of the slots kept
+/// for messages. Candidates are the project's active, listed threads.
 pub(super) async fn search(cx: &Cx<'_>, args: &Args) -> ToolResult {
     let query = str_arg(args, "query")
         .unwrap_or_default()
         .trim()
         .to_lowercase();
-    if query.chars().count() < 2 {
+    // `OrchestrationSearchThreadsInput.query`: trimmed, 2 to 200 UTF-16 units.
+    let length = query.encode_utf16().count();
+    if length < 2 {
         return Err(ToolError::InvalidParams(
             "Expected a value with a length of at least 2\n  at [\"query\"]".into(),
         ));
     }
-    let limit = u64_arg(args, "limit").unwrap_or(10) as usize;
+    if length > SEARCH_QUERY_MAX_LENGTH {
+        return Err(ToolError::InvalidParams(format!(
+            "Expected a value with a length of at most {SEARCH_QUERY_MAX_LENGTH}\n  at [\"query\"]"
+        )));
+    }
+    let limit = u64_arg(args, "limit").map_or(SEARCH_DEFAULT_LIMIT, |l| l as usize);
     let own = cx.caller_projection().await?;
     let project_id = str_arg(args, "projectId").map(str::to_owned).or_else(|| {
         own.as_ref()
             .and_then(|p| p["thread"]["projectId"].as_str().map(str::to_owned))
     });
     let shell = cx.shell().await?;
-    let project_titles: Vec<(&Value, String)> = shell["projects"]
+    let live_projects: Vec<(&Value, String)> = shell["projects"]
         .as_array()
         .into_iter()
         .flatten()
+        .filter(|p| p["deletedAt"].is_null())
         .map(|p| {
             (
                 &p["id"],
@@ -299,67 +307,83 @@ pub(super) async fn search(cx: &Cx<'_>, args: &Args) -> ToolResult {
             )
         })
         .collect();
-    let threads: Vec<&Value> = shell["threads"]
+    // `titleCandidates`: not deleted or archived, not a subagent or side chat, in a live project.
+    let mut candidates: Vec<&Value> = shell["threads"]
         .as_array()
         .into_iter()
         .flatten()
+        .filter(|t| t["deletedAt"].is_null() && t["archivedAt"].is_null())
         .filter(|t| t["lineage"]["relationshipToParent"] != "subagent")
+        .filter(|t| t["lineage"]["sideChat"] != true)
+        .filter(|t| live_projects.iter().any(|(id, _)| *id == &t["projectId"]))
         .filter(|t| project_id.as_deref().is_none_or(|id| t["projectId"] == id))
         .collect();
-    let mut matches = Vec::new();
-    let mut pending = Vec::new();
-    for thread in &threads {
-        let lower = |key: &str| thread[key].as_str().unwrap_or_default().to_lowercase();
-        let project_hit = project_titles
-            .iter()
-            .any(|(id, title)| *id == &thread["projectId"] && title.contains(&query));
-        if lower("title").contains(&query) || lower("branch").contains(&query) || project_hit {
-            matches.push(search_match(cx, thread, "title", None, None));
-        } else {
-            pending.push(*thread);
-        }
+    // Like the clients: what the user last wrote, else when the thread began, newest first.
+    let activity = |t: &Value| {
+        t["latestUserMessageAt"]
+            .as_str()
+            .or(t["createdAt"].as_str())
+            .unwrap_or_default()
+            .to_owned()
+    };
+    candidates.sort_by_cached_key(|t| std::cmp::Reverse(activity(t)));
+    let title_hits: Vec<&Value> = candidates
+        .iter()
+        .copied()
+        .filter(|thread| {
+            let lower = |key: &str| thread[key].as_str().unwrap_or_default().to_lowercase();
+            let project_hit = live_projects
+                .iter()
+                .any(|(id, title)| *id == &thread["projectId"] && title.contains(&query));
+            lower("title").contains(&query) || lower("branch").contains(&query) || project_hit
+        })
+        .take(limit)
+        .collect();
+    let shown: Vec<&Value> = title_hits.iter().map(|t| &t["id"]).collect();
+    let mut input = json!({
+        "query": query,
+        "limit": SEARCH_MESSAGE_LIMIT,
+        "excludedThreadIds": shown,
+    });
+    if let Some(id) = &project_id {
+        input["projectId"] = json!(id);
     }
-    // Message text costs a projection read per thread; stop once the page is full.
-    for thread in pending {
-        if matches.len() >= limit {
-            break;
-        }
-        let Ok(projection) = cx
-            .projection(thread["id"].as_str().unwrap_or_default())
-            .await
-        else {
-            continue;
-        };
-        let hit = projection["messages"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .rev()
-            .find(|m| {
-                m["text"]
-                    .as_str()
-                    .is_some_and(|text| text.to_lowercase().contains(&query))
-            });
-        if let Some(message) = hit {
-            let source = if message["role"] == "user" {
-                "user"
-            } else {
-                "assistant"
-            };
-            let text = message["text"].as_str().unwrap_or_default();
-            let snippet: String = text.chars().take(SNIPPET_CHARS).collect();
-            matches.push(search_match(
+    let found = cx
+        .engine()
+        .call("orchestration.searchThreads", input)
+        .await
+        .map_err(|error| internal(format!("{error:?}")))?;
+    let message_hits: Vec<Value> = found["matches"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|hit| {
+            let thread = candidates.iter().find(|t| t["id"] == hit["threadId"])?;
+            Some(search_match(
                 cx,
                 thread,
-                source,
-                Some(snippet),
-                Some(message["createdAt"].clone()),
-            ));
-        }
-    }
+                hit["source"].as_str().unwrap_or("assistant"),
+                hit["snippet"].as_str().map(str::to_owned),
+                Some(hit["messageCreatedAt"].clone()),
+            ))
+        })
+        .collect();
+    let message_slots = message_hits.len().min(limit / 5);
+    let mut matches: Vec<Value> = title_hits
+        .iter()
+        .take(limit.saturating_sub(message_slots))
+        .map(|thread| search_match(cx, thread, "title", None, None))
+        .collect();
+    matches.extend(message_hits);
     matches.truncate(limit);
     Ok(json!({ "currentThreadId": cx.caller_thread_id(), "matches": matches }))
 }
+
+/// The tool's `limit` default, and the message hits `searchThreads` asks the index for.
+const SEARCH_DEFAULT_LIMIT: usize = 50;
+const SEARCH_MESSAGE_LIMIT: usize = 50;
+/// `THREAD_SEARCH_QUERY_MAX_LENGTH`.
+const SEARCH_QUERY_MAX_LENGTH: usize = 200;
 
 fn search_match(
     cx: &Cx<'_>,
@@ -548,7 +572,7 @@ pub(super) async fn launch(cx: &Cx<'_>, args: &Args) -> ToolResult {
 }
 
 /// `{instanceId, model, options?}`; `provider` names the instance in older clients.
-fn normalize_selection(mut selection: Value) -> Value {
+pub(super) fn normalize_selection(mut selection: Value) -> Value {
     if selection["instanceId"].is_null()
         && let Some(provider) = selection.get("provider").cloned()
     {

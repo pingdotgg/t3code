@@ -217,9 +217,38 @@ const { ORCHESTRATOR_MCP_RUNNING_TASK_NEXT } = await import(
   NodeURL.pathToFileURL(NodePath.join(repo, "packages/contracts/src/orchestratorMcp.ts")).href
 );
 const runningTaskNextOut = NodePath.join(here, "..", "src", "running-task-next.txt");
+// Arguments that keep an explicit `null`. T3 decodes with the JSON codec of each tool's
+// schema (`decodeAsAdvertised`), which reads `null` as omitted unless the field itself takes
+// `null` (`Schema.NullOr`, as `t3_queue`'s `beforeRunId`). The advertised JSON schema drops
+// that `null` branch, so ask each implemented tool's Effect schema directly.
+const Schema = await pkg("effect/Schema");
+const Exit = await pkg("effect/Exit");
+const effectTools = new Map();
+const toolkitsDir = NodePath.join(server, "src/mcp/toolkits");
+for (const kit of NodeFS.readdirSync(toolkitsDir)) {
+  const file = NodePath.join(toolkitsDir, kit, "tools.ts");
+  if (!NodeFS.existsSync(file)) continue;
+  for (const value of Object.values(await import(NodeURL.pathToFileURL(file).href))) {
+    if (value?.tools === undefined) continue;
+    for (const [name, tool] of Object.entries(value.tools)) effectTools.set(name, tool);
+  }
+}
+const nullArguments = [];
+for (const name of implemented) {
+  const tool = effectTools.get(name);
+  if (tool === undefined) {
+    console.error(`${name}: no toolkit in apps/server/src/mcp/toolkits/*/tools.ts defines it.`);
+    process.exit(1);
+  }
+  for (const [key, field] of Object.entries(tool.parametersSchema.fields ?? {})) {
+    if (Exit.isSuccess(Schema.decodeUnknownExit(field)(null))) nullArguments.push(`${name} ${key}\n`);
+  }
+}
+const nullArgumentsOut = NodePath.join(here, "..", "src", "null-arguments.txt");
 const outputs = [
   [out, text, `${catalog.length} tools`],
   [runningTaskNextOut, ORCHESTRATOR_MCP_RUNNING_TASK_NEXT, "running task next text"],
+  [nullArgumentsOut, nullArguments.join(""), `${nullArguments.length} arguments that keep null`],
   [instructionsOut, T3_CODE_ORCHESTRATION_INSTRUCTIONS, "agent instructions"],
   [claudeOut, claudeTexts.join(""), `Claude texts (${claudeTextNames.join(" + ")})`],
 ];

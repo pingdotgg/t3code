@@ -16,3 +16,7 @@ t3_thread_launch
 t3_project_list
 t3_project_read
 t3_environment_read
+send_to_user
+t3_thread_organize
+t3_queue
+t3_thread_configure

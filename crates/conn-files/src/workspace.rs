@@ -28,8 +28,8 @@ pub const READ_FILE_MAX_BYTES: u64 = 1024 * 1024;
 
 #[cfg(target_os = "linux")]
 mod flags {
-    pub const O_NONBLOCK: i32 = 0o4000;
-    pub const O_NOFOLLOW: i32 = 0o400000;
+    pub(super) const O_NONBLOCK: i32 = 0o4000;
+    pub(super) const O_NOFOLLOW: i32 = 0o400000;
 }
 #[cfg(not(target_os = "linux"))]
 mod flags {
