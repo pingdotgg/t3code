@@ -12,7 +12,7 @@ monorepo at `conn.pin`.
 | Area | State |
 | --- | --- |
 | `server.discoverSourceControl` | Served: `git`, `jj` (from `conn-vcs`) and all 7 hosts (see "Discovery") |
-| `sourceControl.*` (9) | 6 served: `signInStart`, `signInWait`, `signInCancel`, `appAccess` (as a T3 server without `T3CODE_GITHUB_APP_CLIENT_ID`), `starred`, `star` (GitHub REST, any other host `false`). Not served: `lookupRepository`, `cloneRepository`, `publishRepository` (they need each host's clone URLs and repository creation) |
+| `sourceControl.*` (9) | All 9 served: `signInStart`, `signInWait`, `signInCancel`, `appAccess` (as a T3 server without `T3CODE_GITHUB_APP_CLIENT_ID`), `starred`, `star` (GitHub REST, any other host `false`); `lookupRepository`, `cloneRepository`, `publishRepository` for GitHub, Cursor Origin, GitLab, Bitbucket and Azure DevOps (see "Repositories"). Forgejo and GitCafe have no repository operations yet |
 | `git.*` (3) | Not served |
 | `pr` in VCS status | Not served (always `null`) |
 | `pullRequests.*` (35) | Not served |
@@ -27,7 +27,11 @@ monorepo at `conn.pin`.
 | `http.rs` | One HTTPS request per connection (hyper + rustls), bounded answer, local fake server for tests |
 | `settings.rs` | A host's saved fields (`hosts`, `tokens`, Bitbucket's and GitCafe's), secret references |
 | `discovery.rs` | The generic CLI probe (`probeSourceControlProvider`), the auth text helpers, a stub executable for tests |
-| `hosts/<host>.rs` | One module per host: its discovery today; its repository and pull request operations later |
+| `cli.rs` | A host CLI call outside discovery, as `VcsProcess.run` runs it (30 s, 1,000,000 bytes) |
+| `remote.rs` | Clone URL and remote text: `cloneUrl.ts`, `parseGitRemoteRepository`, `repositoryKeyFromRemote`, the redaction helpers |
+| `repository.rs` | `SourceControlRepositoryService`: lookup, clone (its own `git clone` child), publish (`ensureRemote`, push, upstream) |
+| `hosts/<host>.rs` | One module per host: its discovery |
+| `hosts/repositories.rs` | Each host's `getRepositoryCloneUrls` and `createRepository` (`Hosts`) |
 
 ## Sign-in and stars
 
@@ -72,10 +76,14 @@ CLI login of the machine is read.
 
 Deviations from the T3 server:
 
-- **No login-shell `PATH` refresh.** Before discovery the T3 server re-reads `PATH` from the
-  login shell (`refreshPathFromLoginShell`, cached 10 s) and writes it into its own
-  environment. Rust 2024 makes `std::env::set_var` unsafe and this workspace forbids `unsafe`,
-  so a CLI installed after the server started is found after a restart.
+- **The login-shell `PATH` lives beside the environment, not in it.** Before discovery the T3
+  server re-reads `PATH`, `__MISE_DIFF` and `JAVA_HOME` from the login shell
+  (`refreshPathFromLoginShell`, cached 10 s) and writes them into its own environment.
+  `std::env::set_var` is unsafe once threads exist, so `conn_support::login_env` keeps them and
+  every spawn site adds them. The same happens at start (`fixPath`). Not ported: the account's
+  shell from the user database (only `$SHELL`, then `/bin/zsh` or `/bin/bash`), the macOS
+  `launchctl getenv PATH` fallback, Nushell's capture, and the desktop's
+  `shellEnvironmentPrepared` (the shell is read at start also when the desktop prepared it).
 - **No secret providers.** A saved credential that is a secret reference reads as the T3
   server's `SettingsSecretUnresolvedError` (its message names the provider).
 - **No GitHub App sign-in.** The server acts as a T3 server without
@@ -87,6 +95,51 @@ Deviations from the T3 server:
   gets the generic "failed" hint.
 - **No concurrency keys.** T3 runs at most 4 `gh` children and 4 non-`git` children at once;
   discovery here starts at most two per CLI host at once, 14 in all.
+
+## Repositories
+
+`sourceControl.lookupRepository`, `cloneRepository` and `publishRepository` follow
+`SourceControlRepositoryService.ts` (`repository.rs`); the host half is in
+`hosts/repositories.rs`:
+
+| Host | Lookup | Create |
+| --- | --- | --- |
+| GitHub | `GET repos/{owner}/{name}` (a bare name: `GET user` for the owner); the host from `GH_REPO` or the checkout's GitHub remote (`git remote -v`, `git config --get-regexp ^remote\..*\.gh-resolved$`), else `GH_HOST`, else github.com | `POST user/repos` or `orgs/{owner}/repos` with `{"name","private"}` |
+| Cursor Origin | `GET /v1/origin/repos/{owner}/{name}` with the `origin auth token` bearer (one retry after a 401) | private only: `POST /v1/origin/repos/{owner}` `{"name"}`, then `PATCH` `{"visibility":"private"}` (3 tries, 1 s apart); a bare name uses the personal namespace |
+| GitLab | `glab api projects/<encoded path>` | `glab api namespaces/<encoded>` for the id, then `glab api --method POST projects --raw-field path= name= visibility= [namespace_id=]` |
+| Bitbucket | `GET /repositories/{workspace}/{slug}` | `POST` the same path with `{"scm":"git","is_private":...}` |
+| Azure DevOps | `az repos show --detect true --repository <name> [--project <p>] --only-show-errors --output json` | `az repos create --detect true --name <name> [--project <p>] ...` |
+
+A host failure reaches the client as T3's fixed "The source control operation could not be
+completed.", except Bitbucket's "Bitbucket repositories must be specified as
+workspace/repository." (the one host error with a `userFacingDetail`). A clone runs its own
+`git clone --progress -- <url> <name>` with `GIT_PROGRESS_DELAY=0`, `GIT_TERMINAL_PROMPT=0` and
+`LANGUAGE=C` (the locale is left alone, unlike other `git` children here), keeps the last four
+non-progress stderr lines with URL credentials removed, stops after 2 minutes, and retries a
+refused SSH clone over HTTPS. Publish adds the remote (`ensureRemote`), pushes
+`HEAD:refs/heads/<branch>` with no deadline, records the upstream, and switches an
+auto-selected SSH remote to HTTPS after an SSH refusal. Every failed push reads as T3's fixed
+text.
+
+Proofs: the cases of `SourceControlRepositoryService.test.ts` on local bare repositories, with
+a stub `git` for the SSH refusals and the slow clone (`repository_tests.rs`); each host's argv,
+paths, headers and bodies against stub CLIs and a loopback fake server
+(`hosts/repositories_tests.rs`); the real client decodes all three (`effect-client.mjs`).
+
+Deviations:
+
+- **Forgejo and GitCafe** have no repository operations: a lookup, a clone by name or a publish
+  there fails as a host with no driver, with T3's fixed text. A clone by URL works for any host.
+- **GitHub's host from a checkout** recognises github.com, `*.ghe.com` and SSH aliases of
+  github.com; a GitHub Enterprise Server remote is not recognised, so `GH_HOST` decides.
+- **No rate-limit pause, quota or concurrency limit** (T3: GitHub 8 at once with a 10 % quota
+  reserve; Bitbucket 4 at once with a shared 429 pause). Bitbucket redirects are not followed.
+- **The Origin token** is read on each call (T3 keeps it 5 minutes).
+- **Publish** reads the branch with `git symbolic-ref` (T3: `statusDetails`) and refreshes the VCS
+  status afterwards, but has no repository identity cache to refresh.
+- **The clone child** gets neither T3's trace2 monitor variables nor the removal of inherited
+  `GIT_DIR`-style variables.
+- The error's `cause` is not sent; clients read `detail`.
 
 ## Costs
 
