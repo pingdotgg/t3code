@@ -4139,6 +4139,29 @@ export function permissionResultFromDecision(input: {
   };
 }
 
+// The SDK forwards these at runtime without typing them. Each marks an ask that no stored
+// grant may answer: an ask rule, a hook's ask, a safety check, or a card the user answers on.
+function askNeedsPerson(callbackOptions: Parameters<CanUseTool>[2]): boolean {
+  const untyped = callbackOptions as Parameters<CanUseTool>[2] & {
+    readonly requiresUserInteraction?: boolean;
+    readonly decisionReasonType?: string;
+  };
+  return (
+    untyped.requiresUserInteraction === true ||
+    untyped.decisionReasonType === "rule" ||
+    untyped.decisionReasonType === "hook" ||
+    untyped.decisionReasonType === "safetyCheck"
+  );
+}
+
+function wholeToolAllowRules(updates: ReadonlyArray<PermissionUpdate>): Array<string> {
+  return updates.flatMap((update) =>
+    update.type === "addRules" && update.behavior === "allow"
+      ? update.rules.flatMap((rule) => (rule.ruleContent === undefined ? [rule.toolName] : []))
+      : [],
+  );
+}
+
 function toSessionPermissionUpdates(
   toolName: string,
   suggestions: ReadonlyArray<PermissionUpdate> | undefined,
@@ -4882,6 +4905,9 @@ interface ClaudeLiveQueryContext {
   // Per process, not per session: a relative temp dir follows the cwd this CLI
   // was launched in, and a later turn's cwd can differ.
   readonly taskOutputRoot: string | undefined;
+  // Tools granted for the whole session while in Plan in this CLI process. In Plan the
+  // CLI keeps asking despite the session rule it was given, so the adapter honors the grant.
+  readonly sessionAllowedTools: Set<string>;
 }
 
 interface ActiveClaudeToolCall {
@@ -11734,8 +11760,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             } satisfies PermissionResult;
           }
 
+          const liveQuery = yield* Ref.get(queryContext);
           const activePermissionMode =
-            (yield* Ref.get(queryContext))?.permissionMode ?? context.queryPolicy.permissionMode;
+            liveQuery?.permissionMode ?? context.queryPolicy.permissionMode;
           const safetyReason = NodeUtil.stripVTControlCharacters(
             callbackOptions.decisionReason ?? "",
           ).trim();
@@ -11751,6 +11778,21 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return {
               behavior: "deny",
               message: `Claude Code's removal safety check denied this command; the user did not reject it. The command did not run. Do not bypass the check by splitting the removal, putting it in a script, or using another tool or shell. If the warning below supplies a safe rewrite, use it and let the same check evaluate it. Otherwise continue the rest of the task without the removal and tell the user what you needed to delete and why. Warning: ${safetyReason}`,
+              toolUseID: callbackOptions.toolUseID,
+            } satisfies PermissionResult;
+          }
+
+          // Outside Plan the CLI honors session rules itself, so a callback there is a
+          // safety check or ask the cached grant must not answer.
+          const mayUseStandingGrant =
+            liveQuery?.permissionMode === "plan" &&
+            callbackOptions.suppressAlwaysAllowRule !== true &&
+            callbackOptions.matchedAskRule === undefined &&
+            !askNeedsPerson(callbackOptions);
+          if (mayUseStandingGrant && liveQuery.sessionAllowedTools.has(toolName)) {
+            return {
+              behavior: "allow",
+              updatedInput: toolInput,
               toolUseID: callbackOptions.toolUseID,
             } satisfies PermissionResult;
           }
@@ -11821,7 +11863,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           );
           if (!(yield* Deferred.isDone(decision))) yield* cancelWithdrawnRequest(artifacts);
 
-          return permissionResultFromDecision({
+          const result = permissionResultFromDecision({
             toolName,
             ...resolvedDecision,
             toolInput,
@@ -11831,6 +11873,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ? {}
               : { suggestions: callbackOptions.suggestions }),
           });
+          if (mayUseStandingGrant && result.behavior === "allow" && result.updatedPermissions) {
+            for (const allowedTool of wholeToolAllowRules(result.updatedPermissions)) {
+              liveQuery.sessionAllowedTools.add(allowedTool);
+            }
+          }
+          return result;
         });
 
         const canUseTool: CanUseTool = (toolName, toolInput, callbackOptions) =>
@@ -12363,6 +12411,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               resolvedTurnCwd,
               hostPlatform,
             ),
+            sessionAllowedTools: new Set(),
           };
           // One step, so the replaced process cannot exit between the install and the handoff.
           yield* Ref.update(queryContext, (replaced) => {
