@@ -87,12 +87,16 @@ Claude receives an HTTP MCP server in its query options:
       },
     },
   },
-  allowedTools: [
-    // existing allowed tools
-    "mcp__t3-code__*",
-  ],
+  settings: {
+    permissions: {
+      allow: ["mcp__t3-code__*"],
+    },
+  },
 }
 ```
+
+The allow rule goes in flag settings, not `allowedTools`: the SDK warns on every
+query whose bare `allowedTools` entries skip `canUseTool`.
 
 The adapter logs only whether MCP configuration exists; it does not log the
 server headers or token.
