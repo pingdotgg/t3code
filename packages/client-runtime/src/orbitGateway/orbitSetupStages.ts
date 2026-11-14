@@ -50,11 +50,11 @@ function createRows(start: OrbitThreadStart): OrbitSetupCreateRow[] {
   const addressOfCompletion: OrbitCreateRowStatus | null =
     completion === "running" ? "running" : completion === "failed" ? "failed" : null;
   const createFailed = start.error !== null && start.environmentId === null;
-  const failedHere =
-    createFailed && !ORBIT_CREATE_ROW_IDS.some((id) => saved?.[id]?.status === "failed");
+  const sequential = ["container", "t3", "register"] as const;
+  const failedHere = createFailed && !sequential.some((id) => saved?.[id]?.status === "failed");
   // A failure the Operation never named (a timeout, a lost Gateway) stops the row that ran.
   const stopped = failedHere
-    ? (["container", "t3", "register"] as const).findLast((id) => saved?.[id]?.status === "running")
+    ? sequential.findLast((id) => saved?.[id]?.status === "running")
     : undefined;
   return ORBIT_CREATE_ROW_IDS.map((id) => {
     const row = saved?.[id];
