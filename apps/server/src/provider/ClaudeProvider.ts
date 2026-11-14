@@ -309,7 +309,11 @@ export type ClaudeCapabilitiesProbe = {
   readonly usageCheckedAt?: string;
   /** Each settings source's `maxEffortLevel` caps; Claude Code clamps every higher effort. */
   readonly effortCapSources?: ReadonlyArray<ClaudeEffortCapSource>;
+  /** Settings files Claude Code skipped because they failed to parse or validate. */
+  readonly settingsErrors?: ReadonlyArray<ClaudeSettingsError>;
 };
+
+type ClaudeSettingsError = { readonly file: string | undefined; readonly message: string };
 
 // `getSettings` exists at runtime but is missing from the SDK's `Query` type, and older CLIs
 // reject the control request.
@@ -317,8 +321,33 @@ type ClaudeSettingsQuery = {
   readonly getSettings?: () => Promise<{
     readonly effective?: unknown;
     readonly sources?: unknown;
+    readonly errors?: unknown;
   }>;
 };
+
+function parseClaudeSettingsErrors(errors: unknown): ReadonlyArray<ClaudeSettingsError> {
+  if (!Array.isArray(errors)) return [];
+  return errors.flatMap((error) => {
+    if (!error || typeof error !== "object") return [];
+    const { file, path, message } = error as {
+      readonly file?: unknown;
+      readonly path?: unknown;
+      readonly message?: unknown;
+    };
+    if (typeof message !== "string") return [];
+    return [
+      {
+        file: typeof file === "string" ? file : undefined,
+        message: typeof path === "string" && path ? `${path}: ${message}` : message,
+      },
+    ];
+  });
+}
+
+function formatClaudeSettingsErrorsMessage(errors: ReadonlyArray<ClaudeSettingsError>): string {
+  const details = errors.map(({ file, message }) => (file ? `${file}: ${message}` : message));
+  return `These Claude settings files did not load, so nothing in them is in effect, including hooks and permission rules. ${details.join("; ")}`;
+}
 
 function parseClaudeMaxEffortLevel(value: unknown): ClaudeEffortLevel | undefined {
   return CLAUDE_EFFORT_LEVELS.find((level) => level === value);
@@ -558,9 +587,10 @@ const probeClaudeCapabilities = (
                 rate_limits: usageResult.success.rate_limits,
               }
             : undefined;
-        const effortCapSources = parseClaudeEffortCapSources(
-          settingsResult && Result.isSuccess(settingsResult) ? settingsResult.success : undefined,
-        );
+        const settings =
+          settingsResult && Result.isSuccess(settingsResult) ? settingsResult.success : undefined;
+        const effortCapSources = parseClaudeEffortCapSources(settings);
+        const settingsErrors = parseClaudeSettingsErrors(settings?.errors);
         const account = init.account as
           | {
               readonly email?: string;
@@ -580,6 +610,7 @@ const probeClaudeCapabilities = (
           ...(init.models?.length ? { models: init.models } : {}),
           ...(usage ? { usage, usageCheckedAt } : {}),
           ...(effortCapSources ? { effortCapSources } : {}),
+          ...(settingsErrors.length > 0 ? { settingsErrors } : {}),
         } satisfies ClaudeCapabilitiesProbe;
       }).pipe(
         Effect.tap(() =>
@@ -864,6 +895,10 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     parsedVersion
       ? yield* resolveResetCredits(parsedVersion)
       : undefined;
+  const settingsErrorsMessage = capabilities.settingsErrors?.length
+    ? formatClaudeSettingsErrorsMessage(capabilities.settingsErrors)
+    : undefined;
+  const message = [settingsErrorsMessage, versionUpgradeMessage].filter(Boolean).join(" ");
   return buildServerProvider({
     presentation: CLAUDE_PRESENTATION,
     enabled: claudeSettings.enabled,
@@ -882,7 +917,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         ...(capabilities.workspaceId ? { workspaceId: capabilities.workspaceId } : {}),
         ...(authMetadata ? authMetadata : {}),
       },
-      ...(versionUpgradeMessage ? { message: versionUpgradeMessage } : {}),
+      ...(message ? { message } : {}),
       usageLimits: resetCredits ? { ...usageLimits, resetCredits } : usageLimits,
     },
   });

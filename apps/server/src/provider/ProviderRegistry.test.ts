@@ -188,6 +188,7 @@ type TestClaudeCapabilities = {
   readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
   readonly models?: ReadonlyArray<ModelInfo>;
+  readonly settingsErrors?: ReadonlyArray<{ readonly file: string; readonly message: string }>;
 };
 
 function claudeCapabilities(overrides: Partial<TestClaudeCapabilities> = {}) {
@@ -4280,6 +4281,31 @@ it.layer(
         );
         assert.strictEqual(status.status, "ready");
         assert.strictEqual(status.auth.status, "authenticated");
+      }).pipe(
+        Effect.provide(
+          layerMockSpawner((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
+
+    it.effect("says a settings file Claude skipped is not in effect, and stays usable", () =>
+      Effect.gen(function* () {
+        const status = yield* checkClaudeProviderStatus(
+          defaultClaudeSettings,
+          claudeCapabilities({
+            settingsErrors: [
+              { file: "/home/u/.claude/settings.json", message: "Invalid or malformed JSON" },
+            ],
+          }),
+        );
+        assert.strictEqual(status.status, "ready");
+        assert.strictEqual(status.auth.status, "authenticated");
+        assert.include(status.message, "nothing in them is in effect");
+        assert.include(status.message, "/home/u/.claude/settings.json: Invalid or malformed JSON");
       }).pipe(
         Effect.provide(
           layerMockSpawner((args) => {
