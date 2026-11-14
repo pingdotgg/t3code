@@ -239,6 +239,7 @@ function fillSidebarInsetEdge(
   inset: HTMLElement,
   offset: number,
   timing: KeyframeAnimationOptions,
+  lifted: boolean,
 ) {
   const opening = offset < 0;
   const edge = opening
@@ -249,7 +250,8 @@ function fillSidebarInsetEdge(
   edge.style.left = `${opening ? rect.right + offset : rect.right}px`;
   edge.style.width = `${opening ? -offset : window.innerWidth - rect.right}px`;
   edge.replaceChildren(
-    ...sidebarInsetEdgeRows(inset, rect, opening).flatMap(({ top, bottom }) => {
+    // A pane whose clips are lifted paints its own notch past its edge, so the piece starts at its top.
+    ...sidebarInsetEdgeRows(inset, rect, opening && !lifted).flatMap(({ top, bottom }) => {
       if (opening) {
         const piece = document.createElement("div");
         piece.className = "absolute inset-x-0 rounded-e-pane bg-background";
@@ -306,6 +308,11 @@ function slideSidebar(commit: () => void) {
     const offsets = new Map(
       targets.map(({ element, start }) => [element, start - slideTrackEdge(element)]),
     );
+    const landingTops = new Map(
+      targets
+        .filter(({ tracked }) => tracked)
+        .map(({ element }) => [element, element.getBoundingClientRect().top]),
+    );
     const anchorStarts = anchors.map(({ element }) => element.getBoundingClientRect());
     const duration = Number.parseFloat(
       getComputedStyle(first.element).getPropertyValue("--panel-animation-duration"),
@@ -315,6 +322,14 @@ function slideSidebar(commit: () => void) {
       easing: "ease-out",
       id: SIDEBAR_SLIDE_ID,
     };
+    const keptAtEdge = (inset: HTMLElement) =>
+      [
+        ...targets.filter(({ tracked, parent }) => tracked && parent === inset),
+        ...anchors.filter((anchor) => anchor.inset === inset),
+      ].map(({ element }) => element);
+    // Mirrors liftSidebarSlideClips, which an opening slide runs once its targets move.
+    const liftsClips = (inset: HTMLElement) =>
+      inset.scrollLeft === 0 && inset.scrollTop === 0 && keptAtEdge(inset).length > 0;
     const slides = new Map<HTMLElement, number>();
     // How far each target starts from where it lands, so a tracked descendant can subtract it.
     const shifts = new Map<HTMLElement, number>();
@@ -334,27 +349,28 @@ function slideSidebar(commit: () => void) {
       if (tracked) {
         if (!element.isConnected) continue;
         // Measured under its ancestors' slides: a transformed ancestor can become its containing
-        // block until the slide ends, which moves where it lays out meanwhile.
+        // block until the slide ends, which moves where it lays out meanwhile, down as well.
         const sliding = slideTrackEdge(element);
         const from = start - sliding;
         const to = start - ownOffset - sliding + carried;
-        if (Math.abs(from) < 0.5 && Math.abs(to) < 0.5) continue;
-        element.animate({ transform: [`translateX(${from}px)`, `translateX(${to}px)`] }, timing);
+        const y = (landingTops.get(element) ?? 0) - element.getBoundingClientRect().top;
+        if (Math.abs(from) < 0.5 && Math.abs(to) < 0.5 && Math.abs(y) < 0.5) continue;
+        element.animate(
+          { transform: [`translate(${from}px, ${y}px)`, `translate(${to}px, ${y}px)`] },
+          timing,
+        );
         continue;
       }
       const offset = ownOffset - carried;
       if (!element.isConnected || Math.abs(offset) < 0.5) continue;
-      if (inset) fillSidebarInsetEdge(element, offset, timing);
+      if (inset) fillSidebarInsetEdge(element, offset, timing, liftsClips(element));
       element.animate({ transform: [`translateX(${offset}px)`, "translateX(0)"] }, timing);
       slides.set(element, offset);
     }
     const restores = insets.flatMap((inset) => {
       const offset = slides.get(inset) ?? 0;
       if (offset >= 0) return [];
-      const kept = [
-        ...targets.filter(({ tracked, parent }) => tracked && parent === inset),
-        ...anchors.filter((anchor) => anchor.inset === inset),
-      ].map(({ element }) => element);
+      const kept = keptAtEdge(inset);
       return kept.length > 0 ? [liftSidebarSlideClips(inset, offset, kept)] : [];
     });
     if (restores.length > 0) {
