@@ -763,6 +763,18 @@ function cancelledAppOwnedTask(
   };
 }
 
+function askedForLinkedMachine(
+  card: Extract<OrchestrationV2TurnItem, { readonly type: "link_request" }>,
+  linked: Extract<OrchestrationV2InternalCommand, { readonly type: "link_request.record" }>,
+): boolean {
+  if (card.requestedAccess !== linked.requestedAccess) return false;
+  if (card.environmentId !== undefined) return card.environmentId === linked.linkedEnvironmentId;
+  if (card.url !== undefined) return linked.url !== undefined && card.url === linked.url;
+  const normalize = (text: string | undefined) => text?.trim().toLowerCase() ?? "";
+  const hint = normalize(card.hint);
+  return hint !== "" && hint === normalize(linked.hint) && hint === normalize(linked.linkedLabel);
+}
+
 // A workspace change detaches the session, which can settle the calling run at once. Queuing its
 // follow-up in a later command would let a delegated task report its result before that exists.
 function metadataUpdateContinuation(
@@ -7134,10 +7146,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
       }
     }
+    const notification =
+      command.manualContinuationOfRunId === undefined
+        ? command.notification
+        : {
+            source: { kind: "system" as const },
+            outcome: "updated" as const,
+            summary: "Resumed thread",
+          };
     const dispatchText =
-      delegatedCompletion === undefined
-        ? command.text
-        : delegatedCompletionWakeDetail(delegatedCompletion.taskIds, projection.subagents);
+      command.manualContinuationOfRunId !== undefined
+        ? ""
+        : delegatedCompletion === undefined
+          ? command.text
+          : delegatedCompletionWakeDetail(delegatedCompletion.taskIds, projection.subagents);
     const sourcePlanProjection =
       command.sourcePlanRef === undefined
         ? null
@@ -7226,12 +7248,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         effects,
         projection,
         modelSelection:
-          delegatedCompletion === undefined && command.notification === undefined
+          delegatedCompletion === undefined && notification === undefined
             ? modelSelection
             : (projection.runs.find((run) => run.id === dispatchMode.targetRunId)?.modelSelection ??
               modelSelection),
         delegatedCompletion,
-        ...(command.notification === undefined ? {} : { notification: command.notification }),
+        ...(notification === undefined ? {} : { notification }),
         targetRunId: dispatchMode.targetRunId,
         messageId: command.messageId,
         text: dispatchText,
@@ -7492,6 +7514,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(command.restartContinuationOfRunId === undefined
           ? {}
           : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
+        ...(command.manualContinuationOfRunId === undefined
+          ? {}
+          : { manualContinuationOfRunId: command.manualContinuationOfRunId }),
         ...(command.usageLimitContinuationOfRunId === undefined
           ? {}
           : { usageLimitContinuationOfRunId: command.usageLimitContinuationOfRunId }),
@@ -7552,7 +7577,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         createdAt: now,
         updatedAt: now,
         ...(delegatedCompletion === undefined ? {} : { delegatedCompletion }),
-        ...(command.notification === undefined ? {} : { notification: command.notification }),
+        ...(notification === undefined ? {} : { notification }),
       };
       const emitEvent = emit(events, command);
       if (targetProviderThread === undefined) {
@@ -7903,6 +7928,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(command.restartContinuationOfRunId === undefined
           ? {}
           : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
+        ...(command.manualContinuationOfRunId === undefined
+          ? {}
+          : { manualContinuationOfRunId: command.manualContinuationOfRunId }),
         ...(command.usageLimitContinuationOfRunId === undefined
           ? {}
           : { usageLimitContinuationOfRunId: command.usageLimitContinuationOfRunId }),
@@ -7967,7 +7995,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         createdAt: now,
         updatedAt: now,
         ...(delegatedCompletion === undefined ? {} : { delegatedCompletion }),
-        ...(command.notification === undefined ? {} : { notification: command.notification }),
+        ...(notification === undefined ? {} : { notification }),
       };
       const turnItem: OrchestrationV2TurnItem = {
         createdBy: command.createdBy,
@@ -8698,6 +8726,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ...(command.restartContinuationOfRunId === undefined
         ? {}
         : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
+      ...(command.manualContinuationOfRunId === undefined
+        ? {}
+        : { manualContinuationOfRunId: command.manualContinuationOfRunId }),
       ...(command.usageLimitContinuationOfRunId === undefined
         ? {}
         : { usageLimitContinuationOfRunId: command.usageLimitContinuationOfRunId }),
@@ -8755,7 +8786,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       createdAt: now,
       updatedAt: now,
       ...(delegatedCompletion === undefined ? {} : { delegatedCompletion }),
-      ...(command.notification === undefined ? {} : { notification: command.notification }),
+      ...(notification === undefined ? {} : { notification }),
     };
     const turnItem: OrchestrationV2TurnItem = {
       createdBy: command.createdBy,
@@ -9294,6 +9325,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         prompt: command.task,
         title: command.title ?? null,
         model: command.modelSelection.model,
+        modelSelection: command.modelSelection,
         ...(command.completionWake === undefined ? {} : { completionWake: command.completionWake }),
         status: "running",
         result: null,
@@ -9756,6 +9788,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         prompt: command.task,
         title: command.title ?? null,
         model: command.modelSelection.model,
+        modelSelection: command.modelSelection,
         ...(command.completionWake === undefined ? {} : { completionWake: command.completionWake }),
         status: "running",
         result: null,
@@ -10427,6 +10460,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         type: _type,
         commandId: _commandId,
         turnItemId: _turnItemId,
+        answeringTurnItemIds,
         wake,
         ...fields
       } = command;
@@ -10486,6 +10520,39 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         occurredAt: now,
         payload: turnItem,
       });
+      // The link answers the older cards that asked for the same machine and
+      // access. They end without waking anyone: the agent hears this link.
+      // A card still being answered stays open for its own answer to end.
+      if (!unchanged && command.linkStatus === "linked") {
+        for (const item of projection.turnItems) {
+          if (
+            item.type !== "link_request" ||
+            item.linkStatus !== "pending" ||
+            item.ordinal >= turnItem.ordinal ||
+            answeringTurnItemIds?.includes(item.id) === true ||
+            !askedForLinkedMachine(item, command)
+          ) {
+            continue;
+          }
+          yield* emit(
+            events,
+            command,
+          )({
+            type: "turn-item.updated",
+            threadId: command.threadId,
+            ...(item.runId === null ? {} : { runId: item.runId }),
+            ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
+            occurredAt: now,
+            payload: {
+              ...item,
+              status: "cancelled",
+              linkStatus: "cancelled",
+              completedAt: now,
+              updatedAt: now,
+            },
+          });
+        }
+      }
       // The agent asked without waiting, so the answer reaches it as a
       // notification: it starts a turn, or follows the one running. Only the
       // answer that closes the card wakes it, and never a closed thread.

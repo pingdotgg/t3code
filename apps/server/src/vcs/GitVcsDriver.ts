@@ -4,6 +4,7 @@ import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -179,12 +180,16 @@ export interface GitPushResult {
   status: "pushed" | "skipped_up_to_date";
   branch: string;
   upstreamBranch?: string | undefined;
+  /** Set when `upstreamBranch` is on a configured push remote instead of the tracked upstream. */
+  pushRemote?: string | undefined;
   setUpstream?: boolean | undefined;
 }
 
 export interface GitPushTarget {
   remoteName: string;
   branchName: string;
+  /** The tracked upstream is current, yet pushes go to this configured push remote. */
+  viaPushRemote: boolean;
 }
 
 export interface GitRangeContext {
@@ -565,6 +570,7 @@ const gitCommand = Effect.fn("GitVcsDriver.gitCommand")(
     args: ReadonlyArray<string>,
     options?: {
       readonly stdin?: string;
+      readonly onSpawn?: () => void;
       readonly env?: NodeJS.ProcessEnv;
       readonly allowNonZeroExit?: boolean;
       readonly timeoutMs?: number;
@@ -580,6 +586,7 @@ const gitCommand = Effect.fn("GitVcsDriver.gitCommand")(
       cwd,
       spawnCwd: globalThis.process.cwd(),
       ...(options?.stdin !== undefined ? { stdin: options.stdin } : {}),
+      ...(options?.onSpawn !== undefined ? { onSpawn: options.onSpawn } : {}),
       ...(options?.env !== undefined ? { env: options.env } : {}),
       ...(options?.allowNonZeroExit !== undefined
         ? { allowNonZeroExit: options.allowNonZeroExit }
@@ -651,6 +658,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
   const execute: VcsDriver.VcsDriver["Service"]["execute"] = (input) =>
     gitCommand(vcsProcess, input.operation, input.cwd, input.args, {
       ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
+      ...(input.onSpawn !== undefined ? { onSpawn: input.onSpawn } : {}),
       ...(input.env !== undefined ? { env: input.env } : {}),
       ...(input.allowNonZeroExit !== undefined ? { allowNonZeroExit: input.allowNonZeroExit } : {}),
       ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
@@ -1721,15 +1729,48 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         cwd: input.cwd,
         args: ["ls-files", "--cached", `--with-tree=${commitOid}`, "-z", "--", "."],
       });
-      // An empty index and checkpoint have nothing for git restore's pathspec to match.
-      if (tracked.stdout.length > 0) {
-        const sparseConfig = yield* execute({
+      const sparseConfig =
+        tracked.stdout.length > 0
+          ? yield* execute({
+              operation,
+              cwd: input.cwd,
+              args: ["config", "--bool", "core.sparseCheckout"],
+              allowNonZeroExit: true,
+            })
+          : null;
+      const sparseCheckout = sparseConfig?.stdout.trim() === "true";
+      // Restoring away the last tracked file can remove a nested workspace directory.
+      const recreateWorkspace = fileSystem.makeDirectory(input.cwd, { recursive: true }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new VcsProcessExitError({
+              operation,
+              command: "git restore",
+              cwd: input.cwd,
+              exitCode: 0,
+              detail: `Could not recreate the checkpoint workspace: ${cause.message}`,
+            }),
+        ),
+      );
+      const resetIndex = Effect.gen(function* () {
+        // On Windows clean can remove './' and exit 0.
+        yield* recreateWorkspace;
+        yield* execute({
           operation,
           cwd: input.cwd,
-          args: ["config", "--bool", "core.sparseCheckout"],
-          allowNonZeroExit: true,
+          args: [...longPaths, "reset", "--quiet", "--", "."],
         });
-        const sparseCheckout = sparseConfig.stdout.trim() === "true";
+      });
+      let mutationStarted = false;
+      const onSpawn = () => {
+        mutationStarted = true;
+      };
+      // Queued commands preserve user staging; spawned children stop before this scope resets it.
+      yield* Effect.addFinalizer((exit) =>
+        mutationStarted && Exit.hasInterrupts(exit) ? resetIndex.pipe(Effect.ignore) : Effect.void,
+      );
+      // An empty index and checkpoint have nothing for git restore's pathspec to match.
+      if (tracked.stdout.length > 0) {
         const restore = [...longPaths, "restore", "--source", commitOid, "--worktree", "--staged"];
         // restore leaves skip-worktree paths alone. Outside a sparse checkout every such bit was
         // set by hand and capture recorded the file, so override them all.
@@ -1737,6 +1778,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           operation,
           cwd: input.cwd,
           args: [...restore, ...(sparseCheckout ? [] : ["--ignore-skip-worktree-bits"]), "--", "."],
+          onSpawn,
         });
         if (sparseCheckout) {
           // Sparse exclusions stay excluded; only skip-worktree paths the rules select are manual.
@@ -1808,28 +1850,6 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           }
         }
       }
-      // Restoring away the last tracked file can remove a nested workspace directory.
-      const recreateWorkspace = fileSystem.makeDirectory(input.cwd, { recursive: true }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new VcsProcessExitError({
-              operation,
-              command: "git restore",
-              cwd: input.cwd,
-              exitCode: 0,
-              detail: `Could not recreate the checkpoint workspace: ${cause.message}`,
-            }),
-        ),
-      );
-      const resetIndex = Effect.gen(function* () {
-        // On Windows clean can remove './' and exit 0.
-        yield* recreateWorkspace;
-        yield* execute({
-          operation,
-          cwd: input.cwd,
-          args: [...longPaths, "reset", "--quiet", "--", "."],
-        });
-      });
       yield* recreateWorkspace;
       const clean = execute({
         operation,
@@ -1837,6 +1857,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         args: [...longPaths, "clean", "-fd", "--", "."],
         env: { LC_ALL: "C" },
         allowNonZeroExit: true,
+        onSpawn,
       });
       let cleaned = yield* clean;
       // Removing a new .gitignore exposes the files it hid; clean again until nothing is left.
@@ -1890,7 +1911,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       yield* resetIndex;
 
       return true;
-    }),
+    }, Effect.scoped),
 
     diffCheckpoints: Effect.fn("GitVcsDriver.checkpoints.diffCheckpoints")(function* (input) {
       const operation = "GitVcsDriver.checkpoints.diffCheckpoints";
