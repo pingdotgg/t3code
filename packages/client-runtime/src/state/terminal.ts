@@ -261,6 +261,8 @@ export function createTerminalSession(
   const { environmentId, threadId, terminalId } = options.target;
   let lifecycle = INITIAL_TERMINAL_LIFECYCLE;
   let gridSize = options.gridSize;
+  // The seeded grid is a cache or default guess; launch input waits for the surface's own measurement.
+  let gridMeasured = false;
   let generation: number | null = null;
   let liveLifecycleVersion: number | null = null;
   let initialInputPending = Boolean(options.initialInput);
@@ -283,6 +285,7 @@ export function createTerminalSession(
       if (
         result._tag !== "Success" ||
         resized !== shellResized ||
+        !gridMeasured ||
         generation === null ||
         !initialInputPending ||
         !data ||
@@ -429,7 +432,8 @@ export function createTerminalSession(
       return attached;
     },
     reportGridSize: (size) => {
-      if (size.cols === gridSize.cols && size.rows === gridSize.rows) return;
+      if (gridMeasured && size.cols === gridSize.cols && size.rows === gridSize.rows) return;
+      gridMeasured = true;
       gridSize = size;
       sendResize();
     },

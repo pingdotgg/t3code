@@ -242,7 +242,7 @@ it("writes the launch's initial input once, after the measured resize lands", as
   expect(calls.map((call) => call.command)).toEqual(["resize", "resize", "write", "write"]);
 });
 
-it.each(["failed resize", "starting snapshot"] as const)(
+it.each(["failed resize", "starting snapshot", "unmeasured grid"] as const)(
   "keeps launch input pending after a %s until a running shell is successfully resized",
   async (scenario) => {
     let failResize = scenario === "failed resize";
@@ -254,6 +254,8 @@ it.each(["failed resize", "starting snapshot"] as const)(
         if (name === "write" && "data" in input && input.data === "pnpm dev\r") written.resolve();
       },
     });
+    // The seeded grid is 120x40; only "unmeasured grid" never hears from the surface.
+    if (scenario !== "unmeasured grid") session.reportGridSize({ cols: 120, rows: 40 });
     mount(attached);
     emit({ status: scenario === "starting snapshot" ? "starting" : "running", version: 1 });
     await completeCommands();
@@ -261,7 +263,9 @@ it.each(["failed resize", "starting snapshot"] as const)(
     expect(of("resize")).toHaveLength(scenario === "starting snapshot" ? 0 : 1);
 
     failResize = false;
-    session.reportGridSize({ cols: 100, rows: 30 });
+    session.reportGridSize(
+      scenario === "unmeasured grid" ? { cols: 120, rows: 40 } : { cols: 100, rows: 30 },
+    );
     emit({ status: "running", version: 2 });
     await written.promise;
     emit({ status: "running", version: 3 });
