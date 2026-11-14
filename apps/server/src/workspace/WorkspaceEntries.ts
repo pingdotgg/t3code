@@ -317,16 +317,16 @@ export const make = Effect.gen(function* () {
           allowNonZeroExit: true,
           timeoutMs: 5_000,
         })
-        .pipe(Effect.orElseSucceed(() => undefined));
+        .pipe(
+          Effect.map((result) => (result.exitCode === 0 ? result.stdout : undefined)),
+          Effect.orElseSucceed(() => undefined),
+        );
     // Only NUL framing keeps a newline in a worktree path. Pre-2.36 Git rejects `-z`.
-    let listed = yield* listWorktrees(["-z"]);
-    if (listed?.exitCode !== 0) {
-      const lineListed = yield* listWorktrees([]);
-      listed = lineListed && { ...lineListed, stdout: lineListed.stdout.replaceAll("\n", "\0") };
-    }
-    if (!listed || listed.exitCode !== 0) return [];
+    const listed =
+      (yield* listWorktrees(["-z"])) ?? (yield* listWorktrees([]))?.replaceAll("\n", "\0");
+    if (listed === undefined) return [];
     const realCwd = yield* Effect.promise(() => NodeFSP.realpath(cwd).catch(() => cwd));
-    const worktreeRoots = listed.stdout.split("\0\0").flatMap((record) => {
+    const worktreeRoots = listed.split("\0\0").flatMap((record) => {
       const fields = record.split("\0");
       const worktree = fields.find((field) => field.startsWith("worktree "));
       // A `prunable` record's directory is gone; another checkout may now sit there.
