@@ -41,6 +41,7 @@ import {
 import type { SidebarThreadSummary, Thread } from "../types";
 import { normalizeSearchText } from "../lib/utils";
 import { isLatestRunSettled } from "../session-logic";
+import { parseTimestampDate } from "../timestampFormat";
 import { THREAD_STATUS_TEXT } from "@t3tools/client-runtime/state/thread-activity-announcement";
 import { observeIntersection } from "../lib/observeIntersection";
 import { deadlineAfter, deadlineStore, type ClockStore } from "@t3tools/client-runtime/clock";
@@ -54,6 +55,10 @@ import { isModelPickerOpen, subscribeToModelPickerVisibility } from "../modelPic
 import { shortcutModifierStore } from "../shortcutModifierState";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
+import {
+  isRecentThreadSwitcherOpen,
+  subscribeToRecentThreadSwitcherOpen,
+} from "./recentThreads/recentThreadVisitsStore";
 
 export function shouldNavigateAfterThreadPark(input: {
   readonly threadKey: string;
@@ -758,18 +763,21 @@ function subscribeToThreadJumpHintInputs(listener: () => void): () => void {
   const unsubscribeTerminals = useTerminalUiStateStore.subscribe(listener);
   const unsubscribeRightPanels = useRightPanelStore.subscribe(listener);
   const unsubscribeModelPicker = subscribeToModelPickerVisibility(listener);
+  const unsubscribeSwitcher = subscribeToRecentThreadSwitcherOpen(listener);
   return () => {
     unsubscribeHold();
     unsubscribeFocus();
     unsubscribeTerminals();
     unsubscribeRightPanels();
     unsubscribeModelPicker();
+    unsubscribeSwitcher();
   };
 }
 
 /**
  * Thread jump hints appear once the jump modifier has been held for a moment,
- * so a quick shortcut never flashes them, and hide as soon as it is released.
+ * so a quick shortcut never flashes them, and hide as soon as it is released or
+ * the recent threads switcher opens.
  * The snapshot is the visibility itself, so a quick shortcut never re-renders the caller.
  */
 export function useThreadJumpHintsVisible(
@@ -780,6 +788,7 @@ export function useThreadJumpHintsVisible(
     subscribeToThreadJumpHintInputs,
     () =>
       threadJumpModifierHold.getSnapshot() &&
+      !isRecentThreadSwitcherOpen() &&
       shouldShowThreadJumpHintsForModifiers(shortcutModifierStore.getSnapshot(), keybindings, {
         platform: navigator.platform,
         context: threadShortcutContext(routeThreadRef),
@@ -990,6 +999,79 @@ export function resolveSidebarRowStatus(
   // A runtime failure without a failed run has nothing to date it, so it stays.
   if (status !== "failed" || thread.latestRun?.status !== "failed") return status;
   return hasUnseenRunFailure(thread) ? status : "ready";
+}
+
+export type SidebarTopStatusIcon =
+  | "working"
+  | "waiting"
+  | "input"
+  | "request"
+  | "approval"
+  | "failed"
+  | "done"
+  | "woke";
+
+export interface SidebarTopStatus {
+  readonly label: string;
+  readonly icon: SidebarTopStatusIcon;
+  readonly className: string;
+}
+
+/** The status a thread card shows top right; null leaves the slot to its time. */
+export function resolveSidebarTopStatus(input: {
+  readonly status: SidebarThreadStatus;
+  readonly goalActive: boolean;
+  readonly isWoke: boolean;
+  readonly isUnread: boolean;
+}): SidebarTopStatus | null {
+  switch (input.status) {
+    case "preparing":
+      return { label: "Setting up", icon: "working", className: "text-info-foreground" };
+    case "working":
+      return {
+        label: input.goalActive ? "Goal" : "Working",
+        icon: "working",
+        className: "text-info-foreground",
+      };
+    case "waiting":
+      return { label: "Waiting", icon: "waiting", className: "text-muted-foreground" };
+    case "approval":
+      return { label: "Approval", icon: "approval", className: "text-warning-foreground" };
+    case "input":
+      return {
+        label: "Input",
+        icon: "input",
+        className: "text-indigo-600 dark:text-indigo-300",
+      };
+    case "request":
+      return { label: "Request", icon: "request", className: "text-guest-foreground" };
+    case "limited":
+      return { label: "Limited", icon: "failed", className: "text-warning-foreground" };
+    case "failed":
+      return { label: "Failed", icon: "failed", className: "text-error-foreground" };
+    case "ready":
+      if (input.isWoke) {
+        return { label: "Woke", icon: "woke", className: "text-warning-foreground" };
+      }
+      return input.isUnread
+        ? { label: "Done", icon: "done", className: "text-success-foreground" }
+        : null;
+  }
+}
+
+export function isSidebarThreadWoke(input: {
+  readonly wokeAt: string | null;
+  readonly lastVisitedAt: string | undefined;
+  readonly settledOverride: SidebarThreadSummary["settledOverride"];
+}): boolean {
+  const wokeAtDate = input.wokeAt === null ? null : parseTimestampDate(input.wokeAt);
+  const lastVisitedDate =
+    input.lastVisitedAt === undefined ? null : parseTimestampDate(input.lastVisitedAt);
+  return (
+    wokeAtDate !== null &&
+    (lastVisitedDate === null || lastVisitedDate < wokeAtDate) &&
+    input.settledOverride !== "settled"
+  );
 }
 
 /** What the window title says the open thread is doing, in the words its announcer uses. */

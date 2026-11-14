@@ -602,8 +602,10 @@ export function ThreadTerminalStatusButton({
 
 export function ThreadWorktreeIndicator({
   thread,
+  tooltip: showTooltip = true,
 }: {
   thread: Pick<SidebarThreadSummary, "id" | "branch" | "worktreePath">;
+  tooltip?: boolean;
 }) {
   const worktreePath = thread.worktreePath?.trim();
   if (!worktreePath) {
@@ -614,21 +616,18 @@ export function ThreadWorktreeIndicator({
   const tooltip = thread.branch
     ? `Worktree: ${displayPath} (${thread.branch})`
     : `Worktree: ${displayPath}`;
+  const indicatorProps = {
+    role: "img",
+    "aria-label": tooltip,
+    "data-testid": `thread-worktree-${thread.id}`,
+    className: "inline-flex items-center justify-center",
+  };
+  const icon = <FolderGit2Icon className="size-3.5 shrink-0 text-icon-muted" />;
+  if (!showTooltip) return <span {...indicatorProps}>{icon}</span>;
 
   return (
     <Tooltip>
-      <TooltipTrigger
-        render={
-          <span
-            role="img"
-            aria-label={tooltip}
-            data-testid={`thread-worktree-${thread.id}`}
-            className="inline-flex items-center justify-center"
-          />
-        }
-      >
-        <FolderGit2Icon className="size-3.5 shrink-0 text-icon-muted" />
-      </TooltipTrigger>
+      <TooltipTrigger render={<span {...indicatorProps} />}>{icon}</TooltipTrigger>
       <TooltipPopup side="top">{tooltip}</TooltipPopup>
     </Tooltip>
   );

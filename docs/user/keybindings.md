@@ -185,6 +185,14 @@ field gets its own undo back. Terminals always keep their native shortcut.
 `navigation.back` (`mod+[` by default) and `navigation.forward` (`mod+]`) move
 through the pages you have visited, like a browser's back and forward buttons.
 
+`thread.recent.next` (`ctrl+tab`) and `thread.recent.previous` (`ctrl+shift+tab`)
+open recently used threads in this window. A quick press returns to the previous
+thread. Keep holding Ctrl to see the list, press Tab to move through it, and
+release Ctrl to open the selected thread. Press Escape to cancel. These shortcuts
+are on by default in the desktop app only, because browsers reserve Ctrl+Tab. In
+a browser, bind another Ctrl shortcut. A shortcut without Ctrl switches straight
+to the previous thread.
+
 `chat.new` may ask you to choose a project when there is more than one.
 `chat.newLocal` skips that chooser. Both use your
 [new-thread defaults](./thread-sidebar.md#start-a-thread). `chat.newWithoutProject`

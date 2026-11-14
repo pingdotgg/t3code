@@ -1078,7 +1078,7 @@ export function scoreThreadSearch(
 }
 
 /** When the user last used a thread: their last message or their last open. */
-export function threadRecentUse(thread: ThreadSearchSubject): number {
+export function threadRecentUse(thread: Pick<ThreadSearchSubject, "activityAt" | "opens">): number {
   return Math.max(thread.activityAt ?? 0, thread.opens?.openedAt ?? 0);
 }
 
