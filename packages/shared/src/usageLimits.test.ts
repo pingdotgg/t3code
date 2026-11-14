@@ -1349,9 +1349,9 @@ describe("pooled account columns", () => {
         account("a", [window]),
         account("b", [
           { ...window, resetsAt: "2026-09-03T15:00:00.000Z" },
-          { ...weekly, usedPercent: 80 },
+          { ...weekly, usedPercent: 81 },
         ]),
-        account("c", [weekly]),
+        account("c", [{ ...weekly, usedPercent: 41 }]),
       ],
       now,
     );
@@ -1360,9 +1360,13 @@ describe("pooled account columns", () => {
       [null, "b", "c"],
     ]);
     expect(pool!.windows[1]!.members.map((member) => member.account.key)).toEqual(["b", "c"]);
-    expect(pool!.windows[1]!.remainingPercent).toBe(40);
-    expect(pool!.windows[1]!.resets.map((reset) => reset.restoresPercent)).toEqual([40, 20]);
-    expect(pool!.windows.map((w) => w.nextReset?.restoresPercent)).toEqual([20, 60]);
+    expect(pool!.windows[1]!.remainingPercent).toBe(39);
+    expect(pool!.windows[1]!.resets.map((reset) => reset.restoresPercent)).toEqual([41, 21]);
+    expect(pool!.windows.map((w) => w.nextReset?.restoresPercent)).toEqual([20, 61]);
+    expect(pool!.windows.map((w) => w.nextReset?.at)).toEqual([
+      Date.parse(window.resetsAt),
+      Date.parse(weekly.resetsAt),
+    ]);
   });
 
   it("falls back to weekly resets when no account reports a session", () => {

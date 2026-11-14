@@ -467,7 +467,7 @@ export interface LimitPoolWindow {
   readonly usedPercent: number;
   readonly pace: LimitPace | null;
   readonly resets: ReadonlyArray<LimitPoolReset>;
-  /** The earliest instant that restores quota, summed over every member resetting then. */
+  /** The earliest refill, summed over members resetting then; member is the first of those accounts. */
   readonly nextReset: LimitPoolReset | null;
 }
 
