@@ -256,6 +256,7 @@ describe("compactBeforeSendTokens", () => {
     { name: "while the thread is working", threadIdle: false, expected: false },
     { name: "with no conversation but /compact", onlyCompactMessages: true, expected: false },
     { name: "for a typed /compact", text: "/compact keep the plan", expected: false },
+    { name: "for a typed /clear", text: "/clear", expected: false },
   ] as const)("$name", ({ name: _name, expected, ...overrides }) => {
     expect(compactBeforeSendTokens(sendInput(overrides as Parameters<typeof sendInput>[0]))).toBe(
       expected ? 293_611 : null,

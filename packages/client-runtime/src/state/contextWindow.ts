@@ -22,8 +22,9 @@ import type { ThreadStructure, ThreadStructureTurnItem } from "./models.ts";
 const CLAUDE_RESUME_COMPACTION_FALLBACK_MS = 70 * 60_000;
 
 // A typed `/compact`, with or without instructions, is already the compaction. Queueing a
-// bare one ahead of it would run an uninstructed compaction first and charge for two.
-export const COMPACT_COMMAND_PATTERN = /^\/compact(?:\s|$)/i;
+// bare one ahead of it would run an uninstructed compaction first and charge for two. A typed
+// `/clear` discards the old context, so compacting it first pays for a summary nobody reads.
+export const NO_COMPACT_BEFORE_COMMAND_PATTERN = /^\/(?:compact|clear)(?:\s|$)/i;
 
 function asFiniteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
@@ -266,7 +267,7 @@ export function compactBeforeSendTokens(input: {
   if (
     provider === undefined ||
     !input.threadIdle ||
-    COMPACT_COMMAND_PATTERN.test(input.text) ||
+    NO_COMPACT_BEFORE_COMMAND_PATTERN.test(input.text) ||
     resolveIdleCompaction(input.settings, provider.instanceId) === "off" ||
     !provider.slashCommands.some((command) => command.name === "compact") ||
     resolvePendingHandoff(projection, input.selection, input.providers) !== null ||
