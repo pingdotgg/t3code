@@ -587,6 +587,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ? ["Delete confirmation"]
       : []),
     ...(settings.confirmQuit !== DEFAULT_UNIFIED_SETTINGS.confirmQuit ? ["Quit shortcut"] : []),
+    ...(settings.swipeNavigationEnabled !== DEFAULT_UNIFIED_SETTINGS.swipeNavigationEnabled
+      ? ["Swipe navigation"]
+      : []),
     ...(isTextGenerationModelDirty ? ["Text generation model"] : []),
     ...(settings.threadTitleInstructions !== DEFAULT_UNIFIED_SETTINGS.threadTitleInstructions
       ? ["Thread title instructions"]
@@ -699,6 +702,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
       confirmThreadUnpin: DEFAULT_UNIFIED_SETTINGS.confirmThreadUnpin,
       confirmQuit: DEFAULT_UNIFIED_SETTINGS.confirmQuit,
+      swipeNavigationEnabled: DEFAULT_UNIFIED_SETTINGS.swipeNavigationEnabled,
       textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
       threadTitleInstructions: DEFAULT_UNIFIED_SETTINGS.threadTitleInstructions,
       fontFamilySans: DEFAULT_UNIFIED_SETTINGS.fontFamilySans,
@@ -1054,6 +1058,39 @@ export function GeneralSettingsPanel() {
           />
         ) : null}
       </SettingsSection>
+
+      {isElectron ? (
+        <SettingsSection id="navigation" title={gt("Navigation")}>
+          <SettingsRow
+            {...setting("swipe-navigation")}
+            description={
+              <T>Swipe left or right with two fingers on a trackpad to go back or forward.</T>
+            }
+            resetAction={
+              settings.swipeNavigationEnabled !==
+              DEFAULT_UNIFIED_SETTINGS.swipeNavigationEnabled ? (
+                <SettingResetButton
+                  label="swipe navigation"
+                  onClick={() =>
+                    updateSettings({
+                      swipeNavigationEnabled: DEFAULT_UNIFIED_SETTINGS.swipeNavigationEnabled,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                checked={settings.swipeNavigationEnabled}
+                onCheckedChange={(checked) =>
+                  updateSettings({ swipeNavigationEnabled: Boolean(checked) })
+                }
+                aria-label={gt("Swipe to navigate back and forward")}
+              />
+            }
+          />
+        </SettingsSection>
+      ) : null}
 
       <SettingsSection id="display" title={gt("Display")}>
         <SettingsRow

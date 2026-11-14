@@ -1,7 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
-import { DesktopSnapShotId } from "@t3tools/contracts";
+import { DEFAULT_CLIENT_SETTINGS, DesktopSnapShotId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -163,9 +163,9 @@ function makeFakeBrowserWindow() {
   };
 }
 
-const layerDesktopClientSettings = Layer.mock(DesktopClientSettings.DesktopClientSettings)({
-  get: Effect.succeedNone,
-});
+const layerDesktopClientSettings = (
+  get: DesktopClientSettings.DesktopClientSettings["Service"]["get"] = Effect.succeedNone,
+) => Layer.mock(DesktopClientSettings.DesktopClientSettings)({ get });
 
 const layerElectronApp = Layer.mock(ElectronApp.ElectronApp)({
   quit: Effect.void,
@@ -232,6 +232,7 @@ function layerTest(input: {
   readonly mainWindow: Ref.Ref<Option.Option<Electron.BrowserWindow>>;
   readonly createdWindowOptions?: Electron.BrowserWindowConstructorOptions[];
   readonly desktopSettings?: DesktopAppSettings.DesktopSettings;
+  readonly readClientSettings?: DesktopClientSettings.DesktopClientSettings["Service"]["get"];
   readonly mainWindowBoundsUpdates?: DesktopAppSettings.DesktopWindowBounds[];
   readonly mainWindowMaximizedUpdates?: boolean[];
   readonly beforeMainWindowBoundsUpdate?: (
@@ -336,7 +337,7 @@ function layerTest(input: {
           ? layerDesktopEnvironment
           : layerDesktopEnvironmentFor(input.platform),
         layerDesktopAppSettings,
-        layerDesktopClientSettings,
+        layerDesktopClientSettings(input.readClientSettings),
         layerDesktopServerExposure,
         DesktopState.layer,
         layerElectronApp,
@@ -458,7 +459,7 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
           }),
           layerDesktopEnvironment,
           DesktopAppSettings.layerTest(),
-          layerDesktopClientSettings,
+          layerDesktopClientSettings(),
           layerDesktopServerExposure,
           DesktopState.layer,
           layerElectronApp,
@@ -1333,25 +1334,69 @@ describe("DesktopWindow", () => {
       yield* Effect.gen(function* () {
         const desktopWindow = yield* DesktopWindow.DesktopWindow;
         yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
-        const swipe = fakeWindow.windowListeners.get("swipe");
-        assert.isDefined(swipe);
-        if (!swipe) return;
+        const listener = fakeWindow.windowListeners.get("swipe");
+        assert.isDefined(listener);
+        if (!listener) return;
+        const swipe = (direction: string) => Effect.promise(async () => listener({}, direction));
         const history = fakeWindow.navigationHistory;
 
-        swipe({}, "left");
+        yield* swipe("left");
         assert.equal(history.goBack.mock.calls.length, 1);
         assert.equal(history.goForward.mock.calls.length, 0);
-        swipe({}, "right");
+        yield* swipe("right");
         assert.equal(history.goForward.mock.calls.length, 1);
 
-        swipe({}, "up");
-        swipe({}, "down");
+        yield* swipe("up");
+        yield* swipe("down");
         history.canGoBack.mockReturnValue(false);
         history.canGoForward.mockReturnValue(false);
-        swipe({}, "left");
-        swipe({}, "right");
+        yield* swipe("left");
+        yield* swipe("right");
         assert.equal(history.goBack.mock.calls.length, 1);
         assert.equal(history.goForward.mock.calls.length, 1);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect.each([
+    {
+      name: "turned off",
+      read: Effect.succeedSome({ ...DEFAULT_CLIENT_SETTINGS, swipeNavigationEnabled: false }),
+      navigations: 0,
+    },
+    {
+      name: "unreadable, so the default applies",
+      read: Effect.fail(
+        new DesktopClientSettings.DesktopClientSettingsReadError({
+          operation: "decode-document",
+          path: "/fake/client-settings.json",
+          cause: new Error("bad json"),
+        }),
+      ),
+      navigations: 1,
+    },
+  ])("handles macOS swipes when swipe navigation settings are $name", ({ read, navigations }) =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = layerTest({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        readClientSettings: read,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        const listener = fakeWindow.windowListeners.get("swipe");
+        assert.isDefined(listener);
+        if (!listener) return;
+        yield* Effect.promise(async () => listener({}, "left"));
+        yield* Effect.promise(async () => listener({}, "right"));
+        assert.equal(fakeWindow.navigationHistory.goBack.mock.calls.length, navigations);
+        assert.equal(fakeWindow.navigationHistory.goForward.mock.calls.length, navigations);
       }).pipe(Effect.provide(layer));
     }),
   );
