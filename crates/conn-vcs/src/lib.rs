@@ -23,6 +23,7 @@
 //!
 //! Every git child has a timeout and bounded stdout and stderr ([`process`]).
 
+pub mod checkpoint;
 pub mod discovery;
 pub mod error;
 pub mod hub;

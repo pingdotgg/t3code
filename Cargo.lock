@@ -145,6 +145,7 @@ dependencies = [
  "conn-contract",
  "conn-provider",
  "conn-support",
+ "conn-vcs",
  "rusqlite",
  "serde",
  "serde_json",

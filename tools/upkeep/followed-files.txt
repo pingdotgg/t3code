@@ -52,6 +52,9 @@ apps/server/src/orchestration-v2
 :(exclude)apps/server/src/orchestration-v2/Adapters
 :(exclude)apps/server/src/orchestration-v2/testkit
 packages/contracts/src/orchestrationV2.ts
+apps/server/src/checkpointing
+packages/contracts/src/checkpointDiff.ts
+packages/client-runtime/src/state/threadCheckpoints.ts
 
 [crates/conn-mcp]
 apps/server/src/mcp

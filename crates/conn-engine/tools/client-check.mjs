@@ -31,6 +31,12 @@ const { presentRunStop } = await load("packages/client-runtime/src/state/threadE
 const { derivePendingBackgroundWork } = await load(
   "packages/shared/src/orchestrationV2PendingBackgroundWork.ts",
 );
+const { deriveThreadCheckpointSummaries, checkpointFileTotals } = await load(
+  "packages/client-runtime/src/state/threadCheckpoints.ts",
+);
+const { resolveMergeBackTargetThreadId, deriveThreadRelationshipGraph } = await load(
+  "packages/client-runtime/src/state/threadRelationships.ts",
+);
 const { boundedSnapshotProjection } = await load(
   "packages/shared/src/orchestrationV2BoundedSnapshot.ts",
 );
@@ -290,6 +296,79 @@ check("projects: added and removed at runtime", () => {
   assert.ok(kinds.includes("project.updated") && kinds.includes("project.removed"));
   assert.equal(shell.snapshot.projects.length, 1);
   assert.ok(!shell.snapshot.projects.some((project) => project.id === "project:added"));
+});
+
+// 11. Checkpoints per turn: the client lists each turn's changed files; a rewind to the
+// first turn leaves the second rolled back and its checkpoint stale.
+check("checkpoints: each turn's changed files, then a rewind", () => {
+  const { projection, status } = followThread(exported.checkpointItems);
+  assert.equal(status, "live");
+  assert.deepEqual(
+    projection.runs.map((run) => [run.status, run.checkpointId !== null]),
+    [
+      ["completed", true],
+      ["rolled_back", true],
+    ],
+  );
+  const summaries = deriveThreadCheckpointSummaries(projection);
+  assert.deepEqual(
+    summaries.map((s) => [s.checkpointTurnCount, s.status, s.files.map((f) => f.path)]),
+    [
+      [1, "ready", ["a.txt"]],
+      [2, "stale", ["b.txt"]],
+    ],
+  );
+  assert.deepEqual(checkpointFileTotals(summaries[0]), { count: 1, additions: 1, deletions: 0 });
+  assert.ok(
+    summaries.every((s) => s.assistantMessageId !== null),
+    "each turn's reply anchors its changed files",
+  );
+  assert.equal(projection.checkpointScopes.length, 1);
+  assert.equal(projection.checkpointScopes[0].kind, "root_run");
+  assert.equal(projection.thread.rollbackRequestId, "cp-rollback");
+  assert.equal(projection.thread.rollbackFailure, null);
+  assert.equal(
+    projection.providerThreads.find((t) => t.id === projection.thread.activeProviderThreadId)
+      .lastRunOrdinal,
+    1,
+  );
+  const items = projection.turnItems.filter((item) => item.type === "checkpoint");
+  assert.deepEqual(
+    items.map((item) => item.files.map((f) => f.path)),
+    [["a.txt"], ["b.txt"]],
+  );
+});
+
+// 12. A fork of the first turn: its lineage, its native fork, and the client's graph.
+check("fork: lineage, a native fork, and the relationship graph", () => {
+  const { projection, status } = followThread(exported.forkItems);
+  assert.equal(status, "live");
+  assert.equal(projection.thread.lineage.relationshipToParent, "fork");
+  assert.equal(projection.thread.forkedFrom.type, "run");
+  assert.equal(projection.thread.forkedFrom.runId, "run:thread-cp:1");
+  assert.equal(resolveMergeBackTargetThreadId(projection), "thread-cp");
+  assert.deepEqual(
+    projection.runs.map((run) => run.status),
+    ["completed"],
+  );
+  const [transfer] = projection.contextTransfers;
+  assert.equal(transfer.type, "fork");
+  assert.equal(transfer.status, "consumed");
+  assert.equal(transfer.resolution.strategy, "native_fork");
+  const shells = Schema.decodeUnknownSync(
+    Schema.toCodecJson(Schema.Array(contracts.OrchestrationV2ThreadShell)),
+  )(exported.checkpointShellThreads);
+  const graph = deriveThreadRelationshipGraph({ threads: shells, projection });
+  const edges = [...(Array.isArray(graph.edges) ? graph.edges : graph.edges.values())];
+  assert.ok(
+    edges.some(
+      (edge) =>
+        edge.kind === "fork" &&
+        edge.sourceThreadId === "thread-cp" &&
+        edge.targetThreadId === "thread-cp-fork",
+    ),
+    `a fork edge: ${JSON.stringify(edges.map((e) => [e.kind, e.sourceThreadId, e.targetThreadId]))}`,
+  );
 });
 
 console.log(`\n${checks} checks passed against the client's own decoders and reducers.`);

@@ -52,8 +52,11 @@ pub struct EngineConfig {
     pub host: Option<Arc<dyn crate::EngineHost>>,
     /// Generates thread titles. Without one, a new thread keeps the title the client sent.
     pub title_generator: Option<Arc<dyn crate::TitleGenerator>>,
-    /// Sees every turn start and end (checkpoints). None by default.
+    /// Sees every turn start and end. None by default.
     pub turn_observer: Option<Arc<dyn crate::TurnObserver>>,
+    /// Captures a git checkpoint of the thread's workspace at each turn, as the T3 server
+    /// does (`checkpoint.rs`). Off by default; the server turns it on.
+    pub checkpoints: bool,
 }
 
 impl std::fmt::Debug for EngineConfig {
@@ -83,6 +86,7 @@ impl EngineConfig {
             host: None,
             title_generator: None,
             turn_observer: None,
+            checkpoints: false,
         }
     }
 }
@@ -114,6 +118,8 @@ pub(crate) struct Inner {
     pub(crate) command_output: crate::output::CommandOutputHub,
     /// Set when shutdown begins; no provider session opens after it.
     pub(crate) shutting_down: std::sync::atomic::AtomicBool,
+    /// Git checkpoints per turn (`checkpoint.rs`); `None` when off.
+    pub(crate) checkpoints: Option<crate::checkpoint::Checkpoints>,
 }
 
 /// Stable project id for a folder, so a fresh database gives clients the same ids.
@@ -171,6 +177,9 @@ impl SqliteEngine {
                 observer: config.turn_observer.clone(),
                 host: config.host.clone(),
                 idle_max_hold: config.idle_max_hold,
+                checkpoints: config
+                    .checkpoints
+                    .then(crate::checkpoint::Checkpoints::default),
             }),
         };
         // Continuations and the reaper start on the caller's runtime; `open` never blocks.
@@ -194,6 +203,43 @@ impl SqliteEngine {
             eprintln!("conn-engine: no runtime, so restarted turns do not continue");
         }
         Ok(engine)
+    }
+
+    /// Puts a completed run back to `waiting` with no checkpoint, as a kill between the
+    /// provider's end and the capture leaves it.
+    #[cfg(test)]
+    pub(crate) async fn test_force_waiting(&self, thread_id: &str, run_id: &str) {
+        let (tid, rid) = (thread_id.to_owned(), run_id.to_owned());
+        self.inner
+            .write(move |tx| {
+                if let Some(mut run) = tx.entity(&tid, "runs", &rid)? {
+                    run["status"] = serde_json::json!("waiting");
+                    run["completedAt"] = Value::Null;
+                    run["checkpointId"] = Value::Null;
+                    tx.append(crate::store::Draft::new(&tid, "run.updated", run).run(Some(&rid)))?;
+                }
+                Ok(())
+            })
+            .await
+            .expect("force waiting");
+    }
+
+    /// Every stored event of a thread as `(type, payload)`, oldest first.
+    #[cfg(test)]
+    pub(crate) async fn test_events(&self, thread_id: &str) -> Vec<(String, Value)> {
+        let tid = thread_id.to_owned();
+        self.inner
+            .db(move |store| store.thread_events_after(&tid, 0, 100_000))
+            .await
+            .expect("events")
+            .into_iter()
+            .map(|(_, e)| {
+                (
+                    e["type"].as_str().unwrap_or_default().to_owned(),
+                    e["payload"].clone(),
+                )
+            })
+            .collect()
     }
 
     /// The project id the engine gives a configured folder.
@@ -415,6 +461,10 @@ impl Inner {
     async fn run_effect(self: Arc<Self>, effect: Effect) {
         match effect {
             Effect::StartTurn { thread_id, run_id } => self.start_turn(thread_id, run_id).await,
+            Effect::Rollback(request) => self.rollback(request).await,
+            Effect::CaptureCheckpoint { thread_id, run_id } => {
+                self.capture_run(thread_id, run_id).await;
+            }
             Effect::Steer {
                 thread_id,
                 run_id,
