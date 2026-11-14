@@ -142,6 +142,7 @@ function orbitCard(
 ) {
   const value: OrbitSetupView = {
     phase: "running",
+    failedTitle: "Instance setup failed",
     stages: [
       orbitStage("create", "Create Instance", "running", {
         detail: "beast",
@@ -305,6 +306,33 @@ it("in the thread, follows the completion: no Cancel while it runs, Retry and Di
   await screen.getByRole("button", { name: "Dismiss" }).click();
   expect(retry).toHaveBeenCalledOnce();
   expect(dismiss).toHaveBeenCalledOnce();
+
+  // A completion cancelled outside a removal: the same card under the cancelled title (Q4).
+  const cancelled = orbitCard({
+    phase: "failed",
+    failedTitle: "Instance setup cancelled",
+    stages: doneStages("failed"),
+    canCancel: false,
+    canRetry: true,
+    instanceStays: true,
+    errorDetailLine: "operation.cancelled",
+  });
+  await screen.rerender(
+    <OrbitThreadSetupRow
+      ready={{
+        view: readyView,
+        threadRef,
+        messageId: "m1",
+        setup: (cancelled.element.props as { view: OrbitSetupView }).view,
+        onRetry: retry,
+        onDismiss: dismiss,
+      }}
+    />,
+  );
+  await expect.element(screen.getByText("Instance setup cancelled")).toBeVisible();
+  expect(screen.getByText("Instance setup failed").query()).toBeNull();
+  await expect.element(screen.getByRole("button", { name: "Retry" })).toBeVisible();
+  await expect.element(screen.getByRole("button", { name: "Dismiss" })).toBeVisible();
 
   await screen.rerender(
     <OrbitThreadSetupRow ready={{ view: readyView, threadRef, messageId: "m1", setup: null }} />,

@@ -47,11 +47,11 @@ export function OrbitInstanceGitLine({ git }: { readonly git: OrbitInstanceGitSt
 }
 
 /**
- * Spec Q3, not decided yet: the row's line while a removal waits for the Instance's setup to stop.
- * Proposal kept: today's text. Returning null shows the row's facts instead.
+ * Spec Q3, decided by the owner (2026-11-14): while a removal waits for the Instance's setup to
+ * stop, the row shows nothing extra, as for any removal: null keeps the row's facts.
  */
 export function orbitRemoveWaitTextBehindCompletion(): string | null {
-  return "Waiting for another removal to finish";
+  return null;
 }
 
 /**

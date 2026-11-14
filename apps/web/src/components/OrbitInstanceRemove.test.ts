@@ -6,11 +6,9 @@ import {
 } from "./OrbitInstanceRemove";
 
 describe("orbitInstanceRemovingText", () => {
-  it("keeps today's wait text while a removal waits for the Instance's setup (Q3 proposal)", () => {
-    expect(orbitRemoveWaitTextBehindCompletion()).toBe("Waiting for another removal to finish");
-    expect(orbitInstanceRemovingText({ kind: "waiting" }, true)).toBe(
-      orbitRemoveWaitTextBehindCompletion(),
-    );
+  it("shows nothing extra while a removal waits for the Instance's setup (Q3)", () => {
+    expect(orbitRemoveWaitTextBehindCompletion()).toBeNull();
+    expect(orbitInstanceRemovingText({ kind: "waiting" }, true)).toBeNull();
     expect(orbitInstanceRemovingText({ kind: "waiting" })).toBe(
       "Waiting for another removal to finish",
     );

@@ -29,7 +29,6 @@ const orbit = vi.hoisted(() => ({
   retry: vi.fn(),
   checkInstanceName: vi.fn(),
   openOrbitDraft: vi.fn(),
-  openOrbitPlusCreate: vi.fn(),
 }));
 vi.mock("../orbit/orbitPaletteProjects", () => ({
   recheckOrbitPaletteProjects: async () => false,
@@ -41,8 +40,6 @@ vi.mock("../orbit/orbitPaletteProjects", () => ({
 }));
 vi.mock("../orbit/openOrbitDraft", () => ({
   openOrbitDraft: async (...args: unknown[]) => orbit.openOrbitDraft(...args) ?? "draft-1",
-  openOrbitPlusCreate: async (...args: unknown[]) =>
-    orbit.openOrbitPlusCreate(...args) ?? "start-plus",
 }));
 
 function orbitEnvironment(
@@ -86,7 +83,6 @@ function setup(
   orbit.retry.mockReset();
   orbit.checkInstanceName.mockReset();
   orbit.openOrbitDraft.mockReset();
-  orbit.openOrbitPlusCreate.mockReset();
 }
 
 describe("CommandPalette open intents", () => {
@@ -373,88 +369,15 @@ describe("CommandPalette open intents", () => {
     await expect.element(page.getByText("Nothing found.")).toBeVisible();
     await expect.element(nameField).toHaveValue("new-page");
     await expect.element(page.getByText("new-page.nckrtl.test is available.")).toBeVisible();
-    // Enter starts the create at once (the same as the plus), and a second Enter starts no other.
     await userEvent.keyboard("{Enter}");
-    await userEvent.keyboard("{Enter}");
-    await vi.waitFor(() => expect(orbit.openOrbitPlusCreate).toHaveBeenCalledOnce());
-    expect(orbit.openOrbitPlusCreate.mock.calls[0]![1]).toMatchObject({
+    await vi.waitFor(() => expect(orbit.openOrbitDraft).toHaveBeenCalledOnce());
+    expect(orbit.openOrbitDraft.mock.calls[0]![1]).toMatchObject({
       projectId: 3,
       instanceKind: "new",
       instanceName: "new-page",
       existing: null,
       domainSuffix: ".nckrtl.test",
     });
-    expect(orbit.openOrbitDraft).not.toHaveBeenCalled();
-  });
-
-  it("starts one create on the plus, never for a taken name, and opens a picked Instance as before", async () => {
-    setup({
-      orbit: {
-        status: "loaded",
-        projects: [
-          {
-            id: 3,
-            slug: "nckrtl",
-            name: "nckrtl",
-            nodeId: 7,
-            nodeName: "beast",
-            instanceDomainSuffix: ".nckrtl.test",
-            cloneable: true,
-            cloneableReason: null,
-            checks: null,
-          },
-        ],
-        environments: [orbitEnvironment(41, 3, "fix")],
-      },
-    });
-    orbit.checkInstanceName.mockImplementation(async (_projectId: number, name: string) =>
-      name === "fix"
-        ? { name, available: false, reason: "taken", domain: null }
-        : { name, available: true, reason: null, domain: `${name}.nckrtl.test` },
-    );
-    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
-
-    openCommandPalette({ open: "new-thread-in" });
-    await page.getByRole("option", { name: /orbit · 1 instance/ }).click();
-    const nameField = page.getByRole("textbox", { name: "Instance name" });
-    const plus = page.getByRole("button", { name: "Create instance" });
-    await userEvent.type(nameField, "fix");
-    await expect.element(page.getByText("fix is taken in nckrtl.")).toBeVisible();
-    await userEvent.keyboard("{Enter}");
-    // The test viewport puts the dialog's inert layer over the button: click it directly.
-    await act(() => (plus.element() as HTMLButtonElement).click());
-    expect(orbit.openOrbitPlusCreate).not.toHaveBeenCalled();
-    await expect.element(nameField).toBeVisible();
-
-    await userEvent.clear(nameField);
-    await userEvent.type(nameField, "abc");
-    await expect.element(page.getByText("abc.nckrtl.test is available.")).toBeVisible();
-    await act(() => {
-      (plus.element() as HTMLButtonElement).click();
-      (plus.element() as HTMLButtonElement).click();
-    });
-    await vi.waitFor(() => expect(orbit.openOrbitPlusCreate).toHaveBeenCalledOnce());
-    expect(orbit.openOrbitPlusCreate.mock.calls[0]![1]).toMatchObject({
-      projectId: 3,
-      instanceKind: "new",
-      instanceName: "abc",
-    });
-    expect(orbit.openOrbitDraft).not.toHaveBeenCalled();
-
-    // Picking an existing Instance still opens its draft and starts nothing.
-    await act(() =>
-      useCommandPaletteStore.setState(useCommandPaletteStore.getInitialState(), true),
-    );
-    openCommandPalette({ open: "new-thread-in" });
-    await page.getByRole("option", { name: /orbit · 1 instance/ }).click();
-    await page.getByRole("option", { name: /fix/ }).click();
-    await vi.waitFor(() => expect(orbit.openOrbitDraft).toHaveBeenCalledOnce());
-    expect(orbit.openOrbitDraft.mock.calls[0]![1]).toMatchObject({
-      instanceKind: "existing",
-      instanceName: "fix",
-      existing: { instanceId: 41, environmentId: "env-41" },
-    });
-    expect(orbit.openOrbitPlusCreate).toHaveBeenCalledOnce();
   });
 
   it("reopens the Instance step from the composer's chip with the draft's name filled in", async () => {
@@ -510,6 +433,5 @@ describe("CommandPalette open intents", () => {
     await userEvent.keyboard("{Enter}");
     await vi.waitFor(() => expect(orbit.retry).toHaveBeenCalledOnce());
     expect(orbit.openOrbitDraft).not.toHaveBeenCalled();
-    expect(orbit.openOrbitPlusCreate).not.toHaveBeenCalled();
   });
 });

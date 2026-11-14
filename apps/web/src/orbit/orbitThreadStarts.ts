@@ -7,7 +7,6 @@ import {
   newOrbitThreadStart,
   OPERATION_TERMINAL_STATUSES,
   type OrbitCompletionPorts,
-  orbitThreadStartHasNoMessage,
   orbitThreadStartCreatedInstance,
   retryOrbitThreadStartRecord,
   runOrbitThreadStart,
@@ -35,11 +34,7 @@ import { waitForAtomValue } from "../state/waitForAtomValue";
 import { keepProjectInWorkspace, useWorkspaceStore } from "../workspaceStore";
 import { recordOrbitPaired, useEnvironmentProvider } from "./environmentProvider";
 import { wakeOrbitInstanceForStart } from "./orbitInstanceSleep";
-import {
-  buildOrbitDraftStart,
-  type OrbitDraftStartInput,
-  type OrbitDraftTarget,
-} from "./orbitDraft";
+import type { OrbitDraftStartInput } from "./orbitDraft";
 import {
   readStored,
   recordCreateOperation,
@@ -112,24 +107,6 @@ export function sendOrbitDraft(input: {
     .finally(input.clearDraft)
     .catch(() => {});
   return start;
-}
-
-/**
- * The palette's plus (or Enter on the name): saves a start with no message, so the runner creates
- * and connects the new Instance as a first message would, without a prompt. Always from the
- * Project's default branch. Null where `orbitThreadStartBlockedReason` names why.
- */
-export function startOrbitInstanceFromPlus(target: OrbitDraftTarget): OrbitThreadStart | null {
-  if (orbitThreadStartBlockedReason() !== null || target.instanceKind !== "new") return null;
-  return saveOrbitDraftStart(
-    buildOrbitDraftStart({
-      target: { ...target, branch: null },
-      message: "",
-      modelSelection: null,
-      runtimeMode: null,
-      interactionMode: null,
-    }),
-  );
 }
 
 export function retryOrbitThreadStart(id: string): void {
@@ -272,19 +249,14 @@ const running = new Set<string>();
 
 /**
  * Runs a start from its last saved step, once per window at a time. Resolves the thread it sent
- * the first message in, or null when the start stopped (its `error` says why). A start with no
- * message (the palette's plus) resolves its Instance's environment with `threadId: null` once the
- * Instance is connected and its project loaded: the caller opens a new-thread draft there.
+ * the first message in, or null when the start stopped (its `error` says why).
  */
 export async function runSavedOrbitThreadStart(
   client: OrbitGatewayClient,
   id: string,
   /** `onCancelled`: the runner cancelled the create a Cancel during admission asked for. */
   options: { readonly onCancelled?: () => void } = {},
-): Promise<{
-  readonly environmentId: EnvironmentId;
-  readonly threadId: ThreadId | null;
-} | null> {
+): Promise<{ readonly environmentId: EnvironmentId; readonly threadId: ThreadId } | null> {
   const start = readStored().find((entry) => entry.id === id);
   if (start !== undefined && start.sentAt != null && !start.pendingThread) {
     // A start of the removed sidebar dialog whose send finished before a quit: only its dismiss is left.
@@ -343,16 +315,6 @@ export async function runSavedOrbitThreadStart(
         return { modelFallback };
       },
     });
-    if (sent && orbitThreadStartHasNoMessage(start)) {
-      const ready = readStored().find((entry) => entry.id === id)?.environmentId ?? null;
-      if (ready === null) return null;
-      // As after a first message: the Instance's project joins the workspace the start began in.
-      const clone = await waitForClone(ready);
-      if (clone !== null) {
-        keepProjectInWorkspace(start.workspaceId ?? null, `${ready}:${clone.projectId}`);
-      }
-      return { environmentId: ready as EnvironmentId, threadId: null };
-    }
     if (!sent || environmentId === null) return null;
     // The start stays for the real thread's "Instance ready" row.
     return {

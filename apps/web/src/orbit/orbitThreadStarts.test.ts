@@ -22,11 +22,7 @@ import {
   retryOrbitThreadStart,
   runSavedOrbitThreadStart,
   sendOrbitDraft,
-  startOrbitInstanceFromPlus,
 } from "./orbitThreadStarts";
-import { appAtomRegistry } from "../rpc/atomRegistry";
-import { environmentProjects } from "../state/projects";
-import { environmentServerConfigsAtom } from "../state/server";
 import { readStored, updateStarts } from "./orbitThreadStartStore";
 
 const runner = vi.hoisted(() => ({ real: false }));
@@ -40,11 +36,6 @@ vi.mock("@t3tools/client-runtime/orbit-gateway", async (importOriginal) => {
       ports: Parameters<typeof original.runOrbitThreadStart>[1],
     ) => {
       if (runner.real) return original.runOrbitThreadStart(start, ports);
-      // A start with no message ends connected, without a send.
-      if (start.message === "") {
-        ports.save({ ...start, environmentId: "clone", instanceId: 41, connected: true });
-        return true;
-      }
       const sent = await ports.send({ ...start, environmentId: "clone" });
       ports.save({ ...start, ...sent, environmentId: "clone", sentAt: 1 });
       return true;
@@ -158,29 +149,6 @@ describe("runSavedOrbitThreadStart", () => {
     });
   });
   afterEach(() => vi.unstubAllGlobals());
-
-  it("ends a start with no message once connected: its Instance, no thread, and the project joins the workspace", async () => {
-    vi.mocked(appAtomRegistry.get).mockImplementation(((atom: unknown) =>
-      atom === environmentProjects.projectsAtom
-        ? [{ environmentId: "clone", workspaceRoot: "/srv/workspace", id: "ws" }]
-        : atom === environmentServerConfigsAtom
-          ? new Map([["clone", { providers: [], settings: { defaultModelSelection: null } }]])
-          : undefined) as never);
-    useWorkspaceStore.setState({ activeWorkspaceId: "S" });
-    const start = startOrbitInstanceFromPlus({ ...projectTarget, instanceName: "abc" });
-    expect(start).toMatchObject({ message: "", instanceName: "abc", branch: null });
-
-    expect(await runSavedOrbitThreadStart(client, start!.id)).toEqual({
-      environmentId: "clone",
-      threadId: null,
-    });
-    expect(readStored()[0]).toMatchObject({ connected: true, sentAt: null, error: null });
-    expect(useWorkspaceStore.getState().workspaces[0]!.projectRefs).toEqual([
-      "beast:bench",
-      "clone:ws",
-    ]);
-    vi.mocked(appAtomRegistry.get).mockReset();
-  });
 
   it("adds the clone's project to the workspace selected at Start once the message is sent", async () => {
     // Nick moves on to workspace U while the clone is made.

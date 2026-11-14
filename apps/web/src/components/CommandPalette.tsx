@@ -284,7 +284,7 @@ import {
   useOrbitPairedEnvironmentIds,
   useOrbitPaletteProjects,
 } from "../orbit/orbitPaletteProjects";
-import { openOrbitDraft, openOrbitPlusCreate } from "../orbit/openOrbitDraft";
+import { openOrbitDraft } from "../orbit/openOrbitDraft";
 import { orbitWakeSupported, useOrbitInstanceSleep } from "../orbit/orbitInstanceSleep";
 import { orbitThreadStartBlockedReason } from "../orbit/orbitThreadStarts";
 import { registerOrbitInstanceStepOpener } from "../orbit/orbitInstanceStep";
@@ -486,7 +486,6 @@ function OpenCommandPaletteDialog(props: {
   const isActionsOnly = deferredQuery.startsWith(">");
   const [highlightedItemValue, setHighlightedItemValue] = useState<string | null>(null);
   const resultListRef = useRef<LegendListRef | null>(null);
-  const orbitCreateStartedRef = useRef(false);
   // A pushed view drops the typed highlight until the user moves it again.
   const highlightClearedRef = useRef(viewStack.length > 0);
   // Entering or leaving browse mode remounts the input; carry the caret across it.
@@ -1940,16 +1939,16 @@ function OpenCommandPaletteDialog(props: {
             : (orbitThreadStartBlockedReason() ?? "Open New thread and pick the Project again."),
       }),
     );
-  // The plus and Enter start the create at once; the palette closes and a second press starts none.
+  // The plus and Enter open the Project's draft for the new Instance: the first prompt and the
+  // branch are chosen there, and the send starts the create.
   const createOrbitInstance = () => {
-    if (orbitStepProject === null || orbitCreateStartedRef.current) return;
+    if (orbitStepProject === null) return;
     if (!orbitStep.hint.canCreate) {
       if (orbitStep.hint.plusEnabled) orbitStep.markSubmitted();
       return;
     }
-    orbitCreateStartedRef.current = true;
     setOpen(false);
-    void openOrbitPlusCreate(router, {
+    void openOrbitDraft(router, {
       projectId: orbitStepProject.id,
       projectSlug: orbitStepProject.slug,
       projectName: orbitStepProject.name,
@@ -1959,8 +1958,8 @@ function OpenCommandPaletteDialog(props: {
       existing: null,
       domainSuffix: orbitStepProject.domainSuffix,
     })
-      .then((startId) => {
-        if (startId === null) showOrbitDraftError();
+      .then((draftId) => {
+        if (draftId === null) showOrbitDraftError();
       })
       .catch(showOrbitDraftError);
   };

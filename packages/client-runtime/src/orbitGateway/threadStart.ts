@@ -196,7 +196,10 @@ export function readOrbitThreadStarts(value: unknown): OrbitThreadStart[] {
       typeof row.id !== "string" ||
       typeof row.commandId !== "string" ||
       typeof row.threadId !== "string" ||
-      typeof row.projectId !== "number"
+      typeof row.projectId !== "number" ||
+      // A start the palette's plus saved without a message (conn#79) no longer runs: every new
+      // Instance starts with a first prompt.
+      (typeof row.message === "string" && row.message.trim() === "")
     ) {
       return [];
     }
@@ -632,17 +635,8 @@ function isAdmissionRefusal(error: unknown): error is OrbitGatewayError {
 }
 
 /**
- * A start made by the palette's plus: it creates and connects the Instance and sends no message.
- * Done once `connected` is set.
- */
-export function orbitThreadStartHasNoMessage(start: OrbitThreadStart): boolean {
-  return start.message.trim() === "";
-}
-
-/**
  * Runs a start from its last saved step to the sent message. Resolves `true` once the message is
- * sent, or for a start with no message once the Instance is connected; otherwise it saves the
- * start with `error` set and resolves `false`.
+ * sent; otherwise it saves the start with `error` set and resolves `false`.
  */
 export async function runOrbitThreadStart(
   start: OrbitThreadStart,
@@ -936,9 +930,6 @@ export async function runOrbitThreadStart(
     }
 
     checkStopped();
-    // A start the palette's plus made has no first message: it ends once the Instance is
-    // connected, and Conn opens a normal new-thread draft there.
-    if (orbitThreadStartHasNoMessage(current)) return true;
     const begin = stamp("agentStartedAt");
     if (Object.keys(begin).length > 0) update(begin);
     const sent = await ports.send({ ...current, environmentId });

@@ -10,6 +10,7 @@ export * from "./orbitSetupStages.ts";
 export * from "./orbitCreateRows.ts";
 export * from "./orbitCompletion.ts";
 export * from "./orbitCompletionPolicy.ts";
+export * from "./orbitCompletionText.ts";
 export * from "./orbitInstance.ts";
 export * from "./instanceList.ts";
 export * from "./orbitConnection.ts";

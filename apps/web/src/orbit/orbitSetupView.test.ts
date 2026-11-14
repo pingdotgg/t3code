@@ -527,6 +527,7 @@ describe("orbitSetupView with the create's completion (release 2030)", () => {
     const view = orbitSetupView(start);
     expect(view).toMatchObject({
       phase: "failed",
+      failedTitle: "Instance setup failed",
       error: "Orbit could not set up the workspace.",
       errorDetailLine: "instance.create_workspace_failed · composer exit 1",
       canRetry: true,
@@ -568,6 +569,34 @@ describe("orbitSetupView with the create's completion (release 2030)", () => {
       "A process of this Project did not start: conn-web.service. Change or remove this process in the Project's Orbit settings, then retry.",
     );
     expect(view.canRetry).toBe(true);
+  });
+
+  it("Q7: the process line says \u2026then retry also without `requires`", () => {
+    const view = orbitSetupView(
+      failed({
+        completionErrorCode: "instance.container_process_inactive",
+        completionProcessUnit: "conn-web.service",
+        completionRequires: null,
+      }),
+    );
+    expect(view.error).toContain("then retry.");
+    expect(view.error).not.toContain("create it again");
+  });
+
+  it("Q4: a cancel outside a removal is titled Instance setup cancelled, with Retry and Dismiss", () => {
+    const view = orbitSetupView(
+      failed({ completionStatus: "cancelled", completionErrorCode: "operation.cancelled" }),
+    );
+    expect(view).toMatchObject({
+      phase: "failed",
+      failedTitle: "Instance setup cancelled",
+      error: null,
+      errorDetailLine: "operation.cancelled",
+      canRetry: true,
+      canCancel: false,
+    });
+    expect(orbitSetupView(failed({})).failedTitle).toBe("Instance setup failed");
+    expect(orbitSetupView(creating).failedTitle).toBe("Instance setup failed");
   });
 
   it("state 12: a completion refused at admission fails the card at once", () => {

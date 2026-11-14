@@ -12,11 +12,7 @@ import {
   reopenOrbitCompletionRows,
   type OrbitCreateRows,
 } from "./orbitCreateRows.ts";
-import {
-  orbitCancelledCompletionShowsFailure,
-  orbitPlusStartFollowsCompletion,
-} from "./orbitCompletionPolicy.ts";
-import { orbitThreadStartHasNoMessage, type OrbitThreadStart } from "./threadStart.ts";
+import type { OrbitThreadStart } from "./threadStart.ts";
 
 /**
  * Conn: the create's `instance.complete` (Orbit release 2030). The create ends once the thread is
@@ -31,6 +27,7 @@ export type OrbitCompletionPhase =
   | "none"
   | "running"
   | "succeeded"
+  /** Failed, or cancelled outside a removal (Orbit offers a Retry): see `orbitCompletionCancelled`. */
   | "failed"
   /** Cancelled by a removal: nothing new shows; the removal takes the thread away. */
   | "removed";
@@ -45,12 +42,18 @@ export function orbitCompletionPhase(start: OrbitThreadStart): OrbitCompletionPh
     case "interrupted":
       return "failed";
     case "cancelled":
-      return start.completionRetryable === true && orbitCancelledCompletionShowsFailure()
-        ? "failed"
-        : "removed";
+      return start.completionRetryable === true ? "failed" : "removed";
     default:
       return "running";
   }
+}
+
+/**
+ * A completion cancelled outside a removal (a CLI cancel; Orbit offers a Retry): the card says
+ * "Instance setup cancelled" and offers Retry and Dismiss as for a failure (owner, spec Q4).
+ */
+export function orbitCompletionCancelled(start: OrbitThreadStart): boolean {
+  return orbitCompletionPhase(start) === "failed" && start.completionStatus === "cancelled";
 }
 
 /** Whether the main window's runner follows this start's completion. */
@@ -59,8 +62,7 @@ export function orbitCompletionNeedsFollow(start: OrbitThreadStart): boolean {
     start.sentAt != null &&
     start.pendingThread === true &&
     start.completionOperationId != null &&
-    !OPERATION_TERMINAL_STATUSES.has(start.completionStatus ?? "queued") &&
-    (!orbitThreadStartHasNoMessage(start) || orbitPlusStartFollowsCompletion())
+    !OPERATION_TERMINAL_STATUSES.has(start.completionStatus ?? "queued")
   );
 }
 

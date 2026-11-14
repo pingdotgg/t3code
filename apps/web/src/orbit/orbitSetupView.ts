@@ -8,9 +8,13 @@ import {
   ORBIT_NAME_DOMAIN_INVALID_TEXT,
   ORBIT_PLACEMENT_CONFLICT,
   ORBIT_ROUTE_DOMAIN_INVALID,
+  ORBIT_SETUP_FAILED_TITLE,
   ORBIT_SOURCE_HEAD_UNAVAILABLE,
+  ORBIT_WORKSPACE_FAILED_TEXT,
+  orbitCompletionFailure,
   orbitCompletionPhase,
-  orbitCompletionProcessFailureCanRetry,
+  orbitErrorDetailText,
+  orbitProcessFailureText,
   orbitSetupStages,
   orbitThreadStartCanRetry,
   orbitThreadStartCreatedInstance,
@@ -56,6 +60,8 @@ export interface OrbitSetupDetails {
 
 export interface OrbitSetupView {
   readonly phase: "running" | "done" | "failed";
+  /** The failed card's title: "Instance setup cancelled" for a completion cancelled outside a removal. */
+  readonly failedTitle: string;
   readonly stages: readonly OrbitSetupViewStage[];
   readonly error: string | null;
   /** Orbit's code and detail line under the error, as `code · detail`, when Orbit sent a detail. */
@@ -81,9 +87,12 @@ export interface OrbitSetupView {
   readonly canCancel: boolean;
 }
 
-export const ORBIT_SETUP_FAILED_TITLE = "Instance setup failed";
+export {
+  ORBIT_INSTANCE_STAYS_LINE,
+  ORBIT_SETUP_CANCELLED_TITLE,
+  ORBIT_SETUP_FAILED_TITLE,
+} from "@t3tools/client-runtime/orbit-gateway";
 export const ORBIT_SETUP_RUNNING_TITLE = "Setting up Instance…";
-export const ORBIT_INSTANCE_STAYS_LINE = "The Instance stays; remove it in Orbit.";
 const NAME_TAKEN = "instance.name_taken";
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -176,26 +185,16 @@ export function orbitStartFailure(
         message: `Orbit could not create ${start.instanceName}: the clone operation failed on ${start.nodeName}.`,
       };
     case ORBIT_CREATE_WORKSPACE_FAILED:
-      return { ...none, message: "Orbit could not set up the workspace." };
-    case ORBIT_CONTAINER_PROCESS_INACTIVE: {
-      const unit = start.errorProcessUnit?.trim();
-      const next = canRetry
-        ? "Change or remove this process in the Project's Orbit settings, then retry."
-        : "Fix the Project, remove this Instance in Orbit, then create it again.";
-      return {
-        ...none,
-        message: `A process of this Project did not start${unit ? `: ${unit}` : ""}. ${next}`,
-      };
-    }
+      return { ...none, message: ORBIT_WORKSPACE_FAILED_TEXT };
+    case ORBIT_CONTAINER_PROCESS_INACTIVE:
+      return { ...none, message: orbitProcessFailureText(start.errorProcessUnit, canRetry) };
     default:
       return { ...none, message: start.error };
   }
 }
 
 function orbitErrorDetailLine(start: OrbitThreadStart): string | null {
-  const detail = start.errorDetail?.trim();
-  if (!detail) return null;
-  return start.errorCode ? `${start.errorCode} · ${detail}` : detail;
+  return orbitErrorDetailText(start.errorCode, start.errorDetail);
 }
 
 const STAGE_LABELS: Readonly<Record<OrbitSetupStageId, string>> = {
@@ -224,8 +223,9 @@ export function orbitSetupView(
         detail: row.id === "address" ? host : null,
       })) ?? null,
   }));
-  if (start.error === null && completion === "failed") {
-    return { ...orbitCompletionFailedView(start), stages, details };
+  const completionFailure = start.error === null ? orbitCompletionFailure(start) : null;
+  if (completionFailure !== null) {
+    return { ...orbitCompletionFailedView(completionFailure), stages, details };
   }
   const phase =
     start.error !== null
@@ -238,6 +238,7 @@ export function orbitSetupView(
   const failure = failed ? orbitStartFailure(start) : null;
   return {
     phase,
+    failedTitle: ORBIT_SETUP_FAILED_TITLE,
     stages,
     error: failure?.message ?? start.error,
     errorDetailLine: failed ? orbitErrorDetailLine(start) : null,
@@ -255,44 +256,24 @@ export function orbitSetupView(
   };
 }
 
-/** Completion codes with a Conn message; any other code shows only its detail line (spec Q2). */
-const COMPLETION_MESSAGE_CODES: ReadonlySet<string> = new Set([
-  ORBIT_CREATE_WORKSPACE_FAILED,
-  ORBIT_CONTAINER_PROCESS_INACTIVE,
-]);
-
 /**
- * The card of a start whose completion failed: the create, Connect and Start agent stay done, the
- * thread stays usable, and Retry asks Orbit for a new completion. No Change name, Change branch or
- * Open: the Instance exists and works.
+ * The card of a start whose completion failed, or was cancelled outside a removal: the create,
+ * Connect and Start agent stay done, the thread stays usable, and Retry asks Orbit for a new
+ * completion. No Change name, Change branch or Open: the Instance exists and works.
  */
 function orbitCompletionFailedView(
-  start: OrbitThreadStart,
+  failure: NonNullable<ReturnType<typeof orbitCompletionFailure>>,
 ): Omit<OrbitSetupView, "stages" | "details"> {
-  const code = start.completionErrorCode ?? null;
-  // The completion's fields in the shape the create's failure texts read.
-  const asStart: OrbitThreadStart = {
-    ...start,
-    errorCode: code,
-    errorDetail: start.completionErrorDetail ?? null,
-    errorDetails: null,
-    errorProcessUnit: start.completionProcessUnit ?? null,
-    errorRecoveryRequires: start.completionRequires ?? null,
-  };
-  const message =
-    code !== null && COMPLETION_MESSAGE_CODES.has(code)
-      ? orbitStartFailure(asStart, orbitCompletionProcessFailureCanRetry(start)).message
-      : null;
   return {
     phase: "failed",
-    error: message,
-    // Without Orbit's detail, the code alone, so the card names what failed.
-    errorDetailLine: orbitErrorDetailLine(asStart) ?? (message === null ? code : null),
-    canRetry: start.completionRetryable === true,
+    failedTitle: failure.title,
+    error: failure.message,
+    errorDetailLine: failure.detailLine,
+    canRetry: failure.canRetry,
     canChangeName: false,
     canChangeBranch: false,
     openInstance: null,
-    instanceStays: code !== ORBIT_CONTAINER_PROCESS_INACTIVE,
+    instanceStays: failure.instanceStays,
     cancelling: false,
     canCancel: false,
   };

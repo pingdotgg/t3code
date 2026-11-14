@@ -23,7 +23,11 @@ import { readOrbitEnvironments } from "./orbitPaletteProjects";
 import type { OrbitDraftTarget } from "./orbitDraft";
 import { openOrbitInstanceStep } from "./orbitInstanceStep";
 import { desktopOrbitGatewayClient } from "./OrbitProfileSync";
-import { ORBIT_INSTANCE_STAYS_LINE, orbitSetupView } from "./orbitSetupView";
+import {
+  ORBIT_INSTANCE_STAYS_LINE,
+  ORBIT_SETUP_CANCELLED_TITLE,
+  orbitSetupView,
+} from "./orbitSetupView";
 import {
   cancelOrbitThreadStart,
   dismissOrbitThreadStart,
@@ -111,8 +115,7 @@ export function OrbitPendingThreadView({ startId }: { startId: string }) {
   /** Carries the message, model and modes into the reopened draft, then drops the saved start. */
   const moveToDraft = (draftId: DraftId) => {
     const store = useComposerDraftStore.getState();
-    // A start the plus made has no message: the reopened draft keeps what it holds.
-    if (start.message !== "") store.setPrompt(draftId, start.message);
+    store.setPrompt(draftId, start.message);
     if (start.modelSelection) store.setModelSelection(draftId, start.modelSelection);
     if (start.runtimeMode) store.setRuntimeMode(draftId, start.runtimeMode);
     if (start.interactionMode) store.setInteractionMode(draftId, start.interactionMode);
@@ -183,7 +186,7 @@ export function OrbitPendingThreadView({ startId }: { startId: string }) {
       if (requested) return;
       toastManager.add({
         type: "info",
-        title: "Instance setup cancelled",
+        title: ORBIT_SETUP_CANCELLED_TITLE,
         ...(instanceStays ? { description: ORBIT_INSTANCE_STAYS_LINE } : {}),
       });
     } catch (error) {
@@ -201,7 +204,7 @@ export function OrbitPendingThreadView({ startId }: { startId: string }) {
       header={
         <>
           <span className="min-w-0 truncate text-sm font-medium text-foreground">
-            {start.message.split("\n")[0] || start.instanceName}
+            {start.message.split("\n")[0]}
           </span>
           <span className="shrink-0 text-xs text-muted-foreground">
             {start.instanceName} · {start.projectSlug}
@@ -211,16 +214,14 @@ export function OrbitPendingThreadView({ startId }: { startId: string }) {
     >
       <div className="min-h-0 flex-1 overflow-y-auto scrollbar-gutter-both bg-background">
         <div className="mx-auto flex w-full max-w-(--chat-content-max-width) flex-col px-4 pt-6">
-          {start.message === "" ? null : (
-            <div className="flex justify-end pb-4">
-              <div
-                data-orbit-pending-message
-                className="max-w-[80%] rounded-bubble border-t border-t-(--message-highlight)! bg-message px-4 pt-2.5 pb-3 text-sm whitespace-pre-wrap text-message-foreground"
-              >
-                {start.message}
-              </div>
+          <div className="flex justify-end pb-4">
+            <div
+              data-orbit-pending-message
+              className="max-w-[80%] rounded-bubble border-t border-t-(--message-highlight)! bg-message px-4 pt-2.5 pb-3 text-sm whitespace-pre-wrap text-message-foreground"
+            >
+              {start.message}
             </div>
-          )}
+          </div>
           <OrbitSetupCard
             view={orbitSetupView(start, create)}
             onRetry={() => retryOrbitThreadStart(start.id)}

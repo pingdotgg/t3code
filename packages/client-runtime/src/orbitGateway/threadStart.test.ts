@@ -14,7 +14,6 @@ import {
   cancelOrbitCompletion,
   cancelOrbitCreate,
   newOrbitThreadStart,
-  orbitThreadStartHasNoMessage,
   orbitThreadInstanceName,
   orbitThreadStartCanRetry,
   orbitThreadStartCreatedInstance,
@@ -373,6 +372,12 @@ describe("readOrbitThreadStarts", () => {
     });
     expect(readOrbitThreadStarts({ starts: [] })).toEqual([]);
   });
+
+  it("drops a start the palette's plus saved without a message (conn#79): it no longer runs", () => {
+    expect(readOrbitThreadStarts([{ ...v1Row, message: "" }])).toEqual([]);
+    expect(readOrbitThreadStarts([{ ...v1Row, message: "  " }])).toEqual([]);
+    expect(readOrbitThreadStarts([v1Row])).toHaveLength(1);
+  });
 });
 
 describe("runOrbitThreadStart", () => {
@@ -411,63 +416,6 @@ describe("runOrbitThreadStart", () => {
     });
     // The create's rows are saved as the runner reads the Operation.
     expect(run.saves.at(-1)!.createRows?.register?.status).toBe("done");
-  });
-
-  describe("a start with no message (the palette's plus)", () => {
-    const plusStart = () =>
-      newOrbitThreadStart({
-        id: "p1",
-        project,
-        message: "",
-        suffix: "k3j9",
-        threadId: "thread-p",
-        messageId: "message-p",
-        commandId: "command-p",
-        now: 0,
-        instanceName: "abc",
-      });
-
-    it("sends the same create as a first message, pairs once, and ends connected without sending", async () => {
-      const { client, calls, branches } = gateway({});
-      const run = ports(client);
-
-      expect(orbitThreadStartHasNoMessage(plusStart())).toBe(true);
-      expect(await runOrbitThreadStart(plusStart(), run.ports)).toBe(true);
-
-      expect(calls.filter((call) => call.startsWith("create"))).toEqual(["create 3 abc"]);
-      expect(branches).toEqual([null]);
-      expect(run.connected).toHaveLength(1);
-      expect(run.sent).toEqual([]);
-      expect(run.saves.at(-1)).toMatchObject({
-        environmentId: "env-41",
-        connected: true,
-        error: null,
-        agentStartedAt: null,
-        sentAt: null,
-      });
-    });
-
-    it("resumes after a relaunch during the create without a second create, and again after it without any call", async () => {
-      const { client, calls } = gateway({ create: ["running", "running", "succeeded"] });
-      const first = ports(client, { stopped: () => calls.includes("operation 100") });
-      // The app quits while the create runs: the start ends without an error.
-      expect(await runOrbitThreadStart(plusStart(), first.ports)).toBe(false);
-      const during = readOrbitThreadStarts(JSON.parse(JSON.stringify([first.saves.at(-1)])))[0]!;
-      expect(during).toMatchObject({ createOperationId: 100, error: null });
-
-      const second = ports(client);
-      expect(await runOrbitThreadStart(during, second.ports)).toBe(true);
-      expect(calls.filter((call) => call.startsWith("create"))).toHaveLength(1);
-      expect(calls.filter((call) => call.startsWith("pair"))).toHaveLength(1);
-      expect(second.sent).toEqual([]);
-
-      const after = readOrbitThreadStarts(JSON.parse(JSON.stringify([second.saves.at(-1)])))[0]!;
-      const callsBefore = calls.length;
-      const third = ports(client, { saved: true });
-      expect(await runOrbitThreadStart(after, third.ports)).toBe(true);
-      expect(calls.slice(callsBefore)).toEqual([]);
-      expect(third.sent).toEqual([]);
-    });
   });
 
   describe("Cancel while the create is admitted", () => {

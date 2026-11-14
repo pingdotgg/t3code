@@ -44,7 +44,7 @@ export function OrbitPendingThreadList() {
                 <Spinner size="sm" className="shrink-0" />
               )}
               <span className="min-w-0 flex-1 truncate text-sidebar-foreground">
-                {start.message.split("\n")[0] || start.instanceName}
+                {start.message.split("\n")[0]}
               </span>
               <span className="shrink-0 text-xs">
                 {start.error ? "Setup failed" : start.projectSlug}

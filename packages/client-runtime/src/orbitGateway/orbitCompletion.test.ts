@@ -8,6 +8,7 @@ import {
   orbitCompletionNeedsAdmission,
   followOrbitCompletion,
   orbitCompletionNeedsFollow,
+  orbitCompletionCancelled,
   orbitCompletionPhase,
   retryOrbitCompletion,
   type OrbitCompletionPorts,
@@ -125,7 +126,7 @@ describe("orbitCompletionPhase", () => {
     [{ completionStatus: "succeeded" as const }, "succeeded"],
     [{ completionStatus: "failed" as const }, "failed"],
     [{ completionStatus: "interrupted" as const }, "failed"],
-    // Q4: a cancel outside a removal (Orbit offers Retry) shows the failed card.
+    // Q4: a cancel outside a removal (Orbit offers Retry) shows the failed card, titled cancelled.
     [{ completionStatus: "cancelled" as const, completionRetryable: true }, "failed"],
     // A removal's cancel: no recovery.
     [{ completionStatus: "cancelled" as const, completionRetryable: false }, "removed"],
@@ -133,12 +134,20 @@ describe("orbitCompletionPhase", () => {
     expect(orbitCompletionPhase(sentStart(extra))).toBe(phase);
   });
 
-  it("follows only sent pending starts with an open completion, and not a plus start (Q5)", () => {
+  it("Q4: only a cancel with Orbit's Retry counts as a cancelled card", () => {
+    const retryable = { completionStatus: "cancelled" as const, completionRetryable: true };
+    expect(orbitCompletionCancelled(sentStart(retryable))).toBe(true);
+    expect(orbitCompletionCancelled(sentStart({ ...retryable, completionRetryable: false }))).toBe(
+      false,
+    );
+    expect(orbitCompletionCancelled(sentStart({ completionStatus: "failed" }))).toBe(false);
+  });
+
+  it("follows only sent pending starts with an open completion", () => {
     expect(orbitCompletionNeedsFollow(sentStart())).toBe(true);
     expect(orbitCompletionNeedsFollow(sentStart({ completionStatus: "failed" }))).toBe(false);
     expect(orbitCompletionNeedsFollow(sentStart({ completionOperationId: null }))).toBe(false);
     expect(orbitCompletionNeedsFollow(sentStart({ sentAt: null }))).toBe(false);
-    expect(orbitCompletionNeedsFollow(sentStart({ message: "" }))).toBe(false);
   });
 });
 

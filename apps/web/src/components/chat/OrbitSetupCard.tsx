@@ -18,7 +18,6 @@ import { useInstanceLinkContextMenu } from "~/orbit/useInstanceLinkContextMenu";
 import { observeVisibleAnimation } from "~/lib/visibleAnimation";
 import {
   ORBIT_INSTANCE_STAYS_LINE,
-  ORBIT_SETUP_FAILED_TITLE,
   type OrbitReadyView,
   type OrbitSetupView,
   type OrbitSetupViewRow,
@@ -183,7 +182,7 @@ export function OrbitSetupCard({
       {failed ? (
         <div className="border-b border-(--shell-divider)! pb-2 pt-1">
           <div className="flex h-6 items-baseline px-1 text-sm leading-relaxed text-destructive-foreground">
-            {ORBIT_SETUP_FAILED_TITLE}
+            {view.failedTitle}
           </div>
         </div>
       ) : null}
