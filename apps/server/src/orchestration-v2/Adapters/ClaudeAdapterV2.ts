@@ -12806,22 +12806,23 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 }),
               });
             });
-            if (userMessage !== null) {
+            const offerUserMessage =
+              userMessage === null
+                ? Effect.void
+                : startUserTurnForWakeReports(nativeThreadId).pipe(
+                    Effect.andThen(
+                      Effect.uninterruptibleMask((restore) =>
+                        restore(
+                          querySession.query.offer(userMessage, () => {
+                            pdfReservation.commit();
+                          }),
+                        ).pipe(Effect.tap(() => Effect.sync(() => pdfReservation.commit()))),
+                      ),
+                    ),
+                  );
+            if (userMessage !== null && !turnInput.resume) {
               yield* attachTurn;
-              yield* startUserTurnForWakeReports(nativeThreadId);
-              yield* Effect.uninterruptibleMask((restore) =>
-                restore(
-                  querySession.query.offer(userMessage, () => {
-                    pdfReservation.commit();
-                  }),
-                ).pipe(
-                  Effect.tap(() =>
-                    Effect.sync(() => {
-                      pdfReservation.commit();
-                    }),
-                  ),
-                ),
-              );
+              yield* offerUserMessage;
               return;
             }
             // Transcript reads suspend replay; hold SDK frames until the buffer is applied to preserve order.
@@ -12852,6 +12853,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   : (yield* Ref.get(absorbedWakes)).has(nativeThreadId);
                 if (!leavesLaterWake) yield* forgetAbsorbedWake(nativeThreadId);
                 if (drained.length === 0) {
+                  if (turnInput.resume) return;
                   const completedAt = yield* DateTime.now;
                   yield* finalizeActiveTurn({ context, status: "completed", completedAt });
                   return;
@@ -12918,7 +12920,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   const completedAt = yield* DateTime.now;
                   yield* finalizeActiveTurn({ context, status: "completed", completedAt });
                   if (leavesLaterWake) yield* offerBufferedWake(nativeThreadId);
-                } else if (!context.nativeWakeStarted) {
+                } else if (!context.nativeWakeStarted && !turnInput.resume) {
                   yield* Effect.sleep(CLAUDE_WAKE_TURN_START_DEADLINE).pipe(
                     Effect.andThen(
                       sdkMessageLock.withPermits(1)(
@@ -12948,6 +12950,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 }
               }),
             );
+            if (userMessage !== null) {
+              yield* sdkMessageLock.withPermits(1)(
+                Effect.gen(function* () {
+                  if ((yield* Ref.get(activeTurn)) === context) yield* offerUserMessage;
+                }),
+              );
+            }
           },
           (effect, turnInput) =>
             effect.pipe(

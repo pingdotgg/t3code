@@ -3724,49 +3724,70 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     });
   const makeWakeHarness = makeWakeHarnessWithOptions();
 
-  it.effect("resumes a stopped query with empty SDK content and a fresh native process", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeWakeHarnessWithOptions({
-        freshQueueOnReopen: true,
-        close: (queue) => Queue.shutdown(queue),
-      });
-      const input = makeClaudeTestTurnInput({
-        threadId: harness.threadId,
-        providerThread: harness.providerThread,
-        now: DateTime.makeUnsafe(0),
-        attemptId: RunAttemptId.make("native-resume"),
-        text: "Initial task",
-        attachments: [],
-        providerTurnOrdinal: 1,
-      });
-      yield* harness.runtime.startTurn(input);
-      yield* harness.offerAndWait(turnOneResult);
-      yield* Queue.take(harness.terminalReceipts);
-      const { message, ...turn } = input;
-      yield* harness.runtime.resumeTurn!({
-        ...turn,
-        providerTurnOrdinal: 2,
-        messageId: message.messageId,
-      });
-      assert.equal(harness.processQueues.length, 2);
-      assert.equal(
-        harness.getOpenedOptions()?.resume,
-        harness.providerThread.nativeThreadRef?.nativeId,
-      );
-      assert.deepEqual(harness.offeredMessages.at(-1)?.message.content, []);
-      yield* harness.offerAndWait(turnOneResult);
-      yield* Queue.take(harness.terminalReceipts);
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        Layer.mergeAll(
-          IdAllocator.layer,
-          McpProviderSessions.layer,
-          NodeServices.layer,
-          NodeCrypto.layer,
+  it.effect.each([false, true])(
+    "resumes a stopped query with empty SDK content and a fresh native process, buffered: %s",
+    (buffered) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({
+          freshQueueOnReopen: true,
+          close: (queue) => Queue.shutdown(queue),
+        });
+        const input = makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: DateTime.makeUnsafe(0),
+          attemptId: RunAttemptId.make("native-resume"),
+          text: "Initial task",
+          attachments: [],
+          providerTurnOrdinal: 1,
+        });
+        yield* harness.runtime.startTurn(input);
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+        if (buffered) {
+          yield* harness.offerAndWait(wakeAssistant);
+          yield* harness.offerAndWait(wakeResult);
+        }
+        const { message, ...turn } = input;
+        yield* harness.runtime.resumeTurn!({
+          ...turn,
+          providerTurnOrdinal: 2,
+          messageId: message.messageId,
+        });
+        assert.equal(harness.processQueues.length, 2);
+        assert.equal(
+          harness.getOpenedOptions()?.resume,
+          harness.providerThread.nativeThreadRef?.nativeId,
+        );
+        if (buffered) {
+          assert.equal(harness.offeredMessages.length, 1);
+        } else {
+          assert.deepEqual(harness.offeredMessages.at(-1)?.message.content, []);
+          yield* harness.offerAndWait(turnOneResult);
+        }
+        yield* Queue.take(harness.terminalReceipts);
+        assert.equal(harness.terminalEvents().length, 2);
+        if (buffered) {
+          assert.isTrue(
+            harness.events.some(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "assistant_message" &&
+                event.turnItem.text === WAKE_ASSISTANT_TEXT,
+            ),
+          );
+        }
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
         ),
       ),
-    ),
   );
 
   it.effect("resumes the session a /clear selected after the Claude process is replaced", () =>

@@ -54,6 +54,7 @@ import { deliverContextHandoffs, withInlineContext } from "./ContextHandoffDeliv
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { unsentManualContinuationSource } from "./manualContinuation.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import {
   ContextHandoffBackgroundWorkError,
@@ -1454,20 +1455,16 @@ export const layer: Layer.Layer<
         legacyInputRunIds,
         budget,
       } = handoffContext;
-      const resumeSource = projection.runs.find(
-        (source) => source.id === run.manualContinuationOfRunId,
-      );
+      const manualResume =
+        run.manualContinuationOfRunId !== undefined && attempt.reason !== "steering_restart";
+      const resumeSource = manualResume
+        ? unsentManualContinuationSource(run, projection)
+        : undefined;
       const unsentResumeMessage =
-        resumeSource !== undefined &&
-        resumeSource.manualContinuationOfRunId === undefined &&
-        !acceptedAttempts.some((attempt) => attempt.runId === resumeSource.id)
+        resumeSource !== undefined
           ? projection.messages.find((source) => source.id === resumeSource.userMessageId)
           : undefined;
-      if (
-        run.manualContinuationOfRunId !== undefined &&
-        unsentResumeMessage === undefined &&
-        session.resumeTurn === undefined
-      ) {
+      if (manualResume && unsentResumeMessage === undefined && session.resumeTurn === undefined) {
         yield* settleStartFailure({
           signal: "resume-unsupported",
           title: "Native resume is unavailable",
@@ -1789,7 +1786,7 @@ export const layer: Layer.Layer<
               .filter((turn) => turn.providerThreadId === providerThread.id)
               .map((turn) => turn.ordinal),
           ) + 1,
-        resume: run.manualContinuationOfRunId !== undefined && unsentResumeMessage === undefined,
+        resume: manualResume && unsentResumeMessage === undefined,
         nativeThreadHasTurns:
           nativeInputRunIds.size > 0 ||
           (legacyInputRunIds.size > 0 &&
