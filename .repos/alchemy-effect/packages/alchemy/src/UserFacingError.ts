@@ -18,9 +18,7 @@ import * as Predicate from "effect/Predicate";
  * Classes without a human-readable `message` prop derive one with a getter
  * (see `AlchemistNotFound` in `Alchemist/Errors.ts`).
  */
-export const UserFacingError: unique symbol = Symbol.for(
-  "alchemy/UserFacingError",
-);
+export const UserFacingError: unique symbol = Symbol.for("alchemy/UserFacingError");
 
 /** An error carrying a human-readable `message` that is safe to print as-is. */
 export interface UserFacingError {

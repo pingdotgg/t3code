@@ -23,9 +23,16 @@ const OPENER_STORAGE_KEY = "t3code:prompt-link-opener";
 const Opener = Schema.NullOr(Schema.Literals(["app", "browser"]));
 
 interface LinkSummary {
+  readonly title: string;
+  readonly description: string;
   readonly prompt: LinkedPrompt | null;
   readonly details: ReadonlyArray<string>;
 }
+
+const PROMPT_HEADER = {
+  title: "Open this prompt",
+  description: "It opens as a draft. Nothing runs until you press Send.",
+};
 
 function summarize(
   appPath: string,
@@ -33,9 +40,19 @@ function summarize(
   const url = new URL(appPath, window.location.origin);
   if (url.pathname !== "/new") {
     const prompt = parseThreadLinkPrompt(url.search);
-    return prompt.ok
-      ? { ok: true, value: { prompt: prompt.value, details: ["Opens one of your threads."] } }
-      : prompt;
+    if (!prompt.ok) return prompt;
+    return {
+      ok: true,
+      value:
+        prompt.value === null
+          ? {
+              title: "Open this thread",
+              description: "It opens in T3 Code if you're connected to the machine it runs on.",
+              prompt: null,
+              details: [],
+            }
+          : { ...PROMPT_HEADER, prompt: prompt.value, details: ["Opens one of your threads."] },
+    };
   }
   const link = parseNewThreadLink(url.search);
   if (!link.ok) return link;
@@ -43,13 +60,18 @@ function summarize(
     const { owner, name, number } = link.value.pullRequest;
     return {
       ok: true,
-      value: { prompt: link.value.prompt, details: [`Pull request ${owner}/${name}#${number}`] },
+      value: {
+        ...PROMPT_HEADER,
+        prompt: link.value.prompt,
+        details: [`Pull request ${owner}/${name}#${number}`],
+      },
     };
   }
   const { repository, provider, model } = link.value;
   return {
     ok: true,
     value: {
+      ...PROMPT_HEADER,
       prompt: link.value.prompt,
       details: [
         repository ? `Repository ${repository.owner}/${repository.name}` : "No project",
@@ -119,13 +141,10 @@ function HostedPromptLinkLanding({
     );
   }
 
-  const { prompt, details } = summary.value;
+  const { title, description, prompt, details } = summary.value;
   return (
     <StandalonePage>
-      <StandalonePageHeader
-        title="Open this prompt"
-        description="It opens as a draft. Nothing runs until you press Send."
-      />
+      <StandalonePageHeader title={title} description={description} />
       {prompt !== null && prompt.hiddenCharacters > 0 ? (
         <Alert className="mt-5" variant="error">
           <AlertTitle>This prompt had hidden characters, it may be malicious</AlertTitle>
@@ -140,7 +159,9 @@ function HostedPromptLinkLanding({
           {prompt.text}
         </pre>
       ) : null}
-      <p className="mt-3 text-xs text-muted-foreground">{details.join(" · ")}</p>
+      {details.length > 0 ? (
+        <p className="mt-3 text-xs text-muted-foreground">{details.join(" · ")}</p>
+      ) : null}
       <div className="mt-6 flex flex-wrap gap-2">
         <Button render={<a href={deepLink} />} onClick={() => onChoose("app", remember)}>
           {onPhone ? "Open in app" : "Open in desktop app"}
