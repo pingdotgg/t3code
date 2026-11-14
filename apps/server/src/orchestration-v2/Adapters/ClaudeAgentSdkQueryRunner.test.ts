@@ -500,7 +500,8 @@ it.effect("does not reuse a fresh session ID after MCP registration times out", 
 
 it.effect.each([
   ["opens after a slow CLI boot", "120 seconds", true],
-  ["times out a CLI that never boots", "5 minutes", false],
+  ["opens after SessionStart hooks run near their 10 minute timeout", "10 minutes", true],
+  ["times out a CLI that never boots", "11 minutes", false],
 ] as const)("%s", ([, bootWait, boots]) =>
   Effect.gen(function* () {
     const waiting = Promise.withResolvers<void>();
