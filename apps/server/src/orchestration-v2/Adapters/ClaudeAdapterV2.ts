@@ -4451,6 +4451,69 @@ const isClaudeBlockedAssistantRateLimit = Schema.is(
   }),
 );
 
+// An idle wake can be rejected before a reset, then replayed after a newer turn succeeds.
+// Only discard the old rejection when its explicitly reported reset has already passed.
+// A live 429 or one with an unknown/future reset still needs normal recovery.
+function expiredBufferedWakeRateLimitFrames(
+  frames: ReadonlyArray<SDKMessage>,
+  result: SDKMessage,
+  receivedAtMs: number,
+  nowMs: number,
+): ReadonlySet<SDKMessage> | null {
+  if (
+    result.type !== "result" ||
+    result.subtype !== "success" ||
+    !result.is_error ||
+    result.api_error_status !== 429
+  ) {
+    return null;
+  }
+  const resultIndex = frames.indexOf(result);
+  if (resultIndex < 0) return null;
+  const beforeResult = frames.slice(0, resultIndex);
+  const lastRootStart = beforeResult.findLastIndex(isClaudeTurnStartMessage);
+  const lastResult = beforeResult.findLastIndex((frame) => frame.type === "result");
+  const segment = frames.slice(Math.max(lastRootStart, lastResult) + 1, resultIndex);
+  const directResets = segment.flatMap((frame) =>
+    frame.type === "rate_limit_event" &&
+    frame.rate_limit_info?.status === "rejected" &&
+    frame.rate_limit_info.overageStatus !== "allowed" &&
+    frame.rate_limit_info.overageStatus !== "allowed_warning" &&
+    frame.rate_limit_info.isUsingOverage !== true &&
+    frame.rate_limit_info.overageInUse !== true
+      ? [frame.rate_limit_info.resetsAt]
+      : [],
+  );
+  // Standalone rate-limit events are authoritative over the embedded assistant error.
+  const embeddedResets = segment.flatMap((frame) =>
+    isClaudeBlockedAssistantRateLimit(frame)
+      ? [frame.api_error_params.rate_limit_info.resetsAt]
+      : [],
+  );
+  const resets = directResets.length > 0 ? directResets : embeddedResets;
+  if (
+    resets.length === 0 ||
+    !resets.every(
+      (reset) =>
+        typeof reset === "number" &&
+        Number.isFinite(reset) &&
+        reset > 0 &&
+        reset * 1_000 > receivedAtMs &&
+        reset * 1_000 <= nowMs,
+    )
+  ) {
+    return null;
+  }
+  return new Set(
+    segment.filter(
+      (frame) =>
+        (frame.type === "rate_limit_event" && frame.rate_limit_info?.status === "rejected") ||
+        (frame.type === "assistant" &&
+          (frame.error === "rate_limit" || isClaudeBlockedAssistantRateLimit(frame))),
+    ),
+  );
+}
+
 function claudeUsageLimitResetAt(resetsAt: unknown): string | null {
   const resetMs = typeof resetsAt === "number" ? resetsAt * 1000 : NaN;
   return Number.isFinite(resetMs) && resetMs > 0 && resetMs < 8.64e15
@@ -12774,6 +12837,29 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 );
                 const lastResult =
                   drained[replayResultIndex === -1 ? lastResultIndex : replayResultIndex];
+                const lastUnsettledRootIndex = drained.findLastIndex(isClaudeTurnStartMessage);
+                const newerRootStillOpen =
+                  lastResult !== undefined &&
+                  lastUnsettledRootIndex > drained.indexOf(lastResult) &&
+                  !drained
+                    .slice(lastUnsettledRootIndex + 1)
+                    .some((entry) => entry.type === "result");
+                const bufferedResultReceivedAt =
+                  lastResult?.type === "result"
+                    ? bufferedResultArrivals.get(lastResult)
+                    : undefined;
+                const expiredWakeFrames =
+                  lastResult !== undefined &&
+                  bufferedResultReceivedAt !== undefined &&
+                  !emptyTurnBeforeNextTurn &&
+                  !newerRootStillOpen
+                    ? expiredBufferedWakeRateLimitFrames(
+                        drained,
+                        lastResult,
+                        DateTime.toEpochMillis(bufferedResultReceivedAt),
+                        DateTime.toEpochMillis(yield* DateTime.now),
+                      )
+                    : null;
                 const opaqueReplayTombstones = taskIdSetForNativeThread(
                   yield* Ref.get(opaqueBackgroundTaskReplayTombstonesByNativeThread),
                   nativeThreadId,
@@ -12790,7 +12876,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   ) {
                     continue;
                   }
-                  if (entry.type !== "result") {
+                  if (entry.type !== "result" && !expiredWakeFrames?.has(entry)) {
                     yield* handleSdkMessage({ query: querySession.query, message: entry });
                   }
                   yield* Ref.update(wakeBuffers, (current) => {
@@ -12807,6 +12893,20 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     else next.set(nativeThreadId, { ...buffered, messages });
                     return next;
                   });
+                }
+                if (expiredWakeFrames !== null) {
+                  // The buffered wake ended before the limit reset. It is no longer a
+                  // rejection of this continuation, so do not fail it or show stale errors.
+                  const completedAt = yield* DateTime.now;
+                  yield* finalizeActiveTurn({
+                    context,
+                    status: "completed",
+                    completedAt,
+                    // The old wake may have incurred usage even though its rejection has expired.
+                    ...(lastResult?.type === "result" ? { result: lastResult } : {}),
+                  });
+                  if (leavesLaterWake) yield* offerBufferedWake(nativeThreadId);
+                  return;
                 }
                 if (lastResult !== undefined && !emptyTurnBeforeNextTurn) {
                   yield* handleSdkMessage({ query: querySession.query, message: lastResult });

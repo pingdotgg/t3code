@@ -15455,10 +15455,62 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
-  it.effect.each([true, false])(
-    "carries a rejected wake rate limit into the continuation failure (event=%s)",
-    (standaloneEvent) =>
+  it.effect.each([
+    {
+      standaloneEvent: true,
+      expiredBeforeReplay: false,
+      newerTurnBeforeReplay: false,
+      resetOffsetMs: null,
+    },
+    {
+      standaloneEvent: false,
+      expiredBeforeReplay: false,
+      newerTurnBeforeReplay: false,
+      resetOffsetMs: null,
+    },
+    {
+      standaloneEvent: true,
+      expiredBeforeReplay: true,
+      newerTurnBeforeReplay: false,
+      resetOffsetMs: null,
+    },
+    {
+      standaloneEvent: false,
+      expiredBeforeReplay: true,
+      newerTurnBeforeReplay: false,
+      resetOffsetMs: null,
+    },
+    {
+      standaloneEvent: true,
+      expiredBeforeReplay: true,
+      newerTurnBeforeReplay: true,
+      resetOffsetMs: null,
+    },
+    {
+      standaloneEvent: true,
+      expiredBeforeReplay: true,
+      newerTurnBeforeReplay: false,
+      resetOffsetMs: 0,
+    },
+    {
+      standaloneEvent: true,
+      expiredBeforeReplay: false,
+      newerTurnBeforeReplay: false,
+      resetOffsetMs: -1,
+    },
+    {
+      standaloneEvent: true,
+      expiredBeforeReplay: false,
+      newerTurnBeforeReplay: false,
+      resetOffsetMs: null,
+      arrivedAfterReset: true,
+    },
+  ])(
+    "replays a rejected wake rate limit without a stale failure (event=$standaloneEvent expired=$expiredBeforeReplay newerTurn=$newerTurnBeforeReplay offset=$resetOffsetMs arrived=$arrivedAfterReset)",
+    (scenario) =>
       Effect.gen(function* () {
+        const { standaloneEvent, expiredBeforeReplay, newerTurnBeforeReplay, resetOffsetMs } =
+          scenario;
         const harness = yield* makeWakeHarness;
         const now = yield* DateTime.now;
         const resetsAt = 1790298600;
@@ -15476,7 +15528,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
         yield* Queue.offer(harness.sdkMessages, turnOneResult);
         yield* Queue.take(harness.terminalReceipts);
-
+        if ("arrivedAfterReset" in scenario && scenario.arrivedAfterReset) {
+          yield* TestClock.setTime(resetsAt * 1_000 + 1_000);
+        }
         yield* Queue.offer(harness.sdkMessages, wakeNotification);
         if (standaloneEvent) {
           yield* harness.offerAndWait(
@@ -15534,22 +15588,68 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }),
         );
 
+        if (resetOffsetMs !== null) {
+          yield* TestClock.setTime(resetsAt * 1_000 + resetOffsetMs);
+        } else if (expiredBeforeReplay) {
+          yield* TestClock.setTime(resetsAt * 1_000 + 60_000);
+        }
+        if (newerTurnBeforeReplay) {
+          // A queued continuation may run behind an ordinary turn served after reset.
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-claude-wake-limit-intervening"),
+              text: "Check whether the limit cleared.",
+              attachments: [],
+              providerTurnOrdinal: 2,
+            }),
+          );
+          yield* harness.offerAndWait(
+            makeResultFrame({
+              uuid: "00000000-0000-4000-8000-000000000636",
+              result: "The new turn succeeded.",
+            }),
+          );
+          assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+        }
         yield* harness.runtime.startTurn(
           makeClaudeTestTurnInput({
             threadId: harness.threadId,
             providerThread: harness.providerThread,
-            now,
+            now: yield* DateTime.now,
             attemptId: RunAttemptId.make("attempt-claude-wake-limit-2"),
             text: "Background task completed.",
             attachments: [],
-            providerTurnOrdinal: 2,
+            providerTurnOrdinal: newerTurnBeforeReplay ? 3 : 2,
             messageCreatedBy: "agent",
             messageCreationSource: "provider",
           }),
         );
         const terminal = yield* Queue.take(harness.terminalReceipts);
-        assert.equal(terminal?.status, "failed");
-        if (terminal === undefined || terminal.status !== "failed") return;
+        if (expiredBeforeReplay) {
+          assert.equal(terminal.status, "completed");
+          assert.isFalse(
+            harness.events.some(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "system_notice" &&
+                event.turnItem.message.includes("usage limit reached"),
+            ),
+          );
+          const completed = harness.events.findLast(
+            (event) => event.type === "provider_turn.updated",
+          );
+          assert.equal(completed?.type, "provider_turn.updated");
+          if (completed?.type === "provider_turn.updated") {
+            assert.equal(completed.providerTurn.turnTokenUsage?.inputTokens, 1);
+            assert.equal(completed.providerTurn.turnTokenUsage?.outputTokens, 1);
+          }
+          return;
+        }
+        assert.equal(terminal.status, "failed");
+        if (terminal.status !== "failed") return;
         assert.equal(terminal.failure.class, "usage_limit");
         assert.equal(terminal.failure.resetAt, "2026-09-25T01:10:00.000Z");
         if (standaloneEvent) {
