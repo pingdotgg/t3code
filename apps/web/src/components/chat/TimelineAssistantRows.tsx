@@ -237,7 +237,9 @@ function AssistantMessageMeta({
       {projectedItem?.item.type === "assistant_message" ? (
         <AssistantForkButton projectedItem={projectedItem} />
       ) : null}
-      {!message.streaming && projectedItem ? (
+      {!message.streaming &&
+      projectedItem &&
+      isQuotableAssistantMessage(projectedItem.item.nativeItemRef) ? (
         <AssistantReplyButton message={message} itemId={projectedItem.sourceItemId} />
       ) : null}
       {!message.streaming && (
