@@ -368,6 +368,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["latex tex katex equations formulas markdown"],
   },
   {
+    id: "file-link-full-paths",
+    title: "Full paths in file links",
+    to: "/settings/appearance",
+    searchTerms: ["file link chip tag path prefix directory folder basename relative markdown"],
+  },
+  {
     id: "panel-animations",
     title: "Panel animations",
     to: "/settings/appearance",

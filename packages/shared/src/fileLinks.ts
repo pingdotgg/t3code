@@ -165,10 +165,12 @@ export function buildFileLinkParentSuffixByPath(
 export function fileLinkLabel(
   file: FilePathPosition,
   parentSuffixByPath: ReadonlyMap<string, string>,
+  options?: { readonly fullPath?: boolean },
 ): string {
-  const suffix = parentSuffixByPath.get(file.path.replaceAll("\\", "/"));
+  const fullPath = options?.fullPath === true;
+  const suffix = fullPath ? undefined : parentSuffixByPath.get(file.path.replaceAll("\\", "/"));
   return [
-    fileBasename(file.path),
+    fullPath ? file.path : fileBasename(file.path),
     suffix,
     file.line
       ? `L${file.line}${file.endLine ? `–${file.endLine}` : file.column ? `:C${file.column}` : ""}`

@@ -164,4 +164,11 @@ describe("fileLinkLabel", () => {
   ])("labels %o", (file, label) => {
     expect(fileLinkLabel(file, new Map())).toBe(label);
   });
+
+  it("uses the full path and skips the parent suffix when requested", () => {
+    const suffixes = new Map([["src/http.ts", "src"]]);
+    expect(fileLinkLabel({ path: "src/http.ts", line: 42 }, suffixes, { fullPath: true })).toBe(
+      "src/http.ts · L42",
+    );
+  });
 });
