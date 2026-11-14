@@ -1197,6 +1197,37 @@ it.layer(
     }),
   );
 
+  it.effect("clears a terminal that keeps printing while its history is saved", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      let printWhileSaving = Effect.void;
+      const printing = FileSystem.FileSystem.of({
+        ...fs,
+        writeFileString: (filePath, data, options) =>
+          printWhileSaving.pipe(Effect.andThen(fs.writeFileString(filePath, data, options))),
+      });
+      const { manager, ptyAdapter, getEvents } = yield* createManager().pipe(
+        Effect.provideService(FileSystem.FileSystem, printing),
+      );
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0]!;
+      // Each save sees fresh output, so the history worker never goes idle.
+      printWhileSaving = Effect.gen(function* () {
+        const printed = yield* Deferred.make<void>();
+        const unsubscribe = yield* manager.subscribe((event) =>
+          event.type === "output" ? Deferred.succeed(printed, undefined) : Effect.void,
+        );
+        process.emitData("tick\n");
+        yield* Deferred.await(printed);
+        unsubscribe();
+      });
+
+      yield* manager.clear({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID });
+
+      expect((yield* getEvents).map((event) => event.type)).toContain("cleared");
+    }),
+  );
+
   it.effect("restores a log tail that starts inside a control sequence without its remainder", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
