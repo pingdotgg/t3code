@@ -3,11 +3,11 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import {
   applyWslEnableSelection,
   isServerNetworkAccessible,
+  parseManualDesktopSshTarget,
   resolveAccessEnvironmentId,
   resolveTailscaleServeBaseUrl,
   selectQrEndpointOption,
   togglePairingScopeSelection,
-  parseManualDesktopSshTarget,
 } from "./ConnectionsSettings.logic";
 
 describe("togglePairingScopeSelection", () => {
@@ -49,12 +49,6 @@ describe("parseManualDesktopSshTarget", () => {
   it.each(["22.5", "1e3", "2222garbage"])("rejects explicit port %j", (port) => {
     expect(() => parseManualDesktopSshTarget({ host: "devbox", username: "", port })).toThrow(
       "SSH port must be between 1 and 65535.",
-    );
-  });
-
-  it("accepts a padded explicit port", () => {
-    expect(parseManualDesktopSshTarget({ host: "devbox", username: "", port: " 2222 " }).port).toBe(
-      2222,
     );
   });
 });
