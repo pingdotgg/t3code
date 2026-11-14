@@ -64,6 +64,24 @@ The relay holds the signing authority for mint requests. DPoP protects an honest
 exchange from credential reuse; it does not make a compromised relay signing
 key harmless. Keep that trust assumption explicit when changing the protocol.
 
+Device approval, off by default, limits what that authority buys. With
+`requireConnectDeviceApproval` on, the environment trusts T3 Connect device
+keys, meaning DPoP thumbprints, and not the relay. A mint for an untrusted key
+still succeeds, so the relay protocol does not change. The credential it returns
+cannot be spent until someone with `access:write` on the environment approves
+that key, so a forged mint yields a request that waits for approval, never a
+session. The waiting device retries the whole mint, and the environment hands
+back the same open request, so approvers see one entry with a stable code
+derived from the thumbprint. Approval is per key and does not expire. It ends
+only when the key is revoked. Revoking a session bound to a key revokes the key,
+all its sessions, and its unspent credentials, unless the caller's own session
+holds the same key; otherwise the device would mint itself a new session within
+seconds. While approval is off, every key that completes an
+exchange is recorded as trusted. Turning approval on therefore keeps current
+devices working and lists them for review, including any that got in before.
+See `issueConnectCredential` in the
+[environment auth service](../../apps/server/src/auth/EnvironmentAuth.ts).
+
 Managed tunnels expose only a validated loopback HTTP origin. Link proof checks
 reject forwarded authority headers, and the relay resolves endpoints from its
 own managed allocations rather than a caller-supplied URL. Health and mint
