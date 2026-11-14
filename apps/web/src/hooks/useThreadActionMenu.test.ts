@@ -35,6 +35,10 @@ function recordEffect(action: string) {
 }
 
 vi.mock("../components/CustomSnoozeDialog", () => ({ requestCustomSnooze: vi.fn() }));
+vi.mock("../components/FolderNameDialog", () => ({
+  resolveFolderMenuAction: async (action: string) =>
+    action === "folder-none" ? { folder: null } : null,
+}));
 vi.mock("react", () => ({
   useCallback: (callback: unknown) => callback,
   useMemo: (factory: () => unknown) => factory(),
@@ -58,7 +62,9 @@ vi.mock("../state/entities", () => ({
     worktreePath: null,
     runtime: null,
     latestRun: null,
+    source: { tags: ["Work"] },
   }),
+  readVisibleThreadShells: () => [],
   useProjects: () => [{ id: "project", environmentId: "secondary" }],
 }));
 vi.mock("../state/environments", () => ({ usePrimaryEnvironmentId: () => "primary" }));
@@ -132,6 +138,7 @@ vi.mock("./useThreadActions", () => ({
         "confirmAndUnpinThread",
         "archiveThread",
         "deleteThread",
+        "moveThreadToFolder",
       ].map((action) => [
         action,
         async () => {
@@ -166,19 +173,24 @@ beforeEach(() => {
 });
 
 describe("thread menu permissions", () => {
-  it.each(["rename", "regenerate-title", "delete", "pin", "settle", "archive"] as const)(
-    "%s rechecks after the native menu closes",
-    async (action) => {
-      state.granted.add("secondary");
-      const choice = deferred<ThreadActionMenuId | null>();
-      state.show.mockReturnValue(choice.promise);
-      createMenu().openMenu(position);
-      state.granted.delete("secondary");
-      choice.resolve(action);
-      await state.completed.promise;
-      expect(state.effects).toEqual([]);
-    },
-  );
+  it.each([
+    "rename",
+    "regenerate-title",
+    "delete",
+    "pin",
+    "settle",
+    "archive",
+    "folder-none",
+  ] as const)("%s rechecks after the native menu closes", async (action) => {
+    state.granted.add("secondary");
+    const choice = deferred<ThreadActionMenuId | null>();
+    state.show.mockReturnValue(choice.promise);
+    createMenu().openMenu(position);
+    state.granted.delete("secondary");
+    choice.resolve(action);
+    await state.completed.promise;
+    expect(state.effects).toEqual([]);
+  });
 
   it("offers find only to a header that can open it, without task permission", async () => {
     createMenu().openMenu(position);

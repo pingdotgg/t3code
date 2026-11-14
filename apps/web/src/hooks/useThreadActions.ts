@@ -23,6 +23,7 @@ import { AsyncResult } from "effect/reactivity";
 import { useRouter } from "@tanstack/react-router";
 
 import { getFallbackThreadIdAfterDelete, pinOrderKeyBetween } from "../components/Sidebar.logic";
+import { folderTagChanges } from "../components/threadActionMenu.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { environmentSession, readEnvironmentScope } from "../state/session";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -139,6 +140,18 @@ export class ThreadPinningUnsupportedError extends Schema.TaggedError<ThreadPinn
 ) {
   override get message(): string {
     return "This environment's server does not support pinning yet. Update the server to use Pin.";
+  }
+}
+
+export class ThreadFoldersUnsupportedError extends Schema.TaggedError<ThreadFoldersUnsupportedError>()(
+  "ThreadFoldersUnsupportedError",
+  {
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+  },
+) {
+  override get message(): string {
+    return "This environment's server does not support folders yet. Update the server to use folders.";
   }
 }
 
@@ -294,6 +307,9 @@ export function useThreadActions() {
     reportFailure: false,
   });
   const unpinThreadMutation = useOrchestrationCommand(threadEnvironment.unpin, {
+    reportFailure: false,
+  });
+  const setThreadTagMutation = useOrchestrationCommand(threadEnvironment.setTag, {
     reportFailure: false,
   });
   const setThreadAutoSettleMutation = useOrchestrationCommand(threadEnvironment.setAutoSettle, {
@@ -744,6 +760,31 @@ export function useThreadActions() {
     });
   };
 
+  /** One command per tag, stopping at the first failure. */
+  const moveThreadToFolder = async (target: ScopedThreadRef, folder: string | null) => {
+    const permissionFailure = threadOperationFailure(target);
+    if (permissionFailure) return permissionFailure;
+    if (!readEnvironmentServerConfigLoaded(target.environmentId)) {
+      return AsyncResult.failure(
+        Cause.fail(
+          new ThreadFoldersUnsupportedError({
+            environmentId: target.environmentId,
+            threadId: target.threadId,
+          }),
+        ),
+      );
+    }
+    const changes = folderTagChanges(readThreadShell(target)?.source.tags ?? [], folder);
+    for (const change of changes) {
+      const result = await setThreadTagMutation({
+        environmentId: target.environmentId,
+        input: { threadId: target.threadId, ...change },
+      });
+      if (result._tag === "Failure") return result;
+    }
+    return AsyncResult.success(undefined);
+  };
+
   const sendPin = async (target: ScopedThreadRef, opts: { orderKey?: string } = {}) => {
     if (!readEnvironmentServerConfigLoaded(target.environmentId)) {
       return AsyncResult.failure(
@@ -1027,6 +1068,7 @@ export function useThreadActions() {
     reorderActiveThread,
     markThreadUnread,
     setThreadAutoSettle,
+    moveThreadToFolder,
     turnThreadIntoProject: (target: ScopedThreadRef) =>
       createProjectFromThread({
         environmentId: target.environmentId,

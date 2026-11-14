@@ -1,5 +1,6 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { requestCustomSnooze } from "../components/CustomSnoozeDialog";
+import { resolveFolderMenuAction } from "../components/FolderNameDialog";
 import { openGuestShareDialog } from "../components/chat/guestShareDialogState";
 import {
   type AtomCommandResult,
@@ -18,7 +19,9 @@ import { useRouter } from "@tanstack/react-router";
 import { pickSnoozePreset, resolveSnoozePresets } from "../components/Sidebar.snooze";
 import {
   buildThreadActionMenuItems,
+  isFolderMenuAction,
   threadActionRequiresOperate,
+  threadFolderNames,
   type ThreadActionMenuId,
 } from "../components/threadActionMenu.logic";
 import { titleRegenerationToast } from "../components/threadTitleRegenerationToast";
@@ -32,6 +35,7 @@ import {
   readEnvironmentServerConfigLoaded,
   readEnvironmentSupportsAutoSettleOptOut,
   readThreadShell,
+  readVisibleThreadShells,
   useProjects,
 } from "../state/entities";
 import { usePrimaryEnvironmentId } from "../state/environments";
@@ -88,6 +92,7 @@ export function useThreadActionMenu(input: {
     deleteThread,
     markThreadUnread,
     turnThreadIntoProject,
+    moveThreadToFolder,
   } = useThreadActions();
   const regenerateThreadTitle = useOrchestrationCommand(threadEnvironment.regenerateTitle, {
     reportFailure: false,
@@ -144,6 +149,12 @@ export function useThreadActionMenu(input: {
         snoozePresets,
         canShareWithGuest,
         canTurnIntoProject: canTurnThreadIntoProject(threadRef),
+        folders: configLoaded
+          ? {
+              names: threadFolderNames(readVisibleThreadShells().map((t) => t.source)),
+              threadTags: [thread.source.tags ?? []],
+            }
+          : null,
       });
       const clicked = await settlePromise(() => api.contextMenu.show(items, position));
       if (clicked._tag === "Failure" || clicked.value === null) return;
@@ -184,6 +195,15 @@ export function useThreadActionMenu(input: {
           failureToast(title, squashAtomCommandFailure(result));
         }
       };
+      if (isFolderMenuAction(action)) {
+        const choice = await resolveFolderMenuAction(action);
+        if (choice) {
+          await reportFailure("Failed to move thread", () =>
+            moveThreadToFolder(threadRef, choice.folder),
+          );
+        }
+        return;
+      }
       switch (action) {
         case "find":
           onFind?.(threadRef);

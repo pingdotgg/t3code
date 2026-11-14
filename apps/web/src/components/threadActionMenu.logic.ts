@@ -1,4 +1,5 @@
-import type { ContextMenuItem } from "@t3tools/contracts";
+import { type ContextMenuItem, ThreadTag } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 
 export type ThreadActionMenuId =
@@ -11,6 +12,10 @@ export type ThreadActionMenuId =
   | "unpin"
   | "settle"
   | "unsettle"
+  | "folder"
+  | `folder:${string}`
+  | "folder-new"
+  | "folder-none"
   | "auto-settle"
   | "auto-settle:enabled"
   | "auto-settle:disabled"
@@ -95,6 +100,92 @@ export interface ThreadActionMenuState {
   readonly canShareWithGuest?: boolean;
   /** A No project thread with its own folder, on a server that can promote it. */
   readonly canTurnIntoProject?: boolean;
+  /** Folders are thread tags; null hides the Folder submenu. */
+  readonly folders?: ThreadFolderMenuState | null;
+}
+
+export interface ThreadFolderMenuState {
+  /** Every folder the client knows, sorted by name. */
+  readonly names: ReadonlyArray<string>;
+  /** The current tags of each thread the menu acts on. */
+  readonly threadTags: ReadonlyArray<ReadonlyArray<string>>;
+}
+
+export interface ThreadFolderTagChange {
+  readonly tag: string;
+  readonly tagged: boolean;
+}
+
+/** Adds the folder before removing other tags, so a partial failure never drops the thread back to its project. */
+export function folderTagChanges(
+  currentTags: ReadonlyArray<string>,
+  folder: string | null,
+): ReadonlyArray<ThreadFolderTagChange> {
+  const removals = currentTags
+    .filter((tag) => tag !== folder)
+    .map((tag) => ({ tag, tagged: false }));
+  return folder === null || currentTags.includes(folder)
+    ? removals
+    : [{ tag: folder, tagged: true }, ...removals];
+}
+
+export function threadFolderNames(
+  threads: Iterable<{ readonly tags?: ReadonlyArray<string> | undefined }>,
+): ReadonlyArray<string> {
+  const names = new Set<string>();
+  for (const thread of threads) {
+    for (const tag of thread.tags ?? []) names.add(tag);
+  }
+  return [...names].toSorted((left, right) => left.localeCompare(right));
+}
+
+const isThreadTag = Schema.is(ThreadTag);
+
+/** The trimmed folder name, or null when it is not a valid thread tag. */
+export function parseFolderName(input: string): string | null {
+  const name = input.trim();
+  return isThreadTag(name) ? name : null;
+}
+
+/** The target folder of a Folder submenu action (null for Back to project), or undefined for other actions. */
+export function folderFromMenuAction(action: string): string | null | undefined {
+  if (action === "folder-none") return null;
+  return action.startsWith("folder:") ? action.slice("folder:".length) : undefined;
+}
+
+export function isFolderMenuAction(action: string): boolean {
+  return action === "folder-new" || folderFromMenuAction(action) !== undefined;
+}
+
+export function buildFolderMenuItem(
+  folders: ThreadFolderMenuState,
+): ContextMenuItem<ThreadActionMenuId> {
+  const everyThread = (predicate: (tags: ReadonlyArray<string>) => boolean) =>
+    folders.threadTags.every(predicate);
+  return {
+    id: "folder",
+    label: "Folder",
+    icon: "folder",
+    children: [
+      ...folders.names.map((name) => ({
+        id: `folder:${name}` as const,
+        label: name,
+        checked: everyThread((tags) => tags.includes(name)),
+        disabled: everyThread((tags) => folderTagChanges(tags, name).length === 0),
+      })),
+      {
+        id: "folder-new" as const,
+        label: "New folder…",
+        icon: "folder-plus",
+        separatorBefore: folders.names.length > 0,
+      },
+      {
+        id: "folder-none" as const,
+        label: "Back to project",
+        disabled: everyThread((tags) => tags.length === 0),
+      },
+    ],
+  };
 }
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
@@ -182,6 +273,7 @@ export function buildThreadActionMenuItems(
     ...(state.canShareWithGuest
       ? [{ id: "share-guest" as const, label: "Share with guest", icon: "user-plus" }]
       : []),
+    ...(state.folders ? [buildFolderMenuItem(state.folders)] : []),
     ...(state.projectFilter
       ? [
           {

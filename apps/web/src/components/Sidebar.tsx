@@ -8,6 +8,7 @@ import {
 } from "./chat/threadContextDrag";
 import { discardComposerDraft } from "../lib/discardComposerDraft";
 import { requestCustomSnooze } from "./CustomSnoozeDialog";
+import { resolveFolderMenuAction } from "./FolderNameDialog";
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
@@ -170,8 +171,11 @@ import { ProjectEnvironmentBadge } from "./ProjectEnvironmentBadge";
 import { ProjectRowActions } from "./ProjectComboboxRow";
 import {
   buildDraftActionMenuItems,
+  buildFolderMenuItem,
   buildThreadActionMenuItems,
+  isFolderMenuAction,
   threadActionRequiresOperate,
+  threadFolderNames,
 } from "./threadActionMenu.logic";
 import {
   applySidebarThreadDrop,
@@ -934,6 +938,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     unpinThread,
     confirmAndUnpinThread,
     setThreadAutoSettle,
+    moveThreadToFolder,
     turnThreadIntoProject,
     reorderPinnedThread,
     reorderActiveThread,
@@ -2329,6 +2334,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       const pinnedSelectedThreads = selectedThreads.filter(
         (thread) => serverConfigs.has(thread.environmentId) && thread.pinnedAt != null,
       );
+      const canMoveToFolder = selectedThreads.every((thread) =>
+        serverConfigs.has(thread.environmentId),
+      );
       const unpinMenuItem = buildBulkUnpinContextMenuItem({
         pinnedCount: pinnedSelectedThreads.length,
       });
@@ -2384,6 +2392,19 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 ]
               : []),
             { id: "mark-unread", label: `Mark unread (${count})` },
+            ...(canMoveToFolder
+              ? [
+                  {
+                    ...buildFolderMenuItem({
+                      names: threadFolderNames(
+                        Array.from(threadByKeyRef.current.values(), (t) => t.source),
+                      ),
+                      threadTags: selectedThreads.map((thread) => thread.source.tags ?? []),
+                    }),
+                    disabled: !canOperateThreads(selectedThreads),
+                  },
+                ]
+              : []),
             {
               id: "delete",
               label: `Delete (${count})`,
@@ -2451,6 +2472,30 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               }),
             );
           }
+        }
+        return;
+      }
+      if (isFolderMenuAction(clicked.value)) {
+        const choice = await resolveFolderMenuAction(clicked.value);
+        if (!choice) return;
+        clearSelection();
+        const results = await Promise.all(
+          selectedThreads.map((thread) =>
+            moveThreadToFolder(scopeThreadRef(thread.environmentId, thread.id), choice.folder),
+          ),
+        );
+        const failures = results.flatMap((result) =>
+          result._tag === "Failure" && !isAtomCommandInterrupted(result) ? [result] : [],
+        );
+        if (failures.length > 0) {
+          const firstError = squashAtomCommandFailure(failures[0]!);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: `Failed to move ${failures.length} thread${failures.length === 1 ? "" : "s"}`,
+              description: firstError instanceof Error ? firstError.message : "An error occurred.",
+            }),
+          );
         }
         return;
       }
@@ -2660,6 +2705,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 canShareWithGuestAtom(threadRef.environmentId),
               ),
               canTurnIntoProject: canTurnThreadIntoProject(threadRef),
+              folders: configLoaded
+                ? {
+                    names: threadFolderNames(
+                      Array.from(threadByKeyRef.current.values(), (t) => t.source),
+                    ),
+                    threadTags: [thread.source.tags ?? []],
+                  }
+                : null,
               supports: {
                 settlement: configLoaded,
                 autoSettleOptOut: supportsAutoSettleOptOut,
@@ -2685,6 +2738,22 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   thread.environmentId,
                 );
           if (preset) attemptSnooze(threadRef, preset);
+          return;
+        }
+        if (isFolderMenuAction(clicked.value)) {
+          const choice = await resolveFolderMenuAction(clicked.value);
+          if (!choice) return;
+          const result = await moveThreadToFolder(threadRef, choice.folder);
+          if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Failed to move thread",
+                description: error instanceof Error ? error.message : "An error occurred.",
+              }),
+            );
+          }
           return;
         }
         switch (clicked.value) {
