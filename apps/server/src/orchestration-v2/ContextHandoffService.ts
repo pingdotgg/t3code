@@ -69,6 +69,8 @@ export interface ContextHandoffServiceV2Shape {
   }) => Effect.Effect<OrchestrationV2ContextHandoff, ContextHandoffServiceV2Error>;
   readonly prepareProviderHandoff: (input: {
     readonly threadId: ThreadId;
+    /** Thread the items came from, when it is not `threadId` (a fork's source). */
+    readonly sourceThreadId?: ThreadId;
     readonly targetRunId: RunId;
     readonly transferId: OrchestrationV2ContextHandoff["transferId"];
     readonly fromProviderThreadIds: ReadonlyArray<ProviderThreadId>;
@@ -213,7 +215,7 @@ function summarizeDeltaItem(item: OrchestrationV2TurnItem): string | null {
     case "command_execution":
       return `- Command: ${compactText(item.input)}`;
     case "file_change":
-      return `- File change: ${compactText(item.changes?.map((change) => change.path).join(", ") ?? item.fileName)}`;
+      return `- File change: ${compactText(item.changes?.length ? item.changes.map((change) => change.path).join(", ") : item.fileName)}`;
     case "checkpoint":
       return `- Checkpoint: ${item.files.length} files`;
     case "handoff":
@@ -487,6 +489,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
       "orchestrationV2.contextHandoff.prepareProviderHandoff",
     )(function* (input: {
       readonly threadId: ThreadId;
+      readonly sourceThreadId?: ThreadId;
       readonly targetRunId: RunId;
       readonly transferId: OrchestrationV2ContextHandoff["transferId"];
       readonly fromProviderThreadIds: ReadonlyArray<ProviderThreadId>;
@@ -521,7 +524,10 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
           ),
         );
       const runStatuses = new Map(input.runs?.map((run) => [run.id, run.status]));
-      const coverage = handoffCoverage(input);
+      const coverage = handoffCoverage({
+        ...input,
+        threadId: input.sourceThreadId ?? input.threadId,
+      });
       const selected = selectHistory({
         messages: input.items.flatMap((item) => {
           const message = historicalMessage(item);

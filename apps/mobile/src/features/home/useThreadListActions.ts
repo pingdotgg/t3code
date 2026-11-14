@@ -17,7 +17,13 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { connectedEnvironmentIdsAtom } from "../../state/presentation";
 import { readEnvironmentScope } from "../../state/session";
-import { environmentThreadShells, threadEnvironment } from "../../state/threads";
+import { clearComposerDraft } from "../../state/use-composer-drafts";
+import {
+  environmentThreadShells,
+  steadyNavigationThreadShellsAtom,
+  steadyShellsHoldingAtom,
+  threadEnvironment,
+} from "../../state/threads";
 import { queuedThreadKeysAtom } from "../../state/use-thread-outbox";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
@@ -83,6 +89,19 @@ function checkThreadOperationPermission(thread: EnvironmentThreadShell, title: s
   return false;
 }
 
+/**
+ * The live row of a thread that a list passes to an action. A list holds its rows while an
+ * environment synchronizes (`steadyNavigationThreadShellsAtom`), so its row can be older than
+ * the client's data: an undo plan or a guard read from it would use replaced state.
+ */
+function liveThread(thread: EnvironmentThreadShell): EnvironmentThreadShell {
+  return (
+    appAtomRegistry
+      .get(environmentThreadShells.threadShellsAtom)
+      .find((row) => row.id === thread.id && row.environmentId === thread.environmentId) ?? thread
+  );
+}
+
 function useThreadActionExecutor(
   onCompleted?: (action: ThreadListAction, thread: EnvironmentThreadShell) => void,
 ) {
@@ -127,9 +146,6 @@ function useThreadActionExecutor(
         return false;
       }
       if (action === "unsettle") ThreadUndo.invalidate("settle", key);
-      if (action === "archive" || action === "delete") {
-        for (const kind of ["settle", "snooze", "pin"]) ThreadUndo.invalidate(kind, key);
-      }
       onStarted?.();
       const result = await withThreadDismissal(
         key,
@@ -159,9 +175,13 @@ function useThreadActionExecutor(
         Dialog.alert(actionFailureTitle(action), actionFailureMessage(action, result.cause));
         return false;
       }
+      if (action === "archive" || action === "delete") {
+        for (const kind of ["settle", "snooze", "pin"]) ThreadUndo.invalidate(kind, key);
+      }
       if (action === "archive" || action === "unarchive" || action === "delete") {
         refreshArchivedThreadsForEnvironment(thread.environmentId);
       }
+      if (action === "delete") clearComposerDraft(key);
       onCompleted?.(action, thread);
       return true;
     })();
@@ -220,6 +240,9 @@ export function useThreadListActions(): {
     reportFailure: false,
   });
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
+    reportFailure: false,
+  });
+  const regenerateTitle = useAtomCommand(threadEnvironment.regenerateTitle, {
     reportFailure: false,
   });
   const snoozeInFlightThreadKeys = useRef(new Set<string>());
@@ -511,9 +534,9 @@ export function useThreadListActions(): {
     titleRegenerationInFlightThreadKeys.current.add(key);
     selectionHaptic();
     const succeeded = await (async () => {
-      const result = await updateThreadMetadata({
+      const result = await regenerateTitle({
         environmentId: thread.environmentId,
-        input: { threadId: thread.id, regenerateTitle: true },
+        input: { threadId: thread.id },
       });
       if (result._tag === "Failure") {
         const error = Cause.squash(result.cause);
@@ -522,6 +545,13 @@ export function useThreadListActions(): {
           error instanceof Error && error.message.trim().length > 0
             ? error.message
             : "The thread title could not be regenerated.",
+        );
+        return false;
+      }
+      if (result.value?.status === "failed") {
+        Dialog.alert(
+          "Could not regenerate title",
+          result.value.message ?? "The thread title could not be regenerated.",
         );
         return false;
       }
@@ -572,7 +602,10 @@ export function useThreadListActions(): {
   const moveThread = async (thread: EnvironmentThreadShell, direction: ThreadMoveDestination) => {
     if (!checkThreadOperationPermission(thread, "Could not move thread")) return false;
     if (getPendingThreadOrder() !== null || appAtomRegistry.get(threadDropBusyAtom)) return false;
-    const shells = appAtomRegistry.get(environmentThreadShells.navigationThreadShellsAtom);
+    // The rows on screen can be older than the server's while they wait to show. A move
+    // planned from them could act on a pin or an order key that the server has replaced.
+    if (appAtomRegistry.get(steadyShellsHoldingAtom)) return false;
+    const shells = appAtomRegistry.get(steadyNavigationThreadShellsAtom);
     const current = shells.find(
       (row) => row.id === thread.id && row.environmentId === thread.environmentId,
     );
@@ -708,19 +741,20 @@ export function useThreadListActions(): {
   const confirmDeleteThread = (thread: EnvironmentThreadShell) =>
     confirmThreadDeletion(executeAction, thread);
 
+  // `moveThread` looks up its own row, and refuses while a list holds older rows.
   return {
-    archiveThread,
-    confirmDeleteThread,
-    settleThread,
-    snoozeThread,
-    unsnoozeThread,
-    unsettleThread,
-    pinThread,
-    unpinThread,
-    setThreadAutoSettle,
+    archiveThread: (thread) => archiveThread(liveThread(thread)),
+    confirmDeleteThread: (thread) => confirmDeleteThread(liveThread(thread)),
+    settleThread: (thread) => settleThread(liveThread(thread)),
+    snoozeThread: (thread, snoozedUntil) => snoozeThread(liveThread(thread), snoozedUntil),
+    unsnoozeThread: (thread) => unsnoozeThread(liveThread(thread)),
+    unsettleThread: (thread) => unsettleThread(liveThread(thread)),
+    pinThread: (thread) => pinThread(liveThread(thread)),
+    unpinThread: (thread) => unpinThread(liveThread(thread)),
+    setThreadAutoSettle: (thread, enabled) => setThreadAutoSettle(liveThread(thread), enabled),
     moveThread,
-    renameThread,
-    regenerateThreadTitle,
+    renameThread: (thread) => renameThread(liveThread(thread)),
+    regenerateThreadTitle: (thread) => regenerateThreadTitle(liveThread(thread)),
   };
 }
 
