@@ -406,12 +406,12 @@ export async function executeAtomQuery<A, E>(
     Effect.gen(function* () {
       yield* AtomRegistry.mount(registry, atom);
       if (options.refresh) {
-        const current = registry.get(atom);
-        const answered = current._tag !== "Initial" && !current.waiting;
-        // Inside a registry batch, such as an Atom.fn starting, a refresh lands only after the
-        // batch commits, so reading at once would answer with the value it replaces.
-        yield* Effect.yieldNow;
-        if (answered && !registry.get(atom).waiting) registry.refresh(atom);
+        yield* Effect.sync(() => {
+          const current = registry.get(atom);
+          if (current._tag !== "Initial" && !current.waiting) {
+            registry.refresh(atom);
+          }
+        });
       }
       return yield* AtomRegistry.getResult(registry, atom, {
         suspendOnWaiting: true,
@@ -956,9 +956,7 @@ export function createEnvironmentRpcQueryAtomFamily<
     ) => Effect.Effect<
       EnvironmentRpcSuccess<TTag>,
       EnvironmentRpcFailure<TTag> | EnvironmentRpcUnavailableError,
-      | EnvironmentSupervisor.EnvironmentSupervisor
-      | EnvironmentRegistry.EnvironmentRegistry
-      | AtomRegistry.AtomRegistry
+      EnvironmentSupervisor.EnvironmentSupervisor | EnvironmentRegistry.EnvironmentRegistry
     >;
     readonly persistence?: QueryPersistence<EnvironmentRpcSuccess<TTag>>;
     readonly staleTimeMs?: number;

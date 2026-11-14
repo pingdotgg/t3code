@@ -1,6 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Deferred from "effect/Deferred";
 import * as Layer from "effect/Layer";
 import type { PullRequestCheck, PullRequestCheckStatus } from "@t3tools/contracts";
 
@@ -40,7 +39,6 @@ const PULL_REQUEST = {
   reviewers: [],
   location: { project: "acme", repository: "web" },
   autoMergeEnabled: false,
-  revision: "open ready head",
 };
 
 function change(
@@ -78,7 +76,7 @@ const readSlice = (input: {
         Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
           ...NO_BLOBS,
           getPullRequest: () => Effect.succeed(PULL_REQUEST),
-          activityAt: ({ pullRequest }) => Effect.succeed(pullRequest.updatedAt),
+          readActivityAt: () => Effect.succeed(null),
           listIterations: () => Effect.succeed([ITERATION]),
           listIterationChanges: () =>
             Effect.succeed({
@@ -131,30 +129,60 @@ function patchedPaths(patch: string): ReadonlyArray<string> {
   );
 }
 
+it.effect("dates an open pull request by its newest thread and keeps its own date otherwise", () =>
+  Effect.gen(function* () {
+    const activity: Array<
+      Effect.Effect<string | null, AzureDevOpsPullRequestCli.AzureDevOpsPullRequestReadError>
+    > = [
+      Effect.succeed("2026-07-05T08:00:00.000Z"),
+      Effect.succeed("2026-07-05T08:00:00.000Z"),
+      Effect.fail(
+        new AzureDevOpsPullRequestCli.AzureDevOpsPullRequestReadError({
+          command: "az",
+          cwd: "/w",
+          operation: "listThreads",
+          cause: "unavailable",
+        }),
+      ),
+    ];
+    let shown: typeof PULL_REQUEST | (Omit<typeof PULL_REQUEST, "state"> & { state: "merged" }) =
+      PULL_REQUEST;
+    const provider = yield* make.pipe(
+      Effect.provide(
+        Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
+          getPullRequest: () => Effect.succeed(shown),
+          runPullRequestAction: () => Effect.succeed(shown),
+          listPolicyChecks: () => Effect.succeed([]),
+          readActivityAt: () => activity.shift() ?? Effect.die("a closed pull request was read"),
+        }),
+      ),
+    );
+    const input = { cwd: "/w", repository: "acme/web", host: "dev.azure.com", number: 7 };
+    const summaryDate = provider.getChangeRequestSummary!(input).pipe(
+      Effect.map((summary) => summary.updatedAt),
+    );
+
+    expect(yield* summaryDate).toBe("2026-07-05T08:00:00.000Z");
+    // Clients drop a reply dated before the summary they show.
+    const reply = yield* provider.runAction({ ...input, action: "ready" });
+    expect(reply?.updatedAt).toBe("2026-07-05T08:00:00.000Z");
+    expect(yield* summaryDate).toBe(PULL_REQUEST.updatedAt);
+    shown = { ...PULL_REQUEST, state: "merged" };
+    expect(yield* summaryDate).toBe(PULL_REQUEST.updatedAt);
+  }),
+);
+
 describe("getChangeRequest", () => {
   it.effect("preserves the newest head when file counting fails", () =>
     Effect.gen(function* () {
-      const dated = yield* Deferred.make<void>();
-      let updatedAt = PULL_REQUEST.updatedAt;
-      const pushedAt = "2026-07-03T00:00:00.000Z";
       const provider = yield* make.pipe(
         Effect.provide(
           Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
             getPullRequest: () => Effect.succeed(PULL_REQUEST),
-            activityAt: () =>
-              Effect.gen(function* () {
-                const at = updatedAt;
-                yield* Deferred.succeed(dated, undefined);
-                return at;
-              }),
+            readActivityAt: () => Effect.succeed(null),
             listPolicyChecks: () => Effect.succeed([]),
             listIterations: () =>
-              Deferred.await(dated).pipe(
-                Effect.map(() => {
-                  updatedAt = pushedAt;
-                  return [ITERATION, { ...ITERATION, id: 4, headCommit: "new-head" }];
-                }),
-              ),
+              Effect.succeed([ITERATION, { ...ITERATION, id: 4, headCommit: "new-head" }]),
             listIterationChanges: () =>
               Effect.fail(
                 new AzureDevOpsPullRequestCli.AzureDevOpsPullRequestReadError({
@@ -175,7 +203,6 @@ describe("getChangeRequest", () => {
         number: 7,
       });
       expect(detail.headSha).toBe("new-head");
-      expect(detail.updatedAt).toBe(pushedAt);
       expect(detail.changedFiles).toBe(0);
     }),
   );
@@ -188,7 +215,7 @@ describe("getChangeRequest", () => {
           Effect.provide(
             Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
               getPullRequest: () => Effect.succeed(PULL_REQUEST),
-              activityAt: ({ pullRequest }) => Effect.succeed(pullRequest.updatedAt),
+              readActivityAt: () => Effect.succeed(null),
               listPolicyChecks: () => Effect.succeed([]),
               listIterations: () =>
                 state === "missing"
@@ -245,10 +272,10 @@ describe("policy checks", () => {
       Effect.provide(
         Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
           getPullRequest: () => Effect.succeed(pullRequest),
+          readActivityAt: () => Effect.succeed(null),
           listIterations: () => Effect.succeed([ITERATION]),
           listIterationChanges: () => Effect.succeed({ changes: [], truncated: false }),
           listPolicyChecks,
-          activityAt: ({ pullRequest }) => Effect.succeed(pullRequest.updatedAt),
         }),
       ),
     );
@@ -293,7 +320,7 @@ describe("getDiff reads", () => {
           Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
             ...NO_BLOBS,
             getPullRequest: () => Effect.succeed(PULL_REQUEST),
-            activityAt: ({ pullRequest }) => Effect.succeed(pullRequest.updatedAt),
+            readActivityAt: () => Effect.succeed(null),
             listIterations: () => Effect.succeed([ITERATION]),
             listIterationChanges: () =>
               Effect.succeed({ changes: paths.map((path) => change(path)), truncated: false }),
@@ -339,6 +366,7 @@ describe("getDiff reads", () => {
         Effect.provide(
           Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
             getPullRequest: () => Effect.succeed(PULL_REQUEST),
+            readActivityAt: () => Effect.succeed(null),
             listIterations: () => Effect.succeed([ITERATION]),
             listIterationChanges: () => Effect.succeed({ changes, truncated: false }),
             readBlobs: (input) =>
@@ -407,6 +435,7 @@ describe("getDiff reads", () => {
         Effect.provide(
           Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
             getPullRequest: () => Effect.succeed(PULL_REQUEST),
+            readActivityAt: () => Effect.succeed(null),
             listIterations: () => Effect.succeed([ITERATION]),
             listIterationChanges: () =>
               Effect.succeed({
@@ -461,6 +490,7 @@ describe("getDiff reads", () => {
           Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
             ...NO_BLOBS,
             getPullRequest: () => Effect.succeed(PULL_REQUEST),
+            readActivityAt: () => Effect.succeed(null),
             listIterations: () => Effect.sync(() => ((iterationReads += 1), [ITERATION])),
             listIterationChanges: () =>
               Effect.sync(() => {

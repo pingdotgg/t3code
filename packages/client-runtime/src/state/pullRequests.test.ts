@@ -13,9 +13,9 @@ import {
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
-import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import * as Effect from "effect/Effect";
 import * as Latch from "effect/Latch";
 import * as Layer from "effect/Layer";
@@ -23,7 +23,6 @@ import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import * as TestClock from "effect/testing/TestClock";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import {
@@ -585,8 +584,6 @@ const makeTestRuntime = Effect.fn("makeTestRuntime")(function* (
         PullRequestDiffLoader.PullRequestDiffLoader.of({ load: () => Effect.die("unused") }),
       ),
       Layer.succeed(EnvironmentQueryStore, queryStore),
-      // The test's clock, so how long a detail read shows in listings moves with `TestClock.adjust`.
-      Layer.succeed(Clock.Clock, yield* Clock.Clock),
     ),
   );
   const atoms = createPullRequestEnvironmentAtoms(runtime, onAnswer);
@@ -1109,18 +1106,11 @@ function actionReplyClient(overrides: Record<string, unknown> = {}) {
 it.effect("shows an action's reply in loaded readers and moves list rows without reads", () =>
   Effect.gen(function* () {
     const reads: string[] = [];
-    const open = {
-      ...actionReference,
-      state: "open",
-      isDraft: true,
-      updatedAtState: "pending",
-      observedAt: 100,
-    };
-    let hostDetail: object = open;
+    const open = { ...actionReference, state: "open", isDraft: true, observedAt: 100 };
     const read = (name: string) => () =>
       Effect.sync(() => {
         reads.push(name);
-        return name === "detail" ? hostDetail : open;
+        return open;
       });
     const replies: unknown[] = [];
     const listAnswers: unknown[] = [];
@@ -1147,7 +1137,7 @@ it.effect("shows an action's reply in loaded readers and moves list rows without
       undefined,
       false,
       {
-        summary: (target, reply) => Effect.sync(() => replies.push({ target, reply })),
+        actionReply: (target, reply) => Effect.sync(() => replies.push({ target, reply })),
         list: (_target, value) => Effect.sync(() => listAnswers.push(value.entries)),
       },
       {
@@ -1171,7 +1161,6 @@ it.effect("shows an action's reply in loaded readers and moves list rows without
       yield* Effect.promise(() => executeAtomQuery(registry, atom));
     }
     reads.length = 0;
-    replies.length = 0;
 
     const answer = yield* Effect.promise(() =>
       atoms.runAction.run(registry, { ...target, input: { ...target.input, action: "merge" } }),
@@ -1185,14 +1174,10 @@ it.effect("shows an action's reply in loaded readers and moves list rows without
         title: "Ship it",
       });
     }
-    const [row] = Option.getOrThrow(AsyncResult.value(registry.get(all))).entries;
-    // The row keeps its own read time: the reply does not carry its checks or labels.
-    expect(row).toMatchObject({ state: "merged", isDraft: false, observedAt: 100 });
-    // The host's own date replaces one still being read.
-    expect(row).not.toHaveProperty("updatedAtState");
-    expect(Option.getOrThrow(AsyncResult.value(registry.get(readers[2]!)))).not.toHaveProperty(
-      "updatedAtState",
-    );
+    expect(Option.getOrThrow(AsyncResult.value(registry.get(all))).entries).toMatchObject([
+      // The row keeps its own read time: the reply does not carry its checks or labels.
+      { state: "merged", isDraft: false, observedAt: 100 },
+    ]);
     expect(Option.getOrThrow(AsyncResult.value(registry.get(openDrafts))).entries).toEqual([]);
     expect(replies).toEqual([{ target, reply: actionReply }]);
     // A cold start paints the saved copy, so the patch must replace the saved answer.
@@ -1206,32 +1191,6 @@ it.effect("shows an action's reply in loaded readers and moves list rows without
     // Only a read can place a row the listing did not hold.
     yield* AtomRegistry.getResult(registry, merged, { suspendOnWaiting: true });
     expect(reads).toEqual(["list:merged"]);
-
-    // A detail read that finds a newer edit, such as a comment, dates the loaded rows too.
-    const commented = { ...actionReply, updatedAt: "2026-10-27T11:00:00Z", observedAt: 300 };
-    hostDetail = commented;
-    registry.refresh(atoms.detail(target));
-    yield* AtomRegistry.getResult(registry, atoms.detail(target), { suspendOnWaiting: true });
-    expect(Option.getOrThrow(AsyncResult.value(registry.get(all))).entries).toMatchObject([
-      { updatedAt: commented.updatedAt, observedAt: 100 },
-    ]);
-    expect(replies).toEqual([
-      { target, reply: actionReply },
-      { target, reply: commented },
-    ]);
-    expect(reads).toEqual(["list:merged", "detail"]);
-
-    // Equal host dates still need the detail's read time, not the listing's older one.
-    hostDetail = { ...commented, isDraft: true, title: "Older read", observedAt: 250 };
-    registry.refresh(atoms.detail(target));
-    yield* AtomRegistry.getResult(registry, atoms.detail(target), { suspendOnWaiting: true });
-    expect(Option.getOrThrow(AsyncResult.value(registry.get(all))).entries).toMatchObject([
-      { title: commented.title, isDraft: false, updatedAt: commented.updatedAt, observedAt: 100 },
-    ]);
-    expect(replies).toEqual([
-      { target, reply: actionReply },
-      { target, reply: commented },
-    ]);
   }),
 );
 
@@ -1282,95 +1241,6 @@ it.effect("keeps an action's reply when a refresh started before the action answ
       (yield* AtomRegistry.getResult(registry, detail, { suspendOnWaiting: true })).state,
     ).toBe("merged");
     expect(Option.getOrThrow(AsyncResult.value(registry.get(detail))).state).toBe("merged");
-  }),
-);
-
-it.effect("keeps a detail read's date when a cached listing answers after it", () =>
-  Effect.gen(function* () {
-    const reads: string[] = [];
-    const listAnswers: unknown[] = [];
-    const cached = { ...actionReply, state: "open", updatedAt: "2026-10-27T09:00:00Z" };
-    let listed: object = { ...cached, observedAt: 100 };
-    const detailRead = { ...cached, state: "closed", updatedAt: "2026-10-27T11:00:00Z" };
-    const started = { all: yield* Deferred.make<void>(), open: yield* Deferred.make<void>() };
-    const release = yield* Deferred.make<void>();
-    let holding = false;
-    const client = actionReplyClient({
-      [WS_METHODS.pullRequestsDetail]: () => Effect.succeed({ ...detailRead, observedAt: 300 }),
-      [WS_METHODS.pullRequestsList]: (input: { readonly state: "all" | "open" }) =>
-        Effect.gen(function* () {
-          reads.push(`list:${input.state}`);
-          const entries = [listed];
-          if (holding) {
-            yield* Deferred.succeed(started[input.state], undefined);
-            yield* Deferred.await(release);
-          }
-          return {
-            entries,
-            viewers: {},
-            providers: [],
-            errors: [],
-            truncated: false,
-            nextCursors: {},
-          };
-        }),
-    });
-    const { atoms, registry } = yield* makeTestRuntime(client, undefined, false, {
-      list: (_target, value) => Effect.sync(() => listAnswers.push(value.entries)),
-    });
-    const target = { environmentId: TARGET.environmentId, input: actionReference };
-    const all = atoms.list({ environmentId: target.environmentId, input: { state: "all" } });
-    const open = atoms.list({ environmentId: target.environmentId, input: { state: "open" } });
-    const settle = <A, E>(atom: Atom.Atom<AsyncResult.AsyncResult<A, E>>) =>
-      AtomRegistry.getResult(registry, atom, { suspendOnWaiting: true });
-    for (const atom of [all, open]) {
-      registry.mount(atom);
-      yield* settle(atom);
-    }
-
-    // Both listings re-read from the server's cache and answer only after the detail read.
-    holding = true;
-    registry.refresh(all);
-    registry.refresh(open);
-    yield* Deferred.await(started.all);
-    yield* Deferred.await(started.open);
-    const detail = atoms.detail(target);
-    registry.mount(detail);
-    yield* settle(detail);
-    expect(Option.getOrThrow(AsyncResult.value(registry.get(all))).entries).toMatchObject([
-      { state: "closed", updatedAt: detailRead.updatedAt, observedAt: 100 },
-    ]);
-    listAnswers.length = 0;
-    yield* Deferred.succeed(release, undefined);
-    holding = false;
-    const shown = [{ state: "closed", updatedAt: detailRead.updatedAt, observedAt: 100 }];
-    expect((yield* settle(all)).entries).toMatchObject(shown);
-    expect((yield* settle(open)).entries).toEqual([]);
-    // Snapshot writers see the answer as shown, not the cached row.
-    expect(listAnswers).toMatchObject([shown, []]);
-
-    // A read sent after the detail read can hit the same cached row.
-    registry.refresh(all);
-    expect((yield* settle(all)).entries).toMatchObject(shown);
-
-    // The detail read shows for five minutes, however often listings answer meanwhile.
-    yield* TestClock.adjust("4 minutes");
-    registry.refresh(all);
-    expect((yield* settle(all)).entries).toMatchObject(shown);
-    yield* TestClock.adjust("1 minute");
-    registry.refresh(all);
-    expect((yield* settle(all)).entries).toMatchObject([
-      { state: "open", updatedAt: cached.updatedAt, observedAt: 100 },
-    ]);
-
-    // A listing that read the pull request since then replaces the detail read's fields.
-    listed = { ...cached, updatedAt: "2026-10-27T12:00:00Z", observedAt: 400 };
-    registry.refresh(all);
-    registry.refresh(open);
-    const reopened = [{ state: "open", updatedAt: "2026-10-27T12:00:00Z", observedAt: 400 }];
-    expect((yield* settle(all)).entries).toMatchObject(reopened);
-    expect((yield* settle(open)).entries).toMatchObject(reopened);
-    expect(reads.filter((read) => read.startsWith("list:"))).toHaveLength(9);
   }),
 );
 

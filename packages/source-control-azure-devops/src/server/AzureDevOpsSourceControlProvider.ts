@@ -1,5 +1,4 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { SourceControlProviderError, type ChangeRequest } from "@t3tools/contracts";
@@ -7,7 +6,6 @@ import { SourceControlProviderError, type ChangeRequest } from "@t3tools/contrac
 import * as AzureDevOpsChangeRequestTemplate from "./azureDevOpsChangeRequestTemplate.ts";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
-import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
 import type { NormalizedAzureDevOpsPullRequestRecord } from "./azureDevOpsPullRequests.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import {
@@ -95,29 +93,6 @@ function toChangeRequest(summary: NormalizedAzureDevOpsPullRequestRecord): Chang
 export const make = Effect.gen(function* () {
   const azure = yield* AzureDevOpsCli.AzureDevOpsCli;
   const { git } = yield* SourceControlHost.SourceControlHost;
-  const pullRequests = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
-
-  /** A pull request read by reference is dated the same way the pull request panel does. */
-  const dated = (cwd: string) => (record: NormalizedAzureDevOpsPullRequestRecord) =>
-    pullRequests
-      .activityAt({
-        cwd,
-        pullRequest: {
-          ...record,
-          updatedAt: Option.getOrNull(Option.map(record.updatedAt, DateTime.formatIso)),
-        },
-        maxAge: AzureDevOpsPullRequestCli.ACTIVITY_MAX_AGE,
-        immediate: true,
-      })
-      .pipe(
-        Effect.map((updatedAt) => ({
-          ...record,
-          updatedAt: Option.orElse(
-            Option.flatMap(Option.fromNullishOr(updatedAt), DateTime.make),
-            () => record.updatedAt,
-          ),
-        })),
-      );
 
   return SourceControlProvider.SourceControlProvider.of({
     kind: SourceControlProviderKind.make("azure-devops"),
@@ -148,7 +123,6 @@ export const make = Effect.gen(function* () {
     listChangeRequests: Effect.fn("AzureDevOpsSourceControlProvider.listChangeRequests")(
       function (input) {
         const source = SourceControlProvider.sourceControlRefFromInput(input);
-        // Rows are candidates that include forks' same-named branches, so they stay undated.
         return azure
           .listPullRequests({
             cwd: input.cwd,
@@ -179,7 +153,6 @@ export const make = Effect.gen(function* () {
     getChangeRequest: Effect.fn("AzureDevOpsSourceControlProvider.getChangeRequest")(
       function (input) {
         return azure.getPullRequest(input).pipe(
-          Effect.flatMap(dated(input.cwd)),
           Effect.map(toChangeRequest),
           Effect.mapError(
             (error) =>

@@ -10,11 +10,9 @@ import * as Option from "effect/Option";
 import { ChildProcessSpawner } from "effect/process";
 
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
-import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
 import * as AzureDevOpsSourceControlProvider from "./AzureDevOpsSourceControlProvider.ts";
 
 const { parseAuth } = AzureDevOpsSourceControlProvider.discovery;
-const unusedPullRequests = Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({});
 
 it("reads the signed-in Azure account and says when az is signed out", () => {
   assert.deepStrictEqual(parseAuth(processOutput("azure-user@example.com\n")), {
@@ -90,11 +88,7 @@ it.effect("names the remote's repository when reading the default branch", () =>
         remoteUrl,
       );
     }
-  }).pipe(
-    Effect.provide(
-      Layer.merge(AzureDevOpsCli.layer.pipe(Layer.provideMerge(support)), unusedPullRequests),
-    ),
-  );
+  }).pipe(Effect.provide(AzureDevOpsCli.layer.pipe(Layer.provideMerge(support))));
 });
 
 it.effect(
@@ -114,7 +108,6 @@ it.effect(
         Layer.mergeAll(
           Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({}),
           TestSourceControlHost.layer(),
-          unusedPullRequests,
         ),
       ),
     ),
@@ -161,11 +154,8 @@ it.effect.each([
               closedAt: null,
               mergedAt: null,
               updatedAt: Option.none(),
-              location: null,
-              revision: "",
             }),
         }),
-        unusedPullRequests,
         TestSourceControlHost.layer({
           git: {
             listLocalBranchNames: () => Effect.succeed([...localBranches]),

@@ -23,43 +23,7 @@ export interface NormalizedAzureDevOpsPullRequestRecord {
   readonly isCrossRepository: boolean;
   readonly closedAt?: string | null;
   readonly mergedAt?: string | null;
-  /** The row's own times only; open pull requests are dated by their threads on top. */
   readonly updatedAt: Option.Option<DateTime.Utc>;
-  readonly location: { readonly project: string; readonly repository: string } | null;
-  readonly revision: string;
-}
-
-/**
- * The latest instant among Azure's timestamps, which mix offsets and precisions, in one ISO form
- * so later times also sort later as strings. Unreadable values are skipped.
- */
-export function latestAzureDevOpsTime(values: Iterable<string | null | undefined>): string | null {
-  let latest: DateTime.Utc | null = null;
-  for (const value of values) {
-    const at = DateTime.make(value?.trim() ?? "");
-    if (Option.isSome(at) && (latest === null || DateTime.isGreaterThan(at.value, latest))) {
-      latest = at.value;
-    }
-  }
-  return latest === null ? null : DateTime.formatIso(latest);
-}
-
-/**
- * What a pull request row shows of pushes, votes and state. Both parsers build it the same way,
- * so a cached thread read stays valid across readers until the row itself moves.
- */
-export function azureDevOpsActivityRevision(input: {
-  readonly state: "open" | "closed" | "merged";
-  readonly isDraft: boolean | null | undefined;
-  readonly sourceCommit: string | null | undefined;
-  readonly votes: ReadonlyArray<number | null | undefined>;
-}): string {
-  return [
-    input.state,
-    input.isDraft === true ? "draft" : "ready",
-    trimOptionalString(input.sourceCommit) ?? "",
-    input.votes.map((vote) => vote ?? 0).join(","),
-  ].join(" ");
 }
 
 const AzureDevOpsPullRequestSchema = Schema.Struct({
@@ -85,11 +49,6 @@ const AzureDevOpsPullRequestSchema = Schema.Struct({
   ),
   status: Schema.String,
   isDraft: Schema.optional(Schema.Boolean),
-  reviewers: Schema.optional(
-    Schema.NullOr(
-      Schema.Array(Schema.Struct({ vote: Schema.optional(Schema.NullOr(Schema.Number)) })),
-    ),
-  ),
   /** `az` prints `null` for a pull request from the same repo. */
   forkSource: Schema.optional(Schema.Unknown),
   creationDate: Schema.optional(Schema.OptionFromNullOr(Schema.DateTimeUtcFromString)),
@@ -204,11 +163,6 @@ function normalizeAzureDevOpsPullRequestRecord(
     onNone: () => null,
     onSome: DateTime.formatIso,
   });
-  const projectName = trimOptionalString(raw.repository?.project?.name);
-  const repositoryName = trimOptionalString(raw.repository?.name);
-  const rowTimes = [raw.creationDate, raw.closedDate].flatMap((at) =>
-    at === undefined ? [] : Option.toArray(at),
-  );
   return {
     number: raw.pullRequestId,
     title: raw.title,
@@ -221,20 +175,9 @@ function normalizeAzureDevOpsPullRequestRecord(
     isCrossRepository: raw.forkSource != null,
     closedAt: state === "closed" ? terminalAt : null,
     mergedAt: state === "merged" ? terminalAt : null,
-    updatedAt: Option.fromNullishOr(
-      rowTimes.reduce<DateTime.Utc | null>(
-        (latest, at) => (latest === null ? at : DateTime.max(latest, at)),
-        null,
-      ),
+    updatedAt: (raw.closedDate ?? Option.none()).pipe(
+      Option.orElse(() => raw.creationDate ?? Option.none()),
     ),
-    location:
-      projectName && repositoryName ? { project: projectName, repository: repositoryName } : null,
-    revision: azureDevOpsActivityRevision({
-      state,
-      isDraft: raw.isDraft,
-      sourceCommit: raw.lastMergeSourceCommit?.commitId,
-      votes: (raw.reviewers ?? []).map((reviewer) => reviewer.vote),
-    }),
   };
 }
 

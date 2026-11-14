@@ -354,14 +354,6 @@ export const PullRequestStackMembership = Schema.Struct({
 });
 export type PullRequestStackMembership = typeof PullRequestStackMembership.Type;
 
-/**
- * How far a listed `updatedAt` can be trusted when the host keeps no last-updated time and the
- * server reads it separately. Pending: not read yet, so it is only the latest time known so far;
- * unavailable: the read failed. Both are settled by a later list read, announced as a refresh.
- */
-export const PullRequestUpdatedAtState = Schema.Literals(["pending", "unavailable"]);
-export type PullRequestUpdatedAtState = typeof PullRequestUpdatedAtState.Type;
-
 export const PullRequestListEntry = Schema.Struct({
   stack: Schema.optional(PullRequestStackMembership),
   provider: SourceControlProviderKind,
@@ -383,8 +375,6 @@ export const PullRequestListEntry = Schema.Struct({
   deletions: NonNegativeInt,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
-  /** Absent when `updatedAt` is the host's own answer. */
-  updatedAtState: Schema.optional(PullRequestUpdatedAtState),
   observedAt: Schema.optional(Schema.Finite),
   viewerReviewRequested: Schema.Boolean,
   labels: Schema.Array(PullRequestLabel),
@@ -530,8 +520,6 @@ export const PullRequestSummary = Schema.Struct({
   closedAt: Schema.optional(Schema.NullOr(Schema.String)),
   mergedAt: Schema.optional(Schema.NullOr(Schema.String)),
   updatedAt: IsoDateTime,
-  /** Set when the summary is a listed row whose `updatedAt` was not read yet. */
-  updatedAtState: Schema.optional(PullRequestUpdatedAtState),
   observedAt: Schema.optional(Schema.Finite),
   author: Schema.optional(Schema.NullOr(PullRequestActor)),
   additions: Schema.optional(NonNegativeInt),

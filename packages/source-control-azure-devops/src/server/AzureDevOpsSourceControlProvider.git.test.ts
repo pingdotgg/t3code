@@ -13,7 +13,6 @@ import * as SourceControlHost from "@t3tools/source-control-core/server/SourceCo
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
-import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
 import * as AzureDevOpsSourceControlProvider from "./AzureDevOpsSourceControlProvider.ts";
 
 const withRepository = <A, E>(
@@ -49,12 +48,7 @@ const withRepository = <A, E>(
     yield* git("config", "core.autocrlf", "false");
     yield* git("remote", "add", "origin", cwd);
     const provider = yield* AzureDevOpsSourceControlProvider.make.pipe(
-      Effect.provide(
-        Layer.merge(
-          Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({}),
-          Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({}),
-        ),
-      ),
+      Effect.provide(Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({})),
     );
     return yield* test({
       git,

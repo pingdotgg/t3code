@@ -43,7 +43,7 @@ export const pullRequestListStatsFamily = Atom.family((_environmentId: string) =
 
 export const composerPullRequests = createPullRequestEnvironmentAtoms(connectionAtomRuntime, {
   // Rows on pages past each listing's head; the head itself is patched where it is cached.
-  summary: (target, reply, registry) =>
+  actionReply: (target, reply, registry) =>
     Effect.sync(() => {
       for (const atom of registry.getNodes().keys()) {
         const listing =

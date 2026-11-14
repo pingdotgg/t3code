@@ -19,7 +19,6 @@ import {
   observePullRequestChecks,
   observePullRequestMetadata,
   newestPullRequestSummary,
-  pullRequestListEntryToSummary,
   rememberPullRequestListAnswer,
   restorePullRequestList,
   restoredPullRequestList,
@@ -129,25 +128,6 @@ describe("pull request summary cache", () => {
     const older = summary({ updatedAt: "2026-09-11T00:00:00Z", observedAt: 999 });
     expect(newestPullRequestSummary(older, reopened)).toBe(reopened);
     expect(newestPullRequestSummary(reopened, older)).toBe(reopened);
-
-    // A listed row whose date is still being read keeps saying so, and loses to a read time.
-    const listed = pullRequestListEntryToSummary({
-      ...reopened,
-      host: "github.com",
-      projectTitle: "widget",
-      additions: 0,
-      deletions: 0,
-      createdAt: reopened.updatedAt,
-      updatedAtState: "pending",
-      viewerReviewRequested: false,
-      labels: [],
-    } as PullRequestListEntry);
-    expect(listed.updatedAtState).toBe("pending");
-    const read = summary({ updatedAt: reopened.updatedAt, observedAt: 1 });
-    expect(newestPullRequestSummary(read, listed)).toBe(read);
-    expect(newestPullRequestSummary(listed, read)).toBe(read);
-    const pushed = { ...listed, updatedAt: "2026-09-13T00:00:00Z" };
-    expect(newestPullRequestSummary(read, pushed)).toBe(pushed);
   });
 
   it("reuses saved thread state while detail is stale and lets newer detail replace it", () => {

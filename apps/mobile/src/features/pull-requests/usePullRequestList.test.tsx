@@ -1,22 +1,15 @@
 import { RegistryContext } from "@effect/atom-react";
 import {
   EnvironmentId,
-  type PullRequestListEntry,
   type PullRequestListInput,
   type PullRequestListResult,
 } from "@t3tools/contracts";
-import { AsyncResult, type Atom, AtomRegistry } from "effect/reactivity";
+import { AtomRegistry } from "effect/reactivity";
 import { act, useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
 
-const mocks = vi.hoisted(() => ({
-  failPage: false,
-  settled: false,
-  updatedAt: null as string | null,
-  holdContinuation: null as null | { started: () => void; wait: Promise<void> },
-  refreshes: null as null | ((key: string) => Atom.Writable<AsyncResult.AsyncResult<number>>),
-}));
+const mocks = vi.hoisted(() => ({ failPage: false }));
 
 vi.mock("../../connection/catalog", async () => {
   const { Atom } = await import("effect/reactivity");
@@ -35,19 +28,8 @@ vi.mock("../../state/pull-requests", async () => {
     "PullRequestListTestError",
     { message: Schema.String },
   ) {}
-  const row = (number: number, updatedAtState?: "pending") =>
-    ({
-      number,
-      host: "github.com",
-      repository: "org/repo",
-      updatedAt: number === 1 && mocks.updatedAt ? mocks.updatedAt : `2026-10-0${number}T00:00:00Z`,
-      observedAt: mocks.settled ? 2 : 1,
-      ...(updatedAtState === undefined ? {} : { updatedAtState }),
-    }) as PullRequestListEntry;
   const page = (nextCursors: PullRequestListResult["nextCursors"]): PullRequestListResult => ({
-    entries: Object.keys(nextCursors).length
-      ? [row(2)]
-      : [row(1, mocks.settled ? undefined : "pending")],
+    entries: [],
     nextCursors,
     truncated: false,
     viewers: {},
@@ -56,46 +38,29 @@ vi.mock("../../state/pull-requests", async () => {
   });
   const list = Atom.family((key: string) => {
     const target: { environmentId: string; input: PullRequestListInput } = JSON.parse(key);
+    const response = page(target.input.cursors ? {} : { "github.com org/repo": "next" });
     return Atom.make(
       Effect.suspend(() => {
-        const response = page(target.input.cursors ? {} : { "github.com org/repo": "next" });
         if (target.environmentId === "offline")
           return Effect.fail(
             new PullRequestListTestError({ message: "Environment is not connected." }),
           );
         if (target.input.cursors && mocks.failPage)
           return Effect.fail(new PullRequestListTestError({ message: "Page failed." }));
-        if (target.input.cursors) {
-          const held = mocks.holdContinuation;
-          mocks.holdContinuation = null;
-          if (held)
-            return Effect.promise(async () => {
-              held.started();
-              await held.wait;
-              return response;
-            });
-        }
         return Effect.succeed(response);
       }),
     );
   });
   const { pullRequestListHead } = await import("./pullRequestList");
-  const refreshes = Atom.family((_key: string) =>
-    Atom.make<AsyncResult.AsyncResult<number>>(AsyncResult.success(0)),
-  );
-  mocks.refreshes = refreshes;
   const pages = Atom.family((_key: string) =>
     Atom.make<ReturnType<typeof pullRequestListHead> | null>(null),
   );
   return {
     pullRequestListPagesKey: (target: unknown) => JSON.stringify(target),
     pullRequestListPagesFamily: pages,
-    pullRequestListStatsFamily: Atom.family((_key: string) =>
-      Atom.make({ stats: new Map(), answeredBy: new Map(), updatedAt: new Map() }),
-    ),
+    pullRequestListStatsFamily: Atom.family((_key: string) => Atom.make(new Map())),
     composerPullRequests: {
       list: (target: unknown) => list(JSON.stringify(target)),
-      refreshes: (target: unknown) => refreshes(JSON.stringify(target)),
       listStats: Atom.family(() => Atom.make(AsyncResult.success({ stats: [] }))),
       invalidate: {
         run: async () => AsyncResult.success({}),
@@ -108,9 +73,6 @@ import { usePullRequestList } from "./usePullRequestList";
 
 function setup(ids: readonly string[]) {
   mocks.failPage = false;
-  mocks.settled = false;
-  mocks.updatedAt = null;
-  mocks.holdContinuation = null;
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const registry = AtomRegistry.make();
   const targets = ids.map((id) => ({
@@ -134,7 +96,6 @@ function setup(ids: readonly string[]) {
     );
   });
   return {
-    registry,
     get latest() {
       return latest;
     },
@@ -175,44 +136,3 @@ it("keeps load-more failures retryable", async () => {
   expect(probe.latest.hasMore).toBe(false);
   expect(probe.latest.continued).toBe(true);
 });
-
-it.each(["after response", "before response", "already dated"] as const)(
-  "refreshes loaded continuations when activity settles %s",
-  async (ordering) => {
-    using probe = setup(["healthy"]);
-    await act(async () => probe.latest.onRefresh());
-    const refresh = () =>
-      probe.registry.set(
-        mocks.refreshes!(JSON.stringify({ environmentId: "healthy", input: {} })),
-        AsyncResult.success(1),
-      );
-    if (ordering === "already dated") mocks.settled = true;
-    if (ordering === "before response") {
-      const started = Promise.withResolvers<void>();
-      const answer = Promise.withResolvers<void>();
-      mocks.holdContinuation = { started: started.resolve, wait: answer.promise };
-      await act(async () => {
-        probe.latest.loadMore();
-        await started.promise;
-        mocks.settled = true;
-        refresh();
-        answer.resolve();
-      });
-    } else {
-      await act(async () => probe.latest.loadMore());
-      expect(probe.latest.entries.find((entry) => entry.number === 1)?.updatedAtState).toBe(
-        ordering === "already dated" ? undefined : "pending",
-      );
-      mocks.settled = true;
-      mocks.updatedAt = "2026-10-03T00:00:00Z";
-      await act(async () => refresh());
-    }
-    const row = probe.latest.entries.find((entry) => entry.number === 1);
-    expect(row?.updatedAtState).toBeUndefined();
-    expect(row?.updatedAt).toBe(
-      ordering === "before response" ? "2026-10-01T00:00:00Z" : "2026-10-03T00:00:00Z",
-    );
-    expect(probe.latest.entries).toHaveLength(2);
-    expect(probe.latest.hasMore).toBe(false);
-  },
-);

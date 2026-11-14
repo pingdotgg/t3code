@@ -3,7 +3,9 @@ import {
   normalizeRefName,
 } from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type {
@@ -17,11 +19,7 @@ import type {
 import { TrimmedNonEmptyString } from "@t3tools/contracts";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 
-import {
-  azureDevOpsActivityRevision,
-  azureDevOpsPullRequestWebUrl,
-  latestAzureDevOpsTime,
-} from "./azureDevOpsPullRequests.ts";
+import { azureDevOpsPullRequestWebUrl } from "./azureDevOpsPullRequests.ts";
 
 // CLI fields vary by command; unknown enum values must not fail the payload.
 const RawIdentitySchema = Schema.Struct({
@@ -29,15 +27,6 @@ const RawIdentitySchema = Schema.Struct({
   uniqueName: Schema.optional(Schema.NullOr(Schema.String)),
   imageUrl: Schema.optional(Schema.NullOr(Schema.String)),
 });
-
-const RawReviewerSchema = Schema.Struct({
-  ...RawIdentitySchema.fields,
-  vote: Schema.optional(Schema.NullOr(Schema.Number)),
-});
-
-const RawCommitSchema = Schema.optional(
-  Schema.NullOr(Schema.Struct({ commitId: Schema.optional(Schema.NullOr(Schema.String)) })),
-);
 
 const RawPullRequestSchema = Schema.Struct({
   pullRequestId: Schema.Int,
@@ -57,8 +46,7 @@ const RawPullRequestSchema = Schema.Struct({
   ),
   mergeStatus: Schema.optional(Schema.NullOr(Schema.String)),
   createdBy: Schema.optional(Schema.NullOr(RawIdentitySchema)),
-  reviewers: Schema.optional(Schema.NullOr(Schema.Array(RawReviewerSchema))),
-  lastMergeSourceCommit: RawCommitSchema,
+  reviewers: Schema.optional(Schema.NullOr(Schema.Array(RawIdentitySchema))),
   sourceRefName: TrimmedNonEmptyString,
   targetRefName: TrimmedNonEmptyString,
   creationDate: TrimmedNonEmptyString,
@@ -103,7 +91,6 @@ const RawThreadSchema = Schema.Struct({
           author: Schema.optional(Schema.NullOr(RawIdentitySchema)),
           publishedDate: Schema.optional(Schema.NullOr(Schema.String)),
           lastUpdatedDate: Schema.optional(Schema.NullOr(Schema.String)),
-          lastContentUpdatedDate: Schema.optional(Schema.NullOr(Schema.String)),
           isDeleted: Schema.optional(Schema.NullOr(Schema.Boolean)),
           commentType: Schema.optional(Schema.NullOr(Schema.String)),
         }),
@@ -171,7 +158,6 @@ export interface AzureDevOpsPullRequest {
   readonly isDraft: boolean;
   readonly mergeability: PullRequestMergeability;
   readonly createdAt: string;
-  /** The row's own times only; open pull requests are dated by their threads on top. */
   readonly updatedAt: string;
   readonly closedAt: string | null;
   readonly body: string;
@@ -180,7 +166,6 @@ export interface AzureDevOpsPullRequest {
   readonly location: AzureDevOpsRepositoryLocation | null;
   readonly autoMergeEnabled: boolean;
   readonly autoMergeMethod?: PullRequestMergeMethod;
-  readonly revision: string;
 }
 
 /** Logins must match the email from `az account show`. */
@@ -263,7 +248,6 @@ function toPullRequest(
   const headBranch = trimmed(normalizeRefName(raw.sourceRefName));
   const baseBranch = trimmed(normalizeRefName(raw.targetRefName));
   if (url === null || headBranch === null || baseBranch === null) return null;
-  const state = toState(raw);
   return {
     number: raw.pullRequestId,
     title: raw.title,
@@ -271,11 +255,11 @@ function toPullRequest(
     author: toActor(raw.createdBy),
     headBranch,
     baseBranch,
-    state,
+    state: toState(raw),
     isDraft: raw.isDraft ?? false,
     mergeability: toMergeability(raw.mergeStatus),
     createdAt: raw.creationDate,
-    updatedAt: latestAzureDevOpsTime([raw.creationDate, closedAt]) ?? raw.creationDate,
+    updatedAt: closedAt ?? raw.creationDate,
     closedAt,
     body: raw.description ?? "",
     reviewRequestLogins: reviewers.map((reviewer) => reviewer.login),
@@ -283,12 +267,6 @@ function toPullRequest(
     location: toLocation(raw),
     autoMergeEnabled: (raw.autoCompleteSetBy ?? null) !== null,
     ...(autoMergeMethod === undefined ? {} : { autoMergeMethod }),
-    revision: azureDevOpsActivityRevision({
-      state,
-      isDraft: raw.isDraft,
-      sourceCommit: raw.lastMergeSourceCommit?.commitId,
-      votes: (raw.reviewers ?? []).map((reviewer) => reviewer.vote),
-    }),
   };
 }
 
@@ -347,27 +325,18 @@ export function decodeViewerJson(raw: string): Result.Result<string | null, Deco
     : Result.fail(decoded.failure);
 }
 
-export interface AzureDevOpsThreads {
-  readonly comments: ReadonlyArray<PullRequestComment>;
-  /** Every thread counts, including the system ones Azure adds for pushes and votes. */
-  readonly activityAt: string | null;
-}
-
-export function decodeThreadsJson(raw: string): Result.Result<AzureDevOpsThreads, DecodeFailure> {
+export function decodeThreadsJson(
+  raw: string,
+): Result.Result<ReadonlyArray<PullRequestComment>, DecodeFailure> {
   const decoded = decodeThreadPage(raw);
   if (!Result.isSuccess(decoded)) {
     return Result.fail(decoded.failure);
   }
   const comments: PullRequestComment[] = [];
-  const times: Array<string | null | undefined> = [];
   for (const entry of decoded.success.value) {
     const decodedThread = decodeThreadEntry(entry);
     if (Exit.isFailure(decodedThread)) continue;
     const thread = decodedThread.value;
-    times.push(thread.publishedDate, thread.lastUpdatedDate);
-    for (const comment of thread.comments ?? []) {
-      times.push(comment.publishedDate, comment.lastUpdatedDate, comment.lastContentUpdatedDate);
-    }
     if (thread.isDeleted === true) continue;
     const path = toRepositoryPath(thread.threadContext?.filePath);
     for (const comment of thread.comments ?? []) {
@@ -392,10 +361,9 @@ export function decodeThreadsJson(raw: string): Result.Result<AzureDevOpsThreads
       });
     }
   }
-  return Result.succeed({
-    comments: comments.toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
-    activityAt: latestAzureDevOpsTime(times),
-  });
+  return Result.succeed(
+    comments.toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
+  );
 }
 
 type RawPolicyEvaluation = Schema.Schema.Type<typeof RawPolicyEvaluationSchema>;
@@ -493,12 +461,46 @@ export function decodePolicyChecksJson(
   });
 }
 
+/** The newest of Azure's timestamps, which mix offsets and precisions; unreadable ones are skipped. */
+export function latestAzureDevOpsTime(values: Iterable<string | null | undefined>): string | null {
+  let latest: DateTime.Utc | null = null;
+  for (const value of values) {
+    const at = DateTime.make(value?.trim() ?? "");
+    if (Option.isSome(at) && (latest === null || DateTime.isGreaterThan(at.value, latest))) {
+      latest = at.value;
+    }
+  }
+  return latest === null ? null : DateTime.formatIso(latest);
+}
+
+/**
+ * When the pull request's conversation last moved. Azure keeps no last-updated time on a pull
+ * request, but it adds a system thread for each push, vote and state change, so every thread counts.
+ */
+export function decodeThreadActivityJson(raw: string): Result.Result<string | null, DecodeFailure> {
+  const decoded = decodeThreadPage(raw);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  const times: Array<string | null | undefined> = [];
+  for (const entry of decoded.success.value) {
+    const decodedThread = decodeThreadEntry(entry);
+    if (Exit.isFailure(decodedThread)) continue;
+    const thread = decodedThread.value;
+    times.push(thread.publishedDate, thread.lastUpdatedDate);
+    for (const comment of thread.comments ?? []) {
+      times.push(comment.publishedDate, comment.lastUpdatedDate);
+    }
+  }
+  return Result.succeed(latestAzureDevOpsTime(times));
+}
+
 const RawIterationSchema = Schema.Struct({
   id: Schema.Int,
-  sourceRefCommit: RawCommitSchema,
-  commonRefCommit: RawCommitSchema,
-  createdDate: Schema.optional(Schema.NullOr(Schema.String)),
-  updatedDate: Schema.optional(Schema.NullOr(Schema.String)),
+  sourceRefCommit: Schema.optional(
+    Schema.NullOr(Schema.Struct({ commitId: Schema.optional(Schema.NullOr(Schema.String)) })),
+  ),
+  commonRefCommit: Schema.optional(
+    Schema.NullOr(Schema.Struct({ commitId: Schema.optional(Schema.NullOr(Schema.String)) })),
+  ),
 });
 
 const RawIterationPageSchema = Schema.Struct({ value: Schema.Array(Schema.Unknown) });
@@ -536,12 +538,6 @@ export interface AzureDevOpsIteration {
   readonly id: number;
   readonly headCommit: string;
   readonly mergeBaseCommit: string;
-}
-
-interface AzureDevOpsIterations {
-  readonly iterations: ReadonlyArray<AzureDevOpsIteration>;
-  /** Counts pushes that cannot be diffed too. */
-  readonly activityAt: string | null;
 }
 
 export interface AzureDevOpsChangeEntry {
@@ -594,25 +590,20 @@ function toChangeKind(
 
 export function decodeIterationsJson(
   raw: string,
-): Result.Result<AzureDevOpsIterations, DecodeFailure> {
+): Result.Result<ReadonlyArray<AzureDevOpsIteration>, DecodeFailure> {
   const decoded = decodeIterationPage(raw);
   if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
   const iterations: AzureDevOpsIteration[] = [];
-  const times: Array<string | null | undefined> = [];
   for (const entry of decoded.success.value) {
     const decodedIteration = decodeIterationEntry(entry);
     if (Exit.isFailure(decodedIteration)) continue;
     const iteration = decodedIteration.value;
-    times.push(iteration.createdDate, iteration.updatedDate);
     const headCommit = trimmed(iteration.sourceRefCommit?.commitId);
     const mergeBaseCommit = trimmed(iteration.commonRefCommit?.commitId);
     if (headCommit === null || mergeBaseCommit === null) continue;
     iterations.push({ id: iteration.id, headCommit, mergeBaseCommit });
   }
-  return Result.succeed({
-    iterations: iterations.toSorted((left, right) => left.id - right.id),
-    activityAt: latestAzureDevOpsTime(times),
-  });
+  return Result.succeed(iterations.toSorted((left, right) => left.id - right.id));
 }
 
 export function decodeIterationChangesJson(

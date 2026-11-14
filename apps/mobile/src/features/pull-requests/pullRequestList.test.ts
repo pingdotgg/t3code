@@ -24,7 +24,6 @@ import {
   shownPullRequestListPages,
   pullRequestListRowsAreEqual,
   withAnsweredPullRequestStats,
-  withRevalidatedPullRequestListPage,
   withListedPullRequests,
   withShownPullRequestStats,
   withoutScratchProjectScope,
@@ -123,9 +122,6 @@ describe("mobile PR list pagination", () => {
     expect(
       mergePullRequestListEntries([entry(1)], [entry(2, { host: "enterprise.test" }), entry(2)]),
     ).toHaveLength(3);
-    // A detail read dated the held row past the read that listed it.
-    const dated = entry(2, { updatedAt: "2026-10-05T00:00:00Z" });
-    expect(mergePullRequestListEntries([dated], [entry(2)])).toEqual([dated]);
   });
   it("patches a row that only the list head supplies, and keeps it while that head is current", () => {
     const head = page([entry(2), entry(1)], { repo: "first" });
@@ -149,30 +145,6 @@ describe("mobile PR list pagination", () => {
     expect(updated.entries[1]?.title).toBe("New title");
     expect(updated.nextCursors).toEqual({ repo: "second" });
     expect(pullRequestListHead(updated, updated.head)).toBe(updated);
-
-    // A row loaded past the head while its date was unread is read again where it was loaded.
-    const continuation = { state: "open" as const, cursors: updated.nextCursors };
-    const undated = appendPullRequestListPage(
-      updated,
-      page([entry(1, { updatedAtState: "pending" })], { repo: "third" }),
-      continuation,
-    );
-    const settledHead = pullRequestListHead(undated, page([entry(4, { observedAt: 3 })]));
-    expect(settledHead.entries.find((row) => row.number === 1)?.updatedAtState).toBe("pending");
-    const revalidated = withRevalidatedPullRequestListPage(
-      settledHead,
-      continuation,
-      page([entry(1, { observedAt: 3 })], { repo: "third-new" }),
-    );
-    expect(revalidated.entries.map((row) => [row.number, row.updatedAtState])).toEqual([
-      [4, undefined],
-      [3, undefined],
-      [2, undefined],
-      [1, undefined],
-    ]);
-    expect(revalidated.nextCursors).toEqual({ repo: "third" });
-    const reset = pullRequestListHead(null, page([entry(4)]));
-    expect(withRevalidatedPullRequestListPage(reset, continuation, page([entry(1)]))).toBe(reset);
   });
   it("can grow legacy listings that provide no cursor, without exceeding the wire limit", () => {
     const first = pullRequestListHead(null, { ...page([entry(1)]), truncated: true });

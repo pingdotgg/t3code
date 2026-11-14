@@ -37,7 +37,6 @@ import type {
   PullRequestReviewerKind,
   PullRequestLabelCandidateList,
   PullRequestState,
-  PullRequestUpdatedAtState,
   PullRequestPreview,
   PullRequestUpdateMethod,
   PullRequestViewerPermissions,
@@ -102,7 +101,6 @@ export interface ProviderChangeRequest {
   readonly closedAt?: string | null;
   readonly mergedAt?: string | null;
   readonly updatedAt: string;
-  readonly updatedAtState?: PullRequestUpdatedAtState | undefined;
   readonly reviewRequestLogins: ReadonlyArray<string>;
   readonly labels: ReadonlyArray<PullRequestLabel>;
   readonly reviewDecision?: PullRequestReviewDecision | null | undefined;
@@ -120,7 +118,6 @@ export interface ProviderChangeRequestSummary {
   readonly closedAt?: string | null;
   readonly mergedAt?: string | null;
   readonly updatedAt: string;
-  readonly updatedAtState?: PullRequestUpdatedAtState | undefined;
   readonly author?: PullRequestActor | null | undefined;
   readonly additions?: number | undefined;
   readonly deletions?: number | undefined;
@@ -165,11 +162,6 @@ export interface ProviderChangeRequestPage {
    */
   readonly resumeAfter?: string;
   readonly continues: boolean;
-  /**
-   * Reads the rows' dates the host does not list, after the page is answered. Succeeds with
-   * whether reading the page again would now answer differently.
-   */
-  readonly settleUpdatedAt?: Effect.Effect<boolean>;
 }
 
 export interface ProviderListCursor {

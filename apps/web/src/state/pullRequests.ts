@@ -55,10 +55,6 @@ function compareSummaries(current: PullRequestSummary, incoming: PullRequestSumm
   if (merged !== 0) return merged;
   const updated = Date.parse(incoming.updatedAt) - Date.parse(current.updatedAt);
   if (updated !== 0) return updated;
-  // A time read for the pull request outranks the same time listed before it was read.
-  const dated =
-    Number(incoming.updatedAtState === undefined) - Number(current.updatedAtState === undefined);
-  if (dated !== 0) return dated;
   if (current.observedAt === undefined && incoming.observedAt === undefined) return 0;
   return (incoming.observedAt ?? -Infinity) - (current.observedAt ?? -Infinity);
 }
@@ -85,7 +81,6 @@ export function pullRequestListEntryToSummary(entry: PullRequestListEntry): Pull
     headBranch: entry.headBranch,
     baseBranch: entry.baseBranch,
     updatedAt: entry.updatedAt,
-    ...(entry.updatedAtState === undefined ? {} : { updatedAtState: entry.updatedAtState }),
     ...(entry.observedAt === undefined ? {} : { observedAt: entry.observedAt }),
     author: entry.author,
     ...(entry.reviewDecision === undefined ? {} : { reviewDecision: entry.reviewDecision }),

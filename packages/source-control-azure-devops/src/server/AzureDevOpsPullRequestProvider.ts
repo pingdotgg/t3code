@@ -1,5 +1,4 @@
 import { resolvePullRequestAuthorFilter, SourceControlProviderKind } from "@t3tools/contracts";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Semaphore from "effect/Semaphore";
 import { rollupCheckStatuses } from "@t3tools/source-control-core/server/pullRequestChecks";
@@ -28,12 +27,13 @@ import {
   type ProviderDiffSlice,
   type PullRequestProviderApi,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
-import type {
-  AzureDevOpsChangeEntry,
-  AzureDevOpsItemContent,
-  AzureDevOpsIteration,
-  AzureDevOpsPullRequest,
-  AzureDevOpsRepositoryLocation,
+import {
+  latestAzureDevOpsTime,
+  type AzureDevOpsChangeEntry,
+  type AzureDevOpsItemContent,
+  type AzureDevOpsIteration,
+  type AzureDevOpsPullRequest,
+  type AzureDevOpsRepositoryLocation,
 } from "./azureDevOpsPullRequestJson.ts";
 import { definition } from "../shared/definition.ts";
 
@@ -200,25 +200,6 @@ export const make = Effect.gen(function* () {
 
   const EMPTY_DIFF_SLICE: ProviderDiffSlice = { patch: "", truncated: false, nextCursor: null };
 
-  // Someone is looking at this pull request, so its read skips the queue listed rows wait in.
-  const dated =
-    (input: { readonly cwd: string; readonly repository: string }, maxAge: Duration.Duration) =>
-    (pullRequest: AzureDevOpsPullRequest) =>
-      cli
-        .activityAt({
-          cwd: input.cwd,
-          repository: input.repository,
-          pullRequest,
-          maxAge,
-          immediate: true,
-        })
-        .pipe(
-          Effect.map((updatedAt) => ({
-            ...pullRequest,
-            updatedAt: updatedAt ?? pullRequest.updatedAt,
-          })),
-        );
-
   // PR locations are immutable; caching avoids full PR reads for viewed-file checks.
   const locations = new Map<string, AzureDevOpsRepositoryLocation>();
   // A pushed iteration never changes, so neither do its commits nor its change list.
@@ -246,6 +227,23 @@ export const make = Effect.gen(function* () {
       number: pullRequest.number,
       isDraft: pullRequest.isDraft,
     });
+
+  /**
+   * Azure's own rows date an open pull request by its creation, so a read of one pull request is
+   * dated by its newest thread instead. A failed read keeps the row's own date.
+   */
+  const withActivity = (input: { readonly cwd: string }, pullRequest: AzureDevOpsPullRequest) => {
+    const location = pullRequest.location;
+    if (pullRequest.state !== "open" || location === null) return Effect.succeed(pullRequest);
+    return cli.readActivityAt({ cwd: input.cwd, location, number: pullRequest.number }).pipe(
+      Effect.map((activityAt) => ({
+        ...pullRequest,
+        updatedAt:
+          latestAzureDevOpsTime([pullRequest.updatedAt, activityAt]) ?? pullRequest.updatedAt,
+      })),
+      Effect.orElseSucceed(() => pullRequest),
+    );
+  };
 
   /** A later slice names its iteration, which the list it was cut from already holds. */
   const diffScope = Effect.fn("AzureDevOpsPullRequestProvider.diffScope")(function* (input: {
@@ -374,51 +372,13 @@ export const make = Effect.gen(function* () {
         })
         .pipe(
           Effect.mapError(fail("listChangeRequests")),
-          Effect.flatMap((batch) =>
-            // Each row's date is a process of its own, so the page is answered before they run.
-            Effect.forEach(batch.items, (pullRequest) =>
-              cli
-                .listedActivity({
-                  cwd: input.cwd,
-                  repository: input.repository,
-                  pullRequest,
-                  maxAge: AzureDevOpsPullRequestCli.ACTIVITY_MAX_AGE,
-                })
-                .pipe(
-                  Effect.map((activity) => ({
-                    item: {
-                      ...toChangeRequest({
-                        ...pullRequest,
-                        updatedAt: activity.at ?? pullRequest.updatedAt,
-                      }),
-                      ...(activity.state === undefined ? {} : { updatedAtState: activity.state }),
-                    },
-                    settle: activity.settle,
-                  })),
-                ),
-            ).pipe(
-              Effect.map((rows) => {
-                const settling = rows.flatMap(({ settle }) =>
-                  settle === undefined ? [] : [settle],
-                );
-                return {
-                  items: rows.map(({ item }) => item),
-                  truncated: batch.truncated,
-                  cursorAdvance: batch.cursorAdvance,
-                  // Azure's ordering is stable across offset-based pages.
-                  continues: true,
-                  ...(settling.length === 0
-                    ? {}
-                    : {
-                        // The CLI bounds how many of these reads run at once.
-                        settleUpdatedAt: Effect.all(settling, { concurrency: "unbounded" }).pipe(
-                          Effect.map((changed) => changed.includes(true)),
-                        ),
-                      }),
-                };
-              }),
-            ),
-          ),
+          Effect.map((batch) => ({
+            items: batch.items.map(toChangeRequest),
+            truncated: batch.truncated,
+            cursorAdvance: batch.cursorAdvance,
+            // Azure's ordering is stable across offset-based pages.
+            continues: true,
+          })),
         ),
 
     getChangeRequestPreview: (input) =>
@@ -448,7 +408,7 @@ export const make = Effect.gen(function* () {
       function* (input) {
         const pullRequest = yield* cli
           .getPullRequest({ cwd: input.cwd, number: input.number })
-          .pipe(Effect.flatMap(dated(input, AzureDevOpsPullRequestCli.ACTIVITY_MAX_AGE)));
+          .pipe(Effect.flatMap((read) => withActivity(input, read)));
         // Undefined keeps the last known state; null would claim no checks exist.
         const checksState = yield* readChecks(input, pullRequest).pipe(
           Effect.map((checks) => rollupCheckStatuses(checks.map((check) => check.status))),
@@ -464,32 +424,30 @@ export const make = Effect.gen(function* () {
 
     getChangeRequest: Effect.fn("AzureDevOpsPullRequestProvider.getChangeRequest")(
       function* (input) {
-        const read = yield* cli.getPullRequest({ cwd: input.cwd, number: input.number });
-        const location = read.location;
-        const pushes = Effect.gen(function* () {
-          if (location === null) return { iterations: [], changedFiles: 0 };
-          const iterations = yield* cli
-            .listIterations({ cwd: input.cwd, location, number: input.number })
-            .pipe(Effect.orElseSucceed(() => []));
-          const changedFiles = yield* listLatestChanges({
-            cwd: input.cwd,
-            location,
-            number: input.number,
-            iterations,
-          }).pipe(
-            Effect.map((listed) => listed.changes.length),
-            Effect.orElseSucceed(() => 0),
-          );
-          return { iterations, changedFiles };
-        });
-        const datedRead = dated(input, AzureDevOpsPullRequestCli.ACTIVITY_MAX_AGE);
-        const [{ iterations, changedFiles }] = yield* Effect.all([pushes, datedRead(read)], {
-          concurrency: "unbounded",
-        });
-        // The thread read is fresh now; dating again only folds in the push times just listed.
-        const pullRequest = yield* datedRead(read);
+        const pullRequest = yield* cli
+          .getPullRequest({ cwd: input.cwd, number: input.number })
+          .pipe(Effect.flatMap((read) => withActivity(input, read)));
+        const location = pullRequest.location;
+        const iterations =
+          location === null
+            ? []
+            : yield* cli
+                .listIterations({ cwd: input.cwd, location, number: input.number })
+                .pipe(Effect.orElseSucceed(() => []));
         // The trial merge's lastMergeSourceCommit can lag behind a new source push.
         const headSha = iterations.at(-1)?.headCommit;
+        const changedFiles =
+          location === null
+            ? 0
+            : yield* listLatestChanges({
+                cwd: input.cwd,
+                location,
+                number: input.number,
+                iterations,
+              }).pipe(
+                Effect.map((listed) => listed.changes.length),
+                Effect.orElseSucceed(() => 0),
+              );
         const checks = yield* readChecks(input, pullRequest).pipe(Effect.orElseSucceed(() => []));
         const detail: ProviderChangeRequestDetail = {
           ...toChangeRequest(pullRequest),
@@ -541,8 +499,6 @@ export const make = Effect.gen(function* () {
       ),
 
     getViewerPermissions: () => Effect.succeed(AZURE_DEVOPS_VIEWER_PERMISSIONS),
-
-    forgetChangeRequestReads: (scope) => cli.forgetActivity(scope),
 
     // `input.commit` is deliberately dropped: Azure states no commit list on a pull request, so
     // the Code tab has nothing to scope itself to and always asks for the whole change.
@@ -738,29 +694,19 @@ export const make = Effect.gen(function* () {
         })
         .pipe(
           Effect.mapError(fail("runAction")),
+          // Clients drop a reply dated before the summary they show, so it is dated the same way.
           Effect.flatMap((reply) =>
-            reply === undefined
-              ? Effect.void
-              : Effect.gen(function* () {
-                  const pullRequest = yield* dated(
-                    input,
-                    AzureDevOpsPullRequestCli.ACTIVITY_MAX_AGE,
-                  )(reply);
-                  const activity = yield* cli.listedActivity({
-                    cwd: input.cwd,
-                    repository: input.repository,
-                    pullRequest,
-                    maxAge: AzureDevOpsPullRequestCli.ACTIVITY_MAX_AGE,
-                  });
-                  return {
+            reply
+              ? withActivity(input, reply).pipe(
+                  Effect.map((pullRequest) => ({
                     ...toSummary(pullRequest),
-                    ...(activity.state === undefined ? {} : { updatedAtState: activity.state }),
                     autoMergeEnabled: pullRequest.autoMergeEnabled,
                     ...(pullRequest.autoMergeMethod === undefined
                       ? {}
                       : { autoMergeMethod: pullRequest.autoMergeMethod }),
-                  };
-                }),
+                  })),
+                )
+              : Effect.void,
           ),
         ),
 
