@@ -478,8 +478,8 @@ describe("Grok usage limits", () => {
   };
 
   it("shows zero usage for complete weekly and monthly periods with no percentage", () => {
-    for (const [currentPeriod, kind, label, resetsAt] of [
-      [weeklyPeriod, "weekly", "Weekly", "2026-09-18T03:10:30.159Z"],
+    for (const [currentPeriod, kind, label, resetsAt, windowDurationMins] of [
+      [weeklyPeriod, "weekly", "Weekly", "2026-09-18T03:10:30.159Z", 7 * 24 * 60],
       [
         {
           type: "USAGE_PERIOD_TYPE_MONTHLY",
@@ -489,12 +489,15 @@ describe("Grok usage limits", () => {
         "monthly",
         "Monthly",
         "2026-10-01T00:00:00.000Z",
+        30 * 24 * 60,
       ],
     ] as const) {
       const response = { config: { currentPeriod } };
       expect
         .soft(grokUsageResponseToLimits(response, checkedAt).windows)
-        .toEqual([{ id: "subscription", kind, label, usedPercent: 0, resetsAt }]);
+        .toEqual([
+          { id: "subscription", kind, label, usedPercent: 0, resetsAt, windowDurationMins },
+        ]);
     }
   });
 
@@ -551,6 +554,60 @@ describe("Grok usage limits", () => {
       ).windows,
     ).toEqual([{ id: "subscription", kind: "monthly", label: "Monthly", usedPercent: 100 }]);
   });
+
+  it("measures the window from the reported period bounds", () => {
+    const window = (type: string, start: string, end: string) =>
+      grokUsageResponseToLimits(
+        { config: { creditUsagePercent: 4, currentPeriod: { type, start, end } } },
+        checkedAt,
+      ).windows[0];
+    expect(
+      window(
+        "USAGE_PERIOD_TYPE_WEEKLY",
+        "2026-10-14T20:51:37.352+00:00",
+        "2026-10-21T20:51:37.352+00:00",
+      ),
+    ).toEqual({
+      id: "subscription",
+      kind: "weekly",
+      label: "Weekly",
+      usedPercent: 4,
+      resetsAt: "2026-10-21T20:51:37.352Z",
+      windowDurationMins: 7 * 24 * 60,
+    });
+    expect(
+      window(
+        "USAGE_PERIOD_TYPE_MONTHLY",
+        "2026-02-01T00:00:00.000+00:00",
+        "2026-03-01T00:00:00.000+00:00",
+      )?.windowDurationMins,
+    ).toBe(28 * 24 * 60);
+  });
+
+  it("leaves the window length unknown when the period start is unusable", () => {
+    const end = "2026-10-21T20:51:37.352+00:00";
+    for (const start of [
+      undefined,
+      null,
+      42,
+      "invalid",
+      "2026-02-30T00:00:00.000Z",
+      end,
+      "2026-10-28T20:51:37.352+00:00",
+    ]) {
+      const [window] = grokUsageResponseToLimits(
+        {
+          config: {
+            creditUsagePercent: 4,
+            currentPeriod: { type: "USAGE_PERIOD_TYPE_WEEKLY", start, end },
+          },
+        },
+        checkedAt,
+      ).windows;
+      expect(window?.resetsAt).toBe("2026-10-21T20:51:37.352Z");
+      expect(window).not.toHaveProperty("windowDurationMins");
+    }
+  });
 });
 
 it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("readGrokAccount", (it) => {
@@ -582,7 +639,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("readGrokAccount"
         ),
       );
       expect(limits.windows[0]?.usedPercent).toBe(37);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect(
@@ -692,7 +749,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("readGrokAccount"
             message: "Grok could not read usage limits.",
           });
         }
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect("sanitizes HTTP failures and malformed billing responses, keeping the account", () =>

@@ -44,4 +44,57 @@ describe("parseElicitationForm", () => {
       },
     );
   }
+
+  it("asks each question once when a choice has a free-text companion field", () => {
+    // OMP's ask dialog follows each choice `q<n>` with a free-text `q<n>__other` field.
+    const ask = (question: string, header: string) => ({
+      type: "string",
+      title: question,
+      description: header,
+      oneOf: [
+        { const: "Yes", title: "Yes" },
+        { const: "No", title: "No" },
+      ],
+    });
+    const form = parseElicitationForm(
+      {
+        type: "object",
+        properties: {
+          q0: ask("Use Postgres for the new service?", "Database"),
+          q0__other: { type: "string", title: "Other (type your own)" },
+          q1: ask("Deploy to staging first?", "Deploy"),
+          q1__other: { type: "string", title: "Other (type your own)" },
+        },
+      },
+      "Answer 2 questions",
+    );
+    assert(form !== undefined);
+    assert.deepStrictEqual(
+      form.questions.map((question) =>
+        [question.header, question.question].some((text) => text.endsWith("?")),
+      ),
+      [true, true],
+    );
+    assert.deepStrictEqual(form.content({ q0: "Yes", q1: "Only on Fridays" }), {
+      q0: "Yes",
+      q1__other: "Only on Fridays",
+    });
+
+    // A multi-select answer can carry options and free text together, so both fields stay.
+    const multi = parseElicitationForm(
+      {
+        type: "object",
+        properties: {
+          q0: { type: "array", title: "Databases?", items: { anyOf: [{ const: "Postgres" }] } },
+          q0__other: { type: "string", title: "Other (type your own)" },
+        },
+      },
+      "Databases?",
+    );
+    assert(multi !== undefined);
+    assert.deepStrictEqual(multi.content({ q0: ["Postgres"], q0__other: "SQLite" }), {
+      q0: ["Postgres"],
+      q0__other: "SQLite",
+    });
+  });
 });

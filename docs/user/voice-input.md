@@ -54,6 +54,16 @@ isn’t already selected. **Test model** lets you try it without sending a messa
 If you use the composer microphone before a model is installed, it offers to download one.
 The recommendation uses your Voice language, or your system’s preferred languages with **Auto-detect**.
 
+If another app already downloaded one of these models, you don’t need a second copy.
+**Download** first looks in Handy’s model folder and the Hugging Face cache on that
+environment and uses a copy it finds there instead of downloading. For a copy anywhere
+else, on web or desktop, paste the path of the model file or its folder under the model
+list and choose **Use existing**. The path is on the environment
+that transcribes, not on the device you are using. T3 Code checks that the file is exactly a
+model from its list and then uses it in place. Removing the model in T3 Code leaves your file
+alone; if the other app deletes it, download or link the model again. Files in another
+format, such as Core ML, ONNX, or MLX builds of the same model, can’t be used.
+
 Select the languages you dictate in to compare models that support all of them.
 Accuracy shows how often the model got words or characters wrong in each
 language; speed is the time to transcribe 30 seconds on a reference GPU. Choose
@@ -73,6 +83,8 @@ macOS and Ctrl elsewhere). Press again, or the check mark, to finish; `Esc`
 discards the recording and leaves your draft unchanged. Recordings last up to
 five minutes. Text is inserted at the cursor or replaces the selection you had
 when recording started, and the editor is read-only while dictation runs.
+Changes that reach the draft meanwhile, such as a cited message, are kept;
+the text then goes after your selection instead of replacing it.
 
 Pressing Send while dictating finishes the recording and sends the draft once
 the transcript has been inserted. Cancelling also cancels that queued send. In
@@ -132,12 +144,15 @@ the model hears the cue as a dictionary hint.
 
 ## Test and troubleshoot
 
-In **Settings → Voice**, **Test microphone** beside the microphone selector
-records up to ten seconds and plays it back in your browser;
-the audio stays on this device and is never transcribed, so silent playback
+In **Settings → Voice**, voice input uses the first connected microphone in the
+**Microphone** list. A microphone joins the list below System default the first
+time it is seen, so nothing changes until you move it up. If a preferred
+microphone is unplugged, the next connected one is used.
+
+**Test microphone** records from that microphone for up to ten seconds and
+plays it back in your browser; the audio stays on this device and is never transcribed, so silent playback
 points at the microphone. **Test model** on the selected model shows a transcript using the
 same environment, language, and dictionary as the composer, but skips transcript
 cleanup even when it is on, so you see what the model heard. Browser recording
 needs HTTPS or localhost and microphone permission; for a remote server over
-plain HTTP, use the desktop app. If the selected microphone is missing, choose
-another or the system default.
+plain HTTP, use the desktop app.
