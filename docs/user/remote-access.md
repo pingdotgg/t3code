@@ -356,11 +356,10 @@ off on either machine, agents start nothing over a link between them. A task
 already running on the other machine still finishes, and if that machine has it
 off, its result arrives once it is back on.
 
-For a headless VPS, run `t3 pair` on the VPS, then open its pairing link in a
-browser on your computer. If the link uses an address your computer cannot
-reach, open the VPS's reachable server address and sign in with the generated
-pairing code instead. In that server's **Settings → Labs**, enable **Linked
-environments**, then enable it on the other machine before retrying the link.
+On a headless server such as a VPS, reach its Settings from a browser: run
+`t3 pair` there and open the printed pairing URL (see
+[Pair over a LAN or private network](#pair-over-a-lan-or-private-network)), then
+turn on **Linked environments** in its **Settings → Labs**.
 
 On the machine you will work from, open **Settings → Environments → Linked environments**,
 choose **Link**, and pick the other machine or enter its address. The list
