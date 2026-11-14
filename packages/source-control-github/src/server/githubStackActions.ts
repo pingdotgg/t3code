@@ -201,6 +201,7 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
       })
     )
       return yield* new GitHubStackPermissionError({ ...identity });
+    const mergedHeadSha = stack.layers[stack.layers.indexOf(open[0]!) - 1]?.headSha;
     // GitHub has no stack-rebase API; per-PR updates replay lower layers' old commits.
     yield* cascadeRebaseStack({
       host: input.host,
@@ -211,6 +212,7 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
         headBranch: layer.headBranch,
         headSha: layer.headSha!,
       })),
+      ...(mergedHeadSha === undefined ? {} : { mergedHeadSha }),
     }).pipe(
       Effect.mapError((cause) =>
         cause._tag === "GitHubStackRebaseConflictError" ||

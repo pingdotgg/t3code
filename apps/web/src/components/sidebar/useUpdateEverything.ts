@@ -6,8 +6,9 @@ import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { isElectron } from "~/env";
 import { useEnvironments } from "~/state/environments";
 import { environmentIdsKey } from "~/state/environmentAtomList";
-import { environmentUpdateStatesAtom } from "~/state/server";
+import { environmentUpdateStatesAtom, serverEnvironment } from "~/state/server";
 import { environmentSessionStatesAtom } from "~/state/session";
+import { useAtomCommand } from "~/state/use-atom-command";
 import { getProviderUpdateRunOutcome } from "../ProviderUpdateLaunchNotification.logic";
 import { useProviderUpdates } from "../ProviderUpdatesAction";
 import { canUpdateServer, type ServerUpdateOutcome, useServerUpdate } from "../ServerUpdateAction";
@@ -76,6 +77,9 @@ export function useUpdateEverything(
   // A track switch moves app and servers only; provider updates stay a separate choice.
   const providers = channelSwitch ? { machines: [], updateAll: async () => [] } : providerUpdates;
   const updateServer = useServerUpdate();
+  const stageServerUpdate = useAtomCommand(serverEnvironment.stageServerUpdate, {
+    reportFailure: false,
+  });
 
   const view = describeUpdateEverything({
     localVersion: localUpdateVersion,
@@ -181,8 +185,29 @@ export function useUpdateEverything(
             );
             return outcomes;
           },
-          updateServers: async () => {
+          ...(providers.machines.length > 0
+            ? {
+                stageServers: () =>
+                  new Map(
+                    servers
+                      .filter(
+                        (server) =>
+                          machines.find((machine) => machine.environmentId === server.environmentId)
+                            ?.serverConfig?.environment.capabilities.serverUpdateStaging === true,
+                      )
+                      .map((server) => [
+                        server.environmentId,
+                        stageServerUpdate({
+                          environmentId: server.environmentId,
+                          input: { targetVersion: server.targetVersion, stageOnly: true },
+                        }),
+                      ]),
+                  ),
+              }
+            : {}),
+          updateServers: async (staged) => {
             const runs = servers.map(async (server) => {
+              await staged.get(server.environmentId);
               const serverOutcome = await updateServer(server, { quiet: true });
               settleUpdateRunMachine(
                 server.environmentId,

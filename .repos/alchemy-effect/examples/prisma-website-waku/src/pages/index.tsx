@@ -14,9 +14,7 @@ export default async function HomePage() {
         title="Styled with Tailwind CSS"
         body="This card is a React component styled with Tailwind utilities."
       />
-      <p className="mt-4 text-slate-600">
-        This page is rendered by the server on every request.
-      </p>
+      <p className="mt-4 text-slate-600">This page is rendered by the server on every request.</p>
       <Counter />
     </div>
   );

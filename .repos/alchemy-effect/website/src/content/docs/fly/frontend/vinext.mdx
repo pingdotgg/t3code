@@ -5,7 +5,7 @@ sidebar:
   order: 9.6
 ---
 
-import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+import PackageManagers from "../../../../components/PackageManagers.astro";
 
 export const devDeps = "@alchemy.run/frontend-frameworks";
 
@@ -20,12 +20,7 @@ Keep `vinext`, `react`, `react-dom`, and `react-server-dom-webpack` in your
 application dependencies, with `vite` and `@vitejs/plugin-rsc` for building.
 Add the Alchemy integration:
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun"><Code code={`bun add -d ${devDeps}`} lang="sh" /></TabItem>
-  <TabItem label="npm" icon="npm"><Code code={`npm install -D ${devDeps}`} lang="sh" /></TabItem>
-  <TabItem label="pnpm" icon="pnpm"><Code code={`pnpm add -D ${devDeps}`} lang="sh" /></TabItem>
-  <TabItem label="yarn" icon="seti:yarn"><Code code={`yarn add -D ${devDeps}`} lang="sh" /></TabItem>
-</Tabs>
+<PackageManagers dev={devDeps} />
 
 ## Configure vinext
 
@@ -47,7 +42,7 @@ No Alchemy plugin is required in `vite.config.ts`; deployment settings belong on
 
 ```typescript
 // alchemy.run.ts
-import * as Fly from "alchemy/Fly";
+import * as Fly from "@alchemy.run/fly";
 
 export const Website = Fly.Website.Vinext("Website", {
   rootDir: ".",

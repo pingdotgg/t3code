@@ -1,0 +1,42 @@
+import type * as config from "@distilled.cloud/aws/config-service";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+
+/**
+ * Runtime binding for `config:DescribeComplianceByConfigRule` — read
+ * whether your Config rules are compliant (and how many resources violate
+ * each noncompliant rule).
+ *
+ * Provide `Config.DescribeComplianceByConfigRuleHttp` on the hosting Lambda Function to
+ * satisfy the requirement.
+ * ### Reading Compliance
+ * **Example:** Check Rule Compliance
+ * ```typescript
+ * // init — grants config:DescribeComplianceByConfigRule
+ * const describeComplianceByConfigRule = yield* AWS.Config.DescribeComplianceByConfigRule();
+ *
+ * // runtime
+ * const result = yield* describeComplianceByConfigRule();
+ * for (const rule of result.ComplianceByConfigRules ?? []) {
+ *   console.log(rule.ConfigRuleName, rule.Compliance?.ComplianceType);
+ * }
+ * ```
+ *
+ * @binding
+ */
+export interface DescribeComplianceByConfigRule extends Binding.Service<
+  DescribeComplianceByConfigRule,
+  "AWS.Config.DescribeComplianceByConfigRule",
+  () => Effect.Effect<
+    (
+      request?: config.DescribeComplianceByConfigRuleRequest,
+    ) => Effect.Effect<
+      config.DescribeComplianceByConfigRuleResponse,
+      config.DescribeComplianceByConfigRuleError
+    >
+  >
+> {}
+
+export const DescribeComplianceByConfigRule = Binding.Service<DescribeComplianceByConfigRule>(
+  "AWS.Config.DescribeComplianceByConfigRule",
+);
