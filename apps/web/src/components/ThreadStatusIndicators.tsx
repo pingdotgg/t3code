@@ -32,6 +32,7 @@ import {
 import { useRender } from "@base-ui/react/use-render";
 import { type ReactNode, type AnimationEvent, type MouseEvent, type ReactElement } from "react";
 import { cn } from "../lib/utils";
+import { useClientSettings } from "../hooks/useSettings";
 import { revealThreadTerminal } from "../lib/revealThreadTerminal";
 
 import { useEnvironmentQuery } from "../state/query";
@@ -295,6 +296,7 @@ function PullRequestBadge({
   onOpenList: () => void;
   onOpenPullRequest: (event: MouseEvent<HTMLElement>, url?: string) => void;
 }) {
+  const colorizePullRequestText = useClientSettings((settings) => settings.colorizePullRequestText);
   const onClick = opensList
     ? (event: MouseEvent<HTMLElement>) => {
         event.preventDefault();
@@ -323,7 +325,9 @@ function PullRequestBadge({
           className={cn("contents font-normal text-xs tabular-nums", presentation.toneClassName)}
         >
           <presentation.Icon aria-hidden className="size-3 shrink-0" />
-          <span className="text-secondary-label">{presentation.text}</span>
+          <span className={colorizePullRequestText ? undefined : "text-secondary-label"}>
+            {presentation.text}
+          </span>
         </span>
       </TooltipTrigger>
       <TooltipPopup
@@ -867,6 +871,7 @@ export function ThreadSearchPullRequestNumber({
   enabled?: boolean;
   settled?: boolean;
 }) {
+  const colorizePullRequestText = useClientSettings((settings) => settings.colorizePullRequestText);
   const matched = pullRequestMatchesSearchQuery(thread, query);
   const supportsMultiplePullRequests = useSupportsMultiplePullRequests(thread.environmentId);
   const linked = useLinkedThreadPullRequest(
@@ -918,7 +923,9 @@ export function ThreadSearchPullRequestNumber({
     >
       {/* text-current opts out of the command palette's muted icon color. */}
       <presentation.Icon aria-hidden className="size-3 shrink-0 text-current" />
-      <span>{presentation.text}</span>
+      <span className={colorizePullRequestText ? undefined : "text-secondary-label"}>
+        {presentation.text}
+      </span>
     </span>
   );
 }
