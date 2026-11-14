@@ -278,6 +278,49 @@ export function planPinnedReorder(input: {
   });
 }
 
+/** Keyless Active rows sort before keyed rows and keyless Pinned rows after them, so a row
+    written with frozen keyless rows on its wrong side cannot keep that position. */
+export function crossesFrozenKeyless(
+  section: "pinned" | "active",
+  frozenBefore: number,
+  frozenTotal: number,
+): boolean {
+  return section === "active" ? frozenBefore < frozenTotal : frozenBefore > 0;
+}
+
+/** planPinnedReorder for a client that writes only `writableIds`. Rows it cannot write and
+    that have no key are frozen; null when the move needs a write it cannot make. */
+export function planWritableReorder(input: {
+  readonly orderedIds: readonly string[];
+  readonly keysById: ReadonlyMap<string, string | null | undefined>;
+  readonly writableIds: ReadonlySet<string>;
+  readonly movedId: string;
+  readonly section: "pinned" | "active";
+}): ReadonlyArray<{ readonly id: string; readonly orderKey: string }> | null {
+  const { orderedIds, keysById, writableIds, movedId } = input;
+  if (!writableIds.has(movedId)) return null;
+  const isFrozen = (id: string) => !writableIds.has(id) && keysById.get(id) == null;
+  const assignments = planPinnedReorder({
+    orderedIds: orderedIds.filter((id) => !isFrozen(id)),
+    keysById,
+    movedId,
+  });
+  if (assignments.some(({ id }) => !writableIds.has(id))) return null;
+  const assignedIds = new Set(assignments.map(({ id }) => id));
+  const frozenTotal = orderedIds.filter(isFrozen).length;
+  let frozenBefore = 0;
+  for (const id of orderedIds) {
+    if (isFrozen(id)) frozenBefore += 1;
+    else if (
+      assignedIds.has(id) &&
+      crossesFrozenKeyless(input.section, frozenBefore, frozenTotal)
+    ) {
+      return null;
+    }
+  }
+  return assignments;
+}
+
 export function sortPinnedThreadsByOrderKey<
   T extends {
     readonly id: string;

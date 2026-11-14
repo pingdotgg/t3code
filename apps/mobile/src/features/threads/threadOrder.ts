@@ -2,7 +2,8 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell
 import {
   generateSpreadPinOrderKeys,
   pinOrderKeyBetween,
-  planPinnedReorder,
+  crossesFrozenKeyless,
+  planWritableReorder,
 } from "@t3tools/client-runtime/state/thread-sort";
 import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentId } from "@t3tools/contracts";
@@ -76,16 +77,6 @@ function rowOrder(row: OrderRow, section: PendingThreadOrder["section"]) {
   };
 }
 
-// Keyless Active rows sort before keyed rows and keyless Pinned rows after them, so a
-// written row cannot persist a position across a keyless row this client cannot write.
-function crossesFrozenKeyless(
-  section: PendingThreadOrder["section"],
-  frozenBefore: number,
-  frozenTotal: number,
-) {
-  return section === "active" ? frozenBefore < frozenTotal : frozenBefore > 0;
-}
-
 export function createThreadMovePlanner(input: {
   readonly ordered: readonly OrderRow[];
   readonly allThreads?: readonly OrderRow[];
@@ -104,32 +95,17 @@ export function createThreadMovePlanner(input: {
       .filter((row) => input.reorderableEnvironmentIds.has(row.environmentId))
       .map(rowId),
   );
-  const isFrozenKeyless = (id: string) => !writableIds.has(id) && keysById.get(id) == null;
   return (movedId: string, direction: ThreadMoveDestination) => {
-    if (!writableIds.has(movedId)) return null;
     const nextIds = threadOrderAfterMove(orderedIds, movedId, direction);
     if (nextIds === null) return null;
-    const assignments = planPinnedReorder({
-      orderedIds: nextIds.filter((id) => !isFrozenKeyless(id)),
+    const assignments = planWritableReorder({
+      orderedIds: nextIds,
       keysById,
+      writableIds,
       movedId,
+      section: input.section,
     });
-    if (assignments.length === 0 || assignments.some(({ id }) => !writableIds.has(id))) {
-      return null;
-    }
-    const assignedIds = new Set(assignments.map(({ id }) => id));
-    const frozenTotal = nextIds.filter(isFrozenKeyless).length;
-    let frozenBefore = 0;
-    for (const id of nextIds) {
-      if (isFrozenKeyless(id)) frozenBefore += 1;
-      else if (
-        assignedIds.has(id) &&
-        crossesFrozenKeyless(input.section, frozenBefore, frozenTotal)
-      ) {
-        return null;
-      }
-    }
-    return assignments;
+    return assignments === null || assignments.length === 0 ? null : assignments;
   };
 }
 
@@ -161,14 +137,14 @@ export function computeThreadMoveAvailability(input: {
     if (input.reorderableEnvironmentIds.has(row.environmentId)) writableIds.add(id);
   }
   // Slots are the rows the planner rewrites; frozen keyless rows drop out of them.
-  const indexById = new Map<string, number>();
+  const visibleIds = new Set<string>();
   const slotIds: string[] = [];
   const slotByIndex: number[] = [];
   const frozenBefore: number[] = [];
   let frozenTotal = 0;
   for (const row of rows) {
     const id = rowId(row);
-    indexById.set(id, slotByIndex.length);
+    visibleIds.add(id);
     if (!writableIds.has(id) && keysById.get(id) == null) {
       slotByIndex.push(-1);
       frozenTotal += 1;
@@ -181,7 +157,7 @@ export function computeThreadMoveAvailability(input: {
   const crosses = (before: number) => crossesFrozenKeyless(input.section, before, frozenTotal);
   const reservedKeys = new Set<string>();
   keysById.forEach((key, id) => {
-    if (key != null && !indexById.has(id)) reservedKeys.add(key);
+    if (key != null && !visibleIds.has(id)) reservedKeys.add(key);
   });
   const midpoints = new Map<string, string | null>();
   const fastPathKey = (beforeKey: string | null, afterKey: string | null): string | null => {
@@ -199,14 +175,14 @@ export function computeThreadMoveAvailability(input: {
   const currentKeys = slotIds.map((id) => keysById.get(id) ?? null);
   const writableSlot = slotIds.map((id) => writableIds.has(id));
   const crossingSlot = frozenBefore.map(crosses);
-  // A swap changes at most two slots, so each rewrite check adjusts precomputed totals.
+  // A move changes at most two slots, so each check adjusts the baseline rewrite totals.
   type RewriteTally = { writes: number; unwritable: number; crossing: number };
   const tally = (
     totals: RewriteTally,
     row: number,
     slot: number,
-    crossing: boolean,
     sign: 1 | -1,
+    crossing = crossingSlot[slot]!,
   ) => {
     if (currentKeys[row] === spreadKeys[slot]) return;
     totals.writes += sign;
@@ -215,11 +191,10 @@ export function computeThreadMoveAvailability(input: {
   };
   const baseline: RewriteTally = { writes: 0, unwritable: 0, crossing: 0 };
   for (let slot = 0; slot < slotIds.length; slot += 1) {
-    tally(baseline, slot, slot, crossingSlot[slot]!, 1);
+    tally(baseline, slot, slot, 1);
   }
-  for (const row of rows) {
-    const movedId = rowId(row);
-    const index = indexById.get(movedId)!;
+  for (let index = 0; index < rows.length; index += 1) {
+    const movedId = rowId(rows[index]!);
     const slot = slotByIndex[index]!;
     if (!writableIds.has(movedId) || slot < 0) {
       result.set(movedId, { canMoveUp: false, canMoveDown: false });
@@ -236,14 +211,14 @@ export function computeThreadMoveAvailability(input: {
       if (neighborSlot < 0) {
         // Passing a frozen row keeps the slot order and moves the row to its other side.
         movedCrossing = crosses(frozenBefore[slot]! + (towardUp ? -1 : 1));
-        tally(totals, slot, slot, crossingSlot[slot]!, -1);
-        tally(totals, slot, slot, movedCrossing, 1);
+        tally(totals, slot, slot, -1);
+        tally(totals, slot, slot, 1, movedCrossing);
       } else {
         const low = Math.min(slot, neighborSlot);
-        tally(totals, low, low, crossingSlot[low]!, -1);
-        tally(totals, low + 1, low + 1, crossingSlot[low + 1]!, -1);
-        tally(totals, low + 1, low, crossingSlot[low + 1]!, 1);
-        tally(totals, low, low + 1, crossingSlot[low]!, 1);
+        tally(totals, low, low, -1);
+        tally(totals, low + 1, low + 1, -1);
+        tally(totals, low + 1, low, 1);
+        tally(totals, low, low + 1, 1);
         beforeSlot = towardUp ? slot - 2 : slot + 1;
         afterSlot = beforeSlot + 1;
       }

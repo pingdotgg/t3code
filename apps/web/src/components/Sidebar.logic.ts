@@ -33,6 +33,7 @@ import {
 import {
   getThreadSortTimestamp,
   planPinnedReorder,
+  planWritableReorder,
   sortThreads,
   toSortableTimestamp,
   type ThreadSortInput,
@@ -398,34 +399,13 @@ export function planSidebarThreadDrop(input: {
     writable: ReadonlySet<string> | undefined,
   ) => {
     if (!writable) return planPinnedReorder({ orderedIds: order, keysById, movedId: activeKey });
-    if (!writable.has(activeKey)) return null;
-    const assignments = planPinnedReorder({
-      orderedIds: order.filter((key) => writable.has(key) || keysById.get(key) != null),
+    return planWritableReorder({
+      orderedIds: order,
       keysById,
+      writableIds: writable,
       movedId: activeKey,
+      section: target.section === "pinned" ? "pinned" : "active",
     });
-    if (assignments.some(({ id }) => !writable.has(id))) return null;
-
-    // Keyless Active rows sort before keyed rows; keyless Pinned rows sort after them.
-    // Materializing any row across a frozen keyless boundary cannot persist that position.
-    const assignedIds = new Set(assignments.map(({ id }) => id));
-    let hasFrozenKeylessBefore = false;
-    let hasAssignedBefore = false;
-    for (const id of order) {
-      const isFrozenKeyless = !writable.has(id) && keysById.get(id) == null;
-      const isAssigned = assignedIds.has(id);
-      if (
-        (target.section === "active" && isFrozenKeyless && hasAssignedBefore) ||
-        (target.section === "pinned" && isAssigned && hasFrozenKeylessBefore)
-      ) {
-        return null;
-      }
-
-      hasFrozenKeylessBefore ||= isFrozenKeyless;
-      hasAssignedBefore ||= isAssigned;
-    }
-
-    return assignments;
   };
   switch (target.section) {
     case "active": {

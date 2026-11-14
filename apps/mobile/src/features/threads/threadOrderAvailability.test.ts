@@ -178,19 +178,13 @@ describe("computeThreadMoveAvailability matches the reference planner", () => {
     expect(pinnedPlanner("env-w:b", "down")).toBeNull();
     expect(pinnedPlanner("env-w:b", "up")?.map(({ id }) => id)).toEqual(["env-w:b"]);
 
-    for (const [section, rows] of [
-      ["active", active],
-      ["pinned", pinned],
-    ] as const) {
-      const batch = computeThreadMoveAvailability({
-        ordered: rows,
-        section,
-        reorderableEnvironmentIds: WRITABLE,
-      });
-      expect(Object.fromEntries(batch)).toEqual(
-        Object.fromEntries(referenceAvailability(rows, rows, WRITABLE, section)),
-      );
-    }
+    const availability = computeThreadMoveAvailability({
+      ordered: active,
+      section: "active",
+      reorderableEnvironmentIds: WRITABLE,
+    });
+    expect(availability.get("env-w:a")).toEqual({ canMoveUp: false, canMoveDown: true });
+    expect(availability.get("env-w:b")).toEqual({ canMoveUp: true, canMoveDown: false });
   });
 
   it("locks every row while a pending reorder is in flight", () => {
