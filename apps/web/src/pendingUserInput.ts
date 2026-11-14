@@ -1,4 +1,6 @@
 import type {
+  PreviewAnnotationContextRecord,
+  PreviewAnnotationPayload,
   ReviewCommentContextRecord,
   ThreadContextRecord,
   UserInputQuestion,
@@ -17,10 +19,40 @@ import {
 } from "@t3tools/client-runtime/state/pending-user-input";
 
 import { collectInlineContextIds } from "./lib/composerContextReferences";
+import {
+  previewAnnotationContextRecord,
+  reviewCommentContextRecord,
+} from "./lib/composerContextRecords";
+import type { ReviewCommentContext } from "./reviewCommentContext";
+
+type AnswerContextRecord =
+  | ThreadContextRecord
+  | ReviewCommentContextRecord
+  | PreviewAnnotationContextRecord;
+
+// Diff comments and preview annotations land in the thread draft even when their chip is in an answer.
+export function answerContextRecords(
+  questionDraft: { threadContexts: ReadonlyArray<ThreadContextRecord> } | null | undefined,
+  threadDraft:
+    | {
+        reviewComments: ReadonlyArray<ReviewCommentContext>;
+        previewAnnotations: ReadonlyArray<PreviewAnnotationPayload>;
+      }
+    | null
+    | undefined,
+): AnswerContextRecord[] {
+  return [
+    ...(questionDraft?.threadContexts ?? []),
+    ...(threadDraft?.reviewComments ?? []).map(reviewCommentContextRecord),
+    ...(threadDraft?.previewAnnotations ?? []).map((annotation) =>
+      previewAnnotationContextRecord(annotation),
+    ),
+  ];
+}
 
 export function projectPendingUserInputAnswer(
   answer: unknown,
-  records: ReadonlyArray<ThreadContextRecord | ReviewCommentContextRecord>,
+  records: ReadonlyArray<AnswerContextRecord>,
 ) {
   if (typeof answer !== "string" || records.length === 0) return answer;
   const recordsById = new Map(records.map((record) => [record.contextId, record]));
