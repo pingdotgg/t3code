@@ -764,7 +764,9 @@ function normalizePermissionRequest(
     ...(request._meta === undefined ? {} : { _meta: request._meta }),
   };
 }
-const decodeMessageMcpNotification = Schema.decodeUnknownEffect(AcpSchemaV2.MessageMcpNotification);
+const decodeMessageMcpNotification = Schema.decodeUnknownEffect(
+  Schema.Union([AcpSchemaV2.MessageMcpNotification, AcpSchema.McpServerMessage]),
+);
 
 export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
   stdio: AcpProtocol.AcpStdio,

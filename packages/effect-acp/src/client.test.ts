@@ -1781,3 +1781,37 @@ it.effect("returns method-not-found when SDK elicitation has no question handler
     assert.equal(response.error.code, -32601);
   }),
 );
+
+it.effect("routes a current-draft mcp/message keyed by serverId to the MCP handler", () =>
+  Effect.gen(function* () {
+    const { stdio, input, output } = yield* makeInMemoryStdio();
+    const acp = yield* AcpClient.make(stdio);
+    const received = yield* Deferred.make<unknown>();
+    const result = { protocolVersion: "2025-06-18", capabilities: {}, serverInfo: {} };
+    yield* acp.handleMcpMessage((request) =>
+      Deferred.succeed(received, request).pipe(Effect.as({ result })),
+    );
+    const params = {
+      serverId: "t3-code",
+      requestId: "mcp-1",
+      method: "initialize",
+      params: { protocolVersion: "2025-06-18" },
+    };
+    yield* Queue.offer(
+      input,
+      yield* encodeJsonl(jsonRpcRequest("mcp/message", Schema.Unknown), {
+        jsonrpc: "2.0",
+        id: 75,
+        headers: [],
+        method: "mcp/message",
+        params,
+      }),
+    );
+    assert.deepEqual(yield* decodeWireResponse(yield* Queue.take(output)), {
+      jsonrpc: "2.0",
+      id: 75,
+      result: { result },
+    });
+    assert.deepEqual(yield* Deferred.await(received), params);
+  }).pipe(Effect.scoped),
+);

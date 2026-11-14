@@ -36,8 +36,8 @@ export type DisableProviderRequest = V2.DisableProviderRequest;
 export type DisableProviderResponse = V2.DisableProviderResponse;
 export type ConnectMcpRequest = V2.ConnectMcpRequest;
 export type ConnectMcpResponse = V2.ConnectMcpResponse;
-export type MessageMcpRequest = V2.MessageMcpRequest;
-export type MessageMcpNotification = V2.MessageMcpNotification;
+export type MessageMcpRequest = V2.MessageMcpRequest | McpServerMessage;
+export type MessageMcpNotification = V2.MessageMcpNotification | McpServerMessage;
 export type MessageMcpResponse = V2.MessageMcpResponse;
 export type DisconnectMcpRequest = V2.DisconnectMcpRequest;
 export type DisconnectMcpResponse = V2.DisconnectMcpResponse;
@@ -458,4 +458,26 @@ export const SetSessionModelRequest = Schema.Struct({
 export type SetSessionModelRequest = typeof SetSessionModelRequest.Type;
 export const SetSessionModelResponse = Schema.Struct({ _meta: LegacyMeta });
 export type SetSessionModelResponse = typeof SetSessionModelResponse.Type;
+
+// ACP schema v1.24 dropped mcp/connect: messages name the declared server and answer with one outcome.
+const OptionalJsonObject = Schema.optionalKey(
+  Schema.NullOr(Schema.Record(Schema.String, Schema.Json)),
+);
+export const McpServerMessage = Schema.Struct({
+  serverId: Schema.String,
+  requestId: Schema.String,
+  method: Schema.String,
+  params: OptionalJsonObject,
+  _meta: OptionalJsonObject,
+});
+export type McpServerMessage = typeof McpServerMessage.Type;
+export type McpServerMessageResponse =
+  | { readonly result: Schema.Json }
+  | {
+      readonly error: {
+        readonly code: number;
+        readonly message: string;
+        readonly data?: Schema.Json;
+      };
+    };
 export type PermissionOption = V2.PermissionOption;
