@@ -56,7 +56,7 @@ shutdown. Follow it byte for byte where a provider can see it.
 | Claude | Anthropic's Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`), at the T3 server's version | `crates/conn-provider-claude` and the SDK host (`helpers/sdk-host`), a small Node program that the Rust server starts with the first session and stops after the last |
 | Codex | `codex app-server`, JSON-RPC over stdio | `crates/conn-provider-codex` |
 | Cursor, OpenCode, Muse | The vendor's SDK | Not built. They go in the same Node helper. |
-| Grok, Kiro, fx, Antigravity, ACP registry | ACP (Agent Client Protocol) over stdio | Not built. One Rust ACP provider for all of them. |
+| Grok, Kiro, fx, Antigravity, ACP registry | ACP (Agent Client Protocol) over stdio | `crates/conn-provider-acp`: Grok built, not yet offered by the server; the others not built. Proofs: its `tools/conformance.mjs` and the replay in `cargo test` |
 | Pi | | Out of scope. |
 
 - Never write a vendor SDK's private protocol by hand, and never set an SDK's identity markers
