@@ -745,12 +745,16 @@ impl Inner {
         }
         let selection = from_json(context.thread["modelSelection"].clone())
             .map_err(|e| RollbackFailure::Failed(e.to_string()))?;
-        let policy = from_json(json!({
+        let mut policy: conn_provider::RuntimePolicy = from_json(json!({
             "runtimeMode": context.thread["runtimeMode"],
             "interactionMode": context.thread["interactionMode"],
             "cwd": context.scope["cwd"],
         }))
         .map_err(|e| RollbackFailure::Failed(e.to_string()))?;
+        // As a turn start does (`RuntimePolicy.layerWithOverride`).
+        if let Some(policy_override) = &self.policy_override {
+            policy_override.apply(&mut policy);
+        }
         let session_id = context.provider_thread["providerSessionId"]
             .as_str()
             .unwrap_or_default();

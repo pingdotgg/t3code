@@ -1171,3 +1171,51 @@ fn refused_message<T, E: serde::Serialize>(result: Result<T, EngineError<E>>) ->
     };
     to_json(&error)["message"].as_str().unwrap().to_owned()
 }
+
+/// A rollback that opens its own session (no live one, as after a restart) lays the
+/// configured runtime policy override over it, as a turn start does (review finding 11).
+#[tokio::test(flavor = "current_thread")]
+async fn a_rollback_session_gets_the_runtime_policy_override() {
+    let db = TempDb::new("rb-override");
+    let repo = Repo::plain("rb-override");
+    let config = |provider: Arc<FakeProvider>| {
+        let mut config = EngineConfig::new(db.path());
+        config.projects = vec![ProjectConfig {
+            title: "Project".into(),
+            workspace_root: repo.root(),
+        }];
+        config.providers = vec![provider];
+        config.stream_flush = Duration::from_millis(20);
+        config.checkpoints = true;
+        config.runtime_policy_override = Some(crate::RuntimePolicyOverride {
+            cwd: None,
+            approval_policy: Some(json!("never")),
+            sandbox_policy: None,
+        });
+        config
+    };
+    {
+        let engine =
+            SqliteEngine::open(config(Arc::new(FakeProvider::new("claudeAgent")))).unwrap();
+        dispatch(&engine, create_in(&repo, "t1", "c1")).await;
+        let mut stream = engine
+            .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+            .await
+            .unwrap();
+        next(&mut stream).await;
+        turn(&engine, &mut stream, "c2", "one").await;
+        turn(&engine, &mut stream, "c3", "two").await;
+    }
+    let provider = Arc::new(FakeProvider::new("claudeAgent"));
+    let engine = SqliteEngine::open(config(provider.clone())).unwrap();
+    let p = projection(&engine, "t1").await;
+    dispatch(
+        &engine,
+        rollback("rb-1", &checkpoint_at(&p, 1), Some(false)),
+    )
+    .await;
+    until(&engine, |p| p["runs"][1]["status"] == "rolled_back").await;
+    let policies = provider.opened_policies.lock().unwrap().clone();
+    assert_eq!(policies.len(), 1, "{policies:?}");
+    assert_eq!(policies[0]["approvalPolicy"], "never", "{policies:?}");
+}

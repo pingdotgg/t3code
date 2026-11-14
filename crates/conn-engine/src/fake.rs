@@ -42,6 +42,8 @@ pub struct FakeProvider {
     pub mcp_servers: Arc<Mutex<Vec<McpServer>>>,
     /// Sessions closed so far.
     pub closed: Arc<AtomicUsize>,
+    /// The runtime policy each session was opened with, as JSON.
+    pub opened_policies: Arc<Mutex<Vec<Value>>>,
     /// Model selections sent to a running turn (`apply_model_selection`), as JSON.
     pub applied_selections: Arc<Mutex<Vec<Value>>>,
     /// Rollback targets asked for: `start` or `turn <app run ordinal>`.
@@ -87,6 +89,7 @@ impl FakeProvider {
             sessions: Arc::new(AtomicUsize::new(0)),
             mcp_servers: Arc::new(Mutex::new(vec![])),
             closed: Arc::new(AtomicUsize::new(0)),
+            opened_policies: Arc::default(),
             applied_selections: Arc::new(Mutex::new(vec![])),
             rollbacks: Arc::new(Mutex::new(vec![])),
             forks: Arc::new(Mutex::new(vec![])),
@@ -206,6 +209,7 @@ impl Provider for FakeProvider {
     ) -> BoxFuture<'_, ProviderResult<OpenedSession>> {
         Box::pin(async move {
             self.sessions.fetch_add(1, Ordering::SeqCst);
+            crate::lock(&self.opened_policies).push(conn_contract::to_json(&input.runtime_policy));
             *crate::lock(&self.mcp_servers) = input.mcp_servers.clone();
             let (tx, rx) = mpsc::channel(64);
             Ok(OpenedSession {
