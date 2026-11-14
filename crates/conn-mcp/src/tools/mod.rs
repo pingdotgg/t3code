@@ -40,7 +40,9 @@ pub(crate) fn fail(code: &'static str, message: impl Into<String>) -> ToolError 
 
 /// Every name in `tools.implemented` has an arm here; a test checks both ways.
 #[cfg(test)]
-pub(crate) const HANDLED: [&str; 18] = [
+pub(crate) const HANDLED: [&str; 20] = [
+    "t3_queue",
+    "t3_thread_configure",
     "t3_thread_organize",
     "send_to_user",
     "orchestrator_capabilities",
@@ -91,6 +93,8 @@ pub(crate) async fn call(
         "t3_thread_interrupt" => threads::interrupt(&cx, &args).await,
         "t3_thread_update" => threads::update(&cx, &args).await,
         "t3_pending_request" => threads::pending_request(&cx, &args).await,
+        "t3_queue" => manage::queue(&cx, &args).await,
+        "t3_thread_configure" => manage::configure(&cx, &args).await,
         "t3_thread_organize" => manage::organize(&cx, &args).await,
         "send_to_user" => message::send_to_user(&cx, &args).await,
         "delegate_task" => tasks::delegate(&cx, &args).await,

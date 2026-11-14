@@ -6,7 +6,7 @@ use std::{collections::HashSet, sync::Arc, time::Duration};
 use conn_contract::from_json;
 use serde_json::{Value, json};
 
-use super::{Args, Cx, ToolError, ToolResult, fail, has_active_run, str_arg};
+use super::{Args, Cx, ToolError, ToolResult, fail, has_active_run, str_arg, threads, u64_arg};
 use crate::{McpService, view};
 
 /// `readThread`: the target (`threadId`, else the caller's own thread) and its projection.
@@ -20,16 +20,25 @@ async fn read_thread(cx: &Cx<'_>, args: &Args) -> Result<(String, Value), ToolEr
             )
         })?
         .to_owned();
-    let projection = cx
-        .projection(&id)
-        .await
-        .map_err(|_| fail("thread_not_found", "The thread was not found."))?;
+    let projection = cx.projection(&id).await.map_err(|error| match error {
+        ToolError::Failure {
+            code: "thread_not_found",
+            ..
+        } => fail("thread_not_found", "The thread was not found."),
+        other => other,
+    })?;
     Ok((id, projection))
 }
 
 /// `newCommandId`.
 fn new_command_id() -> String {
     format!("mcp:{}", conn_support::uuid_v4())
+}
+
+/// A field the chosen action needs (TS `required`). `null` counts as given.
+fn required<'a>(args: &'a Args, name: &str) -> Result<&'a Value, ToolError> {
+    args.get(name)
+        .ok_or_else(|| fail("invalid_request", format!("This action needs `{name}`.")))
 }
 
 /// `t3_thread_organize`: `writesThreads([threadId])`, then one engine command. A thread's own
@@ -226,4 +235,144 @@ async fn try_settle(
     let command = from_json(command).ok()?;
     // A notification can start between the read and the guarded dispatch: then wait.
     Some(service.config.engine.dispatch(command).await.is_ok())
+}
+
+/// `QUEUE_LIST_TEXT_LIMIT` and the `read` limit, in code points (`Array.from`).
+const QUEUE_LIST_TEXT_CHARS: usize = 1_000;
+const QUEUE_READ_TEXT_CHARS: usize = 16_000;
+const QUEUE_DEFAULT_LIMIT: usize = 20;
+
+/// `queuedRunsInDeliveryOrder`: delegated completions first, then queue position (else
+/// ordinal), then ordinal.
+fn queued_in_delivery_order(projection: &Value) -> Vec<&Value> {
+    let completions: HashSet<&str> = projection["messages"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|m| !m["delegatedCompletion"].is_null())
+        .filter_map(|m| m["id"].as_str())
+        .collect();
+    let mut runs: Vec<&Value> = projection["runs"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|r| r["status"] == "queued")
+        .collect();
+    let key = |run: &Value| {
+        let automatic = run["userMessageId"]
+            .as_str()
+            .is_some_and(|id| completions.contains(id));
+        let ordinal = run["ordinal"].as_f64().unwrap_or(0.0);
+        let position = run["queuePosition"].as_f64().unwrap_or(ordinal);
+        (std::cmp::Reverse(automatic), position, ordinal)
+    };
+    runs.sort_by(|a, b| {
+        let (a, b) = (key(a), key(b));
+        a.0.cmp(&b.0)
+            .then(a.1.total_cmp(&b.1))
+            .then(a.2.total_cmp(&b.2))
+    });
+    runs
+}
+
+/// `queueEntry`: a queued run and the start of its message.
+fn queue_entry(projection: &Value, run_id: &str, limit: usize) -> Option<Value> {
+    let run = projection["runs"]
+        .as_array()?
+        .iter()
+        .find(|r| r["id"] == run_id && r["status"] == "queued")?;
+    let message = projection["messages"]
+        .as_array()?
+        .iter()
+        .find(|m| m["id"] == run["userMessageId"])?;
+    let text = message["text"].as_str().unwrap_or_default();
+    let mut chars = text.chars();
+    let kept: String = chars.by_ref().take(limit).collect();
+    Some(json!({
+        "queuedRunId": run["id"],
+        "text": kept,
+        "truncated": chars.next().is_some(),
+    }))
+}
+
+/// `t3_queue`: `list` and `read` read; the other actions are `writesThreads([threadId])` and
+/// one queued-run command each.
+pub(super) async fn queue(cx: &Cx<'_>, args: &Args) -> ToolResult {
+    let action = str_arg(args, "action").unwrap_or_default();
+    if action == "list" || action == "read" {
+        let (_, projection) = read_thread(cx, args).await?;
+        if action == "list" {
+            let runs = queued_in_delivery_order(&projection);
+            let cursor = u64_arg(args, "cursor").unwrap_or(0) as usize;
+            let limit = u64_arg(args, "limit").map_or(QUEUE_DEFAULT_LIMIT, |l| l as usize);
+            let end = cursor.saturating_add(limit);
+            let items: Vec<Value> = runs
+                .iter()
+                .skip(cursor)
+                .take(limit)
+                .filter_map(|run| {
+                    queue_entry(
+                        &projection,
+                        run["id"].as_str().unwrap_or_default(),
+                        QUEUE_LIST_TEXT_CHARS,
+                    )
+                })
+                .collect();
+            return Ok(json!({
+                "items": items,
+                "nextCursor": if end < runs.len() { json!(end) } else { Value::Null },
+            }));
+        }
+        let run_id = required(args, "queuedRunId")?.as_str().unwrap_or_default();
+        return queue_entry(&projection, run_id, QUEUE_READ_TEXT_CHARS)
+            .ok_or_else(|| fail("invalid_request", "The queued message was not found."));
+    }
+    cx.writes_threads(&[str_arg(args, "threadId")]).await?;
+    let run_id = required(args, "queuedRunId")?.clone();
+    let mut command = match action {
+        "edit" => json!({"type": "queued-run.edit", "runId": run_id,
+                         "text": required(args, "text")?}),
+        "reorder" => json!({"type": "queued-run.reorder", "runId": run_id,
+                            "beforeRunId": required(args, "beforeRunId")?}),
+        "promote_to_steer" => json!({"type": "queued-message.promote-to-steer",
+                                     "queuedRunId": run_id,
+                                     "targetRunId": required(args, "targetRunId")?}),
+        _ => json!({"type": "queued-run.cancel", "runId": run_id}),
+    };
+    let (id, _) = read_thread(cx, args).await?;
+    command["commandId"] = json!(new_command_id());
+    command["threadId"] = json!(id);
+    let sequence = cx.dispatch(command).await?;
+    Ok(json!({ "sequence": sequence }))
+}
+
+/// `t3_thread_configure`: without `modelSelection` it reads the thread's selection and
+/// modes; with it, `writesThreads([threadId])` and `thread.model-selection.set` (same
+/// provider instance) or `provider.switch` (`modelSelectionCommandType`).
+pub(super) async fn configure(cx: &Cx<'_>, args: &Args) -> ToolResult {
+    let Some(selection) = args.get("modelSelection") else {
+        let (_, projection) = read_thread(cx, args).await?;
+        let thread = &projection["thread"];
+        return Ok(json!({
+            "threadId": thread["id"],
+            "modelSelection": thread["modelSelection"],
+            "runtimeMode": thread["runtimeMode"],
+            "interactionMode": thread["interactionMode"],
+        }));
+    };
+    cx.writes_threads(&[str_arg(args, "threadId")]).await?;
+    let selection = threads::normalize_selection(selection.clone());
+    let (id, projection) = read_thread(cx, args).await?;
+    let kind = if projection["thread"]["providerInstanceId"] == selection["instanceId"] {
+        "thread.model-selection.set"
+    } else {
+        "provider.switch"
+    };
+    let sequence = cx
+        .dispatch(json!({
+            "type": kind, "threadId": id, "commandId": new_command_id(),
+            "modelSelection": selection,
+        }))
+        .await?;
+    Ok(json!({ "sequence": sequence }))
 }

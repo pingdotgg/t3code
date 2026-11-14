@@ -279,6 +279,63 @@ const steps = [
   ["t3_thread_organize", () => ({ action: "pin" })],
   ["t3_thread_organize", () => ({ threadId: "thread:none", action: "pin" })],
   ["t3_thread_organize", (c) => ({ threadId: c.idleThreadId, action: "bogus" })],
+  // t3_queue on the idle thread: an empty queue, then each write on a run that is not queued.
+  ["t3_queue", (c) => ({ threadId: c.idleThreadId, action: "list" })],
+  ["t3_queue", (c) => ({ threadId: c.idleThreadId, action: "list", cursor: 5, limit: 1 })],
+  ["t3_queue", (c) => ({ threadId: c.idleThreadId, action: "read" })],
+  ["t3_queue", (c) => ({ threadId: c.idleThreadId, action: "read", queuedRunId: "run:none" })],
+  ["t3_queue", (c) => ({ threadId: c.idleThreadId, action: "cancel" })],
+  ["t3_queue", (c) => ({ threadId: c.idleThreadId, action: "cancel", queuedRunId: "run:none" })],
+  ["t3_queue", (c) => ({ threadId: c.idleThreadId, action: "edit", queuedRunId: "run:none" })],
+  [
+    "t3_queue",
+    (c) => ({ threadId: c.idleThreadId, action: "edit", queuedRunId: "run:none", text: "x" }),
+  ],
+  [
+    "t3_queue",
+    (c) => ({ threadId: c.idleThreadId, action: "reorder", queuedRunId: "run:none", beforeRunId: null }),
+  ],
+  ["t3_queue", (c) => ({ threadId: c.idleThreadId, action: "reorder", queuedRunId: "run:none" })],
+  [
+    "t3_queue",
+    (c) => ({ threadId: c.idleThreadId, action: "promote_to_steer", queuedRunId: "run:none" }),
+  ],
+  [
+    "t3_queue",
+    (c) => ({
+      threadId: c.idleThreadId,
+      action: "promote_to_steer",
+      queuedRunId: "run:none",
+      targetRunId: "run:none",
+    }),
+  ],
+  ["t3_queue", () => ({ threadId: "thread:none", action: "list" })],
+  ["t3_queue", () => ({ action: "list" })],
+  ["t3_queue", (c) => ({ threadId: c.idleThreadId, action: "list", limit: 0 })],
+  ["t3_queue", (c) => ({ threadId: c.idleThreadId, action: "list", cursor: -1 })],
+  ["t3_queue", (c) => ({ threadId: c.idleThreadId, action: "list", limit: 1.5 })],
+  ["t3_queue", (c) => ({ threadId: c.idleThreadId, action: "list", limit: "2" })],
+  ["t3_queue", () => ({ threadId: 5, action: "list" })],
+  ["t3_queue", () => ({ action: 5 })],
+  ["send_to_user", () => ({ message: 5 })],
+  ["t3_thread_wait", () => ({ threadId: true })],
+  ["t3_thread_list", () => ({ allProjects: "yes" })],
+  ["t3_thread_list", () => ({ statuses: "running" })],
+  ["t3_thread_configure", () => ({ modelSelection: "x" })],
+  ["t3_thread_read", () => ({ threadId: "thread:none", view: 5 })],
+  ["t3_thread_read", () => ({ threadId: "thread:none", view: "bogus" })],
+  // t3_thread_configure: read, then set the model on the same provider instance.
+  ["t3_thread_configure", (c) => ({ threadId: c.idleThreadId })],
+  [
+    "t3_thread_configure",
+    (c) => ({
+      threadId: c.idleThreadId,
+      modelSelection: { instanceId: "claudeAgent", model: "claude-sonnet-5-5" },
+    }),
+  ],
+  ["t3_thread_configure", (c) => ({ threadId: c.idleThreadId })],
+  ["t3_thread_configure", () => ({ threadId: "thread:none" })],
+  ["t3_thread_configure", () => ({})],
   [
     "t3_thread_launch",
     (c) => ({

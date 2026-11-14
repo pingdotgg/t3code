@@ -548,7 +548,7 @@ pub(super) async fn launch(cx: &Cx<'_>, args: &Args) -> ToolResult {
 }
 
 /// `{instanceId, model, options?}`; `provider` names the instance in older clients.
-fn normalize_selection(mut selection: Value) -> Value {
+pub(super) fn normalize_selection(mut selection: Value) -> Value {
     if selection["instanceId"].is_null()
         && let Some(provider) = selection.get("provider").cloned()
     {

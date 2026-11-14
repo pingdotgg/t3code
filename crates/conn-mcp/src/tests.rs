@@ -1230,3 +1230,154 @@ async fn organize_writes_as_the_typescript_server() {
         .await;
     assert_eq!(code, "parent_not_active");
 }
+
+/// `t3_queue` and `t3_thread_configure` (`toolkits/thread/handlers.ts`): reads are open, writes
+/// take `writesThreads([threadId])`; queue writes are the engine's queued-run commands.
+#[tokio::test(flavor = "current_thread")]
+async fn queue_and_configure_follow_the_typescript_server() {
+    let f = fixture("queue");
+    let mut swamp = Client::open(&f.service, client(true)).await;
+    let full = launch_as_swamp(&mut swamp, "Full", "hang", "full-access", "default").await;
+    let narrow = launch_as_swamp(&mut swamp, "Narrow", "hang", "approval-required", "plan").await;
+    let mut queued = Vec::new();
+    for text in ["first", "second", &"x".repeat(1_200)] {
+        let sent = swamp
+            .ok(
+                "t3_thread_send",
+                json!({"threadId": full, "message": text, "mode": "queue"}),
+            )
+            .await;
+        queued.push(sent["runId"].as_str().unwrap().to_owned());
+    }
+
+    // Refusals first: a read-only client and a narrower agent may read but not write.
+    let mut reader = Client::open(&f.service, client(false)).await;
+    reader
+        .ok("t3_queue", json!({"threadId": full, "action": "list"}))
+        .await;
+    let (code, _) = reader
+        .failure(
+            "t3_queue",
+            json!({"threadId": full, "action": "cancel", "queuedRunId": queued[0]}),
+        )
+        .await;
+    assert_eq!(code, "capability_denied");
+    let mut agent = Client::open(&f.service, agent_of(&f, &narrow)).await;
+    let read = agent
+        .ok("t3_thread_configure", json!({"threadId": full}))
+        .await;
+    assert_eq!(read["runtimeMode"], "full-access");
+    for (tool, args) in [
+        (
+            "t3_queue",
+            json!({"threadId": full, "action": "cancel", "queuedRunId": queued[0]}),
+        ),
+        (
+            "t3_thread_configure",
+            json!({"threadId": full, "modelSelection": {"instanceId": "claudeAgent", "model": "claude-haiku-5-5"}}),
+        ),
+    ] {
+        let (code, _) = agent.failure(tool, args).await;
+        assert_eq!(code, "runtime_mode_escalation_denied", "{tool}");
+    }
+    let (code, message) = swamp
+        .failure(
+            "t3_queue",
+            json!({"threadId": full, "action": "edit", "queuedRunId": queued[0]}),
+        )
+        .await;
+    assert_eq!(
+        (code.as_str(), message.as_str()),
+        ("invalid_request", "This action needs `text`.")
+    );
+
+    // Reads: send order, paging, the 1,000-character list cut and the 16,000 read cut.
+    let list = swamp
+        .ok(
+            "t3_queue",
+            json!({"threadId": full, "action": "list", "limit": 2}),
+        )
+        .await;
+    let ids: Vec<&str> = list["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["queuedRunId"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, [queued[0].as_str(), queued[1].as_str()]);
+    assert_eq!(list["nextCursor"], 2);
+    let rest = swamp
+        .ok(
+            "t3_queue",
+            json!({"threadId": full, "action": "list", "cursor": 2}),
+        )
+        .await;
+    assert_eq!(rest["items"][0]["text"].as_str().unwrap().len(), 1_000);
+    assert_eq!(rest["items"][0]["truncated"], true);
+    assert_eq!(rest["nextCursor"], Value::Null);
+    let one = swamp
+        .ok(
+            "t3_queue",
+            json!({"threadId": full, "action": "read", "queuedRunId": queued[2]}),
+        )
+        .await;
+    assert_eq!(
+        (one["text"].as_str().unwrap().len(), &one["truncated"]),
+        (1_200, &json!(false))
+    );
+
+    // Writes: edit, reorder to the end with null, cancel; each answers its sequence.
+    swamp
+        .ok(
+            "t3_queue",
+            json!({"threadId": full, "action": "edit", "queuedRunId": queued[0], "text": "edited"}),
+        )
+        .await;
+    let edited = swamp
+        .ok(
+            "t3_queue",
+            json!({"threadId": full, "action": "read", "queuedRunId": queued[0]}),
+        )
+        .await;
+    assert_eq!(edited["text"], "edited");
+    let moved = swamp
+        .ok(
+            "t3_queue",
+            json!({"threadId": full, "action": "reorder", "queuedRunId": queued[0], "beforeRunId": null}),
+        )
+        .await;
+    assert!(moved["sequence"].as_u64().unwrap() > 0);
+    let order = swamp
+        .ok("t3_queue", json!({"threadId": full, "action": "list"}))
+        .await;
+    assert_eq!(order["items"][2]["queuedRunId"], queued[0].as_str());
+    swamp
+        .ok(
+            "t3_queue",
+            json!({"threadId": full, "action": "cancel", "queuedRunId": queued[1]}),
+        )
+        .await;
+    let (code, _) = swamp
+        .failure(
+            "t3_queue",
+            json!({"threadId": full, "action": "cancel", "queuedRunId": queued[1]}),
+        )
+        .await;
+    assert_eq!(code, "orchestration_error");
+    let left = swamp
+        .ok("t3_queue", json!({"threadId": full, "action": "list"}))
+        .await;
+    assert_eq!(left["items"].as_array().unwrap().len(), 2);
+
+    // configure: the same provider instance sets the model.
+    swamp
+        .ok(
+            "t3_thread_configure",
+            json!({"threadId": full, "modelSelection": {"instanceId": "claudeAgent", "model": "claude-sonnet-5-5"}}),
+        )
+        .await;
+    let read = swamp
+        .ok("t3_thread_configure", json!({"threadId": full}))
+        .await;
+    assert_eq!(read["modelSelection"]["model"], "claude-sonnet-5-5");
+}
