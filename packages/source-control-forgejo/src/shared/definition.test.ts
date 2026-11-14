@@ -171,3 +171,10 @@ describe("Forgejo change request host", () => {
     ).toBe("forge.example");
   });
 });
+
+describe("Forgejo credentialed media", () => {
+  it("claims an uploaded attachment, which a private repository serves only with a token", () => {
+    const url = "https://codeberg.org/attachments/5b5549d9-9b57-488f-bab0-ec32f841bca8";
+    expect(definition.mediaUrl?.(new URL(url))).toMatchObject({ fetchUrl: url });
+  });
+});

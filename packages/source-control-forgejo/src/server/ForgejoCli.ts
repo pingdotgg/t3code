@@ -10,13 +10,21 @@ import * as FileSystem from "effect/FileSystem";
 import * as Semaphore from "effect/Semaphore";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - fj storage paths use explicit Windows and POSIX layouts, independently of this process's platform.
 import * as NodePath from "node:path";
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
+import {
+  FetchHttpClient,
+  HttpClient,
+  type HttpClientError,
+  HttpClientRequest,
+  type HttpClientResponse,
+} from "effect/http";
+import type * as Scope from "effect/Scope";
 import { ChildProcessSpawner } from "effect/process";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
 import type { SourceControlProviderContext } from "@t3tools/source-control-core/server/SourceControlProvider";
+import type { SourceControlMediaRequest } from "@t3tools/source-control-core/server/driver";
 
 const encodeApiBody = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
@@ -149,6 +157,14 @@ export class ForgejoCli extends Context.Service<
     readonly api: (
       input: ForgejoApiInput,
     ) => Effect.Effect<SourceControlHost.SourceControlProcessOutput, ForgejoCliError>;
+    /** Fetches an attachment the definition's `mediaUrl` claimed, signed in when fj is. */
+    readonly fetchMedia: (
+      request: SourceControlMediaRequest,
+    ) => Effect.Effect<
+      HttpClientResponse.HttpClientResponse | null,
+      HttpClientError.HttpClientError,
+      Scope.Scope
+    >;
   }
 >()("@t3tools/source-control-forgejo/server/ForgejoCli") {}
 
@@ -210,6 +226,8 @@ export function matchForgejoLogin(
       ? matches.find((login) => login.default === "true")
       : undefined;
 }
+
+const MAX_MEDIA_REDIRECTS = 3;
 
 const ForgejoKeysConfig = Config.all({
   dataHome: Config.String("XDG_DATA_HOME").pipe(Config.option),
@@ -758,7 +776,57 @@ export const make = Effect.gen(function* () {
     }
     return result;
   });
-  return ForgejoCli.of({ execute, listLogins, getAccount, resolveRepository, api });
+
+  const mediaHttpClient = HttpClient.withScope(httpClient);
+  const fetchMedia = Effect.fn("ForgejoCli.fetchMedia")(function* (
+    request: SourceControlMediaRequest,
+  ) {
+    const origin = URL.parse(request.url);
+    if (origin === null || (origin.protocol !== "https:" && origin.protocol !== "http:")) {
+      return null;
+    }
+    const keys = yield* readKeys(request.url).pipe(Effect.orElseSucceed(() => null));
+    const host = origin.host.toLowerCase();
+    // fj stores a server without its scheme and assumes HTTPS unless the user named a port.
+    const token =
+      origin.protocol === "https:" || origin.port !== "" ? keys?.hosts[host]?.token : undefined;
+    let target = origin;
+    for (let hop = 0; ; hop += 1) {
+      // A redirect to object storage carries its own signature; the token stays on its server.
+      const authorization =
+        token !== undefined && target.origin === origin.origin ? `token ${token}` : null;
+      const response: HttpClientResponse.HttpClientResponse = yield* mediaHttpClient
+        .execute(
+          HttpClientRequest.get(target.toString()).pipe(
+            HttpClientRequest.setHeaders({
+              ...request.headers,
+              "accept-encoding": "identity",
+              ...(authorization === null ? {} : { authorization }),
+            }),
+          ),
+        )
+        .pipe(
+          Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
+          // A redirect's signed query string is a bearer capability; keep it out of spans.
+          Effect.provideService(HttpClient.TracerDisabledWhen, () => true),
+        );
+      if (response.status < 300 || response.status >= 400) return response;
+      const location = response.headers.location;
+      if (!location || hop >= MAX_MEDIA_REDIRECTS) return null;
+      const next = URL.parse(location, target.href);
+      if (
+        next === null ||
+        (next.protocol !== "https:" && next.protocol !== "http:") ||
+        next.username ||
+        next.password
+      ) {
+        return null;
+      }
+      target = next;
+    }
+  });
+
+  return ForgejoCli.of({ execute, listLogins, getAccount, resolveRepository, api, fetchMedia });
 });
 
 export const layer = Layer.effect(ForgejoCli, make);

@@ -2381,3 +2381,60 @@ it.effect("does not call a valid fj login on an HTTP-only server unauthenticated
     Effect.provideService(HostProcess.HomeDirectory, "/home/maria"),
   ),
 );
+
+it.effect("sends the fj token for an attachment only to the server it belongs to", () => {
+  const seen: Array<readonly [string, string | undefined]> = [];
+  const uuid = "5b5549d9-9b57-488f-bab0-ec32f841bca8";
+  return Effect.gen(function* () {
+    const cli = yield* ForgejoCli.make;
+    const statusOf = (url: string) =>
+      Effect.scoped(cli.fetchMedia({ url, headers: {} }).pipe(Effect.map((r) => r?.status)));
+    assert.strictEqual(yield* statusOf(`https://codeberg.org/attachments/${uuid}`), 200);
+    assert.strictEqual(yield* statusOf(`http://codeberg.org/attachments/${uuid}`), 200);
+    assert.strictEqual(yield* statusOf(`http://forgejo.local:3000/attachments/${uuid}`), 200);
+    assert.strictEqual(yield* statusOf(`https://other.example/attachments/${uuid}`), 200);
+    assert.deepStrictEqual(seen, [
+      [`https://codeberg.org/attachments/${uuid}`, "token codeberg-token"],
+      [`https://objects.example/${uuid}?signature=x`, undefined],
+      // fj assumes HTTPS for a server stored without a port.
+      [`http://codeberg.org/attachments/${uuid}`, undefined],
+      [`http://forgejo.local:3000/attachments/${uuid}`, "token local-token"],
+      [`https://other.example/attachments/${uuid}`, undefined],
+    ]);
+  }).pipe(
+    Effect.provideService(
+      FileSystem.FileSystem,
+      FileSystem.makeNoop({
+        exists: () => Effect.succeed(true),
+        readFileString: () =>
+          Effect.succeed(
+            encodeJson({
+              hosts: {
+                "codeberg.org": { type: "Application", token: "codeberg-token" },
+                "forgejo.local:3000": { type: "Application", token: "local-token" },
+              },
+            }),
+          ),
+      }),
+    ),
+    Effect.provideService(
+      HttpClient.HttpClient,
+      HttpClient.make((request) => {
+        seen.push([request.url, request.headers.authorization]);
+        const redirect = request.url === `https://codeberg.org/attachments/${uuid}`;
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            redirect
+              ? new Response(null, {
+                  status: 303,
+                  headers: { location: `https://objects.example/${uuid}?signature=x` },
+                })
+              : new Response("png", { headers: { "content-type": "image/png" } }),
+          ),
+        );
+      }),
+    ),
+    Effect.provide(TestSourceControlHost.layer({})),
+  );
+});
