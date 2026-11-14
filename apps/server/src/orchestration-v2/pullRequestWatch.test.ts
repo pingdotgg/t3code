@@ -524,6 +524,87 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(evaluatePullRequestWatch(green.next, botDone, noRemarks).changes, []);
   });
 
+  it.each(["failure", "cancelled", "success"] as const)(
+    "wakes once when a same-head workflow retry of a %s finishes",
+    (status) => {
+      const required = { ...check("test", "success"), required: true };
+      const job = (name: string, status: PullRequestCheck["status"], id: number) => ({
+        ...check(name, status),
+        url: `${run(101)}/job/${id}`,
+      });
+      const initial = detail({
+        checks: [required, job("seed", status, 1), job("smoke", "skipped", 2)],
+      });
+      const baseline = evaluatePullRequestWatch(
+        watch({ awaitingBaseline: "all" }),
+        initial,
+        noRemarks,
+      );
+      assert.deepEqual(baseline.changes, []);
+      assert.deepEqual(baseline.next.owedChecks, []);
+
+      const retrying = detail({
+        checks: [required, job("seed", "pending", 3), job("smoke", "skipped", 2)],
+      });
+      const retry = evaluatePullRequestWatch(baseline.next, retrying, noRemarks);
+      assert.deepEqual(retry.changes, []);
+      const repeated = evaluatePullRequestWatch(retry.next, retrying, noRemarks);
+      assert.deepEqual(repeated.changes, []);
+
+      // The downstream job registers after the retry, with the same head and workflow run ID.
+      const smoking = detail({
+        checks: [required, job("seed", "success", 3), job("smoke", "pending", 4)],
+      });
+      const comment = remark("deploy-bot", "2026-10-02T12:06:00Z", "Preview deployed.");
+      const deployed = evaluatePullRequestWatch(repeated.next, smoking, [comment]);
+      assert.deepEqual(deployed.changes, [{ kind: "remarks", remarks: [comment] }]);
+
+      const done = detail({
+        checks: [required, job("seed", "success", 3), job("smoke", "success", 4)],
+      });
+      const final = evaluatePullRequestWatch(deployed.next, done, [comment]);
+      assert.deepEqual(final.changes, [{ kind: "checks-passed", count: 3, required: false }]);
+      assert.deepEqual(final.next.owedChecks, []);
+      assert.deepEqual(evaluatePullRequestWatch(final.next, done, [comment]).changes, []);
+
+      const advisory = detail({ checks: [...done.checks, check("bot", "pending")] });
+      const churn = evaluatePullRequestWatch(final.next, advisory, [comment]);
+      assert.deepEqual(churn.changes, []);
+      assert.deepEqual(
+        evaluatePullRequestWatch(
+          churn.next,
+          detail({ checks: [...done.checks, check("bot", "success")] }),
+          [comment],
+        ).changes,
+        [],
+      );
+    },
+  );
+
+  it.each([false, true])(
+    "keeps completion owed when an unfinished workflow disappears (jobs observed: %s)",
+    (jobsObserved) => {
+      const required = { ...check("test", "success"), required: true };
+      const green = detail({ checks: [required] });
+      const first = evaluatePullRequestWatch(watch(), green, noRemarks);
+      const queued = evaluatePullRequestWatch(
+        first.next,
+        detail({ checks: [required, { ...check("Preview", "pending"), url: run(101) }] }),
+        noRemarks,
+      );
+      assert.deepEqual(queued.changes, []);
+      const job = { ...check("smoke", "pending"), url: `${run(101)}/job/1` };
+      const running = jobsObserved
+        ? evaluatePullRequestWatch(queued.next, detail({ checks: [required, job] }), noRemarks)
+        : queued;
+      assert.deepEqual(running.changes, []);
+      const done = detail({ checks: [required, { ...job, status: "success" }] });
+      const final = evaluatePullRequestWatch(running.next, done, noRemarks);
+      assert.deepEqual(final.changes, [{ kind: "checks-passed", count: 2, required: false }]);
+      assert.deepEqual(evaluatePullRequestWatch(final.next, done, noRemarks).changes, []);
+    },
+  );
+
   it("reports an owed non-required failure once after the required notice", () => {
     const required = { ...check("test", "success"), required: true };
     const early = detail({ checks: [required, check("e2e", "pending")] });
