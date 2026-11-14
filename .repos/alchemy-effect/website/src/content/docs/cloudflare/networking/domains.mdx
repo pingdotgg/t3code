@@ -19,7 +19,7 @@ so a deploy can never clobber DNS it doesn't own.
 A zone is one resource declaration:
 
 ```typescript
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 
 const zone = yield* Cloudflare.Zone.Zone("MyZone", {
   name: "example.com",
@@ -176,10 +176,14 @@ Related:
   at.
 - [Email](/cloudflare/email) — route mail on the zone and send from
   Workers.
+- [DNS Adapters](/infrastructure-as-code/dns-adapters) — publish another
+  platform's custom-domain records (AWS, Fly, Railway, …) in a Cloudflare
+  zone.
 
 Reference:
 
 - [Zone API reference](/providers/cloudflare/zone/zone)
 - [Record API reference](/providers/cloudflare/dns/record)
+- [Records API reference](/providers/cloudflare/dns/records)
 - [Setting API reference](/providers/cloudflare/zone/setting)
 - [Dnssec API reference](/providers/cloudflare/dns/dnssec)

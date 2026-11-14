@@ -1,4 +1,5 @@
 import {
+  parseScopedProjectKey,
   scopedProjectKey,
   scopedThreadKey,
   scopeProjectRef,
@@ -9,8 +10,8 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 import { normalizeHostname } from "~/browser/browserTargetResolver";
-import { useQuietThreadShell } from "~/state/entities";
-import { usePreparedConnection } from "~/state/session";
+import { readThreadShell, useQuietThreadShell } from "~/state/entities";
+import { readPreparedConnection, usePreparedConnection } from "~/state/session";
 
 import {
   BROWSER_FAVICON_MAX_ALIASES_PER_ENTRY,
@@ -23,12 +24,12 @@ import {
   isValidFaviconCapturedAt,
   migratePersistedBrowserFaviconState,
 } from "./browserFaviconLogic";
+import { useComposerDraftStore } from "./composerDraftStore";
 import { createMemoryStorage, type StateStorage } from "./lib/storage";
 
 const BROWSER_FAVICON_STORAGE_KEY = "t3code:browser-favicons:v1";
 const MAX_PENDING_ORIGINS_PER_THREAD = 10;
 const MAX_PENDING_THREADS = 20;
-const MAX_REGISTERED_THREADS = 100;
 
 type PendingFavicon = DesktopPreviewFavicon;
 type PendingFaviconsByOrigin = Record<string, PendingFavicon>;
@@ -36,7 +37,6 @@ type PendingFaviconsByOrigin = Record<string, PendingFavicon>;
 export interface BrowserFaviconStoreState {
   byKey: Record<string, BrowserFaviconEntry>;
   pendingByThreadKey: Record<string, PendingFaviconsByOrigin>;
-  projectRefByThreadKey: Record<string, ScopedProjectRef>;
   recordFavicon: (
     key: string,
     dataUrl: string,
@@ -121,7 +121,6 @@ export const useBrowserFaviconStore = create<BrowserFaviconStoreState>()(
     (set) => ({
       byKey: {},
       pendingByThreadKey: {},
-      projectRefByThreadKey: {},
       recordFavicon: (key, dataUrl, capturedAt, aliases = []) =>
         set((state) => {
           if (!isStorableFaviconDataUrl(dataUrl)) return state;
@@ -162,7 +161,7 @@ export const useBrowserFaviconStore = create<BrowserFaviconStoreState>()(
   ),
 );
 
-export function mergeBrowserFaviconState(
+function mergeBrowserFaviconState(
   persistedState: unknown,
   currentState: BrowserFaviconStoreState,
 ): BrowserFaviconStoreState {
@@ -172,38 +171,22 @@ export function mergeBrowserFaviconState(
   };
 }
 
-export function registerFaviconProjectForThread(
-  threadRef: ScopedThreadRef,
-  projectRef: ScopedProjectRef,
-): void {
-  const threadKey = scopedThreadKey(threadRef);
-  const state = useBrowserFaviconStore.getState();
-  const current = state.projectRefByThreadKey[threadKey];
-  if (
-    current?.environmentId === projectRef.environmentId &&
-    current.projectId === projectRef.projectId
-  ) {
-    return;
-  }
-  useBrowserFaviconStore.setState({
-    projectRefByThreadKey: Object.fromEntries(
-      [
-        ...Object.entries(state.projectRefByThreadKey).filter(([key]) => key !== threadKey),
-        [threadKey, projectRef],
-      ].slice(-MAX_REGISTERED_THREADS),
-    ),
+/** Server threads name their project in the shell; drafts in the composer draft store. */
+function useFaviconProjectRefForThread(threadRef: ScopedThreadRef): ScopedProjectRef | null {
+  const shell = useQuietThreadShell(threadRef);
+  const draftProjectRef = useComposerDraftStore((state) => {
+    const draft = state.getDraftSessionByRef(threadRef);
+    return draft ? scopedProjectKey(scopeProjectRef(draft.environmentId, draft.projectId)) : null;
   });
+  if (shell?.projectId) return scopeProjectRef(threadRef.environmentId, shell.projectId);
+  return draftProjectRef === null ? null : parseScopedProjectKey(draftProjectRef);
 }
 
-export function useFaviconProjectRefForThread(threadRef: ScopedThreadRef): ScopedProjectRef | null {
-  const shell = useQuietThreadShell(threadRef);
-  const shellProjectId = shell?.projectId ?? null;
-  const environmentId = threadRef.environmentId;
-  const shellProjectRef = shellProjectId ? scopeProjectRef(environmentId, shellProjectId) : null;
-  const registered = useBrowserFaviconStore(
-    (state) => state.projectRefByThreadKey[scopedThreadKey(threadRef)] ?? null,
-  );
-  return shellProjectRef ?? registered;
+function readThreadProjectRef(threadRef: ScopedThreadRef): ScopedProjectRef | null {
+  const projectId = readThreadShell(threadRef)?.projectId;
+  if (projectId) return scopeProjectRef(threadRef.environmentId, projectId);
+  const draft = useComposerDraftStore.getState().getDraftSessionByRef(threadRef);
+  return draft ? scopeProjectRef(draft.environmentId, draft.projectId) : null;
 }
 
 export function recordFaviconForProject(
@@ -232,11 +215,14 @@ export function recordFaviconForProject(
   return true;
 }
 
+/**
+ * The thread's project and environment host may not be known yet when a capture
+ * arrives; such captures wait per thread and land with the next capture that can
+ * resolve them.
+ */
 export function recordFaviconForThread(
   threadRef: ScopedThreadRef,
   favicon: DesktopPreviewFavicon,
-  projectRef: ScopedProjectRef | null,
-  environmentHostname: string | undefined,
 ): boolean {
   if (
     !isStorableFaviconDataUrl(favicon.dataUrl) ||
@@ -244,6 +230,10 @@ export function recordFaviconForThread(
     !pendingOriginKey(favicon.pageUrl)
   )
     return false;
+  const projectRef = readThreadProjectRef(threadRef);
+  const connection = readPreparedConnection(threadRef.environmentId);
+  const environmentHostname = connection ? new URL(connection.httpBaseUrl).hostname : undefined;
+  if (projectRef) flushPendingFaviconsForThread(threadRef, projectRef, environmentHostname);
   const hostname =
     environmentHostname !== undefined
       ? environmentHostname
@@ -266,7 +256,7 @@ export function recordFaviconForThread(
   return false;
 }
 
-export function flushPendingFaviconsForThread(
+function flushPendingFaviconsForThread(
   threadRef: ScopedThreadRef,
   projectRef: ScopedProjectRef,
   environmentHostname: string | undefined,
@@ -300,9 +290,28 @@ export function useFaviconForThreadUrl(threadRef: ScopedThreadRef, url: string):
   const environmentHostname = Option.isSome(preparedConnection)
     ? new URL(preparedConnection.value.httpBaseUrl).hostname
     : null;
+  const threadKey = scopedThreadKey(threadRef);
   return useBrowserFaviconStore((state) =>
-    lookupFavicon(state.byKey, projectRef, url, environmentHostname),
+    lookupFaviconForThread(state, threadKey, projectRef, url, environmentHostname),
   );
+}
+
+/**
+ * A capture waiting for its thread's project still shows on that thread, and wins
+ * over an older stored capture for the same origin.
+ */
+export function lookupFaviconForThread(
+  state: Pick<BrowserFaviconStoreState, "byKey" | "pendingByThreadKey">,
+  threadKey: string,
+  projectRef: ScopedProjectRef | null,
+  url: string,
+  environmentHostname: string | null,
+): string | null {
+  const stored = lookupFaviconEntry(state.byKey, projectRef, url, environmentHostname);
+  const originKey = pendingOriginKey(url);
+  const pending = originKey ? state.pendingByThreadKey[threadKey]?.[originKey] : undefined;
+  if (pending && (!stored || pending.capturedAt > stored.capturedAt)) return pending.dataUrl;
+  return stored?.dataUrl ?? null;
 }
 
 export function lookupFavicon(
@@ -311,17 +320,26 @@ export function lookupFavicon(
   url: string,
   environmentHostname: string | null,
 ): string | null {
+  return lookupFaviconEntry(byKey, projectRef, url, environmentHostname)?.dataUrl ?? null;
+}
+
+function lookupFaviconEntry(
+  byKey: Record<string, BrowserFaviconEntry>,
+  projectRef: ScopedProjectRef | null,
+  url: string,
+  environmentHostname: string | null,
+): BrowserFaviconEntry | null {
   const key = projectRef
     ? faviconKey(scopedProjectKey(projectRef), url, environmentHostname)
     : null;
   if (!key) return null;
   const direct = byKey[key];
-  if (direct) return direct.dataUrl;
+  if (direct) return direct;
   try {
     const requestedHost = normalizeHostname(new URL(url).hostname);
     const localKey = faviconKey(scopedProjectKey(projectRef!), url, requestedHost);
     const localEntry = localKey ? byKey[localKey] : null;
-    return localEntry?.aliases?.includes(requestedHost) ? localEntry.dataUrl : null;
+    return localEntry?.aliases?.includes(requestedHost) ? localEntry : null;
   } catch {
     return null;
   }
@@ -331,7 +349,6 @@ export function resetBrowserFaviconsForTests(): void {
   useBrowserFaviconStore.setState({
     byKey: {},
     pendingByThreadKey: {},
-    projectRefByThreadKey: {},
   });
   useBrowserFaviconStore.persist.clearStorage();
 }

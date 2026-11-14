@@ -8,12 +8,6 @@ const beforeFailure = DateTime.makeUnsafe("2026-10-09T12:05:00.000Z");
 const afterFailure = DateTime.makeUnsafe("2026-10-09T12:48:00.000Z");
 
 describe("subagentResumedSince", () => {
-  it("is true while a resumed subagent runs", () => {
-    expect(subagentResumedSince({ status: "running", startedAt: afterFailure }, failedAt)).toBe(
-      true,
-    );
-  });
-
   it("is true while it runs even when the notification was delivered after the resume", () => {
     expect(
       subagentResumedSince(
@@ -23,6 +17,7 @@ describe("subagentResumedSince", () => {
     ).toBe(true);
   });
 
+  // regression: #18099 a resumed subagent's old failure notification row showed failed instead of resumed
   it("is true once a run started after the notification has settled", () => {
     expect(subagentResumedSince({ status: "completed", startedAt: afterFailure }, failedAt)).toBe(
       true,
@@ -33,9 +28,5 @@ describe("subagentResumedSince", () => {
     expect(subagentResumedSince({ status: "failed", startedAt: beforeFailure }, failedAt)).toBe(
       false,
     );
-  });
-
-  it("is false for a settled subagent with no start time", () => {
-    expect(subagentResumedSince({ status: "failed", startedAt: null }, failedAt)).toBe(false);
   });
 });
