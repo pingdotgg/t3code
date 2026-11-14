@@ -442,7 +442,7 @@ describe("device setup consent", () => {
         status: "failed",
         detail: startupError.message,
       });
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("names the missing npm in the host status when device support cannot install", () =>
@@ -536,7 +536,7 @@ describe("device setup consent", () => {
             detail: expected,
           });
         }
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect("listing and provider startup do not start helpers before consent", () =>
@@ -548,7 +548,7 @@ describe("device setup consent", () => {
       expect(readiness._tag).toBe("Failure");
       expect(starts).toEqual([]);
       expect(requests).toEqual([]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect(
@@ -568,7 +568,7 @@ describe("device setup consent", () => {
         expect((yield* Ref.get(settings)).enableDeviceSupport).toBe(false);
         expect(yield* service.readinessIfSupported()).toBeNull();
         expect(starts).toEqual(["start", "stop"]);
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect("boots a stopped Android AVD and uses its emulator serial without duplicating it", () =>
@@ -585,7 +585,7 @@ describe("device setup consent", () => {
       const state = yield* service.state;
       expect(state.devices.map((device) => device.id)).toEqual(["emulator-5554"]);
       expect(state.bootingDevices).toEqual([]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("blocks only emulator video until ffmpeg is usable, then allows retry", () =>
@@ -667,7 +667,7 @@ describe("device setup consent", () => {
       const emulator = yield* openEmulator;
       expect(emulator.deviceId).toBe("emulator-5554");
       expect(requests.filter((url) => url.endsWith("/boot"))).toHaveLength(1);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("opens emulators on hosts that route their own streams without ffmpeg", () =>
@@ -690,7 +690,7 @@ describe("device setup consent", () => {
       });
       expect(session.deviceId).toBe("emulator-5554");
       expect(requests.filter((url) => url.endsWith("/boot"))).toHaveLength(1);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("installs agent support only after the separate agent permission", () =>
@@ -709,7 +709,7 @@ describe("device setup consent", () => {
       expect(agentStops).toEqual(["stop"]);
       expect((yield* service.state).onboardingCompleted).toBe(true);
       expect((yield* Ref.get(settings)).deviceOnboardingCompleted).toBe(true);
-    }).pipe(Effect.scoped),
+    }),
   );
 });
 
@@ -789,7 +789,6 @@ it.effect.each([1, 9009])(
           NetService.layer,
         ).pipe(Layer.provideMerge(NodeServices.layer)),
       ),
-      Effect.scoped,
     ),
 );
 
@@ -816,7 +815,7 @@ it.effect("publishes boot progress and does not restore sessions after support i
     expect(state.devices).toEqual([]);
     expect(state.sessions).toEqual([]);
     expect(state.bootingDevices).toEqual([]);
-  }).pipe(Effect.scoped),
+  }),
 );
 
 it.effect.each([
@@ -846,7 +845,7 @@ it.effect.each([
     endDevice();
     yield* service.list;
     expect((yield* service.state).sessions).toHaveLength(kept);
-  }).pipe(Effect.scoped),
+  }),
 );
 
 describe("device discovery after server restart", () => {
@@ -859,7 +858,7 @@ describe("device discovery after server restart", () => {
       expect(capture.device.id).toBe("Pixel_API_35");
       expect(Array.from(capture.png)).toEqual([137, 80, 78, 71]);
       expect(requests.some((url) => url.endsWith("/api/devices"))).toBe(true);
-    }).pipe(Effect.scoped),
+    }),
   );
 });
 
@@ -880,7 +879,7 @@ it.effect("keeps other discovery warnings and clears them when only a deleted pl
     const refreshed = yield* service.list;
     expect(refreshed.hostStatusDetail).toBeUndefined();
     expect(refreshed.hostStatuses.local?.detail).toBeUndefined();
-  }).pipe(Effect.scoped),
+  }),
 );
 
 it.effect("hides Android discovery failures when the host has no Android SDK", () =>
@@ -894,7 +893,7 @@ it.effect("hides Android discovery failures when the host has no Android SDK", (
     yield* Ref.set(androidAvailable, true);
     const withSdk = yield* service.list;
     expect(withSdk.hostStatusDetail).toBe(`${avdmanagerFailure.message}\niOS discovery failed.`);
-  }).pipe(Effect.scoped),
+  }),
 );
 
 // The hub reports `error` as a util.inspect of Node's exec error.
@@ -945,7 +944,7 @@ it.effect("keeps the cause from the hub's error in discovery warnings, without t
     );
     expect(state.hostStatusDetail).not.toContain("    at ");
     expect(state.hostStatusDetail).not.toContain("stderr:");
-  }).pipe(Effect.scoped),
+  }),
 );
 
 it.effect(
@@ -979,7 +978,7 @@ it.effect(
       const recovered = yield* service.list;
       expect(recovered.devices.map((device) => device.id)).toEqual(["Pixel_API_35"]);
       expect(recovered.hostStatuses.local).toEqual({ status: "ready" });
-    }).pipe(Effect.scoped),
+    }),
 );
 
 it.effect.each([
@@ -1018,7 +1017,7 @@ it.effect.each([
         detail: "The device hub did not answer within 40 seconds.",
         incompletePlatforms,
       });
-    }).pipe(Effect.scoped),
+    }),
 );
 
 it.effect("does not open a retained pre-boot entry when the post-boot listing is incomplete", () =>
@@ -1040,7 +1039,7 @@ it.effect("does not open a retained pre-boot entry when the post-boot listing is
     yield* TestClock.adjust("40 seconds");
     expect((yield* Fiber.join(opening))._tag).toBe("DeviceNotFoundError");
     expect((yield* android.service.state).sessions).toEqual([]);
-  }).pipe(Effect.scoped),
+  }),
 );
 
 it.effect.each([
@@ -1075,7 +1074,7 @@ it.effect.each([
     expect(error.message).toContain(message);
     expect(error.message).toContain(diagnostic);
     expect((yield* service.state).bootingDevices).toEqual([]);
-  }).pipe(Effect.scoped),
+  }),
 );
 
 // regression: #22012 report Android emulator boot failures
@@ -1103,7 +1102,7 @@ it.effect("includes nested hub boot diagnostics and bounds them to 2,000 charact
     const roundTrip = decodeBootError(encodeBootError(error));
     expect(roundTrip.message).toBe(error.message);
     expect((yield* service.state).bootingDevices).toEqual([]);
-  }).pipe(Effect.scoped),
+  }),
 );
 
 it.effect("keeps shutdown successful when subsequent discovery fails", () =>
@@ -1120,7 +1119,7 @@ it.effect("keeps shutdown successful when subsequent discovery fails", () =>
     const state = yield* service.state;
     expect(state.sessions).toEqual([]);
     expect(state.devices.find((device) => device.id === session.deviceId)?.booted).toBe(false);
-  }).pipe(Effect.scoped),
+  }),
 );
 
 it.effect.each(["shutdown", "close"] as const)(
@@ -1302,7 +1301,7 @@ it.effect.each(["shutdown", "close"] as const)(
       yield* Fiber.join(binding);
       yield* Fiber.await(retiring);
       expect(launchers).toEqual(new Set());
-    }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
+    }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true }))),
 );
 
 it.effect("leaves a session its host leases to every thread open when one thread closes", () =>
@@ -1398,7 +1397,6 @@ it.effect("leaves a session its host leases to every thread open when one thread
     Effect.provide(
       ServerSettings.layerTest({ enableDeviceSupport: true, enableAgentDeviceAccess: true }),
     ),
-    Effect.scoped,
   ),
 );
 
@@ -1504,7 +1502,7 @@ it.effect.each([
           (yield* service.state).devices.find((device) => device.id === deviceId)?.booted,
         ).toBe(true);
       }
-    }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
+    }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true }))),
 );
 
 it.effect.each([LOCAL_DEVICE_HOST_ID, "ssh-fixture"])(
@@ -1590,7 +1588,7 @@ it.effect.each([LOCAL_DEVICE_HOST_ID, "ssh-fixture"])(
       ]);
       expect(recovered.hostStatuses[hostId]).toEqual({ status: "ready" });
       if (hostId === LOCAL_DEVICE_HOST_ID) expect(recovered.hostStatusDetail).toBeUndefined();
-    }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
+    }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true }))),
 );
 
 it.effect("retry keeps device and agent consent unchanged", () =>
@@ -1606,7 +1604,7 @@ it.effect("retry keeps device and agent consent unchanged", () =>
     const before = agentStarts.length;
     yield* service.retryHost(LOCAL_DEVICE_HOST_ID);
     expect(agentStarts.length).toBe(before + 1);
-  }).pipe(Effect.scoped),
+  }),
 );
 
 it.effect("failed read-only discovery preserves lifecycle status and installed inventory", () =>
@@ -1618,7 +1616,7 @@ it.effect("failed read-only discovery preserves lifecycle status and installed i
     expect(state.hosts[0]?.hubInstalled).toBe(true);
     expect(state.hosts[0]?.toolInspectionError).toContain("Reconnect the host");
     expect(starts).toEqual([]);
-  }).pipe(Effect.scoped),
+  }),
 );
 
 it.effect(
@@ -1649,7 +1647,7 @@ it.effect(
       expect(requests).toEqual([]);
       yield* service.updateTool("hub");
       expect(installed).toEqual(["agent", "hub"]);
-    }).pipe(Effect.scoped),
+    }),
 );
 
 it.effect("failed manual installation leaves lifecycle state unchanged and can be retried", () =>
@@ -1682,7 +1680,7 @@ it.effect("failed manual installation leaves lifecycle state unchanged and can b
     expect(attempts).toBe(2);
     expect(starts).toEqual([]);
     expect(agentStarts).toEqual([]);
-  }).pipe(Effect.scoped),
+  }),
 );
 
 it.effect("reconciles SSH host settings without publishing no-op changes", () =>
@@ -1861,7 +1859,6 @@ it.effect("a failed tool update reports npm's exit code but not its output", () 
         NetService.layer,
       ).pipe(Layer.provideMerge(NodeServices.layer)),
     ),
-    Effect.scoped,
   ),
 );
 
@@ -2084,7 +2081,7 @@ describe("agent session release on close", () => {
         )
         .filter((label, index, labels) => label !== labels[index - 1]);
       expect(published).toEqual(["none", "reopened"]);
-    }).pipe(Effect.scoped),
+    }),
   );
 });
 
