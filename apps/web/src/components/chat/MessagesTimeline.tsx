@@ -769,7 +769,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
   );
   // Run status/timestamps change per stream event; keep them out of shared row context.
   const runs = useStableHandoffRuns(runsProp);
-  const minimapItems = deriveTimelineMinimapItems(rows);
+  const minimapEnabled = useClientSettings((settings) => settings.timelineMinimapEnabled);
+  const minimapItems = minimapEnabled ? deriveTimelineMinimapItems(rows) : [];
   const minimapRowIndices = minimapItems.map((item) => item.rowIndex);
   const restoreRowIndex =
     restoringThreadPosition && rememberedPosition?.atEnd === false
@@ -970,6 +971,13 @@ const ConversationTimeline = memo(function ConversationTimeline({
   });
 
   const minimapRefreshFrameRef = useRef<number | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Newly mounted strips need the current scroll position.
+  useEffect(() => {
+    if (!minimapEnabled) return;
+    const frame = requestAnimationFrame(() => refreshMinimap());
+    return () => cancelAnimationFrame(frame);
+  }, [minimapEnabled, refreshMinimap]);
+
   const scheduleMinimapRefresh = useStableCallback(() => {
     if (minimapRefreshFrameRef.current !== null) return;
     // LegendList recycles row containers before React commits their positions.
