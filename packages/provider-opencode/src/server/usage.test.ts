@@ -1,3 +1,4 @@
+import type * as NodeWorkerThreads from "node:worker_threads";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId } from "@t3tools/contracts";
@@ -11,12 +12,92 @@ import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 import { vi } from "vite-plus/test";
 
+import {
+  openCodeForkContinuationSessionId,
+  openCodeForkMessages,
+  openCodeForkSchema,
+  openCodeForkSessions,
+  openCodeForkSourceAssistantId,
+  openCodeForkSourceSessionId,
+} from "./usage.fixture.ts";
 import { openCodeUsageReader, readOpenCodeUsage } from "./usage.ts";
+
+const readerWorkers = vi.hoisted(() => ({ started: 0, enabled: false }));
+
+// Statement spies only see the main thread, so reader workers fail to start unless a test enables them.
+vi.mock("node:worker_threads", async (importOriginal) => {
+  const actual = await importOriginal<typeof NodeWorkerThreads>();
+  class ReaderWorker extends actual.Worker {
+    constructor(...args: ConstructorParameters<typeof actual.Worker>) {
+      super(
+        ...((readerWorkers.enabled
+          ? args
+          : [
+              "throw new Error('reader workers disabled');",
+              { eval: true },
+            ]) as ConstructorParameters<typeof actual.Worker>),
+      );
+      readerWorkers.started++;
+    }
+  }
+  return { ...actual, Worker: ReaderWorker };
+});
 
 const openDatabase = (filename: string) =>
   Layer.build(NodeSqliteClient.layer({ filename })).pipe(
     Effect.map(Context.get(SqlClient.SqlClient)),
   );
+
+const recordedForkDatabase = Effect.fn(function* (
+  sessions: ReadonlyArray<{
+    readonly id: string;
+    readonly project_id: string;
+    readonly fork_session_id: string | null;
+    readonly fork_boundary: string | null;
+    readonly slug: string;
+    readonly directory: string;
+    readonly version: string;
+    readonly time_created: number;
+    readonly time_updated: number;
+  }>,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "usage-reader-fork-test-" });
+  const db = yield* openDatabase(path.join(dir, "opencode.db"));
+  for (const statement of openCodeForkSchema) yield* db.unsafe(statement);
+  for (const session of sessions) {
+    yield* db.unsafe(
+      "INSERT INTO session_v2 (id, project_id, fork_session_id, fork_boundary, slug, directory, version, time_created, time_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [
+        session.id,
+        session.project_id,
+        session.fork_session_id,
+        session.fork_boundary,
+        session.slug,
+        session.directory,
+        session.version,
+        session.time_created,
+        session.time_updated,
+      ],
+    );
+  }
+  for (const message of openCodeForkMessages) {
+    yield* db.unsafe(
+      "INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [
+        message.id,
+        message.session_id,
+        message.type,
+        message.seq,
+        message.time_created,
+        message.time_updated,
+        message.data,
+      ],
+    );
+  }
+  return { dir, db };
+});
 
 describe("readOpenCodeUsage", () => {
   it.effect("bounds raw history allocations while counting every eligible message once", () =>
@@ -141,6 +222,7 @@ describe("readOpenCodeUsage", () => {
         );
       }
       let statements = 0;
+      let bodyReads = 0;
       const originalAll = NodeSqlite.StatementSync.prototype.all;
       yield* Effect.acquireRelease(
         Effect.sync(() =>
@@ -149,6 +231,7 @@ describe("readOpenCodeUsage", () => {
             ...params
           ) {
             statements++;
+            if (this.sourceSQL.includes("data ->")) bodyReads++;
             return originalAll.apply(this, params);
           }),
         ),
@@ -161,6 +244,51 @@ describe("readOpenCodeUsage", () => {
         ["opencode:a", "opencode:b", "opencode:c"],
       );
       assert.isBelow(statements, 10);
+
+      bodyReads = 0;
+      const repeated = yield* readOpenCodeUsage(dir, sinceMs);
+      assert.deepStrictEqual(
+        repeated.files.flatMap((file) => file.records).map((record) => record.dedupeKey),
+        ["opencode:a", "opencode:b", "opencode:c"],
+      );
+      // An unchanged database must not have its message bodies read and parsed again.
+      assert.strictEqual(bodyReads, 0);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("does not reuse rows from a replaced or restored database file", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "usage-replaced-" });
+      const write = (name: string, input: number) =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const db = yield* openDatabase(path.join(dir, name));
+            yield* db.unsafe("PRAGMA journal_mode = WAL");
+            yield* db.unsafe(
+              "CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)",
+            );
+            yield* db.unsafe(
+              "INSERT INTO message(rowid, id, session_id, time_created, time_updated, data) VALUES (1, 'a', 's', 1, 1, ?)",
+              [JSON.stringify({ modelID: "m", tokens: { input } })],
+            );
+          }),
+        );
+      const input = Effect.map(
+        readOpenCodeUsage(dir, 0),
+        (result) => result.files[0]?.records[0]?.totals.uncachedInputTokens,
+      );
+      yield* write("opencode.db", 100);
+      assert.strictEqual(yield* input, 100);
+      yield* write("replacement.db", 900);
+      yield* fileSystem.rename(path.join(dir, "replacement.db"), path.join(dir, "opencode.db"));
+      assert.strictEqual(yield* input, 900);
+      // A backup restored in place keeps the inode and birth time, like `cp -p`.
+      yield* write("backup.db", 500);
+      yield* fileSystem.copyFile(path.join(dir, "backup.db"), path.join(dir, "opencode.db"));
+      yield* fileSystem.utimes(path.join(dir, "opencode.db"), 0, 0);
+      assert.strictEqual(yield* input, 500);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -188,6 +316,27 @@ describe("readOpenCodeUsage", () => {
       const legacy = path.join(dir, "storage", "message", message.sessionID);
       yield* fileSystem.makeDirectory(legacy, { recursive: true });
       yield* fileSystem.writeFileString(path.join(legacy, "msg-1.json"), JSON.stringify(message));
+      yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          readerWorkers.enabled = true;
+          readerWorkers.started = 0;
+        }),
+        () => Effect.sync(() => (readerWorkers.enabled = false)),
+      );
+      let mainThreadBodyReads = 0;
+      const originalAll = NodeSqlite.StatementSync.prototype.all;
+      yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          vi.spyOn(NodeSqlite.StatementSync.prototype, "all").mockImplementation(function (
+            this: NodeSqlite.StatementSync,
+            ...params
+          ) {
+            if (this.sourceSQL.includes("data ->")) mainThreadBodyReads++;
+            return originalAll.apply(this, params);
+          }),
+        ),
+        (spy) => Effect.sync(() => spy.mockRestore()),
+      );
       const first = yield* readOpenCodeUsage(dir, 0);
       assert.isFalse(first.error);
       const records = first.files.flatMap((file) => file.records);
@@ -212,6 +361,96 @@ describe("readOpenCodeUsage", () => {
         ["opencode:msg-2"],
       );
       assert.isAbove(Number((yield* fileSystem.stat(path.join(dir, "opencode.db-wal"))).size), 0);
+      // A large database must not be read on the server's event loop.
+      assert.isAbove(readerWorkers.started, 0);
+      assert.strictEqual(mainThreadBodyReads, 0);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("counts an OpenCode reply once across the sessions forked from it", () =>
+    Effect.gen(function* () {
+      const { dir, db } = yield* recordedForkDatabase(openCodeForkSessions);
+      // A reply sent after the second fork is a new provider request.
+      yield* db.unsafe(
+        "INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [
+          "msg_continuationassistant00001",
+          openCodeForkContinuationSessionId,
+          "assistant",
+          8,
+          1792620090000,
+          1792620090500,
+          JSON.stringify({
+            time: { created: 1792620090000, completed: 1792620090500 },
+            agent: "build",
+            model: { id: "claude-sonnet-4-5", providerID: "anthropic" },
+            content: [{ type: "text", text: "continued" }],
+            finish: "stop",
+            cost: 0.02,
+            tokens: { input: 50, output: 10, reasoning: 0, cache: { read: 1500, write: 0 } },
+          }),
+        ],
+      );
+
+      const result = yield* readOpenCodeUsage(dir, 0);
+      assert.isFalse(result.error);
+      const records = result.files.flatMap((file) => file.records);
+      assert.deepStrictEqual(
+        records.map((record) => [record.dedupeKey, record.sessionId]),
+        [
+          [`opencode:${openCodeForkSourceAssistantId}`, openCodeForkSourceSessionId],
+          ["opencode:msg_continuationassistant00001", openCodeForkContinuationSessionId],
+        ],
+      );
+      assert.deepStrictEqual(records[0]?.totals, {
+        uncachedInputTokens: 1000,
+        cachedInputTokens: 300,
+        cacheCreationTokens: 0,
+        outputTokens: 200,
+        reasoningTokens: 0,
+      });
+      assert.strictEqual(records[0]?.reportedCostUsd, 0.01);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("counts each OpenCode fork's own replies after its boundary", () =>
+    Effect.gen(function* () {
+      const [source, fork] = openCodeForkSessions;
+      const sibling = { ...fork, id: "ses_siblingfork00000000000000", slug: "quiet-river" };
+      const { dir, db } = yield* recordedForkDatabase([...openCodeForkSessions, sibling]);
+      const insert = (id: string, sessionId: string, seq: number, created: number, data: string) =>
+        db.unsafe(
+          "INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data) VALUES (?, ?, 'assistant', ?, ?, ?, ?)",
+          [id, sessionId, seq, created, created, data],
+        );
+      const copied = openCodeForkMessages.find(
+        (message) => message.id === openCodeForkSourceAssistantId,
+      )!;
+      yield* insert("msg_siblingcopy_2", sibling.id, copied.seq, copied.time_created, copied.data);
+      // Sibling forks send identical replies at the same seq and millisecond.
+      const created = 1792620090000;
+      const reply = JSON.stringify({ ...JSON.parse(copied.data), time: { created } });
+      yield* insert("msg_forkreply000000000000003", fork.id, 3, created, reply);
+      yield* insert("msg_siblingreply0000000000003", sibling.id, 3, created, reply);
+
+      const records = (yield* readOpenCodeUsage(dir, 0)).files.flatMap((file) => file.records);
+      assert.deepStrictEqual(
+        records.map((record) => record.sessionId),
+        [source.id, fork.id, sibling.id],
+      );
+
+      // Deleting the source leaves the first fork holding the only copy.
+      yield* db.unsafe("DELETE FROM session_message WHERE session_id = ?", [source.id]);
+      yield* db.unsafe("DELETE FROM session_v2 WHERE id = ?", [source.id]);
+      const remaining = (yield* readOpenCodeUsage(dir, 0)).files.flatMap((file) => file.records);
+      assert.includeMembers(
+        remaining.map((record) => record.dedupeKey),
+        ["opencode:msg_1607ab38e001GxURO0NU4GY4Az_2", "opencode:msg_forkreply000000000000003"],
+      );
+      assert.notInclude(
+        remaining.map((record) => record.dedupeKey),
+        "opencode:msg_1607b8a6d001MA7a5GgmyUywMf_2",
+      );
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
