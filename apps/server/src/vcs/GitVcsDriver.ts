@@ -1774,13 +1774,12 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         const restore = [...longPaths, "restore", "--source", commitOid, "--worktree", "--staged"];
         // restore leaves skip-worktree paths alone. Outside a sparse checkout every such bit was
         // set by hand and capture recorded the file, so override them all.
-        yield* gitCommand(
-          vcsProcess,
+        yield* execute({
           operation,
-          input.cwd,
-          [...restore, ...(sparseCheckout ? [] : ["--ignore-skip-worktree-bits"]), "--", "."],
-          { onSpawn },
-        );
+          cwd: input.cwd,
+          args: [...restore, ...(sparseCheckout ? [] : ["--ignore-skip-worktree-bits"]), "--", "."],
+          onSpawn,
+        });
         if (sparseCheckout) {
           // Sparse exclusions stay excluded; only skip-worktree paths the rules select are manual.
           const manual = yield* Effect.gen(function* () {
@@ -1852,13 +1851,14 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         }
       }
       yield* recreateWorkspace;
-      const clean = gitCommand(
-        vcsProcess,
+      const clean = execute({
         operation,
-        input.cwd,
-        [...longPaths, "clean", "-fd", "--", "."],
-        { env: { LC_ALL: "C" }, allowNonZeroExit: true, onSpawn },
-      );
+        cwd: input.cwd,
+        args: [...longPaths, "clean", "-fd", "--", "."],
+        env: { LC_ALL: "C" },
+        allowNonZeroExit: true,
+        onSpawn,
+      });
       let cleaned = yield* clean;
       // Removing a new .gitignore exposes the files it hid; clean again until nothing is left.
       for (
