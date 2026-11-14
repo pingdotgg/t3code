@@ -1,8 +1,8 @@
+import { expect, test } from "@alchemy.run/test";
+import * as Effect from "effect/Effect";
+import { strFromU8, unzipSync } from "fflate";
 import { sha256 } from "@/Util/sha256";
 import { zipCode, zipFiles } from "@/Util/zip";
-import { strFromU8, unzipSync } from "fflate";
-import * as Effect from "effect/Effect";
-import { expect, test } from "alchemy-test";
 
 test(
   "zipCode is deterministic for identical inputs",
@@ -10,13 +10,7 @@ test(
     const hash = () =>
       Effect.runPromise(
         zipCode("export default 1", [
-          {
-            path: "index.mjs.map",
-            content: JSON.stringify({
-              version: 3,
-              sources: ["index.ts"],
-            }),
-          },
+          { path: "index.mjs.map", content: JSON.stringify({ version: 3, sources: ["index.ts"] }) },
         ]).pipe(Effect.flatMap(sha256)),
       );
 
@@ -34,10 +28,7 @@ test(
     const build = () =>
       Effect.runPromise(
         zipCode("export default 1", [
-          {
-            path: "node_modules/uuid/package.json",
-            content: JSON.stringify({ name: "uuid" }),
-          },
+          { path: "node_modules/uuid/package.json", content: JSON.stringify({ name: "uuid" }) },
         ]),
       );
 
@@ -49,9 +40,7 @@ test(
 
     await new Promise((resolve) => setTimeout(resolve, 1100));
     const second = await build();
-    expect(await Effect.runPromise(sha256(second))).toBe(
-      await Effect.runPromise(sha256(first)),
-    );
+    expect(await Effect.runPromise(sha256(second))).toBe(await Effect.runPromise(sha256(first)));
   },
   { tags: ["unit", "local"] },
 );
@@ -72,14 +61,10 @@ test(
     const entries = unzipSync(first);
     for (const file of files) {
       expect(entries[file.path]).toEqual(
-        typeof file.content === "string"
-          ? new TextEncoder().encode(file.content)
-          : file.content,
+        typeof file.content === "string" ? new TextEncoder().encode(file.content) : file.content,
       );
     }
-    expect(
-      Object.keys(unzipSync(await Effect.runPromise(zipFiles([])))),
-    ).toEqual([]);
+    expect(Object.keys(unzipSync(await Effect.runPromise(zipFiles([]))))).toEqual([]);
   },
   { tags: ["unit", "local"] },
 );
@@ -105,23 +90,12 @@ test(
       expect(archive.readUInt16LE(offset + 12)).toBe(0);
       expect(archive.readUInt16LE(offset + 14)).toBe(33);
       const nameLength = archive.readUInt16LE(offset + 28);
-      const name = archive.toString(
-        "utf8",
-        offset + 46,
-        offset + 46 + nameLength,
-      );
+      const name = archive.toString("utf8", offset + 46, offset + 46 + nameLength);
       modes[name] = archive.readUInt32LE(offset + 38) >>> 16;
       offset +=
-        46 +
-        nameLength +
-        archive.readUInt16LE(offset + 30) +
-        archive.readUInt16LE(offset + 32);
+        46 + nameLength + archive.readUInt16LE(offset + 30) + archive.readUInt16LE(offset + 32);
     }
-    expect(modes).toEqual({
-      "bin/tool": 0o100755,
-      link: 0o120777,
-      plain: 0o100644,
-    });
+    expect(modes).toEqual({ "bin/tool": 0o100755, link: 0o120777, plain: 0o100644 });
     expect(strFromU8(unzipSync(archive).link!)).toBe("bin/tool");
   },
   { tags: ["unit", "local"] },

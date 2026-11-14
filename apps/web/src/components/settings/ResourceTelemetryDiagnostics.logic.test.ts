@@ -4,9 +4,7 @@ import type { ResourceTelemetryProcess } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
 import {
-  resourceHistoryBarHeight,
-  resourceHistoryCpuScaleMax,
-  shouldShowResourceMonitorRetry,
+  formatCpuTime,
   visibleResourceTelemetryProcesses,
 } from "./ResourceTelemetryDiagnostics.logic";
 
@@ -34,43 +32,6 @@ const process = (pid: number, ppid: number, depth: number): ResourceTelemetryPro
   lastSeenAt: DateTime.makeUnsafe(0),
 });
 
-describe("shouldShowResourceMonitorRetry", () => {
-  it("allows retry when the initial telemetry request fails before a snapshot", () => {
-    expect(
-      shouldShowResourceMonitorRetry({
-        nativeStatus: null,
-        error: "Resource monitor is unavailable.",
-      }),
-    ).toBe(true);
-  });
-
-  it("does not show retry for an initial load without an error or a healthy snapshot", () => {
-    expect(shouldShowResourceMonitorRetry({ nativeStatus: null, error: null })).toBe(false);
-    expect(shouldShowResourceMonitorRetry({ nativeStatus: "healthy", error: null })).toBe(false);
-  });
-});
-
-describe("resourceHistoryBarHeight", () => {
-  it("renders an exactly zero sample with no visible bar", () => {
-    expect(resourceHistoryBarHeight({ value: 0, max: 100, minimumVisiblePercent: 2 })).toBe(0);
-  });
-
-  it("keeps nonzero samples visible without changing proportional heights", () => {
-    expect(resourceHistoryBarHeight({ value: 0.5, max: 100, minimumVisiblePercent: 2 })).toBe(2);
-    expect(resourceHistoryBarHeight({ value: 50, max: 100, minimumVisiblePercent: 2 })).toBe(50);
-  });
-});
-
-describe("resourceHistoryCpuScaleMax", () => {
-  it("scales average bars independently of brief peak spikes", () => {
-    const buckets = [
-      { avgCpuPercent: 1, maxCpuPercent: 100 },
-      { avgCpuPercent: 8, maxCpuPercent: 8 },
-    ];
-    expect(resourceHistoryCpuScaleMax(buckets)).toBe(8);
-  });
-});
-
 describe("visibleResourceTelemetryProcesses", () => {
   it("hides descendants by parentage even when rows are not depth-first", () => {
     const processes = [
@@ -85,6 +46,17 @@ describe("visibleResourceTelemetryProcesses", () => {
       processes[0],
       processes[1],
       processes[3],
+    ]);
+  });
+});
+
+describe("formatCpuTime", () => {
+  it("switches units when rounding reaches the next unit", () => {
+    expect([59.94, 59.97, 3_599.7, 3_600].map((seconds) => formatCpuTime(seconds))).toEqual([
+      "59.9s",
+      "1m",
+      "1h",
+      "1h",
     ]);
   });
 });

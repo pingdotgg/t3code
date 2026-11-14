@@ -4,6 +4,11 @@ import UIKit
 enum T3ComposerClipboard {
   static let fragmentType = "app.t3.context-fragment"
 
+  // Pasted thread links become chips in JS; packages/shared/src/threadLinks.ts parses them.
+  static func hasThreadLink(_ text: String) -> Bool {
+    text.contains("t3-thread://v2/") || text.contains("https://app.t3.codes/threads/")
+  }
+
   static func write(text: String, fragment: String) {
     var items: [String: Any] = ["public.utf8-plain-text": text]
     if let data = fragment.data(using: .utf8),
@@ -36,8 +41,6 @@ enum T3ComposerClipboard {
   }
 }
 
-// Expo Modules 2.0: the clipboard function is a @JS member; the view stays in
-// definition() until the 2.0 view API lands.
 @ExpoModule("T3ComposerEditor")
 public class T3ComposerEditorModule: Module {
   // UIPasteboard is main-thread only, so the member is main-actor isolated.
@@ -128,6 +131,9 @@ public class T3ComposerEditorModule: Module {
       }
       AsyncFunction("setSelection") { (view: T3ComposerEditorView, start: Int, end: Int) in
         view.setSelection(start: start, end: end)
+      }
+      AsyncFunction("readState") { (view: T3ComposerEditorView) -> [String: Any] in
+        view.readState()
       }
     }
   }

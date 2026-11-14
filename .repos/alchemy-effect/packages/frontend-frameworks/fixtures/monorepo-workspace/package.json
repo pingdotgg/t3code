@@ -11,9 +11,9 @@
     "pretest": "playwright install chromium"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "catalog:",
     "@alchemy.run/cloudflare-test-tools": "workspace:*",
     "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@cloudflare/workers-types": "catalog:",
     "@playwright/test": "catalog:",
     "effect": "catalog:",
     "vite": "catalog:"

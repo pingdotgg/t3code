@@ -16,7 +16,7 @@ Configure AWS through an [Alchemy profile](/environments/profiles) in a region s
 ## Define the database and network
 
 ```typescript title="src/database.ts"
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 import * as Effect from "effect/Effect";
 
 export const AuthDb = Effect.gen(function* () {
@@ -44,7 +44,7 @@ The Aurora composite creates the cluster, writer, and database-credentials secre
 ```typescript title="src/function.ts"
 import { BetterAuth } from "@alchemy.run/better-auth";
 import { AuroraDataApi } from "@alchemy.run/better-auth/AuroraDataApi";
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import { AuthDb } from "./database.ts";
@@ -73,7 +73,7 @@ The database layer binds cluster and secret identifiers and grants the function 
 
 ```typescript title="alchemy.run.ts"
 import * as Alchemy from "alchemy";
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 import * as Effect from "effect/Effect";
 import AuthApi from "./src/function.ts";
 
