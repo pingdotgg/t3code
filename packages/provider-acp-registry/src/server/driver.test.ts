@@ -304,7 +304,7 @@ describe("acpRegistrySnapshotReadiness", () => {
     });
 
     expect(snapshot.auth).toEqual({ status: "unknown", canLogout: false });
-    expect(snapshot.supportsTextGeneration).toBe(false);
+    expect(snapshot.supportsTextGeneration).toBeUndefined();
     expect(
       snapshot.models.map(({ slug, name, isCustom, isDefault }) => ({
         slug,

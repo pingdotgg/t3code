@@ -71,6 +71,8 @@ export interface ThreadTitleGenerationInput {
   instructions?: string | undefined;
   modelSelection: ModelSelection;
   projectId?: ProjectId | null | undefined;
+  /** The thread's native session on the selected instance; a runner that can fork it reuses its context. */
+  sourceSessionId?: string | undefined;
 }
 
 export interface ThreadTitleGenerationResult {

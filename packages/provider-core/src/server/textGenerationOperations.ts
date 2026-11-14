@@ -32,6 +32,8 @@ export interface Request<S extends Schema.Top> {
   readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
   /** Investigate cwd with read-only tools across turns; fail if the runner cannot guarantee read-only access. */
   readonly investigate?: { readonly timeoutMs: number } | undefined;
+  /** A native session the runner may fork instead of starting cold; runners that cannot fork ignore it. */
+  readonly sourceSessionId?: string | undefined;
 }
 
 const INVESTIGATION_TIMEOUT_MS = 15 * 60_000;
@@ -155,6 +157,7 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
       cwd: input.cwd,
       modelSelection: input.modelSelection,
       attachments: input.attachments,
+      sourceSessionId: input.sourceSessionId,
       ...buildThreadTitlePrompt({
         message: input.message,
         projectTitle: input.projectTitle,
