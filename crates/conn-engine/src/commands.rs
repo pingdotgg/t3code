@@ -32,6 +32,12 @@ pub(crate) enum Effect {
         thread_id: String,
         run_id: String,
     },
+    /// Stop ended the run before the provider accepted its turn: the start still in flight is
+    /// abandoned (T3 cancels `provider-turn.start`). Runs at once, outside the lane.
+    AbandonStart {
+        thread_id: String,
+        run_id: String,
+    },
     /// Stop on a thread whose latest run settled while its background work still runs: the
     /// provider gets `interruptTurn` with `requestRuntimeRestart` for that settled turn.
     StopBackgroundWork {
@@ -80,7 +86,7 @@ impl Effect {
             | Self::CloseSession { thread_id }
             | Self::ApplyModelSelection { thread_id, .. }
             | Self::ThreadClosed { thread_id, .. } => Some(thread_id),
-            Self::GenerateTitle { .. } => None,
+            Self::GenerateTitle { .. } | Self::AbandonStart { .. } => None,
         }
     }
 }
@@ -602,10 +608,9 @@ fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
         tx.append(Draft::new(&c.thread_id, "thread.metadata-updated", thread).command(cid))?;
     }
     if let Some(target) = interrupt {
-        effects.push(Effect::Interrupt {
-            thread_id: c.thread_id.clone(),
-            run_id: target["id"].as_str().unwrap_or_default().to_owned(),
-        });
+        // A run stopped before its provider started also abandons that start, and the
+        // restart's message starts at once (T3's queued command path).
+        effects.extend(stop_run(tx, &c.thread_id, &target, None, false)?);
     } else if !queued {
         effects.push(Effect::StartTurn {
             thread_id: c.thread_id.clone(),
@@ -1112,19 +1117,11 @@ fn run_interrupt(tx: &mut Tx<'_>, command: Value) -> Outcome {
     if c.hold_queue == Some(true) {
         hold_queue(tx, &c.thread_id)?;
     }
-    let live = run.filter(is_active);
-    if let Some(run) = &live {
-        mark_stopped_run(tx, &c.thread_id, run, c.reason.as_deref())?;
-    }
     // Stopping a run that already ended changes nothing, so a retry succeeds.
-    Ok(if live.is_some() {
-        vec![Effect::Interrupt {
-            thread_id: c.thread_id,
-            run_id: c.run_id,
-        }]
-    } else {
-        vec![]
-    })
+    match run.filter(is_active) {
+        Some(run) => Ok(stop_run(tx, &c.thread_id, &run, c.reason.as_deref(), true)?),
+        None => Ok(vec![]),
+    }
 }
 
 #[derive(Deserialize)]
@@ -1147,9 +1144,6 @@ fn thread_stop(tx: &mut Tx<'_>, command: Value) -> Outcome {
     hold_queue(tx, &c.thread_id)?;
     let children = crate::families::stop_children(tx, &c.thread_id)?;
     let active = active_run(tx, &c.thread_id)?;
-    if let Some(run) = &active {
-        mark_stopped_run(tx, &c.thread_id, run, c.reason.as_deref())?;
-    }
     // With no active run, background work that outlives the latest run is the target: the
     // provider alone knows whether work remains (`dispatchThreadStop`).
     let settled = match &active {
@@ -1157,17 +1151,115 @@ fn thread_stop(tx: &mut Tx<'_>, command: Value) -> Outcome {
         None => crate::shell::settled_background_target(tx, &c.thread_id)?
             .and_then(|(run, _)| run["id"].as_str().map(str::to_owned)),
     };
-    let own = active
-        .and_then(|run| run["id"].as_str().map(str::to_owned))
-        .map(|run_id| Effect::Interrupt {
-            thread_id: c.thread_id.clone(),
-            run_id,
-        });
+    let own = match &active {
+        Some(run) => stop_run(tx, &c.thread_id, run, c.reason.as_deref(), true)?,
+        None => vec![],
+    };
     let background = settled.map(|run_id| Effect::StopBackgroundWork {
         thread_id: c.thread_id.clone(),
         run_id,
     });
     Ok(children.into_iter().chain(own).chain(background).collect())
+}
+
+/// Stop for one active run (`dispatchRunInterrupt`). Before the provider accepted the run's
+/// turn, the run ends in this commit and its start is abandoned, as T3's "before provider
+/// start" branch does; what follows a run's end (a parent's wake, the next queued run) is
+/// planned here too. Otherwise the Stop is recorded (with `mark`) and the provider gets
+/// `Interrupt`, which waits in the thread's lane.
+pub(crate) fn stop_run(
+    tx: &mut Tx<'_>,
+    thread_id: &str,
+    run: &Value,
+    reason: Option<&str>,
+    mark: bool,
+) -> StoreResult<Vec<Effect>> {
+    let run_id = run["id"].as_str().unwrap_or_default().to_owned();
+    let unaccepted = matches!(
+        run["status"].as_str(),
+        Some("preparing" | "starting" | "running")
+    ) && !tx.start_accepted(&run_id);
+    if !unaccepted {
+        if mark {
+            mark_stopped_run(tx, thread_id, run, reason)?;
+        }
+        return Ok(vec![Effect::Interrupt {
+            thread_id: thread_id.to_owned(),
+            run_id,
+        }]);
+    }
+    interrupt_before_start(tx, thread_id, run, reason)?;
+    let mut effects = vec![Effect::AbandonStart {
+        thread_id: thread_id.to_owned(),
+        run_id: run_id.clone(),
+    }];
+    effects.extend(crate::families::on_run_end(tx, thread_id, &run_id)?);
+    effects.extend(start_next_queued(tx, thread_id, None)?);
+    Ok(effects)
+}
+
+/// T3's "before provider start" branch of `dispatchRunInterrupt`: the Stop request and its
+/// result ("Run interrupted before provider start"), then the attempt, the root node and the
+/// run end `interrupted`, in that order. Nothing else is settled: no checkpoint is captured
+/// and the provider thread keeps its status, as in T3. Items need the run's provider thread
+/// and root node, as T3's do.
+fn interrupt_before_start(
+    tx: &mut Tx<'_>,
+    thread_id: &str,
+    run: &Value,
+    reason: Option<&str>,
+) -> StoreResult<()> {
+    let run_id = run["id"].as_str().unwrap_or_default().to_owned();
+    let root = run["rootNodeId"].as_str().map(str::to_owned);
+    let now = tx.now().to_owned();
+    let draft = |event_type, payload| {
+        Draft::new(thread_id, event_type, payload)
+            .run(Some(&run_id))
+            .node(root.as_deref())
+    };
+    mark_stopped_run(tx, thread_id, run, reason)?;
+    if let Some(request) = interrupt_request(tx, thread_id, &run_id)? {
+        let result = json!({
+            "id": interrupt_item_id(&run_id, "interrupt-result"),
+            "threadId": thread_id,
+            "runId": run_id,
+            "nodeId": request["nodeId"],
+            "providerThreadId": request["providerThreadId"],
+            "providerTurnId": null,
+            "nativeItemRef": null,
+            "parentItemId": request["id"],
+            "ordinal": request["ordinal"].as_u64().map_or(0, |o| o + 1),
+            "status": "interrupted",
+            "title": "Interrupted",
+            "startedAt": now,
+            "completedAt": now,
+            "updatedAt": now,
+            "type": "run_interrupt_result",
+            "message": "Run interrupted before provider start",
+        });
+        tx.append(draft("turn-item.updated", result))?;
+    }
+    if let Some(attempt_id) = run["activeAttemptId"].as_str()
+        && let Some(mut attempt) = tx.entity(thread_id, "attempts", attempt_id)?
+    {
+        attempt["status"] = json!("interrupted");
+        attempt["completedAt"] = json!(now);
+        tx.append(draft("run-attempt.updated", attempt))?;
+    }
+    if let Some(root) = &root
+        && let Some(mut node) = tx.entity(thread_id, "nodes", root)?
+    {
+        node["status"] = json!("interrupted");
+        node["completedAt"] = json!(now);
+        tx.append(draft("node.updated", node))?;
+    }
+    let mut ended = run.clone();
+    ended["status"] = json!("interrupted");
+    ended["completedAt"] = json!(now);
+    tx.append(draft("run.updated", ended))?;
+    tx.release_turn_item_positions(thread_id)?;
+    tx.abandon_start(&run_id);
+    Ok(())
 }
 
 /// `RunExecutionService.USER_STOP_REASON`: a Stop without a reason came from a person.
@@ -1851,6 +1943,7 @@ pub(crate) fn finish_run_as(
         tx.append(draft("node.updated", node))?;
     }
     settle_provider_thread(tx, thread_id, &run, "idle", idle)?;
+    tx.forget_start(run_id);
     // Positions held text took and never used.
     tx.release_turn_item_positions(thread_id)?;
     Ok(true)

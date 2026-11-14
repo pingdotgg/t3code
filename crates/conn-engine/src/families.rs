@@ -373,10 +373,7 @@ pub(crate) fn stop_children(tx: &mut Tx<'_>, thread_id: &str) -> StoreResult<Vec
             let parent_run = row["runId"].as_str().map(str::to_owned);
             tx.append(Draft::new(thread_id, "subagent.updated", row).run(parent_run.as_deref()))?;
             effects.extend(stop_children(tx, &child)?);
-            effects.push(Effect::Interrupt {
-                thread_id: child,
-                run_id,
-            });
+            effects.extend(commands::stop_run(tx, &child, &run, None, false)?);
         }
     }
     Ok(effects)

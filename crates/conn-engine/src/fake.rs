@@ -160,6 +160,8 @@ struct Turn {
 
 struct FakeSession {
     id: ProviderSessionId,
+    /// The run whose start the engine abandoned (`abandon_turn_start`), and its wake-up.
+    abandoned: Arc<(Mutex<Option<String>>, tokio::sync::Notify)>,
     instance: String,
     driver: String,
     events: mpsc::Sender<ProviderEvent>,
@@ -180,6 +182,25 @@ struct FakeSession {
     fail_rollbacks: Arc<AtomicUsize>,
     control_delay: std::time::Duration,
     close_delay: std::time::Duration,
+}
+
+impl FakeSession {
+    /// Waits `wait`, or until the engine abandons `run_id`'s start. True when abandoned.
+    async fn wait_unless_abandoned(&self, run_id: &str, wait: std::time::Duration) -> bool {
+        let deadline = tokio::time::Instant::now() + wait;
+        loop {
+            let notified = self.abandoned.1.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if crate::lock(&self.abandoned.0).as_deref() == Some(run_id) {
+                return true;
+            }
+            tokio::select! {
+                () = &mut notified => {}
+                () = tokio::time::sleep_until(deadline) => return false,
+            }
+        }
+    }
 }
 
 impl Provider for FakeProvider {
@@ -226,6 +247,7 @@ impl Provider for FakeProvider {
                 background_tasks_end_with_process: true,
                 session: Box::new(FakeSession {
                     id: input.provider_session_id,
+                    abandoned: Arc::default(),
                     instance: self.id.as_str().to_owned(),
                     driver: self.driver().to_owned(),
                     events: tx,
@@ -433,6 +455,42 @@ impl Session for FakeSession {
                     return Err(ProviderError::SessionStopped);
                 }
             }
+            // `coldstart`: a start that takes 500 ms with its provider turn shown at once, as
+            // Claude's cold start. Abandoned, it ends that turn interrupted and fails.
+            if text.starts_with("coldstart") {
+                emit(&self.events, [provider_turn(&turn, "running")]).await;
+                *crate::lock(&self.turn) = Some(turn.clone());
+                let wait = std::time::Duration::from_millis(500);
+                if self.wait_unless_abandoned(&turn.run_id, wait).await {
+                    crate::lock(&self.calls).push(format!("start abandoned {}", turn.run_id));
+                    emit(
+                        &self.events,
+                        [
+                            provider_turn(&turn, "interrupted"),
+                            terminal(&turn, TurnStatus::Interrupted, None),
+                        ],
+                    )
+                    .await;
+                    return Err(ProviderError::Failed {
+                        operation: "start_turn",
+                        detail: "the turn start was abandoned".into(),
+                    });
+                }
+                let done = [
+                    provider_turn(&turn, "completed"),
+                    terminal(&turn, TurnStatus::Completed, None),
+                ];
+                tokio::spawn({
+                    let tx = self.events.clone();
+                    async move { emit(&tx, done).await }
+                });
+                return Ok(());
+            }
+            // `latestart`: a provider that does not abandon: 300 ms, then a turn that runs until
+            // it is stopped (as `hang`).
+            if text.starts_with("latestart") {
+                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            }
             // `write <path> <text>`: writes `<text>\n` to `<path>` in the turn's folder, then
             // answers as any other message.
             if let (Some(rest), Some(cwd)) = (
@@ -456,6 +514,7 @@ impl Session for FakeSession {
             self.stuck.store(text == "stuck", Ordering::SeqCst);
             match text.as_str() {
                 "hang" | "stuck" => {}
+                t if t.starts_with("latestart") => {}
                 "ask" => started.push(event(json!({"type": "runtime_request.updated",
                     "threadId": turn.thread_id, "runtimeRequest": {
                     "id": "request:1", "nodeId": turn.root, "providerTurnId": format!("turn:{}", turn.run_id),
@@ -624,6 +683,14 @@ impl Session for FakeSession {
             };
             emit(&self.events, events).await;
             Ok(())
+        })
+    }
+
+    fn abandon_turn_start(&self, input: conn_provider::AbandonTurnStartInput) -> BoxFuture<'_, ()> {
+        Box::pin(async move {
+            crate::lock(&self.calls).push(format!("abandon {}", input.run_id.as_str()));
+            *crate::lock(&self.abandoned.0) = Some(input.run_id.as_str().to_owned());
+            self.abandoned.1.notify_waiters();
         })
     }
 

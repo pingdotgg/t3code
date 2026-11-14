@@ -3499,3 +3499,328 @@ async fn lane_order_is_reservation_order() {
         ]
     );
 }
+
+// ---- Stop before the provider accepted the turn (T3's "before provider start") ----
+
+fn stop(thread: &str, command: &str) -> Value {
+    json!({"type": "thread.stop", "commandId": command, "threadId": thread})
+}
+
+/// The events of the commit at `seq` and the commits before it down to `after`: `(type,
+/// payload)`.
+async fn events_between(engine: &SqliteEngine, after: u64, through: u64) -> Vec<(String, Value)> {
+    engine
+        .stored_events(after, 10_000)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|e| e["sequence"].as_u64().unwrap_or(0) <= through)
+        .map(|e| {
+            (
+                e["event"]["type"].as_str().unwrap_or_default().to_owned(),
+                e["event"]["payload"].clone(),
+            )
+        })
+        .collect()
+}
+
+fn run_of<'a>(p: &'a Value, id: &str) -> &'a Value {
+    p["runs"]
+        .as_array()
+        .and_then(|runs| runs.iter().find(|r| r["id"] == id))
+        .unwrap_or(&Value::Null)
+}
+
+fn item_of<'a>(p: &'a Value, id: &str) -> &'a Value {
+    p["turnItems"]
+        .as_array()
+        .and_then(|items| items.iter().find(|i| i["id"] == id))
+        .unwrap_or(&Value::Null)
+}
+
+/// Stop while the provider still starts the turn (Claude's cold start: the provider turn shows
+/// at once, the CLI boots for minutes). The run ends in the Stop's own commit, as T3's
+/// `dispatchRunInterrupt` "before provider start": the Stop request, its result, then the
+/// attempt, node and run `interrupted`; no capture, the provider thread untouched. The start is
+/// abandoned (the provider is told at once, not after the start), the queue is held, and the
+/// next send starts cleanly. Before: Stop waited in the lane behind the start (here 500 ms).
+#[tokio::test(flavor = "current_thread")]
+async fn stop_during_a_slow_start_ends_the_run_at_once() {
+    let db = TempDb::new("stop-cold-start");
+    let (engine, provider) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    dispatch(&engine, message("t1", "c2", "hello")).await;
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c3", "coldstart")).await;
+    until_provider_turn(&mut thread).await;
+    dispatch(&engine, message("t1", "c4", "queued")).await;
+    let before = engine.stored_events(0, 100_000).await.unwrap();
+    let after = before.last().and_then(|e| e["sequence"].as_u64()).unwrap();
+    let started = std::time::Instant::now();
+    let seq = dispatch(&engine, stop("t1", "c5")).await;
+    let committed = events_between(&engine, after, seq).await;
+    let types: Vec<_> = committed.iter().map(|(t, _)| t.as_str()).collect();
+    assert_eq!(
+        types,
+        [
+            "run.updated", // the queued run is held
+            "turn-item.updated",
+            "turn-item.updated",
+            "run-attempt.updated",
+            "node.updated",
+            "run.updated",
+        ],
+        "{committed:#?}"
+    );
+    let p = projection(&engine, "t1").await;
+    assert!(started.elapsed() < Duration::from_millis(400), "at once");
+    let run = run_of(&p, "run:t1:2");
+    assert_eq!(run["status"], "interrupted");
+    assert!(run["completedAt"].is_string());
+    let request = item_of(&p, "turn-item:run:t1:2:interrupt-request");
+    let result = item_of(&p, "turn-item:run:t1:2:interrupt-result");
+    assert_eq!(request["message"], "Stopped by user");
+    assert_eq!(request["providerTurnId"], Value::Null);
+    assert_eq!(result["type"], "run_interrupt_result");
+    assert_eq!(result["status"], "interrupted");
+    assert_eq!(result["title"], "Interrupted");
+    assert_eq!(result["message"], "Run interrupted before provider start");
+    assert_eq!(result["parentItemId"], request["id"]);
+    assert_eq!(
+        result["ordinal"].as_u64(),
+        request["ordinal"].as_u64().map(|o| o + 1)
+    );
+    assert_eq!(run_of(&p, "run:t1:3")["status"], "queued");
+    assert_eq!(run_of(&p, "run:t1:3")["queueHeld"], true);
+    // The provider heard of it before its start ended, and got no interrupt.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let calls = crate::lock(&provider.calls).clone();
+    assert!(calls.contains(&"abandon run:t1:2".to_owned()), "{calls:?}");
+    assert!(
+        calls.contains(&"start abandoned run:t1:2".to_owned()),
+        "{calls:?}"
+    );
+    assert!(
+        !calls.iter().any(|c| c == "interrupt run:t1:2"),
+        "{calls:?}"
+    );
+    // The provider's own end of its early turn changes nothing on the run.
+    let p = projection(&engine, "t1").await;
+    assert_eq!(run_of(&p, "run:t1:2")["status"], "interrupted");
+    assert_eq!(
+        p["turnItems"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|i| i["runId"] == "run:t1:2" && i["type"] == "error")
+            .count(),
+        0
+    );
+    // A second Stop changes nothing.
+    let seq2 = dispatch(&engine, stop("t1", "c6")).await;
+    assert!(
+        events_between(&engine, seq, seq2)
+            .await
+            .iter()
+            .all(|(t, _)| t != "turn-item.updated" && t != "run.updated"),
+    );
+    // The next send releases the queue; both run.
+    dispatch(&engine, message("t1", "c7", "after")).await;
+    run_to_end(&engine, "t1", "run:t1:4").await;
+    let p = run_to_end(&engine, "t1", "run:t1:3").await;
+    assert_eq!(run_of(&p, "run:t1:3")["status"], "completed");
+    assert_eq!(run_of(&p, "run:t1:4")["status"], "completed");
+    assert_eq!(
+        crate::lock(&provider.calls)
+            .iter()
+            .filter(|c| c.as_str() == "abandon run:t1:2")
+            .count(),
+        1
+    );
+}
+
+/// Stop while the start still waits in the thread's lane: the run ends at once and the
+/// provider never gets the start (T3 cancels the `provider-turn.start` before it executes).
+#[tokio::test(flavor = "current_thread")]
+async fn stop_before_the_start_runs_never_starts_the_provider() {
+    let db = TempDb::new("stop-lane");
+    let (engine, provider) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    dispatch(&engine, message("t1", "c2", "hello")).await;
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    let inner = engine.inner();
+    let blocker = inner.reserve_effect(crate::commands::Effect::ThreadClosed {
+        thread_id: "t1".into(),
+        reason: crate::ThreadClose::Settled,
+    });
+    dispatch(&engine, message("t1", "c3", "hello again")).await;
+    dispatch(&engine, stop("t1", "c4")).await;
+    let p = projection(&engine, "t1").await;
+    assert_eq!(run_of(&p, "run:t1:2")["status"], "interrupted");
+    assert_eq!(
+        item_of(&p, "turn-item:run:t1:2:interrupt-result")["message"],
+        "Run interrupted before provider start"
+    );
+    blocker.start();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let calls = crate::lock(&provider.calls).clone();
+    assert!(!calls.iter().any(|c| c == "start run:t1:2"), "{calls:?}");
+    assert_eq!(
+        run_of(&projection(&engine, "t1").await, "run:t1:2")["status"],
+        "interrupted"
+    );
+}
+
+/// The race the other way: the provider accepted the turn right after Stop ended the run (a
+/// provider that cannot abandon its start). The engine interrupts the turn it then reports, as
+/// T3 interrupts a provider turn that starts after Stop.
+#[tokio::test(flavor = "current_thread")]
+async fn a_turn_accepted_after_stop_is_interrupted() {
+    let db = TempDb::new("stop-late-accept");
+    let (engine, provider) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    dispatch(&engine, message("t1", "c2", "hello")).await;
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    dispatch(&engine, message("t1", "c3", "latestart")).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    dispatch(&engine, stop("t1", "c4")).await;
+    assert_eq!(
+        run_of(&projection(&engine, "t1").await, "run:t1:2")["status"],
+        "interrupted"
+    );
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let calls = crate::lock(&provider.calls).clone();
+    assert!(calls.contains(&"abandon run:t1:2".to_owned()), "{calls:?}");
+    assert!(
+        calls.contains(&"interrupt run:t1:2".to_owned()),
+        "{calls:?}"
+    );
+    let p = projection(&engine, "t1").await;
+    assert_eq!(run_of(&p, "run:t1:2")["status"], "interrupted");
+    let turns: Vec<_> = p["providerTurns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|t| t["runAttemptId"] == "run:t1:2:attempt:1")
+        .map(|t| t["status"].clone())
+        .collect();
+    assert_eq!(turns, [json!("interrupted")]);
+    // The next send runs.
+    dispatch(&engine, message("t1", "c5", "after")).await;
+    assert_eq!(
+        run_of(&run_to_end(&engine, "t1", "run:t1:3").await, "run:t1:3")["status"],
+        "completed"
+    );
+}
+
+/// A Stop after the provider accepted the turn still takes the normal path: the request
+/// waits for the provider's own end.
+#[tokio::test(flavor = "current_thread")]
+async fn stop_after_the_start_was_accepted_interrupts_the_provider() {
+    let db = TempDb::new("stop-accepted");
+    let (engine, provider) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    until_provider_turn(&mut thread).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    dispatch(&engine, stop("t1", "c3")).await;
+    let p = run_to_end(&engine, "t1", "run:t1:1").await;
+    let result = item_of(&p, "turn-item:run:t1:1:interrupt-result");
+    assert_eq!(result["message"], "Stopped by user");
+    let calls = crate::lock(&provider.calls).clone();
+    assert!(
+        calls.contains(&"interrupt run:t1:1".to_owned()),
+        "{calls:?}"
+    );
+    assert!(!calls.iter().any(|c| c.starts_with("abandon")), "{calls:?}");
+}
+
+/// Force stop during a slow start: T3 dispatches `run.interrupt` with the Force stop reason,
+/// which takes the same branch, then releases the session.
+#[tokio::test(flavor = "current_thread")]
+async fn force_stop_during_a_slow_start_ends_the_run_before_provider_start() {
+    let db = TempDb::new("force-cold-start");
+    let (engine, provider) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    dispatch(&engine, message("t1", "c2", "hello")).await;
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c3", "coldstart")).await;
+    until_provider_turn(&mut thread).await;
+    let stopped = call(
+        &engine,
+        "orchestration.forceStopThread",
+        json!({"threadId": "t1"}),
+    )
+    .await;
+    assert_eq!(
+        stopped,
+        Ok(json!({"outcome": "killed", "sharedWithThreadIds": []}))
+    );
+    let p = projection(&engine, "t1").await;
+    assert_eq!(run_of(&p, "run:t1:2")["status"], "interrupted");
+    assert_eq!(
+        item_of(&p, "turn-item:run:t1:2:interrupt-request")["message"],
+        "Force stopped by user"
+    );
+    assert_eq!(
+        item_of(&p, "turn-item:run:t1:2:interrupt-result")["message"],
+        "Run interrupted before provider start"
+    );
+    assert!(count(&provider.closed) >= 1);
+    dispatch(&engine, message("t1", "c4", "after")).await;
+    assert_eq!(
+        run_of(&run_to_end(&engine, "t1", "run:t1:3").await, "run:t1:3")["status"],
+        "completed"
+    );
+}
+
+/// A model change queued behind the slow start waits for the start to end, and the next turn
+/// uses it; a restart send (`restart_active`) during the start ends the run at once and starts
+/// the new message.
+#[tokio::test(flavor = "current_thread")]
+async fn work_queued_behind_an_abandoned_start_runs_after_it() {
+    let db = TempDb::new("stop-cold-start-queue");
+    let (engine, provider) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    dispatch(&engine, message("t1", "c2", "hello")).await;
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c3", "coldstart")).await;
+    until_provider_turn(&mut thread).await;
+    dispatch(&engine, model_selection_set("c4", "claudeAgent")).await;
+    let mut restart = message("t1", "c5", "restarted");
+    restart["dispatchMode"] = json!({"type": "restart_active", "targetRunId": "run:t1:2"});
+    dispatch(&engine, restart).await;
+    let p = projection(&engine, "t1").await;
+    assert_eq!(run_of(&p, "run:t1:2")["status"], "interrupted");
+    assert_eq!(
+        item_of(&p, "turn-item:run:t1:2:interrupt-result")["message"],
+        "Run interrupted before provider start"
+    );
+    let p = run_to_end(&engine, "t1", "run:t1:3").await;
+    assert_eq!(run_of(&p, "run:t1:3")["status"], "completed");
+    assert_eq!(run_of(&p, "run:t1:3")["modelSelection"]["model"], "m");
+    let calls = crate::lock(&provider.calls).clone();
+    let abandoned = calls.iter().position(|c| c == "start abandoned run:t1:2");
+    let next_start = calls.iter().position(|c| c == "start run:t1:3");
+    assert!(abandoned.is_some() && abandoned < next_start, "{calls:?}");
+}

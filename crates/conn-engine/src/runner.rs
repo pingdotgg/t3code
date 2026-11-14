@@ -157,20 +157,128 @@ fn status_name(status: TurnStatus) -> &'static str {
 
 impl Inner {
     pub(crate) async fn start_turn(self: Arc<Self>, thread_id: String, run_id: String) {
-        match self.try_start_turn(&thread_id, &run_id).await {
-            Ok(()) | Err(StartError::Abandoned) => {}
-            Err(StartError::Failed(message)) => {
-                if let Some(live) = self.live_thread(&thread_id) {
-                    live.take_active();
+        let result = self.try_start_turn(&thread_id, &run_id).await;
+        // One write decides, under the store lock, whether Stop got here first: a Stop that
+        // commits later sees the start accepted and interrupts the provider turn instead.
+        let accepted = result.is_ok();
+        let (tid, rid) = (thread_id.clone(), run_id.clone());
+        let abandoned = self
+            .write(move |tx| {
+                let abandoned = tx.start_abandoned(&rid, true);
+                if accepted && !abandoned {
+                    tx.accept_start(&tid, &rid)?;
                 }
-                self.end_run(
-                    &thread_id,
-                    &run_id,
-                    "failed",
-                    Some(failure("provider_error", &message, None)),
-                )
+                Ok(abandoned)
+            })
+            .await
+            .unwrap_or_else(|e| {
+                eprintln!("conn-engine: could not record a turn start: {e}");
+                false
+            });
+        if abandoned {
+            self.after_abandoned_start(&thread_id, &run_id, accepted)
                 .await;
+            return;
+        }
+        if let Err(StartError::Failed(message)) = result {
+            if let Some(live) = self.live_thread(&thread_id) {
+                live.take_active();
             }
+            self.end_run(
+                &thread_id,
+                &run_id,
+                "failed",
+                Some(failure("provider_error", &message, None)),
+            )
+            .await;
+        }
+    }
+
+    /// `AbandonStart`: Stop ended the run before the provider accepted its turn. The live
+    /// session stops sending the run's events to it and gets `abandon_turn_start`, as T3's
+    /// worker interrupts the running start; the start's own effect cleans up after it.
+    pub(crate) async fn abandon_start(&self, thread_id: &str, run_id: &str) {
+        let Some(live) = self.live_thread(thread_id) else {
+            return;
+        };
+        {
+            let mut state = lock(&live.state);
+            if state.active.as_ref().is_some_and(|a| a.run_id == run_id) {
+                state.active = None;
+            }
+        }
+        live.session
+            .abandon_turn_start(conn_provider::AbandonTurnStartInput {
+                thread_id: thread_id.into(),
+                run_id: run_id.into(),
+            })
+            .await;
+    }
+
+    /// The start of a run Stop ended returned. A turn the provider accepted anyway gets
+    /// `interrupt_turn`, as T3 interrupts a provider turn that starts after Stop
+    /// (`RunExecutionService`, `shouldStartProviderTurn`). The turn observer hears of the end
+    /// when it heard of the start.
+    async fn after_abandoned_start(
+        self: &Arc<Self>,
+        thread_id: &str,
+        run_id: &str,
+        accepted: bool,
+    ) {
+        let live = self.live_thread(thread_id);
+        if let Some(live) = &live {
+            let mut state = lock(&live.state);
+            if state.active.as_ref().is_some_and(|a| a.run_id == run_id) {
+                state.active = None;
+            }
+        }
+        if accepted && let Some(live) = live {
+            let (tid, rid) = (thread_id.to_owned(), run_id.to_owned());
+            let reported = self
+                .db(move |store| -> Result<Option<(Value, Value)>, String> {
+                    let tx = store.tx()?;
+                    let found = (|| {
+                        let Some(run) = tx.entity(&tid, "runs", &rid)? else {
+                            return Ok(None);
+                        };
+                        let turn = tx
+                            .entities(&tid, "providerTurns")?
+                            .into_iter()
+                            .filter(|t| {
+                                t["runAttemptId"] == run["activeAttemptId"]
+                                    && t["status"] == "running"
+                            })
+                            .max_by_key(|t| t["ordinal"].as_u64().unwrap_or(0));
+                        let Some(turn) = turn else { return Ok(None) };
+                        let thread = tx
+                            .entities(&tid, "providerThreads")?
+                            .into_iter()
+                            .find(|pt| pt["id"] == turn["providerThreadId"]);
+                        Ok(thread.map(|pt| (pt, turn)))
+                    })();
+                    tx.rollback();
+                    found
+                })
+                .await
+                .ok()
+                .flatten();
+            if let Some((provider_thread, turn)) = reported
+                && let (Ok(provider_thread), Ok(provider_turn_id)) =
+                    (from_json(provider_thread), from_json(turn["id"].clone()))
+                && let Err(e) = live
+                    .session
+                    .interrupt_turn(InterruptInput {
+                        provider_thread,
+                        provider_turn_id,
+                    })
+                    .await
+            {
+                eprintln!("conn-engine: could not interrupt a turn that started after Stop: {e}");
+            }
+        }
+        if let Some(observer) = &self.observer {
+            self.observe_end(observer.clone(), thread_id.to_owned(), run_id.to_owned())
+                .await;
         }
     }
 
@@ -811,6 +919,15 @@ impl Inner {
             model_selection,
             runtime_policy,
         };
+        // A Stop that ended the run meanwhile abandoned it; the provider never hears of it.
+        let rid = run_id.to_owned();
+        let abandoned = self
+            .db(move |store| store.tx().map(|mut tx| tx.start_abandoned(&rid, false)))
+            .await
+            .unwrap_or(false);
+        if abandoned {
+            return Err(StartError::Abandoned);
+        }
         // A run the provider asked for (`continuation.requested`) is an agent message with
         // `creationSource: provider`; the provider shows the output it holds for it.
         live.session
@@ -1442,12 +1559,16 @@ impl Inner {
         let thread_id = input["threadId"].as_str().unwrap_or_default().to_owned();
         let wanted = input["runId"].as_str().map(str::to_owned);
         let tid = thread_id.clone();
-        let run = self
-            .db(move |store| -> Result<Option<Value>, String> {
+        let (run, accepted) = self
+            .db(move |store| -> Result<(Option<Value>, bool), String> {
                 let tx = store.tx()?;
-                let run = crate::commands::active_run(&tx, &tid);
+                let run = crate::commands::active_run(&tx, &tid)?;
+                let accepted = run
+                    .as_ref()
+                    .and_then(|r| r["id"].as_str())
+                    .is_some_and(|id| tx.start_accepted(id));
                 tx.rollback();
-                run
+                Ok((run, accepted))
             })
             .await
             .map_err(crate::EngineError::Internal)?;
@@ -1467,6 +1588,35 @@ impl Inner {
             && wanted != active
         {
             return Err(error(Some("superseded")));
+        }
+        // Before the provider accepted the turn, T3 dispatches `run.interrupt` with the Force
+        // stop reason, which ends the run "before provider start" and abandons the start; then
+        // the session is released.
+        if let Some(run_id) = &run_id
+            && !accepted
+            && run.as_ref().is_some_and(|r| {
+                matches!(
+                    r["status"].as_str(),
+                    Some("preparing" | "starting" | "running")
+                )
+            })
+        {
+            let command = json!({
+                "type": "run.interrupt",
+                "commandId": format!("server:force-stop:{run_id}:{}", self.clock.now_millis()),
+                "threadId": thread_id,
+                "runId": run_id,
+                "reason": crate::commands::FORCE_STOP_REASON,
+            });
+            if let Err(
+                crate::engine::DispatchError::Rejected(e)
+                | crate::engine::DispatchError::Internal(e),
+            ) = self.dispatch_value(command).await
+            {
+                eprintln!("conn-engine: Force stop could not end the run: {e}");
+            }
+            self.close_session(&thread_id).await;
+            return Ok(json!({"outcome": "killed", "sharedWithThreadIds": []}));
         }
         if let Some(live) = self.live_thread(&thread_id) {
             live.take_active();
