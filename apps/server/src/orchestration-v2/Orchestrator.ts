@@ -6660,12 +6660,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
     if (command.manualContinuationOfRunId !== undefined) {
       const source = projection.runs.find((run) => run.id === command.manualContinuationOfRunId);
-      const limited = latestRootProviderFailure(source ?? null, projection.turnItems);
       if (
         command.dispatchMode.type !== "start_immediately" ||
         source === undefined ||
-        (source.status !== "interrupted" &&
-          !(source.status === "failed" && limited?.class === "usage_limit")) ||
+        (source.status !== "interrupted" && source.status !== "failed") ||
+        (source.status === "failed" &&
+          orchestrationV2WorktreePending(projection.thread.worktreePath, projection.runs)) ||
         latestExecutedRun(projection.runs)?.id !== source.id ||
         projection.thread.archivedAt !== null ||
         projection.thread.deletedAt !== null ||

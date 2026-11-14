@@ -49,7 +49,7 @@ interface ComposerResumeInput {
 }
 
 /**
- * Resumes an interrupted run and/or releases the turns held
+ * Resumes a stopped or failed run and/or releases the turns held
  * in its queue. Shares the per-route send lock with the composer's send paths.
  */
 export function useComposerResume(input: ComposerResumeInput) {
