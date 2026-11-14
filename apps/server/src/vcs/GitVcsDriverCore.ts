@@ -4933,17 +4933,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             )
           : Effect.void,
       ),
-      Effect.onExit((exit) =>
+      Effect.onExit(() =>
         lockReason
-          ? (Exit.isSuccess(exit)
-              ? runGit("GitVcsDriver.createWorktree.unlock", input.cwd, [
-                  "worktree",
-                  "unlock",
-                  "--",
-                  worktreePath,
-                ])
-              : releaseWorktreeRegistration(input.cwd, lockReason, false)
-            ).pipe(
+          ? releaseWorktreeRegistration(input.cwd, lockReason, false).pipe(
               Effect.catch((cause) =>
                 Effect.logWarning("could not unlock a created worktree", { cause }),
               ),

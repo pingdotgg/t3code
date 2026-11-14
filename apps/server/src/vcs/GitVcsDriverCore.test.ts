@@ -559,10 +559,7 @@ it.effect.each([
         const metadataQueries = spawnedArgs.filter((args) => args.includes("--git-common-dir"));
         assert.deepStrictEqual(
           metadataQueries,
-          Array.from({ length: hookExitCode === 0 ? 1 : 2 }, () => [
-            "rev-parse",
-            "--git-common-dir",
-          ]),
+          Array.from({ length: 2 }, () => ["rev-parse", "--git-common-dir"]),
         );
         assert.isFalse(spawnedArgs.some((args) => args.includes("symbolic-ref")));
         invalidationFailure = "none";
@@ -626,7 +623,7 @@ it.effect.each(["branch", "detached", "nested", "aliased-root", "aliased-nested"
           newRefName: "feature/cold",
         });
 
-        assert.equal(spawnedArgs.filter((args) => args.includes("--git-common-dir")).length, 1);
+        assert.equal(spawnedArgs.filter((args) => args.includes("--git-common-dir")).length, 2);
         assert.isFalse(spawnedArgs.some((args) => args.includes("--show-toplevel")));
         assert.isFalse(spawnedArgs.some((args) => args.includes("symbolic-ref")));
         spawnedArgs.length = 0;
@@ -688,7 +685,10 @@ it.effect.each(["bare", "unborn"] as const)(
           assert.equal(result.failure.operation, "GitVcsDriver.createWorktree.createBranch");
           assert.equal(result.failure.detail, "git branch failed");
         }
-        assert.equal(spawnedArgs.filter((args) => args.includes("--git-common-dir")).length, 1);
+        assert.equal(
+          spawnedArgs.filter((args) => args.includes("--git-common-dir")).length,
+          state === "bare" ? 2 : 1,
+        );
         assert.isFalse(spawnedArgs.some((args) => args[0] === "symbolic-ref"));
         spawnedArgs.length = 0;
         const refs = yield* driver.listRefs({ cwd });
@@ -5575,6 +5575,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           yield* Deferred.await(claimed);
           yield* Fiber.interrupt(retry);
           assert.include(yield* worktrees, worktreePath);
+          assert.notInclude(yield* worktrees, "locked");
           assert.equal(yield* git(worktreePath, ["branch", "--show-current"]), "t3/cancel");
         }),
     );
@@ -5635,6 +5636,19 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             `${expected}\n`,
           );
         }
+        yield* writeTextFile(
+          cwd,
+          ".git/hooks/post-checkout",
+          '#!/bin/sh\ngit worktree unlock "$PWD" 2>/dev/null || :\ngit worktree lock --reason user-kept "$PWD"\n',
+        );
+        const lockedPath = path.join(yield* makeTmpDir("git-worktrees-"), "hook-locked");
+        yield* driver.createWorktree({
+          cwd,
+          path: lockedPath,
+          refName: initialBranch,
+          newRefName: "feature/hook-locked",
+        });
+        assert.include(yield* git(cwd, ["worktree", "list", "--porcelain"]), "locked user-kept");
       }),
     );
 
