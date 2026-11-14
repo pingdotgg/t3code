@@ -30,6 +30,7 @@ import {
   type AzureDevOpsItemContent,
   type AzureDevOpsIteration,
   type AzureDevOpsPullRequest,
+  type AzureDevOpsPullRequestBatch,
   type AzureDevOpsRepositoryLocation,
 } from "./azureDevOpsPullRequestJson.ts";
 import type { ProviderListCursor } from "@t3tools/source-control-core/server/PullRequestProvider";
@@ -110,6 +111,11 @@ export type AzureDevOpsPullRequestCliError =
 
 const REST_API_VERSION = "7.1";
 const PULL_REQUEST_LIST_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
+/**
+ * Reviewing drops rows the viewer voted on; bound the reads one listing spends skipping them. The
+ * bound waits for one row, since an empty page gives the list service no cursor to resume from.
+ */
+const PULL_REQUEST_LIST_MAX_READS = 3;
 /** A 2,000-file page exceeds the default 1 MiB output budget. */
 const CHANGE_ENTRIES_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 /** JSON escaping and base64 can exceed the decoded file's size. */
@@ -184,6 +190,7 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
       readonly cwd: string;
       readonly location: AzureDevOpsRepositoryLocation;
       readonly number: number;
+      readonly reviewersById: AzureDevOpsPullRequest["reviewersById"];
     }) => Effect.Effect<ReadonlyArray<PullRequestComment>, AzureDevOpsPullRequestCliError>;
 
     readonly listIterations: (input: {
@@ -268,6 +275,26 @@ function involvementArgs(input: {
     case "all":
       return [];
   }
+}
+
+/** `--reviewer` keeps a pull request after the viewer votes on it; only an unvoted one waits on them. */
+function withoutVotedByViewer(
+  batch: AzureDevOpsPullRequestBatch,
+  viewer: string,
+): AzureDevOpsPullRequestBatch {
+  const login = viewer.toLowerCase();
+  const isViewer = (candidate: string) => candidate.toLowerCase() === login;
+  const kept = batch.items.flatMap((item, index) =>
+    item.reviewers.some((reviewer) => isViewer(reviewer.login)) &&
+    !item.reviewRequestLogins.some(isViewer)
+      ? []
+      : [{ item, rawIndex: batch.rawIndexes[index] ?? 0 }],
+  );
+  return {
+    items: kept.map((entry) => entry.item),
+    rawIndexes: kept.map((entry) => entry.rawIndex),
+    rawCount: batch.rawCount,
+  };
 }
 
 function actionArgs(
@@ -400,6 +427,7 @@ export const make = Effect.gen(function* () {
     readonly limit: number;
     readonly skip: number;
     readonly cursorAdvance: number;
+    readonly reads: number;
     readonly items: ReadonlyArray<AzureDevOpsPullRequest>;
   }): Effect.Effect<
     {
@@ -452,29 +480,37 @@ export const make = Effect.gen(function* () {
             }),
           );
         }
+        const batch =
+          input.involvement === "reviewing"
+            ? withoutVotedByViewer(decoded.success, input.viewer)
+            : decoded.success;
 
-        const lastItemIndex = decoded.success.rawIndexes[remaining - 1];
+        const lastItemIndex = batch.rawIndexes[remaining - 1];
         if (lastItemIndex !== undefined) {
           const consumed = lastItemIndex + 1;
           return Effect.succeed({
-            items: [...input.items, ...decoded.success.items.slice(0, remaining)],
-            truncated: consumed < decoded.success.rawCount || decoded.success.rawCount === top,
+            items: [...input.items, ...batch.items.slice(0, remaining)],
+            truncated: consumed < batch.rawCount || batch.rawCount === top,
             cursorAdvance: input.cursorAdvance + consumed,
           });
         }
 
-        const items = [...input.items, ...decoded.success.items];
-        if (decoded.success.rawCount < top) {
+        const items = [...input.items, ...batch.items];
+        if (
+          batch.rawCount < top ||
+          (items.length > 0 && input.reads + 1 >= PULL_REQUEST_LIST_MAX_READS)
+        ) {
           return Effect.succeed({
             items,
-            truncated: false,
-            cursorAdvance: input.cursorAdvance + decoded.success.rawCount,
+            truncated: batch.rawCount === top,
+            cursorAdvance: input.cursorAdvance + batch.rawCount,
           });
         }
         return listPullRequestPage({
           ...input,
-          skip: input.skip + decoded.success.rawCount,
-          cursorAdvance: input.cursorAdvance + decoded.success.rawCount,
+          skip: input.skip + batch.rawCount,
+          cursorAdvance: input.cursorAdvance + batch.rawCount,
+          reads: input.reads + 1,
           items,
         });
       }),
@@ -546,6 +582,7 @@ export const make = Effect.gen(function* () {
         limit: input.limit,
         skip: input.cursor?.delivered ?? 0,
         cursorAdvance: 0,
+        reads: 0,
         items: [],
       });
     }),
@@ -624,7 +661,7 @@ export const make = Effect.gen(function* () {
         resource: "pullRequestThreads",
         routeParameters: pullRequestRoute(input),
         maxOutputBytes: REVIEW_HISTORY_MAX_OUTPUT_BYTES,
-        decode: decodeThreadsJson,
+        decode: (raw) => decodeThreadsJson(raw, input.reviewersById),
       });
     }),
 
