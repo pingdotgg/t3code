@@ -198,6 +198,7 @@ import {
   mergeComposerDraftContentState,
   migrateLegacyNewTaskDraft,
   modelOptionMemoryAtom,
+  moveComposerDraftAttachments,
   releaseUnusedComposerAttachmentFiles,
   removeComposerDraftsForEnvironment,
   replaceComposerDraftAttachments,
@@ -478,6 +479,32 @@ describe("mobile composer drafts", () => {
       expect(composerAttachmentCleanupMocks.remove).toHaveBeenCalledWith(file.fileUri);
     },
   );
+
+  it("moves question attachments to the end of the thread draft and keeps their files", async () => {
+    const question = "environment:question-thread-request";
+    const file = {
+      type: "file" as const,
+      id: "question-file",
+      name: "notes.txt",
+      mimeType: "text/plain",
+      sizeBytes: 1,
+      fileUri: "file:///documents/t3-composer-attachments/question-file.txt",
+    };
+    setComposerDraftText("thread", "Earlier draft");
+    rememberComposerDraftSelection("thread", "Earlier draft", { start: 0, end: 7 });
+    appendComposerDraftAttachments(question, [file]);
+
+    moveComposerDraftAttachments([question], "thread");
+
+    const thread = getComposerDraftSnapshot("thread");
+    // Appended after the text, not over the remembered selection.
+    expect(thread.text.startsWith("Earlier draft ")).toBe(true);
+    expect(thread.attachments).toEqual([file]);
+    expect(thread.context?.records).toEqual([expect.objectContaining({ attachmentId: file.id })]);
+    expect(getComposerDraftSnapshot(question).attachments).toEqual([]);
+    await releaseUnusedComposerAttachmentFiles([file]);
+    expect(composerAttachmentCleanupMocks.remove).not.toHaveBeenCalledWith(file.fileUri);
+  });
 
   it("retains a pick matching cached state until the live shell confirms it", () => {
     const environmentId = EnvironmentId.make("environment-1");

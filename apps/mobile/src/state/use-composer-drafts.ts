@@ -1441,6 +1441,22 @@ export function appendComposerDraftAttachments(
   return rejected.length;
 }
 
+/** Moves `sourceKeys`' attachments to the end of `draftKey` with their chips, keeping every one. */
+export function moveComposerDraftAttachments(
+  sourceKeys: ReadonlyArray<string>,
+  draftKey: string,
+): void {
+  const attachments = sourceKeys.flatMap((key) => getComposerDraftSnapshot(key).attachments);
+  if (attachments.length === 0) return;
+  const { text } = getComposerDraftSnapshot(draftKey);
+  appendComposerDraftAttachments(draftKey, attachments, {
+    allowOverflow: true,
+    appendReference: true,
+    insertion: { text, start: text.length, end: text.length },
+  });
+  for (const key of sourceKeys) clearComposerDraft(key);
+}
+
 export function replaceComposerDraftAttachments(
   draftKey: string,
   attachments: ReadonlyArray<DraftComposerAttachment>,
