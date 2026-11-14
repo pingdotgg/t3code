@@ -25,7 +25,12 @@ import { vi } from "vite-plus/test";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof NodeFSP>();
-  return { ...actual, realpath: vi.fn(actual.realpath), open: vi.fn(actual.open) };
+  return {
+    ...actual,
+    realpath: vi.fn(actual.realpath),
+    open: vi.fn(actual.open),
+    writeFile: vi.fn(actual.writeFile),
+  };
 });
 
 const injectShortReads = Effect.fn("injectShortReads")(function* (target: string) {
@@ -572,6 +577,78 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
   });
 
   describe("writeFile", () => {
+    it.effect.each([
+      { existing: false, failure: "write" },
+      { existing: true, failure: "write" },
+      { existing: false, failure: "rename" },
+      { existing: true, failure: "rename" },
+      { existing: true, failure: "cleanup" },
+      { existing: true, failure: "directory" },
+    ])(
+      "handles $failure failure without losing destination contents (existing: $existing)",
+      ({ existing, failure }) =>
+        Effect.gen(function* () {
+          const service = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const cwd = yield* makeTempDir;
+          const target = path.join(yield* fs.realPath(cwd), "report.md");
+          const original = "original contents\n";
+          if (existing) yield* writeTextFile(cwd, "report.md", original);
+          const native = yield* Effect.promise(() =>
+            vi.importActual<typeof NodeFSP>("node:fs/promises"),
+          );
+          const cause = Object.assign(new Error("Save failed"), {
+            code: failure === "write" ? "EFBIG" : "EACCES",
+          });
+          using _write = vi
+            .spyOn(NodeFSP, "writeFile")
+            .mockImplementation(async (file, data, options) => {
+              if (failure !== "write") return native.writeFile(file, data, options);
+              await native.writeFile(file, String(data).slice(0, 4), options);
+              throw cause;
+            });
+          using _rename = vi.spyOn(NodeFSP, "rename").mockImplementation(async (...args) => {
+            if (failure === "rename") throw cause;
+            return native.rename(...args);
+          });
+          using _cleanup = vi.spyOn(NodeFSP, "rm").mockImplementation(async (...args) => {
+            if (failure === "cleanup") throw cause;
+            return native.rm(...args);
+          });
+          using _directory = vi.spyOn(NodeFSP, "mkdtemp").mockImplementation(async (...args) => {
+            if (failure === "directory") throw cause;
+            return native.mkdtemp(...args);
+          });
+
+          if (failure === "cleanup") {
+            expect(
+              yield* service.writeFile({
+                cwd,
+                relativePath: "report.md",
+                contents: "replacement\n",
+              }),
+            ).toEqual({ relativePath: "report.md" });
+            expect(yield* fs.readFileString(target)).toBe("replacement\n");
+            return;
+          }
+
+          const error = yield* service
+            .writeFile({ cwd, relativePath: "report.md", contents: "replacement contents\n" })
+            .pipe(Effect.flip);
+
+          expect(error).toMatchObject({
+            _tag: "WorkspaceFileSystemOperationError",
+            operation: "write-file",
+            operationPath: target,
+            cause,
+          });
+          if (existing) expect(yield* fs.readFileString(target)).toBe(original);
+          else expect(yield* fs.exists(target)).toBe(false);
+          expect(yield* fs.readDirectory(cwd)).toEqual(existing ? ["report.md"] : []);
+        }),
+    );
+
     it.effect("rejects writes outside a known workspace", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -638,6 +715,8 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         const path = yield* Path.Path;
         const cwd = yield* makeTempDir;
         yield* writeTextFile(cwd, "src/main.ts", "export {};\n");
+        const target = path.join(cwd, "src/main.ts");
+        if (HostProcess.Platform.defaultValue() !== "win32") yield* fileSystem.chmod(target, 0o750);
 
         yield* workspaceFileSystem.writeFile({
           cwd,
@@ -648,6 +727,9 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         expect(yield* fileSystem.readFileString(path.join(cwd, "src/main.ts"))).toBe(
           "export const edited = true;\n",
         );
+        if (HostProcess.Platform.defaultValue() !== "win32") {
+          expect((yield* fileSystem.stat(target)).mode & 0o777).toBe(0o750);
+        }
 
         yield* writeTextFile(cwd, "report.txt", "ordinary file");
         for (const relativePath of whitespaceFilePaths) {
