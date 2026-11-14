@@ -17,7 +17,6 @@ import {
   type ScheduledTask,
   type ScheduledTaskUpsertInput,
   ScheduledTaskId,
-  scheduledTaskThreadMode,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -3426,7 +3425,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                 const merged = {
                   ...task,
                   workspaceStrategy: input.workspaceStrategy ?? task.workspaceStrategy,
-                  threadMode: input.threadMode ?? scheduledTaskThreadMode(task),
+                  threadMode: input.threadMode,
                 };
                 return Ref.update(saved, (strategies) => [
                   ...strategies,
@@ -3578,17 +3577,23 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
     );
 
-    it.effect("keeps the saved workspace when an unbound task stays unbound", () =>
+    it.effect("keeps the saved workspace and session mode when an unbound task stays unbound", () =>
       Effect.gen(function* () {
         const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]);
+        const inputs = yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput>>([]);
         const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
-          Effect.provide(service(masterRepository, saved)),
+          Effect.provide(service(masterRepository, saved, existing, inputs)),
         );
         yield* mcp.updateScheduledTask(client, {
           scheduledTaskId: existing.id,
           bindToCurrentThread: false,
         });
         assert.deepEqual(yield* Ref.get(saved), [{ type: "root" }]);
+        // An unchanged mode is left to the server, so a change committed since the load survives.
+        assert.deepEqual(
+          (yield* Ref.get(inputs)).map((input) => input.threadMode),
+          [undefined],
+        );
       }),
     );
 

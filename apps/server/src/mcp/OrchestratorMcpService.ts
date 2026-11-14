@@ -2262,6 +2262,16 @@ const make = Effect.gen(function* () {
               ? parent.thread.id
               : null;
         const storedThreadMode = scheduledTaskThreadMode(existing);
+        const threadMode =
+          input.freshSession === undefined && input.bindToCurrentThread === undefined
+            ? storedThreadMode
+            : (input.freshSession ??
+                (input.bindToCurrentThread !== false && storedThreadMode === "fresh_session"))
+              ? "fresh_session"
+              : threadId === null &&
+                  (input.bindToCurrentThread === false || storedThreadMode === "new_thread")
+                ? "new_thread"
+                : "continue";
         const updated = yield* scheduledTasks
           .update({
             id: existing.id,
@@ -2285,18 +2295,8 @@ const make = Effect.gen(function* () {
                     existing.projectId,
                   ),
                 }),
-            ...(input.freshSession === undefined && input.bindToCurrentThread === undefined
-              ? {}
-              : {
-                  threadMode:
-                    (input.freshSession ??
-                    (input.bindToCurrentThread !== false && storedThreadMode === "fresh_session"))
-                      ? "fresh_session"
-                      : threadId === null &&
-                          (input.bindToCurrentThread === false || storedThreadMode === "new_thread")
-                        ? "new_thread"
-                        : "continue",
-                }),
+            // Resending the loaded mode would undo a mode change committed since the load.
+            ...(threadMode === storedThreadMode ? {} : { threadMode }),
           })
           .pipe(
             Effect.provideService(DispatchModeLimit, limits),
