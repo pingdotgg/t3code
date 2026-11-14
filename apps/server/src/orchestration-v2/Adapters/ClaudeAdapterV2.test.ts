@@ -4896,7 +4896,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       turn: Effect.Success<ReturnType<typeof openPlanTurn>>,
       toolName: string,
       toolInput: Record<string, unknown>,
-      options?: { toolUseID: string; agentID?: string },
+      options?: { toolUseID: string; agentID?: string; decisionReasonType?: "mode" | "hook" },
     ) {
       const decision = yield* Effect.promise(() =>
         turn.canUseTool(toolName, toolInput, {
@@ -4904,6 +4904,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           toolUseID: options?.toolUseID ?? "tool-plan-write",
           requestId: "request-plan-write",
           ...(options?.agentID === undefined ? {} : { agentID: options.agentID }),
+          ...(options?.decisionReasonType === undefined
+            ? {}
+            : { decisionReasonType: options.decisionReasonType }),
         }),
       ).pipe(Effect.forkScoped);
       const first = yield* Effect.raceFirst(
@@ -4965,6 +4968,55 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             ),
           ),
         ),
+    );
+
+    // regression: #23918 the CLI asks again in Plan despite the session rule it was given
+    it.effect("does not ask again for an MCP tool approved for the session in Plan", () =>
+      Effect.gen(function* () {
+        const turn = yield* openPlanTurn("full-access");
+        const toolName = "mcp__t3-code__t3_thread_read";
+        const first = yield* requestWrite(
+          turn,
+          toolName,
+          { threadId: "thread-a", afterPosition: -1 },
+          { toolUseID: "read-page-1", decisionReasonType: "mode" },
+        );
+        assert.equal(first.first.type, "request");
+        if (first.first.type !== "request") return;
+        yield* turn.runtime.respondToRuntimeRequest({
+          requestId: first.first.event.runtimeRequest.id,
+          decision: "acceptForSession",
+        });
+        assert.equal((yield* Fiber.join(first.decision))?.behavior, "allow");
+
+        const second = yield* requestWrite(
+          turn,
+          toolName,
+          { threadId: "thread-a", afterPosition: 1 },
+          { toolUseID: "read-page-2", decisionReasonType: "mode" },
+        );
+        assert.equal(second.first.type, "decision", "the session approval asked again");
+        if (second.first.type !== "decision") return;
+        assert.equal(second.first.result?.behavior, "allow");
+
+        const hooked = yield* requestWrite(
+          turn,
+          toolName,
+          { threadId: "thread-a", afterPosition: 3 },
+          { toolUseID: "read-page-3", decisionReasonType: "hook" },
+        );
+        assert.equal(hooked.first.type, "request", "a hook's ask was answered from the grant");
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
     );
 
     it.effect("denies Plan writes without asking when approvals are never allowed", () =>
