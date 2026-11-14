@@ -500,7 +500,11 @@ it.effect("tries another checkout when provider refinement remains unknown", () 
 );
 
 function batchedChangeRequest(number: number, repository: string, updatedAt: string) {
-  return { ...changeRequest(number, updatedAt), repository };
+  return {
+    ...changeRequest(number, updatedAt),
+    repository,
+    url: `https://github.com/${repository}/pull/${number}`,
+  };
 }
 
 it.effect("reads nothing from a host with no implementation, but reports it", () =>
@@ -593,6 +597,70 @@ it.effect("reads nothing from a host its provider does not serve, but reports it
         },
       ],
     );
+  }),
+);
+
+it.effect("lists renamed repository PRs once without losing other repositories or cursors", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "current",
+          title: "current",
+          workspaceRoot: "/a",
+          repository: "wrymn/Hellforged",
+        }),
+        project({ id: "old", title: "old", workspaceRoot: "/b", repository: "wrymn/Solus" }),
+        project({ id: "other", title: "other", workspaceRoot: "/c", repository: "acme/other" }),
+        project({
+          id: "enterprise",
+          title: "enterprise",
+          workspaceRoot: "/d",
+          repository: "wrymn/Hellforged",
+          host: "github.example.com",
+        }),
+      ],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          listChangeRequests: ({ repository, host, cursor }) => {
+            const number = cursor === undefined ? 137 : 136;
+            const canonical = repository === "wrymn/Solus" ? "wrymn/Hellforged" : repository;
+            return Effect.succeed({
+              items: [
+                {
+                  ...changeRequest(number, `2026-07-0${cursor === undefined ? 2 : 1}T00:00:00Z`),
+                  url: `https://${host}/${canonical}/pull/${number}`,
+                },
+              ],
+              truncated: cursor === undefined,
+              continues: true,
+            });
+          },
+        }),
+      ],
+    });
+
+    const first = yield* service.list({ state: "open" });
+    assert.deepStrictEqual(
+      first.entries.map(({ url }) => url),
+      [
+        "https://github.com/wrymn/Hellforged/pull/137",
+        "https://github.com/acme/other/pull/137",
+        "https://github.example.com/wrymn/Hellforged/pull/137",
+      ],
+    );
+    assert.strictEqual(Object.keys(first.nextCursors).length, 4);
+
+    const next = yield* service.list({ state: "open", cursors: first.nextCursors });
+    assert.deepStrictEqual(
+      next.entries.map(({ url }) => url),
+      [
+        "https://github.com/wrymn/Hellforged/pull/136",
+        "https://github.com/acme/other/pull/136",
+        "https://github.example.com/wrymn/Hellforged/pull/136",
+      ],
+    );
+    assert.deepStrictEqual(next.nextCursors, {});
   }),
 );
 
@@ -1292,9 +1360,9 @@ it.effect("tries another workspace on the same host for the viewer", () =>
             input.cwd === "/healthy"
               ? Effect.succeed("bilal")
               : Effect.fail(unusable(SourceControlProviderKind.make("github"), "missing-tool")),
-          listChangeRequests: () =>
+          listChangeRequests: ({ repository }) =>
             Effect.succeed({
-              items: [changeRequest(1, "2026-07-02T00:00:00Z")],
+              items: [batchedChangeRequest(1, repository, "2026-07-02T00:00:00Z")],
               truncated: false,
               continues: true,
             }),
@@ -1804,9 +1872,14 @@ it.effect("keeps two hosts of one provider kind as two accounts", () =>
       providers: [
         fakePullRequestProvider(SourceControlProviderKind.make("github"), {
           getViewer: (input) => Effect.succeed(viewerFor[input.cwd] ?? "unknown"),
-          listChangeRequests: () =>
+          listChangeRequests: ({ host, repository }) =>
             Effect.succeed({
-              items: [changeRequest(1, "2026-07-02T00:00:00Z")],
+              items: [
+                {
+                  ...changeRequest(1, "2026-07-02T00:00:00Z"),
+                  url: `https://${host}/${repository}/pull/1`,
+                },
+              ],
               truncated: false,
               continues: true,
             }),

@@ -37,6 +37,7 @@ import {
   pullRequestOverrideAfterAction,
   reusePullRequestEntries,
   settlePullRequestOverrides,
+  unlistedPullRequestEntries,
 } from "./pullRequestList.logic";
 import { pullRequestGroups } from "./pullRequestListGroups.logic";
 import {
@@ -367,6 +368,14 @@ describe("partitioning with the hosts' own priority reads", () => {
     expect(groups.map((group) => group.key)).toEqual(["authored", "others"]);
     expect(groups[1]!.entries.map((item) => item.number)).toEqual([2, 1]);
     expect(groups[0]!.entries.map((item) => item.number)).toEqual([3]);
+
+    // The feed can list an authored pull request under its repository's other name.
+    const alias = { ...mine, repository: "pingdotgg/old-name" };
+    const aliased = partitionPullRequestsWithPriority([newer, alias], [mine], []);
+    expect(aliased.map((group) => [group.key, group.entries.length])).toEqual([
+      ["authored", 1],
+      ["others", 1],
+    ]);
   });
 
   it("gives authored precedence over review-requested and orders partitions by recency", () => {
@@ -422,6 +431,19 @@ describe("remembered pull request list controls", () => {
 
 const ENV_1 = "env-1" as EnvironmentId;
 const ENV_2 = "env-2" as EnvironmentId;
+
+describe("continuing a listing", () => {
+  it("appends new pull requests but not one already listed under a repository's other name", () => {
+    const listed = entry({ number: 1, repository: "pingdotgg/old-name" });
+    const alias = entry({ number: 1 });
+    const otherEnvironment = entry({ number: 1, environmentId: ENV_2 });
+    const fresh = entry({ number: 2 });
+    expect(unlistedPullRequestEntries([listed], [alias, otherEnvironment, fresh])).toEqual([
+      otherEnvironment,
+      fresh,
+    ]);
+  });
+});
 
 describe("merging the environments' own listings", () => {
   const answer = (

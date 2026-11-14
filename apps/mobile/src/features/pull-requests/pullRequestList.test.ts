@@ -120,8 +120,18 @@ describe("mobile PR list pagination", () => {
       mergePullRequestListEntries([current], [entry(2, { observedAt: 10 }), entry(1)]),
     ).toEqual([current, entry(1)]);
     expect(
-      mergePullRequestListEntries([entry(1)], [entry(2, { host: "enterprise.test" }), entry(2)]),
+      mergePullRequestListEntries(
+        [entry(1)],
+        [
+          entry(2, { host: "enterprise.test", url: "https://enterprise.test/org/repo/pull/2" }),
+          entry(2),
+        ],
+      ),
     ).toHaveLength(3);
+    // A renamed repository's old name and new name list the same pull request on different pages.
+    expect(
+      mergePullRequestListEntries([entry(3, { repository: "org/old-name" })], [entry(3)]),
+    ).toHaveLength(1);
   });
   it("patches a row that only the list head supplies, and keeps it while that head is current", () => {
     const head = page([entry(2), entry(1)], { repo: "first" });
@@ -159,7 +169,11 @@ describe("all-environment PR list", () => {
   const mbp = EnvironmentId.make("mbp");
   it("combines independent pages, collapses duplicate PRs, and keeps their source for navigation", () => {
     const first = pullRequestListHead(null, page([entry(3), entry(1)], { repo: "cups-next" }));
-    const second = pullRequestListHead(null, page([entry(2), entry(1)], { repo: "mbp-next" }));
+    // The second environment reaches pull request 1 through the repository's old name.
+    const second = pullRequestListHead(
+      null,
+      page([entry(2), entry(1, { repository: "org/old-name" })], { repo: "mbp-next" }),
+    );
     const merged = mergeEnvironmentPullRequestPages([
       { environmentId: cups, pages: first },
       { environmentId: mbp, pages: second },

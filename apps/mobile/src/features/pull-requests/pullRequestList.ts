@@ -238,8 +238,11 @@ export function mergePullRequestListEntries(
   incoming: readonly PullRequestListEntry[],
 ) {
   const entries = new Map(previous.map((entry) => [pullRequestListKey(entry), entry]));
+  // A renamed repository's aliases can list one pull request under each name.
+  const keysByUrl = new Map(previous.map((entry) => [entry.url, pullRequestListKey(entry)]));
   for (const entry of incoming) {
-    const key = pullRequestListKey(entry);
+    const key = keysByUrl.get(entry.url) ?? pullRequestListKey(entry);
+    keysByUrl.set(entry.url, key);
     const held = entries.get(key);
     if (!held || (entry.observedAt ?? 0) >= (held.observedAt ?? 0)) entries.set(key, entry);
   }
@@ -450,7 +453,8 @@ export function filterPullRequestList<
     (entry.environmentId !== undefined && connectedEnvironmentIds.has(entry.environmentId));
   const unique = new Map<string, Entry>();
   for (const entry of filtered) {
-    const key = pullRequestListKey(entry);
+    // By URL: a renamed repository's aliases list one pull request under each name.
+    const key = entry.url;
     const held = unique.get(key);
     if (!held || (!reachable(held) && reachable(entry))) unique.set(key, entry);
   }

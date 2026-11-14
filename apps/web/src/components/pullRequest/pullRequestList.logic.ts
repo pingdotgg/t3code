@@ -302,6 +302,21 @@ export function pullRequestEntryKey(entry: ScopedEntry): string {
   return `${scope}${entry.host}:${entry.repository}#${entry.number}`;
 }
 
+/** Identifies a pull request across a renamed repository's aliases, which list it under each name. */
+const pullRequestUrlKey = (entry: ScopedEntry) => `${entry.environmentId ?? ""} ${entry.url}`;
+
+/** A continuation page's rows that are not listed yet. */
+export function unlistedPullRequestEntries<T extends ScopedEntry>(
+  held: readonly T[],
+  arrived: readonly T[],
+): T[] {
+  const keys = new Set(held.map(pullRequestEntryKey));
+  const urls = new Set(held.map(pullRequestUrlKey));
+  return arrived.filter(
+    (entry) => !keys.has(pullRequestEntryKey(entry)) && !urls.has(pullRequestUrlKey(entry)),
+  );
+}
+
 export interface PullRequestStatsTarget {
   readonly environmentId: EnvironmentId;
   readonly input: {
@@ -453,16 +468,16 @@ export function partitionPullRequestsWithPriority<Entry extends PullRequestListE
   authored: ReadonlyArray<Entry>,
   reviewRequested: ReadonlyArray<Entry>,
 ): ReadonlyArray<PullRequestGroup<Entry>> {
-  const authoredByKey = new Map(authored.map((entry) => [pullRequestEntryKey(entry), entry]));
+  const authoredByKey = new Map(authored.map((entry) => [pullRequestUrlKey(entry), entry]));
   const reviewByKey = new Map(
     reviewRequested.flatMap((entry) => {
-      const key = pullRequestEntryKey(entry);
+      const key = pullRequestUrlKey(entry);
       return authoredByKey.has(key) ? [] : [[key, entry] as const];
     }),
   );
   const others: Entry[] = [];
   for (const entry of entries) {
-    const key = pullRequestEntryKey(entry);
+    const key = pullRequestUrlKey(entry);
     if (authoredByKey.has(key)) {
       authoredByKey.set(key, entry);
     } else if (reviewByKey.has(key)) {

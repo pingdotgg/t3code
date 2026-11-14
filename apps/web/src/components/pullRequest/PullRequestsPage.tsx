@@ -29,6 +29,7 @@ import {
   mergePullRequestDiffStats,
   pullRequestDiffStatKey,
   pullRequestEntryKey,
+  unlistedPullRequestEntries,
   rankPullRequestMatches,
   pullRequestStatsRefreshBatches,
   pullRequestStatsRequestBatches,
@@ -588,8 +589,7 @@ export function PullRequestsPage() {
         entries: rankPullRequestMatches(answered.entries, sentParsed.text),
       });
     } else if (sentCursors !== null) {
-      const held = new Set(ordered.entries.map(pullRequestEntryKey));
-      const arrived = answered.entries.filter((entry) => !held.has(pullRequestEntryKey(entry)));
+      const arrived = unlistedPullRequestEntries(ordered.entries, answered.entries);
       const appended = rankPullRequestMatches(
         arrived.toSorted(comparePullRequestsByRecency),
         sentParsed.text,
