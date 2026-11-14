@@ -41,12 +41,12 @@ interface XmlNode {
   hasTextChoice?: boolean;
 }
 
-function xml(source: string, odfSpaces = false, htmlEntities = false): XmlNode {
+function xml(source: string, extension: string): XmlNode {
   const root: XmlNode = { name: "root", attrs: {}, children: [] };
   const stack = [root];
   let nodes = 0;
   const parser = new SaxesParser();
-  if (htmlEntities) Object.assign(parser.ENTITIES, characterEntities);
+  if (extension === ".epub") Object.assign(parser.ENTITIES, characterEntities);
   parser.on("opentag", (tag) => {
     if (++nodes > 200_000 || stack.length > 128) throw new Truncation("XML structure limit");
     const node: XmlNode = {
@@ -59,20 +59,25 @@ function xml(source: string, odfSpaces = false, htmlEntities = false): XmlNode {
       ),
       children: [],
     };
-    if (odfSpaces && node.name === "s") node.spaceCount = repeatCount(node.attrs.c);
+    if ([".odt", ".ods", ".odp"].includes(extension) && node.name === "s")
+      node.spaceCount = repeatCount(node.attrs.c);
     stack.at(-1)!.children.push(node);
     stack.push(node);
   });
   parser.on("closetag", () => {
     const node = stack.pop()!;
     const parent = stack.at(-1)!;
+    if (extension === ".docx" && node.name === "del") {
+      parent.children.pop();
+      return;
+    }
     // Markup-compatibility fallbacks repeat their mc:Choice content, e.g. Word text boxes.
     // Keep one when no Choice carries text, such as a chart with a VML caption.
     if (node.name === "Fallback" && parent.hasTextChoice) {
       parent.children.pop();
       return;
     }
-    if (!node.hasText) return;
+    if (!node.hasText && node.name !== "noBreakHyphen") return;
     parent.hasText = true;
     if (node.name === "Choice") parent.hasTextChoice = true;
   });
@@ -99,6 +104,7 @@ function* text(node: XmlNode): Generator<string, void> {
   if (HIDDEN.has(node.name)) return;
   if (["tab", "cell"].includes(node.name)) yield "\t";
   else if (["br", "line-break", "cr"].includes(node.name)) yield "\n";
+  else if (node.name === "noBreakHyphen") yield "\u2011";
   else if (node.spaceCount !== undefined) {
     yield " ".repeat(Math.min(MAX_OUTPUT, node.spaceCount));
     if (node.spaceCount > MAX_OUTPUT) throw new Truncation("Space repeat limit");
@@ -164,7 +170,7 @@ function odfValue(cell: XmlNode): string {
   }
 }
 function hasCellText(cell: XmlNode): boolean {
-  if (odfValue(cell).trim()) return true;
+  if (odfValue(cell).trim() || cell.name === "noBreakHyphen") return true;
   // Space markers can have enormous repeat counts; emptiness never requires expanding them.
   if (HIDDEN.has(cell.name) || cell.spaceCount !== undefined) return false;
   return cell.children.some((child) =>
@@ -441,7 +447,7 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
       try {
         const data = files.get(name);
         if (!data) throw new Error("Missing document part");
-        return xml(data, [".odt", ".ods", ".odp"].includes(extension), extension === ".epub");
+        return xml(data, extension);
       } catch (error) {
         if (error instanceof Truncation) throw error;
         skip(name);
