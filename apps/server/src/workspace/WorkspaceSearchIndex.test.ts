@@ -718,129 +718,105 @@ it.effect("finds symlinks in folders past the first page of the index", () =>
   ).pipe(Effect.provide(testLayer)),
 );
 
-it.effect.each([false, true])(
-  "resumes empty budget pages without losing results (hasMatch: %s)",
-  (hasMatch) =>
+function grepMatch(relativePath: string, lineContent: string): GrepResult["items"][number] {
+  return {
+    ...fileItem(relativePath),
+    isBinary: false,
+    lineNumber: 1,
+    col: 0,
+    byteOffset: 0,
+    lineContent,
+    matchRanges: [[0, lineContent.length]],
+  };
+}
+
+function contentFinder(grepAsync: (query: string, options?: GrepOptions) => Promise<unknown>) {
+  const finder = {
+    destroy: vi.fn(),
+    waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
+    getScanProgressAsync: async () => ({ ok: true as const, value: { isScanning: false, isWarmupComplete: true } }),
+    watchAsync: async () => ({ ok: true as const, value: () => undefined }),
+    grepAsync,
+  } as unknown as FileFinder;
+  vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
+}
+
+it.effect("pages past empty time-budget pages to a late match", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const clock = vi.spyOn(performance, "now").mockReturnValue(0);
+      const cursors = [1, 2].map(
+        (offset) => ({ __brand: "GrepCursor", _offset: offset }) as GrepCursor,
+      );
+      const grep = vi.fn(async (_query: string, options?: GrepOptions) => {
+        const page = options?.cursor ? cursors.indexOf(options.cursor) + 1 : 0;
+        // Each page outlasts any overall deadline; paging must still reach the end.
+        clock.mockReturnValue((page + 1) * 1_000);
+        const items = page === 2 ? [grepMatch("src/late.ts", "needle")] : [];
+        const value: GrepResult = {
+          items,
+          totalMatched: items.length,
+          totalFilesSearched: 1,
+          totalFiles: 3,
+          filteredFileCount: 3,
+          nextCursor: cursors[page] ?? null,
+        };
+        return { ok: true as const, value };
+      });
+      contentFinder(grep);
+
+      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project", "content");
+      const result = yield* searchIndex.searchContents({
+        query: "needle",
+        limit: 10,
+        caseSensitive: true,
+        wholeWord: false,
+        useRegex: false,
+      });
+
+      expect(result.matches.map((match) => match.path)).toEqual(["src/late.ts"]);
+      expect(result.truncated).toBe(false);
+      expect(grep.mock.calls.map(([, options]) => options?.enforceTimeBudget)).toEqual([
+        true,
+        true,
+        true,
+      ]);
+    }),
+  ).pipe(Effect.provide(testLayer)),
+);
+
+it.effect.each([0, 1])(
+  "reruns an empty enforced fallback page whose constraint matched %i files",
+  (constrainedFileCount) =>
     Effect.scoped(
       Effect.gen(function* () {
-        const clock = vi.spyOn(performance, "now").mockReturnValue(0);
-        const cursors = [1, 2].map(
-          (offset) =>
-            ({
-              __brand: "GrepCursor",
-              _offset: offset,
-            }) as GrepCursor,
-        );
-        let eventLoopServiced = false;
-        let eventLoopTask: NodeJS.Immediate | undefined;
-        yield* Effect.addFinalizer(() =>
-          Effect.sync(() => {
-            if (eventLoopTask) clearImmediate(eventLoopTask);
-          }),
-        );
-        const grep = vi.fn((_query: string, options?: GrepOptions) => {
-          const page = options?.cursor ? cursors.indexOf(options.cursor) + 1 : 0;
-          if (page === 0) {
-            clock.mockReturnValue(1_000);
-            eventLoopTask = setImmediate(() => {
-              eventLoopServiced = true;
-            });
-          } else {
-            expect(eventLoopServiced).toBe(true);
-          }
-          expect(options?.enforceTimeBudget).toBe(true);
+        const grep = vi.fn(async (_query: string, options?: GrepOptions) => {
+          const fellBack = options?.enforceTimeBudget === false;
+          const items = fellBack ? [grepMatch("zzzz.txt", "*.ts needle")] : [];
           const value: GrepResult = {
-            items:
-              page === 2 && hasMatch
-                ? [
-                    {
-                      ...fileItem("src/late.ts"),
-                      isBinary: false,
-                      lineNumber: 1,
-                      col: 0,
-                      byteOffset: 0,
-                      lineContent: "needle",
-                      matchRanges: [[0, 6]],
-                    },
-                  ]
-                : [],
-            totalMatched: page === 2 && hasMatch ? 1 : 0,
-            totalFilesSearched: 1,
+            items,
+            totalMatched: items.length,
+            totalFilesSearched: fellBack ? 3 : constrainedFileCount,
             totalFiles: 3,
-            filteredFileCount: 3,
-            nextCursor: cursors[page] ?? null,
+            filteredFileCount: fellBack ? 3 : constrainedFileCount,
+            nextCursor: null,
           };
           return { ok: true as const, value };
         });
-        const finder = {
-          destroy: vi.fn(),
-          waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
-          grep,
-        } as unknown as FileFinder;
-        vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
+        contentFinder(grep);
 
         const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project", "content");
         const result = yield* searchIndex.searchContents({
-          query: "needle",
+          query: "*.ts needle",
           limit: 10,
           caseSensitive: true,
           wholeWord: false,
           useRegex: false,
         });
 
-        expect(result.matches.map((match) => match.path)).toEqual(hasMatch ? ["src/late.ts"] : []);
-        expect(result.truncated).toBe(false);
-        expect(grep).toHaveBeenCalledTimes(3);
+        expect(result.matches.map((match) => match.path)).toEqual(["zzzz.txt"]);
       }),
-    ),
-);
-
-it.effect("reruns an enforced page whose path constraint filtered every file", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const grep = vi.fn((_query: string, options?: GrepOptions) => {
-        const fellBack = options?.enforceTimeBudget === false;
-        const value: GrepResult = {
-          items: fellBack
-            ? [
-                {
-                  ...fileItem("arch/x86/kernel/head64.c"),
-                  isBinary: false,
-                  lineNumber: 1,
-                  col: 0,
-                  byteOffset: 0,
-                  lineContent: "asmlinkage __visible void start_kernel(void)",
-                  matchRanges: [[0, 44]],
-                },
-              ]
-            : [],
-          totalMatched: fellBack ? 1 : 0,
-          totalFilesSearched: fellBack ? 3 : 0,
-          totalFiles: 3,
-          filteredFileCount: fellBack ? 3 : 0,
-          nextCursor: null,
-        };
-        return { ok: true as const, value };
-      });
-      const finder = {
-        destroy: vi.fn(),
-        waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
-        grep,
-      } as unknown as FileFinder;
-      vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
-
-      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project", "content");
-      const result = yield* searchIndex.searchContents({
-        query: "[a-z]{90}[-+*/]{5}|asmlinkage __visible.*start_kernel",
-        limit: 10,
-        caseSensitive: true,
-        wholeWord: false,
-        useRegex: true,
-      });
-
-      expect(result.matches.map((match) => match.path)).toEqual(["arch/x86/kernel/head64.c"]);
-    }),
-  ),
+    ).pipe(Effect.provide(testLayer)),
 );
 
 // fff reads HOME on Linux and macOS but the user profile on Windows, so a temp HOME cannot stand in there.

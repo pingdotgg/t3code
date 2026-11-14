@@ -1319,8 +1319,9 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
 
     do {
       let result = yield* grepPage(true);
-      // fff 0.11 drops an empty enforced raw-query fallback page's cursor when a parsed path constraint matches no files.
-      if (result.filteredFileCount === 0 && result.totalFiles > 0) {
+      // fff 0.11 drops the cursor when an enforced raw-query fallback page (after a constraint like `*.ts` finds nothing)
+      // times out, so an empty enforced page that claims the scan ended is rerun without enforcement.
+      if (result.items.length === 0 && result.nextCursor === null) {
         result = yield* grepPage(false);
       }
       // fff searches an invalid pattern as a literal, which would keep the `(?i)` prefix.
@@ -1347,13 +1348,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       }
       nextCursor = result.nextCursor;
       regexFallbackError ??= result.regexFallbackError;
-      // The RPC has no resume cursor: finish paging internally, letting Node service I/O between pages.
-      if (matches.length < input.limit && nextCursor !== null) {
-        yield* Effect.callback<void>((resume) => {
-          const immediate = setImmediate(() => resume(Effect.void));
-          return Effect.sync(() => clearImmediate(immediate));
-        });
-      }
+      // The RPC has no resume cursor, so page to the limit; short enforced pages keep each native call brief.
     } while (retryLiterally || (matches.length < input.limit && nextCursor !== null));
 
     return {
