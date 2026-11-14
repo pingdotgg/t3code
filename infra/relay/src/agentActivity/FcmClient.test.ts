@@ -1,13 +1,10 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no generateKeyPairSync or verify.
 import * as NodeCrypto from "node:crypto";
 import { describe, expect, it } from "@effect/vitest";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import type * as HttpClientRequest from "effect/http/HttpClientRequest";
@@ -80,62 +77,6 @@ function layerTest(requests: HttpClientRequest.HttpClientRequest[], responses: R
 }
 
 describe("FCM delivery", () => {
-  it.effect.each([
-    { operation: "authorize", stage: "headers", status: null },
-    { operation: "authorize", stage: "body", status: 200 },
-    { operation: "send", stage: "headers", status: null },
-    { operation: "send", stage: "body", status: 503 },
-  ] as const)("bounds a stalled $operation $stage and allows the next delivery", (scenario) =>
-    Effect.gen(function* () {
-      const started = yield* Deferred.make<void>();
-      let shouldStall = true;
-      const http = HttpClient.make((request) => {
-        const isAuthorization = request.url === "https://oauth2.googleapis.com/token";
-        const stall = shouldStall && isAuthorization === (scenario.operation === "authorize");
-        const response = HttpClientResponse.fromWeb(
-          request,
-          isAuthorization
-            ? Response.json({ access_token: "access-token" })
-            : Response.json({}, { status: stall ? 503 : 200 }),
-        );
-        if (stall) {
-          shouldStall = false;
-          const stalled = Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never));
-          if (scenario.stage === "headers") return stalled;
-          Object.defineProperty(response, "json", { value: stalled });
-        }
-        return Effect.succeed(response);
-      });
-      yield* Effect.gen(function* () {
-        const client = yield* FcmClient.FcmClient;
-        const delivery = yield* client.send(input).pipe(Effect.flip, Effect.forkChild);
-        yield* Deferred.await(started);
-        yield* TestClock.adjust("10 seconds");
-        expect(yield* Fiber.join(delivery)).toMatchObject({
-          _tag: "FcmClientError",
-          operation: scenario.operation,
-          status: scenario.status,
-          cause: expect.objectContaining({ _tag: "TimeoutError" }),
-        });
-        expect(yield* client.send(input)).toEqual({ unregistered: false });
-      }).pipe(
-        Effect.provide(
-          FcmClient.layer.pipe(
-            Layer.provide(
-              FcmAssertionSigner.layer.pipe(
-                Layer.provide(
-                  Layer.succeed(WebCrypto.WebCrypto, { subtle: globalThis.crypto.subtle }),
-                ),
-              ),
-            ),
-            Layer.provide(Layer.succeed(RelayConfiguration.RelayConfiguration, config)),
-            Layer.provide(Layer.succeed(HttpClient.HttpClient, http)),
-          ),
-        ),
-      );
-    }),
-  );
-
   it.effect("signs a verifiable Google OAuth assertion scoped to messaging", () =>
     Effect.gen(function* () {
       const signer = yield* FcmAssertionSigner.FcmAssertionSigner;

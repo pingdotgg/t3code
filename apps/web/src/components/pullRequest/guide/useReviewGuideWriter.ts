@@ -1,7 +1,7 @@
 import type { EnvironmentId, PullRequestRef } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
-import { useEffect, useEffectEvent, useState } from "react";
+import { useState } from "react";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
@@ -33,7 +33,10 @@ export function useReviewGuideWriter({
   const data = query.data;
   const running = starting || data?.run?._tag === "Running";
 
-  const watchRun = useEffectEvent(() =>
+  // A run reported by the server is watched where its answer lands (state/pullRequests.ts).
+  const write = async () => {
+    if (running) return;
+    setStarting(true);
     useGuideRunStore.getState().watch({
       environmentId,
       reference,
@@ -41,16 +44,7 @@ export function useReviewGuideWriter({
       previousGuideAt: data?.guide?.generatedAt ?? null,
       previousFailedAt: data?.run?._tag === "Failed" ? data.run.failedAt : null,
       since: Date.now(),
-    }),
-  );
-  useEffect(() => {
-    if (data?.run?._tag === "Running") watchRun();
-  }, [data?.run?._tag]);
-
-  const write = async () => {
-    if (running) return;
-    setStarting(true);
-    watchRun();
+    });
     const result = await generate({ environmentId, input: reference });
     setStarting(false);
     if (result._tag === "Failure") {
@@ -60,7 +54,7 @@ export function useReviewGuideWriter({
         title: "Could not start a review guide",
         description: readableFailure(
           squashAtomCommandFailure(result),
-          "Check the review guide model in Settings → Source Control.",
+          "Check the review guide model in Settings → Source control.",
         ),
       });
     }

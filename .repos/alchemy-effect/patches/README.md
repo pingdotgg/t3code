@@ -20,3 +20,14 @@ OG routes hash the rendered React markup (including inline styles and the yantra
 SVG), font metadata and bytes, and render options. Their keys do not depend on a
 fixed slug or a document body digest. Astro additionally tracks the route's
 bundled dependencies and invalidates its cache when the lockfile changes.
+
+
+# miniflare 4
+
+The pnpm override runs miniflare 4 (used by the e2e harness in
+`@alchemy.run/cloudflare-test-tools`) on the workspace's workerd. Since
+`1.20261026.1`, workerd's disk service rejects backslashes in request paths,
+and miniflare 4 builds its asset manifest from Windows paths, so assets below
+the root fail on Windows. The patch writes the paths with `/`, as miniflare 5
+does (cloudflare/workers-sdk#16307). Drop it when the harness moves to
+miniflare 5.

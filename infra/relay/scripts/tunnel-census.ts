@@ -14,8 +14,7 @@ const PREFIX = "t3coderelay-managedendpoint-";
 const PAGE_SIZE = 1_000;
 const DAY_MS = 86_400_000;
 
-// Cloudflare documents every field here as optional, so a tunnel missing one
-// must not fail the whole page.
+// Cloudflare permits every field to be absent.
 const Tunnel = Schema.Struct({
   name: Schema.optional(Schema.NullOr(Schema.String)),
   status: Schema.optional(Schema.NullOr(Schema.String)),

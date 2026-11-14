@@ -1,6 +1,6 @@
 import type { ResourceTelemetryProcess, ResourceTelemetrySourceStatus } from "@t3tools/contracts";
 
-function processIdentityKey(process: ResourceTelemetryProcess): string {
+export function processIdentityKey(process: Pick<ResourceTelemetryProcess, "identity">): string {
   return `${process.identity.pid}:${process.identity.startTimeMs}`;
 }
 
@@ -57,4 +57,14 @@ export function resourceHistoryCpuScaleMax(
   buckets: ReadonlyArray<{ readonly avgCpuPercent: number }>,
 ): number {
   return Math.max(1, ...buckets.map((bucket) => bucket.avgCpuPercent));
+}
+
+export function formatCpuTime(seconds: number): string {
+  const format = (value: number) => value.toFixed(value >= 10 ? 1 : 2).replace(/\.0+$/, "");
+  // Pick the unit after rounding so 59.97 seconds never renders as "60s".
+  const shortSeconds = format(seconds);
+  if (Number(shortSeconds) < 60) return `${shortSeconds}s`;
+  const shortMinutes = format(seconds / 60);
+  if (Number(shortMinutes) < 60) return `${shortMinutes}m`;
+  return `${(seconds / 3_600).toFixed(2).replace(/\.0+$/, "")}h`;
 }

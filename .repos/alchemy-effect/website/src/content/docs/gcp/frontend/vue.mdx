@@ -1,0 +1,77 @@
+---
+title: Vue
+description: Deploy a Vue single-page app to Cloud Run with GCP.Website.Vite — scaffold with create-vue, deep links answered by index.html.
+sidebar:
+  order: 4
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+import PackageManagers from "../../../../components/PackageManagers.astro";
+
+export const devDeps = "@alchemy.run/frontend-frameworks";
+
+A Vue app is a Vite app, so it deploys with
+[`GCP.Website.Vite`](/gcp/frontend/vite). Vue Router's history mode
+works out of the box: unknown paths answer with `index.html`.
+
+## Install
+
+<PackageManagers dev={devDeps} />
+
+Docker has to be running when you deploy.
+
+## Scaffold the app
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm create vite web --template vue-ts\ncd web && pnpm install && cd ..`} lang="sh" />
+  </TabItem>
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun create vite@latest web -- --template vue-ts\ncd web && bun install && cd ..`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm create vite@latest web -- --template vue-ts\ncd web && npm install && cd ..`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn create vite web --template vue-ts\ncd web && yarn install && cd ..`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+Keep the generated `vite.config.ts` as it is.
+
+## Deploy the site
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as GCP from "@alchemy.run/gcp";
+import * as Effect from "effect/Effect";
+
+export const Website = GCP.Website.Vite("Website", { rootDir: "./web" });
+
+export default Alchemy.Stack(
+  "MyVueApp",
+  { providers: GCP.providers(), state: GCP.state() },
+  Effect.gen(function* () {
+    const site = yield* Website;
+    return { url: site.url };
+  }),
+);
+```
+
+```sh
+bun alchemy deploy
+```
+
+When you add [Vue Router](https://router.vuejs.org) in history mode,
+deep links work as they are: the server answers unknown paths with
+`index.html`.
+
+## Local development
+
+`alchemy dev` runs Vite's dev server with hot reload.
+
+## Where next
+
+- [Vite](/gcp/frontend/vite) — env values, base paths, and 404 pages.
+- [Nuxt](/gcp/frontend/nuxt) — when you need server rendering.

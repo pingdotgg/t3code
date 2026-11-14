@@ -8,14 +8,7 @@
 const PATH_TAG_PREFIX = "_N_T_";
 const MAX_TAG_LENGTH = 256;
 const BASE64_RE = /^[A-Za-z0-9+/]*={0,2}$/;
-const VALID_KINDS = new Set([
-  "FETCH",
-  "APP_PAGE",
-  "PAGES",
-  "APP_ROUTE",
-  "REDIRECT",
-  "IMAGE",
-]);
+const VALID_KINDS = new Set(["FETCH", "APP_PAGE", "PAGES", "APP_ROUTE", "REDIRECT", "IMAGE"]);
 
 export const ENTRY_PREFIX = "cache:";
 export const TAG_PREFIX = "__tag:";
@@ -47,24 +40,17 @@ const normalizeAppPrefix = (appPrefix: string | undefined): string => {
   return `__app:${fnv1a64(appPrefix)}:`;
 };
 
-const buildStorageKey = (
-  prefix: string,
-  categoryPrefix: string,
-  logicalKey: string,
-): string => {
+const buildStorageKey = (prefix: string, categoryPrefix: string, logicalKey: string): string => {
   const key = `${prefix}${categoryPrefix}${logicalKey}`;
   if (KEY_ENCODER.encode(key).length <= KV_KEY_MAX_BYTES) return key;
   return `${prefix}${categoryPrefix}${HASHED_KEY_PREFIX}${fnv1a64(logicalKey)}`;
 };
 
 export const validateTag = (tag: string): string | null => {
-  if (
-    typeof tag !== "string" ||
-    tag.length === 0 ||
-    tag.length > MAX_TAG_LENGTH
-  ) {
+  if (typeof tag !== "string" || tag.length === 0 || tag.length > MAX_TAG_LENGTH) {
     return null;
   }
+  // oxlint-disable-next-line no-control-regex -- rejects control characters on purpose
   if (/[\x00-\x1f\\:]/.test(tag)) return null;
   return tag;
 };
@@ -88,9 +74,7 @@ export const isPathChildOf = (path: string, prefix: string): boolean => {
 };
 
 export const pathFromTag = (tag: string): string | undefined => {
-  const raw = tag.startsWith(PATH_TAG_PREFIX)
-    ? tag.slice(PATH_TAG_PREFIX.length)
-    : tag;
+  const raw = tag.startsWith(PATH_TAG_PREFIX) ? tag.slice(PATH_TAG_PREFIX.length) : tag;
   return raw.startsWith("/") ? raw : undefined;
 };
 
@@ -116,11 +100,7 @@ export const readCacheControlNumberField = (
   field: string,
 ): number | undefined => {
   const control = ctx?.cacheControl;
-  if (
-    control !== undefined &&
-    typeof control === "object" &&
-    control !== null
-  ) {
+  if (control !== undefined && typeof control === "object" && control !== null) {
     const nested = (control as Record<string, unknown>)[field];
     if (typeof nested === "number") return nested;
   }
@@ -143,9 +123,7 @@ export interface StoredCacheEntry {
   cacheControl?: StoredCacheControl;
 }
 
-export const isUnknownRecord = (
-  value: unknown,
-): value is Record<string, unknown> =>
+export const isUnknownRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
 
 export const validateCacheEntry = (raw: unknown): StoredCacheEntry | null => {
@@ -155,11 +133,7 @@ export const validateCacheEntry = (raw: unknown): StoredCacheEntry | null => {
   if (raw.revalidateAt !== null && typeof raw.revalidateAt !== "number") {
     return null;
   }
-  if (
-    raw.expireAt !== undefined &&
-    raw.expireAt !== null &&
-    typeof raw.expireAt !== "number"
-  ) {
+  if (raw.expireAt !== undefined && raw.expireAt !== null && typeof raw.expireAt !== "number") {
     return null;
   }
   if (raw.cacheControl !== undefined) {
@@ -168,18 +142,14 @@ export const validateCacheEntry = (raw: unknown): StoredCacheEntry | null => {
   }
   if (raw.value !== null) {
     if (!isUnknownRecord(raw.value)) return null;
-    if (
-      typeof raw.value.kind !== "string" ||
-      !VALID_KINDS.has(raw.value.kind)
-    ) {
+    if (typeof raw.value.kind !== "string" || !VALID_KINDS.has(raw.value.kind)) {
       return null;
     }
   }
   return raw as unknown as StoredCacheEntry;
 };
 
-const arrayBufferToBase64 = (buffer: ArrayBuffer): string =>
-  Buffer.from(buffer).toString("base64");
+const arrayBufferToBase64 = (buffer: ArrayBuffer): string => Buffer.from(buffer).toString("base64");
 
 const safeBase64ToArrayBuffer = (base64: string): ArrayBuffer | null => {
   if (!BASE64_RE.test(base64) || base64.length % 4 !== 0) return null;
@@ -196,27 +166,20 @@ export const serializeForJSON = (value: Record<string, unknown>): unknown => {
     return {
       ...value,
       rscData:
-        value.rscData instanceof ArrayBuffer
-          ? arrayBufferToBase64(value.rscData)
-          : value.rscData,
+        value.rscData instanceof ArrayBuffer ? arrayBufferToBase64(value.rscData) : value.rscData,
     };
   }
   if (value.kind === "APP_ROUTE") {
     return {
       ...value,
-      body:
-        value.body instanceof ArrayBuffer
-          ? arrayBufferToBase64(value.body)
-          : value.body,
+      body: value.body instanceof ArrayBuffer ? arrayBufferToBase64(value.body) : value.body,
     };
   }
   if (value.kind === "IMAGE") {
     return {
       ...value,
       buffer:
-        value.buffer instanceof ArrayBuffer
-          ? arrayBufferToBase64(value.buffer)
-          : value.buffer,
+        value.buffer instanceof ArrayBuffer ? arrayBufferToBase64(value.buffer) : value.buffer,
     };
   }
   return value;

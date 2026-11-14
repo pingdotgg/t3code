@@ -1,0 +1,2 @@
+# Vercel's default .pnp* rule also excludes pnpm's hook, whose checksum is in the lockfile.
+!/.pnpmfile.cjs

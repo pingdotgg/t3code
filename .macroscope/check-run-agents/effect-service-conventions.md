@@ -1,7 +1,7 @@
 ---
 title: Effect Service Conventions
-model: gpt-6-sol
-effort: max
+model: gpt-6-1-sol
+reasoning: low
 input: incremental
 tools:
   - browse_code
@@ -44,6 +44,18 @@ Review changed TypeScript for the conventions below. They apply when a pull requ
 - Use plain `make` and `layer` in a module named for its implementation (`BunPtyAdapter.ts`). Keep implementation-specific names when one abstract port module holds several implementations (`makeCloudflaredRelayClient`, `layerCloudflared` in `RelayClient.ts`). `infra/relay/src/db.ts` may keep its inline `Layer.succeed(RelayDb, db)`.
 - When a service moves, delete the old files and update every consumer, including orchestration, MCP, tests, and integration harnesses. Do not leave compatibility re-export shims.
 
+## Effect functions and tracing
+
+- Reusable functions use named `Effect.fn("Service.operation")`, not functions wrapping
+  `Effect.gen`. Inline programs, callbacks, and layer construction can keep `Effect.gen`.
+- Named `Effect.fn` creates a span; the unnamed form does not. Default to named spans for service
+  operations and I/O. `Effect.fnUntraced` is deliberate for per-chunk/per-event work, tight loops,
+  or helpers duplicating an existing tracing boundary; require a nearby reason for new uses.
+- Preserve existing span names/options and avoid adding duplicate spans. Pass combinators after
+  the generator body; transforms receive the original function arguments after the effect.
+- Preserve generic signatures, laziness, resource scope, and interruption behavior. An explicit
+  generator return type is `Effect.fn.Return<A, E, R>`.
+
 ## Dependency acquisition and runtime boundaries
 
 - Production service construction acquires its Effect dependencies from the environment with `yield* Foo.Foo`, and `make`/`layer` types expose those requirements. Flag a factory that takes `Foo["Service"]` (or an object of Effect-returning methods) as a parameter when that value is a service dependency. Passing service instances explicitly in tests is fine; passing pure configuration, immutable domain values, or deliberate callback strategies is not service injection.
@@ -57,6 +69,7 @@ Review changed TypeScript for the conventions below. They apply when a pull requ
 - Define service failures with `Schema.TaggedError` and structured attributes: operation or stage, resource path or entity identifier, normalized category or status. Derive `message` from those attributes only. Never derive it from `cause`, `cause.message`, or a stringified defect, and do not add a `detail` field that copies `cause.message`.
 - When wrapping a real failure, keep the immediate underlying error as `cause` so the chain and stack survive. Make `cause` required if every construction wraps a failure. Pure validation or domain errors created without an underlying failure need no cause.
 - Keep attributes and log annotations safe and bounded: no raw wire payloads, command arguments or output, signed URLs, credentials, query strings, or arbitrary defect text. Preserve the exact value only as `cause`; expose normalized categories, lengths, counts, and safe URL protocol or hostname where useful.
+  The documented exception is `DeviceBootError.diagnostics`: device hub launch commands and failure text are intentionally exposed to authorized device users and agents, capped at 2,000 characters and included in the error message. Do not apply this exception to other service errors.
 - At a translation boundary, pass through an already structured domain error when it is part of the target error channel; wrap only unknown or lower-level failures. Map failures where the context is known instead of wrapping a whole multi-step pipeline in one generic error.
 - Do not encode the same distinction twice with both a specific error tag and a single-value `operation`, `reason`, `kind`, or `phase` literal. Split into separate error classes when a discriminator drives caller control flow or the user-facing message; a discriminator used only for diagnostics may stay a field. Caller-visible messages exposed through HTTP, RPC, persisted state, or UI are behavior and must survive a structural refactor.
 - Do not add a helper whose only behavior is `(...args) => new SomeError({ ...args })`. Construct the error at the failure boundary. Keep a mapper only when it performs real normalization, passes through domain errors, or adds reusable context; when such a mapper belongs to the target error type, prefer a static factory on that class.

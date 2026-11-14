@@ -1,18 +1,39 @@
-/**
- * Muse Code's subscription usage limits. Meta reports the account's windows
- * with every model response, and Muse forwards them as `usage/changed`. When a
- * window runs out, Meta refuses the next request and Muse fails the turn.
- */
 import * as DateTime from "effect/DateTime";
+import { clampPercent } from "@t3tools/provider-core/server/usageLimits";
+import type { ProviderUsageLimitsReport } from "@t3tools/provider-core/server/snapshot";
 
 import { LATEST_DATE_MS, type MuseSubscriptionUsage } from "./protocol.ts";
 
-/**
- * Muse surfaces Meta's quota refusal as `API error 429: Subscription quota
- * exhausted. Your usage window resets at 2026-10-13T10:45:52Z.`, at times
- * wrapped by a credential proxy. Muse can also type the stop as `error.quota`,
- * but a relayed refusal arrives untyped, so the text still counts.
- */
+const isoMillis = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
+
+/** Muse's account-wide report as Limits windows, with its tier as the plan. */
+export function museUsageToLimits(usage: MuseSubscriptionUsage): ProviderUsageLimitsReport {
+  const tier = usage.tier.trim();
+  return {
+    checkedAt: isoMillis(usage.observedAtMs),
+    windows: [
+      {
+        id: "session",
+        kind: "session",
+        label: "Session",
+        usedPercent: clampPercent(usage.window.usedPercent),
+        resetsAt: isoMillis(usage.window.resetsAtMs),
+        windowDurationMins: usage.window.windowDurationMins,
+      },
+      {
+        id: "weekly",
+        kind: "weekly",
+        label: "Weekly",
+        usedPercent: clampPercent(usage.weekly.usedPercent),
+        resetsAt: isoMillis(usage.weekly.resetsAtMs),
+        windowDurationMins: 7 * 24 * 60,
+      },
+    ],
+    ...(tier ? { authLabel: tier } : {}),
+  };
+}
+
+/** Credential proxies may omit error.quota from 429 refusals; inspect text too. */
 export function isMuseUsageLimitFailure(message: string | undefined): boolean {
   return message !== undefined && /\b429\b/.test(message) && /quota|usage limit/i.test(message);
 }
@@ -20,11 +41,7 @@ export function isMuseUsageLimitFailure(message: string | undefined): boolean {
 const NAMED_RESET =
   /\bresets at (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))/i;
 
-/**
- * When a stopped turn can run again: every exhausted window must reset first.
- * The resets come from the typed quota, the time the refusal names, and the
- * used-up windows of the last report before it; the latest one still ahead wins.
- */
+/** Resume only after all exhausted windows reset; use the latest future reset from quota, refusal, or usage. */
 export function museUsageLimitResetAt(
   usage: MuseSubscriptionUsage | undefined,
   nowMs: number,
@@ -44,5 +61,5 @@ export function museUsageLimitResetAt(
     (ms): ms is number =>
       ms !== undefined && Number.isFinite(ms) && ms > nowMs && ms <= LATEST_DATE_MS,
   );
-  return resets.length > 0 ? DateTime.formatIso(DateTime.makeUnsafe(Math.max(...resets))) : null;
+  return resets.length > 0 ? isoMillis(Math.max(...resets)) : null;
 }

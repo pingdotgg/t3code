@@ -10,23 +10,21 @@
 
 declare module "virtual:astro-cloudflare:config" {
   export const sessionKVBindingName: string;
-  export const compileImageConfig: {
-    base: string;
-    assetsPrefix: string | undefined;
-    imageServiceEntrypoint: string;
-    buildAssets: string;
-  } | null;
+  export const compileImageConfig: { transformWithBinding: boolean } | null;
   export const isPrerender: boolean;
+  /** Only defined in the `prerender` environment. */
+  export const loadPrerenderScope: (() => Promise<{ ensurePrerenderScope(): void }>) | undefined;
   export const cacheProviderEnabled: boolean;
 }
 
 declare module "astro:static-paths" {
+  import type { RouteData, StaticPathsResult } from "astro";
   import type { BaseApp } from "astro/app";
-  import type { RouteData } from "astro";
 
   export class StaticPaths {
     constructor(app: BaseApp);
     getAll(): Promise<Array<{ pathname: string; route: RouteData }>>;
+    getAllWithMetadata(options?: { staticImages?: boolean }): Promise<StaticPathsResult>;
   }
 }
 

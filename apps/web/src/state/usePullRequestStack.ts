@@ -12,8 +12,7 @@ import { environmentThreadShells } from "./threads";
 
 const sameLinks = Schema.toEquivalence(Schema.Array(ThreadPullRequestLink));
 
-// A shell update re-sends a thread's links as a new array, so equal links keep
-// the previous list and a streaming thread does not re-render the stack.
+// Shell pushes recreate link arrays; reuse equal lists so streaming does not re-render the stack.
 const environmentPullRequestLinksAtom = Atom.family((environmentId: EnvironmentId) => {
   let previous: ReadonlyArray<ThreadPullRequestLink> = [];
   return Atom.make((get) => {

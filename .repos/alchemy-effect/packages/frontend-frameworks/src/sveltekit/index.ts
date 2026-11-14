@@ -1,3 +1,6 @@
+import type * as FileSystem from "effect/FileSystem";
+import type * as Layer from "effect/Layer";
+import type * as Path from "effect/Path";
 /**
  * `@alchemy.run/frontend-frameworks/sveltekit` — SvelteKit integration implementing
  * framework-core's `Framework` service, with the deploy target passed as a
@@ -17,9 +20,6 @@
  * `@alchemy.run/frontend-frameworks/sveltekit/cloudflare`.
  */
 import type { Framework } from "../core/index.ts";
-import type * as FileSystem from "effect/FileSystem";
-import type * as Layer from "effect/Layer";
-import type * as Path from "effect/Path";
 import { layer, type SvelteKitOptions } from "./SvelteKit.ts";
 
 export {
@@ -99,9 +99,7 @@ export interface HarnessOptions {
  * target serves them on `platform.env` via cloudflare-runtime's platform
  * proxy — resource bindings included, not just literal values).
  */
-export const fromHarnessOptions = (
-  options: HarnessOptions,
-): SvelteKitOptions => {
+export const fromHarnessOptions = (options: HarnessOptions): SvelteKitOptions => {
   const worker = options.target?.cloudflare?.worker ?? options.vite;
   return {
     compatibilityDate: worker?.compatibilityDate,

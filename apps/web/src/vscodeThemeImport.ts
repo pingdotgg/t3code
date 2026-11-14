@@ -1,9 +1,12 @@
+import { parse, type ParseError } from "jsonc-parser";
+
 import {
   createVividThemeColors,
   getStandardThemeColors,
   getThemeModes,
   isReservedThemeId,
   parseThemeFile,
+  readableThemeColorOn,
   themeColorToHex,
   themeIdFromName,
   THEME_FILE_VERSION,
@@ -96,8 +99,7 @@ function toHex(color: VsCodeRgb): string {
   return `#${channel(color.r)}${channel(color.g)}${channel(color.b)}`;
 }
 
-/** Overlays are semi-transparent in VS Code; our roles are opaque, so they are
- *  composited onto whatever surface they sit on. */
+// Composite VS Code translucent overlays onto their surfaces; our roles are opaque.
 function flattenOver(color: VsCodeRgba, base: VsCodeRgb): string {
   if (color.a >= 1) return toHex(color);
   return toHex({
@@ -131,6 +133,15 @@ export function isVsCodeThemeFile(value: unknown): boolean {
   const hasWorkbenchColors =
     isRecord(value.colors) && Object.keys(value.colors).some((key) => key.includes("."));
   return hasWorkbenchColors || Array.isArray(value.tokenColors);
+}
+
+export function parseThemeImport(source: string): ThemeDefinition {
+  const errors: ParseError[] = [];
+  const value: unknown = parse(source, errors, { allowTrailingComma: true });
+  if (errors.length > 0) throw new Error("That theme file is not valid JSON.");
+  return isVsCodeThemeFile(value)
+    ? parseVsCodeThemeFile(value)
+    : parseThemeFile(JSON.parse(source));
 }
 
 function resolveAppearance(value: Record<string, unknown>, canvas: VsCodeRgb): ThemeAppearance {
@@ -251,10 +262,18 @@ export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
     if (isReadable(fallback)) return fallback;
     return relativeLuminance(surfaceRgb) < 0.179 ? "#ffffff" : "#000000";
   };
+  // Status colors also fill controls such as destructive buttons, which carry
+  // white text, so a dim one is lightened along its hue rather than replaced
+  // by readableOn's black or white. One hidden in the canvas has no hue to
+  // keep, so the derived color stands in.
+  const readableStatusColor = (fallback: string, ...keys: ReadonlyArray<string>): string => {
+    const specified = solidOver(canvas, ...keys);
+    const base = specified && standsApart(specified, canvasHex) ? specified : fallback;
+    return readableThemeColorOn(base, canvasHex, 4.5);
+  };
 
   const surfaceRaisedHex = raisedSurfaceCandidateHex ?? derived.surfaceRaised;
-  // The checked switch track maps to messageAction, so resolve it before
-  // choosing the input role used by the unchecked track.
+  // Checked tracks use messageAction; resolve it before the unchecked input role.
   const buttonHex = solidOver(canvas, "button.background");
   const actionHex =
     buttonHex && standsApart(buttonHex, canvasHex) && standsApart(buttonHex, surfaceRaisedHex)
@@ -302,8 +321,8 @@ export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
       solidOver(canvas, "panel.border", "editorGroup.border", "contrastBorder") ?? derived.border,
     input: inputHex,
     placeholder: readableOn(surfaceRaisedHex, derived.placeholder, "input.placeholderForeground"),
-    error: readableOn(canvasHex, derived.error, "editorError.foreground", "errorForeground"),
-    warning: readableOn(canvasHex, derived.warning, "editorWarning.foreground"),
+    error: readableStatusColor(derived.error, "editorError.foreground", "errorForeground"),
+    warning: readableStatusColor(derived.warning, "editorWarning.foreground"),
     accentSurface:
       solidOver(canvas, "list.activeSelectionBackground", "list.hoverBackground") ??
       derived.accentSurface,
@@ -417,10 +436,6 @@ export function pairVsCodeThemes(
   return [...passthrough, ...paired].sort((a, b) => a.order - b.order).map((entry) => entry.theme);
 }
 
-/**
- * Some extensions reuse one display name across every file: Dracula ships
- * dracula.json and dracula-soft.json that both say "Dracula".
- */
 export function resolveThemeLabelCollisions(
   entries: ReadonlyArray<{ theme: ThemeDefinition; sourceName?: string | undefined }>,
 ): ReadonlyArray<ThemeDefinition> {

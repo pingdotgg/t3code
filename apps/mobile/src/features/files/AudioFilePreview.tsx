@@ -1,8 +1,11 @@
-import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
+import { Button } from "../../components/ui/Button";
+import { useAudioPlayerStatus } from "expo-audio";
 import { useEffect, useState } from "react";
-import { Pressable, View } from "react-native";
+import { AppState, View } from "react-native";
 import { AppText as Text } from "../../components/ui/AppText";
 import { useFullscreenVideoOpen, useMediaAudioSessionHold } from "../../lib/videoAudioSession";
+import { createAudioPlaybackSession } from "../../lib/audioSession";
+import { usePlaybackAudioPlayer } from "../voice-input/usePlaybackAudioPlayer";
 
 function timestamp(seconds: number) {
   const value = Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : 0;
@@ -10,23 +13,32 @@ function timestamp(seconds: number) {
 }
 
 export function AudioFilePreview(props: { uri: string; onRetry: () => void }) {
-  const player = useAudioPlayer({ uri: props.uri }, { updateInterval: 500 });
+  const player = usePlaybackAudioPlayer(props.uri);
   const status = useAudioPlayerStatus(player);
+  const [playbackRequested, setPlaybackRequested] = useState(false);
+  const playback = createAudioPlaybackSession(player, false, setPlaybackRequested);
   const [seekError, setSeekError] = useState(false);
   // Video teardown deactivates the shared iOS session, which would stop this player.
   useMediaAudioSessionHold(status.playing);
   const fullscreenVideoOpen = useFullscreenVideoOpen();
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the shared audio session in step with the native player status and fullscreen video
   useEffect(() => {
-    if (fullscreenVideoOpen) player.pause();
-  }, [fullscreenVideoOpen, player]);
-  const seek = (seconds: number, play = false) => {
+    if (fullscreenVideoOpen || status.didJustFinish || status.error) playback.pause();
+    else playback.playingChanged(status.playing);
+  }, [fullscreenVideoOpen, status.didJustFinish, status.error, status.playing, playback]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to AppState to pause playback in the background, and pauses on cleanup
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state !== "active") playback.pause();
+    });
+    return () => {
+      subscription.remove();
+      playback.pause();
+    };
+  }, [playback]);
+  const seek = (seconds: number) => {
     setSeekError(false);
-    void player
-      .seekTo(seconds)
-      .then(() => {
-        if (play) player.play();
-      })
-      .catch(() => setSeekError(true));
+    void player.seekTo(seconds).catch(() => setSeekError(true));
   };
   return (
     <View className="flex-1 items-center justify-center gap-5 p-6">
@@ -34,47 +46,49 @@ export function AudioFilePreview(props: { uri: string; onRetry: () => void }) {
         {timestamp(status.currentTime)} / {timestamp(status.duration)}
       </Text>
       <View className="flex-row items-center gap-4">
-        <Pressable
-          accessibilityRole="button"
+        <Button
+          label="−15s"
+          tone="text"
           accessibilityLabel="Back 15 seconds"
           disabled={!status.isLoaded}
           onPress={() => seek(Math.max(0, status.currentTime - 15))}
-          className="p-4"
-        >
-          <Text className="text-foreground">−15s</Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          disabled={!status.isLoaded}
+        />
+        <Button
+          label={
+            playbackRequested || status.playing ? "Pause" : !status.isLoaded ? "Loading…" : "Play"
+          }
+          tone="secondary"
+          disabled={!status.isLoaded && !playbackRequested}
           onPress={() => {
-            if (status.playing) player.pause();
-            else if (status.didJustFinish || status.currentTime >= status.duration) seek(0, true);
-            else player.play();
+            if (status.playing || playback.requested) playback.pause();
+            else {
+              setSeekError(false);
+              void playback
+                .play(
+                  status.didJustFinish || status.currentTime >= status.duration
+                    ? () => player.seekTo(0)
+                    : undefined,
+                )
+                .catch(() => setSeekError(true));
+            }
           }}
-          className="rounded-xl bg-subtle px-6 py-4"
-        >
-          <Text className="text-foreground">
-            {!status.isLoaded ? "Loading…" : status.playing ? "Pause" : "Play"}
-          </Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
+        />
+        <Button
+          label="+15s"
+          tone="text"
           accessibilityLabel="Forward 15 seconds"
           disabled={!status.isLoaded}
           onPress={() => seek(Math.min(status.duration, status.currentTime + 15))}
-          className="p-4"
-        >
-          <Text className="text-foreground">+15s</Text>
-        </Pressable>
+        />
       </View>
       {status.error || seekError ? (
         <View className="items-center gap-3">
           <Text className="text-center text-foreground">
             This audio could not be played. Try again or save it to open in another app.
           </Text>
-          <Pressable accessibilityRole="button" onPress={props.onRetry} className="p-3">
-            <Text className="text-foreground">Try again</Text>
-          </Pressable>
+          <View className="items-center">
+            <Button label="Try again" tone="secondary" onPress={props.onRetry} />
+          </View>
         </View>
       ) : null}
     </View>

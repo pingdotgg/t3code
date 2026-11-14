@@ -7,6 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as Semaphore from "effect/Semaphore";
 
 import { SshPasswordPromptError } from "./errors.ts";
 
@@ -48,7 +49,9 @@ export class SshPasswordPrompt extends Context.Service<SshPasswordPrompt, SshPas
     SshPasswordPrompt,
     SshPasswordPrompt.of({
       isAvailable: false,
-      request: () => Effect.succeed(null),
+      request: Effect.fn("SshPasswordPrompt.request")(function () {
+        return Effect.succeed(null);
+      }),
     }),
   );
 }
@@ -99,52 +102,43 @@ if ($null -ne $env:T3_SSH_AUTH_SECRET) {\r
 exit 1\r
 `;
 
-const getDefaultSshAskpassDirectory = Effect.fn("ssh/auth.getDefaultSshAskpassDirectory")(
-  function* () {
-    const fs = yield* FileSystem.FileSystem;
+const buildSshAskpassHelperDescriptor = Effect.fn("ssh/auth.buildSshAskpassHelperDescriptor")(
+  function* (input: {
+    readonly directory: string;
+  }): Effect.fn.Return<SshAskpassHelperDescriptor, never, Path.Path> {
+    const platform = yield* HostProcess.Platform;
     const path = yield* Path.Path;
-    const parentDirectory = yield* fs.makeTempDirectory({ prefix: "t3code-ssh-runtime-" });
-    return path.join(parentDirectory, SSH_ASKPASS_DIR_NAME);
-  },
-);
+    const directory = input.directory;
 
-export const buildSshAskpassHelperDescriptor = Effect.fn(
-  "ssh/auth.buildSshAskpassHelperDescriptor",
-)(function* (input: {
-  readonly directory: string;
-}): Effect.fn.Return<SshAskpassHelperDescriptor, never, Path.Path> {
-  const platform = yield* HostProcess.Platform;
-  const path = yield* Path.Path;
-  const directory = input.directory;
+    if (platform === "win32") {
+      const powershellPath = joinSshAskpassPath(directory, "ssh-askpass.ps1", platform);
+      return {
+        launcherPath: joinSshAskpassPath(directory, "ssh-askpass.cmd", platform),
+        files: [
+          {
+            path: joinSshAskpassPath(directory, "ssh-askpass.cmd", platform),
+            contents: ASKPASS_WINDOWS_LAUNCHER_SCRIPT,
+          },
+          {
+            path: powershellPath,
+            contents: ASKPASS_WINDOWS_SCRIPT,
+          },
+        ],
+      };
+    }
 
-  if (platform === "win32") {
-    const powershellPath = joinSshAskpassPath(directory, "ssh-askpass.ps1", platform);
     return {
-      launcherPath: joinSshAskpassPath(directory, "ssh-askpass.cmd", platform),
+      launcherPath: path.join(directory, "ssh-askpass.sh"),
       files: [
         {
-          path: joinSshAskpassPath(directory, "ssh-askpass.cmd", platform),
-          contents: ASKPASS_WINDOWS_LAUNCHER_SCRIPT,
-        },
-        {
-          path: powershellPath,
-          contents: ASKPASS_WINDOWS_SCRIPT,
+          path: path.join(directory, "ssh-askpass.sh"),
+          contents: ASKPASS_POSIX_SCRIPT,
+          mode: 0o700,
         },
       ],
     };
-  }
-
-  return {
-    launcherPath: path.join(directory, "ssh-askpass.sh"),
-    files: [
-      {
-        path: path.join(directory, "ssh-askpass.sh"),
-        contents: ASKPASS_POSIX_SCRIPT,
-        mode: 0o700,
-      },
-    ],
-  };
-});
+  },
+);
 
 const ensureSshAskpassHelpers = Effect.fn("ssh/auth.ensureSshAskpassHelpers")(function* (input: {
   readonly directory: string;
@@ -170,6 +164,43 @@ const ensureSshAskpassHelpers = Effect.fn("ssh/auth.ensureSshAskpassHelpers")(fu
   return descriptor.launcherPath;
 });
 
+// Keep setup serialized through cancellation so writes finish before another command uses the helper.
+let defaultSshAskpassRuntimeDirectory: string | undefined;
+const defaultSshAskpassLock = Semaphore.makeUnsafe(1);
+
+const ensureDefaultSshAskpassHelpers = Effect.fn("ssh/auth.ensureDefaultSshAskpassHelpers")(
+  function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const userId = yield* HostProcess.UserId;
+    let runtimeDirectory = defaultSshAskpassRuntimeDirectory;
+    if (runtimeDirectory !== undefined) {
+      const cached = runtimeDirectory;
+      const reusable = yield* Effect.all([fs.realPath(cached), fs.stat(cached)]).pipe(
+        Effect.map(
+          ([resolved, info]) =>
+            resolved === cached &&
+            info.type === "Directory" &&
+            (userId === undefined || Option.getOrUndefined(info.uid) === userId),
+        ),
+        Effect.orElseSucceed(() => false),
+      );
+      if (!reusable) {
+        runtimeDirectory = undefined;
+      }
+    }
+    runtimeDirectory ??= yield* fs.realPath(
+      yield* fs.makeTempDirectory({ prefix: "t3code-ssh-runtime-" }),
+    );
+    const launcherPath = yield* ensureSshAskpassHelpers({
+      directory: path.join(runtimeDirectory, SSH_ASKPASS_DIR_NAME),
+    });
+    defaultSshAskpassRuntimeDirectory = runtimeDirectory;
+    return launcherPath;
+  },
+  (effect) => defaultSshAskpassLock.withPermit(Effect.uninterruptible(effect)),
+);
+
 export const buildSshChildEnvironment = Effect.fn("ssh/auth.buildSshChildEnvironment")(function* (
   input: SshChildEnvironmentOptions = {},
 ): Effect.fn.Return<
@@ -190,8 +221,10 @@ export const buildSshChildEnvironment = Effect.fn("ssh/auth.buildSshChildEnviron
         Effect.orElseSucceed(() => Option.none<string>()),
         Effect.map(Option.getOrUndefined),
       );
-  const directory = input.askpassDirectory ?? (yield* getDefaultSshAskpassDirectory());
-  const sshAskpass = yield* ensureSshAskpassHelpers({ directory });
+  const sshAskpass =
+    input.askpassDirectory === undefined
+      ? yield* ensureDefaultSshAskpassHelpers()
+      : yield* ensureSshAskpassHelpers({ directory: input.askpassDirectory });
 
   return {
     ...baseEnv,
@@ -211,5 +244,13 @@ export function isSshAuthFailure(error: unknown): boolean {
     ) ||
     /authentication failed/u.test(normalized) ||
     /too many authentication failures/u.test(normalized)
+  );
+}
+
+// A local agent signing failure cannot be remedied by the remote account password.
+export function isSshAgentSigningFailure(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /sign_and_send_pubkey: signing failed(?: for [^\n]* from agent:|: (?:agent refused operation|communication with agent failed))/u.test(
+    message,
   );
 }

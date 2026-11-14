@@ -1,71 +1,23 @@
-import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
+import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import {
-  environmentAxisValue,
-  projectAxisValue,
   selectEnvironmentAxis,
   selectProjectAxis,
-  settingsScopeEnvironmentLabel,
+  settingsScopeCheckoutChoices,
+  settingsScopeCheckoutLabel,
 } from "./settingsScopeAxis";
 
-const first = {
-  environmentId: EnvironmentId.make("first"),
-  label: "Development",
-  displayUrl: "https://first.example.com",
-};
-const second = {
-  environmentId: EnvironmentId.make("second"),
-  label: "Development",
-  displayUrl: "https://second.example.com",
-};
-
-describe("settings scope environment labels", () => {
-  it("distinguishes same-name environments by address", () => {
-    const environments = [first, second];
-    expect(
-      environments.map((environment) => settingsScopeEnvironmentLabel(environment, environments)),
-    ).toEqual(["Development · first.example.com", "Development · second.example.com"]);
-  });
-
-  it("falls back to environment IDs when duplicate names have no display URL", () => {
-    const environments = [first, second].map((environment) => ({
-      ...environment,
-      displayUrl: null,
-    }));
-    expect(
-      environments.map((environment) => settingsScopeEnvironmentLabel(environment, environments)),
-    ).toEqual(["Development · first", "Development · second"]);
-  });
-
-  it("keeps unique names compact and removes disambiguation after a rename", () => {
-    expect(settingsScopeEnvironmentLabel(first, [first])).toBe("Development");
-    expect(settingsScopeEnvironmentLabel(first, [first, { ...second, label: "Production" }])).toBe(
-      "Development",
-    );
-  });
-});
+const member = (environmentId: string, physicalProjectKey: string, workspaceRoot = "") =>
+  ({
+    environmentId,
+    physicalProjectKey,
+    workspaceRoot,
+  }) as SidebarProjectSnapshot["memberProjects"][number];
+const group = (...memberProjects: SidebarProjectSnapshot["memberProjects"]) =>
+  ({ memberProjects }) as SidebarProjectSnapshot;
 
 describe("settings scope axes", () => {
-  it("maps each axis to its search key and back", () => {
-    expect(projectAxisValue({})).toBe("all");
-    expect(projectAxisValue({ project: "app" })).toBe("app");
-    expect(selectProjectAxis({ machine: "second" }, "app")).toEqual({
-      project: "app",
-      machine: "second",
-    });
-    expect(selectProjectAxis({ machine: "second", project: "app" }, "all")).toEqual({
-      machine: "second",
-    });
-    expect(selectEnvironmentAxis({ project: "app" }, "first")).toEqual({
-      project: "app",
-      machine: "first",
-    });
-    expect(selectEnvironmentAxis({ project: "app", machine: "first" }, "all")).toEqual({
-      project: "app",
-    });
-  });
-
   it("drops a checkout narrowing from older links when either axis changes", () => {
     const checkout = { project: "app", checkout: "app@first", machine: "first" };
     expect(selectEnvironmentAxis(checkout, "second")).toEqual({
@@ -74,12 +26,25 @@ describe("settings scope axes", () => {
     });
     expect(selectProjectAxis(checkout, "app")).toEqual({ project: "app", machine: "first" });
   });
-});
 
-describe("environmentAxisValue", () => {
-  it("shows the checkout's environment for a legacy checkout link", () => {
-    expect(environmentAxisValue({ project: "p", checkout: "c" }, "laptop")).toBe("laptop");
-    expect(environmentAxisValue({ project: "p" }, null)).toBe("all");
-    expect(environmentAxisValue({ machine: "desk" }, "laptop")).toBe("desk");
+  it("offers checkouts only where an environment cannot tell them apart", () => {
+    const a = member("laptop", "a");
+    const b = member("laptop", "b");
+    const c = member("server", "c");
+
+    expect(settingsScopeCheckoutChoices(group(a, b, c), { machine: "laptop" })).toEqual([a, b]);
+    expect(settingsScopeCheckoutChoices(group(a, b), {})).toEqual([a, b]);
+    expect(settingsScopeCheckoutChoices(group(a, b, c), { checkout: "b" })).toEqual([a, b]);
+    expect(settingsScopeCheckoutChoices(group(a, b, c), {})).toEqual([]);
+    expect(settingsScopeCheckoutChoices(group(a, b, c), { machine: "server" })).toEqual([]);
+  });
+
+  it("labels a checkout by its full path only when its folder name repeats", () => {
+    const first = member("laptop", "a", "/work/one/app");
+    const second = member("laptop", "b", "C:\\work\\two\\app");
+    const other = member("laptop", "c", "/work/tools");
+
+    expect(settingsScopeCheckoutLabel(second, [first, second, other])).toBe("C:\\work\\two\\app");
+    expect(settingsScopeCheckoutLabel(other, [first, second, other])).toBe("tools");
   });
 });

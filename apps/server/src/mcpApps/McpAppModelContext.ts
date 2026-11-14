@@ -1,5 +1,6 @@
 import type { ThreadId, TurnItemId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -23,7 +24,7 @@ export interface McpAppModelContextEntry {
 export class McpAppModelContext extends Context.Service<
   McpAppModelContext,
   {
-    /** Replaces the app's context; empty text removes it. */
+    /** Empty text removes the app's context. */
     readonly set: (input: {
       readonly threadId: ThreadId;
       readonly itemId: TurnItemId;
@@ -66,9 +67,7 @@ export const layer = Layer.effect(
     });
 
     const forThread = Effect.fn("McpAppModelContext.forThread")(function* (threadId: ThreadId) {
-      // The item can live in a thread this one was forked from, so it is
-      // matched by id alone; that thread rolling the run back later leaves the
-      // fork's copy in place.
+      // Match by id across fork lineage; later source rollbacks leave the fork's copy intact.
       return yield* sql<McpAppModelContextEntry>`
         SELECT context.item_id AS "itemId", context.server, context.tool, context.text
         FROM mcp_app_model_context AS context
@@ -83,7 +82,7 @@ export const layer = Layer.effect(
             OR run.thread_id <> context.thread_id
           )
         ORDER BY context.updated_at, context.item_id
-      `.pipe(Effect.mapError(fail));
+      `.pipe(NodeSqliteClient.readOnly, Effect.mapError(fail));
     });
 
     return McpAppModelContext.of({ set, forThread });
@@ -92,5 +91,12 @@ export const layer = Layer.effect(
 
 export const layerEmpty = Layer.succeed(
   McpAppModelContext,
-  McpAppModelContext.of({ set: () => Effect.void, forThread: () => Effect.succeed([]) }),
+  McpAppModelContext.of({
+    set: Effect.fn("McpAppModelContext.set")(function () {
+      return Effect.void;
+    }),
+    forThread: Effect.fn("McpAppModelContext.forThread")(function () {
+      return Effect.succeed([]);
+    }),
+  }),
 );

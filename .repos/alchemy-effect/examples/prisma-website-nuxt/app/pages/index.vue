@@ -9,9 +9,7 @@ const responseGreeting = ref("");
 
 async function loadGreeting() {
   try {
-    const result = await $fetch<{ greeting: string }>(
-      "/api/hello?name=browser",
-    );
+    const result = await $fetch<{ greeting: string }>("/api/hello?name=browser");
     responseGreeting.value = result.greeting;
   } catch {
     responseGreeting.value = "Could not load the greeting. Try again.";
@@ -29,8 +27,6 @@ async function loadGreeting() {
     <button type="button" @click="count++">count: {{ count }}</button>
     <button type="button" @click="loadGreeting">Load greeting</button>
     <p role="status">{{ responseGreeting }}</p>
-    <NuxtLink class="mt-4 inline-block underline" to="/about"
-      >about (prerendered)</NuxtLink
-    >
+    <NuxtLink class="mt-4 inline-block underline" to="/about">about (prerendered)</NuxtLink>
   </main>
 </template>

@@ -4,8 +4,8 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   collectWrappedTerminalLinkLine,
   extractTerminalLinks,
-  isTerminalLinkActivation,
   isTerminalUrl,
+  resolveTerminalLinkTarget,
   type TerminalBufferLineLike,
 } from "./terminal-links";
 
@@ -17,6 +17,36 @@ function createBufferLine(text: string, isWrapped = false): TerminalBufferLineLi
 }
 
 describe("extractTerminalLinks", () => {
+  it.each([
+    String.raw`C:\dev\ai-test\dir 1`,
+    String.raw`C:\dev\ai-test\dir 1\test`,
+    "C:\\",
+    String.raw`\\server\my share\dir 1`,
+    "/home/Jane Doe/project",
+    String.raw`C:\dev\folder (draft)\name!`,
+  ])("keeps the full PowerShell prompt path %s in one link", (path) => {
+    expect(extractTerminalLinks(`PS ${path}> `)).toEqual([
+      { kind: "path", text: path, start: 3, end: 3 + path.length },
+    ]);
+  });
+
+  it("keeps links in a command separate from the PowerShell prompt path", () => {
+    const path = String.raw`C:\dev\dir 1\test`;
+    const prompt = `PS ${path}> `;
+    const url = "https://example.com";
+    expect(extractTerminalLinks(`${prompt}echo ${url}`)).toEqual([
+      { kind: "path", text: path, start: 3, end: 3 + path.length },
+      { kind: "url", text: url, start: prompt.length + 5, end: prompt.length + 5 + url.length },
+    ]);
+  });
+
+  it("does not extend ordinary output paths through trailing prose", () => {
+    const path = String.raw`C:\dev\project`;
+    expect(extractTerminalLinks(`see ${path} for details`)).toEqual([
+      { kind: "path", text: path, start: 4, end: 4 + path.length },
+    ]);
+  });
+
   it.each([
     String.raw`src\index.ts:12`,
     String.raw`.\src\index.ts:12:7`,
@@ -34,6 +64,10 @@ describe("extractTerminalLinks", () => {
     const text = String.raw`C:\Users\Jane Doe\project\index.ts:12:7`;
     expect(extractTerminalLinks(`see ${quote}${text}${quote}.`)).toEqual([
       { kind: "path", text, start: 5, end: 5 + text.length },
+    ]);
+    const atText = "src/my contact@support.vue:12:3";
+    expect(extractTerminalLinks(`see ${quote}${atText}${quote}.`)).toEqual([
+      { kind: "path", text: atText, start: 5, end: 5 + atText.length },
     ]);
   });
 
@@ -54,14 +88,6 @@ describe("extractTerminalLinks", () => {
     expect(extractTerminalLinks('error: "something went wrong."')).toEqual([]);
   });
 
-  it.each([
-    ['"my file.ts":12:7', "my file.ts:12:7", 17],
-    ["'my file.ts:12:7'", "my file.ts:12:7", 16],
-    ["`my file.ts`", "my file.ts", 11],
-  ])("finds a quoted basename in %s", (line, text, end) => {
-    expect(extractTerminalLinks(line)).toEqual([{ kind: "path", text, start: 1, end }]);
-  });
-
   it("keeps quoted paths and URLs separate without duplicate partial paths", () => {
     const path = String.raw`C:\Jane Doe\index.ts:12`;
     const url = "https://example.com/docs";
@@ -73,41 +99,11 @@ describe("extractTerminalLinks", () => {
     ]);
   });
 
-  it("finds http urls and path tokens", () => {
-    const line =
-      "failed at https://example.com/docs and src/components/ThreadTerminalDrawer.tsx:42";
-    expect(extractTerminalLinks(line)).toEqual([
-      {
-        kind: "url",
-        text: "https://example.com/docs",
-        start: 10,
-        end: 34,
-      },
-      {
-        kind: "path",
-        text: "src/components/ThreadTerminalDrawer.tsx:42",
-        start: 39,
-        end: 81,
-      },
-    ]);
-  });
-
   it("classifies uppercase schemes as URLs at activation time too", () => {
     expect(isTerminalUrl("HTTPS://example.com/docs")).toBe(true);
     expect(isTerminalUrl("Http://example.com")).toBe(true);
     expect(isTerminalUrl("src/components/main.ts")).toBe(false);
     expect(isTerminalUrl("httpsdocs/readme.md")).toBe(false);
-  });
-
-  it("finds URLs regardless of scheme casing", () => {
-    expect(extractTerminalLinks("open HTTPS://example.com/docs")).toEqual([
-      {
-        kind: "url",
-        text: "HTTPS://example.com/docs",
-        start: 5,
-        end: 29,
-      },
-    ]);
   });
 
   it("trims trailing punctuation from links", () => {
@@ -128,6 +124,27 @@ describe("extractTerminalLinks", () => {
     ]);
   });
 
+  it.each([
+    "src/żółć.ts:12:7",
+    "żółć/main.ts:12",
+    String.raw`żółć\main.ts:12`,
+    "src/cafe\u0301.ts:12",
+    "src/𐐀.ts:12",
+    "src/app/[id]/page.tsx:3:10",
+    "src/routes/(app)/+page.svelte:12:4",
+    "src/routes/(app)/+page@.svelte:12:3",
+    "src/contact@support.vue:12:3",
+    String.raw`src\contact@support.ts:12:3`,
+    "src/équipe@home.ts:12:3",
+    "src/foo$contact@support.ts:12:3",
+    "node_modules/.pnpm/react@18.3.1/node_modules/react/index.js:12:5",
+    "app/routes/posts.$id.tsx:5",
+  ])("keeps the complete relative path %s", (text) => {
+    expect(extractTerminalLinks(`see ${text} for details`)).toEqual([
+      { kind: "path", text, start: 4, end: 4 + text.length },
+    ]);
+  });
+
   it("finds Windows absolute paths with forward slashes", () => {
     const line = "see C:/Users/someone/project/src/file.ts:42 for details";
     const path = "C:/Users/someone/project/src/file.ts:42";
@@ -138,18 +155,6 @@ describe("extractTerminalLinks", () => {
         text: path,
         start,
         end: start + path.length,
-      },
-    ]);
-  });
-
-  it("trims trailing punctuation from Windows forward-slash paths", () => {
-    const line = "(C:/tmp/x.ts).";
-    expect(extractTerminalLinks(line)).toEqual([
-      {
-        kind: "path",
-        text: "C:/tmp/x.ts",
-        start: 1,
-        end: 12,
       },
     ]);
   });
@@ -169,6 +174,58 @@ describe("extractTerminalLinks", () => {
     const start = line.indexOf(text);
     expect(extractTerminalLinks(line)).toEqual([
       { kind: "path", text, start, end: start + text.length },
+    ]);
+  });
+
+  it.each([
+    " GET /api/trpc/post.list,user.me?batch=1&input=%7B%220%22%3A%7B%22json%22%3Anull%7D%7D 200 in 35ms",
+    "GET /api?+debug 200",
+    'Started GET "/posts?page=2" for ::1',
+    "proxying api/trpc/post.list?batch=1 to the backend",
+  ])("does not turn a logged request route into an editor link: %s", (line) => {
+    expect(extractTerminalLinks(line)).toEqual([]);
+  });
+
+  it("keeps file and URL links before and after a logged request route", () => {
+    const before = "src/server.ts:12";
+    const after = "/app/bin/server:3:7";
+    const url = "https://example.com/api/users?id=42";
+    const line = `${before} GET /api/users?id=42 200 ${after} ${url}`;
+    const afterStart = line.indexOf(after);
+    const urlStart = line.indexOf(url);
+
+    expect(extractTerminalLinks(line)).toEqual([
+      { kind: "path", text: before, start: 0, end: before.length },
+      { kind: "path", text: after, start: afterStart, end: afterStart + after.length },
+      { kind: "url", text: url, start: urlStart, end: urlStart + url.length },
+    ]);
+  });
+
+  it.each([
+    "connected to redis://127.0.0.1:6379/0",
+    "connected to postgres://localhost:5432/app",
+    "uploaded s3://bucket/reports/today.csv",
+    "    at main (file:///Users/jane/app/src/index.mjs:3:7)",
+    "+redis://localhost:6379/0",
+    "-redis://localhost:6379/0",
+    "git clone git@github.com:acme/widgets.git",
+    "remote: git@gitlab.com:group/sub/project.git",
+  ])("does not turn part of a non-web URL into an editor link: %s", (line) => {
+    expect(extractTerminalLinks(line)).toEqual([]);
+  });
+
+  it("keeps file links beside a non-web URL", () => {
+    const line = "src/db.ts:4 redis://localhost:6379/0 C:/app/src/db.ts:9";
+    expect(extractTerminalLinks(line)).toEqual([
+      { kind: "path", text: "src/db.ts:4", start: 0, end: 11 },
+      { kind: "path", text: "C:/app/src/db.ts:9", start: 37, end: 55 },
+    ]);
+  });
+
+  it("keeps a question mark inside a filesystem path", () => {
+    const path = "/tmp/report?draft";
+    expect(extractTerminalLinks(`wrote ${path}`)).toEqual([
+      { kind: "path", text: path, start: 6, end: 6 + path.length },
     ]);
   });
 });
@@ -234,75 +291,45 @@ describe("resolvePathLinkTarget", () => {
     );
   });
 
-  it("resolves relative paths against cwd", () => {
-    expect(
-      resolvePathLinkTarget(
-        "src/components/ThreadTerminalDrawer.tsx:42:7",
-        "/Users/julius/project",
-      ),
-    ).toBe("/Users/julius/project/src/components/ThreadTerminalDrawer.tsx:42:7");
-  });
-
-  it("keeps absolute paths unchanged", () => {
-    expect(
-      resolvePathLinkTarget("/Users/julius/project/src/main.ts:12", "/Users/julius/project"),
-    ).toBe("/Users/julius/project/src/main.ts:12");
-  });
-
-  it("keeps Windows absolute paths with forward slashes unchanged", () => {
-    expect(
-      resolvePathLinkTarget("C:/Users/julius/project/src/main.ts:12", "C:\\Users\\julius\\project"),
-    ).toBe("C:/Users/julius/project/src/main.ts:12");
-  });
-
+  // regression: #13408 terminal links kept a trailing colon
   it("keeps the line and column of a compiler diagnostic", () => {
     const [link] = extractTerminalLinks("/Users/julius/project/main.c:10:5: error: expected ';'");
     expect(resolvePathLinkTarget(link?.text ?? "", "/Users/julius/project")).toBe(
       "/Users/julius/project/main.c:10:5",
     );
   });
-});
 
-describe("isTerminalLinkActivation", () => {
-  it("requires cmd on macOS", () => {
-    expect(
-      isTerminalLinkActivation(
-        {
-          metaKey: true,
-          ctrlKey: false,
-        },
-        "MacIntel",
-      ),
-    ).toBe(true);
-    expect(
-      isTerminalLinkActivation(
-        {
-          metaKey: false,
-          ctrlKey: true,
-        },
-        "MacIntel",
-      ),
-    ).toBe(false);
+  it.each([
+    ["src/main.ts", "/repo/src/main.ts"],
+    ["/repo/src/main.ts", "/repo/src/main.ts"],
+    [String.raw`C:\repo\src\main.ts`, String.raw`C:\repo\src\main.ts`],
+    ["app/(auth)/page.tsx", "/repo/app/(auth)/page.tsx"],
+  ])("preserves a TypeScript compiler location on %s", (path, target) => {
+    const text = `${path}(42,7)`;
+    const links = extractTerminalLinks(`${text}: error TS2322: Type mismatch`);
+    expect(links).toEqual([{ kind: "path", text: `${path}:42:7`, start: 0, end: text.length }]);
+    expect(resolveTerminalLinkTarget(links[0]?.text ?? "", "/repo")).toBe(`${target}:42:7`);
   });
 
-  it("requires ctrl on non-macOS", () => {
+  it.each([
+    [String.raw`PS C:\dev\folder (42,7)> `, String.raw`C:\dev\folder (42,7)`],
+    ["/tmp/report(42,7)", "/tmp/report(42,7)"],
+    ["src/Program.cs(3,10): error CS1002: x", "/repo/src/Program.cs"],
+  ])("preserves existing path targets in %s", (line, target) => {
+    const [link] = extractTerminalLinks(line);
+    expect(resolveTerminalLinkTarget(link?.text ?? "", "/repo")).toBe(target);
+  });
+
+  // regression: #36005 OSC 8 file URIs were joined onto the cwd as relative paths
+  it("does not resolve an OSC 8 file URI target against the cwd", () => {
+    expect(resolveTerminalLinkTarget("file:///var/tmp/report.txt", "/workspace/project")).toBe(
+      "/var/tmp/report.txt",
+    );
     expect(
-      isTerminalLinkActivation(
-        {
-          metaKey: false,
-          ctrlKey: true,
-        },
-        "Win32",
-      ),
-    ).toBe(true);
-    expect(
-      isTerminalLinkActivation(
-        {
-          metaKey: true,
-          ctrlKey: false,
-        },
-        "Linux",
-      ),
-    ).toBe(false);
+      resolveTerminalLinkTarget("file://remote.invalid/var/tmp/report.txt", "/workspace/project"),
+    ).not.toMatch(/^\/workspace\/project\//);
+    expect(resolvePathLinkTarget("file:notes.md", "/workspace/project")).toBe(
+      "/workspace/project/file:notes.md",
+    );
   });
 });

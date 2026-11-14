@@ -1,5 +1,5 @@
-import * as AWS from "alchemy/AWS";
-import * as Drizzle from "alchemy/Drizzle/Postgres";
+import * as AWS from "@alchemy.run/aws";
+import * as Drizzle from "@alchemy.run/drizzle/Postgres";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import { Database } from "./database.ts";

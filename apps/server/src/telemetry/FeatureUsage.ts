@@ -1,8 +1,4 @@
-import {
-  ORCHESTRATION_V2_WS_METHODS,
-  type OrchestrationV2Command,
-  WS_METHODS,
-} from "@t3tools/contracts";
+import { type OrchestrationV2Command, WS_METHODS } from "@t3tools/contracts";
 
 export interface FeatureUsage {
   readonly feature: string;
@@ -18,14 +14,16 @@ const use = (feature: string, variant?: string): FeatureUsage =>
   variant === undefined ? { feature } : { feature, variant };
 
 /**
- * User commands sent through `orchestration.dispatchCommand` that represent a
- * feature choice. Housekeeping commands (visits, reorders, acknowledgements)
- * and `message.dispatch`, which `client.turn.requested` already counts, are
- * left out.
+ * Exclude housekeeping. `client.turn.requested` counts every `message.dispatch`; only sending a
+ * guest's message is also a feature. Record at command dispatch so retries do not count twice.
  */
-const COMMAND_FEATURES: Partial<
-  Record<OrchestrationV2Command["type"], (command: Payload) => FeatureUsage>
-> = {
+const COMMAND_FEATURES: {
+  readonly [Type in OrchestrationV2Command["type"]]?: (
+    command: Extract<OrchestrationV2Command, { readonly type: Type }>,
+  ) => FeatureUsage | undefined;
+} = {
+  "message.dispatch": (command) =>
+    command.guestMessageId === undefined ? undefined : { feature: "guest_message.send" },
   "checkpoint.rollback": (command) => ({
     feature: "checkpoint.rollback",
     variant: command.restoreFiles === false ? "conversation_only" : "with_files",
@@ -38,30 +36,24 @@ const COMMAND_FEATURES: Partial<
   "thread.pin": () => ({ feature: "thread.pin" }),
   "thread.settle": () => ({ feature: "thread.settle" }),
   "thread.pull-request.link": () => ({ feature: "thread.pull_request.link" }),
-  "thread.pull-request.watch": () => ({ feature: "thread.pull_request.watch" }),
-  "thread.runtime-mode.set": (command) =>
-    use("thread.runtime_mode.set", literal(command, "runtimeMode")),
+  "thread.pull-request.watch": (command) =>
+    use("thread.pull_request.watch", command.watching ? "on" : "off"),
+  "thread.runtime-mode.set": (command) => use("thread.runtime_mode.set", command.runtimeMode),
   "thread.interaction-mode.set": (command) =>
-    use("thread.interaction_mode.set", literal(command, "interactionMode")),
+    use("thread.interaction_mode.set", command.interactionMode),
   "run.interrupt": () => ({ feature: "run.interrupt" }),
   "queued-message.promote-to-steer": () => ({ feature: "queue.steer" }),
   "queued-run.edit": () => ({ feature: "queue.edit" }),
+  "thread.guest-share.close": () => ({ feature: "guest_share.close" }),
+  "thread.guest-message.dismiss": () => ({ feature: "guest_message.dismiss" }),
 };
 
 /**
  * RPCs that represent a user starting a feature. Variants come only from
  * closed enums in the contracts, so no path, id, or free text can reach analytics.
+ * Thread launches are left out because `client.thread.started` counts them.
  */
 const METHOD_FEATURES: Readonly<Record<string, (payload: Payload) => FeatureUsage>> = {
-  [ORCHESTRATION_V2_WS_METHODS.launchThread]: (payload) => {
-    const strategy = payload.workspaceStrategy;
-    return use(
-      "thread.launch",
-      typeof strategy === "object" && strategy !== null
-        ? literal(strategy as Payload, "type")
-        : undefined,
-    );
-  },
   [WS_METHODS.terminalOpen]: () => ({ feature: "terminal.open" }),
   [WS_METHODS.previewOpen]: () => ({ feature: "preview.open" }),
   [WS_METHODS.deviceOpen]: () => ({ feature: "device.open" }),
@@ -78,16 +70,22 @@ const METHOD_FEATURES: Readonly<Record<string, (payload: Payload) => FeatureUsag
   [WS_METHODS.agentSessionsImport]: () => ({ feature: "agent_session.import" }),
   [WS_METHODS.projectCloneStart]: () => ({ feature: "project.clone" }),
   [WS_METHODS.sourceControlPublishRepository]: () => ({ feature: "repository.publish" }),
+  [WS_METHODS.sourceControlSignInStart]: () => ({ feature: "source_control.sign_in" }),
   [WS_METHODS.serverUpsertKeybinding]: () => ({ feature: "keybinding.customize" }),
+  [WS_METHODS.guestShareCreate]: () => ({ feature: "guest_share.create" }),
 };
+
+/** The feature a dispatched command uses, or undefined when it is not a tracked feature. */
+export function commandFeatureUsage(command: OrchestrationV2Command): FeatureUsage | undefined {
+  // TypeScript cannot pair a union's tag with its own entry, so widen once here.
+  const mapping = COMMAND_FEATURES[command.type] as
+    | ((command: OrchestrationV2Command) => FeatureUsage | undefined)
+    | undefined;
+  return mapping?.(command);
+}
 
 /** The feature a WebSocket request uses, or undefined when it is not a tracked feature. */
 export function featureUsage(method: string, payload: unknown): FeatureUsage | undefined {
   if (typeof payload !== "object" || payload === null) return undefined;
-  const input = payload as Payload;
-  if (method === ORCHESTRATION_V2_WS_METHODS.dispatchCommand) {
-    const type = literal(input, "type") as OrchestrationV2Command["type"] | undefined;
-    return type === undefined ? undefined : COMMAND_FEATURES[type]?.(input);
-  }
-  return METHOD_FEATURES[method]?.(input);
+  return METHOD_FEATURES[method]?.(payload as Payload);
 }

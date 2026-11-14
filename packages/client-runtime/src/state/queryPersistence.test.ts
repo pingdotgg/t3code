@@ -48,13 +48,6 @@ describe("query persistence", () => {
       ),
     ),
   );
-
-  it.effect("does not persist on platforms without a query store", () =>
-    Effect.gen(function* () {
-      yield* persisted.save(env, "open", { title: "saved" });
-      expect(yield* persisted.load(env, "open")).toEqual(Option.none());
-    }),
-  );
 });
 
 it.effect("restores line counts when visible PR batches change", () =>

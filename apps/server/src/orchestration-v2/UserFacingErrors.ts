@@ -37,6 +37,18 @@ function databaseErrorMessage(value: unknown): string | undefined {
   return "The T3 Code server could not complete this database request. Retry once; if it still fails, check the server logs for the database error.";
 }
 
+export function userFacingDatabaseErrorMessage(cause: unknown): string | undefined {
+  const seen = new Set<unknown>();
+  let value = cause;
+  while (Predicate.isObject(value) && !seen.has(value)) {
+    seen.add(value);
+    const message = databaseErrorMessage(value);
+    if (message !== undefined) return message;
+    value = value.cause;
+  }
+  return undefined;
+}
+
 const CAPABILITY_REJECTION_MESSAGES: Record<string, (provider: string) => string> = {
   queued_messages: (p) => `${p} cannot queue messages behind an active run.`,
   active_steering: (p) =>
@@ -69,9 +81,6 @@ function policyRejectionMessage(value: unknown): string | undefined {
   if (value._tag === "CommandPolicyCapabilityUnsupportedError") {
     const capability = typeof value.capability === "string" ? value.capability : "";
     return CAPABILITY_REJECTION_MESSAGES[capability]?.(provider);
-  }
-  if (value._tag === "CommandPolicyUnsupportedError") {
-    return `${provider} cannot deliver a message that way right now.`;
   }
   return undefined;
 }

@@ -1,0 +1,63 @@
+diff --git a/out/targets/nsis/NsisTarget.js b/out/targets/nsis/NsisTarget.js
+index 8a3462b185b078a260483635e6d774e2ece6e269..105778c145ab63a26444179215c643a7f22148a0 100644
+--- a/out/targets/nsis/NsisTarget.js
++++ b/out/targets/nsis/NsisTarget.js
+@@ -366,7 +366,9 @@ class NsisTarget extends core_1.Target {
+         await this.executeMakensis(defines, commands, sharedHeader + (await this.computeFinalScript(script, false, archs)));
+         // http://forums.winamp.com/showthread.php?p=3078545
+         // TODO: remove workaround when wine is fully upgraded to 11
+-        if ((0, macosVersion_1.isMacOsCatalina)()) {
++        // T3 Code builds Windows installers on Linux without wine; read the
++        // uninstaller out of the stub the way macOS hosts already do.
++        if ((0, macosVersion_1.isMacOsCatalina)() || process.platform === "linux") {
+             try {
+                 await nsisUtil_1.UninstallerReader.exec(installerPath, uninstallerPath);
+             }
+diff --git a/templates/nsis/include/allowOnlyOneInstallerInstance.nsh b/templates/nsis/include/allowOnlyOneInstallerInstance.nsh
+--- a/templates/nsis/include/allowOnlyOneInstallerInstance.nsh
++++ b/templates/nsis/include/allowOnlyOneInstallerInstance.nsh
+@@ -103,6 +103,9 @@
+ !macroend
+
+ !macro _CHECK_APP_RUNNING
++  Var /GLOBAL appRunningMessage
++  Var /GLOBAL appClosingMessage
++  Var /GLOBAL appCannotBeClosedMessage
+   ${GetProcessInfo} 0 $pid $1 $2 $3 $4
+   ${if} $3 != "${APP_EXECUTABLE_FILENAME}"
+     ${if} ${isUpdated}
+@@ -112,17 +115,23 @@
+
+     !insertmacro FIND_PROCESS "${APP_EXECUTABLE_FILENAME}" $R0
+     ${if} $R0 == 0
++      StrCpy $appRunningMessage "$(appRunning)"
++      StrCpy $appClosingMessage "$(appClosing)"
++      StrCpy $appCannotBeClosedMessage "$(appCannotBeClosed)"
++      !ifmacrodef customAppRunningMessages
++        !insertmacro customAppRunningMessages
++      !endif
+       ${if} ${isUpdated}
+         # allow app to exit without explicit kill
+         Sleep 1000
+         Goto doStopProcess
+       ${endIf}
+-      MessageBox MB_OKCANCEL|MB_ICONEXCLAMATION "$(appRunning)" /SD IDOK IDOK doStopProcess
++      MessageBox MB_OKCANCEL|MB_ICONEXCLAMATION "$appRunningMessage" /SD IDOK IDOK doStopProcess
+       Quit
+
+       doStopProcess:
+
+-      DetailPrint "$(appClosing)"
++      DetailPrint "$appClosingMessage"
+
+       !insertmacro KILL_PROCESS "${APP_EXECUTABLE_FILENAME}" 0
+       # to ensure that files are not "in-use"
+@@ -153,7 +162,7 @@
+         # App likely running with elevated permissions.
+         # Ask user to close it manually
+         ${if} $R1 > 1
+-          MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$(appCannotBeClosed)" /SD IDCANCEL IDRETRY loop
++          MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$appCannotBeClosedMessage" /SD IDCANCEL IDRETRY loop
+           Quit
+         ${else}
+           Goto loop

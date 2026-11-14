@@ -184,10 +184,9 @@ export const toBufferedLambdaHandler =
     const { headers, cookies } = splitHeaders(response);
     const bytes = Buffer.from(await response.arrayBuffer());
     const contentType = response.headers.get("content-type") ?? "";
-    const isText =
-      /^text\/|application\/(json|javascript|xml|xhtml\+xml|rss\+xml)/.test(
-        contentType,
-      );
+    const isText = /^text\/|application\/(json|javascript|xml|xhtml\+xml|rss\+xml)/.test(
+      contentType,
+    );
     return {
       statusCode: response.status,
       headers,

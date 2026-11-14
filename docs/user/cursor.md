@@ -8,17 +8,29 @@ TypeScript package. It does not use Cursor's ACP transport for V2 execution.
 - Node.js 22.13 or newer. The repository's supported Node version satisfies this requirement.
 - Sign in with Cursor in **Settings > Providers > Cursor**, or provide a Cursor API key in
   `CURSOR_API_KEY`.
+- A paid Cursor plan on the account used for browser sign-in or `CURSOR_API_KEY`.
 - A model accepted by the Cursor SDK. `auto` is sent to the SDK as its `default` model selection.
 
 The adapter currently uses the SDK's local-agent runtime so runs operate in the selected T3 Code
 workspace. Cursor cloud agents need repository and cloud-environment configuration that T3 Code does
 not expose yet.
 
+Custom Cursor MCP servers and plugins are not configured in T3 Code. They load from the environment
+machine's Cursor config when the agent opens: project `.cursor/mcp.json`, user `~/.cursor/mcp.json`,
+and installed plugins under `~/.cursor/plugins`. Plugin tools
+can appear without a login; OAuth MCP servers still need credentials. Run `agent mcp login <server>`
+with the cwd set to the T3 project root (tokens land in
+`~/.cursor/projects/<folder-slug>/mcp-auth.json`). Cursor desktop Connections auth does not write
+that file, and the local SDK cannot complete interactive MCP OAuth itself—auth attempts fail with
+messages such as "MCP authentication is not supported in local SDK runs" or that the auth server
+does not support dynamic client registration. After you add or change skills, plugins, or MCP
+servers, or after a successful CLI login, use **Restart agent session**.
+
 ## Sign in
 
 Choose **Sign in**, then open the sign-in page and complete it in your browser. T3 Code
 updates automatically when sign-in finishes. This works when connected to a remote environment too.
-On mobile, use **Settings > Provider accounts** for an already configured Cursor instance.
+On mobile, use **Settings > Providers** for an already configured Cursor instance.
 
 Each provider instance keeps its own login on the environment that runs it. Your Cursor editor and
 CLI login are separate. A configured `CURSOR_API_KEY` overrides browser sign-in; remove that override
@@ -35,19 +47,22 @@ The adapter supports:
 - creating and resuming local Cursor agent threads;
 - changing the model and model parameters between turns;
 - assistant text, reasoning, tool activity, plans, and todo streaming;
-- thread-scoped T3 Code MCP tools;
+- thread-scoped T3 Code MCP tools alongside ambient Cursor MCP/plugins from disk;
 - image attachments;
-- interruption, queued app messages, and orchestrator-owned interrupt/restart steering;
+- interruption, queued app messages, and in-turn steering;
 - provider conversation snapshots through `Agent.messages.list()`;
 - Cursor `task` subagents, projected as read-only child app threads with their tool activity and
   final result.
 
-The public SDK does not currently expose native agent fork, conversation rollback, active steering,
-or interactive approval callbacks. Direct active steering is advertised as unsupported, while V2
-steering uses the orchestrator's interrupt-and-restart path and preserves the app run identity across
-provider turns. Same-provider Cursor forks use the orchestrator's portable full-thread context
-handoff into a fresh Cursor agent. The SDK has in-process custom callback tools, but the V2 adapter
-intentionally uses the authenticated, thread-scoped MCP server instead.
+The public SDK does not currently expose native agent fork, conversation rollback, or interactive
+approval callbacks. A text-only steer reaches the current run without restarting it.
+When Cursor cannot deliver the steer, the same message is queued for the next turn after
+this run finishes. If you press Stop, that follow-up stays held until you resume the queue. Steers
+with attachments and provider or runtime changes that must apply immediately interrupt and restart
+the run.
+Same-provider Cursor forks use the orchestrator's portable full-thread context handoff into a fresh
+Cursor agent. The SDK has in-process custom callback tools, but the V2 adapter intentionally uses the
+authenticated, thread-scoped MCP server instead.
 
 Portable handoffs summarize eligible timeline items and can omit the end of long messages. Read
 [Context in portable handoffs](./portable-handoffs.md) before using a fork for work whose exact
@@ -59,9 +74,12 @@ a provider thread to native task projections or advertise subagent thread IDs. A
 read-only: send messages from the parent thread.
 
 Runtime modes map to the controls the local SDK exposes: full access disables its sandbox, while
-restricted modes and explicit non-full-access sandbox policies enable it. Explicit approval policy
-overrides also control Cursor Auto-review. Auto-review is not represented as an interactive T3 Code
-approval flow.
+restricted modes normally enable it. On Windows, Auto and Supervised run without filesystem
+isolation when Cursor Auto-review is enabled, because the SDK does not support a filesystem sandbox
+there. Restricted modes without Auto-review, including the default Auto-accept edits mode, still
+request the sandbox and cannot start on Windows. Explicit sandbox policies remain authoritative,
+including restrictive policies that the Windows SDK rejects. Explicit approval policy overrides
+control Auto-review, which is not represented as an interactive T3 Code approval flow.
 
 The existing Cursor binary path and API endpoint settings belong to the CLI/ACP integration. Cursor
 V2 execution does not launch that binary, and the SDK does not expose an API endpoint override.

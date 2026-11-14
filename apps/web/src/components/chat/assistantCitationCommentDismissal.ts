@@ -1,6 +1,6 @@
 import { ASSISTANT_CITATION_MAX_COMMENT_LENGTH } from "@t3tools/contracts";
 
-export type AssistantCitationCommentDismissal =
+type AssistantCitationCommentDismissal =
   | { kind: "commit"; comment: string }
   | { kind: "close" }
   | { kind: "keep-open" };
