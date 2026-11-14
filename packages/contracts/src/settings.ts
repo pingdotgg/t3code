@@ -845,9 +845,25 @@ export const ClaudeSettings = makeProviderSettingsSchema(
         },
       }),
     ),
+    approveSafetyChecksInFullAccess: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({
+        title: "Approve safety checks in Full access",
+        description:
+          "Full access also approves the checks Claude Code asks about even when bypassing permissions. Your organization's policies, your ask rules, and risky removals still stop.",
+        providerSettingsForm: { control: "switch", clearWhenEmpty: "omit" },
+      }),
+    ),
   },
   {
-    order: ["binaryPath", "homePath", "autoCompactWindow", "idleCompaction", "launchArgs"],
+    order: [
+      "binaryPath",
+      "homePath",
+      "autoCompactWindow",
+      "idleCompaction",
+      "approveSafetyChecksInFullAccess",
+      "launchArgs",
+    ],
   },
 );
 export type ClaudeSettings = typeof ClaudeSettings.Type;

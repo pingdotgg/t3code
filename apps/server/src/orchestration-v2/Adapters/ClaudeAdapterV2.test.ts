@@ -954,6 +954,70 @@ describe("ClaudeAdapterV2 approval presentation", () => {
   });
 });
 
+describe("ClaudeAdapterV2 full access safety checks", () => {
+  const emailCheck =
+    "This call's input holds your account email address, which may leave this machine. If nobody asked to send it, go on without it.";
+  it.each([
+    { name: "approves a provider safety check", expected: true, options: {} },
+    {
+      name: "keeps asking when the setting is off",
+      expected: false,
+      enabled: false,
+      options: {},
+    },
+    {
+      name: "keeps asking outside bypass mode",
+      expected: false,
+      permissionMode: "acceptEdits" as const,
+      options: {},
+    },
+    {
+      name: "keeps the user's ask rule",
+      expected: false,
+      options: { matchedAskRule: { source: "userSettings", toolName: "Bash" } },
+    },
+    {
+      name: "keeps an organization policy",
+      expected: false,
+      options: { decisionReason: "Your organization requires approval for this tool" },
+    },
+    {
+      name: "keeps an organization policy the CLI flags by code",
+      expected: false,
+      options: { decisionReasonCode: "org_ask_ceiling" },
+    },
+    {
+      name: "keeps a server policy ask",
+      expected: false,
+      options: { serverPolicyAskOnly: true },
+    },
+    {
+      name: "keeps tools that need the user",
+      expected: false,
+      options: { requiresUserInteraction: true },
+    },
+  ])(
+    "$name",
+    ({ expected, enabled = true, permissionMode = "bypassPermissions" as const, options }) => {
+      assert.equal(
+        ClaudeAdapterV2.claudeFullAccessApprovesSafetyCheck({
+          enabled,
+          permissionMode,
+          callbackOptions: {
+            signal: new AbortController().signal,
+            toolUseID: "tool-safety",
+            requestId: "request-safety",
+            decisionReason: emailCheck,
+            suppressAlwaysAllowRule: true,
+            ...options,
+          } as Parameters<ClaudeSdk.CanUseTool>[2],
+        }),
+        expected,
+      );
+    },
+  );
+});
+
 describe("ClaudeAdapterV2 session permissions", () => {
   // regression: #15892 an explicit user refusal must stay user_reject, not a tool failure
   it("keeps explicit user refusals classified as user_reject", () => {

@@ -4184,6 +4184,32 @@ export function claudeApprovalPresentation(input: {
   };
 }
 
+const CLAUDE_ORGANIZATION_ASK_REASON = "Your organization requires approval for this tool";
+
+/** Whether a Full access thread may approve an ask that bypass mode still raised. */
+export function claudeFullAccessApprovesSafetyCheck(input: {
+  readonly enabled: boolean;
+  readonly permissionMode: PermissionMode;
+  readonly callbackOptions: Parameters<CanUseTool>[2];
+}): boolean {
+  const options = input.callbackOptions;
+  if (!input.enabled || input.permissionMode !== "bypassPermissions") return false;
+  if (options.matchedAskRule !== undefined) return false;
+  // The SDK passes these through at runtime but leaves them out of its public types.
+  if (Reflect.get(options, "requiresUserInteraction") === true) return false;
+  if (
+    Reflect.get(options, "serverPolicyAskOnly") === true ||
+    Reflect.get(options, "decisionReasonCode") === "org_ask_ceiling"
+  ) {
+    return false;
+  }
+  return ![options.decisionReason, options.title, options.description].some(
+    (text) =>
+      text !== undefined &&
+      NodeUtil.stripVTControlCharacters(text).trim() === CLAUDE_ORGANIZATION_ASK_REASON,
+  );
+}
+
 export function permissionResultFromDecision(input: {
   readonly toolName: string;
   readonly decision: ProviderApprovalDecision;
@@ -11920,6 +11946,20 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return {
               behavior: "deny",
               message: `Claude Code's removal safety check denied this command; the user did not reject it. The command did not run. Do not bypass the check by splitting the removal, putting it in a script, or using another tool or shell. If the warning below supplies a safe rewrite, use it and let the same check evaluate it. Otherwise continue the rest of the task without the removal and tell the user what you needed to delete and why. Warning: ${safetyReason}`,
+              toolUseID: callbackOptions.toolUseID,
+            } satisfies PermissionResult;
+          }
+
+          if (
+            claudeFullAccessApprovesSafetyCheck({
+              enabled: adapterOptions.settings.approveSafetyChecksInFullAccess,
+              permissionMode: activePermissionMode,
+              callbackOptions,
+            })
+          ) {
+            return {
+              behavior: "allow",
+              updatedInput: toolInput,
               toolUseID: callbackOptions.toolUseID,
             } satisfies PermissionResult;
           }
