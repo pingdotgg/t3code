@@ -25,8 +25,11 @@ function paintedTitlebarLayout() {
 }
 
 // The test page has no overlay, so env(titlebar-area-*) is undefined just as in a minimized window.
-it("keeps the titlebar layout while Windows reports an empty overlay", () => {
+it("keeps the titlebar layout while a minimized Windows window reports an empty overlay", () => {
   const overlay = Object.assign(new EventTarget(), { visible: true });
+  let fullscreen = false;
+  const bridgeWindow = window as { desktopBridge?: unknown };
+  bridgeWindow.desktopBridge = { getWindowFullscreenState: () => fullscreen };
   using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
   using _overlay = vi
     .spyOn(
@@ -44,7 +47,12 @@ it("keeps the titlebar layout while Windows reports an empty overlay", () => {
 
     expect(root.classList.contains("wco")).toBe(true);
     expect(paintedTitlebarLayout()).toEqual({ height: 40, width: 137 + 12 });
+
+    fullscreen = true;
+    window.dispatchEvent(new Event("resize"));
+    expect(root.classList.contains("wco")).toBe(false);
   } finally {
+    delete bridgeWindow.desktopBridge;
     stop();
     stopPlatformClasses();
     root.classList.remove("wco");
