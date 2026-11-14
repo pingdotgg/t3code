@@ -12,27 +12,15 @@
         <h1>Upload journal</h1>
         <p>Private files. A real upload event. A durable processing record.</p>
       </header>
-      <p id="message" role="status" aria-live="polite">
-        Connecting to managed authentication…
-      </p>
+      <p id="message" role="status" aria-live="polite">Connecting to managed authentication…</p>
       <section aria-labelledby="account-heading">
         <h2 id="account-heading">Your account</h2>
         <p id="identity">Signed out</p>
         <form id="account">
           <label
-            >Name<input
-              name="name"
-              autocomplete="name"
-              value="Neon explorer"
-              maxlength="100"
+            >Name<input name="name" autocomplete="name" value="Neon explorer" maxlength="100"
           /></label>
-          <label
-            >Email<input
-              name="email"
-              type="email"
-              autocomplete="username"
-              required
-          /></label>
+          <label>Email<input name="email" type="email" autocomplete="username" required /></label>
           <label
             >Password<input
               name="password"
@@ -43,9 +31,7 @@
           /></label>
           <div class="actions">
             <button name="mode" value="signup">Create account</button
-            ><button name="mode" value="signin" class="secondary">
-              Sign in
-            </button>
+            ><button name="mode" value="signin" class="secondary">Sign in</button>
           </div>
         </form>
         <button id="signout" class="secondary" hidden>Sign out</button>
@@ -53,8 +39,8 @@
       <section aria-labelledby="upload-heading">
         <h2 id="upload-heading">Add a file</h2>
         <p>
-          Choose a file up to 10 MiB. Your browser uploads directly to a private
-          bucket using a short-lived signed URL.
+          Choose a file up to 10 MiB. Your browser uploads directly to a private bucket using a
+          short-lived signed URL.
         </p>
         <form id="upload">
           <label>File<input name="file" type="file" required /></label
@@ -72,21 +58,19 @@
       <details>
         <summary>Security and processing</summary>
         <p>
-          Only the signed-in owner can request upload or download URLs. The
-          Function verifies JWT signatures and expiry. A bucket event verifies
-          file metadata and updates Postgres; the browser never marks a file
-          ready.
+          Only the signed-in owner can request upload or download URLs. The Function verifies JWT
+          signatures and expiry. A bucket event verifies file metadata and updates Postgres; the
+          browser never marks a file ready.
         </p>
         <p>
-          Signout ends your session. Previously issued JWTs can remain valid
-          until their short expiry. This tutorial disables email verification
-          and allows localhost; enable verification and restrict origins before
-          production.
+          Signout ends your session. Previously issued JWTs can remain valid until their short
+          expiry. This tutorial disables email verification and allows localhost; enable
+          verification and restrict origins before production.
         </p>
         <p>
-          Size is checked before signing and again after delivery, not enforced
-          as a storage quota by the signed PUT. This is metadata processing, not
-          malware scanning. No AI calls or credits are required.
+          Size is checked before signing and again after delivery, not enforced as a storage quota
+          by the signed PUT. This is metadata processing, not malware scanning. No AI calls or
+          credits are required.
         </p>
       </details>
     </main>

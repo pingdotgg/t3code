@@ -1,14 +1,12 @@
-import { expect, it } from "alchemy-test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { expect, it } from "@alchemy.run/test";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const cli = resolve(here, "../bin/alchemy-test.ts");
-const api = JSON.stringify(
-  pathToFileURL(resolve(here, "../src/index.ts")).href,
-);
+const api = JSON.stringify(pathToFileURL(resolve(here, "../src/index.ts")).href);
 
 const run = async (root: string, plan: unknown, args: string[] = []) => {
   const child = Bun.spawn(
@@ -147,10 +145,7 @@ it(
       }, {tags:[tag]});
     `,
       );
-      const result = await run(root, [
-        [{ tags: ["aws"] }, { tags: ["cf"] }],
-        { tags: [] },
-      ]);
+      const result = await run(root, [[{ tags: ["aws"] }, { tags: ["cf"] }], { tags: [] }]);
       expect(result.output).toContain("2 passed");
       expect(result.output).toContain("0 excluded by plan");
       expect(result.code).toBe(0);
@@ -186,9 +181,7 @@ it(
       const { readdir, readFile } = await import("node:fs/promises");
       const dir = resolve(root, ".alchemy/log/test");
       const logs = await readdir(dir);
-      expect(await readFile(resolve(dir, logs[0]!), "utf8")).toContain(
-        "cleanup sentinel",
-      );
+      expect(await readFile(resolve(dir, logs[0]!), "utf8")).toContain("cleanup sentinel");
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -201,10 +194,7 @@ it(
   async () => {
     const root = await mkdtemp(resolve(tmpdir(), "alchemy-plan-invalid-"));
     try {
-      await writeFile(
-        resolve(root, "bad.test.ts"),
-        `throw new Error('IMPORTED_SENTINEL');`,
-      );
+      await writeFile(resolve(root, "bad.test.ts"), `throw new Error('IMPORTED_SENTINEL');`);
       for (const plan of [
         "{",
         [],
@@ -334,10 +324,7 @@ it(
       it('unmatched', () => { throw new Error('unmatched body'); }, {tags:['live']});
     `,
       );
-      await writeFile(
-        resolve(root, "bad.test.ts"),
-        `throw new Error('import sentinel');`,
-      );
+      await writeFile(resolve(root, "bad.test.ts"), `throw new Error('import sentinel');`);
       const result = await run(root, [{ tags: ["local"] }, { tags: ["unit"] }]);
       expect(result.code).not.toBe(0);
       expect(result.output).toContain("1 failed");
@@ -384,18 +371,14 @@ it(
       expect(result.code).toBe(0);
       expect(result.output).toContain("Dry run — no tests or hooks executed");
       expect(result.output).toContain("Phase 2 (parallel)");
-      expect(result.output).toContain(
-        'tags=["local"], concurrency=64 — 1 tests in 1 files',
-      );
+      expect(result.output).toContain('tags=["local"], concurrency=64 — 1 tests in 1 files');
       expect(result.output).toContain(
         'tags=["live","provider:aws"], concurrency=2 — 1 tests in 1 files',
       );
       expect(result.output).toContain(
         "concurrency=unbounded — 1 tests in 1 files (1 skipped/todo)",
       );
-      expect(result.output).toContain(
-        'tags=["live"], concurrency=1 — 0 tests in 0 files',
-      );
+      expect(result.output).toContain('tags=["live"], concurrency=1 — 0 tests in 0 files');
       expect(result.output).toContain("4 found");
       expect(result.output).toContain("3 selected by plan");
       expect(result.output).toContain("1 excluded by plan");
@@ -415,10 +398,7 @@ it(
   async () => {
     const root = await mkdtemp(resolve(tmpdir(), "alchemy-plan-dry-error-"));
     try {
-      await writeFile(
-        resolve(root, "bad.test.ts"),
-        `throw new Error('dry import sentinel');`,
-      );
+      await writeFile(resolve(root, "bad.test.ts"), `throw new Error('dry import sentinel');`);
       const result = await run(root, [{ tags: [] }], ["--dry-run"]);
       expect(result.code).not.toBe(0);
       expect(result.output).toContain("dry import sentinel");
