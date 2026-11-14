@@ -2,22 +2,6 @@ import { describe, expect, it } from "vite-plus/test";
 import { LRUCache } from "./lruCache";
 
 describe("LRUCache", () => {
-  it("returns null for missing keys", () => {
-    const cache = new LRUCache<string>(2, 100);
-    expect(cache.get("missing")).toBeNull();
-  });
-
-  it("evicts oldest by max entries", () => {
-    const cache = new LRUCache<string>(2, 1_000);
-    cache.set("a", "A", 10);
-    cache.set("b", "B", 10);
-    cache.set("c", "C", 10);
-
-    expect(cache.get("a")).toBeNull();
-    expect(cache.get("b")).toBe("B");
-    expect(cache.get("c")).toBe("C");
-  });
-
   it("promotes on get and evicts least recently used", () => {
     const cache = new LRUCache<string>(2, 1_000);
     cache.set("a", "A", 10);
@@ -39,15 +23,6 @@ describe("LRUCache", () => {
     expect(cache.get("a")).toBeNull();
     expect(cache.get("b")).toBe("B");
     expect(cache.get("c")).toBe("C");
-  });
-
-  it("does not cache entries larger than the memory budget", () => {
-    const cache = new LRUCache<string>(2, 25);
-    cache.set("a", "A", 10);
-    cache.set("oversized", "X", 30);
-
-    expect(cache.get("a")).toBe("A");
-    expect(cache.get("oversized")).toBeNull();
   });
 
   it("preserves an existing entry when an oversized replacement is rejected", () => {

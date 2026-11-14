@@ -1,11 +1,15 @@
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
+import type { ComposerPathSearchTarget } from "@t3tools/client-runtime/state/threads";
 import {
   resolveProviderSkillSourceKind,
   type ProviderSkillSourceKind,
 } from "@t3tools/client-runtime/providerSkills";
 import {
+  type EnvironmentId,
+  type EnvironmentMachineKind,
   type ProjectEntry,
   type ProviderDriverKind,
+  type ProviderInstanceId,
   type PullRequestContextMetadata,
   type ScopedThreadRef,
   type ServerProviderSkill,
@@ -20,13 +24,16 @@ import {
   UserRoundIcon,
   type LucideIcon,
 } from "lucide-react";
-import { memo, useLayoutEffect, useRef } from "react";
+import { memo, useLayoutEffect, useRef, useState } from "react";
 
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
 import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
 import { Command, CommandGroup, CommandItem, CommandList } from "../ui/command";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { PierreEntryIcon } from "./PierreEntryIcon";
+import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { ComposerBanner } from "./ComposerBanner";
 import { resolvePullRequestState } from "../pullRequest/pullRequestPresentation";
 
@@ -36,6 +43,7 @@ export type ComposerCommandItem =
       type: "path";
       path: string;
       pathKind: ProjectEntry["kind"];
+      searchTarget: ComposerPathSearchTarget;
       label: string;
       description: string;
     }
@@ -75,6 +83,26 @@ export type ComposerCommandItem =
       thread: ScopedThreadRef;
       label: string;
       description: string;
+    }
+  | {
+      id: string;
+      type: "environment";
+      environmentId: EnvironmentId;
+      machine: EnvironmentMachineKind;
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
+      type: "model";
+      instanceId: ProviderInstanceId;
+      model: string;
+      driverKind: ProviderDriverKind;
+      providerDisplayName: string;
+      acpRegistryAgentId: string | undefined;
+      acpRegistryIconUrl: string | undefined;
+      label: string;
+      description: string;
     };
 
 export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
@@ -90,6 +118,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
 }) {
   const listRef = useRef<HTMLDivElement>(null);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the highlighted menu item's DOM node into view
   useLayoutEffect(() => {
     if (!props.activeItemId || !listRef.current) return;
     const el = listRef.current.querySelector<HTMLElement>(
@@ -138,7 +167,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
           <div className="px-5 pt-3.5 pb-7">
             <p className="text-secondary-label text-xs">
               {props.isLoading
-                ? props.triggerKind === "skill"
+                ? props.triggerKind === "skill" || props.triggerKind === "slash-command"
                   ? "Searching workspace skills..."
                   : props.triggerKind === "pull-request"
                     ? "Finding pull request..."
@@ -172,6 +201,15 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
     props.triggerKind === "slash-command" && props.item.type === "skill" ? props.item.skill : null;
   const pullRequestPresentation =
     props.item.type === "pull-request" ? resolvePullRequestState(props.item.pullRequest) : null;
+  const descriptionRef = useRef<HTMLSpanElement>(null);
+  const [descriptionTruncated, setDescriptionTruncated] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the rendered description so only cut-off text gets a tooltip
+  useLayoutEffect(() => {
+    const description = descriptionRef.current;
+    setDescriptionTruncated(
+      props.isActive && !!description && description.scrollWidth > description.clientWidth,
+    );
+  }, [props.isActive]);
 
   return (
     <CommandItem
@@ -200,6 +238,23 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
       {props.item.type === "thread" ? (
         <MessagesSquareIcon aria-hidden="true" className="size-4 shrink-0 text-secondary-label" />
       ) : null}
+      {props.item.type === "environment" ? (
+        <EnvironmentMachineIcon
+          kind={props.item.machine}
+          aria-hidden="true"
+          className="size-4 shrink-0 text-secondary-label"
+        />
+      ) : null}
+      {props.item.type === "model" ? (
+        <ProviderInstanceIcon
+          driverKind={props.item.driverKind}
+          displayName={props.item.providerDisplayName}
+          acpRegistryAgentId={props.item.acpRegistryAgentId}
+          acpRegistryIconUrl={props.item.acpRegistryIconUrl}
+          className="size-4 shrink-0"
+          iconClassName="size-4"
+        />
+      ) : null}
       {pullRequestPresentation ? (
         <pullRequestPresentation.Icon
           role="img"
@@ -218,9 +273,20 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
             props.item.label
           )}
         </span>
-        <span className="min-w-0 flex-1 truncate text-left text-secondary-label text-xs">
-          {props.item.description}
-        </span>
+        <Tooltip open={descriptionTruncated}>
+          <TooltipTrigger
+            tabIndex={-1}
+            render={
+              <span
+                ref={descriptionRef}
+                className="min-w-0 flex-1 truncate text-left text-secondary-label text-xs"
+              />
+            }
+          >
+            {props.item.description}
+          </TooltipTrigger>
+          <TooltipPopup>{props.item.description}</TooltipPopup>
+        </Tooltip>
         {skillSourceKind ? (
           <SkillSourceBadge
             kind={skillSourceKind}
