@@ -1407,7 +1407,15 @@ it.effect("starts a steer that missed the turn on the saved next-turn selection"
   }),
 );
 
-it.effect.each(["complete", "stop-before-decline", "stop-after-decline", "queued-model"] as const)(
+const declinedSteerTimings = [
+  "complete",
+  "stop-before-decline",
+  "stop-after-decline",
+  "queued-model",
+  "two-steers",
+] as const;
+
+it.effect.each(declinedSteerTimings)(
   "persists a declined steer without blocking the worker: %s",
   (timing) =>
     Effect.gen(function* () {
@@ -1478,6 +1486,26 @@ it.effect.each(["complete", "stop-before-decline", "stop-after-decline", "queued
             }),
           ).pipe(Effect.asVoid, Effect.orDie);
         }
+        if (timing === "two-steers") {
+          // The second steer arrives before the first is declined.
+          beforeDecline = orchestrator
+            .dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make("steer-second"),
+              threadId,
+              messageId: MessageId.make("message:steer-second"),
+              text: "second",
+              attachments: [],
+              dispatchMode: { type: "steer_active", targetRunId: first.runId },
+              createdBy: "user",
+              creationSource: "web",
+            })
+            .pipe(
+              Effect.andThen(Effect.sync(() => (beforeDecline = Effect.void))),
+              Effect.asVoid,
+              Effect.orDie,
+            );
+        }
         const messageId = MessageId.make("message:declined");
         yield* orchestrator.dispatch({
           type: "message.dispatch",
@@ -1527,6 +1555,19 @@ it.effect.each(["complete", "stop-before-decline", "stop-after-decline", "queued
               MessageId.make("message:steer-later"),
               MessageId.make("message:queued-last"),
             ],
+          );
+          return;
+        }
+        if (timing === "two-steers") {
+          assert.deepEqual(
+            pending.runs
+              .filter((run) => run.status === "queued")
+              .toSorted(
+                (left, right) =>
+                  (left.queuePosition ?? left.ordinal) - (right.queuePosition ?? right.ordinal),
+              )
+              .map((run) => run.userMessageId),
+            [messageId, MessageId.make("message:steer-second")],
           );
           return;
         }

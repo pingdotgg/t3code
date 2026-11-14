@@ -24,6 +24,8 @@ export interface TurnItemPositionStoreV2Shape {
     readonly runOrdinal?: number;
     // `run_start` takes the run's unused first slot, ahead of its items, and appends once it is taken.
     readonly placement?: "append" | "run_start";
+    // Keep an existing position even when it lies outside the run's range.
+    readonly keepExisting?: boolean;
   }) => Effect.Effect<number, TurnItemPositionStoreError>;
   readonly normalize: (
     item: OrchestrationV2TurnItem,
@@ -50,6 +52,7 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
           runId,
           runOrdinal: suppliedRunOrdinal,
           placement = "append",
+          keepExisting = false,
         }) {
           const existing = yield* sql<{ readonly ordinal: number }>`
           SELECT ordinal
@@ -72,7 +75,11 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
           const current = existing[0]?.ordinal;
           if (current !== undefined) {
             // A steer that missed its turn starts the next run; it moves into that run's range.
-            if (runOrdinal === null || (current >= lowerBound && current <= upperBound)) {
+            if (
+              keepExisting ||
+              runOrdinal === null ||
+              (current >= lowerBound && current <= upperBound)
+            ) {
               return current;
             }
             yield* sql`
@@ -138,6 +145,8 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
           threadId: item.threadId,
           turnItemId: item.id,
           runId: item.runId,
+          // Queued steers keep their submission order until their run starts (see Orchestrator).
+          keepExisting: item.status === "pending",
           ...(runOrdinal === undefined ? {} : { runOrdinal }),
         }).pipe(Effect.map((ordinal) => (item.ordinal === ordinal ? item : { ...item, ordinal })));
       }),
