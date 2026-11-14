@@ -7,6 +7,8 @@ export interface PullRequestAnchorRange {
   readonly side: "left" | "right";
   readonly end: number;
   readonly endSide: "left" | "right";
+  /** A GitLab line code's old-side counter: the line it names when that old line was removed. */
+  readonly oldLine?: number;
 }
 
 export type PullRequestAnchor =
@@ -57,6 +59,55 @@ function pullRequestPathTab(pathname: string): PullRequestAnchor | null {
   }
 }
 
+const isLine = (line: number) => Number.isSafeInteger(line) && line >= 1;
+
+function gitLabLine(
+  start: number,
+  side: "left" | "right",
+  oldLine = 0,
+): PullRequestAnchorRange | null {
+  if (!isLine(start)) return null;
+  return { start, side, end: start, endSide: side, ...(isLine(oldLine) ? { oldLine } : {}) };
+}
+
+// GitLab names a file by its path's SHA-1 and a line by `<sha1>_<old>_<new>`, which carries both
+// sides' counters. Rapid Diffs writes `line_<sha1 prefix>_<old>` or `_A<new>`.
+function gitLabDiffAnchor(anchor: string, file: string | null): PullRequestAnchor | null {
+  const rapid = /^line_([a-f0-9]{9})_(A?)(\d+)$/i.exec(anchor);
+  if (rapid) {
+    const line = Number(rapid[3]);
+    return {
+      kind: "diff",
+      digest: (rapid[1] ?? "").toLowerCase(),
+      range: gitLabLine(line, rapid[2] ? "right" : "left"),
+    };
+  }
+  const code = /^(?:diff-content-)?([a-f0-9]{40})(?:_(\d+)_(\d+))?$/i.exec(anchor);
+  // A comment anchor beside `?file=` names the comment.
+  const digest =
+    code?.[1] ?? (!anchor && file !== null && /^[a-f0-9]{40}$/i.test(file) ? file : null);
+  if (digest === null) return null;
+  const [oldLine, newLine] = [Number(code?.[2]), Number(code?.[3])];
+  // A deleted file has no new side, so its new counter is 0.
+  const range =
+    code?.[2] === undefined
+      ? null
+      : newLine === 0
+        ? gitLabLine(oldLine, "left")
+        : gitLabLine(newLine, "right", oldLine);
+  return { kind: "diff", digest: digest.toLowerCase(), range };
+}
+
+/** The range to select, once the diff shows whether a GitLab line code's old line was removed. */
+export function resolvePullRequestAnchorRange(
+  range: PullRequestAnchorRange,
+  isRemovedLine: (oldLine: number) => boolean,
+): PullRequestAnchorRange {
+  return range.oldLine !== undefined && isRemovedLine(range.oldLine)
+    ? (gitLabLine(range.oldLine, "left") ?? range)
+    : range;
+}
+
 export function parsePullRequestAnchor(url: string | null | undefined): PullRequestAnchor | null {
   let parsed: URL;
   try {
@@ -66,6 +117,10 @@ export function parsePullRequestAnchor(url: string | null | undefined): PullRequ
   }
   const fallback = pullRequestPathTab(parsed.pathname);
   const anchor = pullRequestUrlHash(url);
+  const gitLab = /\/-\/merge_requests\/\d+\/diffs\/?$/i.test(parsed.pathname)
+    ? gitLabDiffAnchor(anchor, parsed.searchParams.get("file"))
+    : null;
+  if (gitLab) return gitLab;
   if (!anchor) return fallback;
   // GitHub line ranges may cross diff sides; file digests were MD5 before SHA-256.
   const diff = /^diff-([a-f0-9]+)(?:([LR])(\d+)(?:-([LR])(\d+))?)?$/i.exec(anchor);
@@ -89,19 +144,6 @@ export function parsePullRequestAnchor(url: string | null | undefined): PullRequ
           }
         : null,
     };
-  }
-  // GitLab: SHA-1 of the path, then old and new line counters. A removed line still carries a
-  // new counter, so the new side wins unless the file has none (a 0 for a deleted file).
-  const gitlab = /^([a-f0-9]{40})(?:_(\d+)_(\d+))?$/i.exec(anchor);
-  if (gitlab) {
-    const digest = (gitlab[1] ?? "").toLowerCase();
-    if (!gitlab[2]) return { kind: "diff", digest, range: null };
-    const newLine = Number(gitlab[3]);
-    const oldLine = Number(gitlab[2]);
-    const side = newLine >= 1 ? "right" : "left";
-    const line = side === "right" ? newLine : oldLine;
-    if (!Number.isSafeInteger(line) || line < 1) return fallback;
-    return { kind: "diff", digest, range: { start: line, side, end: line, endSide: side } };
   }
   if (
     /^(?:(?:issuecomment-|pullrequestreview-|discussion_r|r|commitcomment-|event-|note_|comment-)\d+|discussion-diff-\d+(?:[LR]\d+(?:-[LR]\d+)?)?)$/i.test(
@@ -149,14 +191,20 @@ export function resolvePullRequestReviewAnchor(
 
 export function pullRequestDiffPathMatches(digest: string, path: string): boolean {
   const bytes = utf8ToBytes(path);
-  const hash = digest.length === 32 ? md5 : digest.length === 40 ? sha1 : sha256;
-  return digest === bytesToHex(hash(bytes));
+  // GitLab uses SHA-1, abbreviated to 9 characters in Rapid Diffs line anchors.
+  if (digest.length === 40 || digest.length === 9)
+    return bytesToHex(sha1(bytes)).startsWith(digest);
+  return digest === bytesToHex(digest.length === 32 ? md5(bytes) : sha256(bytes));
 }
 
 export function pullRequestLinkCommit(url: string | null | undefined): string | null {
   if (!url) return null;
   try {
-    return /\/pull\/\d+\/commits\/([a-f0-9]{40})\/?$/i.exec(new URL(url).pathname)?.[1] ?? null;
+    const { pathname, searchParams } = new URL(url);
+    const commit = /\/-\/merge_requests\/\d+\/diffs\/?$/i.test(pathname)
+      ? searchParams.get("commit_id")
+      : /\/pull\/\d+\/commits\/([a-f0-9]{40})\/?$/i.exec(pathname)?.[1];
+    return commit && /^[a-f0-9]{40}$/i.test(commit) ? commit : null;
   } catch {
     return null;
   }
