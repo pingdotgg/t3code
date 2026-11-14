@@ -80,8 +80,10 @@ until you turn it on there or remove the server from the profile.
 
 Header and environment values are copied to every machine too. For tokens, pick a
 [secret provider](./secrets.md) instead of **Value**. The secret is read when a session starts; if
-that machine cannot read it, the session does not start and says which server needs it. Changing MCP
-servers needs permission to manage providers.
+that machine cannot read it, the session does not start and says which server needs it. Each machine
+sends its own secret to the server's URL, and URL servers do not need **Allow MCP commands**, so only
+sync profiles with machines and people you trust. Changing MCP servers needs permission to manage
+providers.
 
 ## Provider settings
 
