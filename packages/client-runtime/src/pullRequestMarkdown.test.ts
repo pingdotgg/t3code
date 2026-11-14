@@ -152,6 +152,10 @@ describe("pull request body segmentation", () => {
       },
       { id: "markdown:2", kind: "markdown", text: code, sourceOffset: 54 },
     ]);
+    const multilineSpan = "```foo`\nhttps://example.com/demo.mp4\nbar```";
+    expect(splitPullRequestBody(multilineSpan)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: multilineSpan, sourceOffset: 0 },
+    ]);
   });
 
   it("leaves an indented code line alone even when it is only a video link", () => {
