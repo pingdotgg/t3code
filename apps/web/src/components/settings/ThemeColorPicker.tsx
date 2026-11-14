@@ -31,7 +31,8 @@ export function getThemeRoleLabel(role: ThemeColorRole): string {
 function themePickerAlphaSuffix(value: string): string {
   const normalized = themeColorToHex(value) ?? "";
   const alpha = normalized.length === 9 ? normalized.slice(7) : "";
-  return alpha === "ff" ? "" : alpha;
+  // The picker has no opacity control, so a pick from fully transparent would stay invisible.
+  return alpha === "ff" || alpha === "00" ? "" : alpha;
 }
 
 function normalizeThemePickerColor(value: string): string {

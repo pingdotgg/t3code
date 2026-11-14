@@ -114,6 +114,14 @@ describe("theme color field", () => {
     await userEvent.fill(byLabel("Accent color picker hex value"), "#ff0000");
     expect(onChange).toHaveBeenLastCalledWith("accent", "#ff000080");
   });
+
+  it("makes a fully transparent color opaque when a color is picked", async () => {
+    await using screen = await renderThemeField("#00000000");
+    const { onChange } = screen;
+
+    await userEvent.fill(byLabel("Accent color picker hex value"), "#ff0000");
+    expect(onChange).toHaveBeenLastCalledWith("accent", "#ff0000");
+  });
 });
 
 async function renderAccentPicker(value: string) {
