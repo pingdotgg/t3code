@@ -3344,6 +3344,10 @@ const make = Effect.gen(function* () {
           ...(parent === undefined && scope.client?.senderThread !== undefined
             ? { linkedSender: scope.client.senderThread }
             : {}),
+          // An outside client has no thread to name; the name it was approved with does.
+          ...(parent === undefined && scope.client !== undefined && scope.client.linked !== true
+            ? { senderClient: scope.client.label }
+            : {}),
           messageId,
           text: input.message,
           attachments: [],

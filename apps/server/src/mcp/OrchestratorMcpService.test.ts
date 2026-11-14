@@ -4229,7 +4229,7 @@ describe("OrchestratorMcpService thread lookup", () => {
     }),
   );
 
-  it.effect("records the linked environment's thread that sent a message", () =>
+  it.effect("records the linked environment's thread or outside client that sent a message", () =>
     Effect.gen(function* () {
       const target = liveThreadShell(ThreadId.make("thread:target"));
       const sender = {
@@ -4274,7 +4274,14 @@ describe("OrchestratorMcpService thread lookup", () => {
       const fromLink = yield* sendAs(linked(sender));
       assert.deepStrictEqual(fromLink?.linkedSender, sender);
       assert.isUndefined(fromLink?.senderThreadId);
+      assert.isUndefined(fromLink?.senderClient);
       assert.isUndefined((yield* sendAs(linked()))?.linkedSender);
+      const fromOutsideClient = yield* sendAs({
+        ...client,
+        client: { sessionId: "outside", label: "Acme Desktop", access: "full-access" },
+      });
+      assert.equal(fromOutsideClient?.senderClient, "Acme Desktop");
+      assert.isUndefined(fromOutsideClient?.linkedSender);
     }),
   );
 

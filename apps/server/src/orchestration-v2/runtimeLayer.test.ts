@@ -6338,7 +6338,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
-  it.effect("keeps a linked environment's sender on started and queued messages", () =>
+  it.effect("keeps a remote sender on started and queued messages", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const threadId = ThreadId.make("runtime-layer-linked-sender-thread");
@@ -6370,6 +6370,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           createdBy: "agent",
           creationSource: "mcp",
           linkedSender,
+          senderClient: "Acme Desktop",
           commandId: CommandId.make(`runtime-layer-linked-sender-${suffix}`),
           threadId,
           messageId: MessageId.make(`runtime-layer-linked-sender-${suffix}`),
@@ -6386,6 +6387,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           (candidate) => candidate.id === `runtime-layer-linked-sender-${suffix}`,
         );
         assert.deepStrictEqual(message?.linkedSender, linkedSender);
+        assert.equal(message?.senderClient, "Acme Desktop");
         assert.isUndefined(message?.senderThreadId);
       }
       const startedItem = projection.turnItems.find(
@@ -6395,6 +6397,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.deepStrictEqual(
         startedItem?.type === "user_message" ? startedItem.linkedSender : undefined,
         linkedSender,
+      );
+      assert.equal(
+        startedItem?.type === "user_message" ? startedItem.senderClient : undefined,
+        "Acme Desktop",
       );
     }),
   );

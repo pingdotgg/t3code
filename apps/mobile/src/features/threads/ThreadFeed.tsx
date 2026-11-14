@@ -1368,8 +1368,8 @@ function useMarkdownStyles(): MarkdownStyleSets {
 function AgentMessageFoldHeader(props: {
   readonly environmentId: EnvironmentId;
   readonly senderThreadId?: ThreadId;
-  /** A linked environment's sender title, for when this client cannot reach it. */
-  readonly senderTitle?: string;
+  /** A linked environment's sender thread title, or an outside MCP client's name. */
+  readonly senderTitle?: string | undefined;
   readonly summary: string;
   readonly expanded: boolean;
   readonly onToggle: () => void;
@@ -2104,7 +2104,7 @@ function renderFeedEntry(
                 <AgentMessageFoldHeader
                   environmentId={senderRef?.environmentId ?? props.environmentId}
                   senderThreadId={senderRef?.threadId}
-                  {...(message.linkedSender ? { senderTitle: message.linkedSender.title } : {})}
+                  senderTitle={message.linkedSender?.title ?? message.senderClient}
                   summary={
                     replaceComposerContextReferences(presentation.text, (ref) => ref.label)
                       .split(/\r?\n/)

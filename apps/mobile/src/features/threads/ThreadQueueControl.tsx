@@ -96,7 +96,11 @@ function QueuedRunSender(props: {
       : attribution === "agent"
         ? {
             icon: "bubble.left.and.bubble.right" as const,
-            label: senderShell?.title.trim() || linkedSender?.title.trim() || "Agent",
+            label:
+              senderShell?.title.trim() ||
+              linkedSender?.title.trim() ||
+              props.message.senderClient?.trim() ||
+              "Agent",
           }
         : attribution === "t3code"
           ? { icon: null, label: "Sent by T3 Code" }
