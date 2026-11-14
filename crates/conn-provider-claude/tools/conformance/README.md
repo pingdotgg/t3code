@@ -23,6 +23,12 @@ every SDK, CLI or pinned-commit change. Exit 0 means no difference.
 - `examples/conformance.rs` runs the same scenarios through `ClaudeProvider` and the SDK helper.
 - Both start from the same base environment (`env -i`, a throwaway `HOME`, an empty
   `CLAUDE_CONFIG_DIR`); `compare.mjs` diffs the records.
+- The base environment's `SHELL` is a stand-in login shell (`$OUT/login-shell`). Each side
+  first runs its server's start-up step on it: T3's `fixPath` (`os-jank.ts`) on the base
+  environment, ours `conn_support::login_env::hydrate`. So every scenario's CLI gets the merged
+  `PATH` (`mergePathEntries`: the shell's entries first, a blank entry and repeats dropped),
+  `__MISE_DIFF` and `JAVA_HOME`. A full run then repeats `fresh_turn` with `JAVA_HOME` already
+  set (`$OUT/java-home-set`), where the shell's value must not replace it.
 
 An interrupt runs beside the turn's events on both sides (T3 forks `interruptTurn` with
 `requestRuntimeRestart`, as `ProviderTurnControlService` calls it), and the next step waits
