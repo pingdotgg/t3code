@@ -259,7 +259,7 @@ describe("ScheduledTasksSettings", () => {
     );
     expect(enabledPicker).toBeNull();
     await expect
-      .element(page.getByRole("dialog").getByRole("button", { name: "gpt-5.5", exact: true }))
+      .element(page.getByRole("dialog").getByRole("button", { name: /^gpt-5\.5$/i }))
       .toBeDisabled();
   });
 
