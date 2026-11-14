@@ -13,6 +13,7 @@ import {
   connectionRouteId,
   connectionRouteKind,
   connectionRouteLabel,
+  connectionRoutes,
   credentialConnectionId,
   insertRoute,
   entryWithRoutes,
@@ -22,6 +23,7 @@ import {
   removedWithRelay,
   routeKeepsItsHost,
   routesAfterRemoving,
+  savedRoutes,
   sendsTokenInClear,
   upsertRoute,
   usableRoutes,
@@ -215,6 +217,37 @@ describe("learned routes", () => {
       "relay",
       `learned:${ENVIRONMENT_ID}:http://192.168.1.10:3773`,
     ]);
+  });
+
+  it("puts a learned route back where the user moved it when the server reports it again", () => {
+    const serve = { kind: "tailnet", httpBaseUrl: "https://desk.tail1234.ts.net/" };
+    const first = mergeLearnedRoutes({
+      entry: relayOnly,
+      activeRoute: RELAY,
+      reported: [serve],
+      allowInsecure: true,
+    })!;
+    const reordered = entryWithRoutes(relayOnly, [first[1]!, first[0]!]);
+    const report = (entry: ConnectionCatalogEntry, reported: ReadonlyArray<typeof serve>) => {
+      const next = mergeLearnedRoutes({ entry, activeRoute: RELAY, reported, allowInsecure: true });
+      return next === null ? entry : entryWithRoutes(entry, next);
+    };
+    // A restarted server reports no Serve URL until it validates; so does one probe timeout.
+    const withdrawn = report(reordered, []);
+    expect(ids(connectionRoutes(withdrawn))).toEqual(["relay"]);
+    expect(ids(usableRoutes(withdrawn))).toEqual(["relay"]);
+    const returned = connectionRoutes(report(withdrawn, [serve]));
+    expect(ids(returned)).toEqual([
+      "relay",
+      `learned:${ENVIRONMENT_ID}:https://desk.tail1234.ts.net`,
+    ]);
+    // A route left where it was found is forgotten, and so is one whose credential is removed.
+    expect(report(entryWithRoutes(relayOnly, first), []).withdrawnRoutes).toBeUndefined();
+    const paired = entryWithRoutes(withdrawn, [...connectionRoutes(withdrawn), LAN]);
+    expect(savedRoutes(paired)).toHaveLength(3);
+    expect(
+      savedRoutes(entryWithRoutes(paired, routesAfterRemoving(savedRoutes(paired), "relay"))),
+    ).toEqual([LAN]);
   });
 
   it("labels a learned address Tailscale only while the server reports it as tailnet", () => {

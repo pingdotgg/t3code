@@ -41,20 +41,46 @@ export function connectionRoutes(entry: ConnectionCatalogEntry): ReadonlyArray<C
   return [{ target: entry.target, profile: entry.profile }, ...(entry.alternateRoutes ?? [])];
 }
 
+/** Every saved route in its saved order, withdrawn ones included. */
+export function savedRoutes(entry: ConnectionCatalogEntry): ReadonlyArray<ConnectionRoute> {
+  const routes = [...connectionRoutes(entry)];
+  for (const { route, index } of entry.withdrawnRoutes ?? []) routes.splice(index, 0, route);
+  return routes;
+}
+
+/**
+ * Withdrawn routes in `routes` keep the place they hold there. Those `routes`
+ * leaves out stay where they were, while the route that lent them their
+ * credential is still saved.
+ */
 export function entryWithRoutes(
   entry: ConnectionCatalogEntry,
   routes: ReadonlyArray<ConnectionRoute>,
 ): ConnectionCatalogEntry {
-  const [first, ...rest] = routes;
+  const [first, ...rest] = routes.filter((route) => !isWithdrawn(route));
   if (first === undefined) {
     throw new Error("A saved environment needs at least one route.");
   }
-  const { alternateRoutes: _previous, ...base } = entry;
+  const live = new Set([first, ...rest].map((route) => connectionRouteId(route.target)));
+  const listed = new Set(routes.map((route) => connectionRouteId(route.target)));
+  const withdrawnRoutes = [
+    ...routes.flatMap((route, index) => (isWithdrawn(route) ? [{ route, index }] : [])),
+    ...(entry.withdrawnRoutes ?? []).filter(
+      ({ route }) => !listed.has(connectionRouteId(route.target)),
+    ),
+  ]
+    .filter(
+      ({ route }) =>
+        !live.has(connectionRouteId(route.target)) && live.has(credentialRouteId(route)),
+    )
+    .sort((left, right) => left.index - right.index);
+  const { alternateRoutes: _previous, withdrawnRoutes: _withdrawn, ...base } = entry;
   return {
     ...base,
     target: first.target,
     profile: first.profile,
     ...(rest.length === 0 ? {} : { alternateRoutes: rest }),
+    ...(withdrawnRoutes.length === 0 ? {} : { withdrawnRoutes }),
   };
 }
 
@@ -238,7 +264,7 @@ export function mergeLearnedRoutes(input: {
 }): ReadonlyArray<ConnectionRoute> | null {
   const { entry } = input;
   const active = input.activeRoute.target;
-  const saved = connectionRoutes(entry);
+  const saved = savedRoutes(entry);
   if (active._tag !== "RelayConnectionTarget" && active._tag !== "BearerConnectionTarget") {
     return null;
   }
@@ -282,13 +308,24 @@ export function mergeLearnedRoutes(input: {
       return [
         url === null || !reported.has(normalized(url))
           ? route
-          : withNetwork(route, tailscaleOrigins.has(normalized(url))),
+          : learnedAs(route, { tailscale: tailscaleOrigins.has(normalized(url)) }),
       ];
     }
-    if (url === null || !reported.has(normalized(url)) || known.has(normalized(url))) return [];
-    if (sendsTokenInClear(saved, route, tailscaleOrigins.has(normalized(url)))) return [];
-    known.add(normalized(url));
-    return [withNetwork(route, tailscaleOrigins.has(normalized(url)))];
+    if (
+      url !== null &&
+      reported.has(normalized(url)) &&
+      !known.has(normalized(url)) &&
+      !sendsTokenInClear(saved, route, tailscaleOrigins.has(normalized(url)))
+    ) {
+      known.add(normalized(url));
+      return [learnedAs(route, { tailscale: tailscaleOrigins.has(normalized(url)) })];
+    }
+    if (isWithdrawn(route)) return [route];
+    // The server withdraws an address it still has, such as a Tailscale Serve
+    // URL it is validating again, so a place the user chose outlives the route.
+    return url !== null && !reported.has(normalized(url)) && movedByUser(saved, route)
+      ? [learnedAs(route, { withdrawn: true })]
+      : [];
   });
   let next: ReadonlyArray<ConnectionRoute> = kept;
   for (const url of reported.values()) {
@@ -331,7 +368,7 @@ export function mergeLearnedRoutes(input: {
     routes
       .map(
         (route) =>
-          `${connectionRouteId(route.target)} ${routeHttpBaseUrl(route) ?? ""} ${connectionRouteKind(route)}`,
+          `${connectionRouteId(route.target)} ${routeHttpBaseUrl(route) ?? ""} ${connectionRouteKind(route)} ${isWithdrawn(route)}`,
       )
       .join("\n");
   return signature(saved) === signature(next) ? null : next;
@@ -387,10 +424,26 @@ export interface ReportedEndpoint {
   readonly kind?: string;
 }
 
-function withNetwork(route: ConnectionRoute, tailscale: boolean): ConnectionRoute {
+function movedByUser(routes: ReadonlyArray<ConnectionRoute>, route: ConnectionRoute): boolean {
+  const live = routes.filter((candidate) => !isWithdrawn(candidate));
+  const found = insertRoute(
+    live.filter((candidate) => candidate !== route),
+    route,
+  );
+  return found.indexOf(route) !== live.indexOf(route);
+}
+
+function learnedAs(
+  route: ConnectionRoute,
+  state: { readonly tailscale: boolean } | { readonly withdrawn: true },
+): ConnectionRoute {
   const profile = Option.getOrNull(route.profile);
   if (profile?._tag !== "BearerConnectionProfile") return route;
-  if ((profile.network === "tailscale") === tailscale) return route;
+  const withdrawn = "withdrawn" in state;
+  const tailscale = withdrawn ? profile.network === "tailscale" : state.tailscale;
+  if ((profile.network === "tailscale") === tailscale && isWithdrawn(route) === withdrawn) {
+    return route;
+  }
   return {
     target: route.target,
     profile: Option.some(
@@ -403,6 +456,7 @@ function withNetwork(route: ConnectionRoute, tailscale: boolean): ConnectionRout
         ...(profile.learned === undefined ? {} : { learned: profile.learned }),
         ...(profile.authorization === undefined ? {} : { authorization: profile.authorization }),
         ...(tailscale ? { network: "tailscale" as const } : {}),
+        ...(withdrawn ? { withdrawn: true as const } : {}),
       }),
     ),
   };
@@ -430,6 +484,19 @@ export function isLearned(route: ConnectionRoute): boolean {
   return profile?._tag === "BearerConnectionProfile" && profile.learned === true;
 }
 
+function isWithdrawn(route: ConnectionRoute): boolean {
+  const profile = Option.getOrNull(route.profile);
+  return profile?._tag === "BearerConnectionProfile" && profile.withdrawn === true;
+}
+
+/** The saved route whose credential a learned route connects with. */
+function credentialRouteId(route: ConnectionRoute): string {
+  const profile = Option.getOrNull(route.profile);
+  return profile?._tag === "BearerConnectionProfile" && profile.authorization === "t3-connect"
+    ? RELAY_ROUTE_ID
+    : credentialConnectionId(connectionRouteId(route.target));
+}
+
 /**
  * A learned route borrows the credential of the route it was learned over, so
  * it cannot outlive that route: removing T3 Connect also removes routes learned
@@ -442,15 +509,9 @@ export function routesAfterRemoving(
 ): ReadonlyArray<ConnectionRoute> {
   const removed = routes.find((route) => connectionRouteId(route.target) === removedId);
   if (removed === undefined) return routes;
-  return routes.filter((route) => {
-    if (route === removed) return false;
-    if (!isLearned(route)) return true;
-    const profile = Option.getOrNull(route.profile);
-    if (profile?._tag === "BearerConnectionProfile" && profile.authorization === "t3-connect") {
-      return removed.target._tag !== "RelayConnectionTarget";
-    }
-    return credentialConnectionId(connectionRouteId(route.target)) !== removedId;
-  });
+  return routes.filter(
+    (route) => route !== removed && !(isLearned(route) && credentialRouteId(route) === removedId),
+  );
 }
 
 /**
