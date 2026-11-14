@@ -35,6 +35,7 @@ import "~/index.css";
 
 import { environmentThreadDetails } from "../../state/threads";
 import { act, fakeTimers, render, stubGlobal } from "../../../test/render";
+import { observeResize } from "~/lib/observeResize";
 import { ChangedFilesCard } from "./ChangedFilesTree";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { createWorkspaceFocusController, workspaceAreaProps } from "../../lib/workspaceFocus";
@@ -377,6 +378,90 @@ describe("MessagesTimeline work rows", () => {
       />,
     );
     await vi.waitFor(() => expect(distanceFromEnd()).toBeLessThan(2));
+  });
+
+  it("pins the live end at once when the viewport shrinks during a turn", async () => {
+    const props = { ...baseProps(), isWorking: true };
+    const runId = RunId.make("live-run");
+    const container = document.createElement("div");
+    container.style.cssText = "height: 600px; width: 900px; display: flex; flex-direction: column;";
+    const reply = (id: string) =>
+      message("Streamed reply\n\n".repeat(40), { role: "assistant", runId }, id);
+    const entries = [
+      ...Array.from({ length: 12 }, (_, index) =>
+        message(`Earlier context ${index}`, {}, `context-${index}`),
+      ),
+      reply("progress"),
+    ];
+    // The app shell subscribes to the shared resize observer before any list mounts, so it is
+    // notified before Legend measures the new viewport.
+    const shell = document.body.appendChild(document.createElement("div"));
+    onTestFinished(() => shell.remove());
+    onTestFinished(observeResize(shell, () => {}));
+    await using screen = await render(<MessagesTimeline {...props} timelineEntries={entries} />, {
+      container,
+    });
+    const viewport = props.listRef.current!.getScrollableNode()!;
+    const distanceFromEnd = () =>
+      viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop;
+    await vi.waitFor(() => expect(distanceFromEnd()).toBeLessThan(2));
+    using scrollTo = vi.spyOn(viewport, "scrollTo");
+    const pinnedEnd = (behavior: ScrollBehavior) =>
+      vi.waitFor(() => {
+        expect(scrollTo).toHaveBeenLastCalledWith(expect.objectContaining({ behavior }));
+        expect(distanceFromEnd()).toBeLessThan(2);
+      });
+
+    await screen.rerender(
+      <MessagesTimeline {...props} timelineEntries={[...entries, reply("first")]} />,
+    );
+    await vi.waitFor(() =>
+      expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ behavior: "smooth" })),
+    );
+    // Shrinks by more than the new viewport while that smooth pin runs.
+    container.style.height = "200px";
+    await pinnedEnd("instant");
+
+    await screen.rerender(
+      <MessagesTimeline
+        {...props}
+        timelineEntries={[...entries, reply("first"), reply("second")]}
+      />,
+    );
+    await pinnedEnd("smooth");
+
+    // Read after Legend's resize delivery and its microtasks, before the frame paints.
+    const distanceAfterResize = (height: string, change: () => void) =>
+      new Promise<number>((resolve) => {
+        const observer = new ResizeObserver(() => {
+          observer.disconnect();
+          resolve(distanceFromEnd());
+        });
+        observer.observe(viewport);
+        change();
+        container.style.height = height;
+      });
+    // The newest row grows in the same resize delivery.
+    const newestParagraph = screen.getByText("Streamed reply").last().element() as HTMLElement;
+    expect(
+      await distanceAfterResize("300px", () => (newestParagraph.style.paddingBottom = "191px")),
+    ).toBeLessThan(2);
+    // The scroll-to-end settle's scrollToOffset clears Legend's follow while it runs.
+    expect(
+      await distanceAfterResize("250px", () => {
+        void props.listRef.current!.scrollToOffset({
+          offset: viewport.scrollHeight - viewport.clientHeight,
+          animated: false,
+        });
+        expect(props.listRef.current!.getState().isFollowingEnd).toBe(false);
+      }),
+    ).toBeLessThan(2);
+
+    viewport.scrollTop = 0;
+    await vi.waitFor(() => expect(props.listRef.current!.getState().isFollowingEnd).toBe(false));
+    scrollTo.mockClear();
+    expect(await distanceAfterResize("500px", () => {})).toBeGreaterThan(500);
+    expect(scrollTo).not.toHaveBeenCalled();
   });
 
   it.each(["delegated", "legacy", "missing"] as const)(

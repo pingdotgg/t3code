@@ -22,6 +22,7 @@ import {
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/scroll-anchor";
 import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
+import { flushSync } from "react-dom";
 import { observeResize } from "~/lib/observeResize";
 import { useStableCallback } from "~/hooks/useStableCallback";
 
@@ -1075,6 +1076,41 @@ const ConversationTimeline = memo(function ConversationTimeline({
       if (viewportElement) measureTimelineGutter(viewportElement);
     });
   };
+  const maintainScrollAtEnd =
+    citationPositioning ||
+    (restoringThreadPosition && rememberedPosition?.atEnd === false) ||
+    anchoredEndSpace ||
+    !liveFollowEnabled ||
+    fullscreenAppRowId !== null
+      ? false
+      : isWorking && !prefersReducedMotion && settlingListIdentity === null
+        ? TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH
+        : TIMELINE_MAINTAIN_SCROLL_AT_END;
+  // Legend animates every end pin of an animated list and queues a resize pin behind a running
+  // one, so a viewport resize (terminal drawer) would push the live end out of view for a beat.
+  // Runs from Legend's onLayout, inside the resize batch that flushes item growth after it, so
+  // the pin waits for that flush. scrollToEnd commits through a React update; flushSync paints it.
+  const listViewportHeightRef = useRef<number | null>(null);
+  const pinEndOnViewportResize = useStableCallback(
+    (event: { nativeEvent: { layout: { height: number } } }) => {
+      const { height } = event.nativeEvent.layout;
+      const previousHeight = listViewportHeightRef.current;
+      listViewportHeightRef.current = height;
+      if (previousHeight === null || previousHeight === height) return;
+      if (maintainScrollAtEnd !== TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH) return;
+      const list = listRef.current;
+      if (!list) return;
+      const state = list.getState();
+      // Any scroll request clears Legend's follow while it runs, so the scroll-to-end settle
+      // reads as leaving the end. A reader who left the end band is still never pulled back.
+      if (
+        !state.isFollowingEnd &&
+        !resolveTimelineIsAtEnd({ ...state, scrollLength: previousHeight })
+      )
+        return;
+      queueMicrotask(() => flushSync(() => void list.scrollToEnd({ animated: false })));
+    },
+  );
   const attachTimelineViewportElement = (viewportElement: HTMLDivElement | null) => {
     setTimelineViewportElement(viewportElement);
     if (!viewportElement) return;
@@ -1447,17 +1483,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
               onLoad={handleListLoad}
               {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
               contentInsetEndAdjustment={anchoredEndSpace ? contentInsetEndAdjustment : 0}
-              maintainScrollAtEnd={
-                citationPositioning ||
-                (restoringThreadPosition && rememberedPosition?.atEnd === false) ||
-                anchoredEndSpace ||
-                !liveFollowEnabled ||
-                fullscreenAppRowId !== null
-                  ? false
-                  : isWorking && !prefersReducedMotion && settlingListIdentity === null
-                    ? TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH
-                    : TIMELINE_MAINTAIN_SCROLL_AT_END
-              }
+              maintainScrollAtEnd={maintainScrollAtEnd}
+              onLayout={pinEndOnViewportResize}
               maintainVisibleContentPosition={
                 findActive ||
                 citationPositioning ||
