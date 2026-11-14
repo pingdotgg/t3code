@@ -871,6 +871,7 @@ function threadStatus(
   pendingBackgroundTasks: OrchestrationV2ThreadShell["pendingBackgroundTasks"],
 ) {
   if (activeStatus != null) return activeStatus;
+  if (settledStatus === "failed") return settledStatus;
   return backgroundWorkHoldsCompletion(pendingBackgroundTasks ?? []) ? "waiting" : settledStatus;
 }
 

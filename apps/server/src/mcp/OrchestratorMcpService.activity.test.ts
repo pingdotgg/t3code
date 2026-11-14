@@ -105,7 +105,7 @@ function baseThread(input: {
 function makeRun(input: {
   readonly id: RunId;
   readonly ordinal: number;
-  readonly status: "running" | "waiting" | "cancelled" | "queued" | "completed";
+  readonly status: "running" | "waiting" | "cancelled" | "queued" | "completed" | "failed";
   readonly instanceId?: ProviderInstanceId;
 }) {
   return {
@@ -270,6 +270,15 @@ it("readThread preserves caller access errors and prefers activity-run status ov
     const awaiting = yield* service.readThread(makeScope(), { threadId: parentThreadId });
     expect(awaiting.thread.status).toBe("waiting");
 
+    Object.assign(projection, {
+      runs: [makeRun({ id: activeRunId, ordinal: 1, status: "failed" })],
+    });
+    const failed = yield* service.readThread(makeScope(), { threadId: parentThreadId });
+    expect(failed.thread.status).toBe("failed");
+
+    Object.assign(projection, {
+      runs: [makeRun({ id: activeRunId, ordinal: 1, status: "completed" })],
+    });
     // An unawaited command (a dev server) does not hold the thread once its turn ends.
     pendingBackgroundTasks = [{ taskId: "dev-server", kind: "command" }];
     const released = yield* service.readThread(makeScope(), { threadId: parentThreadId });
