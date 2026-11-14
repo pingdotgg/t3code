@@ -81,7 +81,10 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
         }
       : null;
 
-  /** place mounts the destination before the server open resolves. */
+  /**
+   * place mounts the destination before the server open resolves. write types into the launched
+   * terminal on the thread that launched it, even after the hook moves to another thread.
+   */
   const launchTerminal = (input: {
     readonly place: (terminalId: string) => void;
     readonly terminalId?: string;
@@ -111,7 +114,14 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
         ...(input.stopOnSettle !== undefined ? { stopOnSettle: input.stopOnSettle } : {}),
       },
     });
-    return { terminalId, result };
+    const write = (data: string) =>
+      readEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope)
+        ? writeTerminal({
+            environmentId: threadRef.environmentId,
+            input: { threadId: threadRef.threadId, terminalId, data },
+          })
+        : null;
+    return { terminalId, result, write };
   };
 
   /** Ends a session and deletes its history. A failed close falls back to typing `exit`. */
@@ -134,19 +144,10 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
     })();
   };
 
-  const writeToTerminal = (terminalId: string, data: string) => {
-    if (!threadRef || !canWrite()) return null;
-    return writeTerminal({
-      environmentId: threadRef.environmentId,
-      input: { threadId: threadRef.threadId, terminalId, data },
-    });
-  };
-
   return {
     canWrite: useStableCallback(canWrite),
     allocateTerminalId: useStableCallback(allocateTerminalId),
     launchTerminal: useStableCallback(launchTerminal),
     closeTerminalSession: useStableCallback(closeTerminalSession),
-    writeToTerminal: useStableCallback(writeToTerminal),
   };
 }

@@ -64,10 +64,10 @@ interface ChatTerminalActionsInput {
   readonly environmentId: EnvironmentId;
   readonly composerRef: ComposerHandleRef;
   readonly terminalUiState: ReturnType<typeof selectThreadTerminalUiState>;
-  readonly activeThread: EnvironmentThreadShell | undefined;
+  readonly activeThread: Pick<EnvironmentThreadShell, "worktreePath"> | undefined;
   readonly activeThreadId: ThreadId | null;
   readonly activeThreadRef: ScopedThreadRef | null;
-  readonly activeProject: EnvironmentProject | null;
+  readonly activeProject: Pick<EnvironmentProject, "id" | "workspaceRoot"> | null;
   readonly activeRightPanelSurface: RightPanelSurface | null;
   readonly runningTerminalIds: ReadonlyArray<string>;
   readonly activeServerOrderedTerminalIds: ReadonlyArray<string>;
@@ -273,8 +273,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
       return;
     }
 
-    const writeResult = await terminalActions.writeToTerminal(
-      targetTerminalId,
+    const writeResult = await launched.write(
       options?.shellHistory === "preserve"
         ? `${script.command}\r`
         : projectScriptTerminalInput(script.command),
