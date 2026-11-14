@@ -405,6 +405,10 @@ it.effect("tolerates a missing transcript owner but propagates failed ownership 
       resumeCursor: null,
       runtimePayload: { importedTranscripts: [source.source] },
     });
+    yield* runtimes.recordImportedTranscript({
+      threadId: ThreadId.make("missing-owner"),
+      source: source.source,
+    });
     const importer = yield* makeImporter([source]);
     expect(yield* importer.run).toEqual({ importedCount: 1, skippedCount: 0 });
 
