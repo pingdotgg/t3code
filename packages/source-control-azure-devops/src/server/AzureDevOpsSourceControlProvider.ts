@@ -72,6 +72,16 @@ function repositoryNameFromRemote(remoteUrl: string): string | null {
   return name.startsWith("@") ? null : name;
 }
 
+const pullRequestLookup = (input: {
+  readonly cwd: string;
+  readonly reference: string;
+  readonly context?: { readonly remoteUrl: string } | undefined;
+}) => ({
+  cwd: input.cwd,
+  reference: input.reference,
+  ...(input.context === undefined ? {} : { remoteUrl: input.context.remoteUrl }),
+});
+
 function toChangeRequest(summary: NormalizedAzureDevOpsPullRequestRecord): ChangeRequest {
   return {
     provider: SourceControlProviderKind.make("azure-devops"),
@@ -152,7 +162,7 @@ export const make = Effect.gen(function* () {
     ),
     getChangeRequest: Effect.fn("AzureDevOpsSourceControlProvider.getChangeRequest")(
       function (input) {
-        return azure.getPullRequest(input).pipe(
+        return azure.getPullRequest(pullRequestLookup(input)).pipe(
           Effect.map(toChangeRequest),
           Effect.mapError(
             (error) =>
@@ -266,7 +276,7 @@ export const make = Effect.gen(function* () {
     // and its pull then merges the pull request into the current branch.
     checkoutChangeRequest: Effect.fn("AzureDevOpsSourceControlProvider.checkoutChangeRequest")(
       function* (input) {
-        const pullRequest = yield* azure.getPullRequest(input);
+        const pullRequest = yield* azure.getPullRequest(pullRequestLookup(input));
         if (pullRequest.isCrossRepository)
           return yield* new SourceControlProviderError({
             provider: SourceControlProviderKind.make("azure-devops"),

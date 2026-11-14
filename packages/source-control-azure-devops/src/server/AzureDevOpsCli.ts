@@ -234,6 +234,8 @@ export class AzureDevOpsCli extends Context.Service<
     readonly getPullRequest: (input: {
       readonly cwd: string;
       readonly reference: string;
+      /** The selected remote, whose organization numbers the pull request. */
+      readonly remoteUrl?: string;
     }) => Effect.Effect<NormalizedAzureDevOpsPullRequestRecord, AzureDevOpsCliError>;
 
     readonly getRepositoryCloneUrls: (input: {
@@ -617,14 +619,16 @@ export const make = Effect.gen(function* () {
       );
     }),
     getPullRequest: Effect.fn("AzureDevOpsCli.getPullRequest")(function (input) {
+      const scope = input.remoteUrl === undefined ? null : scopeFromRemoteUrl(input.remoteUrl);
       return executeJson({
         cwd: input.cwd,
         args: [
           "repos",
           "pr",
           "show",
-          "--detect",
-          "true",
+          ...(scope
+            ? ["--detect", "false", "--organization", scope.organization]
+            : ["--detect", "true"]),
           "--id",
           normalizeChangeRequestId(input.reference),
         ],

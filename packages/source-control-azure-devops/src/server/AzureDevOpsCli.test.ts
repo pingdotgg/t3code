@@ -72,6 +72,8 @@ describe("AzureDevOpsCli.layer", () => {
       const result = yield* az.getPullRequest({
         cwd: "/repo",
         reference: "#42",
+        // The selected remote numbers the pull request, whatever the checkout's primary remote.
+        remoteUrl: "git@ssh.dev.azure.com:v3/acme/project/repo",
       });
 
       assert.strictEqual(result.number, 42);
@@ -109,7 +111,9 @@ describe("AzureDevOpsCli.layer", () => {
           "pr",
           "show",
           "--detect",
-          "true",
+          "false",
+          "--organization",
+          "https://dev.azure.com/acme",
           "--id",
           "42",
           "--only-show-errors",
