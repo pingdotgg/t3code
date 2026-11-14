@@ -560,20 +560,20 @@ pub(crate) mod stub {
             Self { dir }
         }
 
-        /// Writes `<dir>/<name>`: a shell script that appends `argv` (one line, NUL-free, args
-        /// joined by U+001F) and the listed variables to `<dir>/<name>.log`, then runs `body`.
+        /// Writes `<dir>/<name>`: a shell script that appends `argv` (one line, args joined by a
+        /// space) and the listed variables to `<dir>/<name>.log`, then runs `body`.
+        ///
+        /// The script writes its whole record with one `printf`, so two children that run at
+        /// the same time cannot mix their lines in the log.
         pub(crate) fn executable(&self, name: &str, record_env: &[&str], body: &str) -> String {
             let path = self.dir.join(name);
             let log = self.dir.join(format!("{name}.log"));
             let mut env_lines = String::new();
             for var in record_env {
-                env_lines.push_str(&format!(
-                    "printf '  env %s=%s\\n' '{var}' \"${{{var}-<unset>}}\" >> '{}'\n",
-                    log.display()
-                ));
+                env_lines.push_str(&format!("  env {var}=${{{var}-<unset>}}\n"));
             }
             let script = format!(
-                "#!/bin/sh\n(printf 'argv'; for a in \"$@\"; do printf ' %s' \"$a\"; done; printf '\\n') >> '{log}'\n{env_lines}{body}\n",
+                "#!/bin/sh\nrec='argv'\nfor a in \"$@\"; do rec=\"$rec $a\"; done\nrec=\"$rec\n{env_lines}\"\nprintf '%s' \"$rec\" >> '{log}'\n{body}\n",
                 log = log.display()
             );
             std::fs::write(&path, script).expect("write stub");
