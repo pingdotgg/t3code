@@ -58,6 +58,8 @@ import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
   ArrowLeftIcon,
   BugIcon,
+  CircleArrowUpIcon,
+  GitForkIcon,
   ChartNoAxesColumnIcon,
   CheckIcon,
   ChevronRightIcon,
@@ -127,6 +129,16 @@ import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { useScratchProject } from "../hooks/useScratchProject";
 import { useStartTriage } from "../hooks/useStartTriage";
+import {
+  canPullUpstream,
+  canRunSourceUpdate,
+  newCommitsLabel,
+} from "./sourceUpdate/sourceUpdate.logic";
+import {
+  useSourceUpdateActions,
+  useSourceUpdateEnvironmentId,
+  useSourceUpdateState,
+} from "./sourceUpdate/useSourceUpdate";
 import { pickTriageEnvironment } from "../lib/triageTarget";
 import { useNewProject } from "../hooks/useNewProject";
 import { useOrderWhileOpen } from "../hooks/useOrderWhileOpen";
@@ -716,6 +728,9 @@ function OpenCommandPaletteDialog(props: {
   const canTriage =
     useAtomValue(serverEnvironment.prepareTriage.permissionAtom(triageEnvironmentId)) &&
     supportsTriage(triageEnvironmentId);
+  const sourceUpdateEnvironmentId = useSourceUpdateEnvironmentId();
+  const sourceUpdate = useSourceUpdateState(sourceUpdateEnvironmentId);
+  const sourceUpdateActions = useSourceUpdateActions();
   const currentProject = resolveCommandPaletteProject(
     projectByKey,
     currentProjectEnvironmentId,
@@ -1349,6 +1364,36 @@ function OpenCommandPaletteDialog(props: {
       description: "An agent investigates a T3 Code problem and helps file an issue",
       icon: <BugIcon className={ITEM_ICON_CLASS} />,
       run: () => startTriage(triageEnvironmentId),
+    });
+  }
+
+  if (sourceUpdateEnvironmentId !== null && canRunSourceUpdate(sourceUpdate.phase)) {
+    actionItems.push({
+      kind: "action",
+      value: "action:source-update",
+      searchTerms: ["update", "source", "rebuild", "restart", "origin", "git", "pull"],
+      title: "Update from source",
+      description: sourceUpdate.status?.behindOrigin
+        ? `Fast-forward to origin/main (${newCommitsLabel(sourceUpdate.status.behindOrigin)}), rebuild, and restart`
+        : "Fast-forward to origin/main, rebuild, and restart",
+      icon: <CircleArrowUpIcon className={ITEM_ICON_CLASS} />,
+      run: () => sourceUpdateActions.update(sourceUpdateEnvironmentId),
+    });
+  }
+  if (
+    sourceUpdateEnvironmentId !== null &&
+    canPullUpstream(sourceUpdate.status, sourceUpdate.phase)
+  ) {
+    actionItems.push({
+      kind: "action",
+      value: "action:pull-upstream",
+      searchTerms: ["upstream", "merge", "pull", "sync", "fork"],
+      title: "Pull upstream",
+      description: sourceUpdate.status?.upstreamAhead
+        ? `An agent merges ${newCommitsLabel(sourceUpdate.status.upstreamAhead)} from upstream/main`
+        : "An agent merges upstream/main into the checkout",
+      icon: <GitForkIcon className={ITEM_ICON_CLASS} />,
+      run: () => sourceUpdateActions.pullUpstream(sourceUpdateEnvironmentId),
     });
   }
 

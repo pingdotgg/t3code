@@ -32,6 +32,7 @@ import {
   createAtomCommandScheduler,
   createEnvironmentRpcCommand,
   createEnvironmentQueryAtomFamily,
+  createGuardedEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
   createEnvironmentSubscriptionAtomFamily,
@@ -96,6 +97,17 @@ const EMPTY_SERVER_UPDATE_STATE_ATOM = Atom.make<ServerUpdateState>(IDLE_SERVER_
 export const serverUpdateStateAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make<ServerUpdateState>(IDLE_SERVER_UPDATE_STATE).pipe(
     Atom.withLabel(`environment-data:server:update-state:${environmentId}`),
+  ),
+);
+
+export type SourceUpdateRun = {
+  readonly previousResultFinishedAt: string | null;
+};
+
+const sourceUpdateRunAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make<SourceUpdateRun | null>(null).pipe(
+    Atom.keepAlive,
+    Atom.withLabel(`environment-data:server:source-update-run:${environmentId}`),
   ),
 );
 
@@ -1349,6 +1361,13 @@ export function createServerEnvironmentAtoms<R, E>(
       ),
     );
   });
+  const sourceUpdateStatus = createGuardedEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:server:source-update-status",
+    tag: WS_METHODS.serverGetSourceUpdateStatus,
+    // Remote fetches are cached on the server; this only rereads the local checkout.
+    refreshIntervalMs: 30_000,
+    idleTtlMs: 0,
+  });
   const welcome = (target: {
     readonly environmentId: EnvironmentId;
     readonly input: EnvironmentRpcInput<typeof WS_METHODS.subscribeServerLifecycle>;
@@ -1374,6 +1393,28 @@ export function createServerEnvironmentAtoms<R, E>(
     }),
     databaseStorage,
     databaseCompactionRecommendations,
+    sourceUpdateStatus,
+    sourceUpdateRunAtom,
+    runSourceUpdate: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:run-source-update",
+      tag: WS_METHODS.serverRunSourceUpdate,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+      onSuccess: ({ environmentId }, registry) =>
+        Effect.sync(() => {
+          const status = registry.get(sourceUpdateStatus({ environmentId, input: {} }));
+          registry.set(sourceUpdateRunAtom(environmentId), {
+            previousResultFinishedAt: AsyncResult.isSuccess(status)
+              ? (status.value.lastResult?.finishedAt ?? null)
+              : null,
+          });
+          registry.refresh(sourceUpdateStatus({ environmentId, input: {} }));
+        }),
+    }),
+    pullUpstream: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:pull-upstream",
+      tag: WS_METHODS.serverPullUpstream,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    }),
     reclaimDatabaseSpace: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:reclaim-database-space",
       tag: WS_METHODS.serverReclaimDatabaseSpace,

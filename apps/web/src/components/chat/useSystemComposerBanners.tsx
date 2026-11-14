@@ -8,7 +8,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { WifiOffIcon } from "lucide-react";
+import { CircleCheckIcon, WifiOffIcon } from "lucide-react";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { environmentCatalog } from "../../connection/catalog";
 import { ConnectionDiagnosisHeadline } from "../settings/ConnectionDiagnosisDetails";
@@ -24,6 +24,13 @@ import { ENVIRONMENT_RECONNECT_WARNING_GRACE_MS } from "../ChatView.logic";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
 import { ServerUpdateAction, serverUpdateStageLabel } from "../ServerUpdateAction";
+import {
+  dismissSourceUpdateOutcome,
+  useCanSourceUpdate,
+  useSourceUpdateActions,
+  useSourceUpdateState,
+} from "../sourceUpdate/useSourceUpdate";
+import { isSourceUpdateSettled } from "../sourceUpdate/sourceUpdate.logic";
 import { useAutoBalanceUpdateBanner } from "./useAutoBalanceUpdateBanner";
 import { ComposerServerUpdateIcon } from "./ComposerServerUpdateStatus";
 import {
@@ -153,6 +160,10 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
   const serverUpdateFailureDismissed =
     serverUpdateState === dismissedServerUpdateState ||
     isServerUpdateFailureDismissed(serverUpdateState);
+  const canSourceUpdate = useCanSourceUpdate(serverUpdateEnvironmentId);
+  const sourceUpdateEnvironmentId = canSourceUpdate ? serverUpdateEnvironmentId : null;
+  const sourceUpdate = useSourceUpdateState(sourceUpdateEnvironmentId);
+  const sourceUpdateActions = useSourceUpdateActions();
   return (() => {
     const items: ComposerBannerStackItem[] = [];
     const updateRunning = serverUpdateState.status === "running";
@@ -264,6 +275,57 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
               },
             }
           : {}),
+      });
+    }
+    const sourcePhase = sourceUpdate.phase;
+    if (
+      !automaticEnvironment &&
+      sourceUpdateEnvironmentId !== null &&
+      (sourcePhase.kind === "running" || isSourceUpdateSettled(sourcePhase))
+    ) {
+      const dismiss = () => dismissSourceUpdateOutcome(sourceUpdateEnvironmentId);
+      items.push({
+        id: `source-update:${sourceUpdateEnvironmentId}`,
+        variant:
+          sourcePhase.kind === "failed"
+            ? "error"
+            : sourcePhase.kind === "succeeded"
+              ? "success"
+              : "default",
+        group: "environment",
+        icon:
+          sourcePhase.kind === "succeeded" ? (
+            <CircleCheckIcon aria-hidden />
+          ) : (
+            <ComposerServerUpdateIcon
+              status={sourcePhase.kind === "failed" ? "failed" : "running"}
+            />
+          ),
+        title:
+          sourcePhase.kind === "running"
+            ? `Updating ${versionMismatchServerLabel} from source`
+            : sourcePhase.kind === "failed"
+              ? `Could not update ${versionMismatchServerLabel} from source`
+              : `Updated ${versionMismatchServerLabel} to ${sourcePhase.sha}`,
+        description:
+          sourcePhase.kind === "running"
+            ? "Pulling, building, and restarting. It reconnects on its own."
+            : sourcePhase.kind === "failed"
+              ? sourcePhase.message
+              : undefined,
+        actions:
+          sourcePhase.kind === "failed" ? (
+            <Button
+              size="xs"
+              variant="ghost"
+              onClick={() => void sourceUpdateActions.update(sourceUpdateEnvironmentId)}
+            >
+              Retry
+            </Button>
+          ) : undefined,
+        ...(sourcePhase.kind === "running"
+          ? {}
+          : { dismissLabel: "Dismiss update notice", onDismiss: dismiss }),
       });
     }
     if (autoBalanceUpdateBanner) items.push(autoBalanceUpdateBanner);

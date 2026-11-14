@@ -989,6 +989,39 @@ export function createEnvironmentRpcQueryAtomFamily<
   });
 }
 
+/** A guarded read: each request is authorized against the destination as a command would be. */
+export function createGuardedEnvironmentRpcQueryAtomFamily<
+  R,
+  ER,
+  TTag extends Extract<EnvironmentUnaryRpcTag, ClientGuardedRpcTag>,
+>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, ER>,
+  options: {
+    readonly label: string;
+    readonly tag: TTag;
+    readonly idleTtlMs?: number;
+    readonly refreshIntervalMs?: number;
+  },
+) {
+  return createEnvironmentQueryAtomFamily(runtime, {
+    label: options.label,
+    ...(options.idleTtlMs === undefined ? {} : { idleTtlMs: options.idleTtlMs }),
+    ...(options.refreshIntervalMs === undefined
+      ? {}
+      : { refreshIntervalMs: options.refreshIntervalMs }),
+    // requestGuarded owns the request span.
+    execute: Effect.fnUntraced(function* (input: EnvironmentRpcInput<TTag>) {
+      const registry = yield* AtomRegistry.AtomRegistry;
+      return yield* requestGuarded(options.tag, input).pipe(
+        Effect.provideService(RpcPermissionGuard, {
+          authorize: (id, method, payload) =>
+            createCommandPermissions(runtime, method).authorize(registry, id, payload),
+        }),
+      );
+    }),
+  });
+}
+
 export function createEnvironmentRpcSubscriptionAtomFamily<
   R,
   ER,
