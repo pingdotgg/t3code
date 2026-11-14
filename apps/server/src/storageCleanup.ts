@@ -830,6 +830,21 @@ const make = Effect.gen(function* () {
     return changed === undefined ? null : reason(changed.file);
   });
 
+  // A worktree can outlive its project moving to another clone. Git removes a
+  // worktree through the repository that registered it, not through the
+  // project's current checkout, so resolve the owning repository first.
+  const worktreeRepository = Effect.fn("StorageCleanup.worktreeRepository")(function* (
+    worktreePath: string,
+  ) {
+    const commonDir = yield* git.execute({
+      operation: "StorageCleanup.worktreeRepository",
+      cwd: worktreePath,
+      args: ["rev-parse", "--git-common-dir"],
+    });
+    const resolved = path.resolve(worktreePath, commonDir.stdout.trim());
+    return path.basename(resolved) === ".git" ? path.dirname(resolved) : resolved;
+  });
+
   const localChangesReason = Effect.fn("StorageCleanup.localChangesReason")(function* (
     cwd: string,
     rules: WorktreeCleanupRules,
@@ -1219,11 +1234,9 @@ const make = Effect.gen(function* () {
         if (holdsRepoWorktree(repoWorktreePaths, yield* pathIdentity(worktreePath)))
           return keep("another thread works in it as a repository worktree");
         if (project === undefined) return keep("project is unavailable");
-        if (
-          (thread.branch === null && !scratch) ||
-          !group.every((member) => storageCleanupThreadIdle(member, now, serverSettings))
-        )
+        if (!group.every((member) => storageCleanupThreadIdle(member, now, serverSettings)))
           return keep(waitForStop("thread is running or has pending work"));
+        if (thread.branch === null && !scratch) return keep("thread has no branch");
         if (group.some((member) => member.branch !== thread.branch))
           return keep("a subagent thread's branch differs from this worktree's branch");
         if (yield* hasTerminal(worktreePaths)) return keep(waitForStop("open terminal"));
@@ -1554,16 +1567,17 @@ const make = Effect.gen(function* () {
             const finalChanges = yield* localChangesReason(worktreePath, settings);
             if (finalChanges !== null) return keep(finalChanges);
             if (yield* settingsChangedSinceCheck) return keep("settings changed since check");
+            const repository = yield* worktreeRepository(worktreePath);
             const commonDir = yield* git.execute({
               operation: "StorageCleanup.repositoryLease",
-              cwd: project.workspaceRoot,
+              cwd: repository,
               args: ["rev-parse", "--path-format=absolute", "--git-common-dir"],
               allowNonZeroExit: true,
             });
             const leaseKey = yield* pathIdentity(
               commonDir.exitCode === 0 && commonDir.stdout.trim() !== ""
                 ? commonDir.stdout.trim()
-                : project.workspaceRoot,
+                : repository,
             );
             // Attaching takes this lease too, so the last attachment check holds
             // through the clean and the removal.
@@ -1596,13 +1610,12 @@ const make = Effect.gen(function* () {
                 }
                 yield* removeLinkedWorktree({
                   operation: "StorageCleanup.cleanupGit",
-                  cwd: project.workspaceRoot,
+                  cwd: repository,
                   worktreePath,
                   // Git requires force for submodules; recursive checks above cannot make removal atomic.
                   force: submodules.force,
                   execute: git.execute,
-                  run: (args) =>
-                    cleanupGit(project.workspaceRoot, [...args], "git worktree remove"),
+                  run: (args) => cleanupGit(repository, [...args], "git worktree remove"),
                 });
                 return true;
               }),

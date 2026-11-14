@@ -129,6 +129,20 @@ function claudeManagedDirectory(
   return "/etc/claude-code";
 }
 
+function claudeManagedSettingsPaths(
+  path: Path.Path,
+  platform: NodeJS.Platform,
+  environment: NodeJS.ProcessEnv,
+): ReadonlyArray<string> {
+  const managedDirectory = claudeManagedDirectory(path, platform, environment);
+  const programData =
+    platform === "win32" ? windowsEnvironmentValue(environment, "ProgramData") : undefined;
+  return [
+    ...(programData ? [path.join(programData, "ClaudeCode", "managed-settings.json")] : []),
+    ...(managedDirectory ? [path.join(managedDirectory, "managed-settings.json")] : []),
+  ];
+}
+
 /** Claude Code settings files, lowest precedence first. */
 function claudeSettingsPaths(
   path: Path.Path,
@@ -138,9 +152,6 @@ function claudeSettingsPaths(
   environment: NodeJS.ProcessEnv,
   repositoryRoot?: string,
 ): ReadonlyArray<string> {
-  const managedDirectory = claudeManagedDirectory(path, platform, environment);
-  const programData =
-    platform === "win32" ? windowsEnvironmentValue(environment, "ProgramData") : undefined;
   const root = repositoryRoot !== undefined && repositoryRoot !== cwd ? repositoryRoot : undefined;
   return [
     path.join(configDirPath, "settings.json"),
@@ -151,8 +162,7 @@ function claudeSettingsPaths(
         ]
       : []),
     ...(root ? [path.join(root, ".claude", "settings.local.json")] : []),
-    ...(programData ? [path.join(programData, "ClaudeCode", "managed-settings.json")] : []),
-    ...(managedDirectory ? [path.join(managedDirectory, "managed-settings.json")] : []),
+    ...claudeManagedSettingsPaths(path, platform, environment),
   ];
 }
 
@@ -261,6 +271,8 @@ const readSkillSettings = Effect.fn("readSkillSettings")(function* (
   const platform = yield* HostProcess.Platform;
   const overridesByName = new Map<string, SkillOverride>();
   const enabledPlugins = new Map<string, boolean>();
+  const managedPluginNames = new Set<string>();
+  const managedPaths = new Set(claudeManagedSettingsPaths(path, platform, environment));
   let syncedPluginsHidden = false;
   const repositoryRoot = cwd === undefined ? undefined : yield* findRepositoryRoot(cwd);
   const projectSettingsPath =
@@ -296,6 +308,9 @@ const readSkillSettings = Effect.fn("readSkillSettings")(function* (
     for (const [key, enabled] of Object.entries(parsed?.enabledPlugins ?? {})) {
       if (typeof enabled === "boolean") {
         enabledPlugins.set(key, enabled);
+        if (managedPaths.has(settingsPath) && key.includes("@")) {
+          managedPluginNames.add(pluginNameKey(key.slice(0, key.indexOf("@"))));
+        }
       } else {
         // Extended formats replace lower-precedence values without enabling the plugin here.
         enabledPlugins.delete(key);
@@ -307,7 +322,12 @@ const readSkillSettings = Effect.fn("readSkillSettings")(function* (
     }
   }
 
-  return { skillOverrides: overridesByName, enabledPlugins, syncedPluginsHidden };
+  return {
+    skillOverrides: overridesByName,
+    enabledPlugins,
+    managedPluginNames,
+    syncedPluginsHidden,
+  };
 });
 
 const InstalledPlugins = Schema.fromJsonString(
@@ -324,6 +344,7 @@ const PluginManifest = Schema.fromJsonString(
   Schema.Struct({
     name: Schema.optional(Schema.NonEmptyString),
     skills: Schema.optional(Schema.Union([Schema.String, Schema.Array(Schema.String)])),
+    defaultEnabled: Schema.optional(Schema.Unknown),
   }),
 );
 
@@ -444,10 +465,66 @@ const resolveSyncedPluginBucket = Effect.fn("resolveSyncedPluginBucket")(functio
   return `${organizationId.toLowerCase()}_${accountId.toLowerCase()}`;
 });
 
+/** A plugin folder itself, or else the manifest-bearing plugins directly inside it. */
+const expandInlinePluginDirectory = Effect.fn("expandInlinePluginDirectory")(function* (
+  directory: string,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const exists = (candidate: string) =>
+    fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => false));
+  for (const component of [path.join(".claude-plugin", "plugin.json"), "skills", "SKILL.md"]) {
+    if (yield* exists(path.join(directory, component))) return [directory];
+  }
+  const children = yield* fileSystem
+    .readDirectory(directory)
+    .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+  return yield* Effect.filter(
+    [...children].sort().map((child) => path.join(directory, child)),
+    (child) => exists(path.join(child, ".claude-plugin", "plugin.json")),
+  );
+});
+
+/** Plugin folders Claude Code loads inline from CLAUDE_CODE_PLUGIN_DIRS, and their plugin names. */
+const discoverInlinePluginSkillRoots = Effect.fn("discoverInlinePluginSkillRoots")(function* (
+  pluginDirectories: string | undefined,
+  enabledPlugins: ReadonlyMap<string, boolean>,
+  managedPluginNames: ReadonlySet<string>,
+) {
+  const path = yield* Path.Path;
+  const home = yield* HostProcess.HomeDirectory;
+  const platform = yield* HostProcess.Platform;
+  const roots: Array<ClaudeSkillRoot> = [];
+  const names = new Set<string>();
+  const seen = new Set<string>();
+  for (const entry of (pluginDirectories ?? "").split(platform === "win32" ? ";" : ":")) {
+    const directory = expandHomePath(entry.trim(), home);
+    // Claude skips relative entries rather than resolving them against its cwd.
+    if (!directory || !path.isAbsolute(directory)) continue;
+    for (const installPath of yield* expandInlinePluginDirectory(path.resolve(directory))) {
+      if (seen.has(installPath)) continue;
+      seen.add(installPath);
+      const manifest = yield* readPluginManifest(installPath);
+      const prefix = manifest?.name ?? path.basename(installPath);
+      // A `<name>@inline` setting wins; otherwise the manifest's `defaultEnabled` decides.
+      const setting = enabledPlugins.get(`${prefix}@inline`);
+      if (setting === false || (setting === undefined && manifest?.defaultEnabled === false)) {
+        continue;
+      }
+      // Managed enabledPlugins entries, true or false, lock the name against inline copies.
+      if (managedPluginNames.has(pluginNameKey(prefix))) continue;
+      names.add(pluginNameKey(prefix));
+      roots.push(...(yield* pluginSkillRoots(installPath, "user", prefix, manifest)));
+    }
+  }
+  return { roots, names };
+});
+
 const discoverPluginSkillRoots = Effect.fn("discoverPluginSkillRoots")(function* (
   configDirPath: string,
   cwd: string | undefined,
   enabledPlugins: ReadonlyMap<string, boolean>,
+  inlinePluginNames: ReadonlySet<string>,
   syncedBucket: string | undefined,
   environment: NodeJS.ProcessEnv,
 ) {
@@ -465,7 +542,8 @@ const discoverPluginSkillRoots = Effect.fn("discoverPluginSkillRoots")(function*
       Effect.orElseSucceed(() => undefined),
     );
   const roots: Array<ClaudeSkillRoot> = [];
-  const claimedPluginNames = new Set<string>();
+  // An enabled inline plugin replaces installed and synced plugins of the same name.
+  const claimedPluginNames = new Set(inlinePluginNames);
   // The CLI's process.cwd() resolves symlinks; registry projectPath values remain lexical.
   const workspace =
     cwd === undefined
@@ -505,7 +583,7 @@ const discoverPluginSkillRoots = Effect.fn("discoverPluginSkillRoots")(function*
     const installPath = path.resolve(cwd ?? ".", install.installPath);
     const manifest = yield* readPluginManifest(installPath);
     const prefix = manifest?.name ?? key.split("@")[0];
-    if (!prefix) continue;
+    if (!prefix || inlinePluginNames.has(pluginNameKey(prefix))) continue;
     // A registry record whose install is gone loads nothing and claims no namespace.
     if (Option.isSome(existing)) claimedPluginNames.add(pluginNameKey(prefix));
     roots.push(...(yield* pluginSkillRoots(installPath, scope, prefix, manifest)));
@@ -571,6 +649,7 @@ const resolveClaudeConfigDirPath = Effect.fn("resolveClaudeConfigDirPath")(funct
 const SettingsEnv = Schema.Struct({
   ANTHROPIC_BASE_URL: Schema.optional(Schema.String),
   CLAUDE_CODE_ENTRYPOINT: Schema.optional(Schema.String),
+  CLAUDE_CODE_PLUGIN_DIRS: Schema.optional(Schema.String),
   // Unquoted JSON values must not fail the decode and drop ANTHROPIC_BASE_URL with them.
   CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: Schema.optional(Schema.Unknown),
   CLAUDE_CODE_GATEWAY_MODEL_DISCOVERY_TIMEOUT_MS: Schema.optional(Schema.Unknown),
@@ -648,11 +727,8 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
   const path = yield* Path.Path;
   const env = environment ?? process.env;
   const configDirPath = yield* resolveClaudeConfigDirPath(config, env, cwd);
-  const { skillOverrides, enabledPlugins, syncedPluginsHidden } = yield* readSkillSettings(
-    configDirPath,
-    cwd,
-    env,
-  );
+  const { skillOverrides, enabledPlugins, managedPluginNames, syncedPluginsHidden } =
+    yield* readSkillSettings(configDirPath, cwd, env);
   const managedDirectory = claudeManagedDirectory(path, yield* HostProcess.Platform, env);
   // Most installs have no synced folder; skip reading `.claude.json` for them.
   const hasSyncedPlugins =
@@ -663,6 +739,15 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
   const syncedBucket = hasSyncedPlugins
     ? yield* resolveSyncedPluginBucket(config, configDirPath, env)
     : undefined;
+  // Claude applies its settings `env` over the inherited environment.
+  const inlinePluginDirectories =
+    (yield* readClaudeSettingsEnv(config, cwd, env)).CLAUDE_CODE_PLUGIN_DIRS ??
+    env.CLAUDE_CODE_PLUGIN_DIRS;
+  const inlinePlugins = yield* discoverInlinePluginSkillRoots(
+    inlinePluginDirectories,
+    enabledPlugins,
+    managedPluginNames,
+  );
 
   const roots: ReadonlyArray<ClaudeSkillRoot> = [
     ...(managedDirectory
@@ -676,7 +761,15 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
         directory: path.join(path.resolve(cwd ?? ".", directory), ".claude", "skills"),
         scope: "project" as const,
       })),
-    ...(yield* discoverPluginSkillRoots(configDirPath, cwd, enabledPlugins, syncedBucket, env)),
+    ...inlinePlugins.roots,
+    ...(yield* discoverPluginSkillRoots(
+      configDirPath,
+      cwd,
+      enabledPlugins,
+      inlinePlugins.names,
+      syncedBucket,
+      env,
+    )),
   ];
 
   const skillsByName = new Map<string, ServerProviderSkill>();
