@@ -613,3 +613,41 @@ fn an_mcp_elicitation_is_an_approval_answered_with_the_forms_option() {
             "content": {"approval": "session"}}})
     );
 }
+
+/// T3's Codex adapter never reports a broken thread: every `turn.terminal` it emits says
+/// `reusable`, a crash of the app-server included, so the engine never writes the provider
+/// thread's `error` status for Codex (`finalProviderThreadStatus`).
+#[test]
+fn every_codex_turn_end_leaves_the_thread_reusable() {
+    let dir = env!("CARGO_MANIFEST_DIR");
+    let ts: Value = serde_json::from_str(&read(format!("{dir}/testdata/ts/simple.json"))).unwrap();
+    let input = turn_input(&ts["startTurn"][0]);
+    let terminals = |outs: Vec<Out>| -> Vec<Value> {
+        outs.into_iter()
+            .filter_map(|o| match o {
+                Out::Event(e) => Some(serde_json::to_value(e).unwrap()),
+                _ => None,
+            })
+            .filter(|v| v["type"] == "turn.terminal")
+            .collect()
+    };
+    let mut seen = Vec::new();
+    for status in ["completed", "interrupted", "failed"] {
+        let mut mapper = Mapper::new(FixedEnv::default());
+        mapper.begin_turn("th", &input);
+        let _ = mapper.turn_start_result("th", &json!({"turn": {"id": "tu", "startedAt": null}}));
+        let done = json!({"method": "turn/completed", "params": {"threadId": "th",
+            "turn": {"id": "tu", "status": status, "completedAt": 3}}});
+        seen.extend(terminals(mapper.handle(Inbound::from_value(done))));
+    }
+    let mut mapper = Mapper::new(FixedEnv::default());
+    mapper.begin_turn("th", &input);
+    let _ = mapper.turn_start_result("th", &json!({"turn": {"id": "tu", "startedAt": null}}));
+    seen.extend(terminals(
+        mapper.on_exit(false, "The Codex app-server exited unexpectedly."),
+    ));
+    assert_eq!(seen.len(), 4);
+    for terminal in seen {
+        assert_eq!(terminal["threadDisposition"], "reusable", "{terminal}");
+    }
+}
