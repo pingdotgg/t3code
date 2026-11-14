@@ -255,8 +255,32 @@ function accountKeyResolver(reports: Iterable<AccountReport>) {
 }
 
 const hubAccountName = (account: { readonly id: string }) => account.id.replace(/\.json$/i, "");
-const hubAccountIdentity = (account: UsageLimitSourceAccount) =>
-  `${account.driver}:${account.email?.trim().toLowerCase() ?? hubAccountName(account)}:${account.workspaceId ?? ""}`;
+
+function limitAccountKeyResolver(presentations: LimitPresentations) {
+  return accountKeyResolver(
+    [...presentations.values()].flatMap((presentation) => [
+      ...(presentation.serverConfig?.providers ?? [])
+        .filter((provider) => provider.enabled)
+        .map(nativeReport),
+      ...(presentation.serverConfig?.usageLimitSources ?? []).flatMap((source) => source.accounts),
+    ]),
+  );
+}
+
+const nativeRowKey = (
+  resolveKey: ReturnType<typeof accountKeyResolver>,
+  environmentId: EnvironmentId,
+  provider: ServerProvider,
+) => resolveKey(nativeReport(provider)) ?? `${environmentId}:${provider.instanceId}`;
+
+const hubRowKey = (
+  resolveKey: ReturnType<typeof accountKeyResolver>,
+  environmentId: EnvironmentId,
+  source: UsageLimitSourceSnapshot,
+  account: UsageLimitSourceAccount,
+) =>
+  resolveKey(account) ??
+  `${hubIdentity(environmentId, source)}:${account.id}${account.workspaceId ? `:${account.workspaceId}` : ""}`;
 
 // Source ids are environment-local, so only a remote endpoint names the same hub across environments.
 function hubIdentity(environmentId: EnvironmentId, source: UsageLimitSourceSnapshot): string {
@@ -364,19 +388,12 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       },
     });
   };
-  const resolveKey = accountKeyResolver(
-    [...presentations.values()].flatMap((presentation) => [
-      ...(presentation.serverConfig?.providers ?? [])
-        .filter((provider) => provider.enabled)
-        .map(nativeReport),
-      ...(presentation.serverConfig?.usageLimitSources ?? []).flatMap((source) => source.accounts),
-    ]),
-  );
+  const resolveKey = limitAccountKeyResolver(presentations);
   for (const [environmentId, presentation] of presentations) {
     const label = presentation.entry.target.label;
     for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
       if (!provider.usageLimits || limitsNotice(provider.usageLimits) !== null) continue;
-      merge(resolveKey(nativeReport(provider)) ?? `${environmentId}:${provider.instanceId}`, {
+      merge(nativeRowKey(resolveKey, environmentId, provider), {
         key: `${environmentId}:${provider.instanceId}`,
         driver: provider.driver,
         displayName: provider.displayName?.trim() || null,
@@ -402,7 +419,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         // A resolved account already has an identity; its public key must stay distinct from others'.
         const hub = resolved ? `${environmentId}:${source.id}` : hubIdentity(environmentId, source);
         const key = `${hub}:${account.id}${account.workspaceId ? `:${account.workspaceId}` : ""}`;
-        merge(resolved ?? key, {
+        merge(hubRowKey(resolveKey, environmentId, source, account), {
           key,
           driver: account.driver,
           displayName: account.email ? null : hubAccountName(account),
@@ -433,17 +450,24 @@ export function collectLimitNotices(presentations: LimitPresentations): readonly
   const label = (environmentLabel: string, subject: string) =>
     presentations.size > 1 ? `${environmentLabel} · ${subject}` : subject;
   const notices = new Set<string>();
-  // Another environment's successful read of the same hub account already shows its row.
-  const readHubAccounts = new Set(
-    [...presentations.values()].flatMap((presentation) =>
-      (presentation.serverConfig?.usageLimitSources ?? []).flatMap((source) =>
-        source.accounts.flatMap((account) =>
-          limitsNotice(account.usageLimits) === null ? [hubAccountIdentity(account)] : [],
-        ),
-      ),
-    ),
-  );
-  for (const presentation of presentations.values()) {
+  // A failed hub read needs no notice when another report already shows the account's row.
+  const resolveKey = limitAccountKeyResolver(presentations);
+  const shownRows = new Set<string>();
+  for (const [environmentId, presentation] of presentations) {
+    for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
+      if (provider.usageLimits && limitsNotice(provider.usageLimits) === null) {
+        shownRows.add(nativeRowKey(resolveKey, environmentId, provider));
+      }
+    }
+    for (const source of presentation.serverConfig?.usageLimitSources ?? []) {
+      for (const account of source.accounts) {
+        if (limitsNotice(account.usageLimits) === null) {
+          shownRows.add(hubRowKey(resolveKey, environmentId, source, account));
+        }
+      }
+    }
+  }
+  for (const [environmentId, presentation] of presentations) {
     const environmentLabel = presentation.entry.target.label;
     for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
       if (provider.usageLimits?.unavailable?.reason === "unsupported") continue;
@@ -459,7 +483,7 @@ export function collectLimitNotices(presentations: LimitPresentations): readonly
       }
       for (const account of source.accounts) {
         if (account.usageLimits.unavailable?.reason !== "probeFailed") continue;
-        if (readHubAccounts.has(hubAccountIdentity(account))) continue;
+        if (shownRows.has(hubRowKey(resolveKey, environmentId, source, account))) continue;
         const name = account.email ?? hubAccountName(account);
         notices.add(
           `${label(environmentLabel, source.label)} · ${name}: ${limitsNotice(account.usageLimits)}`,

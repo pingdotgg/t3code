@@ -4,6 +4,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
+  type UsageLimitSourceAccount,
   UsageLimitSourceId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
@@ -1843,7 +1844,7 @@ describe("external usage settings", () => {
       ...account,
       usageLimits: { checkedAt, windows: [{ ...window, usedPercent: 10 }] },
     };
-    const hub = (accounts: readonly (typeof failed | typeof read)[]) => ({
+    const hub = (accounts: readonly UsageLimitSourceAccount[]) => ({
       providers: [],
       usageLimitSources: [
         {
@@ -1870,6 +1871,37 @@ describe("external usage settings", () => {
         ]),
       ),
     ).toEqual([]);
+    // The row resolves an omitted workspace to the only one known, so the notice must too.
+    expect(
+      collectLimitNotices(
+        new Map([
+          [EnvironmentId.make("a"), desktop],
+          [
+            EnvironmentId.make("b"),
+            {
+              entry: { target: { label: "WSL" } },
+              serverConfig: hub([{ ...read, workspaceId: "ws-1" }]),
+            },
+          ],
+        ]),
+      ),
+    ).toEqual([]);
+    // Without an email, same-named auth files on two environment-local hubs are different accounts.
+    const { email: _failedEmail, ...anonymousFailed } = failed;
+    const { email: _readEmail, ...anonymousRead } = read;
+    expect(
+      collectLimitNotices(
+        new Map([
+          [EnvironmentId.make("a"), { ...desktop, serverConfig: hub([anonymousFailed]) }],
+          [
+            EnvironmentId.make("b"),
+            { entry: { target: { label: "WSL" } }, serverConfig: hub([anonymousRead]) },
+          ],
+        ]),
+      ),
+    ).toEqual([
+      "Desktop · hub · claude-tg@example.com: The provider refused the hub request (HTTP 429).",
+    ]);
   });
 });
 
