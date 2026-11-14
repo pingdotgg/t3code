@@ -1072,12 +1072,14 @@ describe("PiAdapterV2", () => {
         };
         const path = host.resolveAttachmentPath(attachment)!;
         yield* fileSystem.writeFile(path, new Uint8Array([1, 2, 3]));
-        const modelId = supportsImages ? "glm-5.3-flash" : "glm-5.3";
-        const slug = `opencode-go/${modelId}`;
+        // Keep the same model identity for both cases: only reported capabilities change.
+        const provider = "fixture-provider";
+        const modelId = "fixture-model";
+        const slug = `${provider}/${modelId}`;
         const fake = yield* makeFakePi;
         fake.queueModels([
           {
-            provider: "opencode-go",
+            provider,
             id: modelId,
             input: supportsImages ? ["text", "image"] : ["text"],
           },
@@ -1115,9 +1117,9 @@ describe("PiAdapterV2", () => {
       const path = host.resolveAttachmentPath(attachment)!;
       yield* fileSystem.writeFile(path, new Uint8Array([1, 2, 3]));
       const fake = yield* makeFakePi;
-      fake.queueModels([{ provider: "opencode-go", id: "glm-5.3", input: ["text"] }]);
+      fake.queueModels([{ provider: "fixture-provider", id: "fixture-model", input: ["text"] }]);
       const { runtime, takeEvent } = yield* openRuntime(fake);
-      const selection = modelSelection("opencode-go/glm-5.3");
+      const selection = modelSelection("fixture-provider/fixture-model");
       const providerThread = yield* runtime.ensureThread({
         threadId: THREAD_ID,
         modelSelection: selection,
