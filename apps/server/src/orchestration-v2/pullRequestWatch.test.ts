@@ -109,6 +109,14 @@ describe("evaluatePullRequestWatch", () => {
       assert.deepEqual(evaluatePullRequestWatch(clean.next, blocked, noRemarks).changes, [
         { kind: "needs-rebase" },
       ]);
+      assert.include(
+        evaluatePullRequestWatch(
+          first.next,
+          { ...blocked, headSha: "bbbbbbbbbb" },
+          noRemarks,
+        ).changes.map((change) => change.kind),
+        "needs-rebase",
+      );
     },
   );
 

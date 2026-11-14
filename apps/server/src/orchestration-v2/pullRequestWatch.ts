@@ -198,12 +198,13 @@ export function evaluatePullRequestWatch(
     ...atLatest.map((remark) => remark.id),
   ];
 
-  // Like a failed check, a conflict a push did not resolve is news for the new head.
+  // Like a failed check, a conflict or rebase a push did not resolve is news for the new head.
   const toldConflict = !headMoved && watch.conflicting;
   if (watch.awaitingBaseline !== "all" && detail.mergeability === "conflicting" && !toldConflict) {
     changes.push({ kind: "conflicting" });
   }
-  if (watch.awaitingBaseline !== "all" && detail.rebaseRequired === true && !watch.rebaseRequired) {
+  const toldRebase = !headMoved && watch.rebaseRequired === true;
+  if (watch.awaitingBaseline !== "all" && detail.rebaseRequired === true && !toldRebase) {
     changes.push({ kind: "needs-rebase" });
   }
   const rebaseRequired = detail.rebaseRequired ?? watch.rebaseRequired;
