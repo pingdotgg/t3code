@@ -528,7 +528,8 @@ export function chatMarkdownClipboardPayload(
       htmls.push(`<meta charset="utf-8">${mathSourceElement(math).outerHTML}`);
       continue;
     }
-    if (ancestorElement?.closest("pre")) {
+    // A range inside one code element clones only its text, which would otherwise be escaped as prose.
+    if (ancestorElement?.closest("pre, code")) {
       const text = range.toString();
       if (text) {
         texts.push(text);

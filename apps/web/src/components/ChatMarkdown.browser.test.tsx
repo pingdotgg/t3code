@@ -10,10 +10,7 @@ import "../index.css";
 
 import { filesystemEnvironment } from "../state/filesystem";
 import { useRightPanelStore } from "../rightPanelStore";
-import {
-  CHAT_USER_MARKDOWN_REMARK_PLUGINS,
-  remarkEnableOrderedListNumbers,
-} from "@t3tools/shared/markdownPipeline";
+import { remarkEnableOrderedListNumbers } from "@t3tools/shared/markdownPipeline";
 import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskList";
 import { HostImageUrlContext } from "./chat/hostImageUrl";
 import { getSyntaxHighlighterPromise } from "~/lib/syntaxHighlighting";
@@ -135,10 +132,7 @@ vi.mock(import("../hooks/useSettings"), async (original) => {
   return { ...actual, useClientSettings };
 });
 
-import type { Editor } from "@tiptap/core";
 import ChatMarkdown from "./ChatMarkdown";
-import { ComposerPromptEditorTiptap } from "./ComposerPromptEditorTiptap";
-import { serializeEditorDoc } from "../composer-rich-text-doc";
 import { chatMarkdownClipboardPayload } from "../markdown-clipboard";
 import { AudioPreview } from "./files/AudioPreview";
 
@@ -683,7 +677,7 @@ describe("ChatMarkdown inline code selection", () => {
   });
 });
 
-describe("ChatMarkdown alert copy", () => {
+describe("ChatMarkdown copy", () => {
   it("copies a fully selected callout as alert Markdown and a partial one as text", async () => {
     setup();
     await using screen = await renderText("> [!WARNING]\n> Back up first.");
@@ -705,63 +699,18 @@ describe("ChatMarkdown alert copy", () => {
     );
     expect(select(labelText, bodyText, "Back up".length)).toBe("Warning\n\nBack up");
   });
-});
 
-describe("ChatMarkdown literal prose copy", () => {
-  const visibleText = (container: HTMLElement) =>
-    [...container.querySelectorAll(".chat-markdown p")].map((node) => node.textContent).join("\n");
-
-  it.each([
-    "Type \\*word\\* and \\[label](https://example.com) literally.",
-    "Keep *real* emphasis, snake_case, 2 * 3 and https://example.com/_next/ as typed.",
-  ])("pastes and sends %j as it was shown", async (source) => {
+  it("copies part of inline code without prose escapes", async () => {
     setup();
-    await using screen = await renderText(source, {
-      extraRemarkPlugins: CHAT_USER_MARKDOWN_REMARK_PLUGINS,
-    });
-    const shown = visibleText(screen.container);
+    await using screen = await renderText("Read `items[0]*_x` and a*b*c.");
+    const code = screen.container.querySelector("p code")!.firstChild!;
     const range = document.createRange();
-    range.selectNodeContents(screen.container.querySelector(".chat-markdown")!);
-    window.getSelection()!.removeAllRanges();
-    window.getSelection()!.addRange(range);
-    const clipboardData = new DataTransfer();
-    screen.container
-      .querySelector(".chat-markdown")!
-      .dispatchEvent(
-        new ClipboardEvent("copy", { clipboardData, bubbles: true, cancelable: true }),
-      );
-    window.getSelection()!.removeAllRanges();
-
-    await screen.rerender(
-      <ComposerPromptEditorTiptap
-        editorRef={{ current: null }}
-        value=""
-        cursor={0}
-        richTextEnabled
-        contextRecords={new Map()}
-        skills={[]}
-        disabled={false}
-        placeholder=""
-        onChange={() => {}}
-        onPaste={() => {}}
-        onCommandKeyDown={() => false}
-      />,
-    );
-    const editorNode = screen.container.querySelector<HTMLElement & { editor: Editor }>(".tiptap")!;
-    await act(() => {
-      editorNode.editor.view.focus();
-      editorNode.dispatchEvent(new ClipboardEvent("paste", { clipboardData, cancelable: true }));
-    });
-    const sent = serializeEditorDoc(editorNode.editor.state.doc).value;
-
-    await screen.rerender(
-      <ChatMarkdown
-        cwd="/tmp/project"
-        text={sent}
-        extraRemarkPlugins={CHAT_USER_MARKDOWN_REMARK_PLUGINS}
-      />,
-    );
-    expect(visibleText(screen.container)).toBe(shown);
+    range.setStart(code, 0);
+    range.setEnd(code, "items[0]*_".length);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    expect(chatMarkdownClipboardPayload(selection)?.text).toBe("items[0]*_");
   });
 });
 

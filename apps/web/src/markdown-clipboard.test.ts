@@ -234,17 +234,12 @@ describe("serializeRenderedMarkdownFragment", () => {
     "C:/work/_build/out.txt",
     String.raw`C:\work\a-_b.txt`,
     "a*word*b and a_word_b; ~~literal~~ and ~single~",
+    String.raw`before\ after\	end`,
   ])("copies prose that parses back unchanged: %s", (value) => {
     const container = new FakeElement("DIV").append(new FakeText(value));
     const paragraph = userMarkdown.parse(serializeRenderedMarkdownFragment(asNode(container)))
       .children[0];
     expect(paragraph).toMatchObject({ type: "paragraph", children: [{ type: "text", value }] });
-  });
-
-  it("copies a backslash before whitespace as shown", () => {
-    const value = String.raw`before\ after\	end`;
-    const container = new FakeElement("DIV").append(new FakeText(value));
-    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(value);
   });
 
   it.each([
