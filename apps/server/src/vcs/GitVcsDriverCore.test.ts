@@ -3737,6 +3737,11 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           newContents: "$Id$\nedited\nsecond\n",
         });
         assert.strictEqual(plain.newContents, "$Id: literal $\n");
+        yield* writeTextFile(cwd, "README.md", "$Id: x $Id: y $\n");
+        const sharedDollar = yield* driver.getReviewDiffFileContents(
+          makeReviewDiffFileContentsInput(cwd),
+        );
+        assert.strictEqual(sharedDollar.newContents, "$Id$Id: y $\n");
         yield* git(cwd, ["config", "filter.unrelated.clean", "touch filter-ran; cat"]);
         yield* writeTextFile(cwd, ".gitattributes", "README.md ident text eol=lf\n");
         yield* writeTextFile(

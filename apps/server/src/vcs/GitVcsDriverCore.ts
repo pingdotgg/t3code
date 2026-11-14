@@ -4189,18 +4189,19 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       { allowNonZeroExit: true },
     );
     if (filters.exitCode !== 1 || filters.stdout.length > 0) return contents;
+    // Probe a nonoverlapping keyword so ident conversion runs once on the actual file.
     const [canonicalHash, collapsedHash] = yield* Effect.all([
       runGitStdoutWithOptions(
         "GitVcsDriver.getReviewDiffFileContents.workingTree.canonicalHash",
         repositoryRoot,
         ["hash-object", "--stdin", `--path=${input.newPath}`],
-        { stdin: contents },
+        { stdin: "$Id: probe $" },
       ),
       runGitStdoutWithOptions(
         "GitVcsDriver.getReviewDiffFileContents.workingTree.collapsedHash",
         repositoryRoot,
         ["hash-object", "--stdin", `--path=${input.newPath}`],
-        { stdin: collapsed },
+        { stdin: "$Id$" },
       ),
     ]);
     return canonicalHash === collapsedHash ? collapsed : contents;
