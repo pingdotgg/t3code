@@ -2246,6 +2246,27 @@ it.layer(
       }),
   );
 
+  it.effect.each([
+    { parentEnv: { COLORTERM: "truecolor" }, runtimeEnv: { colorterm: "" } },
+    { parentEnv: {}, runtimeEnv: { colorterm: "" } },
+  ])(
+    "keeps an empty lowercase colorterm override on win32 (parent $parentEnv)",
+    ({ parentEnv, runtimeEnv }) =>
+      Effect.gen(function* () {
+        const { manager, ptyAdapter } = yield* createManager(5, { env: parentEnv }).pipe(
+          Effect.provide(layerWithHostPlatform("win32")),
+        );
+
+        yield* manager.open(openInput({ env: runtimeEnv }));
+
+        expect(
+          Object.entries(ptyAdapter.spawnInputs[0]!.env)
+            .filter(([key]) => key.toUpperCase() === "COLORTERM")
+            .map(([, value]) => value),
+        ).toEqual([""]);
+      }),
+  );
+
   it.effect("filters app runtime env variables from terminal sessions", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager(5, {

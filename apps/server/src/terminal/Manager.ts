@@ -1564,8 +1564,18 @@ function createTerminalSpawnEnv(
       );
     }
   }
-  if (!spawnEnv.COLORTERM && runtimeEnv?.COLORTERM === undefined) {
-    spawnEnv.COLORTERM = "truecolor";
+  const findEnvKey = (env: object, key: string) =>
+    platform === "win32"
+      ? Object.keys(env).find((candidate) => candidate.toUpperCase() === key)
+      : key in env
+        ? key
+        : undefined;
+  const colortermKey = findEnvKey(spawnEnv, "COLORTERM") ?? "COLORTERM";
+  if (
+    !spawnEnv[colortermKey] &&
+    (!runtimeEnv || findEnvKey(runtimeEnv, "COLORTERM") === undefined)
+  ) {
+    spawnEnv[colortermKey] = "truecolor";
   }
   // fish 4.1+ can wait 10s at startup for a DA1 reply before a renderer can answer.
   // Skip the query unless the user or provider already chose `query-term` or `no-query-term`.
