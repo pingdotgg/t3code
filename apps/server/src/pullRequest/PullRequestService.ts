@@ -2085,7 +2085,14 @@ export const make = Effect.gen(function* () {
           // Deliberately not `invalidatedByMutation`: ticking a file off says nothing about the
           // change request, and dropping a 300-file diff on every checkbox is the whole cost of
           // the feature.
-          Effect.ensuring(Effect.sync(() => bumpFilesViewedEpoch(ref))),
+          Effect.ensuring(
+            Effect.sync(() => {
+              bumpFilesViewedEpoch(ref);
+              if (input.files.some((file) => file.viewed && file.revision !== undefined)) {
+                bumpEpoch(fileRevisionEpochs, ref);
+              }
+            }),
+          ),
         ),
       ),
     );
@@ -3001,6 +3008,7 @@ export const make = Effect.gen(function* () {
   const filesViewedEpoch = (ref: PullRequestRef) => filesViewedEpochs.get(refScope(ref)) ?? 0;
   const bumpFilesViewedEpoch = (ref: PullRequestRef) => bumpEpoch(filesViewedEpochs, ref);
 
+  const fileRevisionEpochs = new Map<string, number>();
   let everyFileRevisionEpoch = 0;
   const viewedFiles = ViewedFiles.make({
     filesViewedStore,
@@ -3009,7 +3017,8 @@ export const make = Effect.gen(function* () {
     toPullRequestError,
     runFork,
     refEpoch,
-    fileRevisionsEpoch: () => everyFileRevisionEpoch,
+    fileRevisionsEpoch: (ref) =>
+      `${everyFileRevisionEpoch}:${fileRevisionEpochs.get(refScope(ref)) ?? 0}`,
   });
 
   const filtersOfKey = (
