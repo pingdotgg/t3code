@@ -759,6 +759,18 @@ describe("question answer paths", () => {
         },
         {
           ext: "xlsx",
+          bounded: true,
+          parts: {
+            "xl/workbook.xml": '<workbook><sheet name="Flags" r:id="a"/></workbook>',
+            "xl/_rels/workbook.xml.rels":
+              '<Relationships><Relationship Id="a" Target="worksheets/a.xml"/></Relationships>',
+            "xl/worksheets/a.xml":
+              '<worksheet><row><c r="A1" t="b"><v>1</v></c><c r="B1" t="b"><v>0</v></c><c r="C1" t="n"><v>1</v></c><c r="D1" t="b"><v>2</v></c></row></worksheet>',
+          },
+          expected: ["true\tfalse\t1\t2"],
+        },
+        {
+          ext: "xlsx",
           parts: {
             "xl/workbook.xml":
               '<workbook><sheets><sheet name="Inventory" r:id="a"/><sheet name="Budget" r:id="b"/></sheets></workbook>',
