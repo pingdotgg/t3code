@@ -186,6 +186,26 @@ it.each([
   assert.deepEqual(window?.bounds, bounds);
 });
 
+it("selects the titled content window behind full-screen strips that match no window", async () => {
+  // Brave with full-screen windows on two displays, front to back.
+  stubMacLookup(
+    macLookup([
+      { id: 30616, title: "", bounds: { x: 1_920, y: -40, width: 1_920, height: 40 } },
+      { id: 30615, title: "", bounds: { x: 0, y: -75, width: 1_920, height: 75 } },
+      { id: 30607, title: "", bounds: { x: 0, y: 33, width: 1_512, height: 40 } },
+      { id: 30606, title: "", bounds: { x: 0, y: 73, width: 1_512, height: 75 } },
+      { id: 30608, title: "", bounds: { x: 0, y: 33, width: 1_512, height: 115 } },
+      { id: 30605, title: "Google Maps", bounds: { x: 0, y: 148, width: 1_512, height: 834 } },
+      { id: 30971, title: "", bounds: { x: 1_512, y: -98, width: 1_920, height: 143 } },
+      { id: 30614, title: "YouTube", bounds: { x: 1_512, y: -98, width: 1_920, height: 1_080 } },
+    ]),
+  );
+
+  const window = await activeWindow("darwin");
+
+  assert.strictEqual(window?.id, 30605);
+});
+
 it("keeps an untitled content window ahead of a much taller background window", async () => {
   const bounds = { x: 0, y: 0, width: 800, height: 900 };
   stubMacLookup(
