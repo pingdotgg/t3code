@@ -506,6 +506,21 @@ describe("mobile task permissions", () => {
   });
 });
 
+describe("queued follow-up model", () => {
+  it("queues an unpicked follow-up on the thread's current model", async () => {
+    state.grantedEnvironments.add("secondary");
+    const composer = useThreadComposerState(NO_SIDE_CHATS);
+
+    expect(await composer.onSendMessage()).toBe("message");
+
+    // A same-instance pick leaves the draft once the thread accepts it; without a model the
+    // server would run this message on the model queued ahead of it instead.
+    expect(state.enqueue).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ modelSelection: { instanceId: "codex", model: "gpt-5.4" } }),
+    );
+  });
+});
+
 describe("mobile handoff preview and submission", () => {
   it("follows project enablement and provider availability for the selected destination", async () => {
     state.grantedEnvironments.add("secondary");
