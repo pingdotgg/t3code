@@ -557,7 +557,9 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
     return {
       executablePath: process.execPath,
       // Packaged builds have a separate cache; --require prevents cache settings leaking to provider subprocesses.
+      // --use-system-ca also stays off the env: Electron's CA bundle rejects chains the OS trusts.
       args: [
+        "--use-system-ca",
         ...(environment.isPackaged ? ["--require", environment.compileCachePath] : []),
         environment.backendEntryPath,
         "--bootstrap-fd",
