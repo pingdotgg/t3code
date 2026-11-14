@@ -859,21 +859,35 @@ export const make = Effect.gen(function* () {
 
   // A checkout outside T3 Code, such as `git switch` in the terminal, calls no refresh RPC.
   // Rereading remote too, without a fetch, sends the new branch with its own PR and counts.
-  const refreshCheckedOutRef = Effect.fn("VcsStatusBroadcaster.refreshCheckedOutRef")(function* (
+  const publishCheckedOutRef = Effect.fn("VcsStatusBroadcaster.publishCheckedOutRef")(function* (
     cwd: string,
   ) {
-    if (!detailedSubscribers.has(cwd)) {
-      yield* refreshBranchStatusCore(cwd);
-      return;
-    }
+    if (!detailedSubscribers.has(cwd)) return yield* refreshBranchStatusCore(cwd);
     const { observation, refName, isRepo } = yield* readHeadBranch(cwd);
     yield* publishBranch(cwd, { refName, isRepo }, observation);
-    if ((yield* getCachedStatus(cwd))?.remote) {
-      yield* refreshRemoteStatus(cwd, { refreshUpstream: false });
-    } else {
-      yield* refreshLocalStatusCore(cwd);
-    }
   });
+
+  const reconcileCheckedOutRef = Effect.fn("VcsStatusBroadcaster.reconcileCheckedOutRef")(
+    function* (cwd: string) {
+      if (!detailedSubscribers.has(cwd)) return;
+      if ((yield* getCachedStatus(cwd))?.remote) {
+        yield* refreshRemoteStatus(cwd, { refreshUpstream: false });
+      } else {
+        yield* refreshLocalStatusCore(cwd);
+      }
+    },
+  );
+
+  const retryCheckedOutRef = <E>(cwd: string, refresh: Effect.Effect<unknown, E>) =>
+    refresh.pipe(
+      Effect.retry(CHECKOUT_REFRESH_RETRY),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("VCS checked-out ref refresh failed", {
+          cwdLength: cwd.length,
+          ...remoteRefreshFailureDiagnostics(cause),
+        }),
+      ),
+    );
 
   // Runs for the subscription lifetime, so tracing would leave a span open indefinitely.
   const watchHead = Effect.fnUntraced(function* (cwd: string, ready: Deferred.Deferred<void>) {
@@ -895,17 +909,10 @@ export const make = Effect.gen(function* () {
         Stream.filter((event) => path.basename(event.path) === "HEAD"),
         // A rebase moves HEAD many times; refresh once for whatever arrived during a refresh.
         Stream.buffer({ capacity: 1, strategy: "sliding" }),
-        Stream.runForEach(() =>
-          refreshCheckedOutRef(cwd).pipe(
-            Effect.retry(CHECKOUT_REFRESH_RETRY),
-            Effect.catchCause((cause) =>
-              Effect.logWarning("VCS checked-out ref refresh failed", {
-                cwdLength: cwd.length,
-                ...remoteRefreshFailureDiagnostics(cause),
-              }),
-            ),
-          ),
-        ),
+        Stream.mapEffect(() => retryCheckedOutRef(cwd, publishCheckedOutRef(cwd))),
+        // Detailed status waits behind its own reads; the branch keeps up on the stage above.
+        Stream.buffer({ capacity: 1, strategy: "sliding" }),
+        Stream.runForEach(() => retryCheckedOutRef(cwd, reconcileCheckedOutRef(cwd))),
       );
   });
 

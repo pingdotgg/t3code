@@ -1527,6 +1527,10 @@ describe("VcsStatusBroadcaster", () => {
         yield* fs.rename(lockPath, headPath);
 
         assert.deepEqual(yield* branches, [{ refName: "repro", isRepo: true }]);
+        state.currentLocalStatus = { ...baseLocalStatus, refName: "second" };
+        yield* fs.writeFileString(lockPath, "ref: refs/heads/second\n");
+        yield* fs.rename(lockPath, headPath);
+        assert.deepEqual(yield* branches, [{ refName: "second", isRepo: true }]);
         yield* Deferred.succeed(resume, undefined);
       }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
     }).pipe(Effect.provide(NodeServices.layer)),
