@@ -48,9 +48,31 @@ function BoringSidebarRow() {
       {settings.boringSidebarEnabled ? (
         <div className="mt-2 mb-2 border-l-2 border-border/60 ps-3">
           <BoringSidebarMultilineRow />
+          <BoringSidebarFlushRowsRow />
         </div>
       ) : null}
     </SettingsRow>
+  );
+}
+
+function BoringSidebarFlushRowsRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      {...searchableSetting("boring-sidebar-flush-rows")}
+      className="px-0 py-2 sm:px-0"
+      description="Remove indentation from folder threads. Align their titles and details with the project's icon."
+      control={
+        <Switch
+          checked={settings.boringSidebarFlushRows}
+          onCheckedChange={(checked) =>
+            updateSettings({ boringSidebarFlushRows: Boolean(checked) })
+          }
+          aria-label="Align threads with project icon"
+        />
+      }
+    />
   );
 }
 
