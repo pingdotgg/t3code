@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { markdownProseDirection, textDirection } from "./textDirection";
+import {
+  composerParagraphDirections,
+  markdownProseDirection,
+  textDirection,
+} from "./textDirection";
 
 describe("textDirection", () => {
   it.each([
@@ -83,5 +87,35 @@ describe("markdownProseDirection", () => {
 
   it("leaves markdown without prose letters to its surroundings", () => {
     expect(markdownProseDirection("```\nconst a = 1;\n```")).toBeUndefined();
+  });
+});
+
+describe("composerParagraphDirections", () => {
+  it.each([
+    ["an English-leading Arabic line", "StrictMode: يعيد الـ render مرتين في التطوير", ["rtl"]],
+    ["each line by its own majority", "עדכון הקוד בעברית\nEnglish stays left", ["rtl", "ltr"]],
+    [
+      "a line without letters as the one above, and a trailing empty line",
+      "اكتب الدالة\n\n42\nfix it\n",
+      ["rtl", "rtl", "rtl", "ltr", "ltr"],
+    ],
+    [
+      "a code block left to right without passing its direction on",
+      "اكتب الدالة\n```\n// احسب مجموع القيم\n```\n",
+      ["rtl", "ltr", "ltr", "ltr", "rtl"],
+    ],
+    ["inline code as no word", "`useEffect` `useMemo` בעברית `React`", ["rtl"]],
+    ["CRLF as one break", "שלום עולם\r\nEnglish", ["rtl", "ltr"]],
+    ["a draft with no right-to-left line as the platform's", "Fix the שלום label\nplease", []],
+  ])("reads %s", (_, text, directions) => {
+    expect(composerParagraphDirections(text)).toEqual(directions);
+  });
+
+  it("does not count a chip's source text as words", () => {
+    const chip = "@some/long-english-file-name.ts ";
+    expect(composerParagraphDirections(`${chip}שלום`)).toEqual([]);
+    expect(
+      composerParagraphDirections(`${chip}שלום`, [{ start: 0, end: chip.length - 1 }]),
+    ).toEqual(["rtl"]);
   });
 });

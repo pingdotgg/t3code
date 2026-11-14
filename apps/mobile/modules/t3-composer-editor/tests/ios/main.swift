@@ -108,6 +108,41 @@ do {
   )
 }
 
+// Paragraph directions set each paragraph's base direction without changing the text or the caret.
+do {
+  let view = T3ComposerEditorView()
+  view.frame = CGRect(x: 0, y: 0, width: 350, height: 200)
+  let text = "StrictMode: يعيد الـ render مرتين\nEnglish stays left\n"
+  let secondLine = ("StrictMode: يعيد الـ render مرتين\n" as NSString).length
+  let end = (text as NSString).length
+  func send(_ directions: [String], revision: Int) {
+    let payload: [String: Any] = [
+      "value": text,
+      "selection": ["start": end, "end": end],
+      "tokensJson": "[]",
+      "mostRecentEventCount": revision,
+      "isNativeEcho": false,
+      "resetGeneration": 0,
+      "paragraphDirections": directions,
+    ]
+    view.setControlledDocumentJson(String(data: try! JSONSerialization.data(withJSONObject: payload), encoding: .utf8)!)
+  }
+  func direction(at index: Int) -> NSWritingDirection {
+    (view.editor.textStorage.attribute(.paragraphStyle, at: index, effectiveRange: nil) as! NSParagraphStyle).baseWritingDirection
+  }
+  send(["rtl", "ltr", "ltr"], revision: 0)
+  check(view.text == text, "Paragraph directions changed the text")
+  check(view.editor.selectedRange == NSRange(location: end, length: 0), "Paragraph directions moved the caret")
+  check(direction(at: 0) == .rightToLeft, "A right-to-left paragraph must read right to left")
+  check(direction(at: secondLine) == .leftToRight, "A left-to-right paragraph must read left to right")
+  let typing = view.editor.typingAttributes[.paragraphStyle] as! NSParagraphStyle
+  check(typing.baseWritingDirection == .leftToRight, "A new last line must continue the line above")
+  send(["rtl"], revision: 1)
+  check(direction(at: 0) == .rightToLeft, "A mismatched paragraph count must leave directions alone")
+  send([], revision: 2)
+  check(direction(at: 0) == .natural && direction(at: secondLine) == .natural, "No directions must return paragraphs to natural")
+}
+
 print("composer editor tests passed")
 
 private let dropEditor = ComposerTextView()

@@ -49,3 +49,32 @@ const MARKDOWN_CODE_OR_URL =
 export function markdownProseDirection(markdown: string): TextDirection | undefined {
   return textDirection(markdown.replace(MARKDOWN_CODE_OR_URL, " "));
 }
+
+const PARAGRAPH_BREAK = /\r\n|[\n\r\u2029]/;
+const CODE_FENCE = /^ {0,3}(?:`{3,}|~{3,})/;
+
+/**
+ * One direction per paragraph for a plain-text editor, by the composer's rule: a line without
+ * letters continues the one above, code blocks and chips do not count. Empty unless some line
+ * reads right to left, so a left-to-right draft is left to the platform.
+ */
+export function composerParagraphDirections(
+  text: string,
+  chips: ReadonlyArray<{ readonly start: number; readonly end: number }> = [],
+): ReadonlyArray<TextDirection> {
+  if (!RTL_LETTER.test(text)) return [];
+  let prose = text;
+  for (const chip of chips) {
+    prose = prose.slice(0, chip.start) + " ".repeat(chip.end - chip.start) + prose.slice(chip.end);
+  }
+  let previous: TextDirection = "ltr";
+  let inCode = false;
+  const directions = prose.split(PARAGRAPH_BREAK).map((line) => {
+    const fence = CODE_FENCE.test(line);
+    if (fence) inCode = !inCode;
+    if (fence || inCode) return "ltr";
+    previous = markdownProseDirection(line) ?? previous;
+    return previous;
+  });
+  return directions.includes("rtl") ? directions : [];
+}

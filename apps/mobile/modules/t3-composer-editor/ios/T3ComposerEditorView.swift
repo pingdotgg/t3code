@@ -25,6 +25,8 @@ private struct ComposerControlledDocumentPayload: Decodable {
   let mostRecentEventCount: Int
   let isNativeEcho: Bool
   let resetGeneration: Int
+  /// One "ltr" or "rtl" per paragraph of `value`; empty leaves every paragraph to UIKit.
+  let paragraphDirections: [String]?
 }
 
 private struct ComposerThemePayload: Decodable {
@@ -721,6 +723,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     value = document.value
     requestedSelection = document.selection
     applyControlledDocument(force: tokensNeedRebuild)
+    applyParagraphDirections(document.paragraphDirections ?? [])
     applyRequestedSelection()
     cancelFocusingTapRestoreIfSelectionMoved(from: previousSelection)
     if tokensMatchCurrentValue() {
@@ -1140,17 +1143,70 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     return nil
   }
 
-  private func baseAttributes() -> [NSAttributedString.Key: Any] {
-    let font = UIFont(name: fontFamily, size: fontSize)
-      ?? UIFont.systemFont(ofSize: fontSize)
+  private func paragraphStyle(_ direction: NSWritingDirection = .natural) -> NSParagraphStyle {
     let paragraph = NSMutableParagraphStyle()
     paragraph.minimumLineHeight = lineHeight
     paragraph.maximumLineHeight = lineHeight
+    paragraph.baseWritingDirection = direction
+    return paragraph
+  }
+
+  private func baseAttributes() -> [NSAttributedString.Key: Any] {
+    let font = UIFont(name: fontFamily, size: fontSize)
+      ?? UIFont.systemFont(ofSize: fontSize)
     return [
       .font: font,
       .foregroundColor: UIColor(composerHex: theme.text) ?? .label,
-      .paragraphStyle: paragraph,
+      .paragraphStyle: paragraphStyle(),
     ]
+  }
+
+  private func writingDirection(at index: Int) -> NSWritingDirection {
+    let storage = textView.textStorage
+    guard index >= 0, index < storage.length else {
+      return .natural
+    }
+    let style = storage.attribute(.paragraphStyle, at: index, effectiveRange: nil) as? NSParagraphStyle
+    return style?.baseWritingDirection ?? .natural
+  }
+
+  // UIKit's natural direction follows a paragraph's first strong letter. JS sends the direction of
+  // each paragraph by word majority, which this applies without touching the text or the caret.
+  private func applyParagraphDirections(_ directions: [String]) {
+    guard textView.markedTextRange == nil, textView.serializedText() == value else {
+      return
+    }
+    let storage = textView.textStorage
+    let text = storage.string as NSString
+    var paragraphs: [NSRange] = []
+    var endsWithBreak = true
+    var location = 0
+    while location < text.length {
+      var end = 0
+      var contentsEnd = 0
+      text.getParagraphStart(nil, end: &end, contentsEnd: &contentsEnd, for: NSRange(location: location, length: 0))
+      paragraphs.append(NSRange(location: location, length: end - location))
+      endsWithBreak = contentsEnd < end
+      location = end
+    }
+    // A count that disagrees means JS split the text differently; leave it as it is.
+    guard directions.isEmpty || directions.count == paragraphs.count + (endsWithBreak ? 1 : 0) else {
+      return
+    }
+    let wasApplyingControlledValue = isApplyingControlledValue
+    isApplyingControlledValue = true
+    storage.beginEditing()
+    for (index, range) in paragraphs.enumerated() {
+      let direction: NSWritingDirection = directions.isEmpty
+        ? .natural
+        : directions[index] == "rtl" ? .rightToLeft : .leftToRight
+      if writingDirection(at: range.location) != direction {
+        storage.addAttribute(.paragraphStyle, value: paragraphStyle(direction), range: range)
+      }
+    }
+    storage.endEditing()
+    isApplyingControlledValue = wasApplyingControlledValue
+    restoreBaseTypingAttributes()
   }
 
   private func applyTypography() {
@@ -1166,7 +1222,14 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     guard textView.markedTextRange == nil else {
       return
     }
-    textView.typingAttributes = baseAttributes()
+    var attributes = baseAttributes()
+    // New text continues the paragraph at the caret, or the one above it on a new last line.
+    let caret = textView.selectedRange.location
+    let direction = writingDirection(at: caret < textView.textStorage.length ? caret : caret - 1)
+    if direction != .natural {
+      attributes[.paragraphStyle] = paragraphStyle(direction)
+    }
+    textView.typingAttributes = attributes
   }
 
   private func applyTheme() {
