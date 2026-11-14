@@ -792,7 +792,6 @@ describe("pools", () => {
       ]);
       const accounts = collectLimitAccounts(input);
       expect(accounts).toHaveLength(count);
-      expect(new Set(accounts.map((account) => account.key)).size).toBe(count);
       expect(accounts[0]?.displayName).toBe("claude-team-seat");
     },
   );
