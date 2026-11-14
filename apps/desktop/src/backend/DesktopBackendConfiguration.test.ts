@@ -440,7 +440,8 @@ describe("DesktopBackendConfiguration", () => {
             "~",
             "--exec",
             "env",
-            `PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${resolvedPath}`,
+            // The login shell's order wins; system folders only fill gaps.
+            `PATH=${resolvedPath}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`,
             `${linuxAppRoot}/t3`,
             "--bootstrap-fd",
             "0",
@@ -657,7 +658,7 @@ describe("DesktopBackendConfiguration", () => {
           "~",
           "--exec",
           "env",
-          "PATH=/home/test user's/.nvm/versions/node/v22.0.0/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/test user/bin:/opt/test's tools/bin:/usr/bin:/bin",
+          "PATH=/home/test user's/.nvm/versions/node/v22.0.0/bin:/home/test user/bin:/opt/test's tools/bin:/usr/bin:/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
           nodePath,
           linuxEntryPath,
           "--bootstrap-fd",
