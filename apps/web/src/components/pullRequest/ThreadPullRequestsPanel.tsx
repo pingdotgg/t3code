@@ -253,6 +253,7 @@ function LinkRowImpl({
               {snapshot?.author ? (
                 <PullRequestRowAuthor
                   actor={snapshot.author}
+                  environmentId={threadRef.environmentId}
                   className="shrink-0"
                   labelClassName="max-w-28"
                 />

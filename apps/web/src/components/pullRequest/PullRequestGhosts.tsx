@@ -1,4 +1,4 @@
-import type { PullRequestListEntry, PullRequestSummary } from "@t3tools/contracts";
+import type { EnvironmentId, PullRequestListEntry, PullRequestSummary } from "@t3tools/contracts";
 import {
   ArrowLeftIcon,
   ChevronRightIcon,
@@ -80,6 +80,7 @@ export function PullRequestListGhost({ rows = 7, caption }: { rows?: number; cap
 
 export function PullRequestDetailGhost({
   seed: entry,
+  environmentId,
   summary,
   actions,
   checkoutCommand,
@@ -91,6 +92,7 @@ export function PullRequestDetailGhost({
   onCheckoutError,
 }: {
   seed?: PullRequestListEntry | null;
+  environmentId?: EnvironmentId;
   summary?: PullRequestSummary | null;
   actions?: ReactNode;
   checkoutCommand?: string | null;
@@ -203,7 +205,11 @@ export function PullRequestDetailGhost({
               }
               author={
                 seed ? (
-                  <PullRequestActorLabel actor={seed.author ?? null} tooltip={false} />
+                  <PullRequestActorLabel
+                    actor={seed.author ?? null}
+                    environmentId={environmentId}
+                    tooltip={false}
+                  />
                 ) : (
                   <span className="flex items-center gap-1.5">
                     <GhostBar className="size-4 rounded-full" />
