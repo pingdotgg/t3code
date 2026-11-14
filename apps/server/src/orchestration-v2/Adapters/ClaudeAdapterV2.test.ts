@@ -15464,10 +15464,32 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       { standaloneEvent: true, arrivedAfterReset: false, expired: true, newerTurn: true },
       { standaloneEvent: true, arrivedAfterReset: true, expired: false, newerTurn: false },
       { standaloneEvent: true, arrivedAfterReset: false, expired: true, weeklyStillActive: true },
-    ].map((row) => ({ newerTurn: false, weeklyStillActive: false, ...row })),
+      { standaloneEvent: true, arrivedAfterReset: false, expired: true, twoWakes: true },
+      {
+        standaloneEvent: true,
+        arrivedAfterReset: false,
+        expired: true,
+        twoWakes: true,
+        secondWakeStillActive: true,
+      },
+    ].map((row) => ({
+      newerTurn: false,
+      weeklyStillActive: false,
+      twoWakes: false,
+      secondWakeStillActive: false,
+      ...row,
+    })),
   )(
-    "replays a rejected wake rate limit only while it is current (event=$standaloneEvent arrivedAfterReset=$arrivedAfterReset expired=$expired newerTurn=$newerTurn weekly=$weeklyStillActive)",
-    ({ standaloneEvent, arrivedAfterReset, expired, newerTurn, weeklyStillActive }) =>
+    "replays a rejected wake rate limit only while it is current (event=$standaloneEvent arrivedAfterReset=$arrivedAfterReset expired=$expired newerTurn=$newerTurn weekly=$weeklyStillActive twoWakes=$twoWakes secondActive=$secondWakeStillActive)",
+    ({
+      standaloneEvent,
+      arrivedAfterReset,
+      expired,
+      newerTurn,
+      weeklyStillActive,
+      twoWakes,
+      secondWakeStillActive,
+    }) =>
       Effect.gen(function* () {
         const harness = yield* makeWakeHarness;
         const now = yield* DateTime.now;
@@ -15538,6 +15560,49 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         assert.lengthOf(harness.continuationRequests, 1);
 
+        if (twoWakes) {
+          // A second rejected background wake completes while the first
+          // continuation remains queued. Both rejections are expired by replay.
+          yield* harness.offerAndWait(wakeTurnInit);
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "rate_limit_event",
+              rate_limit_info: {
+                status: "rejected",
+                rateLimitType: secondWakeStillActive ? "seven_day" : "five_hour",
+                resetsAt: secondWakeStillActive ? weeklyResetsAt : resetsAt,
+                overageStatus: "rejected",
+              },
+              uuid: "00000000-0000-4000-8000-000000000637",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+          yield* harness.offerAndWait(
+            makeAssistantErrorFrame({
+              uuid: "00000000-0000-4000-8000-000000000638",
+              error: "rate_limit",
+              apiErrorParams: {
+                rate_limit_info: {
+                  status: "rejected",
+                  rateLimitType: secondWakeStillActive ? "seven_day" : "five_hour",
+                  resetsAt: secondWakeStillActive ? weeklyResetsAt : resetsAt,
+                },
+              },
+            }),
+          );
+          yield* harness.offerAndWait(
+            makeResultFrame({
+              uuid: "00000000-0000-4000-8000-000000000639",
+              result: "The second background wake also hit the limit.",
+              isError: true,
+              apiErrorStatus: 429,
+              terminalReason: "api_error",
+              origin: { kind: "task-notification" },
+            }),
+          );
+          assert.lengthOf(harness.continuationRequests, 1);
+        }
+
         // An empty session-task lifecycle result arriving before T3 opens the
         // wake run must not replace the root's terminal usage-limit result.
         yield* harness.offerAndWait(wakeTurnInit);
@@ -15589,7 +15654,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }),
         );
         const terminal = yield* Queue.take(harness.terminalReceipts);
-        if (expired && !weeklyStillActive) {
+        if (expired && !weeklyStillActive && !secondWakeStillActive) {
           assert.equal(terminal.status, "completed");
           assert.isFalse(
             harness.events.some(
@@ -15614,13 +15679,20 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.equal(terminal.failure.class, "usage_limit");
         assert.equal(
           terminal.failure.resetAt,
-          weeklyStillActive ? "2026-10-02T01:10:00.000Z" : "2026-09-25T01:10:00.000Z",
+          weeklyStillActive || secondWakeStillActive
+            ? "2026-10-02T01:10:00.000Z"
+            : "2026-09-25T01:10:00.000Z",
         );
         if (standaloneEvent) {
           const pause = yield* Queue.take(harness.systemNoticeReceipts);
           assert.equal(pause.turnItem.type, "system_notice");
           if (pause.turnItem.type !== "system_notice") return;
-          assert.include(pause.turnItem.message, "This turn is paused until the 5-hour limit");
+          assert.include(
+            pause.turnItem.message,
+            secondWakeStillActive
+              ? "This turn is paused until the 7-day limit"
+              : "This turn is paused until the 5-hour limit",
+          );
         }
       }).pipe(
         Effect.provide(

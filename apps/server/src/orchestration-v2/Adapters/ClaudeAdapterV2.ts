@@ -12850,22 +12850,26 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   !drained
                     .slice(lastUnsettledRootIndex + 1)
                     .some((entry) => entry.type === "result");
-                const bufferedResultReceivedAt =
-                  lastResult?.type === "result"
-                    ? bufferedResultArrivals.get(lastResult)
-                    : undefined;
-                const expiredWakeFrames =
-                  lastResult !== undefined &&
-                  bufferedResultReceivedAt !== undefined &&
-                  !emptyTurnBeforeNextTurn &&
-                  !newerRootStillOpen
-                    ? expiredBufferedWakeRateLimitFrames(
-                        drained,
-                        lastResult,
-                        DateTime.toEpochMillis(bufferedResultReceivedAt),
-                        DateTime.toEpochMillis(yield* DateTime.now),
-                      )
-                    : null;
+                // More than one rejected wake can be buffered behind a continuation.
+                // Suppress expired evidence from every completed wake, but only the
+                // selected terminal result may complete this continuation.
+                const expiredWakeFrames = new Set<SDKMessage>();
+                let lastResultExpired = false;
+                const replayedAtMs = DateTime.toEpochMillis(yield* DateTime.now);
+                for (const entry of drained) {
+                  if (entry.type !== "result") continue;
+                  const receivedAt = bufferedResultArrivals.get(entry);
+                  if (receivedAt === undefined) continue;
+                  const expired = expiredBufferedWakeRateLimitFrames(
+                    drained,
+                    entry,
+                    DateTime.toEpochMillis(receivedAt),
+                    replayedAtMs,
+                  );
+                  if (expired === null) continue;
+                  for (const frame of expired) expiredWakeFrames.add(frame);
+                  if (entry === lastResult) lastResultExpired = true;
+                }
                 const opaqueReplayTombstones = taskIdSetForNativeThread(
                   yield* Ref.get(opaqueBackgroundTaskReplayTombstonesByNativeThread),
                   nativeThreadId,
@@ -12882,7 +12886,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   ) {
                     continue;
                   }
-                  if (entry.type !== "result" && !expiredWakeFrames?.has(entry)) {
+                  if (entry.type !== "result" && !expiredWakeFrames.has(entry)) {
                     yield* handleSdkMessage({ query: querySession.query, message: entry });
                   }
                   yield* Ref.update(wakeBuffers, (current) => {
@@ -12900,8 +12904,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     return next;
                   });
                 }
-                if (expiredWakeFrames !== null) {
-                  // The buffered wake ended before the limit reset. It is no longer a
+                if (lastResultExpired && !emptyTurnBeforeNextTurn && !newerRootStillOpen) {
+                  // The selected wake ended before the limit reset. It is no longer a
                   // rejection of this continuation, so do not fail it or show stale errors.
                   const completedAt = yield* DateTime.now;
                   yield* finalizeActiveTurn({
