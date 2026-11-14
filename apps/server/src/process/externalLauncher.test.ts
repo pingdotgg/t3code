@@ -796,17 +796,32 @@ it.effect.skipIf(windowsHost)("does not offer the OpenZFS zed daemon as Zed on L
     );
     yield* fs.chmod(zfsZed, 0o755);
     const editor = EDITORS.find((editor) => editor.id === "zed")!;
-    const resolve = resolveEditorCommand(editor, { HOME: home, PATH: binDir }).pipe(
-      Effect.provideService(HostProcess.Platform, "linux"),
-      Effect.provideService(Path.Path, withSystemBin(path, systemBin)),
-    );
-    assert.deepEqual(yield* resolve, Option.none());
+    const laterBin = path.join(home, "later-bin");
+    const resolveOn = (platform: NodeJS.Platform) =>
+      resolveEditorCommand(editor, { HOME: home, PATH: `${binDir}:${laterBin}` }).pipe(
+        Effect.provideService(HostProcess.Platform, platform),
+        Effect.provideService(Path.Path, withSystemBin(path, systemBin)),
+      );
+    assert.deepEqual(yield* resolveOn("linux"), Option.none());
+    assert.deepEqual(yield* resolveOn("darwin"), Option.none());
 
     const zedEditor = path.join(home, ".local/bin/zed");
     yield* fs.makeDirectory(path.dirname(zedEditor), { recursive: true });
     yield* fs.writeFileString(zedEditor, "#!/bin/sh\necho 'Zed 0.200.0'\n");
     yield* fs.chmod(zedEditor, 0o755);
-    assert.deepEqual(yield* resolve, Option.some({ command: zedEditor, baseArgs: [] }));
+    assert.deepEqual(yield* resolveOn("linux"), Option.some({ command: zedEditor, baseArgs: [] }));
+
+    yield* fs.remove(zedEditor);
+    const laterZed = path.join(laterBin, "zed");
+    yield* fs.makeDirectory(laterBin, { recursive: true });
+    yield* fs.writeFileString(laterZed, "#!/bin/sh\necho 'Zed 0.200.0'\n");
+    yield* fs.chmod(laterZed, 0o755);
+    for (const platform of ["linux", "darwin"] as const) {
+      assert.deepEqual(
+        yield* resolveOn(platform),
+        Option.some({ command: laterZed, baseArgs: [] }),
+      );
+    }
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
