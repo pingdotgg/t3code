@@ -11961,11 +11961,11 @@ const watchCostScenarios = [
   },
   { name: "noisy inbox", inboxEveryMinute: true, saves: 45 },
   {
-    name: "inbox shows other pull requests but missed this one",
+    name: "inbox proves another watched pull request but missed this one",
     reviewCommentEdit: 40,
-    inboxEveryMinute: true,
     inboxMissesPullRequest: true,
-    saves: -2,
+    provenNeighbour: 42,
+    saves: 44,
   },
   {
     name: "checks swap while the pull request keeps moving",
@@ -12015,17 +12015,23 @@ it.layer(Layer.fresh(layerTest))("pull request watch request cost", (it) => {
         branch: null,
         worktreePath: null,
       });
+      const watched = [
+        number,
+        ...(scenario.provenNeighbour === undefined ? [] : [scenario.provenNeighbour]),
+      ];
       const watch = (watching: boolean) =>
-        orchestrator.dispatch({
-          type: "thread.pull-request.watch",
-          commandId: CommandId.make(`${threadId}-watch-${watching}`),
-          threadId,
-          host: "github.com",
-          repository: "pingdotgg/t3code",
-          number,
-          watching,
-          link: { url: `https://github.com/pingdotgg/t3code/pull/${number}`, source: "agent" },
-        });
+        Effect.forEach(watched, (pr) =>
+          orchestrator.dispatch({
+            type: "thread.pull-request.watch",
+            commandId: CommandId.make(`${threadId}-watch-${pr}-${watching}`),
+            threadId,
+            host: "github.com",
+            repository: "pingdotgg/t3code",
+            number: pr,
+            watching,
+            link: { url: `https://github.com/pingdotgg/t3code/pull/${pr}`, source: "agent" },
+          }),
+        );
       yield* watch(true);
 
       const cost = { graphql: 0, core: 0, refused: 0, fingerprints: 0 };
@@ -12038,6 +12044,7 @@ it.layer(Layer.fresh(layerTest))("pull request watch request cost", (it) => {
         };
         if (scenario.inboxOff) return times;
         if (editAt !== null && !scenario.inboxMissesPullRequest) bump(number, at(-60) + 3_000);
+        if (scenario.provenNeighbour !== undefined) bump(scenario.provenNeighbour, at(-30) + 3_000);
         if (editAt !== null && !scenario.inboxMissesEdit && !scenario.inboxMissesPullRequest) {
           bump(number, editAt + 3_000);
         }
@@ -12066,7 +12073,7 @@ it.layer(Layer.fresh(layerTest))("pull request watch request cost", (it) => {
                     viewerSubscription: scenario.viewerSubscription ?? "SUBSCRIBED",
                   };
                 }),
-              detail: () =>
+              detail: (input) =>
                 Effect.map(Clock.currentTimeMillis, (now) => {
                   cost.graphql += 1;
                   const check = (name: string, failed: boolean) => ({
@@ -12078,7 +12085,11 @@ it.layer(Layer.fresh(layerTest))("pull request watch request cost", (it) => {
                   const swapped =
                     scenario.checksSwapAt !== undefined && now >= at(scenario.checksSwapAt);
                   return {
-                    ...watchedPullRequestDetail({ projectId, number, at: iso(startedAt) }),
+                    ...watchedPullRequestDetail({
+                      projectId,
+                      number: input.number,
+                      at: iso(startedAt),
+                    }),
                     headSha: "abc1234def",
                     checks:
                       scenario.checksSwapAt === undefined
@@ -12086,25 +12097,38 @@ it.layer(Layer.fresh(layerTest))("pull request watch request cost", (it) => {
                         : [check("lint", !swapped), check("test", swapped)],
                   };
                 }),
-              activity: () =>
+              activity: (input) =>
                 Effect.map(Clock.currentTimeMillis, (now) => {
                   cost.graphql += 15;
                   const comments: Array<PullRequestComment> =
-                    editAt === null
-                      ? []
-                      : [
+                    input.number !== number
+                      ? [
                           {
-                            id: "review-comment",
-                            kind: "review-comment",
+                            id: "neighbour-comment",
+                            kind: "issue-comment",
                             author: { login: "maintainer", name: null, avatarUrl: null },
-                            body: "Nit.",
-                            createdAt: iso(at(-60)),
+                            body: "Looks good.",
+                            createdAt: iso(at(-30)),
                             url: null,
-                            path: "src/index.ts",
+                            path: null,
                             reviewState: null,
-                            ...(editAt <= now ? { editedAt: iso(editAt) } : {}),
                           },
-                        ];
+                        ]
+                      : editAt === null
+                        ? []
+                        : [
+                            {
+                              id: "review-comment",
+                              kind: "review-comment",
+                              author: { login: "maintainer", name: null, avatarUrl: null },
+                              body: "Nit.",
+                              createdAt: iso(at(-60)),
+                              url: null,
+                              path: "src/index.ts",
+                              reviewState: null,
+                              ...(editAt <= now ? { editedAt: iso(editAt) } : {}),
+                            },
+                          ];
                   return {
                     comments,
                     commentCount: comments.length,
@@ -12126,8 +12150,6 @@ it.layer(Layer.fresh(layerTest))("pull request watch request cost", (it) => {
                     .filter(([, updatedAt]) => updatedAt > since)
                     .map(([thread, updatedAt]) => ({ number: thread, updatedAt }));
                   if (threads.length > 0) cost.core += 1;
-                  // The watch rejects an inbox that never listed its known remark, like a refusal.
-                  if (threads.length > 0 && scenario.inboxMissesPullRequest) cost.refused += 1;
                   return { threads, truncated: false };
                 }),
             }),

@@ -793,6 +793,14 @@ export const make = Effect.gen(function* () {
   const notificationsUnreadableAt = new Map<string, number>();
   const notificationsLiveThrough = new Map<string, number>();
 
+  // With "On GitHub" notifications off the inbox never moves, so a PR's silence counts only once
+  // the inbox has listed the newest remark someone else made on that PR, the viewer's own.
+  const unprovenRemarkAt = (group: WatchGroup, last: LastRead) =>
+    last.foreignRemarkAt !== null &&
+    last.foreignRemarkAt > (notificationsLiveThrough.get(group.key) ?? -Infinity)
+      ? last.foreignRemarkAt
+      : null;
+
   const repositoryOf = (group: WatchGroup) => {
     const { projectId, host, repository } = referenceOf(group);
     return `${projectId} ${host} ${repository}`.toLowerCase();
@@ -803,15 +811,7 @@ export const make = Effect.gen(function* () {
     groups: ReadonlyArray<WatchGroup>,
   ) {
     const now = yield* Clock.currentTimeMillis;
-    const due = new Map<
-      string,
-      {
-        readonly group: WatchGroup;
-        readonly since: number;
-        readonly evidence: number;
-        readonly evidenceNumber: number | null;
-      }
-    >();
+    const due = new Map<string, { readonly group: WatchGroup; readonly since: number }>();
     for (const group of groups) {
       const last = lastReads.get(group.key);
       const repository = repositoryOf(group);
@@ -823,50 +823,24 @@ export const make = Effect.gen(function* () {
         continue;
       }
       const prior = due.get(repository);
+      const since = Math.min(last.at, unprovenRemarkAt(group, last) ?? Infinity);
       due.set(repository, {
         group: prior?.group ?? group,
-        since: Math.min(prior?.since ?? last.at, last.at),
-        ...((last.foreignRemarkAt ?? -Infinity) > (prior?.evidence ?? -Infinity)
-          ? { evidence: last.foreignRemarkAt!, evidenceNumber: group.targets[0]!.link.number }
-          : {
-              evidence: prior?.evidence ?? -Infinity,
-              evidenceNumber: prior?.evidenceNumber ?? null,
-            }),
+        since: Math.min(prior?.since ?? since, since),
       });
     }
     const checks = new Map<
       string,
       Effect.Effect<ProviderChangeRequestNotifications | null | undefined>
     >();
-    for (const [repository, { group, since, evidence, evidenceNumber }] of due) {
-      // With "On GitHub" notifications off the inbox never moves, so its silence counts only
-      // once it lists the pull request where someone else last remarked on the viewer's own.
-      const unproven = evidence > (notificationsLiveThrough.get(repository) ?? -Infinity);
+    for (const [repository, { group, since }] of due) {
       const check = pullRequests
-        .notifications({
-          ...referenceOf(group),
-          since: (unproven ? Math.min(since, evidence) : since) - NOTIFICATION_LAG_MS,
-        })
+        .notifications({ ...referenceOf(group), since: since - NOTIFICATION_LAG_MS })
         .pipe(
-          Effect.map((notifications) =>
-            unproven &&
-            notifications !== null &&
-            !notifications.threads.some(
-              (thread) =>
-                thread.number === evidenceNumber &&
-                thread.updatedAt >= evidence - NOTIFICATION_LAG_MS,
-            )
-              ? null
-              : notifications,
-          ),
           Effect.tap((notifications) =>
             Effect.sync(() => {
-              if (notifications === null) {
-                notificationsUnreadableAt.set(repository, now);
-                return;
-              }
-              notificationsUnreadableAt.delete(repository);
-              if (unproven) notificationsLiveThrough.set(repository, evidence);
+              if (notifications === null) notificationsUnreadableAt.set(repository, now);
+              else notificationsUnreadableAt.delete(repository);
             }),
           ),
           Effect.catchCause((cause) =>
@@ -907,6 +881,13 @@ export const make = Effect.gen(function* () {
     const thread = notifications.threads.find(
       (candidate) => candidate.number === group.targets[0]!.link.number,
     );
+    const unproven = unprovenRemarkAt(group, last);
+    if (unproven !== null) {
+      if (thread === undefined || thread.updatedAt < unproven - NOTIFICATION_LAG_MS) {
+        return undefined;
+      }
+      notificationsLiveThrough.set(group.key, unproven);
+    }
     return thread === undefined
       ? notifications.truncated
       : thread.updatedAt >= last.at - NOTIFICATION_LAG_MS;
