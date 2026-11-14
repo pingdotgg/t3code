@@ -13,7 +13,6 @@ import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
-import type { BackendStartupFailure } from "../backend/DesktopBackendManager.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopObservability from "./DesktopObservability.ts";
 import * as DesktopState from "./DesktopState.ts";
@@ -35,7 +34,14 @@ export type StartupRecoveryOffer =
   | { readonly _tag: "Releases" }
   | { readonly _tag: "ManagedPolicy" };
 
-const STARTUP_RECOVERY_ACTIONS = ["update", "reinstall", "releases", "copy", "quit"] as const;
+const STARTUP_RECOVERY_ACTIONS = [
+  "windows",
+  "update",
+  "reinstall",
+  "releases",
+  "copy",
+  "quit",
+] as const;
 type StartupRecoveryAction = (typeof STARTUP_RECOVERY_ACTIONS)[number];
 
 /** Prefer a newer build, then the last build that started on this machine, then the releases page. */
@@ -112,7 +118,7 @@ function describeOffer(offer: StartupRecoveryOffer): { text: string; action: str
 
 function buildStartupRecoveryHtml(input: {
   readonly appVersion: string;
-  readonly failure: BackendStartupFailure;
+  readonly failure: DesktopState.PrimaryBackendFailure;
   readonly offer: StartupRecoveryOffer;
   readonly logDir: string;
 }): string {
@@ -132,7 +138,7 @@ pre{flex:1;min-height:60px;margin:0;overflow:auto;background:var(--code);border:
 <h1>T3 Code could not start</h1>
 <p>${escapeHtml(input.failure.reason)}</p>
 <p>${escapeHtml(offer.text)}</p>
-<div class="actions">${offer.action}${actionLink("copy", "Copy details")}${actionLink("quit", "Quit")}</div>
+<div class="actions">${input.failure.useWindows ? actionLink("windows", "Use Windows for this launch", true) : ""}${offer.action}${actionLink("copy", "Copy details")}${actionLink("quit", "Quit")}</div>
 <pre>${escapeHtml(output.length > 0 ? output : "The server wrote no output.")}</pre>
 <p class="muted">Version ${escapeHtml(input.appVersion)}. T3 Code tries again in the background. Logs: ${escapeHtml(input.logDir)}</p>
 </body></html>`;
@@ -173,7 +179,7 @@ export const listen: Effect.Effect<
 
   const windowRef = yield* Ref.make(Option.none<Electron.BrowserWindow>());
   // The failure that opened the window; later restarts do not reload its details.
-  const failureRef = yield* Ref.make(Option.none<BackendStartupFailure>());
+  const failureRef = yield* Ref.make(Option.none<DesktopState.PrimaryBackendFailure>());
   const renderedHtmlRef = yield* Ref.make("");
   const checkedRef = yield* Ref.make(false);
   let backendHasStarted = false;
@@ -210,6 +216,11 @@ export const listen: Effect.Effect<
     yield* logInfo("startup recovery action", { action });
     const current = yield* offer;
     switch (action) {
+      case "windows": {
+        const failure = yield* Ref.get(failureRef);
+        if (Option.isSome(failure) && failure.value.useWindows) yield* failure.value.useWindows;
+        return;
+      }
       case "update": {
         if (current._tag !== "Update") return;
         const state = yield* updates.getState;
