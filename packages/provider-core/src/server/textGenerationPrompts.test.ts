@@ -28,4 +28,20 @@ describe("buildThreadTitlePrompt", () => {
       expect(prompt).toContain('Never include the project name ("Hyperdrive")');
     }
   });
+
+  it("lets the user's title instructions override the word and length limits", () => {
+    const scheme = 'Title every thread "Owner: what it does (model effort)".';
+    for (const previousTitle of [undefined, "Old title"]) {
+      const { prompt } = buildThreadTitlePrompt({
+        message: "Relay chat messages to the lead agent",
+        previousTitle,
+        instructions: scheme,
+      });
+      expect(prompt).toMatch(
+        /conflict with the editorial rules above, including the word and character limits, follow these instead:\n.*Owner: what it does/,
+      );
+    }
+    const { prompt } = buildThreadTitlePrompt({ message: "Fix login", instructions: "  " });
+    expect(prompt).not.toContain("follow these instead");
+  });
 });

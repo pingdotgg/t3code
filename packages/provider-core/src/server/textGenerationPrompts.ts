@@ -466,7 +466,14 @@ ${limitTitleMessage(forkSource.history, 8_000)}`;
 }
 
 function threadTitlePromptSuffix(input: ThreadTitlePromptInput): string {
-  const additionalInstructions = policyInstruction(input.instructions);
+  const trimmedInstructions = input.instructions?.trim();
+  const additionalInstructions = trimmedInstructions
+    ? [
+        "",
+        "Additional instructions from the user. Where they conflict with the editorial rules above, including the word and character limits, follow these instead:",
+        limitSection(trimmedInstructions, 20_000),
+      ]
+    : [];
   const attachmentLines = (input.attachments ?? []).map(
     (attachment) => `- ${attachment.name} (${attachment.mimeType}, ${attachment.sizeBytes} bytes)`,
   );
