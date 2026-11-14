@@ -10,13 +10,14 @@ export function resolvePullRequestDetailChecks(
     detail.observedAt !== undefined && checks.observedAt !== undefined
       ? checks.observedAt >= detail.observedAt
       : checksAreNewer;
-  return newer
-    ? {
-        ...detail,
-        state: detail.state === "merged" ? "merged" : checks.state,
-        checks: checks.checks,
-      }
-    : detail;
+  if (!newer) return detail;
+  const { mergeBlocked: _staleBlock, ...rest } = detail;
+  return {
+    ...rest,
+    state: detail.state === "merged" ? "merged" : checks.state,
+    checks: checks.checks,
+    ...(checks.mergeBlocked === undefined ? {} : { mergeBlocked: checks.mergeBlocked }),
+  };
 }
 
 /** Checks still running are worth a tighter poll than a settled head. */

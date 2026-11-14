@@ -1034,6 +1034,7 @@ export interface GitHubPullRequestCore extends GitHubPullRequestDetail {
   readonly viewerAccess: GitHubViewerAccess & GitHubRepositoryAccess;
   readonly comparison: GitHubBaseComparison | null;
   readonly checksTruncated: boolean;
+  readonly mergeBlocked: boolean;
 }
 
 type CoreRequestedReviewer = NonNullable<
@@ -1114,6 +1115,12 @@ export function toPullRequestCore(result: PullRequestCore.Result): GitHubPullReq
             viewerCanUpdate: pr.viewerCanUpdateBranch,
           },
     checksTruncated: contexts?.pageInfo.hasNextPage === true,
+    // BLOCKED is also the state while required checks or reviews are pending; whoever may bypass
+    // branch rules can still merge now, and Merge on a merge-queue branch enqueues instead.
+    mergeBlocked:
+      pr.mergeStateStatus === "BLOCKED" &&
+      pr.viewerCanMergeAsAdmin === false &&
+      pr.isMergeQueueEnabled === false,
   };
 }
 

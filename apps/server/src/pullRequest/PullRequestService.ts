@@ -1916,6 +1916,9 @@ export const make = Effect.gen(function* () {
             ...(changeRequest.workflowApprovalsRequired === undefined
               ? {}
               : { workflowApprovalsRequired: changeRequest.workflowApprovalsRequired }),
+            ...(changeRequest.mergeBlocked === undefined
+              ? {}
+              : { mergeBlocked: changeRequest.mergeBlocked }),
             ...(changeRequest.mergeQueueRemoval === undefined
               ? {}
               : { mergeQueueRemoval: changeRequest.mergeQueueRemoval }),
@@ -3277,6 +3280,7 @@ export const make = Effect.gen(function* () {
                 state: value.state,
                 checks: value.checks,
                 observedAt: value.observedAt,
+                ...(value.mergeBlocked === undefined ? {} : { mergeBlocked: value.mergeBlocked }),
               });
             }
             recordStats(

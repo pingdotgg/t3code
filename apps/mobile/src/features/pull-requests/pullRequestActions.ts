@@ -13,7 +13,12 @@ import { PullRequestGlyph } from "./pullRequestGlyphs";
 
 type ActionDetail = Pick<
   PullRequestDetail,
-  "state" | "isDraft" | "mergeability" | "autoMergeEnabled" | "workflowApprovalsRequired"
+  | "state"
+  | "isDraft"
+  | "mergeability"
+  | "mergeBlocked"
+  | "autoMergeEnabled"
+  | "workflowApprovalsRequired"
 > & {
   readonly capabilities: Pick<
     PullRequestDetail["capabilities"],
@@ -111,7 +116,12 @@ export function canPerformPullRequestAction(pr: ActionDetail, action: PullReques
     case "draft":
       return !pr.isDraft;
     case "merge":
-      return !pr.isDraft && pr.mergeability !== "conflicting" && allowedMergeMethods(pr).length > 0;
+      return (
+        !pr.isDraft &&
+        pr.mergeability !== "conflicting" &&
+        pr.mergeBlocked !== true &&
+        allowedMergeMethods(pr).length > 0
+      );
     case "enable-auto-merge":
       return !pr.isDraft && pr.autoMergeEnabled === false && allowedMergeMethods(pr).length > 0;
     case "disable-auto-merge":
@@ -136,6 +146,8 @@ export function mergeUnavailableReason(
   if (pr.isDraft) return "Mark this draft ready for review before merging.";
   if (pr.mergeability === "conflicting") return "Resolve the branch conflicts before merging.";
   if (!allowedMergeMethods(pr).length) return "This repository has no available merge methods.";
+  if (pr.mergeBlocked)
+    return "The repository's rules block merging until their requirements are met.";
   return null;
 }
 
