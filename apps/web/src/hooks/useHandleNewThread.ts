@@ -15,6 +15,7 @@ import {
 } from "../composerDraftStore";
 import { newDraftId, newThreadId } from "../lib/utils";
 import { orderItemsByPreferredIds } from "../components/Sidebar.logic";
+import { toastManager } from "../components/ui/toast";
 import {
   deriveLogicalProjectKeyFromSettings,
   getProjectOrderKey,
@@ -106,8 +107,8 @@ export function createNewThreadHandler(router: AnyRouter) {
     const projectGroupingSettings = selectProjectGroupingSettings(getClientSettings());
     // Read at call time; status pushes replace the config map and would recreate every sidebar handler.
     const environmentServerConfigs = appAtomRegistry.get(environmentServerConfigsAtom);
-    const targetServerSettings =
-      environmentServerConfigs.get(projectRef.environmentId)?.settings ?? DEFAULT_SERVER_SETTINGS;
+    const targetServerConfig = environmentServerConfigs.get(projectRef.environmentId);
+    const targetServerSettings = targetServerConfig?.settings ?? DEFAULT_SERVER_SETTINGS;
     const {
       getComposerDraft,
       getDraftSessionByLogicalProjectKey,
@@ -190,7 +191,15 @@ export function createNewThreadHandler(router: AnyRouter) {
           currentRouteTarget?.kind === "draft" ? currentRouteTarget.draftId : null,
         destinationDraftId,
       });
-    const resolveDefaultEnvMode = async (): Promise<DraftThreadEnvMode> => {
+    const resolveDefaultEnvMode = async (): Promise<DraftThreadEnvMode | null> => {
+      if (targetServerConfig === undefined) {
+        toastManager.add({
+          type: "warning",
+          title: "Environment settings are still loading",
+          description: "Wait for this environment to finish connecting, then try again.",
+        });
+        return null;
+      }
       // Environment queries wait for a connection, so reading the project file on an
       // offline machine would never settle and the draft would never open.
       const consultProjectFile =
@@ -266,7 +275,7 @@ export function createNewThreadHandler(router: AnyRouter) {
           workspaceContext = pickExplicitWorkspaceOptions(options);
         } else if (!isDraftAlreadyOpen) {
           const defaultEnvMode = await resolveDefaultEnvMode();
-          if (abandonedSinceRequest()) {
+          if (defaultEnvMode === null || abandonedSinceRequest()) {
             return null;
           }
           // Concurrent calls may change the draft; stale resets, remaps, or navigation could clobber it.
@@ -382,7 +391,7 @@ export function createNewThreadHandler(router: AnyRouter) {
     const createdAt = new Date().toISOString();
     return (async () => {
       const initialEnvMode = options?.envMode ?? (await resolveDefaultEnvMode());
-      if (abandonedSinceRequest()) {
+      if (initialEnvMode === null || abandonedSinceRequest()) {
         return null;
       }
       // Reuse drafts registered while awaiting so their pending navigation cannot lose them.
