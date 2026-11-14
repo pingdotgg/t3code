@@ -27,7 +27,9 @@
 //   node tools/canary.mjs setup <root>       writes <root>/env.sh to source
 //   node tools/canary.mjs watch <root>       scans <root>/tmp until <root>/stop exists
 //   node tools/canary.mjs verify <root> <output log> [more folders to scan]
+//   node tools/canary.mjs selftest            proves verify fails on each kind of breach
 //   node tools/canary.mjs lint
+import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -331,8 +333,8 @@ function verify(root, outputLog, extra) {
   for (const dir of [state.tmp, ...extra]) scanTree(dir, state.token, seen, hits);
   for (const hit of hits) problems.push(`marker in a written file: ${hit}`);
 
-  // 6. The static lint.
-  problems.push(...lint());
+  // 6. The static lint (the self-test checks the lint rules on its own samples).
+  if (process.env.CANARY_SELFTEST !== "1") problems.push(...lint());
 
   if (problems.length > 0) {
     console.error(`canary: ${problems.length} finding(s)`);
@@ -390,6 +392,62 @@ function lint() {
   return problems;
 }
 
+/**
+ * Proves the canary is not blind: on fresh decoys, `verify` passes untouched and fails on
+ * each kind of breach; every lint rule fires on a sample and stays quiet on its sealed form.
+ */
+function selftest() {
+  const base = NodeFS.mkdtempSync(NodePath.join(process.env.TMPDIR ?? "/tmp", "canary-selftest-"));
+  const self = fileURLToPath(import.meta.url);
+  const failures = [];
+  const cases = [
+    ["untouched", () => {}, true],
+    ["a read of a decoy file", (st) => NodeFS.readFileSync(NodePath.join(st.home, ".claude/settings.json")), false],
+    ["a read of the git config", (st) => NodeFS.readFileSync(NodePath.join(st.home, ".gitconfig")), false],
+    ["a marker in the output", (st, root) => NodeFS.appendFileSync(NodePath.join(root, "out.log"), `x=canary-GH_TOKEN-${st.token}\n`), false],
+    ["a marker in a written file", (st) => NodeFS.writeFileSync(NodePath.join(st.tmp, "env.json"), `{"OPENAI_API_KEY":"canary-OPENAI_API_KEY-${st.token}"}`), false],
+    ["a new file in the home", (st) => NodeFS.writeFileSync(NodePath.join(st.home, ".bash_history"), "ls\n"), false],
+    ["a changed mode in the home", (st) => NodeFS.chmodSync(NodePath.join(st.home, ".netrc"), 0o600), false],
+    ["the git credential helper", (st, root) => NodeChildProcess.execFileSync(NodePath.join(root, "tripwire"), ["get"], { stdio: "ignore" }), false, true],
+  ];
+  try {
+    cases.forEach(([name, act, pass, mayExit], index) => {
+      const root = NodePath.join(base, String(index));
+      setup(root);
+      const st = readState(root);
+      NodeFS.writeFileSync(NodePath.join(root, "out.log"), "");
+      try {
+        act(st, root);
+      } catch (error) {
+        if (!mayExit) throw error;
+      }
+      const run = NodeChildProcess.spawnSync(process.execPath, [self, "verify", root, NodePath.join(root, "out.log")], {
+        env: { ...process.env, CANARY_SELFTEST: "1" },
+        encoding: "utf8",
+      });
+      if ((run.status === 0) !== pass) failures.push(`${name}: verify exited ${run.status}, expected ${pass ? 0 : 1}`);
+    });
+    const samples = [
+      ["const h = os.userInfo().homedir;", "const h = process.env.HOME;"],
+      ["let p = unsafe { libc::getpwuid(uid) };", "let p = std::env::var_os(\"HOME\");"],
+      ["let h = std::env::home_dir();", "let h = std::env::var_os(\"HOME\");"],
+      ['  env -i PATH="$PATH" node x.mjs', '  env -i PATH="$PATH" HOME="$tmp" node x.mjs'],
+      ["      HOME: NodeOS.homedir(),", "      HOME: tmpHome,"],
+    ];
+    for (const [bad, good] of samples) {
+      if (!LINT_RULES.some((rule) => rule.re.test(bad))) failures.push(`lint misses: ${bad.trim()}`);
+      if (LINT_RULES.some((rule) => rule.re.test(good))) failures.push(`lint flags: ${good.trim()}`);
+    }
+  } finally {
+    NodeFS.rmSync(base, { recursive: true, force: true });
+  }
+  if (failures.length > 0) {
+    for (const failure of failures) console.error(`canary self-test: ${failure}`);
+    process.exit(1);
+  }
+  console.log(`canary self-test: ${cases.length} decoy cases and ${LINT_RULES.length} lint rules behave`);
+}
+
 const [command, ...rest] = process.argv.slice(2);
 switch (command) {
   case "setup":
@@ -403,6 +461,9 @@ switch (command) {
   case "verify":
     if (!rest[0] || !rest[1]) fail("usage: verify <root> <output log> [folders]");
     verify(NodePath.resolve(rest[0]), rest[1], rest.slice(2));
+    break;
+  case "selftest":
+    selftest();
     break;
   case "lint": {
     const problems = lint();

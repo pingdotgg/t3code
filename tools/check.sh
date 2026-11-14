@@ -205,7 +205,10 @@ run "orbit-flow (fake provider)" \
 touch "$canary/stop"
 wait "$canary_watch"
 canary_watch=""
-run "canary" node tools/canary.mjs verify "$canary" "$canary_log" "$scratch"
+canary_check() {
+  node tools/canary.mjs selftest && node tools/canary.mjs verify "$canary" "$canary_log" "$scratch"
+}
+run "canary" canary_check
 
 printf '\n== Summary\n'
 printf 'passed  %d\n' "${#passed[@]}"
