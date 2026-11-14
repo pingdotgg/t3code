@@ -13,9 +13,9 @@ own design. `conn-server/src/methods/terminal.rs` serves it.
   at most 512 KiB from disk.
 - Per subscriber: a queue of at most 1 MiB (T3: 8 MiB). A viewer further behind gets a fresh
   snapshot instead of the backlog, as in T3.
-- Per stream: at most 4 values of at most 16 KiB wait for the session, so a chunk stays near the
-  64 KiB ack window. The session applies the window's byte limit to pending chunks but does not
-  cap one chunk's size; this keeps chunks small.
+- Per stream: at most 4 values of at most 16 KiB wait for the session. As in T3's `takeBatch`,
+  one chunk holds at most 64 KiB of events by T3's charge (`queuedSize`: the event's own bytes
+  plus 128), unless one event alone is larger. JSON escapes can make the chunk's text longer.
 
 Measured on macOS arm64 with the real web client (`fixtures/recorder`, `rust-terminal`), RSS /
 `footprint` of the server process:
@@ -65,7 +65,8 @@ The T3 server gives agents and MCP tools no terminal access. For a later MCP too
 ## Differences from the T3 server
 
 - `hasRunningSubprocess` and the label come from the PTY's foreground process group
-  (`tcgetpgrp`), not from `ps` every second. A background job (`sleep 10 &`) does not count.
+  (`tcgetpgrp`) and its leader's name, not from `ps` every second. A background job
+  (`sleep 10 &`) does not count. As in T3, a change of the name alone also sends `activity`.
 - `providerInstanceId` is ignored: no provider instance adds environment variables here.
 - No cwd recovery: a missing worktree is `TerminalCwdNotFoundError`; T3 recreates it first.
 - No `closeIdle` (setup scripts) and no `ProjectSetupScriptRunner` callers yet.

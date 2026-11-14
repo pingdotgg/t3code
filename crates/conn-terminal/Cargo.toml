@@ -16,10 +16,11 @@ pty-process = { version = "0.5", features = ["async"] }
 # pty-process.
 rustix = { version = "1", default-features = false, features = ["std", "process", "termios"] }
 serde_json.workspace = true
-tokio = { workspace = true, features = ["process", "io-util", "sync", "time", "rt", "macros"] }
+# `signal`: see `pty::stop_passing_on_ignored_signals`; `process` already pulls in its code.
+tokio = { workspace = true, features = ["process", "io-util", "sync", "time", "rt", "macros", "signal"] }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["process", "io-util", "sync", "time", "rt", "macros", "test-util"] }
+tokio = { workspace = true, features = ["process", "io-util", "sync", "time", "rt", "macros", "signal", "test-util"] }
 
 [lints]
 workspace = true

@@ -11,7 +11,9 @@ Other SDK drivers the T3 server uses (Cursor, OpenCode, Muse) can join as furthe
 - It never reads or handles credentials; only the `claude` binary does.
 - Its only runtime dependency is the Claude SDK (5 MB, which imports only Node built-ins). The
   SDK's platform packages, each with a bundled `claude` binary, are omitted (`.npmrc`), as T3
-  omits them. `esbuild` is a build-time dependency for the single executable.
+  omits them. `esbuild` builds the single executable; it lives in `build/` with its own
+  lockfile, which pins its platform package, so the build installs nothing outside a lockfile
+  and runs no install script.
 
 ## Run from a checkout (development)
 
