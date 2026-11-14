@@ -17,7 +17,7 @@ function keepWindowsPathDestination(this: DestinationCompileContext, token: unkn
 }
 
 // A drive path that has not reached whitespace yet: `C:`, `C:\Users\me`, `C:/work`.
-const UNFINISHED_DRIVE_PATH = /(?:^|\W)[A-Za-z]:(?:[\\/]\S*)?$/;
+export const UNFINISHED_DRIVE_PATH = /(?:^|\W)[A-Za-z]:(?:[\\/]\S*)?$/;
 
 interface EscapeCompileContext {
   readonly stack: ReadonlyArray<{

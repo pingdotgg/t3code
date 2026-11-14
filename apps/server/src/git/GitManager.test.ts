@@ -3062,6 +3062,31 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("lowercases a capitalized Conventional Commits description", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const subjects = ["ci: Run E2E on pull requests", "feat(web)!: A new layout"];
+      const queued = [...subjects];
+
+      const { manager } = yield* makeManager({
+        serverSettings: { sourceControlWritingStyle: { mode: "conventional_commits" as const } },
+        textGeneration: {
+          generateCommitMessage: () => Effect.succeed({ subject: queued.shift() ?? "", body: "" }),
+        },
+      });
+
+      const committed: Array<string> = [];
+      for (const [index] of subjects.entries()) {
+        NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), `change ${index}\n`);
+        yield* runStackedAction(manager, { cwd: repoDir, action: "commit" });
+        committed.push((yield* runGit(repoDir, ["log", "-1", "--pretty=%s"])).stdout.trim());
+      }
+
+      expect(committed).toEqual(["ci: run E2E on pull requests", "feat(web)!: a new layout"]);
+    }),
+  );
+
   it.effect("includes CLAUDE.md for Claude writers only when it differs from AGENTS.md", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
@@ -4453,9 +4478,15 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
 
         const preview = yield* driver.getReviewDiffPreview({ cwd: worktreePath });
         const changes = preview.sources.find((source) => source.kind === "branch-range")!;
-        expect
-          .soft(changes.files)
-          .toEqual([{ path: "feature.txt", previousPath: null, additions: 1, deletions: 0 }]);
+        expect.soft(changes.files).toEqual([
+          {
+            path: "feature.txt",
+            previousPath: null,
+            changeType: "new",
+            additions: 1,
+            deletions: 0,
+          },
+        ]);
         yield* runGit(worktreePath, ["push", "-u", "origin", "feature/remote-base"]);
 
         const generatedInputs: TextGeneration.PrContentGenerationInput[] = [];
