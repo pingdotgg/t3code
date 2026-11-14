@@ -1,3 +1,5 @@
+import { loadHeicDecoder } from "../../lib/heicDecoder";
+
 const MAX_PIXELS = 32_000_000;
 
 function validateTiffMetadata(bytes: ArrayBuffer) {
@@ -152,8 +154,17 @@ async function decode(bytes: ArrayBuffer, heif: boolean) {
   if (bytes.byteLength > 50 * 1024 * 1024) throw new Error("Preview limited to files under 50 MB.");
   if (heif) {
     validateHeif(bytes);
-    const { heicTo } = await import("heic-to/next");
-    return await heicTo({ blob: new Blob([bytes]), type: "image/png" });
+    const { heicTo } = await loadHeicDecoder();
+    const bitmap = await heicTo({ blob: new Blob([bytes]), type: "bitmap" });
+    try {
+      const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("Image decoding is unavailable.");
+      context.drawImage(bitmap, 0, 0);
+      return await canvas.convertToBlob({ type: "image/png" });
+    } finally {
+      bitmap.close();
+    }
   }
   const { decode: decodeTiff } = await import("tiff");
   validateTiffMetadata(bytes);
