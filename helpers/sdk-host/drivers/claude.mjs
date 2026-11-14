@@ -155,6 +155,7 @@ function makeSpawner(state, describeError) {
         detached: true,
       },
     );
+    state.child = child;
     state.exited = new Promise((resolve) => {
       child.once("exit", (code, signal) => {
         try {
@@ -376,6 +377,7 @@ export function createDriver(host) {
           state.stderrTail = (state.stderrTail + text).slice(-STDERR_TAIL_LENGTH);
         },
         query: undefined,
+        child: undefined,
       };
       session.state = state;
       const prompt = {
@@ -489,6 +491,32 @@ export function createDriver(host) {
         resolve({ value: undefined, done: true });
       }
       state.query.close();
+    },
+
+    /**
+     * The T3 server's teardown of a query whose open was interrupted (a Stop while it waits for
+     * `initializationResult` or `setMcpServers`, `ClaudeAdapterV2` `openQuery`): the prompt
+     * stream ends, the CLI's wrapper gets SIGKILL (its exit kills the CLI's group), up to 10 s
+     * for it to exit, then the query is disposed. `end` follows as for any query.
+     */
+    async abort(session) {
+      const state = session.state;
+      if (state?.query === undefined) return;
+      state.inputClosed = true;
+      if (state.waiting !== null) {
+        const resolve = state.waiting;
+        state.waiting = null;
+        resolve({ value: undefined, done: true });
+      }
+      try {
+        if (state.child !== undefined && state.exit === undefined && state.spawnError === undefined) {
+          state.child.kill("SIGKILL");
+        }
+        await Promise.race([state.exited, delay(EXIT_WAIT_MS)]);
+      } finally {
+        const dispose = state.query[Symbol.asyncDispose];
+        await (typeof dispose === "function" ? dispose.call(state.query) : state.query.close());
+      }
     },
 
     fn(name, args, configDir) {

@@ -78,6 +78,8 @@ struct Inner {
     /// Runs turn starts and interrupts one at a time, as T3's effect outbox runs a thread's
     /// effects: a turn sent after a Stop starts once the interrupted CLI has exited.
     turn_control: tokio::sync::Mutex<()>,
+    /// Wakes a start the engine abandoned ([`State::abandoned_run`]).
+    abandon: tokio::sync::Notify,
     /// [`STOP_CONFIRM_TIMEOUT`]; shorter in tests.
     stop_confirm_timeout: Duration,
 }
@@ -97,6 +99,9 @@ struct State {
     /// `resolveBypassAvailability`, cached per working directory (T3's `bypassCache`).
     bypass_cache: Option<(Option<String>, BypassAvailability)>,
     closed: bool,
+    /// The run whose start Stop abandoned (`abandon_turn_start`). One is enough: a thread
+    /// starts one turn at a time, and a stale id matches no later run.
+    abandoned_run: Option<String>,
     logged_skips: HashSet<String>,
     /// Live output tails per Bash call (`taskOutputTails`); the mapper caps them per turn.
     tails: HashMap<String, crate::tail::Tail>,
@@ -157,10 +162,12 @@ impl ClaudeSession {
                 turn_prompt_effort: None,
                 bypass_cache: None,
                 closed: false,
+                abandoned_run: None,
                 logged_skips: HashSet::new(),
                 tails: HashMap::new(),
             }),
             turn_control: tokio::sync::Mutex::new(()),
+            abandon: tokio::sync::Notify::new(),
             stop_confirm_timeout: STOP_CONFIRM_TIMEOUT,
         });
         Self { id, inner }
@@ -248,6 +255,36 @@ impl Inner {
                     }
                 }
             }
+        }
+    }
+
+    fn start_abandoned(&self, run_id: &str) -> bool {
+        self.lock().abandoned_run.as_deref() == Some(run_id)
+    }
+
+    /// Ends once the engine abandoned `run_id`'s start.
+    async fn until_abandoned(&self, run_id: &str) {
+        loop {
+            let notified = self.abandon.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if self.start_abandoned(run_id) {
+                return;
+            }
+            notified.await;
+        }
+    }
+
+    /// Runs `work` unless the engine abandons `run_id`'s start first; then `work` is dropped
+    /// and the result is [`abandoned_error`].
+    async fn unless_abandoned<T>(
+        &self,
+        run_id: &str,
+        work: impl std::future::Future<Output = ProviderResult<T>>,
+    ) -> ProviderResult<T> {
+        tokio::select! {
+            result = work => result,
+            () = self.until_abandoned(run_id) => Err(abandoned_error()),
         }
     }
 
@@ -516,6 +553,30 @@ async fn end_query(helper: &Helper, live: Live) {
         eprintln!("conn-provider-claude: a Claude query did not end in time");
     }
     helper.stop_if_idle().await;
+}
+
+/// The T3 query runner's teardown of an interrupted open: the host aborts the query (prompt
+/// stream ended, SIGKILL, up to 10 s for the exit, dispose), and `end` follows.
+async fn abort_query(helper: &Helper, live: Live) {
+    let Live {
+        query, mut ended, ..
+    } = live;
+    query.abort().await;
+    if tokio::time::timeout(CLOSE_TIMEOUT, ended.wait_for(|done| *done))
+        .await
+        .is_err()
+    {
+        eprintln!("conn-provider-claude: an aborted Claude query did not end in time");
+    }
+    helper.stop_if_idle().await;
+}
+
+/// What an abandoned start returns; the engine already ended the run.
+fn abandoned_error() -> ProviderError {
+    failed_err(
+        "start_turn",
+        "Stop ended the turn before Claude started it.",
+    )
 }
 
 async fn on_end(inner: &Inner, generation: u64, end: &QueryEnd) {
@@ -853,7 +914,14 @@ impl ClaudeSession {
         let native = native_thread_id(&input.provider_thread)
             .ok_or_else(|| failed_err("start_turn", "provider thread has no native Claude id"))?;
         let (model, effort, selection_settings) = model_selection(&input.model_selection);
-        let policy = self.turn_policy(&input.runtime_policy).await;
+        // `resolveSettings` may wait for the SDK host to launch; nothing is open yet.
+        let run_id = input.run_id.as_str();
+        let policy = self
+            .inner
+            .unless_abandoned(run_id, async {
+                Ok(self.turn_policy(&input.runtime_policy).await)
+            })
+            .await?;
         let cwd = input.runtime_policy.cwd.clone();
         let thread = to_json(&input.provider_thread);
         let title = to_json(&input.app_thread)["title"]
@@ -927,7 +995,7 @@ impl ClaudeSession {
         }
 
         match plan {
-            Plan::Launch(query) => self.launch(*query).await?,
+            Plan::Launch(query) => self.launch(*query, run_id).await?,
             Plan::Reuse {
                 set_selection,
                 set_mode,
@@ -1098,20 +1166,36 @@ impl ClaudeSession {
         if let Some(outs) = early {
             self.inner.deliver(None, outs).await;
         }
-        let policy = match self.prepare(&input).await {
-            Ok(policy) => policy,
+        let run_id = input.run_id.as_str();
+        // T3 reads the attachments before it opens the query (`ClaudeAdapterV2` startTurn).
+        let effort = catalog::compile(&to_json(&input.model_selection)).prompt_effort;
+        let text = catalog::prompt_text(&input.message.text, effort.as_deref());
+        let prepared = match self
+            .inner
+            .unless_abandoned(run_id, async {
+                Ok(self.content(&text, &input.message.attachments).await)
+            })
+            .await
+        {
+            Ok(content) => self.prepare(&input).await.map(|policy| (content, policy)),
+            Err(error) => Err(error),
+        };
+        let (content, policy) = match prepared {
+            Ok(prepared) => prepared,
             Err(error) => {
                 if opened_early {
-                    let outs = self.inner.lock().mapper.fail_start(&error.to_string());
+                    let outs = if self.inner.start_abandoned(run_id) {
+                        // The engine ended the run; the early turn ends as Stop ends a turn.
+                        self.inner.lock().mapper.abandon_start()
+                    } else {
+                        self.inner.lock().mapper.fail_start(&error.to_string())
+                    };
                     self.inner.deliver(None, outs).await;
                 }
                 return Err(error);
             }
         };
-        let effort = catalog::compile(&to_json(&input.model_selection)).prompt_effort;
         self.inner.lock().turn_prompt_effort = effort.clone();
-        let text = catalog::prompt_text(&input.message.text, effort.as_deref());
-        let content = self.content(&text, &input.message.attachments).await;
         let inner = &self.inner;
         let (outs, query, uuid) = {
             let mut state = inner.lock();
@@ -1178,7 +1262,7 @@ impl ClaudeSession {
         }
     }
 
-    async fn launch(&self, input: QueryInput) -> ProviderResult<()> {
+    async fn launch(&self, input: QueryInput, run_id: &str) -> ProviderResult<()> {
         let inner = &self.inner;
         let env = self.environment(&input.thread_id, input.resume).await;
         // T3 resolves a relative CLAUDE_CODE_TMPDIR against the real cwd; this uses the cwd
@@ -1239,16 +1323,31 @@ impl ClaudeSession {
         if servers.is_empty() {
             return Ok(());
         }
-        let mut result = handle
-            .call("initializationResult", json!([]), BOOT_TIMEOUT)
-            .await
-            .map(|_| ());
-        if matches!(&result, Err(ProviderError::Failed { .. })) {
-            // T3 ignores a failed initialization here; the message stream reports it.
-            result = Ok(());
-        }
-        if result.is_ok() {
-            result = inner.set_mcp_servers(&servers).await;
+        let boot = async {
+            let mut result = handle
+                .call("initializationResult", json!([]), BOOT_TIMEOUT)
+                .await
+                .map(|_| ());
+            if matches!(&result, Err(ProviderError::Failed { .. })) {
+                // T3 ignores a failed initialization here; the message stream reports it.
+                result = Ok(());
+            }
+            if result.is_ok() {
+                result = inner.set_mcp_servers(&servers).await;
+            }
+            result.map(|()| false)
+        };
+        // A Stop during the boot interrupts it, as T3's worker interrupts `openQuery`.
+        let result = tokio::select! {
+            result = boot => result,
+            () = inner.until_abandoned(run_id) => Ok(true),
+        };
+        if let Ok(true) = result {
+            let live = inner.lock().live.take();
+            if let Some(live) = live {
+                abort_query(&inner.helper, live).await;
+            }
+            return Err(abandoned_error());
         }
         if let Err(error) = result {
             let live = inner.lock().live.take();
@@ -1393,11 +1492,31 @@ impl Session for ClaudeSession {
     fn start_turn(&self, input: TurnInput) -> BoxFuture<'_, ProviderResult<()>> {
         Box::pin(async move {
             let _serial = self.inner.turn_control.lock().await;
-            if input.message.is_provider_continuation() {
+            let run_id = input.run_id.as_str().to_owned();
+            let result = if self.inner.start_abandoned(&run_id) {
+                Err(abandoned_error())
+            } else if input.message.is_provider_continuation() {
                 self.start_continuation(input).await
             } else {
                 self.start_turn_inner(input).await
+            };
+            let mut state = self.inner.lock();
+            if state.abandoned_run.as_deref() == Some(run_id.as_str()) {
+                state.abandoned_run = None;
             }
+            result
+        })
+    }
+
+    /// Stop ended the run before Claude started its turn: a start in flight stops where it
+    /// waits. Reading attachments or launching the SDK host, nothing is open yet. Waiting for
+    /// the CLI's boot or `setMcpServers`, the query is torn down as T3's query runner does
+    /// (prompt stream ended, SIGKILL, up to 10 s for the exit, dispose). Takes no lock that a
+    /// start holds.
+    fn abandon_turn_start(&self, input: conn_provider::AbandonTurnStartInput) -> BoxFuture<'_, ()> {
+        Box::pin(async move {
+            self.inner.lock().abandoned_run = Some(input.run_id.as_str().to_owned());
+            self.inner.abandon.notify_waiters();
         })
     }
 
