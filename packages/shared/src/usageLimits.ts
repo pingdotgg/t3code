@@ -14,6 +14,7 @@ import {
   type ServerProviderResetCredits,
   type ServerProviderUsageLimits,
   type ServerProviderUsageWindow,
+  type UsageLimitSourceAccount,
   type UsageLimitSourceSnapshot,
   type UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
@@ -254,6 +255,8 @@ function accountKeyResolver(reports: Iterable<AccountReport>) {
 }
 
 const hubAccountName = (account: { readonly id: string }) => account.id.replace(/\.json$/i, "");
+const hubAccountIdentity = (account: UsageLimitSourceAccount) =>
+  `${account.driver}:${account.email?.trim().toLowerCase() ?? hubAccountName(account)}:${account.workspaceId ?? ""}`;
 
 // Source ids are environment-local, so only a remote endpoint names the same hub across environments.
 function hubIdentity(environmentId: EnvironmentId, source: UsageLimitSourceSnapshot): string {
@@ -430,6 +433,16 @@ export function collectLimitNotices(presentations: LimitPresentations): readonly
   const label = (environmentLabel: string, subject: string) =>
     presentations.size > 1 ? `${environmentLabel} · ${subject}` : subject;
   const notices = new Set<string>();
+  // Another environment's successful read of the same hub account already shows its row.
+  const readHubAccounts = new Set(
+    [...presentations.values()].flatMap((presentation) =>
+      (presentation.serverConfig?.usageLimitSources ?? []).flatMap((source) =>
+        source.accounts.flatMap((account) =>
+          limitsNotice(account.usageLimits) === null ? [hubAccountIdentity(account)] : [],
+        ),
+      ),
+    ),
+  );
   for (const presentation of presentations.values()) {
     const environmentLabel = presentation.entry.target.label;
     for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
@@ -443,6 +456,14 @@ export function collectLimitNotices(presentations: LimitPresentations): readonly
         notices.add(`${label(environmentLabel, source.label)}: ${source.error}`);
       } else if (source.accounts.length === 0) {
         notices.add(`${label(environmentLabel, source.label)}: No accounts reported.`);
+      }
+      for (const account of source.accounts) {
+        if (account.usageLimits.unavailable?.reason !== "probeFailed") continue;
+        if (readHubAccounts.has(hubAccountIdentity(account))) continue;
+        const name = account.email ?? hubAccountName(account);
+        notices.add(
+          `${label(environmentLabel, source.label)} · ${name}: ${limitsNotice(account.usageLimits)}`,
+        );
       }
     }
   }
