@@ -110,6 +110,27 @@ export function bindAudioGrant(id: string) {
   }
 }
 
+/** Observes revocation even while the recording's editor is unmounted. */
+export function subscribeVoiceConsent(onChange: () => void) {
+  let stopPending = () => {};
+  const followPending = () => {
+    stopPending();
+    const pending = pendingGrant(readChoice());
+    stopPending = pending ? subscribeLocalStorageKey(savedKey(pending.id), onChange) : () => {};
+  };
+  followPending();
+  const stopAudio = subscribeLocalStorageKey(AUDIO_KEY, () => {
+    followPending();
+    onChange();
+  });
+  const stopCleanup = subscribeLocalStorageKey(CLEANUP_KEY, onChange);
+  return () => {
+    stopAudio();
+    stopCleanup();
+    stopPending();
+  };
+}
+
 export function useCleanupGrant() {
   return useLocalStorage(CLEANUP_KEY, null, CleanupGrant)[0];
 }

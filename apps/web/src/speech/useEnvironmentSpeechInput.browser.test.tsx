@@ -4,6 +4,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import { AsyncResult, Atom } from "effect/reactivity";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import { getEnvironmentSpeechModels } from "@t3tools/client-runtime/voice-input";
 import {
@@ -17,7 +18,7 @@ import {
   type SpeechTranscriptionOptions,
 } from "@t3tools/contracts";
 
-import { act, render, stubGlobal } from "../../test/render";
+import { act, fakeTimers, render, stubGlobal } from "../../test/render";
 import { VoiceInputSetup } from "../components/chat/VoiceInputSetup";
 import type { createBrowserVoiceInputPlatform } from "./browserVoiceInput";
 import { useEnvironmentSpeechInput } from "./useEnvironmentSpeechInput";
@@ -28,6 +29,7 @@ import {
   pendingCloudAudioChoice,
 } from "./voiceConsent";
 import { writeBrowserClientSettings } from "../clientPersistenceStorage";
+import { AppAtomRegistryProvider } from "../rpc/atomRegistry";
 
 const mocks = vi.hoisted(() => ({
   voice: undefined as unknown as ReturnType<typeof useEnvironmentSpeechInput>,
@@ -36,6 +38,7 @@ const mocks = vi.hoisted(() => ({
   voiceCapable: new Set<string>(),
   cloudVoiceCapable: new Set<string>(),
   canDictate: new Set<string>(),
+  sessionAtoms: new Map<string, Atom.Atom<AsyncResult.AsyncResult<boolean>>>(),
   prepared: new Map<string, unknown>(),
   primaryEnvironmentId: "primary-env",
   statusRequests: [] as string[],
@@ -51,27 +54,44 @@ const mocks = vi.hoisted(() => ({
   microphoneRequests: [] as string[],
   transcribeCalls: [] as string[],
   cleanupCalls: [] as string[],
+  cleanupResult: undefined as Promise<string> | undefined,
   cleanupDraft: vi.fn(),
   cleanupOptions: [] as SpeechPostProcessingOptions[],
   recordingOptions: [] as SpeechTranscriptionOptions[],
   projectWords: {} as Record<string, SpeechCustomWords>,
-  transcripts: [] as Array<string | Error>,
+  transcripts: [] as Array<string | Error | Promise<string>>,
   committed: vi.fn(),
   draft: "",
+  drafts: {} as Record<string, string>,
 }));
 
-vi.mock("../state/session", () => ({
-  useEnvironmentScope: (id: string) => mocks.canDictate.has(id),
-  usePreparedConnection: (environmentId: string | null) => {
-    if (!environmentId || !mocks.connected.has(environmentId)) return Option.none();
-    let prepared = mocks.prepared.get(environmentId);
-    if (!prepared) {
-      prepared = { environmentId, label: environmentId };
-      mocks.prepared.set(environmentId, prepared);
+vi.mock("../state/session", async () => {
+  const { useAtomValue } = await import("@effect/atom-react");
+  const { AsyncResult, Atom } = await import("effect/reactivity");
+  const sessionStateAtom = (id: string) => {
+    let atom = mocks.sessionAtoms.get(id);
+    if (!atom) {
+      atom = Atom.make(AsyncResult.success(true));
+      mocks.sessionAtoms.set(id, atom);
     }
-    return Option.some(prepared);
-  },
-}));
+    return atom;
+  };
+  return {
+    environmentSession: { sessionStateAtom },
+    useEnvironmentScope: (id: string) =>
+      AsyncResult.getOrElse(useAtomValue(sessionStateAtom(id)), () => false) &&
+      mocks.canDictate.has(id),
+    usePreparedConnection: (environmentId: string | null) => {
+      if (!environmentId || !mocks.connected.has(environmentId)) return Option.none();
+      let prepared = mocks.prepared.get(environmentId);
+      if (!prepared) {
+        prepared = { environmentId, label: environmentId };
+        mocks.prepared.set(environmentId, prepared);
+      }
+      return Option.some(prepared);
+    },
+  };
+});
 vi.mock("../state/environments", () => ({
   usePrimaryEnvironmentId: () => mocks.primaryEnvironmentId,
   useEnvironment: (environmentId: string | null) =>
@@ -157,11 +177,11 @@ vi.mock("@t3tools/client-runtime/voice-input", async (importOriginal) => ({
     draft: unknown,
     options: SpeechPostProcessingOptions,
   ) =>
-    Effect.sync(() => {
+    Effect.promise(async () => {
       mocks.cleanupCalls.push(prepared.environmentId);
       mocks.cleanupDraft(draft);
       mocks.cleanupOptions.push(options);
-      return { text: `Cleaned ${transcript}` };
+      return { text: mocks.cleanupResult ? await mocks.cleanupResult : `Cleaned ${transcript}` };
     }),
 }));
 vi.mock("./browserVoiceInput", () => ({
@@ -215,6 +235,7 @@ function setup(options: { readonly destination?: string | null } = {}) {
   mocks.voiceCapable = new Set(["primary-env", THREAD_ENV, "env-a", "env-b"]);
   mocks.cloudVoiceCapable.clear();
   mocks.canDictate = new Set(mocks.voiceCapable);
+  mocks.sessionAtoms.clear();
   mocks.prepared.clear();
   mocks.statusRequests = [];
   mocks.statusUnavailable = false;
@@ -229,6 +250,7 @@ function setup(options: { readonly destination?: string | null } = {}) {
   mocks.microphoneRequests = [];
   mocks.transcribeCalls = [];
   mocks.cleanupCalls = [];
+  mocks.cleanupResult = undefined;
   mocks.cleanupDraft.mockClear();
   mocks.cleanupOptions = [];
   mocks.recordingOptions = [];
@@ -362,6 +384,216 @@ it.each([
   expect(mocks.transcribeCalls).toEqual([]);
   expect(mocks.committed).not.toHaveBeenCalled();
 });
+
+function SubmissionProbe(props: Parameters<typeof SubmissionProbeContent>[0]) {
+  return (
+    <AppAtomRegistryProvider>
+      <SubmissionProbeContent {...props} />
+    </AppAtomRegistryProvider>
+  );
+}
+
+function SubmissionProbeContent({
+  owner,
+  environmentId = THREAD_ENV,
+}: {
+  owner: string;
+  environmentId?: string;
+}) {
+  const text = mocks.drafts[owner] ?? "";
+  const readDraft = () => ({
+    text: mocks.drafts[owner] ?? "",
+    selection: { start: text.length, end: text.length },
+  });
+  const value = useEnvironmentSpeechInput({
+    environmentId: environmentId as EnvironmentId,
+    ownerKey: owner,
+    readDraft,
+    commitDraft: (next) => {
+      mocks.drafts[owner] = next;
+    },
+    captureSubmissionDraft: () => ({
+      readDraft,
+      commitDraft: (next: string) => {
+        mocks.drafts[owner] = next;
+      },
+    }),
+  });
+  useLayoutEffect(() => {
+    mocks.voice = value;
+  });
+  return null;
+}
+
+it("does not retain a send when transcription finishes before the editor rerenders", async () => {
+  setup({ destination: "env-a" });
+  let finish!: (text: string) => void;
+  mocks.transcripts = [
+    new Promise<string>((resolve) => {
+      finish = resolve;
+    }),
+  ];
+  mocks.drafts = { "thread-a": "Fix", "thread-b": "" };
+  const submit = vi.fn();
+  const cancel = vi.fn();
+  await using screen = await render(<SubmissionProbe owner="thread-a" />);
+  await act(() => mocks.voice.start());
+  let stopping!: Promise<void>;
+  await act(() => {
+    stopping = mocks.voice.stop();
+  });
+  await vi.waitFor(() => expect(mocks.voice.state.phase).toBe("transcribing"));
+  const stale = mocks.voice;
+  await act(async () => {
+    finish("the login bug");
+    await stopping;
+    expect(mocks.voice).toBe(stale);
+    stale.submitAfterDictation(submit, cancel);
+  });
+  expect(cancel).toHaveBeenCalledOnce();
+  expect(submit).not.toHaveBeenCalled();
+  expect(mocks.drafts["thread-a"]).toBe("Fix the login bug");
+  await screen.rerender(<div />);
+  await screen.rerender(<SubmissionProbe owner="thread-b" />);
+  await act(() => mocks.voice.start());
+  expect(mocks.microphoneRequests).toEqual(["env-a", "env-a"]);
+  await act(() => mocks.voice.cancel());
+});
+
+it.each([
+  ["transcribing", "finish"],
+  ["post-processing", "finish"],
+  ["post-processing", "cancel"],
+  ["post-processing", "skip"],
+  ["transcribing", "finish after session expiry"],
+] as const)(
+  "reattaches a confirmed %s submission after remount to %s it",
+  async (phase, action) => {
+    setup({ destination: "env-a" });
+    const expires = action === "finish after session expiry";
+    if (expires) {
+      let reads = 0;
+      mocks.sessionAtoms.set(
+        "env-a",
+        Atom.make(Effect.suspend(() => (++reads === 1 ? Effect.succeed(true) : Effect.never))).pipe(
+          Atom.setIdleTTL(5 * 60_000),
+        ),
+      );
+    }
+    let finish!: (text: string) => void;
+    const result = new Promise<string>((resolve) => {
+      finish = resolve;
+    });
+    if (phase === "post-processing") {
+      chooseTranscriptCleanup(true);
+      mocks.cleanupResult = result;
+    } else mocks.transcripts = [result];
+    await using _response = {
+      [Symbol.asyncDispose]: () =>
+        act(async () => {
+          finish("the login bug");
+        }),
+    };
+    mocks.drafts = { "thread-a": "Fix", "thread-b": "Do not send" };
+    const submit = vi.fn();
+    const cancel = vi.fn();
+    await using screen = await render(<SubmissionProbe owner="thread-a" />);
+    using _timers = expires ? fakeTimers() : { [Symbol.dispose]() {} };
+    await act(() => mocks.voice.start());
+    await act(() => mocks.voice.submitAfterDictation(submit, cancel));
+    await vi.waitFor(() => expect(mocks.voice.state.phase).toBe(phase));
+    await screen.rerender(<div />);
+    if (expires) await act(() => vi.advanceTimersByTimeAsync(6 * 60_000));
+    await screen.rerender(<SubmissionProbe owner="thread-b" />);
+    expect(mocks.voice.state.phase).toBe("idle");
+    await act(() => mocks.voice.cancel());
+    expect(cancel).not.toHaveBeenCalled();
+    await act(() => mocks.voice.start());
+    expect(mocks.voice.state.phase).toBe("idle");
+    expect(mocks.microphoneRequests).toEqual(["env-a"]);
+    await screen.rerender(<div />);
+    await screen.rerender(<SubmissionProbe owner="thread-a" environmentId="env-b" />);
+    expect(mocks.voice.state.phase).toBe("idle");
+    await act(() => mocks.voice.cancel());
+    expect(cancel).not.toHaveBeenCalled();
+    await screen.rerender(<div />);
+    await screen.rerender(<SubmissionProbe owner="thread-a" />);
+    expect(mocks.voice.state.phase).toBe(phase);
+    expect(mocks.voice.freezesEditor).toBe(true);
+    expect(mocks.voice.blocksSubmission).toBe(true);
+    const duplicate = vi.fn();
+    await act(() => mocks.voice.submitAfterDictation(duplicate));
+    expect(duplicate).not.toHaveBeenCalled();
+    if (action === "cancel") await act(() => mocks.voice.cancel());
+    if (action === "skip") await act(() => mocks.voice.skipPostProcessing());
+    await act(async () => {
+      finish("the login bug");
+    });
+    await vi.waitFor(() => expect(mocks.voice.state.phase).toBe("idle"));
+    if (action === "cancel") {
+      expect(cancel).toHaveBeenCalledOnce();
+      expect(submit).not.toHaveBeenCalled();
+      expect(mocks.drafts["thread-a"]).toBe("Fix");
+    } else {
+      const expected = action === "skip" ? "Fix dictated" : "Fix the login bug";
+      await vi.waitFor(() => expect(submit).toHaveBeenCalledExactlyOnceWith(expected));
+      expect(mocks.drafts["thread-a"]).toBe(expected);
+      expect(cancel).not.toHaveBeenCalled();
+    }
+    expect(duplicate).not.toHaveBeenCalled();
+    expect(mocks.drafts["thread-b"]).toBe("Do not send");
+  },
+);
+
+it.each(["cancel", "off", "destination", "cloud-destination", "cleanup", "error"])(
+  "does not send a confirmed recording after %s",
+  async (action) => {
+    setup({ destination: "env-a" });
+    if (action === "cleanup") chooseTranscriptCleanup(true);
+    let finish!: (text: string) => void;
+    let fail!: (error: Error) => void;
+    mocks.transcripts = [
+      new Promise<string>((resolve, reject) => {
+        finish = resolve;
+        fail = reject;
+      }),
+    ];
+    const drafts = { "thread-a": "Fix" };
+    mocks.drafts = drafts;
+    const submit = vi.fn();
+    const cancel = vi.fn();
+    await using screen = await render(<SubmissionProbe owner="thread-a" />);
+    await act(() => mocks.voice.start());
+    await act(() => mocks.voice.submitAfterDictation(submit, cancel));
+    await vi.waitFor(() => expect(mocks.transcribeCalls).toEqual(["env-a"]));
+    if (action === "cancel") await act(() => mocks.voice.cancel());
+    else {
+      await screen.rerender(<div />);
+      if (action === "cleanup") chooseTranscriptCleanup(false);
+      else if (action === "cloud-destination") {
+        const saved = pendingCloudAudioChoice({
+          kind: "cloud",
+          provider: "openai",
+          environmentId: EnvironmentId.make("env-b"),
+        });
+        expect(cancel).not.toHaveBeenCalled();
+        saved();
+      } else if (action !== "error") setDestination(action === "off" ? null : "env-b");
+      if (action !== "error") expect(cancel).toHaveBeenCalledOnce();
+    }
+    await act(async () => {
+      if (action === "error") fail(new Error("Transcription failed"));
+      else finish("the login bug");
+    });
+    await vi.waitFor(() => expect(cancel).toHaveBeenCalledOnce());
+    expect(submit).not.toHaveBeenCalled();
+    expect(drafts["thread-a"]).toBe("Fix");
+    await screen.rerender(<div />);
+    await screen.rerender(<SubmissionProbe owner="thread-a" />);
+    expect(mocks.voice.state.phase).toBe("idle");
+    expect(mocks.voice.blocksSubmission).toBe(false);
+  },
+);
 
 it("retries a failed transcription on the same chosen environment", async () => {
   setup({ destination: "env-a" });
