@@ -547,9 +547,6 @@ function awaitConnectionState(
   });
 }
 
-
-
-
 describe("EnvironmentRegistry", () => {
   it.effect("a bearer replaced while an attempt is in flight retries with the new one", () =>
     Effect.gen(function* () {
@@ -633,4 +630,3 @@ describe("EnvironmentRegistry", () => {
     }),
   );
 });
-

@@ -547,9 +547,6 @@ function awaitConnectionState(
   });
 }
 
-
-
-
 describe("EnvironmentRegistry", () => {
   it.effect("protocol rejection preserves enablement through recovery and relaunch", () =>
     Effect.gen(function* () {
@@ -616,4 +613,3 @@ describe("EnvironmentRegistry", () => {
     }),
   );
 });
-

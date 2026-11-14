@@ -547,9 +547,6 @@ function awaitConnectionState(
   });
 }
 
-
-
-
 describe("EnvironmentRegistry", () => {
   it.effect("discovery leaves direct connections that share an environment id alone", () =>
     Effect.gen(function* () {
@@ -637,4 +634,3 @@ describe("EnvironmentRegistry", () => {
     }),
   );
 });
-

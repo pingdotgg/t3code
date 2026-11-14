@@ -547,9 +547,6 @@ function awaitConnectionState(
   });
 }
 
-
-
-
 describe("EnvironmentRegistry", () => {
   it.effect("rechecks platform ownership after waiting for the environment lease", () =>
     Effect.gen(function* () {
@@ -630,4 +627,3 @@ describe("EnvironmentRegistry", () => {
     }),
   );
 });
-

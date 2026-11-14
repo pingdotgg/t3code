@@ -547,9 +547,6 @@ function awaitConnectionState(
   });
 }
 
-
-
-
 describe("EnvironmentRegistry", () => {
   it.effect("switching an environment off disconnects it and persists the flag", () =>
     Effect.gen(function* () {
@@ -646,4 +643,3 @@ describe("EnvironmentRegistry", () => {
     }),
   );
 });
-

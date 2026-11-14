@@ -37,8 +37,6 @@ import { loadCursorSdk } from "./sdk.ts";
 
 const { ConfigurationError } = loadCursorSdk();
 
-
-
 describe("CursorAdapterV2", () => {
   it.effect("fails standalone SDK transport diagnostics and compacts with SDK summarize", () =>
     Effect.gen(function* () {
@@ -340,4 +338,3 @@ describe("CursorAdapterV2", () => {
     ),
   );
 });
-

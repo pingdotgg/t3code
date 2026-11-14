@@ -37,8 +37,6 @@ import { loadCursorSdk } from "./sdk.ts";
 
 const { ConfigurationError } = loadCursorSdk();
 
-
-
 describe("CursorAdapterV2", () => {
   it.effect("projects Cursor directory trees and lint diagnostics as file search results", () =>
     Effect.gen(function* () {
@@ -476,4 +474,3 @@ describe("CursorAdapterV2", () => {
     ),
   );
 });
-

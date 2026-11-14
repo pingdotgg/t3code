@@ -37,8 +37,6 @@ import { loadCursorSdk } from "./sdk.ts";
 
 const { ConfigurationError } = loadCursorSdk();
 
-
-
 describe("CursorAdapterV2", () => {
   it.effect.each([
     { status: "finished", model: undefined, lateModel: undefined },
@@ -511,4 +509,3 @@ describe("CursorAdapterV2", () => {
     ),
   );
 });
-

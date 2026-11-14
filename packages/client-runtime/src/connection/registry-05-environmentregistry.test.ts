@@ -547,9 +547,6 @@ function awaitConnectionState(
   });
 }
 
-
-
-
 describe("EnvironmentRegistry", () => {
   it.effect.each([false, true])(
     "a switched-off environment stays off after compatibility clears (learned route: %s)",
@@ -599,4 +596,3 @@ describe("EnvironmentRegistry", () => {
       }),
   );
 });
-

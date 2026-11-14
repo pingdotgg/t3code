@@ -1,74 +1,46 @@
-import {
-  type GhosttyKeyboardLayoutMap,
-  ghosttyConsumedMods,
-  ghosttyKeyForEvent,
-  ghosttyUnshiftedCodepoint,
-  loadGhosttyKeyboardLayoutMap,
-} from "./keyCodes";
+import { type GhosttyKeyboardLayoutMap, loadGhosttyKeyboardLayoutMap } from "./keyCodes";
 import { GhosttyRuntime, loadGhosttyRuntime } from "./runtime";
-
-const GHOSTTY_SUCCESS = 0;
-const GHOSTTY_OUT_OF_SPACE = -3;
-const MAX_SCROLLBACK_ROWS = 10_000;
-// wasm32 GhosttyTerminalSelectionFormatOptions layout at the pinned libghostty-vt revision.
-const SELECTION_FORMAT_OPTIONS_SIZE = 16;
-const PALETTE_BYTES = 256 * 3;
-
-const RENDER_DATA = {
-  cols: 1,
-  rows: 2,
-  dirty: 3,
-  rowIterator: 4,
-  background: 5,
-  foreground: 6,
-  cursor: 7,
-  cursorHasValue: 8,
-  cursorStyle: 10,
-  cursorVisible: 11,
-  cursorBlinking: 12,
-  cursorInViewport: 14,
-  cursorX: 15,
-  cursorY: 16,
-} as const;
-
-const ROW_DATA = {
-  dirty: 1,
-  raw: 2,
-  cells: 3,
-} as const;
-
-const CELL_DATA = {
-  raw: 1,
-  style: 2,
-  graphemesLength: 3,
-  graphemes: 4,
-  background: 5,
-  foreground: 6,
-  selected: 7,
-} as const;
-
-// Optional row_cells_get_multi colors must come last; an unset color stops the query.
-const CELL_QUERY = {
-  keys: 0,
-  values: 20,
-  graphemesLength: 40,
-  selected: 44,
-  background: 48,
-  foreground: 52,
-  written: 56,
-  size: 60,
-} as const;
-
-const RAW_CELL_DATA = {
-  wide: 3,
-} as const;
-
-export const GHOSTTY_CELL_WIDE = {
-  narrow: 0,
-  wide: 1,
-  spacerTail: 2,
-  spacerHead: 3,
-} as const;
+import {
+  GHOSTTY_SUCCESS,
+  MAX_SCROLLBACK_ROWS,
+  PALETTE_BYTES,
+  RENDER_DATA,
+  ROW_DATA,
+  CELL_DATA,
+  CELL_QUERY,
+} from "./coreLayout";
+import { encoder } from "./coreText";
+export * from "./coreLayout";
+import { coreEncodeKey, coreEncodePaste, coreEncodeMouse } from "./coreInput";
+import {
+  coreSetSelection,
+  coreSelectAll,
+  coreSelectionRange,
+  coreSelectWord,
+  coreSelectLine,
+  coreHyperlinkAt,
+  coreClearSelection,
+  coreSelectionText,
+  coreViewportPointToScreen,
+  coreScreenPointToViewport,
+  coreGridRef,
+  coreSelectAt,
+  corePointFromGridRef,
+} from "./coreSelection";
+import {
+  coreEncodeOutput,
+  coreReadRow,
+  coreGetU16,
+  coreGetU32,
+  coreGetBool,
+  coreGetColor,
+  coreGetRowBool,
+  coreGetCellColor,
+  coreReadColor,
+  coreEmptyCell,
+  coreAssertSuccess,
+  coreEnsureActive,
+} from "./coreRows";
 
 export interface GhosttyColor {
   readonly r: number;
@@ -160,69 +132,39 @@ export interface GhosttyMouseInput {
   readonly anyButtonPressed: boolean;
 }
 
-const decoder = new TextDecoder();
-const encoder = new TextEncoder();
-
-function blend(foreground: GhosttyColor, background: GhosttyColor): GhosttyColor {
-  const channel = (front: number, back: number) => Math.floor((front * 155 + back * 100) / 255);
-  return {
-    r: channel(foreground.r, background.r),
-    g: channel(foreground.g, background.g),
-    b: channel(foreground.b, background.b),
-  };
-}
-
 function sameColor(left: GhosttyColor, right: GhosttyColor): boolean {
   return left.r === right.r && left.g === right.g && left.b === right.b;
 }
 
-/** Bounds String.fromCodePoint arguments for cells with enormous combining-mark sequences. */
-export function ghosttyCellText(
-  codepointView: DataView,
-  graphemeLength: number,
-  byteOffset = 0,
-): string {
-  if (graphemeLength === 1) return String.fromCodePoint(codepointView.getUint32(byteOffset, true));
-  const CHUNK_SIZE = 4_096;
-  let text = "";
-  for (let start = 0; start < graphemeLength; start += CHUNK_SIZE) {
-    const count = Math.min(CHUNK_SIZE, graphemeLength - start);
-    const codes = new Array<number>(count);
-    for (let index = 0; index < count; index += 1) {
-      codes[index] = codepointView.getUint32(byteOffset + (start + index) * 4, true);
-    }
-    text += String.fromCodePoint(...codes);
-  }
-  return text;
-}
+export { ghosttyCellText } from "./coreRows";
 
 export class GhosttyTerminalCore {
-  private readonly runtime: GhosttyRuntime;
-  private terminalSlot = 0;
-  private terminal = 0;
-  private renderStateSlot = 0;
-  private renderState = 0;
-  private rowIteratorSlot = 0;
-  private rowCellsSlot = 0;
-  private keyEncoderSlot = 0;
-  private keyEncoder = 0;
-  private keyEventSlot = 0;
-  private keyEvent = 0;
-  private mouseEncoderSlot = 0;
-  private mouseEncoder = 0;
-  private mouseEventSlot = 0;
-  private mouseEvent = 0;
-  private ptyWriterId = 0;
-  private ptyWriter: ((data: string) => void) | null = null;
-  private scratch = 0;
-  private graphemes = 0;
-  private graphemeCapacity = 0;
-  private style = 0;
-  private cellQuery = 0;
-  private scrollbar = 0;
-  private rows: GhosttyRow[] = [];
-  private disposed = false;
-  private keyboardLayoutMap: GhosttyKeyboardLayoutMap | undefined;
+  readonly runtime: GhosttyRuntime;
+  terminalSlot = 0;
+  terminal = 0;
+  renderStateSlot = 0;
+  renderState = 0;
+  rowIteratorSlot = 0;
+  rowCellsSlot = 0;
+  keyEncoderSlot = 0;
+  keyEncoder = 0;
+  keyEventSlot = 0;
+  keyEvent = 0;
+  mouseEncoderSlot = 0;
+  mouseEncoder = 0;
+  mouseEventSlot = 0;
+  mouseEvent = 0;
+  ptyWriterId = 0;
+  ptyWriter: ((data: string) => void) | null = null;
+  scratch = 0;
+  graphemes = 0;
+  graphemeCapacity = 0;
+  style = 0;
+  cellQuery = 0;
+  scrollbar = 0;
+  rows: GhosttyRow[] = [];
+  disposed = false;
+  keyboardLayoutMap: GhosttyKeyboardLayoutMap | undefined;
 
   private constructor(runtime: GhosttyRuntime) {
     this.runtime = runtime;
@@ -249,7 +191,7 @@ export class GhosttyTerminalCore {
     }
   }
 
-  private initialize(
+  initialize(
     cols: number,
     rows: number,
     cellWidth: number,
@@ -400,7 +342,7 @@ export class GhosttyTerminalCore {
   }
 
   // Option 23 sets blink on startup and DECSCUSR reset; explicit DECSCUSR or DEC mode 12 still wins.
-  private applyDefaultCursorBlink(): void {
+  applyDefaultCursorBlink(): void {
     const blink = this.runtime.alloc(1);
     this.runtime.bytes(blink, 1)[0] = 1;
     this.runtime.call("ghostty_terminal_set", this.terminal, 23, blink);
@@ -422,7 +364,7 @@ export class GhosttyTerminalCore {
     if (theme.palette) this.setPalette(theme.palette);
   }
 
-  private setPalette(colors: readonly GhosttyColor[]): void {
+  setPalette(colors: readonly GhosttyColor[]): void {
     const palette = this.runtime.alloc(PALETTE_BYTES);
     this.runtime.call("ghostty_terminal_get", this.terminal, 25, palette);
     const bytes = this.runtime.bytes(palette, PALETTE_BYTES);
@@ -533,280 +475,43 @@ export class GhosttyTerminalCore {
   }
 
   encodeKey(event: KeyboardEvent, action: "press" | "release" = "press"): string {
-    this.ensureActive();
-    this.runtime.call("ghostty_key_encoder_setopt_from_terminal", this.keyEncoder, this.terminal);
-    this.runtime.call(
-      "ghostty_key_event_set_action",
-      this.keyEvent,
-      action === "release" ? 0 : event.repeat ? 2 : 1,
-    );
-    this.runtime.call("ghostty_key_event_set_key", this.keyEvent, ghosttyKeyForEvent(event));
-    const mods =
-      (event.shiftKey ? 1 : 0) |
-      (event.ctrlKey ? 1 << 1 : 0) |
-      (event.altKey ? 1 << 2 : 0) |
-      (event.metaKey ? 1 << 3 : 0) |
-      (event.getModifierState("CapsLock") ? 1 << 4 : 0) |
-      (event.getModifierState("NumLock") ? 1 << 5 : 0);
-    this.runtime.call("ghostty_key_event_set_mods", this.keyEvent, mods);
-    this.runtime.call(
-      "ghostty_key_event_set_consumed_mods",
-      this.keyEvent,
-      ghosttyConsumedMods(event),
-    );
-    this.runtime.call("ghostty_key_event_set_composing", this.keyEvent, event.isComposing ? 1 : 0);
-    this.runtime.call(
-      "ghostty_key_event_set_unshifted_codepoint",
-      this.keyEvent,
-      ghosttyUnshiftedCodepoint(event, this.keyboardLayoutMap),
-    );
-
-    const text = event.key.length === 1 ? event.key : "";
-    const textBytes = encoder.encode(text);
-    const textPointer = textBytes.length === 0 ? 0 : this.runtime.alloc(textBytes.length);
-    if (textPointer !== 0) this.runtime.bytes(textPointer, textBytes.length).set(textBytes);
-    this.runtime.call("ghostty_key_event_set_utf8", this.keyEvent, textPointer, textBytes.length);
-
-    const written = this.runtime.call("ghostty_wasm_alloc_usize");
-    const encoded = this.encodeOutput(written, (output, outputSize) =>
-      this.runtime.call(
-        "ghostty_key_encoder_encode",
-        this.keyEncoder,
-        this.keyEvent,
-        output,
-        outputSize,
-        written,
-      ),
-    );
-    this.runtime.call("ghostty_wasm_free_usize", written);
-    if (textPointer !== 0) this.runtime.free(textPointer, textBytes.length);
-    return encoded;
+    return coreEncodeKey(this, event, action);
   }
 
   encodePaste(data: string): string {
-    this.ensureActive();
-    const input = encoder.encode(data);
-    if (input.length === 0) return "";
-    const inputPointer = this.runtime.alloc(input.length);
-    this.runtime.bytes(inputPointer, input.length).set(input);
-    this.runtime.bytes(this.scratch, 1)[0] = 0;
-    const bracketed =
-      this.runtime.call("ghostty_terminal_mode_get", this.terminal, 2004, this.scratch) ===
-        GHOSTTY_SUCCESS && this.runtime.bytes(this.scratch, 1)[0] !== 0;
-    const written = this.runtime.call("ghostty_wasm_alloc_usize");
-    let encoded = "";
-    const sizeResult = this.runtime.call(
-      "ghostty_paste_encode",
-      inputPointer,
-      input.length,
-      bracketed ? 1 : 0,
-      0,
-      0,
-      written,
-    );
-    const outputSize = this.runtime.view(written, 4).getUint32(0, true);
-    if (sizeResult === GHOSTTY_OUT_OF_SPACE && outputSize > 0) {
-      const output = this.runtime.alloc(outputSize);
-      const result = this.runtime.call(
-        "ghostty_paste_encode",
-        inputPointer,
-        input.length,
-        bracketed ? 1 : 0,
-        output,
-        outputSize,
-        written,
-      );
-      const outputLength = this.runtime.view(written, 4).getUint32(0, true);
-      encoded =
-        result === GHOSTTY_SUCCESS ? decoder.decode(this.runtime.bytes(output, outputLength)) : "";
-      this.runtime.free(output, outputSize);
-    }
-    this.runtime.call("ghostty_wasm_free_usize", written);
-    this.runtime.free(inputPointer, input.length);
-    return encoded;
+    return coreEncodePaste(this, data);
   }
 
   encodeMouse(input: GhosttyMouseInput): string {
-    this.ensureActive();
-    this.runtime.call(
-      "ghostty_mouse_encoder_setopt_from_terminal",
-      this.mouseEncoder,
-      this.terminal,
-    );
-
-    const sizeLayout = this.runtime.layout("GhosttyMouseEncoderSize");
-    const size = this.runtime.alloc(sizeLayout.size);
-    for (const [field, value] of [
-      ["size", sizeLayout.size],
-      ["screen_width", input.screenWidth],
-      ["screen_height", input.screenHeight],
-      ["cell_width", input.cellWidth],
-      ["cell_height", input.cellHeight],
-      ["padding_top", input.paddingTop],
-      ["padding_bottom", input.paddingBottom],
-      ["padding_right", input.paddingRight],
-      ["padding_left", input.paddingLeft],
-    ] as const) {
-      this.runtime.setField(size, "GhosttyMouseEncoderSize", field, Math.max(0, Math.round(value)));
-    }
-    this.runtime.call("ghostty_mouse_encoder_setopt", this.mouseEncoder, 2, size);
-    this.runtime.free(size, sizeLayout.size);
-
-    this.runtime.bytes(this.scratch, 1)[0] = input.anyButtonPressed ? 1 : 0;
-    this.runtime.call("ghostty_mouse_encoder_setopt", this.mouseEncoder, 3, this.scratch);
-    this.runtime.bytes(this.scratch, 1)[0] = 1;
-    this.runtime.call("ghostty_mouse_encoder_setopt", this.mouseEncoder, 4, this.scratch);
-
-    this.runtime.call(
-      "ghostty_mouse_event_set_action",
-      this.mouseEvent,
-      input.action === "press" ? 0 : input.action === "release" ? 1 : 2,
-    );
-    if (input.button === null) {
-      this.runtime.call("ghostty_mouse_event_clear_button", this.mouseEvent);
-    } else {
-      this.runtime.call("ghostty_mouse_event_set_button", this.mouseEvent, input.button);
-    }
-    this.runtime.call("ghostty_mouse_event_set_mods", this.mouseEvent, input.mods);
-    const positionLayout = this.runtime.layout("GhosttyMousePosition");
-    const position = this.runtime.alloc(positionLayout.size);
-    const positionView = this.runtime.view(position, positionLayout.size);
-    positionView.setFloat32(positionLayout.fields.x!.offset, input.x, true);
-    positionView.setFloat32(positionLayout.fields.y!.offset, input.y, true);
-    this.runtime.call("ghostty_mouse_event_set_position", this.mouseEvent, position);
-    this.runtime.free(position, positionLayout.size);
-
-    const written = this.runtime.call("ghostty_wasm_alloc_usize");
-    const encoded = this.encodeOutput(written, (output, outputSize) =>
-      this.runtime.call(
-        "ghostty_mouse_encoder_encode",
-        this.mouseEncoder,
-        this.mouseEvent,
-        output,
-        outputSize,
-        written,
-      ),
-    );
-    this.runtime.call("ghostty_wasm_free_usize", written);
-    return encoded;
+    return coreEncodeMouse(this, input);
   }
 
   setSelection(anchor: GhosttyPointInput, end: GhosttyPointInput): void {
-    this.ensureActive();
-    const selectionLayout = this.runtime.layout("GhosttySelection");
-    const gridRefSize = this.runtime.layout("GhosttyGridRef").size;
-    const selection = this.runtime.alloc(selectionLayout.size);
-    let start = 0;
-    let endRef = 0;
-    try {
-      this.runtime.setField(selection, "GhosttySelection", "size", selectionLayout.size);
-      start = this.gridRef(anchor.x, anchor.y, anchor.tag ?? 1);
-      endRef = this.gridRef(end.x, end.y, end.tag ?? 1);
-      const startField = selectionLayout.fields.start!;
-      const endField = selectionLayout.fields.end!;
-      this.runtime
-        .bytes(selection + startField.offset, startField.size)
-        .set(this.runtime.bytes(start, startField.size));
-      this.runtime
-        .bytes(selection + endField.offset, endField.size)
-        .set(this.runtime.bytes(endRef, endField.size));
-      this.runtime.call("ghostty_terminal_set", this.terminal, 21, selection);
-    } finally {
-      this.runtime.free(start, gridRefSize);
-      this.runtime.free(endRef, gridRefSize);
-      this.runtime.free(selection, selectionLayout.size);
-    }
+    coreSetSelection(this, anchor, end);
   }
 
   selectAll(): GhosttySelectionRange["screen"] | null {
-    this.ensureActive();
-    const layout = this.runtime.layout("GhosttySelection");
-    const selection = this.runtime.alloc(layout.size);
-    try {
-      this.runtime.setField(selection, "GhosttySelection", "size", layout.size);
-      if (
-        this.runtime.call("ghostty_terminal_select_all", this.terminal, selection) !==
-        GHOSTTY_SUCCESS
-      ) {
-        return null;
-      }
-      const start = this.pointFromGridRef(selection + layout.fields.start!.offset, 2);
-      const end = this.pointFromGridRef(selection + layout.fields.end!.offset, 2);
-      if (!start || !end) return null;
-      this.runtime.call("ghostty_terminal_set", this.terminal, 21, selection);
-      return { start, end };
-    } finally {
-      this.runtime.free(selection, layout.size);
-    }
+    return coreSelectAll(this);
   }
 
   selectionRange(): GhosttySelectionRange["screen"] | null {
-    this.ensureActive();
-    const layout = this.runtime.layout("GhosttySelection");
-    const selection = this.runtime.alloc(layout.size);
-    try {
-      this.runtime.setField(selection, "GhosttySelection", "size", layout.size);
-      if (
-        this.runtime.call("ghostty_terminal_get", this.terminal, 31, selection) !== GHOSTTY_SUCCESS
-      ) {
-        return null;
-      }
-      const start = this.pointFromGridRef(selection + layout.fields.start!.offset, 2);
-      const end = this.pointFromGridRef(selection + layout.fields.end!.offset, 2);
-      return start && end ? { start, end } : null;
-    } finally {
-      this.runtime.free(selection, layout.size);
-    }
+    return coreSelectionRange(this);
   }
 
   selectWord(col: number, row: number): GhosttySelectionRange | null {
-    return this.selectAt(
-      "GhosttyTerminalSelectWordOptions",
-      "ghostty_terminal_select_word",
-      col,
-      row,
-    );
+    return coreSelectWord(this, col, row);
   }
 
   selectLine(col: number, row: number): GhosttySelectionRange | null {
-    return this.selectAt(
-      "GhosttyTerminalSelectLineOptions",
-      "ghostty_terminal_select_line",
-      col,
-      row,
-    );
+    return coreSelectLine(this, col, row);
   }
 
   hyperlinkAt(col: number, row: number): string | null {
-    this.ensureActive();
-    const ref = this.gridRef(col, row);
-    const written = this.runtime.call("ghostty_wasm_alloc_usize");
-    const sizeResult = this.runtime.call("ghostty_grid_ref_hyperlink_uri", ref, 0, 0, written);
-    const outputSize = this.runtime.view(written, 4).getUint32(0, true);
-    let hyperlink: string | null = null;
-    if (sizeResult === GHOSTTY_OUT_OF_SPACE && outputSize > 0) {
-      const output = this.runtime.alloc(outputSize);
-      const result = this.runtime.call(
-        "ghostty_grid_ref_hyperlink_uri",
-        ref,
-        output,
-        outputSize,
-        written,
-      );
-      const outputLength = this.runtime.view(written, 4).getUint32(0, true);
-      if (result === GHOSTTY_SUCCESS && outputLength > 0) {
-        hyperlink = decoder.decode(this.runtime.bytes(output, outputLength));
-      }
-      this.runtime.free(output, outputSize);
-    }
-    this.runtime.call("ghostty_wasm_free_usize", written);
-    this.runtime.free(ref, this.runtime.layout("GhosttyGridRef").size);
-    return hyperlink;
+    return coreHyperlinkAt(this, col, row);
   }
 
   clearSelection(): void {
-    this.ensureActive();
-    this.runtime.call("ghostty_terminal_set", this.terminal, 21, 0);
+    coreClearSelection(this);
   }
 
   snapshot(): GhosttySnapshot {
@@ -883,55 +588,18 @@ export class GhosttyTerminalCore {
   }
 
   selectionText(): string {
-    this.ensureActive();
-    const options = this.runtime.alloc(SELECTION_FORMAT_OPTIONS_SIZE);
-    const optionsView = this.runtime.view(options, SELECTION_FORMAT_OPTIONS_SIZE);
-    optionsView.setUint32(0, SELECTION_FORMAT_OPTIONS_SIZE, true);
-    optionsView.setUint32(4, 0, true);
-    optionsView.setUint8(8, 1);
-    optionsView.setUint8(9, 1);
-    optionsView.setUint32(12, 0, true);
-    const written = this.runtime.call("ghostty_wasm_alloc_usize");
-    const sizeResult = this.runtime.call(
-      "ghostty_terminal_selection_format_buf",
-      this.terminal,
-      options,
-      0,
-      0,
-      written,
-    );
-    const outputSize = this.runtime.view(written, 4).getUint32(0, true);
-    let text = "";
-    if (sizeResult === GHOSTTY_OUT_OF_SPACE && outputSize > 0) {
-      const output = this.runtime.alloc(outputSize);
-      const result = this.runtime.call(
-        "ghostty_terminal_selection_format_buf",
-        this.terminal,
-        options,
-        output,
-        outputSize,
-        written,
-      );
-      const outputLength = this.runtime.view(written, 4).getUint32(0, true);
-      if (result === GHOSTTY_SUCCESS) {
-        text = decoder.decode(this.runtime.bytes(output, outputLength));
-      }
-      this.runtime.free(output, outputSize);
-    }
-    this.runtime.call("ghostty_wasm_free_usize", written);
-    this.runtime.free(options, SELECTION_FORMAT_OPTIONS_SIZE);
-    return text;
+    return coreSelectionText(this);
   }
 
   viewportPointToScreen(col: number, row: number): { x: number; y: number } | null {
-    return this.convertPoint(col, row, 1, 2);
+    return coreViewportPointToScreen(this, col, row);
   }
 
   screenPointToViewport(col: number, row: number): { x: number; y: number } | null {
-    return this.convertPoint(col, row, 2, 1);
+    return coreScreenPointToViewport(this, col, row);
   }
 
-  private convertPoint(
+  convertPoint(
     col: number,
     row: number,
     fromTag: 1 | 2,
@@ -985,337 +653,74 @@ export class GhosttyTerminalCore {
     }
   }
 
-  private encodeOutput(
-    written: number,
-    encode: (output: number, outputSize: number) => number,
-  ): string {
-    const sizeResult = encode(0, 0);
-    const outputSize = this.runtime.view(written, 4).getUint32(0, true);
-    if (sizeResult === GHOSTTY_SUCCESS && outputSize === 0) return "";
-    if (sizeResult !== GHOSTTY_OUT_OF_SPACE || outputSize === 0) return "";
-
-    const output = this.runtime.alloc(outputSize);
-    const result = encode(output, outputSize);
-    const outputLength = this.runtime.view(written, 4).getUint32(0, true);
-    const encoded =
-      result === GHOSTTY_SUCCESS ? decoder.decode(this.runtime.bytes(output, outputLength)) : "";
-    this.runtime.free(output, outputSize);
-    return encoded;
+  encodeOutput(written: number, encode: (output: number, outputSize: number) => number): string {
+    return coreEncodeOutput(this, written, encode);
   }
 
-  private readRow(
+  readRow(
     iterator: number,
     cols: number,
     defaultForeground: GhosttyColor,
     defaultBackground: GhosttyColor,
   ): GhosttyRow {
-    this.assertSuccess(
-      "ghostty_render_state_row_get(raw)",
-      this.runtime.call("ghostty_render_state_row_get", iterator, ROW_DATA.raw, this.scratch),
-    );
-    const rawRow = this.runtime.memoryDataView().getBigUint64(this.scratch, true);
-    this.runtime.memoryBytes()[this.scratch + 8] = 0;
-    this.assertSuccess(
-      "ghostty_row_get(wrap continuation)",
-      this.runtime.call("ghostty_row_get", rawRow, 2, this.scratch + 8),
-    );
-    const isWrapContinuation = this.runtime.memoryBytes()[this.scratch + 8] !== 0;
-    this.runtime.memoryBytes()[this.scratch + 8] = 0;
-    this.assertSuccess(
-      "ghostty_row_get(wrap)",
-      this.runtime.call("ghostty_row_get", rawRow, 1, this.scratch + 8),
-    );
-    const wrapsToNext = this.runtime.memoryBytes()[this.scratch + 8] !== 0;
-
-    this.assertSuccess(
-      "ghostty_render_state_row_get(cells)",
-      this.runtime.call(
-        "ghostty_render_state_row_get",
-        iterator,
-        ROW_DATA.cells,
-        this.rowCellsSlot,
-      ),
-    );
-    const cellsIterator = this.runtime.readPointer(this.rowCellsSlot);
-    const { size: styleSize, fields: styleFields } = this.runtime.layout("GhosttyStyle");
-    const cellsNext = this.runtime.fn("ghostty_render_state_row_cells_next");
-    const cellsGetMulti = this.runtime.fn("ghostty_render_state_row_cells_get_multi");
-    const cells: GhosttyCell[] = [];
-    while (cells.length < cols && cellsNext(cellsIterator) !== 0) {
-      this.runtime.memoryBytes().fill(0, this.style, this.style + styleSize);
-      this.runtime.setField(this.style, "GhosttyStyle", "size", styleSize);
-      const result = cellsGetMulti(
-        cellsIterator,
-        5,
-        this.cellQuery + CELL_QUERY.keys,
-        this.cellQuery + CELL_QUERY.values,
-        this.cellQuery + CELL_QUERY.written,
-      );
-      const queryView = this.runtime.memoryDataView();
-      const written = queryView.getUint32(this.cellQuery + CELL_QUERY.written, true);
-      if (written < 3) this.assertSuccess("ghostty_render_state_row_cells_get_multi", result);
-      const graphemeLength = queryView.getUint32(this.cellQuery + CELL_QUERY.graphemesLength, true);
-      const selected = queryView.getUint8(this.cellQuery + CELL_QUERY.selected) !== 0;
-      let background =
-        written >= 4 ? this.readColor(this.cellQuery + CELL_QUERY.background) : defaultBackground;
-      let foreground =
-        written === 5
-          ? this.readColor(this.cellQuery + CELL_QUERY.foreground)
-          : written === 3
-            ? this.getCellColor(cellsIterator, CELL_DATA.foreground, defaultForeground)
-            : defaultForeground;
-      let text = "";
-      if (graphemeLength > 0) {
-        const bufferSize = graphemeLength * 4;
-        if (bufferSize > this.graphemeCapacity) {
-          const capacity = Math.max(bufferSize, this.graphemeCapacity * 2);
-          const buffer = this.runtime.alloc(capacity);
-          this.runtime.free(this.graphemes, this.graphemeCapacity);
-          this.graphemes = buffer;
-          this.graphemeCapacity = capacity;
-        }
-        if (
-          this.runtime.call(
-            "ghostty_render_state_row_cells_get",
-            cellsIterator,
-            CELL_DATA.graphemes,
-            this.graphemes,
-          ) === GHOSTTY_SUCCESS
-        ) {
-          // Byte allocations need not be 4-byte aligned; use DataView instead of Uint32Array.
-          text = ghosttyCellText(this.runtime.memoryDataView(), graphemeLength, this.graphemes);
-        }
-      }
-      let wide = 0;
-      // A wrap spacer in the final column can follow a spacer tail.
-      if (text.length === 0 && (cells.at(-1)?.text.length || cells.length === cols - 1)) {
-        this.assertSuccess(
-          "ghostty_render_state_row_cells_get(raw)",
-          this.runtime.call(
-            "ghostty_render_state_row_cells_get",
-            cellsIterator,
-            CELL_DATA.raw,
-            this.scratch,
-          ),
-        );
-        const rawCell = this.runtime.memoryDataView().getBigUint64(this.scratch, true);
-        this.runtime.memoryDataView().setUint32(this.scratch + 8, 0, true);
-        this.assertSuccess(
-          "ghostty_cell_get(wide)",
-          this.runtime.call("ghostty_cell_get", rawCell, RAW_CELL_DATA.wide, this.scratch + 8),
-        );
-        wide = this.runtime.memoryDataView().getUint32(this.scratch + 8, true);
-      }
-      // Read the style after allocation and ABI calls, which can grow WASM memory.
-      const styleView = this.runtime.memoryDataView();
-      if (styleView.getUint8(this.style + styleFields.inverse!.offset) !== 0) {
-        [foreground, background] = [background, foreground];
-      }
-      if (styleView.getUint8(this.style + styleFields.faint!.offset) !== 0) {
-        foreground = blend(foreground, background);
-      }
-      cells.push({
-        text,
-        wide,
-        foreground,
-        background,
-        bold: styleView.getUint8(this.style + styleFields.bold!.offset) !== 0,
-        italic: styleView.getUint8(this.style + styleFields.italic!.offset) !== 0,
-        invisible: styleView.getUint8(this.style + styleFields.invisible!.offset) !== 0,
-        strikethrough: styleView.getUint8(this.style + styleFields.strikethrough!.offset) !== 0,
-        overline: styleView.getUint8(this.style + styleFields.overline!.offset) !== 0,
-        underline: styleView.getInt32(this.style + styleFields.underline!.offset, true) !== 0,
-        selected,
-      });
-    }
-    while (cells.length < cols) cells.push(this.emptyCell(defaultForeground, defaultBackground));
-    return {
-      cells,
-      text: cells
-        .map((cell) => cell.text || " ")
-        .join("")
-        .trimEnd(),
-      isWrapContinuation,
-      wrapsToNext,
-    };
+    return coreReadRow(this, iterator, cols, defaultForeground, defaultBackground);
   }
 
-  private gridRef(col: number, row: number, tag: 1 | 2 = 1): number {
-    const pointLayout = this.runtime.layout("GhosttyPoint");
-    const point = this.runtime.alloc(pointLayout.size);
-    this.runtime.setField(point, "GhosttyPoint", "tag", tag);
-    const pointValue = pointLayout.fields.value!;
-    const valueOffset = pointValue.offset;
-    const view = this.runtime.view(point + valueOffset, pointValue.size);
-    view.setUint16(0, Math.max(0, col), true);
-    view.setUint32(4, Math.max(0, row), true);
-    const gridRefSize = this.runtime.layout("GhosttyGridRef").size;
-    const gridRef = this.runtime.alloc(gridRefSize);
-    this.runtime.setField(gridRef, "GhosttyGridRef", "size", gridRefSize);
-    const result = this.runtime.call("ghostty_terminal_grid_ref", this.terminal, point, gridRef);
-    this.runtime.free(point, pointLayout.size);
-    if (result !== GHOSTTY_SUCCESS) {
-      this.runtime.free(gridRef, gridRefSize);
-      this.assertSuccess("ghostty_terminal_grid_ref", result);
-    }
-    return gridRef;
+  gridRef(col: number, row: number, tag: 1 | 2 = 1): number {
+    return coreGridRef(this, col, row, tag);
   }
 
-  private selectAt(
+  selectAt(
     optionsName: "GhosttyTerminalSelectWordOptions" | "GhosttyTerminalSelectLineOptions",
     operation: "ghostty_terminal_select_word" | "ghostty_terminal_select_line",
     col: number,
     row: number,
   ): GhosttySelectionRange | null {
-    this.ensureActive();
-    const optionsLayout = this.runtime.layout(optionsName);
-    const selectionLayout = this.runtime.layout("GhosttySelection");
-    const options = this.runtime.alloc(optionsLayout.size);
-    let ref = 0;
-    let selection = 0;
-    let range: GhosttySelectionRange | null = null;
-    try {
-      this.runtime.setField(options, optionsName, "size", optionsLayout.size);
-      ref = this.gridRef(col, row);
-      const refField = optionsLayout.fields.ref!;
-      this.runtime
-        .bytes(options + refField.offset, refField.size)
-        .set(this.runtime.bytes(ref, refField.size));
-      selection = this.runtime.alloc(selectionLayout.size);
-      this.runtime.setField(selection, "GhosttySelection", "size", selectionLayout.size);
-      const result = this.runtime.call(operation, this.terminal, options, selection);
-      if (result === GHOSTTY_SUCCESS) {
-        const start = selection + selectionLayout.fields.start!.offset;
-        const end = selection + selectionLayout.fields.end!.offset;
-        const viewportStart = this.pointFromGridRef(start, 1);
-        const viewportEnd = this.pointFromGridRef(end, 1);
-        const screenStart = this.pointFromGridRef(start, 2);
-        const screenEnd = this.pointFromGridRef(end, 2);
-        if (viewportStart && viewportEnd && screenStart && screenEnd) {
-          range = {
-            viewport: { start: viewportStart, end: viewportEnd },
-            screen: { start: screenStart, end: screenEnd },
-          };
-        }
-        this.runtime.call("ghostty_terminal_set", this.terminal, 21, selection);
-      }
-    } finally {
-      this.runtime.free(selection, selectionLayout.size);
-      this.runtime.free(ref, this.runtime.layout("GhosttyGridRef").size);
-      this.runtime.free(options, optionsLayout.size);
-    }
-    return range;
+    return coreSelectAt(this, optionsName, operation, col, row);
   }
 
-  private pointFromGridRef(ref: number, tag: 1 | 2): { x: number; y: number } | null {
-    const coordinateLayout = this.runtime.layout("GhosttyPointCoordinate");
-    const coordinate = this.runtime.alloc(coordinateLayout.size);
-    const result = this.runtime.call(
-      "ghostty_terminal_point_from_grid_ref",
-      this.terminal,
-      ref,
-      tag,
-      coordinate,
-    );
-    const point =
-      result === GHOSTTY_SUCCESS
-        ? {
-            x: this.runtime.readField(coordinate, "GhosttyPointCoordinate", "x"),
-            y: this.runtime.readField(coordinate, "GhosttyPointCoordinate", "y"),
-          }
-        : null;
-    this.runtime.free(coordinate, coordinateLayout.size);
-    return point;
+  pointFromGridRef(ref: number, tag: 1 | 2): { x: number; y: number } | null {
+    return corePointFromGridRef(this, ref, tag);
   }
 
-  private getU16(data: number): number {
-    this.runtime.memoryDataView().setUint16(this.scratch, 0, true);
-    this.assertSuccess(
-      "ghostty_render_state_get",
-      this.runtime.call("ghostty_render_state_get", this.renderState, data, this.scratch),
-    );
-    return this.runtime.memoryDataView().getUint16(this.scratch, true);
+  getU16(data: number): number {
+    return coreGetU16(this, data);
   }
 
-  private getU32(data: number): number {
-    this.runtime.memoryDataView().setUint32(this.scratch, 0, true);
-    this.assertSuccess(
-      "ghostty_render_state_get",
-      this.runtime.call("ghostty_render_state_get", this.renderState, data, this.scratch),
-    );
-    return this.runtime.memoryDataView().getUint32(this.scratch, true);
+  getU32(data: number): number {
+    return coreGetU32(this, data);
   }
 
-  private getBool(data: number): boolean {
-    this.runtime.memoryBytes()[this.scratch] = 0;
-    this.assertSuccess(
-      "ghostty_render_state_get",
-      this.runtime.call("ghostty_render_state_get", this.renderState, data, this.scratch),
-    );
-    return this.runtime.memoryBytes()[this.scratch] !== 0;
+  getBool(data: number): boolean {
+    return coreGetBool(this, data);
   }
 
-  private getColor(data: number, fallback: GhosttyColor): GhosttyColor {
-    this.runtime.memoryBytes().fill(0, this.scratch, this.scratch + 3);
-    const result = this.runtime.call(
-      "ghostty_render_state_get",
-      this.renderState,
-      data,
-      this.scratch,
-    );
-    return result === GHOSTTY_SUCCESS ? this.readColor(this.scratch) : fallback;
+  getColor(data: number, fallback: GhosttyColor): GhosttyColor {
+    return coreGetColor(this, data, fallback);
   }
 
-  private getRowBool(iterator: number, data: number): boolean {
-    this.runtime.memoryBytes()[this.scratch] = 0;
-    return (
-      this.runtime.call("ghostty_render_state_row_get", iterator, data, this.scratch) ===
-        GHOSTTY_SUCCESS && this.runtime.memoryBytes()[this.scratch] !== 0
-    );
+  getRowBool(iterator: number, data: number): boolean {
+    return coreGetRowBool(this, iterator, data);
   }
 
-  private getCellColor(iterator: number, data: number, fallback: GhosttyColor): GhosttyColor {
-    this.runtime.memoryBytes().fill(0, this.scratch, this.scratch + 3);
-    const result = this.runtime.call(
-      "ghostty_render_state_row_cells_get",
-      iterator,
-      data,
-      this.scratch,
-    );
-    return result === GHOSTTY_SUCCESS ? this.readColor(this.scratch) : fallback;
+  getCellColor(iterator: number, data: number, fallback: GhosttyColor): GhosttyColor {
+    return coreGetCellColor(this, iterator, data, fallback);
   }
 
-  private readColor(pointer: number): GhosttyColor {
-    const view = this.runtime.memoryDataView();
-    return {
-      r: view.getUint8(pointer),
-      g: view.getUint8(pointer + 1),
-      b: view.getUint8(pointer + 2),
-    };
+  readColor(pointer: number): GhosttyColor {
+    return coreReadColor(this, pointer);
   }
 
-  private emptyCell(foreground: GhosttyColor, background: GhosttyColor): GhosttyCell {
-    return {
-      text: "",
-      wide: 0,
-      foreground,
-      background,
-      bold: false,
-      italic: false,
-      invisible: false,
-      strikethrough: false,
-      overline: false,
-      underline: false,
-      selected: false,
-    };
+  emptyCell(foreground: GhosttyColor, background: GhosttyColor): GhosttyCell {
+    return coreEmptyCell(this, foreground, background);
   }
 
-  private assertSuccess(operation: string, result: number): void {
-    if (result !== GHOSTTY_SUCCESS) throw new Error(`${operation} failed with result ${result}`);
+  assertSuccess(operation: string, result: number): void {
+    coreAssertSuccess(this, operation, result);
   }
 
-  private ensureActive(): void {
-    if (this.disposed) throw new Error("libghostty-vt terminal has been disposed");
+  ensureActive(): void {
+    coreEnsureActive(this);
   }
 }
 

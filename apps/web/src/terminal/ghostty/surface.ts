@@ -1,453 +1,97 @@
-import { isMacPlatform } from "../../lib/utils";
-import { SELECTION_MULTI_CLICK_INTERVAL_MS } from "../../lib/selectionActions";
-import { collectWrappedTerminalLinkLine, extractTerminalLinks } from "../../terminal-links";
 import {
-  GHOSTTY_CELL_WIDE,
   GhosttyTerminalCore,
-  type GhosttyCell,
   type GhosttyScrollbar,
   type GhosttySnapshot,
   type GhosttyTheme,
 } from "./core";
-import {
-  measureGhosttyCell,
-  renderGhosttySnapshot,
-  terminalGridSize,
-  type GhosttyCellRange,
-  type GhosttyCellMetrics,
-} from "./renderer";
-import symbolsFontUrl from "./fonts/SymbolsNerdFontMono-Regular.woff2?url";
-import { isMonospaceFamily } from "../../appearanceFonts";
+import { measureGhosttyCell, terminalGridSize, type GhosttyCellMetrics } from "./renderer";
 import { observeResize } from "../../lib/observeResize";
-import { terminalLinkAtPositionWithRange } from "./surfaceParts";
-
-const DEFAULT_TERMINAL_FONT_SIZE = 12;
-const MIN_TERMINAL_FONT_SIZE = 6;
-const MAX_TERMINAL_FONT_SIZE = 32;
-const TERMINAL_GLYPH_FALLBACKS =
-  '"Symbols Nerd Font Mono", "Symbols Nerd Font", "JetBrainsMono Nerd Font", ' +
-  '"JetBrainsMono NF", "FiraCode Nerd Font", "Hack Nerd Font", "MesloLGS NF", ' +
-  '"CaskaydiaCove Nerd Font", "PowerlineSymbols", monospace';
-// The platform's own monospace faces; concrete names only, because an
-// unknown keyword (like ui-monospace) makes canvas font shorthand parsing
-// reject the whole string.
-const DEFAULT_TERMINAL_FONT_FAMILY =
-  '"SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", ' + TERMINAL_GLYPH_FALLBACKS;
-const CONTENT_PADDING = 4;
-const MIN_SCROLLBAR_THUMB_HEIGHT = 18;
-const CURSOR_BLINK_INTERVAL_MS = 500;
-/** End an unterminated synchronized update instead of freezing the last frame. */
-const SYNCHRONIZED_OUTPUT_RENDER_TIMEOUT_MS = 500;
-const TERMINAL_FONT_LOAD_TEXT = "iMW0@# .";
-const TERMINAL_FONT_LOAD_VARIANTS = [
-  "normal 400",
-  "normal 700",
-  "italic 400",
-  "italic 700",
-] as const;
-
-export interface GhosttyTerminalFont {
-  readonly family?: string;
-  readonly size?: number;
-}
-
-let symbolsFontLoad: Promise<void> | null = null;
-
-function ensureTerminalSymbolsFont(): Promise<void> {
-  if (symbolsFontLoad !== null) return symbolsFontLoad;
-  symbolsFontLoad = (async () => {
-    try {
-      const face = new FontFace("Symbols Nerd Font Mono", `url(${symbolsFontUrl})`);
-      document.fonts.add(await face.load());
-    } catch {}
-  })();
-  return symbolsFontLoad;
-}
-
-function quoteTerminalFontFamilies(list: string): string {
-  return list
-    .split(",")
-    .map((name) => {
-      const bare = name.trim();
-      if (bare.length === 0) return "";
-      if (/^(['"]).*\1$/.test(bare)) return bare;
-      if (/^[a-zA-Z][a-zA-Z0-9-]*$/.test(bare)) return bare;
-      return `"${bare.replaceAll('"', "")}"`;
-    })
-    .filter((name) => name.length > 0)
-    .join(", ");
-}
-
-function uncheckedTerminalFontFamily(family?: string): string {
-  const custom = family === undefined ? "" : quoteTerminalFontFamilies(family);
-  return custom.length === 0
-    ? DEFAULT_TERMINAL_FONT_FAMILY
-    : `${custom}, ${TERMINAL_GLYPH_FALLBACKS}`;
-}
-
-function terminalFontFamily(family?: string): string {
-  // Quote non-ident names ("3270 Nerd Font", "M+ 1m"): an unquoted one makes
-  // the whole canvas font string invalid and the assignment silently no-ops.
-  const custom = family === undefined ? "" : quoteTerminalFontFamilies(family);
-  if (custom.length === 0) return DEFAULT_TERMINAL_FONT_FAMILY;
-  if (!isMonospaceFamily(custom)) return DEFAULT_TERMINAL_FONT_FAMILY;
-  return uncheckedTerminalFontFamily(custom);
-}
-
-async function loadTerminalFontFamily(
-  family: string | undefined,
-  size: number,
-  environment?: {
-    readonly load: (font: string, text: string) => Promise<unknown>;
-    readonly resolve: (family: string | undefined) => string;
-  },
-): Promise<string> {
-  const candidate = uncheckedTerminalFontFamily(family);
-  const load =
-    environment?.load ?? ((font: string, text: string) => document.fonts.load(font, text));
-  try {
-    await Promise.all(
-      TERMINAL_FONT_LOAD_VARIANTS.map((variant) =>
-        load(`${variant} ${size}px ${candidate}`, TERMINAL_FONT_LOAD_TEXT),
-      ),
-    );
-  } catch {}
-  return (environment?.resolve ?? terminalFontFamily)(family);
-}
-
-function terminalFontSize(size?: number): number {
-  if (size === undefined || !Number.isFinite(size)) return DEFAULT_TERMINAL_FONT_SIZE;
-  return Math.max(MIN_TERMINAL_FONT_SIZE, Math.min(MAX_TERMINAL_FONT_SIZE, Math.round(size)));
-}
-
-function shouldBlinkTerminalCursor(state: {
-  readonly focused: boolean;
-  readonly cursorBlinking: boolean;
-  readonly cursorVisible: boolean;
-  readonly reducedMotion: boolean;
-}): boolean {
-  return state.focused && state.cursorBlinking && state.cursorVisible && !state.reducedMotion;
-}
-
-export function terminalContentOriginY(
-  mountHeight: number,
-  padding: number,
-  rows: number,
-  cellHeight: number,
-  anchorBottom: boolean,
-): number {
-  if (!anchorBottom) return padding;
-  const slack = mountHeight - padding * 2 - rows * cellHeight;
-  return padding + Math.max(0, slack);
-}
-
-export interface TerminalScrollbarGeometry {
-  readonly thumbHeight: number;
-  readonly thumbTop: number;
-  readonly maxOffset: number;
-}
-
-function terminalScrollbarGeometry(
-  state: GhosttyScrollbar,
-  trackHeight: number,
-): TerminalScrollbarGeometry | null {
-  const total = Math.max(0, state.total);
-  const len = Math.max(0, Math.min(state.len, total));
-  const maxOffset = Math.max(0, total - len);
-  if (trackHeight <= 0 || len <= 0 || maxOffset === 0) return null;
-  const thumbHeight = Math.min(
-    trackHeight,
-    Math.max(MIN_SCROLLBAR_THUMB_HEIGHT, (trackHeight * len) / total),
-  );
-  const travel = Math.max(0, trackHeight - thumbHeight);
-  const offset = Math.max(0, Math.min(state.offset, maxOffset));
-  return {
-    thumbHeight,
-    thumbTop: travel * (offset / maxOffset),
-    maxOffset,
-  };
-}
-
-function terminalScrollbarOffsetAtPointer(
-  state: GhosttyScrollbar,
-  trackHeight: number,
-  pointerY: number,
-  pointerOffset: number,
-): number {
-  const geometry = terminalScrollbarGeometry(state, trackHeight);
-  if (geometry === null) return 0;
-  const travel = Math.max(0, trackHeight - geometry.thumbHeight);
-  if (travel === 0) return 0;
-  const thumbTop = Math.max(0, Math.min(pointerY - pointerOffset, travel));
-  return Math.round((thumbTop / travel) * geometry.maxOffset);
-}
-
-function terminalGridCellAt(options: {
-  bounds: { left: number; top: number };
-  clientX: number;
-  clientY: number;
-  cols: number;
-  rows: number;
-  metrics: Pick<GhosttyCellMetrics, "width" | "height">;
-  padding: number;
-  originY: number;
-}): { x: number; y: number } | null {
-  const { bounds, clientX, clientY, cols, rows, metrics, padding, originY } = options;
-  const gridX = clientX - bounds.left - padding;
-  const gridY = clientY - bounds.top - originY;
-  if (gridX < 0 || gridY < 0 || gridX >= cols * metrics.width || gridY >= rows * metrics.height) {
-    return null;
-  }
-  return {
-    x: Math.floor(gridX / metrics.width),
-    y: Math.floor(gridY / metrics.height),
-  };
-}
-
-function terminalCellText(cell: GhosttyCell): string {
-  if (cell.wide === GHOSTTY_CELL_WIDE.spacerTail || cell.wide === GHOSTTY_CELL_WIDE.spacerHead) {
-    return "";
-  }
-  return cell.text || " ";
-}
-
-export function terminalRowText(row: GhosttySnapshot["rowData"][number], trimRight: boolean): string {
-  const text = row.cells.map(terminalCellText).join("");
-  return trimRight ? text.trimEnd() : text;
-}
-
-export function terminalColumnOffset(row: GhosttySnapshot["rowData"][number], column: number): number {
-  let offset = 0;
-  for (let cellIndex = 0; cellIndex < column; cellIndex += 1) {
-    const cell = row.cells[cellIndex];
-    offset += cell ? terminalCellText(cell).length : 1;
-  }
-  return offset;
-}
-
-export interface TerminalLinkWithRange {
-  readonly text: string;
-  readonly range: GhosttyCellRange;
-}
-
-function isSameTerminalLink(
-  left: TerminalLinkWithRange,
-  right: TerminalLinkWithRange | null,
-): boolean {
-  return (
-    right?.text === left.text &&
-    right.range.start.x === left.range.start.x &&
-    right.range.start.y === left.range.start.y &&
-    right.range.end.x === left.range.end.x &&
-    right.range.end.y === left.range.end.y
-  );
-}
-
-export function terminalColumnAtOffset(row: GhosttySnapshot["rowData"][number], offset: number): number {
-  for (let column = 0; column < row.cells.length; column += 1) {
-    const nextOffset = terminalColumnOffset(row, column + 1);
-    if (offset < nextOffset) return column;
-  }
-  return Math.max(0, row.cells.length - 1);
-}
-
-export function isTerminalCopyShortcut(
-  event: Pick<KeyboardEvent, "ctrlKey" | "key" | "metaKey" | "shiftKey">,
-  platform = navigator.platform,
-) {
-  const key = event.key.toLowerCase();
-  if (key === "insert" && !isMacPlatform(platform)) {
-    return event.ctrlKey && !event.shiftKey && !event.metaKey;
-  }
-  if (key !== "c") return false;
-  return isMacPlatform(platform) ? event.metaKey : event.ctrlKey;
-}
-
-/** Primes native and Electron menu copy from the focused textarea; canvas has no DOM selection. */
-export function primeTerminalCopyInput(
-  input: Pick<HTMLTextAreaElement, "value" | "select">,
-  selection: string,
-): void {
-  input.value = selection;
-  if (selection.length === 0) return;
-  input.select();
-}
-
-export function clearPrimedTerminalCopyInput(
-  input: Pick<HTMLTextAreaElement, "value">,
-  primedSelection: string,
-): void {
-  // Only clear the parked copy; other text may be an active CJK composition.
-  if (primedSelection.length === 0 || input.value !== primedSelection) return;
-  input.value = "";
-}
-
-export function applyTerminalCopyEvent(
-  selection: string,
-  clipboardData: { setData: (type: string, data: string) => void } | null | undefined,
-): { preventDefault: boolean; claimWriteFallback: boolean } {
-  if (selection.length === 0 || !clipboardData) {
-    return { preventDefault: false, claimWriteFallback: false };
-  }
-  clipboardData.setData("text/plain", selection);
-  return { preventDefault: true, claimWriteFallback: true };
-}
-
-function isTerminalPasteShortcut(
-  event: Pick<KeyboardEvent, "ctrlKey" | "key" | "metaKey" | "shiftKey">,
-  platform = navigator.platform,
-) {
-  const key = event.key.toLowerCase();
-  if (key === "insert" && !isMacPlatform(platform)) {
-    return event.shiftKey && !event.ctrlKey && !event.metaKey;
-  }
-  if (key !== "v") return false;
-  return isMacPlatform(platform) ? event.metaKey : event.ctrlKey && event.shiftKey;
-}
-
-// X11/Wayland expects middle-click paste; macOS and Windows use it for autoscroll.
-function isMiddleClickPastePlatform(): boolean {
-  return /linux|bsd/i.test(navigator.platform);
-}
-
-function isTerminalCompositionCommitInput(event: Pick<InputEvent, "inputType">): boolean {
-  return (
-    event.inputType === "" ||
-    event.inputType === "insertCompositionText" ||
-    event.inputType === "insertFromComposition"
-  );
-}
-
-export function isTerminalCompositionKey(
-  event: Pick<KeyboardEvent, "isComposing" | "key" | "keyCode">,
-  composing: boolean,
-): boolean {
-  return event.isComposing || composing || event.key === "Process" || event.keyCode === 229;
-}
-
-function isTerminalAltGraphText(event: Pick<KeyboardEvent, "getModifierState" | "key">): boolean {
-  return event.getModifierState("AltGraph") && [...event.key].length === 1;
-}
-
-function shouldReportTerminalMouse(
-  tracking: boolean,
-  event: Pick<MouseEvent, "ctrlKey" | "metaKey" | "shiftKey">,
-): boolean {
-  return tracking && !event.shiftKey && !event.ctrlKey && !event.metaKey;
-}
-
-type TerminalMouseAction = "press" | "release" | "motion";
-
-export function resolveTerminalMouseData(
-  action: TerminalMouseAction,
-  data: string,
-  previousMotionData: string,
-): { readonly send: boolean; readonly nextMotionData: string } {
-  const nextMotionData = action === "motion" ? data : "";
-  return {
-    send: data.length > 0 && (action !== "motion" || data !== previousMotionData),
-    nextMotionData,
-  };
-}
-
-function resolveTerminalMouseTrackingState(
-  previousTracking: boolean,
-  tracking: boolean,
-  motionData: string,
-): { readonly tracking: boolean; readonly motionData: string } {
-  return {
-    tracking,
-    motionData: previousTracking === tracking ? motionData : "",
-  };
-}
-
-export function terminalWheelDeltaRows(
-  event: Pick<WheelEvent, "deltaY" | "deltaMode">,
-  cellHeight: number,
-  viewportRows: number,
-  remainder: number,
-): { readonly rows: number; readonly remainder: number } {
-  const pixels =
-    event.deltaMode === 1
-      ? event.deltaY * cellHeight
-      : event.deltaMode === 2
-        ? event.deltaY * viewportRows * cellHeight
-        : event.deltaY;
-  const total = remainder + pixels / cellHeight;
-  const rows = Math.trunc(total);
-  return { rows, remainder: total - rows };
-}
-
-// Ramp from 1 to 15 rows per autoscroll tick over the first 50px past the edge, as xterm.js does.
-const SELECTION_AUTOSCROLL_RAMP_PX = 50;
-const SELECTION_AUTOSCROLL_MAX_ROWS = 15;
-
-export function terminalSelectionAutoscrollRows(
-  clientY: number,
-  top: number,
-  bottom: number,
-): number {
-  const distance = clientY < top ? clientY - top : clientY > bottom ? clientY - bottom : 0;
-  if (distance === 0) return 0;
-  const ramp = Math.max(-1, Math.min(1, distance / SELECTION_AUTOSCROLL_RAMP_PX));
-  return Math.sign(ramp) + Math.round(ramp * (SELECTION_AUTOSCROLL_MAX_ROWS - 1));
-}
-
-function terminalWheelArrowData(rows: number, applicationCursorKeys: boolean): string {
-  if (rows === 0) return "";
-  const sequence =
-    rows < 0
-      ? applicationCursorKeys
-        ? "\u001bOA"
-        : "\u001b[A"
-      : applicationCursorKeys
-        ? "\u001bOB"
-        : "\u001b[B";
-  return sequence.repeat(Math.abs(rows));
-}
-
-function ghosttyMouseButton(button: number): number | null {
-  switch (button) {
-    case 0:
-      return 1;
-    case 1:
-      return 3;
-    case 2:
-      return 2;
-    case 3:
-      return 4;
-    case 4:
-      return 5;
-    default:
-      return null;
-  }
-}
-
-export interface TerminalSelectionClickSequence {
-  readonly count: number;
-  readonly time: number;
-  readonly x: number;
-  readonly y: number;
-}
-
-const TERMINAL_LINK_DRAG_THRESHOLD_PX = 4;
-
-export function advanceTerminalSelectionClickSequence(
-  previous: TerminalSelectionClickSequence | null,
-  event: Pick<PointerEvent, "clientX" | "clientY" | "timeStamp">,
-): TerminalSelectionClickSequence {
-  const repeats =
-    previous !== null &&
-    event.timeStamp - previous.time <= SELECTION_MULTI_CLICK_INTERVAL_MS &&
-    Math.hypot(event.clientX - previous.x, event.clientY - previous.y) <=
-      TERMINAL_LINK_DRAG_THRESHOLD_PX;
-  return {
-    count: repeats ? (previous.count >= 3 ? 1 : previous.count + 1) : 1,
-    time: event.timeStamp,
-    x: event.clientX,
-    y: event.clientY,
-  };
-}
+import {
+  GhosttyTerminalFont,
+  ensureTerminalSymbolsFont,
+  loadTerminalFontFamily,
+  terminalFontFamily,
+  terminalFontSize,
+} from "./surfaceFonts";
+import {
+  CONTENT_PADDING,
+  TerminalLinkWithRange,
+  TerminalSelectionClickSequence,
+} from "./surfaceGeometry";
+import { TerminalMouseAction } from "./surfaceInput";
+import {
+  surfaceClearCompositionInputSuppression,
+  surfaceClearPrimedCopy,
+  surfaceOnBlur,
+  surfaceOnCompositionEnd,
+  surfaceOnCompositionStart,
+  surfaceOnCopyEvent,
+  surfaceOnFocus,
+  surfaceOnInput,
+  surfaceOnKeyDown,
+  surfaceOnKeyUp,
+  surfaceOnPaste,
+  surfaceOnWindowKeyDown,
+  surfaceOnWindowKeyUp,
+  surfacePrimeCopy,
+} from "./surfaceKeyboard";
+import {
+  surfaceBeginSelection,
+  surfaceClearHoveredLink,
+  surfaceExtendSelectionTo,
+  surfaceOnPointerDown,
+  surfaceOnPointerLeave,
+  surfaceOnPointerMove,
+  surfaceOnPointerUp,
+  surfaceRecordSelectionClick,
+  surfaceRefreshHoveredLink,
+  surfaceSetHoveredLink,
+  surfaceSetSelectionAutoscroll,
+  surfaceUpdateHoverCursor,
+} from "./surfacePointer";
+import {
+  surfaceOnScrollbarKeyDown,
+  surfaceOnScrollbarPointerDown,
+  surfaceOnScrollbarPointerMove,
+  surfaceOnScrollbarPointerUp,
+  surfaceReadScrollbarState,
+  surfaceScrollViewport,
+  surfaceScrollbarToPointer,
+  surfaceUpdateScrollbar,
+} from "./surfaceScrollbar";
+import {
+  surfaceBlinkEnabled,
+  surfaceCancelRender,
+  surfaceCancelSynchronizedRenderTimer,
+  surfaceDeferSynchronizedRender,
+  surfacePositionInput,
+  surfaceRenderFrame,
+  surfaceRequestRender,
+  surfaceScheduleCursorBlink,
+} from "./surfaceRender";
+import {
+  surfaceButtonFromButtons,
+  surfaceCellAt,
+  surfaceFindLinkAt,
+  surfaceLinkAt,
+  surfaceOnContextMenu,
+  surfaceOnMouseDown,
+  surfaceOnMouseUp,
+  surfaceOnWheel,
+  surfaceScrollRows,
+  surfaceSendMouse,
+  surfaceSynchronizeMouseTrackingState,
+} from "./surfaceMouse";
+import {
+  surfaceClearSelection,
+  surfaceGetSelection,
+  surfaceGetSelectionCellCount,
+  surfaceGetSelectionEndClientRect,
+  surfaceGetSelectionPosition,
+  surfaceHasSelection,
+  surfaceSelectAll,
+} from "./surfaceSelection";
+import { surfaceInstallEvents, surfaceRemoveEvents } from "./surfaceEvents";
 
 export interface GhosttySelectionPosition {
   readonly start: { readonly x: number; readonly y: number };
@@ -477,85 +121,85 @@ export class GhosttyTerminalSurface {
   cols = 1;
   rows = 1;
 
-  private readonly mount: HTMLElement;
-  private measuredCols = 1;
-  private measuredRows = 1;
-  private sharedGrid: { readonly cols: number; readonly rows: number } | null = null;
-  private readonly context: CanvasRenderingContext2D;
-  private readonly core: GhosttyTerminalCore;
-  private readonly options: GhosttyTerminalSurfaceOptions;
-  private visible: boolean;
-  private hasSize = false;
-  private metrics: GhosttyCellMetrics;
-  private fontFamily: string;
-  private requestedFontFamily: string | undefined;
-  private fontSize: number;
-  private fontEpoch = 0;
-  private pendingFontEpoch: number | null = null;
-  private readonly stopObservingResize: () => void;
-  private readonly scrollbarThumb: HTMLDivElement;
-  private snapshot: GhosttySnapshot | null = null;
-  private frame = 0;
-  private synchronizedRenderTimer: number | null = null;
-  private cursorTimer: number | null = null;
-  private compositionInputToSuppress: string | null = null;
-  private compositionSuppressionTimer: number | null = null;
-  private cursorOn = true;
-  private renderedCursorY: number | null = null;
-  private forceFullRender = true;
-  private scrollbarDirty = true;
-  private scrollbarState: GhosttyScrollbar | null = null;
-  private scrollbarPointerId: number | null = null;
-  private scrollbarPointerOffset = 0;
-  private disposed = false;
-  private resizeNotifyTimer: number | null = null;
-  private originY = CONTENT_PADDING;
-  private mountHeight = 0;
-  private selectionEnd: { x: number; y: number } | null = null;
-  private selectionAnchorScreen: { x: number; y: number } | null = null;
-  private selectionMode: "cell" | "word" | "line" = "cell";
-  private selectionBase: {
+  readonly mount: HTMLElement;
+  measuredCols = 1;
+  measuredRows = 1;
+  sharedGrid: { readonly cols: number; readonly rows: number } | null = null;
+  readonly context: CanvasRenderingContext2D;
+  readonly core: GhosttyTerminalCore;
+  readonly options: GhosttyTerminalSurfaceOptions;
+  visible: boolean;
+  hasSize = false;
+  metrics: GhosttyCellMetrics;
+  fontFamily: string;
+  requestedFontFamily: string | undefined;
+  fontSize: number;
+  fontEpoch = 0;
+  pendingFontEpoch: number | null = null;
+  readonly stopObservingResize: () => void;
+  readonly scrollbarThumb: HTMLDivElement;
+  snapshot: GhosttySnapshot | null = null;
+  frame = 0;
+  synchronizedRenderTimer: number | null = null;
+  cursorTimer: number | null = null;
+  compositionInputToSuppress: string | null = null;
+  compositionSuppressionTimer: number | null = null;
+  cursorOn = true;
+  renderedCursorY: number | null = null;
+  forceFullRender = true;
+  scrollbarDirty = true;
+  scrollbarState: GhosttyScrollbar | null = null;
+  scrollbarPointerId: number | null = null;
+  scrollbarPointerOffset = 0;
+  disposed = false;
+  resizeNotifyTimer: number | null = null;
+  originY = CONTENT_PADDING;
+  mountHeight = 0;
+  selectionEnd: { x: number; y: number } | null = null;
+  selectionAnchorScreen: { x: number; y: number } | null = null;
+  selectionMode: "cell" | "word" | "line" = "cell";
+  selectionBase: {
     start: { x: number; y: number };
     end: { x: number; y: number };
   } | null = null;
-  private selectionScrollTimer: number | null = null;
-  private selectionScrollDelta = 0;
-  private selectionPointer: { x: number; y: number } | null = null;
-  private mouseReportingPointerId: number | null = null;
-  private mouseReportingButton: number | null = null;
-  private linkActivationPointerId: number | null = null;
-  private linkActivationLink: TerminalLinkWithRange | null = null;
-  private linkActivationOrigin: {
+  selectionScrollTimer: number | null = null;
+  selectionScrollDelta = 0;
+  selectionPointer: { x: number; y: number } | null = null;
+  mouseReportingPointerId: number | null = null;
+  mouseReportingButton: number | null = null;
+  linkActivationPointerId: number | null = null;
+  linkActivationLink: TerminalLinkWithRange | null = null;
+  linkActivationOrigin: {
     x: number;
     y: number;
     clickCount: number;
   } | null = null;
-  private hoveredLink: TerminalLinkWithRange | null = null;
-  private hoverPointer: { x: number; y: number } | null = null;
-  private selectionClickSequence: TerminalSelectionClickSequence | null = null;
-  private selectionMoved = false;
-  private composing = false;
-  private focused = false;
-  private resizeNotified = false;
-  private canvasConfigured = false;
-  private canvasDevicePixelRatio = 0;
-  private pendingCanvasConfiguration: {
+  hoveredLink: TerminalLinkWithRange | null = null;
+  hoverPointer: { x: number; y: number } | null = null;
+  selectionClickSequence: TerminalSelectionClickSequence | null = null;
+  selectionMoved = false;
+  composing = false;
+  focused = false;
+  resizeNotified = false;
+  canvasConfigured = false;
+  canvasDevicePixelRatio = 0;
+  pendingCanvasConfiguration: {
     readonly width: number;
     readonly height: number;
     readonly ratio: number;
   } | null = null;
-  private theme: GhosttyTheme;
+  theme: GhosttyTheme;
   // App capture can hide keydowns, so only encoded presses qualify for Kitty releases.
-  private readonly encodedKeyCodes = new Set<string>();
-  private pasteShortcutToken = 0;
+  readonly encodedKeyCodes = new Set<string>();
+  pasteShortcutToken = 0;
   // Chromium can deliver native paste after the clipboard read resolves.
   // Suppress its duplicate only for the current shortcut gesture.
-  private pasteShortcutGesture: { code: string; readText: string } | null = null;
-  private copyShortcutToken = 0;
-  private clearSelectionAfterCopy = false;
-  private primedCopySelection = "";
-  private wheelRemainder = 0;
-  private touchScroll: {
+  pasteShortcutGesture: { code: string; readText: string } | null = null;
+  copyShortcutToken = 0;
+  clearSelectionAfterCopy = false;
+  primedCopySelection = "";
+  wheelRemainder = 0;
+  touchScroll: {
     pointerId: number;
     startX: number;
     startY: number;
@@ -563,13 +207,13 @@ export class GhosttyTerminalSurface {
     remainder: number;
     moved: boolean;
   } | null = null;
-  private lastMouseMotionData = "";
-  private mouseAnyEventTracking = false;
-  private dprMedia: MediaQueryList | null = null;
+  lastMouseMotionData = "";
+  mouseAnyEventTracking = false;
+  dprMedia: MediaQueryList | null = null;
   // Watch reduced motion changes to restart blink cycles that have no remaining timer.
-  private readonly reducedMotionMedia = window.matchMedia?.("(prefers-reduced-motion: reduce)");
-  private inputLeft = -1;
-  private inputTop = -1;
+  readonly reducedMotionMedia = window.matchMedia?.("(prefers-reduced-motion: reduce)");
+  inputLeft = -1;
+  inputTop = -1;
 
   private constructor(
     mount: HTMLElement,
@@ -746,7 +390,7 @@ export class GhosttyTerminalSurface {
     this.applyFontMetrics();
   }
 
-  private applyFontMetrics(): void {
+  applyFontMetrics(): void {
     this.metrics = measureGhosttyCell(this.context, this.fontSize, this.fontFamily);
     this.core.resize(this.cols, this.rows, this.metrics.width, this.metrics.height);
     this.inputLeft = -1;
@@ -757,14 +401,14 @@ export class GhosttyTerminalSurface {
     this.requestRender();
   }
 
-  private readonly onReducedMotionChange = () => {
+  readonly onReducedMotionChange = () => {
     if (this.disposed) return;
     // Restart from render; reduced motion left the steady cursor with no blink timer.
     this.cursorOn = true;
     this.requestRender();
   };
 
-  private readonly onFontsLoaded = () => {
+  readonly onFontsLoaded = () => {
     if (this.disposed) return;
     // Explicit loads validate and apply the newest request; ignore their events for the old face.
     if (this.pendingFontEpoch !== null) return;
@@ -854,7 +498,7 @@ export class GhosttyTerminalSurface {
     if (this.hasSize && this.applyGrid()) this.requestRender();
   }
 
-  private applyGrid(): boolean {
+  applyGrid(): boolean {
     const cols = Math.min(this.sharedGrid?.cols ?? this.measuredCols, this.measuredCols);
     const rows = Math.min(this.sharedGrid?.rows ?? this.measuredRows, this.measuredRows);
     if (cols === this.cols && rows === this.rows) return false;
@@ -871,7 +515,7 @@ export class GhosttyTerminalSurface {
    * dimensions: notifying on every drag step makes the shell reprint its
    * prompt mid-drag, which reads as jitter.
    */
-  private notifyResize(): void {
+  notifyResize(): void {
     this.resizeNotified = true;
     if (this.resizeNotifyTimer !== null) window.clearTimeout(this.resizeNotifyTimer);
     this.resizeNotifyTimer = window.setTimeout(() => {
@@ -881,7 +525,7 @@ export class GhosttyTerminalSurface {
   }
 
   // Flush on release so immediate typing reaches a shell with the settled width.
-  private readonly onWindowPointerRelease = () => {
+  readonly onWindowPointerRelease = () => {
     if (this.disposed || this.resizeNotifyTimer === null) return;
     this.fit();
     if (this.resizeNotifyTimer === null) return;
@@ -910,81 +554,38 @@ export class GhosttyTerminalSurface {
   }
 
   // The terminal selection is the only browser-readable PRIMARY-like buffer.
-  private pasteTerminalSelection(): void {
+  pasteTerminalSelection(): void {
     const selection = this.getSelection();
     if (selection.length === 0) return;
     void this.pasteFromClipboard(() => Promise.resolve(selection));
   }
 
   hasSelection(): boolean {
-    return this.core.selectionText().length > 0;
+    return surfaceHasSelection(this);
   }
 
   getSelection(): string {
-    return this.core.selectionText();
+    return surfaceGetSelection(this);
   }
 
-  /** An upper bound on the selection's size, read without formatting its text. */
   getSelectionCellCount(): number {
-    const range = this.core.selectionRange();
-    return range ? (Math.abs(range.end.y - range.start.y) + 1) * this.cols : 0;
+    return surfaceGetSelectionCellCount(this);
   }
 
   selectAll(): void {
-    this.clearPrimedCopy();
-    const range = this.core.selectAll();
-    this.selectionAnchorScreen = range?.start ?? null;
-    this.selectionEnd = range ? this.core.screenPointToViewport(range.end.x, range.end.y) : null;
-    this.selectionMode = "cell";
-    this.selectionBase = null;
-    this.setSelectionAutoscroll(0);
-    this.options.onSelectionChange();
-    this.forceFullRender = true;
-    this.requestRender();
+    surfaceSelectAll(this);
   }
 
   getSelectionPosition(): GhosttySelectionPosition | null {
-    // Ask Ghostty rather than the gesture's coordinates, which go stale once
-    // output scrolls the selected rows (alternate screen, scrollback pruning).
-    const range = this.hasSelection() ? this.core.selectionRange() : null;
-    if (!range) return null;
-    const { start, end } = range;
-    const before = start.y < end.y || (start.y === end.y && start.x <= end.x);
-    return before ? { start, end } : { start: end, end: start };
+    return surfaceGetSelectionPosition(this);
   }
 
   getSelectionEndClientRect(): { readonly right: number; readonly bottom: number } | null {
-    const position = this.getSelectionPosition();
-    if (!position) return null;
-    const viewportEnd = this.core.screenPointToViewport(position.end.x, position.end.y);
-    if (
-      !viewportEnd ||
-      viewportEnd.x < 0 ||
-      viewportEnd.x >= this.cols ||
-      viewportEnd.y < 0 ||
-      viewportEnd.y >= this.rows
-    ) {
-      return null;
-    }
-    const bounds = this.canvas.getBoundingClientRect();
-    return {
-      right: bounds.left + CONTENT_PADDING + (viewportEnd.x + 1) * this.metrics.width,
-      bottom: bounds.top + this.originY + (viewportEnd.y + 1) * this.metrics.height,
-    };
+    return surfaceGetSelectionEndClientRect(this);
   }
 
   clearSelection(): void {
-    this.clearPrimedCopy();
-    this.core.clearSelection();
-    this.selectionEnd = null;
-    this.selectionAnchorScreen = null;
-    this.selectionMode = "cell";
-    this.selectionBase = null;
-    this.setSelectionAutoscroll(0);
-    this.options.onSelectionChange();
-    // Selection highlights span rows Ghostty may not mark dirty for this change.
-    this.forceFullRender = true;
-    this.requestRender();
+    surfaceClearSelection(this);
   }
 
   scrollToBottom(): void {
@@ -1029,1096 +630,202 @@ export class GhosttyTerminalSurface {
     }
   }
 
-  private readonly onKeyDown = (event: KeyboardEvent) => {
-    // A consumed repeat still owes the original encoded press a release.
-    if (!event.repeat) this.encodedKeyCodes.delete(event.code);
-    if (isTerminalAltGraphText(event) || !this.options.beforeKey(event)) return;
-    // IME candidates belong to the textarea, even if the key also resembles
-    // a local shortcut. Safari signals the initial composition with code 229.
-    if (isTerminalCompositionKey(event, this.composing)) {
-      return;
-    }
-    const mac = isMacPlatform(navigator.platform);
-    const primaryModifier = mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
-    const selectAllShortcut =
-      event.key.toLowerCase() === "a" &&
-      primaryModifier &&
-      !event.altKey &&
-      (mac ? !event.shiftKey : event.shiftKey);
-    if (selectAllShortcut) {
-      event.preventDefault();
-      event.stopPropagation();
-      this.selectAll();
-      return;
-    }
-    const pageHistory =
-      event.shiftKey &&
-      !event.altKey &&
-      !event.ctrlKey &&
-      !event.metaKey &&
-      (event.key === "PageUp" || event.key === "PageDown");
-    const jumpHistory =
-      event.shiftKey &&
-      !event.altKey &&
-      primaryModifier &&
-      (event.key === "Home" || event.key === "End");
-    if ((pageHistory || jumpHistory) && !this.core.isAlternateScreen()) {
-      const state = this.readScrollbarState();
-      if (state !== null) {
-        event.preventDefault();
-        event.stopPropagation();
-        const delta =
-          event.key === "Home"
-            ? -state.offset
-            : event.key === "End"
-              ? state.total - state.len - state.offset
-              : Math.max(1, state.len) * (event.key === "PageUp" ? -1 : 1);
-        this.scrollViewport(delta);
-        return;
-      }
-    }
-    if (isTerminalCopyShortcut(event) && this.hasSelection()) {
-      // WebKit can omit copy without DOM selection. Ctrl+Shift+C and Ctrl+Insert need synthesized copy events.
-      const selection = this.getSelection();
-      this.primeCopy(selection);
-      if (event.shiftKey || event.key.toLowerCase() === "insert") {
-        event.preventDefault();
-        document.execCommand("copy");
-      } else {
-        // Clear after plain non-mac Ctrl+C so the next press sends SIGINT.
-        this.clearSelectionAfterCopy = !event.shiftKey && !isMacPlatform(navigator.platform);
-        const clipboard = navigator.clipboard;
-        if (typeof clipboard?.writeText === "function") {
-          // Defer fallback writes until native copy can claim the token; browsers may omit copy events.
-          const token = ++this.copyShortcutToken;
-          void Promise.resolve().then(() => {
-            if (this.disposed || this.copyShortcutToken !== token) return;
-            void clipboard.writeText(selection).then(
-              () => {
-                if (this.disposed || this.copyShortcutToken !== token) return;
-                if (this.clearSelectionAfterCopy) {
-                  this.clearSelectionAfterCopy = false;
-                  this.clearSelection();
-                }
-              },
-              () => {
-                if (this.copyShortcutToken === token) {
-                  this.clearSelectionAfterCopy = false;
-                }
-              },
-            );
-          });
-        }
-      }
-      return;
-    }
-    if (isTerminalPasteShortcut(event)) {
-      const gesture = { code: event.code, readText: "" };
-      this.pasteShortcutGesture = gesture;
-      const clipboard = navigator.clipboard;
-      if (typeof clipboard?.readText === "function") {
-        // Keep native paste available if the read is denied. The token drops
-        // a late read; the gesture drops a native duplicate when the read wins.
-        const token = ++this.pasteShortcutToken;
-        void clipboard.readText().then(
-          (text) => {
-            if (this.disposed || this.pasteShortcutToken !== token) return;
-            this.pasteShortcutToken += 1;
-            if (text.length === 0) return;
-            if (this.pasteShortcutGesture === gesture) gesture.readText = text;
-            this.options.onData(this.core.encodePaste(text));
-          },
-          () => {},
-        );
-      }
-      return;
-    }
-    this.clearPrimedCopy();
-    const data = this.core.encodeKey(event);
-    if (data.length === 0) return;
-    this.encodedKeyCodes.add(event.code);
-    event.preventDefault();
-    event.stopPropagation();
-    this.options.onData(data);
-  };
+  onKeyDown = (event: KeyboardEvent) => surfaceOnKeyDown(this, event);
 
-  private readonly onKeyUp = (event: KeyboardEvent) => {
-    // macOS can omit V keyup while Command is held.
-    if (
-      event.code === this.pasteShortcutGesture?.code ||
-      event.key === "Meta" ||
-      event.key === "Control" ||
-      event.key === "Shift"
-    ) {
-      this.pasteShortcutGesture = null;
-    }
-    if (!this.encodedKeyCodes.delete(event.code)) return;
-    if (isTerminalCompositionKey(event, this.composing)) {
-      return;
-    }
-    // Ghostty emits release codes only for Kitty report-event-types sessions.
-    const data = this.core.encodeKey(event, "release");
-    if (data.length === 0) return;
-    event.preventDefault();
-    event.stopPropagation();
-    this.options.onData(data);
-  };
+  onKeyUp = (event: KeyboardEvent) => surfaceOnKeyUp(this, event);
 
-  // A release elsewhere must not leave a press for a later app shortcut to inherit.
-  private readonly onWindowKeyUp = (event: KeyboardEvent) => {
-    if (event.composedPath().includes(this.input)) return;
-    this.encodedKeyCodes.delete(event.code);
-  };
+  onWindowKeyUp = (event: KeyboardEvent) => surfaceOnWindowKeyUp(this, event);
 
-  // A fresh press proves a release was missed; repeats can span a focus round trip.
-  private readonly onWindowKeyDown = (event: KeyboardEvent) => {
-    if (!event.repeat) this.encodedKeyCodes.delete(event.code);
-  };
+  onWindowKeyDown = (event: KeyboardEvent) => surfaceOnWindowKeyDown(this, event);
 
-  private readonly onFocus = () => {
-    this.focused = true;
-    this.cursorOn = true;
-    this.requestRender();
-  };
+  onFocus = () => surfaceOnFocus(this);
 
-  private readonly onBlur = () => {
-    this.focused = false;
-    this.pasteShortcutGesture = null;
-    this.refreshHoveredLink();
-    this.cursorOn = true;
-    this.requestRender();
-  };
+  onBlur = () => surfaceOnBlur(this);
 
-  private readonly onDevicePixelRatioChange = () => {
+  readonly onDevicePixelRatioChange = () => {
     this.watchDevicePixelRatio();
     this.fit();
   };
 
-  private watchDevicePixelRatio(): void {
+  watchDevicePixelRatio(): void {
     this.dprMedia?.removeEventListener("change", this.onDevicePixelRatioChange);
     // Resolution queries track only their initial ratio; re-arm after every change.
     this.dprMedia = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
     this.dprMedia.addEventListener("change", this.onDevicePixelRatioChange);
   }
 
-  private primeCopy(selection: string): void {
-    this.primedCopySelection = selection;
-    primeTerminalCopyInput(this.input, selection);
+  primeCopy(selection: string): void {
+    surfacePrimeCopy(this, selection);
   }
 
-  private clearPrimedCopy(): void {
-    clearPrimedTerminalCopyInput(this.input, this.primedCopySelection);
-    this.primedCopySelection = "";
+  clearPrimedCopy(): void {
+    surfaceClearPrimedCopy(this);
   }
 
-  private readonly onCopyEvent = (event: ClipboardEvent) => {
-    const selection = this.hasSelection() ? this.getSelection() : this.input.value;
-    // Menu Copy skips keydown; prime the textarea even without clipboardData for the native action.
-    this.primeCopy(selection);
-    const result = applyTerminalCopyEvent(selection, event.clipboardData);
-    if (result.preventDefault) event.preventDefault();
-    if (result.claimWriteFallback) {
-      // Native copy wrote successfully; invalidate writeText so it cannot overwrite a later copy.
-      this.copyShortcutToken += 1;
-      if (this.clearSelectionAfterCopy) {
-        this.clearSelectionAfterCopy = false;
-        this.clearSelection();
-      }
-    }
-  };
+  onCopyEvent = (event: ClipboardEvent) => surfaceOnCopyEvent(this, event);
 
-  private readonly onPaste = (event: ClipboardEvent) => {
-    // Default textarea insertion would bypass bracketed-paste encoding through onInput.
-    event.preventDefault();
-    const data = event.clipboardData?.getData("text/plain") ?? "";
-    if (data.length === 0) return;
-    if (data === this.pasteShortcutGesture?.readText) {
-      // The shortcut's clipboard read already sent this paste.
-      this.pasteShortcutGesture = null;
-      return;
-    }
-    // The native paste won the race with actual text; a pending clipboard read
-    // must not double. An empty native paste leaves the read as the only path.
-    this.pasteShortcutToken += 1;
-    this.options.onData(this.core.encodePaste(data));
-  };
+  onPaste = (event: ClipboardEvent) => surfaceOnPaste(this, event);
 
-  private readonly onCompositionStart = () => {
-    this.clearPrimedCopy();
-    this.clearCompositionInputSuppression();
-    this.composing = true;
-  };
+  onCompositionStart = () => surfaceOnCompositionStart(this);
 
-  private readonly onCompositionEnd = (event: CompositionEvent) => {
-    this.composing = false;
-    const data = this.input.value || event.data;
-    if (data.length > 0) this.options.onData(data);
-    this.input.value = "";
-    this.compositionInputToSuppress = data;
-    this.compositionSuppressionTimer = window.setTimeout(() => {
-      this.compositionInputToSuppress = null;
-      this.compositionSuppressionTimer = null;
-    }, 100);
-  };
+  onCompositionEnd = (event: CompositionEvent) => surfaceOnCompositionEnd(this, event);
 
-  private readonly onInput = (event: Event) => {
-    const inputEvent = event as InputEvent;
-    if (this.composing || inputEvent.isComposing) return;
-    const data = this.input.value || inputEvent.data || "";
-    if (data === this.compositionInputToSuppress && isTerminalCompositionCommitInput(inputEvent)) {
-      this.clearCompositionInputSuppression();
-      this.input.value = "";
-      return;
-    }
-    this.clearCompositionInputSuppression();
-    if (data.length > 0) this.options.onData(data);
-    this.input.value = "";
-  };
+  onInput = (event: Event) => surfaceOnInput(this, event);
 
-  private clearCompositionInputSuppression(): void {
-    if (this.compositionSuppressionTimer !== null) {
-      window.clearTimeout(this.compositionSuppressionTimer);
-      this.compositionSuppressionTimer = null;
-    }
-    this.compositionInputToSuppress = null;
+  clearCompositionInputSuppression(): void {
+    surfaceClearCompositionInputSuppression(this);
   }
 
-  private readonly onPointerDown = (event: PointerEvent) => {
-    if (event.pointerType === "touch") {
-      event.preventDefault();
-      if (!event.isPrimary || this.touchScroll !== null) return;
-      this.touchScroll = {
-        pointerId: event.pointerId,
-        startX: event.clientX,
-        startY: event.clientY,
-        lastY: event.clientY,
-        remainder: 0,
-        moved: false,
-      };
-      this.clearHoveredLink();
-      this.canvas.setPointerCapture(event.pointerId);
-      return;
-    }
-    this.focus();
-    if (shouldReportTerminalMouse(this.core.isMouseTracking(), event)) {
-      const button = ghosttyMouseButton(event.button);
-      if (button === null) return;
-      event.preventDefault();
-      event.stopPropagation();
-      this.clearHoveredLink("default");
-      this.mouseReportingPointerId = event.pointerId;
-      this.mouseReportingButton = button;
-      this.sendMouse("press", button, event);
-      this.canvas.setPointerCapture(event.pointerId);
-      return;
-    }
-    if (event.button === 1 && isMiddleClickPastePlatform()) {
-      // Keep pointerdown uncancelled so compatibility mousedown activates the split pane.
-      this.pasteTerminalSelection();
-      return;
-    }
-    if (event.button !== 0) return;
-    const clickCount = this.recordSelectionClick(event);
-    const link = this.linkAt(event.clientX, event.clientY);
-    if (link && !event.shiftKey && clickCount === 1) {
-      event.preventDefault();
-      event.stopPropagation();
-      this.linkActivationPointerId = event.pointerId;
-      this.linkActivationLink = link;
-      this.linkActivationOrigin = {
-        x: event.clientX,
-        y: event.clientY,
-        clickCount,
-      };
-      this.canvas.setPointerCapture(event.pointerId);
-      return;
-    }
-    this.clearHoveredLink();
-    this.beginSelection(event, clickCount);
-    this.canvas.setPointerCapture(event.pointerId);
-  };
+  onPointerDown = (event: PointerEvent) => surfaceOnPointerDown(this, event);
 
-  private recordSelectionClick(
-    event: Pick<PointerEvent, "clientX" | "clientY" | "timeStamp">,
-  ): number {
-    this.selectionClickSequence = advanceTerminalSelectionClickSequence(
-      this.selectionClickSequence,
-      event,
-    );
-    return this.selectionClickSequence.count;
+  recordSelectionClick(event: Pick<PointerEvent, "clientX" | "clientY" | "timeStamp">): number {
+    return surfaceRecordSelectionClick(this, event);
   }
 
-  private beginSelection(event: { clientX: number; clientY: number }, clickCount: number): void {
-    const cell = this.cellAt(event.clientX, event.clientY);
-    this.selectionMoved = false;
-    this.selectionMode = clickCount >= 3 ? "line" : clickCount === 2 ? "word" : "cell";
-    const range =
-      this.selectionMode === "line"
-        ? this.core.selectLine(cell.x, cell.y)
-        : this.selectionMode === "word"
-          ? this.core.selectWord(cell.x, cell.y)
-          : null;
-    if (range) {
-      this.selectionBase = range.screen;
-      this.selectionEnd = range.viewport.end;
-      this.selectionAnchorScreen = range.screen.start;
-      this.options.onSelectionChange();
-    } else {
-      this.selectionMode = "cell";
-      this.selectionBase = null;
-      this.selectionEnd = cell;
-      const screen = this.core.viewportPointToScreen(cell.x, cell.y);
-      this.selectionAnchorScreen = screen;
-      if (screen) {
-        this.core.setSelection({ ...screen, tag: 2 }, { ...screen, tag: 2 });
-      } else {
-        this.core.setSelection(cell, cell);
-      }
-    }
-    this.forceFullRender = true;
-    this.requestRender();
+  beginSelection(event: { clientX: number; clientY: number }, clickCount: number): void {
+    surfaceBeginSelection(this, event, clickCount);
   }
 
-  private readonly onPointerMove = (event: PointerEvent) => {
-    if (event.pointerType === "touch") {
-      const touch = this.touchScroll;
-      if (touch?.pointerId !== event.pointerId) return;
-      event.preventDefault();
-      touch.moved ||=
-        Math.hypot(event.clientX - touch.startX, event.clientY - touch.startY) >
-        TERMINAL_LINK_DRAG_THRESHOLD_PX;
-      if (!touch.moved) return;
-      const delta = terminalWheelDeltaRows(
-        { deltaY: touch.lastY - event.clientY, deltaMode: 0 },
-        this.metrics.height,
-        this.rows,
-        touch.remainder,
-      );
-      touch.lastY = event.clientY;
-      touch.remainder = delta.remainder;
-      this.scrollRows(delta.rows, event);
-      return;
-    }
-    if (this.linkActivationPointerId === event.pointerId) {
-      const origin = this.linkActivationOrigin;
-      if (
-        origin === null ||
-        Math.hypot(event.clientX - origin.x, event.clientY - origin.y) <=
-          TERMINAL_LINK_DRAG_THRESHOLD_PX
-      ) {
-        return;
-      }
-      this.linkActivationPointerId = null;
-      this.linkActivationLink = null;
-      this.linkActivationOrigin = null;
-      this.clearHoveredLink();
-      this.beginSelection(
-        {
-          clientX: origin.x,
-          clientY: origin.y,
-        },
-        origin.clickCount,
-      );
-    }
-    // Only DEC 1003 reports hover motion without a captured pressed button.
-    const anyEventTracking = this.synchronizeMouseTrackingState();
-    if (
-      this.mouseReportingPointerId === event.pointerId ||
-      shouldReportTerminalMouse(anyEventTracking, event)
-    ) {
-      event.preventDefault();
-      this.hoverPointer = { x: event.clientX, y: event.clientY };
-      this.setHoveredLink(null);
-      this.canvas.style.cursor = "default";
-      this.sendMouse("motion", this.buttonFromButtons(event.buttons), event);
-      return;
-    }
-    this.lastMouseMotionData = "";
-    if (!this.selectionAnchorScreen || !this.canvas.hasPointerCapture(event.pointerId)) {
-      this.updateHoverCursor(event);
-      return;
-    }
-    this.clearHoveredLink();
-    this.selectionPointer = { x: event.clientX, y: event.clientY };
-    const bounds = this.canvas.getBoundingClientRect();
-    const top = Math.max(bounds.top, 0) + CONTENT_PADDING;
-    const bottom = Math.min(bounds.bottom, window.innerHeight) - CONTENT_PADDING;
-    this.setSelectionAutoscroll(terminalSelectionAutoscrollRows(event.clientY, top, bottom));
-    const cell = this.cellAt(event.clientX, event.clientY);
-    if (cell.x === this.selectionEnd?.x && cell.y === this.selectionEnd.y) return;
-    this.extendSelectionTo(event.clientX, event.clientY);
-  };
+  onPointerMove = (event: PointerEvent) => surfaceOnPointerMove(this, event);
 
-  private extendSelectionTo(clientX: number, clientY: number): void {
-    if (this.selectionAnchorScreen === null) return;
-    // Ghostty moves its selection with output; keep the drag on those rows too.
-    const anchorScreen = this.core.selectionRange()?.start;
-    if (!anchorScreen) return;
-    const rowDelta = anchorScreen.y - this.selectionAnchorScreen.y;
-    if (this.selectionBase && rowDelta !== 0) {
-      const { start, end } = this.selectionBase;
-      this.selectionBase = {
-        start: { x: start.x, y: start.y + rowDelta },
-        end: { x: end.x, y: end.y + rowDelta },
-      };
-    }
-    const cell = this.cellAt(clientX, clientY);
-    this.selectionMoved = true;
-    this.selectionEnd = cell;
-    const range =
-      this.selectionMode === "line"
-        ? this.core.selectLine(cell.x, cell.y)
-        : this.selectionMode === "word"
-          ? this.core.selectWord(cell.x, cell.y)
-          : null;
-    const cellScreen = this.core.viewportPointToScreen(cell.x, cell.y);
-    if (cellScreen === null) return;
-    const base = this.selectionBase;
-    const beforeBase =
-      base !== null &&
-      (cellScreen.y < base.start.y ||
-        (cellScreen.y === base.start.y && cellScreen.x < base.start.x));
-    const anchor = base === null ? anchorScreen : beforeBase ? base.end : base.start;
-    const end = range === null ? cellScreen : beforeBase ? range.screen.start : range.screen.end;
-    this.selectionAnchorScreen = anchor;
-    this.core.setSelection({ ...anchor, tag: 2 }, { ...end, tag: 2 });
-    this.options.onSelectionChange();
-    this.forceFullRender = true;
-    this.requestRender();
+  extendSelectionTo(clientX: number, clientY: number): void {
+    surfaceExtendSelectionTo(this, clientX, clientY);
   }
 
-  private setSelectionAutoscroll(delta: number): void {
-    this.selectionScrollDelta = delta;
-    if (delta === 0) {
-      if (this.selectionScrollTimer !== null) {
-        window.clearInterval(this.selectionScrollTimer);
-        this.selectionScrollTimer = null;
-      }
-      return;
-    }
-    if (this.selectionScrollTimer !== null) return;
-    this.selectionScrollTimer = window.setInterval(() => {
-      if (this.disposed || this.selectionScrollDelta === 0) return;
-      this.scrollViewport(this.selectionScrollDelta);
-      const pointer = this.selectionPointer;
-      if (pointer) this.extendSelectionTo(pointer.x, pointer.y);
-    }, 80);
+  setSelectionAutoscroll(delta: number): void {
+    surfaceSetSelectionAutoscroll(this, delta);
   }
 
-  private updateHoverCursor(event: PointerEvent): void {
-    this.hoverPointer = { x: event.clientX, y: event.clientY };
-    this.refreshHoveredLink();
+  updateHoverCursor(event: PointerEvent): void {
+    surfaceUpdateHoverCursor(this, event);
   }
 
-  private readonly onPointerLeave = () => {
-    this.lastMouseMotionData = "";
-    this.clearHoveredLink();
-  };
+  onPointerLeave = () => surfaceOnPointerLeave(this);
 
-  private clearHoveredLink(cursor = ""): void {
-    this.hoverPointer = null;
-    this.setHoveredLink(null);
-    this.canvas.style.cursor = cursor;
+  clearHoveredLink(cursor = ""): void {
+    surfaceClearHoveredLink(this, cursor);
   }
 
-  private refreshHoveredLink(): void {
-    const pointer = this.hoverPointer;
-    const link = pointer ? this.linkAt(pointer.x, pointer.y) : null;
-    this.setHoveredLink(link);
+  refreshHoveredLink(): void {
+    surfaceRefreshHoveredLink(this);
   }
 
-  private setHoveredLink(link: TerminalLinkWithRange | null): void {
-    const previous = this.hoveredLink;
-    const unchanged =
-      previous?.text === link?.text &&
-      previous?.range.start.x === link?.range.start.x &&
-      previous?.range.start.y === link?.range.start.y &&
-      previous?.range.end.x === link?.range.end.x &&
-      previous?.range.end.y === link?.range.end.y;
-    this.canvas.style.cursor = link ? "pointer" : "";
-    if (unchanged) return;
-    this.hoveredLink = link;
-    this.forceFullRender = true;
-    this.requestRender();
+  setHoveredLink(link: TerminalLinkWithRange | null): void {
+    surfaceSetHoveredLink(this, link);
   }
 
-  private readonly onPointerUp = (event: PointerEvent) => {
-    if (event.pointerType === "touch") {
-      const touch = this.touchScroll;
-      if (touch?.pointerId !== event.pointerId) return;
-      this.touchScroll = null;
-      event.preventDefault();
-      if (this.canvas.hasPointerCapture(event.pointerId)) {
-        this.canvas.releasePointerCapture(event.pointerId);
-      }
-      if (event.type === "pointercancel" || touch.moved) return;
-      this.focus();
-      if (shouldReportTerminalMouse(this.core.isMouseTracking(), event)) {
-        this.sendMouse("press", ghosttyMouseButton(0), event);
-        this.sendMouse("release", ghosttyMouseButton(0), event);
-      } else {
-        const link = this.linkAt(event.clientX, event.clientY);
-        if (link) this.options.onLinkActivate(link.text, event);
-        else this.clearSelection();
-      }
-      return;
-    }
-    this.setSelectionAutoscroll(0);
-    if (this.linkActivationPointerId === event.pointerId) {
-      event.preventDefault();
-      event.stopPropagation();
-      const link = this.linkActivationLink;
-      this.linkActivationPointerId = null;
-      this.linkActivationLink = null;
-      this.linkActivationOrigin = null;
-      if (this.canvas.hasPointerCapture(event.pointerId)) {
-        this.canvas.releasePointerCapture(event.pointerId);
-      }
-      if (event.type !== "pointercancel") {
-        if (link && isSameTerminalLink(link, this.linkAt(event.clientX, event.clientY))) {
-          this.options.onLinkActivate(link.text, event);
-        }
-      }
-      return;
-    }
-    if (this.mouseReportingPointerId === event.pointerId) {
-      event.preventDefault();
-      event.stopPropagation();
-      this.sendMouse("release", this.mouseReportingButton, event);
-      this.mouseReportingPointerId = null;
-      this.mouseReportingButton = null;
-      if (this.canvas.hasPointerCapture(event.pointerId)) {
-        this.canvas.releasePointerCapture(event.pointerId);
-      }
-      if (event.type === "pointercancel") {
-        this.clearHoveredLink();
-      } else {
-        this.hoverPointer = { x: event.clientX, y: event.clientY };
-        this.refreshHoveredLink();
-      }
-      return;
-    }
-    if (this.canvas.hasPointerCapture(event.pointerId)) {
-      this.canvas.releasePointerCapture(event.pointerId);
-    }
-    if (event.button === 1 && isMiddleClickPastePlatform()) {
-      event.preventDefault();
-      return;
-    }
-    if (event.button !== 0) return;
-    if (!this.selectionMoved && this.selectionMode === "cell") {
-      this.clearSelection();
-    }
-    this.options.onSelectionChange();
-  };
+  onPointerUp = (event: PointerEvent) => surfaceOnPointerUp(this, event);
 
-  private readonly onWheel = (event: WheelEvent) => {
-    if (event.deltaY === 0) return;
-    event.preventDefault();
-    const delta = terminalWheelDeltaRows(
-      event,
-      this.metrics.height,
-      this.rows,
-      this.wheelRemainder,
-    );
-    this.wheelRemainder = delta.remainder;
-    this.scrollRows(delta.rows, event);
-  };
+  onWheel = (event: WheelEvent) => surfaceOnWheel(this, event);
 
-  private scrollRows(rows: number, event: MouseEvent): void {
-    if (rows === 0) return;
-    const magnitude = Math.abs(rows);
-    if (shouldReportTerminalMouse(this.core.isMouseTracking(), event)) {
-      const button = rows < 0 ? 4 : 5;
-      for (let index = 0; index < magnitude; index += 1) {
-        this.sendMouse("press", button, event);
-      }
-      return;
-    }
-    if (this.core.isAlternateScreen()) {
-      // Alternate screens have no scrollback; send arrow keys like xterm.
-      this.options.onData(terminalWheelArrowData(rows, this.core.isApplicationCursorKeys()));
-      return;
-    }
-    this.scrollViewport(rows);
+  scrollRows(rows: number, event: MouseEvent): void {
+    surfaceScrollRows(this, rows, event);
   }
 
-  private readonly onMouseDown = (event: MouseEvent) => {
-    if (event.button === 0 || (event.button === 1 && isMiddleClickPastePlatform())) {
-      event.preventDefault();
-    }
-    this.focus();
-  };
+  onMouseDown = (event: MouseEvent) => surfaceOnMouseDown(this, event);
 
   // Chromium middle mouseup pastes PRIMARY into the focused textarea; prevent a second paste.
-  private readonly onMouseUp = (event: MouseEvent) => {
-    if (event.button === 1 && isMiddleClickPastePlatform()) event.preventDefault();
-  };
+  onMouseUp = (event: MouseEvent) => surfaceOnMouseUp(this, event);
 
-  private readonly onContextMenu = (event: MouseEvent) => {
-    if (shouldReportTerminalMouse(this.core.isMouseTracking(), event)) {
-      event.preventDefault();
-      return;
-    }
-    this.options.onContextMenu?.(event);
-  };
+  onContextMenu = (event: MouseEvent) => surfaceOnContextMenu(this, event);
 
-  private readonly onScrollbarPointerDown = (event: PointerEvent) => {
-    if (event.button !== 0) return;
-    const state = this.readScrollbarState();
-    if (state === null) return;
-    const bounds = this.scrollbar.getBoundingClientRect();
-    const geometry = terminalScrollbarGeometry(state, bounds.height);
-    if (geometry === null) return;
-    event.preventDefault();
-    event.stopPropagation();
-    this.scrollbarPointerId = event.pointerId;
-    this.scrollbarPointerOffset =
-      event.target === this.scrollbarThumb
-        ? event.clientY - bounds.top - geometry.thumbTop
-        : geometry.thumbHeight / 2;
-    this.scrollbar.setPointerCapture(event.pointerId);
-    this.scrollbarToPointer(event.clientY, bounds);
-  };
+  onScrollbarPointerDown = (event: PointerEvent) => surfaceOnScrollbarPointerDown(this, event);
 
-  private readonly onScrollbarPointerMove = (event: PointerEvent) => {
-    if (event.pointerId !== this.scrollbarPointerId || this.scrollbarState === null) return;
-    event.preventDefault();
-    this.scrollbarToPointer(event.clientY, this.scrollbar.getBoundingClientRect());
-  };
+  onScrollbarPointerMove = (event: PointerEvent) => surfaceOnScrollbarPointerMove(this, event);
 
-  private readonly onScrollbarPointerUp = (event: PointerEvent) => {
-    if (event.pointerId !== this.scrollbarPointerId) return;
-    event.preventDefault();
-    this.scrollbarPointerId = null;
-    if (this.scrollbar.hasPointerCapture(event.pointerId)) {
-      this.scrollbar.releasePointerCapture(event.pointerId);
-    }
-  };
+  onScrollbarPointerUp = (event: PointerEvent) => surfaceOnScrollbarPointerUp(this, event);
 
-  private readonly onScrollbarKeyDown = (event: KeyboardEvent) => {
-    const state = this.readScrollbarState();
-    if (state === null) return;
-    let delta = 0;
-    switch (event.key) {
-      case "ArrowUp":
-        delta = -1;
-        break;
-      case "ArrowDown":
-        delta = 1;
-        break;
-      case "PageUp":
-        delta = -Math.max(1, state.len);
-        break;
-      case "PageDown":
-        delta = Math.max(1, state.len);
-        break;
-      case "Home":
-        delta = -state.offset;
-        break;
-      case "End":
-        delta = state.total - state.len - state.offset;
-        break;
-      default:
-        return;
-    }
-    event.preventDefault();
-    event.stopPropagation();
-    this.scrollViewport(delta);
-  };
+  onScrollbarKeyDown = (event: KeyboardEvent) => surfaceOnScrollbarKeyDown(this, event);
 
-  private installEvents(): void {
-    this.input.addEventListener("keydown", this.onKeyDown);
-    this.input.addEventListener("keyup", this.onKeyUp);
-    // App shortcuts stop propagation at window, so observe the same capture target.
-    window.addEventListener("keyup", this.onWindowKeyUp, { capture: true });
-    window.addEventListener("keydown", this.onWindowKeyDown, { capture: true });
-    this.input.addEventListener("focus", this.onFocus);
-    this.input.addEventListener("blur", this.onBlur);
-    this.input.addEventListener("input", this.onInput);
-    this.input.addEventListener("paste", this.onPaste);
-    this.input.addEventListener("copy", this.onCopyEvent);
-    this.input.addEventListener("compositionstart", this.onCompositionStart);
-    this.input.addEventListener("compositionend", this.onCompositionEnd);
-    this.canvas.addEventListener("pointerdown", this.onPointerDown);
-    this.canvas.addEventListener("pointermove", this.onPointerMove);
-    this.canvas.addEventListener("pointerleave", this.onPointerLeave);
-    this.canvas.addEventListener("pointerup", this.onPointerUp);
-    this.canvas.addEventListener("pointercancel", this.onPointerUp);
-    this.canvas.addEventListener("wheel", this.onWheel, { passive: false });
-    this.canvas.addEventListener("mousedown", this.onMouseDown);
-    this.canvas.addEventListener("mouseup", this.onMouseUp);
-    this.canvas.addEventListener("contextmenu", this.onContextMenu);
-    this.scrollbar.addEventListener("pointerdown", this.onScrollbarPointerDown);
-    this.scrollbar.addEventListener("pointermove", this.onScrollbarPointerMove);
-    this.scrollbar.addEventListener("pointerup", this.onScrollbarPointerUp);
-    this.scrollbar.addEventListener("pointercancel", this.onScrollbarPointerUp);
-    this.scrollbar.addEventListener("keydown", this.onScrollbarKeyDown);
-    window.addEventListener("pointerup", this.onWindowPointerRelease);
-    window.addEventListener("pointercancel", this.onWindowPointerRelease);
+  installEvents(): void {
+    surfaceInstallEvents(this);
   }
 
-  private removeEvents(): void {
-    this.input.removeEventListener("keydown", this.onKeyDown);
-    this.input.removeEventListener("keyup", this.onKeyUp);
-    window.removeEventListener("keyup", this.onWindowKeyUp, { capture: true });
-    window.removeEventListener("keydown", this.onWindowKeyDown, { capture: true });
-    this.input.removeEventListener("focus", this.onFocus);
-    this.input.removeEventListener("blur", this.onBlur);
-    this.input.removeEventListener("input", this.onInput);
-    this.input.removeEventListener("paste", this.onPaste);
-    this.input.removeEventListener("copy", this.onCopyEvent);
-    this.input.removeEventListener("compositionstart", this.onCompositionStart);
-    this.input.removeEventListener("compositionend", this.onCompositionEnd);
-    this.canvas.removeEventListener("pointerdown", this.onPointerDown);
-    this.canvas.removeEventListener("pointermove", this.onPointerMove);
-    this.canvas.removeEventListener("pointerleave", this.onPointerLeave);
-    this.canvas.removeEventListener("pointerup", this.onPointerUp);
-    this.canvas.removeEventListener("pointercancel", this.onPointerUp);
-    this.canvas.removeEventListener("wheel", this.onWheel);
-    this.canvas.removeEventListener("mousedown", this.onMouseDown);
-    this.canvas.removeEventListener("mouseup", this.onMouseUp);
-    this.canvas.removeEventListener("contextmenu", this.onContextMenu);
-    this.scrollbar.removeEventListener("pointerdown", this.onScrollbarPointerDown);
-    this.scrollbar.removeEventListener("pointermove", this.onScrollbarPointerMove);
-    this.scrollbar.removeEventListener("pointerup", this.onScrollbarPointerUp);
-    this.scrollbar.removeEventListener("pointercancel", this.onScrollbarPointerUp);
-    this.scrollbar.removeEventListener("keydown", this.onScrollbarKeyDown);
-    window.removeEventListener("pointerup", this.onWindowPointerRelease);
-    window.removeEventListener("pointercancel", this.onWindowPointerRelease);
+  removeEvents(): void {
+    surfaceRemoveEvents(this);
   }
 
-  private scrollViewport(deltaRows: number): void {
-    let delta = Math.trunc(deltaRows);
-    const state = this.readScrollbarState();
-    if (state !== null) {
-      const maxOffset = Math.max(0, state.total - state.len);
-      const offset = Math.max(0, Math.min(state.offset + delta, maxOffset));
-      delta = offset - state.offset;
-      this.scrollbarState = { ...state, offset };
-    }
-    if (delta === 0) return;
-    this.core.scroll(delta);
-    this.forceFullRender = true;
-    this.scrollbarDirty = true;
-    this.requestRender();
+  scrollViewport(deltaRows: number): void {
+    surfaceScrollViewport(this, deltaRows);
   }
 
-  private scrollbarToPointer(clientY: number, bounds: DOMRect): void {
-    const state = this.scrollbarState;
-    if (state === null) return;
-    const offset = terminalScrollbarOffsetAtPointer(
-      state,
-      bounds.height,
-      clientY - bounds.top,
-      this.scrollbarPointerOffset,
-    );
-    this.scrollViewport(offset - state.offset);
+  scrollbarToPointer(clientY: number, bounds: DOMRect): void {
+    surfaceScrollbarToPointer(this, clientY, bounds);
   }
 
-  private updateScrollbar(): void {
-    const state = this.readScrollbarState();
-    const geometry =
-      state === null
-        ? null
-        : terminalScrollbarGeometry(
-            state,
-            Math.max(0, this.mount.clientHeight - CONTENT_PADDING * 2),
-          );
-    this.scrollbar.hidden = geometry === null;
-    if (state === null || geometry === null) return;
-    this.scrollbar.setAttribute("aria-valuemin", "0");
-    this.scrollbar.setAttribute("aria-valuemax", String(geometry.maxOffset));
-    this.scrollbar.setAttribute(
-      "aria-valuenow",
-      String(Math.max(0, Math.min(state.offset, geometry.maxOffset))),
-    );
-    this.scrollbarThumb.style.height = `${geometry.thumbHeight}px`;
-    this.scrollbarThumb.style.transform = `translateY(${geometry.thumbTop}px)`;
+  updateScrollbar(): void {
+    surfaceUpdateScrollbar(this);
   }
 
-  private readScrollbarState(): GhosttyScrollbar | null {
-    const state = this.core.scrollbarState();
-    this.scrollbarState = state;
-    return state;
+  readScrollbarState(): GhosttyScrollbar | null {
+    return surfaceReadScrollbarState(this);
   }
 
-  private requestRender(): void {
-    if (this.disposed || !this.visible || !this.hasSize) return;
-    if (this.deferSynchronizedRender() || this.frame !== 0) return;
-    this.frame = window.requestAnimationFrame(() => {
-      this.frame = 0;
-      this.renderFrame();
-    });
+  requestRender(): void {
+    surfaceRequestRender(this);
   }
 
-  private cancelRender(): void {
-    this.cancelSynchronizedRenderTimer();
-    if (this.frame !== 0) {
-      window.cancelAnimationFrame(this.frame);
-      this.frame = 0;
-    }
-    if (this.cursorTimer !== null) {
-      window.clearTimeout(this.cursorTimer);
-      this.cursorTimer = null;
-    }
+  cancelRender(): void {
+    surfaceCancelRender(this);
   }
 
-  private cancelSynchronizedRenderTimer(): void {
-    if (this.synchronizedRenderTimer === null) return;
-    window.clearTimeout(this.synchronizedRenderTimer);
-    this.synchronizedRenderTimer = null;
+  cancelSynchronizedRenderTimer(): void {
+    surfaceCancelSynchronizedRenderTimer(this);
   }
 
-  private deferSynchronizedRender(): boolean {
-    if (!this.core.isSynchronizedOutput()) {
-      this.cancelSynchronizedRenderTimer();
-      return false;
-    }
-    // A frame queued before the opening marker would now consume partial rows.
-    if (this.frame !== 0) {
-      window.cancelAnimationFrame(this.frame);
-      this.frame = 0;
-    }
-    if (this.cursorTimer !== null) {
-      window.clearTimeout(this.cursorTimer);
-      this.cursorTimer = null;
-    }
-    if (this.synchronizedRenderTimer === null) {
-      this.synchronizedRenderTimer = window.setTimeout(() => {
-        this.synchronizedRenderTimer = null;
-        this.core.endSynchronizedOutput();
-        this.renderFrame();
-      }, SYNCHRONIZED_OUTPUT_RENDER_TIMEOUT_MS);
-    }
-    return true;
+  deferSynchronizedRender(): boolean {
+    return surfaceDeferSynchronizedRender(this);
   }
 
-  private renderFrame(): void {
-    if (this.disposed || !this.visible) return;
-    if (this.frame !== 0) {
-      window.cancelAnimationFrame(this.frame);
-      this.frame = 0;
-    }
-    if (this.mount.clientWidth === 0 || this.mount.clientHeight === 0) {
-      this.hasSize = false;
-      this.forceFullRender = true;
-      this.cancelRender();
-      return;
-    }
-    if (this.deferSynchronizedRender()) return;
-    const canvasConfiguration = this.pendingCanvasConfiguration;
-    if (canvasConfiguration !== null) {
-      this.pendingCanvasConfiguration = null;
-      this.canvas.width = canvasConfiguration.width;
-      this.canvas.height = canvasConfiguration.height;
-      this.context.setTransform(canvasConfiguration.ratio, 0, 0, canvasConfiguration.ratio, 0, 0);
-      this.canvasConfigured = true;
-      this.canvasDevicePixelRatio = canvasConfiguration.ratio;
-    }
-    this.snapshot = this.core.snapshot();
-    if (!this.blinkEnabled()) this.cursorOn = true;
-    // Move the origin only on full repaint; dirty-row updates cannot mix origins.
-    const scrollState = this.readScrollbarState();
-    const anchorBottom = scrollState !== null && scrollState.total > scrollState.len;
-    const nextOriginY = terminalContentOriginY(
-      this.mountHeight,
-      CONTENT_PADDING,
-      this.rows,
-      this.metrics.height,
-      anchorBottom,
-    );
-    if (nextOriginY !== this.originY) {
-      this.originY = nextOriginY;
-      this.forceFullRender = true;
-    }
-    this.refreshHoveredLink();
-    renderGhosttySnapshot({
-      context: this.context,
-      snapshot: this.snapshot,
-      metrics: this.metrics,
-      fontSize: this.fontSize,
-      fontFamily: this.fontFamily,
-      padding: CONTENT_PADDING,
-      originY: this.originY,
-      forceFull: this.forceFullRender,
-      cursorOn: this.cursorOn,
-      previousCursorY: this.renderedCursorY,
-      focused: this.focused,
-      hoveredLinkRange: this.hoveredLink?.range ?? null,
-      ...(this.theme.selectionBackground !== undefined
-        ? { selectionBackground: this.theme.selectionBackground }
-        : {}),
-    });
-    this.positionInput();
-    this.renderedCursorY =
-      this.cursorOn && this.snapshot.cursorVisible && this.snapshot.cursorY >= 0
-        ? this.snapshot.cursorY
-        : null;
-    if (this.scrollbarDirty) {
-      this.scrollbarDirty = false;
-      this.updateScrollbar();
-    }
-    this.forceFullRender = false;
-    this.scheduleCursorBlink();
+  renderFrame(): void {
+    surfaceRenderFrame(this);
   }
 
-  private scheduleCursorBlink(): void {
-    if (this.cursorTimer !== null) window.clearTimeout(this.cursorTimer);
-    this.cursorTimer = null;
-    if (!this.blinkEnabled()) return;
-    this.cursorTimer = window.setTimeout(() => {
-      this.cursorTimer = null;
-      this.cursorOn = !this.cursorOn;
-      this.requestRender();
-    }, CURSOR_BLINK_INTERVAL_MS);
+  scheduleCursorBlink(): void {
+    surfaceScheduleCursorBlink(this);
   }
 
-  private blinkEnabled(): boolean {
-    const snapshot = this.snapshot;
-    if (!snapshot || !this.visible || !this.hasSize) return false;
-    return shouldBlinkTerminalCursor({
-      focused: this.focused,
-      cursorBlinking: snapshot.cursorBlinking,
-      cursorVisible: snapshot.cursorVisible,
-      reducedMotion: this.reducedMotionMedia?.matches ?? false,
-    });
+  blinkEnabled(): boolean {
+    return surfaceBlinkEnabled(this);
   }
 
-  private positionInput(): void {
-    const snapshot = this.snapshot;
-    if (!snapshot || !snapshot.cursorVisible || snapshot.cursorX < 0 || snapshot.cursorY < 0) {
-      return;
-    }
-    const left = CONTENT_PADDING + snapshot.cursorX * this.metrics.width;
-    const top = this.originY + snapshot.cursorY * this.metrics.height;
-    if (left === this.inputLeft && top === this.inputTop) return;
-    this.inputLeft = left;
-    this.inputTop = top;
-    this.input.style.left = `${left}px`;
-    this.input.style.top = `${top}px`;
-    this.input.style.height = `${this.metrics.height}px`;
+  positionInput(): void {
+    surfacePositionInput(this);
   }
 
-  private cellAt(clientX: number, clientY: number): { x: number; y: number } {
-    const bounds = this.canvas.getBoundingClientRect();
-    return {
-      x: Math.max(
-        0,
-        Math.min(
-          this.cols - 1,
-          Math.floor((clientX - bounds.left - CONTENT_PADDING) / this.metrics.width),
-        ),
-      ),
-      y: Math.max(
-        0,
-        Math.min(
-          this.rows - 1,
-          Math.floor((clientY - bounds.top - this.originY) / this.metrics.height),
-        ),
-      ),
-    };
+  cellAt(clientX: number, clientY: number): { x: number; y: number } {
+    return surfaceCellAt(this, clientX, clientY);
   }
 
-  private linkAt(clientX: number, clientY: number): TerminalLinkWithRange | null {
-    const link = this.findLinkAt(clientX, clientY);
-    return link && this.options.canActivateLink?.(link.text) !== false ? link : null;
+  linkAt(clientX: number, clientY: number): TerminalLinkWithRange | null {
+    return surfaceLinkAt(this, clientX, clientY);
   }
 
-  private findLinkAt(clientX: number, clientY: number): TerminalLinkWithRange | null {
-    if (!this.snapshot) return null;
-    const cell = terminalGridCellAt({
-      bounds: this.canvas.getBoundingClientRect(),
-      clientX,
-      clientY,
-      cols: this.cols,
-      rows: this.rows,
-      metrics: this.metrics,
-      padding: CONTENT_PADDING,
-      originY: this.originY,
-    });
-    if (!cell) return null;
-    const explicitHyperlink = this.core.hyperlinkAt(cell.x, cell.y);
-    if (explicitHyperlink) {
-      const start = { ...cell };
-      const end = { ...cell };
-      while (true) {
-        const previous =
-          start.x > 0
-            ? { x: start.x - 1, y: start.y }
-            : start.y > 0 && this.snapshot.rowData[start.y]?.isWrapContinuation
-              ? { x: this.cols - 1, y: start.y - 1 }
-              : null;
-        if (!previous || this.core.hyperlinkAt(previous.x, previous.y) !== explicitHyperlink) break;
-        start.x = previous.x;
-        start.y = previous.y;
-      }
-      while (true) {
-        const next =
-          end.x + 1 < this.cols
-            ? { x: end.x + 1, y: end.y }
-            : end.y + 1 < this.rows && this.snapshot.rowData[end.y]?.wrapsToNext
-              ? { x: 0, y: end.y + 1 }
-              : null;
-        if (!next || this.core.hyperlinkAt(next.x, next.y) !== explicitHyperlink) break;
-        end.x = next.x;
-        end.y = next.y;
-      }
-      return {
-        text: explicitHyperlink,
-        range: { start, end },
-      };
-    }
-    return terminalLinkAtPositionWithRange(this.snapshot.rowData, cell.y, cell.x);
+  findLinkAt(clientX: number, clientY: number): TerminalLinkWithRange | null {
+    return surfaceFindLinkAt(this, clientX, clientY);
   }
 
-  private sendMouse(action: TerminalMouseAction, button: number | null, event: MouseEvent): void {
-    const bounds = this.canvas.getBoundingClientRect();
-    const data = this.core.encodeMouse({
-      action,
-      button,
-      mods:
-        (event.shiftKey ? 1 : 0) |
-        (event.ctrlKey ? 1 << 1 : 0) |
-        (event.altKey ? 1 << 2 : 0) |
-        (event.metaKey ? 1 << 3 : 0),
-      x: Math.max(0, event.clientX - bounds.left),
-      y: Math.max(0, event.clientY - bounds.top),
-      screenWidth: bounds.width,
-      screenHeight: bounds.height,
-      cellWidth: this.metrics.width,
-      cellHeight: this.metrics.height,
-      paddingLeft: CONTENT_PADDING,
-      paddingRight: CONTENT_PADDING,
-      paddingTop: this.originY,
-      paddingBottom: Math.max(0, bounds.height - this.originY - this.rows * this.metrics.height),
-      anyButtonPressed: event.buttons !== 0,
-    });
-    const resolution = resolveTerminalMouseData(action, data, this.lastMouseMotionData);
-    this.lastMouseMotionData = resolution.nextMotionData;
-    if (resolution.send) this.options.onData(data);
+  sendMouse(action: TerminalMouseAction, button: number | null, event: MouseEvent): void {
+    surfaceSendMouse(this, action, button, event);
   }
 
-  private synchronizeMouseTrackingState(): boolean {
-    // Output can toggle DEC 1003; track the prior mode so same-cell motion can start a new session.
-    const tracking = this.core.isMouseAnyEventTracking();
-    const state = resolveTerminalMouseTrackingState(
-      this.mouseAnyEventTracking,
-      tracking,
-      this.lastMouseMotionData,
-    );
-    this.mouseAnyEventTracking = state.tracking;
-    this.lastMouseMotionData = state.motionData;
-    return tracking;
+  synchronizeMouseTrackingState(): boolean {
+    return surfaceSynchronizeMouseTrackingState(this);
   }
 
-  private buttonFromButtons(buttons: number): number | null {
-    if ((buttons & 1) !== 0) return 1;
-    if ((buttons & 4) !== 0) return 3;
-    if ((buttons & 2) !== 0) return 2;
-    if ((buttons & 8) !== 0) return 4;
-    if ((buttons & 16) !== 0) return 5;
-    return null;
+  buttonFromButtons(buttons: number): number | null {
+    return surfaceButtonFromButtons(this, buttons);
   }
 }
+
+export * from "./surfaceFonts";
+export * from "./surfaceGeometry";
+export * from "./surfaceInput";
 export * from "./surfaceParts";
+export * from "./surfaceKeyboard";
+export * from "./surfacePointer";
+export * from "./surfaceScrollbar";
+export * from "./surfaceRender";
+export * from "./surfaceMouse";
+export * from "./surfaceSelection";
+export * from "./surfaceEvents";

@@ -547,9 +547,6 @@ function awaitConnectionState(
   });
 }
 
-
-
-
 describe("EnvironmentRegistry", () => {
   it.effect("removes all owned SSH state only on explicit removal", () =>
     Effect.gen(function* () {
@@ -583,4 +580,3 @@ describe("EnvironmentRegistry", () => {
     }),
   );
 });
-

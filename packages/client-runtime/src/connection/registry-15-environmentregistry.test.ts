@@ -547,9 +547,6 @@ function awaitConnectionState(
   });
 }
 
-
-
-
 describe("EnvironmentRegistry", () => {
   it.effect("applies overlapping platform snapshots in order", () =>
     Effect.gen(function* () {
@@ -589,4 +586,3 @@ describe("EnvironmentRegistry", () => {
     }),
   );
 });
-

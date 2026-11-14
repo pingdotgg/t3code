@@ -547,9 +547,6 @@ function awaitConnectionState(
   });
 }
 
-
-
-
 describe("EnvironmentRegistry", () => {
   it.effect("retains a healthy runtime when the platform repeats an identical registration", () =>
     Effect.gen(function* () {
@@ -635,4 +632,3 @@ describe("EnvironmentRegistry", () => {
     }),
   );
 });
-

@@ -547,9 +547,6 @@ function awaitConnectionState(
   });
 }
 
-
-
-
 describe("EnvironmentRegistry", () => {
   it.effect("preserves cached data on connection failure and clears it on explicit removal", () =>
     Effect.gen(function* () {
@@ -601,4 +598,3 @@ describe("EnvironmentRegistry", () => {
     }),
   );
 });
-

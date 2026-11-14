@@ -1,0 +1,76 @@
+{
+  "members": {
+    "encodeKey": [535, 584, "method"],
+    "encodePaste": [586, 627, "method"],
+    "encodeMouse": [629, 692, "method"],
+    "setSelection": [694, 719, "method"],
+    "selectAll": [721, 741, "method"],
+    "selectionRange": [743, 760, "method"],
+    "selectWord": [762, 769, "method"],
+    "selectLine": [771, 778, "method"],
+    "hyperlinkAt": [780, 805, "method"],
+    "clearSelection": [807, 810, "method"],
+    "selectionText": [885, 924, "method"],
+    "viewportPointToScreen": [926, 928, "method"],
+    "screenPointToViewport": [930, 932, "method"],
+    "encodeOutput": [988, 1004, "method"],
+    "readRow": [1006, 1141, "method"],
+    "gridRef": [1143, 1162, "method"],
+    "selectAt": [1164, 1208, "method"],
+    "pointFromGridRef": [1210, 1229, "method"],
+    "getU16": [1231, 1238, "method"],
+    "getU32": [1240, 1247, "method"],
+    "getBool": [1249, 1256, "method"],
+    "getColor": [1258, 1267, "method"],
+    "getRowBool": [1269, 1275, "method"],
+    "getCellColor": [1277, 1286, "method"],
+    "readColor": [1288, 1295, "method"],
+    "emptyCell": [1297, 1311, "method"],
+    "assertSuccess": [1313, 1315, "method"],
+    "ensureActive": [1317, 1319, "method"]
+  },
+  "modules": {
+    "coreInput.ts": ["encodeKey", "encodePaste", "encodeMouse"],
+    "coreSelection.ts": [
+      "setSelection",
+      "selectAll",
+      "selectionRange",
+      "selectWord",
+      "selectLine",
+      "hyperlinkAt",
+      "clearSelection",
+      "selectionText",
+      "viewportPointToScreen",
+      "screenPointToViewport",
+      "gridRef",
+      "selectAt",
+      "pointFromGridRef"
+    ],
+    "coreRows.ts": [
+      "encodeOutput",
+      "readRow",
+      "getU16",
+      "getU32",
+      "getBool",
+      "getColor",
+      "getRowBool",
+      "getCellColor",
+      "readColor",
+      "emptyCell",
+      "assertSuccess",
+      "ensureActive"
+    ]
+  },
+  "headers": {
+    "coreInput.ts": [
+      "import type { GhosttyKeyboardLayoutMap, GhosttyMouseInput } from \"./core\";"
+    ],
+    "coreSelection.ts": [
+      "import type { GhosttyPointInput, GhosttySelectionRange } from \"./core\";",
+      "import { coreGetRowBool, coreGetU16, coreGetU32 } from \"./coreRows\";"
+    ],
+    "coreRows.ts": [
+      "import type { GhosttyCell, GhosttyColor, GhosttyRow, GhosttySnapshot } from \"./core\";"
+    ]
+  }
+}

@@ -37,8 +37,6 @@ import { loadCursorSdk } from "./sdk.ts";
 
 const { ConfigurationError } = loadCursorSdk();
 
-
-
 describe("CursorAdapterV2", () => {
   it.effect("projects subagent directory trees Cursor serialized without empty lists", () =>
     Effect.gen(function* () {
@@ -601,4 +599,3 @@ describe("CursorAdapterV2", () => {
     );
   });
 });
-

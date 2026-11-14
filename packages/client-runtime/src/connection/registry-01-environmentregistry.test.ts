@@ -547,9 +547,6 @@ function awaitConnectionState(
   });
 }
 
-
-
-
 describe("EnvironmentRegistry", () => {
   it.effect("replays connected state when arming a desktop commit observer", () =>
     Effect.gen(function* () {
@@ -647,4 +644,3 @@ describe("EnvironmentRegistry", () => {
     }),
   );
 });
-

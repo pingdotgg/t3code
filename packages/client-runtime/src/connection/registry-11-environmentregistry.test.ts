@@ -547,9 +547,6 @@ function awaitConnectionState(
   });
 }
 
-
-
-
 describe("EnvironmentRegistry", () => {
   it.effect("removes all relay-owned data without touching non-cloud connections", () =>
     Effect.gen(function* () {
@@ -616,4 +613,3 @@ describe("EnvironmentRegistry", () => {
     }),
   );
 });
-

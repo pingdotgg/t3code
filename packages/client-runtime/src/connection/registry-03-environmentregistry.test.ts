@@ -547,9 +547,6 @@ function awaitConnectionState(
   });
 }
 
-
-
-
 describe("EnvironmentRegistry", () => {
   it.effect("only a fresh health check for the rejected environment unlocks it", () =>
     Effect.gen(function* () {
@@ -697,4 +694,3 @@ describe("EnvironmentRegistry", () => {
     }),
   );
 });
-

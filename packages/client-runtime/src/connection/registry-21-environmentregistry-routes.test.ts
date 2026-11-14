@@ -1,9 +1,5 @@
 import { EnvironmentId } from "@t3tools/contracts";
-import {
-  describe,
-  expect,
-  it,
-} from "@effect/vitest";
+import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -28,8 +24,20 @@ import {
   type StoredPullRequestRoutingPermission,
   makePullRequestRoutingPermissions,
 } from "./pullRequestRoutingPermissions.ts";
-import { BEARER_CREDENTIAL, BEARER_PROFILE, BEARER_TARGET, RELAY_TARGET, SECOND_RELAY_TARGET, SSH_CONNECTION, SSH_PROFILE } from "./registry-21-environmentregistry-routes.part2.testkit.ts";
-import { hasRoutes, makeHarness, routesOf } from "./registry-21-environmentregistry-routes.part3.testkit.ts";
+import {
+  BEARER_CREDENTIAL,
+  BEARER_PROFILE,
+  BEARER_TARGET,
+  RELAY_TARGET,
+  SECOND_RELAY_TARGET,
+  SSH_CONNECTION,
+  SSH_PROFILE,
+} from "./registry-21-environmentregistry-routes.part2.testkit.ts";
+import {
+  hasRoutes,
+  makeHarness,
+  routesOf,
+} from "./registry-21-environmentregistry-routes.part3.testkit.ts";
 
 function awaitConnectionState(
   registry: EnvironmentRegistry.EnvironmentRegistry["Service"],

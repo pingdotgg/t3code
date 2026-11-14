@@ -547,9 +547,6 @@ function awaitConnectionState(
   });
 }
 
-
-
-
 describe("EnvironmentRegistry", () => {
   it.effect("moves prepared credential observers when re-pairing an unchanged environment", () =>
     Effect.gen(function* () {
@@ -625,4 +622,3 @@ describe("EnvironmentRegistry", () => {
     }),
   );
 });
-

@@ -43,7 +43,12 @@ import * as EnvironmentRegistry from "./registry.ts";
 import * as RpcSession from "../rpc/session.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
 import type { SessionControl } from "./registry-21-environmentregistry-routes.part2.testkit.ts";
-import { CACHED_SNAPSHOT, PREPARED, SSH_CONNECTION, TARGET } from "./registry-21-environmentregistry-routes.part2.testkit.ts";
+import {
+  CACHED_SNAPSHOT,
+  PREPARED,
+  SSH_CONNECTION,
+  TARGET,
+} from "./registry-21-environmentregistry-routes.part2.testkit.ts";
 
 export const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
   initialTargets: ReadonlyArray<ConnectionTarget>,

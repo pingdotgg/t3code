@@ -547,9 +547,6 @@ function awaitConnectionState(
   });
 }
 
-
-
-
 describe("EnvironmentRegistry", () => {
   it.effect("a replaced platform bearer wakes a supervisor blocked on the old one", () =>
     Effect.gen(function* () {
@@ -595,4 +592,3 @@ describe("EnvironmentRegistry", () => {
     }),
   );
 });
-

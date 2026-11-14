@@ -547,9 +547,6 @@ function awaitConnectionState(
   });
 }
 
-
-
-
 describe("EnvironmentRegistry", () => {
   it.effect.each([
     { outcome: "connects after a server update", compatible: true, relayFirst: false },
@@ -632,4 +629,3 @@ describe("EnvironmentRegistry", () => {
     }),
   );
 });
-

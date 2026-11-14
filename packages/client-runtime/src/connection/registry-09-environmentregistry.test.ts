@@ -547,9 +547,6 @@ function awaitConnectionState(
   });
 }
 
-
-
-
 describe("EnvironmentRegistry", () => {
   it.effect("moves durable streams to a replacement supervisor", () =>
     Effect.gen(function* () {
@@ -607,4 +604,3 @@ describe("EnvironmentRegistry", () => {
     }),
   );
 });
-

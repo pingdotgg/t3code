@@ -547,9 +547,6 @@ function awaitConnectionState(
   });
 }
 
-
-
-
 describe("EnvironmentRegistry", () => {
   it.effect("platform refreshes preserve unsupported state for the same endpoint", () =>
     Effect.gen(function* () {
@@ -647,4 +644,3 @@ describe("EnvironmentRegistry", () => {
     }),
   );
 });
-

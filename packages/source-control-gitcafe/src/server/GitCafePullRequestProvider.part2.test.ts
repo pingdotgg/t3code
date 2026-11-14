@@ -12,11 +12,24 @@ import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSour
 import * as GitCafeApi from "./GitCafeApi.ts";
 import * as GitCafeCredentials from "./GitCafeCredentials.ts";
 import * as GitCafePullRequestProvider from "./GitCafePullRequestProvider.ts";
-import { actor, assertRequestId, baseOid, decodeJson, encodeJson, fakeGitCafe, headOid, labels, pull, root, stack, target, timestamp } from "./GitCafePullRequestProvider.helpers2.testkit.ts";
+import {
+  actor,
+  assertRequestId,
+  baseOid,
+  decodeJson,
+  encodeJson,
+  fakeGitCafe,
+  headOid,
+  labels,
+  pull,
+  root,
+  stack,
+  target,
+  timestamp,
+} from "./GitCafePullRequestProvider.helpers2.testkit.ts";
 import type { SentRequest } from "./GitCafePullRequestProvider.helpers2.testkit.ts";
 
 describe("GitCafePullRequestProvider", () => {
-
   it.effect.each(["authored", "reviewing"] as const)(
     "lists %s unnarrowed when GitCafe can't say who the viewer is",
     (involvement) => {

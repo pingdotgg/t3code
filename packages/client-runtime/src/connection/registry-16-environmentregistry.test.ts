@@ -547,9 +547,6 @@ function awaitConnectionState(
   });
 }
 
-
-
-
 describe("EnvironmentRegistry", () => {
   it.effect("gives platform registrations precedence over persisted registrations", () =>
     Effect.gen(function* () {
@@ -655,4 +652,3 @@ describe("EnvironmentRegistry", () => {
     }),
   );
 });
-
