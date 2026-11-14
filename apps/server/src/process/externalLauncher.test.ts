@@ -344,7 +344,7 @@ it.effect.skipIf(windowsHost)("opens and reveals a home-relative path in the hom
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
-    for (const name of ["code", "open"]) {
+    for (const name of ["code", "open", "idea"]) {
       const filePath = path.join(binDir, name);
       yield* fileSystem.writeFileString(filePath, "#!/bin/sh\n");
       yield* fileSystem.chmod(filePath, 0o755);
@@ -354,6 +354,11 @@ it.effect.skipIf(windowsHost)("opens and reveals a home-relative path in the hom
     yield* Effect.gen(function* () {
       const launcher = yield* ExternalLauncher.ExternalLauncher;
       yield* launcher.launchEditor({ editor: "vscode", cwd: "~/notes/todo.md:3" });
+      yield* launcher.launchEditor({
+        editor: "idea",
+        cwd: "~/notes/todo.md:3",
+        projectRoot: "~/notes",
+      });
       yield* launcher.launchEditor({
         editor: "file-manager",
         cwd: "~/notes/todo.md",
@@ -374,6 +379,7 @@ it.effect.skipIf(windowsHost)("opens and reveals a home-relative path in the hom
       spawned.map((command) => [command.command, ...command.args]),
       [
         ["code", "--goto", "/Users/t3/notes/todo.md:3"],
+        ["idea", "/Users/t3/notes", "--line", "3", "/Users/t3/notes/todo.md"],
         ["open", "-R", "/Users/t3/notes/todo.md"],
       ],
     );
