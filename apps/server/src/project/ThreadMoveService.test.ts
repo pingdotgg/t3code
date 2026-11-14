@@ -13,6 +13,7 @@ import {
   RunId,
   ServerSettingsError,
   ThreadId,
+  type ThreadMoveInput,
   TurnItemId,
 } from "@t3tools/contracts";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
@@ -295,7 +296,7 @@ it.layer(layerTest)("ThreadMoveService", (it) => {
       const forkId = yield* thread("fork", a.id, at("w"), { parent: threadId, kind: "fork" });
       const added = () =>
         Effect.map(projects.getByWorkspaceRoot(at("plain")), Option.getOrUndefined);
-      const move = (flags?: { addProject?: boolean; confirm?: boolean }) =>
+      const move = (flags?: Omit<ThreadMoveInput, "threadId" | "destination">) =>
         service.move({ threadId, destination: at("plain"), ...flags });
 
       expect(yield* move()).toMatchObject(needsProject(at("plain")));
@@ -312,7 +313,9 @@ it.layer(layerTest)("ThreadMoveService", (it) => {
       assert.isUndefined(yield* added());
       assert.equal((yield* shell(threadId)).projectId, a.id);
 
-      expect(yield* move({ addProject: true, confirm: true })).toMatchObject(
+      // The folders the question showed still match once the project exists at `to`.
+      const approved = { from: at("w"), to: at("plain") };
+      expect(yield* move({ addProject: true, confirm: true, approved })).toMatchObject(
         moved(at("plain"), [threadId, sideId]),
       );
       const project = yield* added();
@@ -562,6 +565,43 @@ it.layer(layerTest)("ThreadMoveService", (it) => {
         }
       }
       for (const late of raced) assert.isTrue(yield* fileSystem.exists(late), late);
+    }),
+  );
+
+  it.effect("/no keeps its folder when an interrupt arrives during the commit", () =>
+    Effect.gen(function* () {
+      const { a, thread, shell, sink } = yield* setup("interrupted");
+      const fileSystem = yield* FileSystem.FileSystem;
+      const committed = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      // The sink does not let an interrupt in while it commits, so the interrupt waits for it.
+      const service = yield* ThreadMoveService.make.pipe(
+        Effect.provideService(
+          EventSink.EventSinkV2,
+          EventSink.EventSinkV2.of({
+            ...sink,
+            commitCommand: (input) =>
+              sink.commitCommand(input).pipe(
+                Effect.tap(() => Deferred.succeed(committed, undefined)),
+                Effect.tap(() => Deferred.await(release)),
+                Effect.uninterruptible,
+              ),
+          }),
+        ),
+      );
+      const threadId = yield* thread("t", a.id, null);
+      const moving = yield* service
+        .move({ threadId, destination: null })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(committed);
+      const interrupt = yield* Fiber.interrupt(moving).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(interrupt);
+      const { projectId, worktreePath } = yield* shell(threadId);
+      assert.equal(projectId, SCRATCH_ID);
+      assert.isTrue(yield* fileSystem.exists(worktreePath ?? ""));
     }),
   );
 

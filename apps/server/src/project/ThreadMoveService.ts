@@ -343,9 +343,20 @@ export const make = Effect.gen(function* () {
         members: decision.members.map((member) => ({ threadId: member.id, title: member.title })),
       };
     });
+    // An interrupt during the commit takes effect after it, so a failure here can follow a
+    // stored move. The folder goes only while no thread works in it.
+    const releaseFolder = (claimed: string) =>
+      readShells.pipe(
+        Effect.flatMap((shells) =>
+          shells.some((shell) => shell.worktreePath === claimed)
+            ? Effect.void
+            : removeEmptyDirectory(claimed),
+        ),
+        Effect.ignore,
+      );
     return yield* worktreePath === null
       ? commit
-      : commit.pipe(Effect.onError(() => removeEmptyDirectory(worktreePath).pipe(Effect.ignore)));
+      : commit.pipe(Effect.onError(() => releaseFolder(worktreePath)));
   });
 
   const move: ThreadMoveService["Service"]["move"] = Effect.fn("ThreadMoveService.move")(
