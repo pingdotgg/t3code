@@ -1698,6 +1698,66 @@ it.effect.each([
   ),
 );
 
+it.effect.each([
+  {
+    name: "fails once an SSH key approval goes unanswered",
+    stderr: ["debug1: Server accepts key: id_ed25519 ED25519 SHA256:abc agent\r\n"],
+    expected: "Git is waiting for SSH key authorization.",
+  },
+  {
+    name: "keeps the command timeout once the SSH agent has signed",
+    stderr: [
+      "debug1: Server accepts key: id_ed25519 ED25519 SHA256:abc agent\r\n",
+      'Authenticated to example.com ([192.0.2.1]:22) using "publickey".\r\n',
+    ],
+    expected: "Git command timed out.",
+  },
+] as const)("$name", (scenario) =>
+  Effect.gen(function* () {
+    const sshCommands = yield* Ref.make<ReadonlyArray<unknown>>([]);
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.gen(function* () {
+        if (!ChildProcess.isStandardCommand(command))
+          return yield* Effect.die("expected Git command");
+        if (command.args[0] !== "fetch") return makeNonRepositoryHandle();
+        yield* Ref.update(sshCommands, (seen) => [...seen, command.options.env?.GIT_SSH_COMMAND]);
+        return ChildProcessSpawner.makeHandle({
+          ...makeNonRepositoryHandle(),
+          isRunning: Effect.succeed(true),
+          exitCode: Effect.never,
+          stderr: Stream.concat(Stream.encodeText(Stream.make(...scenario.stderr)), Stream.never),
+        });
+      }),
+    );
+    const driver = yield* makeGitVcsDriverCore().pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    );
+    const cwd = yield* makeTmpDir();
+    const fetch = yield* driver
+      .fetchRemote({ cwd, remoteName: "origin" })
+      .pipe(
+        Effect.provideService(HostProcess.Environment, { GIT_SSH_COMMAND: "ssh -F /ssh/config" }),
+        Effect.flip,
+        Effect.forkChild,
+      );
+
+    yield* TestClock.adjust("10 seconds");
+    const pending = fetch.pollUnsafe() === undefined;
+    yield* TestClock.adjust("20 seconds");
+    const error = yield* Fiber.join(fetch);
+
+    assert.include(error.detail, scenario.expected);
+    assert.equal(pending, scenario.expected === "Git command timed out.");
+    assert.deepEqual(yield* Ref.get(sshCommands), ["ssh -F /ssh/config -v"]);
+  }).pipe(
+    Effect.provide(
+      layerServerConfig.pipe(
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      ),
+    ),
+  ),
+);
+
 it.effect("retries a fetch that lost a ref update to another Git process", () =>
   Effect.gen(function* () {
     const attempts = yield* Ref.make(0);
