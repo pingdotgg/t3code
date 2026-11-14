@@ -28,7 +28,7 @@ const newerServiceStatus = { ...status, current: false, installedVersion: "999.0
 
 function makeTestService(
   serviceStatus: BootService.BootServiceStatus,
-  restartOutcome: "restarted" | "queued" = "restarted",
+  restartOutcome: "restarted" | "queued" | "skipped" = "restarted",
 ) {
   const installOptions: Array<Parameters<BootService.BootService["Service"]["install"]>[0]> = [];
   const restarts: Array<true> = [];
@@ -149,6 +149,67 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("service commands
         ),
       );
       expect(yield* fs.readFileString(`${baseDir}/service.env`)).toBe(input.expected);
+    }),
+  );
+
+  it.effect.each([
+    {
+      label: "another home's service",
+      installed: true,
+      installedBaseDir: "/other/t3",
+      expected: "The T3 Code service serves /other/t3",
+    },
+    {
+      label: "an unknown service home",
+      installed: true,
+      installedBaseDir: undefined,
+      expected: "T3 home could not be determined",
+    },
+    {
+      label: "no service",
+      installed: false,
+      installedBaseDir: undefined,
+      expected: "T3 Code service is not installed.",
+    },
+  ])("restart explains why it skipped $label", (input) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-cli-test-" });
+      vi.spyOn(BootService, "layer").mockReturnValue(
+        Layer.succeed(
+          BootService.BootService,
+          makeTestService(
+            {
+              ...status,
+              installed: input.installed,
+              ...(input.installedBaseDir === undefined
+                ? {}
+                : {
+                    installedBaseDir: input.installedBaseDir,
+                    otherBaseDir: input.installedBaseDir,
+                  }),
+            },
+            "skipped",
+          ).service,
+        ),
+      );
+
+      const output = yield* Command.runWith(serviceCommand, { version: packageJson.version })([
+        "restart",
+        "--base-dir",
+        baseDir,
+      ]).pipe(
+        Effect.andThen(TestConsole.logLines),
+        Effect.map((lines) => lines.join("\n")),
+        Effect.provideService(HostProcess.Environment, {}),
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+            Layer.fresh(TestConsole.layer),
+          ),
+        ),
+      );
+      expect(output).toContain(input.expected);
     }),
   );
 
