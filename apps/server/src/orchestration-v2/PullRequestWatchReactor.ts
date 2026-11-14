@@ -609,34 +609,26 @@ export const make = Effect.gen(function* () {
       ],
       { concurrency: 2 },
     );
-    // Activity failures must not cancel or hide a permanent detail failure.
-    // Activity is irrelevant once the pull request is closed or merged, so it cannot block ending.
-    const read = Exit.isFailure(detailRead)
-      ? Exit.failCause(detailRead.cause)
-      : detailRead.value.state !== "open"
-        ? Exit.succeed([detailRead.value, Option.none<PullRequestActivity>()] as const)
-        : Exit.isFailure(activityRead)
-          ? Exit.failCause(activityRead.cause)
-          : Exit.succeed([detailRead.value, activityRead.value] as const);
-    if (Exit.isFailure(read)) {
-      if (Cause.hasInterruptsOnly(read.cause)) return yield* Effect.failCause(read.cause);
+    if (Exit.isFailure(detailRead)) {
+      if (Cause.hasInterruptsOnly(detailRead.cause))
+        return yield* Effect.failCause(detailRead.cause);
       lastReads.delete(group.key);
-      const reason = providerFailureReason(read.cause);
+      const reason = providerFailureReason(detailRead.cause);
       if (reason === "rate-limited") return;
       // Transport and host failures can outlast the failure limit; keep the watch for recovery.
       if (reason === "failed") {
         readFailures.delete(group.key);
-        return yield* Effect.failCause(read.cause);
+        return yield* Effect.failCause(detailRead.cause);
       }
       const failures = (readFailures.get(group.key) ?? 0) + 1;
       readFailures.set(group.key, failures);
       if (failures >= READ_FAILURE_LIMIT && (yield* eachTarget(group, giveUp))) {
         readFailures.delete(group.key);
       }
-      return yield* Effect.failCause(read.cause);
+      return yield* Effect.failCause(detailRead.cause);
     }
     readFailures.delete(group.key);
-    const [detail, activity] = read.value;
+    const detail = detailRead.value;
     for (const target of group.targets) {
       const life = lifeOf(target);
       const headSha = detail.headSha ?? life.headSha;
@@ -658,6 +650,20 @@ export const make = Effect.gen(function* () {
           : record(target, null).pipe(Effect.tap(() => ended(target, "merged"))),
       );
     }
+
+    // A failed comments read leaves remarks incomplete, so the next pass reads them again;
+    // checks, head and conflicts from the detail still reach the evaluator.
+    if (Exit.isFailure(activityRead)) {
+      threadTails.delete(group.key);
+      if (providerFailureReason(activityRead.cause) !== "rate-limited") {
+        yield* logFailure("pull request watch activity read failed", { pullRequest: group.key })(
+          activityRead.cause,
+        );
+      }
+    }
+    const activity = Exit.isSuccess(activityRead)
+      ? activityRead.value
+      : Option.none<PullRequestActivity>();
 
     // Never advance the remark watermark past comments an incomplete read could have missed.
     const remarks = Option.isSome(activity)

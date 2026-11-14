@@ -3,9 +3,12 @@ import {
   EnvironmentId,
   EventId,
   MessageId,
+  NodeId,
   ProjectId,
   ProviderInstanceId,
+  RunId,
   ThreadId,
+  TurnItemId,
   type OrchestrationV2DomainEvent,
   type ThreadLinkedPullRequest,
 } from "@t3tools/contracts";
@@ -130,6 +133,7 @@ const message = (
     readonly minute?: number;
     readonly streaming?: boolean;
     readonly createdBy?: "user" | "agent";
+    readonly runId?: RunId;
   } = {},
 ): OrchestrationV2DomainEvent => ({
   id: EventId.make(`message:${id}`),
@@ -142,7 +146,7 @@ const message = (
     creationSource: role === "user" ? "web" : "provider",
     id: MessageId.make(id),
     threadId,
-    runId: null,
+    runId: options.runId ?? null,
     nodeId: null,
     role,
     text,
@@ -732,47 +736,120 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
     }),
   );
 
-  it.effect("finds a curly apostrophe for a straight one and back", () =>
-    Effect.gen(function* () {
-      const projections = yield* ProjectionStore.ProjectionStoreV2;
-      const search = yield* ThreadSearch.ThreadSearch;
-      const project = ProjectId.make("project:apostrophes");
-      const curly = ThreadId.make("thread:apostrophe-curly");
-      const straight = ThreadId.make("thread:apostrophe-straight");
-      yield* createProject(project);
-      yield* Effect.forEach(
-        [
-          thread(curly, project),
-          message(curly, "apostrophe-curly", "user", "the gannet\u2019s nest"),
-          thread(straight, project),
-          message(straight, "apostrophe-straight", "user", "a kittiwake's nest"),
-        ],
-        projections.apply,
-        { discard: true },
-      );
-      const threadIds = (query: string) =>
-        search.search({ query }).pipe(Effect.map(({ matches }) => matches.map((m) => m.threadId)));
-      assert.deepEqual(yield* threadIds("gannet's"), [curly]);
-      assert.deepEqual(yield* threadIds("kittiwake\u2019s"), [straight]);
-    }),
-  );
-
-  it.effect("leaves out answers to an agent's question, which show in its card", () =>
+  it.effect("leaves out answers in their question card and turns the thread hides", () =>
     Effect.gen(function* () {
       const projections = yield* ProjectionStore.ProjectionStoreV2;
       const search = yield* ThreadSearch.ThreadSearch;
       const project = ProjectId.make("project:answers");
       const asked = ThreadId.make("thread:answers");
+      const rewound = ThreadId.make("thread:rewound");
+      const queued = ThreadId.make("thread:queued");
+      const stopped = ThreadId.make("thread:stopped");
+      const recovered = ThreadId.make("thread:recovered");
+      const run = (owner: ThreadId, status: "rolled_back" | "cancelled") =>
+        ({
+          id: EventId.make(`run:${owner}`),
+          type: "run.created",
+          threadId: owner,
+          runId: RunId.make(`run:${owner}`),
+          nodeId: NodeId.make(`node:${owner}`),
+          providerInstanceId,
+          occurredAt: at(2),
+          payload: {
+            id: RunId.make(`run:${owner}`),
+            threadId: owner,
+            ordinal: 1,
+            providerInstanceId,
+            modelSelection: { instanceId: providerInstanceId, model: "gpt-5" },
+            providerThreadId: null,
+            userMessageId: MessageId.make(`${owner}:prompt`),
+            rootNodeId: NodeId.make(`node:${owner}`),
+            activeAttemptId: null,
+            status,
+            requestedAt: at(1),
+            startedAt: at(1),
+            completedAt: at(2),
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        }) satisfies OrchestrationV2DomainEvent;
+      const shown = (owner: ThreadId, id: string, as: "turn_start" | "queued_turn" | "reply") =>
+        ({
+          id: EventId.make(`item:${id}`),
+          type: "turn-item.updated",
+          threadId: owner,
+          occurredAt: at(2),
+          payload: {
+            id: TurnItemId.make(id),
+            threadId: owner,
+            runId: RunId.make(`run:${owner}`),
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1,
+            status: "completed",
+            title: null,
+            startedAt: at(1),
+            completedAt: at(1),
+            updatedAt: at(1),
+            messageId: MessageId.make(id),
+            text: "",
+            ...(as === "reply"
+              ? { type: "assistant_message", streaming: false }
+              : {
+                  type: "user_message",
+                  inputIntent: as,
+                  attachments: [],
+                  createdBy: "user",
+                  creationSource: "web",
+                }),
+          },
+        }) satisfies OrchestrationV2DomainEvent;
       yield* createProject(project);
       yield* Effect.forEach(
         [
           thread(asked, project),
           message(asked, "async-answer:request-1", "user", "use the albatross drive"),
+          thread(rewound, project),
+          run(rewound, "rolled_back"),
+          message(rewound, "rewound-reply", "assistant", "the albatross drive is ready", {
+            runId: RunId.make(`run:${rewound}`),
+          }),
+          thread(queued, project),
+          run(queued, "cancelled"),
+          message(queued, "queued-prompt", "user", "then mount the albatross drive", {
+            runId: RunId.make(`run:${queued}`),
+          }),
+          // A queued prompt usually has no item; an edited one has a queued item.
+          message(queued, "requeued-prompt", "user", "then eject the albatross drive", {
+            runId: RunId.make(`run:${queued}`),
+          }),
+          shown(queued, "requeued-prompt", "queued_turn"),
+          // A stopped turn keeps its prompt and whatever the agent already said.
+          thread(stopped, project),
+          run(stopped, "cancelled"),
+          message(stopped, "stopped-prompt", "user", "format the albatross drive", {
+            runId: RunId.make(`run:${stopped}`),
+          }),
+          shown(stopped, "stopped-prompt", "turn_start"),
+          thread(recovered, project),
+          run(recovered, "cancelled"),
+          message(recovered, "recovered-reply", "assistant", "the albatross drive is formatted", {
+            runId: RunId.make(`run:${recovered}`),
+          }),
+          shown(recovered, "recovered-reply", "reply"),
         ],
         projections.apply,
         { discard: true },
       );
-      assert.deepEqual((yield* search.search({ query: "albatross" })).matches, []);
+      assert.deepEqual(
+        (yield* search.search({ query: "albatross" })).matches
+          .map((match) => match.messageId)
+          .sort(),
+        [MessageId.make("recovered-reply"), MessageId.make("stopped-prompt")],
+      );
     }),
   );
 
@@ -881,6 +958,45 @@ it.effect.each([true, false])(
         search.search({ query }).pipe(Effect.map(({ matches }) => matches.map((m) => m.threadId)));
       assert.deepEqual(yield* threadIds("ошибка в"), [older]);
       assert.deepEqual(yield* threadIds("fermée ec"), [olderFrench]);
+    }).pipe(Effect.provide(layerTest)),
+);
+
+// A two-character CJK word is too short for the index, so it scans even with the index.
+it.effect.each([true, false])(
+  "ThreadSearch finds a curly apostrophe for a straight one and back (indexed: %s)",
+  (indexed) =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const sql = yield* SqlClient.SqlClient;
+      const project = ProjectId.make("project:apostrophes");
+      const curly = ThreadId.make("thread:apostrophe-curly");
+      const straight = ThreadId.make("thread:apostrophe-straight");
+      yield* createProject(project);
+      yield* Effect.forEach(
+        [
+          thread(curly, project),
+          message(curly, "apostrophe-curly", "user", "部署 the gannet\u2019s nest"),
+          thread(straight, project),
+          message(straight, "apostrophe-straight", "user", "部署 a kittiwake's nest"),
+        ],
+        projections.apply,
+        { discard: true },
+      );
+      if (!indexed) {
+        yield* sql`DROP TRIGGER orchestration_v2_message_search_insert`;
+        yield* sql`DROP TRIGGER orchestration_v2_message_search_update`;
+        yield* sql`DROP TRIGGER orchestration_v2_message_search_delete`;
+        yield* sql`DROP TABLE orchestration_v2_message_search`;
+      }
+      const threadIds = (query: string) =>
+        search.search({ query }).pipe(Effect.map(({ matches }) => matches.map((m) => m.threadId)));
+      for (const query of ["gannet's", "部署 gannet's"]) {
+        assert.deepEqual(yield* threadIds(query), [curly], query);
+      }
+      for (const query of ["kittiwake\u2019s", "部署 kittiwake\u2019s"]) {
+        assert.deepEqual(yield* threadIds(query), [straight], query);
+      }
     }).pipe(Effect.provide(layerTest)),
 );
 
