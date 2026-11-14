@@ -4,6 +4,7 @@ import * as NodeUtil from "node:util";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it, vi } from "@effect/vitest";
 import {
+  CommandId,
   ProjectId,
   ProviderInstanceId,
   ScheduledTaskError,
@@ -19,6 +20,7 @@ import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
+import { SqlError, classifySqliteError } from "effect/sql/SqlError";
 
 import * as Fiber from "effect/Fiber";
 import * as Stream from "effect/Stream";
@@ -29,6 +31,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import { OrchestratorDispatchError } from "../orchestration-v2/Orchestrator.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -585,6 +588,8 @@ it.effect("a fresh-session task launches one thread, then starts each later run 
     const launches = yield* Ref.make(0);
     const sends = yield* Ref.make<Array<{ threadId: ThreadId; freshContext?: boolean }>>([]);
     const launched = ThreadId.make("thread:fresh-session-task");
+    const refusal =
+      "The current session is still running background agents or commands, and a fresh session would end them. Wait for them to finish, or press Stop, then send the message again.";
     const layer = ScheduledTaskService.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
@@ -598,13 +603,25 @@ it.effect("a fresh-session task launches one thread, then starts each later run 
           Layer.mock(ThreadManagementService.ThreadManagementService)({
             getThreadShell: () => Effect.succeed({ deletedAt: null } as never),
             sendToThread: (input) =>
-              Ref.update(sends, (all) => [
+              Ref.updateAndGet(sends, (all) => [
                 ...all,
                 {
                   threadId: input.threadId,
                   ...(input.freshContext === undefined ? {} : { freshContext: input.freshContext }),
                 },
-              ]).pipe(Effect.as({} as never)),
+              ]).pipe(
+                Effect.flatMap((all) =>
+                  all.length === 1
+                    ? Effect.fail(
+                        new OrchestratorDispatchError({
+                          commandId: input.commandId,
+                          commandType: "message.dispatch",
+                          cause: refusal,
+                        }),
+                      )
+                    : Effect.succeed({} as never),
+                ),
+              ),
           }),
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
@@ -645,10 +662,28 @@ it.effect("a fresh-session task launches one thread, then starts each later run 
       const legacy = yield* service.upsert({ ...input, threadId: null });
       assert.equal(legacy.task.threadId, launched);
       assert.equal(legacy.task.threadMode, "fresh_session");
-      yield* service.runNow({ id: input.id });
+      const refused = yield* service.runNow({ id: input.id });
+      assert.equal(refused.threadId, null);
+      assert.equal(refused.task.threadId, launched);
+      assert.equal(refused.task.lastRunStatus, "failed");
+      assert.equal(refused.task.runCount, 2);
+      assert.equal(refused.task.nextRunAt, task.nextRunAt);
+      assert.equal(refused.task.lastRunError, refusal);
+      const sql = yield* SqlClient.SqlClient;
+      const [stored] =
+        yield* sql`SELECT last_run_error FROM scheduled_tasks WHERE task_id = ${input.id}`;
+      assert.equal(stored?.last_run_error, refusal);
+      const reread = yield* ScheduledTaskService.ScheduledTaskService.use((fresh) =>
+        fresh.list(),
+      ).pipe(Effect.provide(Layer.fresh(layer)));
+      assert.deepEqual(reread.tasks[0], refused.task);
 
       assert.equal(yield* Ref.get(launches), 1);
       assert.deepEqual(yield* Ref.get(sends), [{ threadId: launched, freshContext: true }]);
+      const succeeded = yield* service.runNow({ id: input.id });
+      assert.equal(succeeded.task.lastRunStatus, "succeeded");
+      assert.equal(succeeded.task.lastRunError, null);
+      assert.equal((yield* service.list()).tasks[0]?.lastRunError, null);
       // Its thread stays in the old project, so moving the task leaves it for a new one.
       const moved = yield* service.upsert({
         ...input,
@@ -659,6 +694,87 @@ it.effect("a fresh-session task launches one thread, then starts each later run 
       assert.equal(moved.task.threadMode, "fresh_session");
       const unbound = yield* service.upsert({ ...input, threadMode: "new_thread" });
       assert.equal(unbound.task.threadId, null);
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("dispatch diagnostics keep opaque failures private and stack-free", () =>
+  Effect.gen(function* () {
+    const commandId = CommandId.make("command:opaque-failure");
+    const wrapped = (cause?: unknown) =>
+      new OrchestratorDispatchError({ commandId, commandType: "message.dispatch", cause });
+    const cyclic: { cause?: unknown; message: string } = { message: "private-nested-secret" };
+    cyclic.cause = cyclic;
+    const sqlError = new SqlError({
+      reason: classifySqliteError(Object.assign(new Error("private-query-data"), { errcode: 13 })),
+    });
+    const failures = [
+      [
+        Effect.die(new Error("plain defect", { cause: new Error("private-nested-secret") })),
+        "plain defect",
+      ],
+      [Effect.die("plain string"), "plain string"],
+      [Effect.interrupt, "All fibers interrupted without error"],
+      [
+        Effect.fail(
+          new ScheduledTaskError({
+            message: "safe task failure",
+            cause: new Error("private-nested-secret"),
+          }),
+        ),
+        "safe task failure",
+      ],
+      ...[
+        undefined,
+        "",
+        "   ",
+        wrapped().message,
+        cyclic,
+        sqlError,
+        new Error("private-nested-secret"),
+      ].map((cause) => [Effect.fail(wrapped(cause)), wrapped().message] as const),
+    ] as const;
+    const failure = yield* Ref.make<Effect.Effect<never, unknown>>(Effect.die("unconfigured"));
+    const layer = ScheduledTaskService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          ManagedPolicy.layerTest(),
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            sendToThread: () => Ref.get(failure).pipe(Effect.flatten, Effect.orDie),
+          }),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/projects",
+            isScratchProject: () => Effect.succeed(false),
+          }),
+          NodeCrypto.layer,
+          Layer.succeed(Scheduler.Scheduler, { register: () => Effect.void }),
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* service.upsert({
+        id: ScheduledTaskId.make("task:opaque-failure"),
+        title: "Opaque failures",
+        prompt: "Check progress",
+        enabled: true,
+        schedule: { type: "interval", everyMs: 60_000 },
+        projectId: ProjectId.make("project:test"),
+        threadId: ThreadId.make("thread:opaque-failure"),
+        threadMode: "fresh_session",
+        workspaceStrategy: { type: "root" },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
+      for (const [effect, expected] of failures) {
+        yield* Ref.set(failure, effect);
+        const result = yield* service.runNow({ id: task.id });
+        assert.equal(result.task.lastRunError, expected);
+        assert.equal((yield* service.list()).tasks[0]?.lastRunError, expected);
+      }
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
