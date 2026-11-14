@@ -3,6 +3,7 @@ import {
   WorkspacePresentationHostContext,
 } from "./workspace-presentation-context";
 import { useAndroidFloatingTabs } from "../settings/appearance/AppearancePreferencesProvider";
+import { GestureDetector } from "react-native-gesture-handler";
 import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   AdaptiveWorkspaceContext,
@@ -89,6 +90,8 @@ import { buildHomeProjectScopes, resolveHomeProjectFilterScope } from "../home/h
 import { newTaskDestination, newTaskFilteredProject } from "../threads/new-task-project-selection";
 import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderErrorBoundary";
 import { PaneContext } from "../../components/ui/Pane";
+import { deriveSidebarSwipeCapabilities, SIDEBAR_FLOATING_SCRIM_OPACITY } from "./sidebar-swipe";
+import { useSidebarSwipeGestures } from "./useSidebarSwipeGesture";
 import { WORKSPACE_PANE_TIMING } from "./workspace-pane-animation";
 import { WorkspaceInspectorPane } from "./workspace-inspector-pane";
 import { WorkspaceInspectorSheet } from "./workspace-inspector-sheet";
@@ -964,6 +967,45 @@ function AdaptiveWorkspaceLayoutContent(
     }),
     [panes, fileInspector, primarySidebarSearchQuery, sidebarToggleable, sidebarByOrientation],
   );
+  const handleSwipeVisibilityCommit = (visible: boolean) => {
+    if (visible === panes.primarySidebarVisible) {
+      renderedSidebarWidth.set(withTiming(visible ? sidebarSlotWidth : 0, WORKSPACE_PANE_TIMING));
+      if (sidebarFloats) {
+        scrimOpacity.set(
+          withTiming(visible ? SIDEBAR_FLOATING_SCRIM_OPACITY : 0, WORKSPACE_PANE_TIMING),
+        );
+      }
+      return;
+    }
+    if (visible) {
+      revealPrimarySidebar();
+    } else {
+      setPrimarySidebarVisible(false);
+    }
+  };
+  const swipeCapabilities = deriveSidebarSwipeCapabilities({
+    usesSplitView: layout.usesSplitView,
+    nativeWorkspace,
+    workspacePage,
+    primarySidebarPinned,
+    primarySidebarVisible: panes.primarySidebarVisible,
+    sidebarFloats,
+    railOverlay,
+    inspectorSheetOpen,
+    sidebarSlotWidth,
+  });
+  const { contentSwipeGesture, scrimSwipeGesture } = useSidebarSwipeGestures({
+    capabilities: swipeCapabilities,
+    viewportWidth,
+    safeAreaLeft: safeAreaInsets.left,
+    safeAreaRight: safeAreaInsets.right,
+    sidebarSlotWidth,
+    sidebarFloats,
+    primarySidebarVisible: panes.primarySidebarVisible,
+    renderedSidebarWidth,
+    scrimOpacity,
+    onCommitVisibility: handleSwipeVisibilityCommit,
+  });
 
   const inspectorSheet = (
     <WorkspaceInspectorSheet
@@ -1102,11 +1144,13 @@ function AdaptiveWorkspaceLayoutContent(
                       : safeAreaInsets
                 }
               >
-                <View className="flex-1">
-                  <PaneContext value="content">
-                    <SettingsWorkspaceLayout>{children}</SettingsWorkspaceLayout>
-                  </PaneContext>
-                </View>
+                <GestureDetector gesture={contentSwipeGesture}>
+                  <View collapsable={false} className="flex-1">
+                    <PaneContext value="content">
+                      <SettingsWorkspaceLayout>{children}</SettingsWorkspaceLayout>
+                    </PaneContext>
+                  </View>
+                </GestureDetector>
               </SafeAreaInsetsContext>
               {floatingTabsEnabled &&
               (compactAndroidSettings || (layout.usesSplitView && workspacePage)) ? (
@@ -1128,11 +1172,15 @@ function AdaptiveWorkspaceLayoutContent(
           pointerEvents={floatingSidebarOpen ? "auto" : "none"}
           style={[{ zIndex: 1 }, scrimAnimatedStyle]}
         >
-          <Pressable
-            accessibilityLabel="Hide sidebar"
-            className="flex-1"
-            onPress={() => setPrimarySidebarVisible(false)}
-          />
+          <GestureDetector gesture={scrimSwipeGesture}>
+            <View collapsable={false} className="flex-1">
+              <Pressable
+                accessibilityLabel="Hide sidebar"
+                className="flex-1"
+                onPress={() => setPrimarySidebarVisible(false)}
+              />
+            </View>
+          </GestureDetector>
         </Animated.View>
       ) : null}
       <PaneContext value="inspector">
