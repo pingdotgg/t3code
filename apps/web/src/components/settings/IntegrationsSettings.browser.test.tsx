@@ -120,9 +120,10 @@ it.each([
   },
 ])("shows device preferences read-only for $scope", async ({ search }) => {
   await ensureClientSettingsHydrated();
-  await persistClientSettingsPatch({
-    browserProfiles: [{ id: "work", name: "Work", kind: "persistent" }],
-  });
+  await persistClientSettingsPatch(
+    { browserProfiles: [{ id: "work", name: "Work", kind: "persistent" }] },
+    async () => {},
+  );
   await using screen = await render(
     <SettingsScopeProvider search={search} onChange={() => {}}>
       <BrowserSettingsPanel />

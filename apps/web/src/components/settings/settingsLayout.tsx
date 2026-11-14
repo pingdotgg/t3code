@@ -453,7 +453,7 @@ export function SettingsRow({
           : environmentWide && control
             ? inertControl("Environment-wide setting. Select an environment to change it.")
             : deviceReadOnly && control
-              ? inertControl("Saved on this device. Clear the project to change it.")
+              ? inertControl("Saved on this device. Select All projects to change it.")
               : control;
   const customized =
     context !== null &&
