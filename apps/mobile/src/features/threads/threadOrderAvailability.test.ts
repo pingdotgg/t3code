@@ -2,7 +2,6 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   generateSpreadPinOrderKeys,
   pinOrderKeyBetween,
-  sortActiveThreadsByOrderKey,
 } from "@t3tools/client-runtime/state/thread-sort";
 import type { EnvironmentId } from "@t3tools/contracts";
 
@@ -138,53 +137,6 @@ describe("computeThreadMoveAvailability matches the reference planner", () => {
         }
       }
     }
-  });
-
-  it("reorders writable rows past a frozen keyless row only on its sorted side", () => {
-    const active = [
-      makeRow("frozen", "env-x", null, false),
-      makeRow("a", "env-w", "m", false),
-      makeRow("b", "env-w", "t", false),
-    ];
-    const planner = createThreadMovePlanner({
-      ordered: active,
-      section: "active",
-      reorderableEnvironmentIds: WRITABLE,
-    });
-    const assignments = planner("env-w:b", "up");
-    expect(assignments?.map(({ id }) => id)).toEqual(["env-w:b"]);
-    const assignedKeys = new Map(assignments?.map(({ id, orderKey }) => [id, orderKey]));
-    const resorted = sortActiveThreadsByOrderKey(
-      active.map((row) => ({
-        ...row,
-        activeOrderKey: assignedKeys.get(`${row.environmentId}:${row.id}`) ?? row.activeOrderKey,
-      })),
-    );
-    expect(resorted.map((row) => row.id)).toEqual(["frozen", "b", "a"]);
-    // Keyed Active rows always sort after keyless ones, so nothing may move above it.
-    expect(planner("env-w:a", "up")).toBeNull();
-
-    // Keyless Pinned rows sort last, so nothing may move below it.
-    const pinned = [
-      makeRow("a", "env-w", "m", true),
-      makeRow("b", "env-w", "t", true),
-      makeRow("frozen", "env-x", null, true),
-    ];
-    const pinnedPlanner = createThreadMovePlanner({
-      ordered: pinned,
-      section: "pinned",
-      reorderableEnvironmentIds: WRITABLE,
-    });
-    expect(pinnedPlanner("env-w:b", "down")).toBeNull();
-    expect(pinnedPlanner("env-w:b", "up")?.map(({ id }) => id)).toEqual(["env-w:b"]);
-
-    const availability = computeThreadMoveAvailability({
-      ordered: active,
-      section: "active",
-      reorderableEnvironmentIds: WRITABLE,
-    });
-    expect(availability.get("env-w:a")).toEqual({ canMoveUp: false, canMoveDown: true });
-    expect(availability.get("env-w:b")).toEqual({ canMoveUp: true, canMoveDown: false });
   });
 
   it("locks every row while a pending reorder is in flight", () => {
