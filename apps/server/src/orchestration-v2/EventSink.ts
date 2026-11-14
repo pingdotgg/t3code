@@ -387,10 +387,10 @@ const layerBase: Layer.Layer<
       });
 
     const normalizeEvents = (events: ReadonlyArray<OrchestrationV2DomainEvent>) => {
-      const runOrdinals = new Map(
+      const runs = new Map(
         events.flatMap((event) =>
           event.type === "run.created" || event.type === "run.updated"
-            ? [[event.payload.id, event.payload.ordinal] as const]
+            ? [[event.payload.id, event.payload] as const]
             : [],
         ),
       );
@@ -401,7 +401,7 @@ const layerBase: Layer.Layer<
             ? turnItemPositions
                 .normalize(
                   event.payload,
-                  event.payload.runId === null ? undefined : runOrdinals.get(event.payload.runId),
+                  event.payload.runId === null ? undefined : runs.get(event.payload.runId),
                 )
                 .pipe(Effect.map((payload) => ({ ...event, payload })))
             : Effect.succeed(event),
