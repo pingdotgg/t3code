@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
-import { normalizeClaudeTurnTokenUsage } from "./ClaudeTurnTokenUsage.ts";
+import {
+  claudeLedgerDelta,
+  claudeModelLedger,
+  normalizeClaudeTurnTokenUsage,
+} from "./ClaudeTurnTokenUsage.ts";
 import {
   accumulateCodexTurnTokenUsage,
   completeCodexTurnTokenUsage,
@@ -208,6 +212,15 @@ describe("billable native turn usage", () => {
       ).toMatchObject({ usageStatus: "partial", inputTokens: 145, outputTokens: 23 });
     },
   );
+
+  it("measures Claude ledger growth only from a known, nondecreasing baseline", () => {
+    const ledger = (output: number) =>
+      claudeModelLedger({ "claude-sonnet-4-6": { inputTokens: 100, outputTokens: output } });
+    expect(claudeLedgerDelta(ledger(10), ledger(25))).toEqual({ inputTokens: 0, outputTokens: 15 });
+    expect(claudeLedgerDelta(ledger(25), ledger(10))).toBeUndefined();
+    expect(claudeLedgerDelta(undefined, ledger(10))).toBeUndefined();
+    expect(claudeModelLedger({})).toBeUndefined();
+  });
 
   it("adds Claude steering segments to the final measured result once", () => {
     expect(
