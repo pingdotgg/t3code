@@ -9289,18 +9289,18 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           },
         });
       };
-      const createRun = (threadId: ThreadId, runId: RunId, ordinal: number, cwd?: string) =>
-        projectionStore.apply(
-          runCreated({
-            id: runId,
-            threadId,
-            ordinal,
-            providerInstanceId,
-            rootNodeId: NodeId.make(`node:${runId}`),
-            cwd,
-            occurredAt: now,
-          }),
-        );
+      const runEvent = (threadId: ThreadId, runId: RunId, ordinal: number, cwd?: string) =>
+        runCreated({
+          id: runId,
+          threadId,
+          ordinal,
+          providerInstanceId,
+          rootNodeId: NodeId.make(`node:${runId}`),
+          cwd,
+          occurredAt: now,
+        });
+      const createRun = (...run: Parameters<typeof runEvent>) =>
+        projectionStore.apply(runEvent(...run));
       const addItem = (threadId: ThreadId, name: string, runId: RunId | null, ordinal: number) =>
         projectionStore.apply({
           id: EventId.make(`event:projection-fork-receipt:item:${name}`),
@@ -9374,6 +9374,30 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         { "imported-fork": "legacy" },
         "v1_import",
       );
+      // This source rewinds its moved run, then forks from a third run that has no rows yet.
+      yield* fixture(
+        "rewound",
+        {
+          "rewound-legacy": "legacy",
+          "rewound-a": null,
+          "rewound-moved": "moved",
+          "rewound-b": null,
+        },
+        {},
+      );
+      const rewound = thread("rewound");
+      const rewoundRun = runEvent(rewound, run("rewound-moved"), 2, "/b");
+      yield* projectionStore.apply({
+        ...rewoundRun,
+        id: EventId.make("event:projection-fork-receipt:rewound"),
+        type: "run.updated",
+        payload: { ...rewoundRun.payload, status: "rolled_back" },
+      });
+      yield* createRun(rewound, run("rewound-empty"), 3, "/b");
+      yield* createThread(thread("rewound-fork"), {
+        threadId: rewound,
+        runId: run("rewound-empty"),
+      });
 
       const shape = (rows: ReadonlyArray<{ readonly item: OrchestrationV2TurnItem }>) =>
         rows.map((row) =>
@@ -9411,6 +9435,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       yield* expectFork(thread("legacy-fork"), ["legacy", "/a", "fork"]);
       yield* expectFork(thread("late-fork"), ["late-moved", "/late-a", "fork"]);
       yield* expectFork(thread("imported-fork"), ["imported-legacy", "/imported-a", "fork"]);
+      yield* expectFork(thread("rewound-fork"), ["rewound-legacy", "/rewound-a", "fork"]);
     }),
   );
 

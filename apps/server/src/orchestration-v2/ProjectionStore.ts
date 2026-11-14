@@ -4531,6 +4531,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     FROM orchestration_v2_projection_runs AS run
                     WHERE run.thread_id = ${forkedFrom.threadId}
                       AND run.ordinal <= (SELECT ordinal FROM fork_run)
+                      -- forkInheritedRunOrdinals drops the same runs from the JavaScript boundary.
+                      AND NOT COALESCE(
+                        run.status = 'rolled_back'
+                          AND julianday(run.completed_at)
+                            < julianday(${DateTime.formatIso(projection.thread.createdAt)}),
+                        0
+                      )
                       AND EXISTS (
                         SELECT 1
                         FROM orchestration_v2_projection_turn_items AS item
