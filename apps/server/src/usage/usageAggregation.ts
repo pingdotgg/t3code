@@ -217,7 +217,11 @@ export class UsageAggregator {
       const held = this.#seen.get(record.dedupeKey);
       if (held !== undefined) {
         this.#duplicatesDropped += 1;
-        if (held.bucket !== null) held.record = mergeUsageCopies(held.record, record);
+        // Grok reports each turn once, complete. A larger later copy is a deleted transcript's
+        // pre-v17 maximum over turns that shared a prompt id; live files come first and win.
+        if (held.bucket !== null && record.provider !== "grok") {
+          held.record = mergeUsageCopies(held.record, record);
+        }
         return false;
       }
     }

@@ -141,6 +141,26 @@ describe("UsageAggregator", () => {
     }
   });
 
+  it("keeps a live Grok turn over a saved pre-v17 maximum that shares its key", () => {
+    const turn = (timestampMs: number, outputTokens: number) =>
+      record({
+        provider: "grok",
+        model: "grok-4.5",
+        timestampMs,
+        dedupeKey: `s:p:${timestampMs}:grok-4.5`,
+        reportedCostUsd: outputTokens / 10,
+        totals: { ...record().totals, uncachedInputTokens: 0, outputTokens },
+      });
+    const first = turn(Date.parse("2026-08-08T10:00:00Z"), 10);
+    const resumed = turn(Date.parse("2026-08-08T11:00:00Z"), 20);
+    const savedMaximum = { ...first, totals: resumed.totals, reportedCostUsd: 2 };
+
+    const result = aggregate([first, resumed, savedMaximum]);
+
+    expect(result.duplicatesDropped).toBe(1);
+    expect(result.buckets).toEqual(aggregate([first, resumed]).buckets);
+  });
+
   it("does not count a key whose first copy fell outside the window", () => {
     const result = aggregate([
       record({ dedupeKey: "msg_1:", timestampMs: Date.parse("2026-07-01T12:00:00Z") }),
