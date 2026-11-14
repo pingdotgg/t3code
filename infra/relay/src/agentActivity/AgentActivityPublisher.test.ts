@@ -489,6 +489,7 @@ describe("makeAggregateState", () => {
     });
 
     expect(aggregate?.activeCount).toBe(1);
+    expect(aggregate?.doneCount).toBeUndefined();
     expect(aggregate?.activities).toMatchObject([{ threadId: "thread-fresh" }]);
   });
 
@@ -597,6 +598,7 @@ describe("makeAggregateState", () => {
     });
 
     expect(aggregate?.activeCount).toBe(5);
+    expect(aggregate?.doneCount).toBe(1);
     expect(aggregate?.activities).toMatchObject([
       { threadId: "a-1" },
       { threadId: "a-2" },
