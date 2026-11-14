@@ -443,7 +443,7 @@ export const layer = Api.make(
       {
         batchSize: 10,
         maxRetries: 5,
-        maxWaitTime: "5 seconds",
+        maxWaitTime: "1 second",
         retryDelay: "30 seconds",
         deadLetterQueue: apnsDeliveryDeadLetterQueue.queueName as unknown as string,
       },
