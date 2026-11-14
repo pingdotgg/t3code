@@ -60,6 +60,7 @@ import {
 import { GuestMessageName, guestBubbleClassName } from "./guestMessageStyle";
 import { MessageCopyButton } from "./MessageCopyButton";
 import { EntryPinButton } from "./EntryPinButton";
+import { useExpandRevealedEntry } from "./entryReveal";
 import { promptLinkFor } from "../promptLinks/copyPromptLink";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { formatBytes } from "../../lib/formatBytes";
@@ -286,7 +287,9 @@ function UserMessageContent({ row }: { row: Extract<TimelineRow, { kind: "messag
 /** Automation prompts are long, repeated runbooks; a folded bubble keeps them out of the way. */
 function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
+  const revealExpansion = useExpandRevealedEntry(row.message.id);
   const [expanded, setExpanded] = useState(false);
+  if (revealExpansion && !expanded) setExpanded(true);
   const revealRef = findRevealRef(() => setExpanded(true));
   const { text, scheduledTaskId } = resolveUserMessagePresentation(row.message);
   const summary =
@@ -470,7 +473,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const userMessage = resolveUserMessagePresentation(row.message);
   // Messages from other agents fold to one line so the user's own messages stay easy to find.
   const folded = userMessage.attribution === "agent";
+  const revealExpansion = useExpandRevealedEntry(row.message.id);
   const [expanded, setExpanded] = useState(false);
+  if (revealExpansion && !expanded) setExpanded(true);
   const revealFoldRef = findRevealRef(() => setExpanded(true));
   const senderShell = useQuietThreadShell(folded ? senderRef : null);
   const senderLabel =
@@ -1033,6 +1038,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             {fileCardsOnly || audioOnly ? null : (
               <div onCopyCapture={onBodyCopyCapture}>
                 <CollapsibleUserMessageBody
+                  entryId={row.message.id}
                   text={resolvedContext.text}
                   renderContextReference={renderContextReference}
                   skills={ctx.skills}
@@ -1140,13 +1146,16 @@ const COLLAPSED_USER_MESSAGE_FADE_HEIGHT_REM = 1.75;
 const COLLAPSED_USER_MESSAGE_FADE_MASK = `linear-gradient(to bottom, black calc(100% - ${COLLAPSED_USER_MESSAGE_FADE_HEIGHT_REM}rem), transparent)`;
 
 const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(props: {
+  entryId: string;
   text: string;
   renderContextReference: (reference: ChatMarkdownContextReference) => ReactNode;
   skills: ReadonlyArray<ServerProviderSkill>;
   markdownCwd: string | undefined;
   collapsible?: boolean;
 }) {
+  const revealExpansion = useExpandRevealedEntry(props.entryId);
   const [expanded, setExpanded] = useState(false);
+  if (revealExpansion && !expanded) setExpanded(true);
   const revealForFind = () => setExpanded(true);
   const revealRef = findRevealRef(revealForFind);
   const hasVisibleBody = props.text.trim().length > 0;

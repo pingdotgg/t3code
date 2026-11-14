@@ -632,6 +632,15 @@ function entryPinLabel(text: string): string {
     : `${line.slice(0, THREAD_ENTRY_PIN_LABEL_LENGTH - 1).trimEnd()}…`;
 }
 
+function messagePinLabel(message: {
+  readonly text: string;
+  readonly attachments: ReadonlyArray<{ readonly name: string }>;
+}): string {
+  const fromText = entryPinLabel(message.text);
+  if (fromText.length > 0) return fromText;
+  return entryPinLabel(message.attachments.map((attachment) => attachment.name).join(", "));
+}
+
 /** The pin for a finished message, HTML render, or proposed plan; undefined when the entry cannot be pinned. */
 function resolveEntryPin(
   entryId: string,
@@ -645,7 +654,7 @@ function resolveEntryPin(
       entryId,
       runId: message.runId,
       kind: message.role === "user" ? "user_message" : "assistant_message",
-      label: entryPinLabel(message.text),
+      label: messagePinLabel(message),
     };
   }
   const item = turnItems.find((candidate) => candidate.id === entryId);

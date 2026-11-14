@@ -4,6 +4,7 @@ import {
   MAX_PIN_HISTORY_PAGES,
   type PinHistoryPage,
   type PinHistorySnapshot,
+  entryRevealExpands,
   pageUntilPinnedEntry,
 } from "./entryReveal";
 
@@ -23,6 +24,20 @@ function scriptedPages(snapshots: ReadonlyArray<PinHistorySnapshot>) {
 }
 
 const missing = { loaded: false, hasMoreHistory: true } satisfies PinHistorySnapshot;
+
+describe("entryRevealExpands", () => {
+  it("opens the named fold once per pin click", () => {
+    const request = { entryId: "plan-1", key: 4 };
+    expect(entryRevealExpands(null, "plan-1", null)).toEqual({ expand: false, claimedKey: null });
+    expect(entryRevealExpands(request, "other", null)).toEqual({ expand: false, claimedKey: null });
+    expect(entryRevealExpands(request, "plan-1", null)).toEqual({ expand: true, claimedKey: 4 });
+    expect(entryRevealExpands(request, "plan-1", 4)).toEqual({ expand: false, claimedKey: 4 });
+    expect(entryRevealExpands({ ...request, key: 5 }, "plan-1", 4)).toEqual({
+      expand: true,
+      claimedKey: 5,
+    });
+  });
+});
 
 describe("pageUntilPinnedEntry", () => {
   it("reveals an entry that is already in the open window without paging", async () => {

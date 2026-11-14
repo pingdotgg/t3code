@@ -276,6 +276,52 @@ const addRolledBackRecoveryCandidate = Effect.fn("addRolledBackRecoveryCandidate
   return threadId;
 });
 
+it.effect("turnItemIds returns only the requested turn item", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = yield* addRolledBackRecoveryCandidate("turn-item-ids");
+    const now = yield* DateTime.now;
+    const projection = yield* store.getThreadProjection(threadId);
+    const run = projection.runs[0]!;
+    const keptId = TurnItemId.make("item:turn-item-ids:rolled-back");
+    const extraId = TurnItemId.make("item:turn-item-ids:extra");
+    yield* store.apply({
+      id: EventId.make("event:turn-item-ids:extra"),
+      type: "turn-item.updated",
+      threadId,
+      runId: run.id,
+      nodeId: run.rootNodeId,
+      driver,
+      occurredAt: now,
+      payload: {
+        id: extraId,
+        threadId,
+        runId: run.id,
+        nodeId: run.rootNodeId,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 2,
+        status: "completed",
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "command_execution",
+        input: "pwd",
+      },
+    });
+    const ids = (filter?: ProjectionStore.ProjectionRecordFilter) =>
+      store
+        .getThreadRecords(threadId, ["turnItems"], filter)
+        .pipe(Effect.map(({ turnItems }) => turnItems.map((item) => item.id)));
+    assert.deepEqual(yield* ids(), [keptId, extraId]);
+    assert.deepEqual(yield* ids({ turnItemIds: [extraId] }), [extraId]);
+    assert.deepEqual(yield* ids({ turnItemIds: [] }), []);
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("routes full projection reads to readers and retains uncommitted writer state", () =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;

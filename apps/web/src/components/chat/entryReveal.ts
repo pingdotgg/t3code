@@ -3,6 +3,9 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
+import { use, useState } from "react";
+
+import { TimelineRowCtx } from "./timelineRowContext";
 
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
@@ -23,6 +26,28 @@ const entryRevealRequestAtom = Atom.make<EntryRevealRequest | null>(null).pipe(
 export function useEntryRevealRequest(threadKey: string): EntryRevealRequest | null {
   const request = useAtomValue(entryRevealRequestAtom);
   return request?.threadKey === threadKey ? request : null;
+}
+
+/** One pin click opens a collapsed fold once. Collapsing it afterward stays collapsed. */
+export function entryRevealExpands(
+  request: Pick<EntryRevealRequest, "entryId" | "key"> | null,
+  entryId: string,
+  claimedKey: number | null,
+): { readonly expand: boolean; readonly claimedKey: number | null } {
+  if (request === null || request.entryId !== entryId || claimedKey === request.key) {
+    return { expand: false, claimedKey };
+  }
+  return { expand: true, claimedKey: request.key };
+}
+
+/** True once for the pin click that names this entry, so the row can open its fold. */
+export function useExpandRevealedEntry(entryId: string): boolean {
+  const ctx = use(TimelineRowCtx);
+  const request = useEntryRevealRequest(ctx.threadRef ? scopedThreadKey(ctx.threadRef) : "");
+  const [claimedKey, setClaimedKey] = useState<number | null>(null);
+  const expansion = entryRevealExpands(request, entryId, claimedKey);
+  if (expansion.claimedKey !== claimedKey) setClaimedKey(expansion.claimedKey);
+  return expansion.expand;
 }
 
 function isEntryLoaded(ref: ScopedThreadRef, entryId: string): boolean {

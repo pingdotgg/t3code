@@ -2611,6 +2611,65 @@ it.effect("a running provider-turn update reads only the thread's queued and run
   }),
 );
 
+it.effect("an attachment-only message is pinned by its file name", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:entry-pin-attachment");
+    const messageId = MessageId.make("entry-pin-attachment");
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-entry-pin-attachment"),
+      threadId,
+      projectId: ProjectId.make("project:entry-pin-attachment"),
+      title: "Attachment pin",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("dispatch-entry-pin-attachment"),
+      threadId,
+      messageId,
+      text: "   ",
+      attachments: [
+        {
+          type: "file",
+          id: "entry-pin-notes",
+          name: "notes.pdf",
+          mimeType: "application/pdf",
+          sizeBytes: 12,
+        },
+      ],
+      dispatchMode: { type: "defer_start" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const runId = (yield* projections.getThreadProjection(threadId)).runs[0]!.id;
+    yield* orchestrator.dispatch({
+      type: "run.interrupt",
+      commandId: CommandId.make("interrupt-entry-pin-attachment"),
+      threadId,
+      runId,
+    });
+    yield* orchestrator.dispatch({
+      type: "thread.entry-pin.set",
+      commandId: CommandId.make("pin-entry-attachment"),
+      threadId,
+      entryId: messageId,
+      pinned: true,
+    });
+    assert.deepEqual((yield* projections.getThread(threadId)).entryPins, [
+      { entryId: messageId, runId, kind: "user_message", label: "notes.pdf" },
+    ]);
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect(
   "pins messages, HTML renders and plans idempotently without counting as thread activity",
   () =>
