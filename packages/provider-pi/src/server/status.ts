@@ -182,16 +182,21 @@ const PI_LOGGED_RPC_OPERATIONS = new Set([
 
 const PI_PROJECT_TRUST_ARGUMENTS = new Set(["--approve", "-a", "--no-approve", "-na"]);
 
-/**
- * The machine probe skips project-local files unless the user picked a trust mode. Pi's RPC mode
- * reads stdin only after session_start, so an extension dialog raised there (an MCP adapter asking
- * to approve a project server) can never be answered and Pi exits 0 without replying.
- */
-function machineProbeLaunchArgs(launchArgs: ReadonlyArray<string>): ReadonlyArray<string> {
-  return launchArgs.some((arg) => PI_PROJECT_TRUST_ARGUMENTS.has(arg))
-    ? launchArgs
-    : [...launchArgs, "--no-approve"];
-}
+const readPiInventory = Effect.fn("PiProviderStatus.readPiInventory")(function* (
+  piSettings: PiSettings,
+  environment: NodeJS.ProcessEnv,
+  launchArgs: ReadonlyArray<string>,
+  timeoutMs: number,
+  cwd?: string,
+) {
+  const connection = yield* makePiDiscoveryConnection(piSettings, environment, launchArgs, cwd);
+  const stateData = yield* connection.request({ type: "get_state" }, timeoutMs);
+  const modelsData = yield* connection.request({ type: "get_available_models" }, timeoutMs);
+  const commandsData = yield* connection
+    .request({ type: "get_commands" }, timeoutMs)
+    .pipe(Effect.orElseSucceed(() => undefined));
+  return { stateData, modelsData, commandsData };
+}, Effect.scoped);
 
 // Text generation runs Pi with --no-extensions, so it cannot load models that an
 // extension or package registers. Listing models with that launch tells them apart.
@@ -243,17 +248,25 @@ const discoverPiViaRpc = Effect.fn("PiProviderStatus.discoverPiViaRpc")(function
     }),
     Effect.forkScoped,
   );
-  const connection = yield* makePiDiscoveryConnection(
+  const { stateData, modelsData, commandsData } = yield* readPiInventory(
     piSettings,
     environment,
-    machineProbeLaunchArgs(launchArgs),
+    launchArgs,
+    timeoutMs,
     cwd,
+  ).pipe(
+    // Pi's RPC mode reads stdin only after session_start, so a startup dialog (an MCP adapter asking
+    // to approve a project server) can never be answered and Pi exits. Retry declining project trust
+    // unless the user chose a trust mode, so trusted projects keep their project-local models.
+    Effect.catchIf(
+      (error) =>
+        error._tag === "PiRpcError" &&
+        (error.operation === "read" || error.operation === "exit") &&
+        !launchArgs.some((arg) => PI_PROJECT_TRUST_ARGUMENTS.has(arg)),
+      () =>
+        readPiInventory(piSettings, environment, [...launchArgs, "--no-approve"], timeoutMs, cwd),
+    ),
   );
-  const stateData = yield* connection.request({ type: "get_state" }, timeoutMs);
-  const modelsData = yield* connection.request({ type: "get_available_models" }, timeoutMs);
-  const commandsData = yield* connection
-    .request({ type: "get_commands" }, timeoutMs)
-    .pipe(Effect.orElseSucceed(() => undefined));
   const discoveredModels = yield* Effect.fromResult(parseDiscoveredModels(modelsData, stateData));
   const { slashCommands, skills } = parsePiDiscoveredCommands(commandsData);
   const textGenerationModelSlugs = yield* Fiber.join(textGenerationModelSlugsFiber);

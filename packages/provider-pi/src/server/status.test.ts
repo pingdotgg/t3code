@@ -127,6 +127,8 @@ const piDiscoverySpawner = (
     readonly authCheck?: string | undefined;
     /** Without `--no-approve`, print a project-trust dialog and exit 0 as Pi 1.x does. */
     readonly startupDialog?: boolean;
+    /** What `--no-approve` lists once project-local extensions are skipped. */
+    readonly declinedProjectInventory?: unknown;
   } = {},
 ) =>
   Effect.succeed(
@@ -154,7 +156,11 @@ const piDiscoverySpawner = (
         );
       }
       return piRpcProcess(
-        args.includes("--no-extensions") ? extensionFreeInventory : inventory,
+        args.includes("--no-extensions")
+          ? extensionFreeInventory
+          : args.includes("--no-approve") && options.declinedProjectInventory !== undefined
+            ? options.declinedProjectInventory
+            : inventory,
         args.includes("--no-extensions") ? onExtensionFreeModelRequest : Effect.void,
         options.state,
       );
@@ -440,25 +446,40 @@ describe("PiProvider", () => {
   );
 
   it.effect.each([
-    { launchArgs: "", models: ["default", "anthropic/claude-opus"] },
-    { launchArgs: "--approve", models: ["default"] },
-  ])("probes past a project startup dialog with launch args '$launchArgs'", (row) =>
-    Effect.gen(function* () {
-      const spawner = yield* piDiscoverySpawner(
-        { models: [{ provider: "anthropic", id: "claude-opus" }] },
-        undefined,
-        undefined,
-        { startupDialog: true },
-      );
-      const snapshot = yield* checkPiProviderStatus({
-        ...settings,
-        launchArgs: row.launchArgs,
-      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
-      assert.deepEqual(
-        snapshot.models.map((model) => model.slug),
-        row.models,
-      );
-    }).pipe(Effect.provide(NodeServices.layer)),
+    { launchArgs: "", startupDialog: true, models: ["default", "anthropic/claude-opus"] },
+    { launchArgs: "--approve", startupDialog: true, models: ["default"] },
+    {
+      launchArgs: "",
+      startupDialog: false,
+      models: ["default", "anthropic/claude-opus", "project/local-model"],
+    },
+  ])(
+    "keeps project trust unless a startup dialog blocks discovery (dialog: $startupDialog, launch args '$launchArgs')",
+    (row) =>
+      Effect.gen(function* () {
+        const spawner = yield* piDiscoverySpawner(
+          {
+            models: [
+              { provider: "anthropic", id: "claude-opus" },
+              { provider: "project", id: "local-model" },
+            ],
+          },
+          undefined,
+          undefined,
+          {
+            startupDialog: row.startupDialog,
+            declinedProjectInventory: { models: [{ provider: "anthropic", id: "claude-opus" }] },
+          },
+        );
+        const snapshot = yield* checkPiProviderStatus({
+          ...settings,
+          launchArgs: row.launchArgs,
+        }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+        assert.deepEqual(
+          snapshot.models.map((model) => model.slug),
+          row.models,
+        );
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   // regression: #18498 a malformed model inventory must not restore stale Pi models
