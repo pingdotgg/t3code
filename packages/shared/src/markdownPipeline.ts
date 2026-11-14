@@ -16,7 +16,6 @@ import remarkRehype from "remark-rehype";
 import { find, html } from "property-information";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
-import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import { remarkGithubAlerts } from "./markdownGithubAlerts.ts";
 import { remarkNormalizeListItemIndentation } from "./markdownListIndentation.ts";
@@ -269,7 +268,7 @@ export const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS: PluggableList = [
   remarkNormalizeListItemIndentation,
   remarkCodexDirectives,
   remarkBreakAroundImageLines,
-  remarkBreaks,
+  remarkHardLineBreaks,
   remarkPreserveCodeMeta,
   remarkNormalizeLinksAndTagInlineCode,
 ];
@@ -409,6 +408,72 @@ function remarkBreakAroundImageLines() {
     const visit = (node: Root | RootContent) => {
       if (node.type === "paragraph") breakLinesAroundImages(node);
       else if ("children" in node) node.children.forEach(visit);
+    };
+    visit(tree);
+  };
+}
+
+const LINE_ENDING = /\r?\n|\r/g;
+
+function splitAtLineEndings(text: Text, source: string): PhrasingContent[] {
+  const pieces = text.value.split(LINE_ENDING);
+  const start = text.position?.start;
+  const endOffset = text.position?.end.offset;
+  const startOffset = start?.offset;
+  const endings =
+    start && startOffset !== undefined && endOffset !== undefined
+      ? [...source.slice(startOffset, endOffset).matchAll(LINE_ENDING)].map((ending) => ({
+          from: startOffset + ending.index,
+          to: startOffset + ending.index + ending[0].length,
+        }))
+      : undefined;
+  // Positions only when every authored line ending lines up with one in the decoded text.
+  const span =
+    start &&
+    startOffset !== undefined &&
+    endOffset !== undefined &&
+    endings?.length === pieces.length - 1
+      ? { line: start.line, column: start.column, from: startOffset, end: endOffset, endings }
+      : undefined;
+  const parts: PhrasingContent[] = [];
+  pieces.forEach((value, index) => {
+    if (value) {
+      const part: Text = { type: "text", value };
+      if (span) {
+        const from = index === 0 ? span.from : span.endings[index - 1]!.to;
+        const to = span.endings[index]?.from ?? span.end;
+        const line = span.line + index;
+        const column = index === 0 ? span.column : 1;
+        part.position = {
+          start: { line, column, offset: from },
+          end: { line, column: column + to - from, offset: to },
+        };
+      }
+      parts.push(part);
+    }
+    if (index < pieces.length - 1) parts.push({ type: "break" });
+  });
+  return parts;
+}
+
+/** remark-breaks, except split text keeps its source position for source-aware transforms. */
+function remarkHardLineBreaks(): Transformer<Root> {
+  return (tree, file) => {
+    const source = String(file);
+    const visit = (node: Root | RootContent) => {
+      if (!("children" in node)) return;
+      const children = node.children as RootContent[];
+      for (let index = 0; index < children.length; index += 1) {
+        const child = children[index]!;
+        if (child.type !== "text") {
+          visit(child);
+          continue;
+        }
+        if (!/[\r\n]/.test(child.value)) continue;
+        const parts = splitAtLineEndings(child, source);
+        children.splice(index, 1, ...parts);
+        index += parts.length - 1;
+      }
     };
     visit(tree);
   };

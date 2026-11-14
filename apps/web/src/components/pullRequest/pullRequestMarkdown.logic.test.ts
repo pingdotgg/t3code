@@ -1,6 +1,7 @@
 import { changeRequestReferenceAutolinker } from "@t3tools/client-runtime/pull-request-markdown";
 import {
   CHAT_MARKDOWN_REMARK_PLUGINS,
+  CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
   CHAT_MARKDOWN_REHYPE_PLUGINS,
 } from "@t3tools/shared/markdownPipeline";
 import remarkParse from "remark-parse";
@@ -18,14 +19,14 @@ type Node = {
   children?: Node[];
 };
 
-function links(markdown: string) {
+function links(markdown: string, { breaks = false } = {}) {
   const autolinks = changeRequestReferenceAutolinker({
     provider: "github",
     url: "https://github.com/team/repo/pull/8",
   })!;
   const processor = unified()
     .use(remarkParse)
-    .use(CHAT_MARKDOWN_REMARK_PLUGINS)
+    .use(breaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS)
     .use(remarkRehype, { allowDangerousHtml: true })
     .use(CHAT_MARKDOWN_REHYPE_PLUGINS)
     .use(rehypePullRequestAutolinks, { autolinks });
@@ -78,6 +79,15 @@ describe("authored mentions after sanitizing HTML", () => {
   });
   it("does not link entity-authored login characters", () => {
     expect(links("@rea&#100;er @reader")).toEqual([
+      ["@reader", "https://github.com/reader", "mention"],
+    ]);
+  });
+  it.each([
+    "line one\ncc \\@other @reader",
+    "> quote\n> \\@other @reader",
+    "- item\n  \\@other @reader",
+  ])("checks mentions in text split at hard line breaks: %s", (markdown) => {
+    expect(links(markdown, { breaks: true })).toEqual([
       ["@reader", "https://github.com/reader", "mention"],
     ]);
   });
