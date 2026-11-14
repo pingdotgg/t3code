@@ -55,6 +55,11 @@ import {
 const HUB_READY_TIMEOUT_MS = 30_000;
 const DAEMON_READY_TIMEOUT_MS = 30_000;
 const DAEMON_POLL_MS = 100;
+const DAEMON_HEALTH_TIMEOUT_MS = 3_000;
+const DAEMON_HEALTH_ATTEMPTS = 3;
+// agent-device waits up to 10 s after SIGTERM and 2 s after SIGKILL before it
+// reports whether the daemon exited.
+const DAEMON_RECOVERY_STOP_TIMEOUT = Duration.seconds(15);
 const HUB_RESTART_STABLE_UPTIME_MS = 60_000;
 const HUB_RESTART_MAX_DELAY_MS = 30_000;
 
@@ -553,17 +558,35 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       entryPath: agentTool.entryPath,
     });
     if (existing._tag === "Some") {
-      const alive = yield* HttpClient.withScope(httpClient)
+      const probe = HttpClient.withScope(httpClient)
         .get(`http://127.0.0.1:${existing.value.httpPort}/health`)
         .pipe(
-          Effect.timeout(Duration.seconds(2)),
           Effect.flatMap((response) =>
             response.arrayBuffer.pipe(Effect.as(response.status === 200)),
           ),
+          Effect.timeout(Duration.millis(DAEMON_HEALTH_TIMEOUT_MS)),
           Effect.scoped,
           Effect.orElseSucceed(() => false),
         );
-      if (alive) return toEndpoint(existing.value);
+      // A daemon busy with a long command can miss one probe; restarting it then
+      // would race its live lock and wedge every later start.
+      for (let attempt = 1; attempt <= DAEMON_HEALTH_ATTEMPTS; attempt++) {
+        if (yield* probe) return toEndpoint(existing.value);
+      }
+      // Stop through agent-device while daemon.json still names the process; once
+      // the file is gone it reports "not-running" and the daemon keeps daemon.lock.
+      const stopped = yield* runAgentDeviceDaemonStop(
+        { entryPath: agentTool.entryPath, nodePath },
+        DAEMON_RECOVERY_STOP_TIMEOUT,
+      ).pipe(Effect.result);
+      if (stopped._tag === "Failure" || stopped.success.timedOut || stopped.success.code !== 0) {
+        yield* Effect.logWarning(
+          "Could not stop an unresponsive agent-device daemon",
+          stopped._tag === "Failure"
+            ? { cause: stopped.failure }
+            : { code: stopped.success.code, timedOut: stopped.success.timedOut },
+        );
+      }
       yield* fs.remove(daemonFilePath(), { force: true }).pipe(Effect.ignore);
     }
     // No `daemon start` exists; `devices` is the cheapest command that starts and awaits it.
@@ -626,6 +649,24 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     }
   });
 
+  const runAgentDeviceDaemonStop = (
+    agentTool: { readonly entryPath: string; readonly nodePath: string },
+    timeout: Duration.Duration,
+  ) =>
+    runner.run({
+      command: agentTool.nodePath,
+      args: [
+        agentTool.entryPath,
+        "daemon",
+        "stop",
+        "--state-dir",
+        agentDeviceStateDir(path, config.stateDir),
+      ],
+      env: { ...hostEnvironment, AGENT_DEVICE_NO_UPDATE_NOTIFIER: "1" },
+      timeout,
+      timeoutBehavior: "timedOutResult",
+    });
+
   // The daemon may predate this process (an earlier server was killed, possibly on an
   // older pin), so stop it with the CLI of its recorded version when that is installed.
   const stopAgentDeviceDaemon = Effect.gen(function* () {
@@ -646,19 +687,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     const nodePath = yield* resolveNodeExecutable("Local device support", hostEnvironment).pipe(
       Effect.provideService(HostProcess.Platform, hostPlatform),
     );
-    yield* runner.run({
-      command: nodePath,
-      args: [
-        entryPath,
-        "daemon",
-        "stop",
-        "--state-dir",
-        agentDeviceStateDir(path, config.stateDir),
-      ],
-      env: { ...hostEnvironment, AGENT_DEVICE_NO_UPDATE_NOTIFIER: "1" },
-      timeout: Duration.seconds(10),
-      timeoutBehavior: "timedOutResult",
-    });
+    yield* runAgentDeviceDaemonStop({ entryPath, nodePath }, Duration.seconds(10));
   }).pipe(
     Effect.provideService(FileSystem.FileSystem, fs),
     Effect.provideService(Path.Path, path),

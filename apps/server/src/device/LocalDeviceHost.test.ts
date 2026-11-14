@@ -51,6 +51,10 @@ const agentFixture = Effect.fn("agentFixture")(function* (
   const daemonStopRequested = yield* Deferred.make<ReadonlyArray<string>>();
   const stateDir = agentDeviceStateDir(path, path.join(baseDir, "userdata"));
   const daemonHealthy = yield* Ref.make(true);
+  const failedProbes = yield* Ref.make(0);
+  const commands: Array<string> = [];
+  const stopResult = yield* Ref.make(processOutput(0));
+  const daemonFileAtStop: Array<boolean> = [];
   const runs: Array<ProcessRunner.ProcessRunInput> = [];
   for (const [name, version, entry] of [
     ["expo-device-hub", DEVICE_HUB_VERSION, "dist/server/cli.mjs"],
@@ -105,17 +109,28 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     Effect.provideService(ProcessRunner.ProcessRunner, {
       run: (input) => {
         runs.push(input);
+        if (input.args.includes("devices") || input.args.includes("daemon"))
+          commands.push(input.args.slice(1, 3).join(" "));
+        if (input.args.includes("daemon"))
+          return fs.exists(`${stateDir}/daemon.json`).pipe(
+            Effect.orDie,
+            Effect.tap((exists) => Effect.sync(() => daemonFileAtStop.push(exists))),
+            Effect.tap(() => Deferred.succeed(daemonStopRequested, input.args)),
+            Effect.andThen(Ref.get(stopResult)),
+          );
         return input.args.includes("devices")
           ? startup(stateDir)
-          : input.args.includes("daemon")
-            ? Deferred.succeed(daemonStopRequested, input.args).pipe(Effect.as(processOutput(0)))
-            : Effect.succeed(input.args.includes("-list-avds") ? avdOutput : processOutput(0));
+          : Effect.succeed(input.args.includes("-list-avds") ? avdOutput : processOutput(0));
       },
     }),
     Effect.provideService(
       HttpClient.HttpClient,
       HttpClient.make((request) =>
-        Ref.get(daemonHealthy).pipe(
+        Effect.all([
+          Ref.get(daemonHealthy),
+          Ref.getAndUpdate(failedProbes, (remaining) => Math.max(0, remaining - 1)),
+        ]).pipe(
+          Effect.map(([daemonUp, failing]) => daemonUp && failing === 0),
           Effect.map((healthy) =>
             HttpClientResponse.fromWeb(
               request,
@@ -129,7 +144,20 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     ),
   );
   yield* host.ensureReady(() => Effect.void);
-  return { host, fs, baseDir, stateDir, hub, daemonHealthy, daemonStopRequested, runs };
+  return {
+    host,
+    fs,
+    baseDir,
+    stateDir,
+    hub,
+    daemonHealthy,
+    daemonStopRequested,
+    failedProbes,
+    commands,
+    stopResult,
+    daemonFileAtStop,
+    runs,
+  };
 });
 
 describe("AgentDevice startup", () => {
@@ -137,7 +165,7 @@ describe("AgentDevice startup", () => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       let attempts = 0;
-      const { host, daemonHealthy } = yield* agentFixture((stateDir) =>
+      const { host, daemonHealthy, commands, daemonFileAtStop } = yield* agentFixture((stateDir) =>
         Effect.gen(function* () {
           attempts++;
           yield* fs
@@ -158,10 +186,65 @@ describe("AgentDevice startup", () => {
       yield* Ref.set(daemonHealthy, false);
       const restarted = yield* host.ensureAgentReady(() => Effect.void);
       expect(attempts).toBe(2);
+      // The old daemon is stopped while daemon.json still identifies it.
+      expect(commands).toEqual(["devices --json", "daemon stop", "devices --json"]);
+      expect(daemonFileAtStop).toEqual([true]);
       expect(restarted.agentDevice).toMatchObject({
         baseUrl: "http://127.0.0.1:12347",
         token: "token-2",
       });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("still restarts an unresponsive daemon when its stop times out", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      let attempts = 0;
+      const { host, daemonHealthy, commands, stopResult } = yield* agentFixture((stateDir) =>
+        Effect.gen(function* () {
+          attempts++;
+          yield* fs
+            .writeFileString(
+              `${stateDir}/daemon.json`,
+              JSON.stringify({ httpPort: 12345 + attempts, token: `token-${attempts}` }),
+            )
+            .pipe(Effect.orDie);
+          return processOutput(0);
+        }),
+      );
+      yield* host.ensureAgentReady(() => Effect.void);
+      yield* Ref.set(daemonHealthy, false);
+      yield* Ref.set(stopResult, processOutput(0, "", "", true));
+
+      const restarted = yield* host.ensureAgentReady(() => Effect.void);
+      expect(commands).toEqual(["devices --json", "daemon stop", "devices --json"]);
+      expect(restarted.agentDevice).toMatchObject({ token: "token-2" });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps a busy daemon that misses a health probe", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      let attempts = 0;
+      const { host, failedProbes, commands } = yield* agentFixture((stateDir) =>
+        Effect.gen(function* () {
+          attempts++;
+          yield* fs
+            .writeFileString(
+              `${stateDir}/daemon.json`,
+              JSON.stringify({ httpPort: 12345 + attempts, token: `token-${attempts}` }),
+            )
+            .pipe(Effect.orDie);
+          return processOutput(0);
+        }),
+      );
+      const first = yield* host.ensureAgentReady(() => Effect.void);
+
+      yield* Ref.set(failedProbes, 1);
+      const again = yield* host.ensureAgentReady(() => Effect.void);
+      expect(again.agentDevice).toEqual(first.agentDevice);
+      expect(attempts).toBe(1);
+      expect(commands).toEqual(["devices --json"]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
