@@ -41,14 +41,22 @@ export function TimelineRowTimestamp({
   );
 }
 
-export function ActivityShimmerOverlay({ children }: { children: ReactNode }) {
+export function ActivityShimmerOverlay({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
   return (
     <span
       aria-hidden
       className="live-activity-focus pointer-events-none absolute inset-y-0 select-none"
     >
       <span className="live-activity-focus-counter block">
-        <span className="live-activity-focus-aligned block text-foreground">{children}</span>
+        <span className={cn("live-activity-focus-aligned block text-foreground", className)}>
+          {children}
+        </span>
       </span>
     </span>
   );
