@@ -12941,15 +12941,47 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           attachments: [],
         }),
       );
-      acknowledge = harness.offerAndWait(
-        makeResultFrame({
-          uuid: "00000000-0000-4000-8000-000000000620",
-          result: "",
-          subtype: "error_during_execution",
-          errors: ["Error: Request was aborted."],
-          terminalReason: "aborted_streaming",
-        }),
-      );
+      // Real Claude answers Stop with an error result for the running tool, then the result.
+      acknowledge = harness
+        .offerAndWait(
+          claudeSdkFrame({
+            type: "user",
+            uuid: "00000000-0000-4000-8000-000000000619",
+            session_id: WAKE_NATIVE_SESSION,
+            parent_tool_use_id: null,
+            message: {
+              role: "user",
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: "tool-running-bash",
+                  is_error: true,
+                  content: "The user doesn't want to proceed with this tool use.",
+                },
+                {
+                  type: "tool_result",
+                  tool_use_id: "tool-failed-bash",
+                  is_error: true,
+                  content: "Process exited with code 1",
+                },
+              ],
+            },
+            tool_result_meta: [{ id: "tool-running-bash", non_execution_kind: "user-rejected" }],
+          }),
+        )
+        .pipe(
+          Effect.andThen(
+            harness.offerAndWait(
+              makeResultFrame({
+                uuid: "00000000-0000-4000-8000-000000000620",
+                result: "",
+                subtype: "error_during_execution",
+                errors: ["Error: Request was aborted."],
+                terminalReason: "aborted_tools",
+              }),
+            ),
+          ),
+        );
       yield* harness.until(() =>
         harness.events.some(
           (event) =>
@@ -12962,6 +12994,37 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       );
       if (active?.type !== "provider_turn.updated")
         return yield* Effect.die("Missing running native turn");
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "assistant",
+          uuid: "00000000-0000-4000-8000-000000000618",
+          session_id: WAKE_NATIVE_SESSION,
+          parent_tool_use_id: null,
+          message: {
+            id: "msg_running_bash",
+            model: "claude-sonnet-4-6",
+            type: "message",
+            role: "assistant",
+            content: [
+              {
+                type: "tool_use",
+                id: "tool-running-bash",
+                name: "Bash",
+                input: { command: "sleep 60" },
+              },
+              {
+                type: "tool_use",
+                id: "tool-failed-bash",
+                name: "Bash",
+                input: { command: "exit 1" },
+              },
+            ],
+            stop_reason: "tool_use",
+            stop_sequence: null,
+            usage: { input_tokens: 1, output_tokens: 1 },
+          },
+        }),
+      );
       yield* harness.runtime.interruptTurn({
         providerThread: harness.providerThread,
         providerTurnId: active.providerTurn.id,
@@ -12970,6 +13033,24 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "interrupted");
       assert.equal(closes, 1);
       assert.lengthOf(harness.terminalEvents(), 1);
+      const stoppedTool = harness.events.findLast(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === "tool-running-bash",
+      );
+      const failedTool = harness.events.findLast(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === "tool-failed-bash",
+      );
+      assert.equal(
+        failedTool?.type === "turn_item.updated" ? failedTool.turnItem.status : undefined,
+        "failed",
+      );
+      assert.equal(
+        stoppedTool?.type === "turn_item.updated" ? stoppedTool.turnItem.status : undefined,
+        "interrupted",
+      );
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
@@ -20998,8 +21079,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     });
   const workflowSnapshot = (input: {
     readonly uuid: string;
-    readonly state: "queued" | "start" | "done";
-    readonly secondState?: "queued" | "start" | "done";
+    readonly state: "queued" | "start" | "done" | "error";
+    readonly secondState?: "queued" | "start" | "done" | "error";
     readonly startedAt?: number;
     readonly lastProgressAt?: number;
     readonly durationMs?: number;
@@ -22763,6 +22844,185 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       yield* Queue.offer(
         harness.sdkMessages,
         makeResultFrame({ uuid: "00000000-0000-4000-8000-000000001372", result: "Done." }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("shows a workflow member's tool as stopped when Stop cancels the workflow", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWorkflowHarness;
+        const transcriptPath = NodePath.join(harness.transcriptDir, "agent-a1.jsonl");
+        NodeFS.writeFileSync(
+          transcriptPath,
+          memberAssistantLine("line-bash", "msg_a1", [
+            { type: "tool_use", id: "toolu_a1_ping", name: "Bash", input: { command: "ping" } },
+          ]),
+        );
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-workflow-member-stopped"),
+            text: "Run the alpha workflow.",
+            attachments: [],
+          }),
+        );
+        yield* launchWorkflow({ harness, snapshotUuid: "00000000-0000-4000-8000-000000001375" });
+        const threadId = workflowMemberEvents(harness.events, 1)[0]?.subagent.childThreadId;
+        const errorLine = (uuid: string, toolUseId: string, output: string, denial?: object) =>
+          transcriptLine({
+            type: "user",
+            uuid,
+            message: {
+              role: "user",
+              content: [
+                { tool_use_id: toolUseId, type: "tool_result", content: output, is_error: true },
+              ],
+            },
+            ...denial,
+          });
+        const denial = {
+          toolUseResult: "User rejected tool use",
+          toolDenialKind: "user-rejected",
+        };
+        NodeFS.appendFileSync(
+          transcriptPath,
+          errorLine("line-ping-failed", "toolu_a1_ping", "Exit code 1"),
+        );
+        yield* harness.offerAndWait(
+          workflowSnapshot({ uuid: "00000000-0000-4000-8000-000000001378", state: "start" }),
+        );
+        // A declined approval written before Stop but first read after it stays a failure.
+        NodeFS.appendFileSync(
+          transcriptPath,
+          memberAssistantLine("line-rm", "msg_a1_rm", [
+            { type: "tool_use", id: "toolu_a1_rm", name: "Bash", input: { command: "rm" } },
+          ]) +
+            errorLine("line-rm-declined", "toolu_a1_rm", "Declined", denial) +
+            memberAssistantLine("line-sleep", "msg_a1_sleep", [
+              { type: "tool_use", id: "toolu_a1_sleep", name: "Bash", input: { command: "sleep" } },
+            ]),
+        );
+        yield* TestClock.setTime(Date.parse("2026-10-17T06:00:00.000Z"));
+        yield* harness.runtime.stopTask!({
+          providerThread: harness.providerThread,
+          taskId: WORKFLOW_TASK_ID,
+        });
+        // Claude writes the Stop rejection while the member still reads as running, then reports it as an error.
+        NodeFS.appendFileSync(
+          transcriptPath,
+          errorLine("line-sleep-stopped", "toolu_a1_sleep", "Rejected", {
+            ...denial,
+            timestamp: "2026-10-17T06:00:01.000Z",
+          }),
+        );
+        yield* harness.offerAndWait(
+          workflowSnapshot({ uuid: "00000000-0000-4000-8000-000000001379", state: "start" }),
+        );
+        yield* harness.offerAndWait(
+          workflowSnapshot({
+            uuid: "00000000-0000-4000-8000-000000001380",
+            state: "error",
+            // Claude's last progress tick for a member blocked in one tool predates the Stop.
+            lastProgressAt: Date.parse("2026-10-17T05:59:00.000Z"),
+          }),
+        );
+        yield* harness.offerAndWait(
+          workflowNotification({ uuid: "00000000-0000-4000-8000-000000001376", status: "stopped" }),
+        );
+        assert.equal(workflowMemberEvents(harness.events, 1).at(-1)?.subagent.status, "cancelled");
+        assert.deepEqual(latestMemberThreadItems(harness.events, threadId).map(describeItem), [
+          "user_message",
+          "command failed: Exit code 1",
+          "command failed: Declined",
+          "command interrupted: Rejected",
+        ]);
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000001377", result: "Done." }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("keeps genuine member failures failed around a workflow Stop", () =>
+    Effect.gen(function* () {
+      let stopCalls = 0;
+      const harness = yield* makeWorkflowHarnessWithOptions({
+        stopTask: () =>
+          ++stopCalls === 1
+            ? Effect.fail(
+                new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+                  method: "stopTask",
+                  cause: new Error("rejected"),
+                }),
+              )
+            : Effect.void,
+      });
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-claude-workflow-stop-failures"),
+          text: "Run the alpha workflow.",
+          attachments: [],
+        }),
+      );
+      yield* launchWorkflow({ harness, snapshotUuid: "00000000-0000-4000-8000-000000001390" });
+      const memberStatus = (index: number) =>
+        workflowMemberEvents(harness.events, index).at(-1)?.subagent.status;
+      const stop = harness.runtime.stopTask!({
+        providerThread: harness.providerThread,
+        taskId: WORKFLOW_TASK_ID,
+      }).pipe(Effect.exit);
+      yield* harness.offerAndWait(
+        workflowSnapshot({
+          uuid: "00000000-0000-4000-8000-000000001391",
+          state: "error",
+          secondState: "start",
+        }),
+      );
+      assert.equal(memberStatus(1), "failed");
+      assert.isTrue(Exit.isFailure(yield* stop));
+      yield* harness.offerAndWait(
+        workflowSnapshot({
+          uuid: "00000000-0000-4000-8000-000000001392",
+          state: "error",
+          secondState: "error",
+        }),
+      );
+      assert.equal(memberStatus(2), "failed");
+      assert.isTrue(Exit.isSuccess(yield* stop));
+      yield* harness.offerAndWait(
+        workflowSnapshot({ uuid: "00000000-0000-4000-8000-000000001393", state: "error" }),
+      );
+      assert.deepEqual([memberStatus(1), memberStatus(2)], ["failed", "failed"]);
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000001394", result: "Done." }),
       );
       yield* Queue.take(harness.terminalReceipts);
     }).pipe(
