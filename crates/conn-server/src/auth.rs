@@ -24,7 +24,7 @@ use conn_support::{
     fs::write_private,
     hex::hex,
     hmac::{constant_time_eq, hmac_sha256},
-    time::{iso_from_ms, now_ms},
+    time::iso_from_ms,
     uuid_v4,
 };
 use serde::{Deserialize, Serialize};
@@ -1091,6 +1091,15 @@ fn narrow(grant: Vec<String>, requested: Option<&[String]>) -> Vec<String> {
     granted
 }
 
+/// The wall clock, which every expiry here reads, as the T3 server's `DateTime.now`. A test
+/// moves it forward with [`tests::jump_wall`] to act out a container that was frozen.
+fn now_ms() -> u64 {
+    let now = conn_support::time::now_ms();
+    #[cfg(test)]
+    let now = now.saturating_add(tests::WALL_OFFSET_MS.with(std::cell::Cell::get));
+    now
+}
+
 /// When something made at `now` with `ttl_ms` to live expires. The life is capped at
 /// [`MAX_TTL_MS`], so no TTL overflows.
 fn expires_at(now: u64, ttl_ms: u64) -> u64 {
@@ -1275,6 +1284,64 @@ pub fn parse_scopes(text: &str) -> Result<Vec<String>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    thread_local! {
+        /// How far this test thread's wall clock is ahead of the system's.
+        pub(super) static WALL_OFFSET_MS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    }
+
+    pub(super) fn jump_wall(by_ms: u64) {
+        WALL_OFFSET_MS.with(|offset| offset.set(offset.get() + by_ms));
+    }
+
+    /// Orbit freezes a container and its wall clock jumps on wake. Every expiry here reads
+    /// the wall clock, as T3's `PairingGrantStore.ts` and `SessionStore.ts` read
+    /// `DateTime.now`: a 5-minute pairing code and WebSocket ticket are gone after 10
+    /// minutes, a 30-day session lives through 3 days and ends after 30.
+    #[test]
+    fn expiries_follow_the_wall_clock_after_a_freeze() {
+        const MIN: u64 = MINUTE_MS;
+        let store = AuthStore::in_memory();
+        let session = store
+            .issue_session(SessionRequest {
+                scopes: vec!["access:read".into()],
+                label: None,
+                subject: None,
+                ttl_ms: SESSION_TTL_MS,
+            })
+            .unwrap();
+        let id = session.principal.session_id.clone();
+        let fresh_code = |ttl| store.issue_pairing_code(None, ttl).unwrap().code;
+        let pairing = |code: &str| store.exchange(code, None, ClientInfo::bot(None)).is_ok();
+        let ticket = || store.issue_ticket(&session.token, Some("rpc")).unwrap().0;
+
+        let code = fresh_code(PAIRING_CODE_TTL_MS);
+        let startup_code = fresh_code(STARTUP_PAIRING_CODE_TTL_MS);
+        let rpc_ticket = ticket();
+        assert!(pairing(&fresh_code(PAIRING_CODE_TTL_MS)), "a fresh code pairs");
+        assert!(store.authenticate_ticket(&ticket(), "rpc").is_some());
+        jump_wall(10 * MIN);
+        assert!(!pairing(&code), "a 5-minute code after 10 minutes");
+        assert!(store.authenticate_ticket(&rpc_ticket, "rpc").is_none());
+        assert!(store.authenticate_bearer(&session.token).is_some());
+        assert!(store.session_active(&id));
+
+        let code = fresh_code(PAIRING_CODE_TTL_MS);
+        jump_wall(2 * 60 * MIN);
+        assert!(!pairing(&code), "a 5-minute code after 2 hours");
+        assert!(store.session_active(&id), "a 30-day session after 2 hours");
+
+        let rpc_ticket = ticket();
+        jump_wall(3 * 24 * 60 * MIN);
+        assert!(!pairing(&startup_code), "a 24-hour code after 3 days");
+        assert!(store.authenticate_ticket(&rpc_ticket, "rpc").is_none());
+        assert!(store.authenticate_bearer(&session.token).is_some());
+        assert!(store.session_active(&id), "a 30-day session after 3 days");
+
+        jump_wall(27 * 24 * 60 * MIN);
+        assert!(store.authenticate_bearer(&session.token).is_none());
+        assert!(!store.session_active(&id), "the session ends at 30 days");
+    }
 
     fn temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("conn-server-{name}-{}", random_hex(6)));
