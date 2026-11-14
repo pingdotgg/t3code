@@ -221,6 +221,7 @@ async fn run(command: GitCommand, scan: Option<Scanner<'_>>) -> Result<GitOutput
     let mut child = Command::new(&command.program);
     child.args(&command.args).current_dir(&command.cwd);
     if command.is_git() {
+        unset_inherited_repository_env(&mut child);
         // Status reads must not take `index.lock` from under an agent's own git commands.
         child
             .env("GIT_OPTIONAL_LOCKS", "0")
@@ -351,6 +352,42 @@ async fn run(command: GitCommand, scan: Option<Scanner<'_>>) -> Result<GitOutput
 /// `explicitBareRepositoryEnv` in `VcsProcess.ts`: one more `GIT_CONFIG_KEY_<n>` /
 /// `GIT_CONFIG_VALUE_<n>` pair after the ones the server inherited, so a `git` that a host CLI
 /// starts opens a bare repository only when told to.
+/// `REPOSITORY_SELECTORS` in `VcsProcess.ts`.
+const REPOSITORY_SELECTORS: [&str; 6] = [
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_COMMON_DIR",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+];
+
+/// `unsetInheritedRepositoryEnv`: the repository selectors among `inherited`, such as a Git
+/// hook's `GIT_DIR`, so that Git finds the repository from its working folder. A command's own
+/// variables, set after, may still name them.
+pub fn inherited_repository_selectors<'a>(
+    inherited: impl IntoIterator<Item = &'a std::ffi::OsStr>,
+) -> Vec<&'static str> {
+    let mut found: Vec<&'static str> = Vec::new();
+    for name in inherited {
+        if let Some(selector) = REPOSITORY_SELECTORS.iter().find(|s| name == **s)
+            && !found.contains(selector)
+        {
+            found.push(selector);
+        }
+    }
+    found
+}
+
+/// Removes the repository selectors the server inherited from a `git` child's environment.
+pub fn unset_inherited_repository_env(command: &mut Command) {
+    let names: Vec<std::ffi::OsString> = std::env::vars_os().map(|(name, _)| name).collect();
+    for selector in inherited_repository_selectors(names.iter().map(std::ffi::OsString::as_os_str))
+    {
+        command.env_remove(selector);
+    }
+}
+
 pub fn explicit_bare_repository_env() -> Vec<(String, String)> {
     git_config_env(std::env::var("GIT_CONFIG_COUNT").ok().as_deref())
 }
@@ -428,6 +465,29 @@ async fn read_bounded<R: AsyncRead + Unpin>(
 
 #[cfg(test)]
 mod tests {
+    // `unsetInheritedRepositoryEnv` on a POSIX host: exact names only, each once.
+    #[test]
+    fn finds_the_inherited_repository_selectors() {
+        let names = [
+            "PATH",
+            "GIT_DIR",
+            "git_dir",
+            "GIT_WORK_TREE",
+            "GIT_DIR",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            "GIT_CONFIG_COUNT",
+        ];
+        let found = super::inherited_repository_selectors(names.iter().map(std::ffi::OsStr::new));
+        assert_eq!(
+            found,
+            [
+                "GIT_DIR",
+                "GIT_WORK_TREE",
+                "GIT_ALTERNATE_OBJECT_DIRECTORIES"
+            ]
+        );
+    }
+
     #[test]
     fn host_clis_get_the_bare_repository_guard() {
         use super::git_config_env;

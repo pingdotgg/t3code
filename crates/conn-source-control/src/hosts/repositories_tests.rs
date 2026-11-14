@@ -167,6 +167,49 @@ fn github_selectors_and_remote_hosts() {
         Some("acme.ghe.com")
     );
     assert_eq!(api_host_for_remote("git@gitlab.com:o/r.git"), None);
+    // gitHubRepositoryResolution.test.ts: "reads an SSH alias through github.com and a real
+    // host as itself", and the github.com-<name> cases.
+    assert_eq!(
+        api_host_for_remote("git@github:acme/web.git").as_deref(),
+        Some("github.com")
+    );
+    assert_eq!(
+        api_host_for_remote("git@github.example.com:a/b.git").as_deref(),
+        Some("github.example.com")
+    );
+    assert_eq!(
+        api_host_for_remote("https://github.corp.example:8443/a/b.git").as_deref(),
+        Some("github.corp.example:8443"),
+        "an Enterprise Server keeps its port"
+    );
+    for url in [
+        "git@github.com-scale:scalable-so/scalablev2.git",
+        "git@GitHub.com-Work:acme/web.git",
+        "ssh://git@github.com-personal/acme/web.git",
+    ] {
+        assert_eq!(
+            api_host_for_remote(url).as_deref(),
+            Some("github.com"),
+            "{url}"
+        );
+    }
+    for (url, host) in [
+        (
+            "git@github.com-evil.example:acme/web.git",
+            Some("github.com-evil.example"),
+        ),
+        (
+            "ssh://git@github.com-evil.example/acme/web.git",
+            Some("github.com-evil.example"),
+        ),
+        (
+            "git@github.com.evil.example:acme/web.git",
+            Some("github.com.evil.example"),
+        ),
+        ("git@evil-github.com:acme/web.git", None),
+    ] {
+        assert_eq!(api_host_for_remote(url).as_deref(), host, "{url}");
+    }
     assert_eq!(
         fetch_remotes(
             "origin\tgit@github.com:o/r.git (fetch)\norigin\tgit@github.com:o/r.git (push)\nup\thttps://github.com/u/r (fetch) [blob:none]\n"
@@ -434,4 +477,280 @@ async fn an_unbuilt_host_fails_as_unregistered() {
         "No example source control provider is registered."
     );
     assert_eq!(failure.user_facing, None);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Forgejo and GitCafe: `ForgejoSourceControlProvider.ts` and `GitCafeSourceControlProvider.ts`
+// ---------------------------------------------------------------------------------------------
+
+use crate::hosts::forgejo_cli::tests::{FJ_OK, Fixture, TEA_LOGINS, requests as fixture_requests};
+
+fn fixture_hosts(fixture: &Fixture) -> Hosts<'_> {
+    Hosts { ctx: fixture.ctx() }
+}
+
+const FORGEJO_REPOSITORY: &str = r#"{"full_name":"maria/project","clone_url":"https://forgejo.local/maria/project.git","ssh_url":"git@forgejo.local:maria/project.git","default_branch":"main"}"#;
+
+#[tokio::test(flavor = "current_thread")]
+async fn forgejo_reads_and_creates_repositories_with_fj() {
+    let server = fake::serve(|r| match (r.method.as_str(), r.path.as_str()) {
+        ("GET", "/api/v1/user") => (200, r#"{"login":"maria"}"#.into()),
+        (_, "/api/v1/repos/maria/project" | "/api/v1/user/repos" | "/api/v1/orgs/acme/repos") => {
+            (201, FORGEJO_REPOSITORY.into())
+        }
+        _ => (404, String::new()),
+    })
+    .await;
+    let mut fixture = Fixture::new("fj-repo");
+    fixture.write_keys(r#"{"hosts":{"forgejo.local":{"type":"Application","token":"fj-token"}}}"#);
+    fixture.endpoints.forgejo_api = Some(server.base.clone());
+    fixture.stub("fj", FJ_OK);
+    let hosts = fixture_hosts(&fixture);
+    let cwd = fixture.repo.clone();
+
+    let urls = hosts
+        .clone_urls("forgejo", &cwd, "maria/project")
+        .await
+        .expect("looked up");
+    assert_eq!(
+        urls,
+        CloneUrls {
+            name_with_owner: "maria/project".into(),
+            url: "https://forgejo.local/maria/project.git".into(),
+            ssh_url: "git@forgejo.local:maria/project.git".into(),
+        }
+    );
+    // One operation verifies the login once, as a cold T3 server's 30 s record does.
+    assert_eq!(fixture.argv("fj"), ["--host https://forgejo.local whoami"]);
+
+    hosts
+        .create_repository("forgejo", &cwd, "maria/new", Visibility::Private)
+        .await
+        .expect("created for the viewer");
+    hosts
+        .create_repository("forgejo", &cwd, "acme/new", Visibility::Public)
+        .await
+        .expect("created in the org");
+    let seen: Vec<(String, String, String)> = fixture_requests(&server)
+        .iter()
+        .map(|r| (r.method.clone(), r.path.clone(), r.body.clone()))
+        .collect();
+    let row = |m: &str, p: &str, b: &str| (m.to_owned(), p.to_owned(), b.to_owned());
+    assert_eq!(
+        seen,
+        [
+            row("GET", "/api/v1/repos/maria/project", ""),
+            row("GET", "/api/v1/user", ""),
+            row(
+                "POST",
+                "/api/v1/user/repos",
+                r#"{"name":"new","private":true,"auto_init":false}"#
+            ),
+            row("GET", "/api/v1/user", ""),
+            row(
+                "POST",
+                "/api/v1/orgs/acme/repos",
+                r#"{"name":"new","private":false,"auto_init":false}"#
+            ),
+        ]
+    );
+    // No checkout remote is read when the call names the repository.
+    assert_eq!(fixture.argv("git"), Vec::<String>::new());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn forgejo_reads_and_creates_repositories_with_tea() {
+    let fixture = Fixture::new("tea-repo");
+    let repository = FORGEJO_REPOSITORY.replace('"', "\\\"");
+    fixture.stub(
+        "tea",
+        &format!(
+            "case \"$1 $*\" in\n  login*) printf '%s' '{TEA_LOGINS}';;\n  *api/v1/user) printf '%s' '{{\"login\":\"maria\"}}'; printf 'HTTP/1.1 200 OK\\n' >&2;;\n  *) printf \"%s\" \"{repository}\"; printf 'HTTP/1.1 201 Created\\n' >&2;;\nesac"
+        ),
+    );
+    let hosts = fixture_hosts(&fixture);
+    let cwd = fixture.repo.clone();
+    let remote = "http://forgejo.local:3000/maria/project";
+    hosts
+        .clone_urls("forgejo", &cwd, remote)
+        .await
+        .expect("looked up");
+    hosts
+        .create_repository(
+            "forgejo",
+            &cwd,
+            "http://forgejo.local:3000/maria/new",
+            Visibility::Private,
+        )
+        .await
+        .expect("created");
+    assert_eq!(
+        fixture.argv("tea"),
+        [
+            "login list --output json",
+            "login list --output json",
+            "api --include --login work --repo maria/project --method GET http://forgejo.local:3000/api/v1/repos/maria/project",
+            "login list --output json",
+            "login list --output json",
+            "api --include --login work --method GET http://forgejo.local:3000/api/v1/user",
+            "login list --output json",
+            "api --include --login work --repo maria/new --method POST --data @- http://forgejo.local:3000/api/v1/user/repos",
+        ]
+    );
+    assert_eq!(
+        fixture.file("tea.stdin"),
+        r#"{"name":"new","private":true,"auto_init":false}"#
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn gitcafe_reads_a_repository_and_waits_for_admission() {
+    let polls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counter = polls.clone();
+    let server = fake::serve(move |r| match (r.method.as_str(), r.path.as_str()) {
+        ("GET", "/api/repos/team/project") => {
+            (200, r#"{"name":"project","defaultBranch":null}"#.into())
+        }
+        ("POST", "/api/orgs/team/repos") => (
+            202,
+            r#"{"repoId":"r1","state":"admitting","owner":" team ","name":"new"}"#.into(),
+        ),
+        ("GET", "/api/orgs/team/admissions/r1") => {
+            let n = counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let state = if n == 0 { "admitting" } else { "complete" };
+            (
+                200,
+                format!(r#"{{"repoId":"r1","state":"{state}","owner":"team","name":"new"}}"#),
+            )
+        }
+        ("POST", "/api/orgs/blocked/repos") => (
+            201,
+            r#"{"repoId":"r2","state":"blocked","owner":"blocked","name":"new"}"#.into(),
+        ),
+        _ => (404, String::new()),
+    })
+    .await;
+    let mut fixture = Fixture::new("cafe-repo");
+    fixture.env = Environment::fixed([("CAFE_TOKEN", "env-token")]);
+    fixture.endpoints.gitcafe_api = Some(server.base.clone());
+    let hosts = fixture_hosts(&fixture);
+    let cwd = fixture.repo.clone();
+
+    let urls = hosts
+        .clone_urls("gitcafe", &cwd, "https://git.cafe/team/project.git")
+        .await
+        .expect("looked up");
+    assert_eq!(
+        urls,
+        CloneUrls {
+            name_with_owner: "team/project".into(),
+            url: "https://git.cafe/team/project".into(),
+            ssh_url: "ssh@git.cafe:team/project.git".into(),
+        }
+    );
+    let created = hosts
+        .create_repository(
+            "gitcafe",
+            &cwd,
+            "https://git.cafe/team/new",
+            Visibility::Public,
+        )
+        .await
+        .expect("admitted");
+    assert_eq!(created.name_with_owner, "team/new");
+    let blocked = hosts
+        .create_repository(
+            "gitcafe",
+            &cwd,
+            "https://git.cafe/blocked/new",
+            Visibility::Private,
+        )
+        .await
+        .expect_err("blocked");
+    assert_eq!(
+        blocked.detail,
+        "GitCafe repository blocked/new is blocked. Check it on GitCafe before retrying."
+    );
+    let seen = fixture_requests(&server);
+    let create = seen
+        .iter()
+        .find(|r| r.path == "/api/orgs/team/repos")
+        .expect("a create");
+    let body: serde_json::Value = serde_json::from_str(&create.body).expect("json");
+    let keys: Vec<&str> = create.body.split('"').skip(1).step_by(4).take(4).collect();
+    assert_eq!(keys, ["name", "requestKey", "visibility", "defaultBranch"]);
+    assert_eq!(body["name"], "new");
+    assert_eq!(body["visibility"], "public");
+    assert_eq!(body["defaultBranch"], "main");
+    assert_eq!(body["requestKey"].as_str().map(str::len), Some(36));
+    assert_eq!(
+        seen.iter()
+            .filter(|r| r.path == "/api/orgs/team/admissions/r1")
+            .count(),
+        2,
+        "polled until complete"
+    );
+    assert_eq!(header(create, "content-type"), Some("application/json"));
+}
+
+// `executeJson` sends through fetch, which follows a renamed repository's redirect with the
+// credential on the same origin, and turns a redirected POST into a GET.
+#[tokio::test(flavor = "current_thread")]
+async fn bitbucket_follows_redirects_as_fetch_does() {
+    let server = fake::serve_with_headers(|r| match (r.method.as_str(), r.path.as_str()) {
+        (_, "/2.0/repositories/ws/old") => (
+            301,
+            vec![("location".into(), "/2.0/repositories/ws/repo".into())],
+            String::new(),
+        ),
+        (_, "/2.0/repositories/ws/repo") => (200, Vec::new(), BITBUCKET_REPOSITORY.into()),
+        _ => (404, Vec::new(), String::new()),
+    })
+    .await;
+    let stubs = StubDir::new("bb-redirect");
+    let settings = Settings::default();
+    let base = format!("{}/2.0/", server.base);
+    let env = Environment::fixed([
+        ("T3CODE_BITBUCKET_API_BASE_URL", base.as_str()),
+        ("T3CODE_BITBUCKET_ACCESS_TOKEN", "bb-token"),
+    ]);
+    let endpoints = Endpoints::default();
+    let child = child_env(&stubs);
+    let hosts = hosts(&stubs, &settings, &env, &endpoints, &child);
+    let urls = hosts
+        .clone_urls("bitbucket", &stubs.dir, "ws/old")
+        .await
+        .expect("followed");
+    assert_eq!(urls.name_with_owner, "ws/repo");
+    hosts
+        .create_repository("bitbucket", &stubs.dir, "ws/old", Visibility::Private)
+        .await
+        .expect("followed as a GET");
+    let seen: Vec<(String, String, String, Option<String>)> = requests(&server)
+        .iter()
+        .map(|r| {
+            (
+                r.method.clone(),
+                r.path.clone(),
+                r.body.clone(),
+                header(r, "authorization").map(str::to_owned),
+            )
+        })
+        .collect();
+    let bearer = Some("Bearer bb-token".to_owned());
+    let row =
+        |m: &str, p: &str, b: &str| (m.to_owned(), p.to_owned(), b.to_owned(), bearer.clone());
+    assert_eq!(
+        seen,
+        [
+            row("GET", "/2.0/repositories/ws/old", ""),
+            row("GET", "/2.0/repositories/ws/repo", ""),
+            row(
+                "POST",
+                "/2.0/repositories/ws/old",
+                r#"{"scm":"git","is_private":true}"#
+            ),
+            row("GET", "/2.0/repositories/ws/repo", ""),
+        ]
+    );
 }

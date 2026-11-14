@@ -225,6 +225,87 @@ pub async fn send(request: HttpRequest) -> Result<HttpResponse, HttpError> {
     }
 }
 
+/// `fetch` with its default `redirect: "follow"`: up to 20 redirects, a 301 or 302 after a POST
+/// and a 303 after anything but GET become a GET without a body, and the `authorization`
+/// header is dropped once the origin changes. The deadline covers every hop.
+pub async fn send_following_redirects(request: HttpRequest) -> Result<HttpResponse, HttpError> {
+    let host = parse_url(&request.url)?.host.to_owned();
+    let deadline = request.timeout;
+    match tokio::time::timeout(deadline, follow(request)).await {
+        Ok(result) => result,
+        Err(_) => Err(HttpError::Timeout { host }),
+    }
+}
+
+async fn follow(mut request: HttpRequest) -> Result<HttpResponse, HttpError> {
+    const MAX_REDIRECTS: usize = 20;
+    for _ in 0..MAX_REDIRECTS {
+        let target = parse_url(&request.url)?;
+        let response = exchange(&target, &request).await?;
+        let location = response
+            .header("location")
+            .filter(|_| matches!(response.status, 301 | 302 | 303 | 307 | 308));
+        let Some(location) = location else {
+            return Ok(response);
+        };
+        let next = resolve_location(&request.url, location).ok_or(HttpError::InvalidUrl)?;
+        let to_get = (matches!(response.status, 301 | 302) && request.method == Method::Post)
+            || (response.status == 303 && request.method != Method::Get);
+        if to_get {
+            request.method = Method::Get;
+            request.body = None;
+            request.headers.retain(|(name, _)| {
+                !matches!(
+                    *name,
+                    "content-type" | "content-encoding" | "content-language" | "content-location"
+                )
+            });
+        }
+        if origin_of(&next) != origin_of(&request.url) {
+            request.headers.retain(|(name, _)| *name != "authorization");
+        }
+        request.url = next;
+    }
+    Err(HttpError::InvalidUrl)
+}
+
+/// `new URL(location, base)` for an `http`/`https` location: absolute, root-relative or
+/// relative to the base's folder. Anything else is refused.
+fn resolve_location(base: &str, location: &str) -> Option<String> {
+    let lower = location
+        .get(..8)
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    if lower.starts_with("https://") || lower.starts_with("http://") {
+        return Some(location.to_owned());
+    }
+    if location.contains("://") {
+        return None;
+    }
+    let origin = origin_of(base)?;
+    if let Some(rest) = location.strip_prefix("//") {
+        let scheme = base.split_once("://")?.0;
+        return Some(format!("{scheme}://{rest}"));
+    }
+    if location.starts_with('/') {
+        return Some(format!("{origin}{location}"));
+    }
+    let path = base.get(origin.len()..)?.split(['?', '#']).next()?;
+    let folder = path.rsplit_once('/').map_or("", |(head, _)| head);
+    Some(format!("{origin}{folder}/{location}"))
+}
+
+/// The scheme and authority of a URL, in lower case.
+fn origin_of(url: &str) -> Option<String> {
+    let (scheme, rest) = url.split_once("://")?;
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    Some(format!(
+        "{}://{}",
+        scheme.to_ascii_lowercase(),
+        rest.get(..end)?.to_ascii_lowercase()
+    ))
+}
+
 async fn exchange(target: &Target<'_>, request: &HttpRequest) -> Result<HttpResponse, HttpError> {
     let host = target.host.to_owned();
     let connect = |message: String| HttpError::Connect {
@@ -396,6 +477,17 @@ pub(crate) mod fake {
     pub(crate) async fn serve(
         answer: impl Fn(&Recorded) -> (u16, String) + Send + Sync + 'static,
     ) -> FakeServer {
+        serve_with_headers(move |r| {
+            let (status, body) = answer(r);
+            (status, Vec::new(), body)
+        })
+        .await
+    }
+
+    /// Answers each request with `(status, extra headers, body)`.
+    pub(crate) async fn serve_with_headers(
+        answer: impl Fn(&Recorded) -> (u16, Vec<(String, String)>, String) + Send + Sync + 'static,
+    ) -> FakeServer {
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
         let base = format!("http://{}", listener.local_addr().expect("addr"));
         let requests = Arc::new(Mutex::new(Vec::new()));
@@ -447,10 +539,14 @@ pub(crate) mod fake {
                         headers,
                         body,
                     };
-                    let (status, text) = answer(&recorded);
+                    let (status, extra, text) = answer(&recorded);
                     log.lock().expect("lock").push(recorded);
+                    let extra: String = extra
+                        .iter()
+                        .map(|(name, value)| format!("{name}: {value}\r\n"))
+                        .collect();
                     let reply = format!(
-                        "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{text}",
+                        "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\n{extra}content-length: {}\r\nconnection: close\r\n\r\n{text}",
                         text.len()
                     );
                     let _ = socket.write_all(reply.as_bytes()).await;
@@ -464,6 +560,58 @@ pub(crate) mod fake {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolves_redirect_locations_as_url_does() {
+        let base = "http://127.0.0.1:9/2.0/repositories/ws/old?x=1";
+        assert_eq!(
+            resolve_location(base, "/2.0/a").as_deref(),
+            Some("http://127.0.0.1:9/2.0/a")
+        );
+        assert_eq!(
+            resolve_location(base, "new").as_deref(),
+            Some("http://127.0.0.1:9/2.0/repositories/ws/new")
+        );
+        assert_eq!(
+            resolve_location(base, "//other.test/x").as_deref(),
+            Some("http://other.test/x")
+        );
+        assert_eq!(resolve_location(base, "ftp://x/y"), None);
+        assert_eq!(
+            origin_of("HTTPS://Api.Bitbucket.org/2.0").as_deref(),
+            Some("https://api.bitbucket.org")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn drops_the_credential_when_a_redirect_leaves_the_origin() {
+        let other = fake::serve(|_| (200, "{}".into())).await;
+        let target = format!("{}/landing", other.base);
+        let first = fake::serve_with_headers(move |_| {
+            (
+                302,
+                vec![("location".into(), target.clone())],
+                String::new(),
+            )
+        })
+        .await;
+        let request = HttpRequest::new(Method::Get, format!("{}/start", first.base)).secret_header(
+            "authorization",
+            "Bearer ",
+            Secret::new("t"),
+        );
+        let response = send_following_redirects(request).await.expect("followed");
+        assert_eq!(response.status, 200);
+        let seen = other.requests.lock().expect("lock").clone();
+        assert_eq!(seen.len(), 1);
+        assert!(
+            seen[0]
+                .headers
+                .iter()
+                .all(|(name, _)| name != "authorization"),
+            "no credential on another origin"
+        );
+    }
 
     #[test]
     fn parses_urls() {

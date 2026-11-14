@@ -170,12 +170,11 @@ maps the Conn-only areas and what each needs.
 ## Repositories and the login-shell PATH (2026-11-14)
 
 `sourceControl.lookupRepository`, `cloneRepository` and `publishRepository` are served
-(`crates/conn-source-control/src/repository.rs`), with the host calls of GitHub, Cursor Origin,
-GitLab, Bitbucket and Azure DevOps. Proven by the cases of T3's
+(`crates/conn-source-control/src/repository.rs`), with the host calls of all 7 hosts (Forgejo and
+GitCafe since part 3, below). Proven by the cases of T3's
 `SourceControlRepositoryService.test.ts` on local bare repositories and a stub `git`, by each
 host's argv, paths and bodies against stub CLIs and a loopback server, and by the real client's
-decoders. Not built: Forgejo's and GitCafe's repository operations (they fail with T3's fixed
-text). The deviations are in the crate README, "Repositories".
+decoders. The deviations are in the crate README, "Repositories".
 
 The login shell's `PATH` (with `__MISE_DIFF` and `JAVA_HOME`) now reaches every child process
 without `std::env::set_var`: `conn_support::login_env` reads it at start and before discovery
@@ -313,6 +312,21 @@ Not done from the brief: merge-back and the portable fork path (`ContextHandoffS
 prepared runs and setup scripts the T3 way, rollback recovery (T3 retries the effect up to 5
 times), the remaining 13 commands.
 
+## Source control, part 3 (2026-11-14)
+
+`sourceControl.lookupRepository`, `cloneRepository` and `publishRepository` now work on all 7
+hosts. Forgejo goes through fj (its `keys.json` token, `fj --host <url> whoami`) or tea (`tea
+api`), as T3's `ForgejoCli` picks the login; GitCafe through the Settings token, `CAFE_TOKEN`
+or `cafe`'s credential helper, with T3's admission wait on create. Closed from part 2: GitHub
+Enterprise Server remotes are recognised; Bitbucket follows redirects as fetch does; every
+`git` child (and the clone) loses inherited `GIT_DIR`-style variables. Proven by T3's own
+Forgejo `api` cases and GitCafe host, credential and provider cases, ported against stub CLIs
+and a loopback server (24 new tests). No new method: the change-request steps need T3's
+definition registry, provider detection and GitHub's GraphQL documents first
+(`crates/conn-source-control/README.md`, "What the next steps need"). No new dependency;
+the macOS release binary grew from 16,558,944 to 16,605,712 bytes (+46,768). `tools/check.sh`
+passed all 30 checks with `CONN_MONOREPO` set; the fixture replay is unchanged.
+
 ## What is left, in the planned order
 
 1. **Rust hygiene, step 1: done (2026-11-14).** The toolchain is pinned to 1.99.1; BeautifulRust's
@@ -363,8 +377,8 @@ times), the remaining 13 commands.
    the area (48 methods, 7 engine commands, 9 `/mcp` tools, 7 hosts). Served (2026-11-14):
    `server.discoverSourceControl` for all 7 hosts, and all 9 `sourceControl.*` (sign-in as a
    T3 server without an app client id; GitHub stars; `lookupRepository`, `cloneRepository`,
-   `publishRepository` on GitHub, Cursor Origin, GitLab, Bitbucket and Azure DevOps). Next:
-   repository operations for Forgejo and GitCafe, then `git.*` (each host's change request
+   `publishRepository` on all 7 hosts). Next: the definition registry, provider detection and
+   a generator for GitHub's GraphQL documents, then `git.*` (each host's change request
    reads and checkout first), `pr` in VCS status, `pullRequests.*` (35), the linked pull
    request commands and the `/mcp` tools.
    Also: the Conn-only methods

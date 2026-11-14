@@ -45,23 +45,24 @@ const OPERATION_EXECUTE: &str = "ForgejoCli.execute";
 /// `timeoutMs` of the `git remote get-url origin` probe.
 const REMOTE_TIMEOUT: Duration = Duration::from_secs(5);
 /// `ForgejoCli.execute`'s default and `requestFj`'s timeout.
-const EXECUTE_TIMEOUT: Duration = Duration::from_secs(30);
+pub(super) const EXECUTE_TIMEOUT: Duration = Duration::from_secs(30);
 /// A `keys.json` this large is not fj's.
 const MAX_KEYS_BYTES: u64 = 1024 * 1024;
 
 const STORAGE_UNREADABLE: &str = "Could not read fj authentication storage.";
 const STORAGE_INVALID: &str = "fj authentication storage is invalid. Authenticate again with fj.";
-const MISSING_CLI: &str =
+pub(super) const MISSING_CLI: &str =
     "Install Forgejo CLI (`fj` 0.6 or later) or Gitea CLI (`tea` 0.16 or later) and retry.";
-const CLI_AUTHENTICATION: &str =
+pub(super) const CLI_AUTHENTICATION: &str =
     "Authenticate this server with `fj auth login`, `fj auth add-token`, or `tea login add`.";
-const CLI_FAILED: &str = "Forgejo CLI command failed.";
-const NO_CREDENTIALS: &str = "fj has no credentials for this server.";
+pub(super) const CLI_FAILED: &str = "Forgejo CLI command failed.";
+pub(super) const NO_CREDENTIALS: &str = "fj has no credentials for this server.";
 const NO_CREDENTIALS_AFTER_RENEWAL: &str =
     "fj has no credentials for this server. Authenticate again with fj.";
 const INVALID_RESPONSE: &str = "Forgejo returned an oversized or invalid response.";
 const INVALID_ACCOUNT: &str = "Forgejo returned an invalid account response.";
 const REQUEST_FAILED: &str = "Forgejo API request failed or timed out.";
+pub(super) const NOT_FOUND: &str = "Forgejo repository or pull request was not found.";
 
 // ---------------------------------------------------------------------------------------------
 // Remotes: `parseForgejoRemote`
@@ -482,13 +483,13 @@ struct RawKeys {
 }
 
 #[derive(Debug, Default)]
-struct Keys {
+pub(super) struct Keys {
     hosts: Vec<(String, Secret)>,
     aliases: Vec<(String, String)>,
 }
 
 impl Keys {
-    fn token(&self, host: &str) -> Option<&Secret> {
+    pub(super) fn token(&self, host: &str) -> Option<&Secret> {
         self.hosts
             .iter()
             .find(|(name, _)| name == host)
@@ -498,19 +499,19 @@ impl Keys {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Platform {
+pub(super) enum Platform {
     Macos,
     Linux,
 }
 
-const PLATFORM: Platform = if cfg!(target_os = "macos") {
+pub(super) const PLATFORM: Platform = if cfg!(target_os = "macos") {
     Platform::Macos
 } else {
     Platform::Linux
 };
 
 /// `forgejoKeysPaths` for macOS and Linux.
-fn keys_paths(home: &Path, data_home: Option<&str>, platform: Platform) -> Vec<PathBuf> {
+pub(super) fn keys_paths(home: &Path, data_home: Option<&str>, platform: Platform) -> Vec<PathBuf> {
     match platform {
         Platform::Macos => ["forgejo-cli", "Cyborus"]
             .iter()
@@ -560,7 +561,7 @@ fn read_bounded(path: &Path) -> FileRead {
 }
 
 /// `readKeys`: the first `keys.json` that exists, or no keys.
-async fn read_keys(ctx: &DiscoveryContext<'_>) -> Result<Keys, &'static str> {
+pub(super) async fn read_keys(ctx: &DiscoveryContext<'_>) -> Result<Keys, &'static str> {
     let Some(home) = ctx.home else {
         return Ok(Keys::default());
     };
@@ -639,15 +640,15 @@ fn public_logins(keys: &Keys, remote_url: Option<&str>) -> Vec<Login> {
 
 /// `ForgejoCliError`'s `detail`, and whether it has `reason: "missing-cli"`.
 #[derive(Clone, Copy, Debug)]
-struct CliError {
-    detail: &'static str,
-    missing_cli: bool,
+pub(super) struct CliError {
+    pub(super) detail: &'static str,
+    pub(super) missing_cli: bool,
 }
 
-type Env = [(&'static str, OsString)];
+pub(super) type Env = [(&'static str, OsString)];
 
 /// `ForgejoCli.execute` for `fj`: 30 s, default output bound, a non-zero exit is an error.
-async fn execute_fj(cwd: &Path, env: &Env, args: &[&str]) -> Result<(), CliError> {
+pub(super) async fn execute_fj(cwd: &Path, env: &Env, args: &[&str]) -> Result<(), CliError> {
     let mut command = GitCommand::host_cli(OPERATION_EXECUTE, "fj", cwd, args.iter().copied())
         .timeout(EXECUTE_TIMEOUT);
     command.env = env.to_vec();
@@ -669,7 +670,7 @@ async fn execute_fj(cwd: &Path, env: &Env, args: &[&str]) -> Result<(), CliError
 
 /// `listLogins` for `fj`. A broken `keys.json` is an error unless `fj` is not installed:
 /// stale credentials of an uninstalled fj must not disable an available tea login.
-async fn list_logins(
+pub(super) async fn list_logins(
     ctx: &DiscoveryContext<'_>,
     env: &Env,
     remote_url: Option<&str>,
@@ -692,35 +693,55 @@ async fn list_logins(
 // The account: `getAccount`
 // ---------------------------------------------------------------------------------------------
 
-/// `authenticateFj` without the cache: fj verifies (and renews) the login, then the token is
-/// read from `keys.json`.
-async fn authenticate_fj(
+/// The fj logins one operation has verified with `fj --host <url> whoami`, by URL, with the
+/// token read after it. `authenticateFj` keeps such a record for 30 s across calls; this server
+/// keeps it for one operation only, so a warm T3 server can skip a `whoami` that this one runs.
+#[derive(Debug, Default)]
+pub(super) struct Verified(Vec<(String, Secret)>);
+
+/// `authenticateFj`: fj verifies (and renews) the login, then the token is read from
+/// `keys.json`. A login this operation verified with the same token is not verified again.
+pub(super) async fn authenticate_fj(
     ctx: &DiscoveryContext<'_>,
     env: &Env,
     home: &Path,
     login: &Login,
+    verified: &mut Verified,
 ) -> Result<Secret, CliError> {
     let failure = |detail| CliError {
         detail,
         missing_cli: false,
     };
-    read_keys(ctx).await.map_err(failure)?;
+    let keys = read_keys(ctx).await.map_err(failure)?;
+    if let Some(token) = keys.token(&login.name)
+        && verified
+            .0
+            .iter()
+            .any(|(url, known)| *url == login.url && known == token)
+    {
+        return Ok(token.clone());
+    }
     // fj reads the cwd repository even with --host and fails on an unborn branch.
     execute_fj(home, env, &["--host", &login.url, "whoami"]).await?;
     // fj owns OAuth renewal. Re-read the file after it has refreshed an expired token.
     let keys = read_keys(ctx).await.map_err(failure)?;
-    keys.token(&login.name)
+    let token = keys
+        .token(&login.name)
         .cloned()
-        .ok_or_else(|| failure(NO_CREDENTIALS_AFTER_RENEWAL))
+        .ok_or_else(|| failure(NO_CREDENTIALS_AFTER_RENEWAL))?;
+    verified.0.retain(|(url, _)| *url != login.url);
+    verified.0.push((login.url.clone(), token.clone()));
+    Ok(token)
 }
 
 /// `getAccount`: the user name Forgejo reports for the saved login, or the `detail` of the
 /// failure.
-async fn get_account(
+pub(super) async fn get_account(
     ctx: &DiscoveryContext<'_>,
     env: &Env,
     home: &Path,
     base_url: &str,
+    verified: &mut Verified,
 ) -> Result<String, String> {
     let logins = list_logins(ctx, env, Some(base_url))
         .await
@@ -730,16 +751,20 @@ async fn get_account(
         .iter()
         .find(|login| login.url.trim_end_matches('/') == wanted)
         .ok_or_else(|| NO_CREDENTIALS.to_owned())?;
-    let token = authenticate_fj(ctx, env, home, login)
+    let token = authenticate_fj(ctx, env, home, login, verified)
         .await
         .map_err(|e| e.detail.to_owned())?;
-    let root = ctx
-        .endpoints
+    fetch_login(&api_base(ctx, &login.url), &token).await
+}
+
+/// The API's base: the login's URL, or a test's fake server.
+pub(super) fn api_base(ctx: &DiscoveryContext<'_>, login_url: &str) -> String {
+    ctx.endpoints
         .forgejo_api
         .as_deref()
-        .unwrap_or(&login.url)
-        .trim_end_matches('/');
-    fetch_login(root, &token).await
+        .unwrap_or(login_url)
+        .trim_end_matches('/')
+        .to_owned()
 }
 
 fn split_origin(url: &str) -> Option<(&str, &str)> {
@@ -782,55 +807,10 @@ fn redirect_target(response: &HttpResponse, current: &str, api_root: &str) -> Op
 /// `requestFj` for `user`, then the account decode: the `login` Forgejo reports, or the
 /// `detail` of the failure.
 async fn fetch_login(base: &str, token: &Secret) -> Result<String, String> {
-    match tokio::time::timeout(EXECUTE_TIMEOUT, request_user(base, token)).await {
-        Ok(result) => result,
-        Err(_) => Err(REQUEST_FAILED.to_owned()),
-    }
-}
-
-async fn request_user(base: &str, token: &Secret) -> Result<String, String> {
-    let api_root = format!("{base}/api/v1/");
-    let send = |url: String| {
-        let request = HttpRequest::new(Method::Get, url).secret_header(
-            "authorization",
-            "token ",
-            token.clone(),
-        );
-        async move {
-            http::send(request)
-                .await
-                .map_err(|_| REQUEST_FAILED.to_owned())
-        }
-    };
-    let mut url = format!("{api_root}user");
-    let mut response = send(url.clone()).await?;
-    // Forgejo redirects a renamed repository's API paths; the same request is re-sent.
-    for _ in 0..5 {
-        let Some(next) = redirect_target(&response, &url, &api_root) else {
-            break;
-        };
-        url = next;
-        response = send(url.clone()).await?;
-    }
-    let status = response.status;
-    let text = if matches!(status, 204 | 205) {
-        String::new()
-    } else if response.truncated {
-        return Err(INVALID_RESPONSE.to_owned());
-    } else {
-        String::from_utf8(response.body).map_err(|_| INVALID_RESPONSE.to_owned())?
-    };
-    if !(200..300).contains(&status) {
-        return Err(if status == 404 {
-            "Forgejo repository or pull request was not found.".to_owned()
-        } else if text.is_empty() {
-            format!(
-                "Forgejo API request failed (HTTP {status}). Check this server's fj credentials and permissions."
-            )
-        } else {
-            format!("Forgejo API request failed (HTTP {status}): {text}")
-        });
-    }
+    let text = request_fj(base, token, Method::Get, "user", None)
+        .await
+        .map_err(|failure| failure.detail)?
+        .text;
     #[derive(Deserialize)]
     struct User {
         login: String,
@@ -840,6 +820,116 @@ async fn request_user(base: &str, token: &Secret) -> Result<String, String> {
         .filter(|user| !user.login.trim().is_empty())
         .map(|user| user.login)
         .ok_or_else(|| INVALID_ACCOUNT.to_owned())
+}
+
+/// A refused `requestFj`: T3's `detail`, the HTTP status when there was an answer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct FjFailure {
+    pub(super) detail: String,
+    pub(super) status: Option<u16>,
+}
+
+/// A `requestFj` answer: the status and the body (empty for 204 and 205).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct FjAnswer {
+    pub(super) status: u16,
+    pub(super) text: String,
+    /// The `link` header, for paging.
+    pub(super) link: Option<String>,
+}
+
+/// `requestFj`: one request to `<base>/api/v1/<path>` with fj's token, at most 30 s in all.
+/// A redirect is followed up to five times with the same method and body, only inside the API.
+pub(super) async fn request_fj(
+    base: &str,
+    token: &Secret,
+    method: Method,
+    path: &str,
+    body: Option<&str>,
+) -> Result<FjAnswer, FjFailure> {
+    let failed = || FjFailure {
+        detail: REQUEST_FAILED.to_owned(),
+        status: None,
+    };
+    tokio::time::timeout(
+        EXECUTE_TIMEOUT,
+        exchange_fj(base, token, method, path, body),
+    )
+    .await
+    .unwrap_or_else(|_| Err(failed()))
+}
+
+/// `apiUrl` for the requested path: no dot segment may climb out of the API root.
+fn api_path_is_safe(path: &str) -> bool {
+    let path = path.split(['?', '#']).next().unwrap_or_default();
+    !path.contains("://")
+        && !path.starts_with('/')
+        && !path.split('/').any(|segment| {
+            let lower = segment.to_ascii_lowercase().replace("%2e", ".");
+            lower == "." || lower == ".."
+        })
+}
+
+async fn exchange_fj(
+    base: &str,
+    token: &Secret,
+    method: Method,
+    path: &str,
+    body: Option<&str>,
+) -> Result<FjAnswer, FjFailure> {
+    let failure = |detail: String, status| FjFailure { detail, status };
+    let api_root = format!("{base}/api/v1/");
+    if !api_path_is_safe(path) {
+        return Err(failure("Invalid Forgejo API path.".into(), None));
+    }
+    let send = |url: String| {
+        let mut request = HttpRequest::new(method, url)
+            .secret_header("authorization", "token ", token.clone())
+            .timeout(EXECUTE_TIMEOUT);
+        if let Some(body) = body {
+            request = request
+                .header("content-type", "application/json")
+                .body(body.as_bytes().to_vec());
+        }
+        async move {
+            http::send(request)
+                .await
+                .map_err(|_| failure(REQUEST_FAILED.to_owned(), None))
+        }
+    };
+    let mut url = format!("{api_root}{path}");
+    let mut response = send(url.clone()).await?;
+    // Forgejo redirects a renamed repository's API paths before running the handler, so the
+    // same method and body are re-sent. The token never leaves the API base.
+    for _ in 0..5 {
+        let Some(next) = redirect_target(&response, &url, &api_root) else {
+            break;
+        };
+        url = next;
+        response = send(url.clone()).await?;
+    }
+    let status = response.status;
+    let link = response.header("link").map(str::to_owned);
+    let text = if matches!(status, 204 | 205) {
+        String::new()
+    } else if response.truncated {
+        return Err(failure(INVALID_RESPONSE.to_owned(), None));
+    } else {
+        String::from_utf8(response.body).map_err(|_| failure(INVALID_RESPONSE.to_owned(), None))?
+    };
+    if !(200..300).contains(&status) {
+        let detail = if status == 404 {
+            NOT_FOUND.to_owned()
+        } else if text.is_empty() {
+            format!(
+                "Forgejo API request failed (HTTP {status}). Check this server's fj credentials and permissions."
+            )
+        } else {
+            format!("Forgejo API request failed (HTTP {status}): {text}")
+        };
+        return Err(failure(detail, Some(status)));
+    }
+    Ok(FjAnswer { status, text, link })
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -878,7 +968,7 @@ fn fj_spec(login: Option<&Login>) -> CliSpec {
     }
 }
 
-fn default_login(logins: &[Login]) -> Option<&Login> {
+pub(super) fn default_login(logins: &[Login]) -> Option<&Login> {
     logins
         .iter()
         .find(|login| login.default == "true")
@@ -993,7 +1083,7 @@ pub async fn discover(ctx: DiscoveryContext<'_>) -> SourceControlProviderDiscove
             return fj;
         };
         let host = remote_host(&login.url);
-        let auth = match get_account(&ctx, &env, home, &login.url).await {
+        let auth = match get_account(&ctx, &env, home, &login.url, &mut Verified::default()).await {
             Ok(account) => provider_auth(
                 ServerProviderAuthStatus::Authenticated,
                 Some(&account),

@@ -146,7 +146,7 @@ See [`fixtures/README.md`](fixtures/README.md) for every scenario and which need
 | `conn-vcs`              | Git status, refs, review diffs, worktrees and their setup             |
 | `conn-files`            | Project files, search, asset URLs, attachments                        |
 | `conn-terminal`         | Shells on PTYs: sessions, scrollback, viewers (`terminal.*`)          |
-| `conn-source-control`   | Source control hosts (GitHub, GitLab, ...): discovery, sign-in, stars; later pull requests |
+| `conn-source-control`   | Source control hosts (GitHub, GitLab, ...): discovery, sign-in, stars, repositories; later pull requests |
 | `conn-server`           | Binary: HTTP, `/ws` session, pairing, method table, handlers          |
 | `conn-support`          | Helpers several crates share: time, hex, base64, HMAC, atomic writes, v4 ids |
 | `conn-features`         | Scheduled tasks and the Conn-only areas beside the engine; see its README |
@@ -405,7 +405,7 @@ lists what it serves.
 | Agents          | `conn-provider-claude`, `conn-provider-codex`, `conn-provider-acp` (Grok); `/mcp` (`conn-mcp`, 20 tools) |
 | Workspace       | `conn-vcs` (status, refs, review, worktrees), `conn-files` (files, search, assets, uploads)     |
 | Terminals       | `conn-terminal`                                                                                 |
-| Source control  | `conn-source-control`: discovery of 7 hosts, all 9 `sourceControl.*` (repositories on 5 hosts)  |
+| Source control  | `conn-source-control`: discovery of 7 hosts, all 9 `sourceControl.*` (repositories on all 7 hosts)  |
 
 The server joins them in `src/host.rs`: each provider session gets a `/mcp` credential, messages
 claim their uploads, a `worktree` launch provisions a worktree, archive and delete close the

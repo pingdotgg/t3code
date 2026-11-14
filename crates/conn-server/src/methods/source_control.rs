@@ -192,8 +192,7 @@ fn repository_failure(error: &RepositoryError) -> Failure {
 }
 
 /// `sourceControl.lookupRepository`, `cloneRepository`, `publishRepository`
-/// (`SourceControlRepositoryService.ts`). Forgejo and GitCafe have no repository operations
-/// yet: they fail as a host the T3 server has no driver for.
+/// (`SourceControlRepositoryService.ts`), for all seven hosts.
 fn register_repositories(table: &mut MethodTable, inputs: &HostInputs, deps: &Deps) {
     let host = inputs.clone();
     table.unary(

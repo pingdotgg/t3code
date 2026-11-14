@@ -12,7 +12,13 @@ use conn_contract::SourceControlRepositoryVisibility as Visibility;
 use serde::Deserialize;
 use serde_json::Value;
 
-use super::{DiscoveryContext, bitbucket, cursor_origin, github};
+use super::{
+    DiscoveryContext, bitbucket, cursor_origin, forgejo,
+    forgejo_cli::{self, Session},
+    gitcafe,
+    gitcafe_api::{self, Client},
+    github,
+};
 use crate::{
     cli::{self, CliCall},
     http::{self, HttpRequest, HttpResponse, Method},
@@ -33,6 +39,8 @@ impl RepositoryHosts for Hosts<'_> {
             github::KIND => github_clone_urls(ctx, repository).await,
             cursor_origin::KIND => origin_clone_urls(ctx, repository).await,
             super::gitlab::KIND => gitlab_clone_urls(ctx, repository).await,
+            gitcafe::KIND => gitcafe_clone_urls(&self.gitcafe(ctx), repository).await,
+            forgejo::KIND => Box::pin(forgejo_clone_urls(ctx, repository)).await,
             bitbucket::KIND => bitbucket_clone_urls(ctx, repository).await,
             super::azure_devops::KIND => azure_clone_urls(ctx, repository).await,
             _ => Err(unregistered(kind)),
@@ -51,10 +59,19 @@ impl RepositoryHosts for Hosts<'_> {
             github::KIND => github_create(ctx, repository, &visibility).await,
             cursor_origin::KIND => origin_create(ctx, repository, &visibility).await,
             super::gitlab::KIND => gitlab_create(ctx, repository, &visibility).await,
+            gitcafe::KIND => gitcafe_create(&self.gitcafe(ctx), repository, &visibility).await,
+            forgejo::KIND => Box::pin(forgejo_create(ctx, repository, &visibility)).await,
             bitbucket::KIND => bitbucket_create(ctx, repository, &visibility).await,
             super::azure_devops::KIND => azure_create(ctx, repository).await,
             _ => Err(unregistered(kind)),
         }
+    }
+}
+
+impl<'a> Hosts<'a> {
+    /// GitCafe asks `cafe` for its credential in the server's own folder.
+    fn gitcafe(&self, ctx: DiscoveryContext<'a>) -> Client<'a> {
+        Client::new(ctx, self.ctx.cwd)
     }
 }
 
@@ -186,23 +203,37 @@ fn parse_selector(selector: &str, default_host: &str) -> Option<Locator> {
     }
 }
 
-/// `gitHubApiHostForRemote`, reduced: github.com (also through an SSH alias such as
-/// `github.com-work`) and `*.ghe.com`. A GitHub Enterprise Server host is not recognised from a
-/// remote here.
+/// `gitHubApiHostForRemote`: an SSH alias of github.com (`github`, `github.com-work`) reads as
+/// github.com; otherwise a host the GitHub definition recognises (github.com, `*.ghe.com`, or a
+/// name with a `github` label, such as a GitHub Enterprise Server at `github.example.com`) is
+/// its own API host, with its port.
 fn api_host_for_remote(url: &str) -> Option<String> {
-    let (host, _) = crate::remote::parse_git_remote_repository(url)?;
-    let ssh = crate::remote::clone_url_protocol(url) == Some(crate::remote::CloneProtocol::Ssh);
+    let (hostname, _) = crate::remote::parse_git_remote_repository(url)?;
+    let protocol = crate::remote::clone_url_protocol(url);
+    let ssh = protocol == Some(crate::remote::CloneProtocol::Ssh);
+    let host = if ssh {
+        hostname.clone()
+    } else {
+        super::forgejo::parse_remote(url).map_or_else(|| hostname.clone(), |r| r.host)
+    };
     if ssh && !host.contains('.') {
         return host.contains("github").then(|| "github.com".to_owned());
     }
+    // `/^github\.com-[a-z0-9_-]+$/`.
     if ssh
-        && host
-            .strip_prefix("github.com-")
-            .is_some_and(|alias| !alias.is_empty() && !alias.contains('.'))
+        && host.strip_prefix("github.com-").is_some_and(|alias| {
+            !alias.is_empty()
+                && alias
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-')
+        })
     {
         return Some("github.com".into());
     }
-    (host == "github.com" || host.ends_with(".ghe.com")).then_some(host)
+    let recognized = hostname == "github.com"
+        || hostname.ends_with(".ghe.com")
+        || hostname.split('.').any(|label| label == "github");
+    recognized.then_some(host)
 }
 
 /// `parseFetchRemotes`.
@@ -684,6 +715,246 @@ async fn gitlab_create(
 }
 
 // ---------------------------------------------------------------------------------------------
+// GitCafe: `GitCafeSourceControlProvider.ts` `getRepositoryCloneUrls`, `createRepository`
+// ---------------------------------------------------------------------------------------------
+
+/// How long `createRepository` waits for GitCafe to admit a repository, and how often it asks.
+const GITCAFE_ADMISSION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+const GITCAFE_ADMISSION_POLL: std::time::Duration = std::time::Duration::from_millis(500);
+
+fn gitcafe_failure(error: gitcafe_api::GitCafeError) -> HostFailure {
+    HostFailure::new(error.detail)
+}
+
+fn gitcafe_unreadable() -> HostFailure {
+    HostFailure::new("GitCafe returned an unreadable response.")
+}
+
+/// `TrimmedNonEmptyString` or `null` (`Schema.NullOr`), present.
+fn trimmed_or_null(value: &Value, key: &str) -> Option<()> {
+    match value.get(key)? {
+        Value::Null => Some(()),
+        Value::String(s) if !s.trim().is_empty() => Some(()),
+        _ => None,
+    }
+}
+
+async fn gitcafe_clone_urls(client: &Client<'_>, repository: &str) -> HostResult<CloneUrls> {
+    let target = client
+        .resolve_named(repository)
+        .await
+        .map_err(gitcafe_failure)?;
+    let text = client
+        .request(
+            target.host,
+            Method::Get,
+            &format!("/repos/{}", target.repository),
+            None,
+        )
+        .await
+        .map_err(gitcafe_failure)?;
+    // `Repository`: a name and a default branch (or null).
+    let value = decode_json(&text).map_err(|_| gitcafe_unreadable())?;
+    trimmed_field(&value, "name").ok_or_else(gitcafe_unreadable)?;
+    trimmed_or_null(&value, "defaultBranch").ok_or_else(gitcafe_unreadable)?;
+    Ok(gitcafe_api::clone_urls(&target))
+}
+
+/// `RepositoryAdmission`.
+struct Admission {
+    repo_id: String,
+    state: String,
+    owner: String,
+    name: String,
+}
+
+fn decode_admission(text: &str) -> HostResult<Admission> {
+    let value = decode_json(text).map_err(|_| gitcafe_unreadable())?;
+    let state = value
+        .get("state")
+        .and_then(Value::as_str)
+        .ok_or_else(gitcafe_unreadable)?
+        .to_owned();
+    match (
+        trimmed_field(&value, "repoId"),
+        trimmed_field(&value, "owner"),
+        trimmed_field(&value, "name"),
+    ) {
+        (Some(repo_id), Some(owner), Some(name)) => Ok(Admission {
+            repo_id,
+            state,
+            owner,
+            name,
+        }),
+        _ => Err(gitcafe_unreadable()),
+    }
+}
+
+async fn gitcafe_create(
+    client: &Client<'_>,
+    repository: &str,
+    visibility: &Visibility,
+) -> HostResult<CloneUrls> {
+    let target = client
+        .resolve_named(repository)
+        .await
+        .map_err(gitcafe_failure)?;
+    let (owner, name) = target
+        .repository
+        .split_once('/')
+        .unwrap_or((target.repository.as_str(), ""));
+    // `bodyJsonUnsafe` keeps the key order of T3's object literal.
+    let body = format!(
+        "{{\"name\":{},\"requestKey\":{},\"visibility\":{},\"defaultBranch\":\"main\"}}",
+        json_text(name),
+        json_text(&conn_support::uuid_v4()),
+        json_text(visibility_text(visibility)),
+    );
+    let pending = decode_admission(
+        &client
+            .request(
+                target.host,
+                Method::Post,
+                &format!("/orgs/{owner}/repos"),
+                Some(&body),
+            )
+            .await
+            .map_err(gitcafe_failure)?,
+    )?;
+    // GitCafe admits a repository asynchronously and answers while admission is still running,
+    // so wait for it to settle the way `cafe repo create --clone` does.
+    let settled = |state: &str| state == "complete" || state == "blocked";
+    let resource = if settled(&pending.state) {
+        pending
+    } else {
+        let path = format!("/orgs/{}/admissions/{}", pending.owner, pending.repo_id);
+        let poll = async {
+            loop {
+                let admission = decode_admission(
+                    &client
+                        .request(target.host, Method::Get, &path, None)
+                        .await
+                        .map_err(gitcafe_failure)?,
+                )?;
+                if settled(&admission.state) {
+                    return Ok::<_, HostFailure>(admission);
+                }
+                tokio::time::sleep(GITCAFE_ADMISSION_POLL).await;
+            }
+        };
+        match tokio::time::timeout(GITCAFE_ADMISSION_TIMEOUT, poll).await {
+            Ok(result) => result?,
+            Err(_) => pending,
+        }
+    };
+    if resource.state != "complete" {
+        return Err(HostFailure::new(format!(
+            "GitCafe repository {} is {}. Check it on GitCafe before retrying.",
+            target.repository, resource.state
+        )));
+    }
+    Ok(gitcafe_api::clone_urls(&gitcafe_api::Target {
+        host: target.host,
+        repository: format!("{}/{}", resource.owner, resource.name),
+    }))
+}
+
+// ---------------------------------------------------------------------------------------------
+// Forgejo: `ForgejoSourceControlProvider.ts` `getRepositoryCloneUrls`, `createRepository`
+// ---------------------------------------------------------------------------------------------
+
+fn forgejo_failure(error: forgejo_cli::ForgejoError) -> HostFailure {
+    HostFailure::new(error.detail)
+}
+
+fn forgejo_invalid() -> HostFailure {
+    HostFailure::new("Forgejo API returned an invalid response.")
+}
+
+/// `RepositorySchema` and `cloneUrls`.
+fn forgejo_urls(text: &str) -> HostResult<CloneUrls> {
+    let value = decode_json(text).map_err(|_| forgejo_invalid())?;
+    let field = |key: &str| {
+        value
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(forgejo_invalid)
+    };
+    match value.get("default_branch") {
+        None | Some(Value::Null | Value::String(_)) => {}
+        Some(_) => return Err(forgejo_invalid()),
+    }
+    Ok(CloneUrls {
+        name_with_owner: field("full_name")?,
+        url: field("clone_url")?,
+        ssh_url: field("ssh_url")?,
+    })
+}
+
+async fn forgejo_clone_urls(ctx: DiscoveryContext<'_>, repository: &str) -> HostResult<CloneUrls> {
+    let mut session = Session::new(ctx);
+    let input = forgejo_cli::Input {
+        repository: Some(repository),
+        ..forgejo_cli::Input::default()
+    };
+    let resolved = session
+        .resolve_repository(&input)
+        .await
+        .map_err(forgejo_failure)?;
+    let path = forgejo_cli::repository_api_path(&resolved.repository);
+    let output = session
+        .api(&input, &path, Method::Get, None)
+        .await
+        .map_err(forgejo_failure)?;
+    forgejo_urls(&output.stdout)
+}
+
+async fn forgejo_create(
+    ctx: DiscoveryContext<'_>,
+    repository: &str,
+    visibility: &Visibility,
+) -> HostResult<CloneUrls> {
+    let mut session = Session::new(ctx);
+    let input = forgejo_cli::Input {
+        repository: Some(repository),
+        ..forgejo_cli::Input::default()
+    };
+    let resolved = session
+        .resolve_repository(&input)
+        .await
+        .map_err(forgejo_failure)?;
+    let user = session
+        .api(&input, "user", Method::Get, None)
+        .await
+        .map_err(forgejo_failure)?;
+    #[derive(Deserialize)]
+    struct User {
+        login: String,
+    }
+    let user: User = serde_json::from_str(&user.stdout).map_err(|_| forgejo_invalid())?;
+    let mut parts = resolved.repository.split('/');
+    let owner = parts.next().unwrap_or_default();
+    let name = parts.next();
+    let path = if owner == user.login {
+        "user/repos".to_owned()
+    } else {
+        format!("orgs/{}/repos", github::encode_uri_component(owner))
+    };
+    // `{ name, private, auto_init }`; `JSON.stringify` drops an undefined name.
+    let name = name.map_or_else(String::new, |n| format!("\"name\":{},", json_text(n)));
+    let body = format!(
+        "{{{name}\"private\":{},\"auto_init\":false}}",
+        matches!(visibility, Visibility::Private)
+    );
+    let output = session
+        .api(&input, &path, Method::Post, Some(&body))
+        .await
+        .map_err(forgejo_failure)?;
+    forgejo_urls(&output.stdout)
+}
+
+// ---------------------------------------------------------------------------------------------
 // Bitbucket: `BitbucketApi.ts` `getRepositoryCloneUrls`, `createRepository`
 // ---------------------------------------------------------------------------------------------
 
@@ -763,7 +1034,8 @@ async fn bitbucket_request(
             .body(body.into_bytes());
     }
     let request = bitbucket::authorize(ctx, request).map_err(HostFailure::new)?;
-    let response = http::send(request)
+    // `executeJson` sends through fetch, which follows redirects (a renamed repository).
+    let response = http::send_following_redirects(request)
         .await
         .map_err(|_| HostFailure::new("Failed to send the Bitbucket request."))?;
     if !(200..300).contains(&response.status) {
