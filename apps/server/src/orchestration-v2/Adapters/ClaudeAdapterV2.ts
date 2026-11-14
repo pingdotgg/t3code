@@ -4539,6 +4539,85 @@ const isClaudeBlockedAssistantRateLimit = Schema.is(
   }),
 );
 
+// An idle wake can be rejected before a reset, then replayed after a newer turn succeeds.
+// Only discard the old rejection when its explicitly reported reset has already passed.
+// A live 429 or one with an unknown/future reset still needs normal recovery.
+function expiredBufferedWakeRateLimitFrames(
+  frames: ReadonlyArray<SDKMessage>,
+  result: SDKMessage,
+  receivedAtMs: number,
+  nowMs: number,
+): ReadonlySet<SDKMessage> | null {
+  if (
+    result.type !== "result" ||
+    result.subtype !== "success" ||
+    !result.is_error ||
+    result.api_error_status !== 429
+  ) {
+    return null;
+  }
+  const resultIndex = frames.indexOf(result);
+  if (resultIndex < 0) return null;
+  const beforeResult = frames.slice(0, resultIndex);
+  const lastRootStart = beforeResult.findLastIndex(isClaudeTurnStartMessage);
+  const lastResult = beforeResult.findLastIndex((frame) => frame.type === "result");
+  const segment = frames.slice(Math.max(lastRootStart, lastResult) + 1, resultIndex);
+  const directLimits = segment.flatMap((frame) =>
+    frame.type === "rate_limit_event" &&
+    frame.rate_limit_info?.status === "rejected" &&
+    frame.rate_limit_info.overageStatus !== "allowed" &&
+    frame.rate_limit_info.overageStatus !== "allowed_warning" &&
+    frame.rate_limit_info.isUsingOverage !== true &&
+    frame.rate_limit_info.overageInUse !== true
+      ? [frame.rate_limit_info]
+      : [],
+  );
+  const directTypes = new Set<string>(
+    directLimits.map((limit) => limit.rateLimitType ?? "unknown"),
+  );
+  // Like result handling, a standalone event wins for its own limit type only.
+  const embeddedResets = segment.flatMap((frame) => {
+    if (!isClaudeBlockedAssistantRateLimit(frame)) return [];
+    const info = frame.api_error_params.rate_limit_info;
+    if (
+      info.overageStatus === "allowed" ||
+      info.overageStatus === "allowed_warning" ||
+      info.isUsingOverage === true ||
+      info.overageInUse === true
+    ) {
+      return [];
+    }
+    const { rateLimitType, resetsAt } = info;
+    return directLimits.length === 0 ||
+      (rateLimitType != null && !directTypes.has(String(rateLimitType)))
+      ? [resetsAt]
+      : [];
+  });
+  const resets = [...directLimits.map((limit) => limit.resetsAt), ...embeddedResets];
+  // Without a blocking reset, an overage-allowed payload cannot prove a 429 expired.
+  if (
+    resets.length === 0 ||
+    !resets.every(
+      (reset) =>
+        typeof reset === "number" &&
+        Number.isFinite(reset) &&
+        reset > 0 &&
+        reset * 1_000 > receivedAtMs &&
+        reset * 1_000 <= nowMs,
+    )
+  ) {
+    return null;
+  }
+  return new Set(
+    segment.filter(
+      (frame) =>
+        (frame.type === "rate_limit_event" && frame.rate_limit_info?.status === "rejected") ||
+        (frame.type === "assistant" &&
+          (frame.error === "rate_limit" || isClaudeBlockedAssistantRateLimit(frame))),
+    ),
+  );
+}
+
 function claudeUsageLimitResetAt(resetsAt: unknown): string | null {
   const resetMs = typeof resetsAt === "number" ? resetsAt * 1000 : NaN;
   return Number.isFinite(resetMs) && resetMs > 0 && resetMs < 8.64e15
@@ -12958,6 +13037,35 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 );
                 const lastResult =
                   drained[replayResultIndex === -1 ? lastResultIndex : replayResultIndex];
+                const lastUnsettledRootIndex = drained.findLastIndex(isClaudeTurnStartMessage);
+                const newerRootStillOpen =
+                  lastResult !== undefined &&
+                  lastUnsettledRootIndex > drained.indexOf(lastResult) &&
+                  !drained
+                    .slice(lastUnsettledRootIndex + 1)
+                    .some((entry) => entry.type === "result");
+                // More than one rejected wake can be buffered behind a continuation.
+                // Suppress expired evidence from every completed wake, but only the
+                // selected terminal result may complete this continuation.
+                const expiredWakeFrames = new Set<SDKMessage>();
+                const expiredResults: SDKResultMessage[] = [];
+                let lastResultExpired = false;
+                const replayedAtMs = DateTime.toEpochMillis(yield* DateTime.now);
+                for (const entry of drained) {
+                  if (entry.type !== "result") continue;
+                  const receivedAt = bufferedResultArrivals.get(entry);
+                  if (receivedAt === undefined) continue;
+                  const expired = expiredBufferedWakeRateLimitFrames(
+                    drained,
+                    entry,
+                    DateTime.toEpochMillis(receivedAt),
+                    replayedAtMs,
+                  );
+                  if (expired === null) continue;
+                  for (const frame of expired) expiredWakeFrames.add(frame);
+                  expiredResults.push(entry);
+                  if (entry === lastResult) lastResultExpired = true;
+                }
                 const opaqueReplayTombstones = taskIdSetForNativeThread(
                   yield* Ref.get(opaqueBackgroundTaskReplayTombstonesByNativeThread),
                   nativeThreadId,
@@ -12974,7 +13082,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   ) {
                     continue;
                   }
-                  if (entry.type !== "result") {
+                  if (entry.type !== "result" && !expiredWakeFrames.has(entry)) {
                     yield* handleSdkMessage({ query: querySession.query, message: entry });
                   }
                   yield* Ref.update(wakeBuffers, (current) => {
@@ -12991,6 +13099,40 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     else next.set(nativeThreadId, { ...buffered, messages });
                     return next;
                   });
+                }
+                // Every expired result was consumed from the wake buffer. Retain its
+                // charged usage once, except when the selected result is about to
+                // supply that usage through finalizeActiveTurn itself.
+                const selectedResultWillFinalize =
+                  lastResultExpired &&
+                  (wakeAbsorbed || (!emptyTurnBeforeNextTurn && !newerRootStillOpen));
+                for (const entry of expiredResults) {
+                  if (selectedResultWillFinalize && entry === lastResult) continue;
+                  context.steeredSegmentUsage.push(entry.usage);
+                  context.steeredLedgerUsage = addClaudeLedgerUsage(
+                    context.steeredLedgerUsage,
+                    resultLedgerUsage.get(entry),
+                  );
+                }
+                if (lastResultExpired && newerRootStillOpen && !wakeAbsorbed) {
+                  // A newer root still owns this continuation. Do not dispatch
+                  // the expired result or settle the root before its own result.
+                  if (leavesLaterWake) yield* offerBufferedWake(nativeThreadId);
+                  return;
+                }
+                if (lastResultExpired && (!emptyTurnBeforeNextTurn || wakeAbsorbed)) {
+                  // The selected wake ended before the limit reset. It is no longer a
+                  // rejection of this continuation, so do not fail it or show stale errors.
+                  const completedAt = yield* DateTime.now;
+                  yield* finalizeActiveTurn({
+                    context,
+                    status: "completed",
+                    completedAt,
+                    // The old wake may have incurred usage even though its rejection has expired.
+                    ...(lastResult?.type === "result" ? { result: lastResult } : {}),
+                  });
+                  if (leavesLaterWake) yield* offerBufferedWake(nativeThreadId);
+                  return;
                 }
                 if (lastResult !== undefined && !emptyTurnBeforeNextTurn) {
                   yield* handleSdkMessage({ query: querySession.query, message: lastResult });

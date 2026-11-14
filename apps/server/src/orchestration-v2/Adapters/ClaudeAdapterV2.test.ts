@@ -15628,13 +15628,111 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
-  it.effect.each([true, false])(
-    "carries a rejected wake rate limit into the continuation failure (event=%s)",
-    (standaloneEvent) =>
+  it.effect.each(
+    [
+      { standaloneEvent: true, arrivedAfterReset: false, expired: false, newerTurn: false },
+      { standaloneEvent: false, arrivedAfterReset: false, expired: false, newerTurn: false },
+      { standaloneEvent: true, arrivedAfterReset: false, expired: true, newerTurn: false },
+      { standaloneEvent: false, arrivedAfterReset: false, expired: true, newerTurn: false },
+      { standaloneEvent: true, arrivedAfterReset: false, expired: true, newerTurn: true },
+      { standaloneEvent: true, arrivedAfterReset: false, expired: true, newerRootOpen: true },
+      {
+        standaloneEvent: true,
+        arrivedAfterReset: false,
+        expired: true,
+        newerRootOpen: true,
+        emptyBeforeNewRoot: true,
+      },
+      {
+        standaloneEvent: true,
+        arrivedAfterReset: false,
+        expired: true,
+        newerRootOpen: true,
+        absorbedByUser: true,
+      },
+      {
+        standaloneEvent: true,
+        arrivedAfterReset: false,
+        expired: true,
+        newerRootOpen: true,
+        emptyBeforeNewRoot: true,
+        absorbedByUser: true,
+      },
+      {
+        standaloneEvent: true,
+        arrivedAfterReset: false,
+        expired: true,
+        newerRootOpen: true,
+        twoWakes: true,
+      },
+      { standaloneEvent: true, arrivedAfterReset: true, expired: false, newerTurn: false },
+      { standaloneEvent: true, arrivedAfterReset: false, expired: true, weeklyStillActive: true },
+      {
+        standaloneEvent: true,
+        arrivedAfterReset: false,
+        expired: true,
+        weeklyStillActive: true,
+        overageIndicator: "status",
+      },
+      {
+        standaloneEvent: true,
+        arrivedAfterReset: false,
+        expired: true,
+        weeklyStillActive: true,
+        overageIndicator: "using",
+      },
+      {
+        standaloneEvent: true,
+        arrivedAfterReset: false,
+        expired: true,
+        weeklyStillActive: true,
+        overageIndicator: "inUse",
+      },
+      {
+        standaloneEvent: false,
+        arrivedAfterReset: false,
+        expired: true,
+        overageIndicator: "status",
+      },
+      { standaloneEvent: true, arrivedAfterReset: false, expired: true, twoWakes: true },
+      {
+        standaloneEvent: true,
+        arrivedAfterReset: false,
+        expired: true,
+        twoWakes: true,
+        secondWakeStillActive: true,
+      },
+    ].map((row) => ({
+      newerTurn: false,
+      newerRootOpen: false,
+      emptyBeforeNewRoot: false,
+      absorbedByUser: false,
+      weeklyStillActive: false,
+      twoWakes: false,
+      secondWakeStillActive: false,
+      overageIndicator: "none",
+      ...row,
+    })),
+  )(
+    "replays a rejected wake rate limit only while it is current (event=$standaloneEvent arrivedAfterReset=$arrivedAfterReset expired=$expired newerTurn=$newerTurn rootOpen=$newerRootOpen emptyBeforeRoot=$emptyBeforeNewRoot absorbed=$absorbedByUser weekly=$weeklyStillActive twoWakes=$twoWakes secondActive=$secondWakeStillActive overage=$overageIndicator)",
+    ({
+      standaloneEvent,
+      arrivedAfterReset,
+      expired,
+      newerTurn,
+      newerRootOpen,
+      emptyBeforeNewRoot,
+      absorbedByUser,
+      weeklyStillActive,
+      twoWakes,
+      secondWakeStillActive,
+      overageIndicator,
+    }) =>
       Effect.gen(function* () {
         const harness = yield* makeWakeHarness;
         const now = yield* DateTime.now;
         const resetsAt = 1790298600;
+        const weeklyResetsAt = resetsAt + 604_800;
 
         yield* harness.runtime.startTurn(
           makeClaudeTestTurnInput({
@@ -15649,7 +15747,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
         yield* Queue.offer(harness.sdkMessages, turnOneResult);
         yield* Queue.take(harness.terminalReceipts);
-
+        if (arrivedAfterReset) {
+          yield* TestClock.setTime(resetsAt * 1_000 + 1_000);
+        }
         yield* Queue.offer(harness.sdkMessages, wakeNotification);
         if (standaloneEvent) {
           yield* harness.offerAndWait(
@@ -15674,9 +15774,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             apiErrorParams: {
               rate_limit_info: {
                 status: "rejected",
-                rateLimitType: "five_hour",
+                rateLimitType: weeklyStillActive ? "seven_day" : "five_hour",
                 // A conflicting embedded time must not replace the event for this window.
-                resetsAt: standaloneEvent ? resetsAt + 3_600 : resetsAt,
+                resetsAt: weeklyStillActive
+                  ? weeklyResetsAt
+                  : standaloneEvent
+                    ? resetsAt + 3_600
+                    : resetsAt,
+                ...(overageIndicator === "status" ? { overageStatus: "allowed" } : {}),
+                ...(overageIndicator === "using" ? { isUsingOverage: true } : {}),
+                ...(overageIndicator === "inUse" ? { overageInUse: true } : {}),
               },
             },
           }),
@@ -15686,6 +15793,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           makeResultFrame({
             uuid: "00000000-0000-4000-8000-000000000632",
             result: "You've hit your session limit · resets 11:10am (Australia/Sydney)",
+            ...(twoWakes && newerRootOpen
+              ? {
+                  usage: {
+                    input_tokens: 2,
+                    output_tokens: 3,
+                    cache_creation_input_tokens: 0,
+                    cache_read_input_tokens: 0,
+                  },
+                }
+              : {}),
             isError: true,
             apiErrorStatus: 429,
             terminalReason: "api_error",
@@ -15694,42 +15811,255 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         assert.lengthOf(harness.continuationRequests, 1);
 
+        if (twoWakes) {
+          // A second rejected background wake completes while the first
+          // continuation remains queued. Both rejections are expired by replay.
+          yield* harness.offerAndWait(wakeTurnInit);
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "rate_limit_event",
+              rate_limit_info: {
+                status: "rejected",
+                rateLimitType: secondWakeStillActive ? "seven_day" : "five_hour",
+                resetsAt: secondWakeStillActive ? weeklyResetsAt : resetsAt,
+                overageStatus: "rejected",
+              },
+              uuid: "00000000-0000-4000-8000-000000000637",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+          yield* harness.offerAndWait(
+            makeAssistantErrorFrame({
+              uuid: "00000000-0000-4000-8000-000000000638",
+              error: "rate_limit",
+              apiErrorParams: {
+                rate_limit_info: {
+                  status: "rejected",
+                  rateLimitType: secondWakeStillActive ? "seven_day" : "five_hour",
+                  resetsAt: secondWakeStillActive ? weeklyResetsAt : resetsAt,
+                },
+              },
+            }),
+          );
+          yield* harness.offerAndWait(
+            makeResultFrame({
+              uuid: "00000000-0000-4000-8000-000000000639",
+              result: "The second background wake also hit the limit.",
+              ...(newerRootOpen
+                ? {
+                    usage: {
+                      input_tokens: 4,
+                      output_tokens: 5,
+                      cache_creation_input_tokens: 0,
+                      cache_read_input_tokens: 0,
+                    },
+                  }
+                : {}),
+              isError: true,
+              apiErrorStatus: 429,
+              terminalReason: "api_error",
+              origin: { kind: "task-notification" },
+            }),
+          );
+          assert.lengthOf(harness.continuationRequests, 1);
+        }
+
         // An empty session-task lifecycle result arriving before T3 opens the
         // wake run must not replace the root's terminal usage-limit result.
         yield* harness.offerAndWait(wakeTurnInit);
-        yield* harness.offerAndWait(
-          makeResultFrame({
-            uuid: "00000000-0000-4000-8000-000000000633",
-            result: "",
-            numTurns: 0,
-            origin: { kind: "task-notification" },
-            terminalReason: null,
-          }),
-        );
+        if (!newerRootOpen || emptyBeforeNewRoot) {
+          yield* harness.offerAndWait(
+            makeResultFrame({
+              uuid: "00000000-0000-4000-8000-000000000633",
+              result: "",
+              numTurns: 0,
+              origin: { kind: "task-notification" },
+              terminalReason: null,
+            }),
+          );
+        }
 
+        if (expired) {
+          yield* TestClock.setTime(resetsAt * 1_000 + 60_000);
+        }
+        if (newerRootOpen) {
+          // The earlier 429 has expired, but another background wake has
+          // started and must be allowed to finish this same continuation.
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              ...wakeTurnInit,
+              uuid: "00000000-0000-4000-8000-000000000643",
+            }),
+          );
+          yield* harness.offerAndWait(
+            makeAssistantTextFrame({
+              uuid: "00000000-0000-4000-8000-000000000644",
+              text: "A later wake is still running.",
+            }),
+          );
+        }
+        if (absorbedByUser) {
+          // A normal user message can consume the newer root's output,
+          // so no terminal SDK result will ever follow for the continuation.
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-claude-wake-limit-absorber"),
+              text: "Did the new background task finish?",
+              attachments: [],
+              providerTurnOrdinal: 2,
+            }),
+          );
+          yield* harness.until(() => harness.offeredMessages.length === 2);
+          yield* harness.offerAndWait(
+            makeResultFrame({
+              uuid: "00000000-0000-4000-8000-000000000646",
+              result: "The background task was absorbed into this answer.",
+            }),
+          );
+          assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+        }
+        if (newerTurn) {
+          // A queued continuation may run behind an ordinary turn served after reset.
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-claude-wake-limit-intervening"),
+              text: "Check whether the limit cleared.",
+              attachments: [],
+              providerTurnOrdinal: 2,
+            }),
+          );
+          yield* harness.offerAndWait(
+            makeResultFrame({
+              uuid: "00000000-0000-4000-8000-000000000636",
+              result: "The new turn succeeded.",
+            }),
+          );
+          assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+        }
         yield* harness.runtime.startTurn(
           makeClaudeTestTurnInput({
             threadId: harness.threadId,
             providerThread: harness.providerThread,
-            now,
+            now: yield* DateTime.now,
             attemptId: RunAttemptId.make("attempt-claude-wake-limit-2"),
             text: "Background task completed.",
             attachments: [],
-            providerTurnOrdinal: 2,
+            providerTurnOrdinal: newerTurn || absorbedByUser ? 3 : 2,
             messageCreatedBy: "agent",
             messageCreationSource: "provider",
           }),
         );
+        if (newerRootOpen) {
+          // An unabsorbed root must not settle until its own result arrives.
+          // An absorbed root has no result left to deliver and must settle now.
+          yield* yieldTicks(20);
+          assert.lengthOf(harness.terminalEvents(), absorbedByUser ? 3 : 1);
+          if (!absorbedByUser) {
+            yield* harness.offerAndWait(
+              makeResultFrame({
+                uuid: "00000000-0000-4000-8000-000000000645",
+                result: "The newer background wake completed.",
+                ...(twoWakes
+                  ? {
+                      usage: {
+                        input_tokens: 7,
+                        output_tokens: 11,
+                        cache_creation_input_tokens: 0,
+                        cache_read_input_tokens: 0,
+                      },
+                    }
+                  : {}),
+                origin: { kind: "task-notification" },
+              }),
+            );
+          }
+          const finished = absorbedByUser
+            ? harness.terminalEvents().at(-1)
+            : yield* Queue.take(harness.terminalReceipts);
+          assert.equal(finished?.status, "completed");
+          const completed = harness.events.findLast(
+            (event) =>
+              event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+          );
+          assert.equal(completed?.type, "provider_turn.updated");
+          if (completed?.type === "provider_turn.updated") {
+            // Retain every charged rejected wake exactly once, even when a
+            // newer root is absorbed by a user turn and emits no own result.
+            assert.equal(
+              completed.providerTurn.turnTokenUsage?.inputTokens,
+              twoWakes ? 13 : absorbedByUser ? 1 : 2,
+            );
+            assert.equal(
+              completed.providerTurn.turnTokenUsage?.outputTokens,
+              twoWakes ? 19 : absorbedByUser ? 1 : 2,
+            );
+          }
+          assert.isFalse(
+            harness.events.some(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "system_notice" &&
+                event.turnItem.message.includes("usage limit reached"),
+            ),
+          );
+          return;
+        }
         const terminal = yield* Queue.take(harness.terminalReceipts);
-        assert.equal(terminal?.status, "failed");
-        if (terminal === undefined || terminal.status !== "failed") return;
+        if (
+          expired &&
+          !secondWakeStillActive &&
+          (overageIndicator !== "none" ? standaloneEvent : !weeklyStillActive)
+        ) {
+          assert.equal(terminal.status, "completed");
+          assert.isFalse(
+            harness.events.some(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "system_notice" &&
+                event.turnItem.message.includes("usage limit reached"),
+            ),
+          );
+          const completed = harness.events.findLast(
+            (event) => event.type === "provider_turn.updated",
+          );
+          assert.equal(completed?.type, "provider_turn.updated");
+          if (completed?.type === "provider_turn.updated") {
+            assert.equal(completed.providerTurn.turnTokenUsage?.inputTokens, twoWakes ? 2 : 1);
+            assert.equal(completed.providerTurn.turnTokenUsage?.outputTokens, twoWakes ? 2 : 1);
+          }
+          return;
+        }
+        assert.equal(terminal.status, "failed");
+        if (terminal.status !== "failed") return;
         assert.equal(terminal.failure.class, "usage_limit");
-        assert.equal(terminal.failure.resetAt, "2026-09-25T01:10:00.000Z");
+        if (!standaloneEvent && overageIndicator !== "none") {
+          // With no blocking reset evidence, preserve the actual 429 failure,
+          // but do not infer a reset timestamp from overage-allowed metadata.
+          assert.isNotOk(terminal.failure.resetAt);
+        } else {
+          assert.equal(
+            terminal.failure.resetAt,
+            weeklyStillActive || secondWakeStillActive
+              ? "2026-10-02T01:10:00.000Z"
+              : "2026-09-25T01:10:00.000Z",
+          );
+        }
         if (standaloneEvent) {
           const pause = yield* Queue.take(harness.systemNoticeReceipts);
           assert.equal(pause.turnItem.type, "system_notice");
           if (pause.turnItem.type !== "system_notice") return;
-          assert.include(pause.turnItem.message, "This turn is paused until the 5-hour limit");
+          assert.include(
+            pause.turnItem.message,
+            secondWakeStillActive
+              ? "This turn is paused until the 7-day limit"
+              : "This turn is paused until the 5-hour limit",
+          );
         }
       }).pipe(
         Effect.provide(
