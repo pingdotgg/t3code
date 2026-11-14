@@ -307,6 +307,7 @@ const CURSOR_AGENT_SETTING_SOURCES = [
 export function makeCursorAgentOptions(input: {
   readonly apiKey?: string;
   readonly modelSelection: ModelSelection;
+  readonly models?: ReadonlyArray<ServerProviderModel>;
   readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
   readonly threadId: ThreadId;
   readonly mcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
@@ -315,7 +316,7 @@ export function makeCursorAgentOptions(input: {
   const policy = cursorRuntimeAgentPolicy(input.runtimePolicy, input.platform);
   const mcpServers = cursorMcpServers(input.mcpSession);
   return {
-    model: cursorSdkModelSelection(input.modelSelection),
+    model: cursorSdkModelSelection(input.modelSelection, input.models),
     name: `T3 Code ${input.threadId}`,
     mode: input.runtimePolicy.interactionMode === "plan" ? "plan" : "agent",
     ...(input.apiKey === undefined ? {} : { apiKey: input.apiKey }),
@@ -377,6 +378,10 @@ function nestedString(value: unknown, keys: ReadonlyArray<string>): string | und
 function cursorToolFailed(toolCall: ToolCall): boolean {
   if (toolCall.result?.status === "error") {
     return true;
+  }
+  // The SDK reports a shell command that exits non-zero as a success.
+  if (toolCall.type === "shell" && toolCall.result?.status === "success") {
+    return toolCall.result.value.exitCode !== 0;
   }
   return toolCall.type === "mcp" && toolCall.result?.status === "success"
     ? toolCall.result.value.isError
@@ -963,7 +968,30 @@ interface ActiveCursorTurn {
   finalized: boolean;
   /** The agent's latest turn ended and no new work has started since. */
   turnEnded: boolean;
+  readonly session: CursorAgentSdk.CursorAgentSdkSession;
+  /** What Cursor billed for this run, summed over its turn-ended updates. */
+  usage: CursorTurnUsage | undefined;
 }
+
+type CursorTurnUsage = NonNullable<Extract<InteractionUpdate, { type: "turn-ended" }>["usage"]>;
+
+const addCursorTurnUsage = (
+  total: CursorTurnUsage | undefined,
+  usage: CursorTurnUsage,
+): CursorTurnUsage => {
+  if (total === undefined) return usage;
+  const reasoningTokens =
+    total.reasoningTokens === undefined && usage.reasoningTokens === undefined
+      ? undefined
+      : (total.reasoningTokens ?? 0) + (usage.reasoningTokens ?? 0);
+  return {
+    inputTokens: total.inputTokens + usage.inputTokens,
+    outputTokens: total.outputTokens + usage.outputTokens,
+    cacheReadTokens: total.cacheReadTokens + usage.cacheReadTokens,
+    cacheWriteTokens: total.cacheWriteTokens + usage.cacheWriteTokens,
+    ...(reasoningTokens === undefined ? {} : { reasoningTokens }),
+  };
+};
 
 interface CursorLiveAgent {
   readonly nativeThreadId: string;
@@ -1340,7 +1368,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             | "completedAt"
             | "updatedAt"
           >;
-          const outputText = cursorToolOutputText(toolCall) || active.streamedOutput;
+          const outputText =
+            cursorToolOutputText(toolCall) ||
+            active.streamedOutput.slice(-MAX_CURSOR_STREAMED_OUTPUT_CHARS);
           let turnItem: OrchestrationV2TurnItem;
           switch (toolCall.type) {
             case "shell":
@@ -2019,6 +2049,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           }
           if (update.type === "turn-ended") {
             context.turnEnded = true;
+            if (update.usage !== undefined) {
+              context.usage = addCursorTurnUsage(context.usage, update.usage);
+            }
           } else if (
             update.type === "step-started" ||
             update.type === "user-message-appended" ||
@@ -2085,9 +2118,13 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               const chunk = shellOutputText(update.event);
               if (chunk.length === 0) return;
               // Persist output once; live hub deltas avoid quadratic event-store growth.
-              shell.streamedOutput = (shell.streamedOutput + chunk).slice(
-                -MAX_CURSOR_STREAMED_OUTPUT_CHARS,
-              );
+              shell.streamedOutput += chunk;
+              // Trimming on every chunk would flatten and copy the whole tail each time.
+              if (shell.streamedOutput.length > 2 * MAX_CURSOR_STREAMED_OUTPUT_CHARS) {
+                shell.streamedOutput = shell.streamedOutput.slice(
+                  -MAX_CURSOR_STREAMED_OUTPUT_CHARS,
+                );
+              }
               yield* emitProviderEvent({
                 type: "command_output.delta",
                 driver: CursorAgentSdk.CURSOR_PROVIDER,
@@ -2109,6 +2146,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           readonly context: ActiveCursorTurn;
           readonly status: OrchestrationV2ProviderTurn["status"];
           readonly completedAt: DateTime.Utc | null;
+          readonly tokenUsage?: OrchestrationV2ProviderTurn["tokenUsage"];
         }): OrchestrationV2ProviderTurn => ({
           id: input.context.providerTurnId,
           providerThreadId: input.context.input.providerThread.id,
@@ -2123,6 +2161,24 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           status: input.status,
           startedAt: input.context.startedAt,
           completedAt: input.completedAt,
+          ...(input.tokenUsage === undefined ? {} : { tokenUsage: input.tokenUsage }),
+          ...(input.completedAt === null || input.context.usage === undefined
+            ? {}
+            : {
+                turnTokenUsage: {
+                  usageScope: "main_agent",
+                  usageStatus: input.status === "completed" ? "complete" : "partial",
+                  // Cursor's inputTokens already include cache reads and writes.
+                  inputTokens: input.context.usage.inputTokens,
+                  cachedInputTokens: input.context.usage.cacheReadTokens,
+                  cacheCreationTokens: input.context.usage.cacheWriteTokens,
+                  outputTokens: input.context.usage.outputTokens,
+                  ...(input.context.usage.reasoningTokens === undefined
+                    ? {}
+                    : { reasoningTokens: input.context.usage.reasoningTokens }),
+                  hasSubagents: input.context.subagents.size > 0,
+                },
+              }),
         });
 
         const finalizeTurn = Effect.fnUntraced(function* (input: {
@@ -2160,6 +2216,17 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           }
           yield* completeReasoning(input.context);
           yield* completeAssistant(input.context);
+          // The turn's billed totals count every step; only the checkpoint knows the context fill.
+          const contextUsage = yield* (
+            input.context.session.readContextUsage ?? Effect.undefined
+          ).pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("orchestration-v2.cursor-context-usage-unavailable", {
+                providerTurnId: input.context.providerTurnId,
+                cause,
+              }).pipe(Effect.as(undefined)),
+            ),
+          );
           yield* emitProviderEvent({
             type: "provider_turn.updated",
             driver: CursorAgentSdk.CURSOR_PROVIDER,
@@ -2167,6 +2234,15 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               context: input.context,
               status: input.status,
               completedAt,
+              ...(contextUsage === undefined
+                ? {}
+                : {
+                    tokenUsage: {
+                      usedTokens: contextUsage.usedTokens,
+                      maxTokens: contextUsage.maxTokens,
+                      updatedAt: DateTime.formatIso(completedAt),
+                    },
+                  }),
             }),
           });
           yield* emitProviderEvent({
@@ -2296,6 +2372,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           const options = makeCursorAgentOptions({
             ...(apiKey === undefined ? {} : { apiKey }),
             modelSelection: openInput.modelSelection,
+            models: adapterOptions.getModels?.() ?? [],
             runtimePolicy: openInput.runtimePolicy,
             platform,
             threadId: openInput.threadId,
@@ -2486,7 +2563,10 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 message,
                 summarize: compacted,
                 options: {
-                  model: cursorSdkModelSelection(turnInput.modelSelection),
+                  model: cursorSdkModelSelection(
+                    turnInput.modelSelection,
+                    adapterOptions.getModels?.() ?? [],
+                  ),
                   mode: turnInput.runtimePolicy.interactionMode === "plan" ? "plan" : "agent",
                   ...(Object.keys(turnMcpServers).length === 0
                     ? {}
@@ -2538,6 +2618,8 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               interrupted: false,
               finalized: false,
               turnEnded: false,
+              session: agent.session,
+              usage: undefined,
             };
             yield* Ref.set(activeTurn, context);
             yield* emitProviderEvent({

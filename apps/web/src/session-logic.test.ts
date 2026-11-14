@@ -1391,6 +1391,29 @@ describe("HTML renders in the timeline", () => {
     ]);
   });
 
+  it("shows a sent message in place through the turn fold, and only once sent", () => {
+    const sentMessage = "Draft reply:\n\n> Thanks, Thursday works.";
+    const send = (
+      status: OrchestrationV2TurnItem["status"],
+      output?: unknown,
+    ): OrchestrationV2TurnItem => ({
+      ...base("render", 2),
+      status,
+      type: "dynamic_tool",
+      toolName: "mcp__t3-code__send_to_user",
+      input: { message: sentMessage },
+      ...(output === undefined ? {} : { output }),
+    });
+    const entries = turn(send("completed", { structuredContent: { sentMessage }, content: [] }));
+    expect(entries.find((entry) => entry.kind === "sent-message")).toMatchObject({
+      id: "render",
+      runId,
+      text: sentMessage,
+    });
+    expect(rowsFor(entries, false)).toEqual(["message", "turn-fold", "sent-message", "message"]);
+    expect(turn(send("running")).some((entry) => entry.kind === "sent-message")).toBe(false);
+  });
+
   it("hosts a captured MCP app after its tool row, from any provider's tool", () => {
     const mcpApp = {
       attachmentId: "render-thread-app-html",
