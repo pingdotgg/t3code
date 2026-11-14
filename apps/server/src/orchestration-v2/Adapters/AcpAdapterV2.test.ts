@@ -53,6 +53,7 @@ import * as Stream from "effect/Stream";
 import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as ChildProcess from "effect/process/ChildProcess";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 import type * as EffectAcpSchema from "effect-acp/compat";
@@ -570,6 +571,36 @@ function makeMockRuntime(input: {
       return input.wrapRuntime?.(wrapped, runtimeOrdinal) ?? wrapped;
     });
 }
+
+it.effect("detaches owned ACP processes on POSIX hosts but not on Windows", () =>
+  Effect.gen(function* () {
+    for (const [platform, expected] of [
+      ["win32", false],
+      ["linux", true],
+    ] as const) {
+      let detached: boolean | undefined;
+      yield* AcpSessionRuntime.make({
+        spawn: { command: "acp-agent", args: [] },
+        cwd: process.cwd(),
+        clientInfo: { name: "test", version: "1" },
+        ownDetachedProcessGroup: true,
+        processGroupPlatform: platform,
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, platform),
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) => {
+            if (ChildProcess.isStandardCommand(command)) detached = command.options.detached;
+            return Effect.die("spawn stopped by test");
+          }),
+        ),
+        Effect.scoped,
+        Effect.exit,
+      );
+      assert.equal(detached, expected, platform);
+    }
+  }).pipe(Effect.provide(layerTest)),
+);
 
 const isProviderAdapterProtocolError = Schema.is(ProviderAdapter.ProviderAdapterProtocolError);
 
@@ -2425,12 +2456,7 @@ describe("AcpAdapterV2", () => {
           },
           stopReason === "error",
         );
-        const expectedStatus =
-          stopReason === "error"
-            ? "failed"
-            : stopReason === "cancelled"
-              ? "cancelled"
-              : "completed";
+        const expectedStatus = stopReason === "cancelled" ? "cancelled" : "failed";
         yield* reportNextPromptStopped(stopReason);
         assertReinjectedInstructions(yield* runTurn("Start work.", expectedStatus), "Start work.");
         assertReinjectedInstructions(
@@ -3149,6 +3175,87 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("replays history in order, with stable earlier snapshots", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+      const instanceId = ProviderInstanceId.make("acp-test-v2-replay-order");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              handleSessionUpdate: (handler) =>
+                Effect.sync(() => {
+                  sessionUpdateHandler = handler;
+                }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+            }),
+          }),
+        },
+        selfInvocation,
+      });
+      const threadId = ThreadId.make("thread-acp-v2-replay-order");
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-v2-replay-order"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      assert.isDefined(sessionUpdateHandler);
+      const replay = (
+        sessionUpdate: "user_message_chunk" | "agent_message_chunk",
+        messageId: string,
+        text: string,
+      ) =>
+        sessionUpdateHandler!({
+          sessionId: "mock-session-1",
+          update: { sessionUpdate, messageId, content: { type: "text", text } },
+        });
+
+      yield* replay("user_message_chunk", "u1", "hel");
+      yield* replay("user_message_chunk", "u1", "lo");
+      yield* replay("agent_message_chunk", "a1", "hi");
+      yield* replay("user_message_chunk", "u2", "next");
+      yield* replay("agent_message_chunk", "a1", " there");
+      const first = yield* runtime.readThreadSnapshot({ providerThread });
+      yield* replay("agent_message_chunk", "a2", "done");
+      yield* replay("user_message_chunk", "u2", " one");
+      const second = yield* runtime.readThreadSnapshot({ providerThread });
+
+      const texts = (snapshot: typeof first) =>
+        snapshot.messages.map((message) => `${message.role}:${message.text}`);
+      assert.deepEqual(texts(first), ["user:hello", "assistant:hi there", "user:next"]);
+      assert.deepEqual(texts(second), [
+        "user:hello",
+        "assistant:hi there",
+        "user:next one",
+        "assistant:done",
+      ]);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect("persists a bounded subset of streamed root and child tool updates", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -3471,14 +3578,14 @@ describe("AcpAdapterV2", () => {
                         "cognition.ai/subagent_context": { parentAgentId: "child-a" },
                       },
                     },
-                    {
-                      sessionUpdate: "agent_message_chunk",
-                      content: { type: "text", text: "ONE" },
+                    ...["O", "N", "E"].map((text) => ({
+                      sessionUpdate: "agent_message_chunk" as const,
+                      content: { type: "text" as const, text },
                       _meta: {
                         "cognition.ai/streamingMessageId": "child-result",
                         "cognition.ai/subagent_context": { parentAgentId: "child-a" },
                       },
-                    },
+                    })),
                     {
                       sessionUpdate: "tool_call",
                       toolCallId: "child-later",
@@ -3631,12 +3738,130 @@ describe("AcpAdapterV2", () => {
         (item) => item.threadId === task?.childThreadId && item.type === "assistant_message",
       );
       assert.equal(new Set(childAnswers.map((item) => item.ordinal)).size, 2);
+      // Later chunks coalesce; the subagent's completion flushes the final text.
+      assert.deepEqual(
+        childAnswers.flatMap((item) =>
+          item.type === "assistant_message" && item.text !== "Checking the code."
+            ? [item.text]
+            : [],
+        ),
+        ["O", "ONE"],
+      );
       const parentTools = items.filter(
         (item) => item.threadId === threadId && item.type === "dynamic_tool",
       );
       assert.equal(parentTools.length, 2);
       assert.equal(parentTools[0]?.title, "Parent tool finished");
     }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("emits coalesced subagent text before a failed turn's terminal", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      type Runtime = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let handler: Parameters<Runtime["handleSessionUpdate"]>[0] | undefined;
+      const instanceId = ProviderInstanceId.make("devin-failed-flush");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          normalizeSessionUpdate: normalizeDevinSessionUpdate,
+          normalizeToolCall: normalizeDevinToolCall,
+          extractSubagentUpdate: extractDevinSubagentUpdate,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              handleSessionUpdate: (next) =>
+                Effect.sync(() => {
+                  handler = next;
+                }).pipe(Effect.andThen(runtime.handleSessionUpdate(next))),
+              prompt: () =>
+                Effect.gen(function* () {
+                  const updates = [
+                    {
+                      sessionUpdate: "tool_call_update",
+                      toolCallId: "child-a",
+                      status: "in_progress",
+                      _meta: {
+                        "cognition.ai/subagent_started": {
+                          agentId: "child-a",
+                          title: "Answer",
+                          task: "Reply ONE.",
+                        },
+                      },
+                    },
+                    ...["O", "N", "E"].map((text) => ({
+                      sessionUpdate: "agent_message_chunk" as const,
+                      content: { type: "text" as const, text },
+                      _meta: {
+                        "cognition.ai/streamingMessageId": "child-result",
+                        "cognition.ai/subagent_context": { parentAgentId: "child-a" },
+                      },
+                    })),
+                  ] satisfies Array<EffectAcpSchema.SessionUpdate>;
+                  for (const update of updates)
+                    yield* handler!({ sessionId: "mock-session-1", update });
+                  return yield* new EffectAcpErrors.AcpRequestError({
+                    code: -32603,
+                    errorMessage: "prompt failed",
+                  });
+                }),
+            }),
+          }),
+        },
+      });
+      const threadId = ThreadId.make("devin-failed-flush-parent");
+      const modelSelection = { instanceId, model: "default" };
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("devin-failed-flush-session"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+        }),
+      );
+      const events = Array.from(
+        yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+        ),
+      );
+      const terminal = events.at(-1);
+      assert.equal(terminal?.type === "turn.terminal" ? terminal.status : undefined, "failed");
+      const childText = events.flatMap((event) =>
+        event.type === "turn_item.updated" &&
+        event.turnItem.type === "assistant_message" &&
+        event.turnItem.threadId !== threadId
+          ? [event.turnItem.text]
+          : [],
+      );
+      assert.equal(childText.at(-1), "ONE");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.effect("routes interleaved Copilot subagent output into subagent threads", () =>
