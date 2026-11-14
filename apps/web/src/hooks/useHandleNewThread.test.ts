@@ -404,4 +404,31 @@ describe("default project selection", () => {
       ),
     ).toEqual({ environmentId: "first", projectId: "project" });
   });
+
+  it("keeps a scratch destination for captures without preferring it over a real project", () => {
+    const project = {
+      id: "project" as ProjectId,
+      environmentId: "environment-primary" as EnvironmentId,
+      title: "No project",
+      workspaceRoot: "/scratch",
+      defaultModelSelection: null,
+      scripts: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    const scratch = { ...project, id: "scratch" as ProjectId, isScratch: true as const };
+    const scratchRef = { environmentId: scratch.environmentId, projectId: scratch.id };
+    expect(resolveDefaultProjectRef([scratch], [], null)).toEqual(scratchRef);
+    expect(resolveDefaultProjectRef([scratch, project], [], null)).toEqual({
+      environmentId: project.environmentId,
+      projectId: project.id,
+    });
+    expect(
+      resolveDefaultProjectRef([scratch, { ...project, archivedAt: scratch.createdAt }], [], null),
+    ).toEqual(scratchRef);
+    expect(
+      resolveDefaultProjectRef([{ ...scratch, archivedAt: scratch.createdAt }], [], null),
+    ).toBeNull();
+    expect(resolveDefaultProjectRef([], [], null)).toBeNull();
+  });
 });
