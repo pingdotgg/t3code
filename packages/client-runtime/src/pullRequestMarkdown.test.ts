@@ -1,11 +1,27 @@
 import { describe, expect, it } from "vite-plus/test";
+import { SOURCE_CONTROL_MEDIA_ASSET } from "@t3tools/contracts";
 
 import {
   changeRequestReferenceAutolinker,
+  pullRequestMediaResource,
   resolveChangeRequestMediaUrl,
   splitPullRequestBody,
   type PullRequestBodySegment,
 } from "./pullRequestMarkdown.ts";
+
+describe("pullRequestMediaResource", () => {
+  it("requests Azure DevOps attachments through the server, which holds the credential", () => {
+    const url =
+      "https://dev.azure.com/org/project/_apis/git/repositories/repo/pullRequests/42/attachments/demo.mp4";
+    expect(pullRequestMediaResource(`${url}?api-version=7.1`, "/repo")).toEqual({
+      _tag: SOURCE_CONTROL_MEDIA_ASSET,
+      cwd: "/repo",
+      url,
+    });
+    expect(pullRequestMediaResource(url.slice("https:".length), "/repo")?.url).toBe(url);
+    expect(pullRequestMediaResource("https://example.test/demo.mp4", "/repo")).toBeNull();
+  });
+});
 
 describe("pull request body segmentation", () => {
   // GitHub writes a dropped image into the body as an `<img>` tag, so a bare attachment link on

@@ -10,9 +10,9 @@ import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff"
 import {
   PullRequestMedia,
   PullRequestMediaContext,
+  usePullRequestImageSource,
   usePullRequestMediaUrl,
 } from "./PullRequestMedia";
-import { videoMimeType } from "@t3tools/shared/video";
 import { createContext, useContext, useMemo, useState } from "react";
 import {
   changeRequestReferenceAutolinker,
@@ -27,9 +27,9 @@ import { linkReferenceAutolinks } from "./pullRequestAutolinks";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
 import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
-import { markdownImageSources } from "../../lib/markdownImageSources";
+import { normalizeNativeMarkdownUrl } from "../../lib/markdownLinks";
 import { FilePreviewGallery, useFilePreviewGallery } from "../../components/ui/FilePreviewGallery";
-import { pullRequestImageSource } from "./pullRequestMediaSource";
+import { pullRequestImageGallery, pullRequestImageSource } from "./pullRequestMediaSource";
 import {
   FilePreviewModal,
   type FilePreviewSource,
@@ -83,20 +83,21 @@ function MarkdownImage(props: {
   readonly alt: string | null;
   readonly onPreview: (source: FilePreviewSource) => void;
 }) {
-  const media = usePullRequestMediaUrl(props.href);
+  const href = normalizeNativeMarkdownUrl(props.href);
+  const media = usePullRequestMediaUrl(href);
   const context = useContext(PullRequestMediaContext);
   const withGallery = useFilePreviewGallery();
   return (
     <ThreadMarkdownImageView
       uri={media.uri}
-      sourceKey={props.href}
+      sourceKey={href}
       cacheKey={media.cacheKey}
-      unavailable={media.unavailable || !/^https?:\/\//i.test(props.href)}
+      unavailable={media.unavailable || !/^https?:\/\//i.test(href)}
       alt={props.alt}
       onPressPreview={(source) =>
         props.onPreview(
           withGallery({
-            ...pullRequestImageSource(props.href, context),
+            ...pullRequestImageSource(href, context),
             name: source.name,
             sourceIdentifier: source.sourceIdentifier,
           }),
@@ -123,16 +124,11 @@ export function PullRequestMarkdown(props: {
   const changeRequestUrl = useContext(ChangeRequestUrlContext);
   const segments = useMemo(() => splitPullRequestBody(props.markdown), [props.markdown]);
   const [undoneTicks, setUndoneTicks] = useState(0);
-  const gallery: FilePreviewItem[] = markdownImageSources(
+  const gallery = pullRequestImageGallery(
     props.imageGroupMarkdown ?? props.markdown,
-  )
-    .map((href) => (changeRequestUrl ? resolveChangeRequestMediaUrl(href, changeRequestUrl) : href))
-    .filter(
-      (uri) =>
-        /^https?:\/\//i.test(uri) &&
-        videoMimeType({ name: uri.split(/[?#]/)[0] ?? uri, mimeType: "" }) === null,
-    )
-    .map((uri) => pullRequestImageSource(uri, mediaContext));
+    mediaContext,
+    changeRequestUrl,
+  );
   const segmentProps = {
     gallery,
     lineBreaks: props.lineBreaks,
@@ -222,7 +218,9 @@ function PullRequestMarkdownContent(props: {
   const mediaContext = useContext(PullRequestMediaContext);
   const changeRequestUrl = useContext(ChangeRequestUrlContext);
   const resolveMediaUrl = (href: string) =>
-    changeRequestUrl ? resolveChangeRequestMediaUrl(href, changeRequestUrl) : href;
+    normalizeNativeMarkdownUrl(
+      changeRequestUrl ? resolveChangeRequestMediaUrl(href, changeRequestUrl) : href,
+    );
   const markdown = linkReferenceAutolinks(props.markdown, autolinks);
   const openPullRequest = useOpenPullRequest();
   const openLink = (href: string) => {
@@ -232,6 +230,7 @@ function PullRequestMarkdownContent(props: {
   const renderImage: MarkdownImageRenderer = (image) => (
     <MarkdownImage href={resolveMediaUrl(image.href)} alt={image.alt} onPreview={setPreview} />
   );
+  const resolveImageSource = usePullRequestImageSource(resolveMediaUrl);
   const styles = useMarkdownPreviewStyles();
   return (
     <FilePreviewGallery value={props.gallery}>
@@ -241,6 +240,7 @@ function PullRequestMarkdownContent(props: {
         textStyle={styles.nativeTextStyle}
         onLinkPress={openLink}
         renderImage={renderImage}
+        resolveImageSource={resolveImageSource}
         onImagePress={(href) =>
           setPreview(pullRequestImageSource(resolveMediaUrl(href), mediaContext))
         }
