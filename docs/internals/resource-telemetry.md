@@ -33,6 +33,33 @@ must exceed the slowest configured heartbeat plus scheduling grace, or intention
 idle polling makes background policy oscillate between constrained and
 unconstrained states. Headless servers leave unavailable power data unknown.
 
+## Whole-machine resources
+
+`server.getHostResources` serves two readers. Load balancing sends `{}` and gets CPU
+and memory only ([`HostResources`](../../apps/server/src/resourceTelemetry/HostResources.ts)),
+so a slow filesystem can never delay picking a machine. Settings → Diagnostics sends
+`detail: "machine"` and polls every 5 seconds while the section is mounted; that adds
+volumes and swap from [`HostStorage`](../../apps/server/src/resourceTelemetry/HostStorage.ts).
+Servers that predate the field drop the unknown key and answer without `storage`, which
+clients show as unsupported, not as an empty machine.
+
+Volumes come from the native monitor's `hostSystem` command (sysinfo `Disks`), read on a
+thread of its own so a hung network mount never stalls process sampling. Concurrent
+requests share one read. The server keeps a reading for 15 seconds and answers from the
+last one if a refresh takes longer than 3 seconds, so an idle server does no disk work
+and a busy view costs at most one volume walk per 15 seconds. Without the monitor, it
+falls back to `statfs` on the T3 home and worktrees directories, grouped by device id,
+and says so in `unavailableReason`. There is no shell probe.
+
+Volume selection drops pseudo filesystems, read-only system snapshots and OS-managed
+mounts, and collapses volumes that report the same name, filesystem and size: APFS lists
+the sealed system snapshot (`/`) and its Data volume separately with identical capacity.
+The volumes holding the T3 home and the worktrees directory are always kept, matched by
+real path to the deepest mount. Free space is the space the server's user can write
+(macOS "important usage", `f_bavail` elsewhere), and low-disk warnings use absolute free
+space rather than percent used: ext4 reserves blocks for root, and 5% of a large disk is
+still plenty.
+
 ## Measurement traps
 
 - Process identity includes start time because operating systems reuse PIDs.
