@@ -1592,8 +1592,11 @@ export const layer: Layer.Layer<
       if (!runningWrite.committed) {
         return;
       }
-      const routableSubagents = projection.subagents.filter((subagent) =>
-        RunExecutionService.canRouteRelatedSubagent(subagent.status),
+      // Delegated (app_owned) children run their own runs; routing them here ingests their items twice.
+      const routableSubagents = projection.subagents.filter(
+        (subagent) =>
+          subagent.origin === "provider_native" &&
+          RunExecutionService.canRouteRelatedSubagent(subagent.status),
       );
       const persistHandoff = Effect.fn("ProviderTurnStartService.persist")(function* (
         handoff: OrchestrationV2ContextHandoff,
