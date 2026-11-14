@@ -534,7 +534,9 @@ impl Inner {
                 provider_thread_json["firstRunOrdinal"] = ordinal.clone();
             }
             provider_thread_json["lastRunOrdinal"] = ordinal;
-            provider_thread_json["status"] = json!("active");
+            // T3 also marks it `active` here and its adapters mark it `idle` at the turn's
+            // end. Our Codex provider sends no thread updates, so the status stays the
+            // provider's own.
         }
         if provider_thread_json
             .get("appThreadId")
