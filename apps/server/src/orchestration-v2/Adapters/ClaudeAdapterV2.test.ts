@@ -8099,6 +8099,172 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  // regression: #24171
+  it.effect.each([
+    {
+      name: "drops the CLI's API error frame when the failure repeats it",
+      text: "API Error: Claude Opus 5.5's safeguards flagged this message (https://www.anthropic.com/legal/aup).",
+      apiErrorStatus: 400,
+      shown: false,
+    },
+    {
+      name: "drops the CLI's API error frame when the repeated failure is truncated",
+      text: `API Error: ${"safeguard detail ".repeat(40)}`.trim(),
+      apiErrorStatus: 400,
+      shown: false,
+    },
+    {
+      name: "keeps the CLI's API error frame when only the truncated failure matches it",
+      text: `API Error: ${"safeguard detail ".repeat(40)}first ending`,
+      result: `API Error: ${"safeguard detail ".repeat(40)}second ending`,
+      apiErrorStatus: 400,
+      shown: true,
+    },
+    {
+      name: "drops the CLI's API error frame when the result has a control character",
+      text: "API Error: rejected detail",
+      result: "API Error: rejected\u0000detail",
+      apiErrorStatus: 400,
+      shown: false,
+    },
+    {
+      name: "drops the CLI's API error frame when a listed error repeats it under a longer result",
+      text: `API Error: ${"x".repeat(489)}`,
+      result: `API Error: ${"x".repeat(489)} hidden tail`,
+      errors: [`API Error: ${"x".repeat(489)}`],
+      failure: `API Error: ${"x".repeat(489)}`,
+      apiErrorStatus: 400,
+      shown: false,
+    },
+    {
+      name: "keeps the CLI's API error frame when a listed error shows only its first 500 characters",
+      text: `API Error: ${"x".repeat(489)} hidden tail`,
+      errors: [`API Error: ${"x".repeat(489)}`],
+      failure: `API Error: ${"x".repeat(489)}`,
+      apiErrorStatus: 400,
+      shown: true,
+    },
+    {
+      name: "drops the CLI's API error frame when its snapshot repeats and the failure repeats it",
+      text: "API Error: Claude Opus 5.5's safeguards flagged this message (https://www.anthropic.com/legal/aup).",
+      repeatedSnapshot: true,
+      apiErrorStatus: 400,
+      shown: false,
+    },
+    {
+      name: "drops the CLI's API error frame when an error result lists it",
+      text: "API Error: Request could not be completed.",
+      subtype: "error_during_execution",
+      errors: ["API Error: Request could not be completed."],
+      apiErrorStatus: 400,
+      shown: false,
+    },
+    {
+      name: "keeps the CLI's API error frame when the endings differ beyond the failure cap",
+      text: `API Error: ${"detail ".repeat(700)}first ending`,
+      result: `API Error: ${"detail ".repeat(700)}second ending`,
+      apiErrorStatus: 400,
+      shown: true,
+    },
+    {
+      name: "emits the held API error frame before later assistant text",
+      text: "API Error: 400 Request rejected.",
+      followingText: "The request was rejected.",
+      apiErrorStatus: 400,
+      shown: true,
+    },
+    {
+      name: "keeps the CLI's API error frame when the failure says something else",
+      text: "API Error: 429 Specific rate limit detail.",
+      apiErrorStatus: 429,
+      shown: true,
+    },
+    {
+      name: "keeps the CLI's API error frame when the turn is interrupted",
+      text: "API Error: rejected",
+      apiErrorStatus: 400,
+      terminalReason: "aborted_streaming" as const,
+      shown: true,
+    },
+  ])("$name", (input) =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-claude-api-error-frame"),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      const result = makeResultFrame({
+        uuid: "00000000-0000-4000-8000-000000000611",
+        result: "result" in input ? input.result : input.text,
+        ...("subtype" in input ? { subtype: input.subtype } : {}),
+        ...("errors" in input ? { errors: input.errors } : {}),
+        isError: true,
+        ...("apiErrorStatus" in input ? { apiErrorStatus: input.apiErrorStatus } : {}),
+        terminalReason: "terminalReason" in input ? input.terminalReason : "api_error",
+      });
+      yield* Queue.offerAll(harness.sdkMessages, [
+        ...Array.from({ length: "repeatedSnapshot" in input ? 2 : 1 }, () =>
+          makeAssistantErrorFrame({
+            uuid: "00000000-0000-4000-8000-000000000610",
+            error: "invalid_request",
+            text: input.text,
+          }),
+        ),
+        ...("followingText" in input
+          ? [
+              makeAssistantTextFrame({
+                uuid: "00000000-0000-4000-8000-000000000612",
+                text: input.followingText,
+              }),
+            ]
+          : []),
+        result,
+      ]);
+
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(
+        terminal.status,
+        "terminalReason" in input && input.terminalReason === "aborted_streaming"
+          ? "interrupted"
+          : "failed",
+      );
+      if (terminal.status === "failed") {
+        if (!input.shown) assert.isTrue(input.text.startsWith(terminal.failure.message));
+        if ("failure" in input) assert.equal(terminal.failure.message, input.failure);
+      } else {
+        assert.equal(terminal.failure, null);
+      }
+      const assistantTexts = harness.events.flatMap((event) =>
+        event.type === "message.updated" && event.message.role === "assistant"
+          ? [event.message.text]
+          : [],
+      );
+      assert.deepEqual(
+        assistantTexts,
+        !input.shown
+          ? []
+          : "followingText" in input
+            ? [input.text, input.followingText]
+            : [input.text],
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   const lastProviderTurn = (events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) => {
     const event = events.findLast((candidate) => candidate.type === "provider_turn.updated");
     if (event?.type !== "provider_turn.updated") {
