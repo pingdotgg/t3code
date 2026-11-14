@@ -9,6 +9,8 @@ export interface CdpRelayTarget {
     owner?: string,
   ) => Promise<unknown>;
   readonly sessionDetached?: (owner: string) => void;
+  /** Whether a page session, by owner as `send` names it, gets the page's screencast frames. */
+  readonly receivesScreencast: (owner: string | undefined) => boolean;
   /** The page's own CDP target id; Playwright keys the main frame by it. */
   readonly targetId: () => Promise<string>;
   readonly url: () => string;
@@ -101,9 +103,8 @@ export function createCdpRelayConnection(
   let downloadEventsEnabled = false;
   /** Relay-created page sessions share one real debugger; child frame sessions retain their own ids. */
   const sessions = new Map<string, "browser" | "page">([[PAGE_SESSION_ID, "page"]]);
-  // The manager acknowledges native frames immediately; each relay consumer must bound its own queue.
-  const screencasts = new Map<string, { pendingFrame: number | null; active: boolean }>();
-  const screencastStarts = new Map<string, object>();
+  // The manager acks native frames at once, so each page session waits on its own ack instead.
+  const unackedFrames = new Map<string, number>();
   let sessionSequence = 0;
   const newSession = (kind: "browser" | "page") => {
     const sessionId = `t3-preview-${kind}-${++sessionSequence}`;
@@ -171,8 +172,7 @@ export function createCdpRelayConnection(
         const sessionId = command.params?.["sessionId"];
         if (typeof sessionId === "string" && sessionId !== PAGE_SESSION_ID) {
           sessions.delete(sessionId);
-          screencasts.delete(sessionId);
-          screencastStarts.delete(sessionId);
+          unackedFrames.delete(sessionId);
           target.sessionDetached?.(sessionId);
         }
         return {};
@@ -193,6 +193,8 @@ export function createCdpRelayConnection(
     }
   };
 
+  let runtimeReset: Promise<unknown> | undefined;
+
   const pageCommand = (command: CdpCommand): Promise<unknown> => {
     const child = sessions.get(command.sessionId!) === "page" ? undefined : command.sessionId;
     const owner =
@@ -206,29 +208,22 @@ export function createCdpRelayConnection(
     if (child === undefined) {
       const sessionId = command.sessionId!;
       if (command.method === "Page.screencastFrameAck") {
-        const stream = screencasts.get(sessionId);
-        if (stream && stream.pendingFrame === command.params?.["sessionId"]) {
-          stream.pendingFrame = null;
+        if (unackedFrames.get(sessionId) === command.params?.["sessionId"]) {
+          unackedFrames.delete(sessionId);
         }
         return Promise.resolve({});
       }
-      if (command.method === "Page.stopScreencast") {
-        const stream = screencasts.get(sessionId);
-        if (stream) stream.active = false;
-        screencastStarts.delete(sessionId);
+      if (command.method === "Page.startScreencast" || command.method === "Page.stopScreencast") {
+        unackedFrames.delete(sessionId);
       }
-      if (command.method === "Page.startScreencast") {
-        const start = screencastStarts.get(sessionId) ?? {};
-        screencastStarts.set(sessionId, start);
-        return target.send(command.method, command.params ?? {}, child, owner).then((result) => {
-          if (screencastStarts.get(sessionId) === start) {
-            const stream = screencasts.get(sessionId);
-            if (stream) stream.active = true;
-            else screencasts.set(sessionId, { pendingFrame: null, active: true });
-          }
-          return result;
-        });
-      }
+    }
+    // The shared debugger keeps Runtime enabled after an earlier connection, and a repeated
+    // enable reports no existing contexts; Playwright waits for them, so reset once per connection.
+    if (command.method === "Runtime.enable" && child === undefined) {
+      runtimeReset ??= target.send("Runtime.disable", {}, undefined, owner).catch(() => undefined);
+      return runtimeReset.then(() =>
+        target.send(command.method, command.params ?? {}, undefined, owner),
+      );
     }
     return target.send(command.method, command.params ?? {}, child, owner);
   };
@@ -282,18 +277,19 @@ export function createCdpRelayConnection(
         send({ method, params, sessionId });
         return;
       }
-      if (method === "Page.screencastFrame") {
-        const frameId = (params as { sessionId?: unknown } | null)?.sessionId;
-        if (typeof frameId !== "number") return;
-        for (const [id, stream] of screencasts) {
-          if (!stream.active || stream.pendingFrame !== null) continue;
-          stream.pendingFrame = frameId;
-          send({ method, params, sessionId: id });
+      const frameId =
+        method === "Page.screencastFrame"
+          ? (params as { sessionId?: unknown } | null)?.sessionId
+          : undefined;
+      for (const [id, kind] of sessions) {
+        if (kind !== "page") continue;
+        if (method === "Page.screencastFrame") {
+          if (typeof frameId !== "number" || unackedFrames.has(id)) continue;
+          if (!target.receivesScreencast(id === PAGE_SESSION_ID ? undefined : id)) continue;
+          unackedFrames.set(id, frameId);
         }
-        return;
+        send({ method, params, sessionId: id });
       }
-      for (const [id, kind] of sessions)
-        if (kind === "page") send({ method, params, sessionId: id });
     },
   };
 }

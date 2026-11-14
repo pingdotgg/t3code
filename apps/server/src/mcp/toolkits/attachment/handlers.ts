@@ -62,7 +62,10 @@ export const layer = McpToolAccess.toLayer(
               if (now - entry.issuedAt > UPLOAD_OWNER_TTL_MS) uploadOwners.delete(id);
             }
             uploadOwners.set(result.attachmentId, { owner: yield* uploadOwner, issuedAt: now });
-            return result;
+            const { origin } = yield* McpInvocationContext.McpInvocationContext;
+            return origin === undefined
+              ? result
+              : { ...result, uploadUrl: `${origin}${result.relativeUrl}` };
           }),
         { linkedCallers: "allowed" },
       ),

@@ -226,12 +226,13 @@ function htmlTagMarkdown(
     const alt = (attribute(tag, "alt") ?? "").replace(/[\\[\]&]/g, "\\$&");
     return `![${alt}](${markdownDestination(src)})`;
   }
+  // A raw newline would end the table row; both parsers decode this reference to one inside the cell.
+  const cellBreak = "&#10;";
   // A blank line inside an open link label would end the paragraph before its "]".
-  const blockBreak = anchors.open === 0 ? "\n\n" : " ";
+  const blockBreak = anchors.open > 0 ? " " : options.inTableCell ? cellBreak : "\n\n";
   if (/^<summary\b/i.test(tag)) return `${blockBreak}**`;
   if (/^<\/summary\s*>/i.test(tag)) return `**${blockBreak}`;
-  // A raw newline would end the table row; both parsers decode this reference to one inside the cell.
-  if (/^<br\b/i.test(tag)) return options.inTableCell ? "&#10;" : "  \n";
+  if (/^<br\b/i.test(tag)) return options.inTableCell ? cellBreak : "  \n";
   if (/^<\/?(?:p|div|details)\b/i.test(tag)) return blockBreak;
   return "";
 }
@@ -281,6 +282,41 @@ export function markdownWithHtml(markdown: string): string {
   };
   visit(parser.parse(markdown), false, false);
   return applyMarkdownEdits(markdown, edits);
+}
+
+/** Reference definitions as authored, one line each, so a Windows destination keeps its backslashes. */
+export function markdownReferenceDefinitions(markdown: string): string[] {
+  if (!markdown.includes("]:")) return [];
+  // Flattened as the renderer does it: a raw HTML block hides the definitions inside it.
+  const flattened = markdownWithHtml(markdown);
+  const definitions: string[] = [];
+  const visit = (node: MarkdownNode, quotes: number) => {
+    if (node.type === "definition") {
+      // A wrapped definition drops its indent and the enclosing quotes' markers, not a literal ">".
+      const wrap = new RegExp(`(?:\\r\\n|\\r|\\n)(?:[ \\t]*>){0,${quotes}}[ \\t]*`, "g");
+      definitions.push(
+        flattened.slice(node.position?.start.offset, node.position?.end.offset).replace(wrap, " "),
+      );
+    }
+    if (!("children" in node)) return;
+    for (const child of node.children) visit(child, quotes + (node.type === "blockquote" ? 1 : 0));
+  };
+  visit(parser.parse(flattened), 0);
+  return definitions;
+}
+
+/**
+ * A reply split into folds and cards renders each fragment as its own document, so each one
+ * carries the reply's definitions. The first definition of a label wins, so the fragment's own
+ * lead: the renderer then prefers them by its own label matching, with none reimplemented here.
+ */
+export function withReferenceDefinitions(
+  fragment: string,
+  replyDefinitions: ReadonlyArray<string>,
+): string {
+  if (replyDefinitions.length === 0 || !fragment.includes("[")) return fragment;
+  const definitions = new Set([...markdownReferenceDefinitions(fragment), ...replyDefinitions]);
+  return `${[...definitions].join("\n")}\n\n${fragment}`;
 }
 
 // Start only at the beginning of a backtick run to avoid retrying every suffix.
