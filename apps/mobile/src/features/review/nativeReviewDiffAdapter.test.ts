@@ -8,7 +8,9 @@ import { combinePullRequestDiffPages } from "../pull-requests/pullRequestDiffPag
 import { createPullRequestDiffHighlightFiles } from "../pull-requests/pullRequestDiffHighlightFiles";
 import {
   buildNativeReviewDiffData,
+  buildReviewCommentPatch,
   getCachedNativeReviewDiffData,
+  reviewCommentDiffText,
 } from "./nativeReviewDiffAdapter";
 import type { ReviewInlineComment } from "./reviewCommentSelection";
 import { buildReviewParsedDiff, type ReviewParsedDiff } from "./reviewModel";
@@ -45,6 +47,27 @@ function filesPatch(paths: ReadonlyArray<string>) {
     )
     .join("\n");
 }
+
+describe("buildReviewCommentPatch", () => {
+  it("keeps a selection's trailing blank line and whitespace", () => {
+    const rows = (diff: string) =>
+      buildNativeReviewDiffData(
+        buildReviewParsedDiff(
+          buildReviewCommentPatch({ ...makeComment("Insert here."), diff }),
+          "review-comment-trailing-blank",
+        ),
+      ).rows.filter((row) => row.kind === "line");
+
+    expect(rows("@@ -3,1 +2,2 @@\n+two\t\n ")).toMatchObject([
+      { content: "two\t", change: "add" },
+      { content: "", change: "context" },
+    ]);
+    expect(rows("@@ -4,1 +4,1 @@\n ")).toMatchObject([{ content: "", change: "context" }]);
+    expect(reviewCommentDiffText("\n@@ -3,1 +2,2 @@\n+two\t\n \n")).toBe(
+      "@@ -3,1 +2,2 @@\n+two\t\n ",
+    );
+  });
+});
 
 describe("buildNativeReviewDiffData languages", () => {
   it.each([

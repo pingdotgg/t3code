@@ -10,6 +10,8 @@ import {
   NodeId,
   ORCHESTRATOR_MCP_RUNNING_TASK_NEXT,
   type OrchestratorMcpCapabilitiesResult,
+  type OrchestratorMcpListScheduledTasksInput,
+  type Project,
   OrchestratorMcpTarget,
   type OrchestrationV2ThreadShell,
   type ScheduledTask,
@@ -2253,7 +2255,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                       cause: new Error("refused by the orchestrator"),
                     }) as never,
                   )
-                : Effect.succeed({} as never),
+                : Effect.succeed({ storedEvents: [] } as never),
           }),
           ServerSettings.layerTest(),
           providerRegistryLayer([
@@ -2637,6 +2639,17 @@ describe("OrchestratorMcpService provider resolution", () => {
           });
           const titled = yield* orchestrator.getThreadProjection(emojiAtLimit.threads[0]!.threadId);
           assert.equal(titled.thread.title, `${"a".repeat(76)}...`);
+          // One commit holds a prompted thread and its run, so no client sees it idle between.
+          const promptedCommits = yield* orchestrator
+            .streamStoredEventsFrom({ threadId: titled.thread.id })
+            .pipe(
+              Stream.filter(
+                ({ event }) => event.type === "thread.created" || event.type === "run.created",
+              ),
+              Stream.take(2),
+              Stream.runCollect,
+            );
+          assert.equal(promptedCommits[0]?.commandId, promptedCommits[1]?.commandId);
 
           yield* settings.updateSettings({
             projectSettingsOverrides: {
@@ -3133,8 +3146,17 @@ describe("OrchestratorMcpService provider resolution", () => {
       tasks: ReadonlyArray<ScheduledTask>,
       boundThread: OrchestrationV2ThreadShell | null,
       upserted: Ref.Ref<number>,
+      saved: ScheduledTask = tasks[0]!,
     ) =>
-      layerOrchestratorService.pipe(
+      OrchestratorMcpService.layer.pipe(
+        Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
+        Layer.provide(
+          Layer.mock(GitVcsDriver.GitVcsDriver)({
+            resolvePrimaryRemoteName: () => Effect.succeed("origin"),
+            resolveDefaultBranchName: () => Effect.succeed("main"),
+            resolveCommit: () => Effect.succeed({ commitSha: "abc123" }),
+          }),
+        ),
         Layer.provide(
           Layer.mergeAll(
             NodeServices.layer,
@@ -3148,109 +3170,89 @@ describe("OrchestratorMcpService provider resolution", () => {
             Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
               list: () => Effect.succeed([]),
             }),
-            Layer.mock(ProjectService.ProjectService)({}),
+            Layer.mock(ProjectService.ProjectService)({
+              getById: (id) =>
+                Effect.succeedSome({
+                  id,
+                  workspaceRoot: "/repo/scheduled",
+                  defaultModelSelection: saved.modelSelection,
+                } as Project),
+            }),
             Layer.mock(SecretRequests.SecretRequests)({}),
             Layer.mock(RemoteDelegation.RemoteDelegation)({}),
             Layer.mock(ScheduledTaskService.ScheduledTaskService)({
               list: () => Effect.succeed({ tasks }),
               upsert: () =>
-                Ref.update(upserted, (count) => count + 1).pipe(Effect.as({ task: tasks[0]! })),
+                Ref.update(upserted, (count) => count + 1).pipe(Effect.as({ task: saved })),
             }),
           ),
         ),
       );
 
-    it.effect("hides a webhook URL from a caller below the task's modes", () =>
+    it.effect("lists a webhook task without its URL to a caller that may run it", () =>
       Effect.gen(function* () {
         const upserted = yield* Ref.make(0);
         const listed = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
           Effect.flatMap((mcp) => mcp.listScheduledTasks(supervisedClient, { projectId })),
-          Effect.provide(
-            service(
-              [
-                task({ runtimeMode: "full-access" }),
-                task({ id: ScheduledTaskId.make("scheduled-task:supervised") }),
-              ],
-              null,
-              upserted,
-            ),
-          ),
-        );
-        assert.deepEqual(
-          listed.tasks.map((summary) => summary.webhookUrl),
-          [undefined, "https://t3.example/hooks/secret"],
-        );
-      }),
-    );
-
-    it.effect("hides a webhook URL from a thread whose turn has ended", () =>
-      Effect.gen(function* () {
-        const callerId = ThreadId.make("thread:scheduled-ended");
-        const shell = liveThreadShell(callerId, { activeRunId: null });
-        const listed = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
-          Effect.flatMap((mcp) =>
-            mcp.listScheduledTasks(
-              {
-                ...supervisedClient,
-                requestNamespace: "provider:scheduled-ended",
-                thread: {
-                  threadId: callerId,
-                  providerSessionId: "provider:scheduled-ended",
-                  providerInstanceId: shell.providerInstanceId,
-                },
-                client: undefined,
-              },
-              { projectId },
-            ),
-          ),
-          Effect.provide(
-            layerOrchestratorService.pipe(
-              Layer.provide(
-                Layer.mergeAll(
-                  NodeServices.layer,
-                  NodeCrypto.layer,
-                  Layer.mock(ThreadManagementService.ThreadManagementService)({
-                    getThreadShell: () => Effect.succeed(null),
-                    getThreadRecords: () => Effect.succeed(idleThreadProjection(shell)),
-                  }),
-                  ServerSettings.layerTest(),
-                  Layer.mock(ProviderRegistry.ProviderRegistry)({
-                    getProviders: Effect.succeed([]),
-                  }),
-                  Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
-                    list: () => Effect.succeed([]),
-                  }),
-                  Layer.mock(ProjectService.ProjectService)({}),
-                  Layer.mock(SecretRequests.SecretRequests)({}),
-                  Layer.mock(RemoteDelegation.RemoteDelegation)({}),
-                  Layer.mock(ScheduledTaskService.ScheduledTaskService)({
-                    list: () => Effect.succeed({ tasks: [task({})] }),
-                  }),
-                ),
-              ),
-            ),
-          ),
-        );
-        assert.equal(listed.tasks[0]?.webhookUrl, undefined);
-      }),
-    );
-
-    it.effect("never shows a read-only client a webhook URL", () =>
-      Effect.gen(function* () {
-        const upserted = yield* Ref.make(0);
-        const listed = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
-          Effect.flatMap((mcp) =>
-            mcp.listScheduledTasks(
-              {
-                ...supervisedClient,
-                client: { sessionId: "scheduled", label: "Claude Code", access: "read-only" },
-              },
-              { projectId },
-            ),
-          ),
           Effect.provide(service([task({})], null, upserted)),
         );
-        assert.equal(listed.tasks[0]?.webhookUrl, undefined);
+        assert.deepEqual(
+          listed.tasks.map((summary) => [summary.webhookUrl, summary.webhookSignature]),
+          [[undefined, "none"]],
+        );
+      }),
+    );
+
+    it.effect("lists only the named task within the requested project", () =>
+      Effect.gen(function* () {
+        const upserted = yield* Ref.make(0);
+        const first = task({});
+        const second = task({ id: ScheduledTaskId.make("scheduled-task:second") });
+        const elsewhere = task({
+          id: ScheduledTaskId.make("scheduled-task:elsewhere"),
+          projectId: ProjectId.make("project:elsewhere"),
+        });
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.provide(service([first, second, elsewhere], null, upserted)),
+        );
+        const ids = (input: OrchestratorMcpListScheduledTasksInput) =>
+          mcp
+            .listScheduledTasks(supervisedClient, input)
+            .pipe(Effect.map(({ tasks }) => tasks.map((summary) => summary.scheduledTaskId)));
+        assert.deepEqual(yield* ids({ scheduledTaskId: second.id }), [second.id]);
+        assert.deepEqual(yield* ids({ projectId, scheduledTaskId: elsewhere.id }), []);
+      }),
+    );
+
+    it.effect("returns a webhook URL when creating a task, not when updating it", () =>
+      Effect.gen(function* () {
+        const upserted = yield* Ref.make(0);
+        const hook = task({});
+        const timer = task({
+          schedule: { type: "interval", everyMs: 3_600_000 },
+          webhook: undefined,
+        });
+        const created = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.flatMap((mcp) =>
+            mcp.scheduleTask(supervisedClient, {
+              projectId,
+              prompt: hook.prompt,
+              schedule: { type: "webhook" },
+            }),
+          ),
+          Effect.provide(service([hook], null, upserted)),
+        );
+        assert.equal(created.webhookUrl, "https://t3.example/hooks/secret");
+        const converted = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.flatMap((mcp) =>
+            mcp.updateScheduledTask(supervisedClient, {
+              scheduledTaskId: timer.id,
+              schedule: { type: "webhook" },
+            }),
+          ),
+          Effect.provide(service([timer], null, upserted, hook)),
+        );
+        assert.equal(converted.webhookUrl, undefined);
       }),
     );
 
@@ -3375,7 +3377,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       git: Partial<GitVcsDriver.GitVcsDriver["Service"]>,
       saved: Ref.Ref<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>,
       task: ScheduledTask = existing,
-      modes?: Ref.Ref<ReadonlyArray<ScheduledTaskUpsertInput["threadMode"]>>,
+      inputs?: Ref.Ref<ReadonlyArray<ScheduledTaskUpsertInput>>,
     ) =>
       OrchestratorMcpService.layer.pipe(
         Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
@@ -3407,9 +3409,9 @@ describe("OrchestratorMcpService provider resolution", () => {
               upsert: (input) =>
                 Ref.update(saved, (strategies) => [...strategies, input.workspaceStrategy]).pipe(
                   Effect.andThen(
-                    modes === undefined
+                    inputs === undefined
                       ? Effect.void
-                      : Ref.update(modes, (all) => [...all, input.threadMode]),
+                      : Ref.update(inputs, (all) => [...all, input]),
                   ),
                   Effect.as({ task }),
                 ),
@@ -3438,16 +3440,48 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
     );
 
+    it.effect.each([
+      {
+        name: "drops an emoji the limit splits",
+        prompt: `${"a".repeat(79)}😀 rest`,
+        title: "a".repeat(79),
+      },
+      {
+        name: "keeps an emoji that ends at the limit",
+        prompt: `${"a".repeat(78)}😀 rest`,
+        title: `${"a".repeat(78)}😀`,
+      },
+    ])("a prompt-derived title $name", ({ prompt, title }) =>
+      Effect.gen(function* () {
+        const inputs = yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput>>([]);
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.provide(
+            service(
+              masterRepository,
+              yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]),
+              existing,
+              inputs,
+            ),
+          ),
+        );
+        yield* mcp.scheduleTask(client, { projectId, prompt, schedule });
+        assert.deepEqual(
+          (yield* Ref.get(inputs)).map((input) => input.title),
+          [title],
+        );
+      }),
+    );
+
     it.effect("keeps one thread when fresh sessions are turned off before the first run", () =>
       Effect.gen(function* () {
-        const modes = yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput["threadMode"]>>([]);
+        const inputs = yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput>>([]);
         const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
           Effect.provide(
             service(
               masterRepository,
               yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]),
               { ...existing, threadMode: "fresh_session" },
-              modes,
+              inputs,
             ),
           ),
         );
@@ -3459,7 +3493,10 @@ describe("OrchestratorMcpService provider resolution", () => {
           scheduledTaskId: existing.id,
           bindToCurrentThread: false,
         });
-        assert.deepEqual(yield* Ref.get(modes), ["continue", "new_thread"]);
+        assert.deepEqual(
+          (yield* Ref.get(inputs)).map((input) => input.threadMode),
+          ["continue", "new_thread"],
+        );
       }),
     );
 
@@ -3467,7 +3504,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       "refuses unbinding into fresh sessions in one call, which would keep the thread",
       () =>
         Effect.gen(function* () {
-          const modes = yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput["threadMode"]>>([]);
+          const inputs = yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput>>([]);
           const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
             Effect.provide(
               service(
@@ -3478,7 +3515,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                   threadId: ThreadId.make("thread:scheduled-base"),
                   threadMode: "continue",
                 },
-                modes,
+                inputs,
               ),
             ),
           );
@@ -3490,7 +3527,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             })
             .pipe(Effect.flip);
           assert.include(refused.message, "first unbind it");
-          assert.deepEqual(yield* Ref.get(modes), []);
+          assert.deepEqual(yield* Ref.get(inputs), []);
         }),
     );
 
