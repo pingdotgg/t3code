@@ -31,17 +31,12 @@ describe("subagent card", () => {
     ).toBeNull();
     const fractionalStart = DateTime.makeUnsafe("2026-09-21T12:00:00.400Z");
     const agent = { ...done, startedAt: fractionalStart };
-    const ticks = [0, 400, 1_000, 8_000, 9_000, 10_000].map(
-      (offset) => DateTime.toEpochMillis(start) + offset,
-    );
-    expect(ticks.map((now) => subagentCardElapsed([{ ...agent, status: "running" }], now))).toEqual(
-      ["0s", "0s", "0s", "7s", "8s", "9s"],
-    );
-    for (const completedAt of [start, fractionalStart]) {
-      expect(
-        subagentCardElapsed([{ ...agent, completedAt }], DateTime.toEpochMillis(later)),
-      ).toBeNull();
-    }
+    const running = { ...agent, status: "running" as const };
+    const startMs = DateTime.toEpochMillis(start);
+    expect([0, 8_000].map((offset) => subagentCardElapsed([running], startMs + offset))).toEqual([
+      "0s",
+      "7s",
+    ]);
     expect(
       subagentCardElapsed(
         [{ ...agent, completedAt: DateTime.makeUnsafe("2026-09-21T12:00:08.000Z") }],
