@@ -2520,6 +2520,7 @@ export default function ChatView(props: ChatViewProps) {
     serverProjection,
     pendingHandoffSelectionUsable ? pendingHandoffSelection : null,
     providerStatuses,
+    Date.parse(`${nowMinute}:00Z`),
   );
   const compactThreadUnavailable =
     !canOperateThread ||
