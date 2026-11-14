@@ -16,7 +16,7 @@ import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useScrollingWorkspacesEnabled } from "../hooks/useSettings";
 import { cn, isMacPlatform } from "../lib/utils";
 import { sidewaysWheelScrollsStrip, wheelDeltaPx } from "../motion/gesture";
-import { usePaneMotion } from "../motion/paneMotion";
+import { PaneMotionSnapshot, usePaneMotion } from "../motion/paneMotion";
 import {
   PanelAnimationSuppressionProvider,
   usePanelNavigationSuppression,
@@ -1055,9 +1055,7 @@ export function LayoutSurfaceHost({
   // on the plain strip; a resize drag, a switch, the overview, filling the
   // window and the window resizing move them 1:1.
   const paneMotionKey =
-    staged || stacked || dragging || narrow
-      ? null
-      : `${workspace.id}:${viewportWidth}:${maximizedTabId !== null}`;
+    staged || stacked || dragging || narrow ? null : `${workspace.id}:${maximizedTabId !== null}`;
   const [ghosts, setGhosts] = useState<ReadonlyMap<string, ClosingTab>>(NO_GHOSTS);
   const presentPanes = shown.workspaces.flatMap((candidate) =>
     candidate.columns.flatMap((column) => column.panes),
@@ -1133,6 +1131,7 @@ export function LayoutSurfaceHost({
     paneCount > 1 || maximizedTabId !== null || ghosts.size > 0,
     dropGhost,
     [slotByTabId, ghosts],
+    viewportWidth,
   );
   // Browser webviews float over their slots: after anything that may move a
   // pane (a layout change, a switch, the overview, pane motion), they follow,
@@ -1265,6 +1264,7 @@ export function LayoutSurfaceHost({
                   { width: `${stripPx}px`, minWidth: "100%" }
           }
         >
+          <PaneMotionSnapshot stageRef={stageRef} slots={slotByTabId} />
           {renderedTabIds.map((tabId) => {
             const entry = chatTabsById.get(tabId);
             const ghost = entry ? null : ghosts.get(tabId);

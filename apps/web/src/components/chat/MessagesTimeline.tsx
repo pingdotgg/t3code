@@ -1667,6 +1667,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
             className="relative -mt-[var(--timeline-top-inset,0px)] h-[calc(100%+var(--timeline-top-inset,0px))] min-h-0"
             data-assistant-citation-viewport="true"
             data-sidebar-slide-track="end"
+            data-pane-slide-track="lane"
           >
             {onCiteAssistantText && citationThreadRef ? (
               <AssistantSelectionToolbar

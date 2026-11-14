@@ -28,13 +28,19 @@ const spring = (dampingRatio: number, stiffness: number, epsilon: number): Motio
 });
 
 /**
- * niri keeps horizontal-view-movement and window-movement equal so panes
- * and the camera moving for the same change stay in step.
+ * The panes and the camera move with the sidebar slide's curve (CSS ease-out) for the Panel
+ * animations setting's duration, so everything one change moves arrives together.
  */
+const PANEL_MOTION: MotionConfig = {
+  kind: "easing",
+  durationMs: 150,
+  curve: { cubicBezier: [0, 0, 0.58, 1] },
+};
+
 const MOTION_DEFAULTS: Readonly<Record<MotionName, MotionConfig>> = {
   "workspace-switch": spring(1, 1000, 0.0001),
-  "horizontal-view-movement": spring(1, 800, 0.0001),
-  "window-movement": spring(1, 800, 0.0001),
+  "horizontal-view-movement": PANEL_MOTION,
+  "window-movement": PANEL_MOTION,
   "overview-open-close": spring(1, 800, 0.0001),
 };
 

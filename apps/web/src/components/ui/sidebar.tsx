@@ -30,7 +30,14 @@ import {
 import { resolveSidebarState, type ResponsiveSidebarState } from "./sidebarState";
 import * as Schema from "effect/Schema";
 import { announceSidebarVisibility } from "~/lib/accessibilityAnnouncements";
-import { afterResizeObservers, liftSlideClips, slideTrackEdge } from "~/motion/slideTrack";
+import { holdPaneContent, releasePaneContent } from "~/motion/paneMotion";
+import {
+  afterResizeObservers,
+  liftSlideClips,
+  markSidebarSlide,
+  sidebarSlideStarting,
+  slideTrackEdge,
+} from "~/motion/slideTrack";
 
 const SIDEBAR_WIDTH = "16rem";
 const SIDEBAR_WIDTH_MOBILE = "calc(100vw - var(--spacing) * 3)";
@@ -157,10 +164,9 @@ function sidebarSlideTargets() {
     })),
     ...Array.from(insets).flatMap((inset) => [
       { element: inset, parent: null, inset: true, tracked: false },
-      ...Array.from(
-        inset.querySelectorAll<HTMLElement>("[data-sidebar-slide-children] > *"),
-        (element) => ({ element, parent: inset, inset: false, tracked: false }),
-      ),
+      ...Array.from(inset.querySelectorAll<HTMLElement>("[data-sidebar-slide-children] > *"))
+        .filter((element) => spansSidebarInset(element, inset))
+        .map((element) => ({ element, parent: inset, inset: false, tracked: false })),
       ...Array.from(inset.querySelectorAll<HTMLElement>("[data-sidebar-slide-track]"))
         .filter((element) => spansSidebarInset(element, inset))
         .map((element) => ({ element, parent: inset, inset: false, tracked: true })),
@@ -168,7 +174,7 @@ function sidebarSlideTargets() {
   ].map((target) => ({ ...target, start: slideTrackEdge(target.element) }));
 }
 
-// Split panes still slide whole with the inset: the edge between two panes moves on its own.
+// Split panes slide whole with the inset; pane motion moves each one, its edges and what it tracks.
 function spansSidebarInset(element: HTMLElement, inset: HTMLElement) {
   const pane = element.closest<HTMLElement>("[data-layout-pane-id]");
   return !pane || Math.abs(pane.getBoundingClientRect().width - inset.clientWidth) < 1;
@@ -198,12 +204,13 @@ function sidebarSlideAnchors(insets: HTMLElement[]) {
       inset.querySelectorAll<HTMLElement>(
         "[data-sidebar-slide-children] > * [data-sidebar-slide-stay]",
       ),
-      (element) => ({
+    )
+      .filter((element) => spansSidebarInset(element, inset))
+      .map((element) => ({
         element,
         inset,
         via: element.closest<HTMLElement>("[data-sidebar-slide-children] > *"),
-      }),
-    ),
+      })),
   ]);
 }
 
@@ -268,21 +275,26 @@ function cancelSidebarSlide(elements: Iterable<Element | null>) {
   }
 }
 
-let sidebarSlidePending = false;
 let restoreSidebarSlideClips: (() => void) | null = null;
 
 function slideSidebar(commit: () => void) {
-  if (sidebarSlidePending) {
+  if (sidebarSlideStarting()) {
     commit();
     return;
   }
   const targets = sidebarSlideTargets();
-  commit();
   const first = targets[0];
-  if (!first) return;
-  sidebarSlidePending = true;
+  if (!first) {
+    commit();
+    return;
+  }
+  // Split panes resize with their own motion, from where they show now.
+  holdPaneContent();
+  commit();
+  markSidebarSlide(true);
   afterResizeObservers(() => {
-    sidebarSlidePending = false;
+    markSidebarSlide(false);
+    releasePaneContent();
     restoreSidebarSlideClips?.();
     const insets = targets.filter(({ inset }) => inset).map(({ element }) => element);
     const anchors = sidebarSlideAnchors(insets);
