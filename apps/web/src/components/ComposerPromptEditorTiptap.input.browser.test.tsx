@@ -26,6 +26,22 @@ import {
   type ComposerPromptEditorProps,
 } from "./ComposerPromptEditorTiptap";
 
+vi.mock(import("../state/server"), async (original) => {
+  const { Atom } = await import("effect/reactivity");
+  const { compileResolvedKeybindingsConfig, DEFAULT_KEYBINDINGS } =
+    await import("@t3tools/shared/keybindings");
+  return {
+    ...(await original()),
+    primaryServerKeybindingsAtom: Atom.make(
+      compileResolvedKeybindingsConfig([
+        ...DEFAULT_KEYBINDINGS,
+        { key: "mod+arrowup", command: "thread.previous" },
+        { key: "mod+arrowdown", command: "thread.next" },
+      ]),
+    ),
+  };
+});
+
 const babysit: ServerProviderSkill = {
   name: "babysit",
   path: "/skills/babysit/SKILL.md",
@@ -271,6 +287,29 @@ it.each([
   },
 );
 
+// The mocked server keybindings bind Command-Up and Command-Down to thread navigation.
+it("leaves Command-arrow thread navigation bindings to the app on macOS", async () => {
+  using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  await using screen = await mountEditor("first\nsecond");
+  const { editor } = screen;
+  await act(async () => {
+    editor.commands.focus("end");
+  });
+  await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
+  const reachedApp: string[] = [];
+  const onWindowKeyDown = (event: KeyboardEvent) => {
+    if (!event.defaultPrevented && event.key.startsWith("Arrow")) reachedApp.push(event.key);
+  };
+  window.addEventListener("keydown", onWindowKeyDown);
+  using _listener = {
+    [Symbol.dispose]: () => window.removeEventListener("keydown", onWindowKeyDown),
+  };
+
+  await userEvent.keyboard("{Meta>}{ArrowUp}{ArrowDown}{/Meta}");
+
+  expect(reachedApp).toEqual(["ArrowUp", "ArrowDown"]);
+});
+
 it.each([
   ["e", false, false],
   ["i", false, false],
@@ -428,6 +467,21 @@ it("keeps unknown dollar names editable when restoring and pasting a draft", asy
   expect(serializeEditorDoc(editor.state.doc).value).toBe(value);
 });
 
+// regression: #25180 Tiptap's paste rules styled the pasted text a second time
+it.each([
+  "Read https://example.com/_handle_/status/1 and open src/__test__.tsx",
+  "see `**x**` now",
+])("sends pasted %s as pasted", async (pasted) => {
+  await using screen = await mountEditor("");
+  const { editor } = screen;
+  await act(async () => {
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", pasted);
+    editor.view.dom.dispatchEvent(new ClipboardEvent("paste", { clipboardData, cancelable: true }));
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(pasted);
+});
+
 it.each(["x\r\n\r\ny", "x\r\ry"])(
   "pastes %j with the same blank line as x\\n\\ny",
   async (text) => {
@@ -559,6 +613,31 @@ describe("Markdown markers around styled text", () => {
       keys: "{Shift>}{Enter}{/Shift}",
       expected: "**bo**\n**ld** after",
       marks: { bold: ["bo", "ld"] },
+    },
+    {
+      name: "a line break after typed inline code leaves the next line plain",
+      value: "",
+      caret: 1,
+      keys: "`Test`{Shift>}{Enter}{/Shift}f",
+      expected: "`Test`\nf",
+      marks: { code: ["Test"] },
+    },
+    {
+      name: "a line break after typed bold leaves the next line plain",
+      value: "",
+      caret: 1,
+      keys: "**Test**{Shift>}{Enter}{/Shift}f",
+      expected: "**Test**\nf",
+      marks: { bold: ["Test"] },
+    },
+    {
+      name: "bold turned on after typed bold carries across a line break",
+      value: "",
+      caret: 1,
+      keys: `**Test**${isMacPlatform(navigator.platform) ? "{Meta>}b{/Meta}" : "{Control>}b{/Control}"}{Shift>}{Enter}{/Shift}f`,
+      expected: "**Test**\n**f**",
+      // The caret beside f shows it as source.
+      marks: { bold: ["Test"] },
     },
     {
       name: "splitting a list item inside bold keeps both halves bold",

@@ -296,6 +296,64 @@ Third}`;
         },
       ],
     });
+    // IPython traceback frames can omit trailing newlines or place ANSI resets after them.
+    const failed = openNotebook(
+      bytes(
+        JSON.stringify({
+          nbformat: 4,
+          cells: [
+            {
+              cell_type: "code",
+              source: "fail()",
+              outputs: [
+                {
+                  output_type: "error",
+                  traceback: [
+                    "-----",
+                    "ValueError    Traceback (most recent call last)",
+                    "Cell In[1], line 4\n----> 4 fail()\n",
+                    "Cell In[1], line 2, in fail()\n----> 2     raise ValueError()\n",
+                    "ValueError: preview proof",
+                  ],
+                },
+                {
+                  output_type: "error",
+                  traceback: [
+                    "Traceback (most recent call last):\n",
+                    "  Cell In[2], line 5\n    fail()\n",
+                    "ValueError: preview proof\n",
+                  ],
+                },
+                {
+                  output_type: "error",
+                  traceback: [
+                    "\u001b[31mTraceback (most recent call last):\n\u001b[0m",
+                    "\u001b[32mCell In[3], line 1\n----> 1 fail()\n\u001b[0m\u001b[39m",
+                    "\u001b[31mValueError: preview proof\u001b[0m",
+                    "final entry",
+                  ],
+                },
+              ],
+            },
+          ],
+        }),
+      ),
+    );
+    if (failed.type !== "notebook") throw new Error("Expected notebook");
+    expect(failed.cells[0]!.outputs).toEqual([
+      {
+        kind: "text",
+        text: "-----\nValueError    Traceback (most recent call last)\nCell In[1], line 4\n----> 4 fail()\nCell In[1], line 2, in fail()\n----> 2     raise ValueError()\nValueError: preview proof",
+      },
+      {
+        kind: "text",
+        text: "Traceback (most recent call last):\n  Cell In[2], line 5\n    fail()\nValueError: preview proof\n",
+      },
+      {
+        kind: "text",
+        text: "\u001b[31mTraceback (most recent call last):\n\u001b[0m\u001b[32mCell In[3], line 1\n----> 1 fail()\n\u001b[0m\u001b[39m\u001b[31mValueError: preview proof\u001b[0m\nfinal entry",
+      },
+    ]);
     expect(() => openNotebook(bytes('{"nbformat":3,"cells":[]}'))).toThrow("version 4");
     expect(() =>
       openNotebook(
