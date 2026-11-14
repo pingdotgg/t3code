@@ -413,6 +413,7 @@ function makeLocalCommandHarness(input: {
     readonly unsentResume?: boolean;
     readonly repeatedResume?: boolean;
     readonly acceptedResume?: boolean;
+    readonly restartedResume?: boolean;
     readonly nativeForkFrom?: "idle" | "busy";
     readonly switchedProvider?: boolean;
     readonly threadRuntimeMode?: OrchestrationV2ThreadProjection["thread"]["runtimeMode"];
@@ -814,6 +815,18 @@ function makeLocalCommandHarness(input: {
           providerThreadId: oldProviderThreadId,
           status: "interrupted",
         },
+        ...(input.sideChat.restartedResume
+          ? [
+              {
+                ...projection.attempts[0]!,
+                id: RunAttemptId.make("unaccepted-replacement"),
+                runId: RunId.make("stopped-run"),
+                attemptOrdinal: 2,
+                reason: "steering_restart" as const,
+                status: "interrupted" as const,
+              },
+            ]
+          : []),
       ],
       providerTurns: [
         ...projection.providerTurns,
@@ -1584,6 +1597,14 @@ effectIt.effect.each([
     acceptedResume: true,
   },
   {
+    contextRun: "delivered",
+    runtimeMode: "full-access",
+    context: "",
+    unsentResume: true,
+    acceptedResume: true,
+    restartedResume: true,
+  },
+  {
     contextRun: "current",
     threadRuntimeMode: "approval-required",
     runtimeMode: "approval-required",
@@ -1604,14 +1625,14 @@ effectIt.effect.each([
       expect(harness.open).toHaveBeenCalledWith(
         expect.objectContaining({ runtimePolicy: expect.objectContaining({ runtimeMode }) }),
       );
+      const resendsOriginal =
+        "unsentResume" in sideChat &&
+        (!("acceptedResume" in sideChat) || "restartedResume" in sideChat);
       expect(harness.startTurn.mock.calls.map(([turn]) => turn.message.text)).toEqual([
-        withInlineContext(
-          context,
-          "unsentResume" in sideChat && !("acceptedResume" in sideChat) ? "Original request" : "",
-        ),
+        withInlineContext(context, resendsOriginal ? "Original request" : ""),
       ]);
       expect(harness.startTurn.mock.calls[0]?.[0].resume === true).toBe(
-        context === "" && (!("unsentResume" in sideChat) || "acceptedResume" in sideChat),
+        context === "" && !resendsOriginal,
       );
       expect(harness.projection().contextHandoffs).toMatchObject([
         {
