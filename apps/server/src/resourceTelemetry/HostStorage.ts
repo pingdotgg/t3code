@@ -2,10 +2,12 @@
 // Effect's FileSystem has no statfs.
 import * as NodeFSP from "node:fs/promises";
 import type {
+  HostGpus,
   HostStorage as HostStorageSnapshot,
   HostVolume,
   HostVolumeRole,
   ResourceMonitorHostDisk,
+  ResourceMonitorHostSystemEvent,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
@@ -27,6 +29,7 @@ import * as NativeTelemetryClient from "./NativeTelemetryClient.ts";
 export interface HostStorageReading {
   readonly storage: HostStorageSnapshot;
   readonly swap?: { readonly totalBytes: number; readonly usedBytes: number };
+  readonly gpu: HostGpus;
 }
 
 export class HostStorage extends Context.Service<
@@ -156,6 +159,25 @@ export function selectHostVolumes(
     );
 }
 
+export function hostGpus(
+  system: Pick<ResourceMonitorHostSystemEvent, "gpus" | "gpuUnavailableReason">,
+): HostGpus {
+  if (system.gpus === undefined) {
+    return { gpus: [], unavailableReason: "This resource monitor does not report GPUs." };
+  }
+  return {
+    gpus: system.gpus.map(({ name, utilizationPercent, memoryTotalBytes, memoryUsedBytes }) => ({
+      name,
+      ...(utilizationPercent !== undefined && Number.isFinite(utilizationPercent)
+        ? { utilization: Math.min(1, Math.max(0, utilizationPercent / 100)) }
+        : {}),
+      ...(memoryTotalBytes !== undefined ? { memoryTotalBytes } : {}),
+      ...(memoryUsedBytes !== undefined ? { memoryUsedBytes } : {}),
+    })),
+    ...(system.gpuUnavailableReason ? { unavailableReason: system.gpuUnavailableReason } : {}),
+  };
+}
+
 const make = Effect.fn("makeHostStorage")(function* () {
   const native = yield* NativeTelemetryClient.NativeTelemetryClient;
   const config = yield* ServerConfig.ServerConfig;
@@ -215,6 +237,7 @@ const make = Effect.fn("makeHostStorage")(function* () {
         }
         return {
           storage: { sampledAt: 0, volumes: [...byDevice.values()], unavailableReason: reason },
+          gpu: { gpus: [], unavailableReason: reason },
         };
       }),
     );
@@ -225,9 +248,16 @@ const make = Effect.fn("makeHostStorage")(function* () {
       Effect.map((system): HostStorageReading => ({
         storage: { sampledAt: 0, volumes: selectHostVolumes(system.disks, current, platform) },
         swap: { totalBytes: system.swapTotalBytes, usedBytes: system.swapUsedBytes },
+        gpu: hostGpus(system),
       })),
       Effect.catch((error) =>
-        statfsFallback(current, `Only T3 volumes are shown: ${error.message}`),
+        Effect.map(
+          statfsFallback(current, `Only T3 volumes are shown: ${error.message}`),
+          (reading): HostStorageReading => ({
+            ...reading,
+            gpu: { gpus: [], unavailableReason: `GPUs are not shown: ${error.message}` },
+          }),
+        ),
       ),
     );
     const sampledAt = DateTime.toEpochMillis(yield* DateTime.now);
@@ -264,6 +294,7 @@ const make = Effect.fn("makeHostStorage")(function* () {
     if (Option.isSome(reading)) return reading.value;
     return Option.getOrElse(previous, () => ({
       storage: { sampledAt: now, volumes: [], unavailableReason: "Reading volumes timed out." },
+      gpu: { gpus: [], unavailableReason: "Reading GPUs timed out." },
     }));
   });
 

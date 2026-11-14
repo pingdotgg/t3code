@@ -28,6 +28,26 @@ export const HostStorage = Schema.Struct({
 });
 export type HostStorage = typeof HostStorage.Type;
 
+const UnitInterval = Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 }));
+
+export const HostGpu = Schema.Struct({
+  name: Schema.String,
+  /** Busy share of the whole GPU; absent where the platform does not expose it. */
+  utilization: Schema.optionalKey(UnitInterval),
+  /** Absent on unified-memory GPUs, which share system memory. */
+  memoryTotalBytes: Schema.optionalKey(NonNegativeInt),
+  /** On unified memory, the system memory the GPU driver holds. */
+  memoryUsedBytes: Schema.optionalKey(NonNegativeInt),
+});
+export type HostGpu = typeof HostGpu.Type;
+
+export const HostGpus = Schema.Struct({
+  gpus: Schema.Array(HostGpu),
+  /** Set when GPUs could not be read, so an empty list is never mistaken for "no GPU". */
+  unavailableReason: Schema.optionalKey(Schema.String),
+});
+export type HostGpus = typeof HostGpus.Type;
+
 // Fields after totalMemoryBytes are optional so older servers and clients still decode.
 export const HostResourcesSnapshot = Schema.Struct({
   sampledAt: NonNegativeInt,
@@ -43,6 +63,9 @@ export const HostResourcesSnapshot = Schema.Struct({
     Schema.Struct({ totalBytes: NonNegativeInt, usedBytes: NonNegativeInt }),
   ),
   storage: Schema.optionalKey(HostStorage),
+  /** Per-core busy share, in core order; machine reads only. */
+  cpuCoreUtilization: Schema.optionalKey(Schema.Array(UnitInterval)),
+  gpu: Schema.optionalKey(HostGpus),
 });
 export type HostResourcesSnapshot = typeof HostResourcesSnapshot.Type;
 
@@ -266,6 +289,14 @@ export const ResourceMonitorHostDisk = Schema.Struct({
 });
 export type ResourceMonitorHostDisk = typeof ResourceMonitorHostDisk.Type;
 
+export const ResourceMonitorHostGpu = Schema.Struct({
+  name: Schema.String,
+  utilizationPercent: Schema.optionalKey(Schema.Number),
+  memoryTotalBytes: Schema.optionalKey(NonNegativeInt),
+  memoryUsedBytes: Schema.optionalKey(NonNegativeInt),
+});
+export type ResourceMonitorHostGpu = typeof ResourceMonitorHostGpu.Type;
+
 export const ResourceMonitorHostSystemEvent = Schema.Struct({
   version: Schema.Literal(RESOURCE_MONITOR_PROTOCOL_VERSION),
   type: Schema.Literal("hostSystem"),
@@ -273,6 +304,8 @@ export const ResourceMonitorHostSystemEvent = Schema.Struct({
   disks: Schema.Array(ResourceMonitorHostDisk),
   swapTotalBytes: NonNegativeInt,
   swapUsedBytes: NonNegativeInt,
+  gpus: Schema.optionalKey(Schema.Array(ResourceMonitorHostGpu)),
+  gpuUnavailableReason: Schema.optionalKey(Schema.String),
 });
 export type ResourceMonitorHostSystemEvent = typeof ResourceMonitorHostSystemEvent.Type;
 

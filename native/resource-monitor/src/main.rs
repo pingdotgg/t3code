@@ -1,3 +1,5 @@
+mod gpu;
+
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{self, BufRead, BufWriter, Write};
@@ -187,6 +189,9 @@ struct HostSystem {
     disks: Vec<HostDisk>,
     swap_total_bytes: u64,
     swap_used_bytes: u64,
+    gpus: Vec<gpu::HostGpu>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    gpu_unavailable_reason: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -200,11 +205,12 @@ struct HostSystemEvent<'a> {
     system: &'a HostSystem,
 }
 
-// Volume queries can block on unresponsive mounts, so they run off the sampling loop.
+// Volume and GPU queries can block (hung mounts, nvidia-smi), so they run off the sampling loop.
 fn read_host_system() -> HostSystem {
     let disks = Disks::new_with_refreshed_list_specifics(DiskRefreshKind::nothing().with_storage());
     let mut system = System::new();
     system.refresh_memory_specifics(MemoryRefreshKind::nothing().with_swap());
+    let gpus = gpu::read_gpus();
     HostSystem {
         disks: disks
             .list()
@@ -221,6 +227,8 @@ fn read_host_system() -> HostSystem {
             .collect(),
         swap_total_bytes: system.total_swap(),
         swap_used_bytes: system.used_swap(),
+        gpus: gpus.gpus,
+        gpu_unavailable_reason: gpus.unavailable_reason,
     }
 }
 
@@ -1292,6 +1300,13 @@ mod tests {
             }],
             swap_total_bytes: 8,
             swap_used_bytes: 2,
+            gpus: vec![gpu::HostGpu {
+                name: "Apple M3 Max".into(),
+                utilization_percent: Some(9.0),
+                memory_total_bytes: None,
+                memory_used_bytes: Some(1_024),
+            }],
+            gpu_unavailable_reason: None,
         };
         let encoded = serde_json::to_value(HostSystemEvent {
             version: PROTOCOL_VERSION,
@@ -1304,12 +1319,16 @@ mod tests {
         assert_eq!(encoded["swapUsedBytes"], 2);
         assert_eq!(encoded["disks"][0]["mountPoint"], "/");
         assert_eq!(encoded["disks"][0]["availableBytes"], 40);
+        assert_eq!(encoded["gpus"][0]["utilizationPercent"], 9.0);
+        assert!(encoded["gpus"][0].get("memoryTotalBytes").is_none());
+        assert!(encoded.get("gpuUnavailableReason").is_none());
     }
 
     #[test]
     fn reads_host_system_without_blocking_on_missing_data() {
         let system = read_host_system();
         assert!(system.swap_used_bytes <= system.swap_total_bytes);
+        assert!(!system.gpus.is_empty() || system.gpu_unavailable_reason.is_some());
     }
 
     #[test]

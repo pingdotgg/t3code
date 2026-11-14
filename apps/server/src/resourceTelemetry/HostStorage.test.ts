@@ -122,6 +122,39 @@ describe("selectHostVolumes", () => {
   });
 });
 
+describe("hostGpus", () => {
+  it("converts percent to a clamped share and keeps absent fields absent", () => {
+    assert.deepStrictEqual(
+      HostStorage.hostGpus({
+        gpus: [
+          { name: "Apple M3 Max", utilizationPercent: 9, memoryUsedBytes: GiB },
+          { name: "Overdriven", utilizationPercent: 250, memoryTotalBytes: 8 * GiB },
+          { name: "Idle", utilizationPercent: Number.NaN },
+        ],
+      }),
+      {
+        gpus: [
+          { name: "Apple M3 Max", utilization: 0.09, memoryUsedBytes: GiB },
+          { name: "Overdriven", utilization: 1, memoryTotalBytes: 8 * GiB },
+          { name: "Idle" },
+        ],
+      },
+    );
+  });
+
+  it("explains an empty list instead of implying no GPU", () => {
+    assert.deepStrictEqual(
+      HostStorage.hostGpus({ gpus: [], gpuUnavailableReason: "No GPU found" }),
+      {
+        gpus: [],
+        unavailableReason: "No GPU found",
+      },
+    );
+    // A monitor from before GPU support omits the field entirely.
+    assert.match(HostStorage.hostGpus({}).unavailableReason ?? "", /does not report GPUs/);
+  });
+});
+
 const hostSystem = (
   disks: ReadonlyArray<ResourceMonitorHostDisk>,
 ): ResourceMonitorHostSystemEvent => ({
@@ -196,6 +229,8 @@ describe("HostStorage.layer", () => {
       assert.isAbove(reading.storage.volumes[0]?.totalBytes ?? 0, 0);
       assert.match(reading.storage.unavailableReason ?? "", /host system/);
       assert.notProperty(reading, "swap");
+      assert.deepStrictEqual(reading.gpu.gpus, []);
+      assert.match(reading.gpu.unavailableReason ?? "", /GPUs are not shown/);
     }).pipe(Effect.provide(storageLayer({}))),
   );
 

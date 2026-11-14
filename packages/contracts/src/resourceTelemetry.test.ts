@@ -23,6 +23,7 @@ describe("HostResourcesSnapshot", () => {
 
     expect(snapshot).not.toHaveProperty("storage");
     expect(snapshot).not.toHaveProperty("swap");
+    expect(snapshot).not.toHaveProperty("gpu");
   });
 
   it("decodes machine details", () => {
@@ -49,9 +50,15 @@ describe("HostResourcesSnapshot", () => {
         ],
         unavailableReason: "Only T3 volumes are shown.",
       },
+      cpuCoreUtilization: [0.25, 1],
+      gpu: { gpus: [{ name: "Apple M3 Max", utilization: 0.09, memoryUsedBytes: 1024 }] },
     });
 
     expect(snapshot.storage?.volumes[0]?.roles).toEqual(["t3Home", "worktrees"]);
+    expect(snapshot.gpu?.gpus[0]?.memoryTotalBytes).toBeUndefined();
+    expect(() =>
+      decodeSnapshot({ ...snapshot, gpu: { gpus: [{ name: "GPU", utilization: 37 }] } }),
+    ).toThrow();
   });
 });
 
@@ -96,8 +103,10 @@ describe("ResourceMonitorEvent", () => {
       ],
       swapTotalBytes: 8,
       swapUsedBytes: 1,
+      gpus: [{ name: "Apple M3 Max", utilizationPercent: 9, memoryUsedBytes: 1024 }],
     });
 
     expect(event.type).toBe("hostSystem");
+    expect(event.type === "hostSystem" && event.gpus?.[0]?.utilizationPercent).toBe(9);
   });
 });

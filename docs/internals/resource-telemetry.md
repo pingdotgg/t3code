@@ -39,17 +39,34 @@ unconstrained states. Headless servers leave unavailable power data unknown.
 and memory only ([`HostResources`](../../apps/server/src/resourceTelemetry/HostResources.ts)),
 so a slow filesystem can never delay picking a machine. Settings → Diagnostics sends
 `detail: "machine"` and polls every 5 seconds while the section is mounted; that adds
-volumes and swap from [`HostStorage`](../../apps/server/src/resourceTelemetry/HostStorage.ts).
-Servers that predate the field drop the unknown key and answer without `storage`, which
-clients show as unsupported, not as an empty machine.
+volumes, swap and GPUs from [`HostStorage`](../../apps/server/src/resourceTelemetry/HostStorage.ts),
+and per-core CPU shares taken from the same two `os.cpus()` readings the 200 ms CPU sample
+already makes, so they cost nothing extra. Per-core shares are the host view even when a
+cgroup or cpuset limits the server. Servers that predate a field answer without it
+(`storage`, `gpu`, `cpuCoreUtilization`), which clients show as not reported, not as zero.
 
-Volumes come from the native monitor's `hostSystem` command (sysinfo `Disks`), read on a
-thread of its own so a hung network mount never stalls process sampling. Concurrent
-requests share one read. The server keeps a reading for 15 seconds and answers from the
-last one if a refresh takes longer than 3 seconds, so an idle server does no disk work
-and a busy view costs at most one volume walk per 15 seconds. Without the monitor, it
-falls back to `statfs` on the T3 home and worktrees directories, grouped by device id,
-and says so in `unavailableReason`. There is no shell probe.
+Volumes and GPUs come from the native monitor's `hostSystem` command, read on a thread of
+its own so a hung network mount or a slow `nvidia-smi` never stalls process sampling.
+Concurrent requests share one read. The server keeps a reading for 15 seconds and answers
+from the last one if a refresh takes longer than 3 seconds, so an idle server does no
+disk or GPU work and a busy view costs at most one read per 15 seconds. Without the
+monitor, it falls back to `statfs` on the T3 home and worktrees directories, grouped by
+device id, reports no GPUs, and says why in each `unavailableReason`.
+
+GPU sources ([`gpu.rs`](../../native/resource-monitor/src/gpu.rs)):
+
+- macOS: IOKit `IOAccelerator` services, `PerformanceStatistics` "Device Utilization %".
+  Apple Silicon and Intel integrated GPUs share system memory, so they report no VRAM
+  total; their "used" figure is "In use system memory", what the driver holds.
+- Linux: `/sys/class/drm/card*/device` for every card, with busy % and VRAM from
+  `amdgpu` sysfs. NVIDIA exposes neither in sysfs, so `nvidia-smi` runs (2 s timeout)
+  only when it is installed. This is the only process the monitor spawns.
+- Windows: DXGI for names and dedicated VRAM, PDH `GPU Engine` and `GPU Adapter Memory`
+  for load and VRAM in use. Load is Task Manager's: per engine, sum the processes, take
+  the busiest engine. The rate counter needs two collections 250 ms apart.
+
+An empty GPU list always carries a reason ("No GPU found" or the failure), so the UI
+never shows a blank.
 
 Volume selection drops pseudo filesystems, read-only system snapshots and OS-managed
 mounts, and collapses volumes that report the same name, filesystem and size: APFS lists

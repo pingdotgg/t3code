@@ -193,9 +193,12 @@ dependencies = [
 name = "t3-resource-monitor"
 version = "0.1.0"
 dependencies = [
+ "objc2-core-foundation",
+ "objc2-io-kit",
  "serde",
  "serde_json",
  "sysinfo",
+ "windows",
 ]
 
 [[package]]

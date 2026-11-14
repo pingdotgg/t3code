@@ -82,6 +82,7 @@ const linuxHost = (files: Record<string, ReadonlyArray<string>>) => {
             read: Effect.succeed({
               storage: { sampledAt: 1, volumes: [] },
               swap: { totalBytes: 8 * GiB, usedBytes: GiB },
+              gpu: { gpus: [], unavailableReason: "No GPU found" },
             }),
           }),
         ),
@@ -218,6 +219,7 @@ describe("HostResources.layer", () => {
       assert.isDefined(snapshot.loadAverage);
       // Load balancing reads stay free of filesystem work.
       assert.notProperty(snapshot, "storage");
+      assert.notProperty(snapshot, "cpuCoreUtilization");
     }).pipe(Effect.provide(linuxHost(unlimitedCgroup))),
   );
 
@@ -231,7 +233,9 @@ describe("HostResources.layer", () => {
 
       assert.deepStrictEqual(snapshot.storage, { sampledAt: 1, volumes: [] });
       assert.deepStrictEqual(snapshot.swap, { totalBytes: 8 * GiB, usedBytes: GiB });
+      assert.deepStrictEqual(snapshot.gpu, { gpus: [], unavailableReason: "No GPU found" });
       assert.strictEqual(snapshot.cpuCount, 8);
+      assert.deepStrictEqual(snapshot.cpuCoreUtilization, Array(8).fill(0.25));
     }).pipe(Effect.provide(linuxHost(unlimitedCgroup))),
   );
 
@@ -252,4 +256,24 @@ describe("HostResources.layer", () => {
       ),
     ),
   );
+});
+
+describe("coreUtilization", () => {
+  const core = (busy: number, idle: number) => ({
+    model: "test",
+    speed: 1,
+    times: { user: busy, nice: 0, sys: 0, idle, irq: 0 },
+  });
+
+  it("measures each core over the sample and skips a changed core set", () => {
+    assert.deepStrictEqual(
+      HostResources.coreUtilization(
+        [core(0, 0), core(0, 0), core(10, 10)],
+        [core(75, 25), core(0, 100), core(10, 10)],
+      ),
+      [0.75, 0, 0],
+    );
+    // A core went offline mid-sample; indices no longer line up.
+    assert.isUndefined(HostResources.coreUtilization([core(0, 0)], [core(1, 1), core(1, 1)]));
+  });
 });
