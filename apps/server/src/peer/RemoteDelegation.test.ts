@@ -1666,7 +1666,7 @@ it.effect.each(["tail-error", "middle-error", "reply-fallback", "cancel-refill"]
               text: "discarded history ".repeat(120),
               type: "assistant_message",
             }));
-          yield* Ref.set(thread.timeline, [
+          const timeline: Array<TimelineEntry> = [
             ...history(middle ? 150 : 300, boxRunId, "before"),
             { id: TurnItemId.make("selected"), runId: boxRunId, text: result, type: ownType },
             ...(middle ? history(200, boxLaterRunId, "later") : []),
@@ -1676,7 +1676,8 @@ it.effect.each(["tail-error", "middle-error", "reply-fallback", "cancel-refill"]
               text: "Wrong run",
               type: "error",
             },
-          ]);
+          ];
+          yield* Ref.set(thread.timeline, timeline);
           yield* Ref.set(thread.pageSize, 100);
           yield* Ref.set(thread.status, "failed");
           if (scenario === "cancel-refill") yield* Ref.set(thread.holdRefill, true);
@@ -1697,12 +1698,24 @@ it.effect.each(["tail-error", "middle-error", "reply-fallback", "cancel-refill"]
               result,
             });
           }
-          const pages = reads.filter((read) => read.itemId === undefined);
-          expect(pages.map((read) => read.afterPosition)).toEqual([undefined, 99, 199, 299]);
-          expect(pages.map((read) => read.maxCharsPerItem)).toEqual([undefined, 1, 1, undefined]);
+          const pages = reads.filter((read) => read.itemId === undefined && read.limit === 100);
+          // A page moves on by however many items the response budget left it.
+          const remaining = (read: OrchestratorMcpThreadReadInput) =>
+            timeline.length - 1 - (read.afterPosition ?? -1);
+          expect(pages[0]).toMatchObject({
+            view: "activity",
+            limit: 100,
+            maxCharsPerItem: 20_000,
+          });
+          expect(pages.slice(1).some((read) => remaining(read) > 100)).toBe(true);
+          for (const read of pages.slice(1))
+            expect(read.maxCharsPerItem).toBe(remaining(read) > 100 ? 1 : 20_000);
+          const forwards = pages.slice(1).map((read) => read.afterPosition ?? -1);
+          expect(forwards).toEqual([...forwards].sort((left, right) => left - right));
+          expect(new Set(forwards).size).toBe(forwards.length);
           const refills = reads.filter((read) => read.itemId !== undefined);
           expect(refills[0]).toMatchObject({ itemId: "selected", textOffset: middle ? 1 : 20_000 });
-          if (scenario !== "cancel-refill") expect(refills).toHaveLength(middle ? 2 : 1);
+          if (scenario !== "cancel-refill") expect(refills).toHaveLength(middle ? 3 : 2);
         }),
       ).pipe(
         Effect.provide(NodeHttpServer.layerTest),
@@ -1804,28 +1817,40 @@ it.effect.each([
               : result,
           });
         }
-        const pages = reads.filter((read) => read.itemId === undefined);
-        const positions =
-          scenario === "cancelled" || scenario === "interrupted"
-            ? [undefined, 99, 199, 299]
-            : scenario === "later-run"
-              ? [undefined, 299, 99, 199, 299]
-              : scenario === "shrinking"
-                ? [undefined, 299, 99]
-                : scenario === "growing"
-                  ? [undefined, 299, 99, 199, 299, 399]
-                  : [undefined, 299];
-        expect(pages.map((read) => read.afterPosition)).toEqual(positions);
+        const pages = reads.filter((read) => read.itemId === undefined && read.limit === 100);
+        // The thread's final page starts at its canonical 100-item boundary.
+        const tailPosition = Math.floor((timeline.length - 1) / 100) * 100 - 1;
+        expect(pages.at(0)?.afterPosition).toBeUndefined();
         expect(
           pages.every(
             (read) =>
-              read.view === "messages" && read.limit === 100 && read.maxCharsPerItem === undefined,
+              read.view === "messages" && read.limit === 100 && read.maxCharsPerItem === 20_000,
           ),
         ).toBe(true);
+        if (scenario === "cancelled" || scenario === "interrupted") {
+          // A run that did not complete keeps the established scan, without the probe.
+          expect(pages.map((read) => read.afterPosition)).not.toContain(tailPosition);
+          const forwards = pages.slice(1).map((read) => read.afterPosition ?? -1);
+          expect(forwards.length).toBeGreaterThan(0);
+          expect(forwards).toEqual([...forwards].sort((left, right) => left - right));
+        } else {
+          expect(pages.at(1)?.afterPosition).toBe(tailPosition);
+          const rest = pages.slice(2);
+          if (scenario === "later-run" || scenario === "shrinking" || scenario === "growing") {
+            // An inconclusive tail falls back to scanning from where the first page ended.
+            expect(rest.length).toBeGreaterThan(0);
+            const resumed = rest.map((read) => read.afterPosition ?? -1);
+            expect(resumed[0]).toBeLessThan(tailPosition);
+            expect(resumed).toEqual([...resumed].sort((left, right) => left - right));
+          } else {
+            // A terminal page holding the run's last reply ends the read there.
+            expect(rest).toHaveLength(0);
+          }
+        }
         const refills = reads.filter((read) => read.itemId !== undefined);
-        expect(refills).toHaveLength(scenario === "long" ? 2 : 0);
+        expect(refills).toHaveLength(scenario === "long" ? 4 : 0);
         if (scenario === "long")
-          expect(refills.map((read) => read.textOffset)).toEqual([20_000, 70_000]);
+          expect(refills.map((read) => read.textOffset)).toEqual([20_000, 40_000, 60_000, 80_000]);
       }),
     ).pipe(
       Effect.provide(NodeHttpServer.layerTest),
