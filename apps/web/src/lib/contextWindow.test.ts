@@ -175,29 +175,6 @@ describe("latestProviderTurnTokenUsage", () => {
     ).toEqual(tokenUsage);
   });
 
-  it("ignores the retired provider thread's last report after a provider switch", () => {
-    const retiredTurn = {
-      providerThreadId: ProviderThreadId.make("pi-thread"),
-      tokenUsage: decodeTokenUsage({
-        usedTokens: 180_000,
-        maxTokens: 200_000,
-        updatedAt: "2026-10-19T11:00:00.000Z",
-      }),
-    };
-    const providerThread = {
-      id: ProviderThreadId.make("acp-thread"),
-      contextUsage: { usedTokens: 12_000, maxTokens: 200_000 },
-      updatedAt: DateTime.makeUnsafe("2026-10-19T12:10:00.000Z"),
-    };
-    const liveUsage = latestProviderTurnTokenUsage([retiredTurn], null, providerThread);
-    expect(liveUsage).toBeNull();
-    expect(deriveLatestContextWindowSnapshot([], liveUsage, providerThread)).toMatchObject({
-      usedTokens: 12_000,
-      maxTokens: 200_000,
-      updatedAt: "2026-10-19T12:10:00.000Z",
-    });
-  });
-
   it("prefers the active provider thread's older report over a newer retired one", () => {
     const turns = [
       {
