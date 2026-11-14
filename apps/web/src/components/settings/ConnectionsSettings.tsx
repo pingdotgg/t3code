@@ -76,7 +76,8 @@ import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Button } from "../ui/button";
-import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
+import { EnvironmentBadgeIcon } from "../EnvironmentBadgeIcon";
+import { EnvironmentGlyphInput } from "./EnvironmentGlyphInput";
 import { type ServerClientSessionRecord } from "~/environments/primary";
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { useUiStateStore } from "~/uiStateStore";
@@ -215,8 +216,8 @@ function AccessSettings() {
                 value={environment.environmentId}
               >
                 <span className="flex min-w-0 items-center gap-2">
-                  <EnvironmentMachineIcon
-                    aria-hidden
+                  <EnvironmentBadgeIcon
+                    environmentId={environment.environmentId}
                     kind={resolveEnvironmentMachineKind(environment.serverConfig)}
                     className="size-3.5 shrink-0"
                   />
@@ -1205,8 +1206,8 @@ function ConnectionsSettingsContent({
               accessEnvironment?.label ?? (desktopBridge ? "This machine" : "Primary environment")
             }
             icon={
-              <EnvironmentMachineIcon
-                aria-hidden
+              <EnvironmentBadgeIcon
+                environmentId={accessEnvironmentId}
                 kind={
                   accessServerConfig ? resolveEnvironmentMachineKind(accessServerConfig) : "desktop"
                 }
@@ -1238,6 +1239,17 @@ function ConnectionsSettingsContent({
               ) : null
             }
           >
+            <SettingsRow
+              title="Badge glyph"
+              description="One character or emoji, shown on this device. Clear it to use the machine icon."
+              control={
+                <EnvironmentGlyphInput
+                  key={accessEnvironmentId}
+                  environmentId={accessEnvironmentId}
+                  label={accessEnvironment?.label ?? "this environment"}
+                />
+              }
+            />
             {accessServerConfig?.managedPolicy ? (
               <div className="px-3 py-2 sm:px-4">
                 <ManagedByOrganization policy={accessServerConfig.managedPolicy} />
@@ -1677,6 +1689,25 @@ function ConnectionsSettingsContent({
       {desktopBridge ? (
         <SettingsSection id="this-app" title="This app">
           <LocalEnvironmentSetting />
+          {savedEnvironments
+            .filter(
+              (environment) =>
+                environment.environmentId !== primaryEnvironmentId &&
+                isDesktopLocalConnectionTarget(environment.entry.target),
+            )
+            .map((environment) => (
+              <SettingsRow
+                key={environment.environmentId}
+                title={environment.label}
+                description="One character or emoji, shown on this device. Clear it to use the machine icon."
+                control={
+                  <EnvironmentGlyphInput
+                    environmentId={environment.environmentId}
+                    label={environment.label}
+                  />
+                }
+              />
+            ))}
         </SettingsSection>
       ) : null}
       <SettingsSection
