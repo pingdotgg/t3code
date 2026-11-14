@@ -188,18 +188,20 @@ describe("toActivity", () => {
     assert.strictEqual(result.reviewThreads[0]?.comments.length, 2);
   });
 
-  it("carries per-remark edit permission onto both copies of a remark", () => {
+  it("carries per-remark edit metadata onto both copies of a remark", () => {
     const result = activity([
       {
         ...lineComment,
         id: "root",
         threadId: "root",
+        updatedAt: timestamp,
         capabilities: capabilities({ edit: false, resolve: true }),
       },
       {
         ...lineComment,
         id: "reply",
         threadId: "root",
+        updatedAt: "2026-09-12T12:02:00Z",
         capabilities: capabilities({ edit: true }),
       },
       { ...lineComment, id: "silent", threadId: "silent", path: null, line: null, side: null },
@@ -208,6 +210,16 @@ describe("toActivity", () => {
     assert.strictEqual(canEdit("root"), false);
     assert.strictEqual(canEdit("reply"), true);
     assert.isUndefined(canEdit("silent"));
+    assert.isUndefined(result.comments.find((comment) => comment.id === "root")?.editedAt);
+    assert.isUndefined(result.comments.find((comment) => comment.id === "silent")?.editedAt);
+    assert.strictEqual(
+      result.comments.find((comment) => comment.id === "reply")?.editedAt,
+      "2026-09-12T12:02:00Z",
+    );
+    assert.strictEqual(
+      result.reviewThreads[0]?.comments.find((comment) => comment.id === "reply")?.editedAt,
+      "2026-09-12T12:02:00Z",
+    );
     assert.deepStrictEqual(
       result.reviewThreads[0]?.comments.map((comment) => [comment.id, comment.canEdit]),
       [

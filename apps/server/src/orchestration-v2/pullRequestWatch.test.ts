@@ -600,7 +600,7 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(again.next.remarkIds, [first.id, "late"]);
   });
 
-  it("reports edits after the watermark once and counts them toward the wake limit", () => {
+  it("reports a settled edit once and counts it toward the wake limit", () => {
     const old = remark("greptile[bot]", "2026-10-02T11:00:00Z");
     const watching = watch({
       headSha: "aaaaaaaaaa",
@@ -609,19 +609,21 @@ describe("evaluatePullRequestWatch", () => {
     });
     assert.deepEqual(evaluatePullRequestWatch(watching, detail(), [old]).changes, []);
     const edited = { ...old, editedAt: "2026-10-02T12:06:00Z" };
-    const report = evaluatePullRequestWatch(watching, detail(), [edited]);
-    assert.deepEqual(report.changes, [{ kind: "remarks", remarks: [edited] }]);
-    assert.equal(report.next.remarksThrough, edited.editedAt);
-    assert.deepEqual(report.next.remarkIds, [old.id]);
-    assert.isTrue(report.exhausted);
-    assert.deepEqual(evaluatePullRequestWatch(report.next, detail(), [edited]).changes, []);
-    const late = { ...edited, id: "late" };
-    assert.deepEqual(evaluatePullRequestWatch(report.next, detail(), [edited, late]).changes, [
+    const held = evaluatePullRequestWatch(watching, detail(), [edited]);
+    assert.deepEqual(held.changes, []);
+    assert.equal(held.next.remarksThrough, edited.editedAt);
+    assert.deepEqual(held.next.remarkIds, [old.id]);
+    const late = { ...remark("reviewer", edited.editedAt), id: "late" };
+    const report = evaluatePullRequestWatch(held.next, detail(), [edited, late]);
+    assert.deepEqual(report.changes, [
       { kind: "remarks", remarks: [late] },
+      { kind: "remarks", remarks: [edited], edited: true },
     ]);
+    assert.isTrue(report.exhausted);
+    assert.deepEqual(evaluatePullRequestWatch(report.next, detail(), [edited, late]).changes, []);
   });
 
-  it("wakes once per edit of a remark seen at the watermark, never for the agent's own", () => {
+  it("wakes once when a remark's edits settle, never for the agent's own", () => {
     const seen = remark("ci-bot", "2026-10-10T19:52:40.000Z");
     const watching = watch({
       headSha: "aaaaaaaaaa",
@@ -630,17 +632,95 @@ describe("evaluatePullRequestWatch", () => {
       wakes: 2,
     });
     assert.deepEqual(evaluatePullRequestWatch(watching, detail(), [seen]).changes, []);
-    const edited = { ...seen, editedAt: "2026-10-10T20:04:50.000Z" };
-    const first = evaluatePullRequestWatch(watching, detail(), [edited]);
-    assert.deepEqual(first.changes, [{ kind: "remarks", remarks: [edited] }]);
-    assert.strictEqual(first.next.remarksThrough, edited.editedAt);
-    assert.deepEqual(evaluatePullRequestWatch(first.next, detail(), [edited]).changes, []);
-    const again = { ...seen, editedAt: "2026-10-10T20:05:50.000Z" };
-    const second = evaluatePullRequestWatch(first.next, detail(), [again]);
-    assert.deepEqual(second.changes, [{ kind: "remarks", remarks: [again] }]);
-    assert.deepEqual(evaluatePullRequestWatch(second.next, detail(), [again]).changes, []);
-    const own = { ...edited, author: { login: "agent-user", name: null, avatarUrl: null } };
-    assert.deepEqual(evaluatePullRequestWatch(watching, detail(), [own]).changes, []);
+    let next = watching;
+    for (const editedAt of ["2026-10-10T20:04:50.000Z", "2026-10-10T20:06:50.000Z"]) {
+      const sweep = evaluatePullRequestWatch(next, detail(), [{ ...seen, editedAt }]);
+      assert.deepEqual(sweep.changes, []);
+      next = sweep.next;
+    }
+    const final = { ...seen, editedAt: "2026-10-10T20:06:50.000Z" };
+    // A failed remark read keeps the held edit for the next sweep.
+    const unread = evaluatePullRequestWatch(next, detail(), null);
+    assert.deepEqual(unread.changes, []);
+    const settled = evaluatePullRequestWatch(unread.next, detail(), [final]);
+    assert.deepEqual(settled.changes, [{ kind: "remarks", remarks: [final], edited: true }]);
+    assert.deepEqual(evaluatePullRequestWatch(settled.next, detail(), [final]).changes, []);
+    // A watch started again keeps the held edit, even one the bot changed while it was stopped.
+    const rewatched = { ...next, remarksThrough: "2026-10-10T20:10:00.000Z", remarkIds: [] };
+    const whileStopped = { ...seen, editedAt: "2026-10-10T20:08:50.000Z" };
+    const reheld = evaluatePullRequestWatch(rewatched, detail(), [whileStopped]);
+    assert.deepEqual(reheld.changes, []);
+    assert.deepEqual(evaluatePullRequestWatch(reheld.next, detail(), [whileStopped]).changes, [
+      { kind: "remarks", remarks: [whileStopped], edited: true },
+    ]);
+    const own = { ...final, author: { login: "agent-user", name: null, avatarUrl: null } };
+    const ownHeld = evaluatePullRequestWatch(watching, detail(), [own]);
+    assert.deepEqual(evaluatePullRequestWatch(ownHeld.next, detail(), [own]).changes, []);
+  });
+
+  it("reports a remark's later edits on one head only after they settle for longer", () => {
+    const summary = remark("coderabbitai[bot]", "2026-10-10T19:52:40.000Z");
+    const status = remark("ci-bot", "2026-10-10T19:52:40.000Z");
+    let next = watch({
+      headSha: "aaaaaaaaaa",
+      remarksThrough: summary.createdAt,
+      remarkIds: [summary.id, status.id],
+    });
+    const time = (minute: number) => `2026-10-10T20:${String(minute).padStart(2, "0")}:00.000Z`;
+    // Reads at each minute, returning the remark changes they report.
+    const reads = (
+      headSha: string,
+      seen: ReadonlyArray<PullRequestComment>,
+      minutes: ReadonlyArray<number>,
+    ) =>
+      minutes.flatMap((minute) => {
+        const report = evaluate(next, detail({ headSha }), seen, Date.parse(time(minute)));
+        next = report.next;
+        return report.changes.filter((change) => change.kind === "remarks");
+      });
+    const at = (minute: number) => ({ ...summary, editedAt: time(minute) });
+    // A remark's first edit on a head wakes once it reads unchanged.
+    assert.deepEqual(reads("aaaaaaaaaa", [at(0)], [1, 3]), [
+      { kind: "remarks", remarks: [at(0)], edited: true },
+    ]);
+    // A rate-limited bot rewriting its countdown stays quiet until the rewrites stop.
+    for (const minute of [5, 10, 15]) {
+      assert.deepEqual(reads("aaaaaaaaaa", [at(minute)], [minute + 1, minute + 3]), []);
+    }
+    assert.deepEqual(reads("aaaaaaaaaa", [at(15)], [26]), [
+      { kind: "remarks", remarks: [at(15)], edited: true },
+    ]);
+    // Another remark's first edit on this head is still news.
+    const statusEdit = { ...status, editedAt: time(27) };
+    assert.deepEqual(reads("aaaaaaaaaa", [at(15), statusEdit], [28, 30]), [
+      { kind: "remarks", remarks: [statusEdit], edited: true },
+    ]);
+    // After a push the bot edits its summary to reviewing, then to its finished review.
+    assert.deepEqual(reads("bbbbbbbbbb", [at(31), statusEdit], [32, 34]), [
+      { kind: "remarks", remarks: [at(31)], edited: true },
+    ]);
+    assert.deepEqual(reads("bbbbbbbbbb", [at(35), statusEdit], [36, 38]), []);
+    assert.deepEqual(reads("bbbbbbbbbb", [at(35), statusEdit], [46]), [
+      { kind: "remarks", remarks: [at(35)], edited: true },
+    ]);
+    // An edit held on the old head does not spend the new head's report.
+    const stale = { ...status, editedAt: time(47) };
+    assert.deepEqual(reads("bbbbbbbbbb", [at(35), stale], [48]), []);
+    assert.deepEqual(reads("cccccccccc", [at(35), stale], [50, 52]), []);
+    const finding = { ...status, editedAt: time(53) };
+    assert.deepEqual(reads("cccccccccc", [at(35), finding], [54, 56]), [
+      { kind: "remarks", remarks: [finding], edited: true },
+    ]);
+  });
+
+  it("reports a remark new to the watch at once even when it was already edited", () => {
+    const posted = {
+      ...remark("coderabbit[bot]", "2026-10-02T12:06:00Z"),
+      editedAt: "2026-10-02T12:07:00Z",
+    };
+    assert.deepEqual(evaluatePullRequestWatch(watch(), detail(), [posted]).changes, [
+      { kind: "remarks", remarks: [posted] },
+    ]);
   });
 
   it("does not treat a failed check read as a rerun", () => {
