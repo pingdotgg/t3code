@@ -226,7 +226,7 @@ export interface TerminalSessionOptions {
     readonly terminalId: string;
   };
   readonly gridSize: TerminalGridSize;
-  /** Written once, as soon as the first attachment snapshot lands. */
+  /** Sent once when the first attachment snapshot lands; the server types it after shell startup. */
   readonly initialInput?: string | undefined;
   /** Read right before every command, so revoking operate stops them at once. */
   readonly canOperate: () => boolean;
@@ -364,7 +364,8 @@ export function createTerminalSession(
       initialInputPending = false;
       void runAtomCommand(registry, atoms.write, {
         environmentId,
-        input: { threadId, terminalId, data: options.initialInput },
+        // The first snapshot can land while the shell still starts; the server holds the input.
+        input: { threadId, terminalId, data: options.initialInput, afterShellStartup: true },
       });
     }
 

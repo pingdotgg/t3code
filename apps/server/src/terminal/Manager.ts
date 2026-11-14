@@ -79,6 +79,7 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
 import * as NativeTelemetryClient from "../resourceTelemetry/NativeTelemetryClient.ts";
 import { terminalOutputStream } from "./OutputProtocol.ts";
+import { watchShellReadiness } from "./shellReadiness.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 
 export {
@@ -114,6 +115,12 @@ const CLOSE_IDLE_QUERY_TIMEOUT = { posix: "1 second", win32: "1500 millis" } as 
 const QUIET_SUBPROCESS_SNAPSHOT_EVERY_TICKS = 30;
 const DEFAULT_PROCESS_KILL_GRACE_MS = 1_000;
 const DEFAULT_MAX_RETAINED_INACTIVE_SESSIONS = 128;
+// PowerShell and cmd have no line-editor signal, so their input is written right away.
+function shellSignalsLineEditor(shell: string): boolean {
+  const name = (shell.split(/[/\\]/).at(-1) ?? shell).toLowerCase().replace(/\.exe$/, "");
+  return name !== "cmd" && name !== "pwsh" && name !== "powershell";
+}
+
 const DEFAULT_OPEN_COLS = 120;
 const DEFAULT_OPEN_ROWS = 30;
 // The tmux/screen/Zellij keys name the multiplexer pane that launched the server,
@@ -316,6 +323,8 @@ interface TerminalSessionState {
   childCommandLabel: string | null;
   runtimeEnv: Record<string, string> | null;
   stopOnSettle: boolean;
+  /** Writes waiting for the current shell to read input; null once it takes them directly. */
+  heldWrites: Array<string> | null;
 }
 
 interface TerminalGrid {
@@ -2570,6 +2579,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       session.hasRunningSubprocess = false;
       session.childCommandLabel = null;
       session.status = "exited";
+      session.heldWrites = null;
       session.pendingHistoryControlSequence = "";
       session.pendingProcessEvents = [];
       session.pendingProcessEventIndex = 0;
@@ -2667,6 +2677,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     yield* modifyManagerState((state) => {
       session.status = "starting";
       session.shell = null;
+      session.heldWrites = null;
       session.cwd = input.cwd;
       session.worktreePath = input.worktreePath ?? null;
       session.cols = input.cols;
@@ -3075,6 +3086,52 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     }).pipe(Effect.ignoreCause({ log: true })),
   );
 
+  // Input typed while a shell starts can be read by an rc-file prompt (fnm, nvm) instead of the
+  // shell. Writes that ask to wait are held, in order, until the line editor reads input.
+  const startOpenedSession = Effect.fn("terminal.startOpenedSession")(function* (
+    session: TerminalSessionState,
+    startInput: TerminalStartInput,
+  ) {
+    const target = { threadId: session.threadId, terminalId: session.terminalId };
+    // Subscribed before the spawn so no startup output is missed.
+    const readiness = yield* watchShellReadiness({
+      ...target,
+      subscribe,
+      onStartupPrompt: Effect.void,
+    });
+    yield* startSession(session, startInput, "started").pipe(
+      Effect.onError(() => Effect.sync(readiness.unsubscribe)),
+    );
+    const spawned = session.process;
+    if (
+      session.status !== "running" ||
+      spawned === null ||
+      session.shell === null ||
+      !shellSignalsLineEditor(session.shell)
+    ) {
+      readiness.unsubscribe();
+      return snapshot(session);
+    }
+    const held: Array<string> = [];
+    session.heldWrites = held;
+    yield* readiness.wait.pipe(
+      Effect.flatMap((outcome) => {
+        // A restart or exit already dropped the queue: the input belonged to the shell it was typed for.
+        if (session.heldWrites !== held) return Effect.void;
+        session.heldWrites = null;
+        return outcome === "exited" || session.process !== spawned
+          ? Effect.void
+          : Effect.forEach(held, (data) => write({ ...target, data }), { discard: true });
+      }),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("terminal held input was not written", { ...target, cause }),
+      ),
+      Effect.ensuring(Effect.sync(readiness.unsubscribe)),
+      Effect.forkIn(workerScope),
+    );
+    return snapshot(session);
+  });
+
   const openWithWorkspaceLease = Effect.fn("terminal.openLocked")(function* (
     requestedInput: TerminalOpenInput,
   ) {
@@ -3125,6 +3182,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         childCommandLabel: null,
         runtimeEnv: normalizedRuntimeEnv(input.env),
         stopOnSettle: input.stopOnSettle ?? false,
+        heldWrites: null,
       };
 
       const createdSession = session;
@@ -3136,17 +3194,12 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       });
 
       yield* evictInactiveSessionsIfNeeded();
-      yield* startSession(
-        session,
-        {
-          cwd: input.cwd,
-          ...(input.worktreePath !== undefined ? { worktreePath: input.worktreePath } : {}),
-          cols,
-          rows,
-        },
-        "started",
-      );
-      return snapshot(session);
+      return yield* startOpenedSession(session, {
+        cwd: input.cwd,
+        ...(input.worktreePath !== undefined ? { worktreePath: input.worktreePath } : {}),
+        cols,
+        rows,
+      });
     }
 
     const liveSession = existing.value;
@@ -3186,17 +3239,12 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     }
 
     if (!liveSession.process) {
-      yield* startSession(
-        liveSession,
-        {
-          cwd: input.cwd,
-          worktreePath: liveSession.worktreePath,
-          cols: targetCols,
-          rows: targetRows,
-        },
-        "started",
-      );
-      return snapshot(liveSession);
+      return yield* startOpenedSession(liveSession, {
+        cwd: input.cwd,
+        worktreePath: liveSession.worktreePath,
+        cols: targetCols,
+        rows: targetRows,
+      });
     }
 
     if (liveSession.cols !== targetCols || liveSession.rows !== targetRows) {
@@ -3600,6 +3648,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       });
     }
     session.inputCount += 1;
+    if (input.afterShellStartup === true && session.heldWrites !== null) {
+      session.heldWrites.push(input.data);
+      return;
+    }
     yield* Effect.try({
       try: () => process.write(input.data),
       catch: (cause) =>

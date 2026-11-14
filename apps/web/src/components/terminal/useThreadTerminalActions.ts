@@ -134,11 +134,16 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
     })();
   };
 
-  const writeToTerminal = (terminalId: string, data: string) => {
+  /** afterShellStartup has the server hold the input until a starting shell reads it. */
+  const writeToTerminal = (
+    terminalId: string,
+    data: string,
+    options?: { readonly afterShellStartup: boolean },
+  ) => {
     if (!threadRef || !canWrite()) return null;
     return writeTerminal({
       environmentId: threadRef.environmentId,
-      input: { threadId: threadRef.threadId, terminalId, data },
+      input: { threadId: threadRef.threadId, terminalId, data, ...options },
     });
   };
 
