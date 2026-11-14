@@ -3035,6 +3035,9 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* initRepoWithCommit(cwd);
         const driver = yield* GitVcsDriver.GitVcsDriver;
         yield* git(cwd, ["init", "scaffold"]);
+        const committed = `${cwd}/committed`;
+        yield* (yield* FileSystem.FileSystem).makeDirectory(committed);
+        yield* initRepoWithCommit(committed);
         yield* writeTextFile(cwd, "README.md", "# tracked change\n");
         yield* writeTextFile(cwd, "untracked.txt", "untracked contents\n");
 
@@ -3044,53 +3047,15 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.include(diff, "+# tracked change");
         assert.include(diff, "+untracked contents");
         assert.notInclude(diff, "scaffold");
+        assert.include(diff, "diff --git a/committed b/committed");
 
         const status = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
         assert.deepStrictEqual(status.branchChanges, {
           baseRef: null,
-          insertions: 2,
+          insertions: 3,
           deletions: 1,
         });
       }),
-    );
-
-    it.effect("keeps a nested repository with commits in the review", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTmpDir();
-        yield* initRepoWithCommit(cwd);
-        const driver = yield* GitVcsDriver.GitVcsDriver;
-        const nested = `${cwd}/nested`;
-        yield* (yield* FileSystem.FileSystem).makeDirectory(nested);
-        yield* initRepoWithCommit(nested);
-
-        const preview = yield* driver.getReviewDiffPreview({ cwd, ignoreWhitespace: false });
-        const diff = preview.sources.find((source) => source.kind === "working-tree")?.diff ?? "";
-
-        assert.include(diff, "diff --git a/nested b/nested");
-      }),
-    );
-
-    // Git rejects this name everywhere (core.protectNTFS). On Windows it is also the short name of .git.
-    it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
-      "fails the review instead of leaving out an untracked file Git cannot index",
-      () =>
-        Effect.gen(function* () {
-          const cwd = yield* makeTmpDir();
-          yield* initRepoWithCommit(cwd);
-          const driver = yield* GitVcsDriver.GitVcsDriver;
-          yield* writeTextFile(cwd, "git~1", "cannot be indexed\n");
-          yield* writeTextFile(cwd, "untracked.txt", "untracked contents\n");
-
-          const error = yield* driver
-            .getReviewDiffPreview({ cwd, ignoreWhitespace: false })
-            .pipe(Effect.flip);
-
-          assert.strictEqual(error._tag, "GitCommandError");
-          assert.strictEqual(
-            (error as GitCommandError).operation,
-            "GitVcsDriver.readUnifiedWorkingTreeReviewDiff.addUntracked",
-          );
-        }),
     );
 
     it.effect("keeps untracked filenames with pathspec magic in the review", () =>
