@@ -10,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import { refreshUsage, usageSummaryInput } from "@t3tools/client-runtime/state/usage";
 import { resolveUsageAccess } from "@t3tools/client-runtime/state/usage-access";
+import * as Effect from "effect/Effect";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useState } from "react";
 
@@ -83,7 +84,7 @@ export interface UsageView {
   readonly selectedEnvironments: readonly EnvironmentUsageStatus[];
   readonly isPending: boolean;
   readonly shown: { readonly window: UsageSummaryInput; readonly merged: MergedUsage } | null;
-  readonly isPartial: boolean;
+  readonly isWaitingLong: boolean;
   readonly refresh: (input?: UsageSummaryInput) => Promise<void>;
 }
 
@@ -106,6 +107,18 @@ export function mergeAnsweredUsage(
         ],
   );
   return mergeUsage(answered, USAGE_CONTRACT_VERSION);
+}
+
+const settleWindowAtom = Atom.family((loadKey: string) =>
+  Atom.make(Effect.sleep("300 millis").pipe(Effect.as(true))).pipe(
+    Atom.withLabel(`web-usage:settle:${loadKey}`),
+  ),
+);
+const idleSettleWindowAtom = Atom.make(AsyncResult.initial<boolean>());
+
+function useSettleWindow(active: boolean, loadKey: string) {
+  const elapsed = useAtomValue(active ? settleWindowAtom(loadKey) : idleSettleWindowAtom);
+  return active && AsyncResult.isSuccess(elapsed);
 }
 
 const NO_HIDDEN_PROVIDERS: ReadonlySet<UsageProviderKind> = new Set();
@@ -203,6 +216,12 @@ export function useUsage(
     (environment) => environment.summary === null && environment.error === null,
   ).length;
   const isPending = answeredCount === 0 && stillReporting > 0;
+  const selectionKey = selectedEnvironments
+    .map(({ environmentId }) => environmentId)
+    .toSorted()
+    .join(",");
+  const isWaitingLong = useSettleWindow(stillReporting > 0, `${windowKey}|${selectionKey}`);
+  const settled = answeredCount > 0 && (stillReporting === 0 || isWaitingLong);
 
   const [lastAnswered, setLastAnswered] = useState<
     | (NonNullable<UsageView["shown"]> & {
@@ -212,7 +231,7 @@ export function useUsage(
     | null
   >(null);
   if (
-    answeredCount > 0 &&
+    settled &&
     (lastAnswered?.merged !== merged ||
       lastAnswered.window !== input ||
       lastAnswered.selection !== selectedEnvironmentIds ||
@@ -229,10 +248,9 @@ export function useUsage(
     lastAnswered?.selection === selectedEnvironmentIds && lastAnswered.hidden === hiddenProviders
       ? lastAnswered
       : null;
-  const shown =
-    answeredCount > 0
-      ? { window: input, merged }
-      : (kept ?? (isPending ? null : { window: input, merged }));
+  const shown = settled
+    ? { window: input, merged }
+    : (kept ?? (stillReporting > 0 ? null : { window: input, merged }));
 
   return {
     merged,
@@ -240,7 +258,7 @@ export function useUsage(
     selectedEnvironments,
     isPending,
     shown,
-    isPartial: answeredCount > 0 && stillReporting > 0,
+    isWaitingLong,
     refresh,
   };
 }
