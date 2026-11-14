@@ -7425,13 +7425,27 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           if (cwd === null) return undefined;
           const configured = adapterOptions.environment.CLAUDE_CONFIG_DIR?.trim();
           const configDir = configured ? path.resolve(cwd, configured) : undefined;
-          const transcriptDir = path.join(
+          const projectsDir = path.join(
             configDir ?? path.join(yield* HostProcess.HomeDirectory, ".claude"),
             "projects",
-            cwd.replace(/[^a-zA-Z0-9]/g, "-"),
-            context.nativeThreadId,
-            "subagents",
           );
+          // Claude names the project folder after the resolved, possibly hashed, cwd; find the session instead.
+          let found: string | undefined;
+          for (const project of yield* fileSystem
+            .readDirectory(projectsDir)
+            .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []))) {
+            const candidate = path.join(projectsDir, project, context.nativeThreadId, "subagents");
+            if (
+              yield* fileSystem
+                .exists(path.join(candidate, `agent-${taskId}.jsonl`))
+                .pipe(Effect.orElseSucceed(() => false))
+            ) {
+              found = candidate;
+              break;
+            }
+          }
+          if (found === undefined) return undefined;
+          const transcriptDir = found;
           let metadata: WorkflowAgentMetadata = {};
           let cursor = initialWorkflowAgentTranscriptCursor;
           const read = Effect.fnUntraced(function* () {

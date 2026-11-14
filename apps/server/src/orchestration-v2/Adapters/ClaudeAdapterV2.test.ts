@@ -18932,10 +18932,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const configDir = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-claude-effort-",
       });
+      // Claude names the folder after the resolved cwd, here as if /workspace were a symlink.
       const subagentsDir = NodePath.join(
         configDir,
         "projects",
-        "-workspace",
+        "-private-workspace",
         WAKE_NATIVE_SESSION,
         "subagents",
       );
