@@ -3503,7 +3503,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     data: Uint8Array,
   ) {
     const [createdAt, millis] = yield* Effect.all([currentIso, currentMillis]);
-    const id = `browser-recording-${millis.toString(36)}`;
+    const uuid = yield* random.uuidV4();
+    const id = `browser-recording-${millis.toString(36)}-${uuid.slice(0, 8)}`;
     const extension = recordingFileExtension(mimeType);
     const artifactPath = path.join(resolvedArtifactDirectory, `${id}.${extension}`);
     yield* fileSystem.makeDirectory(resolvedArtifactDirectory, { recursive: true }).pipe(
@@ -3517,7 +3518,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           }),
       ),
     );
-    yield* fileSystem.writeFile(artifactPath, data).pipe(
+    yield* fileSystem.writeFile(artifactPath, data, { flag: "wx" }).pipe(
       Effect.mapError(
         (cause) =>
           new PreviewOperationError({
