@@ -18,6 +18,11 @@ serde_json.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["sync", "rt", "time", "macros"] }
 jiff.workspace = true
+# Webhook deliveries and replay keys, in their own SQLite file as the T3 server keeps them.
+# Already in the binary through conn-engine: no new crate.
+rusqlite.workspace = true
+# The webhook URL token and the prompt frame id, from the OS random source (in the tree).
+getrandom.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros", "time", "test-util"] }

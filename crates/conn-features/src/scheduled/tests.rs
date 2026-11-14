@@ -1,7 +1,7 @@
 //! Cases from `apps/server/src/scheduledTasks/ScheduledTaskService.test.ts`,
 //! `.schedule.test.ts` and `.interval.test.ts`, on a paused tokio clock. Each test names the
-//! T3 case it ports. Cases about webhooks and managed policy are not here:
-//! this server refuses those saves (tested below).
+//! T3 case it ports. Webhook cases are in `webhook/tests.rs`; managed policy is not
+//! built.
 
 use std::{
     path::PathBuf,
@@ -33,12 +33,12 @@ type Outcome = Box<dyn Fn(String, String) -> BoxFuture<'static, Option<String>> 
 
 /// `Layer.mock(ThreadLaunchService)` and `Layer.mock(ThreadManagementService)`: each part
 /// answers as the test scripts it; an unscripted call fails as an unimplemented mock does.
-struct Fake {
-    launch: Launch,
-    send: SendFn,
-    shell: Shell,
-    queued: Queued,
-    outcome: Outcome,
+pub(super) struct Fake {
+    pub(super) launch: Launch,
+    pub(super) send: SendFn,
+    pub(super) shell: Shell,
+    pub(super) queued: Queued,
+    pub(super) outcome: Outcome,
 }
 
 impl std::fmt::Debug for Fake {
@@ -86,7 +86,7 @@ impl TaskRunner for Fake {
     }
 }
 
-fn shell(project: &str) -> Option<ThreadShell> {
+pub(super) fn shell(project: &str) -> Option<ThreadShell> {
     Some(ThreadShell {
         project_id: project.to_owned(),
         deleted: false,
@@ -94,13 +94,13 @@ fn shell(project: &str) -> Option<ThreadShell> {
     })
 }
 
-struct Env {
-    dir: PathBuf,
-    clock: TestClock,
+pub(super) struct Env {
+    pub(super) dir: PathBuf,
+    pub(super) clock: TestClock,
 }
 
 impl Env {
-    fn new(name: &str, now: &str) -> Self {
+    pub(super) fn new(name: &str, now: &str) -> Self {
         let dir = std::env::temp_dir().join(format!(
             "conn-features-{name}-{}-{}",
             std::process::id(),
@@ -112,7 +112,7 @@ impl Env {
         }
     }
 
-    async fn start(&self, fake: Fake, zone: &str, timer: bool) -> ScheduledTasks {
+    pub(super) async fn start(&self, fake: Fake, zone: &str, timer: bool) -> ScheduledTasks {
         ScheduledTasks::start(Config {
             state_dir: self.dir.clone(),
             clock: Arc::new(self.clock.clone()),
@@ -130,11 +130,11 @@ impl Drop for Env {
     }
 }
 
-fn ms(text: &str) -> i64 {
+pub(super) fn ms(text: &str) -> i64 {
     parse_iso(text).expect("time")
 }
 
-fn input(extra: Value) -> UpsertInput {
+pub(super) fn input(extra: Value) -> UpsertInput {
     let mut base = json!({
         "title": "Interval review",
         "prompt": "Review the open pull requests.",
@@ -152,18 +152,18 @@ fn input(extra: Value) -> UpsertInput {
     serde_json::from_value(base).expect("upsert input")
 }
 
-async fn upsert(service: &ScheduledTasks, extra: Value) -> ScheduledTask {
+pub(super) async fn upsert(service: &ScheduledTasks, extra: Value) -> ScheduledTask {
     service.upsert(input(extra)).await.expect("saved")
 }
 
-async fn failure(service: &ScheduledTasks, extra: Value) -> String {
+pub(super) async fn failure(service: &ScheduledTasks, extra: Value) -> String {
     match service.upsert(input(extra)).await {
         Err(Failure::Task(error)) => error.message,
         other => panic!("expected a task error, got {other:?}"),
     }
 }
 
-async fn tasks(service: &ScheduledTasks) -> Vec<ScheduledTask> {
+pub(super) async fn tasks(service: &ScheduledTasks) -> Vec<ScheduledTask> {
     service.list().await.tasks.into_iter().flatten().collect()
 }
 
@@ -1273,19 +1273,12 @@ async fn a_fresh_session_task_launches_one_thread_then_starts_each_later_run_fre
     assert_eq!(unbound.thread_id, None);
 }
 
-/// What this server refuses that the T3 server stores: webhook tasks.
+/// Schedules the contract refuses are defects, as Effect answers a payload that does not
+/// decode.
 #[tokio::test(start_paused = true)]
-async fn webhook_tasks_are_refused() {
+async fn invalid_schedules_are_refused() {
     let env = Env::new("refused", "2026-07-01T09:00:00.000Z");
     let service = env.start(Fake::default(), "UTC", false).await;
-    assert_eq!(
-        failure(
-            &service,
-            json!({"schedule": {"type": "webhook", "signature": null}})
-        )
-        .await,
-        "This server does not run webhook tasks yet."
-    );
     assert!(matches!(
         service
             .upsert(input(

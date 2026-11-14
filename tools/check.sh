@@ -86,6 +86,7 @@ monorepo_checks=(
   "settings-diff"
   "secrets-interop"
   "textgen-diff"
+  "webhook-diff"
   "limits-diff"
   "parity"
   "codex instructions --check"
@@ -131,6 +132,8 @@ else
   run "secrets-interop" node crates/conn-server/tools/secrets-interop.mjs "$release"
   # Text generators and thread titles against T3's own code, on a loopback stub (no model).
   run "textgen-diff" node crates/conn-server/tools/textgen-diff.mjs "$release/examples/text_generation"
+  # Webhook prompt templates, filters and signatures against T3's own functions.
+  run "webhook-diff" node crates/conn-features/tools/webhook-diff.mjs "$release/examples/webhook_functions"
   run "limits-diff" node crates/conn-server/tools/limits-diff.mjs
   run "parity" \
     node crates/conn-mcp/tools/parity.mjs "$release/examples/replay_server"

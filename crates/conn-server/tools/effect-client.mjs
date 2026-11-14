@@ -271,6 +271,64 @@ const decodeEach = (client) =>
     yield* call("scheduledTasks.setEnabled", { id: taskId, enabled: false });
     yield* call("scheduledTasks.runNow", { id: none });
     yield* call("scheduledTasks.delete", { id: taskId });
+    // A webhook task, paused so no request starts a provider: one delivery to its URL is
+    // logged as `disabled`, then the delivery methods read it and the token rotates.
+    const hook = yield* call("scheduledTasks.upsert", {
+      commandId: "effect-client-hook",
+      title: "Review pull requests",
+      prompt: "Review {{body.url}}",
+      enabled: false,
+      schedule: {
+        type: "webhook",
+        signature: { header: "x-signature", encoding: "hex", prefix: "sha256=", secret: "effect-client-secret" },
+        dedupe: { replayKey: "{{headers.x-delivery}}" },
+        filters: [{ path: "body.url", op: "exists" }],
+      },
+      projectId: "effect-client-p1",
+      workspaceStrategy: { type: "root" },
+      modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+      runtimeMode: "approval-required",
+      interactionMode: "default",
+    });
+    const hookTask = Exit.isSuccess(hook) ? hook.value.task : undefined;
+    if (hookTask?.webhook) {
+      const delivered = yield* Effect.promise(() =>
+        fetch(`${httpBaseUrl}${hookTask.webhook.path}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ url: "https://example.invalid/pull/1" }),
+        }),
+      );
+      check("webhook delivery to a paused task", delivered.status === 409, `status ${delivered.status}`);
+      // The route's own refusals, as webhookRoute.test.ts has them; none reaches a run.
+      const url = `${httpBaseUrl}${hookTask.webhook.path}`;
+      const status = (path, init) =>
+        Effect.promise(() => fetch(path, init).then((r) => ({ status: r.status, outcome: r.headers.get("x-t3-hook-outcome"), allow: r.headers.get("allow") })));
+      const head = yield* status(url, { method: "HEAD" });
+      check("webhook HEAD probe", head.status === 405 && head.allow === "GET, POST, PUT, PATCH", JSON.stringify(head));
+      const big = yield* status(url, { method: "POST", body: new Uint8Array(1024 * 1024 + 1) });
+      check("webhook body over 1 MiB", big.status === 413 && big.outcome === "body_too_large", JSON.stringify(big));
+      const chunks = new ReadableStream({
+        start(controller) {
+          for (let sent = 0; sent <= 1024 * 1024; sent += 64 * 1024) controller.enqueue(new Uint8Array(64 * 1024));
+          controller.close();
+        },
+      });
+      const streamed = yield* status(url, { method: "POST", body: chunks, duplex: "half" });
+      check("webhook chunked body over 1 MiB", streamed.status === 413, JSON.stringify(streamed));
+      const wrong = yield* status(`${url.slice(0, url.lastIndexOf("/"))}/wrong-token`, { method: "POST", body: "{}" });
+      check("webhook wrong token", wrong.status === 404 && wrong.outcome === "not_found", JSON.stringify(wrong));
+      for (const path of ["/api/hooks/id", "/api/hooks/id/tok/extra", "/api/hooks/%E0/tok"]) {
+        const malformed = yield* status(`${httpBaseUrl}${path}`, { method: "POST", body: "{}" });
+        check(`webhook malformed path ${path}`, malformed.status === 404, JSON.stringify(malformed));
+      }
+    }
+    const hookId = hookTask?.id ?? none;
+    const listed = yield* call("scheduledTasks.listWebhookDeliveries", { id: hookId, acceptAnyOutcome: true });
+    const deliveryId = Exit.isSuccess(listed) ? (listed.value.deliveries[0]?.id ?? none) : none;
+    yield* call("scheduledTasks.getWebhookDelivery", { id: hookId, deliveryId });
+    yield* call("scheduledTasks.rotateWebhookToken", { id: hookId });
+    yield* call("scheduledTasks.delete", { id: hookId });
     // Text generators: an unsaved config against a model API stub on loopback, and a missing
     // saved one (a typed error). No outside call.
     const modelApi = NodeHttp.createServer((request, response) => {

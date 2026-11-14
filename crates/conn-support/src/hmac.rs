@@ -1,6 +1,11 @@
-//! HMAC-SHA256 (RFC 2104) and a compare for secrets.
+//! SHA-256, HMAC-SHA256 (RFC 2104) and a compare for secrets.
 
 use sha2::{Digest, Sha256};
+
+/// SHA-256 of `bytes`.
+pub fn sha256(bytes: &[u8]) -> [u8; 32] {
+    Sha256::digest(bytes).into()
+}
 
 /// HMAC-SHA256 with a key of any length.
 pub fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
