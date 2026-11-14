@@ -4,6 +4,8 @@ import {
   scoreQueryMatch,
 } from "@t3tools/shared/searchRanking";
 
+import { isProviderSlashCommandInline } from "@t3tools/client-runtime/providerSkills";
+
 import type { ComposerCommandItem } from "./ComposerCommandMenu";
 import { scoreProviderSkill } from "../../providerSkillSearch";
 
@@ -12,7 +14,7 @@ type SlashSearchItem = Extract<
   { type: "slash-command" | "provider-slash-command" | "skill" }
 >;
 
-/** Provider commands, `/side`, `/btw` and `/clear` work only at the message start. */
+/** Provider commands other than Claude's inline skills, `/side`, `/btw` and `/clear` need the message start. */
 export function slashCommandItemsForPromptPosition(
   items: ReadonlyArray<SlashSearchItem>,
   isAtPromptStart: boolean,
@@ -23,6 +25,8 @@ export function slashCommandItemsForPromptPosition(
   return items.filter(
     (item) =>
       item.type === "skill" ||
+      (item.type === "provider-slash-command" &&
+        isProviderSlashCommandInline(item.provider, item.command)) ||
       (item.type === "slash-command" &&
         item.command !== "side" &&
         item.command !== "btw" &&

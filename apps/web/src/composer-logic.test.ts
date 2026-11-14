@@ -1,6 +1,12 @@
 import { threadPullRequestKeyOf } from "@t3tools/client-runtime/thread-pull-requests";
 import { filterComposerPullRequestMatches } from "@t3tools/shared/composerPullRequestMatches";
-import { EnvironmentId, MessageId, ThreadId, type AssistantCitation } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  MessageId,
+  ProviderDriverKind,
+  ThreadId,
+  type AssistantCitation,
+} from "@t3tools/contracts";
 import {
   collectAssistantCitations,
   expandAssistantCitationsForProvider,
@@ -579,17 +585,34 @@ describe("extendReplacementRangeForTrailingSpace", () => {
   });
 });
 
-describe("side chat slash commands", () => {
-  it("are not offered after the start of a message", () => {
-    const items = (["side", "btw", "clear", "model"] as const).map((command) => ({
-      id: `slash:${command}`,
-      type: "slash-command" as const,
-      command,
-      label: `/${command}`,
-      description: "",
-    }));
+describe("slash commands after the start of a message", () => {
+  it("offer only /model and Claude's inline skills", () => {
+    const items = [
+      ...(["side", "btw", "clear", "model"] as const).map((command) => ({
+        id: `slash:${command}`,
+        type: "slash-command" as const,
+        command,
+        label: `/${command}`,
+        description: "",
+      })),
+      ...(
+        [
+          ["claudeAgent", "code-review"],
+          ["claudeAgent", "verify"],
+          ["codex", "run"],
+        ] as const
+      ).map(([driver, name]) => ({
+        id: `${driver}:${name}`,
+        type: "provider-slash-command" as const,
+        provider: ProviderDriverKind.make(driver),
+        command: { name },
+        label: `/${name}`,
+        description: "",
+      })),
+    ];
     expect(slashCommandItemsForPromptPosition(items, false).map((item) => item.id)).toEqual([
       "slash:model",
+      "claudeAgent:code-review",
     ]);
   });
 });
