@@ -6,6 +6,10 @@ const HOSTED_PAIRING_LABEL_PARAM = "label";
 const PAIRING_APP_LINK_PARAM = "pairingUrl";
 const APP_LINK_PROTOCOL = /^t3code(?:-[a-z]+)?:$/;
 const SUPPORTED_REMOTE_BACKEND_PROTOCOLS = new Set(["http:", "https:", "ws:", "wss:"]);
+const URL_SCHEME_PREFIX = /^[a-zA-Z][a-zA-Z\d+.-]*:\/\//;
+const PRIVATE_IPV4_HOSTNAME =
+  /^(?:127|10|192\.168|169\.254|172\.(?:1[6-9]|2\d|3[01])|100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7]))\.[\d.]+$/;
+const PRIVATE_IPV6_HOSTNAME = /^\[(?:::1|f[cd][\da-f]{2}:.*|fe[89ab][\da-f]:.*)\]$/;
 
 export const readHashParams = (url: URL): URLSearchParams =>
   new URLSearchParams(url.hash.startsWith("#") ? url.hash.slice(1) : url.hash);
@@ -71,6 +75,32 @@ export const RemotePairingTargetError = Schema.Union([
 ]);
 export type RemotePairingTargetError = typeof RemotePairingTargetError.Type;
 
+const isLocalNetworkHost = (host: string): boolean => {
+  let hostname: string;
+  try {
+    hostname = new URL(`http://${host}`).hostname;
+  } catch {
+    return false;
+  }
+  return (
+    PRIVATE_IPV4_HOSTNAME.test(hostname) ||
+    PRIVATE_IPV6_HOSTNAME.test(hostname) ||
+    hostname === "localhost" ||
+    hostname.endsWith(".local")
+  );
+};
+
+/**
+ * Gives a scheme-less host `http://` when it is a loopback, private, link-local, or CGNAT
+ * (Tailscale) IP, `localhost`, or an mDNS `.local` name, where a T3 server reached directly
+ * serves plain HTTP. Public IPs and DNS names get `https://` so a pairing token never crosses
+ * the internet in plain text by default.
+ */
+export const withDefaultRemoteScheme = (value: string): string => {
+  if (URL_SCHEME_PREFIX.test(value)) return value;
+  return `${isLocalNetworkHost(value) ? "http" : "https"}://${value}`;
+};
+
 const hasSupportedRemoteBackendProtocol = (url: URL): boolean =>
   SUPPORTED_REMOTE_BACKEND_PROTOCOLS.has(url.protocol);
 
@@ -84,9 +114,7 @@ const normalizeRemoteBaseUrl = (
   }
 
   const withoutLeadingSlashes = trimmed.replace(/^\/+/, "");
-  const normalizedInput = /^[a-zA-Z][a-zA-Z\d+-]*:\/\//.test(withoutLeadingSlashes)
-    ? withoutLeadingSlashes
-    : `https://${withoutLeadingSlashes}`;
+  const normalizedInput = withDefaultRemoteScheme(withoutLeadingSlashes);
   let url: URL;
   try {
     url = new URL(normalizedInput);

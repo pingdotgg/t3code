@@ -112,6 +112,29 @@ describe("remote", () => {
     });
   });
 
+  it.each([
+    ["10.0.0.10:3773", "http"],
+    ["172.31.0.2:3773", "http"],
+    ["169.254.77.2:3773", "http"],
+    ["100.103.114.49:3773", "http"],
+    ["[fd7a:115c:a1e0::1]:3773", "http"],
+    ["[fe80::1]:3773", "http"],
+    ["[::1]:3773", "http"],
+    ["localhost:3773", "http"],
+    ["studio.local:3773", "http"],
+    ["8.8.8.8:3773", "https"],
+    ["172.32.0.2:3773", "https"],
+    ["100.128.0.1:3773", "https"],
+    ["[2001:db8::1]:3773", "https"],
+    ["10.0.0.10.example.com:3773", "https"],
+  ])("defaults bare host %s to %s", (host, scheme) => {
+    expect(resolveRemotePairingTarget({ host, pairingCode: "pairing-token" })).toEqual({
+      credential: "pairing-token",
+      httpBaseUrl: `${scheme}://${host}/`,
+      wsBaseUrl: `${scheme === "http" ? "ws" : "wss"}://${host}/`,
+    });
+  });
+
   it("rejects unsupported direct pairing URL protocols", () => {
     let pairingUrlError: unknown;
     try {

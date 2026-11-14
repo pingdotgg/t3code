@@ -1,4 +1,4 @@
-import { readHostedPairingRequest } from "@t3tools/shared/remote";
+import { readHostedPairingRequest, withDefaultRemoteScheme } from "@t3tools/shared/remote";
 import * as Schema from "effect/Schema";
 
 const MOBILE_PAIRING_URL_PARAM = "pairingUrl";
@@ -34,7 +34,10 @@ export function buildPairingUrl(host: string, code: string): string {
   if (!c) return h;
 
   try {
-    const url = new URL(h.includes("://") ? h : `${isIpLiteral(h) ? "http" : "https"}://${h}`);
+    // Bare public IPs stay HTTP on mobile so plain-HTTP servers paired by IP keep working.
+    const url = new URL(
+      !h.includes("://") && isIpLiteral(h) ? `http://${h}` : withDefaultRemoteScheme(h),
+    );
     url.hash = new URLSearchParams([["token", c]]).toString();
     return url.toString();
   } catch {
