@@ -309,7 +309,7 @@ const make = Effect.gen(function* () {
                 thread.source === "claudeAgent"
                   ? { threadId, resume: thread.providerSessionId }
                   : { threadId: nativeThreadId },
-              runtimePayload: { cwd: project.workspaceRoot },
+              runtimePayload: { cwd: outcome.worktree?.path ?? project.workspaceRoot },
             },
             { onConflict: "ignore" },
           );
@@ -362,8 +362,8 @@ const make = Effect.gen(function* () {
             modelSelection: { instanceId: thread.providerInstanceId, model },
             runtimeMode,
             interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-            branch: null,
-            worktreePath: null,
+            branch: outcome.worktree?.branch ?? null,
+            worktreePath: outcome.worktree?.path ?? null,
             linkedPullRequest: null,
             branchPullRequest: null,
             activeProviderThreadId: providerThreadId,

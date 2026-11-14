@@ -1,7 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
 
 import { subscribeAtomChanges } from "../rpc/atomRegistry";
-import { environmentThemeDefinitionsAtom, type ThemeDefinition } from "../themePalette";
+import {
+  environmentThemeDefinitionsAtom,
+  storePublishedEnvironmentThemes,
+  type ThemeDefinition,
+} from "../themePalette";
 import { refreshTheme } from "./useTheme";
 
 export function useEnvironmentThemeDefinitions(): ReadonlyArray<ThemeDefinition> {
@@ -13,7 +17,8 @@ export function useEnvironmentThemeDefinitions(): ReadonlyArray<ThemeDefinition>
  * only land if the active theme is re-applied.
  */
 export function startEnvironmentThemeRepaint(): () => void {
-  return subscribeAtomChanges(environmentThemeDefinitionsAtom, () => {
+  return subscribeAtomChanges(environmentThemeDefinitionsAtom, (definitions) => {
+    storePublishedEnvironmentThemes(definitions);
     refreshTheme({ preservePreview: true });
   });
 }
