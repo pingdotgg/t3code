@@ -246,7 +246,7 @@ it.effect("gives no answer when an app's config is there but cannot be read", ()
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
-it.effect("does not guess between apps that name different EAS projects", () =>
+it.effect("does not guess between apps that name different Expo projects", () =>
   Effect.gen(function* () {
     const root = yield* workspace({
       "apps/one/app.json": JSON.stringify({ expo: { extra: { eas: { projectId: ID_A } } } }),
