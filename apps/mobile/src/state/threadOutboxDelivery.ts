@@ -20,6 +20,7 @@ import {
   managedRuntimeModeDenial,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   type EnvironmentId,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import * as Cause from "effect/Cause";
@@ -593,7 +594,9 @@ async function preserveUploadedAttachmentsForEditor(
 const deliveryInputsAtom = Atom.make((get) => {
   const connectedEnvironments = get(workspaceConnections.environmentsAtom);
   const operableEnvironments = new Set<EnvironmentId>();
+  const pendingThreadIds = new Map<EnvironmentId, ReadonlySet<ThreadId>>();
   for (const { environmentId } of connectedEnvironments) {
+    pendingThreadIds.set(environmentId, get(threadEnvironment.pendingThreadIdsAtom(environmentId)));
     if (
       sessionHasScope(
         get(environmentSession.sessionStateAtom(environmentId)),
@@ -613,6 +616,7 @@ const deliveryInputsAtom = Atom.make((get) => {
     serverConfigs: get(environmentServerConfigsAtom),
     connectedEnvironments,
     operableEnvironments,
+    pendingThreadIds,
   };
 }).pipe(Atom.withLabel("mobile:thread-outbox:delivery-inputs"));
 
@@ -1210,6 +1214,7 @@ export function createThreadOutboxDelivery(): {
       serverConfigs,
       connectedEnvironments,
       operableEnvironments,
+      pendingThreadIds,
     } = appAtomRegistry.get(deliveryInputsAtom);
     if (dispatchingQueuedMessageId !== null) {
       return;
@@ -1346,6 +1351,15 @@ export function createThreadOutboxDelivery(): {
         continue;
       }
       if (deliveryAction === "send" && !operableEnvironments.has(nextQueuedMessage.environmentId)) {
+        continue;
+      }
+      // An unconfirmed optimistic change, such as Resume's mode, can still be refused; the send
+      // must compare against what the server holds, or it skips a mode change it still needs.
+      if (
+        deliveryAction === "send" &&
+        creation === undefined &&
+        pendingThreadIds.get(nextQueuedMessage.environmentId)?.has(nextQueuedMessage.threadId)
+      ) {
         continue;
       }
       const dispatchStep = resolveThreadOutboxDispatchStep({

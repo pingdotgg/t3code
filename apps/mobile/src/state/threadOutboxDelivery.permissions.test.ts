@@ -28,6 +28,7 @@ const state = vi.hoisted(() => ({
   modelUnavailable: vi.fn(() => false),
   familyMount: vi.fn(() => () => {}),
   threadShells: null as unknown as Atom.Writable<ReadonlyArray<unknown>>,
+  pendingThreadIds: null as unknown as Atom.Writable<ReadonlyArray<string>>,
   manager: null as unknown as ReturnType<
     typeof import("./thread-outbox-manager").createThreadOutboxManager
   >,
@@ -87,8 +88,11 @@ vi.mock("./server", async () => {
 vi.mock("./threads", async () => {
   const { Atom, AsyncResult } = await import("effect/reactivity");
   state.threadShells = Atom.make<ReadonlyArray<unknown>>([state.thread]).pipe(Atom.keepAlive);
+  state.pendingThreadIds = Atom.make<ReadonlyArray<string>>([]).pipe(Atom.keepAlive);
+  const pendingThreadIdsAtom = Atom.map(state.pendingThreadIds, (ids) => new Set(ids));
   return {
     threadEnvironment: {
+      pendingThreadIdsAtom: () => pendingThreadIdsAtom,
       startTurn: state.start,
       updateMetadata: state.metadata,
       setRuntimeMode: state.runtime,
@@ -226,6 +230,7 @@ beforeEach(() => {
   state.familyMount.mockReset().mockReturnValue(() => {});
   appAtomRegistry.set(composerDraftsAtom, {});
   appAtomRegistry.set(state.threadShells, [state.thread]);
+  appAtomRegistry.set(state.pendingThreadIds, []);
   appAtomRegistry.set(state.manager.queuedMessagesByThreadKeyAtom, {});
   appAtomRegistry.set(dispatchingQueuedMessageIdAtom, null);
   appAtomRegistry.set(editingQueuedMessageIdsAtom, {});
@@ -414,6 +419,31 @@ describe("queued task operation access", () => {
     expect(state.runtime).toHaveBeenCalledOnce();
     expect(state.interaction).not.toHaveBeenCalled();
     expect(state.prepare).not.toHaveBeenCalled();
+    expect(state.start).not.toHaveBeenCalled();
+    expect(remaining()).toEqual([queued]);
+  });
+
+  it("waits for a pending mode change to settle before trusting the thread's mode", async () => {
+    setOperateGrant("secondary", true);
+    // Resume's mode change is in flight: the shell still holds Full access, as the server does.
+    appAtomRegistry.set(state.pendingThreadIds, ["thread"]);
+    const queued = message({ runtimeMode: "approval-required" });
+    await state.manager.enqueue(queued);
+    startDelivery();
+    expect(appAtomRegistry.get(dispatchingQueuedMessageIdAtom)).toBeNull();
+    expect(state.runtime).not.toHaveBeenCalled();
+
+    // The server refused it, so delivery applies the mode itself and stops when that is refused too.
+    state.runtime.mockResolvedValueOnce(
+      AsyncResult.failure(Cause.fail(new Error("Background work would end."))),
+    );
+    const settled = Promise.withResolvers<void>();
+    const release = appAtomRegistry.subscribe(dispatchingQueuedMessageIdAtom, (id) => {
+      if (id === null) settled.resolve();
+    });
+    appAtomRegistry.set(state.pendingThreadIds, []);
+    await settled.promise.finally(release);
+    expect(state.runtime).toHaveBeenCalledOnce();
     expect(state.start).not.toHaveBeenCalled();
     expect(remaining()).toEqual([queued]);
   });
