@@ -453,7 +453,7 @@ export const make = Effect.gen(function* () {
 
   // Held news is cleared only once it reached the thread, so a failed send keeps it.
   const clearHeld = (target: WatchTarget) =>
-    Effect.sync(() => void deferred.delete(watchKey(target)));
+    Effect.sync(() => void deferred.delete(lifeKey(target)));
 
   const sendOne = (item: HeldWake) =>
     record(item.target, item.next, item.wake, item.endedWatch).pipe(
@@ -605,7 +605,7 @@ export const make = Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
     const last = lastReads.get(group.key);
     const released = group.targets.some(
-      (target) => deferred.has(watchKey(target)) && !target.thread.busy,
+      (target) => deferred.has(lifeKey(target)) && !target.thread.busy,
     );
     const plan = planRead(group, last, fingerprint, now, released);
     if (!plan.detail) return;
@@ -741,7 +741,7 @@ export const make = Effect.gen(function* () {
       const report = reportOf(target);
       // A pass that sets the check baseline is recorded, or every later read would stay one.
       if (report.changes.length > 0 && holds(target)) {
-        deferred.add(watchKey(target));
+        deferred.add(lifeKey(target));
         const held = holdFailures(target.watch, report);
         return watchesEqual(held, target.watch) ? Effect.void : record(target, held);
       }
@@ -822,7 +822,7 @@ export const make = Effect.gen(function* () {
       for (const cache of [readFailures, lastReads, threadTails]) {
         for (const key of cache.keys()) if (!byPullRequest.has(key)) cache.delete(key);
       }
-      const watched = new Set(targets.map(watchKey));
+      const watched = new Set(targets.map(lifeKey));
       for (const key of deferred.keys()) if (!watched.has(key)) deferred.delete(key);
     }
     yield* Effect.forEach(

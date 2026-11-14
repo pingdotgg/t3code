@@ -4530,18 +4530,20 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         branch: null,
         worktreePath: null,
       });
-      const watch = (on: boolean, id: string) =>
+      const watch = (on: boolean, id: string, number = 16) =>
         orchestrator.dispatch({
           type: "thread.pull-request.watch",
-          commandId: CommandId.make(`pr-watch-busy-remark-${id}`),
+          commandId: CommandId.make(`pr-watch-busy-remark-${id}-${number}`),
           threadId,
           host: "github.com",
           repository: "pingdotgg/t3code",
-          number: 16,
+          number,
           watching: on,
-          link: { url: "https://github.com/pingdotgg/t3code/pull/16", source: "agent" },
+          link: { url: `https://github.com/pingdotgg/t3code/pull/${number}`, source: "agent" },
         });
+      // Both watches start at the same instant, so only the pull request tells their holds apart.
       yield* watch(true, "start");
+      yield* watch(true, "start", 17);
       yield* orchestrator.dispatch({
         type: "message.dispatch",
         createdBy: "user",
@@ -4556,15 +4558,16 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       });
 
       let comments: Array<PullRequestComment> = [];
+      let rateLimited = false;
       const host = Layer.mergeAll(
         NodeServices.layer,
         NodeCrypto.layer,
         Layer.mock(PullRequestService.PullRequestService)({
-          detail: () =>
+          detail: (input) =>
             Effect.succeed({
               ...watchedPullRequestDetail({
                 projectId,
-                number: 16,
+                number: input.number,
                 at: "2026-10-02T12:00:00.000Z",
               }),
               headSha: "d00d1e0aaa",
@@ -4572,10 +4575,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                 { name: "test", status: "pending", description: null, url: null, required: true },
               ],
             }),
-          activity: () =>
+          activity: (input) =>
             Effect.sync(() => ({
-              comments,
-              commentCount: comments.length,
+              comments: input.number === 16 ? comments : [],
+              commentCount: input.number === 16 ? comments.length : 0,
               commentsTruncated: false,
               reviewThreadsTruncated: false,
               reviewThreads: [],
@@ -4584,8 +4587,24 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           invalidate: () => Effect.void,
           // The checks stay pending, so every pass reads the detail but rereads the activity only
           // when the remarks fingerprint moves.
-          watchFingerprint: () =>
-            Effect.sync(() => ({ status: "pending", remarks: String(comments.length) })),
+          watchFingerprint: (input) =>
+            rateLimited && input.number === 16
+              ? Effect.fail(
+                  new PullRequestOperationError({
+                    operation: "watchFingerprint",
+                    detail: "rate limited",
+                    cause: new PullRequestProviderError({
+                      provider: SourceControlProviderKind.make("github"),
+                      operation: "watchFingerprint",
+                      reason: "rate-limited",
+                      detail: "rate limited",
+                    }),
+                  }),
+                )
+              : Effect.sync(() => ({
+                  status: "pending",
+                  remarks: input.number === 16 ? String(comments.length) : "none",
+                })),
         }),
       );
       const wakes = Effect.map(
@@ -4613,11 +4632,18 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* reactor.sweep;
       assert.deepEqual(yield* wakes, []);
 
+      // The first idle pass cannot read #16, and #17's quiet read must not drop #16's hold.
       yield* finishRuns(threadId);
+      rateLimited = true;
+      yield* TestClock.adjust("2 minutes");
+      yield* reactor.sweep;
+      assert.deepEqual(yield* wakes, []);
+      rateLimited = false;
       yield* TestClock.adjust("2 minutes");
       yield* reactor.sweep;
       assert.deepEqual(yield* wakes, ["#16: new comments"]);
       yield* watch(false, "end");
+      yield* watch(false, "end", 17);
     }),
   );
 
