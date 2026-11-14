@@ -62,6 +62,7 @@ import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/sel
 import {
   findReportedPiModel,
   makePiRpcConnection,
+  PiRpcTimeoutError,
   resolvePiModelSlug,
   piRecordField as recordField,
   piRecordNumber as recordNumber,
@@ -74,7 +75,11 @@ import {
   materializePiT3McpExtension,
   resolvePiLaunchArgs,
 } from "./mcpInjection.ts";
-import { PI_FILE_CHANGE_TOOLS, PI_T3_SERVICE_TIER_COMMAND } from "./mcpExtensionSource.ts";
+import {
+  PI_FILE_CHANGE_TOOLS,
+  PI_T3_RUN_ADMISSION_TITLE,
+  PI_T3_SERVICE_TIER_COMMAND,
+} from "./mcpExtensionSource.ts";
 import { PI_STANDARD_SERVICE_TIER } from "./modelCapabilities.ts";
 
 export const PI_PROVIDER = ProviderDriverKind.make("pi");
@@ -547,6 +552,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         ProviderAdapter.ProviderAdapterV2Error | Cause.Done
       >();
       const pendingPrompts = new Map<string, PendingPiPrompt>();
+      // Lifecycle deadlines restart when a dialog closes: the time a user spends answering is not Pi's.
+      let lastPromptClosedAt = 0;
+      const forgetPrompt = (requestId: string, closedAt: DateTime.Utc) => {
+        pendingPrompts.delete(requestId);
+        lastPromptClosedAt = DateTime.toEpochMillis(closedAt);
+      };
       const sessionApprovals = new Set<string>();
       // Async pi-subagents runs launched in this session, by async id, until they settle.
       const piAsyncRuns = new Map<
@@ -569,6 +580,14 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       // Turn failures can leave Pi alive; pump termination retires the runtime.
       let runtimeRetired = false;
       let pendingWake: PiWake | null = null;
+      // A resumed session's first run asks before it starts; the next owned turn answers it.
+      let heldRunAdmission: string | null = null;
+      // A declined run still starts and settles aborted, without a model request; no turn owns it.
+      let declinedRunSettling = false;
+      // Sent when the admitted run settles: queued into that run, the prompt would join its first
+      // model request, and a run that aborts itself would never deliver it.
+      // Steers sent meanwhile wait behind it, so they cannot overtake the prompt they modify.
+      let promptsAfterAdmittedRun: Array<PiPromptSend> = [];
       let extensionStatusReset: {
         previous: NonNullable<OrchestrationV2ProviderSession["extensionStatuses"]>;
         readonly touched: Set<string>;
@@ -798,6 +817,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         return null;
       };
 
+      const answerRunAdmission = Effect.fn("PiAdapter.answerRunAdmission")(
+        (nativeRequestId: string, confirmed: boolean) =>
+          connection.send({ type: "extension_ui_response", id: nativeRequestId, confirmed }),
+      );
+
       const lifecycleRequest = Effect.fn("PiAdapter.lifecycleRequest")(
         function* (record: PiRpcRecord) {
           if (extensionStatusReset !== null)
@@ -815,7 +839,31 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             )
               return yield* protocolError("Pi transport closed during status reset");
             yield* Deferred.await(reset.ready);
-            const result = yield* request(record, PI_SESSION_TIMEOUT_MS);
+            // Pi replaces a session only once it is idle, and a held run never is. Declined after
+            // the barrier, so a run that reached its gate while this request queued is seen too.
+            if (heldRunAdmission !== null) {
+              yield* answerRunAdmission(heldRunAdmission, false);
+              heldRunAdmission = null;
+              declinedRunSettling = true;
+            }
+            // Session hooks can wait on the user, so Pi gets the whole window after the last dialog.
+            const deadline = Effect.gen(function* () {
+              let wait = PI_SESSION_TIMEOUT_MS;
+              while (wait > 0) {
+                yield* Effect.sleep(Duration.millis(wait));
+                wait =
+                  pendingPrompts.size > 0
+                    ? PI_SESSION_TIMEOUT_MS
+                    : lastPromptClosedAt +
+                      PI_SESSION_TIMEOUT_MS -
+                      DateTime.toEpochMillis(yield* DateTime.now);
+              }
+              return yield* new PiRpcTimeoutError({
+                operation: String(record["type"]),
+                timeoutMs: PI_SESSION_TIMEOUT_MS,
+              });
+            });
+            const result = yield* Effect.raceFirst(request(record, Infinity), deadline);
             if (recordField(result, "cancelled") === true) {
               yield* sessionEventPermit.withPermits(1)(
                 Effect.gen(function* () {
@@ -1579,6 +1627,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       ) {
         const pending = Array.from(pendingPrompts.values());
         pendingPrompts.clear();
+        if (pending.length > 0) lastPromptClosedAt = DateTime.toEpochMillis(resolvedAt);
         yield* Effect.forEach(pending, (prompt) => cancelPrompt(prompt, resolvedAt), {
           discard: true,
         });
@@ -1671,6 +1720,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           return;
         }
         if (nativeRequestId === undefined) return;
+        if (method === "confirm" && recordString(event, "title") === PI_T3_RUN_ADMISSION_TITLE) {
+          if (threadState?.activeTurn == null) heldRunAdmission = nativeRequestId;
+          else yield* answerRunAdmission(nativeRequestId, true);
+          return;
+        }
         const approvalTitle = recordString(event, "title") ?? "";
         const approvalKey = `${approvalTitle.length}:${approvalTitle}${recordString(event, "message") ?? ""}`;
         if (method === "confirm" && sessionApprovals.has(approvalKey)) {
@@ -2058,6 +2112,14 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           yield* updateExtensionStatus(event);
           return;
         }
+        if (
+          declinedRunSettling &&
+          event["type"] !== "extension_ui_request" &&
+          !String(event["type"]).startsWith("t3.")
+        ) {
+          if (event["type"] === "agent_settled") declinedRunSettling = false;
+          return;
+        }
         // Model hooks can show dialogs before turn ownership; keep requests session-scoped and buffer output.
         const interactiveUiRequest =
           event["type"] === "extension_ui_request" &&
@@ -2078,6 +2140,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         const turn = state?.activeTurn ?? null;
         switch (event["type"]) {
           case "agent_start": {
+            // A held run starts but waits at its first model request, so it is not unsolicited.
+            if (turn === null && heldRunAdmission !== null) return;
             if (
               turn === null &&
               state?.providerThread.appThreadId != null &&
@@ -2356,11 +2420,22 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             return;
           }
           case "agent_settled": {
+            // The held run ended on its own before any turn admitted it; nothing is left to admit.
+            if (turn === null && heldRunAdmission !== null) {
+              yield* answerRunAdmission(heldRunAdmission, true);
+              heldRunAdmission = null;
+              return;
+            }
             if (turn?.interrupted === true) {
               if (state !== null) yield* finalizeTurn(state);
               return;
             }
             if (turn !== null) {
+              const deferred = promptsAfterAdmittedRun;
+              promptsAfterAdmittedRun = [];
+              for (const prompt of deferred) {
+                if (prompt.providerTurnId === turn.providerTurn.id) yield* sendPrompt(prompt);
+              }
               turn.nativeAborted = event["aborted"] === true;
               turn.settleWhenIdle = true;
               turn.settleProbeGeneration += 1;
@@ -2527,8 +2602,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             if (requestId === undefined) return;
             const pending = pendingPrompts.get(requestId);
             if (pending === undefined || pending !== event["pending"]) return;
-            pendingPrompts.delete(requestId);
-            yield* cancelPrompt(pending, yield* DateTime.now);
+            const expiredAt = yield* DateTime.now;
+            forgetPrompt(requestId, expiredAt);
+            yield* cancelPrompt(pending, expiredAt);
             return;
           }
           case "t3.flush_extension_errors": {
@@ -3184,6 +3260,14 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 state.providerThread = turnInput.providerThread;
                 state.activeTurn = activeTurn;
                 activeTurn.adoptedWake = wake !== null && !continuation;
+                // The selection is applied and this turn owns the session, so the held run may start.
+                const admittedRun = heldRunAdmission !== null && !continuation;
+                if (heldRunAdmission !== null && admittedRun) {
+                  yield* answerRunAdmission(heldRunAdmission, true);
+                  heldRunAdmission = null;
+                  activeTurn.adoptedWake = true;
+                  activeTurn.sawAgentActivity = true;
+                }
                 if (compactCommand !== null) {
                   yield* connection.send(compactRpcRecord(compactCommand));
                   pendingCompactResponses.push({
@@ -3191,7 +3275,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                     kind: "turn_start",
                   });
                 } else if (payload !== null) {
-                  yield* sendPrompt({
+                  const prompt: PiPromptSend = {
                     providerTurnId: providerTurn.id,
                     kind: "turn_start",
                     record: {
@@ -3200,7 +3284,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                       streamingBehavior: "steer",
                       ...(payload.images.length === 0 ? {} : { images: payload.images }),
                     },
-                  });
+                  };
+                  if (admittedRun) promptsAfterAdmittedRun = [prompt];
+                  else yield* sendPrompt(prompt);
                 }
                 yield* emit({
                   type: "provider_turn.updated",
@@ -3289,7 +3375,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                     kind: "steer",
                   });
                 } else if (payload !== null) {
-                  yield* sendPrompt({
+                  const prompt: PiPromptSend = {
                     providerTurnId: turn.providerTurn.id,
                     kind: "steer",
                     messageId: steerInput.message.messageId,
@@ -3299,7 +3385,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                       streamingBehavior: "steer",
                       ...(payload.images.length === 0 ? {} : { images: payload.images }),
                     },
-                  });
+                  };
+                  if (promptsAfterAdmittedRun[0]?.providerTurnId === turn.providerTurn.id)
+                    promptsAfterAdmittedRun.push(prompt);
+                  else yield* sendPrompt(prompt);
                 }
                 turn.settleProbeGeneration += 1;
               }),
@@ -3385,7 +3474,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               pending.expiresAt !== null &&
               DateTime.toEpochMillis(answeredAt) >= pending.expiresAt
             ) {
-              pendingPrompts.delete(String(requestInput.requestId));
+              forgetPrompt(String(requestInput.requestId), answeredAt);
               yield* cancelPrompt(pending, answeredAt);
               return yield* protocolError(
                 `Pi extension request ${requestInput.requestId} has expired`,
@@ -3397,7 +3486,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               id: pending.nativeRequestId,
               ...response,
             });
-            pendingPrompts.delete(String(requestInput.requestId));
+            forgetPrompt(String(requestInput.requestId), answeredAt);
             if (pending.expirationFiber !== null) yield* Fiber.interrupt(pending.expirationFiber);
             if (pending.method === "confirm" && requestInput.decision === "acceptForSession") {
               sessionApprovals.add(pending.approvalKey);
