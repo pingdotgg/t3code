@@ -62,6 +62,7 @@ import { pendingServiceUpdateExists } from "./updateHandoff.ts";
 import { managedTunnelStartupAction } from "./managedTunnelStartup.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import * as ServerSettings from "../serverSettings.ts";
 
 const storeFailure = (tag: "AlreadyExists" | "PermissionDenied") =>
   new ServerSecretStore.SecretStorePersistError({
@@ -183,6 +184,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
           CloudLink.layer.pipe(
             Layer.provide(EnvironmentKeys.layer),
             Layer.provide(ManagedPolicy.layerTest()),
+            Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
           ),
         ),
         Effect.provideService(
