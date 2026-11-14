@@ -39,6 +39,9 @@ apps/server/src/orchestration-v2
 :(exclude)apps/server/src/orchestration-v2/Adapters
 :(exclude)apps/server/src/orchestration-v2/testkit
 packages/contracts/src/orchestrationV2.ts
+apps/server/src/checkpointing
+packages/contracts/src/checkpointDiff.ts
+packages/client-runtime/src/state/threadCheckpoints.ts
 
 [crates/conn-mcp]
 apps/server/src/mcp
@@ -77,6 +80,19 @@ apps/server/src/git
 apps/server/src/review
 apps/server/src/sourceControl
 apps/server/src/worktreesDirectory.ts
+
+[crates/conn-source-control]
+apps/server/src/sourceControl
+apps/server/src/pullRequest
+packages/source-control-core
+packages/source-control-definitions
+packages/source-control-github
+packages/source-control-gitlab
+packages/source-control-bitbucket
+packages/source-control-azure-devops
+packages/source-control-forgejo
+packages/source-control-gitcafe
+packages/source-control-cursor-origin
 
 [crates/conn-files]
 apps/server/src/workspace

@@ -162,6 +162,7 @@ pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
     config.idle_session = session_idle;
     config.host = Some(host.clone());
     config.turn_observer = Some(host.clone());
+    config.checkpoints = true;
     let engine: Arc<dyn Engine> = Arc::new(or_exit(
         SqliteEngine::open(config),
         "cannot open the engine",

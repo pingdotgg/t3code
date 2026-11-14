@@ -16,6 +16,7 @@ mod projects;
 pub mod provider;
 mod scheduled;
 pub mod server;
+mod source_control;
 pub mod terminal;
 pub mod vcs;
 
@@ -58,4 +59,5 @@ pub fn register_all(table: &mut MethodTable, deps: &Deps) {
     terminal::register(table, deps);
     scheduled::register(table, deps);
     annotations::register(table, deps);
+    source_control::register(table, deps);
 }

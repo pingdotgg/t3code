@@ -9,6 +9,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { importSource, packageImporter } from "../../../tools/monorepo.mjs";
+import { sealedEnv } from "../../../tools/sealed-env.mjs";
 
 // Packages resolve as packages/contracts sees them, so the sources share one `effect`.
 const load = packageImporter("packages/contracts");
@@ -43,7 +44,7 @@ const stateDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "conn-server-
 const server = NodeChildProcess.spawn(
   binary,
   fixture ? [stateDir] : ["--listen", "127.0.0.1:0", "--state-dir", stateDir],
-  { stdio: ["ignore", "pipe", "pipe"] },
+  { stdio: ["ignore", "pipe", "pipe"], env: sealedEnv(stateDir) },
 );
 const stderr = [];
 server.stderr.on("data", (data) => stderr.push(String(data)));
@@ -283,6 +284,9 @@ const decodeEach = (client) =>
     yield* call("orchestration.forceStopThread", { threadId: none });
     yield* call("orchestration.getNativeChildWork", { threadId: none });
     yield* call("orchestration.getThreadFamily", { threadId: none });
+    // Checkpoint diffs: an empty range answers, an unknown thread is a typed error.
+    yield* call("orchestration.getFullThreadDiff", { threadId: none, toTurnCount: 0 });
+    yield* call("orchestration.getTurnDiff", { threadId: none, fromTurnCount: 0, toTurnCount: 1 });
     yield* call("orchestration.getThreadLinkMetadata", { threadIds: [none] });
     yield* call("orchestration.getThreadTitles", { threadIds: [none] });
     yield* call("orchestration.getWorktreeThreadIds", { worktreePath: repo });
@@ -306,6 +310,17 @@ const decodeEach = (client) =>
     yield* call("shell.openInEditor", { cwd: repo, editor: "vscode" });
     yield* call("terminal.clear", { threadId: none, terminalId: "default" });
     yield* call("terminal.observe", { threadId: none, terminalId: "default" });
+    // Source control: every host probed, with no login or token of this machine (sealedEnv).
+    yield* call("server.discoverSourceControl", {});
+    // As a T3 server without an app client id: typed refusals, signed-out, not starred.
+    const signIn = { provider: "github", host: "github.com" };
+    yield* call("sourceControl.signInStart", signIn);
+    yield* call("sourceControl.signInWait", signIn);
+    yield* call("sourceControl.signInCancel", signIn);
+    const repository = { ...signIn, repository: "pingdotgg/t3code" };
+    yield* call("sourceControl.appAccess", repository);
+    yield* call("sourceControl.starred", repository);
+    yield* call("sourceControl.star", { ...repository, provider: "gitlab" });
   });
 
 const result = await Effect.runPromiseExit(program);

@@ -1,14 +1,11 @@
-//! `vcs.*`, `subscribeVcsStatus`, `subscribeVcsBranch`, `review.*`, worktree setup and
-//! `server.discoverSourceControl`. Owner: the VCS and review track. The git work lives in
+//! `vcs.*`, `subscribeVcsStatus`, `subscribeVcsBranch`, `review.*` and worktree setup. Owner:
+//! the VCS and review track (`server.discoverSourceControl` moved to `source_control.rs`). The git work lives in
 //! `conn-vcs`; this file decodes, calls one function, and maps errors.
 //!
 //! [`VcsShared`] sits in `Deps` because the engine needs the same hub (refresh status when a
 //! turn ends) and the same setup tracker (launch into a worktree).
 
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::path::{Path, PathBuf};
 
 use conn_contract::{
     OrchestrationV2GetThreadFamilyInput, OrchestrationV2ShellSnapshot, ReviewBranchCommitsInput,
@@ -20,7 +17,7 @@ use conn_contract::{
     VcsSwitchRefInput, WorktreeSetupCancelResult, to_json,
 };
 use conn_vcs::{
-    VcsError, VcsHub, WorktreeSetups, discovery,
+    VcsError, VcsHub, WorktreeSetups,
     hub::{Remote, Sink},
     refs, review, worktree,
 };
@@ -419,17 +416,11 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
             async move { Ok(WorktreeSetupCancelResult { cancelled }) }
         },
     );
-
-    let cwd = Arc::new(server_cwd.unwrap_or_else(std::env::temp_dir));
-    table.unary("server.discoverSourceControl", move |_, _: Value| {
-        let cwd = cwd.clone();
-        async move { Ok::<_, Failure>(discovery::discover(&cwd).await) }
-    });
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{process::Command, time::Duration};
+    use std::{process::Command, sync::Arc, time::Duration};
 
     use serde_json::json;
 
@@ -765,15 +756,6 @@ mod tests {
                 .await
                 .unwrap(),
             json!({ "cancelled": true })
-        );
-
-        let discovered = unary(&table, "server.discoverSourceControl", json!({}))
-            .await
-            .unwrap();
-        assert_eq!(discovered["versionControlSystems"][0]["kind"], "git");
-        assert_eq!(
-            discovered["versionControlSystems"][0]["status"],
-            "available"
         );
 
         drop((status, branch, setup));
