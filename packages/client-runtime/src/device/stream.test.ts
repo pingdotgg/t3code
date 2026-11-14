@@ -154,6 +154,162 @@ describe("native device stream transport", () => {
       expect(vi.getTimerCount()).toBe(0);
     },
   );
+  it("types AltGr characters on Android and skips Ctrl shortcuts", async () => {
+    const { client, opened } = setup("android");
+    client.start();
+    const socket = await opened;
+    socket.onopen?.();
+    socket.send.mockClear();
+    const press = (key: string, ctrlKey: boolean, altGraph: boolean) =>
+      client.sendKey(
+        {
+          key,
+          code: "Digit0",
+          ctrlKey,
+          altKey: ctrlKey,
+          metaKey: false,
+          shiftKey: false,
+          getModifierState: (name: string) => name === "AltGraph" && altGraph,
+        } as unknown as KeyboardEvent,
+        "down",
+      );
+    // Firefox on Windows also reports AltGr as Ctrl and Alt.
+    press("@", true, true);
+    press("@", false, true);
+    press("0", true, false);
+    expect(socket.send.mock.calls).toEqual([
+      [JSON.stringify({ type: "text", text: "@" })],
+      [JSON.stringify({ type: "text", text: "@" })],
+    ]);
+    client.stop();
+  });
+
+  const connectIosKeys = async (usLayout = true) => {
+    const { client, opened } = setup("ios");
+    client.start();
+    const socket = await opened;
+    socket.onopen?.();
+    socket.onmessage?.({ data: Uint8Array.of(0x83).buffer });
+    const take = () => {
+      const keys = socket.send.mock.calls.map(([packet]) => {
+        const { type, usage } = JSON.parse(new TextDecoder().decode(packet.subarray(1)));
+        return `${type} ${usage.toString(16)}`;
+      });
+      socket.send.mockClear();
+      return keys;
+    };
+    take();
+    type Modifiers = Partial<Record<"shiftKey" | "ctrlKey" | "altKey" | "metaKey", boolean>>;
+    const keyEvent = (code: string, key: string, modifiers: Modifiers = {}, altGraph = false) =>
+      ({
+        code,
+        key,
+        shiftKey: false,
+        ctrlKey: false,
+        altKey: false,
+        metaKey: false,
+        ...modifiers,
+        getModifierState: (name: string) => name === "AltGraph" && altGraph,
+      }) as unknown as KeyboardEvent;
+    const press = (...args: Parameters<typeof keyEvent>) => {
+      const event = keyEvent(...args);
+      client.sendKey(event, "down", usLayout);
+      client.sendKey(event, "up", usLayout);
+    };
+    return { client, take, keyEvent, press };
+  };
+
+  it("types the character from the user's layout with the simulator's US keys", async () => {
+    vi.stubGlobal("navigator", { platform: "Win32" });
+    const { client, take, keyEvent, press } = await connectIosKeys();
+    const ctrlAlt = { ctrlKey: true, altKey: true };
+    const shifted = (usage: string) => ["down e1", `down ${usage}`, `up ${usage}`, "up e1"];
+
+    // Windows AZERTY keys.
+    press("KeyQ", "a");
+    expect(take()).toEqual(["down 4", "up 4"]);
+    press("ControlLeft", "Control", { ctrlKey: true });
+    press("AltRight", "AltGraph", ctrlAlt, true);
+    press("Digit0", "@", ctrlAlt, true);
+    // Chromium on Windows reports AltGr without Ctrl and Alt.
+    press("Digit0", "@", {}, true);
+    expect(take()).toEqual([...shifted("1f"), ...shifted("1f")]);
+    press("Comma", ".", { shiftKey: true });
+    expect(take()).toEqual(["down 37", "up 37"]);
+    press("BracketLeft", "Dead");
+    press("KeyE", "ê");
+    expect(take()).toEqual(["down e2", "down c", "up c", "up e2", "down 8", "up 8"]);
+    press("Digit2", "É", { shiftKey: true });
+    expect(take()).toEqual(["down e2", "down 8", "up 8", "up e2", ...shifted("8")]);
+    press("KeyE", "€", ctrlAlt, true);
+    expect(take()).toEqual(["down e2", ...shifted("1f"), "up e2"]);
+    // A character with no US key goes by its key position.
+    press("Backquote", "²");
+    expect(take()).toEqual(["down 35", "up 35"]);
+
+    // Shortcuts keep their modifiers and use the letter on the key. Ctrl is Command on iOS.
+    client.sendKey(keyEvent("ShiftLeft", "Shift", { shiftKey: true }), "down");
+    press("ArrowLeft", "ArrowLeft", { shiftKey: true });
+    expect(take()).toEqual(["down e1", "down 50", "up 50"]);
+    press("KeyQ", "a", { ctrlKey: true, shiftKey: true });
+    expect(take()).toEqual(["down e3", "down 4", "up 4"]);
+    client.sendKey(keyEvent("ShiftLeft", "Shift", { ctrlKey: true }), "up");
+    expect(take()).toEqual(["up e1"]);
+    client.sendKey(keyEvent("ControlLeft", "Control"), "up");
+    expect(take()).toEqual(["up e3"]);
+    press("KeyH", "h", ctrlAlt);
+    client.sendKey(keyEvent("AltLeft", "Alt"), "up");
+    expect(take()).toEqual(["down e3", "down e2", "down b", "up b", "up e3", "up e2"]);
+
+    // Mac Option characters and Ctrl+Option shortcuts.
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
+    press("KeyP", "π", { altKey: true });
+    press("KeyH", "˙", ctrlAlt);
+    client.sendKey(keyEvent("AltLeft", "Alt"), "up");
+    expect(take()).toEqual([
+      "down e2",
+      "down 13",
+      "up 13",
+      "down e0",
+      "down b",
+      "up b",
+      "up e0",
+      "up e2",
+    ]);
+    // A Mac browser sends no keyup for the letter.
+    client.sendKey(keyEvent("KeyQ", "a", { metaKey: true }), "down");
+    client.sendKey(keyEvent("MetaLeft", "Meta"), "up");
+    expect(take()).toEqual(["down e3", "down 4", "up 4", "up e3"]);
+    client.stop();
+  });
+
+  it("sends the key places to a simulator keyboard that is not US", async () => {
+    vi.stubGlobal("navigator", { platform: "Win32" });
+    const { client, take, press } = await connectIosKeys(false);
+    const ctrlAlt = { ctrlKey: true, altKey: true };
+
+    // Windows Russian keys.
+    press("KeyG", "П", { shiftKey: true });
+    press("Slash", ",", { shiftKey: true });
+    press("KeyB", "и");
+    expect(take()).toEqual([
+      "down e1",
+      "down a",
+      "up a",
+      "down 38",
+      "up 38",
+      "up e1",
+      "down 5",
+      "up 5",
+    ]);
+    // AltGr is Option, not Command and Option.
+    press("Digit0", "@", ctrlAlt, true);
+    expect(take()).toEqual(["down e2", "down 27", "up 27"]);
+    // Shortcuts use the key place, which has the same letter on both keyboards.
+    press("KeyA", "ф", { ctrlKey: true });
+    expect(take()).toEqual(["down e3", "up e2", "down 4", "up 4"]);
+    client.stop();
+  });
 });
 
 describe("iOS keypad protocol", () => {
@@ -228,7 +384,7 @@ describe("iOS keypad protocol", () => {
       ] as const;
       for (const [code] of keys) {
         for (const phase of ["down", "up"] as const) {
-          client.sendKey({ code } as KeyboardEvent, phase);
+          client.sendKey({ code, key: "Unidentified" } as KeyboardEvent, phase);
         }
       }
       const decoder = new TextDecoder();

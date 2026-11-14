@@ -489,14 +489,15 @@ const readIos = Effect.fn("DeviceActions.readIos")(function* (
     quiet(
       simctl(run, udid, ["ui", option], option).pipe(Effect.map((out) => out.trim().toLowerCase())),
     );
-  const [appearance, contentSize, contrast, axStatus] = yield* Effect.all(
+  const [appearance, contentSize, contrast, axStatus, keyboardLayout] = yield* Effect.all(
     [
       uiValue("appearance"),
       uiValue("content_size"),
       uiValue("increase_contrast"),
       quiet(axSettings(ready, udid, ["status"]).pipe(Effect.flatMap(decodeAxStatus))),
+      readIosKeyboardLayout(run, udid),
     ],
-    { concurrency: 4 },
+    { concurrency: 5 },
   );
   const onOff = (value: string | undefined) =>
     value === "on" ? true : value === "off" ? false : undefined;
@@ -526,8 +527,71 @@ const readIos = Effect.fn("DeviceActions.readIos")(function* (
             : {}),
         }
       : {}),
+    ...(keyboardLayout
+      ? { usKeyboardLayout: keyboardLayout === "US" || keyboardLayout === "ABC" }
+      : {}),
   };
   return { settings, foregroundApp: null };
+});
+
+const decodeInputModes = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      UIKeyboardDefaultLanguageInputModes: Schema.optional(
+        Schema.Record(Schema.String, Schema.Array(Schema.String)),
+      ),
+      UIKeyboardSupportedInputModes: Schema.Record(
+        Schema.String,
+        Schema.Struct({
+          Hardware: Schema.optional(Schema.Struct({ Layout: Schema.optional(Schema.String) })),
+          HWLayouts: Schema.optional(Schema.Array(Schema.String)),
+        }),
+      ),
+    }),
+  ),
+);
+
+// Measured on iOS 27: iOS reads the keyboard list only when AppleKeyboardsExpanded is 1. Then the
+// first KeyboardsCurrentAndNext entry, else the first AppleKeyboards entry, sets the layout at boot.
+// Otherwise the default keyboard of the first language sets it. hw=Automatic, or no list, means
+// the keyboard's default layout from the runtime's InputMode plist, for example fr_FR gives French.
+const readIosKeyboardLayout = Effect.fn("DeviceActions.readIosKeyboardLayout")(function* (
+  run: Runner,
+  udid: string,
+) {
+  const read = (...args: Array<string>) => quiet(simctl(run, udid, args, "readKeyboard"));
+  const defaults = (domain: string, key: string) => read("spawn", "defaults", "read", domain, key);
+  const firstItem = (list: string | undefined) =>
+    list?.split("\n")[1]?.match(/^\s*"?([^",]+)/)?.[1];
+
+  const expanded = (yield* defaults("-g", "AppleKeyboardsExpanded"))?.trim() === "1";
+  const keyboard = expanded
+    ? (firstItem(yield* defaults("com.apple.keyboard.preferences", "KeyboardsCurrentAndNext")) ??
+      firstItem(yield* defaults("-g", "AppleKeyboards")))
+    : undefined;
+  const [, listedMode, listedLayout] = keyboard?.match(/^([^@]+)@.*hw=([^;]+)/) ?? [];
+  if (listedLayout && listedLayout !== "Automatic") return listedLayout;
+
+  const language = listedMode ?? firstItem(yield* defaults("-g", "AppleLanguages"));
+  const base = language?.split(/[_-]/)[0];
+  const root = (yield* read("getenv", "SIMULATOR_ROOT"))?.trim();
+  if (!language || !base || !/^[a-z]+$/.test(base) || !root) return undefined;
+  const plist = `${root}/System/Library/TextInput/TextInput_${base}.bundle/InputMode_${base}.plist`;
+  const modes = yield* quiet(
+    run("plutil", ["-convert", "json", "-o", "-", plist]).pipe(
+      Effect.flatMap(ok("readKeyboard")),
+      Effect.flatMap(decodeInputModes),
+    ),
+  );
+  const parts = language.split("-");
+  const mode =
+    listedMode ??
+    parts
+      .map((_, i) => parts.slice(0, parts.length - i).join("_"))
+      .map((key) => modes?.UIKeyboardDefaultLanguageInputModes?.[key]?.[0]?.split("@")[0])
+      .find((value) => value !== undefined);
+  const supported = mode ? modes?.UIKeyboardSupportedInputModes[mode] : undefined;
+  return supported?.Hardware?.Layout ?? supported?.HWLayouts?.[0];
 });
 
 const isColorFilter = (value: unknown): value is DeviceSettings["colorFilter"] & string =>

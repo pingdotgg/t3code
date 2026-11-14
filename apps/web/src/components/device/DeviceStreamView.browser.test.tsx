@@ -1,5 +1,6 @@
 import { RegistryContext } from "@effect/atom-react";
-import { AtomRegistry } from "effect/reactivity";
+import { Effect } from "effect";
+import { Atom, AtomRegistry } from "effect/reactivity";
 import "~/index.css";
 import { EnvironmentId } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
@@ -9,16 +10,19 @@ import { act, render, stubGlobal } from "../../../test/render";
 vi.mock(import("~/state/device"), async (original) => ({
   ...(await original()),
   useDeviceHubAccess: () => access,
+  deviceDetailReadAtom: () => Atom.make(Effect.never),
 }));
 vi.mock(import("./DevicePhoneViewport"), () => ({
   DevicePhoneViewport: () => <></>,
 }));
 import { DeviceStreamView } from "./DeviceStreamView";
+import { deviceDetailAtom } from "~/state/device";
 
 const access = { httpBase: "http://test", wsBase: "ws://test", query: {}, credentials: true };
 function setup() {
   const registry = AtomRegistry.make();
   const touches: unknown[] = [];
+  const keys: string[] = [];
   const image = vi.spyOn(HTMLImageElement.prototype, "src", "set").mockImplementation(() => {});
   // Select MJPEG without starting a WebCodecs decoder. Input uses the real stream client.
   const decoder = stubGlobal("VideoDecoder", undefined);
@@ -45,6 +49,10 @@ function setup() {
         if (typeof message !== "string" && message[0] === 0x03) {
           touches.push(JSON.parse(new TextDecoder().decode(message.subarray(1))));
         }
+        if (typeof message !== "string" && message[0] === 0x06) {
+          const { type, usage } = JSON.parse(new TextDecoder().decode(message.subarray(1)));
+          keys.push(`${type} ${usage.toString(16)}`);
+        }
       }
       close() {}
     },
@@ -63,6 +71,17 @@ function setup() {
       decoder[Symbol.dispose]();
     },
     touches,
+    keys,
+    readLayout(usKeyboardLayout: boolean | "failed") {
+      const key = { environmentId: EnvironmentId.make("test"), hostId: "local", deviceId: "test" };
+      const detail = { ...key, foregroundApp: null, readAt: "" };
+      registry.set(
+        deviceDetailAtom(key),
+        usKeyboardLayout === "failed"
+          ? { detail: null, error: "read failed" }
+          : { detail: { ...detail, settings: { usKeyboardLayout } }, error: null },
+      );
+    },
     async configure(inputUnavailable = false) {
       const json = new TextEncoder().encode(
         JSON.stringify({ width: 400, height: 800, orientation: "portrait", inputUnavailable }),
@@ -205,4 +224,38 @@ it("releases flat pointer ownership when input disconnects", async () => {
     { type: "begin", x: 0.5, y: 0.5 },
     { type: "end", x: 0.75, y: 0.75 },
   ]);
+});
+
+it("sends Mac editing shortcuts to the simulator and leaves the rest to the browser", async () => {
+  using input = setup();
+  Object.defineProperty(navigator, "platform", { value: "MacIntel", configurable: true });
+  using _platform = { [Symbol.dispose]: () => Reflect.deleteProperty(navigator, "platform") };
+  const { configure, keys } = input;
+  await using screen = await render(input.view(), options);
+  await act(async () => configure());
+  await expect.element(screen.getByText("Input connected", { exact: true })).toBeVisible();
+  const host = screen.getByRole("application").element() as HTMLElement;
+  const press = (code: string, key: string) =>
+    host.dispatchEvent(
+      new KeyboardEvent("keydown", { code, key, metaKey: true, bubbles: true, cancelable: true }),
+    );
+  expect(press("KeyL", "l")).toBe(true);
+  expect(press("KeyA", "a")).toBe(false);
+  expect(keys).toEqual([]);
+  await act(async () => input.readLayout(true));
+  expect(keys).toEqual(["down e3", "down 4", "up 4"]);
+  expect(press("KeyC", "с")).toBe(false);
+  expect(keys.slice(3)).toEqual(["down 6", "up 6"]);
+});
+
+it("sends keys typed before a failed layout read with the US layout", async () => {
+  using input = setup();
+  await using screen = await render(input.view(), options);
+  await act(async () => input.configure());
+  await expect.element(screen.getByText("Input connected", { exact: true })).toBeVisible();
+  const host = screen.getByRole("application").element() as HTMLElement;
+  host.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyQ", key: "q", bubbles: true }));
+  expect(input.keys).toEqual([]);
+  await act(async () => input.readLayout("failed"));
+  expect(input.keys).toEqual(["down 14", "up 14"]);
 });
