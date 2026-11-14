@@ -1032,6 +1032,11 @@ export const make = Effect.gen(function* () {
     );
   };
 
+  // T3 Connect credential issuance, DPoP exchanges and device revocation take turns. Two mints
+  // at once would open two requests with one code, and a revoke landing between an exchange
+  // spending its credential and trusting the key would be undone by that exchange.
+  const connectTrustLock = yield* Semaphore.make(1);
+
   const exchangeBootstrapCredentialForAccessToken: EnvironmentAuth["Service"]["exchangeBootstrapCredentialForAccessToken"] =
     (credential, requestedScopes, requestMetadata, input) => {
       return resolveBootstrapGrant(credential, {
@@ -1100,6 +1105,8 @@ export const make = Effect.gen(function* () {
             ),
           ),
         ),
+        (exchange) =>
+          input?.proofKeyThumbprint ? connectTrustLock.withPermits(1)(exchange) : exchange,
         Effect.withSpan("EnvironmentAuth.exchangeBootstrapCredentialForAccessToken"),
       );
     };
@@ -1184,14 +1191,11 @@ export const make = Effect.gen(function* () {
           .recordConnectRequestClient(pairingLinkId, client)
           .pipe(Effect.mapError((cause) => new ServerAuthConnectDevicesError({ cause })));
 
-  // Finding a device's open request and creating one must not interleave, or two mints at
-  // once would leave two requests with the same code.
-  const connectIssueLock = yield* Semaphore.make(1);
   const issueConnectCredential: EnvironmentAuth["Service"]["issueConnectCredential"] = Effect.fn(
     "EnvironmentAuth.issueConnectCredential",
   )(function* ({ proofKeyThumbprint, requireApproval }) {
     return yield* issueConnectCredentialLocked({ proofKeyThumbprint, requireApproval }).pipe(
-      connectIssueLock.withPermits(1),
+      connectTrustLock.withPermits(1),
     );
   });
   // Untraced: the issueConnectCredential span above already covers it.
@@ -1257,13 +1261,15 @@ export const make = Effect.gen(function* () {
   const revokeConnectDevice: EnvironmentAuth["Service"]["revokeConnectDevice"] = Effect.fn(
     "EnvironmentAuth.revokeConnectDevice",
   )(function* (proofKeyThumbprint) {
-    const removed = yield* bootstrapCredentials
-      .revokeConnectDevice(proofKeyThumbprint)
-      .pipe(Effect.mapError((cause) => new ServerAuthConnectDevicesError({ cause })));
-    const revokedSessions = yield* sessions
-      .revokeByProofKey(proofKeyThumbprint)
-      .pipe(Effect.mapError((cause) => new ServerAuthSessionRevocationError({ cause })));
-    return removed || revokedSessions > 0;
+    return yield* Effect.gen(function* () {
+      const removed = yield* bootstrapCredentials
+        .revokeConnectDevice(proofKeyThumbprint)
+        .pipe(Effect.mapError((cause) => new ServerAuthConnectDevicesError({ cause })));
+      const revokedSessions = yield* sessions
+        .revokeByProofKey(proofKeyThumbprint)
+        .pipe(Effect.mapError((cause) => new ServerAuthSessionRevocationError({ cause })));
+      return removed || revokedSessions > 0;
+    }).pipe(connectTrustLock.withPermits(1));
   });
 
   const revokeConnectDeviceByCode: EnvironmentAuth["Service"]["revokeConnectDeviceByCode"] =
@@ -1410,10 +1416,12 @@ export const make = Effect.gen(function* () {
       const currentProofKey = yield* sessions
         .proofKeyThumbprintOf(currentSessionId)
         .pipe(Effect.mapError((cause) => new ServerAuthOtherSessionsRevocationError({ cause })));
-      yield* bootstrapCredentials
-        .revokeConnectDevicesExcept(Option.getOrNull(currentProofKey))
-        .pipe(Effect.mapError((cause) => new ServerAuthConnectDevicesError({ cause })));
-      return yield* revokeOtherSessionsExcept(currentSessionId);
+      return yield* Effect.gen(function* () {
+        yield* bootstrapCredentials
+          .revokeConnectDevicesExcept(Option.getOrNull(currentProofKey))
+          .pipe(Effect.mapError((cause) => new ServerAuthConnectDevicesError({ cause })));
+        return yield* revokeOtherSessionsExcept(currentSessionId);
+      }).pipe(connectTrustLock.withPermits(1));
     });
 
   const issueStartupPairingUrl: EnvironmentAuth["Service"]["issueStartupPairingUrl"] = (baseUrl) =>
