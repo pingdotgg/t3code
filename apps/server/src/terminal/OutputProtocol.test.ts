@@ -9,80 +9,99 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
-import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { Rpc, RpcGroup, RpcMessage, RpcSerialization, RpcServer } from "effect/rpc";
 
 import { terminalOutputStream, withOutputWindow } from "./OutputProtocol.ts";
 
+const eventWith = (
+  field: "data" | "message" | "threadId",
+  text: string,
+): TerminalAttachStreamEvent =>
+  field === "message"
+    ? { threadId: "thread-1", terminalId: "default", type: "error", message: text }
+    : {
+        threadId: field === "threadId" ? text : "thread-1",
+        terminalId: "default",
+        type: "output",
+        data: field === "data" ? text : "x",
+      };
+
 describe("terminal output window", () => {
   it.effect.each([
-    { tag: WS_METHODS.terminalAttach, size: 1, limit: 8 },
-    { tag: WS_METHODS.terminalObserve, size: 1, limit: 8 },
-    { tag: WS_METHODS.terminalAttach, size: 64 * 1024, limit: 1 },
-    { tag: WS_METHODS.terminalObserve, size: 64 * 1024, limit: 1 },
-    { tag: WS_METHODS.subscribeServerConfig, size: 1, limit: 8 },
-    { tag: ORCHESTRATION_V2_WS_METHODS.subscribeShell, size: 1, limit: 8 },
-    { tag: ORCHESTRATION_V2_WS_METHODS.subscribeThread, size: 64 * 1024, limit: 8 },
-    { tag: WS_METHODS.subscribeTerminalMetadata, size: 1, limit: 1 },
-  ])("limits $tag with $size-byte values to $limit pending chunks", ({ tag, size, limit }) =>
-    Effect.gen(function* () {
-      const group = RpcGroup.make(Rpc.make(tag, { success: Schema.String, stream: true }));
-      const output = yield* Queue.unbounded<string>();
-      const responses = yield* Queue.unbounded<RpcMessage.FromServerEncoded>();
-      const receive = yield* Deferred.make<Parameters<RpcServer.Protocol["Service"]["run"]>[0]>();
-      const protocol = yield* RpcServer.Protocol.make((write) =>
-        Effect.gen(function* () {
-          yield* Deferred.succeed(receive, write);
-          const serialization = yield* RpcSerialization.RpcSerialization;
-          return {
-            disconnects: yield* Queue.unbounded<number>(),
-            send: (_clientId, response) => Queue.offer(responses, response),
-            end: () => Effect.void,
-            clientIds: Effect.succeed(new Set([0])),
-            initialMessage: Effect.succeedNone,
-            supportsAck: true,
-            supportsTransferables: false,
-            supportsSpanPropagation: false,
-            supportsNotifications: true,
-            codecFor: serialization.codecFor,
-          };
-        }),
-      );
-      yield* RpcServer.make(group).pipe(
-        Effect.provide(group.toLayerHandler(tag, () => Stream.fromQueue(output))),
-        Effect.provideService(RpcServer.Protocol, withOutputWindow(protocol)),
-        Effect.forkScoped,
-      );
-      const write = yield* Deferred.await(receive);
-      yield* write(0, { _tag: "Request", id: "1", tag, payload: null, headers: [] });
+    { tag: WS_METHODS.terminalAttach, field: "data", size: 1, limit: 8 },
+    { tag: WS_METHODS.terminalObserve, field: "data", size: 1, limit: 8 },
+    { tag: WS_METHODS.terminalAttach, field: "data", size: 64 * 1024, limit: 1 },
+    { tag: WS_METHODS.terminalObserve, field: "data", size: 64 * 1024, limit: 1 },
+    { tag: WS_METHODS.terminalAttach, field: "message", size: 64 * 1024, limit: 1 },
+    { tag: WS_METHODS.terminalAttach, field: "threadId", size: 64 * 1024, limit: 1 },
+    { tag: WS_METHODS.subscribeServerConfig, field: "data", size: 1, limit: 8 },
+    { tag: ORCHESTRATION_V2_WS_METHODS.subscribeShell, field: "data", size: 1, limit: 8 },
+    { tag: ORCHESTRATION_V2_WS_METHODS.subscribeThread, field: "data", size: 64 * 1024, limit: 8 },
+    { tag: WS_METHODS.subscribeTerminalMetadata, field: "data", size: 1, limit: 1 },
+  ] as const)(
+    "limits $tag with $size-byte $field values to $limit pending chunks",
+    ({ tag, field, size, limit }) =>
+      Effect.gen(function* () {
+        const group = RpcGroup.make(
+          Rpc.make(tag, { success: TerminalAttachStreamEventSchema, stream: true }),
+        );
+        const output = yield* Queue.unbounded<TerminalAttachStreamEvent>();
+        const responses = yield* Queue.unbounded<RpcMessage.FromServerEncoded>();
+        const receive = yield* Deferred.make<Parameters<RpcServer.Protocol["Service"]["run"]>[0]>();
+        const protocol = yield* RpcServer.Protocol.make((write) =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(receive, write);
+            const serialization = yield* RpcSerialization.RpcSerialization;
+            return {
+              disconnects: yield* Queue.unbounded<number>(),
+              send: (_clientId, response) => Queue.offer(responses, response),
+              end: () => Effect.void,
+              clientIds: Effect.succeed(new Set([0])),
+              initialMessage: Effect.succeedNone,
+              supportsAck: true,
+              supportsTransferables: false,
+              supportsSpanPropagation: false,
+              supportsNotifications: true,
+              codecFor: serialization.codecFor,
+            };
+          }),
+        );
+        yield* RpcServer.make(group).pipe(
+          Effect.provide(group.toLayerHandler(tag, () => Stream.fromQueue(output))),
+          Effect.provideService(RpcServer.Protocol, withOutputWindow(protocol)),
+          Effect.forkScoped,
+        );
+        const write = yield* Deferred.await(receive);
+        yield* write(0, { _tag: "Request", id: "1", tag, payload: null, headers: [] });
 
-      for (let index = 0; index < limit; index++) {
-        const value = String(index).repeat(size);
-        yield* Queue.offer(output, value);
+        for (let index = 0; index < limit; index++) {
+          const value = eventWith(field, String(index).repeat(size));
+          yield* Queue.offer(output, value);
+          yield* TestClock.adjust(0);
+          assert.equal(yield* Queue.size(responses), 1);
+          assert.deepEqual(yield* Queue.take(responses), {
+            _tag: "Chunk",
+            requestId: "1",
+            values: [value],
+          });
+        }
+        const resumedValue = eventWith(field, "i".repeat(size));
+        yield* Queue.offer(output, resumedValue);
         yield* TestClock.adjust(0);
-        assert.equal(yield* Queue.size(responses), 1);
-        assert.deepEqual(yield* Queue.take(responses), {
-          _tag: "Chunk",
-          requestId: "1",
-          values: [value],
-        });
-      }
-      yield* Queue.offer(output, "i".repeat(size));
-      yield* TestClock.adjust(0);
-      assert.equal(yield* Queue.size(responses), 0);
-      yield* write(0, { _tag: "Ack", requestId: "1" });
-      const resumed = yield* Queue.take(responses);
-      assert.equal(resumed._tag, "Chunk");
-      if (resumed._tag === "Chunk") assert.deepEqual(resumed.values, ["i".repeat(size)]);
+        assert.equal(yield* Queue.size(responses), 0);
+        yield* write(0, { _tag: "Ack", requestId: "1" });
+        const resumed = yield* Queue.take(responses);
+        assert.equal(resumed._tag, "Chunk");
+        if (resumed._tag === "Chunk") assert.deepEqual(resumed.values, [resumedValue]);
 
-      yield* Queue.offer(output, "j");
-      yield* TestClock.adjust(0);
-      assert.equal(yield* Queue.size(responses), 0);
-      yield* write(0, { _tag: "Interrupt", requestId: "1" });
-      assert.equal((yield* Queue.take(responses))._tag, "Exit");
-    }).pipe(Effect.provide(RpcSerialization.layerJson), Effect.scoped),
+        yield* Queue.offer(output, eventWith(field, "j"));
+        yield* TestClock.adjust(0);
+        assert.equal(yield* Queue.size(responses), 0);
+        yield* write(0, { _tag: "Interrupt", requestId: "1" });
+        assert.equal((yield* Queue.take(responses))._tag, "Exit");
+      }).pipe(Effect.provide(RpcSerialization.layerJson)),
   );
 });
 
@@ -242,7 +261,7 @@ describe("terminal output stream", () => {
         assert.deepEqual(yield* takeChunk(healthy), [after]);
         assert.deepEqual(yield* takeChunk(stalled), [after]);
         assert.equal(yield* Queue.size(stalled), 0);
-      }).pipe(Effect.provide(RpcSerialization.layerJson), Effect.scoped),
+      }).pipe(Effect.provide(RpcSerialization.layerJson)),
   );
 
   it.effect("interrupts recovery while its subscription is still waiting", () =>
@@ -271,7 +290,7 @@ describe("terminal output stream", () => {
       yield* Fiber.interrupt(recovery);
       yield* Deferred.await(interrupted);
       assert.equal(publisher.listeners.size, 0);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("cleans listeners when cancelled during a successful acquisition handoff", () =>
@@ -305,7 +324,7 @@ describe("terminal output stream", () => {
         yield* Fiber.join(cancellation);
         assert.equal(publisher.listeners.size, 0);
       }
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("caps each delivered batch at the output window in UTF-8 bytes", () =>
@@ -330,7 +349,7 @@ describe("terminal output stream", () => {
         delivered += batch.length;
       }
       assert.equal(delivered, 1024);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("charges snapshot history but never overflows on one snapshot", () =>
@@ -348,6 +367,6 @@ describe("terminal output stream", () => {
       assert.equal(publisher.listeners.size, 1);
       yield* publisher.publish(snapshot(history));
       assert.equal(publisher.listeners.size, 0);
-    }).pipe(Effect.scoped),
+    }),
   );
 });
