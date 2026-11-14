@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 
+import { InjectedSecrets } from "./instanceEnvironment.ts";
 import type { McpProviderSessionConfig } from "./mcpSession.ts";
 
 // Other providers may never consume these references.
@@ -100,6 +101,8 @@ const matchingPageIndex = (kept: ReadonlyArray<KeptHtmlRender>, input: PageInput
 };
 
 const make = Effect.gen(function* () {
+  const injectedSecrets = yield* InjectedSecrets;
+  const issuedTokens = new Map<ThreadId, ReadonlySet<string>>();
   const sessions = yield* Ref.make(new Map<ThreadId, McpProviderSessionConfig>());
   const htmlRenders = yield* Ref.make(new Map<ThreadId, ReadonlyArray<KeptHtmlRender>>());
   return McpProviderSessions.of({
@@ -113,6 +116,14 @@ const make = Effect.gen(function* () {
         });
       }
       yield* Ref.update(sessions, (current) => new Map(current).set(config.threadId, config));
+      // A rotated provider process may still hold an earlier token until the thread clears.
+      const token = config.authorizationHeader.replace(/^Bearer\s+/, "");
+      const tokens = new Set(issuedTokens.get(config.threadId)).add(token);
+      issuedTokens.set(config.threadId, tokens);
+      injectedSecrets.put(
+        config.threadId,
+        [...tokens].map((value) => ({ name: "T3_MCP_BEARER_TOKEN", value })),
+      );
     }),
     read: Effect.fn("McpProviderSessions.read")(function (threadId) {
       return Ref.get(sessions).pipe(Effect.map((current) => current.get(threadId)));
@@ -128,6 +139,12 @@ const make = Effect.gen(function* () {
             const next = new Map(current);
             next.delete(threadId);
             return next;
+          }),
+        ),
+        Effect.andThen(
+          Effect.sync(() => {
+            issuedTokens.delete(threadId);
+            injectedSecrets.remove(threadId);
           }),
         ),
       );

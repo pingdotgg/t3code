@@ -54,6 +54,10 @@ import * as PortScanner from "../preview/PortScanner.ts";
 import * as ProviderHostLive from "./ProviderHostLive.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+import {
+  InjectedSecrets,
+  makeInjectedSecrets,
+} from "@t3tools/provider-core/server/instanceEnvironment";
 import type { AnyProviderDriver, ProviderInstance } from "@t3tools/provider-core/server/driver";
 
 vi.mock("@anthropic-ai/claude-agent-sdk", { spy: true });
@@ -934,7 +938,11 @@ describe("ProviderInstanceRegistry secret environment", () => {
         Effect.sync(() => {
           created.push(input.environment);
           configs.push(input.config);
-          return { instanceId: input.instanceId, enabled: input.enabled } as ProviderInstance;
+          return {
+            instanceId: input.instanceId,
+            enabled: input.enabled,
+            orchestrationAdapter: { openSession: () => Effect.succeed({}) },
+          } as unknown as ProviderInstance;
         }),
     };
     const gate = Deferred.makeUnsafe<void>();
@@ -991,6 +999,24 @@ describe("ProviderInstanceRegistry secret environment", () => {
         ],
       ]);
     });
+  });
+
+  it.effect("redacts the resolved secret while a session is open", () => {
+    const fixture = setup({ [secret.reference]: "sk-live-0123456789" });
+    const injected = makeInjectedSecrets();
+    return Effect.gen(function* () {
+      const { registry } = yield* fixture.make;
+      const instance = yield* registry.getInstance(instanceId);
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          yield* instance!.orchestrationAdapter.openSession({} as never);
+          expect(injected.redactText("key=sk-live-0123456789")).toBe(
+            "key=[redacted OPENAI_API_KEY]",
+          );
+        }),
+      );
+      expect(injected.redactText("key=sk-live-0123456789")).toBe("key=sk-live-0123456789");
+    }).pipe(Effect.provideService(InjectedSecrets, injected), Effect.scoped);
   });
 
   // An empty secret must not let a driver fall back to a credential the server inherited.

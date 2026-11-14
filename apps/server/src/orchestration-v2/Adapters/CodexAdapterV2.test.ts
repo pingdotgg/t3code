@@ -55,6 +55,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Sink from "effect/Sink";
 import * as Stdio from "effect/Stdio";
 import * as Exit from "effect/Exit";
@@ -69,6 +70,7 @@ import packageJson from "../../../package.json" with { type: "json" };
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as EffectWorker from "../EffectWorker.ts";
 import * as Orchestrator from "../Orchestrator.ts";
 import * as ProviderReplayHarness from "../testkit/ProviderReplayHarness.ts";
@@ -5868,6 +5870,189 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         ),
       );
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("persists tool results without sensitive values from the instance environment", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-injected-env-workspace-" });
+        const secret = "synthetic-proxy-key-6f1d0c8e2b7a4935";
+        const baseUrl = "http://127.0.0.1:8318";
+        const output = [
+          `T3_TEST_PROXY_API_KEY=${secret}`,
+          `T3_TEST_PROXY_BASE_URL=${baseUrl}`,
+          "USER_NOTE=keep this line",
+          "",
+        ].join("\n");
+        const nativeThreadId = "native-codex-injected-env-thread";
+        const nativeTurnId = "native-codex-injected-env-turn";
+        const prompt = "Print the environment.";
+        const commandItem = (status: "inProgress" | "completed") => ({
+          type: "commandExecution",
+          id: "call-codex-injected-env",
+          command: "env",
+          cwd: "/workspace",
+          processId: "4243",
+          source: "unifiedExecStartup",
+          status,
+          commandActions: [{ type: "unknown", command: "env" }],
+          aggregatedOutput: status === "completed" ? output : null,
+          exitCode: status === "completed" ? 0 : null,
+          durationMs: status === "completed" ? 10 : null,
+        });
+        const transcript = yield* decodeReplayTranscriptJson(
+          (yield* encodeReplayTranscriptJson(
+            makeCodexReplayTranscript({
+              scenario: "codex-injected-env-output",
+              entries: [
+                ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt }),
+                {
+                  type: "emit_inbound",
+                  label: "item/completed/fileChange",
+                  frame: {
+                    method: "item/completed",
+                    params: {
+                      threadId: nativeThreadId,
+                      turnId: nativeTurnId,
+                      completedAtMs: 3,
+                      item: {
+                        type: "fileChange",
+                        id: "call-codex-injected-env-file",
+                        status: "completed",
+                        changes: [
+                          {
+                            path: "/workspace/.env",
+                            kind: { type: "add" },
+                            diff: `+T3_TEST_PROXY_API_KEY=${secret}`,
+                          },
+                        ],
+                      },
+                    },
+                  },
+                },
+                ...(["inProgress", "completed"] as const).map((status) => ({
+                  type: "emit_inbound" as const,
+                  label: `item/${status}/command`,
+                  frame: {
+                    method: status === "inProgress" ? "item/started" : "item/completed",
+                    params: {
+                      item: commandItem(status),
+                      threadId: nativeThreadId,
+                      turnId: nativeTurnId,
+                    },
+                  },
+                })),
+                {
+                  type: "emit_inbound",
+                  label: "turn/completed",
+                  frame: {
+                    method: "turn/completed",
+                    params: {
+                      threadId: nativeThreadId,
+                      turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                    },
+                  },
+                },
+              ],
+            }),
+          )).replaceAll(yield* encodeStringJson("/workspace"), yield* encodeStringJson(cwd)),
+        );
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        assert.equal(
+          Number(yield* spawner.exitCode(ChildProcess.make("git", ["init", "--quiet"], { cwd }))),
+          0,
+        );
+        const layerDatabase = SqlitePersistence.layerMemory;
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const threadId = ThreadId.make("thread:injected-env-output");
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("create-injected-env-output"),
+            threadId,
+            projectId: ProjectId.make("project:injected-env-output"),
+            title: "Injected environment output",
+            modelSelection: CODEX_TEST_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+            createdBy: "user",
+            creationSource: "web",
+          });
+          const settled = yield* orchestrator.streamDomainEvents.pipe(
+            Stream.filter(
+              (event) =>
+                (event.type === "turn-item.updated" &&
+                  event.payload.type === "command_execution" &&
+                  event.payload.status === "completed") ||
+                (event.type === "run.updated" &&
+                  ["failed", "interrupted", "cancelled"].includes(event.payload.status)),
+            ),
+            Stream.runHead,
+            Effect.forkChild({ startImmediately: true }),
+          );
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make("start-injected-env-output"),
+            threadId,
+            messageId: MessageId.make("message:injected-env-output"),
+            text: prompt,
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+            dispatchMode: { type: "start_immediately" },
+          });
+          yield* worker.drain();
+          const settledEvent = yield* Fiber.join(settled);
+          assert.equal(
+            settledEvent._tag === "Some" ? settledEvent.value.type : "",
+            "turn-item.updated",
+          );
+
+          const outputs = (yield* orchestrator.getThreadProjection(threadId)).turnItems.flatMap(
+            (item) => (item.type === "command_execution" ? [item.output ?? ""] : []),
+          );
+          assert.lengthOf(outputs, 1);
+          assert.include(outputs[0], "T3_TEST_PROXY_API_KEY=");
+          assert.include(outputs[0], `T3_TEST_PROXY_BASE_URL=${baseUrl}`);
+          assert.include(outputs[0], "USER_NOTE=keep this line");
+          assert.notInclude(outputs[0], secret);
+          const diffs = (yield* orchestrator.getThreadProjection(threadId)).turnItems.flatMap(
+            (item) => (item.type === "file_change" ? [item.diffStr ?? ""] : []),
+          );
+          assert.deepEqual(diffs, ["+T3_TEST_PROXY_API_KEY=[redacted T3_TEST_PROXY_API_KEY]"]);
+
+          const sql = yield* SqlClient.SqlClient;
+          const tables = yield* sql<{ readonly name: string }>`
+            SELECT name FROM sqlite_master WHERE type = 'table'
+          `;
+          for (const { name } of tables) {
+            const rows = yield* sql.unsafe(`SELECT * FROM "${name}"`);
+            assert.notInclude(JSON.stringify(rows), secret, `table ${name}`);
+          }
+        }).pipe(
+          Effect.provide(
+            Layer.merge(
+              ProviderReplayHarness.layerWithRegistry(
+                { name: "codex-injected-env-output", runtimePolicyOverride: { cwd } },
+                CodexAdapterV2Testkit.layer({
+                  transcript: withConfigReads(transcript),
+                  environment: [
+                    { name: "T3_TEST_PROXY_API_KEY", value: secret, sensitive: true },
+                    { name: "T3_TEST_PROXY_BASE_URL", value: baseUrl, sensitive: false },
+                  ],
+                }),
+                { runEffectWorker: false, databaseLayer: layerDatabase },
+              ),
+              layerDatabase,
+            ),
+          ),
+        );
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
   );
 
   const INTERRUPT_SCENARIO = "codex-interrupt-mid-command";

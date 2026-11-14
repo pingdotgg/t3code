@@ -22,6 +22,10 @@ import * as Semaphore from "effect/Semaphore";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import {
+  InjectedSecrets,
+  makeInjectedSecrets,
+} from "@t3tools/provider-core/server/instanceEnvironment";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderContinuationService from "./ProviderContinuationService.ts";
@@ -196,6 +200,28 @@ describe("ProviderContinuationService", () => {
       );
     });
   });
+
+  it.effect("persists wake detail without values registered when it was offered", () =>
+    Effect.gen(function* () {
+      const dispatched = yield* Queue.unbounded<unknown>();
+      const secrets = makeInjectedSecrets();
+      yield* Effect.gen(function* () {
+        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+        secrets.put("session", [{ name: "KEY", value: "synthetic-secret" }]);
+        yield* requests.offer(request(undefined, "tail: KEY=synthetic-secret"));
+        // The producing session can close before the worker takes the request.
+        secrets.remove("session");
+        const command = (yield* Queue.take(dispatched)) as { readonly text: string };
+        assert.equal(command.text, "tail: KEY=[redacted KEY]");
+      }).pipe(
+        Effect.provide(
+          layerTest({ dispatched, getThreadRecords: () => Effect.succeed(projection) }),
+        ),
+        Effect.provideService(InjectedSecrets, secrets),
+        Effect.scoped,
+      );
+    }),
+  );
 
   it.effect("dispatches a current delegated completion as one server-owned queued message", () => {
     return Effect.gen(function* () {

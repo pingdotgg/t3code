@@ -1,6 +1,10 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { CodexSettings, type ProviderReplayTranscript } from "@t3tools/contracts";
+import {
+  CodexSettings,
+  type ResolvedProviderInstanceEnvironment,
+  type ProviderReplayTranscript,
+} from "@t3tools/contracts";
 import * as CodexClient from "effect-codex-app-server/client";
 import type * as CodexError from "effect-codex-app-server/errors";
 import * as CodexReplay from "effect-codex-app-server/replay";
@@ -14,6 +18,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { ProviderAdapterDriverCreateError } from "@t3tools/provider-core/server/adapterDriver";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
+import { withSensitiveEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import {
   makeReplayServerConfig,
   type OrchestratorV2ProviderReplayHarness,
@@ -98,6 +103,7 @@ function metadataFromTranscript(transcript: ProviderReplayTranscript): {
 export function layer(input: {
   readonly transcript: CodexReplay.CodexAppServerReplayTranscript;
   readonly driver?: CodexReplay.CodexAppServerReplayDriver;
+  readonly environment?: ResolvedProviderInstanceEnvironment;
 }) {
   const layerReplay =
     input.driver === undefined
@@ -126,14 +132,18 @@ export function layer(input: {
     ServerConfig.ServerConfig,
     makeReplayServerConfig(input.transcript.scenario).pipe(Effect.orDie),
   ).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
+  const environment = input.environment ?? [];
   const layerRegistry = ProviderAdapterRegistry.layerFromAdaptersEffect(
     CodexAdapterV2.createCodexAdapterV2({
       instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
       displayName: undefined,
-      environment: [],
+      environment,
       enabled: true,
       config: DEFAULT_CODEX_SETTINGS,
-    }).pipe(Effect.map((adapter) => [adapter])),
+    }).pipe(
+      Effect.flatMap((adapter) => withSensitiveEnvironment(adapter, environment)),
+      Effect.map((adapter) => [adapter]),
+    ),
   ).pipe(
     Layer.provide(
       Layer.mergeAll(

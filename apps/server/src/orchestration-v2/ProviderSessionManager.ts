@@ -50,6 +50,7 @@ import {
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ProviderInstallationGate from "../provider/ProviderInstallationGate.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import { InjectedSecrets } from "@t3tools/provider-core/server/instanceEnvironment";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
@@ -429,6 +430,7 @@ export const layerWithOptions = (
       const projectService = yield* Effect.serviceOption(ProjectService.ProjectService);
       const eventSink = yield* EventSink.EventSinkV2;
       const commandOutput = yield* CommandOutputHub.CommandOutputHub;
+      const injectedSecrets = yield* InjectedSecrets;
       const promptSuggestionStore = yield* SubscriptionRef.make<
         ReadonlyMap<ThreadId, NonNullable<OrchestrationV2PromptSuggestion>>
       >(new Map());
@@ -2467,6 +2469,55 @@ export const layerWithOptions = (
           ),
       );
 
+      const redactFields = <T extends object>(value: T, fields: ReadonlyArray<keyof T>): T => {
+        let next: T | undefined;
+        for (const field of fields) {
+          const text = value[field];
+          if (typeof text !== "string") continue;
+          const redacted = injectedSecrets.redactText(text);
+          if (redacted !== text) (next ??= { ...value })[field] = redacted as T[keyof T];
+        }
+        return next ?? value;
+      };
+      const redactEach = <T extends object>(
+        values: ReadonlyArray<T> | undefined,
+        fields: ReadonlyArray<keyof T>,
+      ) => {
+        if (values === undefined) return values;
+        const next = values.map((value) => redactFields(value, fields));
+        return next.some((value, index) => value !== values[index]) ? next : values;
+      };
+      // Rendered tool results only; ids, paths, and tool inputs keep routing the item.
+      const redactTurnItem = (item: OrchestrationV2TurnItem): OrchestrationV2TurnItem => {
+        switch (item.type) {
+          case "command_execution":
+            return redactFields(item, ["output"]);
+          case "dynamic_tool": {
+            const output = injectedSecrets.redact(item.output);
+            return output === item.output ? item : { ...item, output };
+          }
+          case "file_change":
+            return redactFields(item, ["diffStr", "oldStr", "newStr"]);
+          case "file_search": {
+            const results = redactEach(item.results, ["preview"]);
+            return results === item.results ? item : { ...item, results };
+          }
+          case "web_search": {
+            const results = redactEach(item.results, ["title", "snippet"]);
+            return results === item.results ? item : { ...item, results };
+          }
+          default:
+            return item;
+        }
+      };
+      const redactToolOutput = (
+        event: ProviderAdapter.ProviderAdapterV2Event,
+      ): ProviderAdapter.ProviderAdapterV2Event => {
+        if (event.type !== "turn_item.updated") return event;
+        const turnItem = redactTurnItem(event.turnItem);
+        return turnItem === event.turnItem ? event : { ...event, turnItem };
+      };
+
       const makeRetryStallWatch = (entry: LiveSessionEntry) => {
         const runningRetries = new Map<ProviderTurnId, ProviderRetryItem>();
         const stalledRetries = new Map<ProviderTurnId, ProviderRetryItem>();
@@ -2640,8 +2691,47 @@ export const layerWithOptions = (
         };
       };
 
+      // Holds back a chunk tail that could begin a secret split across deltas.
+      const makeLiveOutputRedaction = () => {
+        const held = new Map<
+          string,
+          CommandOutputHub.CommandOutputTarget & { readonly chunk: string }
+        >();
+        const keyOf = (target: CommandOutputHub.CommandOutputTarget) =>
+          `${target.threadId}\u0000${target.itemId}`;
+        // The final tail may itself be a whole shorter secret.
+        const flush = (
+          pending: CommandOutputHub.CommandOutputTarget & { readonly chunk: string },
+        ) => {
+          held.delete(keyOf(pending));
+          return commandOutput.append({
+            ...pending,
+            chunk: injectedSecrets.redactText(pending.chunk),
+          });
+        };
+        const release = (target: CommandOutputHub.CommandOutputTarget) => {
+          const pending = held.get(keyOf(target));
+          return pending === undefined ? Effect.void : flush(pending);
+        };
+        return {
+          append: (delta: CommandOutputHub.CommandOutputTarget & { readonly chunk: string }) => {
+            const key = keyOf(delta);
+            const { emit, pending } = injectedSecrets.redactChunk(
+              held.get(key)?.chunk ?? "",
+              delta.chunk,
+            );
+            if (pending.length === 0) held.delete(key);
+            else held.set(key, { threadId: delta.threadId, itemId: delta.itemId, chunk: pending });
+            return commandOutput.append({ ...delta, chunk: emit });
+          },
+          release,
+          releaseAll: () => Effect.forEach([...held.values()], flush, { discard: true }),
+        };
+      };
+
       const startEventPump = (entry: LiveSessionEntry) => {
         let stoppedByProvider = false;
+        const liveOutput = makeLiveOutputRedaction();
         let lastSessionStatus = entry.runtime.providerSession.status;
         const retryStalls = makeRetryStallWatch(entry);
         return entry.runtime.events.pipe(
@@ -2649,7 +2739,7 @@ export const layerWithOptions = (
             if (shutdownSignal.received) return Effect.void;
             // Live output bypasses persistence and subscribers so floods cannot delay domain events.
             if (nativeEvent.type === "command_output.delta") {
-              return commandOutput.append(nativeEvent);
+              return liveOutput.append(nativeEvent);
             }
             if (nativeEvent.type === "prompt_suggestion.updated") {
               return SubscriptionRef.update(promptSuggestionStore, (current) => {
@@ -2666,16 +2756,21 @@ export const layerWithOptions = (
                 return next;
               });
             }
-            const tracked = retryStalls.track(nativeEvent);
+            const tracked = retryStalls.track(redactToolOutput(nativeEvent));
             const event = tracked.event;
             const armRetryStall = retryStalls.update(tracked);
             const releaseLiveOutput =
               event.type === "turn_item.updated" &&
               event.turnItem.type === "command_execution" &&
               !isOrchestrationV2WorkActive(event.turnItem.status)
-                ? commandOutput.finish({
-                    threadId: event.turnItem.threadId,
-                    itemId: event.turnItem.id,
+                ? Effect.suspend(() => {
+                    const target = {
+                      threadId: event.turnItem.threadId,
+                      itemId: event.turnItem.id,
+                    };
+                    return liveOutput
+                      .release(target)
+                      .pipe(Effect.andThen(commandOutput.finish(target)));
                   })
                 : Effect.void;
             // Metadata can change while idle without extending the runtime's lifetime.
@@ -2767,6 +2862,8 @@ export const layerWithOptions = (
               ),
             );
           }),
+          // Output still held when the stream ends or is interrupted never completed its item.
+          Effect.ensuring(Effect.suspend(liveOutput.releaseAll)),
           Effect.exit,
           Effect.flatMap((exit) =>
             Effect.gen(function* () {

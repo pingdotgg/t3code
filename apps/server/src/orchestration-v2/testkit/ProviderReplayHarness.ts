@@ -23,6 +23,7 @@ import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as ManagedPolicy from "../../policy/ManagedPolicy.ts";
 import * as ThreadManagementService from "../ThreadManagementService.ts";
+import { InjectedSecrets } from "@t3tools/provider-core/server/instanceEnvironment";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpSessionRegistryTestkit from "../../mcp/McpSessionRegistry.testkit.ts";
 import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
@@ -570,6 +571,7 @@ export function layerWithRegistry<Error>(
   ).pipe(
     Layer.provide(ProviderTurnStartServiceTestkit.layer),
     Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    Layer.provide(InjectedSecrets.layer),
   );
 
   if (options.runEffectWorker === false) {
