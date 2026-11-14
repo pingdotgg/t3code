@@ -921,6 +921,8 @@ function turnEventSessionId(event: OpenCodeEvent): string | undefined {
       return event.properties.part.sessionID;
     case "message.updated":
     case "message.part.delta":
+    case "permission.asked":
+    case "question.asked":
     case "session.compacted":
     case "session.error":
     case "session.idle":
@@ -2092,7 +2094,6 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             | { readonly type: "permission"; readonly value: PermissionRequest }
             | { readonly type: "question"; readonly value: QuestionRequest },
         ) {
-          if (pendingChildRequestRoutes.has(nativeRequestId)) return;
           const attempt = Effect.gen(function* () {
             if (
               settledNativeRequestIds.has(nativeRequestId) ||
@@ -2106,7 +2107,8 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             yield* emitRuntimeRequest(owner, nativeRequestId, request);
             return true;
           });
-          if (yield* attempt) return;
+          // A wake replays its request once its run has a turn, while this retry may still wait.
+          if ((yield* attempt) || pendingChildRequestRoutes.has(nativeRequestId)) return;
           pendingChildRequestRoutes.add(nativeRequestId);
           yield* Effect.gen(function* () {
             for (let retry = 0; retry < 5; retry += 1) {
@@ -2821,7 +2823,17 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
         // for no reply never reaches.
         const holdForWake = Effect.fnUntraced(function* (event: OpenCodeEvent) {
           const sessionId = turnEventSessionId(event);
-          const state = sessionId === undefined ? undefined : threads.get(sessionId);
+          // A request blocks OpenCode until answered, and routing gives up after a few seconds,
+          // so one from a subagent waits on its root's wake like the root's own.
+          const isRequest = event.type === "permission.asked" || event.type === "question.asked";
+          let state =
+            sessionId === undefined
+              ? undefined
+              : (threads.get(sessionId) ??
+                (isRequest ? relatedSessionOwners.get(sessionId) : undefined));
+          while (isRequest && state !== undefined && state.parentSubagent !== null) {
+            state = state.parentSubagent.parentState;
+          }
           if (state === undefined || state.parentSubagent !== null) return false;
           if (state.wake?.replaying === true) {
             state.wake.events.push(event);

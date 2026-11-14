@@ -680,6 +680,17 @@ describe("OpenCodeAdapterV2", () => {
       const reply = { role: "assistant", parentID: "msg_task_result" };
       yield* push(message("msg_reply", { ...reply, time: { created: 3 } }));
       yield* push(text("msg_reply", { text: "WAKE", time: { start: 3 } }));
+      yield* push({
+        type: "permission.asked",
+        properties: {
+          id: "per_wake",
+          sessionID: root,
+          permission: "bash",
+          patterns: ["*"],
+          always: [],
+          metadata: {},
+        },
+      });
       const finish = Effect.gen(function* () {
         yield* push(text("msg_reply", { text: "WAKE_OK", time: { start: 3, end: 4 } }));
         yield* push(message("msg_reply", { ...reply, time: { created: 3, completed: 4 } }));
@@ -723,6 +734,17 @@ describe("OpenCodeAdapterV2", () => {
           .flatMap((event) => (event.type === "turn_item.updated" ? [event.turnItem] : []))
           .findLast((item) => item.type === "assistant_message")?.text,
         "WAKE_OK",
+      );
+      assert.deepEqual(
+        events.flatMap((event) =>
+          event.type === "node.updated" &&
+          event.node.kind === "approval_request" &&
+          event.node.status === "waiting"
+            ? [event.node.runId]
+            : [],
+        ),
+        [RunId.make("run-opencode-wake-2")],
+        "an approval OpenCode asks for before the run starts is shown in it",
       );
       assert.equal(prompts.length, 1, "OpenCode already runs this turn; prompting would repeat it");
     }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
