@@ -48,6 +48,7 @@ const modelSelection = {
   model: "gpt-5.4",
 } satisfies ModelSelection;
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
+const CLAUDE_DRIVER = ProviderDriverKind.make("claudeAgent");
 const ITEM_ID = TurnItemId.make("turn-item:command");
 
 function applyFrame(
@@ -109,12 +110,15 @@ const writeCommandItem = (
   fields: Pick<
     Extract<OrchestrationV2TurnItem, { type: "command_execution" }>,
     "status" | "output" | "exitCode"
-  >,
+  > & {
+    readonly driver?: ProviderDriverKind;
+    readonly startedAt?: DateTime.Utc;
+  },
 ) =>
   Effect.gen(function* () {
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const eventSink = yield* EventSink.EventSinkV2;
-    const now = yield* DateTime.now;
+    const { driver = CODEX_DRIVER, startedAt = yield* DateTime.now, ...itemFields } = fields;
     const settled = fields.status !== "running";
     const item: OrchestrationV2TurnItem = {
       id: ITEM_ID,
@@ -123,16 +127,16 @@ const writeCommandItem = (
       nodeId: null,
       providerThreadId: null,
       providerTurnId: null,
-      nativeItemRef: null,
+      nativeItemRef: { driver, nativeId: "tool-1", strength: "strong" },
       parentItemId: null,
       ordinal: 1,
       title: null,
-      startedAt: now,
-      completedAt: settled ? now : null,
-      updatedAt: now,
+      startedAt,
+      completedAt: settled ? startedAt : null,
+      updatedAt: startedAt,
       type: "command_execution",
       input: "yes | head -n 1000000",
-      ...fields,
+      ...itemFields,
     };
     yield* eventSink.write({
       events: [
@@ -140,9 +144,9 @@ const writeCommandItem = (
           id: yield* idAllocator.allocate.event({ threadId }),
           type: "turn-item.updated",
           threadId,
-          driver: CODEX_DRIVER,
+          driver,
           providerInstanceId: modelSelection.instanceId,
-          occurredAt: now,
+          occurredAt: startedAt,
           payload: item,
         },
       ],
@@ -294,13 +298,15 @@ layer("CommandOutputHub", (it) => {
     }),
   );
 
-  it.effect("an old Claude row's raw Bash result shows as its stdout and stderr", () =>
+  it.effect("an early Claude row's raw Bash result shows as its stdout and stderr", () =>
     Effect.gen(function* () {
       const threadId = yield* seedThread;
       yield* writeCommandItem(threadId, {
         status: "completed",
         exitCode: 0,
         output: '{"stdout":"built","stderr":"1 warning","interrupted":false}',
+        driver: CLAUDE_DRIVER,
+        startedAt: DateTime.makeUnsafe("2026-10-03T12:00:00Z"),
       });
       const frames = yield* subscribeFrames(threadId);
       const final = yield* takeFrame(frames);
