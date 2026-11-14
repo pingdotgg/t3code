@@ -5,6 +5,7 @@ import {
   sessionGrantsScope,
   type SessionGrantInput,
 } from "@t3tools/contracts";
+import { scoreQueryMatch } from "@t3tools/shared/searchRanking";
 import { Atom } from "effect/reactivity";
 
 import type {
@@ -76,11 +77,30 @@ export function filterFilesystemBrowseEntries(
 ) {
   const lowerQuery = query.toLowerCase();
   const showHidden = query.startsWith(".");
-  const visibleEntries = entries.filter(
-    (entry) =>
-      entry.name.toLowerCase().startsWith(lowerQuery) &&
-      (showHidden || !entry.name.startsWith(".")),
-  );
+  const candidates = entries.filter((entry) => showHidden || !entry.name.startsWith("."));
+  const visibleEntries =
+    lowerQuery.length === 0
+      ? candidates
+      : candidates
+          .map((entry) => ({
+            entry,
+            // Position penalties stay under 1000 for 255-character names, so tiers never overlap.
+            score: scoreQueryMatch({
+              value: entry.name.toLowerCase(),
+              query: lowerQuery,
+              exactBase: 0,
+              prefixBase: 1000,
+              boundaryBase: 2000,
+              includesBase: 3000,
+              fuzzyBase: 4000,
+              boundaryMarkers: [" ", "-", "_", "."],
+            }),
+          }))
+          .filter((match): match is { entry: FilesystemBrowseEntry; score: number } => {
+            return match.score !== null;
+          })
+          .sort((left, right) => left.score - right.score)
+          .map((match) => match.entry);
   const exactEntry =
     query.length > 0 ? (visibleEntries.find((entry) => entry.name === query) ?? null) : null;
 

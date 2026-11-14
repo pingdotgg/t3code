@@ -3,6 +3,7 @@ import { AuthFilesystemReadScope, AuthOrchestrationReadScope } from "@t3tools/co
 
 import {
   createBrowseNavigationCoordinator,
+  filterFilesystemBrowseEntries,
   getFilesystemBrowsePath,
   getFilesystemBrowseTabCompletion,
   resolveFilesystemReadAccess,
@@ -131,5 +132,44 @@ describe("browse navigation", () => {
 
     await expect(invalidatedRun).resolves.toBe(false);
     expect(commits).toEqual(["second"]);
+  });
+});
+
+describe("browse entry filtering", () => {
+  const entries = ["my-t3code", "t3code", "cotton", "T3Code-old", ".t3", "docs"].map((name) => ({
+    name,
+    fullPath: `~/code/${name}`,
+  }));
+  const names = (query: string) =>
+    filterFilesystemBrowseEntries(entries, query).visibleEntries.map((entry) => entry.name);
+
+  it("keeps every visible entry in order for an empty query", () => {
+    expect(names("")).toEqual(["my-t3code", "t3code", "cotton", "T3Code-old", "docs"]);
+  });
+
+  it("matches substrings and subsequences, best match first", () => {
+    expect(names("code")).toEqual(["t3code", "T3Code-old", "my-t3code"]);
+    expect(names("t3c")).toEqual(["t3code", "T3Code-old", "my-t3code"]);
+    expect(names("tcd")).toEqual(["t3code", "T3Code-old", "my-t3code"]);
+    expect(names("xyz")).toEqual([]);
+  });
+
+  it("ranks a word-start match in a long name above any substring match", () => {
+    const longName = `${"a".repeat(240)}-foo`;
+    const folders = [
+      { name: "xfoo", fullPath: "~/xfoo" },
+      { name: longName, fullPath: "~/long" },
+    ];
+    expect(
+      filterFilesystemBrowseEntries(folders, "foo").visibleEntries.map((entry) => entry.name),
+    ).toEqual([longName, "xfoo"]);
+  });
+
+  it("shows dot folders only when the query starts with a dot", () => {
+    expect(names("t3")).not.toContain(".t3");
+    expect(filterFilesystemBrowseEntries(entries, ".t3")).toEqual({
+      visibleEntries: [entries[4]],
+      exactEntry: entries[4],
+    });
   });
 });
