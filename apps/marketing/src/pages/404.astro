@@ -1,44 +1,171 @@
 ---
 import Layout from "../layouts/Layout.astro";
+import { GITHUB_REPOSITORY_URL } from "../lib/site";
 ---
 
-<Layout title="Page not found | T3 Code" description="This page does not exist on t3.codes." noindex>
-  <section class="not-found container">
-    <p class="eyebrow">404</p>
-    <h1 class="display">This page does not exist.</h1>
-    <p class="not-found-lede">
-      t3.codes is the only official T3 Code website. Download builds from this site, GitHub releases,
-      or the app stores.
-    </p>
-    <div class="not-found-actions">
-      <a class="btn btn-primary btn-lg" href="/download">Download T3 Code</a>
-      <a class="btn btn-ghost btn-lg" href="/">Home</a>
+<Layout
+  title="404 | T3 Code"
+  description="This page doesn't exist. The agent looked everywhere."
+  noindex
+>
+  <section class="not-found">
+    <div class="container not-found-inner">
+      <p class="eyebrow" data-rise>Error 404</p>
+
+      <div class="terminal" data-rise style="--d:90ms">
+        <div class="terminal-bar">
+          <span class="terminal-dot terminal-dot--red"></span>
+          <span class="terminal-dot terminal-dot--yellow"></span>
+          <span class="terminal-dot terminal-dot--green"></span>
+          <span class="terminal-title">agent.log</span>
+        </div>
+        <pre class="terminal-body"><code>$ t3 locate ./the-page-you-wanted
+  searching workspace...
+  searching checkpoints...
+  querying every provider...
+  <span class="line-error">error: no route matches this path</span>
+  hint: it may have been refactored into oblivion<span class="cursor" aria-hidden="true"></span></code></pre>
+      </div>
+
+      <h1 class="not-found-title display" data-rise style="--d:180ms">
+        Even the agent couldn't find this one.
+      </h1>
+      <p class="not-found-sub" data-rise style="--d:270ms">
+        Whatever you were looking for isn't here. It might have moved, been renamed, or never
+        existed in the first place. t3.codes is the only official T3 Code website. Download builds
+        from this site, GitHub releases, or the app stores.
+      </p>
+
+      <div class="not-found-actions" data-rise style="--d:360ms">
+        <a href="/" class="btn btn-primary btn-lg">Go home</a>
+        <a class="btn btn-ghost btn-lg" href="/download">Download T3 Code</a>
+        <a
+          class="btn btn-ghost btn-lg"
+          href={GITHUB_REPOSITORY_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Check the source instead
+        </a>
+      </div>
     </div>
   </section>
 </Layout>
 
 <style>
   .not-found {
-    padding-top: 18vh;
-    padding-bottom: 18vh;
-    max-width: 720px;
+    display: flex;
+    flex: 1;
+    align-items: center;
+    padding: 96px 0;
   }
 
-  .not-found h1 {
-    margin: 14px 0 18px;
-    font-size: clamp(2.25rem, 5vw, 3.5rem);
+  .not-found-inner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    max-width: 640px;
+    margin: 0 auto;
+    text-align: center;
+    gap: 20px;
   }
 
-  .not-found-lede {
-    color: var(--fg-muted);
-    font-size: 1.05rem;
+  .terminal {
+    width: 100%;
+    text-align: left;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-card);
+    overflow: hidden;
+    margin: 12px 0;
+  }
+
+  .terminal-bar {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .terminal-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--border-strong);
+  }
+  .terminal-dot--red {
+    background: #ff5f56;
+  }
+  .terminal-dot--yellow {
+    background: #ffbd2e;
+  }
+  .terminal-dot--green {
+    background: #27c93f;
+  }
+
+  .terminal-title {
+    margin-left: 6px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--fg-dim);
+  }
+
+  .terminal-body {
+    margin: 0;
+    padding: 16px 18px 20px;
+    font-family: var(--font-mono);
+    font-size: 13px;
     line-height: 1.7;
+    color: var(--fg-muted);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .line-error {
+    color: var(--warn);
+  }
+
+  .cursor {
+    display: inline-block;
+    width: 7px;
+    height: 14px;
+    margin-left: 2px;
+    background: var(--accent);
+    vertical-align: text-bottom;
+    animation: blink 1s step-end infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .cursor {
+      animation: none;
+    }
+  }
+
+  @keyframes blink {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0;
+    }
+  }
+
+  .not-found-title {
+    font-size: clamp(22px, 4vw, 30px);
+  }
+
+  .not-found-sub {
+    color: var(--fg-muted);
+    font-size: 15px;
+    max-width: 480px;
   }
 
   .not-found-actions {
     display: flex;
-    flex-wrap: wrap;
     gap: 12px;
-    margin-top: 32px;
+    flex-wrap: wrap;
+    justify-content: center;
+    margin-top: 8px;
   }
 </style>
