@@ -320,10 +320,7 @@ export function selectHistory(input: {
 }) {
   const selected = selectLoadedHistory({
     ...input,
-    candidates: input.messages.map((message) => ({
-      itemId: message.itemId,
-      minCost: messageCost(message),
-    })),
+    candidates: input.messages.map((message) => ({ itemId: message.itemId, minCost: 0 })),
   });
   if (selected.missingItemIds !== undefined) throw new Error("Every candidate is loaded.");
   return selected;
@@ -337,7 +334,7 @@ export function selectHistory(input: {
 export function selectLoadedHistory(input: {
   readonly candidates: ReadonlyArray<{
     readonly itemId: OrchestrationV2HistoricalMessage["itemId"];
-    /** At most the message's cost; see `minHistoricalMessageCost`. */
+    /** At most the message's cost (see `minHistoricalMessageCost`); read only while it is not loaded. */
     readonly minCost: number;
   }>;
   readonly messages: ReadonlyArray<OrchestrationV2HistoricalMessage>;

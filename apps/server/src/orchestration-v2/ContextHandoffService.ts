@@ -548,11 +548,9 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
           return message === null ? [] : [message];
         });
       const prefix = historical(input.items);
+      // `items` are always loaded, so their bound is never read.
       const candidatesOf = (messages: ReadonlyArray<OrchestrationV2HistoricalMessage>) =>
-        messages.map((message) => ({
-          itemId: message.itemId,
-          minCost: minHistoricalMessageCost(message, message.text.length),
-        }));
+        messages.map((message) => ({ itemId: message.itemId, minCost: 0 }));
       const pageCandidates = (candidates: ReadonlyArray<HandoffHistoryCandidate>) =>
         candidates.map(({ minTextLength, ...candidate }) => ({
           itemId: candidate.itemId,
