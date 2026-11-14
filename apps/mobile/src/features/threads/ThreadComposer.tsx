@@ -15,6 +15,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
 import { pastedTextDisposition, replaceTextSelection } from "@t3tools/client-runtime/text-paste";
 import {
+  AuthOrchestrationOperateScope,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   type ChatAttachment,
@@ -57,17 +58,16 @@ import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/re
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import {
   getComposerDraftSnapshot,
-  composerDraftsAtom,
   setComposerDraftText,
   composerContextImportsAtom,
   countComposerDraftAttachmentsAfterSelection,
   useComposerDraft,
 } from "../../state/use-composer-drafts";
-import { appAtomRegistry } from "../../state/atom-registry";
 import type { ComposerDocumentAttachment } from "../../lib/composerContext";
 import { useProject, useVisibleThreadShells } from "../../state/entities";
 import { useMentionableEnvironments } from "../../state/environments";
 import { useLinkedEnvironments } from "../../state/peerLinks";
+import { useEnvironmentScopeDenied } from "../../state/session";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -86,7 +86,11 @@ import {
   composerStripAttachments,
   type DraftComposerFileAttachment,
 } from "../../lib/composerImages";
-import { buildModelOptions, isModelSelectionUnavailable } from "../../lib/modelOptions";
+import {
+  buildModelOptions,
+  isModelSelectionUnavailable,
+  serverConfigForCwd,
+} from "../../lib/modelOptions";
 import { useScaledTextRole, type ScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import type { RemoteClientConnectionState } from "../../lib/connection";
 import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
@@ -469,6 +473,10 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     setResumingQueue(false);
   };
 
+  const operateDenied = useEnvironmentScopeDenied(
+    props.environmentId,
+    AuthOrchestrationOperateScope,
+  );
   const uploadStates = useAtomValue(composerAttachmentUploadsAtom);
   const attachmentsUploading =
     props.connectionState === "connected" &&
@@ -575,7 +583,6 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     ownerKey: composerDraftKey,
     label: props.selectedThread.title || "Untitled thread",
     readDraftMessage: () => getComposerDraftSnapshot(composerDraftKey).text,
-    subscribeToDraftChanges: (onChange) => appAtomRegistry.subscribe(composerDraftsAtom, onChange),
     selection: composerMenu.selection,
     onChangeDraftMessage: (text) => setComposerDraftText(composerDraftKey, text),
     onChangeSelection: composerMenu.onSelectionChange,
@@ -715,7 +722,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     ? undefined
     : currentModelSelection.instanceId;
   const modelOptions = buildModelOptions(
-    props.serverConfig,
+    serverConfigForCwd(props.serverConfig, props.projectCwd),
     currentModelSelection,
     lockedProviderInstanceId,
     props.selectedThread.projectId,
@@ -1201,7 +1208,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
           </Animated.View>
         </ComposerSurface>
 
-        {props.connectionState === "connected" && !props.canOperateThread ? (
+        {props.connectionState === "connected" && operateDenied ? (
           <Text className="pt-2 text-xs text-foreground-muted">
             This connection cannot control this task. You can still edit your draft.
           </Text>

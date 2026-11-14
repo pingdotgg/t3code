@@ -1,10 +1,11 @@
 import {
-  DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
+  ProjectId,
   ProviderDriverKind,
   type ModelSelection,
   type ServerProvider,
 } from "@t3tools/contracts";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
+import * as ProviderInstallationGate from "../provider/ProviderInstallationGate.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
@@ -57,6 +58,7 @@ interface FakeCodexInput {
   mcpServers?: ReadonlyArray<{ name: string; enabled: boolean }> | number;
   requiredCwd?: string;
   requireInstructions?: string;
+  requireMcpServersOff?: ReadonlyArray<string>;
 }
 
 function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
@@ -72,6 +74,7 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
     mcpServers: input.mcpServers ?? [],
     requiredCwd: input.requiredCwd ?? null,
     requireInstructions: input.requireInstructions ?? null,
+    requireMcpServersOff: input.requireMcpServersOff ?? [],
     stderr: input.stderr ?? null,
     output: input.output,
     exitCode: input.exitCode ?? 0,
@@ -127,6 +130,33 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
         "function fail(message, code) {",
         '  process.stderr.write(message + "\\n");',
         "  process.exit(code);",
+        "}",
+        "// Like Codex: a later mcp_servers={...} override replaces servers earlier -c flags defined.",
+        "const servers = new Map();",
+        "const offServers = new Set();",
+        "for (let index = 0; index < args.length; index += 1) {",
+        '  if (args[index] !== "-c" && args[index] !== "--config") continue;',
+        '  const value = args[index + 1] ?? "";',
+        '  if (value.startsWith("mcp_servers={")) {',
+        '    const named = [...value.matchAll(/"([^"]+)"=\\{enabled=false\\}/g)].map((match) => match[1]);',
+        "    for (const name of named) offServers.add(name);",
+        "    for (const name of [...servers.keys()]) {",
+        "      if (named.includes(name)) servers.set(name, false);",
+        "      else servers.delete(name);",
+        "    }",
+        '  } else if (value.startsWith("mcp_servers.")) {',
+        '    const [name, key] = value.slice("mcp_servers.".length).split(/[.=]/);',
+        "    if (value === `mcp_servers.${name}.enabled=false`) offServers.add(name);",
+        "    // An enabled flag alone toggles a server another layer (config.toml) defines.",
+        '    if (key === "enabled" && !servers.has(name)) continue;',
+        '    servers.set(name, servers.get(name) === true || key === "url" || key === "command");',
+        "  }",
+        "}",
+        "for (const [name, hasTransport] of servers) {",
+        '  if (!hasTransport) fail("Error loading config.toml: invalid transport in `mcp_servers." + name + "`", 12);',
+        "}",
+        "for (const name of check.requireMcpServersOff) {",
+        '  if (!offServers.has(name)) fail("MCP server left on: " + name, 13);',
         "}",
         'if (check.requiredCwd !== null && process.cwd() !== check.requiredCwd) fail("cannot inspect checkout", 10);',
         'if (check.requireInstructions !== null && !instructions.includes(check.requireInstructions)) fail("missing writer task", 11);',
@@ -364,7 +394,7 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
           { name: "already-off", enabled: false },
         ],
         requireArg:
-          '--config features.plugins=false --config features.apps=false --config mcp_servers={"augmenter"={enabled=false},"my.server"={enabled=false}}',
+          'exec --config mcp_servers={"augmenter"={enabled=false},"my.server"={enabled=false}} --config developer_instructions="Use',
       },
       (textGeneration) =>
         Effect.gen(function* () {
@@ -376,6 +406,52 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
             diffSummary: "shapes.ts | 2 --",
             diffPatch: "-addDefaultShapes();",
             threadContext: "user: in a few minutes PR will be up then $babysit-pr",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          });
+          expect(result.title).toBe("Remove default shapes");
+        }),
+    ),
+  );
+
+  it.effect("turns off an MCP server that launch args define without dropping its transport", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({ title: "Remove default shapes" }),
+        launchArgs: `-c 'mcp_servers.t3-code.url="http://127.0.0.1:1/mcp"' -c 'mcp_servers.t3-code.enabled=true'`,
+        mcpServers: [{ name: "t3-code", enabled: true }],
+        requireMcpServersOff: ["t3-code"],
+        requireArg:
+          "--config features.apps=false --config mcp_servers.t3-code.enabled=false --ephemeral",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const result = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Remove default shapes from characters",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          });
+          expect(result.title).toBe("Remove default shapes");
+        }),
+    ),
+  );
+
+  it.effect("keeps MCP servers off when launch args set their own mcp_servers table", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({ title: "Remove default shapes" }),
+        launchArgs: `-c 'mcp_servers={"my.server"={command="echo",enabled=true}}'`,
+        mcpServers: [
+          { name: "my.server", enabled: true },
+          { name: "my server", enabled: true },
+        ],
+        requireArg:
+          '--config features.apps=false --config mcp_servers={"my.server"={enabled=false},"my server"={enabled=false}} --config mcp_servers.my server.enabled=false --ephemeral',
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const result = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Remove default shapes from characters",
             modelSelection: DEFAULT_TEST_MODEL_SELECTION,
           });
           expect(result.title).toBe("Remove default shapes");
@@ -430,8 +506,8 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
           subject: "Add important change",
           body: "",
         }),
-        launchArgs: "--strict-config --listen off",
-        requireArg: "--strict-config",
+        launchArgs: "--strict-config --oss --local-provider ollama --listen off",
+        requireArg: "--strict-config --oss --local-provider ollama",
         forbidArg: "--listen",
       },
       (textGeneration) =>
@@ -542,18 +618,27 @@ const PREFLIGHT_PRIMARY_STATES = [
   "pending",
   "exhausted",
   "not installed",
+  "not installed, fallback disabled for project",
   "signed out",
   "signed out, fallback failed",
+  "cannot generate text",
+  "model cannot generate text",
 ] as const;
 
 it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (primaryState) =>
   Effect.gen(function* () {
     const primary = ProviderInstanceId.make("codex");
     const fallback = ProviderInstanceId.make("claude_work");
+    const projectId = ProjectId.make("project-a");
     const selection = {
       instanceId: primary,
       model: "chat-model",
       options: [{ id: "effort", value: "high" }],
+    };
+    const threadDefault = {
+      instanceId: fallback,
+      model: "z-ai/glm-5.3-flash",
+      options: [{ id: "thinking", value: false }],
     };
     const calls: ModelSelection[] = [];
     const instances: ProviderInstance[] = [primary, fallback].map((instanceId) => {
@@ -573,7 +658,7 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
         ...(primaryState === "pending" && instanceId === primary
           ? { installed: false, status: "warning", auth: { status: "unknown" } }
           : {}),
-        ...(primaryState === "not installed" && instanceId === primary
+        ...(primaryState.startsWith("not installed") && instanceId === primary
           ? { installed: false, status: "error", auth: { status: "unknown" } }
           : {}),
         ...(primaryState.startsWith("signed out") && instanceId === primary
@@ -581,6 +666,22 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
           : {}),
         ...(primaryState === "signed out, fallback failed" && instanceId === fallback
           ? { status: "error", auth: { status: "unknown" } }
+          : {}),
+        ...(primaryState === "cannot generate text" && instanceId === primary
+          ? { supportsTextGeneration: false }
+          : {}),
+        ...(primaryState === "model cannot generate text" && instanceId === primary
+          ? {
+              models: [
+                {
+                  slug: selection.model,
+                  name: selection.model,
+                  isCustom: false,
+                  supportsTextGeneration: false,
+                  capabilities: null,
+                },
+              ],
+            }
           : {}),
         ...(primaryState === "exhausted" && instanceId === primary
           ? {
@@ -623,13 +724,25 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
           }),
           ServerSettings.layerTest({
             providerInstances: {
-              [fallback]: { driver: ProviderDriverKind.make("claudeAgent"), config: {} },
+              [fallback]: {
+                driver: ProviderDriverKind.make("claudeAgent"),
+                config: { customModels: [threadDefault.model] },
+              },
             },
+            defaultModelSelection: threadDefault,
+            ...(primaryState === "not installed, fallback disabled for project"
+              ? {
+                  projectSettingsOverrides: {
+                    [projectId]: { providerInstances: { [fallback]: { enabled: false } } },
+                  },
+                }
+              : {}),
           }),
           Layer.mock(TextGenerators.TextGenerators)({ runner: () => Effect.undefined }),
           Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
             resolveLink: () => Effect.die("unused"),
           }),
+          ProviderInstallationGate.layer,
         ),
       ),
     );
@@ -639,18 +752,16 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
         message: "hello",
         linkedContext: "",
         modelSelection: selection,
+        projectId,
       }),
     ).toEqual({ title: "Generated title" });
     expect(calls).toEqual([
       primaryState === "ready" ||
       primaryState === "pending" ||
+      primaryState === "not installed, fallback disabled for project" ||
       primaryState === "signed out, fallback failed"
         ? selection
-        : {
-            instanceId: fallback,
-            model:
-              DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[ProviderDriverKind.make("claudeAgent")],
-          },
+        : threadDefault,
     ]);
   }),
 );
@@ -718,6 +829,7 @@ it.effect(
               Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
                 resolveLink: () => Effect.die("unused"),
               }),
+              ProviderInstallationGate.layer,
             ),
           ),
         );
