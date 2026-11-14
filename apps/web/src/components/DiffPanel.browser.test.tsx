@@ -19,6 +19,8 @@ import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
+// Initializes the i18next instance; this component tree does not reach ./i18n on its own.
+import "../i18n";
 import { act, render } from "../../test/render";
 import { makeThreadFixture } from "~/test-fixtures";
 
@@ -39,6 +41,7 @@ const state = vi.hoisted(() => ({
 
 vi.mock("~/state/server", () => ({
   serverEnvironment: { configValueAtom: () => state.config },
+  environmentServerConfigsAtom: Atom.make(new Map()),
 }));
 vi.mock("~/state/review", () => ({
   reviewEnvironment: {

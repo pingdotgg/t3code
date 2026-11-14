@@ -5,6 +5,8 @@ import {
   CHATGPT_WORKSPACE_USAGE_LIMIT_CODE,
 } from "@t3tools/shared/usageLimits";
 import { memo } from "react";
+import { useTranslation } from "react-i18next";
+import { translateDynamic } from "../../i18n";
 import { writeTextToClipboard } from "../../hooks/useCopyToClipboard";
 import { Alert, AlertAction, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
@@ -19,10 +21,14 @@ export function copyAdminRequest() {
     () =>
       toastManager.add({
         type: "success",
-        title: "Request copied",
-        description: "Send it to your workspace admin.",
+        title: translateDynamic("chat:errors.requestCopied"),
+        description: translateDynamic("chat:errors.sendToWorkspaceAdmin"),
       }),
-    () => toastManager.add({ type: "error", title: "Could not copy the request" }),
+    () =>
+      toastManager.add({
+        type: "error",
+        title: translateDynamic("chat:errors.couldNotCopyRequest"),
+      }),
   );
 }
 
@@ -80,6 +86,7 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
   errorCode?: string | null;
   onDismiss?: () => void;
 }) {
+  const { t } = useTranslation("chat");
   if (!error) return null;
   const workspaceLimit = errorCode === CHATGPT_WORKSPACE_USAGE_LIMIT_CODE;
   const chatGptLimit = workspaceLimit || errorCode === CHATGPT_USAGE_LIMIT_CODE;
@@ -95,14 +102,8 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
         <AlertDescription>
           {chatGptLimit ? (
             <div className="space-y-1">
-              <p className="font-medium">ChatGPT usage limit reached</p>
-              {workspaceLimit ? (
-                <p>
-                  {
-                    "You've reached your workspace's limit for using your ChatGPT plan in other apps. Copy a request to ask your workspace admin for increased usage limits."
-                  }
-                </p>
-              ) : null}
+              <p className="font-medium">{t("errors.chatgptLimitReached")}</p>
+              {workspaceLimit ? <p>{t("errors.workspaceLimitDetail")}</p> : null}
             </div>
           ) : (
             <ExpandableText text={error} collapsedText={getThreadErrorBannerMessage(error)} />
@@ -112,13 +113,18 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
           <AlertAction>
             {workspaceLimit ? (
               <Button variant="default" size="sm" onClick={copyAdminRequest}>
-                Copy request for admin
+                {t("errors.copyRequestForAdmin")}
               </Button>
             ) : chatGptLimit ? (
               <ChatGptUsageButton variant="default" size="sm" />
             ) : null}
             {onDismiss ? (
-              <Button variant="ghost" size="icon-xs" aria-label="Dismiss error" onClick={onDismiss}>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                aria-label={t("errors.dismissError")}
+                onClick={onDismiss}
+              >
                 <XIcon />
               </Button>
             ) : null}

@@ -26,6 +26,7 @@ import {
   TriangleAlertIcon,
 } from "lucide-react";
 import { Fragment } from "react";
+import { translateDynamic } from "../../i18n";
 import { tickTextContent } from "~/lib/tickTextContent";
 import { BackgroundWorkDetails } from "./BackgroundWorkDetails";
 import { Button, InlineButton } from "../ui/button";
@@ -65,8 +66,8 @@ export function childInputNowItem(input: {
     ),
     title: childThreadInputsTitle(childThreadInputs),
     waitingLabel: childThreadInputs.every((child) => child.lineage.sideChat === true)
-      ? "Side chat waiting"
-      : "Subagent waiting",
+      ? translateDynamic("chat:banners.sideChatWaiting")
+      : translateDynamic("chat:banners.subagentWaiting"),
     description: childThreadInputs.map((child, index) => (
       <Fragment key={child.id}>
         {index > 0 ? " " : null}
@@ -80,7 +81,9 @@ export function childInputNowItem(input: {
     )),
     actions: (
       <InlineButton onClick={() => onOpenThread(first.id, first.environmentId)}>
-        {first.hasPendingApprovals ? "Open approval" : "Open question"}
+        {first.hasPendingApprovals
+          ? translateDynamic("chat:banners.openApproval")
+          : translateDynamic("chat:banners.openQuestion")}
       </InlineButton>
     ),
   };
@@ -109,18 +112,25 @@ export function goalNowItem(input: {
         {presentation.canResume && !isWorking ? (
           <>
             <InlineButton
-              onClick={() => void onSendCommand("/goal resume", "Failed to resume goal.")}
+              onClick={() =>
+                void onSendCommand(
+                  "/goal resume",
+                  translateDynamic("chat:banners.failedToResumeGoal"),
+                )
+              }
             >
-              Resume
+              {translateDynamic("chat:banners.resume")}
             </InlineButton>
             <span aria-hidden>·</span>
           </>
         ) : null}
         <InlineButton
           tone="muted"
-          onClick={() => void onSendCommand("/goal clear", "Failed to clear goal.")}
+          onClick={() =>
+            void onSendCommand("/goal clear", translateDynamic("chat:banners.failedToClearGoal"))
+          }
         >
-          Clear
+          {translateDynamic("chat:banners.clear")}
         </InlineButton>
       </>
     ),
@@ -144,10 +154,10 @@ export function runStopNowItem(input: {
     ) : (
       <CircleStopIcon />
     ),
-    title: unresponsive ? "Agent not responding to Stop" : "Stopping",
-    description: unresponsive
-      ? "It may be short on memory. Force stop kills its processes."
-      : undefined,
+    title: unresponsive
+      ? translateDynamic("chat:banners.agentNotRespondingToStop")
+      : translateDynamic("chat:banners.stopping"),
+    description: unresponsive ? translateDynamic("chat:banners.forceStopDetail") : undefined,
     actions: (
       <>
         <span
@@ -159,7 +169,9 @@ export function runStopNowItem(input: {
         />
         {unresponsive && input.canForceStop ? (
           <InlineButton disabled={input.forceStopping} onClick={input.onForceStop}>
-            {input.forceStopping ? "Force stopping..." : "Force stop"}
+            {input.forceStopping
+              ? translateDynamic("chat:banners.forceStopping")
+              : translateDynamic("chat:banners.forceStop")}
           </InlineButton>
         ) : null}
       </>
@@ -218,7 +230,12 @@ export function backgroundWorkNowItem(input: {
     title:
       only && typeof only.label !== "string" && only.task.label !== only.task.kind ? (
         <>
-          {presentation.waiting ? "Waiting" : "Running"} · {only.label}
+          {translateDynamic(
+            presentation.waiting
+              ? "chat:lifecycle.status.waiting"
+              : "chat:lifecycle.status.running",
+          )}{" "}
+          · {only.label}
         </>
       ) : (
         presentation.title
@@ -257,11 +274,13 @@ export function backgroundWorkNowItem(input: {
         />
         {onlyThreadId === undefined ? null : (
           <InlineButton tone="muted" onClick={() => onOpenThread(onlyThreadId)}>
-            Open
+            {translateDynamic("chat:banners.open")}
           </InlineButton>
         )}
         <InlineButton disabled={input.stopDisabled} onClick={() => void input.onStop()}>
-          {input.stopping ? "Stopping..." : "Stop"}
+          {input.stopping
+            ? translateDynamic("chat:banners.stopping")
+            : translateDynamic("chat:banners.stop")}
         </InlineButton>
       </>
     ),
@@ -284,7 +303,9 @@ export function branchMismatchBannerItem(input: {
     icon: <GitBranchIcon />,
     title: (
       <span className="flex min-w-0 items-baseline gap-1.5">
-        <span className="shrink-0 font-normal text-muted-foreground">Branch changed from</span>
+        <span className="shrink-0 font-normal text-muted-foreground">
+          {translateDynamic("chat:banners.branchChangedFrom")}
+        </span>
         <Tooltip>
           <TooltipTrigger
             render={
@@ -294,18 +315,22 @@ export function branchMismatchBannerItem(input: {
             }
           />
           <TooltipPopup side="top">
-            This thread last ran on {mismatch.threadBranch}. Sending will continue on{" "}
-            {mismatch.currentBranch}.
+            {translateDynamic("chat:banners.branchMismatchDetail", {
+              threadBranch: mismatch.threadBranch,
+              currentBranch: mismatch.currentBranch,
+            })}
           </TooltipPopup>
         </Tooltip>
       </span>
     ),
     actions: (
       <Button size="xs" variant="ghost" disabled={input.restoreDisabled} onClick={input.onRestore}>
-        {input.restoring ? "Restoring..." : "Restore branch"}
+        {input.restoring
+          ? translateDynamic("chat:banners.restoring")
+          : translateDynamic("chat:banners.restoreBranch")}
       </Button>
     ),
-    dismissLabel: "Dismiss branch change notice",
+    dismissLabel: translateDynamic("chat:banners.dismissBranchNotice"),
     onDismiss: input.onDismiss,
   };
 }

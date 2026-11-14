@@ -1,5 +1,7 @@
+import enChat from "../locales/en/chat.json";
 import enPalette from "../locales/en/palette.json";
 import enSettings from "../locales/en/settings.json";
+import zhHansChat from "../locales/zh-Hans/chat.json";
 import zhHansPalette from "../locales/zh-Hans/palette.json";
 import zhHansSettings from "../locales/zh-Hans/settings.json";
 import { type UiLocale } from "@t3tools/contracts/settings";
@@ -17,6 +19,7 @@ declare module "i18next" {
     resources: {
       settings: typeof enSettings;
       palette: typeof enPalette;
+      chat: typeof enChat;
     };
   }
 }
@@ -37,10 +40,10 @@ if (!i18n.isInitialized) {
     lng: "en",
     fallbackLng: "en",
     defaultNS: "settings",
-    ns: ["settings", "palette"],
+    ns: ["settings", "palette", "chat"],
     resources: {
-      en: { settings: enSettings, palette: enPalette },
-      "zh-Hans": { settings: zhHansSettings, palette: zhHansPalette },
+      en: { settings: enSettings, palette: enPalette, chat: enChat },
+      "zh-Hans": { settings: zhHansSettings, palette: zhHansPalette, chat: zhHansChat },
     },
     // Locale files are bundled per language, so nothing is fetched at runtime.
     // resolveUiLanguage only ever yields exact codes, so no non-explicit matching.
