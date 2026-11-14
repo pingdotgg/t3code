@@ -1,6 +1,6 @@
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Test from "alchemy/Test/Bun";
 import { expect } from "bun:test";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Test from "@alchemy.run/test/Bun";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import Stack from "../alchemy.run.ts";
@@ -25,9 +25,7 @@ test(
     expect(res.status).toBe(200);
     const html = yield* res.text;
     expect(html).toContain("TanStack Start Solid");
-    expect(html).toContain(
-      "Hello from TanStack Start Solid on Cloudflare.Website.Vite",
-    );
+    expect(html).toContain("Hello from TanStack Start Solid on Cloudflare.Website.Vite");
   }),
   { timeout: 180_000 },
 );

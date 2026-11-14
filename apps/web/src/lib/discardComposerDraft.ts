@@ -1,9 +1,11 @@
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 
+import { cancelPreparingComposerImages } from "../components/chat/preparingComposerImages";
 import {
   type ComposerThreadTarget,
   composerDraftHasUserContent,
+  composerTargetKey,
   resolveComposerDraftKey,
   useComposerDraftStore,
 } from "../composerDraftStore";
@@ -23,6 +25,10 @@ export function discardComposerDraft(target: ComposerThreadTarget): void {
   const discardsSession = typeof target === "string";
 
   const claim = ThreadUndo.begin("discard", key);
+  // The composer may key attachments by the target or by its resolved draft id; a late
+  // compression under either would recreate the draft.
+  cancelPreparingComposerImages(composerTargetKey(target));
+  cancelPreparingComposerImages(key);
   if (discardsSession) {
     store.clearDraftThread(target);
   } else {

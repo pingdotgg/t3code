@@ -93,7 +93,10 @@ describe("mapRemoteDpopEnvironmentError", () => {
       message: "Failed to fetch remote environment endpoint.",
       cause: new TypeError("Failed to fetch"),
     }),
-    new RemoteEnvironmentAuthTimeoutError("https://environment.example.test", 10_000),
+    new RemoteEnvironmentAuthTimeoutError({
+      requestUrl: "https://environment.example.test",
+      timeoutMs: 10_000,
+    }),
   ])("suggests another network when the relay endpoint cannot be reached: $_tag", (error) => {
     const mapped = mapRemoteDpopEnvironmentError(error);
     expect(mapped).toMatchObject({

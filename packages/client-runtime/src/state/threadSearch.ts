@@ -246,14 +246,7 @@ function buildThreadSearchSubject(
   projectTitle: string | null | undefined,
   environmentLabel: string | null | undefined,
 ): ThreadSearchSubject {
-  // What the user wrote, not agent wakes or task notices in the user role. A
-  // thread the user never wrote in counts from its creation; an older server
-  // omits the field, so the latest user-role message stands in.
-  const authored = thread.latestUserAuthoredMessageAt;
-  const activityAt =
-    authored === undefined
-      ? getThreadSortTimestamp(thread, "updated_at")
-      : Date.parse(authored ?? thread.createdAt);
+  const activityAt = getThreadSortTimestamp(thread, "updated_at");
   const localOpenedAt = localThreadOpens.get(`${thread.environmentId}:${thread.id}`) ?? 0;
   return {
     id: thread.id,

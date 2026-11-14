@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
+import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
 
 import { describe, expect, it, vi } from "@effect/vitest";
@@ -811,6 +812,33 @@ describe("terminatePosixOwnedProcessTree", () => {
       expect(fixture.processes.has(111)).toBe(false);
       expect(fixture.processes.has(112)).toBe(false);
     }),
+  );
+
+  it.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
+    "snapshots /proc when a process exits while its entry is being typed",
+    () => {
+      const fs = NodeModule.createRequire(import.meta.url)("node:fs") as typeof NodeFS;
+      const realReaddirSync = fs.readdirSync;
+      // Node lstat()s a dirent of unknown type; a process that exits meanwhile makes it throw.
+      fs.readdirSync = ((path: NodeFS.PathLike, options?: unknown) => {
+        if (path === "/proc" && typeof options === "object" && options !== null) {
+          throw Object.assign(new Error("ENOENT: no such file or directory, lstat '/proc/4563'"), {
+            code: "ENOENT",
+            syscall: "lstat",
+            path: "/proc/4563",
+          });
+        }
+        return Reflect.apply(realReaddirSync, fs, [path, options]);
+      }) as typeof NodeFS.readdirSync;
+      NodeModule.syncBuiltinESMExports();
+      try {
+        const snapshot = AcpSessionRuntime.makePosixProcessTreeController("linux").snapshot();
+        expect(snapshot.some((entry) => entry.pid === process.pid)).toBe(true);
+      } finally {
+        fs.readdirSync = realReaddirSync;
+        NodeModule.syncBuiltinESMExports();
+      }
+    },
   );
 
   it("fails closed where a stable POSIX identity provider is unavailable", () => {

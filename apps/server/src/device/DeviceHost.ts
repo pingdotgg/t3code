@@ -110,6 +110,8 @@ export interface DeviceOperations {
       readonly detail: string | undefined;
       /** Some Android virtual devices could not be listed; the rest are. */
       readonly androidDiscoveryIncomplete?: boolean;
+      /** Platforms that could not be listed; their last known devices stay listed. */
+      readonly incompletePlatforms?: ReadonlyArray<DevicePlatform>;
     },
     DeviceOperationError
   >;
@@ -160,7 +162,12 @@ export interface DeviceHostReady {
   readonly run: (
     command: string,
     args: ReadonlyArray<string>,
-    options?: { readonly timeoutMs?: number; readonly stdin?: string },
+    options?: {
+      readonly timeoutMs?: number;
+      readonly stdin?: string;
+      /** Local output cap; SSH output is not capped. */
+      readonly maxOutputBytes?: number;
+    },
   ) => Effect.Effect<{ readonly stdout: string; readonly stderr: string; readonly code: number }>;
   readonly helpers: {
     readonly serveSimAxSettings: string | null;

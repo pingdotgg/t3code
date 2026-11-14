@@ -1,13 +1,20 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import type { ThreadPullRequestLink, VcsStatusResult } from "@t3tools/contracts";
+import type {
+  PullRequestSummary,
+  ThreadPullRequestKey,
+  ThreadPullRequestLink,
+  VcsStatusResult,
+} from "@t3tools/contracts";
 import {
   sourceControlClients,
   type ChangeRequestTerminology,
 } from "@t3tools/client-runtime/source-control-clients";
 
 import {
+  legacyThreadPullRequestKey,
   resolveThreadCurrentPullRequestLink,
   resolveThreadPullRequestBadge,
+  threadPullRequestKeyOf,
 } from "@t3tools/client-runtime/thread-pull-requests";
 
 export type ThreadPr = NonNullable<VcsStatusResult["pr"]>;
@@ -29,7 +36,7 @@ export interface ThreadPrPresentation {
 const PR_STATE_TEXT_CLASS: Record<ThreadPr["state"], string> = {
   open: "text-adaptive-emerald-600-400",
   merged: "text-adaptive-violet-600-400",
-  closed: "text-foreground-muted",
+  closed: "text-adaptive-rose-600-400",
 };
 
 export function presentThreadPr(
@@ -94,12 +101,7 @@ export function presentThreadLinkedPullRequests(
         : linkedCount !== null
           ? `${linkedCount} linked ${changeRequest.plural}, overall ${badge.state}`
           : `#${link.number} ${changeRequest.singular} ${state === null ? "status pending" : isDraft ? "draft" : state}`,
-    textClassName:
-      state === null || isDraft
-        ? "text-foreground-muted"
-        : isMultiple && state === "closed"
-          ? "text-adaptive-rose-600-400"
-          : PR_STATE_TEXT_CLASS[state],
+    textClassName: state === null || isDraft ? "text-foreground-muted" : PR_STATE_TEXT_CLASS[state],
   };
 }
 
@@ -141,4 +143,54 @@ export function rememberBounded<V>(
     next.delete(oldest);
   }
   return next;
+}
+
+/** The newest summary held for `pullRequest`, matched strictly by host, repository and number. */
+export function knownPullRequestSummary(
+  pullRequest: ThreadPullRequestKey,
+  threads: Iterable<Pick<EnvironmentThreadShell, "projectId" | "pullRequests">>,
+  summaries: Iterable<PullRequestSummary>,
+): PullRequestSummary | undefined {
+  const key = threadPullRequestKeyOf(pullRequest);
+  let newest:
+    | { readonly summary: PullRequestSummary; readonly updatedAt: number; readonly readAt: number }
+    | undefined;
+  // Checks and reviews change without moving `updatedAt`, so equal versions prefer the later read.
+  const consider = (summary: PullRequestSummary, readAt = Number.NEGATIVE_INFINITY) => {
+    const updatedAt = Date.parse(summary.updatedAt);
+    if (
+      newest === undefined ||
+      updatedAt > newest.updatedAt ||
+      (updatedAt === newest.updatedAt && readAt > newest.readAt)
+    ) {
+      newest = { summary, updatedAt, readAt };
+    }
+  };
+  for (const summary of summaries) {
+    if (threadPullRequestKeyOf(legacyThreadPullRequestKey(summary)) === key) {
+      consider(summary, summary.observedAt);
+    }
+  }
+  for (const thread of threads) {
+    for (const link of thread.pullRequests) {
+      const snapshot = link.snapshot;
+      if (snapshot?.updatedAt == null || threadPullRequestKeyOf(link) !== key) continue;
+      consider(
+        {
+          ...snapshot,
+          updatedAt: snapshot.updatedAt,
+          provider: (
+            sourceControlClients.findByChangeRequestUrl(link.url) ??
+            sourceControlClients.get(undefined)
+          ).kind,
+          projectId: thread.projectId,
+          repository: link.repository,
+          number: link.number,
+          url: link.url,
+        },
+        Date.parse(snapshot.syncedAt),
+      );
+    }
+  }
+  return newest?.summary;
 }
