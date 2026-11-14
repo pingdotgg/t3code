@@ -455,7 +455,10 @@ export const makeCliproxyApi = Effect.gen(function* () {
     const response = yield* decodeApiResponse(raw);
     if (response.status_code < 200 || response.status_code >= 300) {
       return yield* new UsageLimitSourceError({
-        detail: `The provider refused the hub request (HTTP ${response.status_code}).`,
+        detail:
+          response.status_code === 401
+            ? "HTTP 401: sign-in expired. Sign in to this account again."
+            : `The provider refused the hub request (HTTP ${response.status_code}).`,
       });
     }
     return response.body;
@@ -471,16 +474,23 @@ export const makeCliproxyApi = Effect.gen(function* () {
       apiCall(hub, account, provider.header(account, platform, architecture), url, data);
     const reading = yield* provider.read({ account, call, checkedAt }).pipe(
       Effect.provideService(Digest.Digest, digest),
-      Effect.orElseSucceed(() => ({
+      Effect.orElseSucceed((error) => ({
         ...listedIdentity(account),
         usageLimits: makeUnavailableUsageLimits({
           checkedAt,
           reason: "probeFailed",
-          message: "The hub could not read this account's usage.",
+          message: isUsageLimitSourceError(error)
+            ? error.detail
+            : "The hub could not decode this account's usage.",
         }),
       })),
     );
-    return { id: account.id, driver: provider.driver, ...reading };
+    return {
+      id: account.id,
+      routingDisabled: account.disabled ?? false,
+      driver: provider.driver,
+      ...reading,
+    };
   });
 
   const readAccounts = Effect.fn("CliproxyApi.readAccounts")(function* (
@@ -496,7 +506,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
     return yield* Effect.forEach(
       accounts.flatMap((account) => {
         const provider = HUB_PROVIDERS.get(account.provider);
-        return provider && !account.disabled ? [{ account, provider }] : [];
+        return provider ? [{ account, provider }] : [];
       }),
       ({ account, provider }) => readAccount(hub, account, provider),
       { concurrency: 4 },

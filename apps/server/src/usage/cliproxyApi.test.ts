@@ -335,6 +335,8 @@ describe("CLIProxyAPI built-in management API", () => {
       const api = yield* test.api;
       const result = yield* api.readAccounts(config);
       expect(result[0]?.usageLimits.unavailable?.reason).toBe("probeFailed");
+      expect(result[0]?.usageLimits.unavailable?.message).toContain("401: sign-in expired");
+      expect(result[0]?.usageLimits.checkedAt).toBeDefined();
       expect(result[1]?.usageLimits.windows[0]?.usedPercent).toBe(12);
       expect(encodeJson(result)).not.toContain("do-not-publish");
     }),
@@ -653,15 +655,18 @@ describe("CLIProxyAPI built-in management API", () => {
     }),
   );
 
-  it.effect("skips disabled accounts and rejects redemption on them", () =>
+  it.effect("reads disabled accounts for usage but rejects redemption on them", () =>
     Effect.gen(function* () {
       const test = fixture({ accounts: [{ ...accounts[0]!, disabled: true }] });
       const api = yield* test.api;
-      expect(yield* api.readAccounts(config)).toEqual([]);
+      const result = yield* api.readAccounts(config);
+      expect(result).toHaveLength(1);
+      expect(result[0]?.routingDisabled).toBe(true);
+      expect(result[0]?.usageLimits.windows[0]?.usedPercent).toBe(78);
       expect((yield* api.consume(config, "first.json", "credit").pipe(Effect.result))._tag).toBe(
         "Failure",
       );
-      expect(test.requests.every((request) => request.path.endsWith("/auth-files"))).toBe(true);
+      expect(test.requests.some((request) => request.body?.method === "POST")).toBe(false);
     }),
   );
 

@@ -1492,6 +1492,67 @@ describe("/usage-limits", () => {
     expect(report?.accounts[0]?.limits.resetCredits?.availableCount).toBe(3);
   });
 
+  it.each([false, true])(
+    "selects eligible redemption with routing-disabled hub accounts (enabled: %s)",
+    (enabled) => {
+      const native = provider({
+        auth: { status: "authenticated", email: "same@example.com" },
+        usageLimits: { ...limits, resetCredits: { availableCount: 1 } },
+      });
+      const disabled = {
+        ...sources[0]!,
+        accounts: ["same", "other"].map((id) => ({
+          id,
+          driver: native.driver,
+          email: `${id}@example.com`,
+          routingDisabled: true,
+          usageLimits: {
+            ...limits,
+            checkedAt: "2026-09-03T11:45:00.000Z",
+            resetCredits: { availableCount: 2, nextCreditId: `${id}-credit` },
+          },
+        })),
+      };
+      if (enabled) {
+        disabled.accounts.push({
+          ...disabled.accounts[0]!,
+          id: "enabled",
+          routingDisabled: false,
+          usageLimits: {
+            ...limits,
+            resetCredits: { availableCount: 1, nextCreditId: "enabled-credit" },
+          },
+        });
+      }
+      const redemption = enabled
+        ? { sourceId: disabled.id, accountId: "enabled", creditId: "enabled-credit" }
+        : { instanceId: native.instanceId };
+      const report = collectProviderUsageLimits(native.instanceId, [native], [disabled], now);
+      expect(report?.accounts.map((account) => account.resetCreditInput)).toEqual([
+        redemption,
+        undefined,
+      ]);
+      const accounts = collectLimitAccounts(
+        new Map([
+          [
+            EnvironmentId.make("env"),
+            {
+              entry: { target: { label: "Local" } },
+              serverConfig: { providers: [native], usageLimitSources: [disabled] },
+            },
+          ],
+        ]),
+      );
+      expect(accounts.map((account) => account.redeem)).toEqual([
+        { environmentId: "env", input: redemption },
+        null,
+      ]);
+      expect(accounts.map((account) => account.limits.resetCredits?.availableCount)).toEqual([
+        2, 2,
+      ]);
+    },
+  );
+
   it("labels hub rows by account id without .json", () => {
     const hub = [
       {
