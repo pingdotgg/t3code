@@ -24,6 +24,11 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.serverRunStorageCleanup]: AuthSettingsWriteScope,
   // Restarts the server, as an update does.
   [WS_METHODS.serverReclaimDatabaseSpace]: AuthEnvironmentMaintainScope,
+  [WS_METHODS.serverGetSourceUpdateStatus]: AuthEnvironmentMaintainScope,
+  // Rebuilds and restarts the server from its checkout.
+  [WS_METHODS.serverRunSourceUpdate]: AuthEnvironmentMaintainScope,
+  // Starts an agent that merges upstream into the checkout the server runs from.
+  [WS_METHODS.serverPullUpstream]: AuthEnvironmentMaintainScope,
   [WS_METHODS.serverCheckOtlpEndpoint]: AuthSettingsWriteScope,
   [WS_METHODS.serverCheckSecretSource]: AuthSettingsWriteScope,
   // Listing models spends the stored API key, so only those who can choose a model may.

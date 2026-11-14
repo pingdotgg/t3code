@@ -154,6 +154,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   serverSelfUpdateProgress: Schema.optionalKey(Schema.Boolean),
   serverUpdateStaging: Schema.optionalKey(Schema.Boolean),
   serverUpdateThreadContinuation: Schema.optionalKey(Schema.Boolean),
+  /** Runs from a git checkout and serves the server.*SourceUpdate and server.pullUpstream RPCs. */
+  sourceUpdate: Schema.optionalKey(Schema.Boolean),
   /** Only explicit false skips Live Activity seeding; older servers may still publish. */
   agentActivityPublishing: Schema.optionalKey(Schema.Boolean),
   projectCloneTracking: Schema.optionalKey(Schema.Boolean),

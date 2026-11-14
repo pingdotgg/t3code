@@ -412,6 +412,60 @@ export class ServerPrepareTriageError extends Schema.TaggedError<ServerPrepareTr
   }
 }
 
+export const ServerSourceUpdateResult = Schema.Struct({
+  outcome: Schema.Literals(["succeeded", "failed"]),
+  finishedAt: IsoDateTime,
+  message: Schema.String,
+});
+export type ServerSourceUpdateResult = typeof ServerSourceUpdateResult.Type;
+
+/** A server run from a git checkout (`T3CODE_SOURCE_CHECKOUT`) and how far its remotes moved. */
+export const ServerSourceUpdateStatus = Schema.Struct({
+  head: Schema.Struct({ sha: Schema.String, subject: Schema.String }),
+  /** Commits `origin/main` has that HEAD lacks; null when the remote branch is missing. */
+  behindOrigin: Schema.NullOr(NonNegativeInt),
+  /** Commits `upstream/main` has that HEAD lacks; null when the remote branch is missing. */
+  upstreamAhead: Schema.NullOr(NonNegativeInt),
+  /** When the remotes were last fetched successfully. */
+  fetchedAt: Schema.NullOr(IsoDateTime),
+  updateRunning: Schema.Boolean,
+  lastResult: Schema.NullOr(ServerSourceUpdateResult),
+});
+export type ServerSourceUpdateStatus = typeof ServerSourceUpdateStatus.Type;
+
+export const ServerRunSourceUpdateInput = Schema.Struct({
+  /** Update even while provider turns are running; the restart interrupts them. */
+  force: Schema.optional(Schema.Boolean),
+});
+export type ServerRunSourceUpdateInput = typeof ServerRunSourceUpdateInput.Type;
+
+export const ServerPullUpstreamResult = Schema.Struct({
+  projectId: ProjectId,
+  threadId: ThreadId,
+});
+export type ServerPullUpstreamResult = typeof ServerPullUpstreamResult.Type;
+
+export const ServerSourceUpdateErrorReason = Schema.Literals([
+  "unavailable",
+  "turns-running",
+  "update-running",
+  "failed",
+]);
+export type ServerSourceUpdateErrorReason = typeof ServerSourceUpdateErrorReason.Type;
+
+export class ServerSourceUpdateError extends Schema.TaggedError<ServerSourceUpdateError>()(
+  "ServerSourceUpdateError",
+  {
+    reason: ServerSourceUpdateErrorReason,
+    detail: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}
+
 export const ServerTraceDiagnosticsErrorKind = Schema.Literals([
   "trace-file-not-found",
   "trace-file-read-failed",

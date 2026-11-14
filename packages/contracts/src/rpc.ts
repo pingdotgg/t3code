@@ -318,6 +318,10 @@ import {
   DesktopUpdateCommitInput,
   OtlpEndpointCheckInput,
   ServerPrepareTriageError,
+  ServerPullUpstreamResult,
+  ServerRunSourceUpdateInput,
+  ServerSourceUpdateError,
+  ServerSourceUpdateStatus,
   ServerPrepareTriageInput,
   ServerPrepareTriageResult,
   OtlpEndpointCheckResult,
@@ -546,6 +550,9 @@ export const WS_METHODS = {
   serverCheckOtlpEndpoint: "server.checkOtlpEndpoint",
   serverListTextGeneratorModels: "server.listTextGeneratorModels",
   serverPrepareTriage: "server.prepareTriage",
+  serverGetSourceUpdateStatus: "server.getSourceUpdateStatus",
+  serverRunSourceUpdate: "server.runSourceUpdate",
+  serverPullUpstream: "server.pullUpstream",
   serverSignalProcess: "server.signalProcess",
   serverReportClientActivity: "server.reportClientActivity",
   serverGetUsageSummary: "server.getUsageSummary",
@@ -1012,6 +1019,24 @@ const WsServerPrepareTriageRpc = Rpc.make(WS_METHODS.serverPrepareTriage, {
   payload: ServerPrepareTriageInput,
   success: ServerPrepareTriageResult,
   error: Schema.Union([ServerPrepareTriageError, EnvironmentAuthorizationError]),
+});
+
+const WsServerGetSourceUpdateStatusRpc = Rpc.make(WS_METHODS.serverGetSourceUpdateStatus, {
+  payload: Schema.Struct({}),
+  success: ServerSourceUpdateStatus,
+  error: Schema.Union([ServerSourceUpdateError, EnvironmentAuthorizationError]),
+});
+
+const WsServerRunSourceUpdateRpc = Rpc.make(WS_METHODS.serverRunSourceUpdate, {
+  payload: ServerRunSourceUpdateInput,
+  success: Schema.Void,
+  error: Schema.Union([ServerSourceUpdateError, EnvironmentAuthorizationError]),
+});
+
+const WsServerPullUpstreamRpc = Rpc.make(WS_METHODS.serverPullUpstream, {
+  payload: Schema.Struct({}),
+  success: ServerPullUpstreamResult,
+  error: Schema.Union([ServerSourceUpdateError, EnvironmentAuthorizationError]),
 });
 
 const WsServerGetUsageSummaryRpc = Rpc.make(WS_METHODS.serverGetUsageSummary, {
@@ -2160,6 +2185,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerCheckOtlpEndpointRpc,
   WsServerListTextGeneratorModelsRpc,
   WsServerPrepareTriageRpc,
+  WsServerGetSourceUpdateStatusRpc,
+  WsServerRunSourceUpdateRpc,
+  WsServerPullUpstreamRpc,
   WsServerGetUsageSummaryRpc,
   WsServerRefreshUsageRatesRpc,
   WsServerSignalProcessRpc,

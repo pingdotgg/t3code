@@ -52,6 +52,16 @@ describe("RPC authorization scopes", () => {
     );
   });
 
+  it("keeps source updates, which rebuild the server and start a merge agent, behind maintain scope", () => {
+    for (const method of [
+      WS_METHODS.serverGetSourceUpdateStatus,
+      WS_METHODS.serverRunSourceUpdate,
+      WS_METHODS.serverPullUpstream,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthEnvironmentMaintainScope);
+    }
+  });
+
   it("separates passive terminal observation from operations that can change a shell", () => {
     for (const method of [WS_METHODS.terminalObserve, WS_METHODS.subscribeTerminalMetadata]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthTerminalReadScope);
