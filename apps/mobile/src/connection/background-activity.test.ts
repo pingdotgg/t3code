@@ -130,7 +130,7 @@ describe("mobile background activity", () => {
     }),
   );
 
-  it.effect("reports on state changes but skips periodic reports while backgrounded", () =>
+  it.effect("ignores inactive and skips periodic reports while backgrounded", () =>
     Effect.gen(function* () {
       setup();
       const entries = yield* SubscriptionRef.make(
@@ -175,11 +175,12 @@ describe("mobile background activity", () => {
       expect(calls).toBe(4);
 
       changeAppState("inactive");
+      changeAppState("active");
       yield* TestClock.adjust("1 second");
-      expect(calls).toBe(5);
+      expect(calls).toBe(4);
 
       yield* TestClock.adjust("25 seconds");
-      expect(calls).toBe(6);
+      expect(calls).toBe(5);
     }),
   );
 });
