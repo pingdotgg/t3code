@@ -4289,9 +4289,9 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
               deletions: 0,
             });
             assert.deepStrictEqual(untrackedScanRoots, [
-              scenario === "normal" ? [":(top,literal)bulk[1]/"] : [],
+              scenario === "long names" ? [] : [":(top,literal)bulk[1]/"],
             ]);
-            if (scenario === "normal") {
+            if (scenario !== "long names") {
               assert.deepStrictEqual(
                 status.workingTree.files.map((file) => file.path),
                 ["bulk[1]/"],
@@ -4423,6 +4423,23 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.include(source.diff, "+# tracked change");
         assert.include(source.diff, "b/ordinary.txt");
         assert.notInclude(source.diff, "large.data");
+      }),
+    );
+
+    it.effect("lists untracked files that status is configured to hide", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["config", "status.showUntrackedFiles", "no"]);
+        yield* writeTextFile(cwd, "notes.txt", "draft\n");
+
+        const status = yield* driver.statusDetailsLocal(cwd);
+        assert.isTrue(status.hasWorkingTreeChanges);
+        assert.deepStrictEqual(
+          status.workingTree.files.map((file) => file.path),
+          ["notes.txt"],
+        );
       }),
     );
 
