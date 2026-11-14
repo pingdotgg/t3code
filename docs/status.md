@@ -146,6 +146,21 @@ range and literal failures in Effect's words and keeps `null` where the schema t
 one needs. 17 tools that a text we send to an agent names are still not served; a test holds
 that list.
 
+## Provider interface, brought up to the T3 server's (2026-11-14)
+
+Closed, each with a test or a T3 recording: Claude's read-only sandbox and `dontAsk` (the
+three failing T3 transcripts pass; the replay takes each scenario's policy from T3's fixture
+table); a model change during a turn (sent to the running session; Claude applies effort live
+and never a new model, as T3; ours used to send `set_model`); Codex Stop that waits and offers
+Force stop (`InterruptTimeout`, `run_interrupt_request` with `unresponsiveAt`, Force stop's own
+result); fork with the fork's model and cwd; background work as T3 derives it for the shell
+and `/mcp` (`derivePendingBackgroundWork`, compared with T3's own function); `ThreadInUse`
+from Codex; a Codex restart continuation starts the native turn without input; MCP servers
+at open; the session row from `open_session`; `planSelectionTransition` in the engine;
+continuation turns through `start_turn`; the SDK host client in `conn-provider-support`.
+Trait additions with no provider behind them yet: `ProviderHost` (only a rooted file host),
+`stop_task`, `await_background_tasks`, `background_work.updated` (Claude reports no roster).
+
 ## What is left, in the planned order
 
 1. **Rust hygiene, step 1: done (2026-11-14).** The toolchain is pinned to 1.99.1; BeautifulRust's
