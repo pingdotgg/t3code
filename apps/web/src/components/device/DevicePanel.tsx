@@ -1,5 +1,6 @@
 import { DeviceHostUpdates } from "./DeviceHostUpdates";
 import type {
+  DeviceHostSummary,
   DevicePlatform,
   DeviceServiceState,
   DeviceSummary,
@@ -318,42 +319,56 @@ export function DevicePanel(props: {
                           <Smartphone className="size-4 shrink-0" />
                           <h3 className="font-medium">{platformLabel(group.platform)}</h3>
                         </div>
-                        <DiscoveryList>
-                          {group.devices.map((device) => (
-                            <div
-                              key={deviceKey(device)}
-                              className="flex items-center gap-3 px-3 py-3"
-                            >
-                              <span className="grid size-8 shrink-0 place-items-center rounded-md border border-border/60">
-                                <Smartphone className="size-4" />
-                              </span>
-                              <div className="flex min-w-0 flex-1 flex-col">
-                                <span className="truncate text-sm font-medium text-foreground">
-                                  {device.name}
-                                </span>
-                                <span className="truncate text-xs text-muted-foreground">
-                                  {`${state.hosts.find((host) => host.id === device.hostId)?.label} · ${device.version} · ${device.booted ? "Running" : "Stopped"}`}
-                                </span>
-                              </div>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                disabled={pendingDeviceKey !== null}
-                                aria-label={`${device.booted ? "Open" : "Start"} ${device.name}`}
-                                onClick={() => void selectDevice(deviceKey(device))}
-                              >
-                                {pendingDeviceKey === deviceKey(device) ? (
-                                  <Spinner size="xs" />
-                                ) : device.booted ? (
-                                  <ArrowUpRight />
-                                ) : (
-                                  <Play />
-                                )}
-                                {device.booted ? "Open" : "Start"}
-                              </Button>
-                            </div>
-                          ))}
-                        </DiscoveryList>
+                        {group.sources.map((source) => (
+                          <div key={source.hostId} className="space-y-2">
+                            <h4 className="px-1 text-xs font-medium text-muted-foreground">
+                              {source.label}
+                            </h4>
+                            <DiscoveryList>
+                              {source.devices.map((device) => {
+                                const action = device.booted
+                                  ? "Open"
+                                  : source.kind === "simlock"
+                                    ? "Lease"
+                                    : "Start";
+                                return (
+                                  <div
+                                    key={deviceKey(device)}
+                                    className="flex items-center gap-3 px-3 py-3"
+                                  >
+                                    <span className="grid size-8 shrink-0 place-items-center rounded-md border border-border/60">
+                                      <Smartphone className="size-4" />
+                                    </span>
+                                    <div className="flex min-w-0 flex-1 flex-col">
+                                      <span className="truncate text-sm font-medium text-foreground">
+                                        {device.name}
+                                      </span>
+                                      <span className="truncate text-xs text-muted-foreground">
+                                        {`${device.version} · ${device.booted ? "Running" : source.kind === "simlock" ? "Available to lease" : "Stopped"}`}
+                                      </span>
+                                    </div>
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      disabled={pendingDeviceKey !== null}
+                                      aria-label={`${action} ${device.name}`}
+                                      onClick={() => void selectDevice(deviceKey(device))}
+                                    >
+                                      {pendingDeviceKey === deviceKey(device) ? (
+                                        <Spinner size="xs" />
+                                      ) : device.booted ? (
+                                        <ArrowUpRight />
+                                      ) : (
+                                        <Play />
+                                      )}
+                                      {action}
+                                    </Button>
+                                  </div>
+                                );
+                              })}
+                            </DiscoveryList>
+                          </div>
+                        ))}
                       </section>
                     ))}
                   </div>
@@ -484,13 +499,46 @@ function DeviceDiscoveryWarning(props: {
   );
 }
 
+/** Per platform, one list per host in the server's host order, so the same model on two hosts never interleaves. */
 function groupDevices(state: DeviceServiceState) {
-  const groups: Array<{ platform: DevicePlatform; devices: DeviceSummary[] }> = [];
+  const groups: Array<{
+    platform: DevicePlatform;
+    sources: Array<{
+      hostId: string;
+      label: string;
+      kind: DeviceHostSummary["kind"] | undefined;
+      devices: DeviceSummary[];
+    }>;
+  }> = [];
+  const hostOrder = (hostId: string) => {
+    const index = state.hosts.findIndex((host) => host.id === hostId);
+    return index === -1 ? state.hosts.length : index;
+  };
   for (const platform of ["ios", "android"] as const) {
     const devices = state.devices
       .filter((device) => device.platform === platform)
-      .toSorted((a, b) => Number(b.booted) - Number(a.booted) || a.name.localeCompare(b.name));
-    if (devices.length > 0) groups.push({ platform, devices });
+      .toSorted(
+        (a, b) =>
+          hostOrder(a.hostId) - hostOrder(b.hostId) ||
+          Number(b.booted) - Number(a.booted) ||
+          a.name.localeCompare(b.name),
+      );
+    const sources: (typeof groups)[number]["sources"] = [];
+    for (const device of devices) {
+      const last = sources.at(-1);
+      if (last?.hostId === device.hostId) {
+        last.devices.push(device);
+        continue;
+      }
+      const host = state.hosts.find((candidate) => candidate.id === device.hostId);
+      sources.push({
+        hostId: device.hostId,
+        label: host?.label ?? "Device host",
+        kind: host?.kind,
+        devices: [device],
+      });
+    }
+    if (sources.length > 0) groups.push({ platform, sources });
   }
   return groups;
 }
