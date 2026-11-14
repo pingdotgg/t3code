@@ -565,6 +565,28 @@ describe("PreviewView", () => {
     await expect.element(address).toHaveFocus();
   });
 
+  it("floats a docked preview from the panel in one click", async () => {
+    setup();
+    useRightPanelStore.setState({ byThreadKey: {} });
+    usePreviewMiniPlayerStore.getState().open(TEST_THREAD_REF, browserMiniPlayerSource("tab-1"));
+    useRightPanelStore.getState().openBrowser(TEST_THREAD_REF, "tab-1");
+
+    await using screen = await render(view());
+    const float = screen.getByRole("button", { name: "Float preview over chat" });
+    await expect.element(float).toHaveAttribute("aria-pressed", "false");
+    await userEvent.click(float);
+
+    expect(
+      selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, TEST_THREAD_REF),
+    ).toBeNull();
+    expect(
+      selectThreadPreviewMiniPlayerTabId(
+        usePreviewMiniPlayerStore.getState().byThreadKey,
+        TEST_THREAD_REF,
+      ),
+    ).toBe("tab-1");
+  });
+
   it("does not reopen find when the user returns to a tab they left with find open", async () => {
     setup();
     const tabView = (tabId: string) => (
