@@ -2004,7 +2004,7 @@ it.effect("explicit settle clears snooze atomically and stays idempotent after r
       yield* TestClock.adjust("1 second");
       const commandId = CommandId.make(`settle-snoozed-${round}`);
       yield* orchestrator.dispatch({ type: "thread.settle", commandId, threadId });
-      // Round 2 snoozed settled work, which took it out of Settled, so this settles it anew.
+      // Snoozing settled work leaves Settled, so round 2 settles anew.
       const expected = {
         settledOverride: "settled",
         settledAt: yield* DateTime.now,
