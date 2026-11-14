@@ -1008,6 +1008,33 @@ describe("AcpSessionRuntime", () => {
     );
   });
 
+  it.effect("omits additional directories when the agent does not advertise them", () => {
+    const requestEvents: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
+    return Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      yield* runtime.start();
+
+      const created = requestEvents.find(
+        (event) => event.method === "session/new" && event.status === "started",
+      );
+      expect(created?.payload).toBeDefined();
+      expect(created?.payload).not.toHaveProperty("additionalDirectories");
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          ...mockRuntimeOptions,
+          additionalDirectories: ["/tmp/t3-attachments"],
+          requestLogger: (event) =>
+            Effect.sync(() => {
+              requestEvents.push(event);
+            }),
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    );
+  });
+
   it.effect("rejects unauthenticated ACP session lifecycle requests", () =>
     Effect.gen(function* () {
       const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;

@@ -2172,7 +2172,8 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
   const sessionSetupFields = (initializeResult: EffectAcpSchema.InitializeResponse) => {
     const meta = options.sessionMeta?.(initializeResult);
     return {
-      ...(options.additionalDirectories?.length
+      ...(options.additionalDirectories?.length &&
+      initializeResult.agentCapabilities?.sessionCapabilities?.additionalDirectories != null
         ? { additionalDirectories: options.additionalDirectories }
         : {}),
       ...(meta == null ? {} : { _meta: meta }),
