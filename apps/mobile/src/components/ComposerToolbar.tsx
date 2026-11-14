@@ -285,6 +285,7 @@ export function ComposerActionButton(props: {
 }) {
   const { scale, smallIconSize } = useAndroidControlSizing();
   const circleSize = Math.round((props.size === "large" ? 44 : 30) * scale);
+  const fadeIcon = props.disabled === true && props.variant !== "danger";
   return (
     <Pressable
       accessibilityLabel={props.accessibilityLabel}
@@ -308,21 +309,26 @@ export function ComposerActionButton(props: {
               : "bg-primary",
         )}
       >
-        <SymbolView
-          name={props.icon}
-          size={props.size === "large" ? Math.round(20 * scale) : smallIconSize}
-          weight="semibold"
-          // Fade the whole icon: a translucent tint stacks where the SVG strokes overlap.
-          className={props.disabled && props.variant !== "danger" ? "opacity-38" : undefined}
-          tintColorClassName={
-            props.variant === "danger"
-              ? "accent-danger-foreground"
-              : props.disabled
-                ? "accent-foreground"
-                : "accent-primary-foreground"
-          }
-          type="monochrome"
-        />
+        {/* Fade the icon as one layer: a translucent tint, or opacity on a Tabler icon (which
+            copies it onto every path), stacks where the SVG strokes overlap. */}
+        <View
+          className={fadeIcon ? "opacity-38" : undefined}
+          needsOffscreenAlphaCompositing={fadeIcon}
+        >
+          <SymbolView
+            name={props.icon}
+            size={props.size === "large" ? Math.round(20 * scale) : smallIconSize}
+            weight="semibold"
+            tintColorClassName={
+              props.variant === "danger"
+                ? "accent-danger-foreground"
+                : props.disabled
+                  ? "accent-foreground"
+                  : "accent-primary-foreground"
+            }
+            type="monochrome"
+          />
+        </View>
       </View>
     </Pressable>
   );
