@@ -648,8 +648,20 @@ const cancelBackgroundOnlyTask = (
       yield* Effect.gen(function* () {
         const service = yield* OrchestratorMcpService.OrchestratorMcpService;
         const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
         yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
         yield* orchestrator.recoverDelegatedTasks;
+        // The harness's worker daemon may hold the settling effect, which drain does not wait on.
+        yield* eventSink.stream({ afterSequence: 0 }).pipe(
+          Stream.filter(
+            ({ event }) =>
+              event.type === "subagent.updated" &&
+              event.payload.id === stopped.taskId &&
+              event.payload.status === "interrupted",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+        );
         const task = (yield* orchestrator.getThreadProjection(
           stopped.scope.thread!.threadId,
         )).subagents.find((entry) => entry.id === stopped.taskId);
