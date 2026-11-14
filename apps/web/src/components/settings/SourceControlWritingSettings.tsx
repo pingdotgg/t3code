@@ -1,3 +1,4 @@
+import { textDirection } from "~/textDirection";
 import { useNavigate } from "@tanstack/react-router";
 import { useRef, useState } from "react";
 import {
@@ -256,6 +257,7 @@ export function SourceControlWritingSettingsSection() {
               <>
                 <Textarea
                   value={allInstructions ?? ""}
+                  dir={textDirection(allInstructions ?? "")}
                   onChange={(event) => setAllInstructions(event.target.value)}
                   rows={4}
                   aria-label="Custom commit and pull request instructions for all selected environments"
@@ -298,6 +300,7 @@ export function SourceControlWritingSettingsSection() {
               key={style.customInstructions}
               ref={customInstructionsRef}
               defaultValue={style.customInstructions}
+              dir="auto"
               onBlur={(event) => {
                 const customInstructions = event.target.value.trim();
                 if (customInstructions !== style.customInstructions) {
@@ -456,6 +459,7 @@ export function SourceControlWritingSettingsSection() {
                 }}
                 rows={4}
                 defaultValue={mixedReviewGuideInstructions ? "" : settings.reviewGuideInstructions}
+                dir="auto"
                 placeholder={
                   mixedReviewGuideInstructions
                     ? "Mixed. Enter instructions to apply to all selected targets."

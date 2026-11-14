@@ -1,3 +1,4 @@
+import { textDirection } from "~/textDirection";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { ArrowLeftIcon, ExternalLinkIcon } from "lucide-react";
 import type { MouseEvent as ReactMouseEvent } from "react";
@@ -178,7 +179,10 @@ export function PullRequestDetailCrumbs({
             <Tooltip>
               <TooltipTrigger
                 render={
-                  <span className="min-w-0 truncate font-medium text-foreground">
+                  <span
+                    className="min-w-0 truncate font-medium text-foreground"
+                    dir={textDirection(detail.title)}
+                  >
                     {detail.title}
                   </span>
                 }

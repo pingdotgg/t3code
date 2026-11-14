@@ -1,3 +1,4 @@
+import { textDirection } from "~/textDirection";
 import { useAtomValue } from "@effect/atom-react";
 import { connectionStatusTitle } from "@t3tools/client-runtime/connection";
 import { AsyncResult } from "effect/reactivity";
@@ -1767,6 +1768,7 @@ function ScheduledTaskEditorForm({
               className="max-h-64 overflow-y-auto"
               placeholder="What should the agent do each time this runs?"
               value={draft.prompt}
+              dir={textDirection(draft.prompt)}
               onChange={(event) =>
                 setDraft((current) => ({ ...current, prompt: event.target.value }))
               }

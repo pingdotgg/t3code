@@ -1,3 +1,4 @@
+import { markdownProseDirection } from "~/textDirection";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { deriveThreadQueueWorkflowState } from "@t3tools/client-runtime/state/thread-workflows";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
@@ -503,7 +504,12 @@ function QueuedMessage(props: {
             ) : null}
             {/* In full, like a sent turn: a queued message is read before it is sent. */}
             {props.previewText ? (
-              <p className="whitespace-pre-wrap wrap-anywhere">{props.previewText}</p>
+              <p
+                className="whitespace-pre-wrap wrap-anywhere"
+                dir={markdownProseDirection(props.previewText)}
+              >
+                {props.previewText}
+              </p>
             ) : null}
           </div>
         ) : null}

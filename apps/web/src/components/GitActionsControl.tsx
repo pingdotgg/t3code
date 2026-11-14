@@ -1,3 +1,4 @@
+import { textDirection } from "~/textDirection";
 import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
 import { useAtomMount, useAtomValue } from "@effect/atom-react";
 import {
@@ -1949,6 +1950,7 @@ export default function GitActionsControl({
               <p className="text-sm font-medium">Commit message (optional)</p>
               <Textarea
                 value={dialogCommitMessage}
+                dir={textDirection(dialogCommitMessage)}
                 onChange={(event) => setDialogCommitMessage(event.target.value)}
                 placeholder="Leave empty to auto-generate"
                 size="sm"

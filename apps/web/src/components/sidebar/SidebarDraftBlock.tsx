@@ -1,3 +1,4 @@
+import { markdownProseDirection } from "~/textDirection";
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
@@ -126,7 +127,12 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
               </Tooltip>
             </span>
           </div>
-          <div className="mt-0.5 truncate text-sm font-medium text-foreground/90">{preview}</div>
+          <div
+            className="mt-0.5 truncate text-sm font-medium text-foreground/90"
+            dir={markdownProseDirection(preview)}
+          >
+            {preview}
+          </div>
         </div>
       </div>
     </li>

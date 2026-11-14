@@ -1,3 +1,4 @@
+import { textDirection } from "~/textDirection";
 import { pipe } from "effect/Function";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -123,7 +124,11 @@ function PendingLinkRequest(props: {
             ? "Link a machine to this environment"
             : `Link ${target} to this environment`}
         </p>
-        {item.reason.trim() ? <p className="text-sm text-muted-foreground">{item.reason}</p> : null}
+        {item.reason.trim() ? (
+          <p className="text-sm text-muted-foreground" dir={textDirection(item.reason)}>
+            {item.reason}
+          </p>
+        ) : null}
       </div>
       {error !== null ? (
         <p role="alert" className="text-xs text-destructive">

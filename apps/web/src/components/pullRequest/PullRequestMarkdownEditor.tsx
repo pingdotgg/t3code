@@ -1,3 +1,4 @@
+import { textDirection } from "~/textDirection";
 import { useState } from "react";
 import {
   AuthSourceControlWriteScope,
@@ -112,6 +113,7 @@ export function PullRequestMarkdownEditor({
           disabled={saving}
           completionScope={completionScope}
           value={draft}
+          dir={textDirection(draft)}
           rows={6}
           placeholder={placeholder}
           aria-label={label}

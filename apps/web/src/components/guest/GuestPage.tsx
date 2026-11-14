@@ -1,3 +1,4 @@
+import { textDirection } from "~/textDirection";
 import {
   EnvironmentId,
   GUEST_MESSAGE_MAX_LENGTH,
@@ -763,6 +764,7 @@ function GuestComposer({
         rows={2}
         maxLength={GUEST_MESSAGE_MAX_LENGTH}
         value={text}
+        dir={textDirection(text)}
         onChange={(event) => setText(event.target.value)}
         onKeyDown={onKeyDown}
         onPaste={onPaste}

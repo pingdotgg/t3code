@@ -1781,6 +1781,7 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
                   (props.isHighlighted || props.isRouteActive) && "text-foreground",
                   thread.titleRegeneration != null && "opacity-55",
                 )}
+                dir={textDirection(thread.title)}
               >
                 {thread.title}
               </span>

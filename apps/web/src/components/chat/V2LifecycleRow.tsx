@@ -1,3 +1,4 @@
+import { textDirection } from "~/textDirection";
 import { ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { AgentElapsed } from "./AgentElapsed";
 import { projectedSubagentsToRuntime } from "@t3tools/client-runtime/state/subagentRuntime";
@@ -115,7 +116,10 @@ export function V2LifecycleRow(props: {
           <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted/60">
             <MessageSquareIcon className="size-4 text-secondary-label" aria-hidden />
           </span>
-          <span className="min-w-0 flex-1 truncate text-sm font-medium">
+          <span
+            className="min-w-0 flex-1 truncate text-sm font-medium"
+            dir={item.title ? textDirection(item.title) : undefined}
+          >
             {item.title ?? "Created thread"}
           </span>
           <Button
@@ -133,7 +137,17 @@ export function V2LifecycleRow(props: {
       <WorkLogRow
         data-v2-item-type={item.type}
         icon={<T3Wordmark className="size-4 text-icon-muted" aria-hidden />}
-        label={<>Created thread{item.title ? ` · ${item.title}` : ""}</>}
+        label={
+          <>
+            Created thread
+            {item.title ? (
+              <>
+                {" "}
+                · <bdi dir={textDirection(item.title)}>{item.title}</bdi>
+              </>
+            ) : null}
+          </>
+        }
         trailing={
           <InlineButton
             aria-label={`Open ${item.title ?? "created thread"}`}

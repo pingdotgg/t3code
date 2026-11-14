@@ -1,3 +1,4 @@
+import { textDirection } from "~/textDirection";
 import type {
   EnvironmentId,
   PullRequestActor,
@@ -441,6 +442,7 @@ export function ReviewThreadCard({
                       size="sm"
                       completionScope={completionScope}
                       value={reply}
+                      dir={textDirection(reply)}
                       placeholder="Reply"
                       aria-label="Reply to this conversation"
                       onValueChange={setReply}

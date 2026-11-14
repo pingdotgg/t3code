@@ -1,3 +1,4 @@
+import { textDirection } from "~/textDirection";
 import { pipe } from "effect/Function";
 import {
   SECRET_REQUEST_DEFAULT_PLACEHOLDER,
@@ -53,7 +54,7 @@ export function SecretRequestCard(props: {
         icon={<Icon className="size-3.5 text-icon-muted" aria-hidden />}
         label={
           <>
-            {item.label} · {display.label}
+            <bdi dir={textDirection(item.label)}>{item.label}</bdi> · {display.label}
           </>
         }
       />
@@ -146,11 +147,20 @@ function PendingSecretRequestForm(props: {
       }}
     >
       <div className="flex min-w-0 flex-col gap-1">
-        <label htmlFor={inputId} className="text-sm font-medium text-foreground">
+        <label
+          htmlFor={inputId}
+          className="text-sm font-medium text-foreground"
+          dir={textDirection(item.label)}
+        >
           {item.label}
         </label>
         {item.reason.trim() ? (
-          <p className="text-sm wrap-anywhere text-muted-foreground">{item.reason}</p>
+          <p
+            className="text-sm wrap-anywhere text-muted-foreground"
+            dir={textDirection(item.reason)}
+          >
+            {item.reason}
+          </p>
         ) : null}
       </div>
       {link !== null ? (

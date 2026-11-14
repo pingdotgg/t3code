@@ -1,3 +1,4 @@
+import { textDirection } from "~/textDirection";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, PullRequestDetail, PullRequestRef } from "@t3tools/contracts";
 import { useState } from "react";
@@ -72,7 +73,10 @@ export function PullRequestTitleEditor({
         <Tooltip>
           <TooltipTrigger
             render={
-              <h1 className="min-w-0 flex-1 truncate text-base font-semibold leading-snug">
+              <h1
+                className="min-w-0 flex-1 truncate text-base font-semibold leading-snug"
+                dir={textDirection(detail.title)}
+              >
                 {detail.title}
               </h1>
             }
@@ -95,6 +99,7 @@ export function PullRequestTitleEditor({
         size="sm"
         disabled={titleSaving}
         value={titleDraft}
+        dir={textDirection(titleDraft)}
         aria-label={`${capitalizeTerm(sourceControlClients.get(detail.provider).changeRequest.singular)} title`}
         onChange={(event) => setTitleScope({ pullRequestKey, text: event.target.value })}
         onKeyDown={(event) => {

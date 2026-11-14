@@ -1,3 +1,4 @@
+import { textDirection } from "~/textDirection";
 import type { PullRequestListEntry, PullRequestSummary } from "@t3tools/contracts";
 import {
   ArrowLeftIcon,
@@ -195,7 +196,12 @@ export function PullRequestDetailGhost({
               title={
                 <PullRequestDetailTitleRow>
                   {seed ? (
-                    <h1 className="truncate text-base font-semibold leading-snug">{seed.title}</h1>
+                    <h1
+                      className="truncate text-base font-semibold leading-snug"
+                      dir={textDirection(seed.title)}
+                    >
+                      {seed.title}
+                    </h1>
                   ) : (
                     <GhostBar className="h-5 w-4/5 max-w-md" />
                   )}

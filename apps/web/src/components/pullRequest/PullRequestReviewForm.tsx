@@ -1,3 +1,4 @@
+import { textDirection } from "~/textDirection";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { capitalizeTerm } from "@t3tools/client-runtime/source-control-clients";
 import type { EnvironmentId, PullRequestRef, PullRequestReviewVerdict } from "@t3tools/contracts";
@@ -161,6 +162,7 @@ export function PullRequestReviewForm({
         rows={3}
         readOnly={speech.freezesEditor}
         value={body}
+        dir={textDirection(body)}
         placeholder={placeholder}
         aria-label="Review summary"
         onValueChange={(next) => setSummary(reviewKey, next)}

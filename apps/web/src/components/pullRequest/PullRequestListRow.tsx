@@ -1,3 +1,4 @@
+import { textDirection } from "~/textDirection";
 import type {
   PullRequestActor,
   PullRequestMergeability,
@@ -78,7 +79,12 @@ export function PullRequestRowLines({
     <span className="min-w-0 flex-1">
       <span className="flex min-w-0 items-center gap-1.5">
         {number}
-        <span className="min-w-0 truncate text-sm">{title}</span>
+        <span
+          className="min-w-0 truncate text-sm"
+          dir={typeof title === "string" ? textDirection(title) : undefined}
+        >
+          {title}
+        </span>
         {signals ? (
           <span className="flex shrink-0 items-center gap-1 text-2xs">{signals}</span>
         ) : null}

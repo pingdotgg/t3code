@@ -1,3 +1,4 @@
+import { textDirection } from "~/textDirection";
 import type { PreviewCard as PreviewCardPrimitive } from "@base-ui/react/preview-card";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { parsePullRequestAnchor, pullRequestLinkCommit } from "@t3tools/shared/pullRequestAnchor";
@@ -161,7 +162,10 @@ export function PullRequestLinkPreview({
                 ) : subject?.kind === "commit" ? (
                   <LinkedCommit commit={subject.commit} />
                 ) : (
-                  <p className="mt-1 text-sm font-medium leading-snug text-foreground text-pretty">
+                  <p
+                    className="mt-1 text-sm font-medium leading-snug text-foreground text-pretty"
+                    dir={textDirection(card.title)}
+                  >
                     {card.title}
                   </p>
                 )}
