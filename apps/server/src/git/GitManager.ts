@@ -606,10 +606,10 @@ function headBranchProbe(
   provider: SourceControlProvider.SourceControlProvider["Service"],
   headSelectors: ReadonlyArray<string>,
   state: "open" | "all",
-  defaultBranchHeadSelector?: string,
+  ownerHeadSelector?: string,
 ) {
   return (
-    provider.headBranchProbe?.({ headSelectors, state, defaultBranchHeadSelector }) ?? {
+    provider.headBranchProbe?.({ headSelectors, state, ownerHeadSelector }) ?? {
       headSelectors,
       limit: state === "open" ? 1 : 20,
     }
@@ -1933,9 +1933,10 @@ export const make = Effect.gen(function* () {
       | "headRepositoryOwnerLogin"
       | "isCrossRepository"
     >,
+    ownerHeadSelector?: string,
   ) {
     const provider = yield* sourceControlProvider(cwd);
-    const probe = headBranchProbe(provider, headContext.headSelectors, "open");
+    const probe = headBranchProbe(provider, headContext.headSelectors, "open", ownerHeadSelector);
     for (const headSelector of probe.headSelectors) {
       const pullRequests = yield* provider.listChangeRequests({
         cwd,
@@ -1976,6 +1977,7 @@ export const make = Effect.gen(function* () {
         ? `${headContext.headRepositoryOwnerLogin}:${defaultBranch}`
         : undefined,
     );
+    let pageWasFull = false;
     for (const headSelector of probe.headSelectors) {
       const pullRequests = yield* provider.listChangeRequests({
         cwd,
@@ -1983,6 +1985,7 @@ export const make = Effect.gen(function* () {
         state: "all",
         limit: probe.limit,
       });
+      pageWasFull ||= pullRequests.length >= probe.limit;
 
       for (const pr of pullRequests.map(toPullRequestInfo)) {
         if (!matchesBranchHeadContext(pr, headContext)) {
@@ -1997,6 +2000,17 @@ export const make = Effect.gen(function* () {
     const latestOpenPr = parsed.find((pr) => pr.state === "open");
     if (latestOpenPr) {
       return latestOpenPr;
+    }
+    // Forks reusing the head name can fill the page before the branch's own open PR.
+    if (pageWasFull) {
+      const openPr = yield* findOpenPr(
+        cwd,
+        headContext,
+        headContext.headRepositoryOwnerLogin
+          ? `${headContext.headRepositoryOwnerLogin}:${headContext.headBranch}`
+          : undefined,
+      );
+      if (openPr) return openPr;
     }
     return parsed[0] ?? null;
   });
