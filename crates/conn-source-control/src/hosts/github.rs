@@ -426,6 +426,10 @@ pub async fn rest(
         http_request = http_request
             .header("content-type", "application/json")
             .body(serde_json::to_vec(body).unwrap_or_default());
+    } else if matches!(request.method, Method::Post | Method::Put) {
+        // Fetch sends `content-length: 0` for a POST or PUT without a body; GitHub asks for it
+        // on `PUT user/starred`.
+        http_request = http_request.body(Vec::new());
     }
     let response = http::send(http_request)
         .await
@@ -448,6 +452,173 @@ pub async fn rest(
             messages: rest_error_messages(&response.text()),
         }),
     }
+}
+
+/// `HOSTNAME` in `GitHubCredentials.ts`: a bare host name with an optional port. API URLs are
+/// built from it, so anything else could send a token elsewhere.
+pub fn is_github_host(host: &str) -> bool {
+    let (name, port) = match host.rsplit_once(':') {
+        Some((name, port)) => (name, Some(port)),
+        None => (host, None),
+    };
+    let port_ok =
+        port.is_none_or(|p| (1..=5).contains(&p.len()) && p.bytes().all(|b| b.is_ascii_digit()));
+    let label_ok = |label: &str| {
+        let bytes = label.as_bytes();
+        !bytes.is_empty()
+            && bytes
+                .iter()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'-')
+            && bytes.first().is_some_and(|b| *b != b'-')
+            && bytes.last().is_some_and(|b| *b != b'-')
+    };
+    port_ok && name.split('.').all(label_ok)
+}
+
+/// `environmentToken`: `GH_TOKEN`/`GITHUB_TOKEN` for github.com and `*.ghe.com`;
+/// `GH_ENTERPRISE_TOKEN`/`GITHUB_ENTERPRISE_TOKEN` only for the host `GH_HOST` names.
+pub fn environment_token(host: &str, env: &Environment) -> Option<Secret> {
+    if !is_github_host(host) {
+        return None;
+    }
+    let names: &[&str] = if host == "github.com" || host.ends_with(".ghe.com") {
+        &["GH_TOKEN", "GITHUB_TOKEN"]
+    } else if env
+        .get("GH_HOST")
+        .map(|h| h.trim().to_lowercase())
+        .as_deref()
+        == Some(host)
+    {
+        &["GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"]
+    } else {
+        &[]
+    };
+    names
+        .iter()
+        .find_map(|name| env.non_blank(name))
+        .and_then(Secret::non_empty)
+}
+
+/// Why no credential was found, as `GitHubCredentials` errors.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CredentialError {
+    NotSignedIn,
+    HostDisabled,
+    CliMissing,
+    CliFailed,
+    /// `SettingsSecretUnresolvedError`, with its message.
+    Unresolved(String),
+}
+
+/// `gh auth token --hostname <host> [--user <account>]` (`fromGh`).
+async fn token_from_gh(
+    ctx: DiscoveryContext<'_>,
+    host: &str,
+    account: Option<&str>,
+) -> Result<Secret, CredentialError> {
+    let mut args = vec!["auth", "token", "--hostname", host];
+    if let Some(account) = account {
+        args.extend(["--user", account]);
+    }
+    let mut command =
+        crate::discovery::ProbeCommand::new("GitHubCredentials.get", "gh", &args, ctx.cwd);
+    command.timeout = std::time::Duration::from_secs(10);
+    // Never let gh print the token into a debug log.
+    command.env = ctx.probe_env(&[("GH_DEBUG", "".into()), ("GH_PROMPT_DISABLED", "1".into())]);
+    match crate::discovery::run_probe(command).await {
+        Ok(output) => Secret::non_empty(output.stdout).ok_or(CredentialError::NotSignedIn),
+        Err(crate::discovery::ProbeFailure::Missing { .. }) => Err(CredentialError::CliMissing),
+        Err(crate::discovery::ProbeFailure::Exit { .. }) => Err(CredentialError::NotSignedIn),
+        Err(_) => Err(CredentialError::CliFailed),
+    }
+}
+
+/// `GitHubCredentials.get` for a host: the token saved in Settings, else the environment's,
+/// else `gh`'s (the account chosen in Settings first, then the active login). T3 keeps the
+/// `gh` answer 5 minutes; this server asks `gh` on each call.
+pub async fn credential(
+    ctx: DiscoveryContext<'_>,
+    raw_host: &str,
+) -> Result<Secret, CredentialError> {
+    let host = raw_host.trim().to_lowercase();
+    if !is_github_host(&host) {
+        return Err(CredentialError::NotSignedIn);
+    }
+    let settings = ctx.settings.host(KIND);
+    if !settings.host_enabled(&host) {
+        return Err(CredentialError::HostDisabled);
+    }
+    if let Some(saved) = settings
+        .keyed_secret("tokens", &host)
+        .require()
+        .map_err(CredentialError::Unresolved)?
+    {
+        return Ok(saved);
+    }
+    if let Some(token) = environment_token(&host, ctx.env) {
+        return Ok(token);
+    }
+    let account = settings.host_account(&host);
+    match token_from_gh(ctx, &host, account).await {
+        Err(CredentialError::NotSignedIn) if account.is_some() => {
+            token_from_gh(ctx, &host, None).await
+        }
+        other => other,
+    }
+}
+
+/// `starredPath`: exactly `owner/name`, neither empty nor a dot segment, each part encoded.
+fn starred_path(repository: &str) -> Option<String> {
+    let segments: Vec<&str> = repository.split('/').collect();
+    (segments.len() == 2 && segments.iter().all(|s| !matches!(*s, "" | "." | ".."))).then(|| {
+        format!(
+            "user/starred/{}",
+            segments
+                .iter()
+                .map(|s| encode_uri_component(s))
+                .collect::<Vec<_>>()
+                .join("/")
+        )
+    })
+}
+
+/// `encodeURIComponent`.
+pub fn encode_uri_component(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for byte in text.bytes() {
+        if byte.is_ascii_alphanumeric() || b"-_.!~*'()".contains(&byte) {
+            out.push(char::from(byte));
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
+}
+
+/// `makeIsRepositoryStarred` / `makeStarRepository`: true only on 204; false on any failure.
+pub async fn starred(ctx: DiscoveryContext<'_>, host: &str, repository: &str, star: bool) -> bool {
+    let Some(path) = starred_path(repository) else {
+        return false;
+    };
+    let Ok(token) = credential(ctx, host).await else {
+        return false;
+    };
+    let host = host.trim().to_lowercase();
+    let root = (host == "github.com")
+        .then_some(())
+        .and(ctx.endpoints.github_rest.as_deref());
+    rest(
+        RestRequest {
+            host: &host,
+            method: if star { Method::Put } else { Method::Get },
+            path: &path,
+            body: None,
+        },
+        token,
+        root,
+    )
+    .await
+    .is_ok_and(|response| response.status == 204)
 }
 
 /// `environmentTokenVariable`: the first of `GH_TOKEN`, `GITHUB_TOKEN` that is set.
@@ -863,6 +1034,242 @@ mod tests {
         assert!(
             log.contains("env GIT_CONFIG_KEY_0=safe.bareRepository"),
             "{log}"
+        );
+    }
+
+    fn ctx<'a>(
+        stubs: &'a StubDir,
+        settings: &'a Settings,
+        env: &'a Environment,
+        endpoints: &'a Endpoints,
+        child_env: &'a [(&'static str, std::ffi::OsString)],
+    ) -> DiscoveryContext<'a> {
+        DiscoveryContext {
+            cwd: &stubs.dir,
+            home: None,
+            settings,
+            env,
+            endpoints,
+            child_env,
+        }
+    }
+
+    /// A `gh` whose `auth token` answers like GitHubCredentials.test.ts' harness: `--user <u>`
+    /// gives `token-for-<u>` unless `<u>` is signed out (empty output), else `active-token`.
+    fn token_gh(stubs: &StubDir, signed_out: &str) -> String {
+        stubs.executable(
+            "gh",
+            &["GH_DEBUG", "GH_PROMPT_DISABLED"],
+            &format!(
+                "user=''; prev=''; for a in \"$@\"; do [ \"$prev\" = --user ] && user=\"$a\"; prev=\"$a\"; done\nif [ -n \"$user\" ]; then [ \"$user\" = '{signed_out}' ] && exit 0; echo \"token-for-$user\"; else echo active-token; fi"
+            ),
+        )
+    }
+
+    async fn token_of(c: DiscoveryContext<'_>, host: &str) -> Result<String, CredentialError> {
+        credential(c, host).await.map(|t| t.expose().to_owned())
+    }
+
+    // GitHubCredentials.test.ts: "lets an environment token win over a pinned account, as gh does"
+    #[tokio::test(flavor = "current_thread")]
+    async fn environment_token_wins_over_a_pinned_account() {
+        let stubs = StubDir::new("gh-cred-env");
+        token_gh(&stubs, "");
+        let s = settings(
+            r#"{"sourceControlHosts":{"github":{"hosts":{"github.com":{"account":"work","enabled":true}}}}}"#,
+        );
+        let env = Environment::fixed([("GH_TOKEN", "from-env")]);
+        let (endpoints, child_env) = (Endpoints::default(), stubs.path_env());
+        let c = ctx(&stubs, &s, &env, &endpoints, &child_env);
+        assert_eq!(
+            token_of(c, "github.com").await,
+            Ok("from-env".into()),
+            "env"
+        );
+        assert_eq!(stubs.log("gh"), "", "gh not asked");
+    }
+
+    // "picks up a changed account on the next request without a restart" (T3 also checks its
+    // 5-minute cache with a call count; this server has no cache).
+    #[tokio::test(flavor = "current_thread")]
+    async fn follows_the_account_chosen_in_settings() {
+        let stubs = StubDir::new("gh-cred-account");
+        token_gh(&stubs, "");
+        let env = Environment::fixed([]);
+        let (endpoints, child_env) = (Endpoints::default(), stubs.path_env());
+        let cases = [
+            ("{}", Ok("active-token".to_owned())),
+            (
+                r#"{"hosts":{"github.com":{"account":"work","enabled":true}}}"#,
+                Ok("token-for-work".into()),
+            ),
+            (
+                r#"{"hosts":{"github.com":{"enabled":false}}}"#,
+                Err(CredentialError::HostDisabled),
+            ),
+            (r#"{"hosts":{}}"#, Ok("active-token".into())),
+        ];
+        for (github, expected) in cases {
+            let s = settings(&format!(
+                r#"{{"sourceControlHosts":{{"github":{github}}}}}"#
+            ));
+            let c = ctx(&stubs, &s, &env, &endpoints, &child_env);
+            assert_eq!(token_of(c, "github.com").await, expected, "{github}");
+        }
+        assert!(
+            stubs
+                .log("gh")
+                .contains("env GH_DEBUG=\n  env GH_PROMPT_DISABLED=1"),
+            "{}",
+            stubs.log("gh")
+        );
+    }
+
+    // "falls back to the active login when the pinned one is no longer signed in"
+    #[tokio::test(flavor = "current_thread")]
+    async fn falls_back_to_the_active_login() {
+        let stubs = StubDir::new("gh-cred-gone");
+        token_gh(&stubs, "gone");
+        let s = settings(
+            r#"{"sourceControlHosts":{"github":{"hosts":{"github.com":{"account":"gone","enabled":true}}}}}"#,
+        );
+        let env = Environment::fixed([]);
+        let (endpoints, child_env) = (Endpoints::default(), stubs.path_env());
+        let c = ctx(&stubs, &s, &env, &endpoints, &child_env);
+        assert_eq!(
+            token_of(c, "github.com").await,
+            Ok("active-token".into()),
+            "fallback"
+        );
+        let argv: Vec<String> = stubs
+            .log("gh")
+            .lines()
+            .filter(|l| l.starts_with("argv"))
+            .map(str::to_owned)
+            .collect();
+        assert_eq!(
+            argv,
+            [
+                "argv auth token --hostname github.com --user gone",
+                "argv auth token --hostname github.com"
+            ],
+            "T3's argv"
+        );
+    }
+
+    // "uses a token saved in Settings before GH_TOKEN and gh", "keeps a host turned off even
+    // with a token saved in Settings"
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_saved_token_comes_first_unless_the_host_is_off() {
+        let stubs = StubDir::new("gh-cred-saved");
+        token_gh(&stubs, "");
+        let env = Environment::fixed([("GH_TOKEN", "env-token")]);
+        let (endpoints, child_env) = (Endpoints::default(), stubs.path_env());
+        let s = settings(
+            r#"{"sourceControlHosts":{"github":{"tokens":{"github.com":"saved-token"}}}}"#,
+        );
+        assert_eq!(
+            token_of(ctx(&stubs, &s, &env, &endpoints, &child_env), "github.com").await,
+            Ok("saved-token".into()),
+            "saved"
+        );
+        let s = settings(
+            r#"{"secretProviders":{"vault":{"kind":"one_password","label":"Work vault","config":{}}},"sourceControlHosts":{"github":{"tokens":{"github.com":{"provider":"vault","reference":"gh#token"}}}}}"#,
+        );
+        let Err(CredentialError::Unresolved(message)) =
+            credential(ctx(&stubs, &s, &env, &endpoints, &child_env), "github.com").await
+        else {
+            panic!("unresolved")
+        };
+        assert!(message.contains("\"Work vault\""), "{message}");
+        let s = settings(
+            r#"{"sourceControlHosts":{"github":{"hosts":{"github.com":{"enabled":false}},"tokens":{"github.com":"saved-token"}}}}"#,
+        );
+        assert_eq!(
+            token_of(ctx(&stubs, &s, &env, &endpoints, &child_env), "github.com").await,
+            Err(CredentialError::HostDisabled),
+            "off"
+        );
+        assert_eq!(stubs.log("gh"), "", "gh not asked");
+    }
+
+    // "never hands a token to a host that is not a plain hostname"
+    #[tokio::test(flavor = "current_thread")]
+    async fn never_hands_a_token_to_an_odd_host() {
+        let stubs = StubDir::new("gh-cred-odd");
+        token_gh(&stubs, "");
+        let env = Environment::fixed([("GH_TOKEN", "env-token")]);
+        let (endpoints, child_env, s) = (Endpoints::default(), stubs.path_env(), defaults());
+        for host in ["evil.com#.ghe.com", "evil.com/.ghe.com", "user@x.ghe.com"] {
+            assert!(environment_token(host, &env).is_none(), "{host}");
+            assert_eq!(
+                token_of(ctx(&stubs, &s, &env, &endpoints, &child_env), host).await,
+                Err(CredentialError::NotSignedIn),
+                "{host}"
+            );
+        }
+        assert_eq!(stubs.log("gh"), "", "gh not asked");
+    }
+
+    // driver.test.ts: "checks and stars only a valid repository, true only on 204"
+    #[tokio::test(flavor = "current_thread")]
+    async fn stars_only_a_valid_repository() {
+        let server = fake::serve(|r| {
+            if r.path == "/user/starred/pingdotgg/t3code" {
+                (204, String::new())
+            } else {
+                (404, r#"{"message":"Not Found"}"#.into())
+            }
+        })
+        .await;
+        let stubs = StubDir::new("gh-star");
+        let env = Environment::fixed([("GH_TOKEN", "env-token")]);
+        let endpoints = Endpoints {
+            github_rest: Some(server.base.clone()),
+            ..Endpoints::default()
+        };
+        let (child_env, s) = (stubs.path_env(), defaults());
+        let c = ctx(&stubs, &s, &env, &endpoints, &child_env);
+        for star in [false, true] {
+            assert!(
+                starred(c, "github.com", "pingdotgg/t3code", star).await,
+                "{star}"
+            );
+            assert!(
+                !starred(c, "github.com", "pingdotgg/uploadthing", star).await,
+                "{star}"
+            );
+            assert!(
+                !starred(c, "github.com", "pingdotgg/t3code/../../user", star).await,
+                "{star}"
+            );
+            assert!(!starred(c, "github.com", "../repos", star).await, "{star}");
+        }
+        let requests = server.requests.lock().expect("lock").clone();
+        let seen: Vec<String> = requests
+            .iter()
+            .map(|r| format!("{} {}", r.method, r.path))
+            .collect();
+        assert_eq!(
+            seen,
+            [
+                "GET /user/starred/pingdotgg/t3code",
+                "GET /user/starred/pingdotgg/uploadthing",
+                "PUT /user/starred/pingdotgg/t3code",
+                "PUT /user/starred/pingdotgg/uploadthing",
+            ],
+            "T3's requests"
+        );
+        let put = requests.get(2).expect("put");
+        assert!(
+            put.headers.contains(&("content-length".into(), "0".into())),
+            "{:?}",
+            put.headers
+        );
+        assert!(
+            put.headers
+                .contains(&("authorization".into(), "Bearer env-token".into())),
+            "token"
         );
     }
 }

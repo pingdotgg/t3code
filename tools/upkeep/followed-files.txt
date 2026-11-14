@@ -78,6 +78,19 @@ apps/server/src/review
 apps/server/src/sourceControl
 apps/server/src/worktreesDirectory.ts
 
+[crates/conn-source-control]
+apps/server/src/sourceControl
+apps/server/src/pullRequest
+packages/source-control-core
+packages/source-control-definitions
+packages/source-control-github
+packages/source-control-gitlab
+packages/source-control-bitbucket
+packages/source-control-azure-devops
+packages/source-control-forgejo
+packages/source-control-gitcafe
+packages/source-control-cursor-origin
+
 [crates/conn-files]
 apps/server/src/workspace
 apps/server/src/assets

@@ -216,7 +216,7 @@ pub async fn run_probe(command: ProbeCommand<'_>) -> Result<ProbeOutput, ProbeFa
 }
 
 /// Every exit code a child can report, for `allowNonZeroExit`.
-const ALL_EXIT_CODES: &[i32] = &{
+pub(crate) const ALL_EXIT_CODES: &[i32] = &{
     let mut codes = [0i32; 512];
     let mut i = 0;
     while i < 512 {
@@ -227,7 +227,7 @@ const ALL_EXIT_CODES: &[i32] = &{
 };
 
 /// `classifyNonZeroExit` plus `VcsProcessExitError.fromProcessExit`'s detail.
-fn classify_exit_detail(stderr: &str) -> &'static str {
+pub(crate) fn classify_exit_detail(stderr: &str) -> &'static str {
     let s = stderr.to_lowercase();
     if [
         "authentication failed",

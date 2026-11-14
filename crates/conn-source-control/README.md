@@ -11,7 +11,7 @@ monorepo at `conn.pin`.
 
 | Area | State |
 | --- | --- |
-| `server.discoverSourceControl` | Not yet from this crate (`conn-vcs` answers `git`, `jj`, `gh`, `glab`) |
+| `server.discoverSourceControl` | Served: `git`, `jj` (from `conn-vcs`) and all 7 hosts (see "Discovery") |
 | `sourceControl.*` (9) | Not served |
 | `git.*` (3) | Not served |
 | `pr` in VCS status | Not served (always `null`) |
@@ -25,6 +25,61 @@ monorepo at `conn.pin`.
 | --- | --- |
 | `secret.rs` | `Secret`: a token with a redacted `Debug` and `Display` |
 | `http.rs` | One HTTPS request per connection (hyper + rustls), bounded answer, local fake server for tests |
+| `settings.rs` | A host's saved fields (`hosts`, `tokens`, Bitbucket's and GitCafe's), secret references |
+| `discovery.rs` | The generic CLI probe (`probeSourceControlProvider`), the auth text helpers, a stub executable for tests |
+| `hosts/<host>.rs` | One module per host: its discovery today; its repository and pull request operations later |
+
+## Discovery
+
+`server.discoverSourceControl` answers `git` and `jj` and the seven hosts in the T3 server's
+order, all probed at once. Each host module ports its driver's probe and its own test cases:
+
+| Host | Probe | T3 cases ported |
+| --- | --- | --- |
+| GitHub | `gh --version`, `gh auth status --json hosts`; `GET /user` with a saved or `GH_TOKEN`/`GITHUB_TOKEN` token | `GitHubSourceControlProvider.test.ts` (parse cases), `gitHubDiscovery.test.ts` (saved token cases) |
+| Cursor Origin | `origin --version`, `origin auth status --json`; `origin auth token`, `GET /v1/origin/namespaces` | none exist upstream; cases from the code |
+| GitLab | `glab --version`, `glab auth status`, then `--all` | `gitLabDiscovery.test.ts` |
+| GitCafe | `cafe --version`, `cafe ... auth status --json` with `CAFE_TOKEN` from Settings | `GitCafeSourceControlProvider.test.ts`, `GitCafeCredentials.test.ts` |
+| Forgejo | `git remote get-url origin`, fj keys file, `fj version`, `fj --host <url> whoami`, `GET /api/v1/user`; else `tea` | `ForgejoSourceControlProvider.test.ts` (discovery cases) |
+| Bitbucket | `GET /user` (3 s) with the Settings or `T3CODE_BITBUCKET_*` credential | `BitbucketApi.test.ts` |
+| Azure DevOps | `az --version`, `az account show --query user.name -o tsv` (20 s) | `AzureDevOpsSourceControlProvider.test.ts` |
+
+How it is proven: every CLI runs as a stub executable that records its argv and the variables
+that matter (`GIT_CONFIG_*`, `CAFE_TOKEN`, `NO_COLOR`), and the tests compare them with the
+T3 driver's argv. Every API request goes to a local fake server that records method, path and
+headers; the tests check the `authorization` shape with a fake token. No test runs a real host
+CLI or calls a real API: the stubs come first on the children's `PATH`, and the environment is
+a fixed set (`hosts::Environment::fixed`). The checks that start a server (`effect-client.mjs`,
+`replay.mjs`) start it with `tools/sealed-env.mjs`: no token variable and a fresh `HOME`, so no
+CLI login of the machine is read.
+
+Deviations from the T3 server:
+
+- **No login-shell `PATH` refresh.** Before discovery the T3 server re-reads `PATH` from the
+  login shell (`refreshPathFromLoginShell`, cached 10 s) and writes it into its own
+  environment. Rust 2024 makes `std::env::set_var` unsafe and this workspace forbids `unsafe`,
+  so a CLI installed after the server started is found after a restart.
+- **No secret providers.** A saved credential that is a secret reference reads as the T3
+  server's `SettingsSecretUnresolvedError` (its message names the provider).
+- **No GitHub App sign-in.** The server acts as a T3 server without
+  `T3CODE_GITHUB_APP_CLIENT_ID`: no `appSignIn` offer, and a saved sign-in is not used.
+- **No caches.** The T3 server keeps a host's token (Origin 5 min, `gh auth token` 5 min) and
+  GitHub's quota and pause state between calls. Discovery here reads them on every call; a
+  GitHub rate-limit answer reads as "unknown" with T3's message.
+- **The macOS wrong-CPU hint** (errno -86 in `failedProbeHint`) is not detected; such a CLI
+  gets the generic "failed" hint.
+- **No concurrency keys.** T3 runs at most 4 `gh` children and 4 non-`git` children at once;
+  discovery here starts at most two per CLI host at once, 14 in all.
+
+## Costs
+
+- Nothing runs while idle: no poll, no watch, no cache.
+- One discovery: at most 14 short CLI children and 3 HTTPS requests (GitHub, Bitbucket,
+  Origin; Forgejo adds one per signed-in fj login it checks), each bounded: 8,000 bytes per
+  CLI stream, 8 MiB per answer, 5 s per CLI (20 s for `az`), 30 s per request (3 s for the
+  whole Bitbucket probe).
+- Each HTTPS request opens its own TCP and TLS connection and closes it after the answer. The
+  TLS configuration (Mozilla's roots) is built on first use and kept.
 
 ## The map
 

@@ -110,14 +110,15 @@ impl DiscoveryContext<'_> {
 /// Every host's discovery item, in `BUILT_IN_SOURCE_CONTROL_DRIVER_LIST` order, all probed at
 /// once (`concurrency: "unbounded"`).
 pub async fn discover(ctx: DiscoveryContext<'_>) -> Vec<SourceControlProviderDiscoveryItem> {
+    // Each on the heap: together they are tens of kilobytes (clippy's `large_futures`).
     let (github, origin, gitlab, gitcafe, forgejo, bitbucket, azure) = tokio::join!(
-        github::discover(ctx),
-        cursor_origin::discover(ctx),
-        gitlab::discover(ctx),
-        gitcafe::discover(ctx),
-        forgejo::discover(ctx),
-        bitbucket::discover(ctx),
-        azure_devops::discover(ctx),
+        Box::pin(github::discover(ctx)),
+        Box::pin(cursor_origin::discover(ctx)),
+        Box::pin(gitlab::discover(ctx)),
+        Box::pin(gitcafe::discover(ctx)),
+        Box::pin(forgejo::discover(ctx)),
+        Box::pin(bitbucket::discover(ctx)),
+        Box::pin(azure_devops::discover(ctx)),
     );
     vec![github, origin, gitlab, gitcafe, forgejo, bitbucket, azure]
 }

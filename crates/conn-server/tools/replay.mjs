@@ -10,6 +10,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { importSource, packageImporter } from "../../../tools/monorepo.mjs";
+import { sealedEnv } from "../../../tools/sealed-env.mjs";
 
 // Packages resolve as packages/contracts sees them, so the sources share one `effect`.
 const load = packageImporter("packages/contracts");
@@ -61,7 +62,7 @@ async function start() {
   const server = NodeChildProcess.spawn(
     binary,
     ["--state-dir", NodePath.join(tmp, "state"), "--project", project],
-    { stdio: ["ignore", "pipe", "pipe"] },
+    { stdio: ["ignore", "pipe", "pipe"], env: sealedEnv(tmp) },
   );
   const stderr = [];
   server.stderr.on("data", (d) => stderr.push(String(d)));
