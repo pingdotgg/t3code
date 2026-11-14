@@ -2,18 +2,12 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Effectable from "effect/Effectable";
 
-export type EffectClass<Shape, A, Err = never, Req = never> = Effect.Effect<
-  A,
-  Err,
-  Req
-> & {
+export type EffectClass<Shape, A, Err = never, Req = never> = Effect.Effect<A, Err, Req> & {
   new (_: never): Shape;
 };
 
 export const effectClass: {
-  <A, Err = never, Req = never>(
-    impl: Effect.Effect<A, Err, Req>,
-  ): EffectClass<A, A, Err, Req>;
+  <A, Err = never, Req = never>(impl: Effect.Effect<A, Err, Req>): EffectClass<A, A, Err, Req>;
   <Shape>(): <A, Err = never, Req = never>(
     impl: Effect.Effect<A, Err, Req>,
   ) => EffectClass<Shape, A, Err, Req>;
@@ -54,9 +48,7 @@ export const taggedFunction = <
           ? Reflect.get(target, prop, receiver)
           : Reflect.get(tag as object, prop, tag),
     has: (target, prop) =>
-      Reflect.has(overrides, prop) ||
-      Reflect.has(target, prop) ||
-      Reflect.has(tag as object, prop),
+      Reflect.has(overrides, prop) || Reflect.has(target, prop) || Reflect.has(tag as object, prop),
   }) as Tag & Fn;
 };
 
@@ -64,8 +56,7 @@ export const isYieldableEffect = (
   value: unknown,
 ): value is Effect.Effect<unknown, unknown, unknown> =>
   Effect.isEffect(value) &&
-  typeof (value as any as { [Symbol.iterator]?: unknown })[Symbol.iterator] ===
-    "function";
+  typeof (value as any as { [Symbol.iterator]?: unknown })[Symbol.iterator] === "function";
 
 export type YieldableEffectLike<A = unknown, E = unknown, R = unknown> =
   | Effect.Effect<A, E, R>
@@ -74,20 +65,13 @@ export type YieldableEffectLike<A = unknown, E = unknown, R = unknown> =
       [Symbol.iterator]: () => Iterator<unknown>;
     };
 
-export const isEffectClassLike = (
-  value: unknown,
-): value is YieldableEffectLike =>
-  typeof value === "function" &&
-  typeof (value as { asEffect?: unknown }).asEffect === "function";
+export const isEffectClassLike = (value: unknown): value is YieldableEffectLike =>
+  typeof value === "function" && typeof (value as { asEffect?: unknown }).asEffect === "function";
 
-export const isYieldableEffectLike = (
-  value: unknown,
-): value is YieldableEffectLike =>
-  (isYieldableEffect(value) || isEffectClassLike(value)) &&
-  !("~alchemy/Kind" in value);
+export const isYieldableEffectLike = (value: unknown): value is YieldableEffectLike =>
+  (isYieldableEffect(value) || isEffectClassLike(value)) && !("~alchemy/Kind" in value);
 
-export type UnwrapEffect<T> =
-  T extends Effect.Effect<infer A, any, any> ? A : T;
+export type UnwrapEffect<T> = T extends Effect.Effect<infer A, any, any> ? A : T;
 
 export type ToEffectInterface<T> = {
   raw: T;

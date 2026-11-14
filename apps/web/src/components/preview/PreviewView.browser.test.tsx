@@ -7,7 +7,6 @@ import {
   FILL_PREVIEW_VIEWPORT,
   ThreadId,
 } from "@t3tools/contracts";
-import type { createPreviewStreamClient } from "@t3tools/client-runtime/preview/server-browser-stream";
 import { type ComponentProps } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
@@ -31,10 +30,10 @@ const mocks = vi.hoisted(() => ({
   addImage: vi.fn(),
   pictureInPicture: false,
   showEmptyState: false,
+  idleServerTab: false,
   loading: false,
   nativeServerTab: false,
-  streamedTab: false,
-  connect: vi.fn<typeof createPreviewStreamClient>(),
+  streamedServerTab: false,
   serverEpoch: null as string | null,
   servers: [] as PreviewableServer[],
   recordingTabIds: new Set<string>(),
@@ -57,6 +56,7 @@ vi.mock(import("./previewBridge"), async (original) => ({
   previewBridge: {
     navigate: mocks.navigate,
     pickElement: mocks.pickElement,
+    annotationVoice: { onEvent: () => () => {}, update: async () => {} },
     setAnnotationSendEnabled: mocks.setAnnotationSendEnabled,
     cancelPickElement: mocks.cancelPickElement,
     refresh: vi.fn(async () => undefined),
@@ -74,6 +74,9 @@ vi.mock(import("./previewBridge"), async (original) => ({
       open: mocks.openPictureInPicture,
       close: mocks.closePictureInPicture,
     },
+    findInPage: vi.fn(async () => undefined),
+    stopFindInPage: vi.fn(async () => undefined),
+    onFindResult: vi.fn(() => () => undefined),
   } as never,
 }));
 vi.mock(import("~/browserHistoryStore"), async (original) => ({
@@ -95,7 +98,7 @@ vi.mock(import("~/previewStateStore"), async (original) => ({
   ...(await original()),
   rememberPreviewUrl: mocks.rememberPreviewUrl,
   useThreadPreviewState: (() => ({
-    activeTabId: mocks.streamedTab ? null : "tab-1",
+    activeTabId: "tab-1",
     serverEpoch: mocks.serverEpoch,
     desktopByTabId: {
       "tab-1": {
@@ -114,17 +117,29 @@ vi.mock(import("~/previewStateStore"), async (original) => ({
     recentlySeenUrls: [],
     sessions: mocks.showEmptyState
       ? {}
-      : {
-          "tab-1": {
-            threadId: "thread-1",
-            tabId: "tab-1",
-            runtime: mocks.nativeServerTab || mocks.streamedTab ? "server" : "desktop",
-            navStatus: { _tag: "Success", url: "http://example.com/", title: "Example" },
-            canGoBack: false,
-            canGoForward: false,
-            updatedAt: "2026-07-13T00:00:00.000Z",
+      : mocks.idleServerTab
+        ? {
+            "tab-1": {
+              threadId: "thread-1",
+              tabId: "tab-1",
+              runtime: "server",
+              navStatus: { _tag: "Idle" },
+              canGoBack: false,
+              canGoForward: false,
+              updatedAt: "2026-07-13T00:00:00.000Z",
+            },
+          }
+        : {
+            "tab-1": {
+              threadId: "thread-1",
+              tabId: "tab-1",
+              runtime: mocks.nativeServerTab || mocks.streamedServerTab ? "server" : "desktop",
+              navStatus: { _tag: "Success", url: "http://example.com/", title: "Example" },
+              canGoBack: false,
+              canGoForward: false,
+              updatedAt: "2026-07-13T00:00:00.000Z",
+            },
           },
-        },
   })) as never,
 }));
 vi.mock(import("~/state/environments"), async (original) => ({
@@ -152,25 +167,21 @@ vi.mock(import("~/browser/previewRuntime"), async (original) => ({
   useRendersServerTabNatively: () => mocks.nativeServerTab,
 }));
 
-vi.mock(import("@t3tools/client-runtime/preview/server-browser-stream"), async (original) => ({
-  ...(await original()),
-  createPreviewStreamClient: mocks.connect,
-}));
-vi.mock(import("~/state/previewStream"), async (original) => {
-  const access = { httpBase: "", wsBase: "", query: {}, credentials: false };
-  return { ...(await original()), usePreviewStreamAccess: () => access };
-});
-
 vi.mock(import("~/browser/browserViewportActions"), { spy: true });
+// The real surface opens a preview stream to the server; only its box matters here.
+vi.mock(import("~/browser/ServerBrowserSurface"), async (original) => ({
+  ...(await original()),
+  ServerBrowserSurface: ((props: { className?: string }) => (
+    <div data-testid="server-browser-surface" className={props.className} />
+  )) as never,
+}));
 
 import { useComposerDraftStore } from "~/composerDraftStore";
+import { commitBrowserViewportChange } from "~/browser/browserViewportActions";
+import { resolveResponsiveBrowserViewportSize } from "~/browser/browserViewportLayout";
 import { useBrowserPointerStore } from "~/browser/browserPointerStore";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
-import { selectThreadPreviewMiniPlayer, usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
-import { selectActiveRightPanelSurface, useRightPanelStore } from "~/rightPanelStore";
-import { createChatCanvasStore } from "../chat/canvasStore";
-import { ChatCanvas } from "../chat/ChatCanvas";
-import { ThreadPreviewMiniPlayer, useThreadPreviewCanvasSource } from "./ThreadPreviewMiniPlayer";
+import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
 import { dispatchPreviewAction } from "./previewActionBus";
 import { PreviewView } from "./PreviewView";
 import { ToastProvider } from "~/components/ui/toast";
@@ -216,11 +227,10 @@ function setup() {
   mocks.pickElement.mockReset();
   mocks.pictureInPicture = false;
   mocks.showEmptyState = false;
+  mocks.idleServerTab = false;
   mocks.loading = false;
   mocks.nativeServerTab = false;
-  mocks.streamedTab = false;
-  mocks.connect.mockReset();
-  useRightPanelStore.getState().removeThread(TEST_THREAD_REF);
+  mocks.streamedServerTab = false;
   mocks.serverEpoch = null;
   mocks.servers = [];
   mocks.recordingTabIds = new Set();
@@ -234,74 +244,6 @@ function setup() {
 }
 
 describe("PreviewView", () => {
-  it("hands control and keyboard focus from the floating preview to the same panel tab", async () => {
-    setup();
-    mocks.streamedTab = true;
-    const canvas = createChatCanvasStore();
-    usePreviewMiniPlayerStore.getState().open(TEST_THREAD_REF, { kind: "browser", tabId: "tab-1" });
-    function Workspace() {
-      const mini = usePreviewMiniPlayerStore((s) =>
-        selectThreadPreviewMiniPlayer(s.byThreadKey, TEST_THREAD_REF),
-      );
-      const panel = useRightPanelStore((s) =>
-        selectActiveRightPanelSurface(s.byThreadKey, TEST_THREAD_REF),
-      );
-      const preview = useThreadPreviewCanvasSource(TEST_THREAD_REF, mini);
-      return (
-        <div className="flex h-96">
-          {mini && (
-            <ChatCanvas
-              store={canvas}
-              threadRef={TEST_THREAD_REF}
-              preview={preview}
-              composerOverlayElement={null}
-            >
-              <ThreadPreviewMiniPlayer threadRef={TEST_THREAD_REF} miniPlayer={mini} />
-            </ChatCanvas>
-          )}
-          {panel?.kind === "preview" && (
-            <PreviewView threadRef={TEST_THREAD_REF} tabId={panel.resourceId} visible />
-          )}
-        </div>
-      );
-    }
-    const floatingSend = vi.fn(() => true);
-    const panelSend = vi.fn(() => true);
-    mocks.connect
-      .mockReturnValueOnce({ send: floatingSend, stop: () => {} })
-      .mockReturnValue({ send: panelSend, stop: () => {} });
-    await using screen = await render(<Workspace />);
-    const agentControl = {
-      controller: "agent",
-      canOperate: true,
-      generation: 1,
-      dialog: null,
-    } as const;
-    await vi.waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(1));
-    await act(() => mocks.connect.mock.calls[0]![1].onControl?.(agentControl));
-    await screen.getByRole("button", { name: "Take control" }).click();
-    await expect
-      .element(screen.getByRole("region", { name: "Floating browser preview" }))
-      .not.toBeInTheDocument();
-    await vi.waitFor(() =>
-      expect(mocks.connect).toHaveBeenNthCalledWith(
-        2,
-        expect.objectContaining({ tabId: "tab-1" }),
-        expect.anything(),
-      ),
-    );
-    const panel = mocks.connect.mock.calls[1]![1];
-    await act(() => panel.onControl?.(agentControl));
-    await vi.waitFor(() => {
-      expect(panelSend).toHaveBeenCalledWith({ type: "takeControl" });
-      expect(floatingSend).not.toHaveBeenCalledWith({ type: "takeControl" });
-    });
-    const input = screen.getByRole("textbox", { name: "Browser page" });
-    await expect.element(input).not.toHaveFocus();
-    await act(() => panel.onControl?.({ ...agentControl, controller: "you" }));
-    await expect.element(input).toHaveFocus();
-  });
-
   it.each(["mailto:alice@example.com", "http://"])(
     "reports rejected address %s without navigating or recording it",
     async (address) => {
@@ -318,6 +260,30 @@ describe("PreviewView", () => {
       await userEvent.click(page.getByRole("button", { name: "Dismiss notification" }));
     },
   );
+
+  it("keeps the address in the bar when Enter commits an IME composition", async () => {
+    setup();
+    await using _screen = await render(view());
+    const input = page.getByPlaceholder("Search or enter URL");
+    await input.fill("https://example.com/pinyin");
+
+    const enter = new KeyboardEvent("keydown", {
+      key: "Enter",
+      code: "Enter",
+      isComposing: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    Object.defineProperty(enter, "keyCode", { value: 229 });
+    act(() => {
+      input.element().dispatchEvent(enter);
+    });
+
+    await expect.element(input).toHaveFocus();
+    await expect.element(input).toHaveValue("https://example.com/pinyin");
+    expect(mocks.navigate).not.toHaveBeenCalled();
+    expect(enter.defaultPrevented).toBe(true);
+  });
 
   it("retains the annotation locally when its own environment loses access during capture", async () => {
     setup();
@@ -373,6 +339,90 @@ describe("PreviewView", () => {
     expect(mocks.addImage).not.toHaveBeenCalled();
   });
 
+  it("lets the pointer reach a local server card above an idle server-rendered tab", async () => {
+    setup();
+    mocks.idleServerTab = true;
+    mocks.servers = [
+      {
+        host: "localhost",
+        port: 8081,
+        url: "http://localhost:8081/",
+        requestedUrl: "http://localhost:8081/",
+        processName: "python3",
+        pid: 4242,
+        terminal: null,
+        source: "scanner",
+      },
+    ];
+    await using _screen = await render(<ToastProvider timeout={0}>{view()}</ToastProvider>);
+    const card = page.getByRole("button", { name: /localhost:8081/ });
+    await expect.element(card).toBeVisible();
+
+    const rect = card.element().getBoundingClientRect();
+    const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+    expect(card.element().contains(hit)).toBe(true);
+  });
+
+  it("sizes the first device viewport of a streamed tab to its panel", async () => {
+    setup();
+    mocks.streamedServerTab = true;
+    await using _screen = await render(<ToastProvider timeout={0}>{view()}</ToastProvider>);
+    const surface = page.getByTestId("server-browser-surface");
+    await expect.element(surface).toBeInTheDocument();
+    const rect = surface.element().getBoundingClientRect();
+
+    await userEvent.click(page.getByRole("button", { name: "Preview menu" }));
+    await userEvent.click(page.getByRole("menuitem", { name: "Show device toolbar" }));
+
+    expect(commitBrowserViewportChange).toHaveBeenCalledWith(expect.anything(), {
+      _tag: "freeform",
+      ...resolveResponsiveBrowserViewportSize(rect, 1),
+    });
+  });
+
+  it("focuses and selects the address from forwarded desktop actions only while visible", async () => {
+    setup();
+    using stack = new DisposableStack();
+    const previousBridge = window.desktopBridge;
+    stack.defer(() => {
+      if (previousBridge) window.desktopBridge = previousBridge;
+      else delete window.desktopBridge;
+    });
+    const listeners = new Set<(action: string) => void>();
+    window.desktopBridge = {
+      getWindowZoomFactor: () => 1,
+      onMenuAction: (listener: (action: string) => void) => {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+    } as NonNullable<typeof window.desktopBridge>;
+    await using screen = await render(view());
+    const address = page.getByRole("textbox");
+    const input = address.element() as HTMLInputElement;
+    const forward = () =>
+      act(() => {
+        listeners.forEach((listener) => listener("preview.focusUrl"));
+      });
+
+    await forward();
+    await expect.element(address).toHaveFocus();
+    expect(input.selectionStart).toBe(0);
+    expect(input.selectionEnd).toBe(input.value.length);
+    await act(() => input.blur());
+    await forward();
+    await expect.element(address).toHaveFocus();
+
+    await act(() => input.blur());
+    await screen.rerender(
+      <PreviewView threadRef={TEST_THREAD_REF} tabId="tab-1" visible={false} />,
+    );
+    await forward();
+    await expect.element(address).not.toHaveFocus();
+    expect(listeners.size).toBe(0);
+  });
+
   it("focuses the address bar each time the focus-url shortcut fires", async () => {
     setup();
     await using _screen = await render(view());
@@ -385,5 +435,22 @@ describe("PreviewView", () => {
     await expect.element(address).not.toHaveFocus();
     act(() => dispatchPreviewAction("focus-url"));
     await expect.element(address).toHaveFocus();
+  });
+
+  it("does not reopen find when the user returns to a tab they left with find open", async () => {
+    setup();
+    const tabView = (tabId: string) => (
+      <PreviewView threadRef={TEST_THREAD_REF} tabId={tabId} visible />
+    );
+    await using screen = await render(tabView("tab-1"));
+    const findBar = page.getByRole("search", { name: "Find in page" });
+
+    act(() => dispatchPreviewAction("find"));
+    await expect.element(findBar).toBeInTheDocument();
+
+    await screen.rerender(tabView("tab-2"));
+    await expect.element(findBar).not.toBeInTheDocument();
+    await screen.rerender(tabView("tab-1"));
+    await expect.element(findBar).not.toBeInTheDocument();
   });
 });
