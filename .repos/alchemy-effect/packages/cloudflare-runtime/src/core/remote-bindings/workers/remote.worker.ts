@@ -1,10 +1,11 @@
 import { newWorkersRpcResponse } from "capnweb";
 import { EmailMessage } from "cloudflare:email";
-import { ConfigError, SystemError } from "../../RuntimeError.shared.ts";
 import { makeErrorResponse } from "../../internal/response.shared.ts";
+import { ConfigError, SystemError } from "../../RuntimeError.shared.ts";
 
 interface Env extends Record<string, unknown> {}
 
+// oxlint-disable-next-line effecttsgo/extends-native-error -- plain workerd script (no Effect); thrown and caught with try/catch
 class BindingNotFoundError extends Error {
   readonly bindingName?: string;
   constructor(name?: string) {
@@ -57,11 +58,7 @@ function getExposedJSRPCBinding(request: Request, env: Env) {
         // Check if this is an EmailMessage (has EmailMessage::raw property) or MessageBuilder
         if ("EmailMessage::raw" in e) {
           // EmailMessage API - reconstruct the EmailMessage object
-          const message = new EmailMessage(
-            e.from,
-            e.to,
-            e["EmailMessage::raw"],
-          );
+          const message = new EmailMessage(e.from, e.to, e["EmailMessage::raw"]);
           return (targetBinding as SendEmail).send(message);
         } else {
           // MessageBuilder API - pass through directly as a plain object
@@ -93,9 +90,7 @@ function getExposedFetcher(request: Request, env: Env) {
   }
 
   // Special case the Dispatch Namespace binding because it has a top-level synchronous .get() call
-  const dispatchNamespaceOptions = request.headers.get(
-    "MF-Dispatch-Namespace-Options",
-  );
+  const dispatchNamespaceOptions = request.headers.get("MF-Dispatch-Namespace-Options");
   if (dispatchNamespaceOptions) {
     const { name, args, options } = JSON.parse(dispatchNamespaceOptions);
     return (targetBinding as DispatchNamespace).get(name, args, options);
@@ -119,10 +114,7 @@ export default {
   async fetch(request, env) {
     try {
       if (isJSRPCBinding(request)) {
-        return await newWorkersRpcResponse(
-          request,
-          getExposedJSRPCBinding(request, env),
-        );
+        return await newWorkersRpcResponse(request, getExposedJSRPCBinding(request, env));
       } else {
         const fetcher = getExposedFetcher(request, env);
         const originalHeaders = new Headers();
@@ -147,7 +139,7 @@ export default {
     } catch (e) {
       if (e instanceof BindingNotFoundError) {
         return makeErrorResponse(
-          new ConfigError({
+          ConfigError.make({
             subtag: "BindingNotFound",
             message: e.message,
             hint: e.bindingName
@@ -160,7 +152,7 @@ export default {
       }
       const message = e instanceof Error ? e.message : String(e);
       return makeErrorResponse(
-        new SystemError({
+        SystemError.make({
           subtag: "RemoteBindingProxy",
           message: `Remote binding handler threw an error: ${message}`,
           cause: e,

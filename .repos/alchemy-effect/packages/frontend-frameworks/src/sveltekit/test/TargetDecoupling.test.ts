@@ -10,18 +10,14 @@ import * as NodePath from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const srcDir = NodePath.resolve(
-  NodePath.dirname(fileURLToPath(import.meta.url)),
-  "..",
-);
+const srcDir = NodePath.resolve(NodePath.dirname(fileURLToPath(import.meta.url)), "..");
 
 /** Every static import / re-export specifier in a module's source. */
 const importSpecifiers = (file: string): Array<string> => {
   const source = NodeFs.readFileSync(NodePath.join(srcDir, file), "utf8");
   const specifiers: Array<string> = [];
   // `import ... from "x"`, `export ... from "x"`, and bare `import "x"`.
-  const pattern =
-    /(?:^|\n)\s*(?:import|export)\s+(?:[^"'\n]*?from\s*)?["']([^"']+)["']/g;
+  const pattern = /(?:^|\n)\s*(?:import|export)\s+(?:[^"'\n]*?from\s*)?["']([^"']+)["']/g;
   for (const match of source.matchAll(pattern)) {
     specifiers.push(match[1] as string);
   }
@@ -56,16 +52,9 @@ describe("target decoupling", () => {
   }
 
   it("platform target modules are the only src modules importing the adapter and rolldown", () => {
-    const files = NodeFs.readdirSync(srcDir).filter((file) =>
-      file.endsWith(".ts"),
-    );
+    const files = NodeFs.readdirSync(srcDir).filter((file) => file.endsWith(".ts"));
     for (const file of files) {
-      if (
-        file === "cloudflare.ts" ||
-        file === "Adapter.ts" ||
-        file === "WorkerShim.ts"
-      )
-        continue;
+      if (file === "cloudflare.ts" || file === "Adapter.ts" || file === "WorkerShim.ts") continue;
       // `source.ts` is Cloudflare-specific by contract (it implements
       // alchemy's Cloudflare Worker source) — it may import ./cloudflare.ts
       // but must not reach around it to the adapter/bundler internals.
@@ -81,10 +70,7 @@ describe("target decoupling", () => {
           /\.\/WorkerShim/.test(specifier) ||
           /@alchemy\.run\/cloudflare-runtime/.test(specifier),
       );
-      expect(
-        offending,
-        `${file} must not import ${offending.join(", ")}`,
-      ).toEqual([]);
+      expect(offending, `${file} must not import ${offending.join(", ")}`).toEqual([]);
     }
   });
 });
