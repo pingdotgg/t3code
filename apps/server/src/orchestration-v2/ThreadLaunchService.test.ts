@@ -2401,6 +2401,7 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
           ),
         checkWorktreeBase: launches.checkWorktreeBase,
         isNonGitProject: launches.isNonGitProject,
+        defaultWorktreeBaseRef: launches.defaultWorktreeBaseRef,
         retryPreparation: launches.retryPreparation,
         prepareRun: launches.prepareRun,
       }),
