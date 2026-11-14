@@ -13,7 +13,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import { AzureCliInstallLocation, type AzureCliInstall } from "./azureCliLauncher.ts";
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
-import { scopeAzureCliArgs } from "./AzureDevOpsCli.ts";
+import { primaryRemoteUrl, scopeAzureCliArgs } from "./AzureDevOpsCli.ts";
 
 const processOutput = (stdout: string): SourceControlHost.SourceControlProcessOutput => ({
   exitCode: ChildProcessSpawner.ExitCode(0),
@@ -112,13 +112,13 @@ describe("AzureDevOpsCli.layer", () => {
           "show",
           "--detect",
           "false",
-          "--organization",
-          "https://dev.azure.com/acme",
           "--id",
           "42",
           "--only-show-errors",
           "--output",
           "json",
+          "--organization",
+          "https://dev.azure.com/acme",
         ],
         cwd: "/repo",
         notFoundDetail: "Pull request not found.",
@@ -408,9 +408,8 @@ describe("azureCliInvocation", () => {
 });
 
 describe("scopeAzureCliArgs", () => {
-  const remotes = (...entries: ReadonlyArray<readonly [string, string]>) =>
-    entries.map(([name, url]) => `${name}\t${url} (fetch)\n${name}\t${url} (push)\n`).join("");
-  const origin = remotes(["origin", "https://dev.azure.com/acme/Project/_git/Repo"]);
+  const origin = "https://dev.azure.com/acme/Project/_git/Repo";
+  const show = ["repos", "show", "--detect", "true"];
 
   it.each([
     [
@@ -451,9 +450,7 @@ describe("scopeAzureCliArgs", () => {
     ["ssh://git@ssh.dev.azure.com:22/v3/acme/My%20Project/My%20Repo", "https://dev.azure.com/acme"],
     ["git@vs-ssh.visualstudio.com:v3/acme/My%20Project/My%20Repo", "https://acme.visualstudio.com"],
   ])("reads the organization of %s", (url, organization) => {
-    expect(
-      scopeAzureCliArgs(["repos", "show", "--detect", "true"], remotes(["origin", url])),
-    ).toEqual([
+    expect(scopeAzureCliArgs(show, url)).toEqual([
       "repos",
       "show",
       "--detect",
@@ -465,28 +462,11 @@ describe("scopeAzureCliArgs", () => {
     ]);
   });
 
-  it("follows the repository identity's primary remote: upstream, then origin, then by name", () => {
-    const azure = (name: string) => [name, `https://dev.azure.com/${name}/P/_git/R`] as const;
-    const organizationOf = (output: string) => {
-      const args = scopeAzureCliArgs(["repos", "show", "--detect", "true"], output);
-      return args[args.indexOf("--organization") + 1];
-    };
-    expect(organizationOf(remotes(azure("zebra"), azure("origin"), azure("upstream")))).toBe(
-      "https://dev.azure.com/upstream",
-    );
-    expect(organizationOf(remotes(azure("zebra"), azure("origin")))).toBe(
-      "https://dev.azure.com/origin",
-    );
-    expect(organizationOf(remotes(azure("zebra"), azure("alpha")))).toBe(
-      "https://dev.azure.com/alpha",
-    );
-  });
-
   it("joins names starting with `-` to their options", () => {
     expect(
       scopeAzureCliArgs(
         ["repos", "pr", "list", "--detect", "true"],
-        remotes(["origin", "https://dev.azure.com/acme/-Project/_git/-Repo"]),
+        "https://dev.azure.com/acme/-Project/_git/-Repo",
       ),
     ).toEqual(expect.arrayContaining(["--project=-Project", "--repository=-Repo"]));
   });
@@ -516,27 +496,29 @@ describe("scopeAzureCliArgs", () => {
     [["repos", "show"], origin],
     [["repos", "show", "--detect", "false"], origin],
     [["repos", "show", "--detect", "true", "--org", "https://dev.azure.com/explicit"], origin],
-    [["repos", "show", "--detect", "true"], ""],
-    // The primary remote is not Azure, so detection must not fall through to another remote.
-    [
-      ["repos", "show", "--detect", "true"],
-      origin + remotes(["upstream", "https://github.com/acme/repo"]),
-    ],
-    [["repos", "show", "--detect", "true"], remotes(["origin", "https://dev.azure.com/acme"])],
-    [
-      ["repos", "show", "--detect", "true"],
-      remotes(["origin", "https://dev.azure.com/acme/%XX/_git/Repo"]),
-    ],
-    [
-      ["repos", "show", "--detect", "true"],
-      remotes(["origin", "git@vs-ssh.visualstudio.com:v3/acme.invalid/Project/Repo"]),
-    ],
+    [show, "https://github.com/acme/repo"],
+    [show, "https://dev.azure.com/acme"],
+    [show, "https://dev.azure.com/acme/%XX/_git/Repo"],
+    [show, "git@ssh.dev.azure.com:v4/acme/Project/Repo"],
+    [show, "git@vs-ssh.visualstudio.com:v3/acme.invalid/Project/Repo"],
     // az would replace the value with the contents of a local file.
-    [
-      ["repos", "show", "--detect", "true"],
-      remotes(["origin", "https://dev.azure.com/acme/Project/_git/%40.env"]),
-    ],
-  ])("leaves %j to az when the checkout gives no scope", (args, output) => {
-    expect(scopeAzureCliArgs(args, output)).toEqual(args);
+    [show, "https://dev.azure.com/acme/Project/_git/%40.env"],
+  ])("leaves %j to az when %s gives no scope", (args, url) => {
+    expect(scopeAzureCliArgs(args, url)).toEqual(args);
+  });
+});
+
+describe("primaryRemoteUrl", () => {
+  const remotes = (...names: ReadonlyArray<string>) =>
+    names.map((name) => `${name}\t${name}-url (fetch)\n${name}\tpush-url (push)\n`).join("");
+
+  it.each([
+    [remotes("zebra", "origin", "upstream"), "upstream-url"],
+    [remotes("zebra", "origin"), "origin-url"],
+    [remotes("zebra", "alpha"), "alpha-url"],
+    [remotes(), null],
+    ["origin\torigin-url (fetch)", null],
+  ])("picks the repository identity's remote from %j", (output, url) => {
+    expect(primaryRemoteUrl(output)).toBe(url);
   });
 });

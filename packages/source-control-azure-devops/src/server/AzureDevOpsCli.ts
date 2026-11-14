@@ -221,6 +221,8 @@ export class AzureDevOpsCli extends Context.Service<
       readonly args: ReadonlyArray<string>;
       readonly timeoutMs?: number;
       readonly maxOutputBytes?: number;
+      /** The remote T3 selected; without one, the checkout's primary remote scopes the command. */
+      readonly remoteUrl?: string;
     }) => Effect.Effect<SourceControlHost.SourceControlProcessOutput, AzureDevOpsCliError>;
 
     readonly listPullRequests: (input: {
@@ -229,18 +231,19 @@ export class AzureDevOpsCli extends Context.Service<
       readonly source?: SourceControlProvider.SourceControlRefSelector;
       readonly state: "open" | "closed" | "merged" | "all";
       readonly limit?: number;
+      readonly remoteUrl?: string;
     }) => Effect.Effect<ReadonlyArray<NormalizedAzureDevOpsPullRequestRecord>, AzureDevOpsCliError>;
 
     readonly getPullRequest: (input: {
       readonly cwd: string;
       readonly reference: string;
-      /** The selected remote, whose organization numbers the pull request. */
       readonly remoteUrl?: string;
     }) => Effect.Effect<NormalizedAzureDevOpsPullRequestRecord, AzureDevOpsCliError>;
 
     readonly getRepositoryCloneUrls: (input: {
       readonly cwd: string;
       readonly repository: string;
+      readonly remoteUrl?: string;
     }) => Effect.Effect<AzureDevOpsRepositoryCloneUrls, AzureDevOpsCliError>;
 
     readonly createRepository: (input: {
@@ -257,12 +260,12 @@ export class AzureDevOpsCli extends Context.Service<
       readonly target?: SourceControlProvider.SourceControlRefSelector;
       readonly title: string;
       readonly bodyFile: string;
+      readonly remoteUrl?: string;
     }) => Effect.Effect<void, AzureDevOpsCliError>;
 
     readonly getDefaultBranch: (input: {
       readonly cwd: string;
       readonly repository: string;
-      /** The selected remote, which names the project when the checkout has several. */
       readonly remoteUrl?: string;
     }) => Effect.Effect<string | null, AzureDevOpsCliError>;
   }
@@ -353,7 +356,8 @@ function decodeAzureDevOpsJson<S extends Schema.Top>(
   );
 }
 
-function primaryRemoteUrl(output: string) {
+/** The remote RepositoryIdentityResolver would pick from `git remote -v` output. */
+export function primaryRemoteUrl(output: string) {
   if (!output.endsWith("\n")) return null;
   const remotes = new Map<string, string>();
   for (const line of output.split("\n")) {
@@ -419,6 +423,9 @@ function scopeFromRemoteUrl(remote: string) {
   }
 }
 
+const remoteOf = (input: { readonly remoteUrl?: string }) =>
+  input.remoteUrl === undefined ? {} : { remoteUrl: input.remoteUrl };
+
 const hasOption = (args: ReadonlyArray<string>, pattern: RegExp) =>
   args.some((arg) => pattern.test(arg));
 
@@ -433,13 +440,12 @@ const detectsScope = (args: ReadonlyArray<string>) => {
   );
 };
 
-/** Replaces `--detect true` with the scope of the checkout's primary remote, when it is Azure. */
+/** Replaces `--detect true` with the scope of an Azure remote. */
 export function scopeAzureCliArgs(
   args: ReadonlyArray<string>,
-  remotes: string,
+  remoteUrl: string,
 ): ReadonlyArray<string> {
-  const remote = detectsScope(args) ? primaryRemoteUrl(remotes) : null;
-  const scope = remote === null ? null : scopeFromRemoteUrl(remote);
+  const scope = detectsScope(args) ? scopeFromRemoteUrl(remoteUrl) : null;
   if (!scope) return args;
   const scoped = [...args, "--organization", scope.organization];
   scoped[args.indexOf("--detect") + 1] = "false";
@@ -512,28 +518,35 @@ export const make = Effect.gen(function* () {
       let args = input.args;
       if (detectsScope(args)) {
         // Windows az running in WSL cannot inspect the server's Linux checkout.
-        const remotes = yield* process
-          .run({
-            operation: "AzureDevOpsCli.resolveScope",
-            command: "git",
-            args: ["remote", "-v"],
-            cwd: input.cwd,
-            env: {
-              GIT_DIR: undefined,
-              GIT_WORK_TREE: undefined,
-              GIT_COMMON_DIR: undefined,
-              GIT_INDEX_FILE: undefined,
-              GIT_OBJECT_DIRECTORY: undefined,
-              GIT_ALTERNATE_OBJECT_DIRECTORIES: undefined,
-            },
-            timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-            maxOutputBytes: 64 * 1024,
-            allowNonZeroExit: true,
-          })
-          .pipe(Effect.orElseSucceed(() => null));
-        if (remotes?.exitCode === 0 && !remotes.stdoutTruncated && !remotes.stdoutInvalidUtf8) {
-          args = scopeAzureCliArgs(args, remotes.stdout);
-        }
+        const remoteUrl =
+          input.remoteUrl ??
+          (yield* process
+            .run({
+              operation: "AzureDevOpsCli.resolveScope",
+              command: "git",
+              args: ["remote", "-v"],
+              cwd: input.cwd,
+              env: {
+                GIT_DIR: undefined,
+                GIT_WORK_TREE: undefined,
+                GIT_COMMON_DIR: undefined,
+                GIT_INDEX_FILE: undefined,
+                GIT_OBJECT_DIRECTORY: undefined,
+                GIT_ALTERNATE_OBJECT_DIRECTORIES: undefined,
+              },
+              timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+              maxOutputBytes: 64 * 1024,
+              allowNonZeroExit: true,
+            })
+            .pipe(
+              Effect.map((remotes) =>
+                remotes.exitCode === 0 && !remotes.stdoutTruncated && !remotes.stdoutInvalidUtf8
+                  ? primaryRemoteUrl(remotes.stdout)
+                  : null,
+              ),
+              Effect.orElseSucceed(() => null),
+            ));
+        if (remoteUrl !== null) args = scopeAzureCliArgs(args, remoteUrl);
       }
       return yield* process
         .run({
@@ -579,6 +592,7 @@ export const make = Effect.gen(function* () {
         "";
       return executeJson({
         cwd: input.cwd,
+        ...remoteOf(input),
         args: [
           "repos",
           "pr",
@@ -619,16 +633,15 @@ export const make = Effect.gen(function* () {
       );
     }),
     getPullRequest: Effect.fn("AzureDevOpsCli.getPullRequest")(function (input) {
-      const scope = input.remoteUrl === undefined ? null : scopeFromRemoteUrl(input.remoteUrl);
       return executeJson({
         cwd: input.cwd,
+        ...remoteOf(input),
         args: [
           "repos",
           "pr",
           "show",
-          ...(scope
-            ? ["--detect", "false", "--organization", scope.organization]
-            : ["--detect", "true"]),
+          "--detect",
+          "true",
           "--id",
           normalizeChangeRequestId(input.reference),
         ],
@@ -659,6 +672,7 @@ export const make = Effect.gen(function* () {
       const repository = parseRepositorySpecifier(input.repository);
       return executeJson({
         cwd: input.cwd,
+        ...remoteOf(input),
         args: [
           "repos",
           "show",
@@ -706,6 +720,7 @@ export const make = Effect.gen(function* () {
     createPullRequest: Effect.fn("AzureDevOpsCli.createPullRequest")(function (input) {
       return execute({
         cwd: input.cwd,
+        ...remoteOf(input),
         args: [
           "repos",
           "pr",
@@ -726,28 +741,17 @@ export const make = Effect.gen(function* () {
     }),
     getDefaultBranch: Effect.fn("AzureDevOpsCli.getDefaultBranch")(function (input) {
       const repository = parseRepositorySpecifier(input.repository);
-      const scope = input.remoteUrl === undefined ? null : scopeFromRemoteUrl(input.remoteUrl);
       return executeJson({
         cwd: input.cwd,
+        ...remoteOf(input),
         args: [
           "repos",
           "show",
+          "--detect",
+          "true",
           // Joined so a name starting with `-` stays the option's value.
-          ...(scope
-            ? [
-                "--detect",
-                "false",
-                "--organization",
-                scope.organization,
-                `--project=${scope.project}`,
-                `--repository=${scope.repository}`,
-              ]
-            : [
-                "--detect",
-                "true",
-                `--repository=${repository.name}`,
-                ...(repository.project ? ["--project", repository.project] : []),
-              ]),
+          `--repository=${repository.name}`,
+          ...(repository.project ? ["--project", repository.project] : []),
         ],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),

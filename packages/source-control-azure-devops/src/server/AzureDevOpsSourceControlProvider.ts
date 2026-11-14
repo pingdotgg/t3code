@@ -72,15 +72,9 @@ function repositoryNameFromRemote(remoteUrl: string): string | null {
   return name.startsWith("@") ? null : name;
 }
 
-const pullRequestLookup = (input: {
-  readonly cwd: string;
-  readonly reference: string;
-  readonly context?: { readonly remoteUrl: string } | undefined;
-}) => ({
-  cwd: input.cwd,
-  reference: input.reference,
-  ...(input.context === undefined ? {} : { remoteUrl: input.context.remoteUrl }),
-});
+/** The remote T3 selected, which scopes `az` instead of the checkout's primary remote. */
+const remoteOf = (input: { readonly context?: { readonly remoteUrl: string } | undefined }) =>
+  input.context === undefined ? {} : { remoteUrl: input.context.remoteUrl };
 
 function toChangeRequest(summary: NormalizedAzureDevOpsPullRequestRecord): ChangeRequest {
   return {
@@ -136,6 +130,7 @@ export const make = Effect.gen(function* () {
         return azure
           .listPullRequests({
             cwd: input.cwd,
+            ...remoteOf(input),
             headSelector: input.headSelector,
             ...(source !== undefined ? { source } : {}),
             state: input.state,
@@ -162,23 +157,25 @@ export const make = Effect.gen(function* () {
     ),
     getChangeRequest: Effect.fn("AzureDevOpsSourceControlProvider.getChangeRequest")(
       function (input) {
-        return azure.getPullRequest(pullRequestLookup(input)).pipe(
-          Effect.map(toChangeRequest),
-          Effect.mapError(
-            (error) =>
-              new SourceControlProviderError({
-                provider: SourceControlProviderKind.make("azure-devops"),
-                operation: "getChangeRequest",
-                command: error.command,
-                cwd: input.cwd,
-                reference: SourceControlProvider.transportSafeSourceControlErrorValue(
-                  input.reference,
-                ),
-                detail: error.detail,
-                cause: error,
-              }),
-          ),
-        );
+        return azure
+          .getPullRequest({ cwd: input.cwd, reference: input.reference, ...remoteOf(input) })
+          .pipe(
+            Effect.map(toChangeRequest),
+            Effect.mapError(
+              (error) =>
+                new SourceControlProviderError({
+                  provider: SourceControlProviderKind.make("azure-devops"),
+                  operation: "getChangeRequest",
+                  command: error.command,
+                  cwd: input.cwd,
+                  reference: SourceControlProvider.transportSafeSourceControlErrorValue(
+                    input.reference,
+                  ),
+                  detail: error.detail,
+                  cause: error,
+                }),
+            ),
+          );
       },
     ),
     createChangeRequest: Effect.fn("AzureDevOpsSourceControlProvider.createChangeRequest")(
@@ -187,6 +184,7 @@ export const make = Effect.gen(function* () {
         return azure
           .createPullRequest({
             cwd: input.cwd,
+            ...remoteOf(input),
             baseBranch: input.baseRefName,
             headSelector: input.headSelector,
             ...(source !== undefined ? { source } : {}),
@@ -214,22 +212,28 @@ export const make = Effect.gen(function* () {
     ),
     getRepositoryCloneUrls: Effect.fn("AzureDevOpsSourceControlProvider.getRepositoryCloneUrls")(
       function (input) {
-        return azure.getRepositoryCloneUrls(input).pipe(
-          Effect.mapError(
-            (error) =>
-              new SourceControlProviderError({
-                provider: SourceControlProviderKind.make("azure-devops"),
-                operation: "getRepositoryCloneUrls",
-                command: error.command,
-                cwd: input.cwd,
-                repository: SourceControlProvider.transportSafeSourceControlErrorValue(
-                  input.repository,
-                ),
-                detail: error.detail,
-                cause: error,
-              }),
-          ),
-        );
+        return azure
+          .getRepositoryCloneUrls({
+            cwd: input.cwd,
+            repository: input.repository,
+            ...remoteOf(input),
+          })
+          .pipe(
+            Effect.mapError(
+              (error) =>
+                new SourceControlProviderError({
+                  provider: SourceControlProviderKind.make("azure-devops"),
+                  operation: "getRepositoryCloneUrls",
+                  command: error.command,
+                  cwd: input.cwd,
+                  repository: SourceControlProvider.transportSafeSourceControlErrorValue(
+                    input.repository,
+                  ),
+                  detail: error.detail,
+                  cause: error,
+                }),
+            ),
+          );
       },
     ),
     createRepository: Effect.fn("AzureDevOpsSourceControlProvider.createRepository")(
@@ -276,7 +280,11 @@ export const make = Effect.gen(function* () {
     // and its pull then merges the pull request into the current branch.
     checkoutChangeRequest: Effect.fn("AzureDevOpsSourceControlProvider.checkoutChangeRequest")(
       function* (input) {
-        const pullRequest = yield* azure.getPullRequest(pullRequestLookup(input));
+        const pullRequest = yield* azure.getPullRequest({
+          cwd: input.cwd,
+          reference: input.reference,
+          ...remoteOf(input),
+        });
         if (pullRequest.isCrossRepository)
           return yield* new SourceControlProviderError({
             provider: SourceControlProviderKind.make("azure-devops"),
