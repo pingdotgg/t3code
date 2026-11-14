@@ -23,7 +23,9 @@ import {
 import type * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
-const decodeJson = Schema.decodeUnknownExit(Schema.fromJsonString(Schema.Array(Schema.Unknown)));
+const decodeJsonArray = Schema.decodeUnknownExit(
+  Schema.fromJsonString(Schema.Array(Schema.Unknown)),
+);
 
 const gitLabCliExecutionErrorContext = {
   operation: Schema.Literal("execute"),
@@ -511,7 +513,7 @@ export const make = Effect.gen(function* () {
           continue;
         }
         const raw = result.stdout.trim();
-        if (raw.length === 0 && !result.stdoutTruncated) break;
+        if (raw.length === 0) break;
         const decoded = decodeGitLabMergeRequestListJson(raw);
         if (result.stdoutTruncated || !Result.isSuccess(decoded)) {
           return yield* new GitLabMergeRequestListDecodeError({
@@ -522,12 +524,14 @@ export const make = Effect.gen(function* () {
           });
         }
         items.push(...decoded.success.map(toSummaryWithOptionalUpdatedAt));
-        const entries = decodeJson(raw);
+        // Count raw entries: the decoder drops invalid ones, which would end paging early.
+        const entries = decodeJsonArray(raw);
         if (
           page * pageSize >= limit ||
           (Exit.isSuccess(entries) && entries.value.length < pageSize)
-        )
+        ) {
           break;
+        }
         page += 1;
       }
       return items.slice(0, limit);
