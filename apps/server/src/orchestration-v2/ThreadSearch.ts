@@ -34,6 +34,7 @@ import {
 } from "@t3tools/shared/paletteSearch";
 import { threadSearchPullRequests } from "@t3tools/shared/threadPullRequests";
 import {
+  foldedMessageSearchText,
   indexedMessageCondition,
   messageSearchText,
   nonPlaceholderMessageCondition,
@@ -279,9 +280,27 @@ export const messageHitsQuery = (
       -- Answers to an agent's question show inside its question card, where
       -- neither find nor a jump can reach them.
       AND messages.message_id NOT LIKE 'async-answer:%'
+      -- Nor can they reach a rolled-back turn, or a message of a stopped turn
+      -- that no shown item carries, such as a queued prompt that never ran.
+      AND NOT EXISTS (
+        SELECT 1 FROM orchestration_v2_projection_runs AS runs
+        WHERE runs.run_id = messages.run_id
+          AND (
+            runs.status = 'rolled_back'
+            OR (
+              runs.status = 'cancelled'
+              AND NOT EXISTS (
+                SELECT 1 FROM orchestration_v2_projection_turn_items AS items
+                WHERE items.run_id = runs.run_id
+                  AND json_extract(items.payload_json, '$.messageId') = messages.message_id
+                  AND json_extract(items.payload_json, '$.inputIntent') IS NOT 'queued_turn'
+              )
+            )
+          )
+      )
       AND NOT EXISTS (
         -- The text read once, not once per check.
-        SELECT 1 FROM (SELECT ${messageSearchText(sql)} AS text) AS message,
+        SELECT 1 FROM (SELECT ${foldedMessageSearchText(sql)} AS text) AS message,
           json_each(${substrings}) AS substring
         WHERE instr(lower(message.text), json_extract(substring.value, '$.token')) = 0
           AND NOT (
@@ -293,7 +312,7 @@ export const messageHitsQuery = (
         SELECT 1 FROM json_each(${shortSpellings}) AS token
         WHERE NOT EXISTS (
           SELECT 1 FROM json_each(token.value) AS spelling
-          WHERE instr(${messageSearchText(sql)}, spelling.value) > 0
+          WHERE instr(${foldedMessageSearchText(sql)}, spelling.value) > 0
         )
       )
     -- The index's own rowid, so FTS5 returns hits newest first and stops at

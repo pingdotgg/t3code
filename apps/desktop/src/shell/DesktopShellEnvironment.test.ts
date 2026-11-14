@@ -486,7 +486,7 @@ describe("DesktopShellEnvironment", () => {
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {
         SHELL: "/bin/zsh",
-        PATH: "/Users/test/.local/bin:/usr/bin",
+        PATH: " /Users/test/.local/bin:/usr/bin",
       };
       const commands: ChildProcess.Command[] = [];
 
@@ -496,7 +496,7 @@ describe("DesktopShellEnvironment", () => {
         handler: (command) => {
           commands.push(command);
           return envOutput({
-            PATH: "/opt/homebrew/bin:/usr/bin",
+            PATH: "/opt/homebrew/bin:/usr/bin:/opt/bin ",
             SSH_AUTH_SOCK: "/tmp/secretive.sock",
             HOMEBREW_PREFIX: "/opt/homebrew",
           });
@@ -505,7 +505,7 @@ describe("DesktopShellEnvironment", () => {
 
       assert.equal(commands.length, 1);
       assert.equal(commands[0]?._tag === "StandardCommand" ? commands[0].command : "", "/bin/zsh");
-      assert.equal(env.PATH, "/opt/homebrew/bin:/usr/bin:/Users/test/.local/bin");
+      assert.equal(env.PATH, "/opt/homebrew/bin:/usr/bin:/opt/bin : /Users/test/.local/bin");
       assert.equal(env.SSH_AUTH_SOCK, "/tmp/secretive.sock");
       assert.equal(env.HOMEBREW_PREFIX, "/opt/homebrew");
       assert.isTrue(prepared);
