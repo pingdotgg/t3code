@@ -76,20 +76,6 @@ export class OrchestrationEventStore extends Context.Service<
       readonly eventType: OrchestrationV2DomainEvent["type"];
     }) => Effect.Effect<boolean, OrchestrationEventStoreError>;
 
-    readonly getAgentReplayStats: (input: {
-      readonly threadId: ThreadId;
-      readonly afterSequence: number;
-      readonly throughSequence: number;
-      readonly maxEvents: number;
-    }) => Effect.Effect<
-      {
-        readonly eventCount: number;
-        readonly rawPayloadBytes: number;
-        readonly hasCreateEvent: boolean;
-      },
-      OrchestrationEventStoreError
-    >;
-
     readonly getReplayStats: (input: {
       readonly afterSequence: number;
       readonly throughSequence: number;
@@ -654,37 +640,6 @@ const makeEventStore = Effect.gen(function* () {
       Effect.map((rows) => rows[0]?.found === 1),
     );
 
-  const getAgentReplayStats: OrchestrationEventStore["Service"]["getAgentReplayStats"] = (input) =>
-    sql<{
-      readonly eventCount: number;
-      readonly rawPayloadBytes: number;
-      readonly hasCreateEvent: number;
-    }>`
-      SELECT
-        COUNT(*) AS "eventCount",
-        COALESCE(SUM(octet_length(payload_json)), 0) AS "rawPayloadBytes",
-        COALESCE(MAX(event_type = 'thread.created'), 0) AS "hasCreateEvent"
-      FROM (
-        SELECT ${restoredPayloadJson} AS payload_json, event_type
-        FROM orchestration_events
-        WHERE aggregate_kind = 'thread'
-          AND stream_id = ${input.threadId}
-          AND application_event_version = 2
-          AND sequence > ${input.afterSequence}
-          AND sequence <= ${input.throughSequence}
-        ORDER BY sequence ASC
-        LIMIT ${Math.max(0, Math.floor(input.maxEvents)) + 1}
-      )
-    `.pipe(
-      NodeSqliteClient.readOnly,
-      Effect.mapError(toPersistenceSqlError("OrchestrationEventStore.getAgentReplayStats:query")),
-      Effect.map((rows) => ({
-        eventCount: rows[0]?.eventCount ?? 0,
-        rawPayloadBytes: rows[0]?.rawPayloadBytes ?? 0,
-        hasCreateEvent: (rows[0]?.hasCreateEvent ?? 0) !== 0,
-      })),
-    );
-
   const getReplayStats: OrchestrationEventStore["Service"]["getReplayStats"] = (input) =>
     sql<{ readonly eventCount: number; readonly rawPayloadBytes: number }>`
       SELECT
@@ -823,7 +778,6 @@ const makeEventStore = Effect.gen(function* () {
     appendAgentEvents,
     readAgentEvents,
     hasAgentEvent,
-    getAgentReplayStats,
     getReplayStats,
     latestAgentSequence,
     latestApplicationSequence,
