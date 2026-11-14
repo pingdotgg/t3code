@@ -11,6 +11,8 @@ import {
   getProviderOptionDescriptors,
   readCustomModelEntries,
   modelSelectionsEqual,
+  pickModelSelection,
+  withImplicitFastModeDefault,
 } from "./model.ts";
 
 const codexCaps: ModelCapabilities = createModelCapabilities({
@@ -50,6 +52,32 @@ describe("descriptor helpers", () => {
     ).toEqual([{ id: "fastMode", value: true }]);
   });
 
+  it("dispatches an old Ultracode effort as Extra High with the Ultracode toggle", () => {
+    const legacy = [{ id: "effort", value: "ultracode" }];
+    const descriptors = getProviderOptionDescriptors({
+      caps: createModelCapabilities({
+        optionDescriptors: [
+          {
+            id: "effort",
+            label: "Reasoning",
+            type: "select",
+            options: [
+              { id: "high", label: "High", isDefault: true },
+              { id: "xhigh", label: "Extra High" },
+            ],
+          },
+          { id: "ultracode", label: "Ultracode", type: "boolean" },
+        ],
+      }),
+      selections: legacy,
+    });
+
+    expect(buildExplicitProviderOptionSelectionsFromDescriptors(descriptors, legacy)).toEqual([
+      { id: "effort", value: "xhigh" },
+      { id: "ultracode", value: true },
+    ]);
+  });
+
   it("compares complete model selections independent of option ordering", () => {
     const left = createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.4", [
       { id: "reasoningEffort", value: "high" },
@@ -71,6 +99,27 @@ describe("descriptor helpers", () => {
       }),
     ).toBe(false);
     expect(modelSelectionsEqual(left, { ...reordered, model: "gpt-5.5" })).toBe(false);
+  });
+
+  it("keeps the options when the current model is picked again", () => {
+    const codex = ProviderInstanceId.make("codex");
+    const current = createModelSelection(codex, "gpt-5.4", [
+      { id: "reasoningEffort", value: "high" },
+    ]);
+
+    expect(pickModelSelection(current, codex, "gpt-5.4")).toBe(current);
+    expect(pickModelSelection(current, codex, "gpt-5.5")).toEqual({
+      instanceId: "codex",
+      model: "gpt-5.5",
+    });
+    expect(pickModelSelection(current, ProviderInstanceId.make("codex_work"), "gpt-5.4")).toEqual({
+      instanceId: "codex_work",
+      model: "gpt-5.4",
+    });
+    expect(pickModelSelection(null, codex, "gpt-5.4")).toEqual({
+      instanceId: "codex",
+      model: "gpt-5.4",
+    });
   });
 });
 
@@ -199,5 +248,21 @@ describe("provider-reported option display", () => {
     { ...selection, options: [{ id: "variant", value: "none" }] },
   ])("ignores reports after changing the model, instance, or option: %j", (selected) => {
     expect(getProviderOptionCurrentLabel(descriptor, selected, reported)).toBe("Unknown");
+  });
+});
+
+describe("withImplicitFastModeDefault", () => {
+  // regression: #2981 a remembered Fast mode choice must survive the implicit default on new chats
+  it("injects fastMode false only when the model exposes fastMode and no selection exists", () => {
+    const caps = createModelCapabilities({
+      optionDescriptors: [{ id: "fastMode", label: "Fast", type: "boolean", currentValue: true }],
+    });
+
+    expect(withImplicitFastModeDefault(caps, undefined)).toEqual([
+      { id: "fastMode", value: false },
+    ]);
+    expect(withImplicitFastModeDefault(caps, [{ id: "fastMode", value: true }])).toEqual([
+      { id: "fastMode", value: true },
+    ]);
   });
 });

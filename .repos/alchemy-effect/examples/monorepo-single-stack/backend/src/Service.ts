@@ -1,10 +1,10 @@
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as Etag from "effect/http/Etag";
 import * as HttpPlatform from "effect/http/HttpPlatform";
 import * as HttpRouter from "effect/http/HttpRouter";
-import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import * as Layer from "effect/Layer";
 import { BackendApi, Greeting } from "./Spec.ts";
 
 export default class Service extends Cloudflare.Worker<Service>()(
@@ -14,9 +14,7 @@ export default class Service extends Cloudflare.Worker<Service>()(
   },
   Effect.gen(function* () {
     const helloGroup = HttpApiBuilder.group(BackendApi, "Hello", (handlers) =>
-      handlers.handle("hello", () =>
-        Effect.succeed(new Greeting({ message: "Hello World" })),
-      ),
+      handlers.handle("hello", () => Effect.succeed(new Greeting({ message: "Hello World" }))),
     );
 
     return {

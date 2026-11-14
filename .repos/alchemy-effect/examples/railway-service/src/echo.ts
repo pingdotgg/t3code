@@ -1,4 +1,4 @@
-import * as Railway from "alchemy/Railway";
+import * as Railway from "@alchemy.run/railway";
 import { Site } from "./shared.ts";
 
 /**

@@ -1,7 +1,10 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import { SourceControlProviderError, type ChangeRequest } from "@t3tools/contracts";
 
+import * as AzureDevOpsChangeRequestTemplate from "./azureDevOpsChangeRequestTemplate.ts";
+import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import type { NormalizedAzureDevOpsPullRequestRecord } from "./azureDevOpsPullRequests.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
@@ -53,6 +56,22 @@ export const discovery = {
     "Install the Azure command-line tools (`az`), then enable Azure DevOps support with `az extension add --name azure-devops`.",
 } satisfies SourceControlCliDiscoverySpec;
 
+/**
+ * The repository name a remote ends in; `az` takes it decoded and finds org and project itself.
+ * Azure clone URLs carry no `.git` suffix, so a trailing `.git` is part of the name.
+ */
+function repositoryNameFromRemote(remoteUrl: string): string | null {
+  const path = URL.parse(remoteUrl.trim())?.pathname ?? remoteUrl.trim();
+  const encoded = path.replace(/\/+$/u, "").split(/[/:]/u).at(-1);
+  if (!encoded) return null;
+  let name = encoded;
+  try {
+    name = decodeURIComponent(encoded);
+  } catch {}
+  // `az` replaces any argument value starting with `@` by the contents of that local file.
+  return name.startsWith("@") ? null : name;
+}
+
 function toChangeRequest(summary: NormalizedAzureDevOpsPullRequestRecord): ChangeRequest {
   return {
     provider: SourceControlProviderKind.make("azure-devops"),
@@ -73,9 +92,34 @@ function toChangeRequest(summary: NormalizedAzureDevOpsPullRequestRecord): Chang
 
 export const make = Effect.gen(function* () {
   const azure = yield* AzureDevOpsCli.AzureDevOpsCli;
+  const { git } = yield* SourceControlHost.SourceControlHost;
 
   return SourceControlProvider.SourceControlProvider.of({
     kind: SourceControlProviderKind.make("azure-devops"),
+    // Azure lists fork pull requests by source branch with no owner filter, so read a full page.
+    headBranchProbe: ({ headSelectors }) => ({
+      headSelectors: headSelectors.filter((selector) => !selector.includes(":")),
+      limit: 100,
+    }),
+    readChangeRequestTemplate: Effect.fn(
+      "AzureDevOpsSourceControlProvider.readChangeRequestTemplate",
+    )(
+      function* ({ cwd }) {
+        // Azure uses the repository default branch even when the PR targets another branch.
+        const remoteName = yield* git.resolvePrimaryRemoteName(cwd);
+        const defaultRef = yield* git.execute({
+          operation: "AzureDevOpsSourceControlProvider.resolveDefaultBranch",
+          cwd,
+          args: ["symbolic-ref", `refs/remotes/${remoteName}/HEAD`],
+        });
+        return yield* AzureDevOpsChangeRequestTemplate.detect(
+          cwd,
+          defaultRef.stdout.trim(),
+          git.execute,
+        );
+      },
+      Effect.orElseSucceed(() => Option.none()),
+    ),
     listChangeRequests: Effect.fn("AzureDevOpsSourceControlProvider.listChangeRequests")(
       function (input) {
         const source = SourceControlProvider.sourceControlRefFromInput(input);
@@ -200,7 +244,10 @@ export const make = Effect.gen(function* () {
     ),
     getDefaultBranch: Effect.fn("AzureDevOpsSourceControlProvider.getDefaultBranch")(
       function (input) {
-        return azure.getDefaultBranch({ cwd: input.cwd }).pipe(
+        const repository =
+          input.context === undefined ? null : repositoryNameFromRemote(input.context.remoteUrl);
+        if (repository === null) return Effect.succeed(null);
+        return azure.getDefaultBranch({ cwd: input.cwd, repository }).pipe(
           Effect.mapError(
             (error) =>
               new SourceControlProviderError({
@@ -215,18 +262,37 @@ export const make = Effect.gen(function* () {
         );
       },
     ),
+    // `az repos pr checkout` ignores git failures: in a single-branch clone its checkout fails
+    // and its pull then merges the pull request into the current branch.
     checkoutChangeRequest: Effect.fn("AzureDevOpsSourceControlProvider.checkoutChangeRequest")(
-      function (input) {
-        return azure
-          .checkoutPullRequest({
+      function* (input) {
+        const pullRequest = yield* azure.getPullRequest(input);
+        if (pullRequest.isCrossRepository)
+          return yield* new SourceControlProviderError({
+            provider: SourceControlProviderKind.make("azure-devops"),
+            operation: "checkoutChangeRequest",
             cwd: input.cwd,
-            reference: input.reference,
-            ...(input.context !== undefined ? { remoteName: input.context.remoteName } : {}),
-          })
-          .pipe(
-            Effect.mapError(
-              (error) =>
-                new SourceControlProviderError({
+            reference: SourceControlProvider.transportSafeSourceControlErrorValue(input.reference),
+            detail: "Checking out an Azure DevOps pull request from a fork is not supported.",
+          });
+        const branch = pullRequest.headRefName;
+        const remoteBranch = {
+          cwd: input.cwd,
+          remoteName: input.context?.remoteName ?? "origin",
+          remoteBranch: branch,
+        };
+        // An existing branch is only switched to; the caller advances it without losing commits.
+        if ((yield* git.listLocalBranchNames(input.cwd)).includes(branch))
+          yield* git.fetchRemoteTrackingBranch(remoteBranch);
+        else yield* git.fetchRemoteBranch({ ...remoteBranch, localBranch: branch });
+        yield* git.switchRef({ cwd: input.cwd, refName: branch });
+      },
+      (effect, input) =>
+        effect.pipe(
+          Effect.mapError((error) =>
+            error._tag === "SourceControlProviderError"
+              ? error
+              : new SourceControlProviderError({
                   provider: SourceControlProviderKind.make("azure-devops"),
                   operation: "checkoutChangeRequest",
                   command: error.command,
@@ -237,9 +303,8 @@ export const make = Effect.gen(function* () {
                   detail: error.detail,
                   cause: error,
                 }),
-            ),
-          );
-      },
+          ),
+        ),
     ),
   });
 });

@@ -1,0 +1,38 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
+  "compilerOptions": {
+    "composite": true,
+    "noEmit": false,
+    "outDir": "./lib",
+    "rootDir": "./src",
+    "module": "Preserve",
+    "moduleResolution": "Bundler",
+    "target": "ESNext",
+    "jsx": "react-jsx",
+    "lib": ["DOM", "DOM.Iterable", "ES2023"]
+  },
+  "references": [
+    {
+      "path": "../alchemy/tsconfig.json"
+    },
+    { "path": "../sql/tsconfig.json" },
+    { "path": "../docker/tsconfig.json" },
+    { "path": "../domain/tsconfig.json" },
+    {
+      "path": "../../submodules/distilled/packages/aws/tsconfig.json"
+    },
+    {
+      "path": "../../submodules/distilled/packages/cloudflare/tsconfig.json"
+    },
+    {
+      "path": "../../submodules/distilled/packages/iceberg/tsconfig.json"
+    },
+    {
+      "path": "../cloudflare-runtime/tsconfig.json"
+    },
+    {
+      "path": "../acme/tsconfig.json"
+    }
+  ]
+}
