@@ -1326,20 +1326,22 @@ const make = Effect.gen(function* () {
     reportLiveTabs();
     // A desktop page navigates on its own and can finish loading before these listeners attach.
     if (desktop) void page.waitForLoadState("load").then(() => reportLoaded(tab), constVoid);
+    const { navStatus } = snapshot;
     // Existing desktop and popup PDFs can start loading before interception attaches.
+    // A page the desktop loaded and then let go would otherwise come back blank here.
     if (
-      snapshot.navStatus._tag === "Loading" &&
-      ((!adopted && !desktop) || isPdfAssetUrl(snapshot.navStatus.url))
+      (navStatus._tag === "Loading" && ((!adopted && !desktop) || isPdfAssetUrl(navStatus.url))) ||
+      (navStatus._tag === "Success" && !adopted && !desktop)
     ) {
       tab.loading = true;
-      const initialUrl = URL.parse(snapshot.navStatus.url);
+      const initialUrl = URL.parse(navStatus.url);
       if (initialUrl) initialUrl.hash = "";
       tab.pendingInitialRequestUrl = initialUrl?.href ?? null;
       const options = { waitUntil: "commit", timeout: NAVIGATION_TIMEOUT_MS } as const;
       tab.initialNavigation = (
-        (desktop || adopted) && page.url() === snapshot.navStatus.url
+        (desktop || adopted) && page.url() === navStatus.url
           ? page.reload(options)
-          : page.goto(snapshot.navStatus.url, options)
+          : page.goto(navStatus.url, options)
       ).then(constVoid, (cause: unknown) => {
         throw ServerBrowserPage.toOperationError(cause, NAVIGATION_TIMEOUT_MS);
       });
