@@ -74,7 +74,11 @@ export interface TransferBudgetRun {
   readonly fleetShellLegacy: TimelineHttpMeasurement;
   /** The shell subscription a cold connect opens from that snapshot's cursor. */
   readonly fleetShellSubscribe: SocketOpenMeasurement;
-  /** A shell resumed from a cursor too old to replay, by a client that reloads over HTTP. */
+  /** A client that holds that snapshot's rows asks the HTTP route whether they still resume. */
+  readonly fleetShellResume: TimelineHttpMeasurement;
+  /** The same question from a cursor too old to replay: the route answers with the snapshot. */
+  readonly staleShellReload: TimelineHttpMeasurement;
+  /** A shell resumed over the socket from that old cursor, by a client that reloads over HTTP. */
   readonly staleShellResume: SocketOpenMeasurement;
   /**
    * The compact bounded snapshot of the long thread whose finished runs left todo lists open,
@@ -141,6 +145,7 @@ const SOCKET_BUDGETS = {
   longTurnColdOpen: { decodedBytes: LONG_TURN_FINISHED_BUDGET.decodedBytes, messages: 2 },
   // These three send no rows. A snapshot in their place is 393 KB for the thread, 42 KB for the shell.
   idleThreadResume: { decodedBytes: 200, messages: 1 },
+  // A subscribe that does not name the snapshot's project identities gets the project again: 851 B.
   fleetShellSubscribe: { decodedBytes: 200, messages: 1 },
   staleShellResume: { decodedBytes: 400, messages: 2 },
 };
@@ -149,6 +154,12 @@ const SOCKET_BUDGETS = {
 const FLEET_SHELL_BUDGET = {
   decodedBytes: 55_000,
   rows: 27,
+};
+
+// The answer is `{"resumable":true}`. A snapshot in its place is 42 KB.
+const FLEET_SHELL_RESUME_BUDGET = {
+  decodedBytes: 100,
+  rows: 0,
 };
 
 // About 14% above the observed 75 KB. The window holds the working run only: 2 nodes, 2 subagents,
@@ -367,6 +378,8 @@ function scenarioRows(run: TransferBudgetRun): ScenarioRow[] {
       run.fleetShellSubscribe,
       SOCKET_BUDGETS.fleetShellSubscribe,
     ),
+    ...httpRows("fleet shell resume check", run.fleetShellResume, FLEET_SHELL_RESUME_BUDGET),
+    ...httpRows("stale shell reload", run.staleShellReload, FLEET_SHELL_BUDGET),
     ...socketRows("stale shell resume", run.staleShellResume, SOCKET_BUDGETS.staleShellResume),
     ...httpRows("stale todo list cold open", run.staleTodoColdOpen, STALE_TODO_BUDGET),
     ...STALE_TODO_RECORD_KINDS.map((kind): ScenarioRow => ({
@@ -439,8 +452,8 @@ export function formatTransferBudgetReport(runs: ReadonlyArray<TransferBudgetRun
     "The measured turn is observed on three sockets at once: one with only the thread subscription (the capped rows), one with only the shell subscription, and a second client holding both. Server egress is the sum of the three. After the turn the second client disconnects and new sockets resubscribe from the cursor it held before the turn, which is the cursor a backgrounded phone would hold. SQL statements are the SQL client's per-statement spans, counted across V2 persistence and the HTTP/WebSocket handlers.",
     `Scenario: ${TRANSFER_HISTORY_TURN_COUNT} historical turns with ${TRANSFER_HISTORY_TOOLS_PER_TURN} command tools and one retained ${formatBytes(TRANSFER_HISTORY_MCP_RESULT_BYTES)} MCP result each, followed by one measured turn with ${TRANSFER_MEASURED_TOOLS} command tools and a retained ${formatBytes(TRANSFER_MEASURED_MCP_RESULT_BYTES)} MCP result. Synthetic V2 domain events exercise persistence, wire projection, and production HTTP/subscription handlers; this does not measure provider adapter ingestion. Payloads contain no user data.`,
     `The long turn rows read a second thread whose last user turn holds ${LONG_TURN_WORK_ROWS} rows of reasoning, commands, file changes, MCP calls, progress messages, checkpoints, and subagents. While that turn runs, web and mobile load the compact bounded snapshot and then one older page. Once it finishes, its work is deferred: the cold open is read over HTTP as web does and over the socket alone as mobile does, then the first page of the deferred work is loaded as an expanded work group does.`,
-    "The resume rows open a new socket from a cursor the client already holds: the first thread after one more ordinary turn, the long-turn thread with nothing new, and the shell from a cursor too old to replay.",
-    `The fleet shell rows read the cold-connect shell after ${SHELL_SETTLED_THREADS} settled threads and ${SHELL_IDLE_SUBAGENTS} idle subagent children are added, then subscribe from that snapshot's cursor. Budgeted reads send the opt-ins current clients send; "older client" rows show the same read without the opt-ins added since row budgets.`,
+    "The resume rows open a new socket from a cursor the client already holds: the first thread after one more ordinary turn, the long-turn thread with nothing new, and the shell from a cursor too old to replay. A client that holds shell rows first names their cursor to the HTTP shell route: the resume check row is the answer that keeps the rows, and the stale shell reload row is the snapshot that replaces them.",
+    `The fleet shell rows read the cold-connect shell after ${SHELL_SETTLED_THREADS} settled threads and ${SHELL_IDLE_SUBAGENTS} idle subagent children are added, then subscribe from that snapshot's cursor and name its project identities, so the project's repository identity is not sent again. Budgeted reads send the opt-ins current clients send; "older client" rows show the same read without the opt-ins added since row budgets.`,
     `The stale todo list rows open a third thread the same way: ${STALE_TODO_SETTLED_RUNS} finished runs, then one run still at work with ${STALE_TODO_LIVE_ROWS} rows. Every run left its todo list open and has ${STALE_TODO_SUBAGENTS_PER_RUN} finished subagents, a provider turn and, once finished, a checkpoint. The record counts must not grow with the number of finished runs.`,
     "",
     "| Provider | Total thread wire | Budget | Result |",
