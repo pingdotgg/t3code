@@ -1,7 +1,7 @@
-import { useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 
 import { isElectron } from "../env";
-import { createSoftwareKeyboardStore } from "../lib/softwareKeyboard";
+import { createSoftwareKeyboardStore, pinShellToKeyboardViewport } from "../lib/softwareKeyboard";
 
 const store = createSoftwareKeyboardStore(
   typeof window === "undefined" ? undefined : window,
@@ -14,4 +14,9 @@ function getServerSnapshot() {
 
 export function useSoftwareKeyboardOpen() {
   return useSyncExternalStore(store.subscribe, store.getSnapshot, getServerSnapshot);
+}
+
+export function usePinShellToKeyboardViewport() {
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps <html> pinned to the visual viewport via its listeners while the shell is mounted
+  useEffect(() => pinShellToKeyboardViewport(window, isElectron), []);
 }

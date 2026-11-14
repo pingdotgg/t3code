@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { observeResize } from "~/lib/observeResize";
 
 type ComposerCommandMenuPosition = {
+  container: HTMLElement;
   bottom: number;
   left: number;
   maxHeight: number;
@@ -14,7 +15,11 @@ function composerCommandMenuPositionsEqual(
   b: ComposerCommandMenuPosition,
 ): boolean {
   return (
-    a.bottom === b.bottom && a.left === b.left && a.maxHeight === b.maxHeight && a.width === b.width
+    a.container === b.container &&
+    a.bottom === b.bottom &&
+    a.left === b.left &&
+    a.maxHeight === b.maxHeight &&
+    a.width === b.width
   );
 }
 
@@ -47,10 +52,22 @@ export function ComposerCommandMenuLayer(props: {
         return;
       }
       const composerOverlap = rootFontSizePx + 1;
+      // While the shell is pinned over Safari's keyboard it is the containing block for fixed
+      // descendants (see index.css), so the menu renders inside it and is placed relative to it.
+      const shell =
+        document.documentElement.dataset.keyboardViewport === undefined
+          ? null
+          : anchor.closest<HTMLElement>('[data-slot="sidebar-wrapper"]');
+      const frame = shell?.getBoundingClientRect() ?? {
+        top: 0,
+        left: 0,
+        bottom: document.documentElement.clientHeight,
+      };
       const next = {
-        bottom: window.innerHeight - rect.top - composerOverlap,
-        left: rect.left + drawerInset,
-        maxHeight: Math.max(96, rect.top - 24 + composerOverlap),
+        container: shell ?? document.body,
+        bottom: frame.bottom - rect.top - composerOverlap,
+        left: rect.left - frame.left + drawerInset,
+        maxHeight: Math.max(96, rect.top - frame.top - 24 + composerOverlap),
         width,
       };
       setPosition((current) =>
@@ -61,6 +78,9 @@ export function ComposerCommandMenuLayer(props: {
     updatePosition();
     window.addEventListener("resize", updatePosition);
     window.addEventListener("scroll", updatePosition, true);
+    // The shell is pinned and unpinned on visual viewport changes, which fire no window events.
+    window.visualViewport?.addEventListener("resize", updatePosition);
+    window.visualViewport?.addEventListener("scroll", updatePosition);
 
     const observed: Element[] = [anchor];
     for (let element = anchor.parentElement; element; element = element.parentElement) {
@@ -72,6 +92,8 @@ export function ComposerCommandMenuLayer(props: {
       stopObserving();
       window.removeEventListener("resize", updatePosition);
       window.removeEventListener("scroll", updatePosition, true);
+      window.visualViewport?.removeEventListener("resize", updatePosition);
+      window.visualViewport?.removeEventListener("scroll", updatePosition);
     };
   }, [props.anchor]);
 
@@ -90,6 +112,6 @@ export function ComposerCommandMenuLayer(props: {
     >
       {props.children}
     </div>,
-    document.body,
+    position.container,
   );
 }
