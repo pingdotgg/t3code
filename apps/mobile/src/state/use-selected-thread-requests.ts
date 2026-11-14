@@ -8,6 +8,7 @@ import {
 import {
   clearComposerDraft,
   composerDraftsAtom,
+  moveComposerDraftAttachments,
   questionAttachmentDraftsAtom,
 } from "./use-composer-drafts";
 import {
@@ -29,6 +30,7 @@ import {
   type ThreadUserInputQuestion,
   onThreadRequestsResolved,
   pruneResolvedUserInputDrafts,
+  questionDraftKeysForRequests,
   resolvedQuestionDraftKeys,
   seedUserInputDraftAnswers,
   userInputDraftKey,
@@ -44,6 +46,7 @@ import {
   type PendingUserInputDraftAnswer,
 } from "@t3tools/client-runtime/state/pending-user-input";
 import { appAtomRegistry } from "./atom-registry";
+import { scopedThreadKey } from "../lib/scopedEntities";
 import { useSelectedThreadPendingRequests } from "./use-thread-detail";
 import { useThreadSelection } from "./use-thread-selection";
 import { useAtomCommand } from "./use-atom-command";
@@ -134,11 +137,34 @@ function pruneResolvedRequestDrafts(
   if (changed) appAtomRegistry.set(questionAttachmentPreparationAtom, counts);
 }
 
+/** Stop or expiry sent nothing, so the question's files and images move to the thread draft. */
+function returnUnsentAttachmentsToThreadDraft(
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+  unansweredRequestIds: ReadonlyArray<RuntimeRequestId>,
+): void {
+  const prefix = questionAttachmentDraftPrefix(environmentId, threadId);
+  const left = moveComposerDraftAttachments(
+    questionDraftKeysForRequests(
+      Object.keys(appAtomRegistry.get(questionAttachmentDraftsAtom(prefix))),
+      prefix,
+      unansweredRequestIds,
+    ),
+    scopedThreadKey(environmentId, threadId),
+  );
+  if (left.length === 0) return;
+  Dialog.alert(
+    "Some question attachments were not returned",
+    `${left.map((attachment) => attachment.name).join(", ")} could not be returned to the draft.`,
+  );
+}
+
 // Resolution can come from anywhere: another device, an interrupt, the turn
 // ending, or a reload over drafts for requests that resolved meanwhile.
-onThreadRequestsResolved(({ environmentId, threadId, pendingRequestIds }) =>
-  pruneResolvedRequestDrafts(environmentId, threadId, pendingRequestIds),
-);
+onThreadRequestsResolved(({ environmentId, threadId, pendingRequestIds, unansweredRequestIds }) => {
+  returnUnsentAttachmentsToThreadDraft(environmentId, threadId, unansweredRequestIds);
+  pruneResolvedRequestDrafts(environmentId, threadId, pendingRequestIds);
+});
 
 /**
  * Drops `answeredRequestId`'s drafts as soon as the server accepts the

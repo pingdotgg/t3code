@@ -16,6 +16,7 @@ import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import {
   CommandId,
+  COMPOSER_CONTEXT_MAX_RECORDS,
   ComposerContextId,
   EnvironmentId,
   MessageId,
@@ -198,6 +199,7 @@ import {
   mergeComposerDraftContentState,
   migrateLegacyNewTaskDraft,
   modelOptionMemoryAtom,
+  moveComposerDraftAttachments,
   releaseUnusedComposerAttachmentFiles,
   removeComposerDraftsForEnvironment,
   replaceComposerDraftAttachments,
@@ -478,6 +480,56 @@ describe("mobile composer drafts", () => {
       expect(composerAttachmentCleanupMocks.remove).toHaveBeenCalledWith(file.fileUri);
     },
   );
+
+  it("moves question attachments to the end of the thread draft and keeps their files", async () => {
+    const question = "environment:question-thread-request";
+    const file = {
+      type: "file" as const,
+      id: "question-file",
+      name: "notes.txt",
+      mimeType: "text/plain",
+      sizeBytes: 1,
+      fileUri: "file:///documents/t3-composer-attachments/question-file.txt",
+    };
+    setComposerDraftText("thread", "Earlier draft");
+    rememberComposerDraftSelection("thread", "Earlier draft", { start: 0, end: 7 });
+    appendComposerDraftAttachments(question, [file]);
+
+    expect(moveComposerDraftAttachments([question], "thread")).toEqual([]);
+
+    const thread = getComposerDraftSnapshot("thread");
+    // Appended after the text, not over the remembered selection.
+    expect(thread.text.startsWith("Earlier draft ")).toBe(true);
+    expect(thread.attachments).toEqual([file]);
+    expect(thread.context?.records).toEqual([expect.objectContaining({ attachmentId: file.id })]);
+    expect(getComposerDraftSnapshot(question).attachments).toEqual([]);
+    await releaseUnusedComposerAttachmentFiles([file]);
+    expect(composerAttachmentCleanupMocks.remove).not.toHaveBeenCalledWith(file.fileUri);
+
+    // Without chip room, media still shows in the strip; other files come back to the caller.
+    appendComposerDraftAttachments(
+      "thread",
+      Array.from({ length: COMPOSER_CONTEXT_MAX_RECORDS - 1 }, (_, index) => ({
+        ...file,
+        id: `filler-${index}`,
+      })),
+      { allowOverflow: true, appendReference: true },
+    );
+    const overflow = { ...file, id: "overflow-file" };
+    const image = {
+      ...file,
+      type: "image" as const,
+      id: "overflow-image",
+      name: "screen.png",
+      mimeType: "image/png",
+      fileUri: "file:///documents/t3-composer-attachments/overflow-image.png",
+      previewUri: "file:///documents/t3-composer-attachments/overflow-image.png",
+    };
+    appendComposerDraftAttachments(question, [overflow, image]);
+    expect(moveComposerDraftAttachments([question], "thread")).toEqual([overflow]);
+    expect(getComposerDraftSnapshot("thread").attachments.at(-1)).toEqual(image);
+    expect(getComposerDraftSnapshot(question).attachments).toEqual([]);
+  });
 
   it("retains a pick matching cached state until the live shell confirms it", () => {
     const environmentId = EnvironmentId.make("environment-1");

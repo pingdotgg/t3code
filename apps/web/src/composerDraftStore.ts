@@ -83,6 +83,7 @@ import {
 } from "./lib/composerContextReferences";
 import {
   fileContextReference,
+  imageContextReference,
   previewAnnotationContextId,
   previewAnnotationContextReference,
   reviewCommentContextId,
@@ -759,6 +760,14 @@ interface ComposerDraftStoreState {
   clearComposerPromptAndImages: (threadRef: ComposerThreadTarget) => void;
   /** Moves all user content into a destination that has none; otherwise leaves both drafts alone. */
   moveComposerContent: (from: ComposerThreadTarget, to: ComposerThreadTarget) => void;
+  /**
+   * Moves images and files the destination can take, chipped into its prompt, and returns
+   * the ones left in source: over the destination's limit or unreachable from its environment.
+   */
+  moveComposerAttachments: (
+    from: ComposerThreadTarget,
+    to: ComposerThreadTarget,
+  ) => ReadonlyArray<ComposerImageAttachment | ComposerFileAttachment>;
 }
 
 export interface EffectiveComposerModelState {
@@ -1006,6 +1015,134 @@ function normalizeTerminalContextsForThread(
   }
 
   return normalizedContexts;
+}
+
+function composerTargetEnvironmentId(
+  state: Pick<ComposerDraftStoreState, "draftThreadsByThreadKey">,
+  target: ComposerThreadTarget,
+  targetKey: string,
+): EnvironmentId | null {
+  return typeof target === "string"
+    ? (state.draftThreadsByThreadKey[targetKey]?.environmentId ??
+        parseScopedThreadKey(targetKey)?.environmentId ??
+        null)
+    : target.environmentId;
+}
+
+function replaceComposerFileReferences(
+  prompt: string,
+  files: ReadonlyArray<ComposerFileAttachment>,
+  replacements: ReadonlyMap<string, ComposerFileAttachment>,
+): string {
+  if (replacements.size === 0) return prompt;
+  return replaceComposerContextReferences(prompt, (occurrence) => {
+    const original = files.find(
+      (file) => fileContextReference(file).contextId === occurrence.contextId,
+    );
+    const replacement = original ? replacements.get(original.id) : undefined;
+    return replacement
+      ? formatInlineContextReference(fileContextReference(replacement))
+      : occurrence.source;
+  });
+}
+
+/**
+ * Splits `source`'s images and files between it and `destination`: up to the send limit,
+ * skipping files the destination already has or cannot reach. Moved images keep their
+ * blob URLs and moved files their uploads, so neither side may release them.
+ */
+function transferComposerAttachments(
+  source: ComposerThreadDraftState,
+  destination: ComposerThreadDraftState,
+  destinationEnvironmentId: EnvironmentId | null,
+) {
+  const remainingAttachmentSlots = Math.max(
+    0,
+    PROVIDER_SEND_TURN_MAX_ATTACHMENTS - destination.images.length - destination.files.length,
+  );
+  const movedImages = source.images.slice(0, remainingAttachmentSlots);
+  const movedImageIds = new Set(movedImages.map((image) => image.id));
+  const destinationFileIds = new Set(destination.files.map((file) => file.id));
+  const replacements = new Map<string, ComposerFileAttachment>();
+  const addedFiles: ComposerFileAttachment[] = [];
+  const movedFiles: ComposerFileAttachment[] = [];
+  for (const sourceFile of source.files) {
+    if (destinationFileIds.has(sourceFile.id)) {
+      movedFiles.push(sourceFile);
+      continue;
+    }
+    if (
+      sourceFile.file === null &&
+      sourceFile.uploadedAttachmentId !== undefined &&
+      sourceFile.uploadEnvironmentId !== destinationEnvironmentId
+    ) {
+      continue;
+    }
+    let file = sourceFile;
+    // Re-upload local bytes across environments; the destination cannot reach source upload ids.
+    if (file.file !== null && file.uploadEnvironmentId !== destinationEnvironmentId) {
+      const { uploadedAttachmentId: _a, uploadEnvironmentId: _e, ...rest } = file;
+      file = rest;
+    }
+    const marker = destination.files.find(
+      (candidate) =>
+        !composerFileNeedsReattach(file) &&
+        composerFileNeedsReattach(candidate) &&
+        !replacements.has(candidate.id) &&
+        composerFileMatchesReattachMarker(candidate, file),
+    );
+    if (marker) {
+      replacements.set(marker.id, file);
+    } else if (movedImages.length + addedFiles.length < remainingAttachmentSlots) {
+      addedFiles.push(file);
+    } else {
+      continue;
+    }
+    movedFiles.push(file);
+    destinationFileIds.add(file.id);
+  }
+  const movedFileIds = new Set(movedFiles.map((file) => file.id));
+  return {
+    moved: [...movedImages, ...movedFiles],
+    source: {
+      ...source,
+      images: source.images.filter((image) => !movedImageIds.has(image.id)),
+      files: source.files.filter((file) => !movedFileIds.has(file.id)),
+      nonPersistedImageIds: source.nonPersistedImageIds.filter(
+        (imageId) => !movedImageIds.has(imageId),
+      ),
+      persistedAttachments: source.persistedAttachments.filter(
+        (attachment) => !movedImageIds.has(attachment.id),
+      ),
+    },
+    destination: {
+      ...destination,
+      images: [...destination.images, ...movedImages],
+      prompt: replaceComposerFileReferences(destination.prompt, destination.files, replacements),
+      files: [...destination.files.map((file) => replacements.get(file.id) ?? file), ...addedFiles],
+      nonPersistedImageIds: [
+        ...destination.nonPersistedImageIds,
+        ...source.nonPersistedImageIds.filter((imageId) => movedImageIds.has(imageId)),
+      ],
+      persistedAttachments: [
+        ...destination.persistedAttachments,
+        ...source.persistedAttachments.filter((attachment) => movedImageIds.has(attachment.id)),
+      ],
+    },
+  };
+}
+
+/** Writes `updates` over `drafts`, dropping the ones left empty. */
+function withComposerDrafts(
+  drafts: Record<string, ComposerThreadDraftState>,
+  updates: Record<string, ComposerThreadDraftState>,
+): Record<string, ComposerThreadDraftState> {
+  const next = { ...drafts };
+  for (const [key, draft] of Object.entries(updates)) {
+    if (shouldRemoveDraft(draft)) delete next[key];
+    else next[key] = draft;
+  }
+  return next;
 }
 
 function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
@@ -3625,18 +3762,11 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             }
             acceptedIds = accepted.map((file) => file.id);
             const retained = existing.files.map((file) => replacements.get(file.id) ?? file);
-            const prompt =
-              replacements.size === 0
-                ? existing.prompt
-                : replaceComposerContextReferences(existing.prompt, (occurrence) => {
-                    const original = existing.files.find(
-                      (file) => fileContextReference(file).contextId === occurrence.contextId,
-                    );
-                    const replacement = original ? replacements.get(original.id) : undefined;
-                    return replacement
-                      ? formatInlineContextReference(fileContextReference(replacement))
-                      : occurrence.source;
-                  });
+            const prompt = replaceComposerFileReferences(
+              existing.prompt,
+              existing.files,
+              replacements,
+            );
             return {
               draftsByThreadKey: {
                 ...state.draftsByThreadKey,
@@ -4359,15 +4489,9 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             if (!source || composerDraftHasUserContent(destination)) {
               return state;
             }
-            const destinationEnvironmentId =
-              typeof to === "string"
-                ? (state.draftThreadsByThreadKey[toKey]?.environmentId ??
-                  parseScopedThreadKey(toKey)?.environmentId ??
-                  null)
-                : to.environmentId;
             const nextDestination = clearStaleFileUploadMetadata(
               { ...destination, ...composerDraftContent(source) },
-              destinationEnvironmentId,
+              composerTargetEnvironmentId(state, to, toKey),
             );
             // Moved images still use these blob URLs at the destination; do not revoke them.
             const nextSource: ComposerThreadDraftState = {
@@ -4387,6 +4511,40 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             }
             return { draftsByThreadKey: nextDraftsByThreadKey };
           });
+        },
+        moveComposerAttachments: (from, to) => {
+          const state = get();
+          const fromKey = resolveComposerDraftKey(state, from);
+          const toKey = resolveComposerDraftKey(state, to);
+          const source = fromKey ? state.draftsByThreadKey[fromKey] : undefined;
+          if (!fromKey || !toKey || fromKey === toKey || !source) {
+            return [];
+          }
+          const destination = state.draftsByThreadKey[toKey] ?? createEmptyThreadDraft();
+          const transfer = transferComposerAttachments(
+            source,
+            destination,
+            composerTargetEnvironmentId(state, to, toKey),
+          );
+          if (transfer.moved.length > 0) {
+            set({
+              draftsByThreadKey: withComposerDrafts(state.draftsByThreadKey, {
+                [fromKey]: transfer.source,
+                [toKey]: {
+                  ...transfer.destination,
+                  prompt: ensureInlineContextReferences(
+                    transfer.destination.prompt,
+                    transfer.moved.map((attachment) =>
+                      attachment.type === "image"
+                        ? imageContextReference(attachment)
+                        : fileContextReference(attachment),
+                    ),
+                  ),
+                },
+              }),
+            });
+          }
+          return [...transfer.source.images, ...transfer.source.files];
         },
       };
     },

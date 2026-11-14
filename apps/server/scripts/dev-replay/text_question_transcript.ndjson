@@ -1,0 +1,5 @@
+{"type":"transcript_start","provider":"acpRegistry","protocol":"acp.ndjson-jsonrpc","version":"1","scenario":"dev_replay_text_question","metadata":{"generatedBy":"hand-written for the dev replay agent"}}
+{"type":"expect_outbound","frame":{"kind":"request","method":"session/prompt","params":"<any>"}}
+{"type":"emit_inbound","frame":{"kind":"request","method":"elicitation/create","params":{"sessionId":"dev-replay-session","mode":"form","message":"Describe what you need.","requestedSchema":{"type":"object","title":"Details","properties":{"details":{"type":"string","title":"Details","description":"What should this replay know before it continues?"}},"required":["details"]}}}}
+{"type":"emit_inbound","frame":{"kind":"notification","method":"session/update","params":{"sessionId":"dev-replay-session","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Thanks, the text question replay is complete."}}}}}
+{"type":"emit_inbound","frame":{"kind":"response","method":"session/prompt","result":{"stopReason":"end_turn"}}}
