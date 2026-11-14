@@ -204,6 +204,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
     startProviderThread: OrchestrationV2ProviderThread = providerThread,
     turnPolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy = policy,
     resume = false,
+    turnKey = suffix,
   ) =>
     runtime.startTurn({
       appThread: {
@@ -230,17 +231,17 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
         deletedAt: null,
       },
       threadId,
-      runId: RunId.make(`run-opencode-${suffix}`),
+      runId: RunId.make(`run-opencode-${turnKey}`),
       runOrdinal: 1,
       providerTurnOrdinal: 1,
-      attemptId: RunAttemptId.make(`attempt-opencode-${suffix}`),
-      rootNodeId: NodeId.make(`node-opencode-${suffix}`),
+      attemptId: RunAttemptId.make(`attempt-opencode-${turnKey}`),
+      rootNodeId: NodeId.make(`node-opencode-${turnKey}`),
       providerThread: startProviderThread,
       ...(resume ? { resume: true as const } : {}),
       message: {
         createdBy: "user",
         creationSource: "web",
-        messageId: MessageId.make(`message-opencode-${suffix}`),
+        messageId: MessageId.make(`message-opencode-${turnKey}`),
         text,
         attachments: [],
       },
@@ -1397,16 +1398,18 @@ describe("OpenCodeAdapterV2", () => {
   );
 
   it.effect.each([
-    { state: "settled", expectedOffers: 1 },
-    { state: "active", expectedOffers: 0 },
-  ])(
-    "routes the OpenCode 1.19.5 root background prompt while $state",
-    ({ state, expectedOffers }) =>
+    { state: "active", end: null },
+    { state: "settled", end: "stop" },
+    { state: "settled", end: "cancelled" },
+    { state: "settled", end: "foreground" },
+  ] as const)(
+    "routes the OpenCode 1.19.5 root background prompt while $state, ending by $end",
+    ({ state, end }) =>
       Effect.gen(function* () {
         const nativeEvents = asyncEventStream();
         const push = (event: unknown) => Effect.promise(() => nativeEvents.push(event));
         const root = "ses_root";
-        let promptId = "";
+        const promptIds: Array<string> = [];
         const aborted: Array<string> = [];
         const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
         const harness = yield* makeOpenCodeRuntimeHarness("root-background-wake", root, {
@@ -1415,7 +1418,7 @@ describe("OpenCodeAdapterV2", () => {
             create: async () => ({ data: { id: root, time: { created: 1, updated: 1 } } }),
             get: async () => ({ data: { id: root, time: { created: 1, updated: 1 } } }),
             promptAsync: async (input: { messageID: string }) => {
-              promptId = input.messageID;
+              promptIds.push(input.messageID);
               return { data: true };
             },
             messages: async () => ({ data: [] }),
@@ -1445,16 +1448,30 @@ describe("OpenCodeAdapterV2", () => {
           type: "session.status",
           properties: { sessionID: root, status: { type } },
         });
+        const assistant = (completed: boolean) => ({
+          type: "message.updated",
+          properties: {
+            sessionID: root,
+            info: {
+              id: "msg_wake_assistant",
+              sessionID: root,
+              role: "assistant",
+              parentID: "msg_background_result",
+              time: completed ? { created: 2, completed: 3 } : { created: 2 },
+            },
+          },
+        });
+        const awaitTerminal = harness.runtime.events.pipe(
+          Stream.filter((event) => event.type === "turn.terminal"),
+          Stream.take(1),
+          Stream.runDrain,
+        );
         yield* harness.startTurn();
-        yield* push(user(promptId));
+        yield* push(user(promptIds[0]!));
         yield* push(status("busy"));
         if (state === "settled") {
           yield* push(status("idle"));
-          yield* harness.runtime.events.pipe(
-            Stream.filter((event) => event.type === "turn.terminal"),
-            Stream.take(1),
-            Stream.runDrain,
-          );
+          yield* awaitTerminal;
         }
         assert.equal(offers.length, 0, "foreground admission must not offer a continuation");
         const before = yield* harness.runtime.readThreadSnapshot({
@@ -1484,19 +1501,11 @@ describe("OpenCodeAdapterV2", () => {
           },
         });
         yield* push(status("busy"));
-        yield* push({
-          type: "message.updated",
-          properties: {
-            sessionID: root,
-            info: {
-              id: "msg_wake_assistant",
-              sessionID: root,
-              role: "assistant",
-              parentID: "msg_background_result",
-              time: { created: 2 },
-            },
-          },
-        });
+        assert.equal(offers.length, state === "settled" ? 1 : 0, "only a settled root needs a run");
+        // The user's prompt joins the run OpenCode already started, taking its held events.
+        if (end === "foreground")
+          yield* harness.startTurn("follow up", undefined, undefined, false, "next");
+        yield* push(assistant(false));
         yield* push({
           type: "message.part.updated",
           properties: {
@@ -1512,40 +1521,53 @@ describe("OpenCodeAdapterV2", () => {
             },
           },
         });
-        yield* push({
-          type: "message.updated",
-          properties: {
-            sessionID: root,
-            info: {
-              id: "msg_wake_assistant",
-              sessionID: root,
-              role: "assistant",
-              parentID: "msg_background_result",
-              time: { created: 2, completed: 3 },
-            },
-          },
-        });
+        yield* push(assistant(true));
+        if (end === "foreground") yield* push(user(promptIds[1]!));
         yield* push(status("idle"));
         yield* push({ type: "session.idle", properties: { sessionID: root } });
-        assert.equal(offers.length, expectedOffers, "only a settled root needs a new continuation");
-        yield* push(user("msg_background_result"));
-        yield* push(status("idle"));
-        yield* push({ type: "session.idle", properties: { sessionID: root } });
+        if (end === "foreground") {
+          const events = yield* harness.runtime.events.pipe(
+            Stream.takeUntil((event) => event.type === "turn.terminal"),
+            Stream.runCollect,
+          );
+          const terminal = Array.from(events).find((event) => event.type === "turn.terminal");
+          assert.equal(terminal?.status, "completed");
+          assert.isTrue(
+            Array.from(events).some(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "assistant_message" &&
+                event.turnItem.providerTurnId === terminal?.providerTurnId &&
+                event.turnItem.text === "WAKE_OK",
+            ),
+            "the foreground turn carries the wake's output",
+          );
+        } else {
+          yield* push(user("msg_background_result"));
+          yield* push(status("idle"));
+          yield* push({ type: "session.idle", properties: { sessionID: root } });
+        }
         assert.equal(
           offers.length,
-          expectedOffers,
+          state === "settled" ? 1 : 0,
           "duplicate message and idle events must not offer twice",
         );
         const offer = offers[0];
         if (offer?.dispatchIfCurrent === undefined) return;
-        yield* harness.runtime.interruptTurn({
-          providerThread: harness.providerThread,
-          providerTurnId: ProviderTurnId.make("provider-turn:settled"),
-          requestRuntimeRestart: true,
-        });
-        assert.deepEqual(aborted, [root], "Stop aborts the wake OpenCode is running");
+        if (end === "stop") {
+          yield* harness.runtime.interruptTurn({
+            providerThread: harness.providerThread,
+            providerTurnId: ProviderTurnId.make("provider-turn:settled"),
+            requestRuntimeRestart: true,
+          });
+        } else if (end === "cancelled") yield* offer.onRunEndedWithoutStarting!();
+        assert.deepEqual(
+          aborted,
+          end === "foreground" ? [] : [root],
+          "an unadmitted wake is aborted; a taken one keeps running",
+        );
         const dispatched = yield* offer.dispatchIfCurrent(Effect.succeed("run"));
-        assert.isTrue(Option.isNone(dispatched), "a stopped wake must not start a run");
+        assert.isTrue(Option.isNone(dispatched), "an ended or taken wake must not start a run");
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 

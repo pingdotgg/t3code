@@ -2336,6 +2336,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           );
         });
 
+        // A call, not inline checks: TS keeps earlier narrowing of these mutable fields across yields.
         const turnIsLive = (state: OpenCodeThreadState, turn: ActiveOpenCodeTurn) =>
           state.activeTurn === turn && !turn.finalized && !turn.interrupted;
 
@@ -2759,7 +2760,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           ).pipe(Effect.timeout("10 seconds"));
 
         /** Drops a held wake; true when OpenCode is running it and the root must be aborted. */
-        const dropWake = (state: OpenCodeThreadState, wake: OpenCodeWake | null = state.wake) => {
+        const dropWake = (state: OpenCodeThreadState, wake: OpenCodeWake | null) => {
           if (wake === null || state.wake !== wake) return false;
           state.wake = null;
           return wake.offered;
@@ -3887,7 +3888,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   controller.abort();
                 if (
                   state !== undefined &&
-                  (yield* eventPermit.withPermit(Effect.sync(() => dropWake(state))))
+                  (yield* eventPermit.withPermit(Effect.sync(() => dropWake(state, state.wake))))
                 ) {
                   yield* abortRootSession(state);
                 }
