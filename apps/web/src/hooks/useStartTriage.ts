@@ -4,7 +4,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId } from "@t3tools/contracts";
+import { type EnvironmentId, scratchBlockedMessage } from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
 
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
@@ -34,22 +34,29 @@ const copyTriageCliCommand = () =>
  */
 export function useStartTriage() {
   const router = useRouter();
-  const { scratchWorkspaceRootFor } = useScratchProject();
+  const { scratchWorkspaceRootFor, scratchBlockedFor, openScratchBlockedHelp } =
+    useScratchProject();
   const handleNewThread = useNewThreadHandler();
   const prepare = useAtomCommand(serverEnvironment.prepareTriage, { reportFailure: false });
   const openScratch = useAtomCommand(projectEnvironment.openScratch, { reportFailure: false });
 
   // With no draft to show, a toast is the only place to point at the CLI.
-  const fail = (description: string) =>
+  const fail = (description: string, blocked = false) =>
     toastManager.add(
       stackedThreadToast({
-        type: "error",
+        // Nothing failed when the server turned this off on purpose; a warning shows the reason in full.
+        type: blocked ? "warning" : "error",
         title: "Could not start triage",
         description: `${description} Run ${TRIAGE_CLI_COMMAND} in a terminal on that machine instead.`,
         timeout: 0,
         actionProps: { children: "Copy command", onClick: () => void copyTriageCliCommand() },
         // "Copy command" is the copy that helps here, not the error text.
-        data: { hideCopyButton: true },
+        data: {
+          hideCopyButton: true,
+          ...(blocked
+            ? { secondaryActionProps: { children: "How to fix", onClick: openScratchBlockedHelp } }
+            : {}),
+        },
       }),
     );
   const failWith = (
@@ -79,7 +86,9 @@ export function useStartTriage() {
 
   return async (environmentId: EnvironmentId) => {
     if (scratchWorkspaceRootFor(environmentId) === null) {
-      fail("This machine cannot start threads without a project.");
+      const blocked = scratchBlockedFor(environmentId);
+      if (blocked === null) fail("This machine cannot start threads without a project.");
+      else fail(scratchBlockedMessage(blocked), true);
       return;
     }
     const requestingRouteHref = router.state.location.href;

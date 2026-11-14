@@ -37,8 +37,21 @@ Each thread without a project works in its own folder under `~/.t3/scratch` (the
 of its first message, and a short id, like
 `2026-09-25-convert-these-pngs-to-webp-a1b2c3d4`. Deleting a thread keeps its
 folder, so the files the agent wrote stay until you delete them. Branch, worktree, and diff controls stay hidden because
-these folders are not Git repositories. This is unavailable when the data
-directory itself sits inside a Git checkout.
+these folders are not Git repositories.
+
+#### When threads without a project are disabled
+
+T3 Code disables threads without a project on a machine whose T3 data directory
+(`~/.t3` by default) is inside a Git repository, such as a home directory kept
+in Git for dotfiles. Their folders would belong to that repository, so an agent
+working in one could change it. Projects on that machine are not affected.
+
+To turn them back on, point `T3CODE_HOME` (or `--base-dir`) at a folder outside
+that repository. T3 Code then keeps all of its data there and starts empty: your
+existing projects and threads stay in the old data directory and do not appear
+until you point T3 Code back at it. If the repository was created by mistake,
+move its `.git` folder out of the way instead, which keeps your data in place.
+T3 Code checks once at startup, so restart it after either change.
 
 When the work grows into something real, pick **Turn into project** from the
 thread's menu. The thread's folder becomes a project where it is, so nothing

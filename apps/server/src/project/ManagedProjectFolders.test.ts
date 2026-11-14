@@ -135,6 +135,10 @@ it.effect("offers nothing, and says why once, when the data dir sits inside a Gi
     yield* Effect.gen(function* () {
       const scratch = yield* ManagedProjectFolders.ManagedProjectFolders;
       assert.isTrue(Option.isNone(yield* scratch.scratchRoot));
+      assert.deepEqual(Option.getOrNull(yield* scratch.scratchBlockedByRepository), {
+        baseDir,
+        repositoryRoot,
+      });
       assert.isFalse(yield* scratch.isScratchProject(ProjectId.make("project:any")));
       const failure = yield* Effect.flip(scratch.ensureScratchProject);
       assert.equal(failure._tag, "ScratchUnavailableError");

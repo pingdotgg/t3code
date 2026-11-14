@@ -459,7 +459,12 @@ function OpenCommandPaletteDialog(props: {
   const updateProject = useOrchestrationCommand(projectEnvironment.update, {
     label: "project unarchive",
   });
-  const { scratchEnvironmentId, scratchWorkspaceRootFor, startScratchThread } = useScratchProject();
+  const {
+    scratchEnvironmentId,
+    scratchWorkspaceRootFor,
+    scratchBlocked,
+    startScratchThreadOrExplain,
+  } = useScratchProject();
   const startTriage = useStartTriage();
   const lookupRepository = useAtomQueryRunner(sourceControlEnvironment.repository, {
     reportFailure: false,
@@ -702,6 +707,8 @@ function OpenCommandPaletteDialog(props: {
     activeThread?.environmentId ?? activeDraftThread?.environmentId ?? null;
   const currentProjectId = activeThread?.projectId ?? activeDraftThread?.projectId ?? null;
   const scratchTargetEnvironmentId = scratchEnvironmentId(currentProjectEnvironmentId);
+  const scratchBlockedByRepository =
+    scratchTargetEnvironmentId === null ? scratchBlocked(currentProjectEnvironmentId) : null;
   const supportsTriage = (environmentId: EnvironmentId | null) =>
     environments.find((environment) => environment.environmentId === environmentId)?.serverConfig
       ?.environment.capabilities.triage === true;
@@ -878,7 +885,9 @@ function OpenCommandPaletteDialog(props: {
           );
         },
       });
-      if (scratchTargetEnvironmentId === null) return projectItems;
+      if (scratchTargetEnvironmentId === null && scratchBlockedByRepository === null) {
+        return projectItems;
+      }
 
       const noProjectIndex = newThreadNoProjectIndex(
         projectPickerEntries.map(({ group, targetProject, isPreferred }) => ({
@@ -899,7 +908,8 @@ function OpenCommandPaletteDialog(props: {
           title: "No project",
           icon: <MessageSquareDashedIcon className={ITEM_ICON_CLASS} />,
           shortcutCommand: "chat.newWithoutProject" as const,
-          run: () => startScratchThread(scratchTargetEnvironmentId),
+          run: () =>
+            startScratchThreadOrExplain(scratchTargetEnvironmentId, scratchBlockedByRepository),
         },
         ...projectItems.slice(noProjectIndex),
       ];
@@ -1328,7 +1338,8 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
-  if (scratchTargetEnvironmentId !== null) {
+  // A blocked machine keeps the entry, so picking it says why instead of the entry vanishing.
+  if (scratchTargetEnvironmentId !== null || scratchBlockedByRepository !== null) {
     actionItems.push({
       kind: "action",
       value: "action:new-thread-without-project",
@@ -1336,7 +1347,8 @@ function OpenCommandPaletteDialog(props: {
       title: "New thread without a project",
       icon: <MessageSquareDashedIcon className={ITEM_ICON_CLASS} />,
       shortcutCommand: "chat.newWithoutProject",
-      run: () => startScratchThread(scratchTargetEnvironmentId),
+      run: () =>
+        startScratchThreadOrExplain(scratchTargetEnvironmentId, scratchBlockedByRepository),
     });
   }
 

@@ -3,6 +3,9 @@ import {
   GitCommandError,
   type GitManagerServiceError,
   ProjectId,
+  SCRATCH_BLOCKED_HELP_URL,
+  type ScratchBlockedByRepository,
+  scratchBlockedMessage,
   type ThreadId,
   VcsProcessSpawnError,
 } from "@t3tools/contracts";
@@ -38,7 +41,9 @@ export class ScratchUnavailableError extends Schema.TaggedError<ScratchUnavailab
     if (this.repositoryRoot === undefined) {
       return "Threads without a project are not available on this environment.";
     }
-    return `Threads without a project are off because the T3 home ${this.baseDir} is inside the Git repository ${this.repositoryRoot}. If that repository was created by mistake, move ${this.repositoryRoot}/.git out of the way; otherwise point T3CODE_HOME (or --base-dir) at a folder outside it. Then restart T3 Code.`;
+    const blocked = { baseDir: this.baseDir, repositoryRoot: this.repositoryRoot };
+    // Logs and agents cannot follow the client's "How to fix" action, so the remedy stays inline.
+    return `${scratchBlockedMessage(blocked)} To turn them on, point T3CODE_HOME (or --base-dir) at a folder outside that repository, or move ${this.repositoryRoot}/.git out of the way if it was created by mistake, then restart T3 Code. Details: ${SCRATCH_BLOCKED_HELP_URL}`;
   }
 }
 
@@ -112,6 +117,7 @@ export class ManagedProjectFolders extends Context.Service<
   ManagedProjectFolders,
   {
     readonly scratchRoot: Effect.Effect<Option.Option<string>>;
+    readonly scratchBlockedByRepository: Effect.Effect<Option.Option<ScratchBlockedByRepository>>;
     readonly ensureScratchProject: Effect.Effect<{ readonly projectId: ProjectId }, ScratchError>;
     readonly isScratchProject: (projectId: ProjectId) => Effect.Effect<boolean>;
     readonly folderForThread: (input: {
@@ -297,6 +303,16 @@ const make = Effect.gen(function* () {
       Result.isSuccess(probed)
         ? scratchProjectRoot(probed.success).pipe(Effect.asSome)
         : Effect.succeedNone,
+    ),
+  );
+  const scratchBlockedByRepository = scratchProbe.pipe(
+    Effect.map((probed) =>
+      Result.isFailure(probed) && probed.failure.repositoryRoot !== undefined
+        ? Option.some({
+            baseDir: probed.failure.baseDir,
+            repositoryRoot: probed.failure.repositoryRoot,
+          })
+        : Option.none(),
     ),
   );
 
@@ -510,6 +526,7 @@ const make = Effect.gen(function* () {
 
   return ManagedProjectFolders.of({
     scratchRoot,
+    scratchBlockedByRepository,
     ensureScratchProject,
     isScratchProject,
     folderForThread,

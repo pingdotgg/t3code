@@ -1819,6 +1819,7 @@ export const layerWsRpc = (
         const environment = yield* serverEnvironment.getDescriptor;
         const auth = yield* serverAuth.getDescriptor();
         const scratchWorkspaceRoot = yield* managedFolders.scratchRoot;
+        const scratchBlockedByRepository = yield* managedFolders.scratchBlockedByRepository;
         const lastEventLoopStall = yield* eventLoopMonitor.latestNoticeableStall;
         const discovery = yield* resolveOpenDiscoveryForConfig({
           editors: externalLauncher.resolveAvailableEditors(),
@@ -1886,6 +1887,10 @@ export const layerWsRpc = (
           ...Option.match(scratchWorkspaceRoot, {
             onNone: () => ({}),
             onSome: (root) => ({ scratchWorkspaceRoot: root }),
+          }),
+          ...Option.match(scratchBlockedByRepository, {
+            onNone: () => ({}),
+            onSome: (blocked) => ({ scratchBlockedByRepository: blocked }),
           }),
           newProjectsRoot: managedFolders.namedProjectsRoot,
           ...(lastEventLoopStall === undefined ? {} : { lastEventLoopStall }),
