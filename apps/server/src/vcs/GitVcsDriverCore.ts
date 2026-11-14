@@ -1866,6 +1866,34 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       Effect.orElseSucceed(() => false),
     );
 
+  // A fetch reads only the remote's first url, while a push writes every push URL (pushurl, else
+  // each url). A fetched ref is evidence of the push destination only when those are the same one.
+  const pushesOnlyToFetchUrl = Effect.fn("GitVcsDriver.pushesOnlyToFetchUrl")(
+    function* (cwd: string, remoteName: string) {
+      const [fetchUrl, pushUrls] = yield* Effect.all([
+        runGitStdout("GitVcsDriver.pushesOnlyToFetchUrl.fetchUrl", cwd, [
+          "remote",
+          "get-url",
+          "--",
+          remoteName,
+        ]),
+        runGitStdout("GitVcsDriver.pushesOnlyToFetchUrl.pushUrls", cwd, [
+          "remote",
+          "get-url",
+          "--push",
+          "--all",
+          "--",
+          remoteName,
+        ]),
+      ]);
+      // Preserve whitespace in URLs and reject ambiguous multiline fetch URLs.
+      return (
+        fetchUrl.endsWith("\n") && !fetchUrl.slice(0, -1).includes("\n") && pushUrls === fetchUrl
+      );
+    },
+    Effect.orElseSucceed(() => false),
+  );
+
   const ensureRemote: GitVcsDriver.GitVcsDriver["Service"]["ensureRemote"] = Effect.fn(
     "ensureRemote",
   )(function* (input) {
@@ -2974,30 +3002,36 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const destination = yield* resolvePushDestination(cwd, branch, details.hasUpstream);
     if (hasNoLocalDelta && details.hasUpstream) {
       if (!destination?.pushRemote) {
-        return {
-          status: "skipped_up_to_date" as const,
-          branch,
-          ...(details.upstreamRef ? { upstreamBranch: details.upstreamRef } : {}),
-        };
-      }
-      const { pushRemote, branchName } = destination;
-      const pushRemoteRef = `${pushRemote}/${branchName}`;
-      // The local ref can be stale when the branch was deleted or rewound elsewhere.
-      const pushRemoteHasHead = yield* fetchRemoteTrackingBranch({
-        cwd,
-        remoteName: pushRemote,
-        remoteBranch: branchName,
-      }).pipe(
-        Effect.andThen(remoteRefContainsHead(cwd, pushRemoteRef)),
-        Effect.orElseSucceed(() => false),
-      );
-      if (pushRemoteHasHead) {
-        return {
-          status: "skipped_up_to_date" as const,
-          branch,
-          upstreamBranch: pushRemoteRef,
-          pushRemote,
-        };
+        // The tracking ref reflects the fetch URL, so it says nothing about a separate push URL.
+        if (!destination || (yield* pushesOnlyToFetchUrl(cwd, destination.remoteName))) {
+          return {
+            status: "skipped_up_to_date" as const,
+            branch,
+            ...(details.upstreamRef ? { upstreamBranch: details.upstreamRef } : {}),
+          };
+        }
+      } else {
+        const { pushRemote, branchName } = destination;
+        const pushRemoteRef = `${pushRemote}/${branchName}`;
+        // The local ref can be stale when the branch was deleted or rewound elsewhere.
+        const pushRemoteHasHead =
+          (yield* pushesOnlyToFetchUrl(cwd, pushRemote)) &&
+          (yield* fetchRemoteTrackingBranch({
+            cwd,
+            remoteName: pushRemote,
+            remoteBranch: branchName,
+          }).pipe(
+            Effect.andThen(remoteRefContainsHead(cwd, pushRemoteRef)),
+            Effect.orElseSucceed(() => false),
+          ));
+        if (pushRemoteHasHead) {
+          return {
+            status: "skipped_up_to_date" as const,
+            branch,
+            upstreamBranch: pushRemoteRef,
+            pushRemote,
+          };
+        }
       }
     } else if (hasNoLocalDelta) {
       const comparableBaseBranch = yield* resolveBaseBranchForNoUpstream(cwd, branch).pipe(
@@ -3013,7 +3047,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
         // The configured diff base can contain HEAD while the publish branch is still behind.
         if (
-          yield* remoteRefContainsHead(cwd, `${destination.remoteName}/${destination.branchName}`)
+          (yield* remoteRefContainsHead(
+            cwd,
+            `${destination.remoteName}/${destination.branchName}`,
+          )) &&
+          (yield* pushesOnlyToFetchUrl(cwd, destination.remoteName))
         ) {
           return {
             status: "skipped_up_to_date" as const,
