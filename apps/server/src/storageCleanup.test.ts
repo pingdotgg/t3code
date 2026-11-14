@@ -606,6 +606,15 @@ const cleanupTestLayer = GitVcsDriver.layer.pipe(
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "storage-cleanup-" })),
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
+const annexWorktree = Effect.fnUntraced(function* (
+  fixture: Effect.Success<ReturnType<typeof cleanupFixture>>,
+  worktree: string,
+) {
+  const adminDir = (yield* fixture.command(worktree, ["rev-parse", "--absolute-git-dir"])).stdout;
+  yield* fixture.fs.remove(`${worktree}/.git`);
+  yield* fixture.fs.symlink(adminDir.trim(), `${worktree}/.git`);
+});
+
 const runCleanupTest = <A, E>(
   effect: Effect.Effect<
     A,
@@ -1815,7 +1824,7 @@ describe("orphan worktree reports", () => {
     ),
   );
 
-  it.live.each(["nested", "direct"] as const)(
+  it.live.each(["nested", "direct", "annexed"] as const)(
     "reports a linked orphan's size without removing its files (%s)",
     (location) =>
       runCleanupTest(
@@ -1824,8 +1833,13 @@ describe("orphan worktree reports", () => {
           fixture.setThreads([]);
           const orphan = `${fixture.config.worktreesDir}/${location === "nested" ? "repository/" : ""}orphan`;
           yield* fixture.command(fixture.repo, ["worktree", "add", "-b", "orphan", orphan]);
-          const sizes = yield* Effect.forEach(yield* fixture.fs.readDirectory(orphan), (name) =>
-            allocatedBytes(fixture.fs, `${orphan}/${name}`),
+          if (location === "annexed") yield* annexWorktree(fixture, orphan);
+          const sizes = yield* Effect.forEach(
+            // Links are not measured, and the annexed `.git` is one.
+            (yield* fixture.fs.readDirectory(orphan)).filter(
+              (name) => location !== "annexed" || name !== ".git",
+            ),
+            (name) => allocatedBytes(fixture.fs, `${orphan}/${name}`),
           );
           const outside = yield* fixture.fs.makeTempDirectoryScoped();
           yield* fixture.fs.writeFileString(`${outside}/external`, "outside data");
@@ -2675,6 +2689,17 @@ describe("storage cleanup reports and local file policies", () => {
           bytes: null,
         });
         expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
+      }),
+    ),
+  );
+  it.live("removes a worktree whose .git file git-annex replaced with a symlink", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture();
+        const { service, worktree, fs } = fixture;
+        yield* annexWorktree(fixture, worktree);
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "removed" });
+        expect(yield* fs.exists(worktree)).toBe(false);
       }),
     ),
   );
