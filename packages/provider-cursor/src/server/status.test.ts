@@ -138,19 +138,32 @@ describe("Cursor SDK model discovery", () => {
     );
   });
 
-  it("filters invalid and duplicate SDK model entries", () => {
+  it("keeps catalog aliases and filters invalid and duplicate SDK model entries", () => {
+    const composer = {
+      id: "composer-2",
+      displayName: "Composer 2",
+      aliases: [" composer-latest ", "", "composer"],
+    } satisfies SDKModel;
     expect(
       buildCursorDiscoveredModelsFromSdk([
         sdkParameterizedModel,
         { ...sdkParameterizedModel, displayName: "Duplicate" },
         { id: "", displayName: "Invalid" },
+        composer,
       ]),
-    ).toEqual([
+    ).toStrictEqual([
       {
         slug: "claude-opus-4-8",
         name: "Opus 4.8",
         isCustom: false,
         capabilities: buildCursorCapabilitiesFromSdkModel(sdkParameterizedModel),
+      },
+      {
+        slug: "composer-2",
+        name: "Composer 2",
+        aliases: ["composer-latest", "composer"],
+        isCustom: false,
+        capabilities: buildCursorCapabilitiesFromSdkModel(composer),
       },
     ]);
   });
@@ -194,6 +207,33 @@ describe("checkCursorProviderStatus", () => {
           { slug: "internal/cursor-model", isCustom: true },
         ],
       });
+    }),
+  );
+
+  it.effect("allows slow SDK discovery with a configured readiness timeout", () =>
+    Effect.gen(function* () {
+      const fiber = yield* checkCursorProviderStatus(baseCursorSettings, {
+        CURSOR_API_KEY: "test-key",
+        T3CODE_CURSOR_PROBE_TIMEOUT_MS: "30000",
+      }).pipe(
+        Effect.provide(
+          CursorSdkCatalog.layerTest(() =>
+            Effect.sleep("20 seconds").pipe(
+              Effect.as({
+                user: {
+                  apiKeyName: "test",
+                  userEmail: "cursor@example.com",
+                  createdAt: "2026-01-01",
+                },
+                models: [sdkParameterizedModel],
+              }),
+            ),
+          ),
+        ),
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust("20 seconds");
+      expect((yield* Fiber.join(fiber)).status).toBe("ready");
     }),
   );
 
