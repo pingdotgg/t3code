@@ -147,6 +147,7 @@ t3 project list
 t3 project list --json
 t3 thread list
 t3 thread list --all-projects --json
+t3 thread list --all-projects --include-subagents --status running --json
 t3 thread list --project <project-id-or-path> --status running --json
 t3 connect status --json
 ```
@@ -154,18 +155,32 @@ t3 connect status --json
 `project list` includes project ids, titles, workspace paths, configured default
 provider/model selections, and thread counts by status. A null model selection
 means the project inherits its default. Counts and `thread list` cover active
-sidebar threads; archived threads, subagents, and side chats are excluded.
+sidebar threads; archived threads and side chats are excluded. Subagents are
+hidden by default. Pass `--include-subagents` to `thread list` to include them;
+JSON includes `parentThreadId` and `relationshipToParent`. Project counts always
+exclude subagents.
 Statuses with no threads are omitted from the counts. `thread list` defaults to
 `--project .`, listing the project containing the current directory. Pass
 `--all-projects` to list across projects; it cannot be combined with `--project`.
-Threads are listed most recently updated first.
+Threads are listed most recently updated first. To count running work across all
+projects, including children whose parents are waiting on delegation:
+
+```sh
+t3 thread list --all-projects --include-subagents --status running --json | jq length
+```
+
+Project selectors exact-match ids. An unknown bare id fails, even if a directory
+with that name exists. Use an explicit path (`.`, `./name`, `../name`, `/abs/path`,
+or `~/name`) to select the containing project. Multi-page listings verify thread
+membership with repeat reads and fail if it keeps changing; they are not an
+atomic snapshot of all statuses.
 
 For a linked managed T3 Connect environment, `connect status` includes its public
 address and MCP URL. Looking up the address requires a stored Connect credential
 and access to the relay. If the lookup fails, status reports that failure;
 unlinked, revoked, and publish-only links have no public MCP URL. Status never
 refreshes the Connect credential. If it reports that the credential needs
-refresh, wait for the running server to refresh it, then retry.
+refresh, run `t3 connect login` with the same `--base-dir`, then retry status.
 
 You can also start, message, and inspect a thread:
 

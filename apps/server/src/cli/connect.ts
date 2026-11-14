@@ -692,7 +692,7 @@ class ConnectAddressCredentialRefreshRequiredError extends Schema.TaggedError<Co
   {},
 ) {
   override get message() {
-    return "Stored T3 Connect credential needs refresh. Wait for the running server to refresh it, then retry.";
+    return "Stored T3 Connect credential needs refresh. Run `t3 connect login` with the same --base-dir to refresh it, then retry status.";
   }
 }
 

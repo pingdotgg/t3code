@@ -5,8 +5,10 @@ import { EnvironmentId } from "@t3tools/contracts";
 import * as NetService from "@t3tools/shared/Net";
 import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Logger from "effect/Logger";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -119,6 +121,10 @@ it.effect(
         assert.equal(request.headers.get("authorization"), "Bearer synthetic-token");
         return Response.json(replies());
       });
+      const logs: string[] = [];
+      const logger = Logger.layer([Logger.make(({ message }) => logs.push(String(message)))], {
+        mergeWithExisting: false,
+      });
       const run = (mode: string, json = true) =>
         Command.runWith(makeCli({ cloudEnabled: true }), { version: "0.0.0" })([
           "connect",
@@ -128,19 +134,34 @@ it.effect(
           ...(json ? ["--json"] : []),
         ]).pipe(
           Effect.provide(
-            ConfigProvider.layer(
-              ConfigProvider.fromEnv({
-                env: {
-                  TEST_LINK_MODE: mode,
-                  T3CODE_CLERK_PUBLISHABLE_KEY: "pk_test_Y2xlcmsuZXhhbXBsZS50ZXN0JA==",
-                  T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: "oauth_client_test",
-                  T3CODE_HOSTED_APP_URL: "https://hosted.example.test",
-                },
-              }),
+            Layer.merge(
+              logger,
+              ConfigProvider.layer(
+                ConfigProvider.fromEnv({
+                  env: {
+                    TEST_LINK_MODE: mode,
+                    T3CODE_CLERK_PUBLISHABLE_KEY: "pk_test_Y2xlcmsuZXhhbXBsZS50ZXN0JA==",
+                    T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: "oauth_client_test",
+                    T3CODE_HOSTED_APP_URL: "https://hosted.example.test",
+                  },
+                }),
+              ),
             ),
           ),
         );
+      yield* fs.makeDirectory(`${baseDir}/userdata/attachments`, { recursive: true });
+      const expiredUpload = `${baseDir}/userdata/attachments/stale.part`;
+      yield* fs.writeFileString(expiredUpload, "partial");
+      yield* fs.utimes(
+        expiredUpload,
+        DateTime.toDateUtc(DateTime.makeUnsafe(-172800000)),
+        DateTime.toDateUtc(DateTime.makeUnsafe(-172800000)),
+      );
+      const beforeJson = (yield* TestConsole.logLines).length;
       yield* run("linked");
+      assert.isFalse(yield* fs.exists(expiredUpload));
+      assert.deepStrictEqual(logs, []);
+      decodeStatus((yield* TestConsole.logLines).slice(beforeJson).join("\n"));
       assert.deepStrictEqual(decodeStatus(String((yield* TestConsole.logLines).at(-1))), {
         publicAddress: "this.example.test",
         mcpUrl: "https://this.example.test/mcp",
@@ -168,6 +189,7 @@ it.effect(
         assert.isNull(needsRefresh.publicAddress);
         assert.equal(fetch.mock.calls.length, 0, "status must not refresh or use a stale token");
         assert.include(needsRefresh.addressLookupError ?? "", "needs refresh");
+        assert.include(needsRefresh.addressLookupError ?? "", "t3 connect login");
       }
       fetch.mockResolvedValue(Response.json(replies("manual")));
       yield* run("linked");

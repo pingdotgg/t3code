@@ -62,7 +62,7 @@ export class DiscoveryProjectNotFoundError extends Schema.TaggedError<DiscoveryP
 ) {
   override readonly [Runtime.errorReported] = false;
   override get message() {
-    return `No T3 Code project matches '${this.identifier}'. Pass a project id or a path inside a project.`;
+    return `No T3 Code project matches '${this.identifier}'. Pass an exact project id or an explicit path (such as ./name) inside a project.`;
   }
 }
 
@@ -113,6 +113,11 @@ const toolFailureDetail = (result: typeof ToolResult.Type) => {
   });
 };
 
+const DISCOVERY_REQUEST_TIMEOUT = "10 seconds";
+
+export const isExplicitProjectPath = (identifier: string) =>
+  /^(?:\.{1,2}(?:[\\/]|$)|[\\/]|~(?:[\\/]|$)|[A-Za-z]:[\\/])/.test(identifier);
+
 const makeThreadTools = (session: McpToolSession, origin: string) => {
   const unexpected = (tool: string) =>
     new ThreadToolFailedError({
@@ -125,9 +130,12 @@ const makeThreadTools = (session: McpToolSession, origin: string) => {
       args: Readonly<Record<string, unknown>>,
       schema: S,
     ): Effect.fn.Return<S["Type"], ThreadServerUnreachableError | ThreadToolFailedError> {
-      const raw = yield* session
-        .call(tool, args)
-        .pipe(Effect.mapError((cause) => new ThreadServerUnreachableError({ origin, cause })));
+      const request = session.call(tool, args);
+      const raw = yield* (
+        tool === "t3_project_list" || tool === "t3_thread_list"
+          ? request.pipe(Effect.timeout(DISCOVERY_REQUEST_TIMEOUT))
+          : request
+      ).pipe(Effect.mapError((cause) => new ThreadServerUnreachableError({ origin, cause })));
       const result = yield* decodeToolResult(raw).pipe(Effect.mapError(() => unexpected(tool)));
       if (result.isError === true) {
         return yield* new ThreadToolFailedError({ tool, detail: toolFailureDetail(result) });
@@ -176,7 +184,10 @@ export const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function*
       endpoint: new URL("/mcp", origin).href,
       authorization: `Bearer ${issued.token}`,
       clientName: "t3-thread-cli",
-    }).pipe(Effect.mapError((cause) => new ThreadServerUnreachableError({ origin, cause })));
+    }).pipe(
+      Effect.timeout(DISCOVERY_REQUEST_TIMEOUT),
+      Effect.mapError((cause) => new ThreadServerUnreachableError({ origin, cause })),
+    );
     return yield* run(makeThreadTools(session, origin));
   }).pipe(
     Effect.scoped,
@@ -202,6 +213,9 @@ export const resolveDiscoveryProject = Effect.fn("cli.discovery.resolveProject")
 >(projects: ReadonlyArray<P>, identifier: string) {
   const byId = projects.find((project) => project.id === identifier);
   if (byId !== undefined) return byId;
+  if (!isExplicitProjectPath(identifier)) {
+    return yield* new DiscoveryProjectNotFoundError({ identifier });
+  }
   const path = yield* Path.Path;
   const fileSystem = yield* FileSystem.FileSystem;
   // Stored roots keep the path the project was added with, which may pass
@@ -248,18 +262,40 @@ export const listAllProjects = Effect.fn("cli.thread.listAllProjects")(function*
 
 export const listAllThreads = Effect.fn("cli.discovery.listAllThreads")(function* (
   tools: ThreadTools,
-  input: Pick<OrchestratorMcpThreadListInput, "projectId" | "allProjects" | "statuses">,
+  input: Pick<
+    OrchestratorMcpThreadListInput,
+    "projectId" | "allProjects" | "statuses" | "includeSubagents"
+  >,
 ) {
-  const threads: Array<OrchestratorMcpThreadListItem> = [];
-  let cursor: number | null = 0;
-  while (cursor !== null) {
-    const page: OrchestratorMcpThreadListResult = yield* tools.call(
-      "t3_thread_list",
-      { ...input, includeSubagents: false, limit: 100, cursor },
-      OrchestratorMcpThreadListResult,
-    );
-    threads.push(...page.threads);
-    cursor = page.nextCursor;
+  let previousIds: string | undefined;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const threads = new Map<string, OrchestratorMcpThreadListItem>();
+    let cursor: number | null = 0;
+    let paginated = false;
+    let total = 0;
+    while (cursor !== null) {
+      const page: OrchestratorMcpThreadListResult = yield* tools.call(
+        "t3_thread_list",
+        { ...input, includeSubagents: input.includeSubagents ?? false, limit: 100, cursor },
+        OrchestratorMcpThreadListResult,
+      );
+      for (const thread of page.threads) threads.set(thread.threadId, thread);
+      total = page.total;
+      cursor = page.nextCursor;
+      paginated ||= cursor !== null;
+    }
+    const ids = [...threads.keys()].sort().join("\n");
+    // Offset pages can shift during a turn; verify membership with a second scan.
+    if (
+      threads.size === total &&
+      ((!paginated && previousIds === undefined) || ids === previousIds)
+    ) {
+      return [...threads.values()].toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    }
+    previousIds = ids;
   }
-  return threads;
+  return yield* new ThreadToolFailedError({
+    tool: "t3_thread_list",
+    detail: "Thread listing changed while paging. Retry when activity has settled.",
+  });
 });

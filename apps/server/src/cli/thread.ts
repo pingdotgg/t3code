@@ -29,6 +29,7 @@ import {
   DiscoveryCliError,
   DiscoveryProjectNotFoundError,
   resolveDiscoveryProject,
+  isExplicitProjectPath,
   withThreadTools,
   listAllProjects,
   listAllThreads,
@@ -163,6 +164,9 @@ export const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
   const byId = projects.find((project) => project.id === identifier);
   if (byId !== undefined) return byId;
 
+  if (!isExplicitProjectPath(identifier)) {
+    return yield* new DiscoveryProjectNotFoundError({ identifier });
+  }
   const path = yield* Path.Path;
   const fileSystem = yield* FileSystem.FileSystem;
   // Stored roots keep the path the project was added with, which may pass
@@ -585,11 +589,17 @@ const decodeThreadId = (value: string) =>
 const threadListCommand = Command.make("list", {
   ...projectLocationFlags,
   project: Flag.String("project").pipe(
-    Flag.withDescription("Project id or a path inside the project. Defaults to this directory."),
+    Flag.withDescription(
+      "Exact project id or an explicit path (./, ../, /, ~) inside the project. Defaults to this directory.",
+    ),
     Flag.optional,
   ),
   allProjects: Flag.Boolean("all-projects").pipe(
     Flag.withDescription("List threads across all projects instead of the current project."),
+    Flag.withDefault(false),
+  ),
+  includeSubagents: Flag.Boolean("include-subagents").pipe(
+    Flag.withDescription("Include subagent threads when checking active work across projects."),
     Flag.withDefault(false),
   ),
   status: Flag.Literals("status", ["idle", ...OrchestrationV2RunStatus.literals]).pipe(
@@ -616,6 +626,7 @@ const threadListCommand = Command.make("list", {
                 Option.getOrElse(flags.project, () => "."),
               );
           const threads = yield* listAllThreads(tools, {
+            includeSubagents: flags.includeSubagents,
             ...(project === undefined ? { allProjects: true } : { projectId: project.id }),
             ...(Option.isSome(flags.status) ? { statuses: [flags.status.value] } : {}),
           });
@@ -635,7 +646,9 @@ const threadListCommand = Command.make("list", {
 const threadStartCommand = Command.make("start", {
   ...projectLocationFlags,
   project: Argument.String("project").pipe(
-    Argument.withDescription("Project id or a path inside the project, such as ."),
+    Argument.withDescription(
+      "Exact project id or an explicit path (./, ../, /, ~) inside the project, such as .",
+    ),
   ),
   message: messageArgument,
   title: Flag.String("title").pipe(
