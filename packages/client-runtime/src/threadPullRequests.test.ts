@@ -393,7 +393,14 @@ describe("chain selection and badge state", () => {
     expect(resolveThreadPullRequestBadge([bottom, top, link(3)])).toEqual({
       kind: "pull-request",
       others: 2,
-      state: "open",
+      state: "mixed",
+    });
+    const closed = (n: number) =>
+      link(n, { snapshot: snapshot({ state: "closed", headBranch: `b${n}` }) });
+    expect(resolveThreadPullRequestBadge([closed(4), closed(5)])).toEqual({
+      kind: "pull-request",
+      others: 1,
+      state: "closed",
     });
     expect(resolveThreadPullRequestBadge([link(3, { source: "stack-dismissed" })])).toBeNull();
   });
