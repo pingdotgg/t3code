@@ -1445,6 +1445,8 @@ export const layerWsRpc = (
       const managedFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
       const scratchThreadPromotion = yield* ScratchThreadPromotion.ScratchThreadPromotion;
       const threadProjectMove = yield* ThreadProjectMove.ThreadProjectMove;
+      const threadMoveError = (cause: ThreadProjectMove.ThreadProjectMoveError) =>
+        new OrchestrationDispatchCommandError({ message: cause.message, cause });
       const eventLoopMonitor = yield* EventLoopMonitor.EventLoopMonitor;
       const threadSearch = yield* ThreadSearch.ThreadSearch;
 
@@ -2908,12 +2910,13 @@ export const layerWsRpc = (
               ),
             ),
         [WS_METHODS.projectsMoveThread]: (input) =>
-          threadProjectMove.move(input).pipe(
-            Effect.asVoid,
-            Effect.mapError(
-              (cause) => new OrchestrationDispatchCommandError({ message: cause.message, cause }),
-            ),
-          ),
+          threadProjectMove.move(input).pipe(Effect.asVoid, Effect.mapError(threadMoveError)),
+        [WS_METHODS.projectsExportThread]: (input) =>
+          threadProjectMove.exportThread(input.threadId).pipe(Effect.mapError(threadMoveError)),
+        [WS_METHODS.projectsImportThread]: (input) =>
+          threadProjectMove.importThread(input).pipe(Effect.mapError(threadMoveError)),
+        [WS_METHODS.projectsFinishThreadMove]: (input) =>
+          threadProjectMove.finishMove(input).pipe(Effect.mapError(threadMoveError)),
         [WS_METHODS.projectCloneCancel]: (input) =>
           projectCloneTracker.cancel(input.projectId).pipe(Effect.map((applied) => ({ applied }))),
         [WS_METHODS.projectCloneRetry]: (input) =>

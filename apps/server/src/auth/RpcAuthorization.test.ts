@@ -75,6 +75,15 @@ describe("RPC authorization scopes", () => {
     }
   });
 
+  it("lets thread readers export a conversation but only operators move one in or archive it", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.projectsExportThread)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    for (const method of [WS_METHODS.projectsImportThread, WS_METHODS.projectsFinishThreadMove]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
+    }
+  });
+
   it("rejects unknown RPC method names", () => {
     for (const method of ["server.notRegistered", "toString", "constructor"]) {
       expect(() => requiredScopeForRpcMethod(method)).toThrow(

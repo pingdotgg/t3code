@@ -229,6 +229,24 @@ export function createProjectEnvironmentAtoms<R, E>(
       scheduler: projectScheduler,
       concurrency: { mode: "serial", key: ({ environmentId }) => environmentId },
     }),
+    exportThread: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:export-thread",
+      tag: WS_METHODS.projectsExportThread,
+      scheduler: projectScheduler,
+      concurrency: { mode: "serial", key: ({ environmentId }) => environmentId },
+    }),
+    importThread: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:import-thread",
+      tag: WS_METHODS.projectsImportThread,
+      scheduler: projectScheduler,
+      concurrency: { mode: "serial", key: ({ environmentId }) => environmentId },
+    }),
+    finishThreadMove: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:finish-thread-move",
+      tag: WS_METHODS.projectsFinishThreadMove,
+      scheduler: projectScheduler,
+      concurrency: { mode: "serial", key: ({ environmentId }) => environmentId },
+    }),
     writeFile: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:projects:write-file",
       tag: WS_METHODS.projectsWriteFile,

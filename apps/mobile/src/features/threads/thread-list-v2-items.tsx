@@ -74,6 +74,7 @@ import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { buildThreadTitleRegenerationMenuItems } from "./thread-title-regeneration-menu";
 import { canTurnThreadIntoProject, turnThreadIntoProject } from "./turnThreadIntoProject";
 import { moveThreadToProject, readThreadMoveTargets } from "./moveThreadToProject";
+import { moveThreadToMachine, readThreadMachineMoveTargets } from "./moveThreadToMachine";
 import { threadCanArchive } from "../home/threadArchive";
 import {
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
@@ -931,6 +932,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const canTurnIntoProject = canTurnThreadIntoProject(thread);
   const projects = useProjects();
   const moveTargets = useMemo(() => readThreadMoveTargets(thread, projects), [thread, projects]);
+  const machineMoveTargets = useMemo(
+    () => readThreadMachineMoveTargets(thread, projects),
+    [thread, projects],
+  );
   const titleMenuItems = useMemo<MenuAction[]>(
     () => [
       { id: "rename", title: "Rename", image: "square.and.pencil" },
@@ -962,9 +967,27 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             } satisfies MenuAction,
           ]
         : []),
+      // One level: Android menus cannot nest a machine's projects inside a submenu.
+      ...(machineMoveTargets.length > 0
+        ? [
+            {
+              id: "move-to-machine",
+              title: "Move to machine",
+              image: "server.rack",
+              attributes: { disabled: !threadCanArchive(thread.runtime) },
+              subactions: machineMoveTargets.flatMap((machine, machineIndex) =>
+                machine.projects.map((project, projectIndex) => ({
+                  id: `move-to-machine:${machineIndex}:${projectIndex}`,
+                  title: `${project.title} · ${machine.label}`,
+                })),
+              ),
+            } satisfies MenuAction,
+          ]
+        : []),
     ],
     [
       canTurnIntoProject,
+      machineMoveTargets,
       moveTargets,
       props.titleRegenerationSupported,
       thread.runtime,
@@ -1072,6 +1095,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       if (nativeEvent.event === "rename") handleRename();
       if (nativeEvent.event === "regenerate-title") handleRegenerateTitle();
       if (nativeEvent.event === "turn-into-project") void turnThreadIntoProject(thread);
+      const machinePick = /^move-to-machine:(\d+):(\d+)$/.exec(nativeEvent.event);
+      if (machinePick) {
+        const machine = machineMoveTargets[Number(machinePick[1])];
+        const project = machine?.projects[Number(machinePick[2])];
+        if (machine && project) void moveThreadToMachine(thread, machine, project);
+      }
       if (nativeEvent.event.startsWith("move-to-project:")) {
         const projectId = nativeEvent.event.slice("move-to-project:".length);
         const project = moveTargets.find((candidate) => candidate.id === projectId);
@@ -1129,6 +1158,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       snoozePresets,
       props.snoozePresets,
       moveTargets,
+      machineMoveTargets,
     ],
   );
   const primaryAction = useMemo(() => {

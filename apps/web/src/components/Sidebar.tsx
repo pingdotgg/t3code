@@ -121,6 +121,7 @@ import {
 import {
   canTurnThreadIntoProject,
   confirmThreadMove,
+  readThreadMachineMoveTargets,
   readThreadMoveTargets,
   useAcknowledgeThreadWoke,
   useThreadActions,
@@ -174,6 +175,7 @@ import { ProjectRowActions } from "./ProjectComboboxRow";
 import {
   buildDraftActionMenuItems,
   buildThreadActionMenuItems,
+  parseMachineMovePick,
   threadActionRequiresOperate,
 } from "./threadActionMenu.logic";
 import {
@@ -933,6 +935,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     setThreadAutoSettle,
     turnThreadIntoProject,
     moveThreadToProject,
+    moveThreadToMachine,
     reorderPinnedThread,
     reorderActiveThread,
     markThreadUnread,
@@ -2612,6 +2615,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           serverConfigs.get(thread.environmentId)?.environment.capabilities
             .threadAutoSettleOptOut === true;
         const isRegeneratingTitle = thread.titleRegeneration != null;
+        const machineMoveTargets = readThreadMachineMoveTargets(threadRef);
         const isSettled = settledThreadKeysRef.current.has(threadKey);
         const isSnoozed = snoozedThreadKeysRef.current.has(threadKey);
         const isPinned = thread.pinnedAt != null;
@@ -2656,6 +2660,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               ),
               canTurnIntoProject: canTurnThreadIntoProject(threadRef),
               moveTargets: readThreadMoveTargets(threadRef),
+              machineMoveTargets,
               supports: {
                 settlement: configLoaded,
                 autoSettleOptOut: supportsAutoSettleOptOut,
@@ -2681,6 +2686,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   thread.environmentId,
                 );
           if (preset) attemptSnooze(threadRef, preset);
+          return;
+        }
+        const machinePick = parseMachineMovePick(clicked.value, machineMoveTargets);
+        if (machinePick) {
+          await moveThreadToMachine(threadRef, {
+            environmentId: machinePick.machine.environmentId,
+            projectId: machinePick.project.id,
+          });
           return;
         }
         if (clicked.value.startsWith("move-to-project:")) {

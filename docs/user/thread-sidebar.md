@@ -60,6 +60,18 @@ there. The old worktree shows as unused in
 [Storage cleanup](./project-settings.md#storage-cleanup). To keep working in a fresh
 worktree, hand the moved thread off to one.
 
+### Move a thread to another machine
+
+To continue a conversation on another connected machine, pick **Move to machine**
+from the thread's menu, or **Move thread to machine...** in the command palette,
+and choose a project there. Both machines need this version of T3 Code, and your
+connection must be allowed to change threads on both.
+
+The new thread gets the conversation, and your next message starts a fresh agent
+session there with that history. Files, diffs, the worktree, attachments and
+scheduled tasks stay on the first machine, where the old thread is archived. To go
+back, unarchive it there, or move the new thread back the same way.
+
 ### Start in the background
 
 In a desktop browser or the desktop app, press `Cmd+Enter` on macOS or `Ctrl+Enter`

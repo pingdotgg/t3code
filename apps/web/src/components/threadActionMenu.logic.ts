@@ -8,6 +8,8 @@ export type ThreadActionMenuId =
   | "turn-into-project"
   | "move-to-project"
   | `move-to-project:${string}`
+  | "move-to-machine"
+  | `move-to-machine:${string}`
   | "project-settings"
   | "pin"
   | "unpin"
@@ -98,6 +100,11 @@ export interface ThreadActionMenuState {
   /** A No project thread with its own folder, on a server that can promote it. */
   readonly canTurnIntoProject?: boolean;
   readonly moveTargets?: ReadonlyArray<{ readonly id: string; readonly title: string }>;
+  /** Picked by `move-to-machine:<machine index>:<project index>`. */
+  readonly machineMoveTargets?: ReadonlyArray<{
+    readonly label: string;
+    readonly projects: ReadonlyArray<{ readonly title: string }>;
+  }>;
 }
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
@@ -114,6 +121,17 @@ export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean
     "copy-thread",
     "copy-thread-id",
   ].includes(action);
+}
+
+/** The machine and project a `move-to-machine:<machine>:<project>` pick names, by position. */
+export function parseMachineMovePick<M extends { readonly projects: ReadonlyArray<unknown> }>(
+  id: string,
+  targets: ReadonlyArray<M>,
+): { readonly machine: M; readonly project: M["projects"][number] } | null {
+  const match = /^move-to-machine:(\d+):(\d+)$/.exec(id);
+  const machine = match ? targets[Number(match[1])] : undefined;
+  const project = match ? machine?.projects[Number(match[2])] : undefined;
+  return machine && project !== undefined ? { machine, project } : null;
 }
 
 export function buildThreadActionMenuItems(
@@ -216,6 +234,24 @@ export function buildThreadActionMenuItems(
             children: state.moveTargets.map((project) => ({
               id: `move-to-project:${project.id}` as const,
               label: project.title,
+            })),
+          },
+        ]
+      : []),
+    ...(state.machineMoveTargets && state.machineMoveTargets.length > 0
+      ? [
+          {
+            id: "move-to-machine" as const,
+            label: "Move to machine",
+            icon: "server",
+            disabled: state.isRunning,
+            children: state.machineMoveTargets.map((machine, machineIndex) => ({
+              id: `move-to-machine:${machineIndex}` as const,
+              label: machine.label,
+              children: machine.projects.map((project, projectIndex) => ({
+                id: `move-to-machine:${machineIndex}:${projectIndex}` as const,
+                label: project.title,
+              })),
             })),
           },
         ]

@@ -124,6 +124,12 @@ const ICON_PATHS: Record<string, ReadonlyArray<{ tag: string; attrs: Record<stri
     { tag: "line", attrs: { x1: "19", x2: "19", y1: "8", y2: "14" } },
     { tag: "line", attrs: { x1: "22", x2: "16", y1: "11", y2: "11" } },
   ],
+  server: [
+    { tag: "rect", attrs: { width: "20", height: "8", x: "2", y: "2", rx: "2", ry: "2" } },
+    { tag: "rect", attrs: { width: "20", height: "8", x: "2", y: "14", rx: "2", ry: "2" } },
+    { tag: "line", attrs: { x1: "6", x2: "6.01", y1: "6", y2: "6" } },
+    { tag: "line", attrs: { x1: "6", x2: "6.01", y1: "18", y2: "18" } },
+  ],
   "folder-input": [
     {
       tag: "path",

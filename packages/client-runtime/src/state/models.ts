@@ -26,18 +26,28 @@ export interface EnvironmentProject extends OrchestrationProjectShell {
   readonly isScratch?: true;
 }
 
+/** The live projects on `environmentId` a thread can move into: all but No project. */
+export function threadMoveProjects(
+  projects: ReadonlyArray<EnvironmentProject>,
+  environmentId: EnvironmentId,
+  scratchWorkspaceRoot: string | null | undefined,
+): ReadonlyArray<EnvironmentProject> {
+  return projects.filter(
+    (project) =>
+      project.environmentId === environmentId &&
+      project.archivedAt == null &&
+      !isScratchProject(project, scratchWorkspaceRoot),
+  );
+}
+
 /** Where a thread can move: the other live projects on its environment, except No project. */
 export function threadMoveTargets(
   projects: ReadonlyArray<EnvironmentProject>,
   thread: { readonly environmentId: EnvironmentId; readonly projectId: ProjectId },
   scratchWorkspaceRoot: string | null | undefined,
 ): ReadonlyArray<EnvironmentProject> {
-  return projects.filter(
-    (project) =>
-      project.environmentId === thread.environmentId &&
-      project.id !== thread.projectId &&
-      project.archivedAt == null &&
-      !isScratchProject(project, scratchWorkspaceRoot),
+  return threadMoveProjects(projects, thread.environmentId, scratchWorkspaceRoot).filter(
+    (project) => project.id !== thread.projectId,
   );
 }
 
