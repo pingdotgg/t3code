@@ -191,6 +191,10 @@ it("ranks recent threads by this client's own latest open", () => {
     threadSearchSubject({ ...thread, id: ThreadId.make("thread-unrecorded"), opens: null }, null)
       .opens,
   ).toEqual({ openedAt: 6_000, score: 1, picks: [] });
+  // A subject built before the open does not hide it.
+  claimThreadOpen(envA, "thread-local", 7_000);
+  expect(threadSearchSubject(thread, null).opens?.openedAt).toBe(7_000);
+  expect(threadSearchSubject(thread, "Project").projectTitle).toBe("Project");
 });
 
 it("counts recency from what the user wrote, else from when the thread began", () => {

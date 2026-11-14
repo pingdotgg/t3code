@@ -1,7 +1,9 @@
 import type { SDKModel } from "@cursor/sdk";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 import type { CursorSettings } from "../settings.ts";
 import { CursorSettings as CursorSettingsSchema } from "../settings.ts";
 import { createModelCapabilities } from "@t3tools/shared/model";
@@ -13,7 +15,9 @@ import {
   checkCursorProviderStatus,
 } from "./status.ts";
 import * as CursorSdkCatalog from "./CursorSdkCatalog.ts";
-import { CursorSdkError } from "./sdk.ts";
+import { loadCursorSdk } from "./sdk.ts";
+
+const { CursorSdkError } = loadCursorSdk();
 
 const decodeCursorSettings = Schema.decodeSync(CursorSettingsSchema);
 
@@ -193,6 +197,33 @@ describe("checkCursorProviderStatus", () => {
     }),
   );
 
+  it.effect("allows slow SDK discovery with a configured readiness timeout", () =>
+    Effect.gen(function* () {
+      const fiber = yield* checkCursorProviderStatus(baseCursorSettings, {
+        CURSOR_API_KEY: "test-key",
+        T3CODE_CURSOR_PROBE_TIMEOUT_MS: "30000",
+      }).pipe(
+        Effect.provide(
+          CursorSdkCatalog.layerTest(() =>
+            Effect.sleep("20 seconds").pipe(
+              Effect.as({
+                user: {
+                  apiKeyName: "test",
+                  userEmail: "cursor@example.com",
+                  createdAt: "2026-01-01",
+                },
+                models: [sdkParameterizedModel],
+              }),
+            ),
+          ),
+        ),
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust("20 seconds");
+      expect((yield* Fiber.join(fiber)).status).toBe("ready");
+    }),
+  );
+
   it.effect("surfaces SDK authentication failures", () =>
     Effect.gen(function* () {
       const provider = yield* checkCursorProviderStatus(baseCursorSettings, {
@@ -243,6 +274,7 @@ describe("checkCursorProviderStatus", () => {
               Effect.fail(
                 new CursorSdkCatalog.CursorSdkCatalogError({
                   authenticationFailure: false,
+                  code: "plan_required",
                   cause: new CursorSdkError(
                     "[plan_required] Cloud Agent is not available for free users. Please upgrade to Pro.",
                     { code: "plan_required", status: 403 },
@@ -336,6 +368,8 @@ describe("checkCursorProviderStatus", () => {
           Effect.fail(
             new CursorSdkCatalog.CursorSdkCatalogError({
               authenticationFailure: meFailure.status === 401,
+              ...(meFailure.status === undefined ? {} : { status: meFailure.status }),
+              ...(meFailure.code === undefined ? {} : { code: meFailure.code }),
               cause: meFailure,
             }),
           ),
@@ -346,6 +380,36 @@ describe("checkCursorProviderStatus", () => {
       }).pipe(Effect.provideService(CursorSdkCatalog.CursorSdkCatalog, catalog));
 
       expect(provider).toMatchObject(expected);
+    }),
+  );
+
+  it.effect("does not report a single slow catalog read as a provider error", () =>
+    Effect.gen(function* () {
+      let reads = 0;
+      const fiber = yield* checkCursorProviderStatus(baseCursorSettings, {
+        CURSOR_API_KEY: "test-cursor-key",
+      }).pipe(
+        Effect.provide(
+          CursorSdkCatalog.layerTest(() => {
+            reads += 1;
+            return reads === 1
+              ? Effect.never
+              : Effect.succeed({
+                  user: {
+                    apiKeyName: "test-key",
+                    userEmail: "cursor@example.com",
+                    createdAt: "2026-01-01T00:00:00.000Z",
+                  },
+                  models: [sdkParameterizedModel],
+                });
+          }),
+        ),
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* TestClock.adjust("1 minute");
+      const provider = yield* Fiber.join(fiber);
+
+      expect(provider.status).not.toBe("error");
     }),
   );
 
