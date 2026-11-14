@@ -75,6 +75,8 @@ export function ComposerControlsBar(props: {
   selectedModelSelection: ModelSelection;
   onProviderModelSelect: ChatComposerProps["onProviderModelSelect"];
   activeThreadModelSelection: ChatComposerProps["activeThreadModelSelection"];
+  /** The project's default model selection; the effort column marks its level as Default. */
+  defaultModelSelection: ModelSelection | null;
   selectedModelForPickerWithCustomFallback: string;
   lockedProvider: ChatComposerProps["lockedProvider"];
   lockedContinuationGroupKey: string | null;
@@ -119,6 +121,7 @@ export function ComposerControlsBar(props: {
     selectedModelSelection,
     onProviderModelSelect,
     activeThreadModelSelection,
+    defaultModelSelection,
     selectedModelForPickerWithCustomFallback,
     lockedProvider,
     lockedContinuationGroupKey,
@@ -221,7 +224,9 @@ export function ComposerControlsBar(props: {
       triggerShortcuts={
         pickerOwnsModeShortcut ? "composer.effort composer.mode" : "composer.effort"
       }
-      effortColumn={<ComposerEffortColumn traits={traitsInput} />}
+      effortColumn={
+        <ComposerEffortColumn traits={traitsInput} defaultModelSelection={defaultModelSelection} />
+      }
       footer={
         <ComposerPickerFooter
           traits={traitsInput}
