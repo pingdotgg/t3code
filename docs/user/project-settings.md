@@ -294,7 +294,9 @@ Before grouping copies, [connect each computer's environment to the same client]
 
 If `t3` is not available in your terminal, desktop users can [install the bundled command](./install.md#the-t3-command) from **Settings → About**, then open a new terminal.
 
-Generate a lowercase UUID v4 once (for example, `python -c "import uuid; print(uuid.uuid4())"`) and reuse it only for copies of that project:
+Generate a lowercase UUID v4 once (for example, `python -c "import uuid; print(uuid.uuid4())"`) and reuse it only for copies of that project.
+
+Run these commands on each computer, using that computer's local copy path and the same UUID for `project add`:
 
 ```sh
 t3 project add /path/to/sdk --grouping-identity <uuid>
