@@ -61,6 +61,23 @@ function catalogWithInspection(
 }
 
 describe("acpRegistrySnapshotReadiness", () => {
+  it("reports a policy refusal as unavailable, not as a missing agent", () => {
+    const message = "Example Corp's policy does not allow the ACP agent test-agent.";
+    const provider = buildCheckedAcpRegistrySnapshot({
+      ...identity,
+      settings: decodeSettings({ agentId: "test-agent" }),
+      checkedAt: "2026-08-13T10:00:00.000Z",
+      inspection: { status: "denied", message },
+    });
+    expect(provider).toMatchObject({
+      installed: false,
+      status: "error",
+      message,
+      availability: "unavailable",
+      unavailableReason: message,
+    });
+  });
+
   it("treats a live empty command advertisement as an authoritative replacement", () => {
     const provider = buildCheckedAcpRegistrySnapshot({
       ...identity,

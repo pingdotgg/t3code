@@ -158,6 +158,8 @@ function acpRegistrySnapshotReadiness(
         message:
           "Select an ACP Registry agent or configure a local ACP executable before starting a thread.",
       };
+    case "denied":
+      return { installed: false, version: null, status: "error", message: inspection.message };
     case "not_found":
       return {
         installed: false,
@@ -372,7 +374,7 @@ export function buildCheckedAcpRegistrySnapshot(
         ? `Set ${advertisedAuthMethod.envVarNames!.join(", ")} under this instance's environment variables in provider settings. T3 Code will detect it on the next provider refresh.`
         : `Sign in in provider settings using "${advertisedAuthMethod.name}".`
     : undefined;
-  return baseSnapshot({
+  const snapshot = baseSnapshot({
     ...input,
     ...(input.inspection.status === "ready" && input.inspection.documentationUrl
       ? { documentationUrl: input.inspection.documentationUrl }
@@ -404,6 +406,9 @@ export function buildCheckedAcpRegistrySnapshot(
         ? { message: readiness.message }
         : {}),
   });
+  return input.inspection.status === "denied"
+    ? { ...snapshot, availability: "unavailable", unavailableReason: input.inspection.message }
+    : snapshot;
 }
 
 export const checkAcpRegistryProviderStatus = Effect.fn("AcpRegistryDriver.checkProviderStatus")(

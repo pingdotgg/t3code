@@ -353,6 +353,18 @@ export function makeManagedProviders(
     }
   }
 
+  // A launch command runs instead of the registry agent, so an allow list owns it.
+  if (limits.allowedAcpAgents !== undefined) {
+    const driver = ProviderDriverKind.make("acpRegistry");
+    const rule = rules.get(driver);
+    rules.set(driver, {
+      pin: rule?.pin,
+      config: [...new Set([...(rule?.config ?? []), "commandPath", "commandArgs"])],
+      fill: rule?.fill ?? [],
+      environment: rule?.environment ?? "fill",
+    });
+  }
+
   const allowed =
     limits.allowedDrivers === undefined ? undefined : new Set<string>(limits.allowedDrivers);
   const isDriverAllowed = (driver: ProviderDriverKind) => allowed?.has(driver) ?? true;

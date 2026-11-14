@@ -146,13 +146,18 @@ function summarizeLimits(
     ...(webhookTasks === undefined ? {} : { webhookTasks }),
     ...(telemetry === undefined ? {} : { telemetry }),
     ...(browserCookieImport === undefined ? {} : { browserCookieImport }),
-    ...(providers?.allowedDrivers === undefined && Object.keys(lockedInstanceFields).length === 0
+    ...(providers?.allowedDrivers === undefined &&
+    providers?.allowedAcpAgents === undefined &&
+    Object.keys(lockedInstanceFields).length === 0
       ? {}
       : {
           providers: {
             ...(providers?.allowedDrivers === undefined
               ? {}
               : { allowedDrivers: providers.allowedDrivers }),
+            ...(providers?.allowedAcpAgents === undefined
+              ? {}
+              : { allowedAcpAgents: providers.allowedAcpAgents }),
             ...(Object.keys(lockedInstanceFields).length === 0 ? {} : { lockedInstanceFields }),
           },
         }),

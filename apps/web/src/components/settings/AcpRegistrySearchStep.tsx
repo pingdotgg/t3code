@@ -1,5 +1,9 @@
 import { pipe } from "effect/Function";
-import { ACP_REGISTRY_MAX_AGENTS, AuthProvidersManageScope } from "@t3tools/contracts";
+import {
+  ACP_REGISTRY_MAX_AGENTS,
+  AuthProvidersManageScope,
+  managedAcpAgentsNotice,
+} from "@t3tools/contracts";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import {
   isAtomCommandInterrupted,
@@ -17,6 +21,7 @@ import { type FormEvent, useState } from "react";
 import { useDeadlinePassed } from "../../hooks/useDeadline";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentQuery } from "../../state/query";
+import { useManagedPolicy } from "../../state/managedPolicy";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
@@ -126,7 +131,7 @@ interface AcpRegistrySearchStepProps {
   readonly providerInstances: Readonly<Record<string, ProviderInstanceConfig>>;
   readonly onPrepared: (agent: AcpRegistrySearchAgent) => void;
   readonly onManualConfiguration: () => void;
-  readonly onLocalConfiguration?: () => void;
+  readonly onLocalConfiguration?: (() => void) | undefined;
 }
 
 export function AcpRegistrySearchStep({
@@ -138,6 +143,7 @@ export function AcpRegistrySearchStep({
   onLocalConfiguration,
 }: AcpRegistrySearchStepProps) {
   const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
+  const agentsLimited = managedAcpAgentsNotice(useManagedPolicy(environmentId)) !== undefined;
   const { query, search, preparingId, prepareError } = registry;
 
   const handleSearch = (event: FormEvent<HTMLFormElement>) => {
@@ -224,7 +230,11 @@ export function AcpRegistrySearchStep({
         results.length === 0 ? (
           <div className="flex min-h-28 flex-col items-center justify-center rounded-2xl border border-dashed px-4 text-center">
             <p className="text-sm font-medium">No compatible agents found</p>
-            <p className="mt-1 text-xs text-muted-foreground">Try a broader search.</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {agentsLimited
+                ? "Only agents your organization allows appear here."
+                : "Try a broader search."}
+            </p>
           </div>
         ) : (
           <ScrollArea scrollFade className="max-h-64">

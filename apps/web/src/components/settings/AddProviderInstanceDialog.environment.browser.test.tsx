@@ -1,4 +1,9 @@
-import { EnvironmentId, ProviderDriverKind, type AcpRegistrySearchAgent } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProviderDriverKind,
+  type AcpRegistrySearchAgent,
+  type ManagedPolicySummary,
+} from "@t3tools/contracts";
 import { userEvent } from "vite-plus/test/browser";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -8,6 +13,9 @@ const actions = vi.hoisted(() => ({
   toast: vi.fn(),
   onOpenChange: vi.fn(),
   canManageProviders: true,
+}));
+const managed = vi.hoisted(() => ({
+  policy: undefined as ManagedPolicySummary | undefined,
 }));
 const settingsHooks = vi.hoisted(() => ({
   read: vi.fn(() => ({ providerInstances: {} })),
@@ -46,6 +54,10 @@ vi.mock(import("../../state/session"), async (original) => {
     readEnvironmentScope: hasScope as never,
   };
 });
+vi.mock(import("../../state/managedPolicy"), async (original) => ({
+  ...(await original()),
+  useManagedPolicy: () => managed.policy,
+}));
 vi.mock(import("../ui/toast"), async (original) => {
   const actual = await original();
   return { ...actual, toastManager: { ...actual.toastManager, add: actions.toast } };
@@ -140,6 +152,7 @@ async function prepareCodexInstance() {
 }
 
 function setup() {
+  managed.policy = undefined;
   actions.canManageProviders = true;
   actions.toast.mockReset();
   actions.onOpenChange.mockReset();
@@ -289,6 +302,23 @@ describe("AddProviderInstanceDialog environment routing", () => {
     });
     expect(actions.onOpenChange).toHaveBeenCalledWith(false);
     expect(signInStep()).toBeNull();
+  });
+
+  it("refuses a manually entered agent the policy leaves out", async () => {
+    setup();
+    managed.policy = {
+      organization: "Example Corp",
+      lockedSettings: [],
+      limits: { providers: { allowedAcpAgents: ["devin"] } },
+    };
+    await using _screen = await render(dialog());
+    await click("Show more");
+    await click("Enter registry agent");
+    await type("#add-provider-acpRegistry-manual-agentId", "cline");
+    await click("Next");
+    expect(document.body.textContent).toContain(
+      "Example Corp's policy does not allow the ACP agent cline.",
+    );
   });
 
   it("rejects a queued save after the provider grant is revoked", async () => {

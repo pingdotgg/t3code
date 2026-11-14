@@ -1,6 +1,7 @@
 import type {
   BackgroundScope,
   ChatAttachment,
+  ManagedPolicySummary,
   ServerSettings,
   ServerSettingsError,
 } from "@t3tools/contracts";
@@ -33,6 +34,7 @@ export class ProviderHost extends Context.Service<
   ProviderHost,
   {
     readonly paths: ProviderHostPaths;
+    readonly managedPolicy?: ManagedPolicySummary | undefined;
     readonly settings: {
       readonly get: Effect.Effect<ServerSettings, ServerSettingsError>;
       /** Runs `use` on a settings snapshot that no settings write can change until it finishes. */

@@ -18,6 +18,8 @@ import {
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
   isManagedDriverAllowed,
+  managedAcpAgentDenial,
+  managedAcpAgentsNotice,
 } from "@t3tools/contracts";
 
 import {
@@ -28,6 +30,7 @@ import {
 import { cn } from "../../lib/utils";
 import { normalizeProviderAccentColor } from "../../providerInstances";
 import { managedInstanceLocks, useManagedPolicy } from "../../state/managedPolicy";
+import { ManagedNotice } from "../ManagedPolicy";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { Button } from "../ui/button";
 import { ChatGptConnectionButton } from "./ChatGptConnectionButton";
@@ -239,9 +242,11 @@ export function AddProviderInstanceDialog({
     ? localCommandPath.length > 0
       ? null
       : "Executable is required."
-    : selectedAcp !== null || (isManualAcpConfiguration && manualAgentId.length > 0)
+    : selectedAcp !== null
       ? null
-      : "Select an ACP or configure one manually.";
+      : isManualAcpConfiguration && manualAgentId.length > 0
+        ? (managedAcpAgentDenial(managedPolicy, manualAgentId) ?? null)
+        : "Select an ACP or configure one manually.";
   const wizardStepSummaries = isAcpRegistry
     ? ([
         isLocalAcp ? "Local ACP command" : (selectedAcp?.name ?? (manualAgentId || null)),
@@ -369,6 +374,8 @@ export function AddProviderInstanceDialog({
 
   // A policy that owns this driver's launch settings also rules out ChatGPT's own runtime.
   const driverLocks = managedInstanceLocks(managedPolicy, driver);
+  const acpLocks = managedInstanceLocks(managedPolicy, ACP_REGISTRY_DRIVER_KIND);
+  const acpAgentsNotice = managedAcpAgentsNotice(managedPolicy);
 
   const handleSave = async () => {
     if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
@@ -514,6 +521,9 @@ export function AddProviderInstanceDialog({
                           <div aria-hidden className="flex-1 border-t border-border/70" />
                         </div>
                       )}
+                      {acpRegistryAllowed && acpAgentsNotice ? (
+                        <ManagedNotice>{acpAgentsNotice}</ManagedNotice>
+                      ) : null}
                       {!acpRegistryAllowed ? null : isAcpRegistry && isManualAcpConfiguration ? (
                         <div className="grid gap-4">
                           <div className="flex items-start justify-between gap-3">
@@ -545,6 +555,9 @@ export function AddProviderInstanceDialog({
                               idPrefix="add-provider-acpRegistry-manual"
                               variant="settings"
                               onChange={setConfigDraft}
+                              managed={
+                                acpLocks && { keys: acpLocks.configKeys, reason: acpLocks.reason }
+                              }
                               environmentId={environmentId}
                             />
                             {isLocalAcp ? (
@@ -568,7 +581,9 @@ export function AddProviderInstanceDialog({
                             providerInstances={settings.providerInstances}
                             onPrepared={handleAcpPrepared}
                             onManualConfiguration={handleManualAcpConfiguration}
-                            onLocalConfiguration={handleLocalAcpConfiguration}
+                            onLocalConfiguration={
+                              acpAgentsNotice ? undefined : handleLocalAcpConfiguration
+                            }
                           />
                           {isAcpRegistry && hasAttemptedSubmit && acpSelectionError ? (
                             <p className="mt-2 text-2xs text-destructive">{acpSelectionError}</p>
