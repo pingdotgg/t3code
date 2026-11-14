@@ -11624,7 +11624,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               !liveQuery.stopping &&
               context.heldSteers.length > 0 &&
               message.subtype === "success" &&
-              !message.is_error
+              !message.is_error &&
+              terminalStatusFromResult(message) === "completed"
             ) {
               context.steeredSegmentUsage.push(message.usage);
               context.steeredLedgerUsage = addClaudeLedgerUsage(
