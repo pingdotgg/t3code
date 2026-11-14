@@ -1,0 +1,64 @@
+{
+  "surface": {
+    "browser": "浏览器",
+    "terminal": "终端",
+    "files": "文件",
+    "diff": "差异",
+    "pullRequest": "变更请求",
+    "pullRequests": "关联的变更请求",
+    "device": "设备",
+    "deviceDescription": "观看 iOS 模拟器或 Android 模拟器。",
+    "sideChat": "侧边对话",
+    "sideChatDescription": "在此线程继续工作的同时问一个旁支问题。"
+  },
+  "disabled": {
+    "browser": "浏览器预览仅在 T3 Code 桌面应用中可用。",
+    "terminal": "终端界面仅在项目线程中可用。",
+    "files": "打开项目后才能使用文件。",
+    "diff": "差异仅适用于 Git 仓库的服务器线程。",
+    "pullRequest": "此线程的分支还没有变更请求。",
+    "pullRequests": "此线程没有可用的关联变更请求。",
+    "device": "设备仅在线程中可用。",
+    "sideChat": "发出第一条消息后才能开始侧边对话。"
+  },
+  "hints": {
+    "browser": "仅在桌面应用中可用。",
+    "terminal": "打开项目后可用。",
+    "files": "打开项目后可用。",
+    "diff": "适用于 Git 仓库。",
+    "pullRequest": "此分支还没有变更请求。",
+    "pullRequests": "没有可用的关联变更请求。",
+    "device": "在线程中可用。",
+    "sideChat": "发出第一条消息后可用。"
+  },
+  "tab": {
+    "unmute": "取消标签页静音",
+    "mute": "标签页静音",
+    "unmuteTitle": "取消 {{title}} 静音",
+    "muteTitle": "{{title}} 静音",
+    "rename": "重命名",
+    "copyPath": "复制路径",
+    "close": "关闭",
+    "closeOthers": "关闭其他",
+    "closeToRight": "关闭右侧",
+    "closeAll": "全部关闭",
+    "scrollPanel": "滚动面板标签页",
+    "scrollLeft": "向左滚动标签页",
+    "scrollRight": "向右滚动标签页"
+  },
+  "launcher": {
+    "openSurface": "打开一个界面"
+  },
+  "browser": {
+    "openInProfile": "在指定配置中打开浏览器"
+  },
+  "device": {
+    "hostFallback": "设备主机",
+    "tabName": "设备标签页名称"
+  },
+  "panel": {
+    "workspacePanel": "工作区面板",
+    "workspacePanelTitle": "工作区面板：{{title}}",
+    "addSurface": "添加面板界面"
+  }
+}
