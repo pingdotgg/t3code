@@ -417,6 +417,13 @@ export interface OrchestratorV2Shape {
     readonly threadId: ThreadId;
     readonly limitRecovery: OrchestrationV2LimitRecoveryUpdate;
   }) => Effect.Effect<void, OrchestratorV2Error>;
+  /** Snoozes only while `runId` is still the thread's last run and nothing else needs the user. */
+  readonly autoSnoozeAfterRun: (input: {
+    readonly commandId: CommandId;
+    readonly threadId: ThreadId;
+    readonly runId: RunId;
+    readonly snoozedUntil: DateTime.Utc;
+  }) => Effect.Effect<void, OrchestratorV2Error>;
   readonly searchThreadStream: (
     input: OrchestrationV2SearchThreadInput,
   ) => Stream.Stream<OrchestrationV2SearchThreadResult, OrchestratorV2Error>;
@@ -16121,6 +16128,45 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 }
               : command,
           );
+        }),
+      );
+    }),
+    autoSnoozeAfterRun: Effect.fn("OrchestratorV2.autoSnoozeAfterRun")(function (input) {
+      return threadDispatch.withLock(
+        input.threadId,
+        Effect.gen(function* () {
+          const { thread, runs, runtimeRequests } = yield* projectionStore
+            .getThreadRecords(input.threadId, ["runs", "runtimeRequests"])
+            .pipe(
+              Effect.mapError(
+                (cause) => new OrchestratorProjectionError({ threadId: input.threadId, cause }),
+              ),
+            );
+          const now = yield* DateTime.now;
+          const latest = runs.reduce<OrchestrationV2Run | undefined>(
+            (found, run) => (found === undefined || run.ordinal > found.ordinal ? run : found),
+            undefined,
+          );
+          // The caller read the thread before this lock; a message sent since then wins.
+          if (
+            latest?.id !== input.runId ||
+            latest.status !== "completed" ||
+            runs.some((run) => run.status === "queued" || isActiveRun(run)) ||
+            runtimeRequests.some((request) => request.status === "pending") ||
+            thread.archivedAt !== null ||
+            thread.deletedAt !== null ||
+            thread.settledOverride === "settled" ||
+            (thread.snoozedUntil != null &&
+              DateTime.toEpochMillis(thread.snoozedUntil) > DateTime.toEpochMillis(now)) ||
+            DateTime.toEpochMillis(input.snoozedUntil) <= DateTime.toEpochMillis(now)
+          )
+            return;
+          yield* dispatchWithReceiptEffect({
+            type: "thread.snooze",
+            commandId: input.commandId,
+            threadId: input.threadId,
+            snoozedUntil: DateTime.formatIso(input.snoozedUntil),
+          });
         }),
       );
     }),

@@ -425,6 +425,26 @@ const decodeRow = Effect.fnUntraced(
     ),
 );
 
+/** The soonest future run of an enabled task bound to this thread, or null. */
+export const nextRunForThread = Effect.fn("ScheduledTaskService.nextRunForThread")(function* (
+  threadId: ThreadId,
+  now: DateTime.DateTime,
+) {
+  const sql = yield* SqlClient.SqlClient;
+  const rows = yield* sql<{ next_run_at: string }>`
+    SELECT next_run_at FROM scheduled_tasks
+    WHERE thread_id = ${threadId} AND enabled = 1
+      AND next_run_at IS NOT NULL AND next_run_at > ${iso(now)}
+    ORDER BY next_run_at ASC
+  `.pipe(NodeSqliteClient.readOnly);
+  // next_run_at is freeform; the soonest parseable value wins.
+  for (const row of rows) {
+    const parsed = DateTime.make(row.next_run_at);
+    if (Option.isSome(parsed)) return DateTime.toUtc(parsed.value);
+  }
+  return null;
+});
+
 export const listDueTasks = Effect.fn("ScheduledTaskService.listDueTasks")(function* (
   now: DateTime.DateTime,
 ) {

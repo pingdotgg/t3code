@@ -454,6 +454,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["usage quota rate limit reset wake recover continue"],
   },
   {
+    id: "snooze-until-scheduled-task",
+    title: "Snooze until scheduled task runs",
+    to: "/settings/threads",
+    searchTerms: ["scheduled task schedule automation recurring wake hide next run"],
+    environmentOnly: true,
+    scope: "environment-defaults",
+  },
+  {
     id: "auto-resume-limited-threads",
     title: "Resume after usage limits",
     to: "/settings/threads",

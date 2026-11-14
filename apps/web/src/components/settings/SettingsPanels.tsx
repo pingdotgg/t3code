@@ -515,6 +515,10 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(!Equal.equals(settings.snoozePresets, DEFAULT_UNIFIED_SETTINGS.snoozePresets)
       ? ["Snooze options"]
       : []),
+    ...(settings.snoozeThreadsUntilScheduledTask !==
+    DEFAULT_UNIFIED_SETTINGS.snoozeThreadsUntilScheduledTask
+      ? ["Snooze until scheduled task runs"]
+      : []),
     ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? ["Word wrap"] : []),
     ...(settings.persistComposerContextStrip !==
     DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip
@@ -683,6 +687,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       autoResumeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.autoResumeLimitedThreads,
       snoozeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.snoozeLimitedThreads,
       snoozePresets: DEFAULT_UNIFIED_SETTINGS.snoozePresets,
+      snoozeThreadsUntilScheduledTask: DEFAULT_UNIFIED_SETTINGS.snoozeThreadsUntilScheduledTask,
       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
@@ -1735,6 +1740,11 @@ export function ThreadsSettingsPanel() {
   const supportsAutoSettlementScope = connectedEnvironments.every(
     (target) => target.serverConfig?.environment.capabilities.threadAutoSettlementScope === true,
   );
+  const supportsScheduledTaskSnooze =
+    hasServerTargets &&
+    connectedEnvironments.every(
+      (target) => target.serverConfig?.environment.capabilities.scheduledTaskSnooze === true,
+    );
 
   const textGenerationTargets = useTextGenerationTargets({
     environmentId,
@@ -1843,6 +1853,24 @@ export function ThreadsSettingsPanel() {
       {!isProjectScope ? (
         <SettingsSection id="snooze" title="Snooze">
           <SnoozePresetsRow />
+          {supportsScheduledTaskSnooze ? (
+            <SettingsRow
+              serverScoped
+              {...searchableSetting("snooze-until-scheduled-task")}
+              description="When a turn ends and the thread has a scheduled task coming up, snooze the thread until the task runs."
+              settingKeys={["snoozeThreadsUntilScheduledTask"]}
+              control={
+                <ScopedSwitch
+                  settingKeys={["snoozeThreadsUntilScheduledTask"]}
+                  checked={settings.snoozeThreadsUntilScheduledTask}
+                  onCheckedChange={(checked) =>
+                    updateSettings({ snoozeThreadsUntilScheduledTask: Boolean(checked) })
+                  }
+                  aria-label="Snooze until scheduled task runs"
+                />
+              }
+            />
+          ) : null}
         </SettingsSection>
       ) : null}
 

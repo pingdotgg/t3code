@@ -101,6 +101,7 @@ export function AutoSettleSettingsRows(props: {
     patch: Partial<AutoSettleSettings> & {
       autoResumeLimitedThreads?: boolean;
       snoozeLimitedThreads?: boolean;
+      snoozeThreadsUntilScheduledTask?: boolean;
     },
   ) => props.write(patch);
 
@@ -122,6 +123,10 @@ export function AutoSettleSettingsRows(props: {
   const disabledFor = (...keys: string[]) =>
     disabled || managedSettingReason(displayTargets, ...keys) !== undefined;
   const afterDays = referenceSettings.sidebarAutoSettleAfterDays;
+  const supportsScheduledTaskSnooze = displayTargets.every(
+    (target) =>
+      target.environment.serverConfig.environment.capabilities.scheduledTaskSnooze === true,
+  );
 
   return (
     <View className="gap-6">
@@ -142,6 +147,18 @@ export function AutoSettleSettingsRows(props: {
             value={uniformMobileSetting(displayTargets, "snoozeLimitedThreads")}
             disabled={disabledFor("snoozeLimitedThreads")}
             onValueChange={(value) => writeToAll({ snoozeLimitedThreads: value })}
+          />
+        </SettingsSection>
+      ) : null}
+      {!projectSelected && supportsScheduledTaskSnooze ? (
+        <SettingsSection title="Scheduled tasks">
+          <SettingsSwitchRow
+            icon="clock"
+            label="Snooze until scheduled task runs"
+            subtitle="When a turn ends and the thread has a scheduled task coming up, snooze the thread until the task runs."
+            value={uniformMobileSetting(displayTargets, "snoozeThreadsUntilScheduledTask")}
+            disabled={disabledFor("snoozeThreadsUntilScheduledTask")}
+            onValueChange={(value) => writeToAll({ snoozeThreadsUntilScheduledTask: value })}
           />
         </SettingsSection>
       ) : null}
