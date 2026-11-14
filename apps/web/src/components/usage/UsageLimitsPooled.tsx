@@ -289,7 +289,7 @@ function PoolSegment({
   readonly color: string;
   readonly now: number;
   readonly index: number;
-  readonly showAccountName: boolean;
+  readonly showPercent: boolean;
 }) {
   return account.redeem ? (
     <RedeemableSegment account={account} redeemAt={account.redeem} {...props} />
@@ -335,13 +335,13 @@ function SegmentTriggers({
   color,
   now,
   index,
-  showAccountName,
+  showPercent,
 }: SegmentPayload & {
   readonly refillPercent: number;
   readonly color: string;
   readonly now: number;
   readonly index: number;
-  readonly showAccountName: boolean;
+  readonly showPercent: boolean;
 }) {
   const popover = use(SegmentPopoverContext) ?? undefined;
   const payload: SegmentPayload = { account, window, reset, redeem };
@@ -400,20 +400,21 @@ function SegmentTriggers({
           {index}
         </span>
         <div className="relative hidden h-full min-w-0 items-center gap-1.5 overflow-hidden rounded-md px-2 text-xs @2xl/pool:flex">
-          {showAccountName ? (
-            <AccountName
-              account={account}
-              className="min-w-0 truncate font-medium text-foreground"
-            />
-          ) : null}
+          <AccountName account={account} className="min-w-0 truncate font-medium text-foreground" />
           {/* A single-account bar repeats the headline percentage. */}
-          {showAccountName ? (
+          {showPercent ? (
             <span className="shrink-0 font-semibold text-foreground tabular-nums">
               {remaining}%
             </span>
           ) : null}
           {resetsIn || credits ? (
-            <span className="ms-auto flex min-w-0 items-center gap-1.5 overflow-hidden rounded-sm bg-background/85 px-1.5 py-0.5 text-2xs whitespace-nowrap text-foreground tabular-nums">
+            <span
+              className={cn(
+                "ms-auto flex items-center gap-1.5 overflow-hidden rounded-sm bg-background/85 px-1.5 py-0.5 text-2xs whitespace-nowrap text-foreground tabular-nums",
+                // A lone account's long name truncates before its reset/credit pill.
+                showPercent ? "min-w-0" : "shrink-0",
+              )}
+            >
               {resetsIn?.replace("resets in ", "↻ ") ?? ""}
               {credits ? (
                 <>
@@ -521,7 +522,7 @@ function PoolBar({
               color={normalizeProviderAccentColor(member.account.accentColor) ?? color}
               now={now}
               index={position + 1}
-              showAccountName={pool.columns.length > 1}
+              showPercent={pool.columns.length > 1}
             />
           ) : pool.kind === "monthly" && member.account.limits.zeroSpendCap ? (
             <div
