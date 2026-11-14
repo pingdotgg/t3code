@@ -53,6 +53,7 @@ import {
   pullRequestLinkSubject,
   writePullRequestDetailSnapshot,
   readableFailure,
+  pullRequestQuoteReply,
 } from "./pullRequestDetail.logic";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 
@@ -545,6 +546,39 @@ describe("review thread conversations", () => {
     comments: [lastReply, { ...finding, body: "Stale finding" }, reply],
   };
 
+  it("quotes a comment without its hidden markup and mentions a bot by its handle", () => {
+    expect(
+      pullRequestQuoteReply({
+        ...finding,
+        body: "<!-- bot state -->\r\nFirst line\r\n\r\nSecond line",
+      }),
+    ).toBe("> First line\n>\n> Second line\n\n@review ");
+    expect(pullRequestQuoteReply({ ...loose, author: null, body: "Hi" })).toBe("> Hi\n\n");
+    expect(pullRequestQuoteReply({ ...loose, author: null }, "\n  picked\n\tlines \n")).toBe(
+      "> \u00a0\u00a0picked\n> \u00a0\u00a0\u00a0\u00a0lines\n\n",
+    );
+    expect(pullRequestQuoteReply({ ...loose, author: null }, "&copy;")).toBe("> \\&copy;\n\n");
+    expect(pullRequestQuoteReply({ ...loose, author: null }, "<!-- keep -->")).toBe(
+      "> \\<\\!\\-\\- keep \\-\\-\\>\n\n",
+    );
+    expect(pullRequestQuoteReply({ ...loose, author: null }, "# Heading")).toBe(
+      "> \\# Heading\n\n",
+    );
+    expect(
+      pullRequestQuoteReply({
+        ...loose,
+        author: null,
+        body: "Use `<!-- x -->`:\n```html\n<!-- keep -->\n```<!-- drop -->",
+      }),
+    ).toBe("> Use `<!-- x -->`:\n> ```html\n> <!-- keep -->\n> ```\n\n");
+    expect(
+      pullRequestQuoteReply({ ...loose, author: null, body: "~~~html\n<!-- keep -->\n~~~" }),
+    ).toBe("> ~~~html\n> <!-- keep -->\n> ~~~\n\n");
+    expect(
+      pullRequestQuoteReply({ ...loose, author: null, body: "Not code \\`<!-- drop -->\\`" }),
+    ).toBe("> Not code \\`\\`\n\n");
+  });
+
   it("keeps a timeline finding and its replies in one row at the finding time", () => {
     const events = buildPullRequestTimeline({
       ...TIMELINE_SOURCE,
@@ -601,6 +635,125 @@ describe("review thread conversations", () => {
     expect(pullRequestConversationItems(comments, []).map((item) => item.id)).toEqual(
       comments.map((entry) => entry.id),
     );
+  });
+
+  it("nests each thread under the review its first comment was posted in", () => {
+    const reviewUrl = (id: string) => `https://example.test/pull/1#pullrequestreview-${id}`;
+    const review = (id: string, day: number, body: string, reviewState: string) => ({
+      ...comment(`review-${id}`, day),
+      kind: "review" as const,
+      body,
+      path: null,
+      reviewState,
+      url: reviewUrl(id),
+    });
+    const posted = (id: string, day: number, inReview: string | null) => ({
+      ...comment(id, day),
+      ...(inReview === null ? {} : { reviewUrl: reviewUrl(inReview) }),
+    });
+    const threadOf = (id: string, ...members: ReturnType<typeof posted>[]) => ({
+      ...thread,
+      id,
+      comments: members,
+    });
+    const summarized = review("1", 3, "Two notes", "COMMENTED");
+    const verdict = review("2", 5, "", "CHANGES_REQUESTED");
+    const first = posted("first", 2, "1");
+    // The comment's copy of the link can carry another path; the anchor names the review.
+    const second = {
+      ...posted("second", 2, null),
+      reviewUrl: `https://example.test/pull/1/files#pullrequestreview-1`,
+    };
+    // A reply posts as its own small review; the thread stays with its root's.
+    const laterReply = posted("later-reply", 4, "2");
+    const blocker = posted("blocker", 5, "2");
+    const bodiless = posted("bodiless", 7, "3");
+    const unlinked = posted("unlinked", 8, null);
+    const items = pullRequestConversationItems(
+      [summarized, verdict],
+      [
+        threadOf("t-second", second),
+        threadOf("t-first", first, laterReply),
+        threadOf("t-blocker", blocker),
+        threadOf("t-bodiless", bodiless),
+        threadOf("t-unlinked", unlinked),
+      ],
+    );
+    expect(
+      items.map((item) =>
+        item.kind === "review"
+          ? { id: item.id, review: item.review, threads: item.threads.map((entry) => entry.id) }
+          : item.id,
+      ),
+    ).toEqual([
+      { id: "review-1", review: summarized, threads: ["t-second", "t-first"] },
+      { id: "review-2", review: verdict, threads: ["t-blocker"] },
+      { id: `review:${reviewUrl("3")}`, review: null, threads: ["t-bodiless"] },
+      "t-unlinked",
+    ]);
+    expect(items[2]).toMatchObject({ createdAt: bodiless.createdAt, author: bodiless.author });
+    expect(pullRequestConversationItemComments(items[0]!)).toEqual([
+      summarized,
+      { ...second, kind: "review-comment", reviewState: null },
+      { ...first, kind: "review-comment", reviewState: null },
+      { ...laterReply, kind: "review-comment", reviewState: null },
+    ]);
+    const resolvedFirst = pullRequestConversationItems(
+      [summarized],
+      [threadOf("t-second", second), { ...threadOf("t-first", first), isResolved: true }],
+    );
+    expect(
+      filterPullRequestConversationItems(resolvedFirst, { bots: true, resolved: false }).map(
+        (item) => (item.kind === "review" ? item.threads.map((entry) => entry.id) : item.id),
+      ),
+    ).toEqual([["t-second"]]);
+    const allResolved = pullRequestConversationItems(
+      [],
+      [{ ...threadOf("t-bodiless", bodiless), isResolved: true }],
+    );
+    expect(
+      filterPullRequestConversationItems(allResolved, { bots: true, resolved: false }),
+    ).toEqual([]);
+    // With every thread filtered out, a summary that still shows stands as a plain comment.
+    const summaryOnly = pullRequestConversationItems(
+      [summarized],
+      [{ ...threadOf("t-first", first), isResolved: true }],
+    );
+    expect(
+      filterPullRequestConversationItems(summaryOnly, { bots: true, resolved: false }),
+    ).toEqual([
+      { kind: "comment", id: summarized.id, createdAt: summarized.createdAt, comment: summarized },
+    ]);
+    // A human reply keeps a bot's thread, but the bot's summary gives way to a bare header.
+    const botReview = { ...summarized, author: bot };
+    const botThread = threadOf("t-first", { ...first, author: bot }, laterReply);
+    expect(
+      filterPullRequestConversationItems(pullRequestConversationItems([botReview], [botThread]), {
+        bots: false,
+        resolved: true,
+      }),
+    ).toMatchObject([
+      { kind: "review", id: botReview.id, review: null, threads: [{ id: "t-first" }] },
+    ]);
+    // A review counts each of its threads toward a page, and the page edge cuts its earliest.
+    const page = pagePullRequestConversationItems(items, 3);
+    expect(page.hidden).toBe(2);
+    expect(
+      page.shown.map((item) =>
+        item.kind === "review" ? item.threads.map((entry) => entry.id) : item.id,
+      ),
+    ).toEqual([["t-blocker"], ["t-bodiless"], "t-unlinked"]);
+    expect(pagePullRequestConversationItems(items, 4).shown[0]).toMatchObject({
+      id: "review-1",
+      threads: [{ id: "t-first" }],
+    });
+    expect(
+      buildPullRequestTimeline({
+        ...TIMELINE_SOURCE,
+        comments: [summarized],
+        reviewThreads: [threadOf("t-first", first)],
+      }).map((event) => event.id),
+    ).toEqual(["review-1", "first", "1baf7bdcafe", "created"]);
   });
 
   it("filters whole conversations when any member matches, including resolved and dismissed reviews", () => {

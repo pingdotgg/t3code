@@ -17,6 +17,9 @@ import {
 import { pullRequestReviewKey } from "./pullRequestReviewStore";
 import { useInlineActionConfirm } from "./useInlineActionConfirm";
 
+/** A fresh object each time, so quoting the same comment twice still lands. */
+export type PullRequestQuoteRequest = { readonly text: string };
+
 export function PullRequestCommentForm({
   environmentId,
   active,
@@ -24,9 +27,11 @@ export function PullRequestCommentForm({
   detail,
   actionPending,
   textareaRef,
+  quoteRequest,
   onCommentAction,
   onCommented,
   onClose,
+  onQuoted,
 }: {
   environmentId: EnvironmentId;
   /** False while the form stays mounted but hidden; dictation is cancelled then. */
@@ -35,16 +40,45 @@ export function PullRequestCommentForm({
   detail: PullRequestDetailView;
   actionPending: boolean;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
+  quoteRequest?: PullRequestQuoteRequest | undefined;
   onCommentAction: (
     body: string,
     action: "close" | "reopen",
   ) => Promise<{ readonly commentPosted: boolean }>;
   onCommented: () => void;
   onClose: () => void;
+  /** A quote deferred past a successful post lands after `onClose`, so the form asks to be shown again. */
+  onQuoted: () => void;
 }) {
   const [body, setBody] = useState("");
   const [submitting, setSubmitting] = useState<"comment" | "close" | "reopen" | null>(null);
   const locked = submitting !== null || actionPending;
+  const [answeredQuoteRequest, setAnsweredQuoteRequest] = useState(quoteRequest);
+  const [pendingQuotes, setPendingQuotes] = useState<ReadonlyArray<string>>([]);
+  const [caretAfterQuote, setCaretAfterQuote] = useState(false);
+  let quotes = pendingQuotes;
+  if (quoteRequest !== answeredQuoteRequest) {
+    setAnsweredQuoteRequest(quoteRequest);
+    if (quoteRequest) quotes = [...quotes, quoteRequest.text];
+  }
+  // A successful post clears the draft, so quotes wait until posting settles.
+  if (quotes.length > 0 && !locked) {
+    setPendingQuotes([]);
+    setBody((draft) => [draft.trimEnd(), ...quotes].filter((part) => part.length > 0).join("\n\n"));
+    setCaretAfterQuote(true);
+  } else if (quotes !== pendingQuotes) {
+    setPendingQuotes(quotes);
+  }
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reveals the composer and moves the DOM caret after a quote lands
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!caretAfterQuote || !textarea) return;
+    setCaretAfterQuote(false);
+    onQuoted();
+    textarea.focus({ preventScroll: true });
+    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+    textarea.scrollTop = textarea.scrollHeight;
+  }, [caretAfterQuote, textareaRef, onQuoted]);
   const speech = useTextFieldSpeech({
     environmentId,
     projectId: reference.projectId,

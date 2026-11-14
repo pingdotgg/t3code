@@ -916,6 +916,28 @@ describe("review thread decoding", () => {
                   createdAt: "2026-07-01T01:00:00Z",
                   pullRequestReview: {
                     url: "https://github.com/acme/web/pull/1#pullrequestreview-9",
+                    state: "COMMENTED",
+                    isMinimized: false,
+                  },
+                },
+                {
+                  id: "t3",
+                  body: "draft",
+                  createdAt: "2026-07-01T02:00:00Z",
+                  pullRequestReview: {
+                    url: "https://github.com/acme/web/pull/1#pullrequestreview-10",
+                    state: "PENDING",
+                    isMinimized: false,
+                  },
+                },
+                {
+                  id: "t4",
+                  body: "hidden",
+                  createdAt: "2026-07-01T03:00:00Z",
+                  pullRequestReview: {
+                    url: "https://github.com/acme/web/pull/1#pullrequestreview-11",
+                    state: "COMMENTED",
+                    isMinimized: true,
                   },
                 },
               ],
@@ -925,11 +947,14 @@ describe("review thread decoding", () => {
       ),
     );
     const comments = reviewThreadConversation(result.threads.map((entry) => entry.thread));
-    expect(comments.map((comment) => comment.id)).toEqual(["t1", "t2"]);
+    expect(comments.map((comment) => comment.id)).toEqual(["t1", "t2", "t3", "t4"]);
     // A reply-only review has no text of its own; its link finds it through the reply it posted.
+    // A pending or hidden review is not in the conversation, so nothing links to it.
     expect(result.threads[0]?.thread.comments.map((comment) => comment.reviewUrl)).toEqual([
       undefined,
       "https://github.com/acme/web/pull/1#pullrequestreview-9",
+      undefined,
+      undefined,
     ]);
   });
 

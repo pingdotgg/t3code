@@ -202,6 +202,52 @@ it("leaves description checkboxes read-only without the right to edit it", async
   );
 });
 
+it("keeps an unsent reply when a resolved conversation is collapsed and reopened", async () => {
+  setup();
+  const note = {
+    author: { login: "reviewer", name: null, avatarUrl: null },
+    createdAt: "2026-09-01T00:00:00Z",
+    url: null,
+  };
+  const body = "Rename this helper";
+  const filterKey = "t3code:pull-request-comment-filter:v1";
+  localStorage.setItem(filterKey, JSON.stringify({ bots: false, resolved: true }));
+  using _filter = { [Symbol.dispose]: () => localStorage.removeItem(filterKey) };
+  await using screen = await render({
+    ...detail,
+    capabilities: {
+      ...detail.capabilities,
+      review: { ...detail.capabilities.review, reply: true },
+    },
+    comments: [
+      { ...note, id: "10", kind: "review-comment", body, path: "src/a.ts", reviewState: null },
+    ],
+    reviewThreads: [
+      {
+        id: "thread",
+        path: "src/a.ts",
+        line: 3,
+        side: "right",
+        isResolved: true,
+        isOutdated: false,
+        comments: [{ ...note, id: "10", body }],
+      },
+    ],
+  });
+  const status = screen.getByRole("button", { name: "Resolved" });
+
+  await userEvent.click(status);
+  await userEvent.click(screen.getByRole("button", { name: "Reply" }));
+  await userEvent.type(screen.getByLabelText("Reply to this conversation"), "Unsent reply");
+  await userEvent.click(status);
+  await expect.element(screen.getByLabelText("Reply to this conversation")).not.toBeVisible();
+  await userEvent.click(status);
+
+  await expect
+    .element(screen.getByLabelText("Reply to this conversation"))
+    .toHaveValue("Unsent reply");
+});
+
 it("fixes an overview thread as its opening remark, since it has no line to attach", async () => {
   setup();
   const author = { login: "reviewer", name: null, avatarUrl: null };

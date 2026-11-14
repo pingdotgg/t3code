@@ -1356,7 +1356,9 @@ export function toReviewDismissalsPage(result: ReviewDismissals.Result): {
 }
 
 function toThreadComment(comment: ThreadComment, viewer: string | null): PullRequestThreadComment {
-  const reviewUrl = trimmed(comment.pullRequestReview?.url);
+  const review = comment.pullRequestReview;
+  const reviewUrl =
+    review == null || review.isMinimized || review.state === "PENDING" ? null : trimmed(review.url);
   return {
     id: comment.id,
     author: toActor(comment.author),
