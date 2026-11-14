@@ -269,15 +269,25 @@ step "Setting up the t3 command..."
 mkdir -p "$bin_dir"
 # Exec by absolute path: through a symlink, argv0 is the link, and the Cursor SDK looks for its
 # helpers beside it. t3 update and t3 install write the same script.
+nl='
+'
+launcher_head="#!/bin/sh${nl}exec '"
+launcher_tail="' \"\$@\"${nl}"
+# The x keeps a trailing newline in the path through command substitution.
 launcher_script() {
-  printf "#!/bin/sh\nexec '%s' \"\$@\"\n" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+  quoted="$(printf '%sx' "$1" | sed "s/'/'\\\\''/g")"
+  printf '%s%s%s' "$launcher_head" "${quoted%x}" "$launcher_tail"
 }
 # The executable an unedited launcher script at $1 runs; a user's own wrapper prints nothing.
 script_t3() {
   [ -f "$1" ] && [ ! -L "$1" ] && [ "$(wc -c < "$1")" -le 4096 ] || return 0
-  quoted="$(sed -n "2s/^exec '\(.*\)' \"\\\$@\"\$/\1/p" "$1")"
-  unquoted="$(printf '%s' "$quoted" | sed "s/'\\\\''/'/g")"
-  [ -n "$unquoted" ] && [ "$(cat "$1")" = "$(launcher_script "$unquoted")" ] && printf '%s' "$unquoted"
+  contents="$(cat "$1"; printf x)"
+  contents="${contents%x}"
+  case "$contents" in "$launcher_head"*"$launcher_tail") ;; *) return 0 ;; esac
+  quoted="${contents#"$launcher_head"}"
+  unquoted="$(printf '%sx' "${quoted%"$launcher_tail"}" | sed "s/'\\\\''/'/g")"
+  unquoted="${unquoted%x}"
+  [ -n "$unquoted" ] && [ "$(launcher_script "$unquoted"; printf x)" = "${contents}x" ] && printf '%s' "$unquoted"
   return 0
 }
 # Replace only this home's own t3 launchers: into its versions, or the desktop app's launcher.

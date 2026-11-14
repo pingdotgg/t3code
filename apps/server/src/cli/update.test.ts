@@ -271,6 +271,25 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
           [entry("2.0.0"), ...args].map((arg) => `[${arg}]\n`).join(""),
         );
 
+        // Like the shell, a relative PATH entry resolves from the working directory, and a
+        // script nobody can execute is passed over.
+        const unrunnable = path.join(root, "unrunnable/t3");
+        yield* fs.makeDirectory(path.dirname(unrunnable), { recursive: true });
+        yield* fs.writeFileString(unrunnable, posixLauncherScript(entry("2.0.0")), { mode: 0o644 });
+        yield* fs.writeFileString(launcher, posixLauncherScript(entry("2.0.0")), { mode: 0o755 });
+        const relative = yield* repointLauncher({
+          launchedAs: entry("2.0.0"),
+          baseDir: home,
+          targetEntryPath: entry("1.0.0"),
+        }).pipe(
+          Effect.provideService(HostProcess.Environment, {
+            PATH: `${path.dirname(unrunnable)}:bin`,
+          }),
+          Effect.provideService(HostProcess.WorkingDirectory, root),
+        );
+        assert.equal(Option.getOrUndefined(relative), launcher);
+        assert.equal(yield* fs.readFileString(unrunnable), posixLauncherScript(entry("2.0.0")));
+
         // An edited script is the user's own wrapper now.
         const edited = `${posixLauncherScript(entry("1.0.0"))}# mine\n`;
         yield* fs.writeFileString(launcher, edited);

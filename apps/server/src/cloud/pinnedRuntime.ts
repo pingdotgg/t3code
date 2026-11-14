@@ -566,9 +566,13 @@ export const findPosixLauncher = Effect.fn("cloud.pinned_runtime.find_posix_laun
     const recorded = yield* fs
       .readFileString(path.join(path.dirname(input.versionsDir), "launchers"))
       .pipe(Effect.orElseSucceed(() => ""));
+    const cwd = yield* HostProcess.WorkingDirectory;
     const candidates = [
-      // PATH first: it decides which t3 the user runs.
-      ...(environment["PATH"] ?? "").split(":").map((directory) => path.join(directory, "t3")),
+      // PATH first, resolved like the shell does: it decides which t3 the user runs.
+      ...(environment["PATH"] ?? "")
+        .split(":")
+        .filter((directory) => directory.length > 0)
+        .map((directory) => path.resolve(cwd, directory, "t3")),
       path.join(
         environment["T3CODE_INSTALL_BIN_DIR"] ||
           path.join(yield* HostProcess.HomeDirectory, ".local", "bin"),
@@ -580,6 +584,9 @@ export const findPosixLauncher = Effect.fn("cloud.pinned_runtime.find_posix_laun
       // The script itself, so an alias that links to it keeps working.
       const script = yield* realPath(candidate);
       if (script === undefined) continue;
+      // Like the shell, pass over a script nobody can execute.
+      const info = yield* fs.stat(script).pipe(Effect.option);
+      if (Option.isNone(info) || (info.value.mode & 0o111) === 0) continue;
       const target = yield* readPosixLauncherTarget(script);
       if (target !== undefined && (yield* realPath(target)) === executable) return script;
     }

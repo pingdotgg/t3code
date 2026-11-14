@@ -107,7 +107,7 @@ it.layer(NodeServices.layer)("t3 uninstall launcher", (it) => {
       const scriptDir = path.join(root, "script-bin");
       const script = path.join(scriptDir, "t3");
       yield* fs.makeDirectory(scriptDir);
-      yield* fs.writeFileString(script, posixLauncherScript(exe));
+      yield* fs.writeFileString(script, posixLauncherScript(exe), { mode: 0o755 });
       assert.equal(
         yield* findOwnedLauncher({ launchedAs: exe, versionsDir }).pipe(
           Effect.provideService(HostProcess.Environment, { PATH: scriptDir }),

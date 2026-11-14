@@ -33,10 +33,8 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer home
       await NodeFSP.writeFile(NodePath.join(target, "t3"), "#!/bin/sh\necho 't3 v1.2.3'\n", {
         mode: 0o755,
       });
-      const { status, stdout, stderr } = NodeChildProcess.spawnSync(
-        "sh",
-        [NodePath.resolve(import.meta.dirname, "install.sh")],
-        {
+      const install = () =>
+        NodeChildProcess.spawnSync("sh", [NodePath.resolve(import.meta.dirname, "install.sh")], {
           cwd: root,
           env: {
             ...process.env,
@@ -47,8 +45,11 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer home
             T3CODE_RELEASE_BASE_URL: "http://127.0.0.1:1",
           },
           encoding: "utf8",
-        },
-      );
+        });
+      // The second run replaces the launcher the first wrote, newlines in its path and all.
+      const first = install();
+      expect(first.status, first.stdout + first.stderr).toBe(0);
+      const { status, stdout, stderr } = install();
       expect(status, stdout + stderr).toBe(0);
       expect(stderr).toContain(`Installed T3 Code ${version}`);
       expect(await NodeFSP.readFile(launcher, "utf8")).toBe(
