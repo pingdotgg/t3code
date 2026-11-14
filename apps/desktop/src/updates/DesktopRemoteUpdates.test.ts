@@ -102,6 +102,29 @@ describe("DesktopRemoteUpdates", () => {
         assert.equal(terminals[0]?.requestId, "req-1");
         assert.equal(harness.quitAndInstalls(), 0);
 
+        yield* Queue.offer(requests, request("req-retry"));
+        yield* settle;
+        assert.deepEqual(
+          terminalReports(reports).map((report) => report.outcome),
+          ["ready-to-install", "ready-to-install"],
+        );
+        assert.equal(terminalReports(reports)[1]?.requestId, "req-retry");
+        assert.equal(terminalReports(reports)[1]?.preparedRequestId, "req-1");
+        assert.equal(harness.quitAndInstalls(), 0);
+        assert.equal(harness.downloadCount(), 1);
+
+        yield* Queue.offer(requests, {
+          ...request("req-other-track"),
+          channel: "nightly",
+          targetVersion: "1.2.4-nightly.20261027.1",
+        });
+        yield* settle;
+        assert.equal(terminalReports(reports)[2]?.outcome, "failed");
+        assert.equal(
+          terminalReports(reports)[2]?.reason,
+          "A prepared desktop update is already in progress.",
+        );
+
         yield* Queue.offer(commits, {
           version: 1,
           type: "commitDesktopUpdate",
@@ -115,6 +138,49 @@ describe("DesktopRemoteUpdates", () => {
           .map((report) => report.state.status);
         assert.include(statuses, "available");
         assert.include(statuses, "downloaded");
+      }),
+    );
+  });
+
+  it.effect("does not renew the preparation lease when a retry recovers its token", () => {
+    const harness = makeHarness();
+
+    return runRemoteUpdatesTest(harness, ({ reports, requests, commits }) =>
+      Effect.gen(function* () {
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* settle;
+        yield* Queue.offer(requests, request("req-original"));
+        yield* settle;
+
+        yield* TestClock.adjust(Duration.minutes(4));
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* settle;
+        yield* Queue.offer(requests, request("req-retry"));
+        yield* settle;
+        assert.equal(terminalReports(reports)[1]?.preparedRequestId, "req-original");
+
+        yield* TestClock.adjust(Duration.minutes(1));
+        yield* Queue.offer(commits, {
+          version: 1,
+          type: "commitDesktopUpdate",
+          requestId: "req-original",
+        });
+        yield* settle;
+        assert.equal(
+          terminalReports(reports)[2]?.reason,
+          "This desktop update is no longer prepared.",
+        );
+        assert.equal(harness.quitAndInstalls(), 0);
+
+        yield* Queue.offer(requests, request("req-new"));
+        yield* settle;
+        yield* Queue.offer(commits, {
+          version: 1,
+          type: "commitDesktopUpdate",
+          requestId: "req-new",
+        });
+        yield* settle;
+        assert.equal(harness.quitAndInstalls(), 1);
       }),
     );
   });
@@ -145,6 +211,14 @@ describe("DesktopRemoteUpdates", () => {
           [["req-switch", "ready-to-install"]],
         );
         assert.equal(terminals[0]?.state.downloadedVersion, "1.2.4-nightly.20261027.1");
+
+        yield* Queue.offer(requests, {
+          ...request("req-other-version"),
+          channel: "nightly",
+          targetVersion: "1.2.4-nightly.20261028.1",
+        });
+        yield* settle;
+        assert.equal(terminalReports(reports)[1]?.outcome, "failed");
       }),
     );
   });

@@ -121,7 +121,11 @@ export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* (
         targetVersion,
       });
       yield* Ref.set(inFlight, false);
-      return { targetVersion, method: "desktop-app" as const, desktopUpdateToken: requestId };
+      return {
+        targetVersion,
+        method: "desktop-app" as const,
+        desktopUpdateToken: report.preparedRequestId ?? requestId,
+      };
     }
     if (report.outcome === "up-to-date") {
       // A switch's host already on the newest build of its track only saved the track.
