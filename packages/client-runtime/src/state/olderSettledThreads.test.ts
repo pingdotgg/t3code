@@ -93,6 +93,10 @@ describe("olderSettledCountKey", () => {
     expect(key([...base, row("woken", { createdDay: 5 })])).not.toBe(start);
     // A local row that turns older (a backdated auto-settle).
     expect(key([base[0]!, row("open", { createdDay: 60, settledDay: 20 })])).not.toBe(start);
+    // An older row that moves to another project.
+    expect(key([{ ...base[0]!, projectId: ProjectId.make("project-b") }, base[1]!])).not.toBe(
+      start,
+    );
   });
 
   it("stays put for new threads and subagents", () => {
@@ -425,42 +429,6 @@ describe("createOlderSettledThreadAtoms", () => {
       });
       expect(count(registry.get(olderAtom))).toBe(7);
       expect(requests).toHaveLength(1);
-    }),
-  );
-
-  it.effect("re-reads counts when an older thread moves to another project", () =>
-    Effect.gen(function* () {
-      const { replies, requests, atoms, registry, setShell, until } = yield* makeAtoms();
-      const olderAtom = atoms.olderSettledAtom(environmentId);
-      const target = ProjectId.make("project-target");
-      const oldThread = row("moved", { settledDay: 10 });
-      const snapshot = Option.getOrThrow(shellSnapshot({ sequence: 3, asOfSequence: 3, count: 1 }));
-      registry.mount(olderAtom);
-      setShell({ snapshot: Option.some({ ...snapshot, threads: [oldThread] }), generation: 1 });
-
-      yield* Queue.offer(
-        replies,
-        Effect.succeed({
-          snapshotSequence: 4,
-          threads: [],
-          counts: [
-            { projectId: project, count: 0 },
-            { projectId: target, count: 1 },
-          ],
-        }),
-      );
-      setShell({
-        snapshot: Option.some({
-          ...snapshot,
-          snapshotSequence: 4,
-          threads: [{ ...oldThread, projectId: target }],
-        }),
-        generation: 1,
-      });
-      yield* TestClock.adjust("500 millis");
-      const moved = yield* until(olderAtom, (value) => value?.counts.get(target) === 1);
-      expect(moved?.counts.get(project)).toBe(0);
-      expect(requests).toEqual([{ before: { settledAt: before }, limit: 0 }]);
     }),
   );
 
