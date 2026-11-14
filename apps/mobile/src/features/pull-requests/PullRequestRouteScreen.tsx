@@ -21,7 +21,11 @@ import { pullRequestFileChapters } from "./pullRequestFileChapters";
 import { Chip } from "../../components/ui/Chip";
 import { Toolbar } from "../../components/ui/Toolbar";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
-import { readPullRequestView, rememberPullRequestView } from "./pullRequestViewMemory";
+import {
+  readPullRequestView,
+  rememberPullRequestView,
+  useEntryPullRequestPath,
+} from "./pullRequestViewMemory";
 import { PullRequestFilesSheet } from "./PullRequestFilesSheet";
 import { ReviewDisplayOptions } from "../review/ReviewDisplayOptions";
 import { useDiffWhitespacePreference } from "../review/useDiffWhitespacePreference";
@@ -1160,8 +1164,8 @@ export function PullRequestDiffContent({
   const { commentsOnly, hideReviewed, groupByType } = viewingPreferences;
   const isGuideChapter = onlyPaths !== undefined;
   const grouped = groupByType && !isGuideChapter;
-  const rememberedPath =
-    params.path || (onlyPaths === undefined ? (readPullRequestView(scopeKey).path ?? "") : "");
+  const entryPath = useEntryPullRequestPath(scopeKey);
+  const rememberedPath = params.path || (onlyPaths === undefined ? entryPath : "");
   const [pickedPath, setJumpPath] = useState<string | null>(null);
   const [chapterId, setChapterId] = useState<ReviewFileGroup>(() =>
     reviewFileGroup(linkPath ?? rememberedPath),
