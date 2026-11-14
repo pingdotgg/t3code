@@ -83,6 +83,7 @@ import {
   resolveThreadListV2ProviderDrivers,
   resolveThreadListV2SwipeActions,
   layoutThreadListV2RowMenuActions,
+  threadListV2RowAccessibilityLabel,
   type ThreadListV2Status,
 } from "./threadListV2";
 import { QueuedMessageIcon } from "./queued-message-icon";
@@ -782,8 +783,18 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       : workingLabel) ?? (isUnread ? DONE_STATUS_LABEL : undefined);
   const recede = shouldRecedeThreadRow({ status, selected });
   const isRegeneratingTitle = thread.titleRegeneration != null;
-  const rowAccessibilityLabel = `${thread.title}${providerNameLabel ? `, ${providerNameLabel}` : ""}${props.hasQueuedMessages ? ", messages queued to send" : ""}${isRegeneratingTitle ? ", regenerating title" : ""}`;
   const timeLabel = props.timeLabel;
+  const rowAccessibilityLabel = threadListV2RowAccessibilityLabel({
+    title: thread.title,
+    variant,
+    woke: showsWoke,
+    statusLabel,
+    timeLabel,
+    snoozeWakeLabel: snoozedRow ? props.snoozeWakeLabelText : undefined,
+    providerNameLabel,
+    hasQueuedMessages: props.hasQueuedMessages === true,
+    regeneratingTitle: isRegeneratingTitle,
+  });
 
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
   const handleAcknowledgeWoke = useCallback(() => {
