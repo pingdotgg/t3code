@@ -27,6 +27,7 @@ import {
   archiveThread,
   closeGuestShare,
   resolveGuestMessage,
+  cancelMergeBack,
   cancelQueuedRun,
   createThread,
   deleteThread,
@@ -368,6 +369,16 @@ export function createThreadEnvironmentAtoms<R, E>(
     mergeBack: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:merge-back",
       execute: mergeThreadBack,
+      scheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.sourceThreadId, input.targetThreadId]),
+      },
+    }),
+    cancelMergeBack: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:cancel-merge-back",
+      execute: cancelMergeBack,
       scheduler,
       concurrency: {
         mode: "serial",
