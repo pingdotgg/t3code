@@ -164,7 +164,7 @@ describe("ACP registry replay fixtures", () => {
           // deadline, draining effects instead of polling the projection.
           for (let attempt = 0; attempt < 10; attempt++) {
             yield* worker.drain();
-            const next = yield* worker.nextClaimableAt;
+            const next = yield* worker.nextClaimableAt();
             if (Option.isNone(next)) break;
             const now = yield* DateTime.now;
             yield* TestClock.adjust(

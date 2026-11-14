@@ -5,7 +5,8 @@ import type { ProjectEntry } from "@t3tools/contracts";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { useEffect, useRef, useState } from "react";
-import { Pressable, RefreshControl, View } from "react-native";
+import { Pressable, View } from "react-native";
+import { RefreshControl } from "../../components/ui/RefreshControl";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";
@@ -215,6 +216,7 @@ export function FileTreeBrowser(props: {
   return (
     <LegendList
       renderScrollComponent={NativeScrollView}
+      nestedScrollEnabled={false}
       contentInset={{ top: headerInset, bottom: bottomInset }}
       alwaysBounceVertical
       className="flex-1"

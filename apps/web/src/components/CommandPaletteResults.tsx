@@ -1,3 +1,4 @@
+import { startPaletteThreadDrag } from "./CommandPalette.drag";
 import { useLegendListRef } from "~/hooks/useLegendListRef";
 import { type ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
@@ -77,7 +78,15 @@ export function CommandPaletteResults(props: CommandPaletteResultsProps) {
   );
 }
 
-export function scrollCommandPaletteRowIntoView(list: LegendListRef | null, rowIndex: number) {
+export function scrollCommandPaletteRowIntoView(
+  list: LegendListRef | null,
+  rowIndex: number,
+  isFirstItem: boolean,
+) {
+  if (isFirstItem) {
+    void list?.scrollToOffset({ offset: 0, animated: false });
+    return;
+  }
   void list?.scrollIndexIntoView({
     index: rowIndex,
     animated: false,
@@ -241,6 +250,19 @@ function CommandPaletteResultRow(props: {
       {...(props.index === undefined ? {} : { index: props.index })}
       value={props.item.value}
       active={props.isActive}
+      {...(props.item.kind === "action" && props.item.checked !== undefined
+        ? { "aria-checked": props.item.checked }
+        : {})}
+      onPointerDown={(event) => {
+        if (props.item.threadRef) {
+          startPaletteThreadDrag(
+            event.nativeEvent,
+            props.item.threadRef,
+            props.item.searchTitle ??
+              (typeof props.item.title === "string" ? props.item.title : "Thread"),
+          );
+        }
+      }}
       onMouseDown={(event) => {
         event.preventDefault();
       }}
