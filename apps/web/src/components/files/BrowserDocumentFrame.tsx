@@ -7,12 +7,16 @@ import {
   THREAD_JUMP_KEYBINDING_COMMANDS,
 } from "@t3tools/contracts";
 import {
+  type HtmlRenderFormField,
   type HtmlRenderShortcut,
+  htmlRenderRestoreFormStateMessage,
   htmlRenderShortcutsMessage,
   htmlRenderThemeFragment,
   htmlRenderThemeMessage,
   htmlRenderResult,
+  isHtmlRenderFormStateRequest,
   readHtmlRenderContentHeight,
+  readHtmlRenderFormState,
   readHtmlRenderImageRequest,
   readHtmlRenderKeyDown,
   readHtmlRenderLinkRequest,
@@ -135,6 +139,7 @@ export function BrowserDocumentFrame(props: {
   readonly pdf: boolean;
   readonly htmlRender?: boolean;
   readonly threadRef?: ScopedThreadRef | undefined;
+  readonly formStateKey?: string | undefined;
   /** Stable resource identity and revision; defaults to src for callers that reload on URL changes. */
   readonly documentKey?: string | undefined;
   /** Resource identity without its revision, so PDF reloads can retain the reading position. */
@@ -154,6 +159,7 @@ export function BrowserDocumentFrame(props: {
       src={props.src}
       title={props.title}
       threadRef={props.threadRef}
+      formStateKey={props.formStateKey}
       className="min-h-0 flex-1"
     />
   ) : (
@@ -174,6 +180,10 @@ function FileDocument(props: { readonly src: string; readonly title: string }) {
   );
 }
 
+// The sandbox gives pages no storage, and leaving a thread unmounts their frames, so the host keeps
+// form input for the app session and sends it back when the page asks after loading.
+const htmlRenderFormStates = new Map<string, ReadonlyArray<HtmlRenderFormField>>();
+
 /** Keep the initial URL while mounted; re-signing must not reload the page. */
 export function HtmlRenderDocument(props: {
   readonly src: string;
@@ -181,12 +191,19 @@ export function HtmlRenderDocument(props: {
   readonly className?: string;
   readonly threadRef?: ScopedThreadRef | undefined;
   readonly onContentHeight?: (height: number) => void;
+  /** Identifies one rendered page so its form input survives a remount, such as a thread switch. */
+  readonly formStateKey?: string | undefined;
   /** Reports fullscreen changes so virtualized rows can stay mounted. */
   readonly onFullscreenChange?: ((fullscreen: boolean) => void) | undefined;
 }) {
   const theme = useHtmlRenderTheme();
   const frameRef = useRef<HTMLIFrameElement>(null);
   const [src] = useState(() => `${props.src.split("#", 1)[0]}${htmlRenderThemeFragment(theme)}`);
+  // Read at mount and answered once. Until then the page's startup reports are ignored so they
+  // cannot erase the saved input, even if this mount ends before the page loads.
+  const pendingFormState = useRef(
+    props.formStateKey === undefined ? undefined : htmlRenderFormStates.get(props.formStateKey),
+  );
   const [loaded, setLoaded] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const postTheme = () => {
@@ -281,6 +298,21 @@ export function HtmlRenderDocument(props: {
     const height = readHtmlRenderContentHeight(event.data);
     if (height !== undefined) {
       props.onContentHeight?.(height);
+      return;
+    }
+    if (isHtmlRenderFormStateRequest(event.data)) {
+      const saved = pendingFormState.current;
+      pendingFormState.current = undefined;
+      if (saved !== undefined) {
+        frame.contentWindow?.postMessage(htmlRenderRestoreFormStateMessage(saved), "*");
+      }
+      return;
+    }
+    const formState = readHtmlRenderFormState(event.data);
+    if (formState !== undefined) {
+      if (props.formStateKey !== undefined && pendingFormState.current === undefined) {
+        htmlRenderFormStates.set(props.formStateKey, formState);
+      }
       return;
     }
     if (document.activeElement !== frame || navigator.userActivation?.isActive === false) return;
