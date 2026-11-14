@@ -15,6 +15,7 @@ import {
   BROWSER_PROFILE_NAME_MAX_LENGTH,
   BROWSER_RECORDING_FRAME_RATES,
   DEFAULT_BROWSER_AUTO_SHOW_FLOATING_PREVIEW,
+  DEFAULT_BROWSER_FLOAT_PREVIEW_ON_PANEL_CLOSE,
   DEFAULT_BROWSER_PROFILE_ID,
   DEFAULT_BROWSER_LINK_TARGET,
   DEFAULT_BROWSER_RECORDING_FRAME_RATE,
@@ -1107,6 +1108,39 @@ function BrowserAutoShowFloatingPreviewSetting({ disabled }: { readonly disabled
   );
 }
 
+function BrowserFloatPreviewOnPanelCloseSetting() {
+  const floatOnClose = useClientSettings((settings) => settings.browserFloatPreviewOnPanelClose);
+  const updateSettings = useUpdatePrimarySettings();
+
+  return (
+    <SettingsRow
+      {...searchableSetting("browser-float-preview-on-panel-close")}
+      description="Keep a browser or device on screen as a floating preview when you close the right panel."
+      resetAction={
+        floatOnClose !== DEFAULT_BROWSER_FLOAT_PREVIEW_ON_PANEL_CLOSE ? (
+          <SettingResetButton
+            label="float preview on panel close"
+            onClick={() =>
+              updateSettings({
+                browserFloatPreviewOnPanelClose: DEFAULT_BROWSER_FLOAT_PREVIEW_ON_PANEL_CLOSE,
+              })
+            }
+          />
+        ) : null
+      }
+      control={
+        <Switch
+          checked={floatOnClose}
+          onCheckedChange={(checked) =>
+            updateSettings({ browserFloatPreviewOnPanelClose: Boolean(checked) })
+          }
+          aria-label="Float preview on panel close"
+        />
+      }
+    />
+  );
+}
+
 function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   const userProfiles = useClientSettings((settings) => settings.browserProfiles);
   const defaultProfileId = useClientSettings((settings) => settings.browserDefaultProfileId);
@@ -1593,6 +1627,8 @@ export function BrowserSettingsPanel() {
           <BrowserLinkTargetSetting disabled={desktopOnly} />
           <BrowserAutoShowFloatingPreviewSetting disabled={desktopOnly} />
         </SettingsUnavailableGroup>
+        {/* Not desktop-only: web clients float server-run browsers and devices too. */}
+        <BrowserFloatPreviewOnPanelCloseSetting />
         {/* Not desktop-only: web clients search from server-run browser tabs too. */}
         <BrowserSearchEngineSetting />
         <AdvancedSettings

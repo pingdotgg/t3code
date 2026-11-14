@@ -1120,6 +1120,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["agent opens browser device simulator pop into view hide"],
   },
   {
+    id: "browser-float-preview-on-panel-close",
+    title: "Float preview on panel close",
+    to: "/settings/browser",
+    searchTerms: ["close right panel browser device floating window mini player hide"],
+  },
+  {
     id: "automatic-pull",
     title: "Automatically pull",
     to: "/settings/source-control",

@@ -121,6 +121,7 @@ export type BrowserDefaultSettings = Pick<
   | "browserSearchEngine"
   | "browserCustomSearchUrl"
   | "browserAutoShowFloatingPreview"
+  | "browserFloatPreviewOnPanelClose"
   | "pullRequestLinksOpenInApp"
 >;
 
@@ -165,6 +166,10 @@ export function getChangedBrowserSettingLabels(settings: BrowserDefaultSettings)
     ...(settings.browserAutoShowFloatingPreview !==
     DEFAULT_UNIFIED_SETTINGS.browserAutoShowFloatingPreview
       ? ["Floating preview"]
+      : []),
+    ...(settings.browserFloatPreviewOnPanelClose !==
+    DEFAULT_UNIFIED_SETTINGS.browserFloatPreviewOnPanelClose
+      ? ["Float preview on panel close"]
       : []),
     ...(settings.pullRequestLinksOpenInApp !== DEFAULT_UNIFIED_SETTINGS.pullRequestLinksOpenInApp
       ? ["Open pull requests in T3 Code"]

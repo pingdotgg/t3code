@@ -16,6 +16,7 @@ import { getClientSettings } from "../../hooks/useSettings";
 import {
   browserMiniPlayerSource,
   type PreviewMiniPlayerSource,
+  previewMiniPlayerSourceKey,
   usePreviewMiniPlayerStore,
 } from "../../previewMiniPlayerStore";
 import {
@@ -211,6 +212,28 @@ export function floatDeviceSurface(
 ): void {
   if (state !== null && !hasLiveSession(state, threadRef.threadId, source)) return;
   usePreviewMiniPlayerStore.getState().open(threadRef, source);
+}
+
+/**
+ * Floats a panel's browser or device as the panel closes. With that off, a
+ * float hidden behind the panel tab closes too, or it would reappear.
+ */
+export function settlePanelPreviewOnClose(
+  threadRef: ScopedThreadRef,
+  source: PreviewMiniPlayerSource,
+  options: { readonly floatOnClose: boolean; readonly deviceState: DeviceServiceState | null },
+): void {
+  const miniPlayer = usePreviewMiniPlayerStore.getState();
+  if (!options.floatOnClose) {
+    const current = miniPlayer.byThreadKey[scopedThreadKey(threadRef)]?.source;
+    if (current && previewMiniPlayerSourceKey(current) === previewMiniPlayerSourceKey(source)) {
+      miniPlayer.close(threadRef);
+    }
+  } else if (source.kind === "browser") {
+    miniPlayer.open(threadRef, source);
+  } else {
+    floatDeviceSurface(threadRef, source, options.deviceState);
+  }
 }
 
 export function resetDeviceSessionBaselinesForTests(): void {
