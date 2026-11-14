@@ -717,3 +717,88 @@ fn the_background_roster_stays_bounded() {
     });
     assert_eq!(cleared, Some(json!([])), "a failed turn clears the roster");
 }
+
+fn last_roster(outs: &[Out]) -> Option<serde_json::Value> {
+    outs.iter().rev().find_map(|o| match o {
+        Out::Event(ProviderEvent::ProviderThreadUpdated { provider_thread }) => {
+            Some(serde_json::to_value(provider_thread).ok()?["pendingBackgroundTasks"].clone())
+        }
+        _ => None,
+    })
+}
+
+/// `awaitBackgroundTasks`: only roster tasks match; they are published with `awaited`.
+#[test]
+fn awaited_background_tasks_are_marked() {
+    let mut mapper = Mapper::new(FixedEnv::default(), SESSION);
+    let thread = provider_thread("n-await");
+    mapper.begin_turn(&turn_input(1, &thread, "x", "full-access"), "default");
+    mapper.handle(Inbound::from_value(json!({
+        "type": "system", "subtype": "task_started", "session_id": "s", "task_id": "bg1",
+        "tool_use_id": "toolu-bg1", "task_type": "local_bash", "description": "sleep",
+        "is_backgrounded": true,
+    })));
+    let thread_json = serde_json::to_value(&thread).unwrap();
+    let (matched, outs) =
+        mapper.await_background_tasks(&thread_json, &["bg1".into(), "nope".into()], true);
+    assert_eq!(matched, vec!["bg1".to_string()]);
+    assert_eq!(
+        last_roster(&outs),
+        Some(
+            json!([{"taskId": "bg1", "kind": "command", "description": "sleep",
+                     "nativeItemId": "toolu-bg1", "awaited": true}])
+        )
+    );
+    let (matched, outs) = mapper.await_background_tasks(&thread_json, &["bg1".into()], false);
+    assert_eq!(matched, vec!["bg1".to_string()]);
+    assert_eq!(last_roster(&outs).unwrap()[0].get("awaited"), None);
+    let (matched, outs) = mapper.await_background_tasks(&thread_json, &["nope".into()], true);
+    assert!(matched.is_empty() && outs.is_empty());
+}
+
+/// `trackClaudeScheduledWakeup`: a ScheduleWakeup result puts T3's stable entry on the
+/// roster; a later `stop` (scheduledFor 0) takes it off.
+#[test]
+fn a_scheduled_wakeup_is_listed_until_cancelled() {
+    let mut mapper = Mapper::new(FixedEnv::default(), SESSION);
+    let thread = provider_thread("n-wake");
+    mapper.begin_turn(&turn_input(1, &thread, "x", "full-access"), "default");
+    let call = |id: &str| {
+        Inbound::from_value(json!({
+            "type": "assistant", "parent_tool_use_id": null, "uuid": format!("u-{id}"),
+            "message": {"id": format!("m-{id}"), "content": [
+                {"type": "tool_use", "id": id, "name": "ScheduleWakeup", "input": {}}
+            ]},
+        }))
+    };
+    let result = |id: &str, due: u64| {
+        Inbound::from_value(json!({
+            "type": "user", "parent_tool_use_id": null,
+            "message": {"content": [{"type": "tool_result", "tool_use_id": id, "content": "ok"}]},
+            "tool_use_result": {"scheduledFor": due},
+        }))
+    };
+    mapper.handle(call("w1"));
+    mapper.handle(result("w1", 4_000_000_000_000));
+    assert!(mapper.has_pending_background_work());
+    let thread_json = serde_json::to_value(&thread).unwrap();
+    let (_, outs) = mapper.await_background_tasks(&thread_json, &[], true);
+    assert!(outs.is_empty());
+    let outs = mapper.handle(Inbound::from_value(json!({
+        "type": "system", "subtype": "background_tasks_changed", "tasks": [],
+    })));
+    assert_eq!(
+        last_roster(&outs),
+        Some(
+            json!([{"taskId": "claude-scheduled-wakeup", "kind": "background_task",
+                     "description": "Scheduled wakeup"}])
+        )
+    );
+    mapper.handle(call("w2"));
+    mapper.handle(result("w2", 0));
+    let outs = mapper.handle(Inbound::from_value(json!({
+        "type": "system", "subtype": "background_tasks_changed", "tasks": [],
+    })));
+    assert_eq!(last_roster(&outs), Some(json!([])));
+    assert!(!mapper.has_pending_background_work());
+}

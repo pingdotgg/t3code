@@ -72,6 +72,89 @@ pub(crate) fn task_outcome(status: Option<&str>) -> &'static str {
     }
 }
 
+/// `CLAUDE_SCHEDULED_WAKEUP_EARLY_FIRE_MARGIN_MS`.
+const EARLY_FIRE_MARGIN_MS: u64 = 120_000;
+
+/// `CLAUDE_SCHEDULED_WAKEUP_TASK`: one stable entry per thread for Claude's pending
+/// `ScheduleWakeup`.
+pub(crate) fn scheduled_wakeup_task() -> Value {
+    json!({
+        "taskId": "claude-scheduled-wakeup",
+        "kind": "background_task",
+        "description": "Scheduled wakeup",
+    })
+}
+
+/// `trackClaudeScheduledWakeup`: Claude keeps one pending wakeup per session; its tool
+/// result is the only sign that Claude will start a turn by itself.
+#[derive(Debug, Default)]
+pub(crate) struct Scheduled {
+    /// `ScheduleWakeup` calls with no result yet.
+    calls: VecDeque<String>,
+    /// When the pending wakeup is due (epoch ms).
+    pub due: Option<u64>,
+    /// The running turn may be the wakeup, fired early.
+    possible_early: bool,
+}
+
+impl Scheduled {
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.calls.len()
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.due = None;
+        self.possible_early = false;
+    }
+
+    /// A turn started (`system` `init`), `idle` when no turn of ours runs.
+    pub(crate) fn turn_started(&mut self, now: u64, idle: bool) {
+        let Some(due) = self.due else {
+            return;
+        };
+        if now >= due {
+            self.due = None;
+        } else if idle && now >= due.saturating_sub(EARLY_FIRE_MARGIN_MS) {
+            self.possible_early = true;
+        }
+    }
+
+    /// A result: an early turn was the wakeup unless a task notification started it.
+    pub(crate) fn result(&mut self, from_task_notification: bool) {
+        if std::mem::take(&mut self.possible_early) && !from_task_notification {
+            self.due = None;
+        }
+    }
+
+    pub(crate) fn call(&mut self, id: &str) {
+        if self.calls.len() >= REPORT_CAP {
+            self.calls.pop_front();
+        }
+        self.calls.push_back(id.to_string());
+    }
+
+    /// Tool results: the `ScheduleWakeup` ones set or clear the wakeup.
+    pub(crate) fn results(&mut self, ids: &[&str], tool_use_result: Option<&Value>) {
+        let mut returned = 0;
+        for id in ids {
+            let before = self.calls.len();
+            self.calls.retain(|c| c != id);
+            returned += before - self.calls.len();
+        }
+        if returned == 0 {
+            return;
+        }
+        // stop:true reports scheduledFor 0; a failed call clears too.
+        let due = (returned == 1)
+            .then(|| tool_use_result?.get("scheduledFor")?.as_f64())
+            .flatten()
+            .filter(|d| d.is_finite() && *d > 0.0);
+        self.possible_early = false;
+        self.due = due.map(|d| d as u64);
+    }
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct Wakes {
     /// Task id, report, and the user turn it was recorded in.

@@ -16,9 +16,10 @@ use std::{
 
 use conn_contract::{ProviderSessionId, ProviderThread, from_json, to_json};
 use conn_provider::{
-    BoxFuture, EnsureThreadInput, ForkThreadInput, InterruptInput, McpServer, ProviderError,
-    ProviderEvent, ProviderResult, ResumeThreadInput, RollbackTarget, RollbackThreadInput,
-    RuntimePolicy, RuntimeRequestResponse, Session, SteerInput, ThreadSnapshot, TurnInput,
+    AwaitBackgroundTasksInput, BoxFuture, EnsureThreadInput, ForkThreadInput, InterruptInput,
+    McpServer, ProviderError, ProviderEvent, ProviderResult, ResumeThreadInput, RollbackTarget,
+    RollbackThreadInput, RuntimePolicy, RuntimeRequestResponse, Session, SteerInput,
+    ThreadSnapshot, TurnInput,
 };
 use serde_json::{Map, Value, json};
 use tokio::sync::{mpsc, watch};
@@ -1760,6 +1761,24 @@ impl Session for ClaudeSession {
 
     fn has_pending_background_work(&self) -> bool {
         self.inner.lock().mapper.has_pending_background_work()
+    }
+
+    /// `awaitBackgroundTasks`: marks the roster's tasks the agent waits on, and sends the
+    /// roster so the thread stays working.
+    fn await_background_tasks(
+        &self,
+        input: AwaitBackgroundTasksInput,
+    ) -> BoxFuture<'_, ProviderResult<Vec<String>>> {
+        Box::pin(async move {
+            let thread = to_json(&input.provider_thread);
+            let (matched, outs) = self.inner.lock().mapper.await_background_tasks(
+                &thread,
+                &input.task_ids,
+                input.awaited,
+            );
+            self.inner.deliver(None, outs).await;
+            Ok(matched)
+        })
     }
 
     fn close(&self) -> BoxFuture<'_, ()> {

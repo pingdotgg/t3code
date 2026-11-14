@@ -106,6 +106,8 @@ pub struct Mapper<E: Env> {
     wakes: wakes::Wakes,
     /// How this CLI process echoes a prompt (`promptEchoMode`).
     echo_mode: EchoMode,
+    /// Claude's pending `ScheduleWakeup` (`scheduledWakeupsByNativeThread`).
+    scheduled: wakes::Scheduled,
 }
 
 /// `ClaudeLiveQueryContext.promptEchoMode`.
@@ -347,6 +349,7 @@ impl<E: Env> Mapper<E> {
             last_provider_thread: None,
             wakes: wakes::Wakes::default(),
             echo_mode: EchoMode::Unknown,
+            scheduled: wakes::Scheduled::default(),
         }
     }
 
@@ -354,6 +357,8 @@ impl<E: Env> Mapper<E> {
     pub fn new_process(&mut self) {
         self.ledger = Some(Vec::new());
         self.echo_mode = EchoMode::Unknown;
+        // Replacing the process cancels Claude's wakeup.
+        self.scheduled.clear();
         // The SDK sends no first roster: a new process starts with none.
         self.roster.clear();
     }
@@ -371,14 +376,18 @@ impl<E: Env> Mapper<E> {
 
     /// Subagents still running, or Claude output waiting for a continuation turn.
     pub fn has_pending_background_work(&self) -> bool {
-        self.subagents.any_running() || self.continuation_requested || !self.roster.is_empty()
+        // A wakeup can be up to an hour out, past the idle timeout, and dies with the process.
+        self.subagents.any_running()
+            || self.continuation_requested
+            || !self.roster.is_empty()
+            || self.scheduled.due.is_some()
     }
 
     /// Sizes of every collection that outlives a turn, for the memory checks.
     #[cfg(test)]
     pub fn held_sizes(&self) -> [usize; 8] {
         [
-            self.wakes.len(),
+            self.wakes.len() + self.scheduled.len(),
             self.pending.len(),
             self.subagents.len(),
             self.wake.len(),
@@ -573,6 +582,7 @@ impl<E: Env> Mapper<E> {
         if let Inbound::Result(result) = &mut message {
             self.measure_ledger(result);
         }
+        self.track_scheduled_wakeup(&message);
         // Before routing: an idle Monitor reports its task before its call replays.
         self.roster.track_monitor_calls(&message);
         if self.turn.is_none() && is_wake_frame(&message) {
@@ -1231,6 +1241,8 @@ impl<E: Env> Mapper<E> {
         self.wake.clear();
         self.continuation_requested = false;
         self.wakes.clear();
+        // An exited process loses its wakeup.
+        self.scheduled.clear();
         let Some(turn) = &self.turn else {
             return out;
         };
@@ -1357,9 +1369,15 @@ impl<E: Env> Mapper<E> {
         if !completed {
             self.roster.clear();
             self.roster.forget_wakes();
+            // A Stop cancels Claude's wakeup; a failed turn on a live process leaves it.
+            if status != TurnStatus::Failed {
+                self.scheduled.clear();
+            }
         }
-        thread["pendingBackgroundTasks"] =
-            self.roster.published(self.last_provider_thread.as_ref());
+        thread["pendingBackgroundTasks"] = self.roster.published(
+            self.last_provider_thread.as_ref(),
+            self.scheduled.due.is_some(),
+        );
         // A turn that wrote to the transcript moved past a rollback's pinned head.
         if completed || turn.cursor.is_some() {
             thread["nativeConversationHeadRef"] = Value::Null;
@@ -2893,6 +2911,40 @@ impl<E: Env> Mapper<E> {
             return;
         }
         self.request_continuation(out);
+    }
+
+    /// `trackClaudeScheduledWakeup`, in arrival order.
+    fn track_scheduled_wakeup(&mut self, message: &Inbound) {
+        match message {
+            Inbound::System(m) if m.subtype == "init" => {
+                let now = self.env.now_ms();
+                self.scheduled.turn_started(now, self.turn.is_none());
+            }
+            Inbound::Result(r) => self.scheduled.result(is_task_notification_result(r)),
+            Inbound::Assistant(m) => {
+                for block in &m.message.content {
+                    if let Block::ToolUse { id, name, .. } = block
+                        && name == "ScheduleWakeup"
+                    {
+                        self.scheduled.call(id);
+                    }
+                }
+            }
+            Inbound::User(m) => {
+                let UserContent::Blocks(blocks) = &m.message.content else {
+                    return;
+                };
+                let ids: Vec<&str> = blocks
+                    .iter()
+                    .filter_map(|b| match b {
+                        Block::ToolResult { tool_use_id, .. } => Some(tool_use_id.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                self.scheduled.results(&ids, m.tool_use_result.as_ref());
+            }
+            _ => {}
+        }
     }
 
     /// The prompt echo gate of `handleSdkMessage`: Claude may run a queued wake before the

@@ -40,6 +40,8 @@ pub(crate) struct Roster {
     /// Tasks whose end arrived while idle and waits for its continuation
     /// (`opaqueBackgroundTaskReplayTombstonesByNativeThread`).
     tombstones: VecDeque<String>,
+    /// Tasks the agent said it waits on (`awaitedBackgroundTasksByNativeThread`).
+    awaited: VecDeque<String>,
 }
 
 fn add_id(set: &mut VecDeque<String>, id: &str) {
@@ -110,9 +112,44 @@ impl Roster {
             .collect()
     }
 
-    /// What the provider thread lists: the roster, then the owed wakes.
-    pub(crate) fn published(&self, previous: Option<&Value>) -> Value {
-        let mut tasks = self.tasks.clone();
+    /// `awaitBackgroundTasks`: the given ids that are on the roster, marked or unmarked.
+    pub(crate) fn set_awaited(&mut self, task_ids: &[String], awaited: bool) -> Vec<String> {
+        let mut matched: Vec<String> = Vec::new();
+        for id in task_ids {
+            if !matched.contains(id) && self.tasks.iter().any(|t| t["taskId"] == id.as_str()) {
+                matched.push(id.clone());
+            }
+        }
+        for id in &matched {
+            if awaited {
+                add_id(&mut self.awaited, id);
+            } else {
+                self.awaited.retain(|t| t != id);
+            }
+        }
+        matched
+    }
+
+    /// What the provider thread lists: the roster (awaited ones marked), then the owed wakes
+    /// (`publishedPendingBackgroundTasks`).
+    pub(crate) fn published(&self, previous: Option<&Value>, scheduled: bool) -> Value {
+        let mut tasks: Vec<Value> = self
+            .tasks
+            .iter()
+            .map(|task| {
+                let mut task = task.clone();
+                if task["taskId"]
+                    .as_str()
+                    .is_some_and(|id| self.awaited.iter().any(|a| a == id))
+                {
+                    task["awaited"] = json!(true);
+                }
+                task
+            })
+            .collect();
+        if scheduled {
+            tasks.push(super::wakes::scheduled_wakeup_task());
+        }
         tasks.extend(self.owed(previous));
         json!(tasks)
     }
@@ -140,6 +177,7 @@ impl Roster {
     #[cfg(test)]
     pub(crate) fn sizes(&self) -> usize {
         self.known.len()
+            + self.awaited.len()
             + self.wake_eligible.len()
             + self.tombstones.len()
             + self.tasks.len()
@@ -153,6 +191,7 @@ impl Roster {
         let had = !self.tasks.is_empty();
         self.tasks.clear();
         self.monitor_tasks.clear();
+        self.awaited.clear();
         had
     }
 
@@ -216,6 +255,7 @@ impl Roster {
         let before = self.tasks.len();
         self.tasks.retain(|t| t["taskId"] != task_id);
         self.monitor_tasks.retain(|t| t != task_id);
+        self.awaited.retain(|t| t != task_id);
         self.tasks.len() != before
     }
 
@@ -342,6 +382,10 @@ impl<E: Env> Mapper<E> {
                     self.roster.remember(task);
                 }
                 // T3 sends the thread for every such frame, changed or not.
+                let tasks = &next;
+                self.roster
+                    .awaited
+                    .retain(|a| tasks.iter().any(|t| t["taskId"] == a.as_str()));
                 self.roster.tasks = next;
                 true
             }
@@ -398,6 +442,27 @@ impl<E: Env> Mapper<E> {
         msg.subtype == "background_tasks_changed"
     }
 
+    /// `awaitBackgroundTasks` for the session's native thread. Returns the matched ids.
+    pub(crate) fn await_background_tasks(
+        &mut self,
+        provider_thread: &Value,
+        task_ids: &[String],
+        awaited: bool,
+    ) -> (Vec<String>, Vec<Out>) {
+        let mut out = Vec::new();
+        if provider_thread["nativeThreadRef"]["nativeId"]
+            .as_str()
+            .is_none()
+        {
+            return (Vec::new(), out);
+        }
+        let matched = self.roster.set_awaited(task_ids, awaited);
+        if !matched.is_empty() {
+            self.emit_roster(&mut out);
+        }
+        (matched, out)
+    }
+
     /// `emitRosterUpdate`: the provider thread with the roster. Idle with no turn running;
     /// with one, `active` in place of `idle`.
     fn emit_roster(&mut self, out: &mut Vec<Out>) {
@@ -417,8 +482,10 @@ impl<E: Env> Mapper<E> {
         };
         thread["providerSessionId"] = json!(self.provider_session_id);
         thread["status"] = status;
-        thread["pendingBackgroundTasks"] =
-            self.roster.published(self.last_provider_thread.as_ref());
+        thread["pendingBackgroundTasks"] = self.roster.published(
+            self.last_provider_thread.as_ref(),
+            self.scheduled.due.is_some(),
+        );
         thread["updatedAt"] = json!(self.env.now());
         self.last_provider_thread = Some(thread.clone());
         emit(
