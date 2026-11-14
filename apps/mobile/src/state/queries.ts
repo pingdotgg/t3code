@@ -11,6 +11,7 @@ import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/files
 import { environmentSession } from "./session";
 import { useEnvironmentPresentation } from "./presentation";
 import type { VcsRefTarget } from "@t3tools/client-runtime/state/vcs";
+import type { ComposerPathSearchTarget } from "@t3tools/client-runtime/state/threads";
 import type {
   EnvironmentId,
   OrchestrationV2ProjectedTurnItem,
@@ -49,7 +50,6 @@ import {
   isComposerPathSearchTarget,
   normalizeComposerPathSearchQuery,
   type CheckpointDiffTarget,
-  type ComposerPathSearchTarget,
 } from "./queryTargets";
 
 const COMPOSER_PATH_SEARCH_DEBOUNCE_MS = 200;

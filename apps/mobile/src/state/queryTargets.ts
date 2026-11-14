@@ -1,3 +1,4 @@
+import type { ComposerPathSearchTarget } from "@t3tools/client-runtime/state/threads";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
 export interface CheckpointDiffTarget {
@@ -6,12 +7,6 @@ export interface CheckpointDiffTarget {
   readonly fromTurnCount: number | null;
   readonly toTurnCount: number | null;
   readonly ignoreWhitespace: boolean;
-}
-
-export interface ComposerPathSearchTarget {
-  readonly environmentId: EnvironmentId | null;
-  readonly cwd: string | null;
-  readonly query: string | null;
 }
 
 export function normalizeComposerPathSearchQuery(query: string | null): string | null {

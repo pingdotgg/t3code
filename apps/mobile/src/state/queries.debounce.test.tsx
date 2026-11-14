@@ -1,5 +1,6 @@
 import { AuthFilesystemReadScope, EnvironmentId } from "@t3tools/contracts";
 import { RegistryContext } from "@effect/atom-react";
+import type { ComposerPathSearchTarget } from "@t3tools/client-runtime/state/threads";
 import type { VcsRefTarget } from "@t3tools/client-runtime/state/vcs";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { act, useLayoutEffect } from "react";
@@ -55,8 +56,24 @@ vi.mock("./query", () => ({
   }),
 }));
 
+vi.mock("../lib/uuid", () => ({ uuidv4: () => "id" }));
+vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));
+vi.mock("./use-composer-drafts", () => ({
+  getComposerDraftSnapshot: () => ({ context: null }),
+  setComposerDraftContext: vi.fn(),
+  useComposerDraftSelection: () => null,
+}));
+vi.mock("./provider-workspace-snapshot-refresh", () => ({
+  providerWorkspaceSnapshotRefresh: vi.fn(),
+}));
+vi.mock("./queries", async (original) => ({
+  ...(await original<typeof import("./queries")>()),
+  useThreadSearch: () => ({ matches: [], query: "", isPending: false }),
+  useComposerPullRequestSearch: () => ({ entries: [], isPending: false, error: null }),
+}));
+
+import { useComposerCommandMenu } from "../features/threads/use-composer-command-menu";
 import { useComposerPathSearch, usePaginatedBranches } from "./queries";
-import type { ComposerPathSearchTarget } from "./queryTargets";
 
 function setup() {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -248,23 +265,6 @@ it("keeps compiled branch results stable and resets pagination for a new target 
   expect(current!.refs).toEqual([]);
 });
 
-vi.mock("../lib/uuid", () => ({ uuidv4: () => "id" }));
-vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));
-vi.mock("./use-composer-drafts", () => ({
-  getComposerDraftSnapshot: () => ({ context: null }),
-  setComposerDraftContext: vi.fn(),
-  useComposerDraftSelection: () => null,
-}));
-vi.mock("./provider-workspace-snapshot-refresh", () => ({
-  providerWorkspaceSnapshotRefresh: vi.fn(),
-}));
-vi.mock("./queries", async (original) => ({
-  ...(await original<typeof import("./queries")>()),
-  useThreadSearch: () => ({ matches: [], query: "", isPending: false }),
-  useComposerPullRequestSearch: () => ({ entries: [], isPending: false, error: null }),
-}));
-import { useComposerCommandMenu } from "../features/threads/use-composer-command-menu";
-
 it.each(["unchanged", "workspace", "remounted-environment", "settled-workspace"])(
   "does not insert an old workspace result into a replacement target: %s",
   (change) => {
@@ -316,13 +316,7 @@ it.each(["unchanged", "workspace", "remounted-environment", "settled-workspace"]
       const item = menu?.items.find((item) => item.type === "path");
       if (!item || !menu) throw new Error("Expected displayed path suggestion");
       act(() => menu!.onSelect(item));
-      if (change !== "workspace") {
-        expect(onChangeDraftMessage).toHaveBeenCalledOnce();
-      } else {
-        expect(onChangeDraftMessage).not.toHaveBeenCalledWith(
-          "[only-in-original.ts](src/only-in-original.ts) ",
-        );
-      }
+      expect(onChangeDraftMessage).toHaveBeenCalledTimes(change === "workspace" ? 0 : 1);
     } finally {
       act(() => root.unmount());
       vi.useRealTimers();

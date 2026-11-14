@@ -10,6 +10,7 @@ import type {
   ServerProviderSkill,
   ServerProviderSlashCommand,
 } from "@t3tools/contracts";
+import type { ComposerPathSearchTarget } from "@t3tools/client-runtime/state/threads";
 import type { ComposerTriggerKind } from "@t3tools/shared/composerTrigger";
 import { memo } from "react";
 import { Pressable, ScrollView, StyleSheet, View, type ViewStyle } from "react-native";
@@ -22,7 +23,6 @@ import { PierreEntryIcon } from "../../components/PierreEntryIcon";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { cn } from "../../lib/cn";
 import type { ModelOption } from "../../lib/modelOptions";
-import type { ComposerPathSearchTarget } from "../../state/queryTargets";
 import { pullRequestStatus } from "../pull-requests/pullRequestStatus";
 export type ComposerCommandItem =
   | {

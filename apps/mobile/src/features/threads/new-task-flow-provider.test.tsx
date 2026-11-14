@@ -128,10 +128,11 @@ function project(environment: string, id: string): EnvironmentProject {
   };
 }
 
-function setup(flowKey = "test-flow") {
+function setup() {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   vi.useFakeTimers();
   vi.clearAllMocks();
+  mocks.serverConfig.mockReset();
   const registry = AtomRegistry.make();
   mocks.registry.mockReturnValue(registry);
   const projects = [project("one", "a"), project("one", "b"), project("two", "b")];
@@ -252,7 +253,7 @@ function setup(flowKey = "test-flow") {
       await act(async () =>
         root.render(
           <RegistryContext.Provider value={registry}>
-            <NewTaskFlowProvider active={active} flowKey={flowKey}>
+            <NewTaskFlowProvider active={active} flowKey="test-flow">
               <Probe />
             </NewTaskFlowProvider>
           </RegistryContext.Provider>,
@@ -447,8 +448,7 @@ it.each([
 );
 
 it("keeps the draft owner while selecting an existing worktree", async () => {
-  mocks.serverConfig.mockReset();
-  using screen = setup("ownership-control");
+  using screen = setup();
   await screen.render(true);
   await act(async () => screen.current.setWorkspaceMode("local"));
   const owner = screen.current.draftKey;
