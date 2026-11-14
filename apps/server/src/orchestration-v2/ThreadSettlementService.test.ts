@@ -1795,12 +1795,15 @@ describe("ThreadSettlementServiceV2 worker", () => {
         yield* reactor.drain;
         assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 2);
 
-        // An app merge the host completes later sends only a refresh, which ends the quiet wait.
+        // An app merge the host completes later sends only a refresh; reads stay on the minute
+        // cadence while the pull request still reads open.
         yield* fixture.publishRefresh;
-        yield* TestClock.adjust("1 minute");
-        yield* Queue.take(fixture.snapshotReads);
-        yield* reactor.drain;
-        assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 3);
+        for (const expected of [3, 4]) {
+          yield* TestClock.adjust("1 minute");
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+          assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, expected);
+        }
       }).pipe(Effect.provide(fixture.layer));
     }),
   );

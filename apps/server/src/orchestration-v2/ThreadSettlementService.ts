@@ -329,11 +329,12 @@ export const make = Effect.gen(function* () {
     readonly repository: string;
     readonly number: number;
   }) => `${reference.projectId}\0${reference.repository.toLowerCase()}\0${reference.number}`;
-  // Merges and refreshes arrive during sweeps; a read that began before one must not mark it quiet.
-  let quietGeneration = 0;
-  // An app merge on a host that completes it later sends no merge event, only this refresh.
-  const forgetQuietReads = Effect.sync(() => {
-    quietGeneration++;
+  // A host can finish a merge minutes after the app's merge action and its refresh, and Azure's
+  // updatedAt never moves while open, so pull requests stay on the fast cadence for a while after.
+  // Sweeps that started before the pause fail the same check, so their reads record nothing.
+  let quietPausedAtMs = Number.NEGATIVE_INFINITY;
+  const pauseQuietReads = Effect.fn("ThreadSettlementServiceV2.pauseQuietReads")(function* () {
+    quietPausedAtMs = DateTime.toEpochMillis(yield* DateTime.now);
     quietOpenReadAt.clear();
   });
   const terminals = yield* TerminalManager.TerminalManager;
@@ -347,10 +348,7 @@ export const make = Effect.gen(function* () {
     threadId?: ThreadId,
   ) {
     // A thread that is not a candidate now (still running) must not keep a merged PR's quiet entry.
-    if (mergedPullRequest !== null) {
-      quietGeneration++;
-      quietOpenReadAt.delete(quietReadKey(mergedPullRequest));
-    }
+    if (mergedPullRequest !== null) yield* pauseQuietReads();
     const settings = yield* settingsService.getSettings;
     const automaticSettlementEnabled = autoSettlementConfigured(settings);
     const threads = yield* projections.getSettlementCandidates(threadId);
@@ -540,7 +538,6 @@ export const make = Effect.gen(function* () {
         else if (!matchesMerge && quietOpenReadAt.has(readKey)) {
           return { state: "open", closedAt: null, mergedAt: null } satisfies SettlementPullRequest;
         }
-        const readGeneration = quietGeneration;
         const summary = matchesMerge
           ? ({
               state: "merged",
@@ -558,7 +555,7 @@ export const make = Effect.gen(function* () {
         if (
           "updatedAt" in summary &&
           summary.state === "open" &&
-          readGeneration === quietGeneration &&
+          nowMs - quietPausedAtMs >= QUIET_SYNC_INTERVAL_MS &&
           nowMs - Date.parse(summary.updatedAt) >= QUIET_AFTER_MS
         ) {
           quietOpenReadAt.set(readKey, nowMs);
@@ -826,7 +823,7 @@ export const make = Effect.gen(function* () {
       }),
     );
     yield* forkParked(Stream.runForEach(mergedPullRequests, (event) => runSweep(event)));
-    yield* forkParked(Stream.runForEach(pullRequests.subscribeRefreshes, () => forgetQuietReads));
+    yield* forkParked(Stream.runForEach(pullRequests.subscribeRefreshes, pauseQuietReads));
     yield* forkParked(
       Stream.runForEach(events, processEvent).pipe(
         Effect.catchCause((cause) =>
