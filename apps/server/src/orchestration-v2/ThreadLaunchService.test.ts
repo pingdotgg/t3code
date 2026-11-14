@@ -122,6 +122,8 @@ const claudeAdapter = {
 } as ProviderAdapter.ProviderAdapterV2["Service"];
 
 interface HarnessOptions {
+  readonly projectRoot?: string;
+  readonly gitDriver?: Layer.Layer<GitVcsDriver.GitVcsDriver>;
   readonly closeTerminal?: TerminalManager.TerminalManager["Service"]["close"];
   readonly adapters?: ReadonlyArray<ProviderAdapter.ProviderAdapterV2["Service"]>;
   readonly managedFolders?: Layer.Layer<ManagedProjectFolders.ManagedProjectFolders>;
@@ -191,6 +193,7 @@ function makeHarness(options: HarnessOptions = {}) {
     Layer.mock(CheckpointStore.CheckpointStore)({
       isGitRepository: options.isGitRepository ?? (() => Effect.succeed(true)),
     }),
+    options.gitDriver ?? Layer.mock(GitVcsDriver.GitVcsDriver)({}),
     Layer.succeed(ProjectService.ProjectService, {
       create: () => Effect.die("unused"),
       bootstrap: () => Effect.die("unused"),
@@ -200,7 +203,10 @@ function makeHarness(options: HarnessOptions = {}) {
       getById: (id) =>
         Effect.succeed(
           id === projectId
-            ? Option.some(project)
+            ? Option.some({
+                ...project,
+                workspaceRoot: options.projectRoot ?? project.workspaceRoot,
+              })
             : id === otherProjectId
               ? Option.some(otherProject)
               : Option.none(),
@@ -1327,6 +1333,87 @@ it.effect.each(["stable", "upstream/release"])(
         ),
       ),
     ),
+);
+
+it.effect.each([
+  { name: "a Settings default", baseRef: "main", defaultBaseRef: true, prepares: true },
+  { name: "an explicit master", baseRef: "master", defaultBaseRef: undefined, prepares: true },
+  // An explicit base that does not exist is kept, so its runs fail rather than silently moving.
+  { name: "an explicit missing main", baseRef: "main", defaultBaseRef: undefined, prepares: false },
+])("a scheduled task saved with $name in a master-only repository prepares: $prepares", (row) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const git = yield* GitVcsDriver.GitVcsDriver;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "scheduled-default-base-" });
+    const cwd = `${directory}/repo`;
+    const worktreePath = `${directory}/worktree`;
+    yield* fs.makeDirectory(cwd);
+    const command = (at: string, args: string[]) =>
+      git.execute({ operation: "launch-test", cwd: at, args });
+    yield* command(cwd, ["init", "-b", "master"]);
+    yield* command(cwd, ["config", "user.name", "Test"]);
+    yield* command(cwd, ["config", "user.email", "test@example.test"]);
+    yield* command(cwd, ["commit", "--allow-empty", "-m", "initial"]);
+    const head = (yield* command(cwd, ["rev-parse", "HEAD"])).stdout.trim();
+    const harness = makeHarness({
+      projectRoot: cwd,
+      gitDriver: Layer.succeed(GitVcsDriver.GitVcsDriver, git),
+      hasCommit: ({ refName }) =>
+        command(cwd, ["rev-parse", "--verify", `${refName}^{commit}`]).pipe(
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        ),
+      remoteExists: (input) => git.remoteExists({ ...input, cwd }),
+      fetchWorktreeBaseCommit: (input) => git.fetchWorktreeBaseCommit({ ...input, cwd }),
+      createWorktree: (input, options) =>
+        git.createWorktree({ ...input, cwd, path: worktreePath }, options),
+      git: {
+        repositoryRoot: () => Effect.succeed(cwd),
+        resolveWorktreeBaseRemote: (input) => git.resolveWorktreeBaseRemote({ ...input, cwd }),
+      },
+    });
+    const layerScheduledTasks = ScheduledTasks.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          harness.layer,
+          NodeCrypto.layer,
+          Scheduler.layer,
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          ManagedPolicy.layerTest(),
+          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const tasks = yield* ScheduledTasks.ScheduledTaskService;
+      const { task } = yield* tasks.upsert({
+        ...scheduledTaskInput("scheduled-task:default-base", projectId),
+        workspaceStrategy: { type: "worktree", baseRef: row.baseRef, startFromOrigin: true },
+        ...(row.defaultBaseRef === undefined ? {} : { defaultBaseRef: row.defaultBaseRef }),
+      });
+      assert.deepEqual(task.workspaceStrategy, {
+        type: "worktree",
+        baseRef: row.prepares ? "master" : "main",
+        startFromOrigin: true,
+      });
+      const { threadId } = yield* tasks.runNow({ id: task.id });
+      const prepared = yield* preparationSettled(threadId!);
+      if (!row.prepares) {
+        assert.equal(prepared.runs[0]?.status, "failed");
+        return;
+      }
+      assert.notEqual(prepared.runs[0]?.status, "failed");
+      assert.equal(prepared.thread.worktreePath, worktreePath);
+      assert.equal((yield* command(worktreePath, ["rev-parse", "HEAD"])).stdout.trim(), head);
+    }).pipe(Effect.provide(Layer.mergeAll(harness.layer, layerScheduledTasks)));
+  }).pipe(
+    Effect.provide(
+      GitVcsDriver.layer.pipe(
+        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "scheduled-default-git-" })),
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      ),
+    ),
+  ),
 );
 
 it.effect("fetches the origin base from the remote it already resolved", () => {

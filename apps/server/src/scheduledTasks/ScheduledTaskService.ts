@@ -1517,7 +1517,14 @@ export const layer = Layer.effect(
         ((yield* managedFolders.isScratchProject(input.projectId)) ||
           (yield* threadLaunch.isNonGitProject(input.projectId)))
           ? { type: "root" }
-          : input.workspaceStrategy;
+          : input.workspaceStrategy.type === "worktree" && input.defaultBaseRef === true
+            ? {
+                ...input.workspaceStrategy,
+                baseRef:
+                  (yield* threadLaunch.defaultWorktreeBaseRef(input.projectId)) ??
+                  input.workspaceStrategy.baseRef,
+              }
+            : input.workspaceStrategy;
       const scheduleUnchanged =
         existingTask !== null &&
         existingTask.enabled === input.enabled &&

@@ -39,6 +39,7 @@ import {
   type WebhookFilterDraft,
 } from "@t3tools/client-runtime/scheduled-task-webhook";
 import { scheduleTimeZoneLabel } from "@t3tools/client-runtime/scheduled-task-time-zone";
+import { scheduledTaskWorkspaceInput } from "@t3tools/client-runtime/scheduled-task-workspace";
 import { useRef, useState, type ReactNode } from "react";
 import { useFocusEffect, useNavigation, usePreventRemove } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
@@ -810,16 +811,12 @@ function TaskForm({
       enabled: draft.enabled,
       threadId: draft.threadId,
       ...(offersThreadModes ? { threadMode: draft.threadMode } : {}),
-      workspaceStrategy:
-        draft.workspace === "root"
-          ? { type: "root" }
-          : draft.workspace === "existing_worktree"
-            ? { type: "existing_worktree", worktreePath: draft.checkoutPath.trim() }
-            : {
-                type: "worktree",
-                baseRef: draft.baseRef.trim() || "main",
-                startFromOrigin: draft.startFromOrigin,
-              },
+      ...scheduledTaskWorkspaceInput({
+        mode: draft.workspace,
+        baseRef: draft.baseRef,
+        startFromOrigin: draft.startFromOrigin,
+        worktreePath: draft.checkoutPath,
+      }),
       // Tasks have no mode picker; a mode above the administrator's ceiling is refused.
       runtimeMode:
         clampManagedRuntimeMode(config?.managedPolicy, draft.runtimeMode) ?? draft.runtimeMode,
@@ -1034,11 +1031,16 @@ function TaskForm({
           {draft.workspace === "worktree" ? (
             <PickerRow
               label="Base branch"
-              value={resolveNewTaskBranchLabel({
-                branchName: draft.baseRef,
-                startFromOrigin: draft.startFromOrigin,
-                workspaceMode: "worktree",
-              })}
+              value={
+                // A blank base saves as the project's default branch, which the server resolves.
+                draft.baseRef
+                  ? resolveNewTaskBranchLabel({
+                      branchName: draft.baseRef,
+                      startFromOrigin: draft.startFromOrigin,
+                      workspaceMode: "worktree",
+                    })
+                  : "Default branch"
+              }
               borderTop
               disabled={!draft.projectId || saving || dictationPending || environmentUnavailable}
               onPress={() => navigation.navigate("SettingsScheduledTaskBranch")}
