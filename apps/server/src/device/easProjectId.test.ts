@@ -166,6 +166,103 @@ it.effect.each([
     expected: Option.some(ID_A),
   },
   {
+    case: "reads app.json's id through a typed variant config that spreads parts of config",
+    files: {
+      "app.config.js": `/** @param {import('expo/config').ConfigContext} context */
+      module.exports = ({ config }) => ({
+        ...config,
+        ios: { ...config.ios, infoPlist: { ...config?.ios.infoPlist, CFBundleDisplayName: "Dev" } },
+        plugins: [...config.plugins, "expo-dev-client"],
+      });`,
+      "app.json": JSON.stringify({ expo: { extra: { eas: { projectId: ID_A } } } }),
+    },
+    expected: Option.some(ID_A),
+  },
+  {
+    case: "reads app.json's id through a config typed in a multi-line JSDoc or line comment",
+    files: {
+      "app.config.js": `// Types: import('expo/config').ExpoConfig
+      /**
+       * The dev variant of the app.
+       * @param {import('expo/config').ConfigContext} context
+       */
+      module.exports = ({ config }) => ({ ...config, name: "Dev" });`,
+      "app.json": JSON.stringify({ expo: { extra: { eas: { projectId: ID_A } } } }),
+    },
+    expected: Option.some(ID_A),
+  },
+  {
+    case: "gives no answer when a config spreads a part of config over the top, which may bring its own extra",
+    files: {
+      "app.config.js": `module.exports = ({ config }) => ({ ...config, ...config.preview });`,
+      "app.json": JSON.stringify({
+        expo: {
+          extra: { eas: { projectId: ID_A } },
+          preview: { extra: { eas: { projectId: ID_B } } },
+        },
+      }),
+    },
+    expected: Option.none(),
+  },
+  {
+    case: "gives no answer when a config wraps a part of config under another key, as Expo reads expo",
+    files: {
+      "app.config.js": `module.exports = ({ config }) =>
+        process.env.APP_VARIANT === "preview" ? { expo: { ...config.preview } } : { ...config };`,
+      "app.json": JSON.stringify({
+        expo: {
+          extra: { eas: { projectId: ID_A } },
+          preview: { extra: { eas: { projectId: ID_B } } },
+        },
+      }),
+    },
+    expected: Option.none(),
+  },
+  {
+    case: "gives no answer when a config spreads a part into an expo entry, which Expo reads as the config",
+    files: {
+      "app.config.js": `module.exports = ({ config }) => ({ ...config, expo: { ...config.preview.expo } });`,
+      "app.json": JSON.stringify({
+        expo: {
+          extra: { eas: { projectId: ID_A } },
+          preview: { expo: { extra: { eas: { projectId: ID_B } } } },
+        },
+      }),
+    },
+    expected: Option.none(),
+  },
+  {
+    case: "gives no answer when a config spreads a part into a computed key",
+    files: {
+      "app.config.js": `module.exports = ({ config }) => ({ ...config, [[...config.keys]]: config.preview });`,
+      "app.json": JSON.stringify({
+        expo: {
+          keys: ["extra"],
+          extra: { eas: { projectId: ID_A } },
+          preview: { eas: { projectId: ID_B } },
+        },
+      }),
+    },
+    expected: Option.none(),
+  },
+  {
+    case: "gives no answer when a template line that only looks like a comment replaces extra",
+    files: {
+      "app.config.js": `module.exports = ({ config }) => {
+        const banner = \`
+/* \${(config.extra = config.preview.extra)} */\`;
+        return { ...config, name: banner };
+      };`,
+      "app.json": JSON.stringify({
+        expo: {
+          extra: { eas: { projectId: ID_A } },
+          preview: { extra: { eas: { projectId: ID_B } } },
+        },
+      }),
+    },
+    expected: Option.none(),
+  },
+  {
     case: "reads a project id that follows spreads",
     files: {
       "app.config.js": `export default ({ config }) => ({
