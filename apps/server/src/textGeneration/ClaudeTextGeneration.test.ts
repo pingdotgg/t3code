@@ -184,6 +184,28 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
       ),
   );
 
+  it.effect("generates branch names outside the project", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({ structured_output: { branch: "fix-reconnect" } }),
+        cwdMustNotBe: process.cwd(),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateBranchName({
+            cwd: process.cwd(),
+            message: "Fix reconnect failures",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("claudeAgent"),
+              model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+            },
+          });
+
+          expect(generated.branch).toBe("fix-reconnect");
+        }),
+    ),
+  );
+
   it.effect("sends thread title instructions to the provider prompt", () =>
     withFakeClaudeEnv(
       {
