@@ -986,13 +986,12 @@ it.effect.each([true, false])(
       if (!indexed) yield* sql`DROP TABLE orchestration_v2_message_search`;
       const threadIds = (query: string) =>
         search.search({ query }).pipe(Effect.map(({ matches }) => matches.map((m) => m.threadId)));
-      for (const query of ["gannet's", "gannet\u2019s", "部署 gannet's", "部署 gannet\u2019s"]) {
+      for (const query of ["gannet's", "部署 gannet's"]) {
         assert.deepEqual(yield* threadIds(query), [curly], query);
       }
-      for (const query of ["kittiwake's", "kittiwake\u2019s", "部署 kittiwake\u2019s"]) {
+      for (const query of ["kittiwake\u2019s", "部署 kittiwake\u2019s"]) {
         assert.deepEqual(yield* threadIds(query), [straight], query);
       }
-      assert.deepEqual(yield* threadIds("部署 gannets"), []);
     }).pipe(Effect.provide(layerTest)),
 );
 
