@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { type MouseEvent as ReactMouseEvent, useState } from "react";
 
 import { type ResizableWidthHandlers, useResizableWidth } from "./useResizableWidth";
 import { observeResize } from "../lib/observeResize";
@@ -30,15 +30,26 @@ export function usePreviewPanelInlineSize(
   const [maxWidth, setMaxWidth] = useState(() =>
     getPreviewPanelMaxWidth(typeof window === "undefined" ? 1280 : window.innerWidth),
   );
-  const { width, handlers } = useResizableWidth({
+  const {
+    width,
+    handlers: dragHandlers,
+    setWidth,
+  } = useResizableWidth({
     storageKey: options.widthStorageKey ?? PREVIEW_PANEL_WIDTH_STORAGE_KEY,
     defaultWidth: options.defaultWidth ?? PREVIEW_PANEL_DEFAULT_WIDTH,
     minWidth: PREVIEW_PANEL_MIN_WIDTH,
     maxWidth,
     edge: "left",
   });
+  const resolveRow = (host: HTMLElement | null) =>
+    container ?? (enabled ? host?.parentElement : null) ?? null;
+  const centerInRow = (event: ReactMouseEvent<HTMLElement>) => {
+    const row = resolveRow(event.currentTarget.parentElement);
+    if (row) setWidth(Math.round(row.clientWidth / 2));
+  };
+  const handlers: ResizableWidthHandlers = { ...dragHandlers, onDoubleClick: centerInRow };
   const observeRow = (host: HTMLElement) => {
-    const row = container ?? (enabled ? host.parentElement : null) ?? null;
+    const row = resolveRow(host);
     // Ref callbacks run before paint, so the width is clamped without an over-wide
     // flash on mount. Only the derived cap is stored: the row resizes every frame
     // of a sidebar drag, but an unchanged cap skips re-rendering the owner.
