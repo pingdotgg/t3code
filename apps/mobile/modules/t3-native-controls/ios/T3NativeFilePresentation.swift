@@ -114,26 +114,8 @@ final class T3NativeFilePresentation: NSObject, QLPreviewControllerDataSource,
       return
     }
     settled[index] = true
-    switch result {
-    case .success(let file):
-      // Quick Look knows which formats it renders; refuse before presenting so the caller
-      // can fall back instead of showing an "unsupported format" page.
-      if QLPreviewController.canPreview(file as NSURL) {
-        files[index] = file
-      } else {
-        Self.remove(file)
-        if index == selectedIndex {
-          openError = NSError(
-            domain: "T3NativePresentation",
-            code: 3,
-            userInfo: [NSLocalizedDescriptionKey: "This file type cannot be previewed on this device."]
-          )
-        }
-      }
-    case .failure(let error):
-      if index == selectedIndex { openError = error }
-    }
-    if index == selectedIndex, files[index] == nil {
+    if let error = store(index, result: result), index == selectedIndex {
+      openError = error
       dismiss()
       return
     }
@@ -146,6 +128,26 @@ final class T3NativeFilePresentation: NSObject, QLPreviewControllerDataSource,
         guard !Task.isCancelled else { return }
         show()
       }
+    }
+  }
+
+  private func store(_ index: Int, result: Result<URL, Error>) -> Error? {
+    switch result {
+    case .success(let file):
+      // Quick Look knows which formats it renders; refuse before presenting so the caller
+      // can fall back instead of showing an "unsupported format" page.
+      guard QLPreviewController.canPreview(file as NSURL) else {
+        Self.remove(file)
+        return NSError(
+          domain: "T3NativePresentation",
+          code: 3,
+          userInfo: [NSLocalizedDescriptionKey: "This file type cannot be previewed on this device."]
+        )
+      }
+      files[index] = file
+      return nil
+    case .failure(let error):
+      return error
     }
   }
 
