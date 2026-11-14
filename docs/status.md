@@ -499,6 +499,56 @@ Deliberate differences from the T3 server:
   provider rollback, which can cut a Codex thread twice. Proof:
   `a_restart_finishes_or_fails_a_rollback_left_pending` (fails without the recovery).
 
+Fixed to match the T3 server, each with a test that fails without the fix:
+
+- A start that fails after Force stop no longer holds the queue: `end_run` holds it only when
+  it ended the run (`a_late_start_failure_after_force_stop_does_not_hold_the_queue`).
+- The end-of-run checkpoint capture is an effect in the thread's lane, as T3's
+  `checkpoint.capture`, so a rollback admitted while a run waits rolls it back too
+  (`a_rollback_admitted_while_a_run_waits_for_its_capture_rolls_it_back`). Fixture replay: 42
+  of 159, as before.
+- `dispatch` and `end_run` take an effect's lane slot under the store lock, so lane order is
+  commit order (`lane_order_is_reservation_order`).
+- Rollback admission asks the provider instance for its capabilities, as T3's
+  `dispatchCheckpointRollback` (`rollback_asks_the_provider_instance_whether_it_can_roll_back`).
+- A rollback's own session gets the runtime policy override
+  (`a_rollback_session_gets_the_runtime_policy_override`); a dropped session-file call frees
+  its SDK host hold (`a_dropped_function_call_releases_its_hold`); the Codex `PATH` search
+  skips a file without an execute bit (`find_executable_skips_a_file_that_cannot_run`).
+
+Established, not fixed:
+
+- **Stop during a Claude cold start.** In T3 the run is marked `running` before
+  `session.startTurn` (`ProviderTurnStartService.ts` 1472-1475, start at 1652). When the
+  session has MCP servers, `openQuery` waits for `initializationResult` (up to 5 min) and
+  `setMcpServers` (up to 90 s) before it returns (`ClaudeAdapterV2.ts` 1470-1509, called at
+  12574), and the provider turn is emitted only after that (12701). A Stop in that window
+  finds no provider turn, so `dispatchRunInterrupt` takes its "before provider start" branch
+  (`Orchestrator.ts` 13013-13161): the run, attempt and root node end `interrupted` in the
+  Stop's own commit, with a `run_interrupt_result` "Run interrupted before provider start",
+  and `provider-turn.start` is cancelled (`cancelUnsettled`, `EventSink.ts` 783-794). The
+  worker races the running start against that cancellation (`EffectWorker.ts` 816 and 844),
+  so the start is interrupted and the half-open CLI is killed (`ClaudeAdapterV2.ts` 1530-1550).
+  A T3 client sees the run stop at once. Here, Stop records the request and queues an
+  `Interrupt` effect behind the `StartTurn` in the lane; the Claude provider's `start_turn`
+  also holds `turn_control` for the whole start (`conn-provider-claude/src/session.rs` 1392,
+  `interrupt_turn` waits on it at 1461). The client shows "Stopping" until the start returns,
+  up to about 6.5 minutes, and only then is the turn interrupted. Our Claude provider also
+  opens the provider turn before the boot (the cold-start change above), so a port of T3's
+  branch needs to know whether the provider accepted the turn, not only whether a provider
+  turn row exists. Without MCP servers T3 emits the provider turn right after `query()`, and
+  both servers take the normal interrupt path.
+- **`binaryPath` for Claude and Codex is not applied.** `crates/conn-server/src/main.rs`
+  builds `ClaudeConfig` and `CodexConfig` with their defaults (`claude`, `codex` on `PATH`) and
+  never reads `providerInstances.claudeAgent` or `.codex` from the settings; nothing applies a
+  later change either. The same holds for `homePath`, `launchArgs` and the instance
+  environment. T3 passes `binaryPath` (with `~` expanded) as `pathToClaudeCodeExecutable`
+  (`ClaudeAdapterV2.ts` 13884-13890 and 2145) and as the Codex command
+  (`CodexAdapterV2.ts` 1733). Only Grok follows its settings (`GrokSettings`, the server's
+  status task). This is an open parity gap: the fix needs the settings applied to the
+  provider configs at start and on change, as for Grok, with a conformance scenario that shows
+  the CLI each server starts.
+
 ## Faults found in the T3 server
 
 Faults in the T3 server at the pinned Conn commit, written so they can be reported upstream.

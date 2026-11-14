@@ -119,7 +119,9 @@ all 23 are.
 - **Effect order.** A thread's effects (turn start, Stop, steer, answer, rollback, capture,
   close) run one at a time, in the order they were made, as T3's effect outbox claims them
   (`EffectOutbox.ts`); title generation runs outside, as T3 gives it its own lane. A lane
-  entry exists only while its thread has an effect waiting or running.
+  entry exists only while its thread has an effect waiting or running. `dispatch` and the
+  run's end take the lane slot under the store lock (`reserve_effect`), so lane order is
+  commit order; the end-of-run capture is such an effect, as T3's `checkpoint.capture`.
 - **Busy thread.** While a run is active, a message queues (`queue_after_active`, or any start)
   or steers (`steer_active`, or the client's `deliveryIntent` steer). A steer before the
   provider turn runs waits as a queued run with `steerWhenReadyRunId`; a steer the provider
