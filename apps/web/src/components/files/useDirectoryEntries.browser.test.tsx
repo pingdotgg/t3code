@@ -144,8 +144,10 @@ it("shares the follow-up promise and does not resolve callers before the final l
   expect(completed).toBe(true);
 });
 
-it("retains the four-query concurrency bound across directories and refreshes", async () => {
-  const folders = Array.from({ length: 8 }, (_, index) => ({
+it("retains the query concurrency bound across directories and refreshes", async () => {
+  // Owned by the test, so lowering the production limit fails it instead of moving the workload too.
+  const expectedFolderReads = 64;
+  const folders = Array.from({ length: expectedFolderReads + 4 }, (_, index) => ({
     path: `folder-${index}`,
     kind: "directory" as const,
   }));
@@ -163,17 +165,17 @@ it("retains the four-query concurrency bound across directories and refreshes", 
   const refreshStart = state.calls.length;
   state.resetPeakQueries();
   await act(async () => state.view.refresh());
-  expect(state.peakQueries).toBe(4);
-  expect(state.activeQueries).toBe(4);
+  expect(state.peakQueries).toBe(expectedFolderReads);
+  expect(state.activeQueries).toBe(expectedFolderReads);
   await act(async () => {
     for (let index = 0; index < 20; index++) state.view.refresh();
   });
   for (let index = refreshStart; index < state.calls.length; index++) {
     await state.settle(index, state.calls[index]!.path === "" ? folders : []);
-    expect(state.activeQueries).toBeLessThanOrEqual(4);
+    expect(state.activeQueries).toBeLessThanOrEqual(expectedFolderReads);
   }
-  expect(state.peakQueries).toBe(4);
-  expect(new Set(state.calls.map((call) => call.path)).size).toBe(9);
+  expect(state.peakQueries).toBe(expectedFolderReads);
+  expect(new Set(state.calls.map((call) => call.path)).size).toBe(folders.length + 1);
   for (const path of ["", ...folders.map((folder) => folder.path)]) {
     expect(state.calls.filter((call) => call.path === path).length).toBeLessThanOrEqual(3);
   }

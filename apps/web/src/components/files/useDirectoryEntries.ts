@@ -8,6 +8,9 @@ import { environmentCatalog } from "~/connection/catalog";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { projectEnvironment } from "~/state/projects";
 
+/** Folder reads in flight; the server shares one Git ignore check among reads beyond its four. */
+const FOLDER_READS_IN_FLIGHT = 64;
+
 export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
   const [directories, setDirectories] = useState(new Map<string, readonly ProjectEntry[]>());
   const [errors, setErrors] = useState(new Map<string, string>());
@@ -28,7 +31,8 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
     requested.current.add(directoryPath);
     const atom = projectEnvironment.listEntries({ environmentId, input: { cwd, directoryPath } });
     const request = (async () => {
-      if (running.current >= 4) await new Promise<void>((resolve) => waiting.current.push(resolve));
+      if (running.current >= FOLDER_READS_IN_FLIGHT)
+        await new Promise<void>((resolve) => waiting.current.push(resolve));
       else running.current++;
       const result = active.current
         ? await executeAtomQuery(appAtomRegistry, atom, {
