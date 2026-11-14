@@ -182,7 +182,11 @@ const makeHandler = Effect.fnUntraced(function* (browser: ServerBrowser.ServerBr
         // Ownership serializes actions in the service. Keep reading so dialog
         // replies and takeover can unblock an action already waiting on the page.
         if (!isAck(message))
-          return yield* canOperate
+          return yield* canOperate ||
+          (typeof message === "object" &&
+            message !== null &&
+            "type" in message &&
+            message.type === "streamSize")
             ? viewer.input(message).pipe(Effect.forkScoped, Effect.asVoid)
             : Effect.void;
         const ack = inFlight;

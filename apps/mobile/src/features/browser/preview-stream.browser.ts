@@ -243,7 +243,8 @@ export function start(configuration: PreviewStreamConfiguration) {
     const height = Math.round((interactive ? next.height : side) * ratio);
     if (cap && cap.width >= width && cap.height >= height) return;
     cap = { width: Math.max(width, cap?.width ?? 0), height: Math.max(height, cap?.height ?? 0) };
-    connect();
+    if (client) client.setFrameSize(cap);
+    else connect();
   };
   const observer = new ResizeObserver(() => {
     if (resizeTimer !== null) clearTimeout(resizeTimer);

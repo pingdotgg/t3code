@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   sent: [] as PreviewStreamInput[],
   access: { url: "ws://preview.test", token: "test" },
   painted: null as (() => void) | null,
+  frameSizes: vi.fn(),
 }));
 
 vi.mock(import("@t3tools/client-runtime/preview/server-browser-stream"), async (original) => ({
@@ -35,9 +36,11 @@ import { ServerBrowserSurface } from "./ServerBrowserSurface";
 function setup() {
   mocks.sent.length = 0;
   mocks.painted = null;
+  mocks.frameSizes.mockReset();
   mocks.createClient.mockReset().mockImplementation(() => ({
     send: (input: PreviewStreamInput) => mocks.sent.push(input),
     stop: () => undefined,
+    setFrameSize: mocks.frameSizes,
   }));
 }
 
@@ -219,4 +222,32 @@ describe("ServerBrowserSurface history", () => {
     press("pointerdown", 0);
     expect(mouseInputs()).not.toEqual([]);
   });
+});
+
+it("keeps control and the focused input when the streamed panel grows", async () => {
+  setup();
+  const { screen, input, canvas } = await renderSurface("you");
+  await using _screen = screen;
+  const panel = canvas.parentElement!;
+  panel.style.width = "400px";
+  panel.style.height = "300px";
+  await vi.waitFor(() => expect(panel.getBoundingClientRect().width).toBe(400));
+  input.focus();
+  const connections = mocks.createClient.mock.calls.length;
+  panel.style.width = "700px";
+  panel.style.height = "500px";
+  await vi.waitFor(() => {
+    const updated = mocks.frameSizes.mock.calls.some(
+      ([size]) => size.width === Math.round(700 * window.devicePixelRatio),
+    );
+    expect(updated || mocks.createClient.mock.calls.length > connections).toBe(true);
+  });
+  expect(mocks.createClient).toHaveBeenCalledTimes(connections);
+  expect(mocks.frameSizes).toHaveBeenCalledWith({
+    width: Math.round(700 * window.devicePixelRatio),
+    height: expect.any(Number),
+  });
+  expect(document.activeElement).toBe(input);
+  await userEvent.keyboard("a");
+  expect(keys()).toContainEqual(expect.objectContaining({ action: "down", key: "a" }));
 });
