@@ -15,6 +15,8 @@ import {
   type SupervisorConnectionState,
 } from "./model.ts";
 import {
+  connectionStatusText,
+  connectionStatusTitle,
   environmentMcpUrl,
   localEnvironmentMcpUrl,
   presentConnectionState,
@@ -187,6 +189,28 @@ describe("connection presentation", () => {
       error: "Disconnected.",
       traceId: "trace-1",
     });
+    const awaitingApproval = presentConnectionState(
+      supervisorState({
+        phase: "backoff",
+        attempt: 1,
+        retryAt: 1,
+        lastFailure: new ConnectionTransientError({
+          reason: "approval-pending",
+          detail: "Approve this device on Mac mini. It shows code K7QM-2XFD.",
+          traceId: "trace-2",
+        }),
+      }),
+    );
+    expect(awaitingApproval).toEqual({
+      phase: "reconnecting",
+      error: "Approve this device on Mac mini. It shows code K7QM-2XFD.",
+      traceId: "trace-2",
+      awaitingApproval: true,
+    });
+    expect(connectionStatusText(awaitingApproval)).toBe(
+      "Approve this device on Mac mini. It shows code K7QM-2XFD.",
+    );
+    expect(connectionStatusTitle(awaitingApproval)).toBe("Waiting for approval");
   });
 
   it("preserves an explicitly available environment while offline", () => {
