@@ -6,7 +6,7 @@ import {
   TextGenerationError,
 } from "@t3tools/contracts";
 import type { MuseSettings } from "../settings.ts";
-import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
+import { formatGeneratedBranchName, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
 import * as Effect from "effect/Effect";
@@ -338,7 +338,7 @@ export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(functi
       ...buildBranchNamePrompt(input),
       modelSelection: input.modelSelection,
     });
-    return { branch: sanitizeBranchFragment(generated.branch) };
+    return { branch: formatGeneratedBranchName(generated.branch, input.naming) };
   });
   const generateThreadTitle: ProviderTextGeneration["generateThreadTitle"] = Effect.fn(
     "MuseTextGeneration.generateThreadTitle",
