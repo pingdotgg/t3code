@@ -57,7 +57,7 @@ const runSecondServer = Effect.fn("scenario.secondServer")(function* (
 test(
   "Removing an environment closes the in-app notifications it raised",
   WEB,
-  async ({ t3, app, screen }) => {
+  async ({ t3, app, screen, browser }) => {
     await t3.project("demo");
     const second = makeState(SECOND_HOME);
     const pairing = Promise.withResolvers<{ host: string; token: string }>();
@@ -102,6 +102,8 @@ test(
       await screen.getByRole("menuitem", "Remove from this device…").press("Enter");
       await screen.getByRole("button", "Confirm").press("Enter");
       await expect(moreActions).toBeHidden({ timeout: 30_000 });
+      // Modal focus changes can resume toast timers; F6 pauses them in the notification region.
+      await browser.keyboard.press("F6");
       await app.screenshot("after-removal");
 
       await expect(toast).toBeHidden();
