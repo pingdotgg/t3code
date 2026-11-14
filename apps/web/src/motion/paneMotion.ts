@@ -72,15 +72,32 @@ export function releasePaneContent(): void {
   }
 }
 
+/** A closing pane's elements and their children before the commit that unmounts it, whose portals
+ * (its tabs and breadcrumb in the bar) React empties as it goes. */
+const closingChildren = new WeakMap<HTMLElement, [Element, Node[]][]>();
+
+type Slots = ReadonlyMap<string, { slot: { paneId: string } }>;
+
 /** Measures the tracked elements before React writes a new pane layout to the DOM. */
 export class PaneMotionSnapshot extends Component<{
   stageRef: React.RefObject<HTMLElement | null>;
-  slots: unknown;
+  slots: Slots;
 }> {
-  override getSnapshotBeforeUpdate(previous: Readonly<{ slots: unknown }>) {
+  override getSnapshotBeforeUpdate(previous: Readonly<{ slots: Slots }>) {
     const stage = this.props.stageRef.current;
-    if (stage && previous.slots !== this.props.slots && !shownBefore.get(stage)?.held) {
-      snapshot(stage, false);
+    if (!stage || previous.slots === this.props.slots) return null;
+    if (!shownBefore.get(stage)?.held) snapshot(stage, false);
+    const panes = new Set([...this.props.slots.values()].map(({ slot }) => slot.paneId));
+    for (const [tabId, { slot }] of previous.slots) {
+      if (this.props.slots.has(tabId) || panes.has(slot.paneId)) continue;
+      const pane = stage.querySelector<HTMLElement>(
+        `:scope > [data-layout-surface][data-layout-tab-id="${CSS.escape(tabId)}"]`,
+      );
+      if (!pane) continue;
+      closingChildren.set(
+        pane,
+        [pane, ...pane.querySelectorAll("*")].map((element) => [element, [...element.childNodes]]),
+      );
     }
     return null;
   }
@@ -467,6 +484,27 @@ function makeEdge(
   };
 }
 
+/** A ghost draws nothing of its own, so a closed surface's pane, which React has already detached
+ * and unmounted, rides inside it as it was until the ghost goes. */
+function holdClosedPane(ghost: HTMLElement, pane: HTMLElement | undefined): void {
+  if (!pane || pane.isConnected || ghost.childElementCount > 0) return;
+  for (const [element, children] of closingChildren.get(pane) ?? []) {
+    const now = element.childNodes;
+    if (now.length !== children.length || children.some((child, i) => now[i] !== child)) {
+      element.replaceChildren(...children);
+    }
+  }
+  closingChildren.delete(pane);
+  // Inserted again, a frame would load its page again.
+  for (const frame of pane.querySelectorAll("iframe, webview")) frame.remove();
+  for (const animation of pane.getAnimations({ subtree: true })) animation.cancel();
+  // Nothing may find it as a live pane.
+  delete pane.dataset.layoutTabId;
+  delete pane.dataset.layoutPaneFocused;
+  Object.assign(pane.style, { left: "0", top: "0", width: "100%", height: "100%" });
+  ghost.append(pane);
+}
+
 const boxOf = (element: HTMLElement): Box => ({
   x: element.offsetLeft,
   y: element.offsetTop,
@@ -648,6 +686,7 @@ export function usePaneMotion(
       }
       const motion = MotionAnimation.start("window-movement", 0, 1);
       const keyframe = (progress: number) => translate(offset.dx * progress, offset.dy * progress);
+      if (motion.durationMs > 0) holdClosedPane(ghost, before?.boxes.get(tabId)?.element);
       if (edge) playMotion(edge.element, motion, keyframe, undefined, undefined, true);
       playMotion(
         ghost,
