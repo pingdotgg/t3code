@@ -2023,10 +2023,15 @@ code {
   list-style-type: none;
 }
 
-.chat-markdown li.task-list-item input[type="checkbox"] {
+.chat-markdown li.task-list-item input[type="checkbox"],
+.chat-markdown li.task-list-item [data-read-only-task] {
   margin-block: 0 0.15em;
   margin-inline: calc(-1 * var(--list-gutter, 1.25rem)) 0.35em;
   vertical-align: middle;
+}
+
+.chat-markdown li.task-list-item [data-read-only-task] input {
+  margin: 0;
 }
 
 /* Markdown assumes inline images — GitHub comments lay button images out in a row — and the
