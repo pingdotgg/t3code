@@ -1,5 +1,6 @@
 import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
@@ -207,6 +208,64 @@ it.layer(NodeServices.layer)("effect-codex-app-server client", (it) => {
         issueKinds: expect.arrayContaining(["MissingKey"]),
       });
       assert.notInclude(JSON.stringify(warnings), secret);
+    }),
+  );
+
+  it.effect("a dying notification handler leaves no request waiting on a live app-server", () =>
+    Effect.gen(function* () {
+      const handle = yield* makeHandle();
+      const client = yield* Layer.build(CodexClient.layerChildProcess(handle)).pipe(
+        Effect.flatMap((context) =>
+          Effect.service(CodexClient.CodexAppServerClient).pipe(Effect.provide(context)),
+        ),
+      );
+      // A Codex error type must still surface as a transport failure, not as Codex's answer.
+      const handlerFailure = CodexError.CodexAppServerRequestError.internalError("Injected");
+      yield* client.handleServerNotification("error", () =>
+        Effect.fail(handlerFailure).pipe(Effect.orDie),
+      );
+      const termination = yield* client.awaitTermination.pipe(Effect.flip, Effect.forkScoped);
+
+      // The peer answers right after this notification and stays alive, so only the reader's
+      // own termination can settle the request.
+      const failure = yield* client.raw
+        .request("mock/notifyThenRespond", {
+          notification: {
+            method: "error",
+            params: {
+              error: {
+                message: "Fatal error: application network permission was revoked",
+                codexErrorInfo: "other",
+                additionalDetails: null,
+              },
+              willRetry: false,
+              threadId: "thread-1",
+              turnId: "turn-1",
+            },
+          },
+        })
+        .pipe(
+          Effect.match({
+            onFailure: (error) => error,
+            onSuccess: () => assert.fail("Expected the dead reader to fail the request"),
+          }),
+        );
+
+      assert.instanceOf(failure, CodexError.CodexAppServerTransportError);
+      assert.equal(failure.operation, "read-input-stream");
+      assert.strictEqual(failure.cause, handlerFailure);
+      assert.strictEqual(yield* Fiber.join(termination), failure);
+      assert.strictEqual(
+        yield* client.raw.request("thread/read", {}).pipe(
+          Effect.match({
+            onFailure: (error) => error,
+            onSuccess: () => assert.fail("Expected the retired transport to reject requests"),
+          }),
+        ),
+        failure,
+      );
+      // Retiring the transport closes the app-server's stdin, so it does not live on unread.
+      assert.equal(yield* handle.exitCode, 0);
     }),
   );
 });

@@ -104,6 +104,12 @@ const handleMethod = (message: Record<string, unknown>) => {
       });
       return;
     }
+    case "mock/notifyThenRespond": {
+      const params = message.params as { readonly notification: unknown };
+      writeMessage(params.notification);
+      respond(message.id as number | string, { answered: true });
+      return;
+    }
     default: {
       if (message.id !== undefined) {
         respondError(message.id as number | string, -32601, `Unhandled request: ${method}`);
