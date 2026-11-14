@@ -288,7 +288,7 @@ export function resolveLocalCheckoutBranchMismatch(input: {
   return { threadBranch: activeThreadBranch, currentBranch: currentGitBranch };
 }
 
-/** Confirms a picked ref's worktree claim against a fresh read, or `null` when the read failed. */
+/** Confirms a picked ref's worktree claim against a fresh read; `freshRead` is `null` when it failed. */
 export function resolveConfirmedSelectedRef(
   listedRef: VcsRef,
   freshRead: { readonly refs: ReadonlyArray<VcsRef>; readonly nextCursor: number | null } | null,

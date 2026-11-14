@@ -72,6 +72,7 @@ import { ComposerControl } from "./chat/ComposerControl";
 import { MiddleTruncate } from "./ui/middle-truncate";
 import { BranchPicker, BranchPickerRefItem } from "./BranchPicker";
 import { stackedThreadToast, toastManager } from "./ui/toast";
+
 export interface BranchToolbarBranchSelectorHandle {
   open: () => void;
 }
