@@ -129,6 +129,18 @@ describe("installPasskeyBridge", () => {
     });
   });
 
+  it("never opens the system sheet for a silent sign-in request", async () => {
+    const { invoke, credentials } = install(() => ({ success: true, data: assertionData }));
+
+    const credential = await credentials.get({
+      publicKey: { challenge: new Uint8Array([1]) },
+      mediation: "silent",
+    });
+
+    assert.strictEqual(invoke.mock.calls.length, 0);
+    assert.notInstanceOf(credential, PublicKeyCredential);
+  });
+
   it("rejects with the WebAuthn error the ceremony ended with", async () => {
     const { credentials } = install((channel) => ({
       success: false,
