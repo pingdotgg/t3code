@@ -11,6 +11,7 @@ import { expect, it, vi } from "vite-plus/test";
 import { olderSettledThreads } from "../../state/threads";
 import { makeRawThreadShell } from "../../test-fixtures";
 import { useThreadListV2 } from "./useThreadListV2";
+import { buildHomeProjectScopes } from "../home/homeThreadList";
 
 vi.mock("../../state/threads", () => ({
   olderSettledThreads: { shelfAtom: vi.fn() },
@@ -84,20 +85,71 @@ it("reuses a large thread list across tab renders and updates when its inputs ch
   expect(initial.layout.items).toHaveLength(160);
   expect(initial.layout.settledCount).toBe(1050);
 
+  const projectScopes = buildHomeProjectScopes({
+    projects: [environmentId, otherEnvironmentId].map((id) => ({
+      environmentId: id,
+      id: ProjectId.make("project-test"),
+      title: "Same project name",
+      workspaceRoot: `/workspace/${id}`,
+      repositoryIdentity: null,
+      defaultModelSelection: null,
+      scripts: [],
+      createdAt: input.now,
+      updatedAt: input.now,
+      pinnedAt: id === otherEnvironmentId ? input.now : null,
+    })),
+    environmentId: null,
+    projectGroupingMode: "separate",
+  });
+  const groupedInput = {
+    ...input,
+    projectFoldersEnabled: true,
+    projectScopes,
+    collapsedProjectKeys: projectScopes.map((scope) => scope.key),
+    selectedThreadKey: `${environmentId}:thread-0`,
+  };
+  await act(async () => root.render(<Probe input={groupedInput} tab="chats" />));
+  const grouped = seen.at(-1)!;
+  const folders = grouped.items.filter((item) => item.type === "v2-project-folder");
+  expect(folders.map((item) => item.scope.representative.environmentId)).toEqual([
+    otherEnvironmentId,
+    environmentId,
+  ]);
+  expect(grouped.items.filter((item) => item.type === "v2-thread")).toHaveLength(11);
+  expect(
+    grouped.items.find((item) => item.type === "v2-thread" && item.item.thread.id === "thread-0"),
+  ).toMatchObject({ canMoveUp: false, canMoveDown: false });
+  await act(async () => root.render(<Probe input={groupedInput} tab="settings" />));
+  expect(seen.at(-1)!.items).toBe(grouped.items);
+  await act(async () =>
+    root.render(<Probe input={{ ...groupedInput, searchQuery: "Thread 149" }} tab="chats" />),
+  );
+  expect(seen.at(-1)!.items.some((item) => item.type === "v2-project-folder")).toBe(false);
+  expect(
+    seen
+      .at(-1)!
+      .items.some((item) => item.type === "v2-thread" && item.item.thread.id === "thread-149"),
+  ).toBe(true);
+  await act(async () => root.render(<Probe input={groupedInput} tab="chats" />));
+  expect(seen.at(-1)!.items.filter((item) => item.type === "v2-project-folder")).toHaveLength(2);
+  await act(async () => root.render(<Probe input={input} tab="chats" />));
+  const restored = seen.at(-1)!;
+  expect(restored.items.some((item) => item.type === "v2-project-folder")).toBe(false);
+
   for (const tab of ["pullRequests", "chats", "settings", "chats"]) {
     await act(async () => root.render(<Probe input={{ ...input }} tab={tab} />));
     expect(seen.at(-1)!.olderSettledShelf.isListed).toBe(initial.olderSettledShelf.isListed);
     expect(seen.at(-1)!.olderSettledShelf.unloadedCount).toBe(
       initial.olderSettledShelf.unloadedCount,
     );
-    expect(seen.at(-1)!.layout).toBe(initial.layout);
-    expect(seen.at(-1)!.items).toBe(initial.items);
+    expect(seen.at(-1)!.layout).toBe(restored.layout);
+    expect(seen.at(-1)!.items).toBe(restored.items);
   }
 
   const nextMinute = { ...input, now: "2026-01-02T00:01:00.000Z" };
   await act(async () => root.render(<Probe input={nextMinute} tab="chats" />));
-  expect(seen.at(-1)!.layout).toBe(initial.layout);
-  expect(seen.at(-1)!.items).not.toBe(initial.items);
+  expect(seen.at(-1)!.layout).toBe(restored.layout);
+  expect(seen.at(-1)!.items).not.toBe(restored.items);
   expect(seen.at(-1)!.items.find((item) => item.type === "v2-thread")).toMatchObject({
     snoozePresetMinute: nextMinute.now,
   });

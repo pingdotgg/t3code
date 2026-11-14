@@ -91,6 +91,7 @@ import type { HomeListFilterMenuEnvironment } from "./home-list-filter-menu";
 import {
   buildHomeProjectScopes,
   findHomeProjectScope,
+  hasHomeThreadListContent,
   type HomeProjectSortOrder,
   sortHomeProjectScopes,
 } from "./homeThreadList";
@@ -100,6 +101,7 @@ import { useFabScroll } from "./FabScrollContext";
 import { holdLaunchSplashForHomeRows, settleLaunchSplashHomeRows } from "./home-launch-splash";
 import { useWorkspaceTabs } from "../layout/workspace/WorkspaceTabsContext";
 import { ThreadListFilters } from "./ThreadListFilters";
+import { ThreadListProjectFolderHeader } from "../threads/ThreadListProjectFolderHeader";
 import { deriveHomeEmptyState } from "./home-empty-state";
 
 interface HomeScreenProps {
@@ -384,6 +386,10 @@ export function HomeScreen(props: HomeScreenProps) {
     snoozedShelfExpanded,
     workingShelfEnabled,
     workingShelfExpanded,
+    projectFoldersEnabled,
+    collapsedProjectKeys,
+    activeReorderEnabled,
+    toggleProjectFolder,
     toggleSettledShelf,
     toggleSnoozedShelf,
     toggleWorkingShelf,
@@ -430,6 +436,10 @@ export function HomeScreen(props: HomeScreenProps) {
     snoozedShelfExpanded,
     settledShelfExpanded,
     selectedThreadKey,
+    projectFoldersEnabled,
+    projectScopes,
+    projectSortOrder: props.projectSortOrder,
+    collapsedProjectKeys,
   });
   // Called as `props.onSelectThread(...)`, the compiler would cache this handler on the whole
   // props object, which is new on every render of Home's parent.
@@ -453,6 +463,16 @@ export function HomeScreen(props: HomeScreenProps) {
   }, [activateVisibleRows, swipeEnabled, threadListV2Items]);
 
   const renderV2Item = ({ item }: { readonly item: ThreadListV2ListItem }) => {
+    if (item.type === "v2-project-folder") {
+      return (
+        <ThreadListProjectFolderHeader
+          item={item}
+          pane={sidebarSurface ? "sidebar" : "screen"}
+          onToggle={toggleProjectFolder}
+          onNewThread={props.onNewThreadInProject}
+        />
+      );
+    }
     if (item.type === "v2-pending") {
       const pendingScopeKey = scopedProjectKey(
         item.pendingTask.environmentId,
@@ -572,7 +592,7 @@ export function HomeScreen(props: HomeScreenProps) {
         reorderSupported={
           item.item.pinned
             ? pinReorderEnvironmentIds.has(thread.environmentId)
-            : !workingShelfEnabled && activeReorderEnvironmentIds.has(thread.environmentId)
+            : activeReorderEnabled && activeReorderEnvironmentIds.has(thread.environmentId)
         }
         canMoveUp={item.canMoveUp}
         canMoveDown={item.canMoveDown}
@@ -605,12 +625,14 @@ export function HomeScreen(props: HomeScreenProps) {
     workingShelfEnabled,
   };
 
-  const hasAnyThreads =
-    props.threads.some((thread) => thread.archivedAt === null) ||
-    props.pendingTasks.length > 0 ||
-    threadListV2Layout.settledCount > 0;
+  const hasListContent = hasHomeThreadListContent({
+    threads: props.threads,
+    pendingTaskCount: props.pendingTasks.length,
+    settledCount: threadListV2Layout.settledCount,
+    items: threadListV2Items,
+  });
   // A hidden list gets no layout, so it never reports its rows as laid out.
-  const hasRowsToLayOut = props.visible && hasAnyThreads && threadListV2Items.length > 0;
+  const hasRowsToLayOut = props.visible && hasListContent && threadListV2Items.length > 0;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds the native launch splash, which is outside React, until the rows are gone or this list unmounts; a layout effect runs before the splash hides in this commit
   useLayoutEffect(() => {
     return hasRowsToLayOut ? holdLaunchSplashForHomeRows() : undefined;
@@ -622,7 +644,7 @@ export function HomeScreen(props: HomeScreenProps) {
         "this environment");
   const emptyState = deriveHomeEmptyState(props.catalogState, props.projects.length);
 
-  if (!hasAnyThreads) {
+  if (!hasListContent) {
     return (
       <View className={containerClassName}>
         <ScreenContent surface={sidebarSurface ? "drawer" : "screen"}>

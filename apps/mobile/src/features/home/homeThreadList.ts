@@ -35,6 +35,20 @@ export interface HomeProjectScope {
   readonly archived: boolean;
 }
 
+export function hasHomeThreadListContent(input: {
+  readonly threads: ReadonlyArray<Pick<EnvironmentThreadShell, "archivedAt">>;
+  readonly pendingTaskCount: number;
+  readonly settledCount: number;
+  readonly items: ReadonlyArray<{ readonly type: string }>;
+}): boolean {
+  return (
+    input.threads.some((thread) => thread.archivedAt === null) ||
+    input.pendingTaskCount > 0 ||
+    input.settledCount > 0 ||
+    input.items.some((item) => item.type === "v2-project-folder")
+  );
+}
+
 function getProjectSortTimestamp(
   project: EnvironmentProject,
   sortOrder: HomeProjectSortOrder,
