@@ -131,7 +131,7 @@ const accentedForms = Map.groupBy(
   ].filter((char) => /^[a-z]$/.test(foldSearchQuery(char))),
   (char) => foldSearchQuery(char),
 );
-// Only text holding one of those letters (by UTF-8 lead byte) needs the GLOB:
+// Only text that may hold one of those letters (by UTF-8 lead byte) needs the GLOB:
 // lower() already folds ASCII case.
 const MESSAGE_HOLDS_ACCENTED_LATIN = [
   ...new Set(
