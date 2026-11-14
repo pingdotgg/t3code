@@ -124,15 +124,15 @@ const config: ShowcaseConfig = {
       simulatorDeviceType: "com.apple.CoreSimulator.SimDeviceType.iPhone-Duo",
       appearance: "dark",
       theme: DEFAULT_SHOWCASE_THEME,
-      orientation: fold === "closed" ? "portrait" : "landscape",
+      orientation: "portrait",
       fold,
-      // Both poses share one ten-image App Store slot.
+      // Both poses share one ten-image App Store slot; the store showed landscape inner shots sideways.
       scenes: ["thread", "terminal", "review", "threads", "environments"],
       storeAsset: {
         store: "apple",
         directory: `apple/iphone-duo-${fold}`,
-        width: fold === "closed" ? 1398 : 2853,
-        height: fold === "closed" ? 2034 : 2007,
+        width: fold === "closed" ? 1398 : 2007,
+        height: fold === "closed" ? 2034 : 2853,
         minimumUploadCount: 1,
         maximumUploadCount: 5,
       },
