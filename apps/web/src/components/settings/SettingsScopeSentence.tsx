@@ -1,5 +1,6 @@
 import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
-import { CheckIcon, ChevronDownIcon, LayersIcon, RotateCcwIcon } from "lucide-react";
+import { fileBasename } from "@t3tools/shared/path";
+import { CheckIcon, ChevronDownIcon, FolderIcon, LayersIcon, RotateCcwIcon } from "lucide-react";
 import { Fragment, useState, type ReactNode } from "react";
 
 import { readLocalApi } from "../../localApi";
@@ -33,13 +34,17 @@ import { useOptionalSettingsScope } from "./SettingsScopeContext";
 import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope";
 import {
   SETTINGS_DEVICE_ONLY_PATHS,
+  ALL_CHECKOUTS_VALUE,
   ALL_ENVIRONMENTS_VALUE,
   ALL_PROJECTS_VALUE,
   environmentAxisValue,
   projectAxisValue,
   projectScopeMenuGroups,
+  selectCheckoutAxis,
   selectEnvironmentAxis,
   selectProjectAxis,
+  settingsScopeCheckoutChoices,
+  settingsScopeCheckoutLabel,
   settingsScopeEnvironmentAddress,
   settingsScopeEnvironmentLabels,
   settingsScopeProjectMachines,
@@ -76,6 +81,7 @@ export function SettingsScopeSentence({ pathname }: { pathname: string }) {
         </span>
         <EnvironmentScopeMenu {...props} />
       </span>
+      <CheckoutScopeMenu {...props} />
     </p>
   );
 }
@@ -240,6 +246,45 @@ function ScopeMenu({
         </div>
       </MenuPopup>
     </Menu>
+  );
+}
+
+function CheckoutScopeMenu({ value, groups, onChange }: SettingsScopeMenuProps) {
+  const group = groups.find((candidate) => candidate.projectKey === value.project);
+  const checkouts = group ? settingsScopeCheckoutChoices(group, value) : [];
+  if (checkouts.length === 0) return null;
+  const selected = checkouts.find((member) => member.physicalProjectKey === value.checkout);
+  return (
+    <span className="flex min-w-0 max-w-full items-center gap-1.5 max-sm:flex-wrap">
+      <span className="shrink-0">in</span>
+      <ScopeMenu
+        ariaLabel="Checkout scope"
+        icon={<FolderIcon aria-hidden className="size-3.5 shrink-0" />}
+        label={
+          selected
+            ? settingsScopeCheckoutLabel(selected, checkouts)
+            : value.checkout
+              ? "Unavailable checkout"
+              : "All checkouts"
+        }
+        value={value.checkout ?? ALL_CHECKOUTS_VALUE}
+        onChange={(next) =>
+          onChange(
+            selectCheckoutAxis(
+              value,
+              checkouts.find((member) => member.physicalProjectKey === next) ?? null,
+            ),
+          )
+        }
+        searchLabel="Search checkouts"
+        allOption={{ value: ALL_CHECKOUTS_VALUE, label: "All checkouts" }}
+        options={checkouts.map((member) => ({
+          value: member.physicalProjectKey,
+          label: fileBasename(member.workspaceRoot),
+          secondary: member.workspaceRoot,
+        }))}
+      />
+    </span>
   );
 }
 
