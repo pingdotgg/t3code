@@ -12864,6 +12864,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 // Suppress expired evidence from every completed wake, but only the
                 // selected terminal result may complete this continuation.
                 const expiredWakeFrames = new Set<SDKMessage>();
+                const expiredResults: SDKResultMessage[] = [];
                 let lastResultExpired = false;
                 const replayedAtMs = DateTime.toEpochMillis(yield* DateTime.now);
                 for (const entry of drained) {
@@ -12878,6 +12879,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   );
                   if (expired === null) continue;
                   for (const frame of expired) expiredWakeFrames.add(frame);
+                  expiredResults.push(entry);
                   if (entry === lastResult) lastResultExpired = true;
                 }
                 const opaqueReplayTombstones = taskIdSetForNativeThread(
@@ -12914,21 +12916,27 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     return next;
                   });
                 }
-                if (lastResultExpired && newerRootStillOpen) {
-                  // The expired result belongs to an earlier wake, not the
-                  // still-running root. Keep its usage without settling that root,
-                  // even if an empty task result was buffered after the 429.
-                  if (lastResult?.type === "result") {
-                    context.steeredSegmentUsage.push(lastResult.usage);
-                    context.steeredLedgerUsage = addClaudeLedgerUsage(
-                      context.steeredLedgerUsage,
-                      resultLedgerUsage.get(lastResult),
-                    );
-                  }
+                // Every expired result was consumed from the wake buffer. Retain its
+                // charged usage once, except when the selected result is about to
+                // supply that usage through finalizeActiveTurn itself.
+                const selectedResultWillFinalize =
+                  lastResultExpired &&
+                  (wakeAbsorbed || (!emptyTurnBeforeNextTurn && !newerRootStillOpen));
+                for (const entry of expiredResults) {
+                  if (selectedResultWillFinalize && entry === lastResult) continue;
+                  context.steeredSegmentUsage.push(entry.usage);
+                  context.steeredLedgerUsage = addClaudeLedgerUsage(
+                    context.steeredLedgerUsage,
+                    resultLedgerUsage.get(entry),
+                  );
+                }
+                if (lastResultExpired && newerRootStillOpen && !wakeAbsorbed) {
+                  // A newer root still owns this continuation. Do not dispatch
+                  // the expired result or settle the root before its own result.
                   if (leavesLaterWake) yield* offerBufferedWake(nativeThreadId);
                   return;
                 }
-                if (lastResultExpired && !emptyTurnBeforeNextTurn) {
+                if (lastResultExpired && (!emptyTurnBeforeNextTurn || wakeAbsorbed)) {
                   // The selected wake ended before the limit reset. It is no longer a
                   // rejection of this continuation, so do not fail it or show stale errors.
                   const completedAt = yield* DateTime.now;
