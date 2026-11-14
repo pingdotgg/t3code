@@ -97,6 +97,35 @@ const PI_UNSOLICITED_ACTIVITY_ERROR =
 const SETTLE_PROBE_MAX_ATTEMPTS = 3;
 const SETTLE_PROBE_RETRY_DELAY = Duration.millis(100);
 
+const PI_USAGE_LIMIT = /usage[ _]limit/i;
+// Pi rounds the server's resets_at to the nearest minute, so the margin keeps recovery after the
+// real reset; ~0 (a reset past or under 30 s away) carries no usable reset.
+const PI_USAGE_LIMIT_RESET = /Try again in ~([1-9]\d{0,5}) min\b/;
+const PI_USAGE_LIMIT_RESET_MARGIN_MS = 30_000;
+
+function piModelErrorFailure(
+  message: string,
+  receivedAt: DateTime.Utc,
+  retryable: boolean | null = null,
+) {
+  if (!PI_USAGE_LIMIT.test(message))
+    return makeProviderFailure({ message, class: "provider_error", retryable });
+  const minutes = PI_USAGE_LIMIT_RESET.exec(message)?.[1];
+  return makeProviderFailure({
+    message,
+    class: "usage_limit",
+    retryable,
+    resetAt:
+      minutes === undefined
+        ? null
+        : DateTime.formatIso(
+            DateTime.add(receivedAt, {
+              milliseconds: Number(minutes) * 60_000 + PI_USAGE_LIMIT_RESET_MARGIN_MS,
+            }),
+          ),
+  });
+}
+
 const PiProviderCapabilitiesV2 = {
   runtimePolicy: { enforcement: "client-boundary" },
   sessions: {
@@ -2187,10 +2216,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               turn.reportedModel = `${reportedProvider}/${reportedModelId}`;
             }
             if (recordString(message, "stopReason") === "error" && turn.failure === null) {
-              turn.failure = makeProviderFailure({
-                message: recordString(message, "errorMessage") ?? "Pi reported a model error.",
-                class: "provider_error",
-              });
+              turn.failure = piModelErrorFailure(
+                recordString(message, "errorMessage") ?? "Pi reported a model error.",
+                yield* DateTime.now,
+              );
             }
             return;
           }
@@ -2324,11 +2353,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               turn.failure = null;
               return;
             }
-            const failure = makeProviderFailure({
-              message: recordString(event, "finalError") ?? "Pi auto-retry failed.",
-              class: "provider_error",
-              retryable: false,
-            });
+            const failure = piModelErrorFailure(
+              recordString(event, "finalError") ?? "Pi auto-retry failed.",
+              emittedAt,
+              false,
+            );
             const attempt = Math.max(1, Math.trunc(recordNumber(event, "attempt") ?? 1));
             const current = turn.activeProviderRetry;
             const providerRetry = {
