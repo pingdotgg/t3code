@@ -269,6 +269,50 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
 });
 
 describe("OpenCodeAdapterV2", () => {
+  it.effect("cleans abandoned native descendants before registering their root thread", () =>
+    Effect.gen(function* () {
+      const aborted: string[] = [];
+      const harness = yield* makeOpenCodeRuntimeHarness("abandoned-root", "ses_other", {
+        event: { subscribe: async () => ({ stream: asyncEventStream().stream }) },
+        session: {
+          create: async () => ({ data: { id: "ses_other", time: { created: 1, updated: 1 } } }),
+          children: async (input: { sessionID: string }) => ({
+            data: input.sessionID === "ses_abandoned" ? [{ id: "ses_abandoned_child" }] : [],
+          }),
+          abort: async (input: { sessionID: string }) => {
+            aborted.push(input.sessionID);
+            return { data: true };
+          },
+        },
+      });
+      yield* harness.runtime.interruptTurn({
+        providerThread: {
+          ...harness.providerThread,
+          nativeThreadRef: {
+            driver: OPENCODE_PROVIDER,
+            nativeId: "ses_abandoned",
+            strength: "strong",
+          },
+        },
+        providerTurnId: ProviderTurnId.make("provider-turn:abandoned"),
+        requestRuntimeRestart: true,
+      });
+      assert.deepEqual(aborted, ["ses_abandoned_child"]);
+      // The same runtime session remains usable for another registered thread.
+      assert.isTrue(
+        Exit.isSuccess(
+          yield* harness.runtime
+            .interruptTurn({
+              providerThread: harness.providerThread,
+              providerTurnId: ProviderTurnId.make("provider-turn:none"),
+              requestRuntimeRestart: true,
+            })
+            .pipe(Effect.exit),
+        ),
+      );
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
+  );
+
   it.effect.each([
     ["empty", "prompt"],
     ["unsupported", "command"],
@@ -1410,11 +1454,30 @@ describe("OpenCodeAdapterV2", () => {
     { state: "settled", end: "stop" },
     { state: "settled", end: "stop-before-busy" },
     { state: "settled", end: "stop-before-busy-timeout" },
+    { state: "settled", end: "foreground-before-status-idle" },
+    { state: "settled", end: "foreground-before-session-idle" },
+    { state: "settled", end: "foreground-before-error" },
+    { state: "settled", end: "stop-before-idle" },
+    { state: "settled", end: "stop-before-error" },
+    { state: "settled", end: "foreground-error" },
+    { state: "settled", end: "foreground-overflow" },
+    { state: "settled", end: "catalog-live" },
+    { state: "settled", end: "catalog-replay" },
+    { state: "settled", end: "retry-registration" },
+    { state: "settled", end: "held-requests" },
+    { state: "settled", end: "compact-takeover" },
+    { state: "settled", end: "no-wake-continuation" },
+    { state: "settled", end: "idle-during-abort-failure" },
+    { state: "settled", end: "foreground-before-busy" },
+    { state: "settled", end: "foreground-before-busy-timeout" },
     { state: "settled", end: "cancelled" },
     { state: "settled", end: "stop-failure" },
     { state: "settled", end: "cancelled-failure" },
+    { state: "settled", end: "stop-busy-failure" },
+    { state: "settled", end: "cancelled-busy-failure" },
     { state: "settled", end: "foreground" },
     { state: "settled", end: "foreground-buffered" },
+    { state: "settled", end: "foreground-buffered-error" },
     { state: "settled", end: "foreground-stop" },
     { state: "settled", end: "foreground-eof" },
     { state: "settled", end: "invalid-continuation" },
@@ -1426,6 +1489,8 @@ describe("OpenCodeAdapterV2", () => {
     { state: "settled", end: "idle-only" },
     { state: "settled", end: "error-only" },
     { state: "settled", end: "routing-stalled" },
+    { state: "settled", end: "replay-continuation-timeout" },
+    { state: "settled", end: "replay-foreground-timeout" },
   ] as const)(
     "routes the OpenCode 1.19.5 root background prompt while $state, ending by $end",
     ({ state, end }) =>
@@ -1442,6 +1507,8 @@ describe("OpenCodeAdapterV2", () => {
         const abortFinished = promiseGate<void>();
         let aborting = false;
         let submittedWhileAborting = false;
+        const replies: unknown[] = [];
+        let summaries = 0;
         const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
         const sessionScope = yield* Scope.make();
         yield* Effect.addFinalizer(() => Scope.close(sessionScope, Exit.void));
@@ -1450,14 +1517,43 @@ describe("OpenCodeAdapterV2", () => {
           root,
           {
             event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+            permission: {
+              reply: async (input: unknown) => {
+                replies.push(input);
+                return { data: true };
+              },
+            },
+            question: {
+              reply: async (input: unknown) => {
+                replies.push(input);
+                return { data: true };
+              },
+            },
+            provider: {
+              list: async () => {
+                routeStarted.resolve();
+                await routeFinished.promise;
+                return { data: { all: [] } };
+              },
+            },
             session: {
               create: async () => ({ data: { id: root, time: { created: 1, updated: 1 } } }),
               get: async (input: { sessionID: string }) => {
-                if (input.sessionID === "ses_unrelated") {
+                if (input.sessionID === "ses_unrelated" || input.sessionID === "ses_replay_child") {
                   routeStarted.resolve();
                   await routeFinished.promise;
                 }
-                return { data: { id: root, time: { created: 1, updated: 1 } } };
+                return {
+                  data: {
+                    id: input.sessionID,
+                    ...(input.sessionID === "ses_held_child" ? { parentID: root } : {}),
+                    time: { created: 1, updated: 1 },
+                  },
+                };
+              },
+              summarize: async () => {
+                summaries++;
+                return { data: true };
               },
               promptAsync: async (input: { messageID: string }) => {
                 submittedWhileAborting ||= aborting;
@@ -1479,14 +1575,16 @@ describe("OpenCodeAdapterV2", () => {
                   (end === "stop" ||
                     end === "cancelled" ||
                     end === "stop-failure" ||
-                    end === "cancelled-failure")
+                    end === "cancelled-failure" ||
+                    end === "stop-busy-failure" ||
+                    end === "cancelled-busy-failure" ||
+                    end === "idle-during-abort-failure")
                 ) {
                   aborting = true;
                   abortStarted.resolve();
                   await abortFinished.promise;
                   aborting = false;
-                  if (end === "stop-failure" || end === "cancelled-failure")
-                    throw new Error("root abort failed");
+                  if (end?.endsWith("failure")) throw new Error("root abort failed");
                 }
                 return { data: true };
               },
@@ -1567,6 +1665,72 @@ describe("OpenCodeAdapterV2", () => {
             },
           },
         });
+        const nativeError = (name = "UnknownError") => ({
+          type: "session.error",
+          properties: { sessionID: root, error: { name, data: { message: "wake failed" } } },
+        });
+        if (
+          end === "foreground-before-status-idle" ||
+          end === "foreground-before-session-idle" ||
+          end === "foreground-before-error" ||
+          end === "stop-before-idle" ||
+          end === "stop-before-error"
+        ) {
+          const stopping = end.startsWith("stop");
+          const starting = yield* (
+            stopping
+              ? harness.runtime.interruptTurn({
+                  providerThread: harness.providerThread,
+                  providerTurnId: ProviderTurnId.make("provider-turn:settled"),
+                  requestRuntimeRestart: true,
+                })
+              : harness.startTurn("follow up")
+          ).pipe(Effect.exit, Effect.forkScoped);
+          yield* TestClock.adjust(0);
+          yield* push(
+            end.endsWith("error")
+              ? nativeError()
+              : end.endsWith("status-idle")
+                ? status("idle")
+                : { type: "session.idle", properties: { sessionID: root } },
+          );
+          // A missing admission signal used to poison the session at this deadline.
+          yield* TestClock.adjust("10 seconds");
+          assert.isTrue(Exit.isSuccess(yield* Fiber.join(starting)));
+          assert.equal(promptIds.length, stopping ? 1 : 2);
+          return;
+        }
+        if (end === "foreground-before-busy" || end === "foreground-before-busy-timeout") {
+          let returned = false;
+          const starting = yield* harness.startTurn("follow up").pipe(
+            Effect.exit,
+            Effect.tap(() =>
+              Effect.sync(() => {
+                returned = true;
+              }),
+            ),
+            Effect.forkScoped,
+          );
+          yield* TestClock.adjust(0);
+          assert.equal(promptIds.length, 1, "foreground waits for native registration");
+          if (end === "foreground-before-busy") {
+            yield* push(status("busy"));
+            assert.equal(promptIds.length, 1, "foreground cannot join a registering wake");
+            yield* push(status("idle"));
+            assert.isTrue(Exit.isSuccess(yield* Fiber.join(starting)));
+            assert.equal(promptIds.length, 2);
+          } else {
+            yield* TestClock.adjust("10 seconds");
+            assert.isTrue(
+              returned,
+              "a lone reemitted user message cannot block foreground forever",
+            );
+            assert.isTrue(Exit.isFailure(yield* Fiber.join(starting)));
+            assert.equal(promptIds.length, 1);
+            assert.isTrue(Exit.isFailure(yield* harness.startTurn("retry").pipe(Effect.exit)));
+          }
+          return;
+        }
         if (end === "stop-before-busy-timeout") {
           const stopping = yield* harness.runtime
             .interruptTurn({
@@ -1577,6 +1741,11 @@ describe("OpenCodeAdapterV2", () => {
             .pipe(Effect.exit, Effect.forkScoped);
           yield* TestClock.adjust("10 seconds");
           assert.isTrue(Exit.isFailure(yield* Fiber.join(stopping)));
+          assert.deepEqual(
+            aborted,
+            [root, "ses_descendant"],
+            "uncertain registration still attempts native cleanup",
+          );
           assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
           assert.isTrue(
             Exit.isFailure(
@@ -1619,8 +1788,292 @@ describe("OpenCodeAdapterV2", () => {
           assert.equal(offers.length, 0, "a terminal-only update cannot offer a wake");
           return;
         }
-        yield* push(status("busy"));
+        yield* push(
+          end === "retry-registration"
+            ? {
+                type: "session.status",
+                properties: {
+                  sessionID: root,
+                  status: { type: "retry", attempt: 1, message: "retry", next: 100 },
+                },
+              }
+            : status("busy"),
+        );
+        if (end === "retry-registration") {
+          yield* push(status("busy"));
+          yield* push(status("busy"));
+        }
+        if (end === "foreground-error" || end === "foreground-overflow") {
+          const starting = yield* harness.startTurn("follow up").pipe(Effect.forkScoped);
+          yield* TestClock.adjust(0);
+          yield* push(
+            nativeError(end === "foreground-overflow" ? "ContextOverflowError" : "UnknownError"),
+          );
+          yield* push(status("idle"));
+          yield* Fiber.join(starting);
+          assert.equal(promptIds.length, 1, "failed waiting foreground cannot submit");
+          const snapshot = yield* harness.runtime.readThreadSnapshot({
+            providerThread: harness.providerThread,
+          });
+          assert.equal(snapshot.providerTurns.at(-1)?.status, "failed");
+          return;
+        }
+        if (end === "catalog-live" || end === "catalog-replay") {
+          yield* push(assistant(false));
+          yield* push({
+            type: "message.part.updated",
+            properties: {
+              part: {
+                type: "step-finish",
+                id: "step-wake",
+                sessionID: root,
+                messageID: "msg_wake_assistant",
+                reason: "stop",
+                cost: 0,
+                tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } },
+              },
+            },
+          });
+          if (end === "catalog-replay") yield* push(status("idle"));
+          const starting = yield* harness
+            .startTurn("", undefined, undefined, false, "catalog", {})
+            .pipe(Effect.exit, Effect.forkScoped);
+          if (end === "catalog-live") yield* Fiber.join(starting);
+          const idle =
+            end === "catalog-live" ? yield* push(status("idle")).pipe(Effect.forkScoped) : null;
+          yield* Effect.promise(() => routeStarted.promise);
+          yield* TestClock.adjust("10 seconds");
+          if (idle !== null) yield* Fiber.join(idle);
+          else yield* Fiber.join(starting);
+          const events = yield* harness.runtime.events.pipe(
+            Stream.takeUntil((event) => event.type === "turn.terminal"),
+            Stream.runCollect,
+          );
+          assert.equal(events.find((event) => event.type === "turn.terminal")?.status, "completed");
+          const snapshot = yield* harness.runtime.readThreadSnapshot({
+            providerThread: harness.providerThread,
+          });
+          assert.equal(snapshot.providerTurns.at(-1)?.status, "completed");
+          return;
+        }
         assert.equal(offers.length, state === "settled" ? 1 : 0, "only a settled root needs a run");
+        if (end === "no-wake-continuation") {
+          yield* offers[0]!.onRunEndedWithoutStarting!();
+          yield* harness.startTurn("", undefined, undefined, false, "no-wake", {});
+          yield* awaitTerminal;
+          const snapshot = yield* harness.runtime.readThreadSnapshot({
+            providerThread: harness.providerThread,
+          });
+          assert.equal(snapshot.providerTurns.at(-1)?.status, "completed");
+          assert.equal(promptIds.length, 1);
+          return;
+        }
+        if (end === "compact-takeover") {
+          const starting = yield* harness.startTurn("/compact").pipe(Effect.forkScoped);
+          yield* TestClock.adjust(0);
+          assert.equal(summaries, 0);
+          yield* push(status("idle"));
+          yield* Fiber.join(starting);
+          yield* awaitTerminal;
+          assert.equal(summaries, 1);
+          assert.equal(promptIds.length, 1);
+          return;
+        }
+        if (end === "idle-during-abort-failure") {
+          const stopping = yield* harness.runtime
+            .interruptTurn({
+              providerThread: harness.providerThread,
+              providerTurnId: ProviderTurnId.make("provider-turn:settled"),
+              requestRuntimeRestart: true,
+            })
+            .pipe(Effect.exit, Effect.forkScoped);
+          yield* Effect.promise(() => abortStarted.promise);
+          yield* push(status("idle"));
+          abortFinished.resolve();
+          assert.isTrue(Exit.isFailure(yield* Fiber.join(stopping)));
+          yield* harness.startTurn("after native idle");
+          assert.equal(promptIds.length, 2);
+          return;
+        }
+        if (end === "held-requests") {
+          yield* push({
+            type: "session.created",
+            properties: {
+              info: { id: "ses_held_child", parentID: root, time: { created: 1, updated: 1 } },
+            },
+          });
+          yield* push({
+            type: "message.part.updated",
+            properties: {
+              part: {
+                id: "held-task",
+                sessionID: root,
+                messageID: "msg_wake_assistant",
+                type: "tool",
+                callID: "held-call",
+                tool: "task",
+                state: {
+                  status: "completed",
+                  input: { description: "Child", prompt: "Work", subagent_type: "general" },
+                  output: "launched",
+                  title: "Child",
+                  metadata: { sessionId: "ses_held_child", background: true },
+                  time: { start: 1, end: 2 },
+                },
+              },
+            },
+          });
+          yield* push({
+            type: "message.updated",
+            properties: {
+              sessionID: "ses_held_child",
+              info: {
+                id: "held-child-user",
+                sessionID: "ses_held_child",
+                role: "user",
+                time: { created: 1 },
+              },
+            },
+          });
+          yield* push({
+            type: "message.updated",
+            properties: {
+              sessionID: "ses_held_child",
+              info: {
+                id: "held-child-message",
+                sessionID: "ses_held_child",
+                role: "assistant",
+                parentID: "held-child-user",
+                time: { created: 2 },
+              },
+            },
+          });
+          yield* push({
+            type: "message.part.updated",
+            properties: {
+              part: {
+                id: "held-child-text",
+                sessionID: "ses_held_child",
+                messageID: "held-child-message",
+                type: "text",
+                text: "HELD_CHILD_OK",
+                time: { start: 2, end: 3 },
+              },
+            },
+          });
+          yield* push({
+            type: "message.part.updated",
+            properties: {
+              part: {
+                id: "held-text",
+                sessionID: root,
+                messageID: "msg_wake_assistant",
+                type: "text",
+                text: "HELD",
+                time: { start: 2 },
+              },
+            },
+          });
+          yield* push({
+            type: "message.part.delta",
+            properties: {
+              sessionID: root,
+              messageID: "msg_wake_assistant",
+              partID: "held-text",
+              field: "text",
+              delta: "_DELTA",
+            },
+          });
+          yield* push({
+            type: "todo.updated",
+            properties: {
+              sessionID: root,
+              todos: [{ content: "Wake task", status: "in_progress", priority: "high" }],
+            },
+          });
+          yield* push({ type: "session.compacted", properties: { sessionID: root } });
+          yield* push({
+            type: "permission.asked",
+            properties: {
+              id: "wake-permission",
+              sessionID: root,
+              permission: "external_directory",
+              patterns: ["/outside/*"],
+              always: [],
+              metadata: {},
+            },
+          });
+          yield* push({
+            type: "question.asked",
+            properties: {
+              id: "wake-question",
+              sessionID: root,
+              questions: [
+                {
+                  header: "Drinks",
+                  question: "Which drink?",
+                  options: [{ label: "Tea", description: "Hot" }],
+                },
+              ],
+            },
+          });
+          const beforeAdmission = yield* harness.runtime.readThreadSnapshot({
+            providerThread: harness.providerThread,
+          });
+          assert.equal(beforeAdmission.runtimeRequests.length, 0);
+          yield* harness.startTurn("", undefined, undefined, false, "held", {});
+          const events = yield* harness.runtime.events.pipe(
+            Stream.takeUntil(
+              (event) =>
+                event.type === "runtime_request.updated" &&
+                event.runtimeRequest.kind === "user_input",
+            ),
+            Stream.runCollect,
+          );
+          assert.isTrue(
+            events.some(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "assistant_message" &&
+                event.turnItem.text === "HELD_CHILD_OK",
+            ),
+          );
+          assert.isTrue(
+            events.some(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "assistant_message" &&
+                event.turnItem.text === "HELD_DELTA",
+            ),
+          );
+          assert.isTrue(events.some((event) => event.type === "plan.updated"));
+          assert.isTrue(
+            events.some(
+              (event) => event.type === "turn_item.updated" && event.turnItem.type === "compaction",
+            ),
+          );
+          for (const event of events) {
+            if (event.type !== "runtime_request.updated") continue;
+            yield* harness.runtime.respondToRuntimeRequest(
+              event.runtimeRequest.kind === "user_input"
+                ? { requestId: event.runtimeRequest.id, answers: { "question-0-drinks": ["Tea"] } }
+                : { requestId: event.runtimeRequest.id, decision: "accept" },
+            );
+          }
+          assert.equal(replies.length, 2);
+          yield* push(status("idle"));
+          yield* awaitTerminal;
+          assert.equal(promptIds.length, 1);
+          return;
+        }
+        if (end === "retry-registration") {
+          assert.equal(offers.length, 1);
+          yield* push(status("idle"));
+          yield* harness.startTurn("", undefined, undefined, false, "retry-wake", {});
+          yield* awaitTerminal;
+          assert.equal(promptIds.length, 1);
+          return;
+        }
         if (end === "invalid-continuation" || end === "policy-failure") {
           const failed = yield* harness
             .startTurn(
@@ -1639,6 +2092,121 @@ describe("OpenCodeAdapterV2", () => {
           assert.deepEqual(aborted, [root, "ses_descendant"]);
           assert.isTrue(
             Option.isNone(yield* offers[0]!.dispatchIfCurrent!(Effect.succeed("stale"))),
+          );
+          return;
+        }
+        if (end === "stop-busy-failure" || end === "cancelled-busy-failure") {
+          const stopping = yield* (
+            end === "stop-busy-failure"
+              ? harness.runtime.interruptTurn({
+                  providerThread: harness.providerThread,
+                  providerTurnId: ProviderTurnId.make("provider-turn:settled"),
+                  requestRuntimeRestart: true,
+                })
+              : offers[0]!.onRunEndedWithoutStarting!()
+          ).pipe(Effect.exit, Effect.forkScoped);
+          yield* Effect.promise(() => abortStarted.promise);
+          abortFinished.resolve();
+          const stopped = yield* Fiber.join(stopping);
+          assert.equal(Exit.isFailure(stopped), end === "stop-busy-failure");
+          const replacement = yield* harness
+            .startTurn("replacement", undefined, undefined, false, "replacement")
+            .pipe(Effect.exit);
+          assert.isTrue(Exit.isFailure(replacement), "uncertain native work requires reconnect");
+          assert.equal(promptIds.length, 1, "replacement cannot join the surviving native loop");
+          assert.deepEqual(aborted, [root, "ses_descendant"]);
+          const events = yield* harness.runtime.events.pipe(
+            Stream.takeUntil(
+              (event) =>
+                event.type === "provider_session.updated" &&
+                event.providerSession.status === "error",
+            ),
+            Stream.runCollect,
+          );
+          assert.isTrue(
+            events.some(
+              (event) =>
+                event.type === "provider_session.updated" &&
+                event.providerSession.status === "error" &&
+                event.providerSession.lastError?.includes("reconnect"),
+            ),
+          );
+          assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
+          return;
+        }
+        if (end === "replay-continuation-timeout" || end === "replay-foreground-timeout") {
+          yield* push({
+            type: "message.part.updated",
+            properties: {
+              sessionID: root,
+              part: {
+                id: "prt_replay_task",
+                sessionID: root,
+                messageID: "msg_wake_assistant",
+                type: "tool",
+                tool: "task",
+                callID: "call_replay_task",
+                state: {
+                  status: "running",
+                  input: { description: "Child", prompt: "Continue", subagent_type: "general" },
+                  title: "Child",
+                  metadata: { sessionId: "ses_replay_child", background: true },
+                  time: { start: 3 },
+                },
+              },
+            },
+          });
+          const starting = yield* harness
+            .startTurn(
+              end === "replay-foreground-timeout" ? "follow up" : "",
+              undefined,
+              undefined,
+              false,
+              "replay",
+              end === "replay-continuation-timeout" ? {} : undefined,
+            )
+            .pipe(Effect.exit, Effect.forkScoped);
+          yield* Effect.promise(() => routeStarted.promise);
+          yield* TestClock.adjust("10 seconds");
+          assert.isTrue(Exit.isFailure(yield* Fiber.join(starting)));
+          const snapshot = yield* harness.runtime.readThreadSnapshot({
+            providerThread: harness.providerThread,
+          });
+          assert.equal(
+            snapshot.providerTurns.at(-1)?.status,
+            "failed",
+            "the installed turn must be finalized",
+          );
+          assert.deepEqual(aborted, [root, "ses_descendant"]);
+          const replacement = yield* harness.startTurn("replacement").pipe(Effect.exit);
+          assert.isTrue(Exit.isFailure(replacement), "incomplete replay requires reconnect");
+          assert.equal(promptIds.length, 1, "failed replay cannot submit a foreground prompt");
+          const events = yield* harness.runtime.events.pipe(
+            Stream.takeUntil((event) => event.type === "turn.terminal"),
+            Stream.runCollect,
+          );
+          assert.isTrue(
+            events.some(
+              (event) =>
+                event.type === "provider_session.updated" &&
+                event.providerSession.status === "error" &&
+                event.providerSession.lastError?.includes("reconnect"),
+            ),
+          );
+          assert.isTrue(
+            events.some(
+              (event) =>
+                event.type === "turn.terminal" &&
+                event.status === "failed" &&
+                event.threadDisposition === "broken",
+            ),
+          );
+          routeFinished.resolve();
+          yield* offers[0]!.onRunEndedWithoutStarting!();
+          assert.deepEqual(
+            aborted,
+            [root, "ses_descendant"],
+            "stale callbacks cannot repeat cleanup",
           );
           return;
         }
@@ -1689,6 +2257,23 @@ describe("OpenCodeAdapterV2", () => {
             "foreground installation cannot wait indefinitely on event I/O",
           );
           assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
+          const events = yield* harness.runtime.events.pipe(
+            Stream.takeUntil(
+              (event) =>
+                event.type === "provider_session.updated" &&
+                event.providerSession.status === "error",
+            ),
+            Stream.runCollect,
+          );
+          assert.isTrue(
+            events.some(
+              (event) =>
+                event.type === "provider_session.updated" &&
+                event.providerSession.status === "error" &&
+                event.providerSession.lastError?.includes("OpenCode event routing timed out") &&
+                event.providerSession.lastError.includes("reconnect"),
+            ),
+          );
           return;
         }
         if (end === "owned-exit" || end === "failed-stream") {
@@ -1714,6 +2299,61 @@ describe("OpenCodeAdapterV2", () => {
         }
         if (end === "closed") {
           yield* Scope.close(sessionScope, Exit.void);
+          const replacementEvents = asyncEventStream();
+          const replacementAborts: string[] = [];
+          const replacementOffers: ProviderContinuationRequests.ProviderContinuationRequest[] = [];
+          const replacement = yield* makeOpenCodeRuntimeHarness(
+            "replacement-root",
+            "ses_replacement",
+            {
+              event: { subscribe: async () => ({ stream: replacementEvents.stream }) },
+              session: {
+                create: async () => ({
+                  data: { id: "ses_replacement", time: { created: 1, updated: 1 } },
+                }),
+                get: async () => ({ data: { id: root, time: { created: 1, updated: 1 } } }),
+                messages: async () => ({
+                  data: [
+                    {
+                      info: {
+                        id: "msg_background_result",
+                        sessionID: root,
+                        role: "user",
+                        time: { created: 1 },
+                      },
+                      parts: [],
+                    },
+                  ],
+                }),
+                update: async () => ({ data: { id: root } }),
+                promptAsync: async () => ({ data: true }),
+                children: async () => ({ data: [] }),
+                abort: async (input: { sessionID: string }) => {
+                  replacementAborts.push(input.sessionID);
+                  return { data: true };
+                },
+              },
+            },
+          ).pipe(
+            Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+              offer: (offer) =>
+                Effect.sync(() => {
+                  replacementOffers.push(offer);
+                }),
+              take: Effect.never,
+            }),
+          );
+          const resumed = yield* replacement.runtime.resumeThread({
+            providerThread: harness.providerThread,
+          });
+          yield* replacement.startTurn("replacement", resumed);
+          yield* Effect.promise(() => replacementEvents.push(user("msg_background_result")));
+          yield* Effect.promise(() => replacementEvents.push(status("busy")));
+          assert.equal(
+            replacementOffers.length,
+            0,
+            "old root frames cannot offer during replacement work",
+          );
           const beforeCallback = [...aborted];
           yield* offers[0]!.onRunEndedWithoutStarting!();
           assert.deepEqual(
@@ -1722,6 +2362,15 @@ describe("OpenCodeAdapterV2", () => {
             "a closed session callback cannot abort replacement work",
           );
           assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
+          assert.deepEqual(
+            replacementAborts,
+            [],
+            "old callbacks cannot abort the installed runtime",
+          );
+          const replacementSnapshot = yield* replacement.runtime.readThreadSnapshot({
+            providerThread: resumed,
+          });
+          assert.equal(replacementSnapshot.providerTurns.at(-1)?.status, "running");
           return;
         }
         const foreground =
@@ -1771,6 +2420,7 @@ describe("OpenCodeAdapterV2", () => {
           );
           return;
         }
+        if (end === "foreground-buffered-error") yield* push(nativeError());
         yield* push(status("idle"));
         yield* push({ type: "session.idle", properties: { sessionID: root } });
         if (foreground !== null) yield* Fiber.join(foreground);
@@ -1821,8 +2471,12 @@ describe("OpenCodeAdapterV2", () => {
           );
           return;
         }
-        if (end === "foreground-buffered" || end === "foreground") {
-          if (end === "foreground-buffered")
+        if (
+          end === "foreground-buffered" ||
+          end === "foreground-buffered-error" ||
+          end === "foreground"
+        ) {
+          if (end === "foreground-buffered" || end === "foreground-buffered-error")
             yield* harness.startTurn("follow up", undefined, undefined, false, "next");
           assert.equal(promptIds.length, 2, "the foreground prompt is submitted");
           const snapshot = yield* harness.runtime.readThreadSnapshot({
@@ -1860,7 +2514,11 @@ describe("OpenCodeAdapterV2", () => {
           });
           yield* push(status("idle"));
         }
-        if (end === "foreground" || end === "foreground-buffered") {
+        if (
+          end === "foreground" ||
+          end === "foreground-buffered" ||
+          end === "foreground-buffered-error"
+        ) {
           const events = yield* harness.runtime.events.pipe(
             Stream.takeUntil((event) => event.type === "turn.terminal"),
             Stream.runCollect,
@@ -1930,7 +2588,11 @@ describe("OpenCodeAdapterV2", () => {
         }
         assert.deepEqual(
           aborted,
-          end === "foreground" || end === "foreground-buffered" ? [] : [root, "ses_descendant"],
+          end === "foreground" ||
+            end === "foreground-buffered" ||
+            end === "foreground-buffered-error"
+            ? []
+            : [root, "ses_descendant"],
           "an unadmitted wake cleans up its root and descendants",
         );
         const dispatched = yield* offer.dispatchIfCurrent(Effect.succeed("run"));
