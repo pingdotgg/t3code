@@ -37,6 +37,7 @@ import {
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
 import { claudeTaskOutputRoot } from "./ClaudeTaskOutputTail.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderInstallationGate from "../../provider/ProviderInstallationGate.ts";
 import { ProviderAdapterDriverCreateError } from "@t3tools/provider-core/server/adapterDriver";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
@@ -942,6 +943,7 @@ function replayQueryRunnerService(
     open: (input) => replay(() => queryRunner.open(input)),
     forkSession: (input) => replay(() => queryRunner.forkSession(input)),
     subagentLaunchToolUseId: (input) => replay(() => queryRunner.subagentLaunchToolUseId(input)),
+    subagentModel: () => Effect.succeed(null),
     assertComplete: replay(() => queryRunner.assertComplete()),
   });
 }
@@ -1054,6 +1056,7 @@ function layerClaudeProviderAdapterRegistryReplay(
       Layer.mergeAll(
         layerClaudeAgentSdkReplay(transcript, options),
         IdAllocator.layer,
+        ProviderInstallationGate.layer,
         NodeServices.layer,
         NodeCrypto.layer,
         layerServerConfig,
@@ -2175,15 +2178,11 @@ async function recordClaudeForkSessionQuery(input: {
           type: "session.fork",
           sessionId: input.sessionId,
           options: {
-            dir: sanitizedReplayCwd(input.scenario),
             upToMessageId,
           },
         },
       });
-      const forked = await forkSession(input.sessionId, {
-        dir: input.cwd,
-        upToMessageId,
-      });
+      const forked = await forkSession(input.sessionId, { upToMessageId });
       forkedNativeSessionIds.push(forked.sessionId);
       input.entries.push({
         type: "emit_inbound",

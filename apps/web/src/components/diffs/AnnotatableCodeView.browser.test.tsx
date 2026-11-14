@@ -62,7 +62,7 @@ function file(
 ) {
   const fileDiff = parsePatchFiles(
     `diff --git a/${name} b/${name}\n--- a/${name}\n+++ b/${name}\n@@ -1 +1 @@\n-old\n+new\n`,
-    name,
+    { cacheKeyPrefix: name },
   )[0]!.files[0]!;
   fileDiff.type = type;
   if (prevName) fileDiff.prevName = prevName;

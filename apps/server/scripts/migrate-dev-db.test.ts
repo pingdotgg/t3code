@@ -9,13 +9,19 @@ import { runMigrations } from "../src/persistence/Migrations.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { runMigrateDevDb } from "./migrate-dev-db.ts";
 
-const withDatabase = <A, E>(
+const withDatabase = <A, E, R>(
   databasePath: string,
-  effect: Effect.Effect<A, E, SqlClient.SqlClient>,
+  effect: Effect.Effect<A, E, R | SqlClient.SqlClient>,
 ) => effect.pipe(Effect.provide(NodeSqliteClient.layer({ filename: databasePath })));
+
+const insertPeerLink = (sql: SqlClient.SqlClient) => sql`INSERT INTO peer_environment_links
+  (environment_id, secret_name, label, urls_json, access, linked_at, expires_at)
+  VALUES ('environment-box', 'peer-link-box', 'Box', '["https://box.example"]', 'auto',
+    '2026-08-01', '2027-08-01')`;
 
 const createFixtureSource = Effect.fn("createMigrateDevDbFixtureSource")(function* (
   baseDir: string,
+  toMigrationInclusive?: number,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -26,20 +32,56 @@ const createFixtureSource = Effect.fn("createMigrateDevDbFixtureSource")(functio
     databasePath,
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations();
+      yield* runMigrations({ toMigrationInclusive });
 
+      const scripts = JSON.stringify([
+        { id: "lint", name: "Lint", command: "vp lint", icon: "lint", runOnWorktreeCreate: false },
+        {
+          id: "teardown",
+          name: "Teardown",
+          command: "./teardown",
+          icon: "configure",
+          runOnWorktreeCreate: false,
+          runOnSettle: true,
+        },
+      ]);
       yield* sql`INSERT INTO projection_projects
         (project_id, title, workspace_root, scripts_json, created_at, updated_at, deleted_at)
         VALUES
-        ('project-kept', 'Kept', '/tmp/kept', '[]', '2026-08-01', '2026-08-01', NULL),
+        ('project-kept', 'Kept', '/tmp/kept', ${scripts}, '2026-08-01', '2026-08-01', NULL),
         ('project-deleted', 'Deleted', '/tmp/deleted', '[]', '2026-08-01', '2026-08-02', '2026-08-02')`;
 
       const forkPayload =
         '{"lineage":{"parentThreadId":"stopped-thread","relationshipToParent":"fork","rootThreadId":"stopped-thread"}}';
       const subagentPayload =
         '{"lineage":{"parentThreadId":"subagent-parent","relationshipToParent":"subagent","rootThreadId":"subagent-parent"},"forkedFrom":{"type":"node","nodeId":"node-1"}}';
+      const watchedPayload = JSON.stringify({
+        pullRequests: [
+          {
+            host: "github.com",
+            repository: "owner/repo",
+            number: 7,
+            url: "https://github.com/owner/repo/pull/7",
+            source: "agent",
+            linkedAt: "2026-08-01T00:00:00.000Z",
+            snapshot: null,
+            stack: null,
+            watch: {
+              startedAt: "2026-08-01T00:00:00.000Z",
+              headSha: null,
+              failedChecks: [],
+              passed: false,
+              passedChecks: [],
+              remarksThrough: "2026-08-01T00:00:00.000Z",
+              remarkIds: [],
+              conflicting: false,
+              wakes: 0,
+            },
+          },
+        ],
+      });
       const threads = [
-        ["stopped-thread", "project-kept", "completed", "{}", "2026-08-01"],
+        ["stopped-thread", "project-kept", "completed", watchedPayload, "2026-08-01"],
         ["fork-thread", "project-kept", "completed", forkPayload, "2026-08-02"],
         ["running-thread", "project-kept", "running", "{}", "2026-08-05"],
         ["settled-thread", "project-kept", "completed", '{"settledAt":"2026-08-01"}', "2026-08-05"],
@@ -69,9 +111,14 @@ const createFixtureSource = Effect.fn("createMigrateDevDbFixtureSource")(functio
           (run_id, thread_id, ordinal, provider, status, requested_at, payload_json)
           VALUES (${`run-${threadId}`}, ${threadId}, 1, 'codex', ${runStatus}, '2026-08-01', '{}')`;
         yield* sql`INSERT INTO orchestration_events
-          (event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at, actor_kind, payload_json, metadata_json)
-          VALUES (${`event-${threadId}`}, 'thread', ${threadId}, 0, 'thread.created', '2026-08-01', 'user', '{}', '{}')`;
+          (event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at, actor_kind, payload_json, metadata_json, application_event_version)
+          VALUES (${`event-${threadId}`}, 'thread', ${threadId}, 0, 'thread.created', '2026-08-01', 'user', '{}', '{}', 2)`;
       }
+      // A V1 thread the server already imported must not trip the legacy guard.
+      yield* sql`INSERT INTO projection_threads
+        (thread_id, project_id, title, model_selection_json, runtime_mode, created_at, updated_at)
+        VALUES ('stopped-thread', 'project-kept', 'stopped-thread',
+          '{"instanceId":"codex","model":"gpt-5.4"}', 'full-access', '2026-08-01', '2026-08-01')`;
       yield* sql`INSERT INTO orchestration_v2_projection_provider_sessions
         (provider_session_id, thread_id, provider, status, updated_at, payload_json)
         VALUES ('session-shared', 'running-thread', 'codex', 'stopped', '2026-08-01', '{}')`;
@@ -95,10 +142,7 @@ const createFixtureSource = Effect.fn("createMigrateDevDbFixtureSource")(functio
         VALUES ('delivery-1', 'task-1', 'key-1', 1900000000000, '{}', '{}', '[]')`;
       yield* sql`INSERT INTO auth_sessions (session_id, subject, scopes, method, issued_at, expires_at)
         VALUES ('session-1', 'user', '[]', 'pairing', '2026-08-01', '2027-08-01')`;
-      yield* sql`INSERT INTO peer_environment_links
-        (environment_id, secret_name, label, urls_json, access, linked_at, expires_at)
-        VALUES ('environment-box', 'peer-link-box', 'Box', '["https://box.example"]', 'auto',
-          '2026-08-01', '2027-08-01')`;
+      if (toMigrationInclusive === undefined) yield* insertPeerLink(sql);
     }),
   );
   return databasePath;
@@ -129,6 +173,13 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
             SELECT stream_id FROM orchestration_events ORDER BY stream_id`;
           const sessions = yield* sql<{ provider_session_id: string }>`
             SELECT provider_session_id FROM orchestration_v2_projection_provider_sessions`;
+          const [pullRequest] = yield* sql<{ url: string | null; watch: string | null }>`
+            SELECT
+              json_extract(payload_json, '$.pullRequests[0].url') AS url,
+              json_extract(payload_json, '$.pullRequests[0].watch') AS watch
+            FROM orchestration_v2_projection_threads WHERE thread_id = 'stopped-thread'`;
+          const [project] = yield* sql<{ scripts_json: string }>`
+            SELECT scripts_json FROM projection_projects WHERE project_id = 'project-kept'`;
           const [leftovers] = yield* sql<{
             auth: number;
             tasks: number;
@@ -143,7 +194,7 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
                 (SELECT COUNT(*) FROM scheduled_task_webhook_pending) AS webhooks,
               (SELECT COUNT(*) FROM orchestration_v2_projection_context_transfers) AS transfers,
               (SELECT COUNT(*) FROM peer_environment_links) AS links`;
-          return { threads, events, sessions, leftovers };
+          return { threads, events, sessions, pullRequest, project, leftovers };
         }),
       );
       assert.deepStrictEqual(
@@ -157,6 +208,31 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
       assert.deepStrictEqual(
         kept.sessions.map((row) => row.provider_session_id),
         ["session-shared"],
+      );
+      assert.deepStrictEqual(
+        kept.pullRequest,
+        { url: "https://github.com/owner/repo/pull/7", watch: null },
+        "copied pull request links keep their history but stop being watched",
+      );
+      assert.deepStrictEqual(
+        JSON.parse(kept.project?.scripts_json ?? "[]"),
+        [
+          {
+            id: "lint",
+            name: "Lint",
+            command: "vp lint",
+            icon: "lint",
+            runOnWorktreeCreate: false,
+          },
+          {
+            id: "teardown",
+            name: "Teardown",
+            command: "./teardown",
+            icon: "configure",
+            runOnWorktreeCreate: false,
+          },
+        ],
+        "copied project scripts stay listed but never run on settle in the original checkout",
       );
       assert.deepStrictEqual(kept.leftovers, {
         auth: 0,
@@ -253,6 +329,61 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
     }),
   );
 
+  // The server imports V1 threads at boot, not in a migration, so a source can
+  // reach the V2 schema with its legacy threads still unimported.
+  it.effect.each([
+    { name: "a pre-V2 source", migrateToLatest: false },
+    { name: "a V2 source whose legacy threads were never imported", migrateToLatest: true },
+  ])("refuses $name", ({ migrateToLatest }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const sourceDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-v1-data-" });
+      const destDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "migrate-dev-db-v1-data-dest-",
+      });
+      const stateDir = path.join(sourceDir, "userdata");
+      const source = path.join(stateDir, "statev2.sqlite");
+      yield* fs.makeDirectory(stateDir, { recursive: true });
+      yield* withDatabase(
+        source,
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* runMigrations({ toMigrationInclusive: 54 });
+          yield* sql`INSERT INTO projection_projects
+            (project_id, title, workspace_root, scripts_json, created_at, updated_at)
+            VALUES ('project-legacy', 'Legacy', '/tmp/legacy', '[]', '2026-08-01', '2026-08-01')`;
+          yield* sql`INSERT INTO projection_threads
+            (thread_id, project_id, title, model_selection_json, runtime_mode, created_at, updated_at)
+            VALUES ('thread-legacy', 'project-legacy', 'Legacy thread',
+              '{"instanceId":"codex","model":"gpt-5.4"}', 'full-access', '2026-08-01', '2026-08-01')`;
+          if (migrateToLatest) yield* runMigrations();
+        }),
+      );
+
+      // A live destination connection keeps uncheckpointed rows in the WAL;
+      // the rejected run must leave those bytes alone.
+      const destination = yield* createFixtureSource(destDir);
+      yield* withDatabase(
+        destination,
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql.unsafe("PRAGMA journal_mode = WAL").unprepared;
+          yield* sql`UPDATE projection_projects SET title = 'Edited' WHERE project_id = 'project-kept'`;
+          const walBefore = yield* fs.readFile(`${destination}-wal`);
+          assert.isAbove(walBefore.length, 0);
+
+          const error = yield* runMigrateDevDb(
+            { baseDir: destDir, source, projects: 5, threadsPerProject: 10 },
+            { sharedHome: sourceDir },
+          ).pipe(Effect.flip);
+          assert.equal(error._tag, "MigrateDevDbLegacySourceError");
+          assert.deepStrictEqual(yield* fs.readFile(`${destination}-wal`), walBefore);
+        }),
+      );
+    }),
+  );
+
   it.effect("seeds from a source that recorded another migration below V2", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -317,6 +448,70 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
       }
       assert.deepStrictEqual(yield* fs.readFile(source), sourceBefore);
       assert.deepStrictEqual(yield* fs.readFile(destination), destinationBefore);
+    }),
+  );
+
+  it.effect("imports a dev seed whose ids after 67 came from the peer links branch", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const sourceDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-peer-" });
+      const destDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-peer-dest-" });
+      const source = yield* createFixtureSource(sourceDir, 67);
+      // Mirrors a real ~/.t3 seed written by a build whose 68-70 differ from main's.
+      yield* withDatabase(
+        source,
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`CREATE TABLE peer_environment_links (
+            environment_id TEXT PRIMARY KEY,
+            secret_name TEXT NOT NULL,
+            label TEXT NOT NULL,
+            urls_json TEXT NOT NULL,
+            access TEXT NOT NULL,
+            linked_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            last_reached_at TEXT,
+            last_error TEXT,
+            fenced INTEGER NOT NULL DEFAULT 0)`;
+          yield* sql`CREATE INDEX orchestration_v2_projection_turn_items_waiting_link_idx
+            ON orchestration_v2_projection_turn_items(thread_id, updated_at DESC, turn_item_id DESC)
+            WHERE type = 'link_request' AND status = 'waiting'`;
+          yield* insertPeerLink(sql);
+          yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES
+            (68, 'PeerLinks'), (69, 'PeerLinkFence'), (70, 'WaitingLinkRequestIndex')`;
+        }),
+      );
+
+      const result = yield* runMigrateDevDb(
+        { baseDir: destDir, source, projects: 5, threadsPerProject: 2 },
+        { sharedHome: sourceDir },
+      );
+
+      const imported = yield* withDatabase(
+        result.databasePath,
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          const threads = yield* sql<{ thread_id: string }>`
+            SELECT thread_id FROM orchestration_v2_projection_threads ORDER BY thread_id`;
+          const schema = yield* sql<{ name: string }>`
+            SELECT name FROM sqlite_master WHERE name IN (
+              'orchestration_v2_projection_turn_items_stop_request_idx',
+              'orchestration_v2_message_search')
+            ORDER BY name`;
+          return { threads, schema };
+        }),
+      );
+      assert.deepStrictEqual(
+        imported.threads.map((row) => row.thread_id),
+        ["fork-thread", "settled-thread", "stopped-thread"],
+      );
+      assert.deepStrictEqual(
+        imported.schema.map((row) => row.name),
+        [
+          "orchestration_v2_message_search",
+          "orchestration_v2_projection_turn_items_stop_request_idx",
+        ],
+      );
     }),
   );
 
