@@ -242,21 +242,18 @@ describe("threadListV2RowAccessibilityLabel", () => {
   } as const;
 
   it("speaks the status or time the row shows beside its title", () => {
-    expect(threadListV2RowAccessibilityLabel({ ...row, statusLabel: { label: "Approval" } })).toBe(
+    expect(threadListV2RowAccessibilityLabel({ ...row, statusLabel: "Approval" })).toBe(
       "Fix login, Approval, Codex",
     );
     expect(threadListV2RowAccessibilityLabel(row)).toBe("Fix login, 5m, Codex");
-    expect(
-      threadListV2RowAccessibilityLabel({ ...row, woke: true, statusLabel: { label: "Done" } }),
-    ).toBe("Fix login, Woke, Codex");
-    expect(threadListV2RowAccessibilityLabel({ ...row, statusLabel: { label: null } })).toBe(
-      "Fix login, Codex",
+    expect(threadListV2RowAccessibilityLabel({ ...row, woke: true, statusLabel: "Done" })).toBe(
+      "Fix login, Woke, Codex",
     );
     expect(
       threadListV2RowAccessibilityLabel({
         ...row,
         variant: "slim",
-        statusLabel: { label: "Failed" },
+        statusLabel: "Failed",
         snoozeWakeLabel: "in 2h",
       }),
     ).toBe("Fix login, in 2h, Codex");

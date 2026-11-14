@@ -790,7 +790,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     title: thread.title,
     variant,
     woke: showsWoke,
-    statusLabel,
+    // Working and waiting rows show only an icon and a duration, so name them for speech.
+    statusLabel:
+      statusLabel && (statusLabel.label ?? (status === "waiting" ? "Waiting" : "Working")),
     timeLabel,
     snoozeWakeLabel: snoozedRow ? props.snoozeWakeLabelText : undefined,
     providerNameLabel,
