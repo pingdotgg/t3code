@@ -1,7 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as NodePath from "@effect/platform-node/NodePath";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -41,11 +43,13 @@ const agentFixture = Effect.fn("agentFixture")(function* (
   ) => Effect.Effect<ProcessRunner.ProcessRunOutput, ProcessRunner.ProcessRunError>,
   avdOutput: ProcessRunner.ProcessRunOutput = processOutput(0),
   previousDaemon?: typeof LocalDeviceHost.__testing.AgentDeviceDaemonFile.Type,
+  environment?: NodeJS.ProcessEnv,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-agent-start-" });
-  const hub = { running: true, spawnFails: false };
+  const hub = { running: true, spawnFails: false, cleanup: Effect.void };
+  const daemonStopRequested = yield* Deferred.make<ReadonlyArray<string>>();
   const stateDir = agentDeviceStateDir(path, path.join(baseDir, "userdata"));
   const daemonHealthy = yield* Ref.make(true);
   const runs: Array<ProcessRunner.ProcessRunInput> = [];
@@ -65,7 +69,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
   }
   const host = yield* LocalDeviceHost.make().pipe(
     Effect.provide(Layer.mergeAll(ServerConfig.layerTest(baseDir, baseDir), NetService.layer)),
-    Effect.provideService(HostProcess.Environment, { HOME: baseDir, PATH: "" }),
+    Effect.provideService(HostProcess.Environment, environment ?? { HOME: baseDir, PATH: "" }),
     Effect.provideService(HostProcess.IsExecutable, false),
     Effect.provideService(HostProcess.Platform, "darwin"),
     Effect.provideService(
@@ -80,20 +84,22 @@ const agentFixture = Effect.fn("agentFixture")(function* (
                 description: "Hub entry missing",
               }),
             )
-          : Effect.succeed(
-              ChildProcessSpawner.makeHandle({
-                pid: ChildProcessSpawner.ProcessId(123),
-                stdout: Stream.empty,
-                stderr: Stream.empty,
-                all: Stream.empty,
-                exitCode: Effect.never,
-                isRunning: Effect.sync(() => hub.running),
-                kill: () => Effect.void,
-                stdin: Sink.drain,
-                getInputFd: () => Sink.drain,
-                getOutputFd: () => Stream.empty,
-                unref: Effect.succeed(Effect.void),
-              }),
+          : Effect.addFinalizer(() => hub.cleanup).pipe(
+              Effect.as(
+                ChildProcessSpawner.makeHandle({
+                  pid: ChildProcessSpawner.ProcessId(123),
+                  stdout: Stream.empty,
+                  stderr: Stream.empty,
+                  all: Stream.empty,
+                  exitCode: Effect.never,
+                  isRunning: Effect.sync(() => hub.running),
+                  kill: () => Effect.void,
+                  stdin: Sink.drain,
+                  getInputFd: () => Sink.drain,
+                  getOutputFd: () => Stream.empty,
+                  unref: Effect.succeed(Effect.void),
+                }),
+              ),
             ),
       ),
     ),
@@ -102,7 +108,9 @@ const agentFixture = Effect.fn("agentFixture")(function* (
         runs.push(input);
         return input.args.includes("devices")
           ? startup(stateDir)
-          : Effect.succeed(input.args.includes("-list-avds") ? avdOutput : processOutput(0));
+          : input.args.includes("daemon")
+            ? Deferred.succeed(daemonStopRequested, input.args).pipe(Effect.as(processOutput(0)))
+            : Effect.succeed(input.args.includes("-list-avds") ? avdOutput : processOutput(0));
       },
     }),
     Effect.provideService(
@@ -122,7 +130,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     ),
   );
   yield* host.ensureReady(() => Effect.void);
-  return { host, fs, baseDir, stateDir, hub, daemonHealthy, runs };
+  return { host, fs, baseDir, stateDir, hub, daemonHealthy, daemonStopRequested, runs };
 });
 
 describe("AgentDevice startup", () => {
@@ -155,6 +163,56 @@ describe("AgentDevice startup", () => {
         baseUrl: "http://127.0.0.1:12347",
         token: "token-2",
       });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("uses the SDK a later shell environment selects", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-sdk-" });
+      const standard = `${home}/Library/Android/sdk`;
+      const profile = `${home}/profile-sdk`;
+      for (const root of [standard, profile]) {
+        for (const tool of ["platform-tools/adb", "emulator/emulator"]) {
+          yield* fs.makeDirectory(`${root}/${tool.split("/")[0]}`, { recursive: true });
+          yield* fs.writeFileString(`${root}/${tool}`, "");
+        }
+      }
+      const environment: NodeJS.ProcessEnv = { HOME: home, PATH: "" };
+      const { host, hub, runs } = yield* agentFixture(
+        (stateDir) =>
+          fs
+            .writeFileString(
+              `${stateDir}/daemon.json`,
+              JSON.stringify({ httpPort: 12345, token: "token" }),
+            )
+            .pipe(Effect.orDie, Effect.as(processOutput(0))),
+        processOutput(0),
+        undefined,
+        environment,
+      );
+      // The desktop shell snapshot updates the server's environment after the host exists.
+      environment.ANDROID_HOME = profile;
+      hub.running = false;
+      runs.length = 0;
+      const ready = yield* host.ensureAgentReady(() => Effect.void);
+      yield* ready.run("emulator", ["-list-avds"]);
+
+      const emulator = `${profile}/emulator/emulator`;
+      const sdkRuns = runs.filter(
+        (run) => run.command === emulator || run.args.includes("devices"),
+      );
+      // Two hub camera probes, the agent-device launch, and the emulator command.
+      expect(sdkRuns.map((run) => run.args[0])).toEqual([
+        "-help-camera-front",
+        "-help-camera-back",
+        expect.stringContaining("agent-device"),
+        "-list-avds",
+      ]);
+      for (const run of sdkRuns) {
+        expect(run.env?.ANDROID_HOME).toBe(profile);
+        expect(run.env?.PATH?.split(":")[0]).toBe(`${profile}/platform-tools`);
+      }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
@@ -351,6 +409,33 @@ describe("AgentDevice startup", () => {
       yield* host.stop;
       expect(runs.filter((run) => run.args.includes("daemon"))).toEqual([]);
       expect(yield* fs.exists(path.join(stateDir, "daemon.json"))).toBe(false);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("stops the agent daemon while the hub is still shutting down", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { host, hub, stateDir, daemonStopRequested } = yield* agentFixture((stateDir) =>
+        fs
+          .writeFileString(
+            `${stateDir}/daemon.json`,
+            JSON.stringify({ httpPort: 12345, token: "test-token" }),
+          )
+          .pipe(Effect.orDie, Effect.as(processOutput(0))),
+      );
+      yield* host.ensureAgentReady(() => Effect.void);
+      const hubExited = yield* Deferred.make<void>();
+      hub.cleanup = Deferred.await(hubExited);
+      const stopping = yield* Effect.forkChild(host.stop);
+      expect((yield* Deferred.await(daemonStopRequested)).slice(1)).toEqual([
+        "daemon",
+        "stop",
+        "--state-dir",
+        stateDir,
+      ]);
+      yield* Deferred.succeed(hubExited, undefined);
+      yield* Fiber.join(stopping);
+      expect(yield* fs.exists(`${stateDir}/hub.json`)).toBe(false);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

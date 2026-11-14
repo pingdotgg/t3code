@@ -678,7 +678,7 @@ it.effect("reports an unreadable capture as T3 does: a successful 0×0 screensho
     );
     yield* withDevices(sample);
     const told = JSON.stringify(shellRequest(sample, { tool: "Bash", input: {} }, model).messages);
-    assert.include(told, "agent-device's own screenshot finds the PNG and is unaffected");
+    assert.include(told, "agent-device's own screenshot is unaffected");
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
