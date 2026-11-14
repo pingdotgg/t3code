@@ -1131,7 +1131,9 @@ impl ClaudeSession {
             } else {
                 state.mapper.begin_turn(&input, &mode)
             };
-            (outs, query, SystemEnv.uuid())
+            let uuid = SystemEnv.uuid();
+            state.mapper.set_prompt_uuid(&uuid);
+            (outs, query, uuid)
         };
         inner.deliver(Some(&query), outs).await;
         let offered = query

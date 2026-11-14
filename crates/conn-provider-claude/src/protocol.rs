@@ -285,6 +285,9 @@ pub struct SystemMsg {
     /// `task_started`: the subagent task whose own background work this is (undeclared).
     #[serde(default)]
     pub parent_task_id: Option<Value>,
+    /// `thinking_tokens`: the prompt it thinks about.
+    #[serde(default)]
+    pub user_message_uuid: Option<String>,
     /// `task_started`: 1 for the root's subagents, more for nested ones.
     #[serde(default)]
     pub spawn_depth: Option<f64>,
@@ -298,6 +301,10 @@ pub struct StreamEventMsg {
     pub event: StreamEvent,
     #[serde(default)]
     pub parent_tool_use_id: Option<String>,
+    #[serde(default)]
+    pub user_message_uuids: Option<Vec<String>>,
+    #[serde(default)]
+    pub user_message_uuid: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -472,6 +479,8 @@ pub struct AssistantMsg {
     /// The prompts this frame answers.
     #[serde(default)]
     pub user_message_uuids: Option<Vec<String>>,
+    #[serde(default)]
+    pub user_message_uuid: Option<String>,
     /// Per MCP `tool_use`: `id`, `display_name`, `server_display_name`, `icon_url`.
     #[serde(default)]
     pub tool_use_meta: Option<Value>,
@@ -554,6 +563,11 @@ pub struct ResultMsg {
     pub model_usage: Option<Value>,
     #[serde(default)]
     pub user_message_uuids: Option<Vec<String>>,
+    #[serde(default)]
+    pub user_message_uuid: Option<String>,
+    /// Who started the turn: `{"kind": "human" | "task-notification" | ...}`.
+    #[serde(default)]
+    pub origin: Option<Value>,
 }
 
 // ---- Host → CLI ----

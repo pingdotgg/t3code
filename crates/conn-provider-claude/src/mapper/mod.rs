@@ -104,7 +104,21 @@ pub struct Mapper<E: Env> {
     last_provider_thread: Option<Value>,
     /// What the next wake reports (`wakeReportsByNativeThread`) and its message text.
     wakes: wakes::Wakes,
+    /// How this CLI process echoes a prompt (`promptEchoMode`).
+    echo_mode: EchoMode,
 }
+
+/// `ClaudeLiveQueryContext.promptEchoMode`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EchoMode {
+    Unknown,
+    Acknowledged,
+    Early,
+    ResultOnly,
+}
+
+/// Root frames held before the prompt's echo, at most.
+const HELD_ROOT_CAP: usize = 512;
 
 /// Input and output tokens (`ClaudeLedgerUsage`).
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -260,6 +274,13 @@ struct Turn {
     had_subagents: bool,
     /// A continuation turn the provider asked for (`isClaudeProviderContinuationTurn`).
     continuation: bool,
+    /// The prompt written for this turn (`promptUuid`); none for a continuation.
+    prompt_uuid: Option<String>,
+    /// The CLI echoed the prompt: its frames are this turn's (`promptEcho: "confirmed"`).
+    echo_confirmed: bool,
+    gated_before_echo: u32,
+    /// Root frames that came before the echo (`heldRootFrames`).
+    held_root: Vec<Inbound>,
 }
 
 impl Turn {
@@ -325,12 +346,14 @@ impl<E: Env> Mapper<E> {
             roster: roster::Roster::default(),
             last_provider_thread: None,
             wakes: wakes::Wakes::default(),
+            echo_mode: EchoMode::Unknown,
         }
     }
 
     /// A new CLI process: its `modelUsage` starts from nothing (`modelLedger: new Map()`).
     pub fn new_process(&mut self) {
         self.ledger = Some(Vec::new());
+        self.echo_mode = EchoMode::Unknown;
         // The SDK sends no first roster: a new process starts with none.
         self.roster.clear();
     }
@@ -422,6 +445,16 @@ impl<E: Env> Mapper<E> {
         vec![steer_event(turn, &message_id, SteerStatus::Completed)]
     }
 
+    /// The uuid of the prompt written for the running turn: frames before its echo may
+    /// belong to a wake Claude runs first.
+    pub fn set_prompt_uuid(&mut self, uuid: &str) {
+        if let Some(turn) = &mut self.turn
+            && !turn.continuation
+        {
+            turn.prompt_uuid = Some(uuid.to_string());
+        }
+    }
+
     pub fn set_permission_mode(&mut self, mode: &str) {
         if let Some(turn) = &mut self.turn {
             turn.permission_mode = mode.to_string();
@@ -490,6 +523,10 @@ impl<E: Env> Mapper<E> {
             steered_ledger: Some(Ledger::default()),
             had_subagents: false,
             continuation: false,
+            prompt_uuid: None,
+            echo_confirmed: false,
+            gated_before_echo: 0,
+            held_root: Vec::new(),
         };
         let mut out = Vec::new();
         emit(
@@ -542,6 +579,9 @@ impl<E: Env> Mapper<E> {
         if let Some(turn) = &mut self.turn {
             accept_echoed_steers(turn, &message, &mut out);
         }
+        let Some(message) = self.echo_gate(message, &mut out) else {
+            return out;
+        };
         match message {
             // Subagent text arrives as whole assistant frames; its stream is not shown.
             Inbound::StreamEvent(msg) if msg.parent_tool_use_id.is_some() => {}
@@ -2729,6 +2769,70 @@ fn overage_allowed(info: &Value) -> bool {
         || info.get("overageInUse") == Some(&json!(true))
 }
 
+/// `claudeEchoedPromptUuids`.
+fn echoed_uuids(message: &Inbound) -> Vec<&str> {
+    let (many, one) = match message {
+        Inbound::Assistant(m) => (&m.user_message_uuids, &m.user_message_uuid),
+        Inbound::Result(m) => (&m.user_message_uuids, &m.user_message_uuid),
+        Inbound::StreamEvent(m) => (&m.user_message_uuids, &m.user_message_uuid),
+        Inbound::System(m) => (&None, &m.user_message_uuid),
+        _ => return Vec::new(),
+    };
+    match many {
+        Some(list) => list.iter().map(String::as_str).collect(),
+        None => one.iter().map(String::as_str).collect(),
+    }
+}
+
+/// `isClaudePromptEchoGatedFrame`.
+fn is_echo_gated(message: &Inbound) -> bool {
+    match message {
+        Inbound::Assistant(m) => m.parent_tool_use_id.is_none(),
+        Inbound::StreamEvent(m) => m.parent_tool_use_id.is_none(),
+        Inbound::User(m) => m.parent_tool_use_id.is_none(),
+        Inbound::Result(_) => true,
+        _ => false,
+    }
+}
+
+fn is_task_notification_result(result: &ResultMsg) -> bool {
+    result
+        .origin
+        .as_ref()
+        .and_then(|o| o.get("kind"))
+        .and_then(Value::as_str)
+        == Some("task-notification")
+}
+
+/// `isClaudeResultForOtherTurn`.
+fn result_for_other_turn(
+    result: &ResultMsg,
+    prompt: &str,
+    steers: &[(String, String)],
+    mode: EchoMode,
+) -> bool {
+    let echoed: Vec<&str> = match &result.user_message_uuids {
+        Some(list) => list.iter().map(String::as_str).collect(),
+        None => result
+            .user_message_uuid
+            .iter()
+            .map(String::as_str)
+            .collect(),
+    };
+    if !echoed.is_empty() {
+        return !echoed
+            .iter()
+            .any(|u| *u == prompt || steers.iter().any(|(s, _)| s == u));
+    }
+    mode != EchoMode::Unknown
+        && result
+            .origin
+            .as_ref()
+            .and_then(|o| o.get("kind"))
+            .and_then(Value::as_str)
+            .is_some_and(|kind| kind != "human")
+}
+
 /// Root frames that mean Claude is working with no turn open.
 fn is_wake_frame(message: &Inbound) -> bool {
     match message {
@@ -2765,6 +2869,90 @@ impl<E: Env> Mapper<E> {
             return;
         }
         self.request_continuation(out);
+    }
+
+    /// The prompt echo gate of `handleSdkMessage`: Claude may run a queued wake before the
+    /// prompt just written. Root frames before the prompt's echo wait; when they end in a
+    /// result for another turn they were that wake, and become a continuation. Returns the
+    /// frame to handle now, if any.
+    fn echo_gate(&mut self, message: Inbound, out: &mut Vec<Out>) -> Option<Inbound> {
+        let Some(turn) = &mut self.turn else {
+            return Some(message);
+        };
+        let Some(prompt) = turn.prompt_uuid.clone() else {
+            return Some(message);
+        };
+        if turn.echo_confirmed {
+            return Some(message);
+        }
+        if echoed_uuids(&message).contains(&prompt.as_str()) {
+            if matches!(self.echo_mode, EchoMode::Unknown | EchoMode::Acknowledged) {
+                self.echo_mode =
+                    if !matches!(message, Inbound::Result(_)) && turn.gated_before_echo == 0 {
+                        EchoMode::Early
+                    } else {
+                        EchoMode::ResultOnly
+                    };
+            }
+            self.release_held_root(out);
+            return Some(message);
+        }
+        if let Inbound::CommandLifecycle { command_uuid, .. } = &message
+            && *command_uuid == prompt
+        {
+            if self.echo_mode == EchoMode::Unknown {
+                self.echo_mode = EchoMode::Acknowledged;
+            }
+            return Some(message);
+        }
+        if !is_echo_gated(&message) {
+            return Some(message);
+        }
+        turn.gated_before_echo += 1;
+        if let Inbound::Result(result) = &message
+            && result_for_other_turn(result, &prompt, &turn.pending_steers, self.echo_mode)
+        {
+            let held = std::mem::take(&mut turn.held_root);
+            turn.gated_before_echo = 0;
+            if result.num_turns == Some(0) {
+                turn.held_root = held;
+                return None;
+            }
+            if self.echo_mode == EchoMode::Early {
+                // `claude-wake-turn-before-prompt`: the held frames were a wake.
+                for frame in held.into_iter().chain(std::iter::once(message)) {
+                    self.hold_wake(frame, out);
+                }
+                return None;
+            }
+            // Foreign output already streamed; its result settles nothing here.
+            if is_task_notification_result(result) {
+                self.wakes.clear();
+            }
+            return None;
+        }
+        if self.echo_mode != EchoMode::Early {
+            return Some(message);
+        }
+        if !matches!(message, Inbound::Result(_)) {
+            if turn.held_root.len() < HELD_ROOT_CAP {
+                turn.held_root.push(message);
+            }
+            return None;
+        }
+        self.release_held_root(out);
+        Some(message)
+    }
+
+    /// `releaseHeldRootFrames`: the echo came; the held frames are this turn's.
+    fn release_held_root(&mut self, out: &mut Vec<Out>) {
+        let Some(turn) = &mut self.turn else {
+            return;
+        };
+        turn.echo_confirmed = true;
+        for frame in std::mem::take(&mut turn.held_root) {
+            out.extend(self.handle(frame));
+        }
     }
 
     /// `offerWakeContinuation`: asks the engine for a continuation turn, once per wake, with
