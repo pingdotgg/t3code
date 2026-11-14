@@ -64,15 +64,56 @@ function runtimeVariables() {
   };
 }
 
+/** Provider, source control host and VCS CLIs (not git): a server a check starts finds none. */
+export const HOST_CLIS = [
+  "claude", "codex", "grok", "gh", "glab", "fj", "tea", "az", "cafe", "origin",
+  "cursor-agent", "opencode", "kiro-cli", "jj",
+];
+
+/**
+ * `PATH` without the CLIs in `HOST_CLIS`: a folder that holds one is replaced, at its place, by
+ * a folder under `dir` with links to everything else in it. The server's source control
+ * discovery and provider probes then run no CLI of this machine (they find none, as on a host
+ * without them), while `node`, `git` and the system tools stay where they were.
+ */
+export function sealedPath(dir, path = process.env.PATH ?? "/usr/bin:/bin") {
+  const out = [];
+  path.split(":").filter(Boolean).forEach((folder, index) => {
+    let names;
+    try {
+      names = NodeFS.readdirSync(folder);
+    } catch {
+      return;
+    }
+    if (!names.some((name) => HOST_CLIS.includes(name))) {
+      out.push(folder);
+      return;
+    }
+    const links = NodePath.join(dir, "path", String(index));
+    NodeFS.mkdirSync(links, { recursive: true });
+    for (const name of names) {
+      if (HOST_CLIS.includes(name)) continue;
+      try {
+        NodeFS.symlinkSync(NodePath.join(folder, name), NodePath.join(links, name));
+      } catch {
+        // A name taken twice keeps its first link.
+      }
+    }
+    out.push(links);
+  });
+  return out.join(":");
+}
+
 /**
  * The environment for a server that a check starts: `RUNTIME_VARIABLES` from the shell, a
- * fresh HOME and a stand-in shell. Discovery (`server.discoverSourceControl`) then reads no CLI
+ * fresh HOME, a stand-in shell and a `PATH` without provider or host CLIs. Discovery (`server.discoverSourceControl`) then reads no CLI
  * login of this machine (gh, glab, fj, ...), no token variable, and calls no host's API; the
  * Claude status probe is off. `dir` must be a fresh temp folder the check removes.
  */
 export function sealedEnv(dir) {
   return {
     ...runtimeVariables(),
+    PATH: sealedPath(dir),
     HOME: freshHome(dir),
     SHELL: standInShell(dir),
     CONN_CLAUDE_STATUS_PROBE: "off",

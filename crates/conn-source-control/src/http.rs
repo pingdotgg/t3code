@@ -410,8 +410,17 @@ async fn dial_logged(
     link_local: LinkLocal,
     log: Option<std::ffi::OsString>,
 ) -> io::Result<TcpStream> {
+    // A link-local literal under `LinkLocal::Refuse` is refused below without a dial.
+    let refused_anyway = link_local == LinkLocal::Refuse
+        && target
+            .host
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .parse::<IpAddr>()
+            .is_ok_and(is_link_local);
     if let Some(log) = log
         && !is_loopback_host(target.host)
+        && !refused_anyway
     {
         let line = format!("{}:{}\n", target.host, target.port);
         let _ = tokio::task::spawn_blocking(move || record_outside(&log, &line)).await;

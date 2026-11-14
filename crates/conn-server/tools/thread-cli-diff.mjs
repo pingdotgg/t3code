@@ -32,6 +32,7 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
 import { monorepo } from "../../../tools/monorepo.mjs";
+import { canaryEnv, gitEnv } from "../../../tools/sealed-env.mjs";
 import { copyRpc } from "./orbit-copy-rpc.mjs";
 import { GUARD_ARG } from "../../../tools/no-outside-fetch.mjs";
 
@@ -124,7 +125,7 @@ function makeSide(name) {
     NodePath.join(userdata, "settings.json"),
     JSON.stringify({ linkedEnvironmentsEnabled: true, enableProviderUpdateChecks: false }),
   );
-  const git = (...args) => NodeChildProcess.execFileSync("git", args, { cwd: project });
+  const git = (...args) => NodeChildProcess.execFileSync("git", args, { cwd: project, env: gitEnv() });
   git("init", "-q", "-b", "main");
   NodeFS.writeFileSync(NodePath.join(project, "README.md"), "# workspace\n");
   git("add", ".");
@@ -177,6 +178,7 @@ function makeSide(name) {
     // Our server never fetches model-manifest.json; the T3 server's settings turn its fetch off.
     CONN_MODEL_MANIFEST_URL: "off",
     CONN_CLAUDE_STATUS_PROBE: "off",
+    ...canaryEnv(),
   };
   const isT3 = name === "t3";
   // The T3 server and CLI run with fetch limited to loopback (no-outside-fetch.mjs).
