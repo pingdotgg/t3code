@@ -23,6 +23,7 @@ import { resolveModelPreferences } from "@t3tools/shared/serverSettings";
 import * as Arr from "effect/Array";
 import * as Equal from "effect/Equal";
 import * as Result from "effect/Result";
+import * as Predicate from "effect/Predicate";
 import {
   getDefaultServerModel,
   getProviderModels,
@@ -73,14 +74,37 @@ export interface AppModelOption {
   isUnavailable?: boolean;
 }
 
+function isSavedCursorPreset(
+  settings: UnifiedSettings,
+  entry: ProviderInstanceEntry,
+  selectedModel: string | null | undefined,
+): boolean {
+  if (entry.driverKind !== "acpRegistry") return false;
+  const config = settings.providerInstances[entry.instanceId]?.config;
+  if (!Predicate.isObject(config)) return false;
+  const cursor =
+    config.source === "local"
+      ? typeof config.commandPath === "string" &&
+        /^cursor-agent(\.exe|\.cmd)?$/i.test(config.commandPath.split(/[\\/]/).pop() ?? "")
+      : config.agentId === "cursor";
+  const preset = /^(.*)\[[^\]]*\]$/.exec(selectedModel ?? "");
+  return cursor && preset !== null && entry.models.some((model) => model.slug === preset[1]);
+}
+
 function appendUnavailableDynamicModelSelection(
   options: AppModelOption[],
   rawModels: ReadonlyArray<ServerProvider["models"][number]>,
   provider: ProviderDriverKind,
   selectedModel: string | null | undefined,
   hiddenModels: ReadonlyArray<string>,
+  savedCursorPreset = false,
 ): AppModelOption[] {
-  if (provider !== "opencode" && provider !== "antigravity" && provider !== "cursor") {
+  if (
+    provider !== "opencode" &&
+    provider !== "antigravity" &&
+    provider !== "cursor" &&
+    !savedCursorPreset
+  ) {
     return options;
   }
   const slug = normalizeCustomModelSlug(selectedModel);
@@ -245,6 +269,7 @@ export function getAppModelOptionsForInstance(
     entry.driverKind,
     selectedModel,
     preferences.hiddenModels,
+    isSavedCursorPreset(settings, entry, selectedModel),
   );
 }
 
@@ -286,7 +311,8 @@ export function resolveAppModelSelectionForInstance(
     resolutionOptions?.preserveUnavailableSelection &&
     (entry.driverKind === "opencode" ||
       entry.driverKind === "antigravity" ||
-      entry.driverKind === "cursor")
+      entry.driverKind === "cursor" ||
+      isSavedCursorPreset(settings, entry, selectedModel))
   ) {
     const unavailableSelection = normalizeCustomModelSlug(selectedModel);
     const hiddenModels = readInstanceModelPreferences(settings, entry.instanceId).hiddenModels;

@@ -415,6 +415,7 @@ export interface AcpAdapterV2Flavor {
     ChildProcessSpawner.ChildProcessSpawner | SecureRandom.SecureRandom | Scope.Scope
   >;
   readonly customModels?: ReadonlyArray<string>;
+  readonly normalizeModelSelection?: (selection: ModelSelection) => ModelSelection;
   /** The agent may run another model than session/new reports, so the model is always written. */
   readonly alwaysSetModel?: boolean;
   /** Values the client shows for options a new session's selection leaves unset. */
@@ -7386,6 +7387,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const validateModelSelection = Effect.fn("AcpAdapterV2.validateModelSelection")(function* (
           modelSelection: ModelSelection,
         ) {
+          modelSelection = flavor.normalizeModelSelection?.(modelSelection) ?? modelSelection;
           const model = flavor.resolveModelId?.(modelSelection) ?? modelSelection.model;
           if (
             flavor.applyModelSelection !== undefined ||
@@ -7418,6 +7420,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           unsetOptionDefaults: NonNullable<ModelSelection["options"]> = [],
         ) {
           yield* Ref.set(activeSelection, null);
+          modelSelection = flavor.normalizeModelSelection?.(modelSelection) ?? modelSelection;
           yield* validateModelSelection(modelSelection);
           const requestedModel = flavor.resolveModelId?.(modelSelection) ?? modelSelection.model;
           // Invalid params is the agent refusing the value, and the runtime

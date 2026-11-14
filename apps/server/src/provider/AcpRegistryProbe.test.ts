@@ -413,6 +413,45 @@ describe("ACP Registry probe", () => {
     );
   });
 
+  // regression: #24371 Cursor lists only fixed effort presets unless asked for its picker
+  // Live clock: the probe waits a short real grace for command advertisements.
+  it.live("lists Cursor's plain model ids so its effort stays a separate option", () => {
+    const catalog = AcpRegistrySupport.AcpRegistryCatalog.of({
+      search: () => Effect.die("unused search"),
+      prepare: () => Effect.die("unused prepare"),
+      inspect: () => Effect.die("unused inspect"),
+      uninstallManagedBinary: () => Effect.die("unused uninstall"),
+      resolve: () =>
+        Effect.succeed({
+          distribution: "local" as const,
+          spawn: { command: "node", args: [mockAgentPath] },
+        }),
+    });
+    const probedModels = (agentId: string) =>
+      probeAcpRegistryConfiguration({
+        instanceId,
+        settings: decodeSettings({ agentId }),
+        cwd: process.cwd(),
+        environment: process.env,
+      }).pipe(Effect.map((result) => result.probe.models.map((model) => model.id)));
+
+    return Effect.gen(function* () {
+      expect(yield* probedModels("cursor")).toEqual([
+        "default",
+        "composer-2",
+        "gpt-5.4",
+        "claude-opus-4-6",
+        "claude-sonnet-4-6",
+      ]);
+      expect(yield* probedModels("mock-agent")).toContain(
+        "gpt-5.3-codex[reasoning=medium,fast=false]",
+      );
+    }).pipe(
+      Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    );
+  });
+
   it.live.each(["succeeds", "fails"] as const)(
     "deletes its health-probe session when deletion is advertised and %s",
     (deleteOutcome) =>
