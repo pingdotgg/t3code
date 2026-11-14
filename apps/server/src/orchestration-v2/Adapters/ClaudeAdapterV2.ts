@@ -6215,6 +6215,51 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }).pipe(Effect.withSpan("ClaudeAdapterV2.completeProviderRetry"));
         });
 
+        // A hung request can take many minutes per attempt, so the budget spans the
+        // whole retry window rather than counting attempts.
+        const failExpiredProviderRetry = Effect.fn("ClaudeAdapterV2.failExpiredProviderRetry")(
+          function* (context: ActiveClaudeTurnContext, startedAt: DateTime.Utc) {
+            const isCurrentRetry = Effect.gen(function* () {
+              const retry = (yield* Ref.get(providerRetries)).get(context.providerTurnId);
+              return retry?.startedAt === startedAt && (yield* Ref.get(activeTurn)) === context
+                ? retry
+                : undefined;
+            });
+            const retry = yield* isCurrentRetry;
+            // A user Stop already in flight keeps its interrupted outcome.
+            if (
+              retry === undefined ||
+              (yield* Ref.get(interruptedTurns)).has(context.providerTurnId)
+            )
+              return;
+            context.retryBudgetFailure = { ...retry.failure, retryable: false };
+            const liveQuery = yield* Ref.get(queryContext);
+            yield* interruptTurn({
+              providerThread: context.input.providerThread,
+              providerTurnId: context.providerTurnId,
+            }).pipe(
+              Effect.timeoutOption(CLAUDE_STOP_CONFIRM_TIMEOUT_MS),
+              Effect.catch((cause) =>
+                Effect.logWarning("orchestration-v2.claude-retry-budget-stop-failed", { cause }),
+              ),
+            );
+            if (liveQuery === null || (yield* isCurrentRetry) === undefined) return;
+            // The CLI did not confirm the stop; settle the turn without it.
+            const ownedLiveQuery = yield* Ref.modify(queryContext, (current) =>
+              current?.query === liveQuery.query ? [true, null] : [false, current],
+            );
+            if (!ownedLiveQuery) return;
+            liveQuery.stopping = true;
+            yield* liveQuery.query.close.pipe(
+              Effect.timeoutOption(CLAUDE_STOP_CONFIRM_TIMEOUT_MS),
+              Effect.ignore,
+            );
+            yield* finalizeActiveTurnAfterQueryExit(liveQuery);
+            yield* endSubagentCallsOfClosedQuery(liveQuery.nativeThreadId, "interrupted");
+            yield* Deferred.succeed(liveQuery.closed, undefined);
+          },
+        );
+
         const rememberProviderThread =
           /* Provider events include streaming deltas; avoid a span for each update. */
           Effect.fnUntraced(function* (providerThread: OrchestrationV2ProviderThread) {
@@ -10756,56 +10801,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               }),
             });
             if (previous === undefined) {
-              // A hung request can take many minutes per attempt; stop the turn once
-              // this retry window outlasts the budget, whatever the attempt count.
-              yield* Effect.sleep(PROVIDER_RETRY_BUDGET_MS).pipe(
-                Effect.andThen(
-                  Effect.gen(function* () {
-                    const current = (yield* Ref.get(providerRetries)).get(context.providerTurnId);
-                    // A user Stop already in flight keeps its interrupted outcome.
-                    if (
-                      current?.startedAt !== state.startedAt ||
-                      (yield* Ref.get(activeTurn)) !== context ||
-                      context.retryBudgetFailure !== undefined ||
-                      (yield* Ref.get(interruptedTurns)).has(context.providerTurnId)
-                    )
-                      return;
-                    context.retryBudgetFailure = current.failure;
-                    const liveQuery = yield* Ref.get(queryContext);
-                    yield* interruptTurn({
-                      providerThread: context.input.providerThread,
-                      providerTurnId: context.providerTurnId,
-                    }).pipe(
-                      Effect.timeoutOption("10 seconds"),
-                      Effect.catch((cause) =>
-                        Effect.logWarning("orchestration-v2.claude-retry-budget-stop-failed", {
-                          cause,
-                        }),
-                      ),
-                    );
-                    const currentAfterTimeout = (yield* Ref.get(providerRetries)).get(
-                      context.providerTurnId,
-                    );
-                    if (
-                      currentAfterTimeout?.startedAt !== state.startedAt ||
-                      (yield* Ref.get(activeTurn)) !== context ||
-                      liveQuery === null
-                    )
-                      return;
-                    const ownedLiveQuery = yield* Ref.modify(queryContext, (current) =>
-                      current?.query === liveQuery.query ? [true, null] : [false, current],
-                    );
-                    if (!ownedLiveQuery) return;
-                    liveQuery.stopping = true;
-                    yield* liveQuery.query.close.pipe(
-                      Effect.timeoutOption("10 seconds"),
-                      Effect.ignore,
-                    );
-                    yield* finalizeActiveTurnAfterQueryExit(liveQuery);
-                    yield* endSubagentCallsOfClosedQuery(liveQuery.nativeThreadId, "interrupted");
-                    yield* Deferred.succeed(liveQuery.closed, undefined);
-                  }),
-                ),
+              yield* failExpiredProviderRetry(context, state.startedAt).pipe(
+                Effect.delay(PROVIDER_RETRY_BUDGET_MS),
                 Effect.forkIn(sessionScope),
               );
             }
