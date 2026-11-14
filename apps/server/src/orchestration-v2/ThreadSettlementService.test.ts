@@ -175,6 +175,20 @@ describe("isAutoSettlementCandidate", () => {
     expect(ThreadSettlementService.isSnoozed(snoozed, NOW_MS)).toBe(false);
   });
 
+  it("never settles, or keeps snoozed, a thread whose goal is blocked", () => {
+    const goal = { objective: "Publish release notes", status: "blocked" as const };
+    expect(ThreadSettlementService.isAutoSettlementCandidate(shell({ goal }), NOW_MS)).toBe(false);
+    const snoozed = shell({
+      snoozedUntil: at(60 * 60 * 1_000),
+      snoozedAt: at(-60 * 60 * 1_000),
+      goal,
+    });
+    expect(ThreadSettlementService.isSnoozed(snoozed, NOW_MS)).toBe(false);
+    expect(
+      ThreadSettlementService.isSnoozed({ ...snoozed, activityRunStatus: "running" }, NOW_MS),
+    ).toBe(true);
+  });
+
   it("keeps snoozed threads parked until a fresh failure or timer wake", () => {
     const snoozed = shell({
       snoozedUntil: at(60 * 60 * 1_000),

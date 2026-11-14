@@ -1,6 +1,9 @@
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
+import {
+  resolveThreadWorkingStartedAt,
+  threadGoalAwaitsUser,
+} from "@t3tools/client-runtime/state/models";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
@@ -686,6 +689,7 @@ type ThreadStatusInput = Pick<
   lastVisitedAt?: string | null | undefined;
   pendingBackgroundTasks?: SidebarThreadSummary["pendingBackgroundTasks"] | undefined;
   blockedOnThreadWait?: boolean | undefined;
+  goal?: SidebarThreadSummary["goal"] | undefined;
 };
 
 // Read at event time: subscribing Sidebar to terminal or modifier state re-renders every row.
@@ -957,13 +961,18 @@ type SidebarThreadStatusInput = Pick<
   | "pendingGuestMessageCount"
   | "runtime"
   | "blockedOnThreadWait"
->;
+> &
+  Partial<Pick<SidebarThreadSummary, "goal">>;
 
 export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): SidebarThreadStatus {
   if (thread.hasPendingApprovals || thread.pendingSubagentRequest === "approval") {
     return "approval";
   }
-  if (thread.hasPendingUserInput || thread.pendingSubagentRequest === "user_input") {
+  if (
+    thread.hasPendingUserInput ||
+    thread.pendingSubagentRequest === "user_input" ||
+    threadGoalAwaitsUser(thread)
+  ) {
     return "input";
   }
   // A guest is waiting on the owner; the agent's own requests come first.
@@ -1222,7 +1231,11 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
-  if (thread.hasPendingUserInput || thread.pendingSubagentRequest === "user_input") {
+  if (
+    thread.hasPendingUserInput ||
+    thread.pendingSubagentRequest === "user_input" ||
+    threadGoalAwaitsUser(thread)
+  ) {
     return {
       label: "Awaiting Input",
       colorClass: "text-indigo-600 dark:text-indigo-300/90",

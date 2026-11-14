@@ -10,7 +10,10 @@ import {
 } from "@t3tools/client-runtime/state/thread-settled";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { resolveThreadProviderStack } from "@t3tools/client-runtime/state/models";
+import {
+  resolveThreadProviderStack,
+  threadGoalAwaitsUser,
+} from "@t3tools/client-runtime/state/models";
 import {
   threadSearchMatchKey,
   threadSearchSubject,
@@ -266,12 +269,17 @@ export function resolveThreadListV2Status(
     | "pendingGuestMessageCount"
     | "runtime"
     | "blockedOnThreadWait"
+    | "goal"
   >,
 ): ThreadListV2Status {
   if (thread.hasPendingApprovals || thread.pendingSubagentRequest === "approval") {
     return "approval";
   }
-  if (thread.hasPendingUserInput || thread.pendingSubagentRequest === "user_input") {
+  if (
+    thread.hasPendingUserInput ||
+    thread.pendingSubagentRequest === "user_input" ||
+    threadGoalAwaitsUser(thread)
+  ) {
     return "input";
   }
   // A guest is waiting on the owner; the agent's own requests come first.

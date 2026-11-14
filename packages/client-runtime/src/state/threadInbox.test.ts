@@ -237,6 +237,19 @@ describe("createInboxReturnTracker", () => {
   });
 });
 
+describe("isThreadWorking", () => {
+  it("leaves Working when a goal is blocked while background work parks the runtime", () => {
+    const parked = {
+      ...thread("a", true),
+      runtime: { ...thread("a", true).runtime!, status: "idle" as const },
+      goal: { objective: "Publish release notes", status: "blocked" as const },
+    };
+    expect(isThreadWorking(parked)).toBe(false);
+    // A reply that is not /goal resume runs while the goal still reads blocked.
+    expect(isThreadWorking({ ...parked, runtime: thread("a", true).runtime })).toBe(true);
+  });
+});
+
 describe("sortWorkingThreadsBySend", () => {
   it("orders by the last message the user sent, not by later runs", () => {
     const sentFirst = {
