@@ -2,6 +2,7 @@ import { it as effectIt } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type {
+  DesktopPreviewFindResultEvent,
   DesktopPreviewRecordingInputEvent,
   PreviewAnnotationPayload,
   PreviewAnnotationRect,
@@ -204,6 +205,7 @@ const layerBrowserSession = Layer.succeed(
     isPartition: (partition) => partition.startsWith("persist:t3code-preview-"),
     getSession: () => Effect.succeed(previewSession as unknown as Electron.Session),
     clearCookies: () => Effect.void,
+    cookiesCleared: () => Effect.void,
     clearCache: () => Effect.void,
   }),
 );
@@ -615,7 +617,9 @@ describe("PreviewManager", () => {
                 attach: () => {},
                 detach: () => {},
                 setShown: () => {},
+                loadFailed: () => {},
                 humanStartedDownload: () => true,
+                agentLedPage: () => false,
                 placeDownload: () => true,
               }),
               Layer.mock(PreviewPasskeys.PreviewPasskeys)({
@@ -668,7 +672,7 @@ describe("PreviewManager", () => {
         if (existing) {
           expect(yield* fs.readFileString(`${downloads}/report.txt`)).toBe("existing download");
         }
-      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   effectIt.effect.each([
@@ -742,6 +746,137 @@ describe("PreviewManager", () => {
       ),
   );
 
+  effectIt.effect.each([
+    "navigate",
+    "reload",
+    "goBack",
+    "goForward",
+    "refresh",
+    "hardReload",
+  ] as const)("%s stops a page script that never yields before it navigates", (operation) =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const preview = makeFaviconWebContents();
+        // As in Chromium: the hung renderer answers nothing, and a terminate reaches it only
+        // while no navigation is pending.
+        let stopped = false;
+        const probed = yield* Deferred.make<void>();
+        const navigatedAfterStop: Array<boolean> = [];
+        const navigated = () => {
+          navigatedAfterStop.push(stopped);
+        };
+        const sendCommand = async (method: string) => {
+          if (method === "Runtime.evaluate") {
+            Deferred.doneUnsafe(probed, Effect.void);
+            await new Promise(() => {});
+          }
+          if (method === "Runtime.terminateExecution") stopped = true;
+        };
+        Object.assign(preview.webContents, {
+          getURL: () => "http://localhost:5173/busy",
+          reload: navigated,
+          reloadIgnoringCache: navigated,
+          loadURL: async () => navigated(),
+          navigationHistory: {
+            canGoBack: () => true,
+            canGoForward: () => true,
+            goBack: navigated,
+            goForward: navigated,
+          },
+          debugger: {
+            isAttached: () => false,
+            attach: vi.fn(),
+            sendCommand,
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+        });
+        fromId.mockReturnValue(preview.webContents);
+        yield* manager.createTab("tab_busy");
+        yield* manager.registerWebview("tab_busy", 42);
+
+        const leaving = yield* (
+          operation === "navigate"
+            ? manager.navigate("tab_busy", "http://localhost:5173/next")
+            : operation === "reload"
+              ? manager.navigate("tab_busy", "http://localhost:5173/busy")
+              : manager[operation]("tab_busy")
+        ).pipe(Effect.forkChild);
+        const probing = yield* Effect.raceFirst(
+          Deferred.await(probed).pipe(Effect.as(true)),
+          Fiber.await(leaving).pipe(Effect.as(false)),
+        );
+        if (probing) yield* TestClock.adjust(1_000);
+        yield* Fiber.join(leaving);
+
+        expect(navigatedAfterStop).toEqual([true]);
+      }),
+    ),
+  );
+
+  effectIt.effect("keeps mouse back and forward buttons inside the preview tab", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const preview = makeFaviconWebContents();
+        const goBack = vi.fn();
+        const goForward = vi.fn();
+        const send = vi.fn();
+        let canGoBack = false;
+        Object.assign(preview.webContents, {
+          navigationHistory: {
+            canGoBack: () => canGoBack,
+            canGoForward: () => true,
+            goBack,
+            goForward,
+          },
+          getZoomFactor: () => 2,
+          send,
+        });
+        fromId.mockReturnValue(preview.webContents);
+        yield* manager.createTab("tab_mouse_navigation");
+        yield* manager.registerWebview("tab_mouse_navigation", 42);
+
+        // Electron reports thumb buttons as "back"/"forward" for every frame of the guest, iframes included.
+        const beforeMouse = preview.listeners.get("before-mouse-event");
+        expect(beforeMouse, "guest has no before-mouse-event listener").toBeDefined();
+        const press = (type: "mouseDown" | "mouseUp", button: string) => {
+          const preventDefault = vi.fn();
+          beforeMouse!({ preventDefault } as never, { type, button, x: 10, y: 10 } as never);
+          return preventDefault;
+        };
+
+        // At the start of tab history the press is still swallowed, or the host app goes back instead.
+        expect(press("mouseDown", "back")).toHaveBeenCalledOnce();
+        expect(press("mouseUp", "back")).toHaveBeenCalledOnce();
+        expect(goBack).not.toHaveBeenCalled();
+
+        canGoBack = true;
+        expect(press("mouseDown", "back")).toHaveBeenCalledOnce();
+        expect(goBack).not.toHaveBeenCalled();
+        expect(press("mouseUp", "back")).toHaveBeenCalledOnce();
+        expect(goBack).toHaveBeenCalledOnce();
+        expect(press("mouseDown", "forward")).toHaveBeenCalledOnce();
+        expect(press("mouseUp", "forward")).toHaveBeenCalledOnce();
+        expect(goForward).toHaveBeenCalledOnce();
+        for (const button of ["left", "right"]) {
+          expect(press("mouseDown", button)).not.toHaveBeenCalled();
+          expect(press("mouseUp", button)).not.toHaveBeenCalled();
+        }
+        expect(goBack).toHaveBeenCalledOnce();
+        expect(goForward).toHaveBeenCalledOnce();
+        // The guest replays dropped presses for human input and recordings, in CSS px.
+        expect(send.mock.calls.filter(([channel]) => channel === "preview:thumb-press")).toEqual([
+          ["preview:thumb-press", "down", 5, 5, 3],
+          ["preview:thumb-press", "up", 5, 5, 3],
+          ["preview:thumb-press", "down", 5, 5, 3],
+          ["preview:thumb-press", "up", 5, 5, 3],
+          ["preview:thumb-press", "down", 5, 5, 4],
+          ["preview:thumb-press", "up", 5, 5, 4],
+        ]);
+      }),
+    ),
+  );
+
   effectIt.effect("keeps editing and forwarded shortcuts in whichever tab holds focus", () =>
     withManager((manager) =>
       Effect.gen(function* () {
@@ -808,6 +943,150 @@ describe("PreviewManager", () => {
         );
         expect(agentPreventDefault).not.toHaveBeenCalled();
         expect(send).not.toHaveBeenCalled();
+      }),
+    ),
+  );
+
+  effectIt.effect.each([
+    ["darwin", true],
+    ["linux", false],
+    ["win32", false],
+  ] as const)(
+    "lets the page and its iframes claim the find and zoom shortcuts before the host acts on %s",
+    ([platform, usesMeta]) =>
+      withManager(
+        (manager) =>
+          Effect.gen(function* () {
+            const preview = makeFaviconWebContents();
+            const send = vi.fn();
+            const mainFrame = { processId: 1, routingId: 1 };
+            Object.assign(preview.webContents, {
+              hostWebContents: { isDestroyed: () => false, send },
+              mainFrame,
+              focusedFrame: mainFrame,
+            });
+            fromId.mockReturnValue(preview.webContents);
+            yield* manager.createTab("tab_page_find");
+            yield* manager.registerWebview("tab_page_find", 42);
+            yield* manager.setForwardedShortcuts([
+              { command: "preview.find", shortcut: parseKeybindingShortcut("mod+f")! },
+              { command: "preview.zoomIn", shortcut: parseKeybindingShortcut("mod+=")! },
+            ]);
+            const beforeInput = preview.listeners.get("before-input-event")!;
+            const keepsZoom = vi.fn();
+            beforeInput(
+              { preventDefault: keepsZoom } as never,
+              {
+                type: "keyDown",
+                key: "=",
+                code: "Equal",
+                meta: usesMeta,
+                control: !usesMeta,
+                shift: false,
+                alt: false,
+              } as never,
+            );
+            expect(keepsZoom).not.toHaveBeenCalled();
+            const findKey = {
+              type: "keyDown",
+              key: "f",
+              code: "KeyF",
+              meta: usesMeta,
+              control: !usesMeta,
+            };
+            const preventDefault = vi.fn();
+
+            beforeInput(
+              { preventDefault } as never,
+              { ...findKey, shift: false, alt: false } as never,
+            );
+            expect(preventDefault).not.toHaveBeenCalled();
+            expect(send).not.toHaveBeenCalled();
+
+            const ipcOn = (preview.webContents as Electron.WebContents).ipc.on as ReturnType<
+              typeof vi.fn
+            >;
+            const pageUnhandledShortcut = ipcOn.mock.calls.find(
+              ([channel]) => channel === "preview:page-unhandled-shortcut",
+            )![1];
+            pageUnhandledShortcut(
+              {},
+              {
+                key: "f",
+                code: "KeyF",
+                metaKey: usesMeta,
+                ctrlKey: !usesMeta,
+                shiftKey: false,
+                altKey: false,
+              },
+            );
+            expect(send).toHaveBeenCalledExactlyOnceWith("desktop:menu-action", "preview.find");
+
+            Object.assign(preview.webContents, { focusedFrame: { processId: 1, routingId: 2 } });
+            beforeInput(
+              { preventDefault } as never,
+              { ...findKey, shift: false, alt: false } as never,
+            );
+            expect(preventDefault).not.toHaveBeenCalled();
+            expect(send).toHaveBeenCalledOnce();
+
+            Object.assign(preview.webContents, { focusedFrame: mainFrame });
+            yield* manager.setForwardedShortcuts([
+              { command: "preview.find", shortcut: parseKeybindingShortcut("ctrl+alt+8")! },
+            ]);
+            pageUnhandledShortcut(
+              {},
+              {
+                key: "[",
+                code: "Digit8",
+                metaKey: false,
+                ctrlKey: true,
+                shiftKey: false,
+                altKey: true,
+              },
+            );
+            expect(send).toHaveBeenCalledTimes(usesMeta ? 2 : 1);
+          }),
+        platform,
+      ),
+  );
+
+  effectIt.effect("searches the guest page and reports its match counts", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const preview = makeFaviconWebContents();
+        const findInPage = vi.fn();
+        const stopFindInPage = vi.fn();
+        Object.assign(preview.webContents, { findInPage, stopFindInPage });
+        fromId.mockReturnValue(preview.webContents);
+        yield* manager.createTab("tab_find");
+        yield* manager.registerWebview("tab_find", 42);
+        const reported = yield* Deferred.make<DesktopPreviewFindResultEvent>();
+        yield* manager.subscribeFindResults((event) => Deferred.succeed(reported, event));
+
+        yield* manager.findInPage("tab_find", "needle", { forward: true, newSession: true });
+        expect(findInPage).toHaveBeenCalledExactlyOnceWith("needle", {
+          forward: true,
+          findNext: true,
+        });
+
+        preview.listeners.get("found-in-page")!(
+          {} as never,
+          {
+            requestId: 1,
+            activeMatchOrdinal: 2,
+            matches: 5,
+            finalUpdate: true,
+          } as never,
+        );
+        expect(yield* Deferred.await(reported)).toEqual({
+          tabId: "tab_find",
+          activeMatchOrdinal: 2,
+          matches: 5,
+        });
+
+        yield* manager.stopFindInPage("tab_find");
+        expect(stopFindInPage).toHaveBeenCalledExactlyOnceWith("clearSelection");
       }),
     ),
   );
@@ -1924,7 +2203,7 @@ describe("PreviewManager", () => {
       expect(yield* nextType).toBe("attached");
       yield* manager.closeTab("tab_1");
       expect(yield* nextType).toBe("detached");
-    }).pipe(Effect.provide(managerLayer()), Effect.scoped),
+    }).pipe(Effect.provide(managerLayer())),
   );
 
   effectIt.effect(
@@ -1983,7 +2262,163 @@ describe("PreviewManager", () => {
         expect(yield* Queue.take(capturing)).toBe(true);
         screenshot.resolve({ data: "" });
         expect(yield* Queue.take(capturing)).toBe(false);
+      }).pipe(Effect.provide(managerLayer())),
+  );
+
+  effectIt.effect(
+    "opens a new-tab link in the background only when the agent's input led to it",
+    () =>
+      Effect.gen(function* () {
+        const host = yield* DesktopBrowserHost.DesktopBrowserHost;
+        const serverTab = { threadId: "thread-1", tabId: "server-tab-1" };
+        const contents = Object.assign(
+          makeTestPreviewWebContents(async () => {
+            throw new Error("unused");
+          }, 42),
+          {
+            isDevToolsOpened: () => false,
+            getUserAgent: () => "Electron",
+            focusedFrame: null,
+          },
+        );
+        fromId.mockReturnValue(contents);
+        const manager = yield* PreviewManager.PreviewManager;
+        const openLinks = yield* Queue.unbounded<boolean>();
+        yield* manager.subscribeOpenLinks(({ background }) =>
+          Queue.offer(openLinks, background).pipe(Effect.asVoid),
+        );
+        const attached = yield* Deferred.make<void>();
+        yield* host.events.pipe(
+          Stream.runForEach((line) =>
+            new TextDecoder().decode(line).includes('"type":"attached"')
+              ? Deferred.succeed(attached, undefined)
+              : Effect.void,
+          ),
+          Effect.forkScoped,
+        );
+        yield* manager.createTab("tab_1", { serverTab });
+        yield* manager.registerWebview("tab_1", 42);
+        yield* Deferred.await(attached);
+        const openWindow = vi.mocked(contents.setWindowOpenHandler).mock.calls[0]![0];
+        const openBlankLink = Effect.suspend(() => {
+          openWindow({
+            url: "https://example.com/next",
+            disposition: "foreground-tab",
+          } as Electron.HandlerDetails);
+          return Queue.take(openLinks);
+        });
+
+        expect(yield* openBlankLink).toBe(false);
+
+        yield* host.handleCommandLine(
+          JSON.stringify({
+            type: "cdp",
+            ...serverTab,
+            message: JSON.stringify({
+              id: 1,
+              method: "Runtime.evaluate",
+              params: { expression: "document.querySelector('a').click()" },
+              sessionId: "t3-preview-page",
+            }),
+          }),
+        );
+        expect(yield* openBlankLink).toBe(true);
+
+        // A person clicking in the guest itself gives it a focused frame.
+        Object.assign(contents, { focusedFrame: {} });
+        expect(yield* openBlankLink).toBe(false);
       }).pipe(Effect.provide(managerLayer()), Effect.scoped),
+  );
+
+  effectIt.effect("reports early and subsequent load failures for the current guest", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.DesktopBrowserHost;
+      const serverTab = { threadId: "thread-1", tabId: "server-tab-1" };
+      const lines = yield* Queue.unbounded<string>();
+      yield* host.events.pipe(
+        Stream.runForEach((line) => Queue.offer(lines, new TextDecoder().decode(line))),
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      const makeGuest = (id: number) => {
+        const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
+        const wc = Object.assign(
+          makeTestPreviewWebContents(
+            async () => ({
+              toJPEG: () => Buffer.from("jpeg"),
+              getSize: () => ({ width: 100, height: 80 }),
+            }),
+            id,
+          ),
+          {
+            isDevToolsOpened: () => false,
+            getUserAgent: () => "Electron",
+            once: vi.fn(),
+            on: (event: string, listener: (...args: unknown[]) => void) => {
+              listeners.set(event, [...(listeners.get(event) ?? []), listener]);
+            },
+          },
+        );
+        const emit = (event: string, ...args: unknown[]) => {
+          for (const listener of listeners.get(event) ?? []) listener(...args);
+        };
+        return {
+          wc,
+          emit,
+          fail: (url: string) =>
+            emit("did-fail-load", {}, -202, "ERR_CERT_AUTHORITY_INVALID", url, true),
+        };
+      };
+      const initial = makeGuest(42);
+      const replacement = makeGuest(43);
+      const manager = yield* PreviewManager.PreviewManager;
+      const statuses: PreviewManager.PreviewNavStatus[] = [];
+      yield* manager.subscribeStateChanges((_tabId, state) =>
+        Effect.sync(() => {
+          statuses.push(state.navStatus);
+        }),
+      );
+      yield* manager.createTab("tab_1", { serverTab });
+      yield* manager.prepareWebview(initial.wc);
+      yield* manager.prepareWebview(replacement.wc);
+      initial.fail("https://first.local/");
+      initial.emit("did-start-navigation", { isMainFrame: false, isSameDocument: false });
+      initial.emit("did-start-loading");
+      replacement.fail("https://second.local/");
+      const failure = (url: string) => ({
+        type: "loadFailed",
+        ...serverTab,
+        url,
+        code: -202,
+        description: "ERR_CERT_AUTHORITY_INVALID",
+      });
+
+      fromId.mockReturnValue(initial.wc);
+      yield* manager.registerWebview("tab_1", 42);
+      expect(JSON.parse(yield* Queue.take(lines))).toEqual({ type: "attached", ...serverTab });
+      expect(JSON.parse(yield* Queue.take(lines))).toEqual(failure("https://first.local/"));
+
+      fromId.mockReturnValue(replacement.wc);
+      yield* manager.registerWebview("tab_1", 43);
+      expect(JSON.parse(yield* Queue.take(lines))).toEqual({ type: "detached", ...serverTab });
+      expect(JSON.parse(yield* Queue.take(lines))).toEqual({ type: "attached", ...serverTab });
+      expect(JSON.parse(yield* Queue.take(lines))).toEqual(failure("https://second.local/"));
+
+      // A callback queued by the old guest must not report a failure for its replacement.
+      initial.fail("https://stale.local/");
+      replacement.fail("https://current.local/");
+      expect(JSON.parse(yield* Queue.take(lines))).toEqual(failure("https://current.local/"));
+      expect(statuses).not.toContainEqual(expect.objectContaining({ url: "https://stale.local/" }));
+
+      const retried = makeGuest(44);
+      yield* manager.prepareWebview(retried.wc);
+      retried.fail("https://retry.local/");
+      retried.emit("did-start-navigation", { isMainFrame: true, isSameDocument: false });
+      fromId.mockReturnValue(retried.wc);
+      yield* manager.registerWebview("tab_1", 44);
+      expect(JSON.parse(yield* Queue.take(lines))).toEqual({ type: "detached", ...serverTab });
+      expect(JSON.parse(yield* Queue.take(lines))).toEqual({ type: "attached", ...serverTab });
+      expect(statuses.at(-1)?.kind).toBe("Success");
+    }).pipe(Effect.provide(managerLayer())),
   );
 
   effectIt.effect("discards a screenshot that resolves after its guest is replaced", () =>
