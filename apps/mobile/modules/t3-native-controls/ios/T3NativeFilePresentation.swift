@@ -10,10 +10,18 @@ private final class FilePreviewItem: NSObject, QLPreviewItem {
 
 private final class FilePreviewController: QLPreviewController {
   var onAppear: (() -> Void)?
+  var onDismiss: (() -> Void)?
 
   override func viewDidAppear(_ animated: Bool) {
     super.viewDidAppear(animated)
     onAppear?()
+  }
+
+  // Quick Look's own didDismiss callback can lag well behind the screen being tappable again,
+  // so a tap on the thumbnail in that gap would land while JS still thinks the viewer is open.
+  override func viewDidDisappear(_ animated: Bool) {
+    super.viewDidDisappear(animated)
+    if isBeingDismissed { onDismiss?() }
   }
 }
 
@@ -167,6 +175,7 @@ final class T3NativeFilePresentation: NSObject, QLPreviewControllerDataSource,
     preview.dataSource = self
     preview.currentPreviewItemIndex = pages.firstIndex(of: selectedIndex) ?? 0
     preview.onAppear = { [weak self] in self?.resumePendingDismissal() }
+    preview.onDismiss = { [weak self] in self?.finish() }
     controller = preview
     presenter.present(preview, animated: !UIAccessibility.isReduceMotionEnabled) { [self] in
       resumePendingDismissal()
