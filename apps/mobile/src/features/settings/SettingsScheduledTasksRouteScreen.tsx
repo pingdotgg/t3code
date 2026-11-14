@@ -39,7 +39,6 @@ import {
   type WebhookFilterDraft,
 } from "@t3tools/client-runtime/scheduled-task-webhook";
 import { scheduleTimeZoneLabel } from "@t3tools/client-runtime/scheduled-task-time-zone";
-import { scheduledTaskEditPatch } from "@t3tools/client-runtime/scheduled-task-edit";
 import { useRef, useState, type ReactNode } from "react";
 import { useFocusEffect, useNavigation, usePreventRemove } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
@@ -79,6 +78,7 @@ import {
   editDraft,
   parseIntervalMinutes,
   scheduledTaskDefaultModel,
+  scheduledTaskEditPatchFor,
   scheduleFromDraft,
   unbindDraftFromThread,
   type ScheduledTaskDraft as Draft,
@@ -837,7 +837,10 @@ function TaskForm({
     // An edit sends only the fields this form changed, so it keeps edits made elsewhere since.
     const result =
       draft.task !== null && offersUpdate
-        ? await update({ environmentId, input: scheduledTaskEditPatch(draft.task, input) })
+        ? await update({
+            environmentId,
+            input: scheduledTaskEditPatchFor(draft.task, input, config?.providers ?? []),
+          })
         : await upsert({ environmentId, input });
     setSaving(false);
     if (result._tag === "Failure") {
