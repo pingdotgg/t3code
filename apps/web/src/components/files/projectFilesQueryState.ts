@@ -144,6 +144,7 @@ export function confirmProjectFileQueryData(
   appAtomRegistry.set(atom, {
     ...optimisticFile,
     saved: true,
+    confirmingQuery: queryAtom,
   });
   releaseUnsavedFile(atom);
   appAtomRegistry.refresh(queryAtom);
