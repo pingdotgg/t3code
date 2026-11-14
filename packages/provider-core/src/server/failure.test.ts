@@ -139,6 +139,24 @@ it("names how the provider process exited and the stage it failed in, without it
   );
 });
 
+it("tells the user to sign in only when an ACP agent answers auth_required", () => {
+  const providerSessionId = ProviderSessionId.make("provider-session:private-id");
+  const sessionOpenFailure = (code: number) => ({
+    _tag: "ProviderSessionOpenError",
+    cause: new ProviderAdapter.ProviderAdapterOpenSessionError({
+      driver: ProviderDriverKind.make("acpRegistry"),
+      providerSessionId,
+      cause: Cause.fail({ _tag: "AcpRequestError", code, errorMessage: "Private agent text" }),
+    }),
+  });
+
+  assert.equal(
+    makeProviderFailure({ cause: Cause.fail(sessionOpenFailure(-32000)) }).message,
+    "The provider needs you to sign in. Sign in from its provider settings or with its own CLI or app, then retry the turn.",
+  );
+  assert.isUndefined(knownProviderFailureMessage(sessionOpenFailure(-32603)));
+});
+
 it("keeps unrecognized reasons and provider text out of category messages", () => {
   for (const cause of [
     "Private launch command",
