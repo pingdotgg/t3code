@@ -4499,6 +4499,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
     }
+    let restoredUnsettledAt: DateTime.Utc | null | undefined;
+    if (command.type === "thread.unsettle" && command.restoreUnsettledAt !== undefined) {
+      const parsed =
+        command.restoreUnsettledAt === null
+          ? Option.some(null)
+          : DateTime.make(command.restoreUnsettledAt);
+      if (Option.isNone(parsed)) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} unsettle anchor ${command.restoreUnsettledAt} is not a valid time.`,
+        });
+      }
+      restoredUnsettledAt = parsed.value;
+    }
     let snoozedUntil: DateTime.Utc | null = null;
     if (command.type === "thread.snooze") {
       const projection = yield* loadProjectionForCommand(command, ["runs", "runtimeRequests"], {
@@ -4628,7 +4643,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...thread,
             settledOverride: "active",
             settledAt: null,
-            unsettledAt: alreadyPinnedActive ? (thread.unsettledAt ?? null) : now,
+            unsettledAt: alreadyPinnedActive
+              ? (thread.unsettledAt ?? null)
+              : restoredUnsettledAt === undefined
+                ? now
+                : restoredUnsettledAt,
             updatedAt: alreadyPinnedActive ? thread.updatedAt : now,
           };
         }
