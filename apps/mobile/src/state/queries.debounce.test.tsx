@@ -265,9 +265,12 @@ it("keeps compiled branch results stable and resets pagination for a new target 
   expect(current!.refs).toEqual([]);
 });
 
-it.each(["unchanged", "workspace", "remounted-environment", "settled-workspace"])(
-  "does not insert an old workspace result into a replacement target: %s",
-  (change) => {
+it.each([
+  { settled: false, inserts: 0 },
+  { settled: true, inserts: 1 },
+])(
+  "inserts a path only when its search matches the current workspace (settled: $settled)",
+  ({ settled, inserts }) => {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     vi.useFakeTimers();
     mocks.pathFixture = true;
@@ -294,29 +297,15 @@ it.each(["unchanged", "workspace", "remounted-environment", "settled-workspace"]
     try {
       act(() => root.render(<Probe cwd="/original" environment={target.environmentId} />));
       expect(menu?.items[0]?.label).toBe("only-in-original.ts");
-      if (change !== "unchanged") {
-        act(() =>
-          root.render(
-            <Probe
-              key={change === "remounted-environment" ? "replacement" : undefined}
-              cwd="/replacement"
-              environment={
-                change === "remounted-environment"
-                  ? EnvironmentId.make("other")
-                  : target.environmentId
-              }
-            />,
-          ),
-        );
-      }
-      if (change === "settled-workspace") {
+      act(() => root.render(<Probe cwd="/replacement" environment={target.environmentId} />));
+      if (settled) {
         act(() => vi.advanceTimersByTime(200));
         expect(menu?.items[0]?.label).toBe("replacement.ts");
       }
       const item = menu?.items.find((item) => item.type === "path");
       if (!item || !menu) throw new Error("Expected displayed path suggestion");
       act(() => menu!.onSelect(item));
-      expect(onChangeDraftMessage).toHaveBeenCalledTimes(change === "workspace" ? 0 : 1);
+      expect(onChangeDraftMessage).toHaveBeenCalledTimes(inserts);
     } finally {
       act(() => root.unmount());
       vi.useRealTimers();

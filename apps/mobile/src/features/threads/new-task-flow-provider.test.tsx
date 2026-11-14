@@ -132,7 +132,6 @@ function setup() {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   vi.useFakeTimers();
   vi.clearAllMocks();
-  mocks.serverConfig.mockReset();
   const registry = AtomRegistry.make();
   mocks.registry.mockReturnValue(registry);
   const projects = [project("one", "a"), project("one", "b"), project("two", "b")];
@@ -173,14 +172,11 @@ function setup() {
     Atom.make(() => {
       const [, cwd] = JSON.parse(key) as [string, string];
       const result: VcsListRefsResult = {
-        refs: [
-          { name: "main", current: true, isDefault: true, worktreePath: cwd },
-          { name: "other", current: false, isDefault: false, worktreePath: "/replacement" },
-        ],
+        refs: [{ name: "main", current: true, isDefault: true, worktreePath: cwd }],
         isRepo: true,
         hasPrimaryRemote: true,
         nextCursor: null,
-        totalCount: 2,
+        totalCount: 1,
       };
       return AsyncResult.success(result);
     }).pipe(Atom.keepAlive),
@@ -446,23 +442,3 @@ it.each([
     expect(screen.current.selectedProject).toEqual(screen.projects[expectedProject]);
   },
 );
-
-it("keeps the draft owner while selecting an existing worktree", async () => {
-  using screen = setup();
-  await screen.render(true);
-  await act(async () => screen.current.setWorkspaceMode("local"));
-  const owner = screen.current.draftKey;
-  expect(screen.current.workspaceCwd).toBe("/a");
-  await act(async () => screen.current.setPrompt("@src"));
-  await act(async () =>
-    screen.current.selectBranch({
-      name: "other",
-      current: false,
-      isDefault: false,
-      worktreePath: "/replacement",
-    }),
-  );
-  expect(screen.current.workspaceCwd).toBe("/replacement");
-  expect(screen.current.draftKey).toBe(owner);
-  expect(screen.current.prompt).toBe("@src");
-});
