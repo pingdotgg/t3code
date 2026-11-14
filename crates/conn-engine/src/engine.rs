@@ -57,6 +57,32 @@ pub struct EngineConfig {
     /// Captures a git checkpoint of the thread's workspace at each turn, as the T3 server
     /// does (`checkpoint.rs`). Off by default; the server turns it on.
     pub checkpoints: bool,
+    /// Laid over every turn's runtime policy, as T3's `RuntimePolicy.layerWithOverride`. The
+    /// server sets none; the T3 fixture replay sets the fixture's policy.
+    pub runtime_policy_override: Option<RuntimePolicyOverride>,
+}
+
+/// `RuntimePolicyV2Override` in T3's `RuntimePolicy.ts`: fields that replace the policy the
+/// engine derives from the thread.
+#[derive(Clone, Debug, Default)]
+pub struct RuntimePolicyOverride {
+    pub cwd: Option<String>,
+    pub approval_policy: Option<Value>,
+    pub sandbox_policy: Option<Value>,
+}
+
+impl RuntimePolicyOverride {
+    pub(crate) fn apply(&self, policy: &mut conn_provider::RuntimePolicy) {
+        if let Some(cwd) = &self.cwd {
+            policy.cwd = Some(cwd.clone());
+        }
+        if let Some(approval) = &self.approval_policy {
+            policy.approval_policy = Some(approval.clone());
+        }
+        if let Some(sandbox) = &self.sandbox_policy {
+            policy.sandbox_policy = Some(sandbox.clone());
+        }
+    }
 }
 
 impl std::fmt::Debug for EngineConfig {
@@ -87,6 +113,7 @@ impl EngineConfig {
             title_generator: None,
             turn_observer: None,
             checkpoints: false,
+            runtime_policy_override: None,
         }
     }
 }
@@ -120,6 +147,8 @@ pub(crate) struct Inner {
     pub(crate) shutting_down: std::sync::atomic::AtomicBool,
     /// Git checkpoints per turn (`checkpoint.rs`); `None` when off.
     pub(crate) checkpoints: Option<crate::checkpoint::Checkpoints>,
+    /// [`EngineConfig::runtime_policy_override`].
+    pub(crate) policy_override: Option<RuntimePolicyOverride>,
 }
 
 /// Stable project id for a folder, so a fresh database gives clients the same ids.
@@ -180,6 +209,7 @@ impl SqliteEngine {
                 checkpoints: config
                     .checkpoints
                     .then(crate::checkpoint::Checkpoints::default),
+                policy_override: config.runtime_policy_override.clone(),
             }),
         };
         // Continuations and the reaper start on the caller's runtime; `open` never blocks.
@@ -245,6 +275,16 @@ impl SqliteEngine {
     /// The project id the engine gives a configured folder.
     pub fn project_id_for(workspace_root: &str) -> String {
         project_id(workspace_root)
+    }
+
+    /// One page of the whole event log after `after`, oldest first, as
+    /// `OrchestrationV2StoredEvent` rows. The log is never pruned: every event since the store
+    /// was made is there. For tools that check the log against T3's own assertions (the
+    /// `t3_fixture_replay` example); clients read the streams.
+    pub async fn stored_events(&self, after: u64, limit: usize) -> Result<Vec<Value>, String> {
+        self.inner
+            .db(move |store| store.stored_events_after(after, limit))
+            .await
     }
 }
 

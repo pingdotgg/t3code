@@ -401,18 +401,24 @@ impl Inner {
         let Some(mut context) = context else {
             return Err(StartError::Abandoned);
         };
+        if let Some(cwd) = self.policy_override.as_ref().and_then(|p| p.cwd.clone()) {
+            context.cwd = Some(cwd);
+        }
         if context.run["status"] != "starting" {
             return Err(StartError::Abandoned);
         }
 
         let model_selection: conn_contract::ModelSelection =
             from_json(context.run["modelSelection"].clone()).map_err(|e| e.to_string())?;
-        let runtime_policy: RuntimePolicy = from_json(json!({
+        let mut runtime_policy: RuntimePolicy = from_json(json!({
             "runtimeMode": context.thread["runtimeMode"],
             "interactionMode": context.thread["interactionMode"],
             "cwd": context.cwd,
         }))
         .map_err(|e| e.to_string())?;
+        if let Some(policy) = &self.policy_override {
+            policy.apply(&mut runtime_policy);
+        }
 
         let instance = context.run["providerInstanceId"]
             .as_str()

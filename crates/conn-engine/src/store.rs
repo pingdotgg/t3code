@@ -398,6 +398,30 @@ impl Store {
         Ok(rows)
     }
 
+    /// One page of the whole event log after `after`, oldest first, as
+    /// `OrchestrationV2StoredEvent` rows (`sequence`, `commandId`, `event`).
+    pub(crate) fn stored_events_after(&self, after: u64, limit: usize) -> StoreResult<Vec<Value>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT seq, command_id, event FROM events WHERE seq > ?1 ORDER BY seq LIMIT ?2")
+            .map_err(err)?;
+        let rows = stmt
+            .query_map(params![after as i64, limit as i64], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(err)?
+            .map(|row| {
+                let (seq, command_id, text) = row.map_err(err)?;
+                Ok(json!({"sequence": seq, "commandId": command_id, "event": parse(text)?}))
+            })
+            .collect::<StoreResult<Vec<_>>>()?;
+        Ok(rows)
+    }
+
     /// One JSON column per row.
     pub(crate) fn query_json(
         &self,

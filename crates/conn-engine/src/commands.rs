@@ -223,9 +223,8 @@ fn thread_create(tx: &mut Tx<'_>, command: Value) -> Outcome {
     if tx.thread(&c.thread_id)?.is_some() {
         return reject(format!("Thread {} already exists.", c.thread_id));
     }
-    if tx.project(&c.project_id)?.is_none() {
-        return reject(format!("Project {} does not exist.", c.project_id));
-    }
+    // T3's `dispatchThreadCreate` does not look the project up: a thread may name a project
+    // this server does not know (its replay fixtures do). `launchThread` checks it.
     let model = normalize_model_selection(&c.model_selection);
     let now = tx.now().to_owned();
     let thread = json!({
