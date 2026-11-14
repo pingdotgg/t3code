@@ -2009,6 +2009,58 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect("skips the rows already delivered at a tied boundary before applying the limit", () =>
+    Effect.gen(function* () {
+      // Twenty pull requests share the boundary instant, then five are older. GitHub's search
+      // has no qualifier for a row number, so the boundary always comes back from its start.
+      const tied = rows(20, 1);
+      const older = rows(5, 21, () => ({ updatedAt: "2026-07-01T00:00:00Z" }));
+      mockedExecute.mockImplementation((call) => {
+        const variables = call.kind === "graphql" ? (call.variables ?? {}) : {};
+        const q = String(variables["q"] ?? "");
+        const bound = /updated:<=(\S+)/.exec(q)?.[1];
+        const matching = [...tied, ...older].filter(
+          (row) => bound === undefined || String(row["updatedAt"]) <= bound,
+        );
+        const start = variables["after"] == null ? 0 : Number(variables["after"]);
+        const end = start + Number(variables["first"]);
+        const hasNextPage = end < matching.length;
+        return Effect.succeed(
+          output(
+            encodeJson({
+              data: {
+                search: {
+                  pageInfo: { hasNextPage, endCursor: hasNextPage ? String(end) : null },
+                  nodes: matching.slice(start, end),
+                },
+              },
+            }),
+          ),
+        );
+      });
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const batch = yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        state: "open",
+        involvement: "all",
+        viewer: "bilal",
+        limit: 10,
+        cursor: {
+          updatedBefore: "2026-07-02T00:00:00Z",
+          delivered: 10,
+          seenAt: Array.from({ length: 10 }, (_, index) => index + 1),
+        },
+      });
+
+      expect(batch.items.map((item) => item.number)).toEqual([
+        11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+      ]);
+    }),
+  );
+
   it.effect("answers a search that found nothing with nothing, not with the whole repository", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(emptySearch()));
