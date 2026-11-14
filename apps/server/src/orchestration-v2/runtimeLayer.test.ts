@@ -7465,6 +7465,123 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       }),
   );
 
+  it.effect("keeps usage-limit recovery when a subagent notification arrives after the limit", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make("runtime-layer-limit-then-subagent-wake");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`${threadId}:create`),
+        threadId,
+        projectId: ProjectId.make(`${threadId}:project`),
+        title: "Limited parent",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`${threadId}:message:user`),
+        threadId,
+        messageId: MessageId.make(`${threadId}:message:user`),
+        text: "Review the branch with subagents",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "start_immediately" },
+      });
+      const limitedRun = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+        (run) => run.status === "starting",
+      );
+      assert.isDefined(limitedRun);
+      assert.isNotNull(limitedRun.rootNodeId);
+      const now = yield* DateTime.now;
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`${threadId}:error`),
+            type: "turn-item.updated",
+            threadId,
+            runId: limitedRun.id,
+            nodeId: limitedRun.rootNodeId,
+            providerInstanceId: limitedRun.providerInstanceId,
+            occurredAt: now,
+            payload: {
+              id: TurnItemId.make(`${threadId}:error`),
+              type: "error",
+              threadId,
+              runId: limitedRun.id,
+              nodeId: limitedRun.rootNodeId,
+              providerThreadId: limitedRun.providerThreadId,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 2,
+              status: "failed",
+              title: "Provider failure",
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              failure: {
+                class: "usage_limit",
+                message: "Claude API rate limit reached. Try again later.",
+                code: "api_error_429",
+                retryable: true,
+                resetAt: DateTime.formatIso(DateTime.add(now, { minutes: 22 })),
+              },
+            },
+          },
+          {
+            id: EventId.make(`${threadId}:failed`),
+            type: "run.updated",
+            threadId,
+            runId: limitedRun.id,
+            nodeId: limitedRun.rootNodeId,
+            providerInstanceId: limitedRun.providerInstanceId,
+            occurredAt: now,
+            payload: { ...limitedRun, status: "failed", completedAt: now },
+          },
+        ],
+      });
+
+      // ProviderContinuationService's wake when a background subagent fails on the same limit.
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "agent",
+        creationSource: "provider",
+        commandId: CommandId.make(`${threadId}:message:wake`),
+        threadId,
+        messageId: MessageId.make(`${threadId}:message:wake`),
+        text: "Continue.",
+        notification: {
+          source: { kind: "background_task" },
+          outcome: "failed",
+          summary: 'Subagent "Review" failed',
+        },
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+      });
+      const wakeRun = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+        (run) => run.userMessageId === MessageId.make(`${threadId}:message:wake`),
+      );
+      assert.isDefined(wakeRun);
+      assert.equal(wakeRun.status, "queued", "the wake started a run past the usage limit");
+
+      const shell = (yield* orchestrator.getShellSnapshot()).threads.find(
+        (thread) => thread.id === threadId,
+      );
+      assert.equal(shell?.latestRunId, limitedRun.id);
+      assert.equal(shell?.status, "failed");
+      assert.equal(shell?.lastErrorClass, "usage_limit");
+    }),
+  );
+
   // A thread fed by agent messages, with helpers to end its runs as a provider would.
   const queueTestThread = (threadId: ThreadId) =>
     Effect.gen(function* () {
