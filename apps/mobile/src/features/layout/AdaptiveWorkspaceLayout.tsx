@@ -369,19 +369,32 @@ function AdaptiveWorkspaceLayoutContent(
   const width = viewportWidth - navigationRailWidth;
   // The sidebar stays mounted under a workspace page, so its list is ready on the way back.
   const shouldRenderPrimarySidebar = layout.usesSplitView;
+  const inspectorSizing = Platform.OS === "android" ? "android" : undefined;
+  const auxiliaryPanePreferredWidth = fileInspectorPreferredWidth ?? undefined;
+  const inspectorWindow = useMemo(
+    () =>
+      Platform.OS === "android"
+        ? { width: viewportWidth, leadingWidth: viewportWidth - width, hinge: windowHinge }
+        : undefined,
+    [viewportWidth, width, windowHinge],
+  );
   const fileInspector = useMemo(
     () =>
       deriveFileInspectorPaneLayout({
         layout,
         viewportWidth: width,
-        preferredWidth: fileInspectorPreferredWidth ?? undefined,
+        inspectorSizing,
+        inspectorWindow,
+        preferredWidth: auxiliaryPanePreferredWidth,
         reservedLeadingWidth:
           shouldRenderPrimarySidebar && showPrimarySidebar && !sidebarFloats
             ? (layout.listPaneWidth ?? 0) + (layout.listPaneGap ?? 0)
             : 0,
       }),
     [
-      fileInspectorPreferredWidth,
+      auxiliaryPanePreferredWidth,
+      inspectorSizing,
+      inspectorWindow,
       layout,
       showPrimarySidebar,
       shouldRenderPrimarySidebar,
@@ -409,6 +422,8 @@ function AdaptiveWorkspaceLayoutContent(
       deriveWorkspacePaneLayout({
         layout,
         viewportWidth: width,
+        inspectorSizing,
+        inspectorWindow,
         horizontalSafeArea,
         nativeWorkspace,
         primarySidebarFloats: sidebarFloats,
@@ -416,14 +431,16 @@ function AdaptiveWorkspaceLayoutContent(
         // Only a column a screen fills makes room, so a stale preference can't hide the sidebar.
         auxiliaryPanePreferredVisible:
           !workspacePage && inspectorActive && fileInspectorPreferredVisible,
-        auxiliaryPanePreferredWidth: fileInspectorPreferredWidth ?? undefined,
+        auxiliaryPanePreferredWidth,
         nativeInspectorWidth,
       }),
     [
       nativeInspectorWidth,
       horizontalSafeArea,
       fileInspectorPreferredVisible,
-      fileInspectorPreferredWidth,
+      auxiliaryPanePreferredWidth,
+      inspectorSizing,
+      inspectorWindow,
       inspectorActive,
       layout,
       nativeWorkspace,
@@ -457,6 +474,7 @@ function AdaptiveWorkspaceLayoutContent(
         ),
       );
       setFileInspectorPreferredVisible(true);
+      if (Platform.OS === "android" && sidebarFloats) setPrimarySidebarVisible(false);
     }
 
     return () => {
@@ -481,15 +499,22 @@ function AdaptiveWorkspaceLayoutContent(
     if (primarySidebarPinned) {
       return;
     }
-    if (!panes.primarySidebarVisible && panes.primarySidebarSuppressedByAuxiliary) {
+    if (
+      !panes.primarySidebarVisible &&
+      (panes.primarySidebarSuppressedByAuxiliary ||
+        (Platform.OS === "android" && !sidebarFloats && panes.auxiliaryPaneVisible))
+    ) {
       setFileInspectorPreferredVisible(false);
-      setPrimarySidebarPreferredVisible(true);
+      setPrimarySidebarVisible(true);
       return;
     }
     setPrimarySidebarVisible(!preferredSidebarVisible);
   };
   const revealPrimarySidebar = () => {
-    if (panes.primarySidebarSuppressedByAuxiliary) {
+    if (
+      panes.primarySidebarSuppressedByAuxiliary ||
+      (Platform.OS === "android" && !sidebarFloats && panes.auxiliaryPaneVisible)
+    ) {
       setFileInspectorPreferredVisible(false);
     }
     setPrimarySidebarVisible(true);
@@ -507,6 +532,7 @@ function AdaptiveWorkspaceLayoutContent(
   };
   const showInspector = () => {
     setFileInspectorPreferredVisible(true);
+    if (Platform.OS === "android" && sidebarFloats) setPrimarySidebarVisible(false);
     if (fileInspector.supported) {
       setInspectorSheetRoute(null);
       return;
@@ -529,8 +555,8 @@ function AdaptiveWorkspaceLayoutContent(
   };
   useHardwareKeyboardCommand("files", handleOpenFilesCommand);
   const toggleAuxiliaryPane = () => {
-    if (fileInspector.supported) {
-      setFileInspectorPreferredVisible((current) => !current);
+    if (fileInspector.supported && fileInspectorPreferredVisible) {
+      setFileInspectorPreferredVisible(false);
       setInspectorSheetRoute(null);
     } else if (inspectorSheetOpen) dismissInspectorSheet();
     else showInspector();
@@ -654,8 +680,10 @@ function AdaptiveWorkspaceLayoutContent(
   const inspectorColumnTargetWidth = panes.auxiliaryPaneVisible
     ? (panes.auxiliaryPaneWidth ?? 0)
     : 0;
-  // Android's split content is a rounded card: keep it off the screen edge like the list card.
-  const contentEndGap = Platform.OS === "android" && layout.usesSplitView ? 4 : 0;
+  const inspectorGap = panes.auxiliaryPaneGap ?? 0;
+  // ScreenContent supplies both margins at an inspector boundary.
+  const contentEndGap =
+    Platform.OS === "android" && layout.usesSplitView && !panes.auxiliaryPaneVisible ? 4 : 0;
   // Android's split is one strip: a sidebar slot of fixed width, then the detail pane. The
   // sidebar never resizes; both slide by one offset, so together they always fill the width.
   const stripSidebar =
@@ -674,6 +702,7 @@ function AdaptiveWorkspaceLayoutContent(
         0,
         (contentSpansSidebar ? width : panes.contentPaneWidth) -
           inspectorColumnTargetWidth -
+          inspectorGap -
           contentEndGap,
       );
   // A workspace page (Usage) lays out at this width even while hidden behind another tab, so
@@ -746,12 +775,11 @@ function AdaptiveWorkspaceLayoutContent(
   // against the edge that stays put while the other one slides, so nothing reflows after the
   // panes land. A sliding sidebar uncovers the strip it is about to fill, or covers the content
   // until it is gone.
-  const contentLeftTarget = sidebarFloats
-    ? navigationRailWidth
-    : navigationRailWidth +
-      (shouldRenderPrimarySidebar && !workspacePage && panes.primarySidebarVisible
-        ? (layout.listPaneWidth ?? 0) + (layout.listPaneGap ?? 0)
-        : 0);
+  const contentLeftTarget =
+    navigationRailWidth +
+    (!sidebarFloats && shouldRenderPrimarySidebar && !workspacePage && panes.primarySidebarVisible
+      ? (layout.listPaneWidth ?? 0) + (layout.listPaneGap ?? 0)
+      : 0);
   const [contentAnchor, setContentAnchor] = useState({
     viewportWidth,
     left: contentLeftTarget,
@@ -831,20 +859,28 @@ function AdaptiveWorkspaceLayoutContent(
     scrimOpacity.set(withTiming(floatingSidebarOpen ? 0.32 : 0, WORKSPACE_PANE_TIMING));
   }, [floatingSidebarOpen, scrimOpacity]);
   const scrimAnimatedStyle = useAnimatedStyle(() => ({ opacity: scrimOpacity.value }));
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Back closes a floating sidebar before it leaves the page
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Back closes Android panes or a floating sidebar before leaving the page
   useEffect(() => {
-    if (!floatingSidebarOpen || nativeWorkspace) return;
+    const inspectorOpen = Platform.OS === "android" && panes.auxiliaryPaneVisible;
+    if ((!floatingSidebarOpen && !inspectorOpen) || nativeWorkspace) return;
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
       // A sheet or modal over the workspace takes Back first.
       const state = rootStackState(navigation);
       if (state && workspaceRoutesOf(state.routes.slice(0, state.index + 1)).overlays.length > 0) {
         return false;
       }
-      setPrimarySidebarVisible(false);
+      if (floatingSidebarOpen) setPrimarySidebarVisible(false);
+      else setFileInspectorPreferredVisible(false);
       return true;
     });
     return () => subscription.remove();
-  }, [floatingSidebarOpen, nativeWorkspace, navigation, setPrimarySidebarVisible]);
+  }, [
+    floatingSidebarOpen,
+    panes.auxiliaryPaneVisible,
+    nativeWorkspace,
+    navigation,
+    setPrimarySidebarVisible,
+  ]);
   // Showing or hiding the sidebar clips a fixed-width list. A hinge resize instead tracks the
   // animated edge, so the header actions slide with it rather than jumping or being covered.
   const listPaneGap = layout.listPaneGap ?? 0;
@@ -880,7 +916,8 @@ function AdaptiveWorkspaceLayoutContent(
       viewportWidth -
         renderedRailWidth.value -
         (workspacePage || sidebarFloats ? 0 : renderedSidebarWidth.value) -
-        renderedInspectorWidth.value,
+        renderedInspectorWidth.value -
+        inspectorGap,
     ),
   );
   // Android can resize the native row before React removes its split panes on a fold.
@@ -897,7 +934,7 @@ function AdaptiveWorkspaceLayoutContent(
             // back to the row, so a column after it stays put while the strip slides.
             width: Math.max(
               0,
-              viewportWidth - renderedRailWidth.value - renderedInspectorWidth.value,
+              viewportWidth - renderedRailWidth.value - renderedInspectorWidth.value - inspectorGap,
             ),
             marginRight: -sidebarSlotWidth,
             transform: [{ translateX: stripOffset.value }],
@@ -934,6 +971,21 @@ function AdaptiveWorkspaceLayoutContent(
     [sidebarInLandscape, sidebarInPortrait, sidebarOverRotates],
   );
 
+  const setAuxiliaryPaneWidth = (preferredWidth: number) => {
+    const next = deriveFileInspectorPaneLayout({
+      layout,
+      viewportWidth: width,
+      inspectorSizing,
+      inspectorWindow,
+      preferredWidth,
+      reservedLeadingWidth:
+        shouldRenderPrimarySidebar && showPrimarySidebar && !sidebarFloats
+          ? (layout.listPaneWidth ?? 0) + (layout.listPaneGap ?? 0)
+          : 0,
+    });
+    if (next.width !== null) setFileInspectorPreferredWidth(next.width);
+  };
+
   const actions = useStableActions({
     startNewTask: handleStartNewTask,
     selectDetail: handleSelectDetail,
@@ -945,7 +997,7 @@ function AdaptiveWorkspaceLayoutContent(
     revealPrimarySidebar,
     setPrimarySidebarVisible,
     openWorkspaceTab,
-    setAuxiliaryPaneWidth: setFileInspectorPreferredWidth,
+    setAuxiliaryPaneWidth,
     setNativeInspectorWidth: (width: number) =>
       setNativeInspectorWidthFraction(inspectorWidthFor(width / viewportWidth) / viewportWidth),
   });
@@ -1135,13 +1187,15 @@ function AdaptiveWorkspaceLayoutContent(
           />
         </Animated.View>
       ) : null}
+      {inspectorGap > 0 ? <View style={{ width: inspectorGap }} /> : null}
       <PaneContext value="inspector">
         <WorkspaceInspectorPane
           renderedInspectorWidth={renderedInspectorWidth}
           active={workspaceInspector?.active ?? false}
+          obscured={floatingSidebarOpen}
           panes={panes}
           content={workspaceInspector?.content}
-          setAuxiliaryPaneWidth={setFileInspectorPreferredWidth}
+          setAuxiliaryPaneWidth={setAuxiliaryPaneWidth}
           onClose={() => setFileInspectorPreferredVisible(false)}
           onClosed={handleWorkspaceInspectorClosed}
         />

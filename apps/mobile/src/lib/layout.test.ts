@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   alignListPaneToHinge,
   deriveLayout,
+  constrainAuxiliaryPaneWidth,
   deriveThreadArrangementSizing,
   deriveThreadWorkLogSizing,
   deriveWorkspacePaneLayout,
@@ -141,6 +142,166 @@ describe("isPrimarySidebarPinned", () => {
 
 describe("deriveWorkspacePaneLayout", () => {
   it.each([
+    {
+      width: 704,
+      leadingWidth: 72,
+      hinge: null,
+      inspectorWidth: 352,
+      maximumWidth: 352,
+      mainEnd: 352,
+      gap: 0,
+    },
+    {
+      width: 933,
+      leadingWidth: 72,
+      hinge: null,
+      inspectorWidth: 466.5,
+      maximumWidth: 541,
+      mainEnd: 466.5,
+      gap: 0,
+    },
+    {
+      width: 744,
+      leadingWidth: 72,
+      hinge: null,
+      inspectorWidth: 372,
+      maximumWidth: 372,
+      mainEnd: 372,
+      gap: 0,
+    },
+    {
+      width: 900,
+      leadingWidth: 72,
+      hinge: { x: 450, width: 0 },
+      inspectorWidth: 450,
+      maximumWidth: 508,
+      mainEnd: 450,
+      gap: 0,
+    },
+    {
+      width: 744,
+      leadingWidth: 72,
+      hinge: { x: 372, width: 8 },
+      inspectorWidth: 364,
+      maximumWidth: 364,
+      mainEnd: 372,
+      gap: 8,
+    },
+    {
+      width: 1200,
+      leadingWidth: 72,
+      hinge: { x: 600, width: 24 },
+      inspectorWidth: 576,
+      maximumWidth: 576,
+      mainEnd: 600,
+      gap: 24,
+    },
+    {
+      width: 1000,
+      leadingWidth: 72,
+      hinge: null,
+      inspectorWidth: 371.2,
+      maximumWidth: 556.8,
+      mainEnd: 628.8,
+      gap: 0,
+    },
+  ])(
+    "derives the inspector from window width and existing hinge coordinates ($width dp)",
+    ({ width, leadingWidth, hinge, inspectorWidth, maximumWidth, mainEnd, gap }) => {
+      const input = {
+        layout: deriveLayout({ width, height: 900 }),
+        viewportWidth: width - leadingWidth,
+        inspectorSizing: "android" as const,
+        inspectorWindow: { width, leadingWidth, hinge },
+        primarySidebarPreferredVisible: true,
+        auxiliaryPanePreferredVisible: true,
+      };
+      expect(deriveWorkspacePaneLayout(input)).toMatchObject({
+        auxiliaryPaneVisible: true,
+        auxiliaryPaneWidth: expect.closeTo(inspectorWidth),
+        auxiliaryPaneGap: gap,
+        primarySidebarVisible: input.layout.variant === "medium",
+      });
+      expect(width - inspectorWidth - gap).toBeCloseTo(mainEnd);
+      expect(
+        deriveWorkspacePaneLayout({ ...input, auxiliaryPanePreferredWidth: width }),
+      ).toMatchObject({
+        auxiliaryPaneWidth: expect.closeTo(maximumWidth),
+        auxiliaryPaneGap: gap,
+      });
+      const resized = deriveWorkspacePaneLayout({ ...input, auxiliaryPanePreferredWidth: 320 });
+      expect(resized).toMatchObject({
+        auxiliaryPaneWidth: gap > 0 ? inspectorWidth : 320,
+        auxiliaryPaneGap: gap,
+      });
+      if (gap > 0) {
+        const restored = deriveWorkspacePaneLayout({
+          ...input,
+          auxiliaryPanePreferredWidth: resized.auxiliaryPaneWidth ?? undefined,
+        });
+        expect(restored.auxiliaryPaneWidth).toBe(inspectorWidth);
+        expect(restored.auxiliaryPaneGap).toBe(gap);
+        expect(width - (restored.auxiliaryPaneWidth ?? 0) - (restored.auxiliaryPaneGap ?? 0)).toBe(
+          mainEnd,
+        );
+      }
+    },
+  );
+
+  it.each([
+    { viewportWidth: 660, defaultWidth: 328, maximumWidth: 336 },
+    { viewportWidth: 744, defaultWidth: 370, maximumWidth: 420 },
+    { viewportWidth: 745, defaultWidth: 370.5, maximumWidth: 421 },
+    { viewportWidth: 1100, defaultWidth: 440, maximumWidth: 660 },
+  ])(
+    "sizes Android panes from the available width at $viewportWidth dp",
+    ({ viewportWidth, defaultWidth, maximumWidth }) => {
+      const layout = deriveLayout({ width: viewportWidth + 96, height: 900 });
+      for (const primarySidebarFloats of [false, true]) {
+        const input = {
+          layout,
+          viewportWidth,
+          inspectorSizing: "android" as const,
+          primarySidebarFloats,
+          primarySidebarPreferredVisible: true,
+          auxiliaryPanePreferredVisible: true,
+        };
+        expect(deriveWorkspacePaneLayout(input)).toMatchObject({
+          primarySidebarVisible: primarySidebarFloats,
+          primarySidebarSuppressedByAuxiliary: !primarySidebarFloats,
+          auxiliaryPaneVisible: true,
+          auxiliaryPaneWidth: defaultWidth,
+          contentPaneWidth: viewportWidth,
+        });
+        for (const preferredWidth of [320, 350, viewportWidth]) {
+          const width = constrainAuxiliaryPaneWidth({
+            preferredWidth,
+            availableWidth: viewportWidth,
+            inspectorSizing: "android" as const,
+          });
+          expect(width).toBe(Math.min(preferredWidth, maximumWidth));
+          expect(
+            deriveWorkspacePaneLayout({ ...input, auxiliaryPanePreferredWidth: width }),
+          ).toMatchObject({
+            auxiliaryPaneWidth: width,
+            primarySidebarVisible: primarySidebarFloats || (viewportWidth === 1100 && width <= 400),
+          });
+        }
+        expect(
+          deriveWorkspacePaneLayout({ ...input, auxiliaryPanePreferredVisible: false }),
+        ).toMatchObject({ primarySidebarVisible: true });
+        expect(
+          deriveWorkspacePaneLayout({
+            ...input,
+            layout: deriveLayout({ width: 390, height: 900 }),
+            viewportWidth: 390,
+          }),
+        ).toMatchObject({ auxiliaryPaneVisible: false });
+      }
+    },
+  );
+
+  it.each([
     { width: 1_194, height: 834, horizontalSafeArea: 0, fraction: 0.4, suppressed: false },
     { width: 1_032, height: 1_376, horizontalSafeArea: 0, fraction: 0.4, suppressed: true },
     // The unfolded Duo's system bar leaves no room for the sidebar beside even the narrowest inspector.
@@ -149,26 +310,29 @@ describe("deriveWorkspacePaneLayout", () => {
     "steps the sidebar aside for the native inspector only when the page gets too narrow ($width wide)",
     ({ width, height, horizontalSafeArea, fraction, suppressed }) => {
       const layout = deriveLayout({ width, height });
-      for (const primarySidebarPreferredVisible of [true, false]) {
-        expect(
-          deriveWorkspacePaneLayout({
-            layout,
-            viewportWidth: width,
-            horizontalSafeArea,
-            nativeWorkspace: true,
-            primarySidebarPreferredVisible,
-            auxiliaryPanePreferredVisible: true,
-            nativeInspectorWidth: nativeInspectorColumnWidth({
+      for (const nativeWorkspace of [true, false]) {
+        for (const primarySidebarPreferredVisible of [true, false]) {
+          expect(
+            deriveWorkspacePaneLayout({
+              layout,
               viewportWidth: width,
               horizontalSafeArea,
-              fraction,
+              nativeWorkspace,
+              inspectorSizing: nativeWorkspace ? undefined : "android",
+              primarySidebarPreferredVisible,
+              auxiliaryPanePreferredVisible: true,
+              nativeInspectorWidth: nativeInspectorColumnWidth({
+                viewportWidth: width,
+                horizontalSafeArea,
+                fraction,
+              }),
             }),
-          }),
-        ).toMatchObject({
-          primarySidebarVisible: primarySidebarPreferredVisible && !suppressed,
-          primarySidebarSuppressedByAuxiliary: primarySidebarPreferredVisible && suppressed,
-          auxiliaryPaneVisible: true,
-        });
+          ).toMatchObject({
+            primarySidebarVisible: primarySidebarPreferredVisible && !suppressed,
+            primarySidebarSuppressedByAuxiliary: primarySidebarPreferredVisible && suppressed,
+            auxiliaryPaneVisible: true,
+          });
+        }
       }
     },
   );
@@ -198,6 +362,21 @@ describe("deriveWorkspacePaneLayout", () => {
       primarySidebarVisible: false,
       primarySidebarSuppressedByAuxiliary: false,
       auxiliaryPaneVisible: true,
+    });
+    expect(
+      deriveWorkspacePaneLayout({
+        layout: deriveLayout({ width: 680, height: 900 }),
+        viewportWidth: 608,
+        inspectorSizing: "android",
+        inspectorWindow: { width: 680, leadingWidth: 72, hinge: null },
+        primarySidebarPreferredVisible: false,
+        auxiliaryPanePreferredVisible: true,
+        auxiliaryPanePreferredWidth: 320,
+      }),
+    ).toMatchObject({
+      primarySidebarVisible: false,
+      auxiliaryPaneVisible: true,
+      auxiliaryPaneWidth: 320,
     });
   });
 });

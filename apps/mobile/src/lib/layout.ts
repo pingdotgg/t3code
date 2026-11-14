@@ -57,6 +57,7 @@ const AUXILIARY_PANE_MIN_WIDTH = 260;
 const AUXILIARY_PANE_MAX_WIDTH = 480;
 const AUXILIARY_PANE_DEFAULT_MAX_WIDTH = 320;
 const FILE_INSPECTOR_MIN_VIEWPORT_WIDTH = 820;
+const ANDROID_WIDE_INSPECTOR_MIN_WIDTH = 1000;
 const FILE_INSPECTOR_MIN_MAIN_WIDTH = 560;
 // UIKit's inspector column keeps its own width, so the sidebar steps aside only when the page
 // would get narrower than this: landscape 11" and 13" iPads keep three columns, portrait ones don't.
@@ -86,9 +87,17 @@ export interface WorkspacePaneLayout {
   readonly supportsAuxiliaryPane: boolean;
   readonly auxiliaryPaneVisible: boolean;
   readonly auxiliaryPaneWidth: number | null;
+  readonly auxiliaryPaneGap?: number;
+}
+
+export interface InspectorWindow {
+  readonly width: number;
+  readonly leadingWidth: number;
+  readonly hinge: VerticalHinge | null;
 }
 
 export interface FileInspectorPaneLayout {
+  readonly gap?: number;
   readonly supported: boolean;
   readonly width: number | null;
 }
@@ -209,6 +218,8 @@ export function deriveWorkspacePaneLayout(input: {
   /** Width UIKit keeps out of its columns, such as the Duo's system bar. */
   readonly horizontalSafeArea?: number;
   readonly nativeWorkspace?: boolean;
+  readonly inspectorSizing?: "android";
+  readonly inspectorWindow?: InspectorWindow;
   /** Whether the sidebar floats over the content rather than taking its room; medium by default. */
   readonly primarySidebarFloats?: boolean;
   readonly primarySidebarPreferredVisible: boolean;
@@ -229,6 +240,8 @@ export function deriveWorkspacePaneLayout(input: {
     layout: input.layout,
     viewportWidth,
     preferredWidth: input.auxiliaryPanePreferredWidth,
+    inspectorSizing: input.inspectorSizing,
+    inspectorWindow: input.inspectorWindow,
     reservedLeadingWidth: preferredPrimarySidebarWidth,
   });
   const auxiliaryPaneVisible = fileInspector.supported && input.auxiliaryPanePreferredVisible;
@@ -237,8 +250,8 @@ export function deriveWorkspacePaneLayout(input: {
     : fileInspector.width;
   const primarySidebarSuppressedByAuxiliary =
     preferredPrimarySidebarVisible &&
-    !floats &&
     auxiliaryPaneVisible &&
+    !floats &&
     inspectorWidth !== null &&
     input.layout.listPaneWidth !== null &&
     viewportWidth -
@@ -246,7 +259,9 @@ export function deriveWorkspacePaneLayout(input: {
       input.layout.listPaneWidth -
       (input.layout.listPaneGap ?? 0) -
       inspectorWidth <
-      (input.nativeWorkspace ? NATIVE_INSPECTOR_MIN_MAIN_WIDTH : FILE_INSPECTOR_MIN_MAIN_WIDTH);
+      (input.nativeWorkspace || input.inspectorSizing === "android"
+        ? NATIVE_INSPECTOR_MIN_MAIN_WIDTH
+        : FILE_INSPECTOR_MIN_MAIN_WIDTH);
   const primarySidebarVisible =
     preferredPrimarySidebarVisible && !primarySidebarSuppressedByAuxiliary;
   const primarySidebarWidth = primarySidebarVisible ? preferredPrimarySidebarWidth : 0;
@@ -256,6 +271,7 @@ export function deriveWorkspacePaneLayout(input: {
     primarySidebarWhenExpanded: input.primarySidebarPreferredVisible,
     primarySidebarSuppressedByAuxiliary,
     contentPaneWidth: Math.max(0, viewportWidth - primarySidebarWidth),
+    auxiliaryPaneGap: auxiliaryPaneVisible ? (fileInspector.gap ?? 0) : 0,
     supportsAuxiliaryPane: fileInspector.supported,
     auxiliaryPaneVisible,
     auxiliaryPaneWidth: fileInspector.width,
@@ -284,8 +300,52 @@ export function deriveFileInspectorPaneLayout(input: {
   readonly viewportWidth: number;
   readonly preferredWidth?: number;
   readonly reservedLeadingWidth?: number;
+  readonly inspectorSizing?: "android";
+  readonly inspectorWindow?: InspectorWindow;
 }): FileInspectorPaneLayout {
   const viewportWidth = Math.max(0, input.viewportWidth);
+  const window = input.inspectorWindow;
+  const hinge = window?.hinge;
+  if (input.inspectorSizing === "android" && window && hinge && hinge.width > 0) {
+    const width = window.width - hinge.x - hinge.width;
+    const supported =
+      input.layout.usesSplitView && width >= 320 && hinge.x - window.leadingWidth >= 280;
+    return { supported, gap: supported ? hinge.width : 0, width: supported ? width : null };
+  }
+  if (
+    input.inspectorSizing === "android" &&
+    (input.inspectorWindow?.width ?? viewportWidth) < ANDROID_WIDE_INSPECTOR_MIN_WIDTH
+  ) {
+    const gap = input.preferredWidth === undefined ? (window?.hinge?.width ?? 0) : 0;
+    const defaultWidth = window
+      ? window.width - (window.hinge?.x ?? window.width / 2) - gap
+      : Math.max(0, viewportWidth - 4) / 2;
+    const width = constrainAuxiliaryPaneWidth({
+      preferredWidth: input.preferredWidth ?? defaultWidth,
+      availableWidth: viewportWidth - gap,
+      inspectorSizing: "android",
+      inspectorWindow: window,
+    });
+    const supported =
+      input.layout.usesSplitView && width >= 320 && viewportWidth - gap - width >= 280;
+    return { supported, gap: supported ? gap : 0, width: supported ? width : null };
+  }
+  if (input.inspectorSizing === "android") {
+    const supported =
+      input.layout.usesSplitView &&
+      viewportWidth >= AUXILIARY_PANE_MIN_WIDTH + NATIVE_INSPECTOR_MIN_MAIN_WIDTH + 4;
+    return {
+      supported,
+      width: supported
+        ? constrainAuxiliaryPaneWidth({
+            preferredWidth: input.preferredWidth ?? viewportWidth * 0.4,
+            availableWidth: viewportWidth,
+            inspectorSizing: "android",
+            inspectorWindow: input.inspectorWindow,
+          })
+        : null,
+    };
+  }
   const reservedLeadingWidth = Number.isFinite(input.reservedLeadingWidth)
     ? Math.max(0, input.reservedLeadingWidth ?? 0)
     : 0;
@@ -313,6 +373,8 @@ export function deriveFileInspectorPaneLayout(input: {
 export function constrainAuxiliaryPaneWidth(input: {
   readonly preferredWidth: number;
   readonly availableWidth: number;
+  readonly inspectorSizing?: "android";
+  readonly inspectorWindow?: InspectorWindow;
 }): number {
   const safePreferredWidth = Number.isFinite(input.preferredWidth)
     ? input.preferredWidth
@@ -320,6 +382,23 @@ export function constrainAuxiliaryPaneWidth(input: {
   const availableWidth = Number.isFinite(input.availableWidth)
     ? Math.max(0, input.availableWidth)
     : 0;
+  if (
+    input.inspectorSizing === "android" &&
+    (input.inspectorWindow?.width ?? availableWidth) < ANDROID_WIDE_INSPECTOR_MIN_WIDTH
+  ) {
+    const window = input.inspectorWindow;
+    const mainReserve = window
+      ? Math.min(320, (window.hinge?.x ?? window.width / 2) - window.leadingWidth)
+      : 324;
+    return clamp(safePreferredWidth, 320, Math.max(320, availableWidth - mainReserve));
+  }
+  if (input.inspectorSizing === "android") {
+    return nativeInspectorColumnWidth({
+      viewportWidth: availableWidth,
+      horizontalSafeArea: 4,
+      fraction: availableWidth > 0 ? safePreferredWidth / availableWidth : 0.4,
+    });
+  }
   const maxWidth = Math.max(
     AUXILIARY_PANE_MIN_WIDTH,
     Math.min(AUXILIARY_PANE_MAX_WIDTH, availableWidth - FILE_INSPECTOR_MIN_MAIN_WIDTH),
