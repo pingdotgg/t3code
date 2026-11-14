@@ -1387,7 +1387,13 @@ describe("OpenCodeAdapterV2", () => {
   );
 
   // OpenCode 1.18.32 background tasks complete at launch; children stay busy after root settlement.
-  it.effect("reports a background task child as pending work after the root turn settles", () =>
+  // Event order from a live 1.19.5 run: the child reports busy only after the launch completes.
+  it.effect.each([
+    { case: "finishes", ending: "idle", outcome: "completed" },
+    { case: "is aborted", ending: "abort", outcome: "interrupted" },
+    { case: "fails before its first turn", ending: "error", outcome: "failed" },
+    { case: "never starts and the thread is stopped", ending: "stop", outcome: "interrupted" },
+  ])("keeps a background task's subagent running until its child $case", ({ ending, outcome }) =>
     Effect.gen(function* () {
       const nativeEvents = asyncEventStream();
       const push = (event: unknown) => Effect.promise(() => nativeEvents.push(event));
@@ -1415,9 +1421,14 @@ describe("OpenCodeAdapterV2", () => {
         return yield* Effect.die("OpenCode runtime must expose hasPendingBackgroundWork.");
       }
       yield* harness.startTurn();
-      const terminal = yield* harness.runtime.events.pipe(
-        Stream.filter((event) => event.type === "turn.terminal"),
-        Stream.runHead,
+      const received = yield* harness.runtime.events.pipe(
+        Stream.takeUntil(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "subagent" &&
+            event.turnItem.status !== "running",
+        ),
+        Stream.runCollect,
         Effect.forkScoped,
       );
       const taskPart = (status: "running" | "completed") => ({
@@ -1459,7 +1470,6 @@ describe("OpenCodeAdapterV2", () => {
         },
       });
       yield* push(status(root, "busy"));
-      yield* push(taskPart("running"));
       yield* push({
         type: "session.created",
         properties: {
@@ -1467,15 +1477,55 @@ describe("OpenCodeAdapterV2", () => {
           info: { id: child, parentID: root, time: { created: 2, updated: 2 } },
         },
       });
-      yield* push(status(child, "busy"));
+      yield* push(taskPart("running"));
+      const starts = ending !== "stop" && ending !== "error";
+      if (starts) {
+        yield* push({
+          type: "message.updated",
+          properties: {
+            sessionID: child,
+            info: { id: "msg_child_prompt", sessionID: child, role: "user", time: { created: 2 } },
+          },
+        });
+      }
       yield* push(taskPart("completed"));
+      if (starts) yield* push(status(child, "busy"));
       yield* push(status(root, "idle"));
-      assert.equal(Option.getOrUndefined(yield* Fiber.join(terminal))?.status, "completed");
-      assert.isTrue(yield* hasPendingBackgroundWork, "the running child must pin idle release");
+      assert.equal(yield* hasPendingBackgroundWork, starts, "a running child pins idle release");
 
-      yield* push(status(child, "idle"));
-      yield* push({ type: "session.idle", properties: { sessionID: child } });
+      if (ending === "stop") {
+        yield* harness.runtime.interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId: ProviderTurnId.make("provider-turn:settled"),
+          requestRuntimeRestart: true,
+        });
+      } else {
+        if (ending !== "idle") {
+          yield* push({
+            type: "session.error",
+            properties: {
+              sessionID: child,
+              error:
+                ending === "abort"
+                  ? { name: "MessageAbortedError", data: {} }
+                  : { name: "UnknownError", data: { message: "model unavailable" } },
+            },
+          });
+        }
+        yield* push(status(child, "idle"));
+        yield* push({ type: "session.idle", properties: { sessionID: child } });
+      }
       assert.isFalse(yield* hasPendingBackgroundWork, "an idle child must not pin idle release");
+      assert.deepEqual(
+        (yield* Fiber.join(received)).flatMap((event) =>
+          event.type === "subagent.updated"
+            ? [`subagent ${event.subagent.status}`]
+            : event.type === "turn.terminal"
+              ? [`root turn ${event.status}`]
+              : [],
+        ),
+        ["subagent running", "subagent running", "root turn completed", `subagent ${outcome}`],
+      );
     }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
