@@ -1,3 +1,7 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Vite config runs before any Effect runtime.
+import * as NodeChildProcess from "node:child_process";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Vite config runs before any Effect runtime.
+import * as NodeFS from "node:fs";
 import "vite-plus/test/config";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- tsdown needs the asset path when it reads this config.
 import * as NodePath from "node:path";
@@ -73,6 +77,35 @@ const packExecutableTargets = packExecutableTarget
     ]
   : undefined;
 
+// Incremental state lets an edit re-check only the files it can reach. State from another revision
+// can hide Effect-rule diagnostics, so it is cleared when HEAD changes. The path stays fixed so the
+// task cache key does not change per commit; the task excludes it because every run rewrites it.
+const TYPECHECK_BUILD_INFO_DIR = "node_modules/.cache/tsc";
+const TYPECHECK_BUILD_INFO = `${TYPECHECK_BUILD_INFO_DIR}/typecheck.tsbuildinfo`;
+const typecheckRevisionFile = `${import.meta.dirname}/${TYPECHECK_BUILD_INFO_DIR}/revision`;
+const readOrEmpty = (read: () => string) => {
+  try {
+    return read().trim();
+  } catch {
+    return "";
+  }
+};
+const typecheckRevision = readOrEmpty(() =>
+  NodeChildProcess.execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: import.meta.dirname,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  }),
+);
+if (readOrEmpty(() => NodeFS.readFileSync(typecheckRevisionFile, "utf8")) !== typecheckRevision) {
+  NodeFS.rmSync(`${import.meta.dirname}/${TYPECHECK_BUILD_INFO_DIR}`, {
+    recursive: true,
+    force: true,
+  });
+  NodeFS.mkdirSync(`${import.meta.dirname}/${TYPECHECK_BUILD_INFO_DIR}`, { recursive: true });
+  NodeFS.writeFileSync(typecheckRevisionFile, typecheckRevision);
+}
+
 // The root config's `projects` route repo-root runs to package configs,
 // including this one. Inheriting them would make this config a container.
 const { projects: _rootTestProjects, ...baseTestConfig } = baseConfig.test ?? {};
@@ -88,6 +121,13 @@ export default mergeConfig(
           command: "node scripts/cli.ts build",
           dependsOn: ["@t3tools/web#build"],
           cache: false,
+        },
+        typecheck: {
+          command: `effect-tsgo tsrs --noEmit --incremental --tsBuildInfoFile ${TYPECHECK_BUILD_INFO}`,
+          cache: {
+            input: [{ auto: true }, `!${TYPECHECK_BUILD_INFO_DIR}/**`],
+            output: [{ auto: true }, `!${TYPECHECK_BUILD_INFO_DIR}/**`],
+          },
         },
       },
     },
