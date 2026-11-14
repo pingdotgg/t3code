@@ -482,10 +482,13 @@ function downloadName(uri: unknown, name: unknown): string {
       : typeof uri === "string"
         ? (uri.split(/[/?#]/).findLast(Boolean) ?? "download")
         : "download";
-  const safe = Array.from(raw, (char) =>
-    /[\\/:*?"<>|]/.test(char) || char.charCodeAt(0) < 32 ? "-" : char,
-  ).join("");
-  return safe.slice(0, MAX_DOWNLOAD_NAME) || "download";
+  let safe = "";
+  for (const char of raw) {
+    const next = /[\\/:*?"<>|]/.test(char) || char.charCodeAt(0) < 32 ? "-" : char;
+    if (safe.length + next.length > MAX_DOWNLOAD_NAME) break;
+    safe += next;
+  }
+  return safe || "download";
 }
 
 function readDownloads(contents: unknown): ReadonlyArray<McpAppDownload> | undefined {
