@@ -209,7 +209,7 @@ export function secretRequestAnswerInput(
       ? null
       : { threadId: item.threadId, turnItemId: item.id, answer: { type: "reference", reference } };
   }
-  const secret = answer.secret.trim();
+  const { secret } = answer;
   if (secret.length === 0) return null;
   return { threadId: item.threadId, turnItemId: item.id, answer: { type: "save", secret } };
 }
