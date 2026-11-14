@@ -58,7 +58,12 @@ import {
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
-import { guestShareView, guestThreadModel } from "./guestView.ts";
+import {
+  guestShareView,
+  guestThreadModel,
+  projectDomainEventForGuest,
+  projectThreadProjectionForGuest,
+} from "./guestView.ts";
 import {
   classifyGuestUploads,
   GUEST_UPLOAD_HEADER_BYTES,
@@ -516,7 +521,8 @@ const make = Effect.gen(function* () {
 
   /**
    * The thread as the owner's thread subscription sends it: a bounded snapshot, then the same
-   * wire events, batched the same way. Only the share's own state is added.
+   * wire events, batched the same way, without the owner's branch or paths on disk. Only the
+   * share's own state is added.
    */
   const stream = Effect.fn("GuestShareService.stream")(function* (session: string) {
     const { thread, share } = yield* authorize(session, "session");
@@ -558,14 +564,12 @@ const make = Effect.gen(function* () {
           if (item.kind !== "event") return [];
           if (endsShare(item.event)) return [ended];
           if (item.event.type === "turn-item.updated") rememberSent(share.id, [item.event.payload]);
+          const event = projectDomainEventForGuest(item.event);
+          if (event === null) return [];
           const updated = threadOf(item.event);
           const view = updated === null ? null : viewOf(updated);
-          return view === null
-            ? [{ type: "thread", item }]
-            : [
-                { type: "thread", item },
-                { type: "view", view },
-              ];
+          const thread: GuestStreamEvent = { type: "thread", item: { ...item, event } };
+          return view === null ? [thread] : [thread, { type: "view", view }];
         }),
         Stream.flattenIterable,
         // A failed read closes the response without `ended`: the browser reconnects, and
@@ -577,7 +581,7 @@ const make = Effect.gen(function* () {
     );
     const openingSnapshot = buildBoundedThreadStreamSnapshot({
       snapshotSequence: snapshot.snapshotSequence,
-      projection: snapshot.projection,
+      projection: projectThreadProjectionForGuest(snapshot.projection),
     });
     const opening: ReadonlyArray<GuestStreamEvent> = [
       { type: "view", view: initialView },

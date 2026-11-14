@@ -3,16 +3,22 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   ChatAttachmentId,
+  CheckpointId,
+  CheckpointRef,
+  CheckpointScopeId,
   CommandId,
   EventId,
   GuestShareId,
   type GuestStreamEvent,
   MessageId,
+  NodeId,
+  type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadHistoryPage,
   type OrchestrationV2TurnItem,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderSessionId,
   RunId,
   ThreadId,
   TurnItemId,
@@ -282,6 +288,242 @@ it.effect("starts a stream with the runs and items already in the thread", () =>
       snapshot.item.projection.visibleTurnItems.map((row) => row.item.type),
       "user_message",
     );
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("sends the guest no owner paths, branches, checkpoint files or subagent records", () =>
+  Effect.gen(function* () {
+    const worktreePath = "/Users/owner/code/secret-worktree";
+    const branch = "owner/secret-branch";
+    const changedFile = "src/secret-changed-file.ts";
+    const subagentPrompt = "Owner-only subagent prompt";
+    const subagentResult = "Owner-only subagent result";
+    const driver = ProviderDriverKind.make("codex");
+    const { orchestrator, guestShares, credential } = yield* shareThread;
+    const { token: session } = yield* guestShares.redeem({ credential, name: "Sam" });
+    const eventSink = yield* EventSink.EventSinkV2;
+    const now = yield* DateTime.now;
+    const ownerEvent = (
+      id: string,
+      event: Pick<OrchestrationV2DomainEvent, "type" | "payload">,
+    ): OrchestrationV2DomainEvent =>
+      ({
+        id: EventId.make(id),
+        threadId,
+        driver,
+        providerInstanceId: instanceId,
+        occurredAt: now,
+        ...event,
+      }) as OrchestrationV2DomainEvent;
+    const providerSession = (type: "provider-session.attached" | "provider-session.updated") =>
+      ownerEvent(`event:${type}`, {
+        type,
+        payload: {
+          id: ProviderSessionId.make("session:owner"),
+          driver,
+          providerInstanceId: instanceId,
+          // A live session, so the windowed snapshot includes it.
+          status: "running",
+          cwd: worktreePath,
+          model: null,
+          capabilities: CodexProviderCapabilitiesV2,
+          extensionStatuses: [],
+          createdAt: now,
+          updatedAt: now,
+          lastError: null,
+        },
+      });
+    const runId = yield* ownerRun;
+    const checkpointScope = (id: string) =>
+      ownerEvent(`event:${id}`, {
+        type: "checkpoint-scope.created",
+        payload: {
+          id: CheckpointScopeId.make(id),
+          threadId,
+          runId,
+          nodeId: NodeId.make("node:owner"),
+          parentScopeId: null,
+          providerThreadId: null,
+          kind: "manual",
+          ordinalWithinParent: 0,
+          advancesAppRunCount: false,
+          cwd: worktreePath,
+          createdAt: now,
+        },
+      });
+    const [ownerRunRecord] = (yield* orchestrator.getThreadSnapshotWindow(threadId, {
+      rowLimit: 10,
+    })).projection.runs;
+    if (ownerRunRecord === undefined) return assert.fail("Expected the owner's run.");
+    const linkedPullRequest = (id: string, title: string) =>
+      ownerEvent(`event:${id}`, {
+        type: "thread.pull-request-link-updated",
+        payload: {
+          host: "github.com",
+          repository: "acme/app",
+          number: 7,
+          url: "https://github.com/acme/app/pull/7",
+          source: "created",
+          linkedAt: DateTime.formatIso(now),
+          snapshot: {
+            state: "open",
+            title,
+            headBranch: branch,
+            baseBranch: branch,
+            isDraft: false,
+            updatedAt: null,
+            syncedAt: DateTime.formatIso(now),
+          },
+          stack: {
+            kind: "native",
+            id: "stack:owner",
+            number: 7,
+            url: "https://github.com/acme/app/pull/7",
+            base: branch,
+            layers: [{ number: 7, headBranch: branch, state: "open" }],
+          },
+        },
+      });
+    const preparedRun = (
+      id: string,
+      workspacePreparation: NonNullable<(typeof ownerRunRecord)["workspacePreparation"]>,
+    ) =>
+      ownerEvent(`event:${id}`, {
+        type: "run.updated",
+        payload: { ...ownerRunRecord, workspacePreparation },
+      });
+    const workflowSubagent = (id: string) =>
+      ownerEvent(`event:${id}`, {
+        type: "subagent.updated",
+        payload: {
+          id: NodeId.make(id),
+          threadId,
+          runId,
+          parentNodeId: NodeId.make("node:owner"),
+          origin: "provider_native",
+          createdBy: "agent",
+          driver,
+          providerInstanceId: instanceId,
+          providerThreadId: null,
+          childThreadId: null,
+          nativeTaskRef: null,
+          prompt: subagentPrompt,
+          title: "review",
+          model: null,
+          status: "running",
+          workflow: {
+            runHandles: {
+              runId: "workflow-run",
+              transcriptDir: `${worktreePath}/.claude/workflows/${id}`,
+              scriptPath: `${worktreePath}/.claude/workflows/${id}.js`,
+            },
+            phases: [],
+            agents: [],
+          },
+          result: subagentResult,
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+        },
+      });
+    const checkpointCaptured = (id: string, ordinalWithinScope: number) =>
+      ownerEvent(`event:${id}`, {
+        type: "checkpoint.captured",
+        payload: {
+          id: CheckpointId.make(id),
+          threadId,
+          scopeId: CheckpointScopeId.make("scope:before"),
+          runId,
+          nodeId: NodeId.make("node:owner"),
+          parentCheckpointId: null,
+          ordinalWithinScope,
+          appRunOrdinal: null,
+          ref: CheckpointRef.make(`refs/t3/${id}`),
+          status: "ready",
+          files: [{ path: changedFile, kind: "modified", additions: 1, deletions: 0 }],
+          capturedAt: now,
+        },
+      });
+
+    // Before the guest connects, so the opening snapshot carries them.
+    yield* orchestrator.dispatch({
+      type: "thread.metadata.update",
+      commandId: CommandId.make("owner-worktree"),
+      threadId,
+      branch,
+      worktreePath,
+      linkedPullRequest: {
+        projectId: ProjectId.make("project:guest-share-service"),
+        repository: "acme/app",
+        number: 7,
+        url: "https://github.com/acme/app/pull/7",
+      },
+    });
+    yield* eventSink.write({
+      events: [
+        providerSession("provider-session.attached"),
+        checkpointScope("scope:before"),
+        preparedRun("run:before", { type: "existing_worktree", worktreePath, branch }),
+        linkedPullRequest("pr:before", "Fix the login bug"),
+        workflowSubagent("subagent:before"),
+        checkpointCaptured("checkpoint:before", 0),
+      ],
+    });
+    const events = yield* guestShares.stream(session);
+    // While the guest watches, so the live events carry them.
+    yield* orchestrator.dispatch({
+      type: "thread.metadata.update",
+      commandId: CommandId.make("owner-rename"),
+      threadId,
+      title: "Renamed",
+    });
+    yield* eventSink.write({
+      events: [
+        providerSession("provider-session.updated"),
+        checkpointScope("scope:live"),
+        preparedRun("run:live", { type: "worktree", baseRef: branch, branch }),
+        linkedPullRequest("pr:live", "Fix the login bug, take two"),
+        workflowSubagent("subagent:live"),
+        checkpointCaptured("checkpoint:live", 1),
+      ],
+    });
+    yield* orchestrator.dispatch({
+      type: "thread.guest-share.close",
+      commandId: CommandId.make("close-after-owner-paths"),
+      threadId,
+    });
+
+    const received = Array.from(yield* Stream.runCollect(events));
+    const snapshot = received.find(
+      (event) => event.type === "thread" && event.item.kind === "snapshot",
+    );
+    if (snapshot?.type !== "thread" || snapshot.item.kind !== "snapshot") {
+      return assert.fail("Expected a thread snapshot.");
+    }
+    assert.equal(snapshot.item.projection.providerSessions.length, 1);
+    assert.equal(snapshot.item.projection.runs[0]?.workspacePreparation?.type, "existing_worktree");
+    assert.equal(snapshot.item.projection.thread.pullRequests?.[0]?.snapshot?.state, "open");
+    assert.lengthOf(snapshot.item.projection.subagents, 0);
+    assert.lengthOf(snapshot.item.projection.checkpoints, 0);
+    assert.lengthOf(snapshot.item.projection.checkpointScopes, 0);
+    const liveTypes = received.flatMap((event) =>
+      event.type === "thread" && event.item.kind === "event" ? [event.item.event.type] : [],
+    );
+    assert.includeMembers(liveTypes, [
+      "thread.metadata-updated",
+      "provider-session.updated",
+      "run.updated",
+      "thread.pull-request-link-updated",
+    ]);
+    for (const dropped of ["checkpoint-scope.created", "checkpoint.captured", "subagent.updated"]) {
+      assert.notInclude(liveTypes, dropped);
+    }
+    const wire = JSON.stringify(received);
+    assert.notInclude(wire, worktreePath);
+    assert.notInclude(wire, branch);
+    assert.notInclude(wire, changedFile);
+    assert.notInclude(wire, subagentPrompt);
+    assert.notInclude(wire, subagentResult);
   }).pipe(Effect.provide(layerTest)),
 );
 
