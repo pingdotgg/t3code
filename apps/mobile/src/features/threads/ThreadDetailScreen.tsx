@@ -15,7 +15,7 @@ import { parseThreadKey, threadKey } from "@t3tools/client-runtime/state/entitie
 import { createThreadVisitTracker } from "@t3tools/client-runtime/state/thread-visits";
 import { useChildThreadInputs, useThreadReportedModelSelection } from "../../state/entities";
 import { UsageLimitRecoveryCard } from "./UsageLimitRecoveryCard";
-import { useFocusEffect, useNavigation } from "@react-navigation/native";
+import { useFocusEffect, useIsFocused, useNavigation } from "@react-navigation/native";
 import {
   effectiveSnoozed,
   threadWokeAt,
@@ -211,6 +211,8 @@ import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-scroll-position";
 import { useOpenLinkedThread } from "./useOpenLinkedThread";
 import { useGlobalVoiceInput } from "../voice-input/VoiceInputProvider";
+import { useEnvironmentShellReadiness } from "../../state/shell";
+import { useSettledThreadView } from "./useSettledThreadView";
 import type { OrchestrationV2ProviderSession } from "@t3tools/contracts";
 
 export interface ThreadDetailScreenProps {
@@ -1209,14 +1211,18 @@ function ThreadDetailBody(
     }
   };
   const showContent = props.showContent ?? true;
-  // Showing the thread counts as viewing it, before its live shell arrives too.
-  useAtomMount(
-    threadVisitTracker(
-      showContent && !props.draftMode
-        ? { environmentId: props.environmentId, threadId: props.selectedThread.id }
-        : null,
-    ),
+  // Showing the thread counts as viewing it; after a resume or sync, only once it settles.
+  const shellSynchronizing =
+    useEnvironmentShellReadiness(props.environmentId).status === "synchronizing";
+  const covered = !useIsFocused();
+  const viewedThread = useSettledThreadView(
+    showContent && !props.draftMode
+      ? { environmentId: props.environmentId, threadId: props.selectedThread.id }
+      : null,
+    shellSynchronizing,
+    covered,
   );
+  useAtomMount(threadVisitTracker(viewedThread));
   const layoutVariant = props.layoutVariant ?? "compact";
   const isSplitLayout = layoutVariant !== "compact";
   const contentMaxWidth =
