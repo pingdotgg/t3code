@@ -395,6 +395,13 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
   ),
   t3_project_delete: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {
+      const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+      if (yield* folders.isScratchProject(input.projectId))
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message:
+            '"No project" is the built-in scratch project and cannot be deleted through MCP. The user can remove it in Settings.',
+        });
       const projects = yield* Project.ProjectService;
       const clones = yield* ProjectCloneTracker.ProjectCloneTracker;
       return yield* mutateProjectWithClone(projects, clones, {
