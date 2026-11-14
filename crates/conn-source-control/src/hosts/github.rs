@@ -1,0 +1,868 @@
+//! GitHub (`packages/source-control-github`): discovery, and the REST request every later
+//! operation sends.
+//!
+//! Discovery is the managed probe of `GitHubSourceControlProvider.makeDiscovery`: `gh --version`
+//! and `gh auth status --json hosts`, then `GET /user` when a token is saved in Settings or set
+//! in `GH_TOKEN`/`GITHUB_TOKEN`, because `gh auth status` may not know those.
+//!
+//! Not built: the GitHub App sign-in. This server behaves as a T3 server without
+//! `T3CODE_GITHUB_APP_CLIENT_ID`: no `appSignIn` offer, and a saved sign-in is not used.
+
+use conn_contract::{
+    ServerProviderAuthStatus, SourceControlDiscoveryStatus, SourceControlProviderAuth,
+    SourceControlProviderAuthAccountsItem, SourceControlProviderDiscoveryItem,
+};
+use serde::Deserialize;
+
+use super::{DiscoveryContext, Environment};
+use crate::{
+    discovery::{
+        CliSpec, DEFAULT_PROBE_TIMEOUT, ProbeContext, ProbeOutput, first_safe_auth_line, probe_cli,
+        provider_auth,
+    },
+    http::{self, HttpRequest, HttpResponse, Method},
+    secret::Secret,
+    settings::HostSettings,
+};
+
+pub const KIND: &str = "github";
+const INSTALL_HINT: &str = "Install the GitHub command-line tool (`gh`) via https://cli.github.com/ or your package manager (for example `brew install gh`).";
+/// `REQUEST_HEADERS` in `GitHubRequestPolicy.ts`.
+pub const API_VERSION: &str = "2022-11-28";
+pub const USER_AGENT: &str = "t3code";
+
+fn spec() -> CliSpec {
+    CliSpec {
+        kind: KIND,
+        label: "GitHub",
+        executable: "gh",
+        version_args: &["--version"],
+        auth_args: vec![
+            "auth".into(),
+            "status".into(),
+            "--json".into(),
+            "hosts".into(),
+        ],
+        auth_retry_args: None,
+        probe_timeout: DEFAULT_PROBE_TIMEOUT,
+        install_hint: INSTALL_HINT,
+    }
+}
+
+/// One `gh auth status --json hosts` account (`GitHubAuthStatusAccount`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AuthAccount {
+    pub host: String,
+    pub account: String,
+    pub authenticated: bool,
+    pub active: bool,
+    pub error: Option<String>,
+    pub environment_variable: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct RawAccount {
+    state: String,
+    #[serde(default)]
+    error: Option<String>,
+    active: bool,
+    host: String,
+    login: String,
+    #[serde(default, rename = "tokenSource")]
+    token_source: Option<String>,
+}
+
+/// `hosts` in JSON key order, as `Object.values` walks it.
+struct OrderedHosts(Vec<Vec<RawAccount>>);
+
+impl<'de> Deserialize<'de> for OrderedHosts {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visit;
+        impl<'de> serde::de::Visitor<'de> for Visit {
+            type Value = OrderedHosts;
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("an object of account lists")
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> Result<Self::Value, A::Error> {
+                let mut out = Vec::new();
+                while let Some((_, accounts)) = map.next_entry::<String, Vec<RawAccount>>()? {
+                    out.push(accounts);
+                }
+                Ok(OrderedHosts(out))
+            }
+        }
+        deserializer.deserialize_map(Visit)
+    }
+}
+
+#[derive(Deserialize)]
+struct RawStatus {
+    hosts: OrderedHosts,
+}
+
+fn is_environment_token_source(source: &str) -> bool {
+    // `/^(?:GH|GITHUB)_(?:ENTERPRISE_)?TOKEN$/u`
+    let rest = source
+        .strip_prefix("GH_")
+        .or_else(|| source.strip_prefix("GITHUB_"));
+    matches!(rest, Some("TOKEN" | "ENTERPRISE_TOKEN"))
+}
+
+/// `parseGitHubAuthStatus`: `None` when stdout is not that JSON shape.
+pub fn parse_auth_status(stdout: &str) -> Option<Vec<AuthAccount>> {
+    let status: RawStatus = serde_json::from_str(stdout).ok()?;
+    Some(
+        status
+            .hosts
+            .0
+            .into_iter()
+            .flatten()
+            .filter_map(|raw| {
+                let host = raw.host.trim();
+                let login = raw.login.trim();
+                if host.is_empty() || login.is_empty() {
+                    return None;
+                }
+                Some(AuthAccount {
+                    host: host.to_lowercase(),
+                    account: login.to_owned(),
+                    authenticated: raw.state == "success",
+                    active: raw.active,
+                    error: raw
+                        .error
+                        .map(|e| e.trim().to_owned())
+                        .filter(|e| !e.is_empty()),
+                    environment_variable: raw
+                        .token_source
+                        .filter(|s| is_environment_token_source(s)),
+                })
+            })
+            .collect(),
+    )
+}
+
+/// `findAuthenticatedGitHubAccount`.
+fn find_authenticated<'a>(
+    accounts: impl Iterator<Item = &'a AuthAccount> + Clone,
+) -> Option<&'a AuthAccount> {
+    accounts
+        .clone()
+        .find(|a| a.authenticated && a.active)
+        .or_else(|| accounts.into_iter().find(|a| a.authenticated))
+}
+
+/// `effectiveGitHubAccount`.
+fn effective_account<'a>(
+    host: &str,
+    accounts: &'a [AuthAccount],
+    settings: &HostSettings<'_>,
+) -> Option<&'a AuthAccount> {
+    if !settings.host_enabled(host) {
+        return None;
+    }
+    let usable = accounts
+        .iter()
+        .filter(|a| a.host == host && a.authenticated);
+    usable
+        .clone()
+        .find(|a| a.environment_variable.is_some())
+        .or_else(|| {
+            settings
+                .host_account(host)
+                .and_then(|pinned| usable.clone().find(|a| a.account == pinned))
+        })
+        .or_else(|| find_authenticated(usable))
+}
+
+fn account_rows(accounts: &[AuthAccount]) -> Vec<SourceControlProviderAuthAccountsItem> {
+    accounts
+        .iter()
+        .map(|a| SourceControlProviderAuthAccountsItem {
+            host: a.host.clone(),
+            account: a.account.clone(),
+            active: a.active,
+            authenticated: a.authenticated,
+            error: a.error.clone(),
+            environment_variable: a.environment_variable.clone(),
+        })
+        .collect()
+}
+
+/// `parseGitHubAuth`.
+pub fn parse_auth(output: &ProbeOutput, settings: &HostSettings<'_>) -> SourceControlProviderAuth {
+    use ServerProviderAuthStatus::{Authenticated, Unauthenticated, Unknown};
+    let combined = output.combined();
+    let parsed = parse_auth_status(&output.stdout);
+    let accounts = parsed.as_deref().unwrap_or_default();
+    let with_rows = |mut auth: SourceControlProviderAuth| {
+        if parsed.is_some() {
+            auth.accounts = Some(account_rows(accounts));
+        }
+        auth
+    };
+    let mut hosts: Vec<&str> = Vec::new();
+    for account in accounts {
+        if !hosts.contains(&account.host.as_str()) {
+            hosts.push(&account.host);
+        }
+    }
+    let fallback = find_authenticated(accounts.iter());
+    let ordered = fallback.map(|f| f.host.as_str()).into_iter().chain(
+        hosts
+            .iter()
+            .copied()
+            .filter(|h| Some(*h) != fallback.map(|f| f.host.as_str())),
+    );
+    let chosen = ordered
+        .into_iter()
+        .find_map(|host| effective_account(host, accounts, settings));
+
+    if let Some(chosen) = chosen {
+        let detail = chosen.environment_variable.as_ref().map(|var| {
+            format!("Using {var} from the server environment; it overrides the account chosen in Settings.")
+        });
+        return with_rows(provider_auth(
+            Authenticated,
+            Some(&chosen.account),
+            Some(&chosen.host),
+            detail.as_deref(),
+        ));
+    }
+    if let Some(fallback) = fallback {
+        return with_rows(provider_auth(
+            Unauthenticated,
+            None,
+            Some(&fallback.host),
+            Some(
+                "Every GitHub host gh is signed in to is turned off in Settings → Source Control.",
+            ),
+        ));
+    }
+    if parsed.is_some() {
+        let failed = accounts
+            .iter()
+            .find(|a| a.active)
+            .or_else(|| accounts.first());
+        return with_rows(provider_auth(
+            Unauthenticated,
+            None,
+            failed.map(|a| a.host.as_str()),
+            Some(failed.and_then(|a| a.error.as_deref()).unwrap_or(
+                "Run `gh auth login` to authenticate GitHub CLI with an active account.",
+            )),
+        ));
+    }
+    if output.exit_code != 0 && combined.contains("unknown flag: --json") {
+        return provider_auth(
+            Unknown,
+            None,
+            None,
+            Some(
+                "GitHub CLI is too old to report sign-in status. Update `gh` to 2.81.0 or newer (for example `brew upgrade gh`) and rescan.",
+            ),
+        );
+    }
+    if output.exit_code != 0 {
+        return provider_auth(
+            Unauthenticated,
+            None,
+            None,
+            Some(
+                &first_safe_auth_line(&combined)
+                    .unwrap_or_else(|| "Run `gh auth login` to authenticate GitHub CLI.".into()),
+            ),
+        );
+    }
+    provider_auth(
+        Unknown,
+        None,
+        None,
+        Some(
+            &first_safe_auth_line(&combined)
+                .unwrap_or_else(|| "GitHub CLI auth status could not be parsed.".into()),
+        ),
+    )
+}
+
+/// `gitHubApiUrls(host).rest`.
+pub fn rest_root(host: &str) -> String {
+    if host == "github.com" {
+        "https://api.github.com".into()
+    } else if host.ends_with(".ghe.com") {
+        format!("https://api.{host}")
+    } else {
+        format!("https://{host}/api/v3")
+    }
+}
+
+/// Why a REST request failed, with the T3 error's `message`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ApiError {
+    /// `GitHubApiAuthenticationError` (401).
+    Authentication {
+        host: String,
+    },
+    RateLimit,
+    NotFound {
+        messages: Vec<String>,
+    },
+    Response {
+        status: u16,
+        messages: Vec<String>,
+    },
+    Request {
+        host: String,
+    },
+}
+
+impl ApiError {
+    pub fn message(&self) -> String {
+        match self {
+            ApiError::Authentication { host } => format!(
+                "GitHub refused the credential for {host}. Run `gh auth login --hostname {host}` and retry."
+            ),
+            ApiError::RateLimit => "GitHub API rate limit exceeded.".into(),
+            ApiError::NotFound { messages } => {
+                let missing = "GitHub could not find the requested resource, or the credential cannot see it.";
+                if messages.is_empty() {
+                    missing.into()
+                } else {
+                    format!("{missing} GitHub said: {}", messages.join("; "))
+                }
+            }
+            ApiError::Response { status, messages } => {
+                if messages.is_empty() {
+                    format!("GitHub returned HTTP {status}.")
+                } else {
+                    format!("GitHub returned an error: {}", messages.join("; "))
+                }
+            }
+            ApiError::Request { host } => format!("Could not reach GitHub at {host}."),
+        }
+    }
+}
+
+/// `restErrorMessages`: `message` and each of `errors[]` (a string, its `message`, or
+/// `"<field> <code>"`).
+fn rest_error_messages(body: &str) -> Vec<String> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Item {
+        Text(String),
+        Detail {
+            message: Option<String>,
+            field: Option<String>,
+            code: Option<String>,
+        },
+    }
+    #[derive(Deserialize)]
+    struct Body {
+        message: Option<String>,
+        errors: Option<Vec<Item>>,
+    }
+    let Ok(body) = serde_json::from_str::<Body>(body) else {
+        return Vec::new();
+    };
+    let details = body
+        .errors
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|item| match item {
+            Item::Text(text) => Some(text),
+            Item::Detail {
+                message: Some(m), ..
+            } => Some(m),
+            Item::Detail {
+                field: Some(f),
+                code: Some(c),
+                ..
+            } => Some(format!("{f} {c}")),
+            Item::Detail { .. } => None,
+        });
+    body.message.into_iter().chain(details).collect()
+}
+
+/// `isRateLimited` for a REST answer.
+fn is_rate_limited(response: &HttpResponse) -> bool {
+    if response.status == 429 {
+        return true;
+    }
+    if response.status != 403 {
+        return false;
+    }
+    if response.header("x-ratelimit-remaining") == Some("0") {
+        return true;
+    }
+    let text = response.text().to_lowercase();
+    text.contains("rate limit") || text.contains("abuse detection mechanism")
+}
+
+/// A REST request (`GitHubRest.rest`): the T3 headers, a bearer token, 30 s, 8 MiB.
+#[derive(Clone, Debug)]
+pub struct RestRequest<'a> {
+    pub host: &'a str,
+    pub method: Method,
+    /// Relative to the API root, query included.
+    pub path: &'a str,
+    pub body: Option<serde_json::Value>,
+}
+
+pub async fn rest(
+    request: RestRequest<'_>,
+    token: Secret,
+    root_override: Option<&str>,
+) -> Result<HttpResponse, ApiError> {
+    let root = root_override.map_or_else(|| rest_root(request.host), str::to_owned);
+    let url = format!("{root}/{}", request.path.trim_start_matches('/'));
+    let mut http_request = HttpRequest::new(request.method, url)
+        .header("accept", "application/vnd.github+json")
+        .header("x-github-api-version", API_VERSION)
+        .header("user-agent", USER_AGENT)
+        .secret_header("authorization", "Bearer ", token);
+    if let Some(body) = &request.body {
+        http_request = http_request
+            .header("content-type", "application/json")
+            .body(serde_json::to_vec(body).unwrap_or_default());
+    }
+    let response = http::send(http_request)
+        .await
+        .map_err(|_| ApiError::Request {
+            host: request.host.to_owned(),
+        })?;
+    if is_rate_limited(&response) {
+        return Err(ApiError::RateLimit);
+    }
+    match response.status {
+        401 => Err(ApiError::Authentication {
+            host: request.host.to_owned(),
+        }),
+        404 => Err(ApiError::NotFound {
+            messages: rest_error_messages(&response.text()),
+        }),
+        200..=299 => Ok(response),
+        status => Err(ApiError::Response {
+            status,
+            messages: rest_error_messages(&response.text()),
+        }),
+    }
+}
+
+/// `environmentTokenVariable`: the first of `GH_TOKEN`, `GITHUB_TOKEN` that is set.
+fn environment_token_variable(env: &Environment) -> Option<&'static str> {
+    ["GH_TOKEN", "GITHUB_TOKEN"]
+        .into_iter()
+        .find(|name| env.non_blank(name).is_some())
+}
+
+/// `makeDiscovery(...).probe`.
+pub async fn discover(ctx: DiscoveryContext<'_>) -> SourceControlProviderDiscoveryItem {
+    use ServerProviderAuthStatus::{Authenticated, Unauthenticated, Unknown};
+    let settings = ctx.settings.host(KIND);
+    let env = ctx.probe_env(&[]);
+    let probe = ProbeContext {
+        cwd: ctx.cwd,
+        env: &env,
+    };
+    let cli = probe_cli(probe, &spec(), |output| parse_auth(output, &settings)).await;
+    let enabled = settings.host_enabled("github.com");
+    let saved = settings.keyed_secret("tokens", "github.com").require();
+    let saved = match saved {
+        Err(message) if enabled => {
+            return SourceControlProviderDiscoveryItem {
+                status: SourceControlDiscoveryStatus::Available,
+                auth: provider_auth(Unauthenticated, None, Some("github.com"), Some(&message)),
+                ..cli
+            };
+        }
+        Err(_) => None,
+        Ok(saved) => saved,
+    };
+    let variable = environment_token_variable(ctx.env);
+    let token = match (&saved, variable) {
+        (Some(token), _) => token.clone(),
+        (None, Some(name)) => match ctx.env.non_blank(name).and_then(Secret::non_empty) {
+            Some(token) => token,
+            None => return cli,
+        },
+        (None, None) => return cli,
+    };
+    if !enabled {
+        return cli;
+    }
+    let token_source = if saved.is_some() {
+        "the token saved in Settings".to_owned()
+    } else {
+        variable.unwrap_or_default().to_owned()
+    };
+    let viewer = rest(
+        RestRequest {
+            host: "github.com",
+            method: Method::Get,
+            path: "user",
+            body: None,
+        },
+        token,
+        ctx.endpoints.github_rest.as_deref(),
+    )
+    .await;
+    #[derive(Deserialize)]
+    struct Viewer {
+        login: String,
+    }
+    let login = viewer
+        .as_ref()
+        .ok()
+        .and_then(|r| serde_json::from_slice::<Viewer>(&r.body).ok())
+        .map(|v| v.login);
+    let accounts = cli.auth.accounts.clone();
+    let mut auth = match (&login, &viewer) {
+        (Some(login), _) => provider_auth(
+            Authenticated,
+            Some(login),
+            Some("github.com"),
+            Some(&if saved.is_some() {
+                "Using the token saved in Settings; it overrides GH_TOKEN and the gh login."
+                    .to_owned()
+            } else {
+                format!(
+                    "Using {token_source} from the server environment; it overrides the account chosen in Settings."
+                )
+            }),
+        ),
+        (None, Err(failure)) if !matches!(failure, ApiError::Authentication { .. }) => {
+            let what = if saved.is_some() {
+                token_source.clone()
+            } else {
+                format!("the token in {token_source}")
+            };
+            provider_auth(
+                Unknown,
+                None,
+                Some("github.com"),
+                Some(&format!("Could not check {what}: {}", failure.message())),
+            )
+        }
+        _ => provider_auth(
+            Unauthenticated,
+            None,
+            Some("github.com"),
+            Some(&if saved.is_some() {
+                "GitHub refused the token saved in Settings. Replace or remove it in Settings → Source Control.".to_owned()
+            } else {
+                format!(
+                    "GitHub refused the token in {token_source}. Replace it, or unset it to use `gh auth login`."
+                )
+            }),
+        ),
+    };
+    auth.accounts = accounts;
+    SourceControlProviderDiscoveryItem {
+        status: SourceControlDiscoveryStatus::Available,
+        auth,
+        ..cli
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        discovery::{none, some, stub::StubDir},
+        hosts::Endpoints,
+        http::fake,
+        settings::Settings,
+    };
+
+    fn output(stdout: &str, stderr: &str, exit_code: i32) -> ProbeOutput {
+        ProbeOutput {
+            stdout: stdout.into(),
+            stderr: stderr.into(),
+            exit_code,
+        }
+    }
+
+    fn settings(json: &str) -> Settings {
+        Settings::new(serde_json::from_str(json).expect("json"))
+    }
+
+    fn defaults() -> Settings {
+        Settings::default()
+    }
+
+    const ACTIVE_AND_STALE: &str = r#"{"hosts":{"github.com":[
+        {"state":"success","active":true,"host":"github.com","login":"active-user","tokenSource":"keyring","gitProtocol":"ssh"},
+        {"state":"error","active":false,"host":"github.com","login":"stale-user","tokenSource":"keyring","gitProtocol":"ssh","error":"The token in keyring is invalid."}]}}"#;
+
+    // GitHubSourceControlProvider.test.ts: "accepts active authenticated GitHub accounts when
+    // another account fails" and "parses GitHub auth JSON from stdout when stderr has warnings".
+    #[test]
+    fn accepts_the_active_account() {
+        let s = defaults();
+        for stderr in ["", "warning: ignored diagnostic from gh\n"] {
+            let auth = parse_auth(&output(ACTIVE_AND_STALE, stderr, 0), &s.host(KIND));
+            assert_eq!(
+                auth.status,
+                ServerProviderAuthStatus::Authenticated,
+                "{stderr}"
+            );
+            assert_eq!(auth.account, some("active-user"), "account");
+            assert_eq!(auth.host, some("github.com"), "host");
+        }
+    }
+
+    // "parses GitHub auth status accounts by host and active state"
+    #[test]
+    fn parses_accounts_by_host() {
+        let json = r#"{"hosts":{"github.com":[
+            {"state":"success","active":true,"host":"github.com","login":"active-user","tokenSource":"keyring","gitProtocol":"ssh"},
+            {"state":"error","active":false,"host":"github.com","login":"stale-user","tokenSource":"keyring","gitProtocol":"ssh"}],
+          "github.example.test":[{"state":"success","active":false,"host":"github.example.test","login":"enterprise-user","tokenSource":"keyring","gitProtocol":"ssh"}]}}"#;
+        let accounts = parse_auth_status(json).expect("parses");
+        let row = |host: &str, account: &str, authenticated, active| AuthAccount {
+            host: host.into(),
+            account: account.into(),
+            authenticated,
+            active,
+            error: None,
+            environment_variable: None,
+        };
+        assert_eq!(
+            accounts,
+            vec![
+                row("github.com", "active-user", true, true),
+                row("github.com", "stale-user", false, false),
+                row("github.example.test", "enterprise-user", true, false),
+            ],
+            "in JSON order"
+        );
+    }
+
+    // "reports unauthenticated when GitHub JSON has accounts but none are valid"
+    #[test]
+    fn none_valid_is_unauthenticated() {
+        let json = r#"{"hosts":{"github.com":[{"state":"error","active":true,"host":"github.com","login":"stale-user","tokenSource":"keyring","gitProtocol":"ssh","error":"The token in keyring is invalid."}]}}"#;
+        let auth = parse_auth(&output(json, "", 0), &defaults().host(KIND));
+        assert_eq!(
+            auth.status,
+            ServerProviderAuthStatus::Unauthenticated,
+            "status"
+        );
+        assert_eq!(auth.host, some("github.com"), "host");
+        assert_eq!(
+            auth.detail,
+            some("The token in keyring is invalid."),
+            "detail"
+        );
+    }
+
+    // "reports an update hint instead of unauthenticated when gh predates --json"
+    #[test]
+    fn old_gh_gets_an_update_hint() {
+        let auth = parse_auth(
+            &output(
+                "",
+                "unknown flag: --json\n\nUsage:  gh auth status [flags]\n",
+                1,
+            ),
+            &defaults().host(KIND),
+        );
+        assert_eq!(auth.status, ServerProviderAuthStatus::Unknown, "status");
+        let VcsDetail(detail) = VcsDetail::of(&auth.detail);
+        assert!(detail.contains("2.81.0"), "{detail}");
+    }
+
+    struct VcsDetail(String);
+    impl VcsDetail {
+        fn of(detail: &conn_contract::VcsDiscoveryItemDetail) -> Self {
+            match detail {
+                conn_contract::VcsDiscoveryItemDetail::Some(s) => Self(s.value.clone()),
+                conn_contract::VcsDiscoveryItemDetail::None(_) => Self(String::new()),
+            }
+        }
+    }
+
+    fn multi_account(extra: &str) -> String {
+        format!(
+            r#"{{"hosts":{{"github.com":[
+                {{"state":"success","active":true,"host":"github.com","login":"personal"}},
+                {{"state":"success","active":false,"host":"github.com","login":"work"}}{extra}],
+              "ghe.acme.test":[{{"state":"error","active":true,"host":"ghe.acme.test","login":"jm","error":"expired"}}]}}}}"#
+        )
+    }
+
+    // "reports every gh login and leads with the account Settings pin"
+    #[test]
+    fn settings_pin_leads() {
+        let s = settings(
+            r#"{"sourceControlHosts":{"github":{"hosts":{"github.com":{"account":"work","enabled":true}}}}}"#,
+        );
+        let auth = parse_auth(&output(&multi_account(""), "", 0), &s.host(KIND));
+        assert_eq!(auth.account, some("work"), "pinned account");
+        let rows = auth.accounts.expect("rows");
+        assert_eq!(rows.len(), 3, "every login");
+        assert_eq!(
+            rows.get(2).and_then(|r| r.error.as_deref()),
+            Some("expired"),
+            "error kept"
+        );
+    }
+
+    // "reports unauthenticated when Settings turn off every signed-in host"
+    #[test]
+    fn every_host_turned_off() {
+        let s = settings(
+            r#"{"sourceControlHosts":{"github":{"hosts":{"github.com":{"enabled":false}}}}}"#,
+        );
+        let auth = parse_auth(&output(&multi_account(""), "", 0), &s.host(KIND));
+        assert_eq!(
+            auth.status,
+            ServerProviderAuthStatus::Unauthenticated,
+            "status"
+        );
+        assert_eq!(
+            auth.detail,
+            some(
+                "Every GitHub host gh is signed in to is turned off in Settings → Source Control."
+            ),
+            "detail"
+        );
+    }
+
+    // "names the environment token that overrides the Settings choice"
+    #[test]
+    fn environment_token_overrides() {
+        let s = settings(
+            r#"{"sourceControlHosts":{"github":{"hosts":{"github.com":{"account":"work","enabled":true}}}}}"#,
+        );
+        let extra = r#",{"state":"success","active":false,"host":"github.com","login":"bot","tokenSource":"GH_TOKEN"}"#;
+        let auth = parse_auth(&output(&multi_account(extra), "", 0), &s.host(KIND));
+        assert_eq!(auth.account, some("bot"), "env account");
+        assert_eq!(
+            auth.detail,
+            some(
+                "Using GH_TOKEN from the server environment; it overrides the account chosen in Settings."
+            ),
+            "detail"
+        );
+        assert_eq!(
+            auth.accounts
+                .as_ref()
+                .and_then(|r| r.get(2))
+                .and_then(|r| r.environment_variable.as_deref()),
+            Some("GH_TOKEN"),
+            "row names the variable"
+        );
+    }
+
+    /// A `gh` that is installed and signed out, so only the token decides.
+    fn signed_out_gh(stubs: &StubDir) -> String {
+        stubs.executable(
+            "gh",
+            &["GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"],
+            "if [ \"$1\" = --version ]; then echo 'gh version 2.81.0 (2025-10-01)'; exit 0; fi; exit 1",
+        )
+    }
+
+    // gitHubDiscovery.test.ts: "reports $name saved GitHub token instead of another
+    // credential", with the request on a local fake server and `gh` on PATH as a stub.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_saved_token_wins_over_the_environment() {
+        let stubs = StubDir::new("gh-discovery");
+        let _gh = signed_out_gh(&stubs);
+        let server = fake::serve(|_| (200, r#"{"login":"octocat"}"#.into())).await;
+        let cases = [
+            (
+                "a readable",
+                r#""resolved-token""#,
+                "authenticated",
+                "the token saved in Settings",
+                Some("Bearer resolved-token"),
+            ),
+            (
+                "no",
+                r#""""#,
+                "authenticated",
+                "GH_TOKEN from the server environment",
+                Some("Bearer environment-token"),
+            ),
+            (
+                "an unreadable",
+                r#"{"provider":"vault","reference":"op://v/gh"}"#,
+                "unauthenticated",
+                "secret provider \"vault\"",
+                None,
+            ),
+        ];
+        for (name, token, status, detail, authorization) in cases {
+            let before = server.requests.lock().expect("lock").len();
+            let s = settings(&format!(
+                r#"{{"sourceControlHosts":{{"github":{{"tokens":{{"github.com":{token}}}}}}}}}"#
+            ));
+            let env = Environment::fixed([("GH_TOKEN", "environment-token")]);
+            let endpoints = Endpoints {
+                github_rest: Some(server.base.clone()),
+                ..Endpoints::default()
+            };
+            let child_env = stubs.path_env();
+            let item = discover(DiscoveryContext {
+                cwd: &stubs.dir,
+                home: None,
+                settings: &s,
+                env: &env,
+                endpoints: &endpoints,
+                child_env: &child_env,
+            })
+            .await;
+            let VcsDetail(text) = VcsDetail::of(&item.auth.detail);
+            assert!(text.contains(detail), "{name}: {text}");
+            let expected_status = if status == "authenticated" {
+                ServerProviderAuthStatus::Authenticated
+            } else {
+                ServerProviderAuthStatus::Unauthenticated
+            };
+            assert_eq!(item.auth.status, expected_status, "{name}");
+            let requests = server.requests.lock().expect("lock").clone();
+            let new = requests.get(before..).unwrap_or_default();
+            match authorization {
+                Some(authorization) => {
+                    assert_eq!(item.auth.account, some("octocat"), "{name}");
+                    let request = new.first().expect("one request");
+                    assert_eq!(
+                        (request.method.as_str(), request.path.as_str()),
+                        ("GET", "/user"),
+                        "{name}"
+                    );
+                    let header = |n: &str| {
+                        request
+                            .headers
+                            .iter()
+                            .find(|(k, _)| k == n)
+                            .map(|(_, v)| v.as_str())
+                    };
+                    assert_eq!(
+                        header("accept"),
+                        Some("application/vnd.github+json"),
+                        "{name}"
+                    );
+                    assert_eq!(header("x-github-api-version"), Some("2022-11-28"), "{name}");
+                    assert_eq!(header("user-agent"), Some("t3code"), "{name}");
+                    assert_eq!(header("authorization"), Some(authorization), "{name}");
+                }
+                None => {
+                    assert!(new.is_empty(), "{name}: no request");
+                    assert_eq!(item.auth.account, none(), "{name}");
+                }
+            }
+        }
+        let log = stubs.log("gh");
+        assert!(log.contains("argv --version\n"), "{log}");
+        assert!(log.contains("argv auth status --json hosts\n"), "{log}");
+        assert!(
+            log.contains("env GIT_CONFIG_KEY_0=safe.bareRepository"),
+            "{log}"
+        );
+    }
+}
