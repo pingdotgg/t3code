@@ -18,6 +18,7 @@ const CHECKS_VALUES: Record<string, PullRequestListFilters["checks"]> = {
 const QUERY_TOKEN = /(?:[^\s"]|"[^"]*")+/g;
 const MAX_QUALIFIER_VALUES = 10;
 const MAX_QUALIFIER_LENGTH = 200;
+const MAX_TEXT_LENGTH = 200;
 
 function qualifierValue(raw: string): string {
   return raw.replaceAll('"', "").trim();
@@ -77,14 +78,18 @@ export function parsePullRequestQuery(raw: string): {
         draft = (value.toLowerCase() === "true") !== negated ? "only" : "hide";
         continue;
       case "review": {
-        const decision = negated ? undefined : REVIEW_VALUES[value.toLowerCase()];
+        const key = value.toLowerCase();
+        const decision =
+          !negated && Object.hasOwn(REVIEW_VALUES, key) ? REVIEW_VALUES[key] : undefined;
         if (decision === undefined) break;
         review = decision;
         continue;
       }
       case "status":
       case "checks": {
-        const state = negated ? undefined : CHECKS_VALUES[value.toLowerCase()];
+        const key = value.toLowerCase();
+        const state =
+          !negated && Object.hasOwn(CHECKS_VALUES, key) ? CHECKS_VALUES[key] : undefined;
         if (state === undefined) break;
         checks = state;
         continue;
@@ -116,7 +121,7 @@ export function parsePullRequestQuery(raw: string): {
     text.push(token);
   }
   return {
-    text: text.join(" "),
+    text: text.join(" ").slice(0, MAX_TEXT_LENGTH).trim(),
     filters: {
       ...(labels.length === 0 ? {} : { labels: labels.slice(0, MAX_QUALIFIER_VALUES) }),
       ...(excludedLabels.length === 0
