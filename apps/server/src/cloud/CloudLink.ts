@@ -1,5 +1,4 @@
 import {
-  AuthStandardClientScopes,
   EnvironmentAuthenticatedPrincipal,
   type EnvironmentCloudLinkStateResult,
   type EnvironmentCloudPreferencesRequest,
@@ -100,6 +99,7 @@ import * as ConnectReachability from "./ConnectReachability.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import * as ManagedLimits from "../policy/managedLimits.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { relayUrlConfig } from "./publicConfig.ts";
 import {
   filterRelayResponse,
@@ -519,6 +519,7 @@ const make = Effect.gen(function* () {
   const endpointRuntime = yield* ManagedEndpointRuntime.CloudManagedEndpointRuntime;
   const reachability = yield* ConnectReachability.ConnectReachability;
   const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
   const cliTokenManager = yield* CliTokenManager.CloudCliTokenManager;
   const httpClient = yield* HttpClient.HttpClient;
   const httpServer = yield* HttpServer.HttpServer;
@@ -1590,12 +1591,12 @@ const make = Effect.gen(function* () {
         return yield* new CloudLinkProofReplayedError({ request: "mint" });
       }
 
-      const issued = yield* environmentAuth.createPairingLink({
-        scopes: AuthStandardClientScopes,
-        subject: "cloud-connect",
-        ttl: Duration.minutes(2),
-        label: "T3 Connect",
+      const settings = yield* serverSettings.getSettings.pipe(
+        Effect.catch(internalError("issue-credential")),
+      );
+      const issued = yield* environmentAuth.issueConnectCredential({
         proofKeyThumbprint: proof.clientProofKeyThumbprint,
+        requireApproval: settings.requireConnectDeviceApproval,
       });
       const responsePayload = {
         iss: `t3-env:${environmentId}`,

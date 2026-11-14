@@ -105,7 +105,10 @@ it.effect(
       );
     }).pipe(
       Effect.provide(
-        Layer.merge(Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({}), TestSourceControlHost.layer()),
+        Layer.mergeAll(
+          Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({}),
+          TestSourceControlHost.layer(),
+        ),
       ),
     ),
 );
