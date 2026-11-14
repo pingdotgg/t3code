@@ -958,7 +958,10 @@ export function useThreadActions() {
           case "settle":
             return settleThreadMutation({
               environmentId: target.environmentId,
-              input: { threadId: target.threadId },
+              input: {
+                threadId: target.threadId,
+                ...(step.settledAt === undefined ? {} : { settledAt: step.settledAt }),
+              },
             });
           case "unsettle":
             return unsettleThread(target);

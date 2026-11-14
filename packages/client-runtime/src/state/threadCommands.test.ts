@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import {
   CommandId,
   RuntimeRequestId,
@@ -373,12 +374,17 @@ describe("title regeneration", () => {
 
 describe("remote thread lifecycle commands", () => {
   const actions = [
+    [
+      "settle",
+      { settledAt: "2026-09-12T10:00:00.000Z" },
+      { settledOverride: "settled", settledAt: NOW, pinnedAt: null, snoozedUntil: null },
+    ],
     ["settle", {}, { settledOverride: "settled", pinnedAt: null, snoozedUntil: null }],
     ["unsettle", { reason: "user" }, { settledOverride: "active", settledAt: null }],
     [
       "snooze",
       { snoozedUntil: "2099-01-01T00:00:00.000Z" },
-      { snoozedUntil: FUTURE, settledOverride: "active", settledAt: null },
+      { snoozedUntil: FUTURE, settledOverride: "active", settledAt: null, unsettledAt: NOW },
     ],
     ["unsnooze", { reason: "user" }, { snoozedUntil: null, snoozedAt: null }],
     ["pin", { orderKey: "a" }, { pinnedAt: expect.any(Object), pinOrderKey: "a" }],
@@ -392,6 +398,7 @@ describe("remote thread lifecycle commands", () => {
     "shows %s before a delayed remote reply and rolls back a rejection",
     ([action, input, expected]) =>
       Effect.gen(function* () {
+        using _now = vi.spyOn(Date, "now").mockReturnValue(DateTime.toEpochMillis(NOW));
         const h = yield* makeHarness();
         const source = h.snapshotAtom(ENVIRONMENT_ID);
         const initial = {
@@ -426,6 +433,9 @@ describe("remote thread lifecycle commands", () => {
         });
         expect(h.registry.get(h.visibleAtom)?.threads[0]).toMatchObject(expected);
         const request = yield* Queue.take(h.requests);
+        if (action === "settle" && "settledAt" in input) {
+          expect(request.command).toMatchObject({ settledAt: NOW });
+        }
         expect(h.registry.get(source)).toBe(initial);
         yield* Deferred.fail(request.reply, new Error("Remote rejected the action"));
         expect((yield* Effect.promise(() => result))._tag).toBe("Failure");

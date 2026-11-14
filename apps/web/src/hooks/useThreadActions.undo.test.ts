@@ -63,6 +63,7 @@ const threadShell = vi.hoisted(() => ({
   pinnedAt: null as string | null,
   snoozedUntil: null as string | null,
   settledOverride: null as "settled" | "active" | null,
+  settledAt: null as string | null,
   projectId: "project",
   environmentId: "undo-env",
   session: null,
@@ -122,6 +123,7 @@ beforeEach(() => {
   threadShell.pinnedAt = null;
   threadShell.snoozedUntil = null;
   threadShell.settledOverride = null;
+  threadShell.settledAt = null;
   shellLoaded.current = true;
 });
 afterEach(() => {
@@ -313,13 +315,14 @@ describe("settle and snooze Undo", () => {
     });
   });
 
-  it("returns work snoozed from Settled to Settled instead of waking it", async () => {
+  it("returns work snoozed from Settled to its original Settled position", async () => {
     threadShell.settledOverride = "settled";
+    threadShell.settledAt = "2026-01-01T00:00:00.000Z";
     await useThreadActions().snoozeThread(target, "2099-01-01T09:00:00.000Z");
     await currentUndo()();
     expect(commands.settle).toHaveBeenCalledExactlyOnceWith({
       environmentId: target.environmentId,
-      input: { threadId: target.threadId },
+      input: { threadId: target.threadId, settledAt: "2026-01-01T00:00:00.000Z" },
     });
     expect(commands.unsnooze).not.toHaveBeenCalled();
   });

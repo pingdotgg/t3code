@@ -521,6 +521,15 @@ it.effect("a settled thread snoozed for later wakes into the active list", () =>
         threadId,
         snoozedUntil: DateTime.formatIso(snoozedUntil),
       });
+      assert.deepInclude(yield* projections.getThread(threadId), {
+        settledOverride: "active",
+        settledAt: null,
+        unsettledAt: remindedAt,
+        snoozedAt: remindedAt,
+        snoozedUntil,
+      });
+      yield* TestClock.adjust("1 second");
+      const manuallyWokenAt = yield* DateTime.now;
       if (wake === "expiry") {
         yield* TestClock.adjust("61 minutes");
       } else {
@@ -531,11 +540,12 @@ it.effect("a settled thread snoozed for later wakes into the active list", () =>
           reason: "user",
         });
       }
-      assert.deepInclude(yield* projections.getThreadShell(threadId), {
+      assert.deepInclude(yield* projections.getThread(threadId), {
         settledOverride: "active",
         settledAt: null,
         unsettledAt: remindedAt,
         snoozedUntil: wake === "expiry" ? snoozedUntil : null,
+        ...(wake === "manual" ? { lastSnoozeWakeAt: manuallyWokenAt } : {}),
       });
     }
   }).pipe(Effect.provide(layerTest)),
