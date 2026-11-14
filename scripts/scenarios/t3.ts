@@ -26,6 +26,12 @@ export interface T3State {
     readonly messages: ReadonlyArray<string>;
     readonly model?: string;
   }) => Promise<T3Thread>;
+  /** Starts a thread whose turn never ends, so it stays working for the rest of the test. */
+  readonly workingThread: (input: {
+    readonly project: string;
+    readonly title: string;
+    readonly message: string;
+  }) => Promise<void>;
 }
 
 export interface T3Thread {
@@ -111,11 +117,21 @@ export function makeState(home: string, env: NodeJS.ProcessEnv = {}) {
     return { threadId } satisfies T3Thread;
   });
 
+  const workingThread = Effect.fn("scenario.workingThread")(function* (input: {
+    readonly project: string;
+    readonly title: string;
+    readonly message: string;
+  }) {
+    const hang = ["--provider", "devHang", "--model", "default"];
+    yield* cli(["thread", "start", input.project, input.message, "--title", input.title, ...hang]);
+  });
+
   return {
     cli,
     state: {
       project: (title, files = {}) => runPromise(project(title, files)),
       thread: (input) => runPromise(thread(input)),
+      workingThread: (input) => runPromise(workingThread(input)),
     } satisfies T3State,
     // The server outlives the test, so the next one must not see this one's projects.
     cleanup: Effect.forEach(
