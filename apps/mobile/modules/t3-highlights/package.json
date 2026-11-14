@@ -2,16 +2,8 @@
   "name": "@t3tools/mobile-highlights-native",
   "version": "0.0.0",
   "private": true,
-  "expo-module": {
-    "ios": {
-      "modules": [
-        "T3HighlightsModule"
-      ]
-    },
-    "android": {
-      "modules": [
-        "expo.modules.t3highlights.T3HighlightsModule"
-      ]
-    }
+  "types": "./src/T3Highlights.nitro.ts",
+  "peerDependencies": {
+    "react-native-nitro-modules": "*"
   }
 }
