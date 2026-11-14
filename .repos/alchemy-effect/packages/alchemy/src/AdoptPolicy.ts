@@ -30,9 +30,7 @@ import * as Effect from "effect/Effect";
  * The policy can be overridden per-effect via {@link adopt} — most commonly
  * applied at the resource or stack scope.
  */
-export class AdoptPolicy extends Context.Service<AdoptPolicy, boolean>()(
-  "AdoptPolicy",
-) {}
+export class AdoptPolicy extends Context.Service<AdoptPolicy, boolean>()("AdoptPolicy") {}
 
 /**
  * Engine-raised failure produced when `read` reports an existing resource
@@ -50,6 +48,24 @@ export class OwnedBySomeoneElse extends Data.TaggedError("OwnedBySomeoneElse")<{
   logicalId?: string;
   /** The physical name/identifier of the conflicting resource. */
   physicalName?: string;
+}> {}
+
+/**
+ * Engine-raised failure produced when a delete-first replacement in a
+ * dependency cycle must delete its previous generation before its new
+ * identity is known: precreate runs on unresolved props, and a provider
+ * without `observe`, or whose `observe` reports {@link Unresolved}, cannot
+ * check ownership first. Refusing before the delete keeps the
+ * previous generation; re-run with `--adopt` (or `adopt(true)`) to accept
+ * whatever the identity resolves to.
+ */
+export class UnverifiableReplacement extends Data.TaggedError("UnverifiableReplacement")<{
+  /** A human-readable description of why the replacement was refused. */
+  message: string;
+  /** The Resource Type (e.g. `AWS.Lambda.Function`). */
+  resourceType?: string;
+  /** The logical ID of the refused resource. */
+  logicalId?: string;
 }> {}
 
 /**
@@ -107,11 +123,67 @@ export const Unowned: {
   },
   {
     is: (value: unknown): boolean =>
-      typeof value === "object" &&
-      value !== null &&
-      (value as any)[UnownedTag] === true,
+      typeof value === "object" && value !== null && (value as any)[UnownedTag] === true,
   },
 );
+
+/**
+ * {@link Unowned} unless `attrs` is the generation a replacement is replacing:
+ * during a replacement `read` and `observe` receive that generation's
+ * attributes as `previous`, and a delete-first replacement that reuses its
+ * identity finds it under that same identity. `key` must identify the
+ * resource uniquely (a full resource name or an API id, not a display name).
+ *
+ * ```ts
+ * read: Effect.fn(function* ({ output, olds, previous }) {
+ *   // ...
+ *   return output ? attrs : unownedUnlessPrevious(attrs, previous, "name");
+ * }),
+ * ```
+ */
+export const unownedUnlessPrevious = <T extends object, K extends keyof T>(
+  attrs: T,
+  previous: Partial<Record<K, unknown>> | undefined,
+  key: K,
+): T =>
+  previous !== undefined && previous[key] !== undefined && previous[key] === attrs[key]
+    ? attrs
+    : Unowned(attrs);
+
+/**
+ * A provider's `observe` answer when the identity `precreate` would claim
+ * depends on props that have not resolved yet, so nothing can be checked.
+ * Unlike `undefined`, it does not report the identity as absent: the engine
+ * checks the resolved identity before `reconcile` claims it, and refuses a
+ * delete-first replacement that would delete its previous generation first.
+ *
+ * ```ts
+ * observe: Effect.fn(function* ({ id, news }) {
+ *   if (!isResolved(news.namespace)) return Unresolved;
+ *   // ...
+ * }),
+ * ```
+ *
+ * `precreate` must not write to an identity it cannot resolve.
+ */
+export const Unresolved: unique symbol = Symbol("alchemy/Unresolved");
+export type Unresolved = typeof Unresolved;
+
+/**
+ * Raised by a provider's `precreate` when the identity it must claim is still
+ * {@link Unresolved}. The engine resolves every prop that comes from outside
+ * a dependency cycle before precreate, so the identity depends on a peer in
+ * the resource's own cycle. Name the resource with a literal, or a value from
+ * outside the cycle.
+ */
+export class UnresolvedIdentity extends Data.TaggedError("UnresolvedIdentity")<{
+  /** A human-readable description of the unresolved identity. */
+  message: string;
+  /** The Resource Type (e.g. `AWS.Lambda.Function`). */
+  resourceType?: string;
+  /** The logical ID of the resource. */
+  logicalId?: string;
+}> {}
 
 /**
  * Strip the {@link Unowned} brand from an attributes object before persisting
@@ -129,16 +201,10 @@ export const stripUnowned = <T extends object>(attrs: T): T => {
 };
 
 export const adopt: {
-  (
-    enabled?: boolean,
-  ): <A, E, R = never>(
-    effect: Effect.Effect<A, E, R>,
-  ) => Effect.Effect<A, E, R>;
+  (enabled?: boolean): <A, E, R = never>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
   <R1 = never>(
     enabled: Effect.Effect<boolean, never, R1>,
-  ): <A, E, R2 = never>(
-    effect: Effect.Effect<A, E, R2>,
-  ) => Effect.Effect<A, E, R1 | R2>;
+  ): <A, E, R2 = never>(effect: Effect.Effect<A, E, R2>) => Effect.Effect<A, E, R1 | R2>;
 } = ((enabled: boolean | Effect.Effect<boolean, never, any> = true) =>
   (eff: Effect.Effect<any, any, any>) =>
     eff.pipe(

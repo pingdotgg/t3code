@@ -1,9 +1,9 @@
-import { Action } from "@/Action.ts";
-import type { Input } from "@/Input.ts";
-import type * as Output from "@/Output.ts";
 import type * as Brand from "effect/Brand";
 import * as Effect from "effect/Effect";
 import * as S from "effect/Schema";
+import { Action } from "@/Action.ts";
+import type { Input } from "@/Input.ts";
+import type * as Output from "@/Output.ts";
 
 // Branded primitives (effect/Brand or Schema.brand) must stay opaque
 // Outputs. Before the `[A] extends [Primitive]` short-circuit in
@@ -19,11 +19,7 @@ type OrderId = typeof OrderId.Type;
 type PortNum = number & Brand.Brand<"PortNum">;
 
 // --- ToOutput keeps branded primitives as plain Output ---
-type NotExploded<T> = "charAt" extends keyof T
-  ? false
-  : "toFixed" extends keyof T
-    ? false
-    : true;
+type NotExploded<T> = "charAt" extends keyof T ? false : "toFixed" extends keyof T ? false : true;
 
 declare const t1: NotExploded<Output.ToOutput<UserId, never>>;
 declare const t2: NotExploded<Output.ToOutput<OrderId, never>>;
