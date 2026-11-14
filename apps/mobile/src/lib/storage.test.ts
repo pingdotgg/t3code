@@ -134,6 +134,14 @@ describe("mobile connection storage", () => {
     });
   });
 
+  it("persists the transcription language and ignores invalid stored values", async () => {
+    await savePreferencesPatch({ speechLanguage: "de" });
+    await savePreferencesPatch({ baseFontSize: 18 });
+    await expect(loadPreferences()).resolves.toEqual({ speechLanguage: "de", baseFontSize: 18 });
+    mocks.setPreferencesJson(JSON.stringify({ speechLanguage: "x", baseFontSize: 18 }), 100);
+    await expect(loadPreferences()).resolves.toEqual({ baseFontSize: 18 });
+  });
+
   it("loads legacy preferences when SQLite is unavailable", async () => {
     mocks.setDatabaseFailures(true, true);
     await mocks.setItemAsync("t3code.preferences", JSON.stringify({ baseFontSize: 17 }));

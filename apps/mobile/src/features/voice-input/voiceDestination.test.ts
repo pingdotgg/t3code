@@ -1,5 +1,6 @@
 import { EnvironmentId } from "@t3tools/contracts";
-import { Atom } from "effect/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
+import { decodeSpeechPcmRequest } from "@t3tools/shared/speech";
 import { expect, it, vi } from "vite-plus/test";
 import { appAtomRegistry } from "../../state/atom-registry";
 import {
@@ -17,11 +18,26 @@ const mocks = vi.hoisted(() => ({
   markerWrite: vi.fn<(id: string) => void>(),
   probe: vi.fn(),
   fetch: vi.fn<typeof fetch>(),
+  preferencesChanged:
+    vi.fn<(preferences: { speechLanguage?: string; language?: string } | null) => void>(),
 }));
 vi.mock("expo", () => ({
   requireOptionalNativeModule: () => ({ decodeRecording: async () => new Uint8Array([0, 0]) }),
 }));
 vi.mock("expo/fetch", () => ({ fetch: mocks.fetch }));
+vi.mock("../../state/preferences", () => {
+  const mobilePreferencesAtom = Atom.make<
+    AsyncResult.AsyncResult<{ speechLanguage?: string; language?: string }>
+  >(AsyncResult.success({ speechLanguage: "de" }));
+  mocks.preferencesChanged.mockImplementation((preferences) =>
+    appAtomRegistry.set(
+      mobilePreferencesAtom,
+      preferences === null ? AsyncResult.initial() : AsyncResult.success(preferences),
+    ),
+  );
+  return { mobilePreferencesAtom };
+});
+
 vi.mock("expo-file-system", () => ({
   Paths: { document: "file:///app/" },
   File: class {
@@ -165,6 +181,10 @@ it("keeps local as the default and never reuses consent for an offline or resele
     const options = { signal: new AbortController().signal };
     const recording = await current!.prepare(options);
     await expect(recording.transcribe("file:///voice.m4a", options)).resolves.toBe("hello");
+    expect(
+      decodeSpeechPcmRequest(new Uint8Array(mocks.fetch.mock.calls[1]![1]!.body as ArrayBuffer))
+        .options.speechLanguage,
+    ).toBe("de");
     expect(mocks.fetch.mock.calls.map(([url, init]) => [String(url), init?.redirect])).toEqual([
       ["https://my-server.test/api/voice/status", "error"],
       ["https://my-server.test/api/voice/transcribe", "error"],
@@ -187,6 +207,10 @@ it("keeps local as the default and never reuses consent for an offline or resele
       .mockResolvedValueOnce(Response.json({ text: "cloud" }));
     const next = await appAtomRegistry.get(voiceRouteAtom)!.transcriber!.prepare(options);
     await expect(next.transcribe("file:///voice.m4a", options)).resolves.toBe("cloud");
+    expect(
+      decodeSpeechPcmRequest(new Uint8Array(mocks.fetch.mock.lastCall![1]!.body as ArrayBuffer))
+        .options.speechLanguage,
+    ).toBe("de");
     mocks.fetch.mockResolvedValueOnce(
       Response.json(
         {
@@ -255,6 +279,23 @@ it("a late cloud key save cannot override a newer destination choice", () => {
     expect(appAtomRegistry.get(voiceGrantAtom)).toBe(grant);
     expect(grant?.destination).toEqual({ kind: "cloud", environmentId: host, provider: "xai" });
   } finally {
+    appAtomRegistry.reset();
+  }
+});
+
+it("keeps the recording route stable across unrelated preference updates and auto hydration", () => {
+  const unmount = appAtomRegistry.mount(voiceRouteAtom);
+  try {
+    chooseVoiceDestination(EnvironmentId.make("my-server"));
+    const germanRoute = appAtomRegistry.get(voiceRouteAtom);
+    mocks.preferencesChanged({ speechLanguage: "de", language: "fr" });
+    expect(appAtomRegistry.get(voiceRouteAtom)).toBe(germanRoute);
+    mocks.preferencesChanged(null);
+    const autoRoute = appAtomRegistry.get(voiceRouteAtom);
+    mocks.preferencesChanged({});
+    expect(appAtomRegistry.get(voiceRouteAtom)).toBe(autoRoute);
+  } finally {
+    unmount();
     appAtomRegistry.reset();
   }
 });

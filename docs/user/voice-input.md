@@ -10,6 +10,9 @@ On iPhone and Android, voice input transcribes on the device by default. To opt 
 to a named environment on that phone, open **Settings → Voice → Transcribe on**. See
 [Voice input on mobile](./composer.md#voice-input-on-mobile).
 
+For environment or cloud transcription on mobile, choose **Transcription language**
+in Voice settings. The default is auto-detect. This choice does not affect on-device dictation.
+
 ## Choose where audio goes
 
 On web and desktop, you choose where transcription runs.
