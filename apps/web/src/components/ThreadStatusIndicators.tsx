@@ -65,10 +65,7 @@ import {
   type PullRequestGlyphIcon,
 } from "./pullRequest/pullRequestIcons";
 import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
-import {
-  COMPOSER_PULL_REQUEST_DRAG_TYPE,
-  encodePullRequestDragPayload,
-} from "./chat/composerMentionDrag";
+import { writePullRequestDragData } from "./chat/composerMentionDrag";
 
 export interface PrStatusIndicator {
   label: string;
@@ -370,23 +367,21 @@ function PullRequestBadge({
       onDragStart: (event: DragEvent<HTMLElement>) => {
         if (opensList || number === undefined || url === undefined) return;
         event.stopPropagation();
-        event.dataTransfer.clearData();
-        event.dataTransfer.setData("text/plain", `#${number}`);
-        event.dataTransfer.setData("text/uri-list", url);
-        if (pr) {
-          event.dataTransfer.setData(
-            COMPOSER_PULL_REQUEST_DRAG_TYPE,
-            encodePullRequestDragPayload({
-              number,
-              url,
-              title: pr.title,
-              headBranch: pr.headRef,
-              baseBranch: pr.baseRef,
-              state: pr.state,
-              isDraft: pr.isDraft === true,
-            }),
-          );
-        }
+        writePullRequestDragData(
+          event.dataTransfer,
+          { number, url },
+          pr
+            ? {
+                number,
+                url,
+                title: pr.title,
+                headBranch: pr.headRef,
+                baseBranch: pr.baseRef,
+                state: pr.state,
+                isDraft: pr.isDraft === true,
+              }
+            : null,
+        );
       },
       onClick,
     },
