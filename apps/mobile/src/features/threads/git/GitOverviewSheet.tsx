@@ -96,12 +96,20 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
       : null,
   );
 
-  const currentBranchLabel = gitStatus.data?.refName ?? selectedThread?.branch ?? "Detached HEAD";
-  const currentStatusSummary = statusSummary(gitStatus.data);
+  const isRepo = gitStatus.data?.isRepo ?? true;
+  // A plain folder that tracks repositories has no branch of its own; its turns still have diffs.
+  const trackedRepositoryCount = isRepo ? 0 : (selectedThreadProject?.trackedFolders?.length ?? 0);
+  const currentBranchLabel =
+    trackedRepositoryCount > 0
+      ? (selectedThreadProject?.title ?? "Repositories")
+      : (gitStatus.data?.refName ?? selectedThread?.branch ?? "Detached HEAD");
+  const currentStatusSummary =
+    trackedRepositoryCount > 0
+      ? `${trackedRepositoryCount} tracked ${trackedRepositoryCount === 1 ? "repository" : "repositories"}`
+      : statusSummary(gitStatus.data);
   const currentWorktreePath = selectedThreadWorktreePath;
   const gitOperationLabel = gitState.gitOperationLabel;
   const busy = gitOperationLabel !== null;
-  const isRepo = gitStatus.data?.isRepo ?? true;
   const hasPrimaryRemote = gitStatus.data?.hasPrimaryRemote ?? false;
   const isDefaultRef = gitStatus.data?.isDefaultRef ?? false;
 
@@ -268,8 +276,12 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
         <ListRow
           icon="text.bubble"
           label="Review changes"
-          description="Inspect changes, uncommitted edits, and turn diffs"
-          disabled={busy || !isRepo}
+          description={
+            trackedRepositoryCount > 0
+              ? "Inspect turn diffs"
+              : "Inspect changes, uncommitted edits, and turn diffs"
+          }
+          disabled={busy || !(isRepo || trackedRepositoryCount > 0)}
           onPress={() => {
             const params = { environmentId, threadId };
             if (presentation === "sheet") {

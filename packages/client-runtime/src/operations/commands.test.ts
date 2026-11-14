@@ -185,6 +185,7 @@ describe("V2 environment commands", () => {
   it.effect("resolves run ordinal zero to the persisted thread-start checkpoint", () =>
     Effect.gen(function* () {
       const scopeId = CheckpointScopeId.make("checkpoint-scope-root");
+      const repositoryScopeId = CheckpointScopeId.make("checkpoint-scope-repository");
       const checkpointId = CheckpointId.make("checkpoint-thread-start");
       const projection: OrchestrationV2ThreadProjection = {
         ...v2Projection,
@@ -202,6 +203,38 @@ describe("V2 environment commands", () => {
             status: "ready",
             files: [],
             capturedAt: v2Now,
+          },
+          // A tracked repository's first baseline, recorded after the thread's own.
+          {
+            id: CheckpointId.make("checkpoint-repository-start"),
+            threadId: v2ThreadId,
+            scopeId: repositoryScopeId,
+            runId: null,
+            nodeId: NodeId.make("node-run-1"),
+            parentCheckpointId: null,
+            ordinalWithinScope: 0,
+            appRunOrdinal: null,
+            ref: CheckpointRef.make("refs/t3/repository-start"),
+            status: "ready",
+            files: [],
+            capturedAt: v2Now,
+          },
+        ],
+        checkpointScopes: [
+          {
+            id: repositoryScopeId,
+            threadId: v2ThreadId,
+            runId: null,
+            nodeId: NodeId.make("node-run-1"),
+            parentScopeId: scopeId,
+            providerThreadId: null,
+            kind: "manual",
+            ordinalWithinParent: 1,
+            advancesAppRunCount: false,
+            cwd: "/workspace/api",
+            label: "api",
+            repositoryPath: "/workspace/api",
+            createdAt: v2Now,
           },
         ],
       };

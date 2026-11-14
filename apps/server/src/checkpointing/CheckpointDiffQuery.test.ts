@@ -64,7 +64,7 @@ function layerFor(input: {
         }),
       ),
     ),
-    Layer.provideMerge(NodeCrypto.layer),
+    Layer.provideMerge(Layer.merge(NodeCrypto.layer, NodeServices.layer)),
   );
 }
 
@@ -319,6 +319,8 @@ it.effect("truncates a storage-cut UTF-8 character without replacement text", ()
     const result = yield* query.getTurnDiff({ threadId, fromTurnCount: 0, toTurnCount: 2 });
     assert.isAtMost(Buffer.byteLength(result.diff), 10_000_000);
     assert.isTrue(result.diff === `${prefix}\n\n[truncated]`);
+    // A thread without tracked repositories keeps the payload it always had.
+    assert.notProperty(result, "repositories");
   }).pipe(Effect.provide(layer));
 });
 
@@ -341,5 +343,66 @@ it.effect("preserves an exact-fit filtered patch across batches without a marker
     const result = yield* query.getFullThreadDiff({ threadId, toTurnCount: 2 });
     assert.isTrue(result.diff === patches.join(""));
     assert.strictEqual(patchReads, 2);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("adds a patch for each tracked repository that changed in the range", () => {
+  const projection = makeProjection();
+  const repository = (name: string, cwd: string, ordinals: ReadonlyArray<number>) => {
+    const id = CheckpointScopeId.make(`scope:checkpoint-diff-v2:${name}`);
+    return {
+      scope: {
+        id,
+        runId: firstRunId,
+        kind: "manual" as const,
+        cwd,
+        label: name,
+        repositoryPath: cwd,
+      },
+      checkpoints: ordinals.map((ordinalWithinScope) => ({
+        scopeId: id,
+        runId: ordinalWithinScope === 2 ? secondRunId : null,
+        ordinalWithinScope,
+        appRunOrdinal: null,
+        status: "ready" as const,
+        ref: CheckpointRef.make(`refs/t3/test/${name}/${ordinalWithinScope}`),
+      })),
+    };
+  };
+  const sibling = repository("shared", "/work/shared", [1, 2]);
+  // Nothing before the range's end, so there is no patch to make.
+  const nested = repository("ui", "/work/app/packages/ui", [2]);
+  const diffCheckpoints = vi.fn((input: CheckpointStore.DiffCheckpointsInput) =>
+    Effect.succeed(input.format === "numstat" ? "1\t0\tfile.ts\0" : `patch of ${input.cwd}`),
+  );
+  const layer = layerFor({
+    projection: Effect.succeed({
+      ...projection,
+      checkpointScopes: [
+        ...projection.checkpointScopes.map((scope) => ({ ...scope, cwd: "/work/app" })),
+        sibling.scope,
+        nested.scope,
+      ],
+      checkpoints: [...projection.checkpoints, ...sibling.checkpoints, ...nested.checkpoints],
+    }),
+    diffCheckpoints,
+  });
+  return Effect.gen(function* () {
+    const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+    const result = yield* query.getTurnDiff({ threadId, fromTurnCount: 0, toTurnCount: 2 });
+    assert.deepEqual(result.repositories, [
+      {
+        name: "shared",
+        repositoryPath: "/work/shared",
+        relativePath: "../shared",
+        diff: "patch of /work/shared",
+      },
+    ]);
+    // The thread's own patch leaves the folder of the repository inside it alone.
+    assert.strictEqual(result.diff, "patch of /work/app");
+    assert.deepEqual(
+      diffCheckpoints.mock.calls.find(([input]) => input.cwd === "/work/app")?.[0].excludePaths,
+      ["packages/ui"],
+    );
   }).pipe(Effect.provide(layer));
 });

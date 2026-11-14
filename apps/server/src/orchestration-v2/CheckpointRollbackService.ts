@@ -155,6 +155,8 @@ export const layer: Layer.Layer<
         providerThread.providerSessionId === null ||
         checkpoint === undefined ||
         scope === undefined ||
+        // A repository's checkpoints follow the thread's; they are not a place to rewind to.
+        typeof scope.repositoryPath === "string" ||
         checkpoint.scopeId !== scope.id ||
         // Missing snapshots support conversation rewind only.
         (checkpoint.status !== "ready" &&
@@ -341,9 +343,15 @@ export const layer: Layer.Layer<
               providerThreadTurns,
             });
       if (input.restoreFiles !== false) yield* checkpoints.restore({ scope, checkpoint });
-      if (staleCheckpoints.length > 0) {
-        yield* checkpoints.deleteStaleRefs({ scope, checkpoints: staleCheckpoints });
+      const staleScopeCheckpoints = staleCheckpoints.filter((stale) => stale.scopeId === scope.id);
+      if (staleScopeCheckpoints.length > 0) {
+        yield* checkpoints.deleteStaleRefs({ scope, checkpoints: staleScopeCheckpoints });
       }
+      yield* checkpoints.discardRepositorySnapshots({
+        rootScope: scope,
+        thread: context.thread,
+        ordinals: runsToRollback.map((run) => run.ordinal),
+      });
 
       // Lock against full-row thread writes that could restore the old native session after rollback.
       yield* threadCommands.withLock(

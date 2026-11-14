@@ -3841,6 +3841,52 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         },
       });
 
+      // A tracked repository's scope names the run that first changed it, here one outside the
+      // window, while its newest checkpoint belongs to a run inside it.
+      const repositoryScope = {
+        id: CheckpointScopeId.make("scope:bounded-sql-history:repository"),
+        threadId,
+        runId: RunId.make("run:bounded-sql-history:1"),
+        nodeId: NodeId.make("node:bounded-sql-history:1"),
+        parentScopeId: scopeId,
+        providerThreadId: null,
+        kind: "manual" as const,
+        ordinalWithinParent: 1,
+        advancesAppRunCount: false,
+        cwd: "/repo/worktree/api",
+        label: "api",
+        repositoryPath: "/repo/worktree/api",
+        createdAt: now,
+      };
+      const repositoryCheckpointId = CheckpointId.make("checkpoint:bounded-sql-history:repository");
+      yield* projectionStore.apply({
+        id: EventId.make("event:bounded-sql-history:repository-scope"),
+        type: "checkpoint-scope.created",
+        threadId,
+        occurredAt: now,
+        payload: repositoryScope,
+      });
+      yield* projectionStore.apply({
+        id: EventId.make("event:bounded-sql-history:repository-checkpoint"),
+        type: "checkpoint.captured",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: repositoryCheckpointId,
+          threadId,
+          scopeId: repositoryScope.id,
+          runId: RunId.make("run:bounded-sql-history:1000"),
+          nodeId: NodeId.make("node:bounded-sql-history:1000"),
+          parentCheckpointId: null,
+          ordinalWithinScope: 1_000,
+          appRunOrdinal: null,
+          ref: CheckpointRef.make("refs/t3/bounded-sql-history/repository/1000"),
+          status: "ready",
+          files: [{ path: "src/main.ts", kind: "modified", additions: 1, deletions: 0 }],
+          capturedAt: now,
+        },
+      });
+
       const snapshots = yield* Effect.all(
         Array.from({ length: 4 }, () =>
           projectionStore.getThreadSnapshotWindow(threadId, { rowLimit: 76 }),
@@ -3859,11 +3905,12 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         );
         assert.deepEqual(
           snapshot.projection.checkpointScopes.map((scope) => scope.id),
-          [scopeId],
+          [scopeId, repositoryScope.id],
         );
+        assert.deepEqual(snapshot.projection.checkpointScopes[1], repositoryScope);
         assert.deepEqual(
           snapshot.projection.checkpoints.map((checkpoint) => checkpoint.id),
-          [baselineId],
+          [repositoryCheckpointId, baselineId],
         );
       }
       const humanWindow = () =>

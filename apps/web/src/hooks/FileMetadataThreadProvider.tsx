@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { OrchestrationV2ThreadProjection, ScopedThreadRef } from "@t3tools/contracts";
+import { isRepositoryCheckpointScope } from "@t3tools/client-runtime/state/thread-repositories";
 import { resolveWorkspaceFilePath } from "@t3tools/shared/path";
 import { Atom } from "effect/reactivity";
 import { createContext, useEffect, useRef, type ReactNode } from "react";
@@ -15,9 +16,10 @@ export function FileMetadataThreadProvider(props: {
   threadRef: ScopedThreadRef | null;
   cwd: string | undefined;
   checkpoints: OrchestrationV2ThreadProjection["checkpoints"] | undefined;
+  checkpointScopes: OrchestrationV2ThreadProjection["checkpointScopes"] | undefined;
   children?: ReactNode;
 }) {
-  const { threadRef, cwd, checkpoints, children } = props;
+  const { threadRef, cwd, checkpoints, checkpointScopes, children } = props;
   useAtomValue(threadRef ? projectEnvironment.fileMetadataThread(threadRef) : EMPTY_RETENTION);
   const invalidate = useAtomCommand(projectEnvironment.invalidateFileMetadata, {
     reportFailure: false,
@@ -45,19 +47,28 @@ export function FileMetadataThreadProvider(props: {
     )
       return;
     const oldById = new Map(before.checkpoints.map((checkpoint) => [checkpoint.id, checkpoint]));
+    // A tracked repository's files are relative to its own folder, not the thread's.
+    const repositoryCwdByScope = new Map(
+      checkpointScopes?.flatMap((scope) =>
+        isRepositoryCheckpointScope(scope) ? [[scope.id, scope.cwd] as const] : [],
+      ),
+    );
     const paths = new Set<string>();
+    const add = (checkpoint: OrchestrationV2ThreadProjection["checkpoints"][number]) => {
+      const root = repositoryCwdByScope.get(checkpoint.scopeId) ?? cwd;
+      for (const file of checkpoint.files) paths.add(resolveWorkspaceFilePath(file.path, root));
+    };
     for (const checkpoint of checkpoints) {
       const old = oldById.get(checkpoint.id);
       oldById.delete(checkpoint.id);
       if (old?.files === checkpoint.files && old?.status === checkpoint.status) continue;
-      for (const file of checkpoint.files) paths.add(resolveWorkspaceFilePath(file.path, cwd));
-      for (const file of old?.files ?? []) paths.add(resolveWorkspaceFilePath(file.path, cwd));
+      add(checkpoint);
+      if (old) add(old);
     }
-    for (const checkpoint of oldById.values())
-      for (const file of checkpoint.files) paths.add(resolveWorkspaceFilePath(file.path, cwd));
+    for (const checkpoint of oldById.values()) add(checkpoint);
     if (paths.size > 0)
       void invalidate({ environmentId: threadRef.environmentId, input: { paths: [...paths] } });
-  }, [threadRef, cwd, checkpoints, invalidate]);
+  }, [threadRef, cwd, checkpoints, checkpointScopes, invalidate]);
 
   return <FileMetadataThreadContext value={threadRef}>{children}</FileMetadataThreadContext>;
 }

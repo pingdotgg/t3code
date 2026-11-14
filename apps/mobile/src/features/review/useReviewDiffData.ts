@@ -7,6 +7,7 @@ import { getCachedReviewParsedDiff } from "./reviewState";
 import {
   applyReviewDiffMetadata,
   buildReviewParsedDiff,
+  filterReviewParsedDiffToFolder,
   type ReviewParsedDiff,
   type ReviewRenderableFile,
   type ReviewSectionItem,
@@ -128,18 +129,33 @@ export function useReviewDiffData(input: {
   readonly selectedSection: ReviewSectionItem | null;
   readonly draftMessage: string;
   readonly draftContext: OrchestrationMessageContext | undefined;
+  /** Shows one folder of a turn's patch; `folders` lists every folder, NUL-separated. */
+  readonly repositoryFilter: { readonly folder: string; readonly folders: string } | null;
 }) {
   const { draftMessage, draftContext, selectedSection, threadKey } = input;
   const selectedSectionId = selectedSection?.id ?? null;
   const source = selectedSection?.source;
   const lazySource = source?.truncated && source.files ? source : null;
-  const previewDiff: ReviewParsedDiff = lazySource
+  const sectionDiff: ReviewParsedDiff = lazySource
     ? { kind: "empty" }
     : getCachedReviewParsedDiff({
         threadKey,
         sectionId: selectedSection?.id ?? null,
         diff: selectedSection?.diff,
       });
+  const repositoryFolder = input.repositoryFilter?.folder ?? null;
+  const repositoryFolders = input.repositoryFilter?.folders ?? "";
+  const previewDiff = useMemo(
+    () =>
+      repositoryFolder === null
+        ? sectionDiff
+        : filterReviewParsedDiffToFolder(
+            sectionDiff,
+            repositoryFolder,
+            repositoryFolders.split("\0"),
+          ),
+    [sectionDiff, repositoryFolder, repositoryFolders],
+  );
   const registry = useContext(RegistryContext);
   const { environmentId, cwd } = input;
   const scope = JSON.stringify([
