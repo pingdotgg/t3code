@@ -2064,9 +2064,24 @@ describe("EnvironmentRegistry routes", () => {
 
   it.effect("re-pairing the same address replaces that route rather than adding another", () =>
     Effect.gen(function* () {
+      // Borrows the login saved under the old route id, which goes away with that route.
+      const learnedId = `learned:${LAN_TARGET.environmentId}:http://100.101.102.103:3773@${LAN_TARGET.connectionId}`;
       const harness = yield* makeHarness(
-        [LAN_TARGET, RELAY_TARGET],
-        [LAN_PROFILE],
+        [
+          LAN_TARGET,
+          new BearerConnectionTarget({ ...LAN_TARGET, connectionId: learnedId }),
+          RELAY_TARGET,
+        ],
+        [
+          LAN_PROFILE,
+          new BearerConnectionProfile({
+            ...LAN_PROFILE,
+            connectionId: learnedId,
+            httpBaseUrl: "http://100.101.102.103:3773/",
+            wsBaseUrl: "ws://100.101.102.103:3773/",
+            learned: true,
+          }),
+        ],
         [[LAN_TARGET.connectionId, BEARER_CREDENTIAL]],
       );
       yield* Effect.gen(function* () {

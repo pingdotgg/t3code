@@ -394,6 +394,67 @@ describe("ConnectionCatalogDocument", () => {
     expect(bearerOnly.remoteDpopTokens).toEqual([]);
   });
 
+  it("a new pairing replaces the login of the environment's other paired addresses", () => {
+    const route = (connectionId: string, httpBaseUrl: string, learned = false) => ({
+      target: new BearerConnectionTarget({ ...BEARER_TARGET, connectionId }),
+      profile: new BearerConnectionProfile({
+        ...BEARER_PROFILE,
+        connectionId,
+        httpBaseUrl,
+        wsBaseUrl: httpBaseUrl.replace(/^http/, "ws"),
+        ...(learned ? { learned: true } : {}),
+      }),
+    });
+    const expired = new BearerConnectionCredential({ token: "expired" });
+    const https = route("https", "https://remote.example.test/");
+    const lan = route("lan", "http://192.168.1.10:3773/");
+    const learned = route("learned:tailnet@https", "http://100.101.102.103:3773/", true);
+    const ssh = new SshConnectionTarget({
+      environmentId: ENVIRONMENT_ID,
+      label: "Remote",
+      connectionId: "ssh",
+    });
+    const saved: ConnectionCatalogDocument = {
+      ...EMPTY_CONNECTION_CATALOG_DOCUMENT,
+      targets: [https.target, lan.target, learned.target, ssh],
+      profiles: [https.profile, lan.profile, learned.profile],
+      credentials: [https, lan, { target: ssh }].map(({ target }) => ({
+        connectionId: target.connectionId,
+        credential: expired,
+      })),
+    };
+    const tokens = (document: ConnectionCatalogDocument) =>
+      Object.fromEntries(
+        document.credentials.map((value) => [value.connectionId, value.credential.token]),
+      );
+    const pair = (paired: ReturnType<typeof route>, credential = BEARER_CREDENTIAL) =>
+      registerConnectionInCatalog(
+        saved,
+        new BearerConnectionRegistration({ ...paired, credential }),
+        [paired.target, ...saved.targets],
+      );
+
+    // Paired over HTTPS: the plain HTTP LAN address keeps to the login it was paired with.
+    const overHttps = pair(route("https-2", "https://other.example.test/"));
+    expect(tokens(overHttps)).toEqual({
+      ssh: "expired",
+      lan: "expired",
+      https: "bearer-token",
+      "https-2": "bearer-token",
+    });
+    // Removing the newly paired address leaves the others on the working login.
+    expect(tokens(setRoutesInCatalog(overHttps, ENVIRONMENT_ID, saved.targets))).toMatchObject({
+      https: "bearer-token",
+    });
+
+    expect(tokens(pair(route("lan-2", "http://10.0.0.5:3773/")))).toMatchObject({
+      lan: "bearer-token",
+      https: "bearer-token",
+    });
+    // Editing an address registers the login it already has.
+    expect(tokens(pair(lan, expired))).toEqual(tokens(saved));
+  });
+
   it("keeps an environment's position in the catalog when its routes change", () => {
     const other = new RelayConnectionTarget({
       environmentId: EnvironmentId.make("environment-2"),
