@@ -263,9 +263,10 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
           "max-md:absolute max-md:inset-y-0 max-md:start-0 max-md:z-10 max-md:w-full",
       )}
     >
-      <SidebarContent className="overflow-x-hidden">
-        <SidebarGroup>
-          <div className="flex flex-col gap-2">
+      <SidebarContent
+        className="overflow-x-hidden"
+        fixedHeader={
+          <SidebarGroup className={cn(!compactSearchOpen && "max-md:hidden")}>
             <div
               className={cn(
                 "flex h-8 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
@@ -319,6 +320,11 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                 <Kbd>/</Kbd>
               )}
             </div>
+          </SidebarGroup>
+        }
+      >
+        <SidebarGroup className={cn(!compactSearchOpen && "max-md:mt-(--sidebar-content-inset)")}>
+          <div className="flex flex-col gap-2">
             {isSearching && results.length === 0 ? (
               <p
                 role="status"
