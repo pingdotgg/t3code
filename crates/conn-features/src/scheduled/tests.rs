@@ -1118,20 +1118,26 @@ async fn the_destination_thread_is_checked_only_when_it_changes() {
     );
 }
 
-/// `a run interrupted right after it reserves the task does not block the next run`: here a
-/// caller that stops waiting does not stop the run, which records its end and frees the task.
+/// `a run interrupted right after it reserves the task does not block the next run`, and
+/// the T3 server's `onError`: a caller that stops waiting stops the run, which is recorded as
+/// failed with T3's interrupt text, and the task is free for the next run.
 #[tokio::test(start_paused = true)]
-async fn a_caller_that_stops_waiting_does_not_block_the_next_run() {
+async fn a_caller_that_stops_waiting_stops_the_run_and_records_a_failure() {
     let env = Env::new("interrupted", "2026-07-01T09:00:00.000Z");
     let launches = Arc::new(StdMutex::new(0));
-    let counted = launches.clone();
+    let finished = Arc::new(StdMutex::new(0));
+    let (counted, done) = (launches.clone(), finished.clone());
     let fake = Fake {
         launch: Box::new(move |_| {
             if let Ok(mut n) = counted.lock() {
                 *n += 1;
             }
-            Box::pin(async {
+            let done = done.clone();
+            Box::pin(async move {
                 tokio::time::sleep(Duration::from_secs(1)).await;
+                if let Ok(mut n) = done.lock() {
+                    *n += 1;
+                }
                 Ok("thread:launched".to_owned())
             })
         }),
@@ -1146,18 +1152,32 @@ async fn a_caller_that_stops_waiting_does_not_block_the_next_run() {
     let runner = service.clone();
     let id = task.id.clone();
     let first = tokio::spawn(async move { runner.run_now(&id).await });
-    tokio::task::yield_now().await;
+    while *launches.lock().expect("lock") == 0 {
+        tokio::task::yield_now().await;
+    }
     first.abort();
+    assert!(first.await.expect_err("aborted").is_cancelled());
     tokio::time::sleep(Duration::from_secs(2)).await;
-    let listed = tasks(&service).await;
     assert_eq!(
-        listed[0].last_run_status,
-        ScheduledTaskRunStatus::Succeeded,
-        "the run finished"
+        *finished.lock().expect("lock"),
+        0,
+        "the launch stopped with its caller"
     );
+    let listed = tasks(&service).await;
+    assert_eq!(listed[0].last_run_status, ScheduledTaskRunStatus::Failed);
+    assert_eq!(
+        listed[0].last_run_error.as_deref(),
+        Some(super::INTERRUPTED_RUN)
+    );
+    assert_eq!(listed[0].run_count, 1);
+    assert!(listed[0].next_run_at.is_some(), "planned again");
     let second = service.run_now(&task.id).await.expect("second run");
     assert_eq!(second.thread_id.as_deref(), Some("thread:launched"));
     assert_eq!(*launches.lock().expect("lock"), 2);
+    assert_eq!(
+        tasks(&service).await[0].last_run_status,
+        ScheduledTaskRunStatus::Succeeded
+    );
 }
 
 /// `a fresh-session task launches one thread, then starts each later run fresh in it`.
