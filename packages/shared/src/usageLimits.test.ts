@@ -1362,6 +1362,7 @@ describe("pooled account columns", () => {
     expect(pool!.windows[1]!.members.map((member) => member.account.key)).toEqual(["b", "c"]);
     expect(pool!.windows[1]!.remainingPercent).toBe(40);
     expect(pool!.windows[1]!.resets.map((reset) => reset.restoresPercent)).toEqual([40, 20]);
+    expect(pool!.windows.map((w) => w.nextReset?.restoresPercent)).toEqual([20, 60]);
   });
 
   it("falls back to weekly resets when no account reports a session", () => {

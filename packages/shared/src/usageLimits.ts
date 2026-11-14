@@ -690,22 +690,23 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
             ];
       })
       .sort((left, right) => left.at - right.at);
-    const resets = refills.map(({ member, at, restores }): LimitPoolReset => ({
+    const rounded = ({ member, at, restores }: (typeof refills)[number]): LimitPoolReset => ({
       member,
       at,
       restoresPercent: Math.round(restores),
-    }));
+    });
+    // Sum raw shares per instant before rounding, so accounts resetting together add up exactly.
+    const byInstant = new Map<number, (typeof refills)[number]>();
+    for (const refill of refills) {
+      const earlier = byInstant.get(refill.at);
+      byInstant.set(
+        refill.at,
+        earlier ? { ...earlier, restores: earlier.restores + refill.restores } : refill,
+      );
+    }
+    const resets = refills.map(rounded);
     const nextReset =
-      [...new Set(refills.map((refill) => refill.at))]
-        .map((at): LimitPoolReset => {
-          const together = refills.filter((refill) => refill.at === at);
-          return {
-            member: together[0]!.member,
-            at,
-            restoresPercent: Math.round(together.reduce((sum, refill) => sum + refill.restores, 0)),
-          };
-        })
-        .find((reset) => reset.restoresPercent > 0) ?? null;
+      [...byInstant.values()].map(rounded).find((reset) => reset.restoresPercent > 0) ?? null;
     return {
       id,
       kind: first.kind,

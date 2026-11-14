@@ -36,50 +36,6 @@ function managedChatGpt(instanceId: string, displayName: string): ServerProvider
 }
 
 describe("UsageLimitsPooled ChatGPT usage card", () => {
-  it.each([true, false])(
-    "shows the quota restored by the next reset, simultaneous=%s",
-    async (simultaneous) => {
-      const providers = [20, 80].map((usedPercent, index): ServerProvider => ({
-        ...managedChatGpt(`account_${index}`, `Account ${index + 1}`),
-        usageLimits: {
-          checkedAt,
-          windows: [
-            {
-              id: "five_hour",
-              label: "5-hour",
-              kind: "session",
-              usedPercent,
-              resetsAt:
-                simultaneous || index === 0
-                  ? "2026-10-25T18:00:00.000Z"
-                  : "2026-10-25T19:00:00.000Z",
-              windowDurationMins: 300,
-            },
-          ],
-        },
-      }));
-      await using screen = await render(
-        <UsageLimitsPooled
-          presentations={
-            new Map([
-              [
-                EnvironmentId.make("desk"),
-                {
-                  entry: { target: { label: "Desk" } },
-                  serverConfig: { providers },
-                },
-              ],
-            ])
-          }
-          now={Date.parse(checkedAt)}
-        />,
-      );
-      await expect
-        .element(screen.getByText(simultaneous ? "↻ +50%" : "↻ +10%", { exact: true }))
-        .toBeVisible();
-    },
-  );
-
   it("names the managed connections it covers", async () => {
     const presentations = new Map([
       [
