@@ -28,6 +28,8 @@ export const es: Messages = {
     downloadForMac: "Descargar para macOS",
     downloadForWindows: "Descargar para Windows",
     downloadForLinux: "Descargar para Linux",
+    downloadForIos: "Descargar para iOS",
+    downloadForAndroid: "Descargar para Android",
     sourceLink: "Roba nuestro código (legalmente)",
     alsoOnPhone: "También en tu teléfono:",
     screenshotAlt: "T3 Code ejecutando subagentes de Claude, Codex, Muse y Gemini en un mismo hilo",

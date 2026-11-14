@@ -27,7 +27,7 @@ import {
   ToolCallVisibility,
 } from "@t3tools/contracts/settings";
 import { desktopUpdateChannelOf } from "@t3tools/shared/cliRelease";
-import { createModelSelection } from "@t3tools/shared/model";
+import { createModelSelection, pickModelSelection } from "@t3tools/shared/model";
 import { resolvePastedPath } from "@t3tools/shared/path";
 import * as Equal from "effect/Equal";
 import * as Schema from "effect/Schema";
@@ -67,7 +67,7 @@ import { SnoozePresetsRow } from "./SnoozePresetsSettings";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import { managedTelemetryOffMessage, usePrimaryManagedPolicy } from "../../state/managedPolicy";
 import {
-  getCustomModelOptionsByInstance,
+  getTextGenerationModelOptionsByInstance,
   resolveAppModelSelectionState,
   selectsPlanAgent,
 } from "../../modelSelection";
@@ -89,6 +89,11 @@ import { ScopedSwitch } from "./ScopedSwitch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
+  autoSettleDaysField,
+  cancelAutoSettleDaysField,
+  commitAutoSettleDaysField,
+  editAutoSettleDaysField,
+  failAutoSettleDaysField,
   getChangedBrowserSettingLabels,
   getChangedTypographySettingLabels,
   hasChangedBackgroundActivitySettings,
@@ -96,6 +101,7 @@ import {
   projectGroupingModeFromToggle,
   readLastEnabledProjectGroupingMode,
   rememberEnabledProjectGroupingMode,
+  syncAutoSettleDaysField,
 } from "./SettingsPanels.logic";
 import {
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
@@ -555,6 +561,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ? ["Continue threads after restarts"]
       : []),
     ...(isBackgroundActivityDirty ? ["Background activity"] : []),
+    ...(settings.keepAwakeWhileAgentsWork !== DEFAULT_UNIFIED_SETTINGS.keepAwakeWhileAgentsWork
+      ? ["Keep awake while agents work"]
+      : []),
     ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
       ? ["New thread mode"]
       : []),
@@ -678,6 +687,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
+      keepAwakeWhileAgentsWork: DEFAULT_UNIFIED_SETTINGS.keepAwakeWhileAgentsWork,
       backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
       automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
       providerHealthRefreshInterval: DEFAULT_UNIFIED_SETTINGS.providerHealthRefreshInterval,
@@ -728,14 +738,21 @@ function AutoSettleDaysInput({
   onCommit,
 }: {
   value: number;
-  onCommit: (days: number) => void;
+  onCommit: (days: number, options: { onFailed: () => void }) => void;
 }) {
-  const [draft, setDraft] = useState(String(value));
-  const [draftSource, setDraftSource] = useState(value);
-  if (draftSource !== value) {
-    setDraftSource(value);
-    setDraft(String(value));
-  }
+  const [stored, setField] = useState(() => autoSettleDaysField(value));
+  const field = syncAutoSettleDaysField(stored, value);
+  if (field !== stored) setField(field);
+
+  const commit = () => {
+    const next = commitAutoSettleDaysField(field);
+    setField(next.field);
+    if (next.submit === null) return;
+    const { revision } = next.field;
+    onCommit(next.submit, {
+      onFailed: () => setField((current) => failAutoSettleDaysField(current, revision)),
+    });
+  };
 
   return (
     <Input
@@ -744,19 +761,19 @@ function AutoSettleDaysInput({
       min={MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
       max={MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
       className="w-full sm:w-24"
-      value={draft}
-      onChange={(event) => {
-        setDraft(event.target.value);
-        const parsed = Number(event.target.value);
-        if (
-          Number.isInteger(parsed) &&
-          parsed >= MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS &&
-          parsed <= MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS
-        ) {
-          onCommit(parsed);
+      value={field.draft}
+      onChange={(event) => setField(editAutoSettleDaysField(field, event.target.value))}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.nativeEvent.isComposing) return;
+        if (event.key === "Enter") commit();
+        if (event.key === "Escape" && field.dirty) {
+          // An unhandled Escape closes the settings page, and the blur that follows would save.
+          event.preventDefault();
+          event.stopPropagation();
+          setField(cancelAutoSettleDaysField(field));
         }
       }}
-      onBlur={() => setDraft(String(value))}
       aria-label="Days of inactivity before auto-settle"
     />
   );
@@ -1743,7 +1760,7 @@ export function ThreadsSettingsPanel() {
   );
   const textGenProvider: ProviderDriverKind =
     textGenInstanceEntry?.driverKind ?? DEFAULT_DRIVER_KIND;
-  const textGenerationModelOptionsByInstance = getCustomModelOptionsByInstance(
+  const textGenerationModelOptionsByInstance = getTextGenerationModelOptionsByInstance(
     settings,
     textGenerationProviders,
     textGenInstanceId,
@@ -1756,6 +1773,7 @@ export function ThreadsSettingsPanel() {
   const textGenerationModelDisabledReason = useScopedModelDisabledReason(
     settings,
     textGenerationModelInstanceEntries,
+    true,
   );
   const mixedAddProjectBaseDirectory = useScopedSettingsMixed(["addProjectBaseDirectory"]);
   const mixedTextGenerationModel = useScopedSettingsMixed(["textGenerationModelSelection"]);
@@ -1936,7 +1954,9 @@ export function ThreadsSettingsPanel() {
               control={
                 <AutoSettleDaysInput
                   value={settings.sidebarAutoSettleAfterDays}
-                  onCommit={(days) => updateSettings({ sidebarAutoSettleAfterDays: days })}
+                  onCommit={(days, options) =>
+                    updateSettings({ sidebarAutoSettleAfterDays: days }, options)
+                  }
                 />
               }
             />
@@ -2026,7 +2046,11 @@ export function ThreadsSettingsPanel() {
                       textGenerationModelSelection: resolveAppModelSelectionState(
                         {
                           ...settings,
-                          textGenerationModelSelection: createModelSelection(instanceId, model),
+                          textGenerationModelSelection: pickModelSelection(
+                            textGenerationModelSelection,
+                            instanceId,
+                            model,
+                          ),
                         },
                         textGenerationProviders,
                       ),
@@ -2205,6 +2229,35 @@ export function MaintenanceSettingsPanel() {
 
       <SettingsSection id="background" title="Background activity">
         <BackgroundActivitySettingsRow />
+        <SettingsRow
+          serverScoped
+          settingKeys={["keepAwakeWhileAgentsWork"]}
+          {...searchableSetting("keep-awake-while-agents-work")}
+          description="Stop the computer from going to sleep while agents are working, and let it sleep once they finish. Closing a laptop lid still puts it to sleep."
+          resetAction={
+            settings.keepAwakeWhileAgentsWork !==
+            DEFAULT_UNIFIED_SETTINGS.keepAwakeWhileAgentsWork ? (
+              <SettingResetButton
+                label="keep awake while agents work"
+                onClick={() =>
+                  updateSettings({
+                    keepAwakeWhileAgentsWork: DEFAULT_UNIFIED_SETTINGS.keepAwakeWhileAgentsWork,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <ScopedSwitch
+              settingKeys={["keepAwakeWhileAgentsWork"]}
+              checked={settings.keepAwakeWhileAgentsWork}
+              onCheckedChange={(checked) =>
+                updateSettings({ keepAwakeWhileAgentsWork: Boolean(checked) })
+              }
+              aria-label="Keep awake while agents work"
+            />
+          }
+        />
       </SettingsSection>
 
       <StorageCleanupSections />

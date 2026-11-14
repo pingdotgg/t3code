@@ -262,7 +262,9 @@ export type PreviewAutomationResizeInput = typeof PreviewAutomationResizeInput.T
 export const PreviewAutomationResizeResult = Schema.Struct({
   tabId: PreviewTabId,
   setting: PreviewViewportSetting,
-  viewport: PreviewRenderedViewportSize,
+  viewport: Schema.optional(PreviewRenderedViewportSize).annotate({
+    description: "Viewport size after the resize. Omitted when it could not be measured.",
+  }),
 });
 export type PreviewAutomationResizeResult = typeof PreviewAutomationResizeResult.Type;
 
@@ -778,22 +780,41 @@ export class PreviewAutomationTabNotFoundError extends Schema.TaggedError<Previe
   }
 }
 
+export const PreviewAutomationSnapshotStage = Schema.Literals([
+  "metrics",
+  "frames",
+  "page state",
+  "screenshot",
+  "accessibility tree",
+]);
+
+export const PreviewAutomationTimeoutDetail = Schema.Struct({
+  timeoutMs: Schema.Int.check(Schema.isGreaterThan(0)),
+  pendingStages: Schema.Array(PreviewAutomationSnapshotStage).check(Schema.isMaxLength(5)),
+});
+
 export class PreviewAutomationTimeoutError extends Schema.TaggedError<PreviewAutomationTimeoutError>()(
   "PreviewAutomationTimeoutError",
   {
     ...PreviewAutomationRequestErrorFields,
     ...PreviewAutomationOptionalRemoteDiagnosticFields,
+    pendingStages: Schema.optional(PreviewAutomationTimeoutDetail.fields.pendingStages),
     reason: Schema.optional(Schema.String),
   },
 ) {
   override get message(): string {
     const summary = `Preview automation ${this.operation} timed out after ${this.timeoutMs}ms.`;
-    return this.reason === undefined ? summary : `${summary} ${this.reason}`;
+    const stages = this.pendingStages?.length
+      ? ` Waiting for: ${this.pendingStages.join(", ")}.`
+      : "";
+    const reason = this.reason === undefined ? "" : ` ${this.reason}`;
+    return `${summary}${stages}${reason}`;
   }
 }
 
 export const PreviewAutomationControlReason = Schema.Literals([
   "agentMismatch",
+  "unclaimedTab",
   "humanControl",
   "tabRequired",
   "closed",
@@ -814,6 +835,8 @@ export class PreviewAutomationControlInterruptedError extends Schema.TaggedError
   override get message(): string {
     if (this.reason === "agentMismatch")
       return "This browser tab belongs to another agent session or a human. Open your own tab.";
+    if (this.reason === "unclaimedTab")
+      return "This tab has no agent owner. Ask the user to close it in the browser panel.";
     if (this.reason === "humanControl")
       return "A human controls this browser tab. Wait until they release control.";
     if (this.reason === "tabRequired")
