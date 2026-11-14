@@ -1,15 +1,10 @@
-import {
-  formatResourceTag,
-  stripChildEffectPrefix,
-} from "@/Util/ResourceOutput.ts";
-import { describe, expect, it } from "alchemy-test";
+import { describe, expect, it } from "@alchemy.run/test";
+import { formatResourceTag, stripChildEffectPrefix } from "@/Util/ResourceOutput.ts";
 
 describe("stripChildEffectPrefix", { tags: ["unit", "local"] }, () => {
   it("removes an Effect pretty prefix", () => {
     expect(
-      stripChildEffectPrefix(
-        "[14:49:25.594] INFO (#1836): Cloudflare Worker reconcile: starting",
-      ),
+      stripChildEffectPrefix("[14:49:25.594] INFO (#1836): Cloudflare Worker reconcile: starting"),
     ).toBe("Cloudflare Worker reconcile: starting");
   });
 

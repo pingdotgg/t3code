@@ -58,6 +58,10 @@ export interface SelfServiceProps {
    * Named entrypoint on the worker. Defaults to the default entrypoint.
    */
   readonly entrypoint?: string;
+  /**
+   * Optional `ctx.props` delivered to the entrypoint.
+   */
+  readonly props?: Record<string, unknown>;
 }
 
 /**
@@ -73,15 +77,13 @@ export interface SelfServiceProps {
  * where the request must hit the worker's `fetch` handler rather than the
  * assets middleware.
  */
-export const self = (
-  binding: string,
-  { entrypoint }: SelfServiceProps = {},
-): BindingHook =>
+export const self = (binding: string, { entrypoint, props }: SelfServiceProps = {}): BindingHook =>
   Effect.succeed({
     name: binding,
     service: {
       name: SERVICE_USER_WORKER,
       ...(entrypoint !== undefined ? { entrypoint } : undefined),
+      ...(props !== undefined ? { props: { json: JSON.stringify(props) } } : undefined),
     },
   });
 

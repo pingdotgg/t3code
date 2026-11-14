@@ -1,6 +1,7 @@
 import { useEvent } from "expo";
 import { useVideoPlayer, VideoView } from "expo-video";
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useIsFocused } from "@react-navigation/native";
+import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 import { Pressable, View } from "react-native";
 
 import { AppActivityIndicator } from "./ui/AppActivityIndicator";
@@ -8,6 +9,8 @@ import { AppText } from "./ui/AppText";
 import { SymbolView } from "./ui/AppSymbol";
 import { VideoThumbnailImage } from "./VideoThumbnailImage";
 import { useMediaActions } from "../state/mediaActions";
+import { fitVideoFrame } from "../lib/videoFrameFit";
+import { loadVideoThumbnail } from "../lib/videoThumbnails";
 import { type MediaActionsSource } from "../lib/mediaActionsSource";
 import { useMediaVideoPlayback } from "../lib/useMediaVideoPlayback";
 import { MediaActionsMenu } from "./MediaActionsMenu";
@@ -135,7 +138,10 @@ interface MediaVideoPlayerProps {
   readonly thumbnailVisible?: boolean;
   readonly visible?: boolean;
   readonly unavailable?: boolean;
+  readonly unavailableDetail?: string | undefined;
   readonly expanded?: boolean;
+  /** Fill the parent and size the frame to the video's shape instead of a fixed 16:9 slot. */
+  readonly fitToVideo?: boolean;
   readonly autoPlay?: boolean;
   readonly paused?: boolean;
   readonly onPlaybackStart?: () => void;
@@ -145,16 +151,44 @@ interface MediaVideoPlayerProps {
 
 function MediaVideoPlayerContent(props: MediaVideoPlayerProps) {
   const mediaActions = useMediaActions(props.actionsSource);
+  const isFocused = useIsFocused();
   const [playbackUri, setPlaybackUri] = useState<string | null>(props.expanded ? props.uri : null);
   // Keep an opened player mounted while signing or reconnecting temporarily has no usable URL.
   if (playbackUri === null && props.expanded && props.uri !== null) setPlaybackUri(props.uri);
+  const unavailableText = props.unavailableDetail
+    ? `Video unavailable. ${props.unavailableDetail}`
+    : "Video unavailable";
+  const [videoSize, setVideoSize] = useState<{ width: number; height: number } | null>(null);
+  const [bounds, setBounds] = useState<{ width: number; height: number } | null>(null);
+  const sizeSource = props.fitToVideo && isFocused && videoSize === null ? props.uri : null;
+  // Queue before the poster so early Play cannot cancel the extraction that supplies frame dimensions.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads native thumbnail dimensions independently of the poster's lifetime
+  useLayoutEffect(() => {
+    if (sizeSource === null) return;
+    // Thumbnails are oriented like the displayed frame, unlike VideoTrack.size.
+    const controller = new AbortController();
+    void loadVideoThumbnail(
+      props.thumbnailKey,
+      async () => ({ uri: sizeSource, dispose: () => undefined }),
+      controller.signal,
+    ).then((thumbnail) => {
+      if (thumbnail && !controller.signal.aborted) {
+        setVideoSize({ width: thumbnail.width, height: thumbnail.height });
+      }
+    });
+    return () => controller.abort();
+  }, [props.thumbnailKey, sizeSource]);
+  const fittedFrame =
+    props.fitToVideo && videoSize && bounds ? fitVideoFrame(videoSize, bounds, 480) : null;
 
-  return (
+  const frame = (
     <View
       collapsable={false}
       className="overflow-hidden rounded-[10px] bg-black"
       style={[
-        props.expanded ? { flex: 1 } : { width: "100%", maxWidth: 480, aspectRatio: 16 / 9 },
+        props.expanded
+          ? { flex: 1 }
+          : (fittedFrame ?? { width: "100%", maxWidth: 480, aspectRatio: 16 / 9 }),
         props.borderRadius === undefined ? null : { borderRadius: props.borderRadius },
       ]}
     >
@@ -171,7 +205,9 @@ function MediaVideoPlayerContent(props: MediaVideoPlayerProps) {
         <MediaActionsMenu media={mediaActions} inModal={props.expanded} style={{ flex: 1 }}>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`Play ${props.name}`}
+            accessibilityLabel={
+              props.unavailable ? `${props.name}. ${unavailableText}` : `Play ${props.name}`
+            }
             accessibilityHint={
               mediaActions.actions.length > 0 ? "Touch and hold for media actions" : undefined
             }
@@ -193,7 +229,7 @@ function MediaVideoPlayerContent(props: MediaVideoPlayerProps) {
               />
             ) : null}
             {props.unavailable ? (
-              <AppText className="text-sm text-white/80">Video unavailable</AppText>
+              <AppText className="text-center text-sm text-white/80">{unavailableText}</AppText>
             ) : props.uri === null ? (
               <AppActivityIndicator color="#ffffff" accessibilityLabel="Loading video" />
             ) : (
@@ -212,6 +248,18 @@ function MediaVideoPlayerContent(props: MediaVideoPlayerProps) {
           </Pressable>
         </MediaActionsMenu>
       )}
+    </View>
+  );
+  if (!props.fitToVideo) return frame;
+  return (
+    <View
+      className="flex-1 items-center justify-center self-stretch"
+      onLayout={(event) => {
+        const { width, height } = event.nativeEvent.layout;
+        setBounds({ width, height });
+      }}
+    >
+      {frame}
     </View>
   );
 }
