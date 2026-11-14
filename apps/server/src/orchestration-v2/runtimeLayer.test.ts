@@ -79,6 +79,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as PullRequestWatchReactor from "./PullRequestWatchReactor.ts";
 import { PULL_REQUEST_WATCH_WAKE_LIMIT } from "./pullRequestWatch.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
+import * as PullRequestWatchService from "../pullRequest/PullRequestWatchService.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as RuntimeLayer from "./runtimeLayer.ts";
@@ -4134,6 +4135,102 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.deepEqual(yield* summaries, ["#12: checks passed", "#12: checks passed"]);
       yield* watch(false, "end");
     }),
+  );
+
+  it.effect.each([
+    ["success", "#12: checks passed"],
+    ["failure", "#12: checks failed"],
+  ] as const)(
+    "reports checks pending at watch time that finish with %s before the first read",
+    ([status, summary]) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = ThreadId.make(`runtime-pull-request-watch-gap-${status}`);
+        const projectId = ProjectId.make(`pr-watch-gap-project-${status}`);
+        yield* seedProject({
+          projectId,
+          title: "Watch gap",
+          workspaceRoot: "/workspace/watch-gap",
+          defaultModelSelection: null,
+          createdAt: "2026-10-01T00:00:00.000Z",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`pr-watch-gap-create-${status}`),
+          threadId,
+          projectId,
+          title: "Watch gap",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        const headSha = "ad70160aaa";
+        let finished = false;
+        const detail = watchedPullRequestDetail({
+          projectId,
+          number: 12,
+          at: "2026-10-02T12:00:00.000Z",
+        });
+        const host = Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          Layer.mock(ProjectService.ProjectService)({ getShell: () => Effect.succeedNone }),
+          Layer.mock(PullRequestService.PullRequestService)({
+            summary: () =>
+              Effect.sync(() => ({
+                ...detail,
+                headSha,
+                checksState: finished ? (status === "success" ? "passing" : "failing") : "pending",
+              })),
+            detail: () =>
+              Effect.sync(() => ({
+                ...detail,
+                headSha,
+                checks: [
+                  {
+                    name: "test",
+                    status: finished ? status : ("pending" as const),
+                    description: null,
+                    url: null,
+                    required: true,
+                  },
+                ],
+              })),
+            activity: () =>
+              Effect.succeed({
+                comments: [],
+                commentCount: 0,
+                commentsTruncated: false,
+                reviewThreads: [],
+                commits: [],
+              }),
+          }),
+        );
+        const watches = yield* PullRequestWatchService.PullRequestWatchService.pipe(
+          Effect.provide(PullRequestWatchService.layer.pipe(Layer.provide(host))),
+        );
+        // The agent calls watch_pull_request while the check runs, and it finishes before a sweep.
+        yield* watches.setWatching({
+          threadId,
+          target: { url: "https://github.com/pingdotgg/t3code/pull/12" },
+          watching: true,
+        });
+        finished = true;
+
+        const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+        yield* reactor.sweep;
+        yield* worker.drain();
+        const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
+        assert.deepEqual(
+          messages.flatMap((message) => message.notification?.summary ?? []),
+          [summary],
+        );
+      }),
   );
 
   it.effect.each([
