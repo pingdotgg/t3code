@@ -8,6 +8,7 @@ import {
   ProviderInstanceId,
   MessageId,
   RuntimeRequestId,
+  DeviceHostUnavailableError,
   RunId,
   type OrchestrationV2Run,
   ThreadId,
@@ -36,6 +37,7 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 
+import * as DeviceService from "../device/DeviceService.ts";
 import * as GitManager from "../git/GitManager.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
@@ -588,6 +590,9 @@ interface HarnessOptions {
     input: ProjectSetupScriptRunner.ProjectSetupScriptRunnerInput,
   ) => Effect.Effect<void>;
   readonly onCloseIdle?: () => Effect.Effect<void>;
+  readonly onDeviceClose?: () => Effect.Effect<void>;
+  readonly deviceCloseError?: DeviceHostUnavailableError;
+  readonly deviceSessions?: ReadonlyArray<{ readonly hostId: string; readonly deviceId: string }>;
   readonly currentThreads?: ReadonlyArray<OrchestrationV2AppThread>;
   readonly projections?: ProjectionStore.ProjectionStoreV2Shape;
 }
@@ -616,6 +621,9 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
   >([]);
   const summaryRecovery = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
   const invalidatedCwds = yield* Ref.make<ReadonlyArray<string>>([]);
+  const deviceCloses = yield* Ref.make<
+    ReadonlyArray<Parameters<DeviceService.DeviceService["Service"]["close"]>[0]>
+  >([]);
   const domainEvents = yield* PubSub.unbounded<OrchestrationV2DomainEvent>();
   const observedEvents = yield* Queue.unbounded<EventId>();
   const closedIdle = yield* Queue.unbounded<{ readonly threadId: string }>();
@@ -704,13 +712,14 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
               ),
           ),
         ),
-      getThread: (threadId) => {
-        if (options.projections) return options.projections.getThread(threadId);
-        const thread = options.currentThreads?.find((candidate) => candidate.id === threadId);
-        return thread
-          ? Effect.succeed(thread)
-          : Effect.die(new Error(`Unexpected thread read: ${threadId}`));
-      },
+      getThread: (threadId) =>
+        Effect.suspend(() => {
+          if (options.projections) return options.projections.getThread(threadId);
+          const thread = options.currentThreads?.find((candidate) => candidate.id === threadId);
+          return thread
+            ? Effect.succeed(thread)
+            : Effect.die(new Error(`Unexpected thread read: ${threadId}`));
+        }),
     }),
     Layer.mock(Orchestrator.OrchestratorV2)({
       streamDomainEvents: Stream.fromPubSub(domainEvents).pipe(
@@ -721,6 +730,28 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     Layer.mock(TerminalManager.TerminalManager)({
       closeOnSettle: (input) =>
         Queue.offer(closedIdle, input).pipe(Effect.andThen(options.onCloseIdle?.() ?? Effect.void)),
+    }),
+    Layer.mock(DeviceService.DeviceService)({
+      sessionsForThread: (threadId) =>
+        Effect.succeed(
+          (options.deviceSessions ?? [{ hostId: "local", deviceId: "emulator-5554" }]).map(
+            (session) => ({
+              ...session,
+              threadId,
+              platform: "android" as const,
+              openedAt: "2026-01-01T00:00:00.000Z",
+            }),
+          ),
+        ),
+      // onDeviceClose stands in for the lifecycle lock wait; `when` runs once the lock is held.
+      close: (input, closeOptions) =>
+        Effect.gen(function* () {
+          yield* options.onDeviceClose?.() ?? Effect.void;
+          if (closeOptions?.when && !(yield* closeOptions.when)) return;
+          yield* Ref.update(deviceCloses, (closes) => [...closes, input]);
+          const error = options.deviceCloseError;
+          if (error && error.hostId === input.hostId) return yield* error;
+        }),
     }),
     Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
       runForThread: (input) =>
@@ -774,6 +805,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     invalidatedCwds,
     closedIdle,
     scriptRuns,
+    deviceCloses,
     observedEvents,
     publishEvent: (event: OrchestrationV2DomainEvent) => PubSub.publish(domainEvents, event),
     updateSettings,
@@ -2110,6 +2142,73 @@ describe("ThreadSettlementServiceV2 terminals", () => {
     }),
   );
 
+  it.effect("closes another thread's terminals while a device release waits on the lock", () =>
+    Effect.gen(function* () {
+      const releaseStarted = yield* Deferred.make<void>();
+      const lockFreed = yield* Deferred.make<void>();
+      const waiting = appThread("waiting-device-thread", "settled");
+      const other = appThread("other-thread", "settled");
+      const fixture = yield* makeHarness({
+        snapshot: makeSnapshot([]),
+        currentThreads: [waiting, other],
+        deviceSessions: [{ hostId: "starting-ssh", deviceId: "pixel" }],
+        onDeviceClose: () =>
+          Deferred.succeed(releaseStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(lockFreed)),
+          ),
+      });
+
+      yield* Effect.gen(function* () {
+        const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+        yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+        yield* fixture.publishEvent(settledEvent(waiting));
+        assert.deepStrictEqual(yield* Queue.take(fixture.closedIdle), { threadId: waiting.id });
+        yield* Deferred.await(releaseStarted);
+        yield* fixture.publishEvent(settledEvent(other));
+        assert.deepStrictEqual(yield* Queue.take(fixture.closedIdle), { threadId: other.id });
+        yield* Deferred.succeed(lockFreed, undefined);
+        yield* service.drain;
+        assert.deepStrictEqual(
+          (yield* Ref.get(fixture.deviceCloses)).map((close) => close.threadId),
+          [waiting.id, other.id],
+        );
+      }).pipe(Effect.provide(fixture.layer));
+    }),
+  );
+
+  it.effect("releases the other devices and runs the settle script when one release fails", () =>
+    Effect.gen(function* () {
+      const settled = appThread("reconnecting-host-thread", "settled", "/worktrees/thread");
+      const fixture = yield* makeHarness({
+        snapshot: makeSnapshot([]),
+        currentThreads: [settled],
+        existingWorktreePaths: ["/worktrees/thread"],
+        deviceSessions: [
+          { hostId: "ssh-host", deviceId: "remote-pixel" },
+          { hostId: "local", deviceId: "emulator-5554" },
+        ],
+        deviceCloseError: new DeviceHostUnavailableError({
+          hostId: "ssh-host",
+          reason: "Device host is reconnecting. Retry close after it reconnects.",
+        }),
+      });
+
+      yield* Effect.gen(function* () {
+        const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+        yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+        yield* fixture.publishEvent(settledEvent(settled));
+        assert.deepStrictEqual(yield* Queue.take(fixture.closedIdle), { threadId: settled.id });
+        const run = yield* Queue.take(fixture.scriptRuns);
+        assert.strictEqual(run.threadId, settled.id);
+        yield* service.drain;
+        assert.deepStrictEqual(yield* Ref.get(fixture.deviceCloses), [
+          { threadId: settled.id, hostId: "ssh-host", deviceId: "remote-pixel" },
+          { threadId: settled.id, hostId: "local", deviceId: "emulator-5554" },
+        ]);
+      }).pipe(Effect.provide(fixture.layer));
+    }),
+  );
+
   it.effect("runs the settle script in the thread's own worktree", () =>
     Effect.gen(function* () {
       const shared = appThread("shared-checkout-thread", "settled");
@@ -2156,6 +2255,11 @@ describe("ThreadSettlementServiceV2 terminals", () => {
         yield* fixture.publishEvent(settledEvent(settled));
         yield* fixture.publishEvent(settledEvent(marker));
         assert.strictEqual((yield* Queue.take(fixture.scriptRuns)).threadId, marker.id);
+        yield* service.drain;
+        assert.deepStrictEqual(
+          (yield* Ref.get(fixture.deviceCloses)).filter((close) => close.threadId === settled.id),
+          [],
+        );
       }).pipe(Effect.provide(fixture.layer));
     }),
   );

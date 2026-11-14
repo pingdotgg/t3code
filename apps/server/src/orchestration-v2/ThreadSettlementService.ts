@@ -26,6 +26,7 @@ import * as Semaphore from "effect/Semaphore";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
+import * as DeviceService from "../device/DeviceService.ts";
 import * as GitManager from "../git/GitManager.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
@@ -338,6 +339,7 @@ export const make = Effect.gen(function* () {
     quietOpenReadAt.clear();
   });
   const terminals = yield* TerminalManager.TerminalManager;
+  const devices = yield* DeviceService.DeviceService;
   const projectScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   // Repeated thread.settled retains settledAt; run the action only once per settlement.
   const settleActionRunAt = new Map<ThreadId, number>();
@@ -696,12 +698,55 @@ export const make = Effect.gen(function* () {
       return sweepThread(threadId).pipe(FiberSet.run(threadSweeps), Effect.asVoid);
     });
 
+  // Per device: a thread without devices skips the lock a starting host holds, and one
+  // unreachable host leaves no other device claimed. The settled check runs under that lock, so a
+  // thread re-engaged while a release waits keeps its devices.
+  const releaseSettledThreadDevices = Effect.fn(
+    "ThreadSettlementServiceV2.releaseSettledThreadDevices",
+  )(
+    function* (threadId: ThreadId) {
+      const stillSettled = projections
+        .getThread(threadId)
+        .pipe(Effect.map((thread) => thread.settledOverride === "settled"));
+      yield* Effect.forEach(
+        yield* devices.sessionsForThread(threadId),
+        ({ hostId, deviceId }) =>
+          devices.close({ threadId, hostId, deviceId }, { when: stillSettled }).pipe(
+            Effect.catch((error) =>
+              Effect.logWarning("releasing a settled thread's device failed", {
+                threadId,
+                hostId,
+                deviceId,
+                error,
+              }),
+            ),
+          ),
+        { discard: true },
+      );
+    },
+    (effect, threadId) =>
+      effect.pipe(
+        Effect.catchCauseIf(
+          (cause) => !Cause.hasInterruptsOnly(cause),
+          (cause) =>
+            Effect.logWarning("releasing a settled thread's devices failed", {
+              threadId,
+              cause: Cause.pretty(cause),
+            }),
+        ),
+      ),
+  );
+  // Releases wait on the device lock a starting host can hold for minutes, so they run beside
+  // the event loop instead of stalling every other thread's settle cleanup.
+  const deviceReleases = yield* FiberSet.make<void>();
+
   // Skip settle scripts in shared checkouts where other threads may still work.
   const cleanUpSettledThread = Effect.fn("ThreadSettlementServiceV2.cleanUpSettledThread")(
     function* (threadId: ThreadId) {
       const settled = yield* projections.getThread(threadId);
       if (settled.settledOverride !== "settled") return;
       yield* terminals.closeOnSettle({ threadId });
+      yield* releaseSettledThreadDevices(threadId).pipe(FiberSet.run(deviceReleases));
       const worktreePath = settled.worktreePath;
       if (worktreePath === null || !(yield* fileSystem.exists(worktreePath))) return;
       // Recheck after closing and worktree I/O; re-engaged threads must not be cleaned up.
@@ -835,6 +880,9 @@ export const make = Effect.gen(function* () {
 
   return {
     start,
-    drain: Effect.andThen(fullSweeps.drain, FiberSet.awaitEmpty(threadSweeps)),
+    drain: fullSweeps.drain.pipe(
+      Effect.andThen(FiberSet.awaitEmpty(threadSweeps)),
+      Effect.andThen(FiberSet.awaitEmpty(deviceReleases)),
+    ),
   } satisfies ThreadSettlementServiceV2["Service"];
 });
