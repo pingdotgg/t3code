@@ -1,18 +1,36 @@
-import { AcpRegistryOperationError, ProviderInstanceId } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import {
+  AcpRegistryOperationError,
+  ProviderInstanceId,
+  type ServerProvider,
+} from "@t3tools/contracts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import { AcpRegistrySettings } from "../settings.ts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
+import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 import {
+  AcpRegistryDriver,
   applyAcpRegistryAvailableCommands,
   applyAcpRegistryLiveConfiguration,
   buildCheckedAcpRegistrySnapshot,
   checkAcpRegistryProviderReadiness,
   checkAcpRegistryProviderStatus,
 } from "./driver.ts";
+import { normalizeAcpRegistryLiveConfiguration } from "./probe.ts";
 
 const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
 const identity = {
@@ -206,6 +224,53 @@ describe("acpRegistrySnapshotReadiness", () => {
         capabilities: { optionDescriptors: [{ id: "effort", currentValue: "high" }] },
       },
     ]);
+
+    // Session configOptions describe the current model only.
+    const sharedMode = {
+      id: "mode",
+      label: "Mode",
+      type: "select" as const,
+      options: [{ id: "ask", label: "Ask" }],
+      currentValue: "ask",
+    };
+    const twoModelList = [
+      { id: "glm", name: "GLM", description: null },
+      { id: "opus", name: "Opus", description: null },
+    ];
+    const afterGlm = applyAcpRegistryLiveConfiguration(
+      provider,
+      {
+        models: twoModelList,
+        currentModelId: "glm",
+        configOptions: [...liveOptions, sharedMode],
+        modelOptionIds: ["effort"],
+      },
+      [],
+    );
+    const twoModels = afterGlm.models;
+    expect(twoModels.find((model) => model.slug === "glm")).toMatchObject({
+      capabilities: { optionDescriptors: [{ id: "effort" }, { id: "mode" }] },
+    });
+    expect(
+      twoModels.find((model) => model.slug === "opus")?.capabilities?.optionDescriptors ?? [],
+    ).toEqual([sharedMode]);
+    // A later session on another model keeps the options learned for this one.
+    const afterOpus = applyAcpRegistryLiveConfiguration(
+      afterGlm,
+      {
+        models: twoModelList,
+        currentModelId: "opus",
+        configOptions: [{ ...liveOptions[0]!, id: "thinking" }, sharedMode],
+        modelOptionIds: ["thinking"],
+      },
+      [],
+    ).models;
+    expect(afterOpus.find((model) => model.slug === "glm")).toMatchObject({
+      capabilities: { optionDescriptors: [{ id: "mode" }, { id: "effort" }] },
+    });
+    expect(afterOpus.find((model) => model.slug === "opus")).toMatchObject({
+      capabilities: { optionDescriptors: [{ id: "thinking" }, { id: "mode" }] },
+    });
   });
 
   it("projects discovery without claiming authentication when no login methods are advertised", () => {
@@ -429,6 +494,207 @@ describe("acpRegistrySnapshotReadiness", () => {
         auth: { status: "unknown" },
         message: "Checking ACP authentication, models, and commands in the background...",
       });
+    }),
+  );
+});
+
+const fakeAgentSource = `
+import { readFileSync } from "node:fs";
+import { createInterface } from "node:readline";
+const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
+createInterface({ input: process.stdin }).on("line", (line) => {
+  const { id, method } = JSON.parse(line);
+  if (id === undefined) return;
+  if (method === "initialize") {
+    send({ id, result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [] } });
+  } else if (method === "session/new") {
+    const modelIds = JSON.parse(readFileSync(process.argv[2], "utf8"));
+    send({
+      id,
+      result: {
+        sessionId: "probe-session",
+        models: {
+          currentModelId: modelIds[0],
+          availableModels: modelIds.map((modelId) => ({ modelId, name: modelId })),
+        },
+      },
+    });
+    send({
+      method: "session/update",
+      params: {
+        sessionId: "probe-session",
+        update: { sessionUpdate: "available_commands_update", availableCommands: [] },
+      },
+    });
+  } else {
+    send({ id, result: {} });
+  }
+});
+`;
+
+const driverLayer = TestProviderHost.layer({ runBackgroundWork: false }).pipe(
+  Layer.provideMerge(AcpRegistryRuntimeCoordinator.layer),
+  Layer.provideMerge(IdAllocator.layer),
+  Layer.provideMerge(McpProviderSessions.layer),
+  Layer.provideMerge(
+    Layer.succeed(
+      ProviderEventLoggers.ProviderEventLoggers,
+      ProviderEventLoggers.NoOpProviderEventLoggers,
+    ),
+  ),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+);
+
+it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) => {
+  it.effect("drops cached and session-reported models when its caches are invalidated", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "acp-driver-" });
+      const agentPath = path.join(directory, "agent.mjs");
+      const modelsPath = path.join(directory, "models.json");
+      yield* fileSystem.writeFileString(agentPath, fakeAgentSource);
+      yield* fileSystem.writeFileString(modelsPath, JSON.stringify(["old-model"]));
+      const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
+
+      const instance = yield* AcpRegistryDriver.create({
+        instanceId: identity.instanceId,
+        displayName: identity.displayName,
+        enabled: true,
+        environment: [],
+        config: decodeSettings({ agentId: "test-agent" }),
+      }).pipe(
+        Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, {
+          ...catalogWithInspection({
+            status: "ready",
+            agentId: "test-agent",
+            version: "1.0.0",
+            distribution: "npx",
+          }),
+          resolve: () =>
+            Effect.succeed({
+              distribution: "npx" as const,
+              spawn: { command: process.execPath, args: [agentPath, modelsPath] },
+            }),
+        }),
+      );
+      const modelSlugs = instance.snapshot.streamChanges.pipe(
+        Stream.map((snapshot) => snapshot.models.map((model) => model.slug)),
+      );
+      const waitForModels = (expected: ReadonlyArray<string>) =>
+        modelSlugs.pipe(
+          Stream.filter((slugs) => slugs.join() === expected.join()),
+          Stream.runHead,
+        );
+
+      const probed = yield* waitForModels(["old-model"]).pipe(
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* instance.snapshot.refresh;
+      yield* Fiber.join(probed);
+      yield* coordinator.publishLiveConfiguration(
+        identity.instanceId,
+        normalizeAcpRegistryLiveConfiguration([], undefined, {
+          currentModelId: "old-model",
+          availableModels: [{ modelId: "old-model", name: "old-model" }],
+        }),
+      );
+      yield* fileSystem.writeFileString(modelsPath, JSON.stringify(["old-model", "new-model"]));
+
+      const refreshed = yield* waitForModels(["old-model", "new-model"]).pipe(
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* instance.invalidateCaches ?? Effect.void;
+      yield* instance.snapshot.refresh;
+      expect(Option.isSome(yield* Fiber.join(refreshed))).toBe(true);
+    }),
+  );
+
+  it.effect("keeps options learned for each model across a refresh", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "acp-driver-" });
+      const agentPath = path.join(directory, "agent.mjs");
+      const modelsPath = path.join(directory, "models.json");
+      yield* fileSystem.writeFileString(agentPath, fakeAgentSource);
+      yield* fileSystem.writeFileString(modelsPath, JSON.stringify(["model-a", "model-b"]));
+      const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
+
+      const instance = yield* AcpRegistryDriver.create({
+        instanceId: identity.instanceId,
+        displayName: identity.displayName,
+        enabled: true,
+        environment: [],
+        config: decodeSettings({ agentId: "test-agent" }),
+      }).pipe(
+        Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, {
+          ...catalogWithInspection({
+            status: "ready",
+            agentId: "test-agent",
+            version: "1.0.0",
+            distribution: "npx",
+          }),
+          resolve: () =>
+            Effect.succeed({
+              distribution: "npx" as const,
+              spawn: { command: process.execPath, args: [agentPath, modelsPath] },
+            }),
+        }),
+      );
+      const effortBySlug = (snapshot: ServerProvider) =>
+        snapshot.models
+          .map(
+            (model) =>
+              `${model.slug}:${(model.capabilities?.optionDescriptors ?? []).map((option) => option.id).join("+")}`,
+          )
+          .join();
+      const waitFor = (expected: string) =>
+        instance.snapshot.streamChanges.pipe(
+          Stream.filter((snapshot) => effortBySlug(snapshot) === expected),
+          Stream.runHead,
+        );
+      const session = (currentModelId: string) =>
+        normalizeAcpRegistryLiveConfiguration(
+          [
+            {
+              id: "effort",
+              name: "Effort",
+              category: "thought_level",
+              type: "select",
+              currentValue: "high",
+              options: [
+                { value: "low", name: "Low" },
+                { value: "high", name: "High" },
+              ],
+            },
+          ],
+          undefined,
+          {
+            currentModelId,
+            availableModels: [
+              { modelId: "model-a", name: "model-a" },
+              { modelId: "model-b", name: "model-b" },
+            ],
+          },
+        );
+
+      const probed = yield* waitFor("model-a:,model-b:").pipe(
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* instance.snapshot.refresh;
+      yield* Fiber.join(probed);
+      const learned = yield* waitFor("model-a:effort,model-b:effort").pipe(
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* coordinator.publishLiveConfiguration(identity.instanceId, session("model-b"));
+      yield* coordinator.publishLiveConfiguration(identity.instanceId, session("model-a"));
+      yield* Fiber.join(learned);
+
+      yield* instance.snapshot.refresh;
+      expect(effortBySlug(yield* instance.snapshot.getSnapshot)).toBe(
+        "model-a:effort,model-b:effort",
+      );
     }),
   );
 });

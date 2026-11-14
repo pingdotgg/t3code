@@ -28,6 +28,9 @@ import {
 } from "@t3tools/contracts";
 import { onTestFinished, vi } from "vite-plus/test";
 
+import { buildIncomingShareDraft } from "../features/sharing/incoming-share-model";
+import { composerContextSendBlockReason } from "../lib/composerContext";
+
 const composerDraftFileMocks = vi.hoisted(() => {
   let document = JSON.stringify({ schemaVersion: 1, drafts: {} });
   let readError: Error | null = null;
@@ -205,6 +208,7 @@ import {
   restoreComposerDraftSnapshotState,
   restoreCloudComposerDrafts,
   retargetNewTaskDraft,
+  retargetSavedNewTaskDraft,
   setComposerDraftText,
   insertComposerDraftContext,
   insertComposerDraftText,
@@ -457,7 +461,7 @@ describe("mobile composer drafts", () => {
         const restored = history.restore(text, getComposerDraftSnapshot(key));
         setComposerDraftText(key, text);
         setComposerDraftContext(key, restored.context);
-        appendComposerDraftAttachments(key, restored.attachments, { allowOverflow: true });
+        appendComposerDraftAttachments(key, restored.attachments, { restore: true });
       };
       try {
         changeText("");
@@ -801,6 +805,32 @@ describe("mobile composer drafts", () => {
     expect(getComposerDraftSnapshot(key).text).toBe("keep newly typed text pasted");
   });
 
+  it("keeps a pending paste before text typed at its caret, and the caret after that text", async () => {
+    const key = "environment-1:typing-at-paste-point";
+    const image = {
+      id: "image",
+      type: "file" as const,
+      name: "picture.png",
+      mimeType: "text/plain",
+      sizeBytes: 4,
+      fileUri: "file:///picture.png",
+    };
+    setComposerDraftText(key, "Before ");
+    const insertion = captureComposerDraftInsertion(key, { start: 7, end: 7 });
+    const write = Promise.withResolvers<void>();
+    const pending = write.promise.then(() =>
+      appendComposerDraftAttachments(key, [image], { appendReference: true, insertion }),
+    );
+    setComposerDraftText(key, "Before yaz");
+    rememberComposerDraftSelection(key, "Before yaz", { start: 10, end: 10 });
+    write.resolve();
+    expect(await pending).toBe(0);
+    const link = "[picture.png](t3-context://v1/file/image)";
+    expect(getComposerDraftSnapshot(key).text).toBe(`Before ${link} yaz`);
+    const caret = `Before ${link} yaz`.length;
+    expect(captureComposerDraftInsertion(key)).toMatchObject({ start: caret, end: caret });
+  });
+
   it.each(["attachment", "context", "imported context"])(
     "releases a selected file when replaced by %s",
     async (kind) => {
@@ -1053,10 +1083,43 @@ describe("mobile composer drafts", () => {
     const overflowRejected = appendComposerDraftAttachments(
       draftKey,
       [makeAttachment("restored-1")],
-      { allowOverflow: true },
+      { restore: true },
     );
     expect(overflowRejected).toBe(0);
     expect(appAtomRegistry.get(composerDraftsAtom)[draftKey]?.attachments).toHaveLength(101);
+  });
+
+  it("drops duplicate attachments, releases their files, and keeps them on restore", async () => {
+    const outboxLoad = vi.spyOn(threadOutboxManager, "load").mockResolvedValue(true);
+    onTestFinished(() => outboxLoad.mockRestore());
+    const cleanup = Promise.withResolvers<void>();
+    composerAttachmentCleanupMocks.remove.mockImplementationOnce(async () => {
+      cleanup.resolve();
+    });
+    const makeVideo = (id: string) => ({
+      id,
+      type: "file" as const,
+      name: "clip.mov",
+      mimeType: "video/quicktime",
+      sizeBytes: 42,
+      fileUri: `file:///documents/t3-composer-attachments/${id}.mov`,
+    });
+    const draftKey = "new-task:environment-1:project-duplicates";
+    appAtomRegistry.set(composerDraftsAtom, {
+      [draftKey]: { text: "", attachments: [makeVideo("held")] },
+    });
+
+    expect(
+      appendComposerDraftAttachments(draftKey, [makeVideo("again"), makeVideo("again-2")]),
+    ).toBe(0);
+    expect(appAtomRegistry.get(composerDraftsAtom)[draftKey]?.attachments).toEqual([
+      makeVideo("held"),
+    ]);
+    await cleanup.promise;
+    expect(composerAttachmentCleanupMocks.remove).toHaveBeenCalledWith(makeVideo("again").fileUri);
+
+    appendComposerDraftAttachments(draftKey, [makeVideo("restored")], { restore: true });
+    expect(appAtomRegistry.get(composerDraftsAtom)[draftKey]?.attachments).toHaveLength(2);
   });
 
   it("keeps shared attachment files until every draft releases them", async () => {
@@ -1900,7 +1963,7 @@ describe("mobile composer drafts", () => {
     expect(getComposerDraftSnapshot(second).text).toBe("second idea");
   });
 
-  it("retargets a new-task draft to another project without losing its text", () => {
+  it("retargets a new-task draft to another project, keeping only a pull request workspace", () => {
     const from = {
       environmentId: EnvironmentId.make("environment-1"),
       projectId: ProjectId.make("project-1"),
@@ -1921,7 +1984,7 @@ describe("mobile composer drafts", () => {
     });
     const createdAt = getComposerDraftSnapshot(key).project?.createdAt;
 
-    retargetNewTaskDraft(key, to);
+    retargetNewTaskDraft(key, to, { keepPullRequestWorkspace: true });
 
     const moved = getComposerDraftSnapshot(key);
     expect(moved.text).toBe("moving house");
@@ -1931,6 +1994,46 @@ describe("mobile composer drafts", () => {
     expect(moved.project).toEqual({ ...to, createdAt });
     expect(findNewTaskDraftKeys(appAtomRegistry.get(composerDraftsAtom), from)).toEqual([]);
     expect(findNewTaskDraftKeys(appAtomRegistry.get(composerDraftsAtom), to)).toEqual([key]);
+
+    const pullRequestSelection = {
+      mode: "worktree" as const,
+      branch: "feature/pr-head",
+      worktreePath: "/old-machine/worktrees/pr-42",
+      startFromOrigin: false,
+      pullRequestReference: "https://github.com/acme/repo/pull/42",
+    };
+    updateComposerDraftSettings(key, { workspaceSelection: pullRequestSelection });
+    retargetNewTaskDraft(key, from, { keepPullRequestWorkspace: true });
+    expect(getComposerDraftSnapshot(key).workspaceSelection).toEqual({
+      ...pullRequestSelection,
+      worktreePath: null,
+    });
+    retargetNewTaskDraft(key, to);
+    expect(getComposerDraftSnapshot(key).workspaceSelection).toBeUndefined();
+  });
+
+  it("retargets a saved new-task draft only after drafts load", async () => {
+    const from = {
+      environmentId: EnvironmentId.make("environment-1"),
+      projectId: ProjectId.make("project-1"),
+    };
+    const to = {
+      environmentId: EnvironmentId.make("environment-1"),
+      projectId: ProjectId.make("project-2"),
+    };
+    const key = createNewTaskDraft(from);
+    setComposerDraftText(key, "kept through a cold start");
+    await flushComposerDrafts();
+    appAtomRegistry.set(composerDraftsAtom, {});
+    resetComposerDraftsLoadState();
+
+    await expect(retargetSavedNewTaskDraft(key, to)).resolves.toBe(true);
+    expect(getComposerDraftSnapshot(key)).toMatchObject({
+      text: "kept through a cold start",
+      project: to,
+    });
+    await expect(retargetSavedNewTaskDraft(`${key}-gone`, to)).resolves.toBe(false);
+    expect(appAtomRegistry.get(composerDraftsAtom)[`${key}-gone`]).toBeUndefined();
   });
 
   it("merges persisted option memory without replacing newer choices", async () => {
@@ -2162,7 +2265,7 @@ describe("mobile composer drafts", () => {
   it("merges shared content into a project draft without duplicating retries", () => {
     const draftKey = "new-task:environment-1:project-1";
     const sharedAttachment = {
-      id: "share-1:image:0",
+      id: "share-1-image-0",
       type: "image" as const,
       name: "Screenshot.png",
       mimeType: "image/png",
@@ -2197,7 +2300,7 @@ describe("mobile composer drafts", () => {
   it("shows a shared non-image file as a composer chip", () => {
     const draftKey = "new-task:environment-1:project-1";
     const sharedFile = {
-      id: "share-1:file:0",
+      id: "share-1-file-0",
       type: "file" as const,
       name: "backup.json",
       mimeType: "application/json",
@@ -2230,6 +2333,37 @@ describe("mobile composer drafts", () => {
     const once = mergeComposerDraftContentState({}, draftKey, recovered);
     expect(once[draftKey]?.text).toBe("Retry this");
     expect(mergeComposerDraftContentState(once, draftKey, recovered)).toBe(once);
+  });
+
+  it("lets a shared file through the send check", async () => {
+    const { attachments } = await buildIncomingShareDraft({
+      id: "share-1",
+      createdAt: "2026-07-15T10:00:00.000Z",
+      payloads: [
+        {
+          shareType: "file",
+          value: "file:///shared/report.xlsx",
+          mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          originalName: "report.xlsx",
+        },
+      ],
+      resolvedPayloads: [],
+      fileReader: {
+        readBase64: async () => "",
+        readSize: async () => 42,
+        removeOwnedFile: async () => {},
+      },
+    });
+    const draftKey = "new-task:environment-1:project-1";
+
+    const merged = mergeComposerDraftContentState({}, draftKey, {
+      text: "",
+      attachments,
+      sourceShareId: "share-1",
+    })[draftKey]!;
+
+    expect(merged.context?.records).toHaveLength(1);
+    expect(composerContextSendBlockReason(merged.context)).toBeNull();
   });
 
   it("preserves existing images when shared content exceeds the draft attachment limit", () => {

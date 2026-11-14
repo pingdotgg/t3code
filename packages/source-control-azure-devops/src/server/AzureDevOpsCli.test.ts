@@ -9,6 +9,9 @@ import { VcsProcessExitError, VcsProcessSpawnError } from "@t3tools/contracts";
 
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
+import { AzureCliInstallLocation, type AzureCliInstall } from "./azureCliLauncher.ts";
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 
 const processOutput = (stdout: string): SourceControlHost.SourceControlProcessOutput => ({
@@ -21,9 +24,11 @@ const processOutput = (stdout: string): SourceControlHost.SourceControlProcessOu
 
 const mockRun = vi.fn<SourceControlHost.SourceControlHost["Service"]["process"]["run"]>();
 
+// The CLI layer is exercised on a host that spawns `az` itself, so the launcher upgrade stays out of these assertions.
 const layerSupport = Layer.mergeAll(
   TestSourceControlHost.layer({ process: { run: mockRun } }),
   NodeServices.layer,
+  Layer.succeed(HostProcess.Platform, "linux"),
 );
 const layer = Layer.mergeAll(AzureDevOpsCli.layer.pipe(Layer.provide(layerSupport)), layerSupport);
 
@@ -82,6 +87,12 @@ describe("AzureDevOpsCli.layer", () => {
       assert.strictEqual(
         classifyFailure?.("TF401180: The requested pull request was not found."),
         "not-found",
+      );
+      assert.strictEqual(
+        classifyFailure?.(
+          "ERROR: TF400733: The request has been canceled: Request was blocked due to exceeding usage of resource 'Global' in namespace 'User'.",
+        ),
+        "rate-limited",
       );
       assert.deepStrictEqual(call, {
         operation: "AzureDevOpsCli.execute",
@@ -337,5 +348,50 @@ describe("AzureDevOpsCli.layer", () => {
       assert.instanceOf(error, AzureDevOpsCli.AzureDevOpsCliRateLimitError);
       assert.strictEqual(error.cause, cause);
     }).pipe(Effect.provide(layer)),
+  );
+});
+
+describe("azureCliInvocation", () => {
+  const launcher = "C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\wbin\\az.cmd";
+  const msi: AzureCliInstall = {
+    interpreter: "C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\python.exe",
+    installer: "MSI",
+  };
+
+  const invocationFor = (install: AzureCliInstall | undefined) =>
+    AzureDevOpsCli.azureCliInvocation().pipe(
+      Effect.provideService(HostProcess.Platform, "win32"),
+      Effect.provideService(HostProcess.Environment, { PATH: "C:\\tools" }),
+      Effect.provideService(SpawnExecutableResolution, () => launcher),
+      Effect.provideService(AzureCliInstallLocation, () => install),
+    );
+
+  it.effect("runs the install's interpreter in UTF-8 mode", () =>
+    Effect.gen(function* () {
+      assert.deepStrictEqual(yield* invocationFor(msi), {
+        command: msi.interpreter,
+        args: ["-X", "utf8", "-IBm", "azure.cli"],
+        env: { AZ_INSTALLER: "MSI" },
+      });
+    }),
+  );
+
+  it.effect("keeps the launcher when the install is not recognized", () =>
+    Effect.gen(function* () {
+      assert.deepStrictEqual(yield* invocationFor(undefined), {
+        command: "az",
+        args: [],
+      });
+    }),
+  );
+
+  it.effect("spawns az directly off Windows", () =>
+    Effect.gen(function* () {
+      const invocation = yield* AzureDevOpsCli.azureCliInvocation().pipe(
+        Effect.provideService(HostProcess.Platform, "linux"),
+      );
+
+      assert.deepStrictEqual(invocation, { command: "az", args: [] });
+    }),
   );
 });

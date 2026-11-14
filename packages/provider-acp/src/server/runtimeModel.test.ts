@@ -361,6 +361,50 @@ describe("AcpRuntimeModel", () => {
     ).toBe(true);
   });
 
+  it("clears explicitly nulled ACP v2 tool call fields and replaces raw input", () => {
+    const toolCall = (update: Omit<EffectAcpSchema.ToolCallUpdate, "toolCallId">) => {
+      const parsed = parseSessionUpdateEvent({
+        sessionId: "session-1",
+        update: { sessionUpdate: "tool_call_update", toolCallId: "call-1", ...update },
+      } satisfies EffectAcpSchema.SessionNotification);
+      const event = parsed.events.find((candidate) => candidate._tag === "ToolCallUpdated");
+      if (!event || event._tag !== "ToolCallUpdated") {
+        throw new Error("expected a tool call update");
+      }
+      return event.toolCall;
+    };
+
+    const created = toolCall({
+      name: "old-name",
+      title: "Old title",
+      kind: "read",
+      status: "in_progress",
+      content: [{ type: "content", content: { type: "text", text: "old output" } }],
+      rawInput: { path: "old.txt", obsolete: true },
+      _meta: { old: true },
+    });
+
+    expect(
+      mergeToolCallState(created, toolCall({ rawInput: { path: "new.txt" } })).data.rawInput,
+    ).toEqual({ path: "new.txt" });
+
+    const cleared = mergeToolCallState(
+      created,
+      toolCall({
+        name: null,
+        title: null,
+        kind: null,
+        status: null,
+        content: null,
+        rawInput: null,
+        _meta: null,
+      }),
+    );
+    const { name, title, kind, content, rawInput, meta } = cleared.data;
+    expect({ name, title, kind, content, rawInput, meta }).toEqual({});
+    expect({ kind: cleared.kind, title: cleared.title, status: cleared.status }).toEqual({});
+  });
+
   it("forwards an empty ACP v1 plan to clear previous entries", () => {
     const entries = [
       [{ content: "Inspect state", priority: "high", status: "pending" }],
@@ -1364,6 +1408,29 @@ describe("extractMcpToolCallIdentity", () => {
         tool: "delegate_task",
       });
     }
+  });
+
+  it("recovers T3 identity from Hermes editor-renamed MCP tool titles", () => {
+    const identityFor = (title: string) =>
+      extractMcpToolCallIdentity(
+        toolCallFromUpdate({
+          sessionUpdate: "tool_call",
+          toolCallId: "hermes-1",
+          kind: "other",
+          title,
+          status: "pending",
+          rawInput: { title: "Chart", html: "<p>hi</p>", height: 320 },
+        }),
+      );
+
+    expect(identityFor("mcp__editor_t3_code_f6129534__html_render")).toEqual({
+      server: "t3-code",
+      tool: "html_render",
+    });
+    expect(identityFor("mcp__editor_github_1234abcd__html_render")).toEqual({
+      server: "editor_github_1234abcd",
+      tool: "html_render",
+    });
   });
 
   it("recovers T3 identity from Kiro's @-scoped titles", () => {
