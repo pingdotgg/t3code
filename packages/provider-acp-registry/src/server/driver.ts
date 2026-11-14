@@ -672,9 +672,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       ...(isZaiUsageLimitsInstance(effectiveConfig)
         ? {
             onPromptRequestError: () => {
-              runInInstanceScope(
-                (snapshot.refreshUsage ?? Effect.void).pipe(Effect.ignoreCause({ log: true })),
-              );
+              runInInstanceScope(rereadGlmUsage.pipe(Effect.ignoreCause({ log: true })));
             },
           }
         : {}),
@@ -801,6 +799,19 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           ...(limits.unavailable === undefined ? {} : { unavailable: limits.unavailable }),
         }),
       );
+    const glmRereadSemaphore = yield* Semaphore.make(1);
+    // Reads directly: refreshUsage skips limits a missing-credentials read marked unsupported.
+    // Failures that land together share one read.
+    const rereadGlmUsage =
+      glmUsageCache === null
+        ? Effect.void
+        : glmUsageCache.readFresh.pipe(
+            Effect.flatMap((limits) =>
+              limits === undefined ? Effect.void : applyGlmReading(limits),
+            ),
+            glmRereadSemaphore.withPermitsIfAvailable(1),
+            Effect.asVoid,
+          );
     const checkProvider = Effect.gen(function* () {
       const cached = glmUsageCache === null ? { limits: undefined } : yield* glmUsageCache.get;
       return yield* checkAcpRegistryProvider({
