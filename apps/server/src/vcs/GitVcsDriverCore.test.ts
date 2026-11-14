@@ -8411,4 +8411,51 @@ it.layer(layerTest)("branch change totals after a failed untracked listing", (it
       assert.deepStrictEqual(status.branchChanges, { baseRef: null, insertions: 2, deletions: 0 });
     }),
   );
+
+  it.effect("share one listing between overlapping status reads", () =>
+    Effect.gen(function* () {
+      const cwd = yield* makeTmpDir("git-untracked-shared-");
+      yield* initRepoWithCommit(cwd);
+      yield* writeTextFile(cwd, "notes.txt", "one\ntwo\n");
+      const firstListing = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const secondReadAtListing = yield* Deferred.make<void>();
+      let listings = 0;
+      let branchChecks = 0;
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          const args = ChildProcess.isStandardCommand(command) ? command.args.map(String) : [];
+          if (args.includes("ls-files") && args.includes("--others") && ++listings === 1) {
+            yield* Deferred.succeed(firstListing, undefined);
+            yield* Deferred.await(release);
+          }
+          const handle = yield* delegate.spawn(command);
+          // A read's branch check is its last Git command before the listing.
+          if (!args.includes("refs/heads/main") || ++branchChecks !== 2) return handle;
+          return ChildProcessSpawner.makeHandle({
+            ...handle,
+            exitCode: handle.exitCode.pipe(
+              Effect.tap(() => Deferred.succeed(secondReadAtListing, undefined)),
+            ),
+          });
+        }),
+      );
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provide(layerServerConfig),
+      );
+      const read = driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
+
+      const first = yield* Effect.forkChild(read);
+      yield* Deferred.await(firstListing);
+      const second = yield* Effect.forkChild(read);
+      yield* Deferred.await(secondReadAtListing);
+      yield* Deferred.succeed(release, undefined);
+      const totals = { baseRef: null, insertions: 2, deletions: 0 };
+      assert.deepStrictEqual((yield* Fiber.join(first)).branchChanges, totals);
+      assert.deepStrictEqual((yield* Fiber.join(second)).branchChanges, totals);
+      assert.strictEqual(listings, 1, "the second read used the listing already running");
+    }),
+  );
 });
