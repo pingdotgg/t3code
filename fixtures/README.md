@@ -95,7 +95,8 @@ fixtures/recorder/rust-scenarios.sh live              # 22 scenarios, 27 Claude 
 ```
 
 Both write recordings to a new temp folder (or `--out <dir>`), and `CONN_RECORDER_SHOTS=<dir>`
-keeps the screenshots. `fake` runs `target/release/examples/replay_server`, the engine's
+keeps the screenshots. The fake set is not in `tools/check.sh`: it passed in each full run
+(2026-11-14), but it takes about 17 minutes, twice the whole check. `fake` runs `target/release/examples/replay_server`, the engine's
 scripted fake provider: no tool runs, so the follow-up and queue scenarios send into the next
 turn, not into a running one, and the worktree scenario writes the agent's file itself.
 `live` runs `target/release/conn-server` with the user's own Claude login and settings, and
