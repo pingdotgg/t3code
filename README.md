@@ -84,6 +84,7 @@ line when the variable is missing. Without it, `tools/check.sh` runs the Rust ch
 | Ack window          | same, with `target/release/examples/effect_fixture --fixture`                                                                   | Ack window and `Interrupt`                                                                           |
 | Client reducers     | `cargo run -p conn-engine --features fake-provider --example export_turn -- x.json`, then `crates/conn-engine/tools/client-check.mjs x.json` | Shell and thread streams rebuild the right state in the client's reducers                            |
 | Replay              | `node crates/conn-server/tools/replay.mjs target/release/examples/replay_server`                                                | Every call in the `remote` and `turn` recordings gets a decodable answer or the not-supported defect |
+| Text generation     | `node crates/conn-server/tools/textgen-diff.mjs target/release/examples/text_generation` | Text generator requests and answers, title prompts, contexts and titles equal T3's own code, on a loopback stub |
 | MCP parity          | `node crates/conn-mcp/tools/parity.mjs target/release/examples/replay_server`                                                   | `/mcp` answers as the T3 server's does, on the same calls                                            |
 | Codex instructions  | `node crates/conn-provider-codex/tools/gen-instructions.mjs --check`                                                             | T3's Codex `additionalContext` text is current, byte for byte                                         |
 | Codex conformance   | `node crates/conn-provider-codex/tools/conformance.mjs`                                                                         | Codex argv, environment, every stdin frame and shutdown equal the T3 server's, on a stub `codex`      |
@@ -390,7 +391,7 @@ to the socket.
 
 ## Status
 
-**Coverage:** 98 of 236 methods (20 of 33 streams), from the method table at startup. Every
+**Coverage:** 99 of 236 methods (20 of 33 streams), from the method table at startup. Every
 registered method checks the scope the T3 server requires (`src/scopes.rs`, its table
 generated). `assets.createUrl`, `terminal.open` and `terminal.attach` also get the contract's
 length, pattern and range limits before decode (`src/limits.rs`, its table generated). Every registered method but two has a run that decodes its answer with the real
@@ -406,6 +407,7 @@ lists what it serves.
 | Workspace       | `conn-vcs` (status, refs, review, worktrees), `conn-files` (files, search, assets, uploads)     |
 | Terminals       | `conn-terminal`                                                                                 |
 | Source control  | `conn-source-control`: discovery of 7 hosts, all 9 `sourceControl.*` (repositories on all 7 hosts)  |
+| Text generators | `src/text_generation/`: `server.listTextGeneratorModels` and thread titles through the user's own model API (`docs/server-area.md`, "Text generators") |
 
 The server joins them in `src/host.rs`: each provider session gets a `/mcp` credential, messages
 claim their uploads, a `worktree` launch provisions a worktree, archive and delete close the
@@ -474,9 +476,11 @@ What a real Conn session hits that this server does not do:
   scheduled-task edits, provider sign-in and install, peer links, discovered local servers and
   the other methods the startup coverage line lists as missing.
 - **No checkpoints:** turns are not captured as git refs, so no turn diff or restore.
-- **No title model wired:** `generateTitle` keeps the client's seed title. A generator must call
-  the provider the way the T3 server does.
-- **`/mcp` serves 20 of 87 T3 tools** (`crates/conn-mcp/README.md`).
+- **Titles only through a text generator:** a thread title is generated when the title model
+  is a text generator (`crates/conn-server/src/text_generation/`). With an agent title model
+  (Codex, the default, or Claude) the thread keeps the client's seed title: the T3 server asks
+  that provider, this server does not (`docs/server-area.md`, "Text generators").
+- **`/mcp` serves 28 of 87 T3 tools** (`crates/conn-mcp/README.md`).
 - **Worktree launch:** the worktree is made before the thread exists; `prepared-run.*` stays
   refused and no project setup script runs.
 - **Providers:** Claude, Codex and Grok (Grok without background work or subagents). Their gaps are in each crate's README.

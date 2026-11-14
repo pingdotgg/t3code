@@ -118,4 +118,39 @@ mod tests {
         let thread: ThreadId = from_json(serde_json::json!("t1")).unwrap();
         assert_eq!(thread.as_str(), "t1");
     }
+
+    /// `gen-contract.mjs` writes a redacting `Debug` for every field the contract marks as a
+    /// secret (`isSecretSetting`), a `Redacted` value, and a field named `secret`.
+    #[test]
+    fn secret_fields_never_show_in_debug() {
+        const SECRET: &str = "s3cr3t-value";
+        let signature: ScheduledTaskUpsertScheduleWebhookSignature = from_json(serde_json::json!({
+            "header": "x-hub-signature-256", "encoding": "hex", "prefix": "sha256=",
+            "secret": SECRET,
+        }))
+        .unwrap();
+        let answer: SecretRequestAnswerInputAnswerSave =
+            from_json(serde_json::json!({"type": "save", "secret": SECRET})).unwrap();
+        let generator: TextGeneratorConfig = from_json(serde_json::json!({
+            "kind": "openaiCompatible", "baseUrl": "https://api.example.com/v1", "apiKey": SECRET,
+        }))
+        .unwrap();
+        let ticket: AuthWebSocketTicketResult = from_json(
+            serde_json::json!({"ticket": SECRET, "expiresAt": "2026-01-01T00:00:00.000Z"}),
+        )
+        .unwrap();
+        for shown in [
+            format!("{signature:?}"),
+            format!("{answer:?}"),
+            format!("{generator:?}"),
+            format!("{ticket:?}"),
+            format!("{signature:#?}"),
+        ] {
+            assert!(!shown.contains(SECRET), "{shown}");
+            assert!(shown.contains("<redacted>"), "{shown}");
+        }
+        // The other fields still show, and the wire keeps the value.
+        assert!(format!("{signature:?}").contains("x-hub-signature-256"));
+        assert_eq!(to_json(&answer)["secret"], SECRET);
+    }
 }

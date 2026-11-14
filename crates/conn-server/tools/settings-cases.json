@@ -175,6 +175,25 @@
       "name": "T3 Connect device approval is stored like any setting",
       "stored": {},
       "patch": { "requireConnectDeviceApproval": true }
+    },
+    {
+      "name": "turning a text generator off echoes the marker and keeps the key",
+      "stored": { "textGenerators": { "tg1": { "kind": "anthropic", "label": "Mine", "baseUrl": "https://api.example.com/v1", "apiKey": "tg-key", "enabled": true } } },
+      "patch": { "textGenerators": { "tg1": { "kind": "anthropic", "label": "Mine", "baseUrl": "https://api.example.com/v1", "apiKey": "••••••", "enabled": false } } }
+    },
+    {
+      "name": "a text generator is chosen as the title model with title instructions",
+      "stored": { "textGenerators": { "tg1": { "kind": "openaiCompatible", "baseUrl": "https://api.example.com/v1", "apiKey": "tg-key" } } },
+      "patch": {
+        "textGenerationModelSelection": { "instanceId": "tg1", "model": "small/model" },
+        "threadTitleInstructions": "  Use Title Case.  ",
+        "projectSettingsOverrides": { "p1": { "textGenerationModelSelection": { "instanceId": "tg1", "model": "other/model" } } }
+      }
+    },
+    {
+      "name": "a new text generator is added beside a saved one",
+      "stored": { "textGenerators": { "tg1": { "kind": "openaiCompatible", "baseUrl": "https://api.example.com/v1", "apiKey": "tg-key" } } },
+      "patch": { "textGenerators": { "openrouter": { "kind": "openaiCompatible", "label": "OpenRouter", "baseUrl": "https://openrouter.ai/api/v1", "apiKey": "or-key", "enabled": true } } }
     }
   ]
 }

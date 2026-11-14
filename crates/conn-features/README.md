@@ -59,7 +59,9 @@ with its state and what it needs from outside the server.
   unbound tasks launch a thread through `launchThread` (the first message carries
   `scheduledTaskId` and the task's creator), bound tasks queue a `message.dispatch` in their
   thread and follow it when it moves to another project. The run's end is recorded only on the
-  row it marked running. A follower watches the run up to 24 hours and records a provider
+  row it marked running. `runNow` runs in the caller's future, as in T3: a caller that stops
+  waiting stops the run, which is recorded as failed with T3's interrupt text ("All fibers
+  interrupted without error"), counted and planned again (`releaseStuckRun`). A follower watches the run up to 24 hours and records a provider
   failure after an accepted message (`recordRunFailure`); one follower per task.
 - **Restarts:** rows left `running` are recorded as failed ("Run was interrupted by a server
   restart.") and planned again; a one-time run counts from its start.
@@ -68,18 +70,45 @@ with its state and what it needs from outside the server.
 
 ### Differences from the T3 server
 
-- A run started by `runNow` goes on when the caller stops waiting, and always records its end.
-  T3 cancels it and records it as failed.
 - No webhook tasks (see the table). No managed policy, so no
   `blockedByPolicy` and no runtime-mode ceiling.
 - The timer runs a task at its due time; T3 runs it on the next 5-second poll.
 - `upsert` also refuses a 501st task.
 
+### Webhook tasks: what is left
+
+Not built; the three methods stay unregistered, a webhook save is refused, and no `/api/hooks`
+route exists. What a port needs, from `apps/server/src/scheduledTasks/`:
+
+- The route (`webhookRoute.ts`): `GET`, `POST`, `PUT`, `PATCH` on
+  `/api/hooks/<task id>/<token>`, `HEAD` answers 405; body at most 1 MiB, also when chunked;
+  answers 202 (with `x-t3-hook-outcome`), 401, 404 (an unknown hook and a wrong token look
+  the same), 409, 410, 413, 429, 500.
+- The checks (`ScheduledTaskService.ts:2112`): the token compared in constant time; HMAC-SHA256
+  over the raw body (`webhookVerification.ts`, hex or base64, an optional prefix); the
+  maximum delivery age; filters (`webhookFilter.ts`); rejected requests rate-limited before
+  the signature work.
+- Rate and queue: 60 runs a minute per task, 20 queued, replay and coalesce keys with a
+  window (`webhookDedupe.ts`, a pending table with states), relay delivery claims kept 48 h.
+- The prompt: `renderWebhookPrompt` (`webhookTemplate.ts`) with a random frame id, refused
+  above the provider's input limit.
+- The log: 50 + 20 + 20 deliveries kept per task, bodies up to 64 KiB, secret headers and
+  query values redacted; `listWebhookDeliveries`, `getWebhookDelivery`.
+- The secret: stored with the task (T3: the `webhook_secret` column, clear text); here the task
+  row in `scheduled-tasks.json` (0600) would hold it. `secretRef` answers need `request_secret`
+  (not served).
+- The relay (T3 Connect): `url` stays `null` without one; the route works directly.
+- Tests to port: `ScheduledTaskService.webhook.test.ts` (2,200 lines), `webhookRoute.test.ts`,
+  `webhookFilter.test.ts`, `webhookTemplate.test.ts`, `webhookVerification.test.ts`.
+
+The generated `ScheduledTaskUpsertScheduleWebhookSignature` already hides its `secret` in
+`Debug` (`gen-contract.mjs`).
+
 ### Proofs
 
 - 31 unit tests: the cases of `Schedule.test.ts`, `ScheduledTaskService.interval.test.ts`,
-  `.schedule.test.ts` and `.test.ts` that do not need webhooks or managed policy, on a paused
-  tokio clock (`clock::TestClock` follows it), and the engine runner's outcome rules.
+  `.schedule.test.ts` and `.test.ts` that do not need webhooks or managed policy (with the
+  interrupted `runNow`), on a paused tokio clock (`clock::TestClock` follows it), and the engine runner's outcome rules.
 - `conn-engine`: `a_scheduled_launch_keeps_its_task_id_and_actor`.
 - `effect-client.mjs`: the five methods decode with the real client's decoders.
 - `conn-mcp`: refusal tests for every access rule, the normal path, and 19 `parity.mjs` steps

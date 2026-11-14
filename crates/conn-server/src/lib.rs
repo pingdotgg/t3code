@@ -16,6 +16,7 @@ pub mod serve;
 pub mod session;
 pub mod settings;
 pub mod table;
+pub mod text_generation;
 
 pub use http::{AppState, router};
 use table::MethodTable;

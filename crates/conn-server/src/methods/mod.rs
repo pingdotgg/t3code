@@ -18,6 +18,7 @@ mod scheduled;
 pub mod server;
 mod source_control;
 pub mod terminal;
+mod text_generation;
 pub mod vcs;
 
 /// Services handlers may use. `None` until the owning track wires it in `main.rs`.
@@ -38,6 +39,9 @@ pub struct Deps {
     pub scheduled_tasks: Option<conn_features::scheduled::ScheduledTasks>,
     /// Annotations (`conn_features::annotations`); without it `annotations.*` is not served.
     pub annotations: Option<conn_features::annotations::Annotations>,
+    /// Text generators (`crate::text_generation`); without it `listTextGeneratorModels` is not
+    /// served.
+    pub text_generators: Option<Arc<crate::text_generation::TextGenerators>>,
     /// Bumped when a provider's `ServerProvider` entry changes (`provider::ProviderStatus`).
     pub provider_status: provider::ProviderStatus,
 }
@@ -62,4 +66,5 @@ pub fn register_all(table: &mut MethodTable, deps: &Deps) {
     scheduled::register(table, deps);
     annotations::register(table, deps);
     source_control::register(table, deps);
+    text_generation::register(table, deps);
 }

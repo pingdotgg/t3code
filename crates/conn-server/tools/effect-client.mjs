@@ -5,6 +5,7 @@
 // decoders, for decode-coverage.mjs. Every folder it touches is a temp folder.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
+import * as NodeHttp from "node:http";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
@@ -270,6 +271,24 @@ const decodeEach = (client) =>
     yield* call("scheduledTasks.setEnabled", { id: taskId, enabled: false });
     yield* call("scheduledTasks.runNow", { id: none });
     yield* call("scheduledTasks.delete", { id: taskId });
+    // Text generators: an unsaved config against a model API stub on loopback, and a missing
+    // saved one (a typed error). No outside call.
+    const modelApi = NodeHttp.createServer((request, response) => {
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify({ data: [{ id: "model-b" }, { id: "model-a", name: "Model A" }] }));
+    });
+    yield* Effect.promise(() => new Promise((resolve) => modelApi.listen(0, "127.0.0.1", resolve)));
+    yield* call("server.listTextGeneratorModels", {
+      id: "effect-client-tg",
+      config: {
+        kind: "openaiCompatible",
+        baseUrl: `http://127.0.0.1:${modelApi.address().port}/v1`,
+        apiKey: "effect-client-key",
+        enabled: true,
+      },
+    });
+    yield* call("server.listTextGeneratorModels", { id: none });
+    yield* Effect.promise(() => new Promise((resolve) => modelApi.close(resolve)));
     // Annotations, in the project made above.
     yield* call("annotations.subscribe", { projectId: "effect-client-p1" });
     yield* call("annotations.create", {

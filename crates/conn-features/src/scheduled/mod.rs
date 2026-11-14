@@ -710,8 +710,9 @@ impl ScheduledTasks {
     }
 
     /// `runNow`: runs the task at once, also while it is paused. Answers after the run's
-    /// message went out, with the thread or `None` when the dispatch failed. The run goes on
-    /// when the caller stops waiting, so it always records its end.
+    /// message went out, with the thread or `None` when the dispatch failed. The run belongs
+    /// to the caller, as in the T3 server: when the caller stops waiting, the run stops and is
+    /// recorded as failed ([`INTERRUPTED_RUN`]).
     pub async fn run_now(&self, id: &str) -> Result<RunOutcome, TaskError> {
         let task = self.load_task(id).await?;
         if matches!(task.schedule, ScheduledTaskSchedule::Webhook(_)) {
@@ -720,10 +721,33 @@ impl ScheduledTasks {
                 Some(id),
             ));
         }
-        let service = self.clone();
-        tokio::spawn(async move { service.run_task(task, Trigger::Manual).await })
-            .await
-            .map_err(|_| TaskError::new("Could not run schedule task.", Some(id)))?
+        self.run_task(task, Trigger::Manual).await
+    }
+
+    /// `releaseStuckRun`: a run that stopped before it recorded its end is recorded as failed,
+    /// while its row is still marked running.
+    async fn release_stuck_run(&self, id: &str, started_iso: &str, message: &str) {
+        let now = self.now();
+        let mut tasks = self.inner.tasks.lock().await;
+        let mut next_tasks = tasks.clone();
+        let Some(slot) = next_tasks
+            .iter_mut()
+            .find(|t| t.id == id && t.last_run_status == ScheduledTaskRunStatus::Running)
+        else {
+            return;
+        };
+        let mut source = slot.clone();
+        source.last_run_at = Some(started_iso.to_owned());
+        slot.last_run_status = ScheduledTaskRunStatus::Failed;
+        slot.last_run_error = Some(message.to_owned());
+        slot.next_run_at = self.next_run_after_run(&source, Some(started_iso), now);
+        slot.updated_at = format_iso(now);
+        slot.run_count = slot.run_count.saturating_add(1);
+        if self.persist(&next_tasks).await.is_ok() {
+            *tasks = next_tasks;
+            drop(tasks);
+            self.notify_changed();
+        }
     }
 
     /// `runTask`.
@@ -783,6 +807,12 @@ impl ScheduledTasks {
         }
         let started_iso = format_iso(started);
         self.mark_running(&active.id, &started_iso).await?;
+        // From here a dropped run records its failure, as T3's `onError` does.
+        let mut stuck = StuckRun {
+            service: Some(self.clone()),
+            id: active.id.clone(),
+            started_iso: started_iso.clone(),
+        };
         let fire_key = format!("{}:{started}:{}", active.id, trigger.as_str());
         let command_id = format!("scheduled-task:{fire_key}");
         let message_id = format!("scheduled-task-message:{fire_key}");
@@ -825,9 +855,11 @@ impl ScheduledTasks {
             Ok(thread) => (ScheduledTaskRunStatus::Succeeded, None, Some(thread)),
             Err(error) => (ScheduledTaskRunStatus::Failed, Some(error), None),
         };
-        let (recorded, written) = self
+        let recorded = self
             .record_completion(&task, &started_iso, started, completed, status, error)
-            .await?;
+            .await;
+        stuck.service = None;
+        let (recorded, written) = recorded?;
         if written && let Some(thread) = &thread_id {
             self.follow_outcome(&active.id, &started_iso, thread, &message_id);
         }
@@ -1193,6 +1225,38 @@ fn resolve_thread_mode(
         ScheduledTaskThreadMode::Continue
     } else {
         stored
+    }
+}
+
+/// What a run that stops without an end records: T3's text for an interrupt-only cause
+/// (`Cause.squash`).
+pub const INTERRUPTED_RUN: &str = "All fibers interrupted without error";
+
+/// Armed while a run is marked running and has not recorded its end. Dropped armed (the
+/// caller of `runNow` stopped waiting), it records the run as failed.
+struct StuckRun {
+    service: Option<ScheduledTasks>,
+    id: String,
+    started_iso: String,
+}
+
+impl Drop for StuckRun {
+    fn drop(&mut self) {
+        let Some(service) = self.service.take() else {
+            return;
+        };
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let (id, started_iso) = (
+            std::mem::take(&mut self.id),
+            std::mem::take(&mut self.started_iso),
+        );
+        runtime.spawn(async move {
+            service
+                .release_stuck_run(&id, &started_iso, INTERRUPTED_RUN)
+                .await;
+        });
     }
 }
 

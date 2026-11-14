@@ -9,8 +9,6 @@ use serde_json::json;
 use crate::engine::Inner;
 use crate::{TitleKind, TitleRequest};
 
-/// `buildThreadTitlePrompt` caps the text it sends at 8,000 characters.
-const TITLE_INPUT_CHARS: usize = 8_000;
 /// Failure messages are cut to one line of 300 characters, as `TextGenerationError.detail` is.
 const FAILURE_CHARS: usize = 300;
 
@@ -26,9 +24,18 @@ fn failure_message(error: &str) -> String {
         .unwrap_or("Title generation failed.")
         .trim();
     if line.chars().count() > FAILURE_CHARS {
-        format!("{}...", cut(line, FAILURE_CHARS - 3))
+        // `${detail.slice(0, MAX_FAILURE_MESSAGE_LENGTH - 1)}…`
+        format!("{}\u{2026}", cut(line, FAILURE_CHARS - 1))
     } else {
         line.to_owned()
+    }
+}
+
+fn title_message(m: &serde_json::Value) -> crate::TitleMessage {
+    crate::TitleMessage {
+        role: m["role"].as_str().unwrap_or("user").to_owned(),
+        text: m["text"].as_str().unwrap_or_default().to_owned(),
+        attachments: m["attachments"].as_array().cloned().unwrap_or_default(),
     }
 }
 
@@ -43,36 +50,28 @@ impl Inner {
                     let Some(thread) = tx.thread(&id)? else {
                         return Ok(None);
                     };
-                    let project = tx.project(thread["projectId"].as_str().unwrap_or_default())?;
+                    let project_id = thread["projectId"].as_str().map(str::to_owned);
+                    let project = tx.project(project_id.as_deref().unwrap_or_default())?;
                     let messages = tx.entities(&id, "messages")?;
                     let kind = if regenerate {
-                        // The newest texts that fit, oldest first.
-                        let mut budget = TITLE_INPUT_CHARS;
-                        let mut transcript = Vec::new();
-                        for m in messages.iter().rev() {
-                            let text = m["text"].as_str().unwrap_or_default();
-                            if text.is_empty() || budget == 0 {
-                                continue;
-                            }
-                            let taken = cut(text, budget);
-                            budget = budget.saturating_sub(taken.chars().count());
-                            let role = m["role"].as_str().unwrap_or("user").to_owned();
-                            transcript.push((role, taken));
-                        }
-                        transcript.reverse();
+                        // T3 reads the finished user and assistant messages.
                         TitleKind::Regenerate {
                             previous_title: thread["title"].as_str().unwrap_or_default().to_owned(),
-                            transcript,
+                            messages: messages
+                                .iter()
+                                .filter(|m| {
+                                    m["streaming"] != true
+                                        && (m["role"] == "user" || m["role"] == "assistant")
+                                })
+                                .map(title_message)
+                                .collect(),
                         }
                     } else {
                         let Some(first) = messages.iter().find(|m| m["role"] == "user") else {
                             return Ok(None);
                         };
                         TitleKind::Initial {
-                            message: cut(
-                                first["text"].as_str().unwrap_or_default(),
-                                TITLE_INPUT_CHARS,
-                            ),
+                            message: title_message(first),
                         }
                     };
                     let cwd = thread["worktreePath"]
@@ -81,6 +80,7 @@ impl Inner {
                         .map(str::to_owned);
                     Ok(Some(TitleRequest {
                         thread_id: id.clone(),
+                        project_id,
                         cwd,
                         project_title: project.and_then(|p| p["title"].as_str().map(str::to_owned)),
                         kind,
@@ -124,7 +124,7 @@ impl Inner {
             Ok(title)
                 if !title.is_empty()
                     && title != "New thread"
-                    && Some(&title) != previous.as_ref() =>
+                    && Some(title.as_str()) != previous.as_deref().map(str::trim) =>
             {
                 command["title"] = json!(title);
                 if regenerate {
