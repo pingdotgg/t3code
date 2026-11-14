@@ -3,6 +3,7 @@ import {
   type OrchestrationV2ThreadProjectMoveCommand,
   type OrchestrationV2ThreadProjection,
   type ProviderThreadId,
+  type RunId,
   TurnItemId,
 } from "@t3tools/contracts";
 import type * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -28,6 +29,8 @@ export interface ThreadMoveMember {
     "thread" | "providerSessions" | "providerThreads" | "runs"
   >;
   readonly previousFolder: string;
+  /** The folder each run's root checkpoint scope recorded. */
+  readonly scopeFolders: ReadonlyMap<RunId, string>;
   readonly storageFolders: ReadonlyMap<ProviderThreadId, string>;
   readonly nextOrdinal: number;
 }
@@ -116,7 +119,7 @@ export const planThreadMove = Effect.fn("ThreadMovePlan.planThreadMove")(functio
           type: "run.updated",
           threadId,
           providerInstanceId: run.providerInstanceId,
-          payload: { ...run, cwd: member.previousFolder },
+          payload: { ...run, cwd: member.scopeFolders.get(run.id) ?? member.previousFolder },
         });
       }
       for (const session of providerSessions) {

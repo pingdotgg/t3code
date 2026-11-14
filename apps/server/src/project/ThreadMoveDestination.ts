@@ -94,7 +94,7 @@ const quote = (title: string) => `"${title}"`;
 const code = (folder: string) => `\`${folder}\``;
 
 const failure = (verb: string, target: string) => (cause: unknown) =>
-  new ThreadMoveError({ message: `Could not ${verb} ${target}.`, cause });
+  new ThreadMoveError({ stage: "check", message: `Could not ${verb} ${target}.`, cause });
 const notFound = (error: PlatformError.PlatformError) => error.reason._tag === "NotFound";
 const kindOf = (fileSystem: FileSystem.FileSystem, target: string) =>
   fileSystem.stat(target).pipe(

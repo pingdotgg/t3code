@@ -130,7 +130,13 @@ const member = (
   previousFolder = "/work/a",
   nextOrdinal = 7,
   storageFolders: ReadonlyMap<ProviderThreadId, string> = new Map(),
-): ThreadMoveMember => ({ projection: thread, previousFolder, storageFolders, nextOrdinal });
+): ThreadMoveMember => ({
+  projection: thread,
+  previousFolder,
+  scopeFolders: new Map(),
+  storageFolders,
+  nextOrdinal,
+});
 
 it.effect.each([
   { name: "root to root", worktreePath: null, from: "/work/a", to: "/work/b", scratch: null },

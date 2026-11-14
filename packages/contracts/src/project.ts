@@ -593,7 +593,18 @@ export const ThreadMoveResult = Schema.Union([
 ]);
 export type ThreadMoveResult = typeof ThreadMoveResult.Type;
 
+export const ThreadMoveStage = Schema.Literals([
+  "check",
+  "add-project",
+  "claim-folder",
+  "plan",
+  "commit",
+]);
+export type ThreadMoveStage = typeof ThreadMoveStage.Type;
+
 export class ThreadMoveError extends Schema.TaggedError<ThreadMoveError>()("ThreadMoveError", {
+  /** Absent when the server could not start the move. */
+  stage: Schema.optional(ThreadMoveStage),
   message: Schema.String,
   cause: Schema.optional(Schema.Defect()),
 }) {}

@@ -6,6 +6,7 @@ import {
   ThreadMoveError,
   type ThreadMoveInput,
   type ThreadMoveResult,
+  type ThreadMoveStage,
 } from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -17,6 +18,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../config.ts";
 import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
@@ -30,6 +32,7 @@ import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.
 import { deriveProviderInstanceConfigMap } from "../provider/ProviderInstanceRegistryHydration.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { resolveProviderInstanceTerminalEnvironment } from "../terminal/Manager.ts";
+import { removeEmptyDirectory } from "../vcs/removeEmptyDirectory.ts";
 import { managedWorktreesDirectories } from "../worktreesDirectory.ts";
 import * as ManagedProjectFolders from "./ManagedProjectFolders.ts";
 import * as ProjectLock from "./ProjectLock.ts";
@@ -74,13 +77,26 @@ export const make = Effect.gen(function* () {
   const hostEnvironment = yield* HostProcess.Environment;
   const random = yield* SecureRandom.SecureRandom;
 
-  const fail = (message: string) => (cause: unknown) => new ThreadMoveError({ message, cause });
+  const fail = (stage: ThreadMoveStage, message: string) => (cause: unknown) =>
+    new ThreadMoveError({ stage, message, cause });
   const resolve = (folder: string) =>
     fileSystem.realPath(folder).pipe(Effect.orElseSucceed(() => path.resolve(folder)));
-  // FileSystem.remove needs `recursive` for any folder, so the listing stands in for rmdir.
-  const removeEmptyFolder = (folder: string) =>
-    Effect.flatMap(fileSystem.readDirectory(folder), (entries) =>
-      entries.length === 0 ? fileSystem.remove(folder, { recursive: true }) : Effect.void,
+  // Scopes in commit order; a run's latest scope wins.
+  const rootScopeFolders = (threadId: ThreadId) =>
+    eventStore.read({ threadId, eventType: "checkpoint-scope.created" }).pipe(
+      Stream.runCollect,
+      Effect.map(
+        (events) =>
+          new Map(
+            events.flatMap(({ event }) =>
+              event.type === "checkpoint-scope.created" &&
+              event.payload.kind === "root_run" &&
+              event.payload.runId !== null
+                ? [[event.payload.runId, event.payload.cwd] as const]
+                : [],
+            ),
+          ),
+      ),
     );
 
   const probes: ThreadMoveProbes = {
@@ -89,11 +105,11 @@ export const make = Effect.gen(function* () {
     threadRecords: (threadId) =>
       threads
         .getThreadRecords(threadId, ["runs", "runtimeRequests"], { turnItemTypes: [] })
-        .pipe(Effect.mapError(fail("Could not read the thread."))),
+        .pipe(Effect.mapError(fail("check", "Could not read the thread."))),
     hasBackgroundWork: (threadId) =>
       threads
         .threadHasBackgroundWork(threadId)
-        .pipe(Effect.mapError(fail("Could not probe the thread's background work."))),
+        .pipe(Effect.mapError(fail("check", "Could not probe the thread's background work."))),
   };
 
   const providerInstance = Effect.fn("ThreadMoveService.providerInstance")(function* (
@@ -107,12 +123,12 @@ export const make = Effect.gen(function* () {
       path,
       rawProviderInstanceId: instanceId,
       env: hostEnvironment as Record<string, string>,
-    }).pipe(Effect.mapError(fail("Could not resolve the provider's environment.")));
+    }).pipe(Effect.mapError(fail("check", "Could not resolve the provider's environment.")));
     return {
       driver: instance.driverKind,
       capabilities: yield* instance.orchestrationAdapter
         .getCapabilities()
-        .pipe(Effect.mapError(fail("Could not read the provider's capabilities."))),
+        .pipe(Effect.mapError(fail("check", "Could not read the provider's capabilities."))),
       version: (yield* instance.snapshot.getSnapshot).version ?? null,
       environment,
     } satisfies ThreadMoveProviderInstance;
@@ -120,16 +136,16 @@ export const make = Effect.gen(function* () {
 
   const readShells = threads.getShellSnapshot().pipe(
     Effect.map((snapshot) => [...snapshot.threads, ...snapshot.archivedThreads]),
-    Effect.mapError(fail("Could not read the threads.")),
+    Effect.mapError(fail("check", "Could not read the threads.")),
   );
 
   const decide = Effect.fn("ThreadMoveService.decide")(function* (request: ThreadMoveInput) {
     const shells = yield* readShells;
     const { projects: projectList } = yield* projects.snapshot.pipe(
-      Effect.mapError(fail("Could not read the projects.")),
+      Effect.mapError(fail("check", "Could not read the projects.")),
     );
     const settings = yield* serverSettings.getSettings.pipe(
-      Effect.mapError(fail("Could not read the settings.")),
+      Effect.mapError(fail("check", "Could not read the settings.")),
     );
     const members = collectMoveSet(request.threadId, shells);
     const instances = new Map<ProviderInstanceId, ThreadMoveProviderInstance>();
@@ -163,7 +179,7 @@ export const make = Effect.gen(function* () {
           threadIds: members.map((member) => member.id),
           effectType: "provider-session.relocate-storage",
         })
-        .pipe(Effect.mapError(fail("Could not read the thread's pending moves."))));
+        .pipe(Effect.mapError(fail("check", "Could not read the thread's pending moves."))));
     return {
       projects: projectList,
       decision: relocating
@@ -191,7 +207,7 @@ export const make = Effect.gen(function* () {
           }),
         );
     },
-    Effect.mapError(fail("Could not add the project.")),
+    Effect.mapError(fail("add-project", "Could not add the project.")),
   );
 
   const lockMembers = (
@@ -217,7 +233,7 @@ export const make = Effect.gen(function* () {
     const project = Option.getOrUndefined(
       yield* projects
         .getById(projectId)
-        .pipe(Effect.mapError(fail("Could not read the destination project."))),
+        .pipe(Effect.mapError(fail("check", "Could not read the destination project."))),
     );
     if (project === undefined) return destinationGone;
     if (project.archivedAt != null)
@@ -243,7 +259,7 @@ export const make = Effect.gen(function* () {
         : Option.getOrUndefined(
             yield* managedFolders
               .folderForThread({ projectId, threadId: thread.id, text: thread.title })
-              .pipe(Effect.mapError(fail("Could not claim a scratch folder."))),
+              .pipe(Effect.mapError(fail("claim-folder", "Could not claim a scratch folder."))),
           );
     if (worktreePath === undefined)
       return refused("Scratch folders are unavailable on this server.");
@@ -252,7 +268,7 @@ export const make = Effect.gen(function* () {
     const commit = Effect.gen(function* () {
       const members: Array<ThreadMoveMember> = [];
       for (const member of decision.members) {
-        const unreadable = fail(`Could not read "${member.title}".`);
+        const unreadable = fail("plan", `Could not read "${member.title}".`);
         const projection = yield* threads
           .getThreadRecords(
             member.id,
@@ -263,6 +279,9 @@ export const make = Effect.gen(function* () {
         members.push({
           projection,
           previousFolder: member.worktreePath ?? previousProject.workspaceRoot,
+          scopeFolders: projection.runs.every((run) => run.cwd !== undefined)
+            ? new Map()
+            : yield* rootScopeFolders(member.id).pipe(Effect.mapError(unreadable)),
           storageFolders: yield* nativeStorageFolders(eventStore, member.id, projection).pipe(
             Effect.mapError(unreadable),
           ),
@@ -277,7 +296,7 @@ export const make = Effect.gen(function* () {
       const command = {
         type: "thread.project.move" as const,
         commandId: CommandId.make(
-          `thread-move:${yield* random.uuidV4().pipe(Effect.mapError(fail("Could not plan the move.")))}`,
+          `thread-move:${yield* random.uuidV4().pipe(Effect.mapError(fail("plan", "Could not plan the move.")))}`,
         ),
         threadId: thread.id,
         projectId,
@@ -309,7 +328,7 @@ export const make = Effect.gen(function* () {
         },
         now,
         idAllocator,
-      }).pipe(Effect.mapError(fail("Could not plan the move.")));
+      }).pipe(Effect.mapError(fail("plan", "Could not plan the move.")));
       yield* eventSink
         .commitCommand({
           commandId: command.commandId,
@@ -319,7 +338,7 @@ export const make = Effect.gen(function* () {
           events: plan.events,
           effects: plan.effects,
         })
-        .pipe(Effect.mapError(fail("Could not commit the move.")));
+        .pipe(Effect.mapError(fail("commit", "Could not commit the move.")));
       return {
         _tag: "moved" as const,
         folder,
@@ -328,7 +347,7 @@ export const make = Effect.gen(function* () {
     });
     return yield* worktreePath === null
       ? commit
-      : commit.pipe(Effect.onError(() => removeEmptyFolder(worktreePath).pipe(Effect.ignore)));
+      : commit.pipe(Effect.onError(() => removeEmptyDirectory(worktreePath).pipe(Effect.ignore)));
   });
 
   const move: ThreadMoveService["Service"]["move"] = Effect.fn("ThreadMoveService.move")(
@@ -341,7 +360,7 @@ export const make = Effect.gen(function* () {
       const projectId =
         (destination._tag === "new-project" ? added : destination.project)?.id ??
         (yield* managedFolders.ensureScratchProject.pipe(
-          Effect.mapError(fail("Scratch folders are unavailable on this server.")),
+          Effect.mapError(fail("claim-folder", "Scratch folders are unavailable on this server.")),
         )).projectId;
       const locked: Array<ThreadId> = [];
       const result = yield* projectLocks.withLock(
