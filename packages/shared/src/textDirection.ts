@@ -161,8 +161,12 @@ function proseDirection(parts: ReadonlyArray<{ text: string; code: boolean }>) {
   return textDirection(prose.replace(HTTP_URL, " "));
 }
 
+const MARKDOWN_CODE_OR_URL =
+  /(`{3,}|~{3,})[\s\S]*?(?:\n[\t >]*\1[`~]*[\t ]*(?=\n|$)|$)|(`{1,2})(?!`)[\s\S]*?(?<!`)\2(?!`)|https?:\/\/\S+/g;
+
+// A linear scan, not a parse: this runs on every render of messages up to 120k chars.
 export function markdownProseDirection(...fields: ReadonlyArray<string>) {
-  return proseDirection(fields.flatMap(markdownCodeParts));
+  return textDirection(fields.map((field) => field.replace(MARKDOWN_CODE_OR_URL, " ")).join(" "));
 }
 
 export function markdownPreview(markdown: string, maxChars: number) {
