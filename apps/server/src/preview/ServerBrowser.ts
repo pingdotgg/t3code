@@ -2690,12 +2690,16 @@ const make = Effect.gen(function* () {
         return { tabId: tab.tabId, colorScheme };
       }
       case "snapshot": {
+        const snapshotInput = input as PreviewAutomationSnapshotInput | undefined;
+        const rendering = {
+          ...tab,
+          renderScale: tab.desktop ? "display" : RENDER_SCALE,
+          fullScreenshot: snapshotInput?.fullScreenshot,
+        } as const;
         const snapshot = await withScreencastsPaused(tab, () =>
-          ServerBrowserPage.snapshot({
-            ...tab,
-            renderScale: tab.desktop ? "display" : RENDER_SCALE,
-            fullScreenshot: (input as PreviewAutomationSnapshotInput | undefined)?.fullScreenshot,
-          }),
+          snapshotInput?.pixelsRequired === false
+            ? ServerBrowserPage.snapshotMetadata(rendering)
+            : ServerBrowserPage.snapshot(rendering),
         );
         const loadError = loadErrorOf(tab);
         return loadError ? { ...snapshot, url: loadError.url, loadError } : snapshot;

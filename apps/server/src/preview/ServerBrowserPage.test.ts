@@ -23,6 +23,24 @@ import { SessionControl } from "./SessionControl.ts";
 
 const decodeEvaluateInput = Schema.decodeUnknownSync(PreviewAutomationEvaluateInput);
 
+describe("JPEG screenshot dimensions", () => {
+  const encode = (bytes: number[]) => Buffer.from(bytes).toString("base64");
+  const frame = [0xff, 0xd8, 0xff, 0xc0, 0, 7, 8, 0, 24, 0, 32];
+
+  it("reads valid dimensions and rejects invalid or incomplete frames", () => {
+    expect(ServerBrowserPage.jpegSize(encode(frame))).toEqual({ width: 32, height: 24 });
+    for (const bytes of [
+      [],
+      [0xff, 0xd8, 0xff, 0xe1, 0, 20, 1],
+      frame.slice(0, -1),
+      [...frame.slice(0, 7), 0, 0, 0, 32],
+      [...frame.slice(0, 9), 0, 0],
+    ]) {
+      expect(() => ServerBrowserPage.jpegSize(encode(bytes))).toThrow("Invalid JPEG screenshot.");
+    }
+  });
+});
+
 describe("server browser capture deadlines", () => {
   it("releases control after an unanswered capture and ignores its late reply", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
@@ -448,7 +466,7 @@ describe("server browser snapshot screenshot", () => {
   const screenshotOf = async (html: string) => {
     const page = await context.newPage();
     await page.setContent(html);
-    const { screenshot, fullScreenshot } = await ServerBrowserPage.snapshot({
+    const input = {
       page,
       cdp: await context.newCDPSession(page),
       renderScale: 2,
@@ -456,7 +474,8 @@ describe("server browser snapshot screenshot", () => {
       consoleEntries: [],
       networkEntries: [],
       actionTimeline: [],
-    });
+    };
+    const { screenshot, fullScreenshot } = await ServerBrowserPage.snapshot(input);
     // The server has no DOM types, so the decoder runs as page source.
     const points = [
       [0.15, 0.75],
@@ -475,7 +494,7 @@ describe("server browser snapshot screenshot", () => {
         Array.from(context.getImageData(x * bitmap.width, y * bitmap.height, 1, 1).data),
       );
     })()`)) as Array<[number, number, number, number]>;
-    return { screenshot, fullScreenshot, pixels };
+    return { screenshot, fullScreenshot, pixels, input };
   };
   const colorOf = ([red, green, blue]: readonly [number, number, number, number]) =>
     blue - red > 100 ? "blue" : red - blue > 100 ? "red" : `rgb(${red}, ${green}, ${blue})`;
@@ -490,13 +509,20 @@ describe("server browser snapshot screenshot", () => {
   });
 
   it("captures a plain page at the shrunk size with its content in place", async () => {
-    const { screenshot, fullScreenshot, pixels } = await screenshotOf(halves(""));
+    const { screenshot, fullScreenshot, pixels, input } = await screenshotOf(halves(""));
+    const metadata = await ServerBrowserPage.snapshotMetadata(input);
 
     expect({
       size: [screenshot.width, screenshot.height],
       fullSize: [fullScreenshot?.width, fullScreenshot?.height],
+      metadataSize: metadata.screenshot,
       colors: pixels.map(colorOf),
-    }).toEqual({ size: [1280, 800], fullSize: [2560, 1600], colors: ["blue", "red", "red"] });
+    }).toEqual({
+      size: [1280, 800],
+      fullSize: [2560, 1600],
+      metadataSize: { width: 1280, height: 800 },
+      colors: ["blue", "red", "red"],
+    });
   });
 
   it("records the destination of a finite entrance animation without waiting on infinite ones", async () => {
