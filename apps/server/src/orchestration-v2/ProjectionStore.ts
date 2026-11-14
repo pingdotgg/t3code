@@ -215,6 +215,7 @@ export type ProjectionSettlementCandidate = Pick<
   | "archivedAt"
   | "settledOverride"
   | "pinnedAt"
+  | "promotedAt"
   | "autoSettleDisabledAt"
   | "snoozedUntil"
   | "snoozedAt"
@@ -460,7 +461,14 @@ export interface ShellSnapshotOptions {
 /** What a shell subscriber's trims read from an active thread, without building its shell. */
 export interface ActiveShellIndexEntry extends Pick<
   OrchestrationV2ThreadShell,
-  "id" | "projectId" | "lineage" | "settledOverride" | "settledAt" | "pinnedAt" | "snoozedUntil"
+  | "id"
+  | "projectId"
+  | "lineage"
+  | "promotedAt"
+  | "settledOverride"
+  | "settledAt"
+  | "pinnedAt"
+  | "snoozedUntil"
 > {
   /** False only when no run, request, work item, or watch can make the shell live. */
   readonly mayBeLive: boolean;
@@ -919,6 +927,8 @@ export function applyToProjection(
     case "thread.auto-settle-set":
     case "thread.pinned":
     case "thread.unpinned":
+    case "thread.promoted":
+    case "thread.demoted":
     case "thread.pin-reordered":
     case "thread.metadata-updated":
     case "thread.runtime-mode-updated":
@@ -1845,6 +1855,7 @@ export function threadShellFromProjection(
     snoozedUntil: projection.thread.snoozedUntil ?? null,
     snoozedAt: projection.thread.snoozedAt ?? null,
     pinnedAt: projection.thread.pinnedAt ?? null,
+    promotedAt: projection.thread.promotedAt ?? null,
 
     autoSettleDisabledAt: projection.thread.autoSettleDisabledAt ?? null,
     pinOrderKey: projection.thread.pinOrderKey ?? null,
@@ -2142,6 +2153,7 @@ function shellFromState(input: {
     snoozedUntil: input.state.thread.snoozedUntil ?? null,
     snoozedAt: input.state.thread.snoozedAt ?? null,
     pinnedAt: input.state.thread.pinnedAt ?? null,
+    promotedAt: input.state.thread.promotedAt ?? null,
 
     autoSettleDisabledAt: input.state.thread.autoSettleDisabledAt ?? null,
     pinOrderKey: input.state.thread.pinOrderKey ?? null,
@@ -2304,6 +2316,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             case "thread.auto-settle-set":
             case "thread.pinned":
             case "thread.unpinned":
+            case "thread.promoted":
+            case "thread.demoted":
             case "thread.pin-reordered":
             case "thread.active-reordered":
             case "thread.tags-updated":
@@ -3121,6 +3135,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             event.type !== "thread.auto-settle-set" &&
             event.type !== "thread.pinned" &&
             event.type !== "thread.unpinned" &&
+            event.type !== "thread.promoted" &&
+            event.type !== "thread.demoted" &&
             event.type !== "thread.pin-reordered" &&
             event.type !== "thread.active-reordered" &&
             event.type !== "thread.tags-updated" &&
@@ -8172,6 +8188,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 return {
                   ...thread,
                   pinnedAt: thread.pinnedAt ?? null,
+                  promotedAt: thread.promotedAt ?? null,
 
                   autoSettleDisabledAt: thread.autoSettleDisabledAt ?? null,
                   snoozedUntil: thread.snoozedUntil ?? null,
@@ -8729,6 +8746,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         WHERE deleted_at IS NULL
           AND json_extract(payload_json, '$.archivedAt') IS NULL
           AND json_extract(payload_json, '$.lineage.relationshipToParent') = 'subagent'
+          AND json_extract(payload_json, '$.promotedAt') IS NULL
       `;
         return rows.map((row) => ThreadId.make(row.thread_id));
       },
@@ -8753,6 +8771,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         readonly settled_override: string | null;
         readonly settled_at: string | null;
         readonly pinned_at: string | null;
+        readonly promoted_at: string | null;
         readonly snoozed_until: string | null;
         readonly may_be_live: number;
         readonly has_remote_tasks: number;
@@ -8767,6 +8786,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           json_extract(t.payload_json, '$.settledOverride') AS settled_override,
           json_extract(t.payload_json, '$.settledAt') AS settled_at,
           json_extract(t.payload_json, '$.pinnedAt') AS pinned_at,
+          json_extract(t.payload_json, '$.promotedAt') AS promoted_at,
           json_extract(t.payload_json, '$.snoozedUntil') AS snoozed_until,
           -- A superset of isLiveSubagentShell: the sources of its run status, pending request,
           -- and pending background work.
@@ -8825,6 +8845,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             : null,
         settledAt: row.settled_at === null ? null : DateTime.makeUnsafe(row.settled_at),
         pinnedAt: row.pinned_at === null ? null : DateTime.makeUnsafe(row.pinned_at),
+        promotedAt: row.promoted_at === null ? null : DateTime.makeUnsafe(row.promoted_at),
         snoozedUntil: row.snoozed_until === null ? null : DateTime.makeUnsafe(row.snoozed_until),
         mayBeLive: row.may_be_live === 1,
         hasRemoteTasks: row.has_remote_tasks === 1,
@@ -8930,8 +8951,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         FROM orchestration_v2_projection_threads t
         WHERE t.deleted_at IS NULL
           AND json_extract(t.payload_json, '$.archivedAt') IS NULL
-          AND json_extract(t.payload_json, '$.lineage.relationshipToParent') IS NOT 'subagent'
-          AND json_extract(t.payload_json, '$.lineage.sideChat') IS NOT 1
+          AND (json_extract(t.payload_json, '$.promotedAt') IS NOT NULL
+            OR (json_extract(t.payload_json, '$.lineage.relationshipToParent') IS NOT 'subagent'
+              AND json_extract(t.payload_json, '$.lineage.sideChat') IS NOT 1))
           AND json_extract(t.payload_json, '$.settledOverride') = 'settled'
           AND json_extract(t.payload_json, '$.settledAt') IS NOT NULL${
             projectIds === undefined ? sql`` : sql` AND t.project_id IN ${sql.in(projectIds)}`

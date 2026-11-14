@@ -17,7 +17,7 @@ import {
 } from "@t3tools/client-runtime/state/thread-search";
 import { foldSearchQuery, rankSearchItems, scoreThreadSearch } from "@t3tools/shared/paletteSearch";
 import {
-  isListedThreadLineage,
+  isListedThread,
   type ContextMenuItem,
   type EnvironmentId,
   type ResolvedKeybindingsConfig,
@@ -581,8 +581,10 @@ export async function deleteSelectedThreadEntries<
   return { deletedThreadKeys, firstFailure };
 }
 
-export function isSidebarHiddenThread(thread: Pick<SidebarThreadSummary, "lineage">): boolean {
-  return !isListedThreadLineage(thread.lineage);
+export function isSidebarHiddenThread(
+  thread: Pick<SidebarThreadSummary, "lineage" | "promotedAt">,
+): boolean {
+  return !isListedThread(thread);
 }
 
 // Subagent and side-chat threads have no sidebar row, so an open one is represented by
@@ -591,7 +593,7 @@ export function isSidebarHiddenThread(thread: Pick<SidebarThreadSummary, "lineag
 export function resolveSidebarRowThreadId(
   threadId: ThreadId,
   environmentId: EnvironmentId,
-  threads: readonly Pick<SidebarThreadSummary, "id" | "environmentId" | "lineage">[],
+  threads: readonly Pick<SidebarThreadSummary, "id" | "environmentId" | "lineage" | "promotedAt">[],
 ): ThreadId {
   const findThread = (id: ThreadId) =>
     threads.find((thread) => thread.id === id && thread.environmentId === environmentId);
@@ -610,7 +612,10 @@ export function resolveSidebarRowThreadId(
  * the sidebar lists, by thread key; they show under that thread, as subagents do.
  */
 export function filterSidebarV2VisibleThreads<
-  T extends Pick<SidebarThreadSummary, "archivedAt" | "environmentId" | "id" | "lineage"> & {
+  T extends Pick<
+    SidebarThreadSummary,
+    "archivedAt" | "environmentId" | "id" | "lineage" | "promotedAt"
+  > & {
     projectId: string;
   },
 >(
@@ -623,7 +628,7 @@ export function filterSidebarV2VisibleThreads<
       thread.archivedAt === null &&
       !isShownUnderParent(
         { environmentId: thread.environmentId, threadId: thread.id },
-        thread.lineage,
+        thread,
         delegatedUnderParent,
       ) &&
       (scopedProjectKeys === null ||
@@ -1430,7 +1435,7 @@ export function sortLogicalProjectsForSidebar<
 export function sortSidebarV2ProjectGroups<
   TProject extends LogicalSidebarProject,
   TThread extends ScopedSidebarThread &
-    Pick<SidebarThreadSummary, "environmentId" | "id" | "lineage">,
+    Pick<SidebarThreadSummary, "environmentId" | "id" | "lineage" | "promotedAt">,
 >(
   projects: readonly TProject[],
   threads: readonly TThread[],

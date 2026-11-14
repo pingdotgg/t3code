@@ -307,6 +307,8 @@ export function applyOrchestrationV2ProjectionEvent(
     case "thread.auto-settle-set":
     case "thread.pinned":
     case "thread.unpinned":
+    case "thread.promoted":
+    case "thread.demoted":
     case "thread.pin-reordered":
     case "thread.active-reordered":
     case "thread.metadata-updated":

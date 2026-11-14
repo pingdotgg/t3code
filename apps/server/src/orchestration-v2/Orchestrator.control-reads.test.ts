@@ -2008,6 +2008,73 @@ it.effect("explicit settle clears snooze atomically and stays idempotent after r
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("promoting a subagent thread lists it on its own without changing its lineage", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const events = yield* EventSink.EventSinkV2;
+    const parentId = ThreadId.make("thread:promote-parent");
+    const childId = ThreadId.make("thread:promote-child");
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-promote-parent"),
+      threadId: parentId,
+      projectId: ProjectId.make("project:promote"),
+      title: "Parent",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const lineage = {
+      parentThreadId: parentId,
+      rootThreadId: parentId,
+      relationshipToParent: "subagent",
+    } as const;
+    yield* events.write({
+      events: [
+        {
+          id: EventId.make("promote-child-created"),
+          type: "thread.created",
+          threadId: childId,
+          occurredAt: yield* DateTime.now,
+          payload: { ...(yield* projections.getThread(parentId)), id: childId, lineage },
+        },
+      ],
+    });
+    const childIndex = Effect.map(projections.listActiveShellIndex(), (index) =>
+      index.find((entry) => entry.id === childId),
+    );
+
+    const promote = CommandId.make("promote-child");
+    yield* orchestrator.dispatch({ type: "thread.promote", commandId: promote, threadId: childId });
+    const promoted = { lineage, promotedAt: yield* DateTime.now };
+    const committed = yield* events.readByCommandId({ commandId: promote }).pipe(Stream.runCollect);
+    assert.equal(committed[0]?.event.type, "thread.promoted");
+    assert.deepInclude(yield* projections.getThreadShell(childId), promoted);
+    assert.deepInclude(yield* childIndex, promoted);
+    assert.notInclude(yield* projections.listActiveSubagentThreadIds(), childId);
+
+    yield* orchestrator.dispatch({
+      type: "thread.demote",
+      commandId: CommandId.make("demote-child"),
+      threadId: childId,
+    });
+    assert.deepInclude(yield* projections.getThreadShell(childId), { lineage, promotedAt: null });
+    assert.include(yield* projections.listActiveSubagentThreadIds(), childId);
+
+    for (const type of ["thread.promote", "thread.demote"] as const) {
+      const rejected = yield* orchestrator
+        .dispatch({ type, commandId: CommandId.make(`${type}-parent`), threadId: parentId })
+        .pipe(Effect.flip);
+      assert.include(String(rejected.cause), "not a subagent");
+    }
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("keeps a snooze when a live question is cancelled or an approval is answered", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;

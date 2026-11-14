@@ -141,6 +141,7 @@ it.effect("resets a fork's pin, snooze, settle and delegation state but keeps it
       ...makeSourceThread(),
       lastSnoozeWakeAt: snoozedAt,
       pinnedAt: snoozedAt,
+      promotedAt: snoozedAt,
       pinOrderKey: "a0",
       activeOrderKey: "a1",
       autoSettleDisabledAt: snoozedAt,
@@ -163,6 +164,7 @@ it.effect("resets a fork's pin, snooze, settle and delegation state but keeps it
     assert.isNull(result.targetThread.snoozedAt);
     assert.isNull(result.targetThread.lastSnoozeWakeAt);
     assert.isNull(result.targetThread.pinnedAt);
+    assert.isNull(result.targetThread.promotedAt);
     assert.isNull(result.targetThread.pinOrderKey);
     assert.isNull(result.targetThread.activeOrderKey);
     assert.isNull(result.targetThread.autoSettleDisabledAt);

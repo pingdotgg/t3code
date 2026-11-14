@@ -12,8 +12,10 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import {
+  isListedThread,
   isListedThreadLineage,
   isLiveSubagentShell,
+  isNestedSubagentThread,
   isOlderSettledThreadShell,
   OrchestrationProjectShell as ProjectShellSchema,
   OrchestrationV2ThreadShell as ThreadShellSchema,
@@ -179,7 +181,7 @@ function buildActiveShellSnapshot(input: {
 
 type ShellTrimRow = Pick<
   OrchestrationV2ThreadShell,
-  "id" | "projectId" | "lineage" | "settledOverride" | "settledAt"
+  "id" | "projectId" | "lineage" | "promotedAt" | "settledOverride" | "settledAt"
 > & { readonly hasRemoteTasks?: boolean };
 
 /**
@@ -205,14 +207,13 @@ function shellTrimFacts(rows: ReadonlyArray<ShellTrimRow>): ShellTrimFacts {
   const settledTimes: Array<number> = [];
   for (const row of rows) {
     if (row.hasRemoteTasks === true) remoteTaskParentIds.add(row.id);
-    if (row.lineage.relationshipToParent === "subagent") {
+    // A promoted child still needs its idle ancestors, so parents are tracked by lineage.
+    if (row.lineage.relationshipToParent === "subagent" && row.lineage.parentThreadId) {
+      subagentParentIds.add(row.lineage.parentThreadId);
+    }
+    if (isNestedSubagentThread(row)) {
       subagentThreadIds.add(row.id);
-      if (row.lineage.parentThreadId) subagentParentIds.add(row.lineage.parentThreadId);
-    } else if (
-      isListedThreadLineage(row.lineage) &&
-      row.settledOverride === "settled" &&
-      row.settledAt !== null
-    ) {
+    } else if (isListedThread(row) && row.settledOverride === "settled" && row.settledAt !== null) {
       settledTimes.push(DateTime.toEpochMillis(row.settledAt));
     }
   }
@@ -237,10 +238,11 @@ function shellTrimFacts(rows: ReadonlyArray<ShellTrimRow>): ShellTrimFacts {
 }
 
 function hiddenChildAncestorIds(
-  threads: ReadonlyArray<Pick<OrchestrationV2ThreadShell, "lineage">>,
+  threads: ReadonlyArray<Pick<OrchestrationV2ThreadShell, "lineage" | "promotedAt">>,
 ) {
   const ancestorIds = new Set<string>();
   for (const thread of threads) {
+    // By lineage, so a promoted child still keeps its older settled ancestors.
     if (isListedThreadLineage(thread.lineage)) continue;
     if (thread.lineage.parentThreadId !== null) ancestorIds.add(thread.lineage.parentThreadId);
     ancestorIds.add(thread.lineage.rootThreadId);
@@ -254,7 +256,7 @@ function omitIdleSubagentShellsWith(
 ): ReadonlyArray<OrchestrationV2ThreadShell> {
   return threads.filter(
     (thread) =>
-      thread.lineage.relationshipToParent !== "subagent" ||
+      !isNestedSubagentThread(thread) ||
       isLiveSubagentShell(thread) ||
       facts.subagentParentIds.has(thread.id) ||
       facts.remoteTaskParentIds.has(thread.id),
@@ -376,7 +378,7 @@ function shellSubscriberThreadIds(
   const facts = shellTrimFacts(index);
   const subagents = index.filter(
     (entry) =>
-      entry.lineage.relationshipToParent === "subagent" &&
+      isNestedSubagentThread(entry) &&
       (!options.omitIdleSubagents ||
         entry.mayBeLive ||
         entry.hasRemoteTasks ||
@@ -384,12 +386,12 @@ function shellSubscriberThreadIds(
   );
   const ancestorIds = hiddenChildAncestorIds([
     ...subagents,
-    ...index.filter((entry) => entry.lineage.sideChat === true),
+    ...index.filter((entry) => entry.lineage.sideChat === true || entry.promotedAt != null),
   ]);
   const keptSubagentIds = new Set(subagents.map((entry) => entry.id));
   const beforeMs = facts.olderSettledBeforeMs;
   return index.flatMap((entry) =>
-    entry.lineage.relationshipToParent === "subagent"
+    isNestedSubagentThread(entry)
       ? keptSubagentIds.has(entry.id)
         ? [entry.id]
         : []
@@ -539,10 +541,14 @@ export function shouldPublishShellApplicationEvent(
   if ("aggregateKind" in stored) return true;
   const { event } = stored;
   if (event.type === "thread.created") {
-    if (event.payload.lineage.relationshipToParent === "subagent") {
+    if (isNestedSubagentThread(event.payload)) {
       subagentThreadIds.add(event.threadId);
     }
     return true;
+  }
+  if (event.type === "thread.promoted") subagentThreadIds.delete(event.threadId);
+  if (event.type === "thread.demoted" && isNestedSubagentThread(event.payload)) {
+    subagentThreadIds.add(event.threadId);
   }
   if (event.type === "thread.deleted") {
     // Replay and the live tail overlap; keep known IDs so late events stay filtered.

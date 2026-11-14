@@ -246,7 +246,7 @@ export function startThreadNotifications(
       if (
         isShownUnderParent(
           { environmentId, threadId: rawThread.id },
-          rawThread.lineage,
+          rawThread,
           delegatedUnderParent,
         )
       ) {

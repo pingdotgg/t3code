@@ -509,6 +509,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecovery)),
   guestShare: Schema.optional(Schema.NullOr(ThreadGuestShare)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  /** Set on a subagent child the user gave its own sidebar row. Lineage never changes. */
+  promotedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -570,6 +572,22 @@ export function isProviderNativeSubagentThread(
   thread: Pick<OrchestrationV2AppThread, "lineage" | "creationSource">,
 ): boolean {
   return thread.lineage.relationshipToParent === "subagent" && thread.creationSource === "provider";
+}
+
+/** Hidden children (subagents, side chats) are listed once the user promotes them. */
+export function isListedThread(thread: {
+  readonly lineage: OrchestrationV2AppThreadLineage;
+  readonly promotedAt?: DateTime.Utc | string | null | undefined;
+}): boolean {
+  return isListedThreadLineage(thread.lineage) || thread.promotedAt != null;
+}
+
+/** A subagent child shown under its parent until the user promotes it. */
+export function isNestedSubagentThread(thread: {
+  readonly lineage: Pick<OrchestrationV2AppThreadLineage, "relationshipToParent">;
+  readonly promotedAt?: DateTime.Utc | string | null | undefined;
+}): boolean {
+  return thread.lineage.relationshipToParent === "subagent" && thread.promotedAt == null;
 }
 
 export const IDLE_COMPACTION_TEXT = "/compact";
@@ -1979,6 +1997,8 @@ export const OrchestrationV2DomainEvent = Schema.Union([
       "thread.pinned",
       "thread.auto-settle-set",
       "thread.unpinned",
+      "thread.promoted",
+      "thread.demoted",
       "thread.pin-reordered",
       "thread.active-reordered",
       "thread.tags-updated",
@@ -2240,6 +2260,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecovery)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  promotedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -2292,11 +2313,14 @@ export function isLiveSubagentShell(
  * count every such thread, so the server and clients share this one rule.
  */
 export function isOlderSettledThreadShell(
-  thread: Pick<OrchestrationV2ThreadShell, "lineage" | "settledOverride" | "settledAt">,
+  thread: Pick<
+    OrchestrationV2ThreadShell,
+    "lineage" | "promotedAt" | "settledOverride" | "settledAt"
+  >,
   beforeMs: number,
 ): boolean {
   return (
-    isListedThreadLineage(thread.lineage) &&
+    isListedThread(thread) &&
     thread.settledOverride === "settled" &&
     thread.settledAt !== null &&
     DateTime.toEpochMillis(thread.settledAt) < beforeMs
@@ -2413,6 +2437,7 @@ export const OrchestrationV2AppThreadJson = OrchestrationV2AppThread.mapFields((
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   lastSnoozeWakeAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
+  promotedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   lastVisitedAt: Schema.NullOr(Schema.DateTimeUtcFromString).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
@@ -2868,6 +2893,7 @@ export const OrchestrationV2ThreadShellJson = OrchestrationV2ThreadShell.mapFiel
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
+  promotedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   lastVisitedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   titleRegeneration: Schema.optional(
@@ -2923,6 +2949,8 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
       "thread.pinned",
       "thread.auto-settle-set",
       "thread.unpinned",
+      "thread.promoted",
+      "thread.demoted",
       "thread.pin-reordered",
       "thread.active-reordered",
       "thread.tags-updated",
@@ -3170,6 +3198,16 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("thread.unpin"),
+    commandId: CommandId,
+    threadId: ThreadId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.promote"),
+    commandId: CommandId,
+    threadId: ThreadId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.demote"),
     commandId: CommandId,
     threadId: ThreadId,
   }),

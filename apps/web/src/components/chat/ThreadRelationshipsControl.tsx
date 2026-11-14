@@ -29,7 +29,9 @@ import {
   resolveLatestMergeBackRun,
 } from "@t3tools/client-runtime/state/thread-workflows";
 import {
+  AuthOrchestrationOperateScope,
   isOrchestrationV2WorkActive,
+  isListedThreadLineage,
   isProviderNativeSubagentThread,
   NodeId,
   type EnvironmentId,
@@ -46,8 +48,10 @@ import * as DateTime from "effect/DateTime";
 import { useNavigate, useRouter } from "@tanstack/react-router";
 import {
   ArrowRightIcon,
+  ArrowUpRightIcon,
   BotIcon,
   ChevronDownIcon,
+  CornerDownRightIcon,
   CornerLeftUpIcon,
   GitForkIcon,
   MessagesSquareIcon,
@@ -69,6 +73,7 @@ import {
   useAnyEnvironmentHiding,
 } from "../../state/entities";
 import { useEnvironment, useEnvironmentProviders } from "../../state/environments";
+import { useEnvironmentScope } from "../../state/session";
 import { serverEnvironment } from "../../state/server";
 import {
   applyProviderInstanceSettings,
@@ -460,11 +465,14 @@ export function ThreadRelationshipsPanel(props: {
   const mergeBack = useAtomCommand(threadEnvironment.mergeBack);
   const stopSession = useAtomCommand(threadEnvironment.stopSession);
   const interruptTurn = useAtomCommand(threadEnvironment.interruptTurn);
+  const promoteThread = useAtomCommand(threadEnvironment.promote);
+  const demoteThread = useAtomCommand(threadEnvironment.demote);
+  const canOperate = useEnvironmentScope(props.environmentId, AuthOrchestrationOperateScope);
   const stopWorkflowCommand = useAtomCommand(orchestrationEnvironment.stopWorkflow);
   const canOperateWorkflow = useAtomValue(
     orchestrationEnvironment.stopWorkflow.permissionAtom(props.environmentId),
   );
-  const [busyAction, setBusyAction] = useState<"merge" | "detach" | null>(null);
+  const [busyAction, setBusyAction] = useState<"merge" | "detach" | "promote" | null>(null);
   const mergeErrorToastId = useRef<string | null>(null);
   const detachErrorToastId = useRef<string | null>(null);
   const [stoppingId, setStoppingId] = useState<string | null>(null);
@@ -610,6 +618,11 @@ export function ThreadRelationshipsPanel(props: {
   // A linked environment's agent may have delegated this thread from there.
   const delegatedFrom = currentThread?.delegatedFrom;
 
+  const canPromote =
+    currentThread !== undefined &&
+    currentThread.archivedAt === null &&
+    !isListedThreadLineage(currentThread.lineage);
+  const promoted = currentThread?.promotedAt != null;
   const lineageVisible =
     props.showLineage &&
     (related.length > 0 ||
@@ -620,7 +633,8 @@ export function ThreadRelationshipsPanel(props: {
       remotePrevious.length > 0 ||
       delegatedFrom !== undefined ||
       // Disconnect lives in this heading, so a thread with only side chats still shows it.
-      (canDetach && sideChats.length > 0));
+      (canDetach && sideChats.length > 0) ||
+      canPromote);
   const sideChatsVisible = props.showSideChats && sideChats.length > 0;
   const runningSideChats = sideChats.filter(({ edge }) => edge.status === "running").length;
 
@@ -679,6 +693,24 @@ export function ThreadRelationshipsPanel(props: {
       detachErrorToastId.current = toastManager.add({
         type: "error",
         title: "Could not disconnect agent session",
+      });
+    }
+  };
+
+  const togglePromoted = async () => {
+    if (!canOperate || busyAction !== null) return;
+    setBusyAction("promote");
+    const result = await (promoted ? demoteThread : promoteThread)({
+      environmentId: props.environmentId,
+      input: { threadId: props.threadId },
+    });
+    setBusyAction(null);
+    if (result._tag === "Failure") {
+      toastManager.add({
+        type: "error",
+        title: promoted
+          ? "Could not move thread back under its parent"
+          : "Could not promote thread",
       });
     }
   };
@@ -977,6 +1009,7 @@ export function ThreadRelationshipsPanel(props: {
           showHeading={
             runningCount > 0 ||
             canDetach ||
+            canPromote ||
             related.length > 0 ||
             active.length > 0 ||
             remoteActive.length > 0 ||
@@ -984,28 +1017,61 @@ export function ThreadRelationshipsPanel(props: {
           }
           data-thread-relationships-panel
           actions={
-            canDetach ? (
-              <Menu>
-                <MenuTrigger
-                  render={
-                    <ThreadDetailsControl
-                      size="icon-xs"
-                      variant="ghost"
-                      part="icon"
-                      aria-label="More thread actions"
-                      disabled={busyAction !== null}
-                    />
-                  }
-                >
-                  <MoreHorizontalIcon className="size-3.5" />
-                </MenuTrigger>
-                <MenuPopup align="end" className="min-w-60 max-w-(--available-width)">
-                  <MenuItem onClick={() => void detach()}>
-                    <UnplugIcon className="size-3.5" />
-                    Disconnect agent session
-                  </MenuItem>
-                </MenuPopup>
-              </Menu>
+            canPromote || canDetach ? (
+              <>
+                {canPromote ? (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <ThreadDetailsControl
+                          size="icon-xs"
+                          variant="ghost"
+                          part="icon"
+                          aria-label={promoted ? "Move back under parent" : "Promote to thread"}
+                          disabled={!canOperate || busyAction !== null}
+                          onClick={() => void togglePromoted()}
+                        />
+                      }
+                    >
+                      {busyAction === "promote" ? (
+                        <Spinner aria-hidden size="xs" />
+                      ) : promoted ? (
+                        <CornerDownRightIcon aria-hidden className="size-3.5" />
+                      ) : (
+                        <ArrowUpRightIcon aria-hidden className="size-3.5" />
+                      )}
+                    </TooltipTrigger>
+                    <TooltipPopup side="left">
+                      {promoted
+                        ? "Hide this thread from the sidebar again; it stays under its parent"
+                        : "Give this chat its own row in the sidebar"}
+                    </TooltipPopup>
+                  </Tooltip>
+                ) : null}
+                {canDetach ? (
+                  <Menu>
+                    <MenuTrigger
+                      render={
+                        <ThreadDetailsControl
+                          size="icon-xs"
+                          variant="ghost"
+                          part="icon"
+                          aria-label="More thread actions"
+                          disabled={busyAction !== null}
+                        />
+                      }
+                    >
+                      <MoreHorizontalIcon className="size-3.5" />
+                    </MenuTrigger>
+                    <MenuPopup align="end" className="min-w-60 max-w-(--available-width)">
+                      <MenuItem onClick={() => void detach()}>
+                        <UnplugIcon className="size-3.5" />
+                        Disconnect agent session
+                      </MenuItem>
+                    </MenuPopup>
+                  </Menu>
+                ) : null}
+              </>
             ) : null
           }
         >

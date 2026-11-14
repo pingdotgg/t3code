@@ -490,6 +490,8 @@ function simpleThreadCommand(
     | "thread.settle"
     | "thread.pin"
     | "thread.unpin"
+    | "thread.promote"
+    | "thread.demote"
     | "thread.guest-share.close",
   input: ThreadCommandInput,
 ) {
@@ -619,6 +621,18 @@ export const unpinThread = Effect.fn("EnvironmentCommands.unpinThread")(function
   input: UnpinThreadInput,
 ) {
   return yield* simpleThreadCommand("thread.unpin", input);
+});
+
+export const promoteThread = Effect.fn("EnvironmentCommands.promoteThread")(function* (
+  input: ThreadCommandInput,
+) {
+  return yield* simpleThreadCommand("thread.promote", input);
+});
+
+export const demoteThread = Effect.fn("EnvironmentCommands.demoteThread")(function* (
+  input: ThreadCommandInput,
+) {
+  return yield* simpleThreadCommand("thread.demote", input);
 });
 
 export const unsettleThread = Effect.fn("EnvironmentCommands.unsettleThread")(function* (

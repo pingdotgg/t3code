@@ -10,6 +10,7 @@ import {
   deleteSelectedThreadEntries,
   getFallbackThreadIdAfterDelete,
   hasUnseenCompletion,
+  filterSidebarV2VisibleThreads,
   resolveSidebarRowThreadId,
   orderItemsByPreferredIds,
   pinOrderKeyBetween,
@@ -175,6 +176,16 @@ describe("sidebar thread lineage helpers", () => {
     const loopA = subagentOf("thread-loop-a", ThreadId.make("thread-loop-b"));
     const loopB = subagentOf("thread-loop-b", loopA.id);
     expect(resolveSidebarRowThreadId(loopA.id, environmentId, [loopA, loopB])).toBe(loopA.id);
+    // A promoted subagent has its own row, and its children resolve to it.
+    const promoted = { ...child, promotedAt: "2026-01-01T00:00:00.000Z" };
+    const promotedFamily = [root, promoted, grandchild];
+    expect(resolveSidebarRowThreadId(promoted.id, environmentId, promotedFamily)).toBe(promoted.id);
+    expect(resolveSidebarRowThreadId(grandchild.id, environmentId, promotedFamily)).toBe(
+      promoted.id,
+    );
+    expect(
+      filterSidebarV2VisibleThreads(promotedFamily, null, new Set()).map((thread) => thread.id),
+    ).toEqual([root.id, promoted.id]);
   });
 });
 
