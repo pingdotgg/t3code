@@ -693,7 +693,7 @@ function ThreadDetailBody(
     latestRunCompletedAt: props.selectedThread.latestRun?.completedAt ?? null,
   });
   const runStatusAction = async (action: "stop" | "wake" | "unsettle" | "dismiss") => {
-    if (statusPending || !props.canOperateThread) return;
+    if (statusPending || !props.canOperateThread) return false;
     const request: BackgroundWorkStopRequest = {
       threadKey: selectedThreadKey,
       taskIds:
@@ -754,6 +754,7 @@ function ThreadDetailBody(
         error instanceof Error ? error.message : "Try again.",
       );
     }
+    return result._tag !== "Failure";
   };
   const pendingBackgroundWork = presentPendingBackgroundWork(
     props.selectedThread.pendingBackgroundTasks,
@@ -1748,10 +1749,11 @@ function ThreadDetailBody(
                           onStop={
                             // The refusal says "press Stop"; work only the provider sees has no other Stop.
                             props.canOperateThread && isBackgroundWorkRefusal(composerError)
-                              ? () => {
-                                  clearThreadComposerError(selectedThreadKey);
-                                  void runStatusAction("stop");
-                                }
+                              ? () =>
+                                  // A failed or skipped Stop keeps the notice, so Stop can be retried.
+                                  void runStatusAction("stop").then((stopped) => {
+                                    if (stopped) clearThreadComposerError(selectedThreadKey);
+                                  })
                               : undefined
                           }
                         />
