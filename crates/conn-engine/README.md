@@ -180,6 +180,14 @@ all 23 are.
   provider answers Stop with `InterruptTimeout`, the run stays open and the request gets
   `unresponsiveAt` (`thread.interrupt.unresponsive`): clients offer Force stop, whose result
   says "Force stopped by user".
+- **Stop before the provider accepted the turn** (T3's "before provider start"). A run is
+  accepted once `Session::start_turn` returned (an in-memory ledger in the store, one entry per
+  active run, pruned at 1,024; nothing is persisted). Before that, Stop, Force stop, a restart
+  send and a stopped delegated child end the run in their own commit: the request, the result
+  "Run interrupted before provider start", then the attempt, node and run `interrupted`; no
+  capture, no provider-thread write. `AbandonStart` (outside the lane) calls
+  `Session::abandon_turn_start`; a turn the provider accepts anyway is interrupted. The fake
+  provider's `coldstart` and `latestart` messages test it.
 - **Model change during a turn.** A `thread.model-selection.set` on the thread's instance
   goes to the running provider turn's session (`provider-session.apply-model-selection`,
   `ProviderTurnControlService.applyModelSelection`); the provider applies what it can live.

@@ -823,7 +823,8 @@ Fixed to match the T3 server, each with a test that fails without the fix:
 
 Established, not fixed:
 
-- **Stop during a Claude cold start.** In T3 the run is marked `running` before
+- **Stop during a Claude cold start** (fixed on 2026-11-14; see "Stop during a turn start, as
+  the T3 server does it"). In T3 the run is marked `running` before
   `session.startTurn` (`ProviderTurnStartService.ts` 1472-1475, start at 1652). When the
   session has MCP servers, `openQuery` waits for `initializationResult` (up to 5 min) and
   `setMcpServers` (up to 90 s) before it returns (`ClaudeAdapterV2.ts` 1470-1509, called at
@@ -853,6 +854,66 @@ Established, not fixed:
   status task). This is an open parity gap: the fix needs the settings applied to the
   provider configs at start and on change, as for Grok, with a conformance scenario that shows
   the CLI each server starts.
+
+## Stop during a turn start, as the T3 server does it (2026-11-14)
+
+A Stop that arrives before the provider accepted the turn now ends the run at once, for every
+provider, as T3's `dispatchRunInterrupt` "before provider start" (`Orchestrator.ts`
+13013-13161). Before, Stop queued `Interrupt` behind the running `StartTurn` in the thread's
+lane, and a Claude cold start showed "Stopping" for up to about 6.5 minutes.
+
+- **Keyed on acceptance.** The store keeps an in-memory start ledger beside SQLite: a run is
+  *accepted* once `Session::start_turn` returned for it (T3 keys on the stored provider turn;
+  our Claude shows its turn before the boot, so a row is no proof). A restart starts every
+  active run again, so nothing persists and a store written by `main` loads unchanged. Bound:
+  one entry per active run, pruned at 1,024.
+- **What the client sees, as T3.** In the Stop's own commit: the `run_interrupt_request`
+  ("Stopped by user", or the reason), the `run_interrupt_result` ("Run interrupted before
+  provider start", parent the request, ordinal + 1), then the attempt, the root node and the
+  run `interrupted`. No checkpoint capture and no provider-thread write, as T3. `thread.stop`
+  holds the queue; a send releases it and starts cleanly. A second Stop changes nothing. Force
+  stop dispatches `run.interrupt` with "Force stopped by user" (T3's `forceStopThread`), then
+  releases the session. A restart send and a stopped delegated child take the same branch.
+- **What the provider sees.** `Effect::AbandonStart` runs at once, outside the lane, and calls
+  the new `Session::abandon_turn_start`. A start that had not reached the provider never does.
+  A turn the provider accepts anyway is interrupted (T3 interrupts a provider turn that starts
+  after Stop, `RunExecutionService` `shouldStartProviderTurn`). The lane still orders the next
+  start, a model change or a rollback behind the abandoned start, as T3's worker waits for the
+  interrupted start to end.
+  - **Claude:** attachments are read before the query opens (as T3's `startTurn`); a Stop then,
+    or while `resolveSettings` waits for the SDK host, opens nothing. A Stop while the CLI boots
+    (`initializationResult`) or registers MCP servers aborts the query with the new host
+    command `abort`: T3's teardown of an interrupted `openQuery` (`ClaudeAdapterV2.ts`
+    1530-1550: prompt stream ended, SIGKILL of the wrapper, whose exit kills the CLI's group,
+    up to 10 s for the exit, dispose). The early turn ends `interrupted`.
+  - **Codex:** the start stops at the request it waits on (`thread/resume`, `config/read`,
+    `turn/start`) and sends nothing more, as T3's interrupted `startTurn`; a later
+    `turn/started` is no root turn (T3 `rememberSubagentTurnStarted`, ours `child_turn_seen`).
+  - **ACP (Grok):** the start finishes the step it is in (an agent restart is not cut short,
+    so no half-started process is left) and sends no `session/prompt`.
+- **Proofs.** Engine tests (fake provider: `coldstart` shows its turn and takes 500 ms,
+  `latestart` cannot abandon): `stop_during_a_slow_start_ends_the_run_at_once` (events and
+  their order, the provider told before its start ended, no interrupt, the queue held, a second
+  Stop, the next send), `stop_before_the_start_runs_never_starts_the_provider`,
+  `a_turn_accepted_after_stop_is_interrupted` (the race the other way),
+  `stop_after_the_start_was_accepted_interrupts_the_provider`,
+  `force_stop_during_a_slow_start_ends_the_run_before_provider_start`,
+  `work_queued_behind_an_abandoned_start_runs_after_it` (a model change and a restart send).
+  Six fail with the old path. Claude: `an_abandoned_start_aborts_the_booting_query`;
+  conformance scenarios `stop_during_boot` and `stop_during_mcp_registration` (the stub holds
+  `initialize` or `mcp_set_servers`; the T3 side interrupts `startTurn` as its worker does): SAME,
+  2 CLI starts, the first killed with no prompt; with `close` in place of `abort` the scenario
+  reports DIFF. The stub now records how each start ended, and `compare.mjs` compares it.
+  Codex: `an_abandoned_start_sends_nothing_more` (a fake app-server holds `config/read`, then
+  `turn/start`). ACP: `an_abandoned_start_sends_no_prompt`. `client-check.mjs`: the client's
+  reducers show the run interrupted at once and never "Stopping".
+- **Not proven.** Codex and ACP have no T3-side comparison of a mid-start Stop (their
+  conformance harnesses drive T3's fixture runner; a held response plus a Stop there is not
+  built). A Stop during our SDK host's own launch has no T3 counterpart (T3 has no host); ours
+  opens nothing then. A Stop while the engine opens the provider session or loads the native
+  thread lets that step finish (T3 interrupts it), then sends no turn. Our first run of a new
+  thread has no provider thread while `starting`, so a Stop then writes no request or result
+  item (T3 has one); after the running write it does.
 
 ## Faults found in the T3 server
 
