@@ -235,6 +235,21 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
        44px under a pane inset 8px on a 52px row). */
     --pane-notch-height: calc(var(--workspace-chrome-row-height) - var(--workspace-pane-inset-top));
   }
+
+  /* A pane under the caption buttons that runs on past the window's edge
+     (--pane-window-end-clip, SurfaceHost.tsx) keeps its room for them on screen. */
+  .wco
+    [data-slot="sidebar"][data-variant="inset"]
+    ~ [data-slot="sidebar-inset"]
+    [data-layout-pane-id] {
+    --workspace-native-controls-inset: calc(
+      var(--workspace-controls-edge-right) + 0.75rem + var(--pane-window-end-clip, 0px)
+    );
+    --workspace-pane-local-controls-right: calc(
+      var(--workspace-pane-controls-right) - var(--workspace-pane-inset) +
+        var(--pane-window-end-clip, 0px)
+    );
+  }
 }
 
 /* The pane notch (pen maP8m, see PaneNotch.tsx): the pane gives up its
@@ -6318,19 +6333,22 @@ body {
     --pane-join-rim-k: 1.6;
     /* The rim's run along the pane's top edge, out from each ear. */
     --pane-join-tail: 36px;
+    /* The row the tabs centre in. Windows' 40px caption row leaves less than
+       the topbar's height under the shift, and padding cannot go negative. */
+    --pane-join-row: min(
+      var(--workspace-topbar-height),
+      var(--pane-notch-height) - var(--pane-join-shift)
+    );
 
     & [data-pane-header] {
       padding-block: var(--pane-join-shift)
-        calc(var(--pane-notch-height) - var(--workspace-topbar-height) - var(--pane-join-shift));
+        calc(var(--pane-notch-height) - var(--pane-join-row) - var(--pane-join-shift));
       /* From a tab's foot to the pane's top edge. */
       --pane-join-drop: calc(
-        var(--pane-notch-height) - var(--pane-join-shift) -
-          (var(--workspace-topbar-height) + 1.75rem) / 2
+        var(--pane-notch-height) - var(--pane-join-shift) - (var(--pane-join-row) + 1.75rem) / 2
       );
       /* Above a tab, up to 2px under the header's top. */
-      --pane-join-rise: calc(
-        var(--pane-join-shift) + (var(--workspace-topbar-height) - 1.75rem) / 2 - 2px
-      );
+      --pane-join-rise: calc(var(--pane-join-shift) + (var(--pane-join-row) - 1.75rem) / 2 - 2px);
       --pane-join-h: calc(var(--pane-join-rise) + 1.75rem + var(--pane-join-drop));
       --pane-join-rim-size: 100% calc(var(--pane-join-h) * var(--pane-join-rim-k));
     }
@@ -6468,7 +6486,8 @@ body {
 
     /* The bar's own controls follow the tabs down. */
     & [data-workspace-titlebar-controls] {
-      translate: 0 var(--pane-join-shift);
+      translate: 0
+        calc(var(--pane-join-shift) - (var(--workspace-topbar-height) - var(--pane-join-row)) / 2);
     }
 
     /* The pane's corner cuts sit at the bar's foot; the end one at the pane's
@@ -6598,12 +6617,12 @@ body {
         mask: linear-gradient(to right, transparent, #000);
       }
 
+      /* A stretched 1px layer fades on the Windows compositor. */
       & [data-jm] {
-        width: 1px;
+        width: calc(var(--jm) * 1px);
         height: calc(100% + 1px);
         transform-origin: 0 0;
         translate: calc(var(--jx) + var(--r)) 0;
-        scale: var(--jm) 1;
         background: var(--pane-join-fill);
       }
       & [data-jm]::after {

@@ -640,7 +640,7 @@ function surfaceTabsOf(
 let running = 0;
 let stop: (() => void) | null = null;
 
-function start(): () => void {
+export function startLayoutSurfaceSync(): () => void {
   reconcileOnLoad();
   const unsubscribers = [
     useRightPanelStore.subscribe((state, previous) => {
@@ -699,7 +699,7 @@ export function useLayoutSurfaceSync(): void {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Start cross-store surface subscriptions for the first mounted host and release them after the last host leaves.
   useEffect(() => {
     running += 1;
-    if (running === 1) stop = start();
+    if (running === 1) stop = startLayoutSurfaceSync();
     return () => {
       running -= 1;
       if (running === 0) {

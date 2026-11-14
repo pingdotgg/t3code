@@ -87,6 +87,16 @@ export function wheelDeltaPx(delta: number, event: WheelEvent): number {
   return delta;
 }
 
+/** The horizontal travel used by the workspace strip and terminal wheel handlers. */
+export function sidewaysWheelDelta(
+  event: Pick<WheelEvent, "deltaX" | "deltaY" | "shiftKey" | "ctrlKey" | "metaKey" | "altKey">,
+): number {
+  if (event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && event.deltaX === 0) {
+    return event.deltaY;
+  }
+  return Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : 0;
+}
+
 function scrollsSideways(element: Element): boolean {
   if (element.scrollWidth <= element.clientWidth) return false;
   const { overflowX } = getComputedStyle(element);

@@ -17,13 +17,16 @@ import type { ThreadRouteTarget } from "../threadRoutes";
 import {
   createLayoutLauncherContent,
   findLayoutLauncherFor,
+  findLayoutTabByContent,
   findLayoutPane,
   findLayoutSurfaceTabs,
   layoutChatSwaps,
+  resizeLayoutColumn,
   selectFocusedTab,
   selectFocusedWorkspace,
   THREAD_TERMINAL_SURFACE_ID,
   type LayoutState,
+  type LayoutTabContent,
   type LayoutTabLocation,
   type LayoutTabDestination,
 } from "./layoutModel";
@@ -256,7 +259,14 @@ export function openPullRequestWorkspace(threadRef: ScopedThreadRef, number: num
 }
 
 /** Threads whose surfaces an open hid, by thread key: they show again when an open brings it back. */
-const companionsHiddenByOpen = new Map<string, { panel: boolean; terminal: boolean }>();
+const companionsHiddenByOpen = new Map<
+  string,
+  {
+    panel: boolean;
+    terminal: boolean;
+    columns: Array<{ content: LayoutTabContent; width: number; cameraWidth: number | null }>;
+  }
+>();
 
 function chatThreadRef(target: ThreadRouteTarget): ScopedThreadRef | null {
   if (target.kind === "server") return target.threadRef;
@@ -277,12 +287,12 @@ export function followLayoutCompanions(open: () => void): void {
     const from = chatThreadRef(swap.from);
     const to = chatThreadRef(swap.to);
     if (from && to && scopedThreadKey(from) === scopedThreadKey(to)) continue;
-    if (from) hideCompanionsOf(from);
+    if (from) hideCompanionsOf(from, before);
     if (to) showCompanionsOf(to);
   }
 }
 
-function hideCompanionsOf(threadRef: ScopedThreadRef) {
+function hideCompanionsOf(threadRef: ScopedThreadRef, layout: LayoutState) {
   const panel = selectThreadRightPanelState(
     useRightPanelStore.getState().byThreadKey,
     threadRef,
@@ -292,7 +302,19 @@ function hideCompanionsOf(threadRef: ScopedThreadRef) {
     threadRef,
   ).terminalOpen;
   if (!panel && !terminal) return;
-  companionsHiddenByOpen.set(scopedThreadKey(threadRef), { panel, terminal });
+  const chat = findThreadChat(layout, threadRef);
+  const locations = [...(chat ? [chat] : []), ...findLayoutSurfaceTabs(layout, threadRef)];
+  const columns = new Map(
+    locations.map(({ column, tab, workspace }) => [
+      column.id,
+      { content: tab.content, width: column.width, cameraWidth: workspace.cameraWidth },
+    ]),
+  );
+  companionsHiddenByOpen.set(scopedThreadKey(threadRef), {
+    panel,
+    terminal,
+    columns: [...columns.values()],
+  });
   hideThreadSurfaceTabs(threadRef);
 }
 
@@ -305,10 +327,27 @@ function showCompanionsOf(threadRef: ScopedThreadRef) {
   const chat = findThreadChat(store.layout, threadRef);
   const focused = selectFocusedTab(store.layout);
   if (!chat) return;
-  if (hidden.panel) useRightPanelStore.getState().syncFromLayout(threadRef, { open: true });
+  if (hidden.panel) {
+    requestLayoutSurfacePlacement(threadRef, layoutSurfacePlacement(chat, false));
+    useRightPanelStore.getState().syncFromLayout(threadRef, { open: true });
+  }
   if (hidden.terminal) {
     requestLayoutSurfacePlacement(threadRef, layoutSurfacePlacement(chat, true));
     useTerminalUiStateStore.getState().setTerminalOpen(threadRef, true);
   }
   if (focused) useLayoutStore.getState().focusTab(focused.id);
+  // A navigation hide refits the remaining columns; returning restores the widths it borrowed.
+  useLayoutStore.setState((state) => {
+    let layout = state.layout;
+    for (const column of hidden.columns) {
+      const location = findLayoutTabByContent(layout, column.content);
+      if (!location) continue;
+      const scale =
+        column.cameraWidth && location.workspace.cameraWidth
+          ? column.cameraWidth / location.workspace.cameraWidth
+          : 1;
+      layout = resizeLayoutColumn(layout, location.column.id, column.width * scale);
+    }
+    return { layout };
+  });
 }

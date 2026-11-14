@@ -75,6 +75,16 @@ const inSecondPane = (selector: string) => {
 async function clickHeld(element: HTMLElement) {
   const strip = document.querySelector<HTMLElement>("[data-layout-strip]")!;
   const held = strip.scrollLeft;
+  const geometry = () => ({
+    scrollLeft: strip.scrollLeft,
+    viewportWidth: strip.clientWidth,
+    scrollWidth: strip.scrollWidth,
+    tabLeft: element.getBoundingClientRect().left,
+    focusedTabId: focusedTabId(),
+    behavior: useLayoutBehaviorStore.getState().behavior.whenNoRoom,
+    workspace: useLayoutStore.getState().layout.workspaces[0],
+  });
+  const beforePress = geometry();
   const pointer = { bubbles: true, button: 0, pointerType: "mouse" } as const;
   element.dispatchEvent(new PointerEvent("pointerdown", pointer));
   await expect
@@ -82,8 +92,14 @@ async function clickHeld(element: HTMLElement) {
     .toHaveAttribute("data-layout-pane-focused", "true");
   expect(strip.scrollLeft).toBe(held);
   element.dispatchEvent(new PointerEvent("pointerup", pointer));
+  const afterRelease = geometry();
   await page.elementLocator(element).click();
-  await vi.waitFor(() => expect(strip.scrollLeft).toBeGreaterThan(held));
+  await vi.waitFor(() =>
+    expect(
+      strip.scrollLeft,
+      JSON.stringify({ beforePress, afterRelease, afterClick: geometry() }),
+    ).toBeGreaterThan(held),
+  );
 }
 
 it("shows a tab in an unfocused pane that runs off screen with one click on it", async () => {
@@ -95,11 +111,13 @@ it("shows a tab in an unfocused pane that runs off screen with one click on it",
 
 const secondPaneStrip = () => inSecondPane("[data-layout-tab-strip]");
 const joinOffset = (strip: HTMLElement) =>
-  strip.querySelector<HTMLElement>("[data-pane-join]")!.style.getPropertyValue("--jx");
+  Number.parseFloat(
+    strip.querySelector<HTMLElement>("[data-pane-join]")!.style.getPropertyValue("--jx"),
+  );
 const tabOffset = (strip: HTMLElement, tabId: string) => {
   const tab = strip.querySelector<HTMLElement>(`[data-layout-pane-tab="${tabId}"]`)!;
   const left = tab.getBoundingClientRect().left - strip.getBoundingClientRect().left;
-  return `${Math.round(left + strip.scrollLeft)}px`;
+  return left + strip.scrollLeft;
 };
 
 it("keeps a pane's tab strip and moves its joined tab when the pane switches tabs", async () => {
@@ -108,14 +126,19 @@ it("keeps a pane's tab strip and moves its joined tab when the pane switches tab
   const pane = useLayoutStore.getState().layout.workspaces[0]!.columns[1]!.panes[0]!;
   const first = pane.tabs.find((tab) => tab.id !== tabs.second.id)!;
   useLayoutStore.getState().focusTab(first.id);
+  // Chromium rounds layout pixels separately from transformed bounding boxes.
   await vi.waitFor(() =>
-    expect(joinOffset(secondPaneStrip())).toBe(tabOffset(secondPaneStrip(), first.id)),
+    expect(
+      Math.abs(joinOffset(secondPaneStrip()) - tabOffset(secondPaneStrip(), first.id)),
+    ).toBeLessThanOrEqual(1),
   );
   const strip = secondPaneStrip();
 
   useLayoutStore.getState().focusTab(tabs.second.id);
   await vi.waitFor(() => expect(focusedTabId()).toBe(tabs.second.id));
-  await vi.waitFor(() => expect(joinOffset(strip)).toBe(tabOffset(strip, tabs.second.id)));
+  await vi.waitFor(() =>
+    expect(Math.abs(joinOffset(strip) - tabOffset(strip, tabs.second.id))).toBeLessThanOrEqual(1),
+  );
   // The label under the landed shape reads as the active one, and only that one.
   await vi.waitFor(() =>
     expect(
