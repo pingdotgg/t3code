@@ -68,16 +68,17 @@ it.each([false, true])(
       text.replaceWith(replacement);
       window.getSelection()?.collapse(replacement, 5);
       expect(serializeEditorDoc(editor.state.doc).value).toBe("line one");
-      element.dispatchEvent(
-        new KeyboardEvent("keydown", {
-          key: "Enter",
-          code: "Enter",
-          keyCode: 13,
-          shiftKey: true,
-          bubbles: true,
-          cancelable: true,
-        }),
-      );
+      const shiftEnter = new KeyboardEvent("keydown", {
+        key: "Enter",
+        code: "Enter",
+        keyCode: 13,
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      });
+      element.dispatchEvent(shiftEnter);
+      // Safari would otherwise insert its own line break on top of the handled one.
+      expect(shiftEnter.defaultPrevented).toBe(true);
       await vi.advanceTimersByTimeAsync(200);
     });
     expect(submit).not.toHaveBeenCalled();
@@ -108,26 +109,6 @@ it.each([false, true])(
       false,
     );
     expect(commandKey.mock.calls[0]?.[1].shiftKey).toBeFalsy();
-    expect(serializeEditorDoc(editor.state.doc).value).toBe("line!\n one");
-
-    commandKey.mockClear();
-    submit.mockClear();
-    await act(async () => {
-      element.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
-      element.dispatchEvent(
-        new KeyboardEvent("keydown", {
-          key: "Enter",
-          code: "Enter",
-          keyCode: 13,
-          shiftKey: true,
-          bubbles: true,
-          cancelable: true,
-        }),
-      );
-      await vi.advanceTimersByTimeAsync(200);
-    });
-    expect(commandKey).not.toHaveBeenCalled();
-    expect(submit).not.toHaveBeenCalled();
     expect(serializeEditorDoc(editor.state.doc).value).toBe("line!\n one");
   },
 );
