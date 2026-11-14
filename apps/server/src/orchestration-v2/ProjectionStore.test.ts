@@ -9414,6 +9414,142 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 
+  it.effect("keeps a source's move after the fork out of the fork's history", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const day = (date: number) => DateTime.makeUnsafe(`2026-03-0${date}T00:00:00.000Z`);
+      const projectId = ProjectId.make("project:projection-fork-later-move");
+      const thread = (name: string) => ThreadId.make(`thread:projection-fork-later-move:${name}`);
+      const run = (name: string) => RunId.make(`run:projection-fork-later-move:${name}`);
+      const createThread = (name: string, createdAt: DateTime.Utc, forkOf?: string) => {
+        const created = threadCreated({
+          threadId: thread(name),
+          projectId,
+          worktreePath: "/a",
+          providerInstanceId,
+          parent: forkOf === undefined ? undefined : thread(forkOf),
+          kind: forkOf === undefined ? undefined : "fork",
+        });
+        return projectionStore.apply({
+          ...created,
+          occurredAt: createdAt,
+          payload: {
+            ...created.payload,
+            createdAt,
+            updatedAt: createdAt,
+            forkedFrom:
+              forkOf === undefined
+                ? null
+                : { type: "run", threadId: thread(forkOf), runId: run(forkOf) },
+          },
+        });
+      };
+      const addItem = (
+        threadName: string,
+        text: string,
+        at: DateTime.Utc,
+        ordinal: number,
+        previousFolder?: string,
+      ) => {
+        const runId = previousFolder === undefined ? run(threadName) : null;
+        return projectionStore.apply({
+          id: EventId.make(`event:projection-fork-later-move:${threadName}:${ordinal}`),
+          type: "turn-item.updated",
+          threadId: thread(threadName),
+          ...(runId === null ? {} : { runId }),
+          occurredAt: at,
+          payload: {
+            id: TurnItemId.make(`turn-item:projection-fork-later-move:${threadName}:${ordinal}`),
+            threadId: thread(threadName),
+            runId,
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal,
+            status: "completed",
+            title: null,
+            startedAt: at,
+            completedAt: at,
+            updatedAt: at,
+            ...(previousFolder === undefined
+              ? {
+                  type: "assistant_message",
+                  messageId: MessageId.make(`message:${threadName}:${ordinal}`),
+                  text,
+                  streaming: false,
+                }
+              : { type: "system_notice", message: text, previousFolder }),
+          },
+        });
+      };
+      // Each source answers on day 1, moves to /b on day 3 and to /c on day 5. One fork
+      // is from day 2, before both moves, and one from day 4, between them.
+      const source = Effect.fnUntraced(function* (name: string, lateAnswer: boolean) {
+        yield* createThread(name, day(1));
+        yield* projectionStore.apply(
+          runCreated({
+            id: run(name),
+            threadId: thread(name),
+            ordinal: 1,
+            providerInstanceId,
+            occurredAt: day(1),
+          }),
+        );
+        yield* addItem(name, "answer", day(1), 1);
+        yield* createThread(`${name}-early`, day(2), name);
+        yield* addItem(name, "Moved to /b.", day(3), 2, "/a");
+        yield* createThread(`${name}-between`, day(4), name);
+        yield* addItem(name, "Moved to /c.", day(5), 3, "/b");
+        // Output of the forked run that arrives after both moves.
+        if (lateAnswer) yield* addItem(name, "late answer", day(6), 4);
+      });
+      yield* source("plain", false);
+      yield* source("late", true);
+      // A fork that moves shows its own receipt.
+      yield* addItem("plain-early", "Moved to /x.", day(7), 1, "/a");
+
+      const shape = (rows: ReadonlyArray<{ readonly item: OrchestrationV2TurnItem }>) =>
+        rows.map((row) =>
+          row.item.type === "system_notice"
+            ? row.item.message
+            : row.item.type === "assistant_message"
+              ? row.item.text
+              : row.item.type,
+        );
+      const expectFork = Effect.fnUntraced(function* (
+        name: string,
+        expected: ReadonlyArray<string>,
+      ) {
+        const projection = yield* projectionStore.getThreadProjection(thread(name));
+        assert.deepEqual(shape(projection.visibleTurnItems), expected);
+        const page = yield* projectionStore.getTimelinePage(thread(name), {
+          view: "activity",
+          limit: 10,
+        });
+        assert.deepEqual(page.items, projection.visibleTurnItems);
+        const window = yield* projectionStore.getThreadSnapshotWindow(thread(name), {
+          rowLimit: 10,
+        });
+        assert.deepEqual(shape(window.projection.visibleTurnItems), expected);
+      });
+      yield* expectFork("plain-early", ["answer", "fork", "Moved to /x."]);
+      yield* expectFork("plain-between", ["answer", "Moved to /b.", "fork"]);
+      yield* expectFork("late-early", ["answer", "late answer", "fork"]);
+      yield* expectFork("late-between", ["answer", "Moved to /b.", "late answer", "fork"]);
+      // A short window spends its rows on inherited history, not on a move the fork never made.
+      const shortWindow = yield* projectionStore.getThreadSnapshotWindow(thread("late-early"), {
+        rowLimit: 2,
+      });
+      assert.deepEqual(shape(shortWindow.projection.visibleTurnItems), [
+        "answer",
+        "late answer",
+        "fork",
+      ]);
+    }),
+  );
+
   it.effect("removes rolled back runs from the active visible projection", () =>
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;

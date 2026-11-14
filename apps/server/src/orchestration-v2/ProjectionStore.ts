@@ -1484,10 +1484,17 @@ function makeForkMarkerTurnItem(input: {
 
 type ForkHistoryItem = Pick<OrchestrationV2TurnItem, "runId" | "ordinal" | "type"> & {
   readonly previousFolder?: string | undefined;
+  readonly startedAt?: DateTime.Utc | null | undefined;
 };
 
 const isMoveReceipt = (item: ForkHistoryItem) =>
   item.runId === null && item.type === "system_notice" && item.previousFolder !== undefined;
+
+// A source that moves after the fork was created says nothing about the fork, which stayed.
+const isMoveReceiptBeforeFork = (item: ForkHistoryItem, forkCreatedAt: DateTime.Utc) =>
+  isMoveReceipt(item) &&
+  item.startedAt != null &&
+  !DateTime.isGreaterThan(item.startedAt, forkCreatedAt);
 
 // Same boundary as covering_receipt in readProjection's fork window SQL.
 function forkBoundaryOrdinal(
@@ -1495,6 +1502,7 @@ function forkBoundaryOrdinal(
   runOrdinalById: ReadonlyMap<NonNullable<OrchestrationV2TurnItem["runId"]>, number>,
   sourceRunOrdinal: number,
   historyOrigin: OrchestrationV2ThreadProjection["thread"]["historyOrigin"],
+  forkCreatedAt: DateTime.Utc,
 ): number {
   let boundaryRun = -1;
   let boundary = -1;
@@ -1506,7 +1514,10 @@ function forkBoundaryOrdinal(
     boundaryRun = run;
     boundary = item.ordinal;
   }
-  return items.find((item) => isMoveReceipt(item) && item.ordinal > boundary)?.ordinal ?? boundary;
+  return (
+    items.find((item) => item.ordinal > boundary && isMoveReceiptBeforeFork(item, forkCreatedAt))
+      ?.ordinal ?? boundary
+  );
 }
 
 function isTurnItemAtOrBeforeRun(input: {
@@ -1515,10 +1526,13 @@ function isTurnItemAtOrBeforeRun(input: {
   readonly boundaryOrdinal: number;
   readonly runOrdinalById: ReadonlyMap<NonNullable<OrchestrationV2TurnItem["runId"]>, number>;
   readonly sourceRunOrdinal: number;
+  readonly forkCreatedAt: DateTime.Utc;
 }): boolean {
   if (input.item.ordinal > input.boundaryOrdinal) return false;
   if (input.item.runId === null) {
-    return input.historyOrigin === "v1_import" || isMoveReceipt(input.item);
+    return isMoveReceipt(input.item)
+      ? isMoveReceiptBeforeFork(input.item, input.forkCreatedAt)
+      : input.historyOrigin === "v1_import";
   }
   const ordinal = input.runOrdinalById.get(input.item.runId);
   return ordinal !== undefined && ordinal <= input.sourceRunOrdinal;
@@ -1593,6 +1607,7 @@ function visibleTurnItemsThroughRun(input: {
       runOrdinalById,
       sourceRun.ordinal,
       input.sourceProjection.thread.historyOrigin,
+      input.forkCreatedAt,
     );
   const inheritedPrefix = input.sourceProjection.visibleTurnItems
     .filter(
@@ -1614,6 +1629,7 @@ function visibleTurnItemsThroughRun(input: {
           boundaryOrdinal,
           runOrdinalById,
           sourceRunOrdinal: sourceRun.ordinal,
+          forkCreatedAt: input.forkCreatedAt,
         }),
     ),
   );
@@ -2298,7 +2314,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       readonly attemptStatus?: string | null;
       readonly persistentOutput?: boolean;
       readonly deferredWork?: OrchestrationV2TurnItem["deferredWork"];
+      /** Set, with `startedAt`, on a move receipt: a fork inherits it only from before the fork. */
       readonly previousFolder?: string;
+      readonly startedAt?: DateTime.Utc | null;
     };
     type TimelineIndexRow = {
       readonly sourceThreadId: ThreadId;
@@ -3279,8 +3297,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                             AND json_extract(source_thread.payload_json, '$.historyOrigin') = 'v1_import'
                         )
                       )
+                      -- A move receipt from before the fork; a later move is the source's alone.
                       OR (item.run_id IS NULL AND item.type = 'system_notice'
-                        AND json_extract(item.payload_json, '$.previousFolder') IS NOT NULL)
+                        AND json_extract(item.payload_json, '$.previousFolder') IS NOT NULL
+                        AND julianday(json_extract(item.payload_json, '$.startedAt')) <= julianday(${
+                          window.forkCreatedAt === undefined
+                            ? null
+                            : DateTime.formatIso(window.forkCreatedAt)
+                        }))
                       OR (
                         run.ordinal <= (
                           SELECT required_run.ordinal
@@ -4535,6 +4559,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                         WHERE thread_id = ${forkedFrom.threadId} AND run_id IS NULL
                           AND type = 'system_notice'
                           AND json_extract(payload_json, '$.previousFolder') IS NOT NULL
+                          AND julianday(json_extract(payload_json, '$.startedAt'))
+                            <= julianday(${DateTime.formatIso(projection.thread.createdAt)})
                           AND ordinal > (SELECT ordinal FROM effective_boundary)),
                       (SELECT ordinal FROM effective_boundary)
                     ) AS ordinal
@@ -6463,6 +6489,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           created_by: "user" | "agent" | "system" | null;
           message_id: string | null;
           previous_folder: string | null;
+          moved_at: string | null;
           status: OrchestrationV2TurnItem["status"];
           ordinal: number;
           attempt_id: string | null;
@@ -6473,7 +6500,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           CASE WHEN item.type = 'user_message' THEN json_extract(item.payload_json, '$.inputIntent') END AS input_intent,
           CASE WHEN item.type = 'user_message' THEN json_extract(item.payload_json, '$.createdBy') END AS created_by,
           CASE WHEN item.type IN ('user_message', 'assistant_message') THEN json_extract(item.payload_json, '$.messageId') END AS message_id,
-          CASE WHEN item.type = 'system_notice' THEN json_extract(item.payload_json, '$.previousFolder') END AS previous_folder
+          CASE WHEN item.type = 'system_notice' THEN json_extract(item.payload_json, '$.previousFolder') END AS previous_folder,
+          CASE WHEN item.type = 'system_notice' THEN json_extract(item.payload_json, '$.startedAt') END AS moved_at
         FROM orchestration_v2_projection_turn_items AS item
         ${
           includeAttempts
@@ -6504,6 +6532,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           ...(row.created_by === null ? {} : { createdBy: row.created_by }),
           ...(row.message_id === null ? {} : { messageId: MessageId.make(row.message_id) }),
           ...(row.previous_folder === null ? {} : { previousFolder: row.previous_folder }),
+          ...(row.previous_folder === null || row.moved_at === null
+            ? {}
+            : { startedAt: DateTime.makeUnsafe(row.moved_at) }),
         }));
         const local: Array<TimelineIndexRow> = items.map((item) => ({
           sourceThreadId: threadId,
@@ -6540,6 +6571,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ordinals,
             sourceRun.ordinal,
             source.records.thread.historyOrigin,
+            records.thread.createdAt,
           );
           inherited = [
             ...source.visible.filter(
@@ -6554,6 +6586,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   boundaryOrdinal,
                   runOrdinalById: ordinals,
                   sourceRunOrdinal: sourceRun.ordinal,
+                  forkCreatedAt: records.thread.createdAt,
                 }),
             ),
           ].map((row) => ({ ...row, visibility: "inherited" }));
