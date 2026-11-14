@@ -984,6 +984,7 @@ export function toPullRequestSummary(pr: SummarizedPullRequest): GitHubPullReque
 export interface GitHubPullRequestWatchFingerprint {
   readonly status: string;
   readonly remarks: string;
+  readonly includesRemarkState: boolean;
 }
 
 type EditedConnection = WatchedPullRequest["comments"] | WatchedPullRequest["reviews"];
@@ -1011,12 +1012,16 @@ export function toPullRequestWatchFingerprint(
     status: [
       pr.state,
       pr.mergeable,
+      pr.mergeStateStatus,
       pr.headRefOid,
       stateCounts(contexts?.checkRunCountsByState ?? null),
       stateCounts(contexts?.statusContextCountsByState ?? null),
       pr.mergeQueueRemovals?.filteredCount ?? 0,
     ].join(" "),
+    includesRemarkState: pr.totalCommentsCount !== null,
     remarks: [
+      pr.updatedAt,
+      pr.totalCommentsCount,
       pr.comments.totalCount,
       newestEdit(pr.comments),
       pr.reviews?.totalCount ?? 0,

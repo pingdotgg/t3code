@@ -5116,6 +5116,99 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       }),
   );
 
+  it.effect.each([true, false])(
+    "reads activity on every sweep while the fingerprint lacks remark state (complete: %s)",
+    (complete) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const threadId = ThreadId.make(`runtime-pull-request-watch-partial-${complete}`);
+        const projectId = ProjectId.make(`pr-watch-partial-project-${complete}`);
+        yield* seedProject({
+          projectId,
+          title: "Watch partial remarks",
+          workspaceRoot: "/workspace/watch-partial",
+          defaultModelSelection: null,
+          createdAt: "2026-10-01T00:00:00.000Z",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`pr-watch-partial-create-${complete}`),
+          threadId,
+          projectId,
+          title: "Watch partial remarks",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        const key = { host: "github.com", repository: "pingdotgg/t3code", number: 94 };
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(`pr-watch-partial-start-${complete}`),
+          threadId,
+          ...key,
+          watching: true,
+          link: { url: "https://github.com/pingdotgg/t3code/pull/94", source: "agent" },
+        });
+
+        let activityReads = 0;
+        const host = Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          Layer.mock(PullRequestService.PullRequestService)({
+            // The fingerprint never moves, so only a missing remark total can prompt an activity read.
+            watchFingerprint: () =>
+              Effect.succeed({ status: "quiet", remarks: "none", includesRemarkState: complete }),
+            invalidate: () => Effect.void,
+            detail: () =>
+              Effect.succeed({
+                ...watchedPullRequestDetail({
+                  projectId,
+                  number: 94,
+                  at: "2026-10-02T12:00:00.000Z",
+                }),
+                headSha: "6074dd48ff",
+                checks: [
+                  { name: "lint", status: "success", description: null, url: null, required: true },
+                ],
+              }),
+            activity: (input) =>
+              Effect.sync(() => {
+                if (input.number === 94) activityReads++;
+                return {
+                  comments: [],
+                  commentCount: 0,
+                  commentsTruncated: false,
+                  reviewThreads: [],
+                  commits: [],
+                };
+              }),
+          }),
+        );
+        const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const sweep = reactor.sweep.pipe(Effect.andThen(worker.drain()));
+
+        yield* sweep;
+        const afterFirst = activityReads;
+        yield* sweep;
+        yield* sweep;
+        assert.equal(activityReads, complete ? afterFirst : afterFirst + 2);
+
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(`pr-watch-partial-end-${complete}`),
+          threadId,
+          ...key,
+          watching: false,
+        });
+        yield* worker.drain();
+      }),
+  );
+
   // regression: #21155 watching a pull request again repeated news the thread already got
   it.effect("watching a dismissed stack layer again keeps what its last watch told", () =>
     Effect.gen(function* () {

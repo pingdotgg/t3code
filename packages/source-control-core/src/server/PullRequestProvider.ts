@@ -75,6 +75,8 @@ export class PullRequestProviderError extends Schema.TaggedError<PullRequestProv
 export interface ProviderChangeRequestWatchFingerprint {
   readonly status: string;
   readonly remarks: string;
+  /** False when the host returned partial remark state; callers must read activity instead. */
+  readonly includesRemarkState?: boolean;
 }
 
 export interface PullRequestProviderFailure {

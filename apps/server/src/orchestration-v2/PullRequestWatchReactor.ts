@@ -182,6 +182,7 @@ function planRead(
     return { detail: read || checksDue, activity: read };
   }
   const activity =
+    fingerprint.includesRemarkState === false ||
     last.remarks !== fingerprint.remarks ||
     !last.remarksComplete ||
     now - last.at >= FINGERPRINT_REREAD_MS;
@@ -590,9 +591,10 @@ export const make = Effect.gen(function* () {
     if (
       last === undefined ||
       group.targets.some((target) => !last.watches.has(watchKey(target))) ||
+      fingerprint?.includesRemarkState === false ||
       (fingerprint !== null && last.remarks !== fingerprint.remarks)
     ) {
-      // A new watch or changed host remarks needs a fresh view of every tail.
+      // A new watch, changed host remarks, or partial remark state needs a fresh view of every tail.
       threadTails.delete(group.key);
     }
     const reference = referenceOf(group);
