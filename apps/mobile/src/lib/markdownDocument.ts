@@ -82,7 +82,9 @@ function attribute(tag: string, name: string): string | null {
 }
 
 function markdownDestination(url: string): string {
-  return `<${url.replace(/&/g, "&amp;").replace(/</g, "%3C").replace(/>/g, "%3E").replace(/\|/g, "%7C").replace(/\n/g, "")}>`;
+  // Windows separators are escaped later by `markdownWithWindowsPathDestinations`.
+  const escaped = isWindowsAbsolutePath(url) ? url : url.replace(/\\/g, "\\\\");
+  return `<${escaped.replace(/&/g, "&amp;").replace(/</g, "%3C").replace(/>/g, "%3E").replace(/\|/g, "%7C").replace(/\n/g, "")}>`;
 }
 
 const ANCHOR_TAG = /^<\/?a[\s/>]/i;

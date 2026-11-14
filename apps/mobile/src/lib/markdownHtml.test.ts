@@ -41,22 +41,19 @@ describe("HTML in native Markdown", () => {
     expect(paragraph?.type).toBe("paragraph");
     if (paragraph?.type === "paragraph")
       expect(paragraph.children[0]).toMatchObject({ type: "image", alt: "&lt;" });
+    const url = "https://example.com/shot.png?label=&lt;&sig=a%26b";
     const anchor = '<a href="https://example.com/shot.png?label=&amp;lt;&amp;sig=a%26b">Open</a>';
-    for (const [source, type] of [
-      [markdown, "Image"],
-      [anchor, "Link"],
+    const posixImage = String.raw`<img src="/tmp/a\&amp;b.png">`;
+    expect(markdownImageSources(posixImage)).toEqual([String.raw`/tmp/a\&b.png`]);
+    for (const [source, type, expected] of [
+      [markdown, "Image", url],
+      [anchor, "Link", url],
+      [posixImage, "Image", String.raw`/tmp/a\&b.png`],
     ] as const) {
       expect(
         (await parseMarkdown(markdownForNativeRendering(source, ENRICHED_INLINE_FILE_LINK_REGEX)))
           .children,
-      ).toMatchObject([
-        {
-          type: "Paragraph",
-          children: [
-            { type, attributes: { url: "https://example.com/shot.png?label=&lt;&sig=a%26b" } },
-          ],
-        },
-      ]);
+      ).toMatchObject([{ type: "Paragraph", children: [{ type, attributes: { url: expected } }] }]);
     }
   });
 
