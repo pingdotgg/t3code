@@ -1515,6 +1515,82 @@ describe("buildThreadFeed", () => {
       "thinking:step",
     ]);
     expect(rows([user, step, passed], "zen", running)).toEqual(["user", "thinking:step"]);
+    // A question keeps the run working; the reply written before it is what the user answers.
+    const asking: OrchestrationV2TurnItem = {
+      ...base("asking", at(6), 5),
+      type: "dynamic_tool",
+      toolName: "AskUserQuestion",
+      status: "completed",
+      input: {},
+      output: {},
+    };
+    const questionRequestId = RuntimeRequestId.make("question");
+    const question = (answered: boolean): OrchestrationV2TurnItem => ({
+      ...base("question", at(7), 6),
+      type: "user_input_request",
+      requestId: questionRequestId,
+      questions: [],
+      ...(answered
+        ? {
+            questionAnswer: {
+              requestId: questionRequestId,
+              answers: { color: "Blue" },
+              attachmentsByQuestionId: {},
+            },
+          }
+        : {}),
+    });
+    expect(rows([user, step, passed, final], "zen", running)).not.toContain("final");
+    expect(rows([user, step, passed, final, asking, question(false)], "zen", running)).toEqual([
+      "user",
+      "final",
+      "thinking:",
+    ]);
+    // Answering keeps the run working, and the reply stays above the answered question.
+    expect(rows([user, step, passed, final, asking, question(true)], "zen", running)).toEqual([
+      "user",
+      "final",
+      "question",
+      "thinking:",
+    ]);
+    // Agents often run a command between the reply and the question; the reply still shows.
+    expect(rows([user, step, passed, asking, question(true)], "zen", running)).toEqual([
+      "user",
+      "step",
+      "question",
+      "thinking:",
+    ]);
+    // Secret and link requests ask the user too; their cards keep the reply above them.
+    const secret: OrchestrationV2TurnItem = {
+      ...base("secret", at(7), 6),
+      type: "secret_request",
+      label: "API key",
+      reason: "Needed to call the API",
+      secretStatus: "pending",
+    };
+    const link: OrchestrationV2TurnItem = {
+      ...base("link", at(7), 6),
+      type: "link_request",
+      reason: "Needed to run on the VPS",
+      linkStatus: "pending",
+    };
+    for (const request of [secret, link]) {
+      expect(rows([user, step, passed, final, asking, request], "zen", running)).toEqual([
+        "user",
+        "final",
+        request.id,
+        "thinking:",
+      ]);
+    }
+    const later: OrchestrationV2TurnItem = {
+      ...base("later", at(8), 7),
+      type: "reasoning",
+      streaming: false,
+      text: "later",
+    };
+    expect(
+      rows([user, step, passed, final, asking, question(true), later], "zen", running),
+    ).toEqual(["user", "final", "question", "thinking:later"]);
     expect(rows(turn, "zen", { ...running, turnEnded: true })).toEqual(["user", "final"]);
     const nextRun = { ...running, runId: RunId.make("run-2") };
     const followUp = { ...say("follow-up", 6, true), runId: nextRun.runId };

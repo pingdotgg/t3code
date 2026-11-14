@@ -1440,10 +1440,39 @@ function deriveInFlightSteerAnswerIds(entries: ReadonlyArray<TimelineEntry>): Re
   return ids;
 }
 
+/** A question, secret, or link request: the agent asks the user, pending or answered. */
+function timelineEntryAsksUser(entry: TimelineEntry): boolean {
+  if (entry.kind === "work") return entry.entry.itemType === "user_input_request";
+  if (entry.kind !== "event") return false;
+  const type = entry.projectedItem.item.type;
+  return type === "secret_request" || type === "link_request";
+}
+
+/**
+ * The last reply an agent wrote before it asked the user something: zen keeps it, since the run
+ * still works while it waits and after the answer. Agents often run a command or a tool between
+ * the reply and the request, so only a user message ends the search.
+ */
+function deriveRepliesBeforeAsks(entries: ReadonlyArray<TimelineEntry>): ReadonlySet<string> {
+  const ids = new Set<string>();
+  let reply: string | null = null;
+  for (const entry of entries) {
+    if (timelineEntryAsksUser(entry)) {
+      if (reply !== null) ids.add(reply);
+      reply = null;
+    } else if (entry.kind === "message") {
+      reply = entry.message.role === "assistant" ? entry.message.id : null;
+    }
+  }
+  return ids;
+}
+
 export function liveAnswerPreview(entries: ReadonlyArray<TimelineEntry>): string | null {
   const boundary = lastResponseBoundaryIndex(entries);
   for (let index = entries.length - 1; index > boundary; index -= 1) {
     const entry = entries[index]!;
+    // The reply before a question shows in full; the preview only shows newer text.
+    if (timelineEntryAsksUser(entry)) return null;
     const text =
       entry.kind === "message" && entry.message.role === "assistant"
         ? entry.message.text
@@ -1492,6 +1521,7 @@ function timelineRowEntries(
     const answeringFrom = answering ? lastResponseBoundaryIndex(entries) + 1 : entries.length;
     const terminalIds = deriveTerminalAssistantMessageIds(entries);
     const steerAnswerIds = deriveInFlightSteerAnswerIds(entries);
+    const askReplyIds = deriveRepliesBeforeAsks(entries);
     const retainedReplyIds = retainedAssistantReplyEntryIds(entries);
     shown = entries.filter((entry, index) => {
       if (entry.kind !== "message") {
@@ -1502,6 +1532,7 @@ function timelineRowEntries(
         message.role !== "assistant" ||
         message.id === input.revealedMessageId ||
         steerAnswerIds.has(message.id) ||
+        askReplyIds.has(message.id) ||
         retainedReplyIds.has(entry.id) ||
         (terminalIds.has(message.id) &&
           index < answeringFrom &&
