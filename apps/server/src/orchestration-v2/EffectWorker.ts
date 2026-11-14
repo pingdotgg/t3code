@@ -1,4 +1,4 @@
-import { CommandId } from "@t3tools/contracts";
+import { CommandId, type RunId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -44,6 +44,8 @@ export class OrchestrationEffectExecutionError extends Schema.TaggedError<Orches
   },
 ) {}
 
+const isOrchestrationEffectExecutionError = Schema.is(OrchestrationEffectExecutionError);
+
 /**
  * Do not apply this to `provider-turn.restart`: that compound effect also runs
  * detach and start. Swallowing a start failure that happens to mention
@@ -61,6 +63,19 @@ function isNonRetryableProviderTurnControlFailure(effectType: string, errorText:
     /treating as already stopped/i.test(errorText)
   );
 }
+
+// Keep an owner for starting runs when persistence or restart cleanup fails.
+const ownsStartingRun = (effectType: EffectOutbox.OrchestrationEffectV2["request"]["type"]) =>
+  effectType === "provider-turn.start" || effectType === "provider-turn.restart";
+
+const cannotSettleRun = (cause: Cause.Cause<unknown>) =>
+  Cause.findErrorOption(cause).pipe(
+    Option.exists(
+      (error) =>
+        isOrchestrationEffectExecutionError(error) &&
+        ProviderTurnStartService.isProviderTurnStartRunStateMissingError(error.cause),
+    ),
+  );
 
 export interface OrchestrationEffectExecutorV2Shape {
   readonly execute: (
@@ -102,6 +117,43 @@ export const layerExecutor: Layer.Layer<
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
     const settings = yield* ServerSettings.ServerSettingsService;
+    const startRun = (
+      effect: EffectOutbox.OrchestrationEffectV2,
+      runId: RunId,
+      willRetry: boolean,
+    ) =>
+      providerTurnStart.start({ threadId: effect.threadId, runId, willRetry }).pipe(
+        Effect.catchCauseIf(
+          (cause) => !willRetry && !Cause.hasInterruptsOnly(cause),
+          (cause) =>
+            Effect.logWarning(
+              "Last run start attempt failed",
+              { effectId: effect.id, effectType: effect.request.type, runId },
+              cause,
+            ).pipe(
+              Effect.andThen(
+                Effect.suspend(() => {
+                  const failure = Option.getOrUndefined(Cause.findErrorOption(cause));
+                  // A failed read cannot identify the attempt. Keep retry ownership
+                  // rather than settling whichever attempt happens to be current.
+                  if (
+                    !ProviderTurnStartService.isProviderTurnStartError(failure) ||
+                    failure.attemptId === undefined ||
+                    failure.rootNodeId === undefined
+                  ) {
+                    return Effect.failCause(cause);
+                  }
+                  return providerTurnStart.failStartingRun({
+                    threadId: effect.threadId,
+                    runId,
+                    attemptId: failure.attemptId,
+                    rootNodeId: failure.rootNodeId,
+                  });
+                }),
+              ),
+            ),
+        ),
+      );
     return OrchestrationEffectExecutorV2.of({
       execute: Effect.fn("OrchestrationEffectExecutorV2.execute")(function (effect, options) {
         const willRetry = options?.willRetry ?? false;
@@ -165,18 +217,16 @@ export const layerExecutor: Layer.Layer<
                 ),
               );
           case "provider-turn.start":
-            return providerTurnStart
-              .start({ threadId: effect.threadId, runId: effect.request.runId, willRetry })
-              .pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new OrchestrationEffectExecutionError({
-                      effectId: effect.id,
-                      effectType: effect.request.type,
-                      cause,
-                    }),
-                ),
-              );
+            return startRun(effect, effect.request.runId, willRetry).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: effect.request.type,
+                    cause,
+                  }),
+              ),
+            );
           case "provider-turn.interrupt": {
             const request = effect.request;
             return providerTurnControl
@@ -414,11 +464,8 @@ export const layerExecutor: Layer.Layer<
                       : Effect.void,
                 ),
                 Effect.andThen(
-                  providerTurnStart.start({
-                    threadId: effect.threadId,
-                    runId: effect.request.runId,
-                    willRetry,
-                  }),
+                  // Failed interruption or detach must not report the old process stopped.
+                  startRun(effect, effect.request.runId, willRetry),
                 ),
                 Effect.mapError(
                   (cause) =>
@@ -906,7 +953,8 @@ export const layerWithOptions = (
             ? yield* outbox
                 .succeed({ effectId: effect.id, workerId })
                 .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
-            : effect.attemptCount >= maxAttempts
+            : effect.attemptCount >= maxAttempts &&
+                (!ownsStartingRun(effect.request.type) || cannotSettleRun(exit.cause))
               ? yield* outbox
                   .fail({ effectId: effect.id, workerId, error })
                   .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
