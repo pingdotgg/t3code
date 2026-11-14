@@ -15,7 +15,8 @@ import { parseThreadKey, threadKey } from "@t3tools/client-runtime/state/entitie
 import { createThreadVisitTracker } from "@t3tools/client-runtime/state/thread-visits";
 import { useChildThreadInputs, useThreadReportedModelSelection } from "../../state/entities";
 import { UsageLimitRecoveryCard } from "./UsageLimitRecoveryCard";
-import { useFocusEffect, useNavigation } from "@react-navigation/native";
+import { useFocusEffect, useIsFocused, useNavigation } from "@react-navigation/native";
+import { useAppActive } from "../../lib/appState";
 import {
   effectiveSnoozed,
   threadWokeAt,
@@ -1257,7 +1258,12 @@ function ThreadDetailBody(
       ? null
       : { width: Math.max(0, columnWidth - controlInsets.left - controlInsets.right) };
   const selectedInstanceId = props.selectedThread.modelSelection.instanceId;
-  useAtomMount(threadStreamHaptics(props.selectedThreadDetailRef));
+  const screenIsFocused = useIsFocused();
+  const appIsActive = useAppActive();
+  // The native stack keeps covered screens mounted, so gate on focus too.
+  useAtomMount(
+    threadStreamHaptics(screenIsFocused && appIsActive ? props.selectedThreadDetailRef : null),
+  );
   const selectedProviderSkills = (() => {
     const provider = props.serverConfig?.providers.find(
       (candidate) => candidate.instanceId === selectedInstanceId,
