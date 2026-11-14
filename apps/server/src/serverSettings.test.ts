@@ -73,11 +73,11 @@ const layerServerSettingsWithSecrets = () =>
     ),
   );
 
-const layerFailingSecretStore = (cause: ServerSecretStore.SecretStoreError) =>
+const layerFailingSecretStore = (cause: ServerSecretStore.SecretStoreReadError) =>
   Layer.succeed(
     ServerSecretStore.ServerSecretStore,
     ServerSecretStore.ServerSecretStore.of({
-      get: () => Effect.fail(cause),
+      get: (name) => (name === cause.resource ? Effect.fail(cause) : Effect.succeedNone),
       set: () => Effect.void,
       create: () => Effect.void,
       getOrCreateRandom: () => Effect.succeed(new Uint8Array()),
@@ -1994,6 +1994,26 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       yield* Effect.exit(serverSettings.getSettings);
 
       assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), legacy);
+
+      yield* serverSettings.updateSettings({ defaultAutoPull: true });
+
+      const written = JSON.parse(yield* fileSystem.readFileString(serverConfig.settingsPath));
+      assert.deepEqual(written.bitbucket, JSON.parse(legacy).bitbucket);
+      assert.equal(written.defaultAutoPull, true);
+
+      // Creating the host would drop the retired key and its token marker before the token moves.
+      const hostPatch = yield* Effect.exit(
+        serverSettings.updateSettings({
+          sourceControlHosts: { bitbucket: { email: "new@example.com" } },
+        }),
+      );
+
+      const afterHostPatch = JSON.parse(
+        yield* fileSystem.readFileString(serverConfig.settingsPath),
+      );
+      assert.deepEqual(afterHostPatch.bitbucket, JSON.parse(legacy).bitbucket);
+      assert.isUndefined(afterHostPatch.sourceControlHosts?.bitbucket);
+      assert.equal(hostPatch._tag, "Failure");
     }).pipe(Effect.provide(layerSettings));
   });
 
@@ -2026,7 +2046,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       assert.deepEqual(loaded.github?.tokens, { "github.com": "ghp_saved" });
       assert.deepEqual(loaded.github?.hosts, { "github.com": { account: "work" } });
       const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
-      assert.notInclude(raw, '"bitbucket":{"email"');
+      assert.doesNotHaveAnyKeys(JSON.parse(raw), ["bitbucket", "github"]);
       assert.include(raw, "sourceControlHosts");
       assert.isTrue(Option.isNone(yield* secrets.get("bitbucket-access-token")));
     }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
