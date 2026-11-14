@@ -782,6 +782,13 @@ describe("pools", () => {
       2,
     ],
     [
+      "each machine's own trailing-dot localhost subdomain hub",
+      "http://hub.localhost.:8317",
+      "hub",
+      "http://hub.localhost.:8317",
+      2,
+    ],
+    [
       "each machine's own mapped IPv4 loopback hub",
       "http://[::ffff:7f00:1]:8317",
       "hub",
