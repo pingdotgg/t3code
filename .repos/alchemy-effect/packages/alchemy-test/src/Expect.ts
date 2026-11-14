@@ -60,11 +60,7 @@ const inspect = (value: unknown, depth: number, seen: Set<unknown>): string => {
   }
 };
 
-const inspectUnsafe = (
-  value: unknown,
-  depth: number,
-  seen: Set<unknown>,
-): string => {
+const inspectUnsafe = (value: unknown, depth: number, seen: Set<unknown>): string => {
   if (value === null) return "null";
   if (value === undefined) return "undefined";
   switch (typeof value) {
@@ -83,49 +79,33 @@ const inspectUnsafe = (
   if (isAsymmetric(value)) return value.toString();
   if (value instanceof Date) return `Date(${value.toISOString()})`;
   if (value instanceof RegExp) return value.toString();
-  if (value instanceof Error)
-    return `${value.name}(${JSON.stringify(value.message)})`;
+  if (value instanceof Error) return `${value.name}(${JSON.stringify(value.message)})`;
   if (seen.has(value)) return "[Circular]";
   if (depth > MAX_DEPTH) return Array.isArray(value) ? "[…]" : "{…}";
   seen.add(value);
   try {
     if (Array.isArray(value)) {
-      const items = value
-        .slice(0, MAX_ITEMS)
-        .map((v) => inspect(v, depth + 1, seen));
-      if (value.length > MAX_ITEMS)
-        items.push(`… ${value.length - MAX_ITEMS} more`);
+      const items = value.slice(0, MAX_ITEMS).map((v) => inspect(v, depth + 1, seen));
+      if (value.length > MAX_ITEMS) items.push(`… ${value.length - MAX_ITEMS} more`);
       return `[ ${items.join(", ")} ]`;
     }
     if (value instanceof Map) {
       const items = [...value.entries()]
         .slice(0, MAX_ITEMS)
-        .map(
-          ([k, v]) =>
-            `${inspect(k, depth + 1, seen)} => ${inspect(v, depth + 1, seen)}`,
-        );
+        .map(([k, v]) => `${inspect(k, depth + 1, seen)} => ${inspect(v, depth + 1, seen)}`);
       return `Map { ${items.join(", ")} }`;
     }
     if (value instanceof Set) {
-      const items = [...value.values()]
-        .slice(0, MAX_ITEMS)
-        .map((v) => inspect(v, depth + 1, seen));
+      const items = [...value.values()].slice(0, MAX_ITEMS).map((v) => inspect(v, depth + 1, seen));
       return `Set { ${items.join(", ")} }`;
     }
     const proto = Object.getPrototypeOf(value);
     const ctor =
-      proto !== null &&
-      proto !== Object.prototype &&
-      proto.constructor?.name !== "Object"
+      proto !== null && proto !== Object.prototype && proto.constructor?.name !== "Object"
         ? `${proto.constructor?.name ?? ""} `
         : "";
-    const entries = Object.entries(value as Record<string, unknown>).slice(
-      0,
-      MAX_ITEMS,
-    );
-    const body = entries
-      .map(([k, v]) => `${k}: ${inspect(v, depth + 1, seen)}`)
-      .join(", ");
+    const entries = Object.entries(value as Record<string, unknown>).slice(0, MAX_ITEMS);
+    const body = entries.map(([k, v]) => `${k}: ${inspect(v, depth + 1, seen)}`).join(", ");
     return `${ctor}{ ${body} }`;
   } finally {
     seen.delete(value);
@@ -151,10 +131,7 @@ const asymmetricRegistry = new WeakSet<object>();
 const isAsymmetric = (value: unknown): value is AsymmetricMatcher =>
   typeof value === "object" && value !== null && asymmetricRegistry.has(value);
 
-const asymmetric = (
-  label: string,
-  matches: (actual: unknown) => boolean,
-): AsymmetricMatcher => {
+const asymmetric = (label: string, matches: (actual: unknown) => boolean): AsymmetricMatcher => {
   const matcher: AsymmetricMatcher = {
     matches,
     toString: () => label,
@@ -165,12 +142,9 @@ const asymmetric = (
 
 const anyMatcher = (ctor: any): AsymmetricMatcher =>
   asymmetric(`Any<${ctor?.name ?? "?"}>`, (actual) => {
-    if (ctor === String)
-      return typeof actual === "string" || actual instanceof String;
-    if (ctor === Number)
-      return typeof actual === "number" || actual instanceof Number;
-    if (ctor === Boolean)
-      return typeof actual === "boolean" || actual instanceof Boolean;
+    if (ctor === String) return typeof actual === "string" || actual instanceof String;
+    if (ctor === Number) return typeof actual === "number" || actual instanceof Number;
+    if (ctor === Boolean) return typeof actual === "boolean" || actual instanceof Boolean;
     if (ctor === BigInt) return typeof actual === "bigint";
     if (ctor === Symbol) return typeof actual === "symbol";
     if (ctor === Function) return typeof actual === "function";
@@ -184,23 +158,13 @@ const anyMatcher = (ctor: any): AsymmetricMatcher =>
 // asymmetric matchers are honored on the expected side)
 // ---------------------------------------------------------------------------
 
-export const equals = (
-  actual: unknown,
-  expected: unknown,
-  strict = false,
-): boolean => eq(actual, expected, strict, new Map());
+export const equals = (actual: unknown, expected: unknown, strict = false): boolean =>
+  eq(actual, expected, strict, new Map());
 
 const definedKeys = (obj: Record<PropertyKey, unknown>): Array<PropertyKey> =>
-  (Reflect.ownKeys(obj) as Array<PropertyKey>).filter(
-    (k) => obj[k as any] !== undefined,
-  );
+  (Reflect.ownKeys(obj) as Array<PropertyKey>).filter((k) => obj[k as any] !== undefined);
 
-const eq = (
-  a: unknown,
-  b: unknown,
-  strict: boolean,
-  seen: Map<unknown, unknown>,
-): boolean => {
+const eq = (a: unknown, b: unknown, strict: boolean, seen: Map<unknown, unknown>): boolean => {
   if (isAsymmetric(b)) return b.matches(a);
   if (isAsymmetric(a)) return a.matches(b);
   if (Object.is(a, b)) return true;
@@ -213,9 +177,7 @@ const eq = (
   seen.set(a, b);
   try {
     if (a instanceof Date || b instanceof Date) {
-      return (
-        a instanceof Date && b instanceof Date && a.getTime() === b.getTime()
-      );
+      return a instanceof Date && b instanceof Date && a.getTime() === b.getTime();
     }
     if (a instanceof Error || b instanceof Error) {
       // Vitest semantics: errors match on class, message and own enumerable
@@ -234,10 +196,7 @@ const eq = (
     }
     if (a instanceof RegExp || b instanceof RegExp) {
       return (
-        a instanceof RegExp &&
-        b instanceof RegExp &&
-        a.source === b.source &&
-        a.flags === b.flags
+        a instanceof RegExp && b instanceof RegExp && a.source === b.source && a.flags === b.flags
       );
     }
     if (a instanceof URL || b instanceof URL) {
@@ -318,8 +277,7 @@ const matchesObject = (
   }
   if (!isObjectLike(actual)) return false;
   if (Array.isArray(expected)) {
-    if (!Array.isArray(actual) || actual.length !== expected.length)
-      return false;
+    if (!Array.isArray(actual) || actual.length !== expected.length) return false;
     return expected.every((e, i) => matchesObject(actual[i], e, seen));
   }
   if (
@@ -364,12 +322,8 @@ export interface Matchers<A = unknown> {
   toHaveProperty(path: string | Array<PropertyKey>, value?: unknown): void;
   toMatch(pattern: string | RegExp): void;
   toMatchObject(expected: object): void;
-  toThrow(
-    expected?: string | RegExp | Error | (new (...args: Array<any>) => Error),
-  ): void;
-  toThrowError(
-    expected?: string | RegExp | Error | (new (...args: Array<any>) => Error),
-  ): void;
+  toThrow(expected?: string | RegExp | Error | (new (...args: Array<any>) => Error)): void;
+  toThrowError(expected?: string | RegExp | Error | (new (...args: Array<any>) => Error)): void;
   toBeGreaterThan(expected: number | bigint): void;
   toBeGreaterThanOrEqual(expected: number | bigint): void;
   toBeLessThan(expected: number | bigint): void;
@@ -455,11 +409,7 @@ const getPath = (
       );
   let current: any = target;
   for (const part of parts) {
-    if (
-      current === null ||
-      current === undefined ||
-      !(part in Object(current))
-    ) {
+    if (current === null || current === undefined || !(part in Object(current))) {
       return { found: false, value: undefined };
     }
     current = current[part as any];
@@ -494,28 +444,12 @@ const makeMatchers = <A>(actual: A, negated: boolean): Matchers<A> => {
         actual,
         expected,
       ),
-    toBeDefined: () =>
-      check(
-        actual !== undefined,
-        negated,
-        () => `expected value to be defined`,
-      ),
+    toBeDefined: () => check(actual !== undefined, negated, () => `expected value to be defined`),
     toBeUndefined: () =>
-      check(
-        actual === undefined,
-        negated,
-        () => `expected ${str(actual)} to be undefined`,
-      ),
-    toBeNull: () =>
-      check(
-        actual === null,
-        negated,
-        () => `expected ${str(actual)} to be null`,
-      ),
-    toBeTruthy: () =>
-      check(!!actual, negated, () => `expected ${str(actual)} to be truthy`),
-    toBeFalsy: () =>
-      check(!actual, negated, () => `expected ${str(actual)} to be falsy`),
+      check(actual === undefined, negated, () => `expected ${str(actual)} to be undefined`),
+    toBeNull: () => check(actual === null, negated, () => `expected ${str(actual)} to be null`),
+    toBeTruthy: () => check(!!actual, negated, () => `expected ${str(actual)} to be truthy`),
+    toBeFalsy: () => check(!actual, negated, () => `expected ${str(actual)} to be falsy`),
     toBeNaN: () =>
       check(
         typeof actual === "number" && Number.isNaN(actual),
@@ -537,29 +471,20 @@ const makeMatchers = <A>(actual: A, negated: boolean): Matchers<A> => {
       ) {
         pass = [...(actual as unknown as Iterable<unknown>)].includes(item);
       }
-      check(
-        pass,
-        negated,
-        () => `expected ${str(actual)} to contain ${str(item)}`,
-        actual,
-        item,
-      );
+      check(pass, negated, () => `expected ${str(actual)} to contain ${str(item)}`, actual, item);
     },
     toContainEqual: (item) => {
       const values = Array.isArray(actual)
         ? actual
         : actual instanceof Set
           ? [...actual]
-          : actual !== null &&
-              typeof actual === "object" &&
-              Symbol.iterator in (actual as object)
+          : actual !== null && typeof actual === "object" && Symbol.iterator in (actual as object)
             ? [...(actual as unknown as Iterable<unknown>)]
             : undefined;
       check(
         values !== undefined && values.some((v) => equals(v, item)),
         negated,
-        () =>
-          `expected ${str(actual)} to contain an element equal to ${str(item)}`,
+        () => `expected ${str(actual)} to contain an element equal to ${str(item)}`,
         actual,
         item,
       );
@@ -572,8 +497,7 @@ const makeMatchers = <A>(actual: A, negated: boolean): Matchers<A> => {
       check(
         actualLength === length,
         negated,
-        () =>
-          `expected length ${str(actualLength)} to be ${length} (value: ${str(actual)})`,
+        () => `expected length ${str(actualLength)} to be ${length} (value: ${str(actual)})`,
         actualLength,
         length,
       );
@@ -596,9 +520,7 @@ const makeMatchers = <A>(actual: A, negated: boolean): Matchers<A> => {
       const text = typeof actual === "string" ? actual : undefined;
       const pass =
         text !== undefined &&
-        (typeof pattern === "string"
-          ? text.includes(pattern)
-          : pattern.test(text));
+        (typeof pattern === "string" ? text.includes(pattern) : pattern.test(text));
       check(
         pass,
         negated,
@@ -663,11 +585,9 @@ const makeMatchers = <A>(actual: A, negated: boolean): Matchers<A> => {
       ),
     toBeCloseTo: (expected, precision = 2) =>
       check(
-        typeof actual === "number" &&
-          Math.abs(actual - expected) < 10 ** -precision / 2,
+        typeof actual === "number" && Math.abs(actual - expected) < 10 ** -precision / 2,
         negated,
-        () =>
-          `expected ${str(actual)} to be close to ${expected} (precision ${precision})`,
+        () => `expected ${str(actual)} to be close to ${expected} (precision ${precision})`,
         actual,
         expected,
       ),
@@ -683,8 +603,7 @@ const makeMatchers = <A>(actual: A, negated: boolean): Matchers<A> => {
       check(
         typeof actual === type,
         negated,
-        () =>
-          `expected ${str(actual)} (${typeof actual}) to be of type ${type}`,
+        () => `expected ${str(actual)} (${typeof actual}) to be of type ${type}`,
         typeof actual,
         type,
       ),
@@ -692,8 +611,7 @@ const makeMatchers = <A>(actual: A, negated: boolean): Matchers<A> => {
       check(
         predicate(actual),
         negated,
-        () =>
-          `expected ${str(actual)} to satisfy ${predicate.name || "predicate"}`,
+        () => `expected ${str(actual)} to satisfy ${predicate.name || "predicate"}`,
         actual,
       ),
     toBeOneOf: (values) =>
@@ -727,9 +645,7 @@ const makePromiseMatchers = <A>(
     if (kind === "resolves") return await promise;
     try {
       const value = await promise;
-      fail(
-        `expected promise to reject, but it resolved with ${stringify(value)}`,
-      );
+      fail(`expected promise to reject, but it resolved with ${stringify(value)}`);
     } catch (error) {
       if (error instanceof AssertionError) throw error;
       return error;
@@ -768,17 +684,12 @@ export const expect: Expect = Object.assign(
   <A>(actual: A, _message?: string): Matchers<A> => makeMatchers(actual, false),
   {
     any: anyMatcher,
-    anything: () =>
-      asymmetric(
-        "Anything",
-        (actual) => actual !== null && actual !== undefined,
-      ),
+    anything: () => asymmetric("Anything", (actual) => actual !== null && actual !== undefined),
     arrayContaining: (items: ReadonlyArray<unknown>) =>
       asymmetric(
         `ArrayContaining ${stringify(items)}`,
         (actual) =>
-          Array.isArray(actual) &&
-          items.every((item) => actual.some((v) => equals(v, item))),
+          Array.isArray(actual) && items.every((item) => actual.some((v) => equals(v, item))),
       ),
     objectContaining: (subset: Record<string, unknown>) =>
       asymmetric(`ObjectContaining ${stringify(subset)}`, (actual) =>
@@ -792,14 +703,11 @@ export const expect: Expect = Object.assign(
     stringMatching: (pattern: string | RegExp) =>
       asymmetric(`StringMatching ${String(pattern)}`, (actual) => {
         if (typeof actual !== "string") return false;
-        return typeof pattern === "string"
-          ? actual.includes(pattern)
-          : pattern.test(actual);
+        return typeof pattern === "string" ? actual.includes(pattern) : pattern.test(actual);
       }),
     toSatisfy: (predicate: (value: any) => boolean, description?: string) =>
-      asymmetric(
-        `Satisfies ${description ?? predicate.name ?? "predicate"}`,
-        (actual) => predicate(actual),
+      asymmetric(`Satisfies ${description ?? predicate.name ?? "predicate"}`, (actual) =>
+        predicate(actual),
       ),
     fail: (message?: string): never => {
       throw new AssertionError(message ?? "expect.fail()");
@@ -838,8 +746,7 @@ export const assert: Assert = Object.assign(assertFn, {
   deepStrictEqual: (actual: unknown, expected: unknown, message?: string) => {
     if (!equals(actual, expected, true)) {
       throw new AssertionError(
-        message ??
-          `expected ${stringify(actual)} to deep equal ${stringify(expected)}`,
+        message ?? `expected ${stringify(actual)} to deep equal ${stringify(expected)}`,
         actual,
         expected,
       );

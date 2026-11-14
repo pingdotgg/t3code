@@ -1,6 +1,6 @@
+import * as Options from "@alchemy.run/cloudflare-test-tools/e2e/Options";
 import * as Astro from "@alchemy.run/frontend-frameworks/astro";
 import cloudflare from "@alchemy.run/frontend-frameworks/astro/cloudflare";
-import * as Options from "@alchemy.run/cloudflare-test-tools/e2e/Options";
 
 export default Options.make({
   // Target-scoped config carriage: `target.cloudflare` carries the worker

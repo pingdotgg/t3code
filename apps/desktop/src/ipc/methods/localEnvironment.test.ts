@@ -1,4 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
@@ -10,7 +13,11 @@ import * as ElectronApp from "../../electron/ElectronApp.ts";
 import * as ElectronTheme from "../../electron/ElectronTheme.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as DesktopWindow from "../../window/DesktopWindow.ts";
-import { getLocalEnvironmentEnabled, setLocalEnvironmentEnabled } from "./localEnvironment.ts";
+import {
+  getHostEnvironmentId,
+  getLocalEnvironmentEnabled,
+  setLocalEnvironmentEnabled,
+} from "./localEnvironment.ts";
 
 const layerUnusedLifecycleRuntime = Layer.mergeAll(
   DesktopShutdown.layer,
@@ -27,6 +34,26 @@ const layerUnusedLifecycleRuntime = Layer.mergeAll(
 );
 
 describe("local environment IPC", () => {
+  it.effect("reads the shared home identity without creating one", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const stateDir = yield* fs.makeTempDirectoryScoped();
+      const environment = DesktopEnvironment.DesktopEnvironment.of({
+        path,
+        stateDir,
+      } as DesktopEnvironment.DesktopEnvironment["Service"]);
+      const read = getHostEnvironmentId
+        .handler(undefined)
+        .pipe(Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment));
+      assert.strictEqual(yield* read, null);
+      assert.isFalse(yield* fs.exists(path.join(stateDir, "environment-id")));
+      yield* fs.writeFileString(path.join(stateDir, "environment-id"), "  service-id\n");
+      assert.strictEqual(yield* read, "service-id");
+      yield* fs.writeFileString(path.join(stateDir, "environment-id"), "\n");
+      assert.strictEqual(yield* read, null);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
   it.effect("relaunches only when the setting changes and keeps other settings", () => {
     const relaunchReasons: Array<string> = [];
     const layer = Layer.mergeAll(
