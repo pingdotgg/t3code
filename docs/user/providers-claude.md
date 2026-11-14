@@ -24,6 +24,9 @@ Add another Claude instance in **Settings > Providers**:
 | Claude Work     | `claude`    | Leave empty            |
 | Claude Personal | `claude`    | `~/.claude_personal`   |
 
+On mobile, tap **Add Claude account** in **Settings > Providers** and enter a name and the
+config folder. The login itself still happens on the environment's machine.
+
 An empty config-directory setting uses Claude Code's normal configuration. The
 custom setting changes `CLAUDE_CONFIG_DIR`, leaving `HOME` and the system keychain
 location intact. Use the same variable for the login command. Setting `HOME`
@@ -37,6 +40,10 @@ state. Claude does not have Codex's shared-home and shadow-home arrangement.
 For presets that differ only in API keys or endpoints, use the instance's
 **Environment variables**. Variable assignments do not belong in **Launch arguments**.
 
+File paths in the `--settings` and `--append-system-prompt-file` launch arguments
+can start with `~` for the home directory of the machine running T3 Code. Any
+other relative path is read from the thread's project folder, or its worktree.
+
 Claude Code's verbose mode can stay enabled when you use Claude for text generation, including
 thread titles, branch names, commit messages, and pull request descriptions. On a remote connection,
 T3 Code uses the Claude configuration on the connected server.
@@ -48,12 +55,16 @@ Set **Auto-compact after** in the Claude provider settings to an integer between
 300,000 tokens. This changes when compaction happens, not the model's context
 window. Leave it empty for Claude Code's default.
 
-You can also send `/compact` in an existing conversation. Web and desktop offer
-**Compact context** from the context meter. When you return to a large thread
-after Claude's prompt cache expires, a **Compact** chip with the thread's token count shows
+You can also send `/compact` in an existing conversation. Claude Code also
+compacts automatically. To see context usage, see
+[commands and skills](./composer.md#commands-and-skills).
+
+When you return to a large thread after Claude's prompt cache expires, a
+**Compact** chip with the thread's token count shows
 next to the send button. While it is on, Enter summarizes the history first, then
-sends your message. Click the chip to switch it to **Full** and keep the full
-history for that message. The cache lasts about an hour on a Claude
+sends your message. Click the chip to switch it to **Keep** and keep the full
+history for that message. The mobile app shows no chip: an eligible message sent
+from it summarizes first. The cache lasts about an hour on a Claude
 subscription and 5 minutes with an API key, Bedrock, or Vertex. See [commands and skills](./composer.md#commands-and-skills) for using
 composer commands.
 
@@ -61,9 +72,12 @@ composer commands.
 over 200,000 tokens. Each Claude provider's settings can override it:
 
 - **When you return** shows the **Compact** chip described above. This is the default.
-- **Before the cache expires (beta)** compacts an idle thread shortly before its
-  prompt cache expires, so coming back does not reprocess the whole conversation.
+- **Before the cache expires (beta)** tries to compact an idle thread shortly before its
+  prompt cache expires, while the history is still cached.
   The compaction appears in the thread as a `/compact` turn sent by T3 Code.
+  If the window is missed, such as when you enable this mode after the cache has
+  expired or the server restarts before compaction runs, it falls back to
+  **When you return**. Switch the chip to **Keep** to keep the full history for that message.
 - **Never** skips idle compaction and Claude's resume prompt. **Auto-compact after**
   still applies, and you can still compact by hand.
 
@@ -81,11 +95,12 @@ Claude skills come from the config directory's `skills` folder and the project's
 `.claude/skills` folder. If both define the same name, the config-directory copy
 wins. Skills disabled in Claude's settings do not appear in the composer.
 
-Use `$` in the composer to select a skill. Enabled installed Claude plugins also
-contribute skills under names such as `plugin:review`. Skills marked `disable-model-invocation`
-can still be started by you. Invoke those one per message: Claude directly runs
-only the last named skill and may try to start earlier ones through its Skill
-tool, which refuses skills reserved for manual invocation.
+Use `$` in the composer to select a skill. Enabled installed Claude plugins,
+and plugins synced from your claude.ai account, also contribute skills under
+names such as `plugin:review`. Skills marked `disable-model-invocation` can
+still be started by you. Invoke those one per message: Claude directly runs only
+the last named skill and may try to start earlier ones through its Skill tool,
+which refuses skills reserved for manual invocation.
 
 ## Task lists
 
@@ -93,6 +108,19 @@ To show Claude task lists in the web and desktop apps, add
 `CLAUDE_CODE_ENABLE_TODO_TOOLS=1` under **Variables** in the Claude instance's
 **Environment** section in **Settings > Providers**. Each update shows as a Tasks
 row in the thread; open it to see every step.
+
+## Claude in Chrome
+
+Claude threads can use the Claude in Chrome extension, which works in your own
+Chrome with its sign-ins. T3 Code sessions load it only when asked: add `--chrome`
+to **Launch arguments** in the Claude instance's settings in **Settings > Providers**.
+It applies to sessions that start after you save. Set up the extension as you would
+for Claude Code first; see Claude Code's [Chrome guide](https://code.claude.com/docs/en/chrome).
+
+The instance must be signed in with `/login` on a direct Anthropic plan. Instances
+that use an API key or a `claude setup-token` token don't get it, even with
+`--chrome`, and neither do third-party providers such as Amazon Bedrock. Claude Code
+doesn't support it in WSL.
 
 ## OpenRouter
 
