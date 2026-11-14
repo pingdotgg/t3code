@@ -1403,7 +1403,7 @@ describe("adding a remark to the chat", () => {
       comment: remark("c1", `<details>\n${"script ".repeat(400)}</details> Tail.\nVisible.`),
     });
 
-    expect(context?.text).toMatch(/^octocat: Visible\./u);
+    expect(context?.text).toMatch(/^octocat: Tail\.\nVisible\./u);
   });
 
   it("gives way to the newest replies when a thread outgrows what the composer sends", () => {
