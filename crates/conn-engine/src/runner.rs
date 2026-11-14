@@ -857,6 +857,12 @@ impl Inner {
                 },
             };
             let Some(event) = event else { break };
+            // Once shutdown began, nothing a closing session reports is stored: T3 writes
+            // nothing after its runtime is interrupted, and the next start recovers the live
+            // run (`restart.rs`). Stored, the close's turn end would end the run here.
+            if self.shutting_down() {
+                break;
+            }
             let now = self.clock.now_millis();
             live.touch(now);
             // Snapshots that came due before this event go first, as T3's idle tick would.
@@ -994,7 +1000,9 @@ impl Inner {
                 }
             }
         }
-        if let Some(active) = live.take_active() {
+        if !self.shutting_down()
+            && let Some(active) = live.take_active()
+        {
             self.end_run(
                 &thread_id,
                 &active.run_id,

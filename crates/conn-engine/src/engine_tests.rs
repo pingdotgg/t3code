@@ -453,6 +453,42 @@ async fn a_restart_continues_the_running_turn_in_the_same_provider_thread() {
     assert_eq!(shell["threads"][0]["status"], "completed");
 }
 
+/// A clean stop (SIGTERM, a service restart) keeps the running turn for the next start, as T3
+/// does: the closing session's end of the turn is not stored, so the next start continues it.
+/// `idle-diff.mjs` compares the shell after such a restart with the T3 server's.
+#[tokio::test(flavor = "current_thread")]
+async fn a_shutdown_leaves_the_running_turn_for_the_next_start() {
+    let db = TempDb::new("shutdown-running");
+    {
+        let (engine, _) = open(&db);
+        dispatch(&engine, create("t1", "c1")).await;
+        let mut thread = engine
+            .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+            .await
+            .unwrap();
+        next(&mut thread).await;
+        dispatch(&engine, message("t1", "c2", "hang")).await;
+        until_provider_turn(&mut thread).await;
+        engine.shutdown().await;
+        let p = projection(&engine, "t1").await;
+        assert_eq!(
+            run_statuses(&p),
+            [("run:t1:1".into(), "running".into())],
+            "shutdown stores no end of the turn"
+        );
+    }
+    let (engine, _) = open(&db);
+    let p = run_to_end(&engine, "t1", "run:t1:2").await;
+    assert_eq!(
+        run_statuses(&p),
+        [
+            ("run:t1:1".into(), "cancelled".into()),
+            ("run:t1:2".into(), "completed".into())
+        ]
+    );
+    assert_eq!(p["runs"][1]["restartContinuationOfRunId"], "run:t1:1");
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn restart_continuations_stop_after_three_in_a_row() {
     let db = TempDb::new("restart-loop");
