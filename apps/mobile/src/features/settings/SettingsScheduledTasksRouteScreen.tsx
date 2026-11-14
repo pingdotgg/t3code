@@ -83,14 +83,21 @@ import {
   type ScheduledTaskDraft as Draft,
 } from "./scheduledTaskDraft";
 import { settingsTargetsForProject } from "./settings-environment-filter.logic";
+import { ScheduledTaskStatusDot } from "./components/ScheduledTaskStatusDot";
+import { useScheduledTaskActions } from "./scheduled-task-actions";
 import { useScheduledTaskDestinationLabel, useScheduledTaskEditor } from "./scheduled-task-editor";
 import {
   discardScheduledTaskEditor,
   markScheduledTaskEditorSaved,
 } from "./scheduled-task-editor-state";
 import {
+  SCHEDULE_WEEKDAYS,
+  describeScheduledTaskSchedule,
   formatNextScheduledTaskRun,
-  formatScheduledTaskInterval,
+  formatScheduledTaskRunAtDate,
+  formatScheduledTaskRunAtTime,
+  formatScheduledTaskTime,
+  scheduledTaskRepeatLabel,
 } from "./scheduledTaskPresentation";
 
 type ScheduledTaskRoutes = {
@@ -101,49 +108,11 @@ type ScheduledTaskRoutes = {
   SettingsScheduledTaskThread: undefined;
 };
 
-const DAYS = [
-  { index: 1, label: "Mon" },
-  { index: 2, label: "Tue" },
-  { index: 3, label: "Wed" },
-  { index: 4, label: "Thu" },
-  { index: 5, label: "Fri" },
-  { index: 6, label: "Sat" },
-  { index: 0, label: "Sun" },
-] as const;
-
 const THREAD_MODE_LABELS: Record<ScheduledTaskThreadMode, string> = {
   new_thread: "New thread each run",
   continue: "One thread, same conversation",
   fresh_session: "One thread, fresh session",
 };
-
-function describeSchedule(task: ScheduledTask, timeZone?: string): string {
-  if (task.schedule.type === "webhook") return "On webhook";
-  if (task.schedule.type === "once") {
-    const runAt = new Date(task.schedule.runAt);
-    return `Once, ${formatRunAtDate(runAt)} at ${formatRunAtTime(runAt)}`;
-  }
-  if (task.schedule.type === "interval") return formatScheduledTaskInterval(task.schedule.everyMs);
-  const days = task.schedule.weekdays?.length ? repeatLabel(task.schedule.weekdays) : "Every day";
-  const zone = scheduleTimeZoneLabel(timeZone, task.nextRunAt);
-  return `${days} at ${formatTime(task.schedule.timeOfDay)}${zone === undefined ? "" : ` ${zone}`}`;
-}
-
-function formatTime(value: string): string {
-  const [hours, minutes] = value.split(":").map(Number);
-  if (!Number.isInteger(hours) || !Number.isInteger(minutes)) return value;
-  const time = new Date();
-  time.setHours(hours ?? 9, minutes ?? 0, 0, 0);
-  return time.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-}
-
-function formatRunAtDate(value: Date): string {
-  return value.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
-}
-
-function formatRunAtTime(value: Date): string {
-  return value.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-}
 
 function timePickerValue(value: string): Date {
   const [hours, minutes] = value.split(":").map(Number);
@@ -155,17 +124,6 @@ function timePickerValue(value: string): Date {
     0,
   );
   return time;
-}
-
-function repeatLabel(weekdays: ReadonlyArray<number>): string {
-  const days = new Set(weekdays);
-  if (days.size === 7) return "Every day";
-  if (days.size === 5 && [1, 2, 3, 4, 5].every((day) => days.has(day))) return "Weekdays";
-  return (
-    DAYS.filter((day) => days.has(day.index))
-      .map((day) => day.label)
-      .join(", ") || "Choose days"
-  );
 }
 
 function FormField(props: {
@@ -1058,7 +1016,7 @@ function TaskForm({
             <>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={`Time, ${formatTime(draft.schedule.timeOfDay)}${
+                accessibilityLabel={`Time, ${formatScheduledTaskTime(draft.schedule.timeOfDay)}${
                   runAtZone ? ` ${runAtZone}` : ""
                 }`}
                 onPress={() => setTimePickerOpen((open) => !open)}
@@ -1071,7 +1029,7 @@ function TaskForm({
                   textRole="footnote"
                   className="min-w-0 flex-1 text-right text-foreground-muted"
                 >
-                  {formatTime(draft.schedule.timeOfDay)}
+                  {formatScheduledTaskTime(draft.schedule.timeOfDay)}
                   {runAtZone ? ` ${runAtZone}` : ""}
                 </Text>
                 <SymbolView
@@ -1095,7 +1053,7 @@ function TaskForm({
               ) : null}
               <SelectRow
                 label="Repeat"
-                value={repeatLabel(draft.schedule.weekdays)}
+                value={scheduledTaskRepeatLabel(draft.schedule.weekdays)}
                 borderTop
                 actions={[
                   {
@@ -1106,9 +1064,12 @@ function TaskForm({
                   {
                     id: "weekdays",
                     title: "Weekdays",
-                    state: repeatLabel(draft.schedule.weekdays) === "Weekdays" ? "on" : undefined,
+                    state:
+                      scheduledTaskRepeatLabel(draft.schedule.weekdays) === "Weekdays"
+                        ? "on"
+                        : undefined,
                   },
-                  ...DAYS.map((day) => ({
+                  ...SCHEDULE_WEEKDAYS.map((day) => ({
                     id: String(day.index),
                     title: day.label,
                     attributes: { keepsMenuPresented: true },
@@ -1120,11 +1081,11 @@ function TaskForm({
                 onSelect={(id) => {
                   const weekdays =
                     id === "every_day"
-                      ? DAYS.map((day) => day.index)
+                      ? SCHEDULE_WEEKDAYS.map((day) => day.index)
                       : id === "weekdays"
                         ? [1, 2, 3, 4, 5]
                         : (() => {
-                            const day = DAYS.find((item) => String(item.index) === id);
+                            const day = SCHEDULE_WEEKDAYS.find((item) => String(item.index) === id);
                             if (!day) return draft.schedule.weekdays;
                             return draft.schedule.weekdays.includes(day.index)
                               ? draft.schedule.weekdays.filter((index) => index !== day.index)
@@ -1141,7 +1102,10 @@ function TaskForm({
           ) : draft.schedule.mode === "once" ? (
             (["date", "time"] as const).map((field) => {
               const runAt = new Date(draft.schedule.runAt);
-              const label = field === "date" ? formatRunAtDate(runAt) : formatRunAtTime(runAt);
+              const label =
+                field === "date"
+                  ? formatScheduledTaskRunAtDate(runAt)
+                  : formatScheduledTaskRunAtTime(runAt);
               return (
                 <View key={field}>
                   <Pressable
@@ -1422,38 +1386,8 @@ function EnvironmentTasks({
   const visibleTasks = tasks.data?.tasks.filter(
     (task) => projectIds === null || projectIds.includes(task.projectId),
   );
-  const canOperate = useAtomValue(
-    serverEnvironment.upsertScheduledTask.permissionAtom(environmentId),
-  );
-  const setEnabled = useAtomCommand(serverEnvironment.setScheduledTaskEnabled, {
-    label: "scheduled task enabled",
-    reportFailure: false,
-  });
-  const runNow = useAtomCommand(serverEnvironment.runScheduledTaskNow, {
-    label: "scheduled task run",
-    reportFailure: false,
-  });
-  const remove = useAtomCommand(serverEnvironment.deleteScheduledTask, {
-    label: "scheduled task delete",
-    reportFailure: false,
-  });
+  const { canOperate, isEnabled, act } = useScheduledTaskActions(environmentId);
   const selectDetail = useSelectWorkspaceDetail();
-  const failure = (title: string, result: AtomCommandResult<unknown, unknown>) => {
-    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      Dialog.alert(title, String(squashAtomCommandFailure(result)));
-    }
-  };
-
-  const act = async (task: ScheduledTask, action: "run" | "toggle" | "delete") => {
-    if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
-    const result =
-      action === "run"
-        ? await runNow({ environmentId, input: { id: task.id } })
-        : action === "toggle"
-          ? await setEnabled({ environmentId, input: { id: task.id, enabled: !task.enabled } })
-          : await remove({ environmentId, input: { id: task.id } });
-    failure(`Could not ${action === "toggle" ? "update" : action} task`, result);
-  };
 
   return (
     <SettingsSection
@@ -1482,8 +1416,8 @@ function EnvironmentTasks({
             key={task.id}
             className={
               index === 0
-                ? "flex-row items-start gap-1 px-4 py-3"
-                : "flex-row items-start gap-1 border-t border-border-subtle px-4 py-3"
+                ? "flex-row items-center gap-2 px-4 py-3"
+                : "flex-row items-center gap-2 border-t border-border-subtle px-4 py-3"
             }
           >
             <Pressable
@@ -1494,16 +1428,21 @@ function EnvironmentTasks({
               }}
               className="min-w-0 flex-1 gap-1 active:opacity-70"
             >
-              <Text textRole="body" className="text-foreground" numberOfLines={1}>
-                {task.title}
-              </Text>
+              <View className="flex-row items-center gap-2">
+                <ScheduledTaskStatusDot status={task.lastRunStatus} />
+                <Text textRole="body" className="shrink text-foreground" numberOfLines={1}>
+                  {task.title}
+                </Text>
+              </View>
               <Text className="text-sm text-foreground-muted" numberOfLines={2}>
-                {describeSchedule(task, tasks.data?.timeZone)}
-                {!task.enabled
-                  ? " · Paused"
-                  : task.nextRunAt
-                    ? ` · ${formatNextScheduledTaskRun(task.nextRunAt, now)}`
-                    : ""}
+                {describeScheduledTaskSchedule(task, tasks.data?.timeZone)}
+                {task.lastRunStatus === "running"
+                  ? " · Running"
+                  : !isEnabled(task)
+                    ? " · Paused"
+                    : task.nextRunAt
+                      ? ` · ${formatNextScheduledTaskRun(task.nextRunAt, now)}`
+                      : ""}
               </Text>
               {task.blockedByPolicy ? (
                 <Text className="text-sm text-foreground-muted" numberOfLines={2}>
@@ -1516,20 +1455,33 @@ function EnvironmentTasks({
                 </Text>
               ) : null}
             </Pressable>
+            <View className="self-stretch justify-center">
+              <ThemedSwitch
+                accessibilityLabel={
+                  isEnabled(task) ? `Pause ${task.title}` : `Resume ${task.title}`
+                }
+                disabled={!canOperate}
+                value={isEnabled(task)}
+                onValueChange={() => void act(task, "toggle")}
+              />
+            </View>
             <Menu
               actions={[
                 { id: "edit", title: "Edit" },
                 ...(task.threadId !== null && scheduledTaskThreadMode(task) !== "new_thread"
                   ? [{ id: "thread", title: "Open thread" }]
                   : []),
-                {
-                  id: "toggle",
-                  title: task.enabled ? "Pause" : "Resume",
-                  attributes: { disabled: !canOperate },
-                },
                 ...(task.schedule.type === "webhook"
                   ? []
-                  : [{ id: "run", title: "Run now", attributes: { disabled: !canOperate } }]),
+                  : [
+                      {
+                        id: "run",
+                        title: "Run now",
+                        attributes: {
+                          disabled: !canOperate || task.lastRunStatus === "running",
+                        },
+                      },
+                    ]),
                 {
                   id: "delete",
                   title: "Delete",
@@ -1557,15 +1509,15 @@ function EnvironmentTasks({
                       onPress: () => void act(task, "delete"),
                     },
                   ]);
-                } else if (action === "toggle" || action === "run") {
-                  void act(task, action);
+                } else if (action === "run") {
+                  void act(task, "run");
                 }
               }}
             >
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={`Actions for ${task.title}`}
-                className="h-11 w-11 items-center justify-center"
+                className="-mx-2 h-11 w-11 items-center justify-center"
               >
                 <SymbolView
                   name="ellipsis"
