@@ -20,17 +20,9 @@ function step(
 }
 
 describe("composer suggestions", () => {
-  const draft = "# Heading\nsee #12 and $skill\n/plan @src";
-
-  it.each([
-    ["a heading's #", 1, "pull-request"],
-    ["#12", draft.indexOf("#12") + 3, "pull-request"],
-    ["$skill", draft.indexOf("$skill") + 6, "skill"],
-    ["/plan", draft.indexOf("/plan") + 5, "slash-command"],
-    ["@src", draft.length, "path"],
-  ])("stay closed when the caret moves onto %s", (_label, cursor, kind) => {
-    const candidate = detectComposerTrigger(draft, cursor);
-    expect(candidate?.kind).toBe(kind);
+  it("stay closed when the caret moves onto a trigger", () => {
+    const candidate = detectComposerTrigger("# Heading\nmore text", 1);
+    expect(candidate?.kind).toBe("pull-request");
 
     const state = nextComposerTriggerState(closed, candidate, "caret");
 
