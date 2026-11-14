@@ -106,10 +106,10 @@ Deviations from the T3 server:
 
 | Host | Lookup | Create |
 | --- | --- | --- |
-| GitHub | `GET repos/{owner}/{name}` (a bare name: `GET user` for the owner); the host from `GH_REPO` or the checkout's GitHub remote (`git remote -v`, `git config --get-regexp ^remote\..*\.gh-resolved$`), else `GH_HOST`, else github.com | `POST user/repos` or `orgs/{owner}/repos` with `{"name","private"}` |
+| GitHub | `GET repos/{owner}/{name}` (a bare name: `GET user` for the owner); the host from `GH_REPO` or the checkout's GitHub remote (`git remote -v`, `git config --get-regexp ^remote\..*\.gh-resolved$`; github.com, its SSH aliases, `*.ghe.com`, or a host with a `github` label such as an Enterprise Server), else `GH_HOST`, else github.com | `POST user/repos` or `orgs/{owner}/repos` with `{"name","private"}` |
 | Cursor Origin | `GET /v1/origin/repos/{owner}/{name}` with the `origin auth token` bearer (one retry after a 401) | private only: `POST /v1/origin/repos/{owner}` `{"name"}`, then `PATCH` `{"visibility":"private"}` (3 tries, 1 s apart); a bare name uses the personal namespace |
 | GitLab | `glab api projects/<encoded path>` | `glab api namespaces/<encoded>` for the id, then `glab api --method POST projects --raw-field path= name= visibility= [namespace_id=]` |
-| Bitbucket | `GET /repositories/{workspace}/{slug}` | `POST` the same path with `{"scm":"git","is_private":...}` |
+| Bitbucket | `GET /repositories/{workspace}/{slug}`, redirects followed as fetch follows them | `POST` the same path with `{"scm":"git","is_private":...}` |
 | Azure DevOps | `az repos show --detect true --repository <name> [--project <p>] --only-show-errors --output json` | `az repos create --detect true --name <name> [--project <p>] ...` |
 | GitCafe | `GET /api/repos/{owner}/{name}` on git.cafe or staging.git.cafe (the host from the URL, else the checkout's GitCafe remote: `git remote get-url -- origin`, `git remote`, `git config --get remote.<r>.url`, else git.cafe) | `POST /api/orgs/{owner}/repos` `{"name","requestKey","visibility","defaultBranch":"main"}`, then `GET /api/orgs/{owner}/admissions/{id}` every 500 ms for up to 30 s until `complete` or `blocked` |
 | Forgejo | `resolveTarget` (below), then `GET <base>/api/v1/repos/{owner}/{name}` | `GET user`, then `POST user/repos` or `orgs/{owner}/repos` with `{"name","private","auto_init":false}` |
@@ -152,15 +152,17 @@ Deviations:
   missing one for 10 s). Here each operation checks once and asks `cafe` once, so a warm T3
   server can run fewer children than this one.
 
-- **GitHub's host from a checkout** recognises github.com, `*.ghe.com` and SSH aliases of
-  github.com; a GitHub Enterprise Server remote is not recognised, so `GH_HOST` decides.
-- **No rate-limit pause, quota or concurrency limit** (T3: GitHub 8 at once with a 10 % quota
-  reserve; Bitbucket 4 at once with a shared 429 pause). Bitbucket redirects are not followed.
+- **No rate-limit slots or quota.** T3 runs at most 8 GitHub and 4 Bitbucket requests at once
+  and keeps GitHub's quota and Bitbucket's 429 pause. A lookup runs as interactive and a create
+  is a write, and T3 refuses neither while paused, so the only effect on these three methods is
+  T3's queueing under load. The pause matters for background reads (pull requests), which are
+  not built.
 - **The Origin token** is read on each call (T3 keeps it 5 minutes).
 - **Publish** reads the branch with `git symbolic-ref` (T3: `statusDetails`) and refreshes the VCS
   status afterwards, but has no repository identity cache to refresh.
-- **The clone child** gets neither T3's trace2 monitor variables nor the removal of inherited
-  `GIT_DIR`-style variables.
+- **The clone child** loses the repository selectors the server inherited (`GIT_DIR`,
+  `GIT_WORK_TREE`, ...), as every `git` child does (`unsetInheritedRepositoryEnv`). T3 adds a
+  trace2 variable only to a `git` call that reports hook progress, and a clone does not.
 - The error's `cause` is not sent; clients read `detail`.
 
 ## Costs

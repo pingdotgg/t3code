@@ -500,8 +500,9 @@ async fn run_clone(
         .arg("--")
         .arg(normalize_clone_url(clone_url))
         .arg(name)
-        .current_dir(parent)
-        .env("GIT_OPTIONAL_LOCKS", "0");
+        .current_dir(parent);
+    conn_vcs::process::unset_inherited_repository_env(&mut command);
+    command.env("GIT_OPTIONAL_LOCKS", "0");
     for (key, value) in explicit_bare_repository_env() {
         command.env(key, value);
     }

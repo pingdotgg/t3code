@@ -203,23 +203,37 @@ fn parse_selector(selector: &str, default_host: &str) -> Option<Locator> {
     }
 }
 
-/// `gitHubApiHostForRemote`, reduced: github.com (also through an SSH alias such as
-/// `github.com-work`) and `*.ghe.com`. A GitHub Enterprise Server host is not recognised from a
-/// remote here.
+/// `gitHubApiHostForRemote`: an SSH alias of github.com (`github`, `github.com-work`) reads as
+/// github.com; otherwise a host the GitHub definition recognises (github.com, `*.ghe.com`, or a
+/// name with a `github` label, such as a GitHub Enterprise Server at `github.example.com`) is
+/// its own API host, with its port.
 fn api_host_for_remote(url: &str) -> Option<String> {
-    let (host, _) = crate::remote::parse_git_remote_repository(url)?;
-    let ssh = crate::remote::clone_url_protocol(url) == Some(crate::remote::CloneProtocol::Ssh);
+    let (hostname, _) = crate::remote::parse_git_remote_repository(url)?;
+    let protocol = crate::remote::clone_url_protocol(url);
+    let ssh = protocol == Some(crate::remote::CloneProtocol::Ssh);
+    let host = if ssh {
+        hostname.clone()
+    } else {
+        super::forgejo::parse_remote(url).map_or_else(|| hostname.clone(), |r| r.host)
+    };
     if ssh && !host.contains('.') {
         return host.contains("github").then(|| "github.com".to_owned());
     }
+    // `/^github\.com-[a-z0-9_-]+$/`.
     if ssh
-        && host
-            .strip_prefix("github.com-")
-            .is_some_and(|alias| !alias.is_empty() && !alias.contains('.'))
+        && host.strip_prefix("github.com-").is_some_and(|alias| {
+            !alias.is_empty()
+                && alias
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-')
+        })
     {
         return Some("github.com".into());
     }
-    (host == "github.com" || host.ends_with(".ghe.com")).then_some(host)
+    let recognized = hostname == "github.com"
+        || hostname.ends_with(".ghe.com")
+        || hostname.split('.').any(|label| label == "github");
+    recognized.then_some(host)
 }
 
 /// `parseFetchRemotes`.
@@ -1020,7 +1034,8 @@ async fn bitbucket_request(
             .body(body.into_bytes());
     }
     let request = bitbucket::authorize(ctx, request).map_err(HostFailure::new)?;
-    let response = http::send(request)
+    // `executeJson` sends through fetch, which follows redirects (a renamed repository).
+    let response = http::send_following_redirects(request)
         .await
         .map_err(|_| HostFailure::new("Failed to send the Bitbucket request."))?;
     if !(200..300).contains(&response.status) {

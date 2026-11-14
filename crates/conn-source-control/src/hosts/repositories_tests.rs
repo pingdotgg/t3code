@@ -167,6 +167,49 @@ fn github_selectors_and_remote_hosts() {
         Some("acme.ghe.com")
     );
     assert_eq!(api_host_for_remote("git@gitlab.com:o/r.git"), None);
+    // gitHubRepositoryResolution.test.ts: "reads an SSH alias through github.com and a real
+    // host as itself", and the github.com-<name> cases.
+    assert_eq!(
+        api_host_for_remote("git@github:acme/web.git").as_deref(),
+        Some("github.com")
+    );
+    assert_eq!(
+        api_host_for_remote("git@github.example.com:a/b.git").as_deref(),
+        Some("github.example.com")
+    );
+    assert_eq!(
+        api_host_for_remote("https://github.corp.example:8443/a/b.git").as_deref(),
+        Some("github.corp.example:8443"),
+        "an Enterprise Server keeps its port"
+    );
+    for url in [
+        "git@github.com-scale:scalable-so/scalablev2.git",
+        "git@GitHub.com-Work:acme/web.git",
+        "ssh://git@github.com-personal/acme/web.git",
+    ] {
+        assert_eq!(
+            api_host_for_remote(url).as_deref(),
+            Some("github.com"),
+            "{url}"
+        );
+    }
+    for (url, host) in [
+        (
+            "git@github.com-evil.example:acme/web.git",
+            Some("github.com-evil.example"),
+        ),
+        (
+            "ssh://git@github.com-evil.example/acme/web.git",
+            Some("github.com-evil.example"),
+        ),
+        (
+            "git@github.com.evil.example:acme/web.git",
+            Some("github.com.evil.example"),
+        ),
+        ("git@evil-github.com:acme/web.git", None),
+    ] {
+        assert_eq!(api_host_for_remote(url).as_deref(), host, "{url}");
+    }
     assert_eq!(
         fetch_remotes(
             "origin\tgit@github.com:o/r.git (fetch)\norigin\tgit@github.com:o/r.git (push)\nup\thttps://github.com/u/r (fetch) [blob:none]\n"
@@ -648,4 +691,66 @@ async fn gitcafe_reads_a_repository_and_waits_for_admission() {
         "polled until complete"
     );
     assert_eq!(header(create, "content-type"), Some("application/json"));
+}
+
+// `executeJson` sends through fetch, which follows a renamed repository's redirect with the
+// credential on the same origin, and turns a redirected POST into a GET.
+#[tokio::test(flavor = "current_thread")]
+async fn bitbucket_follows_redirects_as_fetch_does() {
+    let server = fake::serve_with_headers(|r| match (r.method.as_str(), r.path.as_str()) {
+        (_, "/2.0/repositories/ws/old") => (
+            301,
+            vec![("location".into(), "/2.0/repositories/ws/repo".into())],
+            String::new(),
+        ),
+        (_, "/2.0/repositories/ws/repo") => (200, Vec::new(), BITBUCKET_REPOSITORY.into()),
+        _ => (404, Vec::new(), String::new()),
+    })
+    .await;
+    let stubs = StubDir::new("bb-redirect");
+    let settings = Settings::default();
+    let base = format!("{}/2.0/", server.base);
+    let env = Environment::fixed([
+        ("T3CODE_BITBUCKET_API_BASE_URL", base.as_str()),
+        ("T3CODE_BITBUCKET_ACCESS_TOKEN", "bb-token"),
+    ]);
+    let endpoints = Endpoints::default();
+    let child = child_env(&stubs);
+    let hosts = hosts(&stubs, &settings, &env, &endpoints, &child);
+    let urls = hosts
+        .clone_urls("bitbucket", &stubs.dir, "ws/old")
+        .await
+        .expect("followed");
+    assert_eq!(urls.name_with_owner, "ws/repo");
+    hosts
+        .create_repository("bitbucket", &stubs.dir, "ws/old", Visibility::Private)
+        .await
+        .expect("followed as a GET");
+    let seen: Vec<(String, String, String, Option<String>)> = requests(&server)
+        .iter()
+        .map(|r| {
+            (
+                r.method.clone(),
+                r.path.clone(),
+                r.body.clone(),
+                header(r, "authorization").map(str::to_owned),
+            )
+        })
+        .collect();
+    let bearer = Some("Bearer bb-token".to_owned());
+    let row =
+        |m: &str, p: &str, b: &str| (m.to_owned(), p.to_owned(), b.to_owned(), bearer.clone());
+    assert_eq!(
+        seen,
+        [
+            row("GET", "/2.0/repositories/ws/old", ""),
+            row("GET", "/2.0/repositories/ws/repo", ""),
+            row(
+                "POST",
+                "/2.0/repositories/ws/old",
+                r#"{"scm":"git","is_private":true}"#
+            ),
+            row("GET", "/2.0/repositories/ws/repo", ""),
+        ]
+    );
 }
