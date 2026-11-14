@@ -275,7 +275,9 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
           table === "session_message" && forks.size > 0 && columns.has("seq") ? "seq" : "NULL";
         // Without time_updated an in-place edit can keep the length, so any database write counts.
         const version = updated === "NULL" ? `${identity}/${stamp(wal!)}` : identity;
-        const predicates = table === "session_message" ? ["type = 'assistant'"] : [];
+        // OpenCode 2 records a compaction request's spend on its compaction message.
+        const predicates =
+          table === "session_message" ? ["type IN ('assistant', 'compaction')"] : [];
         if (timestamp !== "NULL") predicates.push("time_created >= ?");
         // List rowids and change markers so SQLite can use time indexes without reading message
         // bodies; octet_length comes from the record header.
