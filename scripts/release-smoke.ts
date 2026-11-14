@@ -48,6 +48,7 @@ const workspaceFiles = [
   "packages/source-control-core/package.json",
   "packages/source-control-cursor-origin/package.json",
   "packages/source-control-definitions/package.json",
+  "packages/source-control-entire/package.json",
   "packages/source-control-forgejo/package.json",
   "packages/source-control-gitcafe/package.json",
   "packages/source-control-github/package.json",
