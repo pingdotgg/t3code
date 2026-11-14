@@ -49,7 +49,7 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 import { toastManager } from "../ui/toast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { Tooltip, TooltipPopup, TooltipTrigger, TooltipScrollDismissArea } from "../ui/tooltip";
 import {
   PullRequestActorLabel,
   PullRequestCheckStatusIcon,
@@ -825,7 +825,8 @@ export function PullRequestSummaryTab({
   };
 
   return (
-    <div
+    <TooltipScrollDismissArea
+      dismissFocused
       ref={(node) => {
         scrollRef.current = node;
         scrollerRef(node);
@@ -1139,6 +1140,6 @@ export function PullRequestSummaryTab({
           </>
         )}
       </Section>
-    </div>
+    </TooltipScrollDismissArea>
   );
 }

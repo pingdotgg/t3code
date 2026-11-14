@@ -5,12 +5,22 @@ import {
 } from "@t3tools/contracts";
 import { EnvironmentId, ProjectId, type PullRequestDetailView } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
+import "../../index.css";
 
 const state = vi.hoisted(() => ({
   update: vi.fn(),
   canUpdate: true,
   timestampFormat: "locale" as "locale" | "12-hour" | "24-hour",
+}));
+
+vi.mock(import("~/assets/assetUrls"), async (original) => ({
+  ...(await original()),
+  useAssetUrlState: () => ({
+    _tag: "Success",
+    expiresAt: Number.MAX_SAFE_INTEGER,
+    url: `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"><rect width="320" height="180" fill="blue"/></svg>')}`,
+  }),
 }));
 
 vi.mock(import("~/state/use-atom-command"), async (original) => ({
@@ -107,6 +117,38 @@ const detail: PullRequestDetailView = {
     requestReviewers: false,
   },
 };
+
+// Mouse-opened previews restore focus without focus-visible, so only keyboard reopens the tooltip.
+it("dismisses a media tooltip after keyboard preview and PR scroll", async () => {
+  setup();
+  const url = "https://github.com/user-attachments/assets/7195f963-51a9-4331-be74-3e06be760422";
+  await using screen = await render({
+    ...detail,
+    body: `![Screenshot](${url})\n\n${"Paragraph\n\n".repeat(40)}`,
+  });
+  const scroller = screen.container.querySelector<HTMLElement>(
+    "[data-pull-request-summary-scroll]",
+  )!;
+  scroller.style.height = "600px";
+  const link = screen.getByRole("button", { name: "Preview Screenshot", exact: true });
+  await expect.element(screen.getByAltText("Screenshot")).toBeVisible();
+  await act(() => (link.element() as HTMLElement).focus());
+  await userEvent.keyboard("{Enter}");
+  await expect.element(page.getByRole("dialog")).toBeVisible();
+  // Leave the opener while the dialog is up: scrolling must not depend on mouseleave.
+  await userEvent.hover(page.getByRole("button", { name: "Close image preview" }));
+  await userEvent.keyboard("{Escape}");
+  await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
+  expect(document.activeElement).toBe(link.element());
+  await vi.waitFor(() =>
+    expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toBe(url),
+  );
+  await act(() => {
+    scroller.scrollTop = 100;
+  });
+  await vi.waitFor(() => expect(document.querySelector('[data-slot="tooltip-popup"]')).toBeNull());
+  expect(document.activeElement).toBe(link.element());
+});
 
 // The comment filter persists to localStorage, so tests that touch it start and end empty.
 

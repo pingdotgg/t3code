@@ -19,26 +19,60 @@ const TooltipProvider = TooltipPrimitive.Provider;
 
 type TooltipActionsRef = RefObject<TooltipPrimitive.Root.Actions | null>;
 
-// The compiler freezes context values; update hovered tooltips through calls instead of shared ref writes.
+type TrackedTooltip = { trigger: HTMLElement; actionsRef: TooltipActionsRef };
+
+// The compiler freezes context values; update tracked tooltips through calls instead of shared ref writes.
 function createTooltipHoverTracker() {
-  let hovered: { trigger: HTMLElement; actionsRef: TooltipActionsRef } | null = null;
+  let hovered: TrackedTooltip | null = null;
+  let focused: TrackedTooltip | null = null;
+  let focusScrollFrame: number | null = null;
+  const settleFocus = () => {
+    if (focusScrollFrame !== null) cancelAnimationFrame(focusScrollFrame);
+    focusScrollFrame = null;
+  };
+  const blur = (actionsRef: TooltipActionsRef) => {
+    if (focused?.actionsRef !== actionsRef) return;
+    settleFocus();
+    focused = null;
+  };
+  const release = (actionsRef: TooltipActionsRef) => {
+    if (hovered?.actionsRef === actionsRef) hovered = null;
+    blur(actionsRef);
+  };
   return {
     hover(trigger: HTMLElement, actionsRef: TooltipActionsRef) {
       hovered = { trigger, actionsRef };
     },
-    release(actionsRef: TooltipActionsRef) {
-      if (hovered?.actionsRef === actionsRef) hovered = null;
+    focus(trigger: HTMLElement, actionsRef: TooltipActionsRef) {
+      settleFocus();
+      focused = { trigger, actionsRef };
+      // Browser focus scrolling is dispatched before the next animation frame.
+      focusScrollFrame = requestAnimationFrame(() => {
+        focusScrollFrame = null;
+      });
     },
-    dismissUnfocused() {
-      const tooltip = hovered;
-      if (!tooltip) return;
-      const focused = tooltip.trigger.ownerDocument.activeElement;
-      if (focused && tooltip.trigger.contains(focused) && focused.matches(":focus-visible")) {
-        return;
+    blur,
+    release,
+    settleFocus,
+    dismiss(dismissFocused: boolean) {
+      const focusScrollPending = focusScrollFrame !== null;
+      settleFocus();
+      const tooltips =
+        hovered?.actionsRef === focused?.actionsRef ? [focused ?? hovered] : [hovered, focused];
+      for (const tooltip of tooltips) {
+        if (!tooltip) continue;
+        const active = tooltip.trigger.ownerDocument.activeElement;
+        if (
+          active &&
+          tooltip.trigger.contains(active) &&
+          active.matches(":focus-visible") &&
+          (!dismissFocused || focusScrollPending)
+        )
+          continue;
+        release(tooltip.actionsRef);
+        // Base UI also cancels delayed hover opens through this action.
+        tooltip.actionsRef.current?.close();
       }
-      hovered = null;
-      // Base UI also cancels delayed hover opens through this action.
-      tooltip.actionsRef.current?.close();
     },
   };
 }
@@ -47,15 +81,37 @@ type TooltipHoverTracker = ReturnType<typeof createTooltipHoverTracker>;
 const TooltipHoverContext = createContext<TooltipActionsRef | null>(null);
 const TooltipScrollContext = createContext<TooltipHoverTracker | null>(null);
 
-function TooltipScrollDismissArea({ onScrollCapture, ...props }: ComponentProps<"div">) {
+function TooltipScrollDismissArea({
+  onScrollCapture,
+  onWheelCapture,
+  onKeyDownCapture,
+  onPointerDownCapture,
+  dismissFocused = false,
+  ...props
+}: ComponentProps<"div"> & {
+  /** PR scrolling also dismisses tooltips reopened by media preview focus restoration. */
+  dismissFocused?: boolean;
+}) {
   const [tracker] = useState(createTooltipHoverTracker);
   return (
     <TooltipScrollContext value={tracker}>
       <div
         {...props}
+        onWheelCapture={(event) => {
+          tracker.settleFocus();
+          onWheelCapture?.(event);
+        }}
+        onKeyDownCapture={(event) => {
+          tracker.settleFocus();
+          onKeyDownCapture?.(event);
+        }}
+        onPointerDownCapture={(event) => {
+          tracker.settleFocus();
+          onPointerDownCapture?.(event);
+        }}
         onScrollCapture={(event) => {
           onScrollCapture?.(event);
-          tracker.dismissUnfocused();
+          tracker.dismiss(dismissFocused);
         }}
       />
     </TooltipScrollContext>
@@ -97,6 +153,14 @@ function TooltipTrigger(props: TooltipPrimitive.Trigger.Props) {
       onMouseEnter={(event) => {
         props.onMouseEnter?.(event);
         tracker.hover(event.currentTarget, actionsRef);
+      }}
+      onFocus={(event) => {
+        props.onFocus?.(event);
+        tracker.focus(event.currentTarget, actionsRef);
+      }}
+      onBlur={(event) => {
+        props.onBlur?.(event);
+        tracker.blur(actionsRef);
       }}
     />
   );
