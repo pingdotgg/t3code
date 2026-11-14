@@ -444,10 +444,10 @@ it.live("answers content searches with git grep while a slow content index build
       "fatal: cannot use Perl-compatible regexes when not compiled with USE_LIBPCRE\n",
     );
     expect((yield* noPcreIndex.searchContents(regexInput)).regexFallbackError).toBeUndefined();
-    expect(grep).toHaveBeenCalledTimes(1);
+    expect(grep).toHaveBeenCalledTimes(2);
     const noRangesIndex = yield* failingGitIndex("-o", "fatal: unexpected failure\n");
     yield* noRangesIndex.searchContents(regexInput);
-    expect(grep).toHaveBeenCalledTimes(2);
+    expect(grep).toHaveBeenCalledTimes(4);
     // Ranges output cut off after line 1: line 2 is left out and the result says so.
     const cutRangesIndex = yield* failingGitIndex("-o", "", {
       exitCode: 0,
@@ -467,7 +467,7 @@ it.live("answers content searches with git grep while a slow content index build
 
     isWarmupComplete = true;
     yield* search({});
-    expect(grep).toHaveBeenCalledTimes(3);
+    expect(grep).toHaveBeenCalledTimes(6);
     expect(finder.destroy).not.toHaveBeenCalled();
   }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );
@@ -735,7 +735,10 @@ function contentFinder(grepAsync: (query: string, options?: GrepOptions) => Prom
   const finder = {
     destroy: vi.fn(),
     waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
-    getScanProgressAsync: async () => ({ ok: true as const, value: { isScanning: false, isWarmupComplete: true } }),
+    getScanProgressAsync: async () => ({
+      ok: true as const,
+      value: { isScanning: false, isWarmupComplete: true },
+    }),
     watchAsync: async () => ({ ok: true as const, value: () => undefined }),
     grepAsync,
   } as unknown as FileFinder;
@@ -849,4 +852,38 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
         expect(result).toBe("WorkspaceSearchIndexCreateFailed");
       }),
     ).pipe(Effect.provide(testLayer)),
+);
+
+// Real fff: it parses glob and path syntax out of the query, which a native whole-word prefilter must not break.
+it.effect.each([
+  { query: "*.ts needle", expected: ["words.ts:2"] },
+  { query: "*.ts", expected: ["notes.md:1"] },
+  { query: "needle", expected: ["notes.md:1", "words.ts:2"] },
+])("matches whole words in a real workspace for $query", ({ query, expected }) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-whole-word-" });
+      yield* fileSystem.writeFileString(
+        path.join(cwd, "words.ts"),
+        "needleSuffix\nneedle\ntrailer\n",
+      );
+      yield* fileSystem.writeFileString(path.join(cwd, "notes.md"), "needle *.ts\n");
+
+      const searchIndex = yield* WorkspaceSearchIndex.make(cwd, "content");
+      const result = yield* searchIndex.searchContents({
+        query,
+        limit: 500,
+        caseSensitive: true,
+        wholeWord: true,
+        useRegex: false,
+      });
+
+      expect(result.regexFallbackError).toBeUndefined();
+      expect(result.matches.map((match) => `${match.path}:${match.lineNumber}`).toSorted()).toEqual(
+        expected,
+      );
+    }),
+  ).pipe(Effect.provide(testLayer)),
 );
