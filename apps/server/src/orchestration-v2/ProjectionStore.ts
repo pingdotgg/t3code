@@ -726,6 +726,7 @@ export interface ProjectionStoreV2Shape {
   readonly getCheckpointCaptureContext: (
     threadId: ThreadId,
     target: { readonly runId: RunId; readonly scopeId: CheckpointScopeId },
+    options?: { readonly preservedCheckpoints: "baselines" },
   ) => Effect.Effect<ProjectionCheckpointCaptureContext, ProjectionStoreV2Error>;
   readonly getCheckpointRollbackContext: (
     threadId: ThreadId,
@@ -5916,6 +5917,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     const getCheckpointCaptureContext: ProjectionStoreV2Shape["getCheckpointCaptureContext"] = (
       threadId,
       target,
+      options,
     ) =>
       sql
         .withTransaction(
@@ -5945,8 +5947,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 OR provider_thread_id IN (SELECT provider_thread_id FROM orchestration_v2_projection_subagents WHERE thread_id = ${threadId}))`,
               sql<{ readonly ordinal: number }>`SELECT ordinal_within_scope AS ordinal
             FROM orchestration_v2_projection_checkpoints
-            WHERE thread_id = ${threadId} AND scope_id = ${target.scopeId}
-              AND (status = 'ready' OR (status = 'missing' AND run_id IS NOT NULL))`,
+            WHERE thread_id = ${threadId} AND scope_id = ${target.scopeId} AND (status = 'ready' OR (status = 'missing' AND run_id IS NOT NULL))
+              ${
+                options?.preservedCheckpoints === "baselines"
+                  ? sql`AND ordinal_within_scope IN (0, ${run === undefined ? null : Math.max(0, run.ordinal - 1)})`
+                  : sql``
+              }`,
             ]);
             return {
               run,
