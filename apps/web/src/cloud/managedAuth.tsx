@@ -16,8 +16,7 @@ import { useEffect, type ReactNode } from "react";
 import { environmentCatalog } from "../connection/catalog";
 import { runtime } from "../lib/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
-import { browserClerkLoadRecoveryEnvironment, watchClerkLoadRecovery } from "./clerkLoadRecovery";
-import { resolveCloudPublicConfig, resolveRelayClerkTokenOptions } from "./publicConfig";
+import { resolveRelayClerkTokenOptions } from "./publicConfig";
 
 export function deactivateManagedRelayAuthentication(): void {
   setManagedRelaySession(appAtomRegistry, null);
@@ -69,17 +68,15 @@ export function ManagedRelayAuthProvider({ children }: { readonly children: Reac
   const clerk = useClerk();
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches the Clerk instance to the managed relay account service for the provider's lifetime
   useEffect(() => managedRelayAccountService.attach(clerk), [clerk]);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mirrors Clerk's load failure into the relay session state and reloads once Clerk answers again
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mirrors Clerk's load failure into the relay session state that connections read
   useEffect(() => {
-    const publishableKey = resolveCloudPublicConfig().clerkPublishableKey;
-    if (publishableKey === null) return;
-    return watchClerkLoadRecovery(
-      clerk,
-      browserClerkLoadRecoveryEnvironment({
-        publishableKey,
-        setFailed: (failed) => setManagedRelaySignInFailed(appAtomRegistry, failed),
-      }),
-    );
+    const onStatus = (status: typeof clerk.status) =>
+      setManagedRelaySignInFailed(appAtomRegistry, status === "error");
+    clerk.on("status", onStatus, { notify: true });
+    return () => {
+      clerk.off("status", onStatus);
+      setManagedRelaySignInFailed(appAtomRegistry, false);
+    };
   }, [clerk]);
   return children;
 }
