@@ -30,6 +30,7 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+import { buildInitialPiProviderSnapshot } from "../../../../packages/provider-pi/src/server/status.ts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -1460,6 +1461,63 @@ describe("OrchestratorMcpService provider resolution", () => {
     slashCommands: [],
     skills: [],
   });
+
+  it.effect.each([
+    { status: "warning", customModels: [] },
+    { status: "ready", customModels: [] },
+    { status: "ready", customModels: ["custom/model"] },
+  ] as const)("accepts an explicit Pi model before discovery: %j", (row) =>
+    Effect.gen(function* () {
+      const initial = yield* buildInitialPiProviderSnapshot({
+        enabled: true,
+        binaryPath: "pi",
+        launchArgs: "",
+        customModels: [...row.customModels],
+      });
+      yield* OrchestratorMcpService.requireAdvertisedModel(
+        {
+          ...initial,
+          instanceId: ProviderInstanceId.make("pi"),
+          driver: ProviderDriverKind.make("pi"),
+          status: row.status,
+        },
+        "anthropic/claude-opus",
+      );
+    }),
+  );
+
+  it.effect.each(["discovered", "unauthenticated", "other provider"] as const)(
+    "rejects an unadvertised model with a %s inventory",
+    (inventory) =>
+      Effect.gen(function* () {
+        const provider = providerSnapshot({
+          instanceId: ProviderInstanceId.make("test"),
+          driver: ProviderDriverKind.make(inventory === "other provider" ? "muse" : "pi"),
+          model: "default",
+        });
+        const error = yield* OrchestratorMcpService.requireAdvertisedModel(
+          {
+            ...provider,
+            auth: { status: inventory === "unauthenticated" ? "unauthenticated" : "unknown" },
+            models:
+              inventory === "discovered"
+                ? [
+                    ...provider.models,
+                    {
+                      slug: "anthropic/claude-sonnet",
+                      name: "Claude Sonnet",
+                      subProvider: "anthropic",
+                      isCustom: false,
+                      capabilities: null,
+                    },
+                  ]
+                : provider.models,
+          },
+          "anthropic/claude-opus",
+        ).pipe(Effect.flip);
+        assert.equal(error.code, "model_unavailable");
+      }),
+  );
 
   const providerRegistryLayer = (providers: ReadonlyArray<ServerProvider>) =>
     Layer.mock(ProviderRegistry.ProviderRegistry)({

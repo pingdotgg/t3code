@@ -395,9 +395,15 @@ const advertisedModel = (provider: ServerProvider, model: string) =>
     candidate.aliases?.some((alias) => alias.toLowerCase() === model.toLowerCase()),
   );
 
-/** A provider that lists no models accepts any slug. */
+/** Empty inventories and Pi's undiscovered placeholder inventory accept any slug. */
 export const requireAdvertisedModel = (provider: ServerProvider, model: string) =>
-  provider.models.length > 0 && advertisedModel(provider, model) === undefined
+  provider.models.length > 0 &&
+  (provider.driver !== "pi" ||
+    provider.auth.status !== "unknown" ||
+    provider.models.some(
+      (candidate) => !candidate.isCustom && candidate.subProvider !== undefined,
+    )) &&
+  advertisedModel(provider, model) === undefined
     ? Effect.fail(
         failure(
           "model_unavailable",
