@@ -13,9 +13,9 @@ not orchestration events: the event store knows projects and threads, a run is n
 journal is the engine's to read. Clients follow runs the way they follow scheduled tasks, by a
 list that is sent again when something changes.
 
-**Off unless asked for.** The server registers the definitions exported by the module named in
-`T3CODE_WORKFLOWS`. Without it the `Workflows` service is the disabled one and the engine's modules are never
-imported
+**Off until something is defined.** The server registers what the files in the home's `workflows`
+folder define. While they define nothing the `Workflows` service is the disabled one and the
+engine's modules are never imported
 ([`WorkflowRuntime.ts`](../../apps/server/src/workflows/WorkflowRuntime.ts)). Keep it that way:
 anything a light module imports from `effect/workflow` or `effect/cluster` is paid for by every
 server and CLI start.
@@ -69,12 +69,22 @@ gone, so its cleanup runs outside the engine and has only what the run was start
 the engine `onEnd` is an ordinary last step.
 
 **Definitions reload by replacing the engine.** The engine is built from a fixed set of
-definitions, so a changed file closes it and builds a new one on the same database, which is
+definitions, so a changed folder closes it and builds a new one on the same database, which is
 what a restart does; runs come through it as they come through a restart. The service the rest
 of the server holds forwards to whichever engine is current, and callers during the swap wait
-for the new one. A file is loaded under a new address each time, because Node keeps a module by
-its address; modules the file imports keep theirs and are therefore not reloaded. Saving from a
-client verifies a copy beside the real file first, so its imports resolve the same way.
+for the new one. With nothing defined there is no engine, and its modules are never loaded.
+
+**Each file keeps its last good version.** A file that stops loading does not take its workflows
+down, and does not hold back the other files. What is checked across files, a workflow defined
+twice or a version dropped under unfinished runs, refuses the whole change instead, because
+there is no telling which file was meant to win.
+
+**The API is globals, so files load one at a time.** `T3.workflow` registers with the load in
+progress, and the globals are the process's. A file is loaded under a new address each time,
+because Node keeps a module by its address; modules a file imports keep theirs, so they are not
+reloaded, and a workflow one of them defines registers only the first time. That is why shared
+code belongs in a subfolder and definitions in the files themselves. Saving from a client
+verifies a copy beside the real file first, so its imports resolve the same way.
 
 ## Traps
 

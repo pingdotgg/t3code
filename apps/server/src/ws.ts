@@ -2315,10 +2315,13 @@ export const layerWsRpc = (
           workflows
             .cancel(input.runId, input.reason ?? "Cancelled")
             .pipe(Effect.mapError(toWorkflowRequestError)),
-        [WS_METHODS.workflowsGetDefinition]: (_input) =>
-          Effect.map(workflowDefinitions.read, (definition) => ({ definition })),
+        [WS_METHODS.workflowsGetDefinition]: (_input) => workflowDefinitions.read,
         [WS_METHODS.workflowsSaveDefinition]: (input) =>
-          Effect.map(workflowDefinitions.save(input.source), (problems) => ({ problems })),
+          Effect.map(workflowDefinitions.save(input.name, input.source), (problems) => ({
+            problems,
+          })),
+        [WS_METHODS.workflowsDeleteDefinition]: (input) =>
+          Effect.map(workflowDefinitions.remove(input.name), (problems) => ({ problems })),
         [WS_METHODS.scheduledTasksSubscribe]: (_input) =>
           scheduledTasks.subscribeList().pipe(Stream.map(withVisibleWebhookUrls)),
         [WS_METHODS.scheduledTasksUpsert]: (input) => scheduledTasks.upsert(input),

@@ -375,11 +375,11 @@ describe("WorkflowRunsView", () => {
     await expect.element(runs).toMatchTextContent("Has not run yet.");
   });
 
-  it("says how to turn workflows on when nothing has run", async () => {
+  it("points at where workflows are written when nothing has run", async () => {
     setup({ runs: [], questions: [] });
     await using screen = await render(page());
 
     await expect.element(screen.getByText("No workflow runs yet")).toBeVisible();
-    await expect.element(screen.getByText("T3CODE_WORKFLOWS")).toBeVisible();
+    await expect.element(screen.getByRole("button", { name: "Definitions" })).toBeVisible();
   });
 });

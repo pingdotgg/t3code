@@ -1822,6 +1822,10 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:workflows:save-definition",
       tag: WS_METHODS.workflowsSaveDefinition,
     }),
+    deleteWorkflowDefinition: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:workflows:delete-definition",
+      tag: WS_METHODS.workflowsDeleteDefinition,
+    }),
     createGuestShare: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:guest-share:create",
       tag: WS_METHODS.guestShareCreate,

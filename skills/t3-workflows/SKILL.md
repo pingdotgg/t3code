@@ -15,76 +15,68 @@ task is enough.
 
 ## Set up
 
-1. Write one definitions file (below). It imports nothing.
-2. Start the server with `T3CODE_WORKFLOWS=/absolute/path/to/workflows.ts`. Without it, workflows
-   are off and every `t3 workflow` command says so.
-3. Edit the file whenever you like. The server reads it again when it changes and, if nothing is
-   wrong with it, runs it from then on without a restart. Files it imports are read once: restart
-   the server after changing one of those.
+Put a `.ts` file in the `workflows` folder of the T3 home (`~/.t3/workflows/` unless the server
+was started with another home). Every file there defines workflows; there is nothing to turn on
+and nothing to restart. `T3CODE_WORKFLOWS` names another folder, or one file, to read instead.
 
-A changed file that does not load, defines a workflow twice, or drops a version that still has
-unfinished runs is not used: the last version that loaded keeps running, and the server logs
-`Workflow definitions were not loaded` with the reason. The Workflows page shows the same reason.
+The server reads a file again when it changes and, if nothing is wrong with it, runs it from then
+on. A file that does not load keeps running as it last loaded, and the server logs
+`A workflow definitions file was not loaded` with the reason. A change that defines a workflow
+twice, or drops a version that still has unfinished runs, is not taken up either. The Workflows
+page shows the same reasons, and its Definitions view edits these files with a check on save.
+
+Files starting with a dot are ignored, and so are folders: keep code several files share in a
+subfolder and import it. Imported files are read once, so restart the server after changing one.
 
 ## The file
 
-The default export is a function. The server calls it with the API and registers what it returns.
+A file calls `T3.workflow(…)` for each workflow it defines. It imports nothing: `T3`, `Effect`,
+`Schema`, `Option`, `Duration` and `Schedule` are globals.
 
 ```ts
-export default ({
-  workflow,
-  step,
-  agent,
-  ask,
-  stop,
-  title,
-  every,
-  Tick,
-  Effect,
-  Schema,
-  Option,
-}) => [
-  workflow(
-    "dependency-report",
-    { version: 1, payload: Tick, triggers: [every("1 day")] },
-    Effect.fn(function* (tick) {
-      yield* title("name", `Dependencies ${tick.scheduledAt.slice(0, 10)}`);
+const { workflow, agent, ask, stop, title, every, Tick } = T3;
 
-      const audit = yield* agent("audit", {
-        project: "project-id",
-        brief: "List this repository's outdated dependencies. Do not change any file.",
-        output: Schema.Struct({
-          outdated: Schema.Array(Schema.Struct({ name: Schema.String, latest: Schema.String })),
-        }),
-      });
-      if (audit.value.outdated.length === 0) return yield* stop("nothing is outdated");
+workflow(
+  "dependency-report",
+  { version: 1, payload: Tick, triggers: [every("1 day")] },
+  Effect.fn(function* (tick) {
+    yield* title("name", `Dependencies ${tick.scheduledAt.slice(0, 10)}`);
 
-      const answer = yield* ask("upgrade", {
-        title: `Upgrade ${audit.value.outdated.length} dependencies?`,
-        choices: ["upgrade", "skip"],
-        data: audit.value,
-        timeout: "2 days",
-      });
-      if (Option.isNone(answer) || answer.value.choice === "skip") {
-        return yield* stop("not approved");
-      }
+    const audit = yield* agent("audit", {
+      project: "project-id",
+      brief: "List this repository's outdated dependencies. Do not change any file.",
+      output: Schema.Struct({
+        outdated: Schema.Array(Schema.Struct({ name: Schema.String, latest: Schema.String })),
+      }),
+    });
+    if (audit.value.outdated.length === 0) return yield* stop("nothing is outdated");
 
-      yield* agent("upgrade", {
-        thread: audit.thread,
-        brief: "Upgrade the dependencies you listed, run the tests, and say what changed.",
-      });
-    }),
-  ),
-];
+    const answer = yield* ask("upgrade", {
+      title: `Upgrade ${audit.value.outdated.length} dependencies?`,
+      choices: ["upgrade", "skip"],
+      data: audit.value,
+      timeout: "2 days",
+    });
+    if (Option.isNone(answer) || answer.value.choice === "skip") {
+      return yield* stop("not approved");
+    }
+
+    yield* agent("upgrade", {
+      thread: audit.thread,
+      brief: "Upgrade the dependencies you listed, run the tests, and say what changed.",
+    });
+  }),
+);
 ```
 
-The API object holds `workflow`, `step`, `sleep`, `wait`, `stop`, `title`, `agent`,
-`ask`, `store`, `signal`, `signalAll`, `invoke`, `start`, `cancel`, `runs`, the
-triggers `every`, `daily`, `webhook` with their payload schemas `Tick` and `WebhookRequest`, and
-Effect's `Effect`, `Schema`, `Option`, `Duration`, `Schedule`. Take everything from it, and list each name you use in the function's parameter: a name that is
-not listed, `Option` for example, is not defined. An
-`import` of `effect` in the file would load a second copy that the engine does not run. Node's own
-modules (`node:fs`, `node:crypto`) can be imported as usual.
+`T3` holds `workflow`, `step`, `sleep`, `wait`, `stop`, `title`, `agent`, `ask`, `store`, `signal`,
+`signalAll`, `invoke`, `start`, `cancel`, `runs`, and the triggers `every`, `daily`, `webhook`
+with their payload schemas `Tick` and `WebhookRequest`. Take what you use from it at the top of the
+file, or write `T3.step(…)` in full. `Effect`, `Schema`, `Option`, `Duration` and `Schedule` are
+Effect's own. An `import` of `effect` in the file would load a second copy that the engine does
+not run. Node's own modules (`node:fs`, `node:crypto`) can be imported as usual.
+
+A workflow's name and version must be defined once across all files.
 
 ## `workflow(name, options, body)`
 
@@ -145,7 +137,7 @@ the brief to end a waiting turn without submitting. The step then waits across t
 result, and asks for it only when the thread has done nothing for that long. Without `quiet`, a
 turn that ends without the result is asked for it at once. Keep a `timeout` on such a step.
 
-`agent.try` takes what `agent` takes (it is a method of `agent`, so list only `agent`) and never pauses the run. It gives
+`agent.try` takes what `agent` takes and never pauses the run. It gives
 `{ outcome: "done", value, thread }`, or `{ outcome: "failed", reason, thread? }` for an agent
 that could not be started, died twice, ran out of time or never gave its result. Use it when the
 workflow has a next move: another model, another machine, or `stop`.
@@ -218,26 +210,24 @@ again up to five times; `show` has the error.
 ## Other workflows
 
 A workflow can run another. Keep the other workflow in a variable, so its payload and result are
-typed:
+typed, and define both in one file:
 
 ```ts
-export default ({ workflow, invoke, stop, Effect, Schema }) => {
-  const review = workflow("review", { version: 1, payload: Change, returns: Verdict }, …);
+const { workflow, invoke, stop } = T3;
 
-  const fix = workflow(
-    "fix",
-    { version: 1, payload: Issue },
-    Effect.fn(function* (issue) {
-      const ended = yield* invoke("review", review, { branch: "fix/1" });
-      if (ended.outcome !== "completed") {
-        return yield* stop(`review ${ended.outcome}: ${ended.reason}`);
-      }
-      ended.value; // a Verdict
-    }),
-  );
+const review = workflow("review", { version: 1, payload: Change, returns: Verdict }, …);
 
-  return [review, fix]; // both are registered
-};
+workflow(
+  "fix",
+  { version: 1, payload: Issue },
+  Effect.fn(function* (issue) {
+    const ended = yield* invoke("review", review, { branch: "fix/1" });
+    if (ended.outcome !== "completed") {
+      return yield* stop(`review ${ended.outcome}: ${ended.reason}`);
+    }
+    ended.value; // a Verdict
+  }),
+);
 ```
 
 | Call                                        | Does                                                                                                                                                                         |

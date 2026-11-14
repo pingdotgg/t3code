@@ -103,8 +103,15 @@ export function WorkflowRunsView({
         description={
           <>
             A workflow ties agents, code, schedules and questions to you into one run that survives
-            restarts. Start the server with <code className="font-mono">T3CODE_WORKFLOWS</code> set
-            to a definitions file.{" "}
+            restarts. Write one under{" "}
+            <button
+              type="button"
+              className="underline underline-offset-2 hover:text-foreground"
+              onClick={onOpenDefinitions}
+            >
+              Definitions
+            </button>
+            , or ask an agent to.{" "}
             <a
               href={WORKFLOWS_GUIDE_URL}
               target="_blank"
@@ -151,7 +158,7 @@ export function WorkflowRunsView({
         >
           <span className="min-w-0 flex-1 text-muted-foreground">
             <span className="font-medium text-destructive-foreground">
-              The definitions file does not load.
+              A workflow file has a problem.
             </span>{" "}
             The last version that did keeps running.
           </span>

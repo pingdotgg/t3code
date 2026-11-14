@@ -127,7 +127,8 @@ export class Workflows extends Context.Service<
 
 const refuse = Effect.fn("Workflows.disabled")(function* () {
   return yield* new WorkflowInputError({
-    problem: "Workflows are not enabled on this server: no definitions module is configured.",
+    problem:
+      "This server defines no workflows yet. Add a file to the workflows folder of its T3 home.",
   });
 });
 

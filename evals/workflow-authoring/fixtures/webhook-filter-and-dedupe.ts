@@ -1,13 +1,8 @@
 // Written the way an agent with only the skill would write it.
 // @effect-diagnostics globalDateInEffect:off globalJsonInEffect:off
-export default ({
-  workflow,
-  agent,
-  stop,
-  webhook,
-  WebhookRequest,
-  Effect,
-}: typeof import("../../../apps/server/src/workflows/api.ts")) => [
+const { workflow, agent, stop, webhook, WebhookRequest } = T3;
+
+export default [
   workflow(
     "deploy-watch",
     {
