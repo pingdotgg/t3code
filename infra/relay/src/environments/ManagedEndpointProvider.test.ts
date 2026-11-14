@@ -617,7 +617,7 @@ describe("ManagedEndpointProvider", () => {
     }).pipe(Effect.provide(layerProvider(makeTunnelClient(tunnelCalls))));
   });
 
-  it.effect("rejects non-loopback managed endpoint origins before calling Cloudflare", () => {
+  it.effect("rejects public managed endpoint origins before calling Cloudflare", () => {
     const dnsCalls: DnsCall[] = [];
 
     return Effect.gen(function* () {
@@ -626,7 +626,7 @@ describe("ManagedEndpointProvider", () => {
         provider.provision({
           userId: "user_ABC",
           environmentId: "env_ABC",
-          origin: { localHttpHost: "192.168.1.10", localHttpPort: 3773 },
+          origin: { localHttpHost: "203.0.113.7", localHttpPort: 3773 },
         }),
       );
 
@@ -637,7 +637,7 @@ describe("ManagedEndpointProvider", () => {
           _tag: "ManagedEndpointOriginNotAllowed",
           userId: "user_ABC",
           environmentId: "env_ABC",
-          host: "192.168.1.10",
+          host: "203.0.113.7",
           port: 3773,
         });
       }

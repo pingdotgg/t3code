@@ -9,6 +9,7 @@ import {
   RELAY_LINK_PROOF_TYP,
   verifyRelayJwt,
 } from "@t3tools/shared/relayJwt";
+import { isManagedTunnelOriginHost } from "@t3tools/shared/hostClassification";
 import * as Context from "effect/Context";
 import * as Signature from "effect/crypto/Signature";
 import * as DateTime from "effect/DateTime";
@@ -117,19 +118,9 @@ function isSecureManagedEndpoint(endpoint: RelayEnvironmentLinkProofPayload["end
   }
 }
 
-function normalizeHostname(hostname: string): string {
-  return hostname
-    .trim()
-    .toLowerCase()
-    .replace(/^\[(.*)\]$/u, "$1");
-}
-
-function isLoopbackManagedTunnelOrigin(
-  origin: RelayEnvironmentLinkProofPayload["origin"],
-): boolean {
-  const hostname = normalizeHostname(origin.localHttpHost);
+function isAllowedManagedTunnelOrigin(origin: RelayEnvironmentLinkProofPayload["origin"]): boolean {
   return (
-    (hostname === "127.0.0.1" || hostname === "::1" || hostname === "localhost") &&
+    isManagedTunnelOriginHost(origin.localHttpHost) &&
     Number.isInteger(origin.localHttpPort) &&
     origin.localHttpPort > 0 &&
     origin.localHttpPort <= 65_535
@@ -280,7 +271,7 @@ const make = Effect.gen(function* () {
           stage: "consume_challenge_nonce",
         });
       }
-      if (input.request.managedTunnelsEnabled && !isLoopbackManagedTunnelOrigin(verified.origin)) {
+      if (input.request.managedTunnelsEnabled && !isAllowedManagedTunnelOrigin(verified.origin)) {
         return yield* new EnvironmentLinkProofInvalid({
           userId: input.userId,
           environmentId: verified.environmentId,

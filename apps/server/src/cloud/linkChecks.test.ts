@@ -54,6 +54,23 @@ describe("parseManagedEndpointLocalOrigin", () => {
       ).toBe(true);
     },
   );
+
+  it.each([
+    ["http://192.168.1.42:3773", "http://127.0.0.1:3773", undefined],
+    ["http://192.168.1.42:3773", "http://192.168.1.43:3773", undefined],
+    ["http://example.com:3773", "http://example.com:3773", undefined],
+    // A server bound to every interface tunnels to loopback, not the address a client used.
+    ["http://192.168.1.42:3773", "http://192.168.1.42:3773", "127.0.0.1"],
+  ])("rejects origin %s for request %s on server host %s", (origin, requestUrl, serverHost) => {
+    expect(
+      isAllowedEndpointOrigin({
+        origin: parseManagedEndpointLocalOrigin(origin).origin,
+        requestUrl,
+        allowNonLoopbackRequestHost: true,
+        ...(serverHost === undefined ? {} : { serverHost }),
+      }),
+    ).toBe(false);
+  });
 });
 
 describe("link proof provider kinds", () => {

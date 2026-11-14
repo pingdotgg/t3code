@@ -4,6 +4,7 @@ import type {
   RelayManagedEndpointOrigin,
   RelayManagedEndpointRuntimeConfig,
 } from "@t3tools/contracts/relay";
+import { isManagedTunnelOriginHost } from "@t3tools/shared/hostClassification";
 import type { HttpServerRequest } from "effect/http";
 
 const CLOUD_PROOF_MAX_LIFETIME_SECONDS = 5 * 60;
@@ -99,13 +100,22 @@ export function isAllowedEndpointOrigin(input: {
   readonly origin: RelayManagedEndpointOrigin;
   readonly requestUrl: string;
   readonly allowNonLoopbackRequestHost?: boolean;
+  /** The host this server's own tunnel targets; a non-loopback origin must name it. */
+  readonly serverHost?: string;
 }): boolean {
-  if (!isLoopbackHostname(input.origin.localHttpHost)) {
+  const url = new URL(input.requestUrl);
+  const originHost = normalizeHostname(input.origin.localHttpHost);
+  // A specific non-loopback --host serves only on that address, so the origin may name it
+  // when the request reached this server there.
+  const boundHere =
+    isManagedTunnelOriginHost(originHost) &&
+    originHost === normalizeHostname(url.hostname) &&
+    (input.serverHost === undefined || originHost === normalizeHostname(input.serverHost));
+  if (!boundHere && !isLoopbackHostname(originHost)) {
     return false;
   }
 
-  const url = new URL(input.requestUrl);
-  if (!input.allowNonLoopbackRequestHost && !isLoopbackHostname(url.hostname)) {
+  if (!boundHere && !input.allowNonLoopbackRequestHost && !isLoopbackHostname(url.hostname)) {
     return false;
   }
 
