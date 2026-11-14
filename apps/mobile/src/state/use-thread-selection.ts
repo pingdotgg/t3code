@@ -72,6 +72,7 @@ function threadDetailToShell(
     title: thread.title,
     providerInstanceId: thread.providerInstanceId,
     modelSelection: thread.modelSelection,
+    ...(thread.modelUnreported === undefined ? {} : { modelUnreported: thread.modelUnreported }),
     runtimeMode: thread.runtimeMode,
     interactionMode: thread.interactionMode,
     branch: thread.branch,
