@@ -13,6 +13,15 @@ export const PULL_REQUEST_WATCH_WAKE_LIMIT = 10;
 export const PULL_REQUEST_WATCH_NO_CHECKS_MS = 15 * 60_000;
 const LISTED_ITEMS = 10;
 const SNIPPET_LENGTH = 200;
+// Remark bodies are untrusted and run to 64 KB, and unclosed openers make the markup pass
+// backtrack, so it only reads far enough to fill an excerpt once HTML comments are gone.
+const SNIPPET_SCAN_LENGTH = 2_000;
+// One left-to-right pass keeps code spans' tags and reads attribute backticks as part of the tag.
+// A lookahead pins each delimiter run at full length, so a long run can't backtrack cubically.
+// Element names are lowercase. A one-letter element needs attributes or a later closing tag,
+// so Promise<a> stays.
+const MARKUP =
+  /(?<code>(?<!`)(?=(?<ticks>`+))\k<ticks>[\s\S]*?(?<!`)\k<ticks>(?!`)|(?<!~)(?=(?<tildes>~{3,}))\k<tildes>[\s\S]*?\k<tildes>)|<(?<one>[abip])>(?=[\s\S]*?<\/\k<one>>)|<\/(?:a|b|blockquote|br|code|dd|details|div|dl|dt|em|h[1-6]|hr|i|img|li|ol|p|picture|pre|source|span|strong|sub|summary|sup|table|tbody|td|th|thead|tr|ul)\s*>|<(?:blockquote|br|code|dd|details|div|dl|dt|em|h[1-6]|hr|img|li|ol|picture|pre|source|span|strong|sub|summary|sup|table|tbody|td|th|thead|tr|ul)(?=[\s/>])(?:[^>"']|"[^"]*"|'[^']*')*>|<(?:a|b|i|p)\s(?:[^>"']|"[^"]*"|'[^']*')*>/g;
 
 export type PullRequestWatchChange =
   | { readonly kind: "checks-failed"; readonly failed: ReadonlyArray<PullRequestCheck> }
@@ -253,9 +262,29 @@ export function evaluatePullRequestWatch(
   };
 }
 
+// indexOf keeps this linear on unclosed openers, so it can read the whole body.
+function withoutHtmlComments(body: string): string {
+  let text = "";
+  let from = 0;
+  for (let open = body.indexOf("<!--"); open !== -1; open = body.indexOf("<!--", from)) {
+    const close = body.indexOf("-->", open + 4);
+    if (close === -1) {
+      // Like GitHub: an unclosed opener starting a line hides the rest, but one inside a paragraph is text.
+      const lineStart = body.lastIndexOf("\n", open - 1) + 1;
+      const hidesRest = /^ {0,3}$/.test(body.slice(lineStart, open));
+      return text + body.slice(from, hidesRest ? open : undefined);
+    }
+    text += `${body.slice(from, open)} `;
+    from = close + 3;
+  }
+  return text + body.slice(from);
+}
+
 function snippet(body: string): string {
-  const text = body
-    .replaceAll(/<!--[\s\S]*?-->/g, " ")
+  const text = withoutHtmlComments(body)
+    .slice(0, SNIPPET_SCAN_LENGTH)
+    .toWellFormed()
+    .replaceAll(MARKUP, (match, code: string | undefined) => (code === undefined ? " " : match))
     .replaceAll(/\s+/g, " ")
     .trim();
   if (text.length <= SNIPPET_LENGTH) return text;
