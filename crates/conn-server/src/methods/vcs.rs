@@ -37,6 +37,12 @@ pub struct VcsShared {
     pub setups: WorktreeSetups,
 }
 
+impl std::fmt::Debug for VcsShared {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VcsShared").finish_non_exhaustive()
+    }
+}
+
 /// Items a status or branch subscriber may fall behind by before updates are skipped. Each
 /// item is a full replacement, so the next one heals a skipped one.
 const STREAM_BUFFER: usize = 16;
@@ -402,7 +408,7 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
             }
         },
     );
-    let setups = shared.setups.clone();
+    let setups = shared.setups;
     table.unary(
         "worktreeSetup.cancel",
         move |_, input: OrchestrationV2GetThreadFamilyInput| {

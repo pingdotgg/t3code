@@ -8,7 +8,7 @@ use super::Deps;
 use super::orchestration::engine_unary;
 use crate::table::MethodTable;
 
-pub fn register(table: &mut MethodTable, deps: &Deps) {
+pub(super) fn register(table: &mut MethodTable, deps: &Deps) {
     let Some(engine) = deps.engine.as_ref() else {
         return;
     };

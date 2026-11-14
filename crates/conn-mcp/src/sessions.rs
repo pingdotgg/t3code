@@ -18,17 +18,17 @@ struct Session {
 }
 
 #[derive(Default)]
-pub struct Sessions {
+pub(crate) struct Sessions {
     sessions: HashMap<String, Session>,
 }
 
-pub enum Lookup {
+pub(crate) enum Lookup {
     Found,
     Unknown,
 }
 
 impl Sessions {
-    pub fn open(&mut self, owner: String) -> String {
+    pub(crate) fn open(&mut self, owner: String) -> String {
         let now = Instant::now();
         self.sessions
             .retain(|_, s| now.duration_since(s.last_used) < IDLE);
@@ -52,7 +52,7 @@ impl Sessions {
         id
     }
 
-    pub fn touch(&mut self, id: &str, owner: &str) -> Lookup {
+    pub(crate) fn touch(&mut self, id: &str, owner: &str) -> Lookup {
         match self.sessions.get_mut(id) {
             Some(session) if session.owner == owner && session.last_used.elapsed() < IDLE => {
                 session.last_used = Instant::now();
@@ -62,7 +62,7 @@ impl Sessions {
         }
     }
 
-    pub fn close(&mut self, id: &str, owner: &str) -> Lookup {
+    pub(crate) fn close(&mut self, id: &str, owner: &str) -> Lookup {
         match self.sessions.get(id) {
             Some(session) if session.owner == owner => {
                 self.sessions.remove(id);
@@ -73,7 +73,7 @@ impl Sessions {
     }
 
     #[cfg(test)]
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.sessions.len()
     }
 }

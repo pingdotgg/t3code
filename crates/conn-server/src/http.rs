@@ -44,6 +44,17 @@ pub struct AppState {
     pub deps: crate::methods::Deps,
 }
 
+impl std::fmt::Debug for AppState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AppState")
+            .field("table", &self.table)
+            .field("auth", &self.auth)
+            .field("descriptor", &self.descriptor)
+            .field("deps", &self.deps)
+            .finish_non_exhaustive()
+    }
+}
+
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
@@ -633,7 +644,7 @@ async fn ws(
         },
     };
     let table = state.table.clone();
-    let auth = state.auth.clone();
+    let auth = state.auth;
     upgrade
         .max_message_size(MAX_MESSAGE_BYTES)
         .max_frame_size(MAX_MESSAGE_BYTES)

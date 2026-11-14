@@ -117,7 +117,7 @@ pub trait Env: Send {
     fn uuid(&mut self) -> String;
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct SystemEnv;
 
 impl Env for SystemEnv {
@@ -136,7 +136,7 @@ impl Env for SystemEnv {
 }
 
 /// A fixed clock at the epoch and counting uuids, like the TS test harness's `TestClock`.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct FixedEnv {
     next: u64,
 }

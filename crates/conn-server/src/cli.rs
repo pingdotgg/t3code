@@ -432,7 +432,7 @@ fn free_port(host: &str, start: u16) -> u16 {
 }
 
 /// `DesktopBackendBootstrap`: the JSON line Conn desktop writes to `--bootstrap-fd`.
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DesktopBootstrapEnvelope {
     pub mode: Option<String>,
@@ -441,6 +441,26 @@ pub struct DesktopBootstrapEnvelope {
     pub t3_home: Option<String>,
     pub desktop_bootstrap_token: Option<String>,
     pub desktop_bootstrap_secret: Option<String>,
+}
+
+impl std::fmt::Debug for DesktopBootstrapEnvelope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let redacted = |value: &Option<String>| value.as_ref().map(|_| "<redacted>");
+        f.debug_struct("DesktopBootstrapEnvelope")
+            .field("mode", &self.mode)
+            .field("port", &self.port)
+            .field("host", &self.host)
+            .field("t3_home", &self.t3_home)
+            .field(
+                "desktop_bootstrap_token",
+                &redacted(&self.desktop_bootstrap_token),
+            )
+            .field(
+                "desktop_bootstrap_secret",
+                &redacted(&self.desktop_bootstrap_secret),
+            )
+            .finish()
+    }
 }
 
 /// How long the desktop has to write its bootstrap line, as in `bootstrap.ts`.
@@ -728,11 +748,18 @@ fn run_inner(command: Command) -> Result<(), String> {
             let links = open_auth(&state_dir)?.pairing_links();
             let scopes_of = |l: &conn_contract::AuthPairingLink| -> Vec<Value> {
                 match &l.permissions {
-                    Some(p) => p.iter().map(|s| serde_json::to_value(s).unwrap()).collect(),
+                    Some(p) => p
+                        .iter()
+                        .map(|s| {
+                            serde_json::to_value(s).expect("a scope literal always serializes")
+                        })
+                        .collect(),
                     None => l
                         .scopes
                         .iter()
-                        .map(|s| serde_json::to_value(s).unwrap())
+                        .map(|s| {
+                            serde_json::to_value(s).expect("a scope literal always serializes")
+                        })
                         .collect(),
                 }
             };

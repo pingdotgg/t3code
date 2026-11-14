@@ -21,7 +21,7 @@ const DEFAULT_ITEM_MAX_CHARS: usize = 500;
 /// text runs near one token per character (`THREAD_READ_RESULT_MAX_BYTES`).
 const READ_RESULT_MAX_BYTES: usize = 30_000;
 const DEFAULT_WAIT_MS: u64 = 10 * 60 * 1000;
-pub const MAX_WAIT_MS: u64 = 60 * 60 * 1000;
+pub(super) const MAX_WAIT_MS: u64 = 60 * 60 * 1000;
 const MESSAGE_VIEW_TYPES: [&str; 3] = ["user_message", "assistant_message", "proposed_plan"];
 
 fn thread_id(args: &Args) -> &str {
@@ -40,7 +40,7 @@ fn target_id<'a>(cx: &'a Cx<'_>, args: &'a Args) -> Result<&'a str, ToolError> {
         })
 }
 
-pub async fn list(cx: &Cx<'_>, args: &Args) -> ToolResult {
+pub(super) async fn list(cx: &Cx<'_>, args: &Args) -> ToolResult {
     let all = bool_arg(args, "allProjects") == Some(true);
     let own = cx.caller_projection().await?;
     let project_id: Option<String> = if all {
@@ -110,7 +110,7 @@ pub async fn list(cx: &Cx<'_>, args: &Args) -> ToolResult {
     }))
 }
 
-pub async fn read(cx: &Cx<'_>, args: &Args) -> ToolResult {
+pub(super) async fn read(cx: &Cx<'_>, args: &Args) -> ToolResult {
     let id = thread_id(args);
     let projection = cx.projection(id).await?;
     let view_name = str_arg(args, "view").unwrap_or("messages");
@@ -271,7 +271,7 @@ fn items_within_budget(
 const SNIPPET_CHARS: usize = 240;
 
 /// Title, branch, project title, then message text, in active non-subagent threads.
-pub async fn search(cx: &Cx<'_>, args: &Args) -> ToolResult {
+pub(super) async fn search(cx: &Cx<'_>, args: &Args) -> ToolResult {
     let query = str_arg(args, "query")
         .unwrap_or_default()
         .trim()
@@ -402,7 +402,10 @@ fn resolve_mode(
     Ok(resolved.to_owned())
 }
 
-pub fn resolve_runtime_mode(limit: &str, requested: Option<&str>) -> Result<String, ToolError> {
+pub(super) fn resolve_runtime_mode(
+    limit: &str,
+    requested: Option<&str>,
+) -> Result<String, ToolError> {
     resolve_mode(
         limit,
         requested,
@@ -412,7 +415,10 @@ pub fn resolve_runtime_mode(limit: &str, requested: Option<&str>) -> Result<Stri
     )
 }
 
-pub fn resolve_interaction_mode(limit: &str, requested: Option<&str>) -> Result<String, ToolError> {
+pub(super) fn resolve_interaction_mode(
+    limit: &str,
+    requested: Option<&str>,
+) -> Result<String, ToolError> {
     resolve_mode(
         limit,
         requested,
@@ -423,7 +429,7 @@ pub fn resolve_interaction_mode(limit: &str, requested: Option<&str>) -> Result<
 }
 
 /// Starts a thread through the engine's `launchThread`; returns its projection.
-pub async fn launch_thread(cx: &Cx<'_>, input: Value) -> ToolResult {
+pub(super) async fn launch_thread(cx: &Cx<'_>, input: Value) -> ToolResult {
     match cx.engine().launch_thread(input).await {
         Ok(result) => Ok(result["projection"].clone()),
         Err(EngineError::Rejected(error)) => Err(fail(
@@ -437,7 +443,7 @@ pub async fn launch_thread(cx: &Cx<'_>, input: Value) -> ToolResult {
     }
 }
 
-pub async fn launch(cx: &Cx<'_>, args: &Args) -> ToolResult {
+pub(super) async fn launch(cx: &Cx<'_>, args: &Args) -> ToolResult {
     let limits = cx.writing_caller().await?;
     let own = cx.caller_projection().await?;
     if bool_arg(args, "scratch") == Some(true) {
@@ -555,7 +561,7 @@ fn normalize_selection(mut selection: Value) -> Value {
     selection
 }
 
-pub async fn send(cx: &Cx<'_>, args: &Args) -> ToolResult {
+pub(super) async fn send(cx: &Cx<'_>, args: &Args) -> ToolResult {
     let id = thread_id(args);
     cx.writes_threads(&[str_arg(args, "threadId")]).await?;
     let projection = cx.projection(id).await?;
@@ -641,7 +647,7 @@ pub async fn send(cx: &Cx<'_>, args: &Args) -> ToolResult {
 /// Waits until a run ends or waits on a question or approval (a person must answer). No
 /// `run_id`: the thread's latest run. Returns the run, `None` for a thread with no run, and
 /// whether the wait timed out.
-pub async fn wait_for_run(
+pub(super) async fn wait_for_run(
     cx: &Cx<'_>,
     thread: &str,
     run_id: Option<&str>,
@@ -697,7 +703,7 @@ pub async fn wait_for_run(
     }
 }
 
-pub async fn wait(cx: &Cx<'_>, args: &Args) -> ToolResult {
+pub(super) async fn wait(cx: &Cx<'_>, args: &Args) -> ToolResult {
     let id = thread_id(args);
     cx.projection(id).await?;
     let timeout = args
@@ -719,7 +725,7 @@ pub async fn wait(cx: &Cx<'_>, args: &Args) -> ToolResult {
     }))
 }
 
-pub async fn interrupt(cx: &Cx<'_>, args: &Args) -> ToolResult {
+pub(super) async fn interrupt(cx: &Cx<'_>, args: &Args) -> ToolResult {
     let id = thread_id(args);
     cx.writes_threads(&[str_arg(args, "threadId")]).await?;
     let projection = cx.projection(id).await?;
@@ -766,7 +772,7 @@ pub async fn interrupt(cx: &Cx<'_>, args: &Args) -> ToolResult {
     Ok(json!({"threadId": id, "runId": run["id"], "status": "interrupt_requested"}))
 }
 
-pub async fn update(cx: &Cx<'_>, args: &Args) -> ToolResult {
+pub(super) async fn update(cx: &Cx<'_>, args: &Args) -> ToolResult {
     cx.writes_threads(&[str_arg(args, "threadId")]).await?;
     let id = target_id(cx, args)?.to_owned();
     let action = str_arg(args, "action").unwrap_or_default();
@@ -806,7 +812,7 @@ pub async fn update(cx: &Cx<'_>, args: &Args) -> ToolResult {
 }
 
 /// Questions an agent asked (`user_input` requests); approvals are not listed or answered.
-pub async fn pending_request(cx: &Cx<'_>, args: &Args) -> ToolResult {
+pub(super) async fn pending_request(cx: &Cx<'_>, args: &Args) -> ToolResult {
     let action = str_arg(args, "action").unwrap_or_default();
     if action == "respond" {
         cx.writes_threads(&[str_arg(args, "threadId")]).await?;

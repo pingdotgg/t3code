@@ -20,7 +20,7 @@ fn project(row: &Value) -> Value {
     out
 }
 
-pub async fn list(cx: &Cx<'_>, args: &Args) -> ToolResult {
+pub(super) async fn list(cx: &Cx<'_>, args: &Args) -> ToolResult {
     let shell = cx.shell().await?;
     let projects: Vec<&Value> = shell["projects"]
         .as_array()
@@ -41,7 +41,7 @@ pub async fn list(cx: &Cx<'_>, args: &Args) -> ToolResult {
     }))
 }
 
-pub async fn read(cx: &Cx<'_>, args: &Args) -> ToolResult {
+pub(super) async fn read(cx: &Cx<'_>, args: &Args) -> ToolResult {
     let id = str_arg(args, "projectId").unwrap_or_default();
     let shell = cx.shell().await?;
     shell["projects"]
@@ -53,7 +53,7 @@ pub async fn read(cx: &Cx<'_>, args: &Args) -> ToolResult {
 
 /// `t3_environment_read`. Preferences are the settings defaults: this server has no
 /// settings store.
-pub fn environment(cx: &Cx<'_>) -> Value {
+pub(super) fn environment(cx: &Cx<'_>) -> Value {
     let config = cx.config();
     json!({
         "environmentId": config.environment_id,
@@ -77,7 +77,7 @@ pub fn environment(cx: &Cx<'_>) -> Value {
 const LISTED_MODEL_LIMIT: usize = 8;
 
 /// `orchestrator_capabilities`: the providers that can run a delegated task here.
-pub async fn capabilities(cx: &Cx<'_>, args: &Args) -> ToolResult {
+pub(super) async fn capabilities(cx: &Cx<'_>, args: &Args) -> ToolResult {
     let limits = cx.limits().await?;
     let own = cx.caller_projection().await?;
     let inherited = own.as_ref().map(|p| p["thread"]["modelSelection"].clone());
@@ -159,14 +159,14 @@ pub async fn capabilities(cx: &Cx<'_>, args: &Args) -> ToolResult {
 }
 
 /// A provider entry for `instance_id`, from `ServerConfig.providers`.
-pub fn provider(cx: &Cx<'_>, instance_id: &str) -> Option<Value> {
+pub(super) fn provider(cx: &Cx<'_>, instance_id: &str) -> Option<Value> {
     (cx.config().providers)()
         .into_iter()
         .find(|p| p["instanceId"] == instance_id)
 }
 
 /// The first ready provider and its first model: a client's default when the project has none.
-pub fn default_model_selection(cx: &Cx<'_>) -> Option<Value> {
+pub(super) fn default_model_selection(cx: &Cx<'_>) -> Option<Value> {
     (cx.config().providers)()
         .into_iter()
         .find(|p| p["status"] == "ready" && p["enabled"] != false)

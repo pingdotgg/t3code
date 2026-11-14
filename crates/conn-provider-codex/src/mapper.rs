@@ -22,7 +22,10 @@ use crate::protocol::{Inbound, reply, reply_error};
 pub const DRIVER: &str = "codex";
 
 /// What the session must do after feeding the mapper.
-#[allow(clippy::large_enum_variant)] // Moved straight into a channel; boxing adds an allocation.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "moved straight into a channel; boxing adds an allocation"
+)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Out {
     Event(ProviderEvent),
@@ -181,6 +184,12 @@ pub struct Mapper<E: Env> {
     ended_unfinished: HashSet<String>,
     /// The latest ended turns, newest last; at most [`ENDED_TURNS_KEPT`].
     ended: VecDeque<String>,
+}
+
+impl<E: Env> std::fmt::Debug for Mapper<E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Mapper").finish_non_exhaustive()
+    }
 }
 
 fn ref_strong(native: &str) -> Value {
@@ -942,7 +951,7 @@ impl<E: Env> Mapper<E> {
         match kind {
             "contextCompaction" => {
                 turn.running_compactions.push(id.clone());
-                let started_ms = started.clone();
+                let started_ms = started;
                 emit_compaction(turn, &id, "running", &started_ms, out);
                 return;
             }
@@ -1806,7 +1815,10 @@ fn node_json(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one item row from the turn and every field of the native item"
+)]
 fn item_json(
     turn: &Turn,
     native_item: &str,
@@ -2206,7 +2218,10 @@ fn web_search_artifacts(
     );
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one approval row from the turn and every field of the request"
+)]
 fn approval_artifacts(
     turn: &mut Turn,
     item_id: &str,

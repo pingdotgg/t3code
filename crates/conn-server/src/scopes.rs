@@ -50,6 +50,10 @@ pub fn is_declared(tag: &str) -> bool {
 /// # Panics
 ///
 /// When `tag` has no entry; the method table checks that when a handler registers.
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "a tag without an entry is a bug that the method table rules out at start"
+)]
 pub fn check(tag: &str, ctx: &CallContext, payload: &Value) -> Result<(), Failure> {
     let Some(principal) = &ctx.principal else {
         return Ok(());

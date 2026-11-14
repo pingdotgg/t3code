@@ -1,7 +1,7 @@
 //! Recorded CLI traffic (`testdata/cli`, from the stdio probe, CLI 2.1.322) and the events the
 //! TypeScript adapter emitted for the same input (`testdata/ts`).
 
-pub fn cli_transcripts() -> [(&'static str, &'static str); 12] {
+pub(crate) fn cli_transcripts() -> [(&'static str, &'static str); 12] {
     [
         ("e01_turn", include_str!("../testdata/cli/e01_turn.ndjson")),
         (
@@ -48,7 +48,7 @@ pub fn cli_transcripts() -> [(&'static str, &'static str); 12] {
     ]
 }
 
-pub fn cli(name: &str) -> &'static str {
+pub(crate) fn cli(name: &str) -> &'static str {
     cli_transcripts()
         .into_iter()
         .find(|(n, _)| *n == name)
@@ -56,7 +56,7 @@ pub fn cli(name: &str) -> &'static str {
         .expect("known transcript")
 }
 
-pub fn ts_events(name: &str) -> &'static str {
+pub(crate) fn ts_events(name: &str) -> &'static str {
     match name {
         "e01_turn" => include_str!("../testdata/ts/e01_turn.json"),
         "e02_second_turn" => include_str!("../testdata/ts/e02_second_turn.json"),

@@ -338,7 +338,9 @@ async fn read_bounded<R: AsyncRead + Unpin>(
     drain: bool,
 ) -> (Vec<u8>, Option<usize>) {
     let mut buffer = Vec::new();
-    let mut chunk = [0u8; 8192];
+    // On the heap: an 8 KiB array would sit in every git future (stdout and stderr each),
+    // which makes them about 18 KiB (clippy's `large_futures`).
+    let mut chunk = vec![0u8; 8192];
     let mut seen = 0usize;
     loop {
         let n = match reader.read(&mut chunk).await {

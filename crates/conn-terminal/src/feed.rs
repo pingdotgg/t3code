@@ -12,9 +12,9 @@ use std::{
 use tokio::sync::Notify;
 
 /// What T3 charges an event on top of its variable fields, so tiny events still count.
-pub const EVENT_OVERHEAD: usize = 128;
+pub(crate) const EVENT_OVERHEAD: usize = 128;
 
-pub struct Feed<T> {
+pub(crate) struct Feed<T> {
     state: Mutex<FeedState<T>>,
     notify: Notify,
     max_bytes: usize,
@@ -26,14 +26,14 @@ struct FeedState<T> {
     overflowed: bool,
 }
 
-pub enum Take<T> {
+pub(crate) enum Take<T> {
     Items(Vec<T>),
     /// The queue overflowed and was dropped; the subscriber must start again from a snapshot.
     Resync,
 }
 
 impl<T> Feed<T> {
-    pub fn new(max_bytes: usize) -> Arc<Self> {
+    pub(crate) fn new(max_bytes: usize) -> Arc<Self> {
         Arc::new(Self {
             state: Mutex::new(FeedState {
                 items: VecDeque::new(),
@@ -45,7 +45,7 @@ impl<T> Feed<T> {
         })
     }
 
-    pub fn push(&self, item: T, size: usize) {
+    pub(crate) fn push(&self, item: T, size: usize) {
         let mut state = self.state.lock().expect("feed lock");
         if state.overflowed {
             return;
@@ -64,7 +64,7 @@ impl<T> Feed<T> {
     }
 
     /// Replaces everything queued with `item`, as a resync does.
-    pub fn reset(&self, item: T, size: usize) {
+    pub(crate) fn reset(&self, item: T, size: usize) {
         let mut state = self.state.lock().expect("feed lock");
         state.items = VecDeque::from([(item, size)]);
         state.bytes = size;
@@ -75,7 +75,11 @@ impl<T> Feed<T> {
 
     /// Waits for items. `merge` may fold the next item into the last one taken (consecutive
     /// output); it returns the item back when it cannot. Takes up to `max_bytes` per call.
-    pub async fn take(&self, max_bytes: usize, merge: impl Fn(&mut T, T) -> Option<T>) -> Take<T> {
+    pub(crate) async fn take(
+        &self,
+        max_bytes: usize,
+        merge: impl Fn(&mut T, T) -> Option<T>,
+    ) -> Take<T> {
         loop {
             let notified = self.notify.notified();
             {

@@ -51,18 +51,18 @@ fn mutation_error(command_id: &Value, failure: ProjectFailure) -> EngineError<Va
     if failure.internal {
         return EngineError::Internal(failure.message);
     }
-    let not_empty = failure
-        .cause
-        .as_ref()
-        .is_some_and(|c| c["_tag"] == "ProjectNotEmptyError");
+    let generic = || "Failed to mutate project.".to_owned();
+    let (message, cause) = match failure.cause {
+        Some(cause) if cause["_tag"] == "ProjectNotEmptyError" => (failure.message, cause),
+        Some(cause) => (generic(), cause),
+        None => (generic(), json!({"message": failure.message})),
+    };
     let mut error = json!({
         "_tag": "ProjectMutationError",
         "commandId": command_id,
-        "message": if not_empty { failure.message.clone() } else { "Failed to mutate project.".to_owned() },
+        "message": message,
     });
-    error["cause"] = failure
-        .cause
-        .unwrap_or_else(|| json!({"message": failure.message}));
+    error["cause"] = cause;
     EngineError::Rejected(error)
 }
 

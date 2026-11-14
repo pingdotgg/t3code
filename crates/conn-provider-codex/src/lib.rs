@@ -50,6 +50,14 @@ pub struct CodexProvider {
     models: Arc<Mutex<Vec<(String, String)>>>,
 }
 
+impl std::fmt::Debug for CodexProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CodexProvider")
+            .field("instance_id", &self.instance_id)
+            .finish_non_exhaustive()
+    }
+}
+
 impl CodexProvider {
     pub fn new(instance_id: ProviderInstanceId, config: CodexConfig) -> Self {
         let launch_args = std::env::var(launch::LAUNCH_ARGS_ENV).ok();

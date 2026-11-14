@@ -23,6 +23,7 @@ use crate::{
     router,
 };
 
+#[derive(Debug)]
 pub struct ServeOptions {
     pub listen: SocketAddr,
     pub state_dir: PathBuf,

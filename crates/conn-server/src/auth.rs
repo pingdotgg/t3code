@@ -112,13 +112,24 @@ fn descriptor_for(policy: &str, bootstrap_methods: &[&str]) -> serde_json::Value
 /// The credential Conn desktop hands its local backend (`DesktopBackendBootstrap`). With a
 /// secret, valid tokens rotate every 12 hours (`desktopBootstrapToken.ts`); without one, the
 /// token itself works for 24 hours. Either may be exchanged any number of times.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct DesktopBootstrap {
     pub token: String,
     pub secret: Option<String>,
     pub expires_at_ms: u64,
     /// Bound to a non-loopback host: one-time codes work too (`remote-reachable`).
     pub remote_reachable: bool,
+}
+
+impl std::fmt::Debug for DesktopBootstrap {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DesktopBootstrap")
+            .field("token", &"<redacted>")
+            .field("secret", &self.secret.as_ref().map(|_| "<redacted>"))
+            .field("expires_at_ms", &self.expires_at_ms)
+            .field("remote_reachable", &self.remote_reachable)
+            .finish()
+    }
 }
 
 const DESKTOP_TOKEN_WINDOW_MS: u64 = 12 * 60 * MINUTE_MS;
@@ -301,7 +312,7 @@ fn browser_from_user_agent(ua: &str) -> Option<&'static str> {
     .map(|(_, browser)| browser)
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct IssuedPairingCode {
     pub id: String,
     pub code: String,
@@ -311,11 +322,33 @@ pub struct IssuedPairingCode {
     pub expires_at_ms: u64,
 }
 
-#[derive(Debug)]
+impl std::fmt::Debug for IssuedPairingCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IssuedPairingCode")
+            .field("id", &self.id)
+            .field("code", &"<redacted>")
+            .field("label", &self.label)
+            .field("scopes", &self.scopes)
+            .field("created_at_ms", &self.created_at_ms)
+            .field("expires_at_ms", &self.expires_at_ms)
+            .finish()
+    }
+}
+
 pub struct IssuedSession {
     pub token: String,
     pub principal: Principal,
     pub client: ClientInfo,
+}
+
+impl std::fmt::Debug for IssuedSession {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IssuedSession")
+            .field("token", &"<redacted>")
+            .field("principal", &self.principal)
+            .field("client", &self.client)
+            .finish()
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -471,6 +504,15 @@ pub struct AuthStore {
     /// Where sessions and pairing links persist; `None` keeps them in memory (tests).
     file: Option<PathBuf>,
     changes: broadcast::Sender<AccessChange>,
+}
+
+impl std::fmt::Debug for AuthStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The state holds token hashes and pairing codes.
+        f.debug_struct("AuthStore")
+            .field("file", &self.file)
+            .finish_non_exhaustive()
+    }
 }
 
 impl AuthStore {
@@ -998,6 +1040,12 @@ impl AuthStore {
 pub struct ConnectionGuard {
     store: Arc<AuthStore>,
     session_id: String,
+}
+
+impl std::fmt::Debug for ConnectionGuard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConnectionGuard").finish_non_exhaustive()
+    }
 }
 
 impl Drop for ConnectionGuard {
@@ -1537,7 +1585,7 @@ mod tests {
                 ClientInfo::default(),
             )
             .unwrap();
-        let id = session.principal.session_id.clone();
+        let id = session.principal.session_id;
         let guard = store.connect(&id);
         let listed = store.client_session(&id, None).unwrap();
         assert!(listed.connected);
@@ -1563,7 +1611,7 @@ mod tests {
             )
             .unwrap();
         let saved = fs::read_to_string(&file).unwrap();
-        let id = session.principal.session_id.clone();
+        let id = session.principal.session_id;
         let mut changes = store.subscribe();
         let guard = store.connect(&id);
         assert_eq!(fs::read_to_string(&file).unwrap(), saved);
@@ -1658,7 +1706,7 @@ mod tests {
         let server = AuthStore::open(file.clone()).unwrap();
         let mut changes = server.subscribe();
         // What `auth session issue` does in its own process while the server runs.
-        let cli = AuthStore::open(file.clone()).unwrap();
+        let cli = AuthStore::open(file).unwrap();
         let issued = cli
             .issue_session(SessionRequest {
                 scopes: vec!["access:read".into(), "access:write".into()],

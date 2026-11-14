@@ -29,7 +29,7 @@ struct Record {
 }
 
 #[derive(Default)]
-pub struct Credentials {
+pub(crate) struct Credentials {
     records: HashMap<[u8; 32], Record>,
 }
 
@@ -38,7 +38,7 @@ fn hash(token: &str) -> [u8; 32] {
 }
 
 impl Credentials {
-    pub fn issue(&mut self, request: ThreadCredentialRequest) -> (String, ThreadCaller) {
+    pub(crate) fn issue(&mut self, request: ThreadCredentialRequest) -> (String, ThreadCaller) {
         if self.records.len() >= MAX_RECORDS
             && let Some(oldest) = self
                 .records
@@ -67,7 +67,7 @@ impl Credentials {
         (token, caller)
     }
 
-    pub fn resolve(&mut self, token: &str) -> Option<ThreadCaller> {
+    pub(crate) fn resolve(&mut self, token: &str) -> Option<ThreadCaller> {
         if token.is_empty() {
             return None;
         }
@@ -83,7 +83,7 @@ impl Credentials {
         Some(record.caller.clone())
     }
 
-    pub fn touch(&mut self, thread_id: &str) {
+    pub(crate) fn touch(&mut self, thread_id: &str) {
         for record in self.records.values_mut() {
             if record.caller.thread_id == thread_id {
                 record.last_alive = Instant::now();
@@ -92,17 +92,17 @@ impl Credentials {
         }
     }
 
-    pub fn revoke(&mut self, matches: impl Fn(&ThreadCaller) -> bool) {
+    pub(crate) fn revoke(&mut self, matches: impl Fn(&ThreadCaller) -> bool) {
         self.records.retain(|_, record| !matches(&record.caller));
     }
 
     #[cfg(test)]
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.records.len()
     }
 
     #[cfg(test)]
-    pub fn age_all(&mut self, by: std::time::Duration) {
+    pub(crate) fn age_all(&mut self, by: std::time::Duration) {
         for record in self.records.values_mut() {
             record.last_alive = record
                 .last_alive

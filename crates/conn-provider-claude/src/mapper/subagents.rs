@@ -12,7 +12,11 @@ use std::collections::{HashMap, VecDeque};
 
 use sha2::{Digest, Sha256};
 
-use super::*;
+use super::{
+    AppThread, AssistantMsg, Block, DRIVER, Env, Inbound, Mapper, Out, ProviderEvent, Scope,
+    SystemMsg, ToolCall, UserContent, UserMsg, Value, emit, event, from_json, ids, json, ordinal,
+    tool_artifacts, tool_output, turn_item,
+};
 
 const PENDING_LAUNCH_CAP: usize = 64;
 const PENDING_FRAME_IDS_CAP: usize = 64;
@@ -60,7 +64,7 @@ pub(crate) struct Sub {
 }
 
 impl Sub {
-    pub fn running(&self) -> bool {
+    pub(super) fn running(&self) -> bool {
         self.task["status"] == "running"
     }
 
@@ -95,27 +99,27 @@ pub(crate) struct Subagents {
 impl Subagents {
     /// Subagents, launches and held frames, for the memory checks.
     #[cfg(test)]
-    pub fn len(&self) -> usize {
+    pub(super) fn len(&self) -> usize {
         self.by_task.len() + self.by_tool.len() + self.launches.len() + self.frames.len()
     }
 
-    pub fn any_running(&self) -> bool {
+    pub(super) fn any_running(&self) -> bool {
         self.by_task.values().any(Sub::running)
     }
 
     /// The tool_use id belongs to a tool a subagent runs.
-    pub fn owns_tool(&self, tool_use_id: &str) -> bool {
+    pub(super) fn owns_tool(&self, tool_use_id: &str) -> bool {
         self.by_task
             .values()
             .any(|s| s.tools.contains_key(tool_use_id))
     }
 
-    pub fn is_subagent_tool(&self, tool_use_id: &str) -> bool {
+    pub(super) fn is_subagent_tool(&self, tool_use_id: &str) -> bool {
         self.by_tool.contains_key(tool_use_id)
     }
 
     /// Forgets settled subagents and stale launches; called when a new user turn starts.
-    pub fn prune_settled(&mut self) {
+    pub(super) fn prune_settled(&mut self) {
         let settled: Vec<String> = self
             .by_task
             .iter()

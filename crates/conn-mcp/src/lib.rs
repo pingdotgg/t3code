@@ -44,6 +44,18 @@ pub struct McpConfig {
     pub hosted_app_url: String,
 }
 
+impl std::fmt::Debug for McpConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("McpConfig")
+            .field("environment_id", &self.environment_id)
+            .field("label", &self.label)
+            .field("server_version", &self.server_version)
+            .field("platform", &self.platform)
+            .field("hosted_app_url", &self.hosted_app_url)
+            .finish_non_exhaustive()
+    }
+}
+
 pub const DEFAULT_HOSTED_APP_URL: &str = "https://app.t3.codes";
 
 /// Who calls. The route authenticates; the service only reads this.
@@ -82,13 +94,24 @@ impl Caller {
 }
 
 /// The `t3-code` MCP server entry a provider passes to its CLI for one thread.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct McpServerEntry {
     pub thread_id: String,
     pub provider_session_id: String,
     pub url: String,
     /// The full header value: `Bearer <token>`.
     pub authorization: String,
+}
+
+impl std::fmt::Debug for McpServerEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("McpServerEntry")
+            .field("thread_id", &self.thread_id)
+            .field("provider_session_id", &self.provider_session_id)
+            .field("url", &self.url)
+            .field("authorization", &"<redacted>")
+            .finish()
+    }
 }
 
 /// T3 waits can block for an hour; providers' own MCP timeouts must stay above that.
@@ -127,6 +150,16 @@ pub struct McpService {
     credentials: Mutex<credentials::Credentials>,
     sessions: Mutex<sessions::Sessions>,
     endpoint: OnceLock<String>,
+}
+
+impl std::fmt::Debug for McpService {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The credentials and sessions hold agent tokens.
+        f.debug_struct("McpService")
+            .field("config", &self.config)
+            .field("endpoint", &self.endpoint)
+            .finish_non_exhaustive()
+    }
 }
 
 impl McpService {

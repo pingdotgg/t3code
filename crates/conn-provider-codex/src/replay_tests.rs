@@ -27,7 +27,7 @@ use serde_json::{Value, json};
 use crate::mapper::{Mapper, Out};
 use crate::protocol::Inbound;
 
-pub const FIXTURES: &[&str] = &[
+pub(crate) const FIXTURES: &[&str] = &[
     "simple",
     "multi_turn",
     "codex_model_reroute",
@@ -49,12 +49,12 @@ fn read(path: String) -> String {
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}"))
 }
 
-pub struct Replay {
+pub(crate) struct Replay {
     pub events: Vec<Value>,
     pub skipped: Vec<String>,
 }
 
-pub fn replay(name: &str) -> (Replay, Vec<Value>, String) {
+pub(crate) fn replay(name: &str) -> (Replay, Vec<Value>, String) {
     let dir = env!("CARGO_MANIFEST_DIR");
     let ts: Value = serde_json::from_str(&read(format!("{dir}/testdata/ts/{name}.json"))).unwrap();
     let transcript = read(format!("{dir}/testdata/cli/{name}.ndjson"));
@@ -163,7 +163,7 @@ fn turn_input(v: &Value) -> TurnInput {
 }
 
 /// Both sides through the contract types, then the documented normalizations.
-pub fn normalize(event: &Value, captured_on: &str) -> Value {
+pub(crate) fn normalize(event: &Value, captured_on: &str) -> Value {
     let typed: conn_provider::ProviderEvent = serde_json::from_value(event.clone())
         .unwrap_or_else(|e| panic!("event does not decode: {e}\n{event}"));
     let mut value = serde_json::to_value(typed).unwrap();

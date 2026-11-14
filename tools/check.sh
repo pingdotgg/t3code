@@ -57,7 +57,7 @@ toolchain_pin() {
 
 run "toolchain pin" toolchain_pin
 run "cargo fmt --check" cargo fmt --check
-run "cargo clippy" cargo clippy --workspace --all-targets -- -D warnings
+run "cargo clippy" cargo clippy --workspace --all-targets --all-features -- -D warnings
 run "cargo test" cargo test --workspace
 run "release build" cargo build --release --workspace --bins --examples
 run "decode check" env CARGO_TARGET_DIR="$repo/target" \

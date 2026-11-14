@@ -7,6 +7,11 @@
 //! thread starts with `orchestration.launchThread`; the thread view loads the HTTP snapshot and
 //! subscribes after its sequence with `requestCompletionMarker` and `acceptDedupedBodies`.
 
+#![expect(
+    clippy::unwrap_used,
+    reason = "an example run by the client check: a failure should stop it"
+)]
+
 use std::{sync::Arc, time::Duration};
 
 use conn_contract::{from_json, to_json};

@@ -397,7 +397,7 @@ mod tests {
             (
                 FromServer::ClientProtocolError {
                     error: json!({"_tag":"RpcClientError"}),
-                    request_ids: Some(vec![id.clone()]),
+                    request_ids: Some(vec![id]),
                 },
                 json!({"_tag":"ClientProtocolError","error":{"_tag":"RpcClientError"},"requestIds":[4]}),
             ),

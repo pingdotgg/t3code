@@ -112,6 +112,15 @@ pub struct SettingsStore {
     revision: watch::Sender<u64>,
 }
 
+impl std::fmt::Debug for SettingsStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The settings may hold secrets (provider keys, tokens).
+        f.debug_struct("SettingsStore")
+            .field("path", &self.path)
+            .finish_non_exhaustive()
+    }
+}
+
 impl SettingsStore {
     /// Reads `path`. A missing file is no settings; a malformed one is logged and treated the
     /// same, as the TypeScript server does, and is not rewritten until a client changes one.

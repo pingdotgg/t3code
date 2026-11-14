@@ -51,8 +51,28 @@ axum = { version = "0.8", default-features = false, features = [
   "query",
 ] }
 
+# BeautifulRust's lint set (lints/beautiful-rust/lints.toml), stage 1, plus `large_futures`.
+# CRATES.md ("Lint set") lists the stages that follow and the [lib] lints that stay off.
 [workspace.lints.rust]
 unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+unwrap_used = "warn"
+expect_used = "allow"
+panic_in_result_fn = "warn"
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+dbg_macro = "warn"
+todo = "warn"
+wildcard_imports = "warn"
+string_add = "warn"
+missing_assert_message = "warn"
+redundant_clone = "warn"
+rc_buffer = "warn"
+large_futures = "warn"
 
 [profile.release]
 # Smaller than opt-level 3 on every measure (README, "Memory"): binary, RSS and footprint.

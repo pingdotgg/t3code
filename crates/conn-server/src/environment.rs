@@ -42,6 +42,19 @@ pub struct Environment {
     pub auth: Arc<AuthStore>,
 }
 
+impl std::fmt::Debug for Environment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Environment")
+            .field("descriptor", &self.descriptor)
+            .field("cwd", &self.cwd)
+            .field("state_dir", &self.state_dir)
+            .field("settings", &self.settings)
+            .field("keybindings", &self.keybindings)
+            .field("auth", &self.auth)
+            .finish()
+    }
+}
+
 impl Environment {
     /// Reads the environment id from `state_dir`, or creates one on first start, and opens
     /// the stores. `cwd` is the folder the server reports as its own.

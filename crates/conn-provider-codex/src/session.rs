@@ -35,6 +35,14 @@ pub struct CodexSession {
     inner: Arc<Inner>,
 }
 
+impl std::fmt::Debug for CodexSession {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CodexSession")
+            .field("id", &self.id)
+            .finish_non_exhaustive()
+    }
+}
+
 struct Inner {
     id: String,
     instance_id: String,

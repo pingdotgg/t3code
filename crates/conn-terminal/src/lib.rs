@@ -120,6 +120,12 @@ pub struct TerminalManager {
     inner: Arc<Inner>,
 }
 
+impl std::fmt::Debug for TerminalManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TerminalManager").finish_non_exhaustive()
+    }
+}
+
 struct Inner {
     config: TerminalConfig,
     store: Option<Store>,
@@ -1144,6 +1150,15 @@ pub struct Subscription {
     ready: VecDeque<TerminalAttachStreamEvent>,
 }
 
+impl std::fmt::Debug for Subscription {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Subscription")
+            .field("key", &self.key)
+            .field("id", &self.id)
+            .finish_non_exhaustive()
+    }
+}
+
 impl Subscription {
     /// The next event. Never ends by itself: a closed terminal sends `closed`, and a terminal
     /// opened again under the same id sends a new snapshot.
@@ -1197,6 +1212,14 @@ pub struct MetadataSubscription {
     id: u64,
     feed: Arc<Feed<TerminalMetadataStreamEvent>>,
     ready: VecDeque<TerminalMetadataStreamEvent>,
+}
+
+impl std::fmt::Debug for MetadataSubscription {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MetadataSubscription")
+            .field("id", &self.id)
+            .finish_non_exhaustive()
+    }
 }
 
 impl MetadataSubscription {

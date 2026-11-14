@@ -25,7 +25,7 @@ use tokio::io::{AsyncRead, AsyncSeekExt, AsyncWriteExt, ReadBuf};
 
 use crate::AppState;
 
-pub fn router() -> Router<AppState> {
+pub(super) fn router() -> Router<AppState> {
     Router::new()
         .route("/api/assets/{token}/{*name}", get(asset))
         .route("/api/attachments/upload/{token}", post(upload))

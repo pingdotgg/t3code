@@ -3,7 +3,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub fn now_iso() -> String {
+pub(crate) fn now_iso() -> String {
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
@@ -33,7 +33,7 @@ pub fn now_iso() -> String {
 /// Milliseconds since the epoch of a wire time (`2026-11-13T08:49:41.123Z`, a fraction and a
 /// `Z` or `+hh:mm` offset optional), or `None` for text that is not one. The T3 server gets
 /// this from `Date.parse`; it only ever sees the wire form.
-pub fn parse_iso_ms(text: &str) -> Option<i64> {
+pub(crate) fn parse_iso_ms(text: &str) -> Option<i64> {
     let digits = |s: &str| -> Option<i64> {
         (!s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
             .then(|| s.parse::<i64>().ok())

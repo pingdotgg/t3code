@@ -592,7 +592,7 @@ mod mcp {
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
     use tokio::net::TcpListener;
 
-    pub struct Server {
+    pub(super) struct Server {
         pub url: String,
         pub calls: Arc<Mutex<Vec<String>>>,
         pub auth: Arc<Mutex<Vec<String>>>,
@@ -605,7 +605,7 @@ mod mcp {
         }
     }
 
-    pub async fn start() -> Server {
+    pub(super) async fn start() -> Server {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}/mcp", listener.local_addr().unwrap());
         let calls = Arc::new(Mutex::new(Vec::new()));

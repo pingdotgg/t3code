@@ -647,7 +647,7 @@ impl Files {
             },
             _ => Claims::ProjectFavicon {
                 workspace_root: fs::canonicalize(&root)
-                    .unwrap_or(root.clone())
+                    .unwrap_or(root)
                     .to_string_lossy()
                     .into_owned(),
                 relative_path: relative,

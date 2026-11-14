@@ -51,6 +51,14 @@ pub struct ClaudeProvider {
     helper: Helper,
 }
 
+impl std::fmt::Debug for ClaudeProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClaudeProvider")
+            .field("instance_id", &self.instance_id)
+            .finish_non_exhaustive()
+    }
+}
+
 impl ClaudeProvider {
     pub fn new(instance_id: ProviderInstanceId, config: ClaudeConfig) -> Self {
         let helper = Helper::new(config.helper.clone(), instance_id.as_str());

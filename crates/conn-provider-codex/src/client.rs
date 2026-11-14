@@ -93,6 +93,12 @@ pub struct AppServer {
     starting: tokio::sync::Mutex<()>,
 }
 
+impl std::fmt::Debug for AppServer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AppServer").finish_non_exhaustive()
+    }
+}
+
 impl AppServer {
     /// The T3 server sends a session's app-server nothing beyond `initialize` until a thread
     /// call (no `model/list`: its model catalog comes from a separate status probe).

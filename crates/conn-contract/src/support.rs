@@ -41,7 +41,7 @@ impl<'de> Deserialize<'de> for JsNumber {
         struct V;
         impl de::Visitor<'_> for V {
             type Value = JsNumber;
-            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 f.write_str("a number, \"NaN\", \"Infinity\" or \"-Infinity\"")
             }
             fn visit_f64<E: de::Error>(self, v: f64) -> Result<JsNumber, E> {
@@ -131,22 +131,27 @@ macro_rules! tagged_union {
             fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
                 use serde::de::Error;
                 let value = <serde_json::Value as serde::Deserialize>::deserialize(d)?;
-                #[allow(unused_mut)]
-                let mut first_error: Option<serde_json::Error> = None;
-                match value.get($tag).and_then(serde_json::Value::as_str) {
-                    $(Some($($value)|+) => {
-                        $(match <$dty as serde::Deserialize>::deserialize(&value) {
-                            Ok(v) => return Ok(Self::$dv(v)),
-                            Err(e) => { first_error.get_or_insert(e); }
-                        })+
-                    })*
-                    _ => {
-                        $(match <$fty as serde::Deserialize>::deserialize(&value) {
-                            Ok(v) => return Ok(Self::$fv(v)),
-                            Err(e) => { first_error.get_or_insert(e); }
+                // Each failed member keeps the first error (`first.or`), without a `mut` that is
+                // unused when a union has no fallback members.
+                let first_error: Option<serde_json::Error> =
+                    match value.get($tag).and_then(serde_json::Value::as_str) {
+                        $(Some($($value)|+) => {
+                            let first: Option<serde_json::Error> = None;
+                            $(let first = match <$dty as serde::Deserialize>::deserialize(&value) {
+                                Ok(v) => return Ok(Self::$dv(v)),
+                                Err(e) => first.or(Some(e)),
+                            };)+
+                            first
                         })*
-                    }
-                }
+                        _ => {
+                            let first: Option<serde_json::Error> = None;
+                            $(let first = match <$fty as serde::Deserialize>::deserialize(&value) {
+                                Ok(v) => return Ok(Self::$fv(v)),
+                                Err(e) => first.or(Some(e)),
+                            };)*
+                            first
+                        }
+                    };
                 Err(match first_error {
                     Some(e) => D::Error::custom(e),
                     None => D::Error::custom(format_args!(
