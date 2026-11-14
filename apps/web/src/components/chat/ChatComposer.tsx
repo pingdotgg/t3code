@@ -1,6 +1,7 @@
 import { VoiceInputSetup } from "./VoiceInputSetup";
 import { useComposerTypingGuard } from "./useComposerTypingGuard";
 import { insertAttachmentReferencesForDraft } from "./composerAttachmentReferences";
+import type { ComposerAttachmentInsertion } from "../composerAttachmentInsertion";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
 import { BackgroundThreadContext } from "./backgroundThread";
 import {
@@ -44,6 +45,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  PRIMARY_LOCAL_ENVIRONMENT_ID,
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -52,7 +54,7 @@ import { formatComposerModelMention } from "@t3tools/client-runtime/composer-mod
 import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
-import { folderDropTarget, resolveDroppedFolderPath } from "./folderDrop";
+import { type FolderDropTarget, folderDropTarget, resolveDroppedFolderPath } from "./folderDrop";
 import { splitTransferredFiles } from "./workspaceFileDrop";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
@@ -85,6 +87,7 @@ import {
 } from "../../composer-logic";
 import { DEFAULT_COMPOSER_PLACEHOLDER } from "../../composerPlaceholder";
 import { deriveComposerSendState, getAntigravitySendBlockReason } from "../ChatView.logic";
+import { threadHasStarted } from "../../lib/chatThreadActions";
 import {
   dataTransferHasComposerMention,
   makeComposerMentionDragHandlers,
@@ -666,6 +669,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   useLayoutEffect(() => {
     attachmentTargetKeyRef.current = attachmentTargetKey;
   });
+  const composerMountedRef = useRef(true);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks unmount so an awaited folder conversion cannot write into ChatView's reused promptRef
+  useLayoutEffect(() => {
+    composerMountedRef.current = true;
+    return () => {
+      composerMountedRef.current = false;
+    };
+  }, []);
   const questionPreparations = useQuestionAttachmentPreparation((state) => state.counts);
   const prompt = composerDraft.prompt;
   const composerImages = attachmentDraft.images;
@@ -879,8 +890,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     threadModelSelection: activeThreadModelSelection,
     projectModelSelection: activeProjectDefaultModelSelection,
     promptInjectionState: getComposerPromptInjectionState(prompt),
+    threadStarted: threadHasStarted(activeThread),
     candidateInstanceIds: [
-      composerDraft.activeProvider ?? null,
       activeThread?.runtime?.providerInstanceId,
       activeThreadModelSelection?.instanceId,
       activeProjectDefaultModelSelection?.instanceId,
@@ -2582,6 +2593,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const insertAttachmentReferences = (
     references: ReadonlyArray<ComposerContextReference>,
     selection?: { start: number; end: number },
+    pendingInsertion?: ComposerAttachmentInsertion,
   ): boolean => {
     if (references.length === 0) return false;
     // Question answers carry attachments beside the answer, never as chips. Falling back to
@@ -2592,6 +2604,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       liveAttachmentTargetKey: attachmentTargetKeyRef.current,
       references,
       insertReferences: () => {
+        if (pendingInsertion?.insert(references)) return true;
         if (selection) {
           const edit = inlineContextReferenceReplacement(promptRef.current, selection, references);
           return applyPromptReplacementStable(edit.start, edit.end, edit.text);
@@ -2649,23 +2662,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
   const insertComposerTextAtEndStable = useStableCallback(insertComposerTextAtEnd);
 
-  const addComposerFolders = (folders: File[]) => {
-    const target = folderDropTarget({
-      localEnvironmentDisabled: isLocalEnvironmentDisabled(),
-      environmentId,
-      primaryEnvironmentId,
-      connection: readPreparedConnection(environmentId),
-      isDesktopRenderer: window.desktopBridge !== undefined,
-    });
-    if (target === "remote") {
-      toastManager.add({
-        type: "error",
-        title: "Folders can only be referenced on a server running on this computer",
-      });
-      return;
-    }
+  const insertComposerFolders = async (
+    folders: File[],
+    target: FolderDropTarget,
+    draftKey: string,
+  ) => {
+    const bridge = window.desktopBridge;
     for (const folder of folders) {
-      const path = resolveDroppedFolderPath(folder, window.desktopBridge?.getPathForFile);
+      const droppedPath = resolveDroppedFolderPath(folder, bridge?.getPathForFile);
+      const path =
+        droppedPath === null || typeof target === "string"
+          ? droppedPath
+          : ((await bridge
+              ?.toLocalBackendPath(target.wslBackendId, droppedPath)
+              .catch(() => null)) ?? null);
+      // ChatView is reused across threads, so a slow conversion must not land in the next draft.
+      if (!composerMountedRef.current || attachmentTargetKeyRef.current !== draftKey) return;
       if (path === null) {
         toastManager.add({
           type: "error",
@@ -2687,6 +2699,37 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
     }
     focusComposer();
+  };
+
+  const addComposerFolders = (folders: File[]) => {
+    const target = folderDropTarget({
+      localEnvironmentDisabled: isLocalEnvironmentDisabled(),
+      environmentId,
+      primaryEnvironmentId,
+      connection: readPreparedConnection(environmentId),
+      isDesktopRenderer: window.desktopBridge !== undefined,
+      primaryRunsInWsl:
+        window.desktopBridge
+          ?.getLocalEnvironmentBootstraps()
+          .some(
+            (bootstrap) =>
+              bootstrap.id === PRIMARY_LOCAL_ENVIRONMENT_ID &&
+              typeof bootstrap.runningDistro === "string",
+          ) === true,
+    });
+    if (target === "remote") {
+      toastManager.add({
+        type: "error",
+        title: "Folders can only be referenced on a server running on this computer",
+      });
+      return;
+    }
+    const draftKey = attachmentTargetKeyRef.current;
+    // Hold send until every conversion lands, or the folder misses the message.
+    pendingDraftWork.begin(draftKey);
+    void insertComposerFolders(folders, target, draftKey).finally(() =>
+      pendingDraftWork.end(draftKey),
+    );
   };
   const addComposerFoldersStable = useStableCallback(addComposerFolders);
 

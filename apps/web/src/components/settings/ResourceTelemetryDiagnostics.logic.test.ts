@@ -3,7 +3,10 @@ import { describe, expect, it } from "vite-plus/test";
 import type { ResourceTelemetryProcess } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-import { visibleResourceTelemetryProcesses } from "./ResourceTelemetryDiagnostics.logic";
+import {
+  formatCpuTime,
+  visibleResourceTelemetryProcesses,
+} from "./ResourceTelemetryDiagnostics.logic";
 
 const process = (pid: number, ppid: number, depth: number): ResourceTelemetryProcess => ({
   identity: { pid, startTimeMs: pid * 1_000 },
@@ -43,6 +46,17 @@ describe("visibleResourceTelemetryProcesses", () => {
       processes[0],
       processes[1],
       processes[3],
+    ]);
+  });
+});
+
+describe("formatCpuTime", () => {
+  it("switches units when rounding reaches the next unit", () => {
+    expect([59.94, 59.97, 3_599.7, 3_600].map((seconds) => formatCpuTime(seconds))).toEqual([
+      "59.9s",
+      "1m",
+      "1h",
+      "1h",
     ]);
   });
 });
