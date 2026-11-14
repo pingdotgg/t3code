@@ -1,6 +1,7 @@
 import type {
   GitRunStackedActionResult,
   GitStackedAction,
+  ReviewDiffPreviewSource,
   VcsStatusResult,
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
@@ -172,6 +173,78 @@ export function buildMenuItems(
       dialogAction: "create_pr",
     },
   ];
+}
+
+export function getMenuActionDisabledReason({
+  item,
+  gitStatus,
+  isBusy,
+  hasPrimaryRemote,
+}: {
+  item: GitActionMenuItem;
+  gitStatus: VcsStatusResult | null;
+  isBusy: boolean;
+  hasPrimaryRemote: boolean;
+}): string | null {
+  if (!item.disabled) return null;
+  if (isBusy) return "Git action in progress.";
+  if (!gitStatus) return "Git status is unavailable.";
+
+  const hasBranch = gitStatus.refName !== null;
+  const hasChanges = gitStatus.hasWorkingTreeChanges;
+  const isAhead = gitStatus.aheadCount > 0;
+  const isBehind = gitStatus.behindCount > 0;
+  const terminology = changeRequestTerminologyFor(gitStatus);
+
+  if (item.id === "commit") {
+    if (!hasChanges) {
+      return "Worktree is clean. Make changes before committing.";
+    }
+    return "Commit is currently unavailable.";
+  }
+
+  if (item.id === "push") {
+    if (!hasBranch) {
+      return "Detached HEAD: check out a branch before pushing.";
+    }
+    if (isBehind) {
+      return "Branch is behind upstream. Pull/rebase before pushing.";
+    }
+    if (!gitStatus.hasUpstream && !hasPrimaryRemote) {
+      return 'Add an "origin" remote before pushing.';
+    }
+    if (!isAhead) {
+      return "No local commits to push.";
+    }
+    return "Push is currently unavailable.";
+  }
+
+  if (!hasBranch) {
+    return `Detached HEAD: check out a branch before creating a ${terminology.singular}.`;
+  }
+  if (!gitStatus.hasUpstream && !hasPrimaryRemote) {
+    return `Add an "origin" remote before creating a ${terminology.singular}.`;
+  }
+  if ((gitStatus.aheadOfDefaultCount ?? gitStatus.aheadCount) <= 0) {
+    return `No local commits to include in a ${terminology.singular}.`;
+  }
+  if (isBehind) {
+    return `Branch is behind upstream. Pull/rebase before creating a ${terminology.singular}.`;
+  }
+  return `Create ${terminology.singular} is currently unavailable.`;
+}
+
+export function hasUsableGitMenuContent(input: {
+  readonly menuItems: readonly GitActionMenuItem[];
+  readonly canWriteSourceControl: boolean;
+  readonly canPublishRepository: boolean;
+  readonly hasNotice: boolean;
+}): boolean {
+  return (
+    input.canPublishRepository ||
+    input.hasNotice ||
+    (input.canWriteSourceControl && input.menuItems.some((item) => !item.disabled))
+  );
 }
 
 export function resolveQuickAction(
@@ -435,9 +508,21 @@ export type ChangesLineTotals = {
 
 // `branchChanges ?? workingTree` treats `{0,0}` as present, so a zero branch total hid a dirty
 // working tree and the Changes row read +0 while Diff still showed the work.
+// The Diff panel's branch comparison wins when it has file stats, so a remembered base or
+// hidden whitespace reads the same in the row as in the panel.
 export function resolveChangesTotals(
   status: VcsStatusResult | null | undefined,
+  branchPreview?: ReviewDiffPreviewSource | null,
 ): ChangesLineTotals | null {
+  if (branchPreview?.files) {
+    let insertions = 0;
+    let deletions = 0;
+    for (const file of branchPreview.files) {
+      insertions += file.additions;
+      deletions += file.deletions;
+    }
+    return { insertions, deletions, baseRef: branchPreview.baseRef };
+  }
   if (!status) return null;
   const branch = status.branchChanges;
   const tree = { ...status.workingTree, baseRef: null };

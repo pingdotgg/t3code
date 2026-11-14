@@ -2,6 +2,7 @@ import {
   ORCHESTRATION_CACHE_SCHEMA_VERSION,
   ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION,
   COMPACT_THREAD_CACHE_SCHEMA_VERSION,
+  type ConnectionPersistenceError,
   StoredOrchestrationThreadSnapshot,
 } from "@t3tools/client-runtime/platform";
 import {
@@ -19,9 +20,11 @@ import {
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as MobileDatabase from "../persistence/mobile-database";
 import { make } from "./environment-cache-store";
@@ -209,6 +212,35 @@ function threadSnapshotWithItems(): OrchestrationV2ThreadDetailSnapshot {
           item: local,
         },
       ],
+    },
+  };
+}
+
+// More rows than one encoding chunk, so a cold save yields to the host mid-encode.
+function threadSnapshotWithManyItems(
+  snapshotSequence: number,
+  message = "A settled local notice.",
+): OrchestrationV2ThreadDetailSnapshot {
+  const base = threadSnapshotWithItems();
+  const turnItems = Array.from({ length: 40 }, (_, index) => ({
+    ...base.projection.turnItems[0]!,
+    id: TurnItemId.make(`notice-${snapshotSequence}-${index}`),
+    ordinal: index,
+    message,
+  }));
+  return {
+    ...THREAD_SNAPSHOT,
+    snapshotSequence,
+    projection: {
+      ...THREAD_SNAPSHOT.projection,
+      turnItems,
+      visibleTurnItems: turnItems.map((item, position) => ({
+        position,
+        visibility: "local" as const,
+        sourceThreadId: THREAD_ID,
+        sourceItemId: item.id,
+        item,
+      })),
     },
   };
 }
@@ -536,7 +568,7 @@ describe("mobile SQLite environment cache store", () => {
     }),
   );
 
-  it.live("returns cached threads before their pull request links, which load after", () =>
+  it.effect("returns cached threads before their pull request links, which load after", () =>
     Effect.gen(function* () {
       const memory = makeDatabase();
       const store = yield* make().pipe(
@@ -561,12 +593,13 @@ describe("mobile SQLite environment cache store", () => {
 
       const shell = Option.getOrThrow(yield* store.loadShell(ENVIRONMENT_ID));
       expect(shell.threads.map((thread) => thread.pullRequests)).toEqual([undefined, undefined]);
-      const links = yield* shell.loadPullRequests!;
-      expect([...links]).toEqual([[THREAD_ID, [link]]]);
+      const links = yield* Effect.forkChild(shell.loadPullRequests!);
+      yield* TestClock.adjust("1 millis");
+      expect([...(yield* Fiber.join(links))]).toEqual([[THREAD_ID, [link]]]);
     }),
   );
 
-  it.live("keeps cached threads when their pull request links cannot be read", () => {
+  it.effect("keeps cached threads when their pull request links cannot be read", () => {
     const messages: Array<unknown> = [];
     const logger = Logger.make(({ message }) => {
       messages.push(message);
@@ -602,11 +635,60 @@ describe("mobile SQLite environment cache store", () => {
 
       const shell = Option.getOrThrow(yield* store.loadShell(ENVIRONMENT_ID));
       expect(shell.threads.map((thread) => thread.id)).toEqual([THREAD_ID, readable.id]);
-      expect([...(yield* shell.loadPullRequests!)]).toEqual([[readable.id, [link]]]);
+      const links = yield* Effect.forkChild(shell.loadPullRequests!);
+      yield* TestClock.adjust("1 millis");
+      expect([...(yield* Fiber.join(links))]).toEqual([[readable.id, [link]]]);
       expect(messages).toHaveLength(1);
       expect(memory.removed).toEqual([]);
     }).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
   });
+
+  it.effect("does not write a save that a removal, clear, or newer save overtook", () =>
+    Effect.gen(function* () {
+      const id = cacheId(ENVIRONMENT_ID, "thread", THREAD_ID);
+      const overtake = Effect.fn("overtake")(function* (
+        later: (
+          store: Effect.Success<ReturnType<typeof make>>,
+        ) => Effect.Effect<void, ConnectionPersistenceError>,
+      ) {
+        const memory = makeDatabase();
+        const store = yield* make().pipe(
+          Effect.provideService(MobileDatabase.MobileDatabase, memory.database),
+        );
+        const older = yield* store
+          .saveThread(ENVIRONMENT_ID, threadSnapshotWithManyItems(1))
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* later(store);
+        yield* Fiber.join(older);
+        return { memory, store };
+      });
+
+      const removed = yield* overtake((store) => store.removeThread(ENVIRONMENT_ID, THREAD_ID));
+      expect(removed.memory.values.has(id)).toBe(false);
+      const cleared = yield* overtake((store) => store.clear(ENVIRONMENT_ID));
+      expect(cleared.memory.values.has(id)).toBe(false);
+      const replaced = yield* overtake((store) =>
+        store.saveThread(ENVIRONMENT_ID, { ...THREAD_SNAPSHOT, snapshotSequence: 2 }),
+      );
+      const kept = yield* replaced.store.loadThread(ENVIRONMENT_ID, THREAD_ID);
+      expect(Option.getOrThrow(kept).snapshotSequence).toBe(2);
+    }),
+  );
+
+  it.effect("removes the older copy of a thread that grew past the cache limit", () =>
+    Effect.gen(function* () {
+      const memory = makeDatabase();
+      const store = yield* make().pipe(
+        Effect.provideService(MobileDatabase.MobileDatabase, memory.database),
+      );
+      const id = cacheId(ENVIRONMENT_ID, "thread", THREAD_ID);
+      yield* store.saveThread(ENVIRONMENT_ID, threadSnapshotWithItems());
+      expect(memory.values.has(id)).toBe(true);
+      yield* store.saveThread(ENVIRONMENT_ID, threadSnapshotWithManyItems(2, "x".repeat(200_000)));
+      expect(memory.values.has(id)).toBe(false);
+      expect(memory.removed).toEqual([id]);
+    }),
+  );
 
   it.effect("deletes a corrupt cache record and treats it as a miss", () =>
     Effect.gen(function* () {
