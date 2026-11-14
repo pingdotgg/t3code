@@ -317,12 +317,14 @@ describe("resolveIdleCompaction", () => {
   });
 });
 
-describe("ClientSettings notifications", () => {
-  it("requires opt-in when existing settings omit notification preferences", () => {
+describe("ClientSettings opt-in preferences", () => {
+  it("requires opt-in when existing settings omit the preferences", () => {
     expect(decodeClientSettings({}).notificationMode).toBe("off");
     expect(decodeClientSettings({}).inAppNotificationsEnabled).toBe(false);
     expect(decodeClientSettingsPatch({})).not.toHaveProperty("inAppNotificationsEnabled");
     expect(decodeClientSettingsPatch({})).not.toHaveProperty("notificationMode");
+    expect(decodeClientSettings({}).vimListNavigation).toBe(false);
+    expect(decodeClientSettingsPatch({})).not.toHaveProperty("vimListNavigation");
   });
 });
 

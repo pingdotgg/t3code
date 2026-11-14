@@ -1,6 +1,7 @@
 import type { KeybindingCommand, ResolvedKeybindingsConfig } from "@t3tools/contracts";
 
 import { resolveShortcutCommand, type ShortcutMatchContext } from "../keybindings";
+import { getClientSettings } from "../hooks/useSettings";
 import { isEditableFocused } from "../lib/editableFocus";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
@@ -43,6 +44,7 @@ interface CommandScope {
 const globalScopes: CommandScope[] = [];
 const captureScopes: CommandScope[] = [];
 const observerScopes: CommandScope[] = [];
+const LIST_NAVIGATION_SELECTOR = '[role="menu"], [role="listbox"], [data-list-navigation="true"]';
 
 function readFocusContext(event: KeyboardEvent): Partial<ShortcutMatchContext> {
   return {
@@ -102,7 +104,51 @@ function runScopes(scopes: readonly CommandScope[], event: KeyboardEvent): boole
 }
 
 function dispatchCaptureKeyDown(event: KeyboardEvent): void {
+  if (handleListNavigation(event)) return;
   runScopes(captureScopes, event);
+}
+
+function handleListNavigation(event: KeyboardEvent): boolean {
+  const key = event.key.toLowerCase();
+  if (
+    !event.ctrlKey ||
+    event.altKey ||
+    event.metaKey ||
+    event.shiftKey ||
+    event.isComposing ||
+    event.keyCode === 229 ||
+    event.defaultPrevented ||
+    (key !== "j" && key !== "k") ||
+    !getClientSettings().vimListNavigation ||
+    !(event.target instanceof Element)
+  )
+    return false;
+
+  const target = event.target;
+  const control = target.closest("[aria-controls]");
+  const list =
+    target.closest(LIST_NAVIGATION_SELECTOR) ??
+    control
+      ?.getAttribute("aria-controls")
+      ?.split(/\s+/)
+      .map((id) => document.getElementById(id))
+      .find((element) => element?.matches(LIST_NAVIGATION_SELECTOR));
+  if (!list?.checkVisibility()) return false;
+
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  const arrow = key === "j" ? "ArrowDown" : "ArrowUp";
+  target.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: arrow,
+      code: arrow,
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      repeat: event.repeat,
+    }),
+  );
+  return true;
 }
 
 function dispatchKeyDown(event: KeyboardEvent): void {

@@ -515,6 +515,7 @@ export function ComposerEffortColumn(props: { traits: TraitsSelectionInput | nul
         className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain px-2 pt-2.5 pb-1.5"
         // Capture, so Up and Down on an option row move rows instead of opening its menu.
         onKeyDownCapture={moveBetweenRows}
+        data-list-navigation="true"
       >
         {props.traits ? <EffortLevels traits={props.traits} /> : <NoEffortRow />}
       </div>

@@ -1,10 +1,16 @@
 import { useRef, useState } from "react";
-import { expect, it } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
+import { createPortal } from "react-dom";
+import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
+import * as settings from "../../hooks/useSettings";
+import { registerCommands } from "../../shortcuts/dispatcher";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../../test/render";
 import { Dialog, DialogPopup } from "../ui/dialog";
 import { ComposerStashMenu } from "./ComposerStashMenu";
+
+vi.mock(import("../../hooks/useSettings"), { spy: true });
 
 function Composer({ dialog = false }: { dialog?: boolean }) {
   const composerFormRef = useRef<HTMLFormElement>(null);
@@ -36,23 +42,25 @@ function Composer({ dialog = false }: { dialog?: boolean }) {
       </form>
       <input aria-label="Search threads" />
       <button onClick={() => setOpen(true)}>Open stash</button>
-      {open && (
-        <ComposerStashMenu
-          composerFormRef={composerFormRef}
-          entries={entries}
-          stashShortcutLabel="Ctrl+S"
-          onRestore={(entry) => {
-            setDraft(entry.prompt);
-            setEntries((current) => current.filter(({ id }) => id !== entry.id));
-            setOpen(false);
-          }}
-          onDelete={(entry) => {
-            setEntries((current) => current.filter(({ id }) => id !== entry.id));
-            if (entries.length === 1) setOpen(false);
-          }}
-          onClose={() => setOpen(false)}
-        />
-      )}
+      {open &&
+        createPortal(
+          <ComposerStashMenu
+            composerFormRef={composerFormRef}
+            entries={entries}
+            stashShortcutLabel="Ctrl+S"
+            onRestore={(entry) => {
+              setDraft(entry.prompt);
+              setEntries((current) => current.filter(({ id }) => id !== entry.id));
+              setOpen(false);
+            }}
+            onDelete={(entry) => {
+              setEntries((current) => current.filter(({ id }) => id !== entry.id));
+              if (entries.length === 1) setOpen(false);
+            }}
+            onClose={() => setOpen(false)}
+          />,
+          document.body,
+        )}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogPopup aria-label="Command palette">
           <input aria-label="Search commands" />
@@ -67,8 +75,14 @@ const stash = () => page.getByRole("list", { name: "Stashed prompts" });
 const press = (keys: string) => userEvent.keyboard(keys);
 const focus = (element: Element) => act(async () => (element as HTMLElement).focus());
 
-it("leaves dialog, unrelated input and question button shortcuts alone while the stash is open", async () => {
+it("navigates the portaled stash without taking keys from unrelated controls", async () => {
   await using _screen = await render(<Composer dialog />);
+  using _settings = vi.spyOn(settings, "getClientSettings").mockReturnValue({
+    ...DEFAULT_CLIENT_SETTINGS,
+    vimListNavigation: true,
+  });
+  using stack = new DisposableStack();
+  stack.defer(registerCommands({}));
   const input = page.getByRole("textbox", { name: "Search commands" }).element();
   await focus(input);
 
@@ -107,4 +121,15 @@ it("leaves dialog, unrelated input and question button shortcuts alone while the
   expect(stash().element().textContent).toContain("first prompt");
   expect(stash().element().textContent).toContain("second prompt");
   await expect.element(editor()).toHaveValue("Unsent draft");
+
+  const first = page.getByRole("button", { name: "Restore stashed prompt: first prompt" });
+  const second = page.getByRole("button", { name: "Restore stashed prompt: second prompt" });
+  await focus(first.element());
+  await press("{Control>}j{/Control}");
+  await expect.element(second).toHaveFocus();
+  await press("{Control>}k{/Control}");
+  await expect.element(first).toHaveFocus();
+  await press("{Control>}j{/Control}{Enter}");
+  await expect.element(editor()).toHaveValue("second prompt");
+  await expect.element(stash()).not.toBeInTheDocument();
 });
