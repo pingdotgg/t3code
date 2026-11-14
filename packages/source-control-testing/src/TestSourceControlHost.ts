@@ -9,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
+import * as SshRemoteHost from "@t3tools/source-control-core/server/sshRemoteHost";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -57,13 +58,16 @@ export const layer = (
       const settings = yield* Ref.make(options.settings ?? DEFAULT_SERVER_SETTINGS);
       const update = (patch: ServerSettingsPatch) =>
         Ref.updateAndGet(settings, (current) => applyServerSettingsPatch(current, patch));
+      const run =
+        options.process?.run ??
+        ((input) => Effect.die(`Unexpected ${input.command} run in ${input.operation}.`));
       const host = SourceControlHost.SourceControlHost.of({
         settings: { get: Ref.get(settings), getWithSecrets: () => Ref.get(settings), update },
-        process: {
-          run:
-            options.process?.run ??
-            ((input) => Effect.die(`Unexpected ${input.command} run in ${input.operation}.`)),
-        },
+        process: { run },
+        canonicalRemoteUrl: yield* SshRemoteHost.make({
+          run,
+          isPublicHost: (hostName) => hostName === "github.com" || hostName === "gitlab.com",
+        }),
         git: { ...failingGit, ...options.git },
       });
       return Context.make(SourceControlHost.SourceControlHost, host).pipe(

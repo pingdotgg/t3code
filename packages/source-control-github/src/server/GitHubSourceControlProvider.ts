@@ -305,29 +305,29 @@ export const makeDiscovery = Effect.gen(function* () {
       } satisfies SourceControlProviderDiscoveryItem);
     }),
     // Claim disabled hosts so errors identify the setting.
-    refineUnknownRemote: ({ context }) => {
+    refineUnknownRemote: Effect.fnUntraced(function* ({ context }) {
       const url = URL.parse(context.provider.baseUrl);
-      if (!url?.host) return Effect.succeed(null);
-      const host = gitHubApiHostForRemote(context.remoteUrl) ?? url.host;
+      if (!url?.host) return null;
+      const host =
+        gitHubApiHostForRemote(yield* sourceControlHost.canonicalRemoteUrl(context.remoteUrl)) ??
+        url.host;
       // A timeout or keyring failure propagates: the registry does not keep that answer.
-      return api.credential(host).pipe(
+      const known = yield* api.credential(host).pipe(
         Effect.as(true),
         Effect.catchTags({
           GitHubCliMissingError: () => Effect.succeed(false),
           GitHubHostDisabledError: () => Effect.succeed(true),
           GitHubNotSignedInError: () => Effect.succeed(false),
         }),
-        Effect.map((known) =>
-          known
-            ? ({
-                kind: SourceControlProviderKind.make("github"),
-                name: host === "github.com" ? "GitHub" : "GitHub Self-Hosted",
-                baseUrl: host === url.host ? context.provider.baseUrl : `https://${host}`,
-              } as const)
-            : null,
-        ),
       );
-    },
+      return known
+        ? ({
+            kind: SourceControlProviderKind.make("github"),
+            name: host === "github.com" ? "GitHub" : "GitHub Self-Hosted",
+            baseUrl: host === url.host ? context.provider.baseUrl : `https://${host}`,
+          } as const)
+        : null;
+    }),
   } satisfies SourceControlManagedCliDiscoverySpec;
 });
 
@@ -518,6 +518,14 @@ export const make = Effect.gen(function* () {
   const git = sourceControlHost.git;
   const fileSystem = yield* FileSystem.FileSystem;
 
+  // An SSH alias is read as the host ssh config sends it to; git keeps the remote's name.
+  const canonicalFetchRemotes = (remotes: string) =>
+    Effect.forEach(parseFetchRemotes(remotes), (remote) =>
+      sourceControlHost
+        .canonicalRemoteUrl(remote.url)
+        .pipe(Effect.map((url) => ({ name: remote.name, url }))),
+    );
+
   const gitRead = (cwd: string, args: ReadonlyArray<string>) =>
     process.run({
       operation: "GitHubSourceControlProvider.resolveRepository",
@@ -538,6 +546,14 @@ export const make = Effect.gen(function* () {
         remotes: remotes?.exitCode === 0 ? remotes.stdout : "",
         resolved: resolved?.exitCode === 0 ? resolved.stdout : "",
       })),
+      Effect.flatMap((read) =>
+        canonicalFetchRemotes(read.remotes).pipe(
+          Effect.map((remotes) => ({
+            ...read,
+            remotes: remotes.map(({ name, url }) => `${name}\t${url} (fetch)`).join("\n"),
+          })),
+        ),
+      ),
     );
 
   const resolveRepository = Effect.fn("GitHubSourceControlProvider.resolveRepository")(
@@ -547,7 +563,18 @@ export const make = Effect.gen(function* () {
       readonly context?: SourceControlProvider.SourceControlProviderContext | undefined;
     }) {
       const envRepository = environment.GH_REPO?.trim();
-      const hostHint = input.host ?? contextHost(input.context);
+      // A context made from the written remote names the alias, not the host it leads to.
+      const contextUrl = input.context?.remoteUrl;
+      const canonicalUrl =
+        contextUrl === undefined
+          ? undefined
+          : yield* sourceControlHost.canonicalRemoteUrl(contextUrl);
+      const hostHint =
+        (canonicalUrl === undefined || canonicalUrl === contextUrl
+          ? undefined
+          : (gitHubApiHostForRemote(canonicalUrl) ?? undefined)) ??
+        input.host ??
+        contextHost(input.context);
       const defaultHost = (hostHint ?? environment.GH_HOST ?? "github.com").toLowerCase();
       if (envRepository) {
         const locator = parseGitHubRepositorySelector(envRepository, defaultHost);
@@ -790,8 +817,9 @@ export const make = Effect.gen(function* () {
         Effect.map((result) => (result.exitCode === 0 ? result.stdout : "")),
         Effect.mapError(gitFailure),
       );
+      const fetchRemotes = yield* canonicalFetchRemotes(remotes);
       const remoteFor = (nameWithOwner: string) =>
-        parseFetchRemotes(remotes).find(
+        fetchRemotes.find(
           (remote) =>
             (gitHubApiHostForRemote(remote.url) ??
               normalizeGitRemoteUrl(remote.url).split("/")[0]) === base.host &&
@@ -959,7 +987,10 @@ export const make = Effect.gen(function* () {
   return SourceControlProvider.SourceControlProvider.of({
     kind: SourceControlProviderKind.make("github"),
     resolveRemoteWebHost: Effect.fn("GitHubSourceControlProvider.resolveRemoteWebHost")(
-      ({ context }) => Effect.succeed(gitHubApiHostForRemote(context.remoteUrl)),
+      ({ context }) =>
+        sourceControlHost
+          .canonicalRemoteUrl(context.remoteUrl)
+          .pipe(Effect.map(gitHubApiHostForRemote)),
     ),
     // GitHub matches bare heads; read a full page to disambiguate forks by owner. A default branch
     // collides with most forks, so its owner-qualified lookup has GitHub filter by owner instead.
@@ -1095,6 +1126,17 @@ export const make = Effect.gen(function* () {
     ),
     getRepositoryCloneUrls: Effect.fn("GitHubSourceControlProvider.getRepositoryCloneUrls")(
       function* (input) {
+        // A pasted SSH remote is cloned as written, so an alias keeps choosing its key.
+        const sshRemote = input.repository.trim();
+        if (isSshRemoteUrl(sshRemote)) {
+          const canonical = yield* sourceControlHost.canonicalRemoteUrl(sshRemote);
+          const [remoteHost, owner, name, ...rest] = normalizeGitRemoteUrl(canonical).split("/");
+          const host = gitHubApiHostForRemote(canonical) ?? remoteHost;
+          if (!host || !owner || !name || rest.length > 0)
+            return yield* failure("Repositories are named owner/name.");
+          const repository = yield* readRepository({ host, owner, name });
+          return { nameWithOwner: repository.full_name, url: sshRemote, sshUrl: sshRemote };
+        }
         const fallbackHost = (
           input.host ??
           (yield* resolveRepository(input).pipe(

@@ -138,11 +138,13 @@ function selectProviderContext(
   remotes: ReadonlyArray<{
     readonly name: string;
     readonly url: string;
+    /** Where ssh config sends the remote; the host is classified by it. */
+    readonly canonicalUrl: string;
   }>,
 ): SourceControlProvider.SourceControlProviderContext | null {
   const candidates: Array<SourceControlProvider.SourceControlProviderContext> = [];
   for (const remote of remotes) {
-    const provider = sourceControlDefinitions.recognizeRemote(remote.url);
+    const provider = sourceControlDefinitions.recognizeRemote(remote.canonicalUrl);
     if (provider) {
       candidates.push({
         provider,
@@ -243,7 +245,7 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
   function* (registrations: ReadonlyArray<SourceControlProviderRegistration>) {
     const config = yield* ServerConfig.ServerConfig;
     const serverSettings = yield* ServerSettings.ServerSettingsService;
-    const { process } = yield* SourceControlHost.SourceControlHost;
+    const { process, canonicalRemoteUrl } = yield* SourceControlHost.SourceControlHost;
     const vcsRegistry = yield* VcsDriverRegistry.VcsDriverRegistry;
     const providers = new Map<
       SourceControlProviderKind,
@@ -307,7 +309,12 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
               }),
           ),
         );
-        return yield* refineContext(cwd, selectProviderContext(remotes.remotes));
+        const classified = yield* Effect.forEach(remotes.remotes, (remote) =>
+          canonicalRemoteUrl(remote.url).pipe(
+            Effect.map((canonicalUrl) => ({ ...remote, canonicalUrl })),
+          ),
+        );
+        return yield* refineContext(cwd, selectProviderContext(classified));
       },
     );
 
@@ -320,10 +327,36 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
       timeToLive: (exit) => (Exit.isSuccess(exit) ? PROVIDER_DETECTION_CACHE_TTL : Duration.zero),
     });
 
+    // A caller's context names the host its remote is written with; an SSH alias is placed by
+    // the host it leads to, keeping the kind the caller already settled.
+    const canonicalContext = Effect.fnUntraced(function* (
+      context: SourceControlProvider.SourceControlProviderContext,
+    ) {
+      // An empty base URL asks one host's own login to place the remote.
+      const canonicalUrl =
+        context.provider.baseUrl === ""
+          ? context.remoteUrl
+          : yield* canonicalRemoteUrl(context.remoteUrl);
+      const provider =
+        canonicalUrl === context.remoteUrl
+          ? null
+          : sourceControlDefinitions.recognizeRemote(canonicalUrl);
+      if (provider === null) return context;
+      return {
+        ...context,
+        provider:
+          context.provider.kind === "unknown"
+            ? provider
+            : { ...provider, kind: context.provider.kind },
+      };
+    });
+
     const resolveHandle: SourceControlProviderRegistry["Service"]["resolveHandle"] = (input) =>
       (input.context === undefined
         ? Cache.get(providerContextCache, input.cwd)
-        : refineContext(input.cwd, input.context)
+        : canonicalContext(input.context).pipe(
+            Effect.flatMap((context) => refineContext(input.cwd, context)),
+          )
       ).pipe(
         Effect.map((context) => {
           const kind = context?.provider.kind ?? SourceControlProviderKind.make("unknown");

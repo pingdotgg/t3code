@@ -69,6 +69,16 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       expect(identity?.canonicalKey).toBe("github.com/t3tools/t3code");
       expect(identity?.provider).toBe("github");
       expect(identity?.displayName).toBe("T3Tools/t3code");
+
+      // An alias is keyed by the host ssh config sends it to; git keeps the written remote.
+      yield* git(cwd, ["remote", "set-url", "origin", "git@gh-work:T3Tools/t3code.git"]);
+      const aliased = yield* RepositoryIdentityResolver.make({
+        canonicalRemoteUrl: (url) => Effect.succeed(url.replace("@gh-work:", "@github.com:")),
+      }).pipe(Effect.provide(ProcessRunner.layer));
+      const aliasIdentity = yield* aliased.resolve(cwd);
+      expect(aliasIdentity?.canonicalKey).toBe("github.com/t3tools/t3code");
+      expect(aliasIdentity?.provider).toBe("github");
+      expect(aliasIdentity?.locator.remoteUrl).toBe("git@gh-work:T3Tools/t3code.git");
     }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
   );
 
@@ -406,6 +416,16 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       yield* git(cwd, ["remote", "add", "ghe-parent", "https://ghe.example.com:8443/acme/web.git"]);
       yield* git(cwd, ["config", "remote.ghe-fork.gh-resolved", "acme/web"]);
       expect((yield* resolveFresh())?.locator.remoteName).toBe("ghe-parent");
+
+      // An SSH alias and the server it leads to are one host.
+      yield* git(cwd, ["config", "--unset", "remote.ghe-fork.gh-resolved"]);
+      yield* git(cwd, ["remote", "add", "alias-fork", "git@work:me/tool.git"]);
+      yield* git(cwd, ["remote", "add", "alias-parent", "git@code.example.test:acme/tool.git"]);
+      yield* git(cwd, ["config", "remote.alias-fork.gh-resolved", "acme/tool"]);
+      const aliased = yield* RepositoryIdentityResolver.make({
+        canonicalRemoteUrl: (url) => Effect.succeed(url.replace("@work:", "@code.example.test:")),
+      }).pipe(Effect.provide(ProcessRunner.layer));
+      expect((yield* aliased.resolve(cwd))?.locator.remoteName).toBe("alias-parent");
     }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
   );
 
