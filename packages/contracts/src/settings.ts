@@ -530,6 +530,7 @@ export const ClientSettingsSchema = Schema.Struct({
   boringSidebarMultilineRows: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
+  sidebarSearchInTitleBar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   toolCallVisibility: ToolCallVisibility.pipe(
     Schema.withDecodingDefault(Effect.succeed("showAll" as const)),
   ),
@@ -2086,6 +2087,7 @@ export const ClientSettingsPatch = Schema.Struct({
   showSkillsInSlashMenu: Schema.optionalKey(Schema.Boolean),
   boringSidebarEnabled: Schema.optionalKey(Schema.Boolean),
   boringSidebarMultilineRows: Schema.optionalKey(Schema.Boolean),
+  sidebarSearchInTitleBar: Schema.optionalKey(Schema.Boolean),
   toolCallVisibility: Schema.optionalKey(ToolCallVisibility),
   screenReaderAnnouncements: Schema.optionalKey(ScreenReaderAnnouncements),
   screenReaderWindowTitle: Schema.optionalKey(Schema.Boolean),

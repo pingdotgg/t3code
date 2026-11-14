@@ -1,6 +1,8 @@
 export const THREAD_SIDEBAR_WIDTH_STORAGE_KEY = "chat_thread_sidebar_width";
 const THREAD_SIDEBAR_DEFAULT_WIDTH = 16 * 16;
 const THREAD_SIDEBAR_MIN_WIDTH = 13 * 16;
+// Fits the search icon beside the title bar buttons and macOS window controls.
+export const TITLE_BAR_SEARCH_SIDEBAR_MIN_WIDTH = 15.5 * 16;
 export const THREAD_MAIN_CONTENT_MIN_WIDTH = 40 * 16;
 
 export function resolveThreadSidebarMinimumWidth(brandWidth: number): number {
