@@ -1374,6 +1374,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     );
   });
 
+  let statusFetchCount = 0;
   const fetchRemoteForStatus = Effect.fn("GitVcsDriver.fetchRemoteForStatus.wait")(function* (
     gitCommonDir: string,
     remoteName: string,
@@ -1423,6 +1424,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           Effect.onExit(() =>
             Effect.sync(() => {
               statusFetches.delete(key);
+              // Counted when git exits, not when a waiter times out; a failed fetch can still move refs.
+              statusFetchCount += 1;
             }),
           ),
           Effect.forkIn(serviceScope, { startImmediately: false, uninterruptible: false }),
@@ -1671,18 +1674,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }
     }
   });
-  let statusFetchCount = 0;
   const refreshStatusRemoteCacheEntry = Effect.fn("refreshStatusRemoteCacheEntry")(function* (
     cacheKey: StatusRemoteRefreshCacheKey,
   ) {
     return yield* fetchRemoteForStatus(cacheKey.gitCommonDir, cacheKey.remoteName).pipe(
       Effect.as(true as const),
-      // A failed or interrupted fetch can still have updated some refs.
-      Effect.ensuring(
-        Effect.sync(() => {
-          statusFetchCount += 1;
-        }),
-      ),
     );
   });
 
