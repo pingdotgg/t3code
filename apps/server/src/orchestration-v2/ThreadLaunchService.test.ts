@@ -1364,6 +1364,15 @@ it.effect.each([
     saved: "origin/trunk",
   },
   {
+    name: "a Settings local default",
+    branch: "master",
+    remote: true,
+    startFromOrigin: false,
+    defaultBaseRef: true,
+    baseRef: "main",
+    saved: "master",
+  },
+  {
     name: "a failed project lookup",
     branch: "master",
     remote: false,
@@ -1402,12 +1411,17 @@ it.effect.each([
     yield* command(cwd, ["config", "user.name", "Test"]);
     yield* command(cwd, ["config", "user.email", "test@example.test"]);
     yield* command(cwd, ["commit", "--allow-empty", "-m", "initial"]);
-    const head = (yield* command(cwd, ["rev-parse", "HEAD"])).stdout.trim();
+    let head = (yield* command(cwd, ["rev-parse", "HEAD"])).stdout.trim();
     if (row.remote) {
       yield* command(cwd, ["init", "--bare", `${directory}/remote.git`]);
       yield* command(cwd, ["remote", "add", "origin", `${directory}/remote.git`]);
       yield* command(cwd, ["push", "-u", "origin", row.branch]);
       yield* command(cwd, ["remote", "set-head", "origin", row.branch]);
+    }
+    if (row.startFromOrigin === false) {
+      yield* command(cwd, ["commit", "--allow-empty", "-m", "local ahead of tracking"]);
+      head = (yield* command(cwd, ["rev-parse", "HEAD"])).stdout.trim();
+      assert.notEqual(head, (yield* command(cwd, ["rev-parse", "origin/master"])).stdout.trim());
     }
     const lookupFailure = new ProjectService.ProjectOperationError({
       operation: "read-project",
@@ -1448,7 +1462,11 @@ it.effect.each([
       const tasks = yield* ScheduledTasks.ScheduledTaskService;
       const save = tasks.upsert({
         ...scheduledTaskInput("scheduled-task:default-base", projectId),
-        workspaceStrategy: { type: "worktree", baseRef: row.baseRef, startFromOrigin: true },
+        workspaceStrategy: {
+          type: "worktree",
+          baseRef: row.baseRef,
+          startFromOrigin: row.startFromOrigin ?? true,
+        },
         ...(row.defaultBaseRef === undefined ? {} : { defaultBaseRef: row.defaultBaseRef }),
       });
       if (row.name === "a failed project lookup") {
@@ -1462,7 +1480,7 @@ it.effect.each([
       assert.deepEqual(task.workspaceStrategy, {
         type: "worktree",
         baseRef: row.saved,
-        startFromOrigin: true,
+        startFromOrigin: row.startFromOrigin ?? true,
       });
       const { threadId } = yield* tasks.runNow({ id: task.id });
       const prepared = yield* preparationSettled(threadId!);

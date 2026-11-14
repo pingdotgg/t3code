@@ -1475,6 +1475,31 @@ export const layer = Layer.effect(
           : input.schedule.type === "once"
             ? { type: "once", runAt: iso(DateTime.makeUnsafe(input.schedule.runAt)) }
             : input.schedule;
+      // A folder that is not a Git repository, Scratch included, cannot hold a worktree.
+      const workspaceStrategy: ScheduledTask["workspaceStrategy"] =
+        input.workspaceStrategy.type === "worktree" &&
+        ((yield* managedFolders.isScratchProject(input.projectId)) ||
+          (yield* threadLaunch.isNonGitProject(input.projectId)))
+          ? { type: "root" }
+          : input.workspaceStrategy.type === "worktree" && input.defaultBaseRef === true
+            ? {
+                ...input.workspaceStrategy,
+                baseRef:
+                  (yield* threadLaunch
+                    .defaultWorktreeBaseRef(
+                      input.projectId,
+                      input.workspaceStrategy.startFromOrigin,
+                    )
+                    .pipe(
+                      Effect.mapError((cause) =>
+                        taskError("Could not resolve the project default branch.", {
+                          taskId: id,
+                          cause,
+                        }),
+                      ),
+                    )) ?? input.workspaceStrategy.baseRef,
+              }
+            : input.workspaceStrategy;
       const webhook =
         input.schedule.type === "webhook"
           ? yield* Effect.gen(function* () {
@@ -1511,26 +1536,6 @@ export const layer = Layer.effect(
               return { token, secret, secretChanged };
             })
           : { token: null, secret: null, secretChanged: true };
-      // A folder that is not a Git repository, Scratch included, cannot hold a worktree.
-      const workspaceStrategy: ScheduledTask["workspaceStrategy"] =
-        input.workspaceStrategy.type === "worktree" &&
-        ((yield* managedFolders.isScratchProject(input.projectId)) ||
-          (yield* threadLaunch.isNonGitProject(input.projectId)))
-          ? { type: "root" }
-          : input.workspaceStrategy.type === "worktree" && input.defaultBaseRef === true
-            ? {
-                ...input.workspaceStrategy,
-                baseRef:
-                  (yield* threadLaunch.defaultWorktreeBaseRef(input.projectId).pipe(
-                    Effect.mapError((cause) =>
-                      taskError("Could not resolve the project default branch.", {
-                        taskId: id,
-                        cause,
-                      }),
-                    ),
-                  )) ?? input.workspaceStrategy.baseRef,
-              }
-            : input.workspaceStrategy;
       const scheduleUnchanged =
         existingTask !== null &&
         existingTask.enabled === input.enabled &&

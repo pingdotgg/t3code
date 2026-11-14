@@ -345,6 +345,7 @@ export function BranchPickerScreen(props: {
   readonly onRefresh: () => void;
   readonly onLoadMore: () => void;
   readonly selectionDisabled?: boolean;
+  readonly savedBranchChoice?: { readonly name: string; readonly onSelect: () => void };
   readonly defaultBranchChoice?: { readonly selected: boolean; readonly onSelect: () => void };
   readonly onSelect: (branch: VcsRef) => void;
   readonly worktree?: {
@@ -395,6 +396,8 @@ export function BranchPickerScreen(props: {
     <>
       {props.defaultBranchChoice ? (
         <SelectionRow
+          isFirst
+          isLast
           title="Default branch"
           selected={props.defaultBranchChoice.selected}
           onPress={props.defaultBranchChoice.onSelect}
@@ -413,6 +416,16 @@ export function BranchPickerScreen(props: {
             value={props.worktree.startFromOrigin}
           />
         </View>
+      ) : null}
+      {props.savedBranchChoice ? (
+        <SelectionRow
+          icon="arrow.triangle.branch"
+          isFirst
+          isLast
+          title={props.savedBranchChoice.name}
+          selected
+          onPress={props.savedBranchChoice.onSelect}
+        />
       ) : null}
     </>
   );

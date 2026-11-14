@@ -169,6 +169,19 @@ export function ScheduledTaskBranchPickerRouteScreen() {
   return (
     <BranchPickerScreen
       title="Base branch"
+      savedBranchChoice={
+        editor.draft.baseRef &&
+        !visibleBranches.some((ref) => ref.name === editor.draft.baseRef) &&
+        editor.draft.baseRef.toLowerCase().includes(query.trim().toLowerCase())
+          ? {
+              name: editor.draft.baseRef,
+              onSelect: () => {
+                void Haptics.selectionAsync();
+                navigation.goBack();
+              },
+            }
+          : undefined
+      }
       defaultBranchChoice={{
         selected: editor.draft.baseRef === "",
         onSelect: () => {

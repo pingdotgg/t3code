@@ -9,7 +9,7 @@ import { BranchPicker, BranchPickerRefItem } from "./BranchPicker";
 import { resolveBranchTriggerLabel, sanitizeNewRefName } from "./BranchToolbar.logic";
 import { MiddleTruncate } from "./ui/middle-truncate";
 import { Button } from "./ui/button";
-import { ComboboxTrigger } from "./ui/combobox";
+import { ComboboxItem, ComboboxTrigger } from "./ui/combobox";
 
 export function WorktreeBaseBranchPicker({
   environmentId,
@@ -63,6 +63,13 @@ export function WorktreeBaseBranchPicker({
     branchByName.set(selectedRef.name, selectedRef);
   }
   const items = [...branchByName.keys()];
+  if (
+    value &&
+    !branchByName.has(value) &&
+    value.toLowerCase().includes(query.trim().toLowerCase())
+  ) {
+    items.unshift(value);
+  }
   const hasNextPage = branches.data?.nextCursor != null;
   const statusText =
     branches.error ??
@@ -120,7 +127,18 @@ export function WorktreeBaseBranchPicker({
               handleOpenChange(false);
             }}
           />
-        ) : null;
+        ) : (
+          <ComboboxItem
+            index={index}
+            value={name}
+            onClick={() => {
+              onValueChange(name);
+              handleOpenChange(false);
+            }}
+          >
+            <MiddleTruncate value={name} />
+          </ComboboxItem>
+        );
       }}
     >
       <ComboboxTrigger

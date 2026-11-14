@@ -224,6 +224,7 @@ export class ThreadLaunchService extends Context.Service<
     /** The base a new worktree gets when none was chosen; null when the project is unknown. */
     readonly defaultWorktreeBaseRef: (
       projectId: ProjectId,
+      startFromOrigin?: boolean,
     ) => Effect.Effect<string | null, ProjectService.ProjectOperationError>;
     readonly retryPreparation: (
       input: ThreadLaunchPreparationInput,
@@ -250,6 +251,7 @@ const resolveDefaultWorktreeBaseRef = Effect.fn(
     "resolvePrimaryRemoteName" | "resolveDefaultBranchName" | "resolveCommit" | "resolveBranchName"
   >,
   cwd: string,
+  startFromOrigin: boolean,
 ) {
   const refExists = (revision: string) =>
     git.resolveCommit({ cwd, revision }).pipe(
@@ -266,6 +268,7 @@ const resolveDefaultWorktreeBaseRef = Effect.fn(
       .pipe(Effect.orElseSucceed(() => null));
     // Fetch does not update a recorded HEAD, so it can outlive the branch it names.
     for (const branch of remoteDefault === null ? conventional : [remoteDefault, ...conventional]) {
+      if (!startFromOrigin && (yield* refExists(`refs/heads/${branch}`))) return branch;
       // Launch resolves a bare name through a local branch's upstream, or else assumes `origin`.
       if (yield* refExists(`refs/remotes/${remoteName}/${branch}`)) {
         return `${remoteName}/${branch}`;
@@ -496,10 +499,17 @@ const make = Effect.gen(function* () {
   });
 
   const defaultWorktreeBaseRef: ThreadLaunchService["Service"]["defaultWorktreeBaseRef"] =
-    Effect.fn("ThreadLaunchService.defaultWorktreeBaseRef")(function* (projectId) {
+    Effect.fn("ThreadLaunchService.defaultWorktreeBaseRef")(function* (
+      projectId,
+      startFromOrigin = true,
+    ) {
       const project = yield* projects.getById(projectId);
       if (Option.isNone(project)) return null;
-      return yield* resolveDefaultWorktreeBaseRef(gitDriver, project.value.workspaceRoot);
+      return yield* resolveDefaultWorktreeBaseRef(
+        gitDriver,
+        project.value.workspaceRoot,
+        startFromOrigin,
+      );
     });
 
   const prepareInBackground = Effect.fn("ThreadLaunchService.prepareInBackground")(function* (
