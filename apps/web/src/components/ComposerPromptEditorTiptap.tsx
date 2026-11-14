@@ -212,7 +212,7 @@ type CitationInsertedSpaces = { before: boolean; after: boolean };
 type OpenCitationComment = {
   key: string;
   sourceAnchor?: AssistantCitationSourceAnchor;
-  removeOnCancel?: CitationInsertedSpaces;
+  insertedSpaces?: CitationInsertedSpaces;
 };
 
 const ComposerCitationCommentContext = createContext<{
@@ -220,11 +220,13 @@ const ComposerCitationCommentContext = createContext<{
   onOpenChange: (citeKey: string, open: boolean) => void;
   onDraftChange: (citeKey: string, comment: string) => void;
   onSubmitAndSend: () => boolean;
+  readOnly: boolean;
 }>({
   openComment: null,
   onOpenChange: () => {},
   onDraftChange: () => {},
   onSubmitAndSend: () => false,
+  readOnly: false,
 });
 
 const RichComposerSkillsContext = createContext<ReadonlyArray<ServerProviderSkill>>([]);
@@ -469,20 +471,19 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
     return true;
   };
 
-  const removeOnCancel = commentTarget?.removeOnCancel;
+  const insertedSpaces = commentTarget?.insertedSpaces;
   const onRemove = () => {
-    if (!removeOnCancel) return;
+    if (!editor.isEditable) return;
     const pos = nodePos();
     if (pos === null) return;
     const { doc } = editor.state;
     const current = doc.nodeAt(pos);
     if (!current) return;
     const end = pos + current.nodeSize;
-    const from = removeOnCancel.before && doc.textBetween(pos - 1, pos) === " " ? pos - 1 : pos;
-    const to = removeOnCancel.after && doc.textBetween(end, end + 1) === " " ? end + 1 : end;
-    // A read-only composer (dictation) can still receive a new citation, so Cancel must undo it.
-    const chain = editor.chain();
-    (editor.isEditable ? chain.focus() : chain).deleteRange({ from, to }).run();
+    const from = insertedSpaces?.before && doc.textBetween(pos - 1, pos) === " " ? pos - 1 : pos;
+    const to = insertedSpaces?.after && doc.textBetween(end, end + 1) === " " ? end + 1 : end;
+    commentContext.onOpenChange(citeKey, false);
+    editor.chain().deleteRange({ from, to }).focus(from).run();
   };
 
   const sentRef = useRef(false);
@@ -537,7 +538,7 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
             if (open && !editor.isEditable) return;
             commentContext.onOpenChange(citeKey, open);
           },
-          ...(removeOnCancel ? { onCancel: onRemove } : {}),
+          onRemove: commentContext.readOnly ? undefined : onRemove,
           onSave: onSaveComment,
           onDraftChange: (comment) => commentContext.onDraftChange(citeKey, comment),
           onSaveAndSend: (comment) => {
@@ -1014,6 +1015,7 @@ function ComposerPromptEditorTiptapInner(
       citationDraftRef.current = { key: nodeKey, comment };
     },
     onSubmitAndSend: onCitationSubmitAndSend ?? (() => false),
+    readOnly: disabled,
   };
 
   const handleEditorChange = (updated: TiptapEditor, transaction: Transaction) => {
@@ -1641,7 +1643,7 @@ function ComposerPromptEditorTiptapInner(
           setOpenCitation({
             key: citeKey,
             sourceAnchor: pendingCitation.sourceAnchor,
-            removeOnCancel: pendingCitation.insertedSpaces,
+            insertedSpaces: pendingCitation.insertedSpaces,
           });
         }
       }
@@ -1760,7 +1762,7 @@ function ComposerPromptEditorTiptapInner(
           setOpenCitation({
             key: citeKey,
             sourceAnchor: request.sourceAnchor,
-            removeOnCancel: request.insertedSpaces,
+            insertedSpaces: request.insertedSpaces,
           });
         }
       },

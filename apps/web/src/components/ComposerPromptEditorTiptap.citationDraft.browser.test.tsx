@@ -9,6 +9,7 @@ import { expect, it } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import { findAssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
+import { isMacPlatform } from "~/lib/utils";
 import { act, render } from "../../test/render";
 import {
   ComposerPromptEditorTiptap as ComposerPromptEditor,
@@ -107,6 +108,86 @@ it("keeps an unsaved citation comment when a question takes the composer", async
   await expect.element(page.getByLabelText("Edit citation comment")).toBeInTheDocument();
 });
 
+it("Cancel keeps a fresh citation and discards edits", async () => {
+  const editorRef = createRef<ComposerPromptEditorHandle>();
+  await using screen = await render(<Composer question={false} editorRef={editorRef} />);
+  const sourceAnchor = findAssistantCitationSourceAnchor(document, citation);
+  if (!sourceAnchor) throw new Error("Citation source did not resolve");
+  await act(async () =>
+    editorRef.current?.requestCitationComment({
+      sourceAnchor,
+      previousValue: "See ",
+      value: promptBefore,
+      citationStart: "See ".length,
+      insertedSpaces: { before: false, after: true },
+    }),
+  );
+  const comment = page.getByLabelText("Comment on selected text");
+  await expect.element(comment).toBeVisible();
+  await comment.fill("unsaved");
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect.element(comment).not.toBeInTheDocument();
+  expect(screen.container.querySelector("output")?.dataset.prompt).toBe(promptBefore);
+  await page.getByRole("button", { name: "Add comment to citation" }).click();
+  await expect.element(comment).toHaveValue("");
+  await comment.fill("saved comment");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await page.getByRole("button", { name: "Edit citation comment", exact: true }).click();
+  await comment.fill("discard this edit");
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page.getByRole("button", { name: "Edit citation comment", exact: true }).click();
+  await expect.element(comment).toHaveValue("saved comment");
+});
+
+it("Delete citation removes a fresh citation and its inserted space, and undo restores it", async () => {
+  const editorRef = createRef<ComposerPromptEditorHandle>();
+  await using screen = await render(<Composer question={false} editorRef={editorRef} />);
+  const sourceAnchor = findAssistantCitationSourceAnchor(document, citation);
+  if (!sourceAnchor) throw new Error("Citation source did not resolve");
+  await act(async () =>
+    editorRef.current?.requestCitationComment({
+      sourceAnchor,
+      previousValue: "See ",
+      value: promptBefore,
+      citationStart: "See ".length,
+      insertedSpaces: { before: false, after: true },
+    }),
+  );
+  const comment = page.getByLabelText("Comment on selected text");
+  await expect.element(comment).toBeVisible();
+  await comment.fill("unsaved");
+  await page.getByRole("button", { name: "Delete citation", exact: true }).click();
+  await expect.element(comment).not.toBeInTheDocument();
+  await expect
+    .element(page.elementLocator(screen.container.querySelector("output")!))
+    .toHaveAttribute("data-prompt", "See ");
+  await userEvent.keyboard(
+    isMacPlatform(navigator.platform) ? "{Meta>}z{/Meta}" : "{Control>}z{/Control}",
+  );
+  await expect
+    .element(page.elementLocator(screen.container.querySelector("output")!))
+    .toHaveAttribute("data-prompt", promptBefore);
+  await expect.element(comment).not.toBeInTheDocument();
+  await screen.rerender(<Composer question editorRef={editorRef} />);
+  await screen.rerender(<Composer question={false} editorRef={editorRef} />);
+  await expect
+    .element(page.elementLocator(screen.container.querySelector("output")!))
+    .toHaveAttribute("data-prompt", promptBefore);
+  await expect.element(comment).not.toBeInTheDocument();
+  await page.getByRole("button", { name: "Add comment to citation" }).click();
+  await expect.element(comment).toHaveValue("");
+});
+
+it("deletes an existing citation without removing surrounding spaces", async () => {
+  const editorRef = createRef<ComposerPromptEditorHandle>();
+  await using screen = await render(<Composer question={false} editorRef={editorRef} />);
+  await page.getByRole("button", { name: "Add comment to citation" }).click();
+  await page.getByRole("button", { name: "Delete citation" }).click();
+  await expect
+    .element(page.elementLocator(screen.container.querySelector("output")!))
+    .toHaveAttribute("data-prompt", "See  ");
+});
+
 it("clears the sent prompt when an empty citation comment sends it", async () => {
   const editorRef = createRef<ComposerPromptEditorHandle>();
   await using screen = await render(<Composer question={false} editorRef={editorRef} />);
@@ -162,7 +243,7 @@ it.each(["blocked", "refusedLater"] as const)(
   },
 );
 
-it("cancels a new citation while dictation makes the composer read-only", async () => {
+it("keeps a new citation on Cancel while dictation makes the composer read-only", async () => {
   const editorRef = createRef<ComposerPromptEditorHandle>();
   await using screen = await render(<Composer question={false} editorRef={editorRef} disabled />);
 
@@ -182,5 +263,5 @@ it("cancels a new citation while dictation makes the composer read-only", async 
   await page.getByRole("button", { name: "Cancel" }).click();
 
   await expect.element(page.getByLabelText("Comment on selected text")).not.toBeInTheDocument();
-  expect(screen.container.querySelector("output")?.dataset.prompt).toBe("See ");
+  expect(screen.container.querySelector("output")?.dataset.prompt).toBe(promptBefore);
 });
