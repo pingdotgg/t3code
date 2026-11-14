@@ -1,35 +1,8 @@
 //! Ids, time and randomness, shaped like `IdAllocatorV2` in
 //! `packages/provider-core/src/server/IdAllocator.ts`. Each id helper takes the driver kind.
 
+pub use conn_support::ids::{encode_component, join_id};
 pub use conn_support::{time::iso_from_ms, uuid_v4};
-
-/// `encodeURIComponent`: keeps `A-Z a-z 0-9 - _ . ! ~ * ' ( )`, percent-encodes the rest.
-pub fn encode_component(part: &str) -> String {
-    let mut out = String::with_capacity(part.len());
-    for byte in part.bytes() {
-        let keep = byte.is_ascii_alphanumeric()
-            || matches!(
-                byte,
-                b'-' | b'_' | b'.' | b'!' | b'~' | b'*' | b'\'' | b'(' | b')'
-            );
-        if keep {
-            out.push(byte as char);
-        } else {
-            out.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    out
-}
-
-/// `joinId`: `prefix:part:part`, each part encoded.
-pub fn join_id(prefix: &str, parts: &[&str]) -> String {
-    let mut out = String::from(prefix);
-    for part in parts {
-        out.push(':');
-        out.push_str(&encode_component(part));
-    }
-    out
-}
 
 pub fn provider_thread_id(driver: &str, native_thread_id: &str) -> String {
     join_id(

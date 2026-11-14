@@ -316,6 +316,24 @@ impl Session for FakeSession {
                 ordinal: input.run_ordinal,
             };
             let text = input.message.text.clone();
+            // `write <path> <text>`: writes `<text>\n` to `<path>` in the turn's folder, then
+            // answers as any other message.
+            if let (Some(rest), Some(cwd)) = (
+                text.strip_prefix("write "),
+                conn_contract::to_json(&input.runtime_policy)["cwd"]
+                    .as_str()
+                    .map(std::path::PathBuf::from),
+            ) {
+                let (path, body) = rest.split_once(' ').unwrap_or((rest, ""));
+                let (file, body) = (cwd.join(path), format!("{body}\n"));
+                let _ = tokio::task::spawn_blocking(move || {
+                    if let Some(parent) = file.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    std::fs::write(file, body)
+                })
+                .await;
+            }
             let tx = self.events.clone();
             let mut started = vec![provider_turn(&turn, "running")];
             self.stuck.store(text == "stuck", Ordering::SeqCst);

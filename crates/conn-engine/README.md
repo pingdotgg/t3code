@@ -12,7 +12,8 @@ workspace README describes the trait's first methods and the wire.
 | `EngineConfig::home`                          | `scratch/` and `projects/` folders; defaults to the database folder |
 | `EngineConfig::idle_session`                  | Closes a provider session after 10 idle minutes (its process too)   |
 | `TitleGenerator`, `TitleRequest`, `TitleKind` | `generateTitle` and `regenerateTitle` through a small model         |
-| `TurnObserver`, `TurnPoint`                   | Turn start and end, the hook for git checkpoints                    |
+| `TurnObserver`, `TurnPoint`                   | Turn start and end (`/mcp` touch, VCS refresh)                      |
+| `EngineConfig::checkpoints`                   | Git checkpoints per turn, diffs, rollback (`src/checkpoint.rs`)     |
 
 `calls.rs` lists the tags `call` and `open_stream` serve. The server registers them with their
 contract types (`methods/orchestration.rs`, `methods/projects.rs`), so a result that does not
@@ -55,6 +56,16 @@ The T3 sources are under `apps/server/src/orchestration-v2/` unless a path says 
 all 23 are.
 
 ## Behaviour worth knowing
+
+- **Checkpoints** (`src/checkpoint.rs`, on with `EngineConfig::checkpoints`). A thread has one
+  root scope in its run's folder. Before the provider gets a message the workspace is captured
+  as the baseline (ordinal `run - 1`, 5 s budget). A provider turn that completes leaves the
+  run `waiting`; the capture records the run's checkpoint with its changed files (capped at
+  200 with `filesTotal`, as T3's wire), a `checkpoint` turn item, and completes the run; the
+  parent's wake and the next queued run follow it. Interrupted and cancelled runs are captured
+  too. No git repository: `missing` checkpoints. A restart captures a run left `waiting`.
+  `getTurnDiff` counts completed runs with a ready checkpoint and cuts the patch at 10 MB with
+  T3's marker.
 
 - **Busy thread.** While a run is active, a message queues (`queue_after_active`, or any start)
   or steers (`steer_active`, or the client's `deliveryIntent` steer). A steer before the

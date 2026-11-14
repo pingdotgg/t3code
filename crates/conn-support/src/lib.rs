@@ -5,6 +5,7 @@ pub mod base64;
 pub mod fs;
 pub mod hex;
 pub mod hmac;
+pub mod ids;
 pub mod time;
 
 /// A random version 4 UUID from the OS random source, lowercase and hyphenated, as

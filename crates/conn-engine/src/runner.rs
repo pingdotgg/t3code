@@ -22,7 +22,7 @@ use tokio::{
     time::{Instant, sleep_until},
 };
 
-use crate::commands::{failure, finish_run, hold_queue, start_next_queued};
+use crate::commands::{failure, finish_run_as, hold_queue, start_next_queued};
 use crate::engine::Inner;
 use crate::lock;
 use crate::store::Draft;
@@ -161,20 +161,41 @@ impl Inner {
         let held_on_failure = failure
             .as_ref()
             .is_some_and(|f| f["class"] != "validation_error");
+        let checkpointing = self.checkpoints.is_some();
         let next = self
             .write(move |tx| {
-                finish_run(tx, &thread_id, &run_id, status, failure)?;
+                // A run with a checkpoint scope is captured first (`checkpoint.capture`): a
+                // completed one waits, and what follows its end runs after the capture.
+                let captured = checkpointing
+                    && matches!(status, "completed" | "interrupted" | "cancelled")
+                    && tx
+                        .entity(&thread_id, "runs", &run_id)?
+                        .and_then(|run| run["rootNodeId"].as_str().map(str::to_owned))
+                        .map(|root| tx.entity(&thread_id, "nodes", &root))
+                        .transpose()?
+                        .flatten()
+                        .is_some_and(|node| node["checkpointScopeId"].is_string());
+                let persisted = if captured && status == "completed" {
+                    "waiting"
+                } else {
+                    status
+                };
+                finish_run_as(tx, &thread_id, &run_id, status, persisted, failure)?;
                 // A failure holds the queue, so queued messages do not hit the same wall.
                 if held_on_failure {
                     hold_queue(tx, &thread_id)?;
                 }
+                if captured {
+                    return Ok(None);
+                }
                 let mut effects = crate::families::on_run_end(tx, &thread_id, &run_id)?;
                 effects.extend(start_next_queued(tx, &thread_id, None)?);
-                Ok(effects)
+                Ok(Some(effects))
             })
             .await;
         match next {
-            Ok(effects) => effects.into_iter().for_each(|e| self.spawn_effect(e)),
+            Ok(Some(effects)) => effects.into_iter().for_each(|e| self.spawn_effect(e)),
+            Ok(None) => return self.capture_run(thread, run).await,
             Err(e) => eprintln!("conn-engine: could not end run: {e}"),
         }
         if let Some(observer) = &self.observer {
@@ -437,13 +458,18 @@ impl Inner {
             attempt_id.clone(),
             root.clone(),
         );
-        let still_live = self
+        let checkpoint_cwd = self
+            .checkpoints
+            .as_ref()
+            .and(context.cwd.clone())
+            .filter(|_| context.thread["lineage"]["sideChat"] != true);
+        let started = self
             .write(move |tx| {
                 let Some(mut run) = tx.entity(&tid, "runs", &rid)? else {
-                    return Ok(false);
+                    return Ok(None);
                 };
                 if run["status"] != "starting" {
-                    return Ok(false);
+                    return Ok(None);
                 }
                 let now = tx.now().to_owned();
                 let pt_id = provider_thread_json["id"].clone();
@@ -485,19 +511,34 @@ impl Inner {
                 run["startedAt"] = json!(now);
                 run["activeAttemptId"] = json!(aid);
                 run["providerThreadId"] = pt_id.clone();
-                tx.append(draft("run.updated", run))?;
+                tx.append(draft("run.updated", run.clone()))?;
+                let mut scope = None;
                 if let Some(mut node) = tx.entity(&tid, "nodes", &root_id)? {
+                    if let Some(cwd) = &checkpoint_cwd {
+                        scope = Some(crate::checkpoint::ensure_scope(
+                            tx, &tid, &run, &mut node, &pt_id, cwd,
+                        )?);
+                    }
                     node["status"] = json!("running");
                     node["startedAt"] = json!(now);
                     node["providerThreadId"] = pt_id;
                     tx.append(draft("node.updated", node))?;
                 }
-                Ok(true)
+                Ok(Some(scope))
             })
             .await?;
-        if !still_live {
+        let Some(scope) = started else {
             live.take_active();
             return Err(StartError::Abandoned);
+        };
+        // The baseline holds no change of this turn: the provider has not had the message.
+        if let Some((scope_id, cwd)) = scope {
+            self.capture_baseline(
+                &scope_id,
+                &cwd,
+                context.run["ordinal"].as_u64().unwrap_or(1),
+            )
+            .await;
         }
         if let Some(observer) = &self.observer {
             observer
@@ -1126,7 +1167,7 @@ impl Inner {
     }
 
     /// Tells the observer a run ended, when it started (an attempt exists) and is now final.
-    async fn observe_end(
+    pub(crate) async fn observe_end(
         &self,
         observer: Arc<dyn crate::TurnObserver>,
         thread_id: String,

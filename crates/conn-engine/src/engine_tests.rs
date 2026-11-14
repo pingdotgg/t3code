@@ -2980,3 +2980,6 @@ async fn shutdown_closes_sessions_together_and_opens_no_more() {
         "starting"
     );
 }
+
+#[path = "checkpoint_tests.rs"]
+mod checkpoint_tests;

@@ -31,6 +31,9 @@ const { presentRunStop } = await load("packages/client-runtime/src/state/threadE
 const { derivePendingBackgroundWork } = await load(
   "packages/shared/src/orchestrationV2PendingBackgroundWork.ts",
 );
+const { deriveThreadCheckpointSummaries, checkpointFileTotals } = await load(
+  "packages/client-runtime/src/state/threadCheckpoints.ts",
+);
 const { boundedSnapshotProjection } = await load(
   "packages/shared/src/orchestrationV2BoundedSnapshot.ts",
 );
@@ -290,6 +293,39 @@ check("projects: added and removed at runtime", () => {
   assert.ok(kinds.includes("project.updated") && kinds.includes("project.removed"));
   assert.equal(shell.snapshot.projects.length, 1);
   assert.ok(!shell.snapshot.projects.some((project) => project.id === "project:added"));
+});
+
+// 11. Checkpoints per turn: the client lists each turn's changed files.
+check("checkpoints: each turn shows the files it changed", () => {
+  const { projection, status } = followThread(exported.checkpointItems);
+  assert.equal(status, "live");
+  assert.deepEqual(
+    projection.runs.map((run) => [run.status, run.checkpointId !== null]),
+    [
+      ["completed", true],
+      ["completed", true],
+    ],
+  );
+  const summaries = deriveThreadCheckpointSummaries(projection);
+  assert.deepEqual(
+    summaries.map((s) => [s.checkpointTurnCount, s.status, s.files.map((f) => f.path)]),
+    [
+      [1, "ready", ["a.txt"]],
+      [2, "ready", ["b.txt"]],
+    ],
+  );
+  assert.deepEqual(checkpointFileTotals(summaries[0]), { count: 1, additions: 1, deletions: 0 });
+  assert.ok(
+    summaries.every((s) => s.assistantMessageId !== null),
+    "each turn's reply anchors its changed files",
+  );
+  assert.equal(projection.checkpointScopes.length, 1);
+  assert.equal(projection.checkpointScopes[0].kind, "root_run");
+  const items = projection.turnItems.filter((item) => item.type === "checkpoint");
+  assert.deepEqual(
+    items.map((item) => item.files.map((f) => f.path)),
+    [["a.txt"], ["b.txt"]],
+  );
 });
 
 console.log(`\n${checks} checks passed against the client's own decoders and reducers.`);

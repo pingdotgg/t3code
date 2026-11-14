@@ -11,6 +11,11 @@ use crate::store::{Draft, StoreResult, Tx};
 /// Work that touches a provider. Runs after the command's events are committed.
 #[derive(Debug)]
 pub(crate) enum Effect {
+    /// Captures a run's checkpoint and finishes it (`checkpoint.capture`).
+    CaptureCheckpoint {
+        thread_id: String,
+        run_id: String,
+    },
     StartTurn {
         thread_id: String,
         run_id: String,
@@ -1485,6 +1490,20 @@ pub(crate) fn finish_run(
     status: &str,
     failure: Option<Value>,
 ) -> StoreResult<()> {
+    finish_run_as(tx, thread_id, run_id, status, status, failure)
+}
+
+/// Ends a run's items with `status`, and the run and its root node with `persisted`: a
+/// completed provider turn whose checkpoint is still to be taken persists `waiting`, with no
+/// `completedAt` (`RunExecutionService.ts`).
+pub(crate) fn finish_run_as(
+    tx: &mut Tx<'_>,
+    thread_id: &str,
+    run_id: &str,
+    status: &str,
+    persisted: &str,
+    failure: Option<Value>,
+) -> StoreResult<()> {
     let Some(mut run) = tx.entity(thread_id, "runs", run_id)? else {
         return Ok(());
     };
@@ -1574,14 +1593,23 @@ pub(crate) fn finish_run(
         attempt["completedAt"] = json!(now);
         tx.append(draft("run-attempt.updated", attempt))?;
     }
-    run["status"] = json!(status);
-    run["completedAt"] = json!(now);
+    let completed_at = if persisted == "waiting" {
+        Value::Null
+    } else {
+        json!(now)
+    };
+    run["status"] = json!(persisted);
+    run["completedAt"] = completed_at.clone();
     tx.append(draft("run.updated", run))?;
     if let Some(root) = &root
         && let Some(mut node) = tx.entity(thread_id, "nodes", root)?
     {
-        node["status"] = json!(item_status);
-        node["completedAt"] = json!(now);
+        node["status"] = json!(if persisted == "waiting" {
+            "waiting"
+        } else {
+            item_status
+        });
+        node["completedAt"] = completed_at;
         tx.append(draft("node.updated", node))?;
     }
     tx.compact_streaming(thread_id)

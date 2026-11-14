@@ -17,6 +17,8 @@ pub(crate) const METHODS: &[&str] = &[
     "orchestration.getThreadLinkMetadata",
     "orchestration.getThreadFamily",
     "orchestration.getTurnItem",
+    "orchestration.getTurnDiff",
+    "orchestration.getFullThreadDiff",
     "orchestration.getWorktreeThreadIds",
     "orchestration.getNativeChildWork",
     "orchestration.searchThread",
@@ -138,6 +140,16 @@ pub(crate) async fn call(inner: Arc<Inner>, method: String, input: Value) -> Cal
                     EngineError::Rejected(json!({"_tag": "OrchestrationV2GetThreadProjectionError",
                         "threadId": thread_id, "message": "Failed to load turn item"}))
                 })
+        }
+        "orchestration.getTurnDiff" => {
+            inner
+                .checkpoint_diff(crate::checkpoint::DiffMethod::Turn, input)
+                .await
+        }
+        "orchestration.getFullThreadDiff" => {
+            inner
+                .checkpoint_diff(crate::checkpoint::DiffMethod::FullThread, input)
+                .await
         }
         // Native child work is an Antigravity profile read; no provider here has one.
         "orchestration.getNativeChildWork" => Ok(json!({"children": []})),
