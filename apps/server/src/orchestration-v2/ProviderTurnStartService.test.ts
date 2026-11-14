@@ -1429,6 +1429,7 @@ effectIt.effect("leaves a managed worktree folder without .git that holds user f
       worktreePath,
       worktreesDir,
       fileSystem,
+      path,
       failReadsAfterRunning: true,
     });
     yield* harness.start;
