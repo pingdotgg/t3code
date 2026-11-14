@@ -1107,6 +1107,36 @@ function BrowserAutoShowFloatingPreviewSetting({ disabled }: { readonly disabled
   );
 }
 
+function BrowserAudioMutedSetting({ disabled }: { readonly disabled: boolean }) {
+  const audioMuted = useClientSettings((settings) => settings.browserDefaultAudioMuted);
+  const updateSettings = useUpdateScopedSettings();
+
+  return (
+    <SettingsRow
+      {...searchableSetting("browser-default-audio-muted")}
+      description="Start new browser tabs muted. Unmute a tab from its tab menu."
+      resetAction={
+        !disabled && audioMuted ? (
+          <SettingResetButton
+            label="mute preview tabs by default"
+            onClick={() => updateSettings({ browserDefaultAudioMuted: false })}
+          />
+        ) : null
+      }
+      control={
+        <Switch
+          disabled={disabled}
+          checked={audioMuted}
+          onCheckedChange={(checked) =>
+            updateSettings({ browserDefaultAudioMuted: Boolean(checked) })
+          }
+          aria-label="Mute new browser tabs"
+        />
+      }
+    />
+  );
+}
+
 function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   const userProfiles = useClientSettings((settings) => settings.browserProfiles);
   const defaultProfileId = useClientSettings((settings) => settings.browserDefaultProfileId);
@@ -1592,6 +1622,7 @@ export function BrowserSettingsPanel() {
           <BrowserProfilesSetting disabled={desktopOnly} />
           <BrowserLinkTargetSetting disabled={desktopOnly} />
           <BrowserAutoShowFloatingPreviewSetting disabled={desktopOnly} />
+          <BrowserAudioMutedSetting disabled={desktopOnly} />
         </SettingsUnavailableGroup>
         {/* Not desktop-only: web clients search from server-run browser tabs too. */}
         <BrowserSearchEngineSetting />

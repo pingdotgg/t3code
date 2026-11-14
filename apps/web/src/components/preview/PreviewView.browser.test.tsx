@@ -46,6 +46,7 @@ const STUB_BROWSER_DEFAULTS = {
   zoomFactor: DEFAULT_PREVIEW_ZOOM_FACTOR,
   appearance: DEFAULT_PREVIEW_APPEARANCE,
   autoShowFloatingPreview: true,
+  audioMuted: false,
   profiles: BUILT_IN_BROWSER_PROFILES,
   profileId: DEFAULT_BROWSER_PROFILE_ID,
 };

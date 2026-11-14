@@ -383,6 +383,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
         zoomFactor: defaults?.zoomFactor,
         serverTab: defaults?.serverTab,
         colorScheme: defaults?.colorScheme,
+        audioMuted: defaults?.audioMuted,
       }),
     closeTab: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_CLOSE_TAB_CHANNEL, { tabId }),
     registerWebview: (tabId, webContentsId) =>

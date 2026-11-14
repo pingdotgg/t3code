@@ -544,3 +544,12 @@ describe("server model preferences", () => {
     expect(decodeServerSettingsPatch(input)).toEqual(input);
   });
 });
+
+describe("browserDefaultAudioMuted", () => {
+  it("defaults off and accepts an opt-in", () => {
+    expect(decodeClientSettings({}).browserDefaultAudioMuted).toBe(false);
+    expect(decodeClientSettingsPatch({ browserDefaultAudioMuted: true })).toMatchObject({
+      browserDefaultAudioMuted: true,
+    });
+  });
+});
