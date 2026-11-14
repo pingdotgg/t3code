@@ -1,6 +1,6 @@
 // @effect-diagnostics globalTimers:off globalDate:off - The tracker runs in atom subscriptions, outside an Effect runtime.
 import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
-import { Atom } from "effect/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 
 import { parseThreadKey, threadKey } from "./entities.ts";
 import { type AtomCommand, runAtomCommand } from "./runtime.ts";
@@ -75,6 +75,7 @@ export function createThreadVisitTracker(options: ThreadVisitTrackerOptions) {
 
       const dispatch = (shell: VisitedShell, visitedAt: string, opened: boolean) => {
         clearTimer();
+        const previousDispatchedUpdatedAt = lastDispatchedUpdatedAt;
         lastDispatchedUpdatedAt = visitedAt;
         lastDispatchAt = Date.now();
         void runAtomCommand(
@@ -89,7 +90,14 @@ export function createThreadVisitTracker(options: ThreadVisitTrackerOptions) {
             },
           },
           { reportFailure: false },
-        );
+        ).then((result) => {
+          if (!AsyncResult.isFailure(result)) return;
+          // The server never heard it, so the next shell update (such as the
+          // reconnect snapshot) retries; a newer dispatch already covers it.
+          if (opened) openPending = true;
+          if (lastDispatchedUpdatedAt === visitedAt)
+            lastDispatchedUpdatedAt = previousDispatchedUpdatedAt;
+        });
       };
 
       const onShell = (shell: VisitedShell | null) => {

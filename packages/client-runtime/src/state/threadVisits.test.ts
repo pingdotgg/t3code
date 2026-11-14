@@ -1,4 +1,5 @@
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
@@ -190,4 +191,50 @@ it("advances the watermark to a wake without waiting for the throttle", () => {
   vi.advanceTimersByTime(1_000);
   t.update({ updatedAt: at(16) });
   expect(t.visits).toHaveLength(2);
+});
+
+it("retries a failed visit when the same shell returns after reconnect", async () => {
+  vi.useFakeTimers({ now: Date.UTC(2026, 0, 1) });
+  try {
+    const ref = { environmentId, threadId: ThreadId.make("thread-retry-failed-write") };
+    const shell: Shell = {
+      environmentId,
+      id: ref.threadId,
+      updatedAt: at(10),
+      lastVisitedAt: at(0),
+      latestRun: null,
+    };
+    const shellAtom = Atom.make<Shell | null>(shell);
+    const accepted: VisitThreadInput[] = [];
+    const attempts: VisitThreadInput[] = [];
+    let connected = false;
+    const tracker = createThreadVisitTracker({
+      threadShellAtom: () => shellAtom,
+      visit: {
+        label: "test-failed-visit",
+        run: async (_registry, value) => {
+          attempts.push(value.input);
+          if (!connected) return AsyncResult.failure(Cause.fail("disconnected"));
+          accepted.push(value.input);
+          return AsyncResult.success(undefined);
+        },
+      },
+    });
+    const registry = AtomRegistry.make();
+    const unmount = registry.mount(tracker(ref));
+    try {
+      await vi.advanceTimersByTimeAsync(VISIT_DISPATCH_THROTTLE_MS);
+      expect(attempts).toHaveLength(1);
+      expect(accepted).toEqual([]);
+      connected = true;
+      registry.set(shellAtom, { ...shell });
+      await vi.advanceTimersByTimeAsync(VISIT_DISPATCH_THROTTLE_MS);
+      expect(accepted).toEqual([{ threadId: ref.threadId, visitedAt: at(10), opened: true }]);
+    } finally {
+      unmount();
+      registry.dispose();
+    }
+  } finally {
+    vi.useRealTimers();
+  }
 });
