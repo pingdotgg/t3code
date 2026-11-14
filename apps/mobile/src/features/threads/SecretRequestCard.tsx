@@ -22,7 +22,8 @@ import type {
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useRef, useState } from "react";
-import { View, type ColorValue } from "react-native";
+import { ScrollView, View, type ColorValue } from "react-native";
+import Animated, { useAnimatedStyle, type DerivedValue } from "react-native-reanimated";
 
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
@@ -40,6 +41,7 @@ export function SecretRequestCard(props: {
   readonly environmentId: EnvironmentId;
   readonly projectedItem: OrchestrationV2ProjectedTurnItem;
   readonly iconColor: ColorValue;
+  readonly maxHeight: DerivedValue<number>;
 }) {
   const { item, visibility } = props.projectedItem;
   if (item.type !== "secret_request") return null;
@@ -50,6 +52,7 @@ export function SecretRequestCard(props: {
         environmentId={props.environmentId}
         item={item}
         iconColor={props.iconColor}
+        maxHeight={props.maxHeight}
       />
     );
   }
@@ -73,8 +76,10 @@ function PendingSecretRequestForm(props: {
   readonly environmentId: EnvironmentId;
   readonly item: SecretRequestItem;
   readonly iconColor: ColorValue;
+  readonly maxHeight: DerivedValue<number>;
 }) {
-  const { item } = props;
+  const { item, maxHeight } = props;
+  const heightStyle = useAnimatedStyle(() => ({ maxHeight: maxHeight.value }));
   const answer = useAtomCommand(serverEnvironment.answerSecretRequest, {
     label: "answer secret request",
     // The failure cause holds the request; keep it out of the console.
@@ -124,123 +129,136 @@ function PendingSecretRequestForm(props: {
   const link = secretRequestLink(item);
 
   return (
-    <View className="mb-3 gap-3 rounded-[20px] border border-border bg-card-alt p-4">
-      <View className="gap-1">
-        <Text className="font-t3-bold text-base text-foreground">{item.label}</Text>
-        {item.reason.trim() ? (
-          <Text className="font-sans text-sm leading-5 text-foreground-muted" selectable>
-            {item.reason}
-          </Text>
-        ) : null}
-      </View>
-      {link !== null ? (
-        <View className="gap-1.5">
-          <Button
-            label={`Open ${link.host}`}
-            tone="secondary"
-            fullWidth
-            onPress={() => void tryOpenExternalUrl(link.href, "secret-request")}
-          />
-          {/* A link found in the reason is already shown there. */}
-          {item.url !== undefined ? (
-            <Text selectable className="font-mono text-xs text-foreground-muted">
-              {item.url}
+    <Animated.View
+      className="mb-3 overflow-hidden rounded-[20px] border border-border bg-card-alt"
+      style={heightStyle}
+    >
+      <ScrollView
+        bounces={false}
+        className="min-h-0"
+        contentContainerClassName="gap-3 p-4"
+        keyboardShouldPersistTaps="handled"
+        nestedScrollEnabled
+        showsVerticalScrollIndicator
+        style={{ flexShrink: 1 }}
+      >
+        <View className="gap-1">
+          <Text className="font-t3-bold text-base text-foreground">{item.label}</Text>
+          {item.reason.trim() ? (
+            <Text className="font-sans text-sm leading-5 text-foreground-muted" selectable>
+              {item.reason}
             </Text>
           ) : null}
         </View>
-      ) : null}
-      {sources.length > 0 ? (
-        <View className="flex-row flex-wrap gap-2">
-          <Chip
-            label="Value"
-            size="small"
-            selected={source === null}
-            disabled={submitting}
-            onPress={() => {
-              setSourceId(null);
-              setError(null);
-            }}
-          />
-          {sources.map((candidate) => (
+        {link !== null ? (
+          <View className="gap-1.5">
+            <Button
+              label={`Open ${link.host}`}
+              tone="secondary"
+              fullWidth
+              onPress={() => void tryOpenExternalUrl(link.href, "secret-request")}
+            />
+            {/* A link found in the reason is already shown there. */}
+            {item.url !== undefined ? (
+              <Text selectable className="font-mono text-xs text-foreground-muted">
+                {item.url}
+              </Text>
+            ) : null}
+          </View>
+        ) : null}
+        {sources.length > 0 ? (
+          <View className="flex-row flex-wrap gap-2">
             <Chip
-              key={candidate.id}
-              label={candidate.label}
+              label="Value"
               size="small"
-              selected={candidate.id === source?.id}
+              selected={source === null}
               disabled={submitting}
               onPress={() => {
-                setSourceId(candidate.id);
+                setSourceId(null);
                 setError(null);
               }}
             />
-          ))}
-        </View>
-      ) : null}
-      {source === null ? (
-        <SecretTextInput
-          accessibilityLabel={item.label}
-          placeholder={item.placeholder ?? SECRET_REQUEST_DEFAULT_PLACEHOLDER}
-          value={secret}
-          onChangeText={setSecret}
-          editable={!submitting}
-          onSubmitEditing={(value) => void send({ type: "save", secret: value })}
-        />
-      ) : (
-        <TextInput
-          key={source.id}
-          accessibilityLabel={`${item.label} reference in ${source.label}`}
-          placeholder={source.referencePlaceholder}
-          value={reference}
-          onChangeText={(next) => {
-            setReference(next);
-            setError(null);
-          }}
-          editable={!submitting}
-          autoCorrect={false}
-          autoCapitalize="none"
-          autoComplete="off"
-          textContentType="none"
-          importantForAutofill="no"
-          spellCheck={false}
-          returnKeyType="done"
-          onSubmitEditing={save}
-        />
-      )}
-      {error !== null ? (
-        <Text
-          accessibilityRole="alert"
-          accessibilityLiveRegion="polite"
-          className="font-sans text-sm text-danger-foreground"
-        >
-          {error}
-        </Text>
-      ) : null}
-      <Button
-        label="Save securely"
-        tone="primary"
-        fullWidth
-        disabled={submitting || draft.trim().length === 0}
-        onPress={save}
-      />
-      <View className="flex-row items-center justify-between gap-2">
-        <View className="flex-1 flex-row items-center gap-1.5">
-          <SymbolView
-            name={PRIVATE_SYMBOL}
-            size={13}
-            tintColor={props.iconColor}
-            type="monochrome"
+            {sources.map((candidate) => (
+              <Chip
+                key={candidate.id}
+                label={candidate.label}
+                size="small"
+                selected={candidate.id === source?.id}
+                disabled={submitting}
+                onPress={() => {
+                  setSourceId(candidate.id);
+                  setError(null);
+                }}
+              />
+            ))}
+          </View>
+        ) : null}
+        {source === null ? (
+          <SecretTextInput
+            accessibilityLabel={item.label}
+            placeholder={item.placeholder ?? SECRET_REQUEST_DEFAULT_PLACEHOLDER}
+            value={secret}
+            onChangeText={setSecret}
+            editable={!submitting}
+            onSubmitEditing={(value) => void send({ type: "save", secret: value })}
           />
-          <Text className="flex-1 font-sans text-xs text-foreground-muted">
-            {secretRequestPrivacyNote(item)}
+        ) : (
+          <TextInput
+            key={source.id}
+            accessibilityLabel={`${item.label} reference in ${source.label}`}
+            placeholder={source.referencePlaceholder}
+            value={reference}
+            onChangeText={(next) => {
+              setReference(next);
+              setError(null);
+            }}
+            editable={!submitting}
+            autoCorrect={false}
+            autoCapitalize="none"
+            autoComplete="off"
+            textContentType="none"
+            importantForAutofill="no"
+            spellCheck={false}
+            returnKeyType="done"
+            onSubmitEditing={save}
+          />
+        )}
+        {error !== null ? (
+          <Text
+            accessibilityRole="alert"
+            accessibilityLiveRegion="polite"
+            className="font-sans text-sm text-danger-foreground"
+          >
+            {error}
           </Text>
-        </View>
+        ) : null}
         <Button
-          label="Decline"
-          tone="text"
-          disabled={submitting}
-          onPress={() => void send({ type: "decline" })}
+          label="Save securely"
+          tone="primary"
+          fullWidth
+          disabled={submitting || draft.trim().length === 0}
+          onPress={save}
         />
-      </View>
-    </View>
+        <View className="flex-row items-center justify-between gap-2">
+          <View className="flex-1 flex-row items-center gap-1.5">
+            <SymbolView
+              name={PRIVATE_SYMBOL}
+              size={13}
+              tintColor={props.iconColor}
+              type="monochrome"
+            />
+            <Text className="flex-1 font-sans text-xs text-foreground-muted">
+              {secretRequestPrivacyNote(item)}
+            </Text>
+          </View>
+          <Button
+            label="Decline"
+            tone="text"
+            disabled={submitting}
+            onPress={() => void send({ type: "decline" })}
+          />
+        </View>
+      </ScrollView>
+    </Animated.View>
   );
 }

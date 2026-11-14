@@ -1078,6 +1078,7 @@ function ThreadDetailBody(
       // An in-flow question shares the room above it with the floating control.
       composerOverlapHeight:
         composerBottomInset +
+        controlInsets.bottom +
         (questionInFlow && showFloatingStatus ? FLOATING_WORKING_CONTROL_COVERAGE : 0),
     }),
   );
@@ -1175,6 +1176,14 @@ function ThreadDetailBody(
       combinedContentInsetEndAdjustment.set(value);
     },
     [questionInFlow, userInputCoverageApplies],
+  );
+  const secretRequestMaxHeight = useDerivedValue(() =>
+    derivePendingUserInputMaxHeight({
+      windowHeight: screenAreaHeight,
+      keyboardHeight: keyboardStickyEnabled ? -keyboardTranslation.value : 0,
+      navigationHeaderHeight,
+      composerOverlapHeight: combinedContentInsetEndAdjustment.value + controlInsets.bottom,
+    }),
   );
   const composerPopoverLift = useDerivedValue(() =>
     withTiming(
@@ -1518,6 +1527,7 @@ function ThreadDetailBody(
                   jumpToMessageId={jumpMessageLoaded ? jumpMessageId : null}
                   onJumpedToMessage={() => finishThreadMessageJump(selectedThreadKey)}
                   contentInsetEndAdjustment={combinedContentInsetEndAdjustment}
+                  secretRequestMaxHeight={secretRequestMaxHeight}
                   keyboardOffset={composerKeyboardOffset}
                   sendingWithKeyboard={sendingWithKeyboard}
                   fitShortFeedToViewport={questionInFlow && !isKeyboardVisible}
