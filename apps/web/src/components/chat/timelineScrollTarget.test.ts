@@ -20,8 +20,13 @@ class ScrollElement extends EventTarget {
   }
 }
 
-function targetsTimeline(target: EventTarget | null, timeline: ScrollElement, deltaY: number) {
-  return isTimelineScrollTarget(target, timeline as unknown as HTMLElement, deltaY);
+function targetsTimeline(
+  target: EventTarget | null,
+  timeline: ScrollElement,
+  deltaY: number,
+  wheel?: { deltaX: number; shiftKey: boolean },
+) {
+  return isTimelineScrollTarget(target, timeline as unknown as HTMLElement, deltaY, wheel);
 }
 
 function setup() {
@@ -46,37 +51,15 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("timeline scroll targets", () => {
-  it("retains vertical wheel and keyboard scroll intent", () => {
-    const { timeline } = setup();
-    const content = new ScrollElement(timeline);
-    expect(
-      isTimelineScrollTarget(content, timeline as unknown as HTMLElement, -30, {
-        deltaX: 5,
-        shiftKey: false,
-      }),
-    ).toBe(true);
-    expect(targetsTimeline(content, timeline, -30)).toBe(true);
-    expect(
-      isTimelineScrollTarget(content, timeline as unknown as HTMLElement, 0, {
-        deltaX: 80,
-        shiftKey: false,
-      }),
-    ).toBe(false);
-  });
   it.each([
-    { deltaX: 80, deltaY: -30, shiftKey: false },
-    { deltaX: -80, deltaY: 30, shiftKey: false },
-    { deltaX: 0, deltaY: -30, shiftKey: true },
-  ])("keeps horizontal gestures from releasing timeline follow: %j", (gesture) => {
+    { deltaX: 5, deltaY: -30, shiftKey: false, targets: true },
+    { deltaX: 80, deltaY: -30, shiftKey: false, targets: false },
+    { deltaX: -80, deltaY: 30, shiftKey: false, targets: false },
+    { deltaX: 0, deltaY: -30, shiftKey: true, targets: false },
+  ])("leaves sideways wheel gestures out of the timeline: %j", ({ targets, ...wheel }) => {
     const { timeline } = setup();
     const table = new ScrollElement(timeline);
-    const targets = isTimelineScrollTarget(
-      table,
-      timeline as unknown as HTMLElement,
-      gesture.deltaY,
-      gesture,
-    );
-    expect(targets).toBe(false);
+    expect(targetsTimeline(table, timeline, wheel.deltaY, wheel)).toBe(targets);
   });
 
   it.each([-30, 30])("keeps a nested tool group's scroll out of the timeline: %i", (deltaY) => {
