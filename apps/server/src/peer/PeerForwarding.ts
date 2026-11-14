@@ -1,6 +1,8 @@
 import {
   type EnvironmentId,
   OrchestratorMcpFailure,
+  type RunId,
+  type ThreadId,
   type OrchestratorMcpEnvironmentLinksResult,
   OrchestratorMcpThreadInterruptInput,
   OrchestratorMcpThreadInterruptResult,
@@ -21,6 +23,7 @@ import type * as Tool from "effect/ai/Tool";
 import { assertNotLinked } from "../mcp/linkOrigin.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { readCaller, unavailable } from "../mcp/threadAccess.ts";
+import { ThreadToolkit } from "../mcp/toolkits/thread/tools.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 import * as PeerMcpClient from "./PeerMcpClient.ts";
@@ -67,6 +70,12 @@ export class PeerForwarding extends Context.Service<
       environmentId: EnvironmentId,
       input: OrchestratorMcpThreadInterruptInput,
     ) => Effect.Effect<OrchestratorMcpThreadInterruptResult, OrchestratorMcpFailure>;
+    /** `t3_queue` `cancel` there, which fails once the run is no longer queued. */
+    readonly cancelQueuedRun: (
+      scope: Scope,
+      environmentId: EnvironmentId,
+      input: { readonly threadId: ThreadId; readonly queuedRunId: RunId },
+    ) => Effect.Effect<void, OrchestratorMcpFailure>;
     /** `t3_thread_wait` there, in pieces short enough to survive any route. */
     readonly waitForThread: (
       scope: Scope,
@@ -188,6 +197,21 @@ const make = Effect.gen(function* () {
       input,
     );
 
+  const queueTool = ThreadToolkit.tools.t3_queue;
+  const cancelQueuedRun: PeerForwarding["Service"]["cancelQueuedRun"] = (
+    scope,
+    environmentId,
+    input,
+  ) =>
+    forward(
+      scope,
+      queueTool.name,
+      queueTool.parametersSchema,
+      queueTool.successSchema,
+      environmentId,
+      { action: "cancel", ...input } satisfies Tool.Parameters<typeof queueTool>,
+    ).pipe(Effect.asVoid);
+
   const waitForThread: PeerForwarding["Service"]["waitForThread"] = Effect.fn(
     "PeerForwarding.waitForThread",
   )(function* (scope, environmentId, input) {
@@ -221,7 +245,8 @@ const make = Effect.gen(function* () {
   });
 
   // While the beta is off, agents start nothing over links. Tasks already running there keep
-  // following through readThread, waitForThread and interruptThread, so they still finish.
+  // following through readThread, waitForThread, interruptThread and cancelQueuedRun, so they
+  // still finish.
   const requireEnabled = links.enabled.pipe(
     Effect.flatMap((enabled) => (enabled ? Effect.void : Effect.fail(linkedEnvironmentsOff))),
   );
@@ -276,6 +301,7 @@ const make = Effect.gen(function* () {
     call,
     readThread,
     interruptThread,
+    cancelQueuedRun,
     waitForThread,
     links: listLinks,
   });

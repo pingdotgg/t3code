@@ -109,9 +109,10 @@ export class RemoteDelegation extends Context.Service<
       sent: OrchestratorMcpThreadSendResult,
     ) => Effect.Effect<OrchestratorMcpThreadSendResult, OrchestratorMcpFailure>;
     /**
-     * Stops the task's thread there, then completes it here as cancelled. A
-     * task that already has its result keeps it; its thread there is still
-     * stopped, as cancelling a local task stops follow-up work on its child.
+     * Stops the task's work there, then completes it here as cancelled: a
+     * queued run alone, else its thread. A task that already has its result
+     * keeps it; its thread there is still stopped, as cancelling a local task
+     * stops follow-up work on its child.
      */
     readonly cancel: (
       scope: ThreadScope,
@@ -582,25 +583,54 @@ const make = Effect.gen(function* () {
     issuedAt: 0,
   });
 
+  /** The task's run there, or undefined when it cannot be read or is no longer listed. */
+  const runThere = (scope: ThreadScope, remote: OrchestrationV2RemoteTaskChild) =>
+    remote.runId === undefined
+      ? Effect.undefined
+      : forwarding
+          .readThread(scope, remote.environmentId, {
+            threadId: remote.threadId,
+            limit: 1,
+            runLimit: 50,
+          })
+          .pipe(
+            Effect.map((read) => read.recentRuns.find((run) => run.runId === remote.runId)),
+            Effect.orElseSucceed(() => undefined),
+          );
+
   /**
-   * Stops the task's own thread there as its Stop button does: its running turn, queued
-   * messages, pull request watches and delegated tasks. `key` names the stop (the follower
-   * sends one, each cancel its own), and each is recorded there once however often it is sent.
+   * Stops the task's own work there: a queued run alone, since other tasks may share the thread,
+   * nothing for one that ended unstarted, else the thread as its Stop button does. `key` names
+   * the stop (the follower sends one, each cancel its own); each is recorded there once.
    */
-  const stopThere = (
+  const stopThere = Effect.fn("RemoteDelegation.stopThere")(function* (
     scope: ThreadScope,
     remote: OrchestrationV2RemoteTaskChild,
     key: string,
     reason?: string,
-  ) =>
-    forwarding
-      .interruptThread(scope, remote.environmentId, {
-        threadId: remote.threadId,
-        stop: true,
-        ...(reason === undefined ? {} : { reason }),
-        clientRequestId: `${key}:${remote.threadId}`,
-      })
-      .pipe(Effect.asVoid);
+  ) {
+    const run = yield* runThere(scope, remote);
+    if (run !== undefined && run.startedAt === null && isTerminal(run.status)) return;
+    if (run?.status === "queued") {
+      const cancelled = yield* forwarding
+        .cancelQueuedRun(scope, remote.environmentId, {
+          threadId: remote.threadId,
+          queuedRunId: run.runId,
+        })
+        .pipe(
+          Effect.as(true),
+          // It started since, so it is stopped as a running task is.
+          Effect.orElseSucceed(() => false),
+        );
+      if (cancelled) return;
+    }
+    yield* forwarding.interruptThread(scope, remote.environmentId, {
+      threadId: remote.threadId,
+      stop: true,
+      ...(reason === undefined ? {} : { reason }),
+      clientRequestId: `${key}:${remote.threadId}`,
+    });
+  });
 
   /**
    * The last reply `runId` gave on the task's thread there, which is its
@@ -986,19 +1016,14 @@ const make = Effect.gen(function* () {
     },
   );
 
-  const runStatus = Effect.fn("RemoteDelegation.runStatus")(
-    function* (scope: ThreadScope, task: OrchestrationV2Subagent) {
-      const remote = task.remoteChild;
-      if (remote?.runId === undefined) return null;
-      const read = yield* forwarding.readThread(
-        followScope(scope.thread, remote),
-        remote.environmentId,
-        { threadId: remote.threadId, limit: 1, runLimit: 50 },
-      );
-      return read.recentRuns.find((run) => run.runId === remote.runId)?.status ?? null;
-    },
-    Effect.orElseSucceed(() => null),
-  );
+  const runStatus = Effect.fn("RemoteDelegation.runStatus")(function* (
+    scope: ThreadScope,
+    task: OrchestrationV2Subagent,
+  ) {
+    const remote = task.remoteChild;
+    if (remote === undefined) return null;
+    return (yield* runThere(followScope(scope.thread, remote), remote))?.status ?? null;
+  });
 
   const start: RemoteDelegation["Service"]["start"] = () =>
     forkParked(
