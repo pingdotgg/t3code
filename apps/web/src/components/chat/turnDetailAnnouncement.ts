@@ -106,7 +106,7 @@ export function turnDetail(
     if (entry.kind === "work") {
       const work = entry.entry;
       if (work.sourceActivityKind === "context-compaction") {
-        activity ??= null;
+        activity ??= work.toolLifecycleStatus === "inProgress" ? work.label : null;
         continue;
       }
       // Notices, todo lists and checkpoints sit beside the turn's steps without being one.

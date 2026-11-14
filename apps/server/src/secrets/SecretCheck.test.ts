@@ -228,7 +228,7 @@ it.layer(layerTest)("SecretCheck", (it) => {
         ]);
         assert.deepStrictEqual(server.refreshed, [dependent]);
         assert.deepStrictEqual(yield* server.registry.listUnavailable, []);
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect("an unreadable secret fails naming its provider and leaves instances alone", () =>
@@ -250,7 +250,7 @@ it.layer(layerTest)("SecretCheck", (it) => {
         (yield* server.registry.listUnavailable).map((entry) => entry.instanceId),
         [dependent],
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("a failed check keeps the value the server already holds", () =>
@@ -267,7 +267,7 @@ it.layer(layerTest)("SecretCheck", (it) => {
 
       assert.deepStrictEqual(yield* server.resolver.read([locked]), ["locked-key"]);
       assert.deepStrictEqual(server.reads.slice(readsBefore), [locked.reference]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("a check applies to an instance whose other secret failed a later refresh", () =>
@@ -289,7 +289,7 @@ it.layer(layerTest)("SecretCheck", (it) => {
         secrets: ["wanted-new", "locked-key"],
       });
       assert.deepStrictEqual(yield* server.registry.listUnavailable, []);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("a check applies the value it read when a refresh re-reads that secret first", () =>
@@ -358,6 +358,6 @@ it.layer(layerTest)("SecretCheck", (it) => {
       assert.deepStrictEqual(server.createdConfigs.at(-1), {
         keys: { a: "wanted-new", b: "locked-key" },
       });
-    }).pipe(Effect.scoped),
+    }),
   );
 });
