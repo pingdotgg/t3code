@@ -18,6 +18,21 @@ const LOCKED_RENAME_RETRIES = 20;
 const LOCKED_RENAME_RETRY_DELAY = "100 millis";
 const CHUNK_WRITE_LENGTH = 1 << 20;
 
+// Saves keep the replaced file's mode and create new files owner-only; chmod, since the umask narrows an open mode.
+const replacedMode = (fs: FileSystem.FileSystem, targetPath: string) =>
+  fs.stat(targetPath).pipe(
+    Effect.map((info) => info.mode & 0o777),
+    Effect.catchIf(
+      (error) => error.reason._tag === "NotFound",
+      () => Effect.succeed(0o600),
+    ),
+  );
+
+const isUnsupportedSync = (error: PlatformError.PlatformError) => {
+  const code = (error.reason.cause as NodeJS.ErrnoException | undefined)?.code;
+  return code === "EINVAL" || code === "ENOTSUP" || code === "ENOSYS";
+};
+
 /** Resolves symlink targets before renaming so writes preserve the link. Iterable contents stream in bounded batches. */
 export const writeFileStringAtomically = (input: {
   readonly filePath: string;
@@ -42,15 +57,17 @@ export const writeFileStringAtomically = (input: {
       );
       const tempPath = path.join(tempDirectory, "contents.tmp");
 
-      const contents = input.contents;
-      if (typeof contents === "string") {
-        yield* fs.writeFileString(tempPath, contents);
-      } else {
-        // Closed before the rename, which Windows refuses for open files.
-        yield* Effect.scoped(
-          Effect.gen(function* () {
-            const file = yield* fs.open(tempPath, { flag: "w" });
-            const encoder = new TextEncoder();
+      // One write-only handle: a reopen fails when the umask or the chmod drops access.
+      // Without the sync, a crash soon after the rename can leave the target empty.
+      // Closed before the rename, which Windows refuses for open files.
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const file = yield* fs.open(tempPath, { flag: "w" });
+          const encoder = new TextEncoder();
+          const contents = input.contents;
+          if (typeof contents === "string") {
+            yield* file.writeAll(encoder.encode(contents));
+          } else {
             let batch: string[] = [];
             let batchLength = 0;
             for (const chunk of contents) {
@@ -62,10 +79,26 @@ export const writeFileStringAtomically = (input: {
               batchLength = 0;
             }
             if (batchLength > 0) yield* file.writeAll(encoder.encode(batch.join("")));
-          }),
+          }
+          if (platform !== "win32") {
+            yield* fs.chmod(tempPath, yield* replacedMode(fs, targetPath));
+          }
+          yield* file.sync;
+        }),
+      );
+      if (platform !== "win32") {
+        yield* fs.rename(tempPath, targetPath);
+        // Persists the rename. A directory without read access cannot be opened to sync, and
+        // replacing in one needs only write and search access, so that save stands.
+        return yield* fs.open(targetDirectory, { flag: "r" }).pipe(
+          Effect.flatMap((directory) => directory.sync),
+          Effect.scoped,
+          Effect.catchIf(
+            (error) => error.reason._tag === "PermissionDenied" || isUnsupportedSync(error),
+            (error) => Effect.logWarning(error),
+          ),
         );
       }
-      if (platform !== "win32") return yield* fs.rename(tempPath, targetPath);
 
       // Stop retrying if another save changes the target; read-only targets also return permanent EPERM.
       const targetVersion = fs.stat(targetPath).pipe(
