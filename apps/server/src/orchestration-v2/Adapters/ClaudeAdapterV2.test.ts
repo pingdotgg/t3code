@@ -681,6 +681,39 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
   });
 });
 
+describe("ClaudeAdapterV2 SDK warnings", () => {
+  it("drops only the SDK's canUseTool shadowing warning while opening a query", async () => {
+    using emitWarning = vi.spyOn(process, "emitWarning").mockImplementation(() => {});
+    for (const options of [
+      { permissionMode: "default", allowedTools: [ClaudeAdapterV2.CLAUDE_T3_MCP_TOOL_WILDCARD] },
+      { permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true },
+    ] satisfies ReadonlyArray<ClaudeSdk.Options>) {
+      const query = ClaudeAdapterV2.withoutClaudeCanUseToolShadowedWarning(() =>
+        ClaudeSdk.query({
+          prompt: "",
+          options: {
+            ...options,
+            canUseTool: async (_toolName, input) => ({ behavior: "allow", updatedInput: input }),
+            pathToClaudeCodeExecutable: "/nonexistent/claude",
+          },
+        }),
+      );
+      await query.next().catch(() => undefined);
+    }
+    ClaudeAdapterV2.withoutClaudeCanUseToolShadowedWarning(() =>
+      process.emitWarning("unrelated", { code: "UNRELATED_WARNING" }),
+    );
+
+    assert.deepEqual(
+      emitWarning.mock.calls.map(([, options]) =>
+        typeof options === "object" ? options.code : options,
+      ),
+      ["UNRELATED_WARNING"],
+    );
+    assert.strictEqual<unknown>(process.emitWarning, emitWarning);
+  });
+});
+
 describe("ClaudeAdapterV2 native protocol logging", () => {
   it("injects thread-scoped MCP configuration without logging the credential", () => {
     const threadId = ThreadId.make("thread-claude-mcp");
