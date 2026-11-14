@@ -1563,7 +1563,7 @@ function zenAnswerMessageIds(
 ): ReadonlySet<MessageId> {
   const replies: Array<{ readonly message: ThreadFeedMessage; readonly index: number }> = [];
   const lastReplyByResponse = new Map<string, MessageId>();
-  const keptAnswers = finalAnswerIds(feed);
+  const keptAnswers = new Set(finalAnswerIds(feed));
   const askReplies = repliesBeforeAsks(feed, start);
   let userMessages = 0;
   let awaitingReply = false;
