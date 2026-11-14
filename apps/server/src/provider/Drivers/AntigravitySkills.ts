@@ -227,6 +227,25 @@ const scanSkillDirectories = Effect.fn("scanAntigravitySkillDirectories")(functi
   return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
 });
 
+const readJsonFile = Effect.fn("readAntigravityPluginConfig")(function* (
+  filePath: string,
+  budget: ScanBudget,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const info = yield* readIfPresent(fileSystem.stat(filePath), filePath);
+  if (info?.type !== "File") return undefined;
+  if (info.size > BigInt(Math.min(MAX_SKILL_BYTES, budget.remainingBytes))) {
+    return yield* new AntigravitySkillsProbeError({
+      reason: "scan-budget-exhausted",
+      path: filePath,
+    });
+  }
+  const contents = yield* readIfPresent(fileSystem.readFileString(filePath), filePath);
+  if (contents === undefined) return undefined;
+  budget.remainingBytes -= Buffer.byteLength(contents);
+  return contents;
+});
+
 const PluginManifest = Schema.fromJsonString(
   Schema.Struct({ disabled: Schema.optional(Schema.Boolean) }),
 );
@@ -263,7 +282,7 @@ const discoverAntigravityPlugins = Effect.fn("discoverAntigravityPlugins")(funct
   }
   budget.remainingEntries -= entries.length;
   const preferencesPath = path.join(config, "config.json");
-  const preferencesContents = yield* readSkill(preferencesPath, budget);
+  const preferencesContents = yield* readJsonFile(preferencesPath, budget);
   const preferences =
     preferencesContents === undefined
       ? { plugins: {} }
@@ -287,7 +306,7 @@ const discoverAntigravityPlugins = Effect.fn("discoverAntigravityPlugins")(funct
     const enabled = preferences.plugins?.[entry]?.enabled;
     if (enabled === false) continue;
     const manifestPath = path.join(pluginDirectory, "plugin.json");
-    const contents = yield* readSkill(manifestPath, budget);
+    const contents = yield* readJsonFile(manifestPath, budget);
     if (contents === undefined) continue;
     const manifest = yield* decodePluginManifest(contents).pipe(
       Effect.catchTags({

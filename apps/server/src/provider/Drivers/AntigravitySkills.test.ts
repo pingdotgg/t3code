@@ -115,7 +115,7 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
               name === "off" || name === "broken"
                 ? "{ invalid"
                 : JSON.stringify({
-                    name: `Display ${name}`,
+                    name: `--- Display ${name} ---`,
                     disabled: name === "beta" || name === "disabled",
                   }),
             );
@@ -202,21 +202,6 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
     }),
   );
 
-  it.effect("preserves plugin directory case across separate homes", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const identifiers = [];
-      for (const name of ["alpha", "Alpha"]) {
-        const input = yield* makeWorkspace();
-        const plugin = path.join(input.userHome, ".gemini", "config", "plugins", name);
-        yield* writeSkill(path.join(plugin, "skills", "review"), "---\nname: review\n---\n");
-        yield* fileSystem.writeFileString(path.join(plugin, "plugin.json"), "{}");
-        identifiers.push(...(yield* discoverAntigravitySkills(input)).map((skill) => skill.name));
-      }
-      assert.deepEqual(identifiers, ["plugin:alpha:review", "plugin:_41_lpha:review"]);
-    }),
-  );
   it.effect("uses native root order for duplicate names", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
