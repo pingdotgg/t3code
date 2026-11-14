@@ -173,8 +173,20 @@ describe("server browser element refs", () => {
     const hidden = await failure("button");
     expect(hidden.tag).toBe("PreviewAutomationTimeoutError");
     expect(hidden.message).toBe(
-      'The click may have happened; check the page before retrying. "button" still matches an element after the timeout.',
+      'The click may have happened; check the page before retrying. "button" still matches an element after the timeout. Playwright last saw: element is not visible.',
     );
+  });
+
+  it("gives a late target only the click's remaining time, not a fresh timeout", async () => {
+    await page.setContent(`<script>
+      setTimeout(() => document.body.insertAdjacentHTML("beforeend",
+        '<button id="save" disabled onclick="document.body.dataset.clicked = 1">Save</button>'), 1000);
+      setTimeout(() => document.querySelector("#save").disabled = false, 2500);
+    </script>`);
+    await expect(
+      ServerBrowserPage.click(page, { selector: "#save", timeoutMs: 2_000 }),
+    ).rejects.toThrow();
+    expect(await page.locator("body").getAttribute("data-clicked")).toBeNull();
   });
 
   it("does not retarget a removed ref to a replacement node", async () => {
@@ -610,6 +622,67 @@ describe("server browser drag", () => {
   });
 });
 
+describe("server browser click", () => {
+  it("clicks a target the page replaced while it was being scrolled into view", async () => {
+    let scrolls = 0;
+    const clicks: Array<unknown> = [];
+    const page = {
+      locator: () => ({
+        // Playwright resolves the node once; a page re-rendering it detaches that node.
+        scrollIntoViewIfNeeded: async () => {
+          if (scrolls++ === 0) {
+            throw new Error("locator.scrollIntoViewIfNeeded: Element is not attached to the DOM");
+          }
+        },
+        boundingBox: async () => ({ x: 0, y: 0, width: 20, height: 20 }),
+        click: async (options: unknown) => {
+          clicks.push(options);
+        },
+        count: async () => 1,
+      }),
+      once: () => {},
+      off: () => {},
+    } as unknown as Page;
+
+    await expect(ServerBrowserPage.click(page, { selector: "#save" })).resolves.toEqual({
+      x: 10,
+      y: 10,
+    });
+    expect(clicks).toHaveLength(1);
+  });
+
+  it("retries a replaced target only within the action's timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      const timeouts: Array<number | undefined> = [];
+      const clicks: Array<unknown> = [];
+      const detached = new Error(
+        "locator.scrollIntoViewIfNeeded: Element is not attached to the DOM",
+      );
+      const page = {
+        locator: () => ({
+          scrollIntoViewIfNeeded: async (options?: { timeout?: number }) => {
+            timeouts.push(options?.timeout);
+            vi.advanceTimersByTime(60);
+            throw detached;
+          },
+          click: async (options: unknown) => {
+            clicks.push(options);
+          },
+        }),
+      } as unknown as Page;
+
+      await expect(
+        ServerBrowserPage.click(page, { selector: "#save", timeoutMs: 100 }),
+      ).rejects.toBe(detached);
+      expect(timeouts).toEqual([100, 40]);
+      expect(clicks).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("server browser evaluate", () => {
   it("does not retry a parse error that arrives after the timeout", async () => {
     vi.useFakeTimers();
@@ -641,6 +714,14 @@ describe("server browser evaluate", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("server browser unresponsive script", () => {
+  it("leaves a page that answers alone", async () => {
+    const send = vi.fn(async (_method: string) => ({}));
+    await ServerBrowserPage.stopUnresponsiveScript({ send } as unknown as CDPSession);
+    expect(send.mock.calls.map(([method]) => method)).toEqual(["Runtime.evaluate"]);
   });
 });
 
