@@ -51,10 +51,6 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
             "revision": 0,
         })]))
     });
-    // Desktop asks the server to open agent panels; nothing here ever asks.
-    table.stream("panels.requests", |_, _: Value| async {
-        Ok(open_stream(Vec::new()))
-    });
 
     // File reads, and on macOS two subprocesses: off the event loop.
     table.unary("server.getHostResources", |_, _: Value| async move {

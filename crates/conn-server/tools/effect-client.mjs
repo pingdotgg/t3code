@@ -306,7 +306,6 @@ const decodeEach = (client) =>
     yield* call("shell.openInEditor", { cwd: repo, editor: "vscode" });
     yield* call("terminal.clear", { threadId: none, terminalId: "default" });
     yield* call("terminal.observe", { threadId: none, terminalId: "default" });
-    yield* call("panels.requests", {});
   });
 
 const result = await Effect.runPromiseExit(program);

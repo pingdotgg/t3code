@@ -2,5 +2,3 @@
 # decode-coverage.mjs fails when a registered method is neither covered nor listed here, and
 # when a line here is covered or no longer registered. Give each line a reason.
 
-# A stream that sends no item until a panel request arrives; nothing to decode on a bare server.
-panels.requests

@@ -54,7 +54,7 @@ settings; about 140 MiB for the `claude` program alone).
 
 | Part | State |
 | --- | --- |
-| RPC methods | 88 of 236 served; 87 have a run that the real client's decoders accept |
+| RPC methods | 87 of 236 served; 87 have a run that the real client's decoders accept |
 | Engine commands | 41 of 56 |
 | HTTP routes | 13 of 57 |
 | `/mcp` tools | 28 of 87 |

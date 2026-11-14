@@ -10,6 +10,7 @@ with its state and what it needs from outside the server.
 | --- | --- | --- | --- |
 | Scheduled tasks | `scheduledTasks.subscribe`, `upsert`, `setEnabled`, `delete`, `runNow` | `schedule_task`, `list_scheduled_tasks`, `delete_scheduled_task`, `run_scheduled_task_now` | Webhook tasks (`rotateWebhookToken`, `listWebhookDeliveries`, `getWebhookDelivery` stay unregistered; a webhook save is refused); `fresh_session` tasks (refused: the engine cannot start a fresh provider session on a send) |
 | Annotations | `annotations.subscribe`, `create`, `remove` | `annotations_list`, `annotations_claim`, `annotations_complete`, `annotations_release` | |
+| Panels | none | none | `panels.requests` and `panels.respond` stay unregistered, as the T3 server leaves them unmounted (`wsFork.ts`); this server used to answer `panels.requests` with an empty open stream |
 
 ## Annotations (`src/annotations`)
 
