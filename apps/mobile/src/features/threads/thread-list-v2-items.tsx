@@ -63,10 +63,6 @@ import {
 } from "../../state/pending-new-tasks-model";
 import { useBranches } from "../../state/queries";
 import { useNewTaskProjectDefaults } from "./use-new-task-project-defaults";
-import {
-  resolveThreadPrBadgeAction,
-  type ThreadPrPresentation,
-} from "../../state/thread-pr-presentation";
 import { useThreadPr } from "../../state/use-thread-pr";
 import { useSwipeRowDormant } from "../home/swipe-row-activation";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
@@ -669,10 +665,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly selected?: boolean;
   readonly fullSwipeWidth?: number;
   readonly onSelectThread: (thread: EnvironmentThreadShell) => void;
-  readonly onOpenThreadPullRequests: (
-    thread: EnvironmentThreadShell,
-    pr: ThreadPrPresentation,
-  ) => void;
   readonly onDeleteThread: (thread: EnvironmentThreadShell) => void;
   readonly onNewThreadOnBranch: (thread: EnvironmentThreadShell) => void;
   readonly onRenameThread: (thread: EnvironmentThreadShell) => void;
@@ -720,7 +712,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     thread,
     variant,
     onSelectThread,
-    onOpenThreadPullRequests,
     onDeleteThread,
     onRenameThread,
     onRegenerateThreadTitle,
@@ -762,10 +753,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       })
     : null;
   const pr = useThreadPr(thread);
-  const prBadgeLabel = pr ? resolveThreadPrBadgeAction(pr).accessibilityLabel : null;
-  const handleOpenPullRequests = useCallback(() => {
-    if (pr) onOpenThreadPullRequests(thread, pr);
-  }, [onOpenThreadPullRequests, pr, thread]);
 
   const theme = useUniwindTheme();
   const sidebarPane = props.pane === "sidebar";
@@ -782,7 +769,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       : workingLabel) ?? (isUnread ? DONE_STATUS_LABEL : undefined);
   const recede = shouldRecedeThreadRow({ status, selected });
   const isRegeneratingTitle = thread.titleRegeneration != null;
-  const rowAccessibilityLabel = `${thread.title}${providerNameLabel ? `, ${providerNameLabel}` : ""}${props.hasQueuedMessages ? ", messages queued to send" : ""}${isRegeneratingTitle ? ", regenerating title" : ""}`;
+  const rowAccessibilityLabel = `${thread.title}${providerNameLabel ? `, ${providerNameLabel}` : ""}${props.hasQueuedMessages ? ", messages queued to send" : ""}${isRegeneratingTitle ? ", regenerating title" : ""}${pr ? `, ${pr.accessibilityLabel}` : ""}`;
   const timeLabel = props.timeLabel;
 
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
@@ -795,11 +782,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   }, [props.wokeAt, thread.environmentId, thread.id, visitThread]);
   // VoiceOver cannot focus buttons inside the accessible row.
   const rowAccessibilityActions = useMemo(
-    () => [
-      ...(prBadgeLabel ? [{ name: "openPullRequests", label: prBadgeLabel }] : []),
-      ...(showsWoke ? [{ name: "dismissWoke", label: "Dismiss Woke notification" }] : []),
-    ],
-    [prBadgeLabel, showsWoke],
+    () => (showsWoke ? [{ name: "dismissWoke", label: "Dismiss Woke notification" }] : []),
+    [showsWoke],
   );
 
   const handleDelete = useCallback(() => onDeleteThread(thread), [onDeleteThread, thread]);
@@ -1341,17 +1325,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           <View className="flex-1" />
         )}
         {pr ? (
-          <Pressable
-            // Padding cancelled by negative margin grows the touch target into
-            // the row padding without moving the badge.
-            className="-m-2.5 flex-row items-center gap-1 p-2.5"
-            accessibilityRole="button"
-            accessibilityLabel={prBadgeLabel ?? undefined}
-            onPress={handleOpenPullRequests}
-            // Handle long-press so opening the iOS row menu cannot also open the PR on release.
-            onLongPress={() => undefined}
-            style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
-          >
+          <View className="flex-row items-center gap-1" pointerEvents="none">
             <SymbolView
               name={
                 pr.kind === "stack"
@@ -1378,7 +1352,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             >
               {pr.label}
             </Text>
-          </Pressable>
+          </View>
         ) : null}
         {providerInstance ? (
           <View className="flex-row items-center">
@@ -1441,7 +1415,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         accessibilityState={{ selected }}
         accessibilityActions={rowAccessibilityActions}
         onAccessibilityAction={(event) => {
-          if (event.nativeEvent.actionName === "openPullRequests") handleOpenPullRequests();
           if (event.nativeEvent.actionName === "dismissWoke") handleAcknowledgeWoke();
         }}
         onPress={() => {

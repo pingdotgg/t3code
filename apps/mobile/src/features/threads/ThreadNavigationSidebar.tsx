@@ -65,7 +65,6 @@ import {
   ThreadListV2WorkingShelfHeader,
 } from "./thread-list-v2-items";
 import { useThreadRowProviderInstanceResolver } from "./thread-provider-instance";
-import type { ThreadPrPresentation } from "../../state/thread-pr-presentation";
 import { ThreadPrDemandProvider } from "../../state/thread-pr-demand";
 import {
   isThreadListV2ListItem,
@@ -97,10 +96,6 @@ interface ThreadNavigationSidebarProps {
   readonly onOpenPendingTask: (pendingTask: PendingNewTask) => void;
   readonly onSearchQueryChange: (query: string) => void;
   readonly onSelectThread: (thread: EnvironmentThreadShell) => void;
-  readonly onOpenThreadPullRequests: (
-    thread: EnvironmentThreadShell,
-    pr: ThreadPrPresentation,
-  ) => void;
   readonly onRequestVisibility: () => void;
   readonly searchQuery: string;
 }
@@ -321,7 +316,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     }
   };
   // Destructure callback props; capturing all props would invalidate these row-closing handlers on unrelated changes.
-  const { onSelectThread, onOpenThreadPullRequests } = props;
+  const { onSelectThread } = props;
   // A row listed for a message match opens the thread at that message, by
   // tap or by shortcut.
   const handleSelectThread = (thread: EnvironmentThreadShell) => {
@@ -333,13 +328,6 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
       requestThreadMessageJump(scopedThreadKey(thread.environmentId, thread.id), messageId);
     }
     onSelectThread(thread);
-    openSwipeableRef.current?.close();
-  };
-  const handleOpenThreadPullRequests = (
-    thread: EnvironmentThreadShell,
-    pr: ThreadPrPresentation,
-  ) => {
-    onOpenThreadPullRequests(thread, pr);
     openSwipeableRef.current?.close();
   };
   const handleScrollBeginDrag = () => {
@@ -453,7 +441,6 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             }
             fullSwipeWidth={props.width - 20}
             onSelectThread={handleSelectThread}
-            onOpenThreadPullRequests={handleOpenThreadPullRequests}
             onDeleteThread={confirmDeleteThread}
             onArchiveThread={archiveThread}
             onRenameThread={renameThread}
