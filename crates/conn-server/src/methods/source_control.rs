@@ -33,8 +33,8 @@ use crate::{
 /// What a host call reads, built fresh per call (settings may have changed).
 #[derive(Clone)]
 struct HostInputs {
-    cwd: Arc<PathBuf>,
-    home: Option<Arc<PathBuf>>,
+    cwd: Arc<Path>,
+    home: Option<Arc<Path>>,
     environment: Option<Arc<ServerEnvironment>>,
 }
 
@@ -53,12 +53,12 @@ impl HostInputs {
 pub(super) fn register(table: &mut MethodTable, deps: &Deps) {
     let environment = deps.environment.clone();
     let inputs = HostInputs {
-        cwd: Arc::new(
+        cwd: Arc::from(
             environment
                 .as_ref()
                 .map_or_else(std::env::temp_dir, |e| e.cwd.clone()),
         ),
-        home: std::env::var_os("HOME").map(|h| Arc::new(PathBuf::from(h))),
+        home: std::env::var_os("HOME").map(|h| Arc::from(PathBuf::from(h))),
         environment,
     };
 
@@ -69,7 +69,7 @@ pub(super) fn register(table: &mut MethodTable, deps: &Deps) {
         async move {
             let result = discover(
                 &host.cwd,
-                host.home.as_deref().map(PathBuf::as_path),
+                host.home.as_deref(),
                 &settings,
                 &Environment::process(),
                 &[],
@@ -125,7 +125,7 @@ pub(super) fn register(table: &mut MethodTable, deps: &Deps) {
                 Ok::<_, Failure>(
                     starred(
                         &host.cwd,
-                        host.home.as_deref().map(PathBuf::as_path),
+                        host.home.as_deref(),
                         &settings,
                         &env,
                         &input,
