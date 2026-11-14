@@ -13,6 +13,13 @@ export type UsageSpeed = "standard" | "fast" | "ultrafast";
 
 export interface UsageRecord {
   readonly provider: UsageProviderKind;
+  /**
+   * The upstream integration that served the model, when the harness reports
+   * one. A provider harness can front several upstreams (OpenCode fronts
+   * OpenCode Go, Zen, MiniMax and others), and only this names which one a
+   * record belongs to.
+   */
+  readonly upstreamProvider?: string;
   readonly timestampMs: number;
   readonly model: string;
   readonly rateModel?: string;

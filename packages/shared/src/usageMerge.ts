@@ -28,6 +28,8 @@ export interface ProviderTotals {
 export interface ModelTotals {
   readonly model: string;
   readonly provider: UsageProviderKind;
+  /** The upstream integration that served the model, when the harness knows it. */
+  readonly upstreamProvider?: string;
   readonly costUsd: number;
   readonly totalTokens: number;
   readonly tokens: UsageTokenTotals;
@@ -155,8 +157,17 @@ function bucketsForSource(summary: UsageSummary, source: UsageSource): readonly 
   );
 }
 
-function bucketKey(bucket: UsageBucket): string {
-  return JSON.stringify([bucket.day, bucket.hourStart ?? null, bucket.provider, bucket.model]);
+function bucketKey(
+  bucket: UsageBucket,
+  upstreamProvider: string | null = bucket.upstreamProvider ?? null,
+): string {
+  return JSON.stringify([
+    bucket.day,
+    bucket.hourStart ?? null,
+    bucket.provider,
+    upstreamProvider,
+    bucket.model,
+  ]);
 }
 
 function claimSources(
@@ -172,7 +183,17 @@ function claimSources(
     string,
     { environment: EnvironmentUsage; source: UsageSource }
   >();
-  const seenBucketKeysByFingerprint = new Map<string, Set<string>>();
+  const seenBucketKeysByFingerprint = new Map<
+    string,
+    {
+      /** The owner's cells, keyed by their own attribution. */
+      readonly attributed: Set<string>;
+      /** The owner's cells that carry no attribution. */
+      readonly unattributed: Set<string>;
+      /** The owner's cells, keyed without their attribution. */
+      readonly any: Set<string>;
+    }
+  >();
   const supplementalBucketsByEnvironment = new Map<EnvironmentId, Set<UsageBucket>>();
   const sessionsByFingerprint = new Map<string, number>();
   const duplicates: string[] = [];
@@ -215,7 +236,16 @@ function claimSources(
       }
       let seen = seenBucketKeysByFingerprint.get(key);
       if (seen === undefined) {
-        seen = new Set(bucketsForSource(owner.environment.summary, owner.source).map(bucketKey));
+        const ownerCells = bucketsForSource(owner.environment.summary, owner.source);
+        seen = {
+          attributed: new Set(ownerCells.map((bucket) => bucketKey(bucket))),
+          unattributed: new Set(
+            ownerCells
+              .filter((bucket) => bucket.upstreamProvider === undefined)
+              .map((bucket) => bucketKey(bucket, null)),
+          ),
+          any: new Set(ownerCells.map((bucket) => bucketKey(bucket, null))),
+        };
         seenBucketKeysByFingerprint.set(key, seen);
       }
       const supplemental =
@@ -223,8 +253,18 @@ function claimSources(
       let added = false;
       for (const bucket of bucketsForSource(environment.summary, source)) {
         const cell = bucketKey(bucket);
-        if (seen.has(cell)) continue;
-        seen.add(cell);
+        const unattributedCell = bucketKey(bucket, null);
+        // A cell is already counted when the owner holds the same records: with
+        // the same attribution, without one (a server that did not know the
+        // upstream), or, for a cell without attribution, under any attribution.
+        if (
+          seen.attributed.has(cell) ||
+          seen.unattributed.has(unattributedCell) ||
+          (bucket.upstreamProvider === undefined && seen.any.has(unattributedCell))
+        )
+          continue;
+        seen.attributed.add(cell);
+        seen.any.add(unattributedCell);
         supplemental.add(bucket);
         added = true;
       }
@@ -331,6 +371,7 @@ const EMPTY_MERGED: MergedUsage = {
 export function mergeUsage(
   environments: readonly EnvironmentUsage[],
   expectedContractVersion: number,
+  keepBucket?: (bucket: UsageBucket) => boolean,
 ): MergedUsage {
   if (environments.length === 0) return EMPTY_MERGED;
 
@@ -383,6 +424,8 @@ export function mergeUsage(
     string,
     {
       provider: UsageProviderKind;
+      upstreamProvider?: string;
+      model: string;
       costUsd: number;
       totalTokens: number;
       tokens: UsageTokenTotals;
@@ -419,7 +462,10 @@ export function mergeUsage(
       sessionsByFingerprint,
       sourceKey,
     );
-    if (buckets.length > 0) contributingEnvironments.push(environment.environmentId);
+    // The filter runs on the reconciled contributions, so a cell that only a
+    // newer scan attributes still counts once.
+    const keptBuckets = keepBucket === undefined ? buckets : buckets.filter(keepBucket);
+    if (keptBuckets.length > 0) contributingEnvironments.push(environment.environmentId);
 
     for (const [providerKind, providerSessions] of sessionsByProvider) {
       sessions += providerSessions;
@@ -434,7 +480,7 @@ export function mergeUsage(
       providerAccumulator.set(providerKind, provider);
     }
 
-    for (const bucket of buckets) {
+    for (const bucket of keptBuckets) {
       const tokens = bucketTokens(bucket);
 
       costUsd += bucket.costUsd;
@@ -468,9 +514,11 @@ export function mergeUsage(
       provider.records += bucket.records;
       providerAccumulator.set(bucket.provider, provider);
 
-      const modelKey = `${bucket.provider} ${bucket.model}`;
+      const modelKey = `${bucket.provider} ${bucket.upstreamProvider ?? ""} ${bucket.model}`;
       const model = modelAccumulator.get(modelKey) ?? {
         provider: bucket.provider,
+        ...(bucket.upstreamProvider ? { upstreamProvider: bucket.upstreamProvider } : {}),
+        model: bucket.model,
         costUsd: 0,
         totalTokens: 0,
         tokens: {
@@ -552,9 +600,10 @@ export function mergeUsage(
     .sort((a, b) => b.costUsd - a.costUsd);
 
   const models: ModelTotals[] = [...modelAccumulator.entries()]
-    .map(([key, totals]) => ({
-      model: key.slice(key.indexOf(" ") + 1),
+    .map(([, totals]) => ({
+      model: totals.model,
       provider: totals.provider,
+      ...(totals.upstreamProvider ? { upstreamProvider: totals.upstreamProvider } : {}),
       costUsd: totals.costUsd,
       totalTokens: totals.totalTokens,
       tokens: totals.tokens,

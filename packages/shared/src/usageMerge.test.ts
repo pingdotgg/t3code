@@ -316,6 +316,61 @@ describe("mergeUsage", () => {
     expect(merged.records).toBe(5);
     expect(merged.sessions).toBe(1);
     expect(merged.contributingEnvironments).toEqual(["old"]);
+
+    const attributed = environment("new", {
+      ...partial.summary,
+      buckets: partial.summary.buckets.map((entry) => ({
+        ...entry,
+        upstreamProvider: "anthropic",
+      })),
+    });
+    expect(mergeUsage([complete, attributed], USAGE_CONTRACT_VERSION).costUsd).toBe(10);
+
+    const attributedComplete = environment("old", {
+      ...complete.summary,
+      buckets: complete.summary.buckets.map((entry) => ({
+        ...entry,
+        upstreamProvider: "anthropic",
+      })),
+    });
+    expect(mergeUsage([attributedComplete, partial], USAGE_CONTRACT_VERSION).costUsd).toBe(10);
+  });
+
+  it("filters the reconciled contributions instead of the summaries", () => {
+    const source = { provider: "claude" as const, hostId: "mac", homePath: "/home/theo/.claude" };
+    const complete = environment("old", summary([bucket()], [source]));
+    const partialSummary = summary(
+      [
+        bucket({ sourcePath: source.homePath, costUsd: 4, records: 2 }),
+        bucket({
+          day: "2026-08-08" as UsageDay,
+          sourcePath: source.homePath,
+          costUsd: 3,
+          records: 1,
+        }),
+      ],
+      [{ ...source, distinctSessions: 2 }],
+    );
+    const attributed = environment("new", {
+      ...partialSummary,
+      readAt: "2026-08-08T01:00:00.000Z",
+      sources: partialSummary.sources.map((entry) => ({ ...entry, status: "partial" as const })),
+      buckets: partialSummary.buckets.map((entry) => ({
+        ...entry,
+        upstreamProvider: "anthropic",
+      })),
+    });
+
+    // The complete scan owns the overlapping day, so only its later day is the
+    // attributed model's own usage.
+    expect(mergeUsage([complete, attributed], USAGE_CONTRACT_VERSION).costUsd).toBe(13);
+    expect(
+      mergeUsage(
+        [complete, attributed],
+        USAGE_CONTRACT_VERSION,
+        (bucket) => bucket.upstreamProvider === "anthropic",
+      ).costUsd,
+    ).toBe(3);
   });
 
   it("identifies an environment reporting an older contract version", () => {

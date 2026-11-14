@@ -33,7 +33,11 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { openCodeUsageReader, type OpenCodeUsageReaderEnv } from "./usage.ts";
-import { readOpenCodeGoUsageLimits } from "./usageLimits.ts";
+import {
+  mergeUsageLimits,
+  readOpenCodeGoUsageLimits,
+  readOpenCodeIntegrationUsageLimits,
+} from "./usageLimits.ts";
 import { loadOpenCode2Catalog, loadOpenCode2DirectoryCatalog } from "./openCode2Catalog.ts";
 import {
   checkOpenCodeProviderStatus,
@@ -58,6 +62,7 @@ import {
 } from "./versionProbe.ts";
 import * as OpenCodeServerOwner from "./OpenCodeServerOwner.ts";
 import * as OpenCode2Client from "./v2/OpenCode2Client.ts";
+import { readProviderEndpoints } from "./v2/providerEndpoints.ts";
 import * as OpenCode2Server from "./v2/OpenCode2Server.ts";
 import { replaceOutdatedService } from "./v2/OpenCode2Service.ts";
 import {
@@ -474,7 +479,7 @@ export const OpenCodeDriver: ProviderDriver<
       Effect.provideService(Digest.Digest, digest),
     );
     let unsupportedUsageVersion: string | undefined;
-    const checkUsageLimits = Effect.gen(function* () {
+    const checkConsoleUsageLimits = Effect.gen(function* () {
       if (!effectiveConfig.enabled) return yield* legacyUsageLimits;
       const runtime = yield* runtimeProbe.get;
       if (runtime.generation === "v1" || runtime.version === unsupportedUsageVersion)
@@ -496,6 +501,36 @@ export const OpenCodeDriver: ProviderDriver<
           },
         })),
       ),
+    );
+    // A custom provider meters its own plan, so its quota has to be read from
+    // that provider rather than from the OpenCode Console budget. The endpoint
+    // OpenCode resolves for a provider says whose key a credential is, so it
+    // is read only for a provider that has a credential to check.
+    const checkIntegrationUsageLimits = readOpenCodeIntegrationUsageLimits({
+      enabled: effectiveConfig.enabled,
+      serverUrl: effectiveConfig.serverUrl,
+      environment: processEnv,
+      resolveEndpoint: (integrationId) =>
+        openCode2Server
+          .withConnection((connection) =>
+            readProviderEndpoints(connection, host.paths.cwd).pipe(
+              Effect.map((endpoints) => endpoints.get(integrationId)),
+            ),
+          )
+          .pipe(Effect.catchCause(() => Effect.undefined)),
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, pathService),
+      Effect.provideService(HttpClient.HttpClient, httpClient),
+      Effect.provideService(Digest.Digest, digest),
+    );
+    // One probe for the provider's limits, so the recovery that retries a
+    // failed read retries the Console budget and the integration quotas alike.
+    const checkUsageLimits = Effect.zipWith(
+      checkConsoleUsageLimits,
+      checkIntegrationUsageLimits,
+      (usageLimits, integration) => mergeUsageLimits(usageLimits, integration),
+      { concurrent: true },
     );
     const checkProvider = Effect.all(
       {

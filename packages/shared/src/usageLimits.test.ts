@@ -180,6 +180,32 @@ describe("new thread model fallback", () => {
       ["opencode", "console-custom"],
     ],
     ["opencode", ["budget_all"], "opencode/model", false, undefined, []],
+    ["opencode", ["minimax_weekly"], "minimax/MiniMax-M3.1-Flash", true, undefined, undefined],
+    [
+      "opencode",
+      ["minimax-coding-plan_weekly"],
+      "minimax/MiniMax-M3.1-Flash",
+      false,
+      undefined,
+      undefined,
+    ],
+    [
+      "opencode",
+      ["minimax-coding-plan_weekly"],
+      "minimax-coding-plan/MiniMax-M3",
+      true,
+      undefined,
+      undefined,
+    ],
+    [
+      "opencode",
+      ["minimax-coding-plan_weekly"],
+      "opencode-go/big-pickle",
+      false,
+      undefined,
+      undefined,
+    ],
+    ["opencode", ["go_weekly"], "minimax/MiniMax-M3.1-Flash", false, undefined, undefined],
   ] as const)(
     "matches %s pools %s to %s",
     (driver, ids, model, usesFallback, modelIds, providerIds) => {
@@ -1055,6 +1081,55 @@ describe("pooled account columns", () => {
     pool.windows.map((row) =>
       row.columns.map((member) => (member.window ? member.account.key : null)),
     );
+
+  it("counts one credential once in a pool", () => {
+    const accounts = [
+      {
+        ...account("env-a", [
+          { ...weekly, id: "go_weekly", usedPercent: 20, credentialFingerprint: "go-key" },
+        ]),
+        driver: ProviderDriverKind.make("opencode"),
+      },
+      {
+        // The same Go credential on another environment, with a plan of its own.
+        ...account("env-b", [
+          { ...weekly, id: "go_weekly", usedPercent: 20, credentialFingerprint: "go-key" },
+        ]),
+        driver: ProviderDriverKind.make("opencode"),
+      },
+      {
+        ...account("env-c", [
+          { ...weekly, id: "go_weekly", usedPercent: 80, credentialFingerprint: "other-go-key" },
+        ]),
+        driver: ProviderDriverKind.make("opencode"),
+      },
+    ];
+    const [pool] = collectLimitPools(accounts, now);
+    expect(pool?.windows[0]?.members).toHaveLength(2);
+    expect(pool?.windows[0]?.usedPercent).toBe(50);
+  });
+
+  it("keeps the freshest report of a credential that repeats", () => {
+    const goAccount = (key: string, checkedAt: string, usedPercent: number) => {
+      const windows = [
+        { ...weekly, id: "go_weekly", usedPercent, credentialFingerprint: "go-key" },
+      ];
+      return {
+        ...account(key, windows),
+        driver: ProviderDriverKind.make("opencode"),
+        limits: { checkedAt, windows },
+      };
+    };
+    const [pool] = collectLimitPools(
+      [
+        goAccount("env-a", "2026-09-03T10:00:00.000Z", 20),
+        goAccount("env-b", "2026-09-03T11:30:00.000Z", 80),
+      ],
+      now,
+    );
+    expect(pool?.windows[0]?.members).toHaveLength(1);
+    expect(pool?.windows[0]?.usedPercent).toBe(80);
+  });
 
   it.each([
     {

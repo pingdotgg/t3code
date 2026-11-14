@@ -98,14 +98,11 @@ export function mergeAnsweredUsage(
           {
             environmentId,
             label,
-            summary:
-              keepBucket === undefined
-                ? summary
-                : { ...summary, buckets: summary.buckets.filter(keepBucket) },
+            summary,
           },
         ],
   );
-  return mergeUsage(answered, USAGE_CONTRACT_VERSION);
+  return mergeUsage(answered, USAGE_CONTRACT_VERSION, keepBucket);
 }
 
 const NO_HIDDEN_PROVIDERS: ReadonlySet<UsageProviderKind> = new Set();

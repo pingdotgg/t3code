@@ -66,10 +66,19 @@ export function exhaustedUsageWindow(
       );
       return exhausted.find((window) => window.id !== "individual" || !hasPlanWindows);
     }
-    case "opencode":
-      return exhausted.find(
-        (window) => !window.id.startsWith("go_") || model.startsWith("opencode-go/"),
-      );
+    case "opencode": {
+      // Each window names the integration that meters it, so a model's limits
+      // come from its own provider instead of whichever plan happens to be
+      // exhausted. The Console budget is metered as "go" or "budget".
+      const integration = model.split("/")[0] ?? "";
+      return exhausted.find((window) => {
+        const owner = window.id.split("_")[0]!;
+        if (owner === "go") return integration === "opencode-go";
+        // A Console workspace budget covers every model in the workspace.
+        if (owner === "budget") return true;
+        return owner === integration;
+      });
+    }
     default:
       return exhausted[0];
   }
@@ -622,8 +631,26 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
         ? `${window.kind}:${window.id}`
         : pooled;
       const list = byKey.get(key);
-      if (list) list.push(member);
-      else byKey.set(key, [member]);
+      if (list) {
+        // The same credential on two accounts is one allowance, so it counts
+        // once, and the fresher report of it is the one that counts.
+        const credential = window.credentialFingerprint;
+        const repeated =
+          credential === undefined
+            ? -1
+            : list.findIndex((member) => member.window.credentialFingerprint === credential);
+        if (repeated !== -1) {
+          const previous = list[repeated]!;
+          if (
+            Date.parse(member.account.limits.checkedAt) >
+            Date.parse(previous.account.limits.checkedAt)
+          ) {
+            list[repeated] = member;
+          }
+          continue;
+        }
+        list.push(member);
+      } else byKey.set(key, [member]);
     }
   }
   const pools = [...byKey].map(([key, members]): LimitPoolWindow => {

@@ -1,6 +1,6 @@
 import * as NodeSqlite from "node:sqlite";
 
-import type { ServerProviderUsageWindow } from "@t3tools/contracts";
+import type { ServerProviderUsageLimits, ServerProviderUsageWindow } from "@t3tools/contracts";
 import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -29,8 +29,14 @@ const StoredKey = Schema.Struct({
   type: Schema.Literal("key"),
   key: Schema.String,
   metadata: Schema.optionalKey(
-    Schema.NullOr(Schema.Struct({ server: Schema.optionalKey(Schema.Unknown) })),
+    Schema.NullOr(
+      Schema.Struct({
+        server: Schema.optionalKey(Schema.Unknown),
+        baseURL: Schema.optionalKey(Schema.Unknown),
+      }),
+    ),
   ),
+  configuration: Schema.optionalKey(Schema.Struct({ baseURL: Schema.optionalKey(Schema.Unknown) })),
 });
 const decodeStoredKey = Schema.decodeOption(Schema.fromJsonString(StoredKey));
 const UsageWindow = Schema.Struct({
@@ -40,6 +46,91 @@ const UsageWindow = Schema.Struct({
 const UsageResponse = Schema.Struct({
   usage: Schema.Struct({ rolling: UsageWindow, weekly: UsageWindow, monthly: UsageWindow }),
 });
+
+/**
+ * Upstream integrations that publish their own quota. OpenCode fronts several
+ * providers behind one harness, and each of them meters its own plan, so the
+ * quota has to be read from the integration that serves the model rather than
+ * from the OpenCode Console budget.
+ */
+const INTEGRATION_QUOTA_ENDPOINTS: Readonly<
+  Record<string, { readonly endpoint: string; readonly label: string }>
+> = {
+  "minimax-coding-plan": {
+    endpoint: "https://api.minimax.io/v1/token_plan/remains",
+    label: "MiniMax Token Plan",
+  },
+  minimax: {
+    endpoint: "https://api.minimax.io/v1/token_plan/remains",
+    label: "MiniMax",
+  },
+};
+
+/**
+ * MiniMax issues its token-plan keys with this prefix. A pay-as-you-go key
+ * meters no plan, and a key that belongs to another endpoint must never leave
+ * the machine, so only a plan key is sent to the quota API.
+ */
+const MINI_MAX_PLAN_KEY_PREFIX = "sk-cp-";
+
+/** The hosts that serve MiniMax's own API. */
+const MINI_MAX_HOSTS = new Set(["api.minimax.io", "api.minimaxi.com"]);
+
+// MiniMax answers with one entry per quota and two metered windows.
+const MiniMaxQuotaResponse = Schema.Struct({
+  base_resp: Schema.optionalKey(
+    Schema.Struct({
+      status_code: Schema.optionalKey(Schema.Finite),
+      status_msg: Schema.optionalKey(Schema.String),
+    }),
+  ),
+  model_remains: Schema.optionalKey(Schema.Array(Schema.Unknown)),
+});
+
+interface MiniMaxQuotaEntry {
+  readonly model_name?: string;
+  readonly current_interval_remaining_percent?: number;
+  readonly current_interval_status?: number;
+  readonly end_time?: number;
+  readonly start_time?: number;
+  readonly weekly_end_time?: number;
+  readonly weekly_start_time?: number;
+  readonly current_weekly_remaining_percent?: number;
+  readonly current_weekly_status?: number;
+}
+
+const miniMaxQuotaEntry = Schema.decodeUnknownOption(
+  Schema.Struct({
+    model_name: Schema.optionalKey(Schema.String),
+    current_interval_remaining_percent: Schema.optionalKey(Schema.Finite),
+    current_interval_status: Schema.optionalKey(Schema.Finite),
+    end_time: Schema.optionalKey(Schema.Finite),
+    start_time: Schema.optionalKey(Schema.Finite),
+    weekly_end_time: Schema.optionalKey(Schema.Finite),
+    weekly_start_time: Schema.optionalKey(Schema.Finite),
+    current_weekly_remaining_percent: Schema.optionalKey(Schema.Finite),
+    current_weekly_status: Schema.optionalKey(Schema.Finite),
+  }),
+);
+
+/**
+ * The bucket that meters the plan every chat model draws from. MiniMax reports
+ * one bucket per quota, and the others (a video allowance, for example) meter a
+ * quota no model in T3 Code spends.
+ */
+const MINI_MAX_PLAN_BUCKET = "general";
+
+/**
+ * The plan's own bucket. Reporting a second bucket under the same window ids
+ * would pool two different quotas into one percentage, so only the bucket that
+ * meters the plan is reported.
+ */
+function miniMaxPlanBucket(entries: readonly MiniMaxQuotaEntry[]): MiniMaxQuotaEntry | undefined {
+  const plan = entries.find((entry) => entry.model_name === MINI_MAX_PLAN_BUCKET);
+  if (plan) return plan;
+  // A payload with a single bucket leaves no room for ambiguity.
+  return entries.length === 1 ? entries[0] : undefined;
+}
 
 // Select before decoding so an OAuth or self-hosted connection cannot fall
 // through to another stored account. NULL-active rows predate the selection flag.
@@ -52,59 +143,370 @@ class OpenCodeCredentialReadError extends Schema.TaggedError<OpenCodeCredentialR
   }
 }
 
-const readStoredApiKey = (databasePath: string, integrationId: "opencode" | "opencode-go") =>
+interface StoredCredential {
+  readonly key: string;
+  /** The OpenCode deployment the credential belongs to, when the store names one. */
+  readonly server: string | undefined;
+  /** The endpoint the credential reaches, when the store names one. */
+  readonly baseURL: string | undefined;
+}
+
+/**
+ * Every active credential in the local OpenCode store, newest first per
+ * integration. One read, so every caller sees the same store.
+ */
+const readStoredCredentials = (databasePath: string) =>
   Effect.try({
     try: () => {
       const database = new NodeSqlite.DatabaseSync(databasePath, { readOnly: true });
       try {
         database.exec("PRAGMA busy_timeout = 100");
-        const row = database
+        const rows = database
           .prepare(
-            `SELECT value FROM credential
-             WHERE integration_id = ? AND active IS NOT 0
-             ORDER BY active DESC, time_created DESC, id DESC LIMIT 1`,
+            `SELECT integration_id, value FROM credential
+             WHERE active IS NOT 0 ORDER BY active DESC, time_created DESC, id DESC`,
           )
-          .get(integrationId);
-        const stored =
-          typeof row?.value === "string"
-            ? Option.getOrUndefined(decodeStoredKey(row.value))
-            : undefined;
-        const server = stored?.metadata?.server;
-        if (typeof server === "string") {
-          const url = new URL(server);
-          if (`${url.origin}${url.pathname.replace(/\/+$/, "")}` !== "https://opencode.ai/console")
-            return undefined;
+          .all() as Array<{ readonly integration_id: unknown; readonly value: unknown }>;
+        const credentials = new Map<string, StoredCredential>();
+        for (const row of rows) {
+          const integrationId = typeof row.integration_id === "string" ? row.integration_id : "";
+          if (integrationId === "" || credentials.has(integrationId)) continue;
+          const stored =
+            typeof row.value === "string"
+              ? Option.getOrUndefined(decodeStoredKey(row.value))
+              : undefined;
+          const key = stored?.key.trim();
+          if (!key) continue;
+          const server = stored?.metadata?.server;
+          const configuredBaseURL =
+            typeof stored?.metadata?.baseURL === "string"
+              ? stored.metadata.baseURL
+              : typeof stored?.configuration?.baseURL === "string"
+                ? stored.configuration.baseURL
+                : undefined;
+          credentials.set(integrationId, {
+            key,
+            server: typeof server === "string" ? server : undefined,
+            baseURL: configuredBaseURL,
+          });
         }
-        return stored?.key.trim();
+        return credentials;
       } finally {
         database.close();
       }
     },
     catch: (cause) => new OpenCodeCredentialReadError({ databasePath, cause }),
-  }).pipe(Effect.orElseSucceed(() => undefined));
+  }).pipe(Effect.orElseSucceed(() => new Map<string, StoredCredential>()));
 
-/** External OpenCode servers own their credentials; never read the host's account for them. */
-export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(function* (input: {
+/** A Zen key belongs to the deployment that stored it, so only the Console's own is used. */
+function isOfficialConsole(server: string | undefined): boolean {
+  if (server === undefined) return true;
+  try {
+    const url = new URL(server);
+    return `${url.origin}${url.pathname.replace(/\/+$/, "")}` === "https://opencode.ai/console";
+  } catch {
+    return false;
+  }
+}
+
+/** A credential that names another server belongs to that server, not to MiniMax. */
+function servesMiniMax(server: string | undefined): boolean {
+  if (server === undefined) return true;
+  try {
+    const url = new URL(server);
+    return MINI_MAX_HOSTS.has(url.host);
+  } catch {
+    return false;
+  }
+}
+
+/** The endpoint MiniMax serves its own API from. */
+function isMiniMaxEndpoint(baseURL: string | undefined): boolean {
+  if (baseURL === undefined) return false;
+  try {
+    return MINI_MAX_HOSTS.has(new URL(baseURL).host);
+  } catch {
+    return false;
+  }
+}
+
+/** The local OpenCode store: where its data home, auth file and credential database live. */
+const openCodeStorePaths = Effect.fn("OpenCodeStore.paths")(function* (
+  environment: NodeJS.ProcessEnv,
+) {
+  const path = yield* Path.Path;
+  const dataHome =
+    environment.XDG_DATA_HOME ||
+    path.join(
+      environment.HOME || environment.USERPROFILE || (yield* HostProcess.HomeDirectory),
+      ".local",
+      "share",
+    );
+  const databaseFile = environment.OPENCODE_DB ?? "opencode.db";
+  return {
+    dataHome,
+    authPath: path.join(dataHome, "opencode", "auth.json"),
+    databasePath: path.resolve(dataHome, "opencode", databaseFile),
+  };
+});
+
+const miniMaxWindow = (
+  integrationId: string,
+  label: string,
+  id: string,
+  kind: "session" | "weekly",
+  remainingPercent: number | undefined,
+  statusCode: number | undefined,
+  resetsAtMs: number | undefined,
+  startsAtMs: number | undefined,
+): ServerProviderUsageWindow | null => {
+  if (remainingPercent === undefined) return null;
+  // MiniMax reports 1 normal, 2 exhausted and 3 unlimited.
+  if (statusCode === 3) return null;
+  const usedPercent = clampPercent(100 - remainingPercent);
+  const resetsAt =
+    resetsAtMs !== undefined && Number.isFinite(resetsAtMs)
+      ? Option.getOrUndefined(DateTime.make(resetsAtMs))
+      : undefined;
+  // The window length is what lets the client judge pace, so take it from the
+  // window's own bounds.
+  const windowDurationMins =
+    startsAtMs !== undefined &&
+    resetsAtMs !== undefined &&
+    Number.isFinite(startsAtMs) &&
+    Number.isFinite(resetsAtMs) &&
+    resetsAtMs > startsAtMs
+      ? Math.round((resetsAtMs - startsAtMs) / 60_000)
+      : undefined;
+  return {
+    id: `${integrationId}_${id}`,
+    kind,
+    label: `${label} · ${kind === "session" ? "Interval" : "Weekly"}`,
+    usedPercent,
+    ...(windowDurationMins === undefined ? {} : { windowDurationMins }),
+    ...(resetsAt ? { resetsAt: DateTime.formatIso(resetsAt) } : {}),
+  };
+};
+
+export interface OpenCodeUsageLimitsInput {
   readonly enabled: boolean;
   readonly serverUrl: string;
   readonly environment: NodeJS.ProcessEnv;
-}) {
+  /**
+   * The endpoint OpenCode resolves for a provider. A provider without one is
+   * not probed: the key's owner would be unknown.
+   */
+  readonly resolveEndpoint?:
+    | ((integrationId: string) => Effect.Effect<string | undefined>)
+    | undefined;
+}
+
+export interface OpenCodeIntegrationUsageLimits {
+  readonly checkedAt: string;
+  readonly windows: readonly ServerProviderUsageWindow[];
+  /** The identity of the credentials that meter the reported windows. */
+  readonly credentialFingerprint?: string | undefined;
+}
+
+/**
+ * Quota for the upstream integrations the user actually runs. OpenCode Go is
+ * the Console budget; a custom provider meters its own plan, so its windows
+ * come from that provider's API.
+ */
+export const readOpenCodeIntegrationUsageLimits = Effect.fn("readOpenCodeIntegrationUsageLimits")(
+  function* (input: OpenCodeUsageLimitsInput) {
+    const checkedAt = DateTime.formatIso(yield* DateTime.now);
+    const empty = {
+      checkedAt,
+      windows: [] as readonly ServerProviderUsageWindow[],
+      credentialFingerprint: undefined as string | undefined,
+    };
+    if (!input.enabled || input.serverUrl.trim()) return empty;
+
+    return yield* Effect.gen(function* () {
+      const env = input.environment;
+      const { databasePath } = yield* openCodeStorePaths(env);
+      const storedCredentials = yield* readStoredCredentials(databasePath);
+      // Only a credential that MiniMax itself issued may reach MiniMax's API.
+      const candidates: Array<readonly [string, StoredCredential]> = [];
+      for (const integrationId of Object.keys(INTEGRATION_QUOTA_ENDPOINTS)) {
+        const credential = storedCredentials.get(integrationId);
+        if (credential === undefined) continue;
+        if (!credential.key.startsWith(MINI_MAX_PLAN_KEY_PREFIX)) continue;
+        if (!servesMiniMax(credential.server)) continue;
+        // The provider must resolve to MiniMax's own endpoint, and the
+        // credential must not point somewhere else.
+        const endpoint =
+          input.resolveEndpoint === undefined
+            ? undefined
+            : yield* input.resolveEndpoint(integrationId);
+        if (endpoint === undefined || !isMiniMaxEndpoint(endpoint)) continue;
+        if (credential.baseURL !== undefined && !isMiniMaxEndpoint(credential.baseURL)) continue;
+        candidates.push([integrationId, credential]);
+      }
+      if (candidates.length === 0) return empty;
+
+      const digest = yield* Digest.Digest;
+      const fingerprint = (value: string) =>
+        digest
+          .digest(Digest.sha256, new TextEncoder().encode(value))
+          .pipe(Effect.map(Hex.encode), Effect.orDie);
+      // The account names every credential that meters it, so two environments
+      // that share one key but differ in another stay apart.
+      const credentialFingerprint = yield* fingerprint(
+        candidates
+          .map(
+            ([integrationId, credential]) =>
+              `opencode-integrations\0${integrationId}\0${credential.key}`,
+          )
+          .sort()
+          .join("\0"),
+      );
+      // Each window names the credential that meters it, so the same plan on
+      // two environments is one quota.
+      const windowFingerprints = new Map<string, string>();
+      for (const [integrationId, credential] of candidates) {
+        windowFingerprints.set(
+          integrationId,
+          yield* fingerprint(`opencode-integration\0${integrationId}\0${credential.key}`),
+        );
+      }
+
+      const client = yield* HttpClient.HttpClient;
+      const windows: ServerProviderUsageWindow[] = [];
+      for (const [integrationId, credential] of candidates) {
+        const quota = INTEGRATION_QUOTA_ENDPOINTS[integrationId];
+        if (quota === undefined) continue;
+        const response = yield* client
+          .execute(
+            HttpClientRequest.get(quota.endpoint).pipe(
+              HttpClientRequest.bearerToken(credential.key),
+            ),
+          )
+          .pipe(Effect.timeout("5 seconds"), Effect.option);
+        if (Option.isNone(response)) continue;
+        const result = response.value;
+        if (result.status !== 200) continue;
+        // The body read needs its own bound: a server that sends headers and
+        // then stalls would hold the refresh permit forever.
+        const body = yield* HttpClientResponse.schemaBodyJson(MiniMaxQuotaResponse)(result).pipe(
+          Effect.timeout("5 seconds"),
+          Effect.option,
+        );
+        if (Option.isNone(body)) continue;
+        const payload = body.value;
+        if ((payload.base_resp?.status_code ?? 0) !== 0) continue;
+        const entries = (payload.model_remains ?? []).flatMap((raw) => {
+          const entry = Option.getOrUndefined(miniMaxQuotaEntry(raw));
+          return entry ? [entry] : [];
+        });
+        const plan = miniMaxPlanBucket(entries);
+        if (plan === undefined) continue;
+        const interval = miniMaxWindow(
+          integrationId,
+          quota.label,
+          "interval",
+          "session",
+          plan.current_interval_remaining_percent,
+          plan.current_interval_status,
+          plan.end_time,
+          plan.start_time,
+        );
+        const weekly = miniMaxWindow(
+          integrationId,
+          quota.label,
+          "weekly",
+          "weekly",
+          plan.current_weekly_remaining_percent,
+          plan.current_weekly_status,
+          plan.weekly_end_time,
+          plan.weekly_start_time,
+        );
+        const credentialFingerprint = windowFingerprints.get(integrationId);
+        if (interval !== null)
+          windows.push(
+            credentialFingerprint === undefined ? interval : { ...interval, credentialFingerprint },
+          );
+        if (weekly !== null)
+          windows.push(
+            credentialFingerprint === undefined ? weekly : { ...weekly, credentialFingerprint },
+          );
+      }
+      return { checkedAt, windows, credentialFingerprint };
+    }).pipe(
+      Effect.orElseSucceed(() => ({
+        checkedAt,
+        windows: [] as readonly ServerProviderUsageWindow[],
+        credentialFingerprint: undefined as string | undefined,
+      })),
+    );
+  },
+);
+
+/**
+ * The account identity covers every credential that meters it, so two
+ * environments that share a Console key but not an integration key stay
+ * separate accounts.
+ */
+function mergeFingerprints(
+  console: string | undefined,
+  integration: string | undefined,
+): string | undefined {
+  if (console === undefined) return integration;
+  if (integration === undefined) return console;
+  return `${console}.${integration}`;
+}
+
+/**
+ * Combine the Console budget with the quotas of the integrations in use.
+ *
+ * The Console budget can be unavailable while a custom provider still meters
+ * a plan, so the unavailable marker is dropped once there are windows to
+ * report.
+ */
+export function mergeUsageLimits(
+  console: ServerProviderUsageLimits,
+  integration: OpenCodeIntegrationUsageLimits,
+): ServerProviderUsageLimits {
+  // Without a quota of its own the account is what the Console says it is.
+  if (integration.windows.length === 0) return console;
+  // The integration's quota replaces the unavailable marker, but the Console
+  // metadata stays: its fingerprint is what tells one account apart from
+  // another when several environments report the same one.
+  const { unavailable: _unavailable, ...consoleMetadata } = console;
+  const credentialFingerprint = mergeFingerprints(
+    consoleMetadata.credentialFingerprint,
+    integration.credentialFingerprint,
+  );
+  // The Console windows name the Console credential; an integration window
+  // already names the credential that meters it.
+  const consoleWindows =
+    consoleMetadata.credentialFingerprint === undefined
+      ? console.windows
+      : console.windows.map((window) => ({
+          ...window,
+          credentialFingerprint: consoleMetadata.credentialFingerprint,
+        }));
+  return {
+    ...consoleMetadata,
+    ...(credentialFingerprint === undefined ? {} : { credentialFingerprint }),
+    checkedAt: console.checkedAt,
+    windows: [...consoleWindows, ...integration.windows],
+  };
+}
+
+/** External OpenCode servers own their credentials; never read the host's account for them. */
+export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(function* (
+  input: OpenCodeUsageLimitsInput,
+) {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const unsupported = makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
   if (!input.enabled || input.serverUrl.trim()) return unsupported;
 
   return yield* Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
     const env = input.environment;
-    const dataHome =
-      env.XDG_DATA_HOME ||
-      path.join(
-        env.HOME || env.USERPROFILE || (yield* HostProcess.HomeDirectory),
-        ".local",
-        "share",
-      );
-    const authPath = path.join(dataHome, "opencode", "auth.json");
+    const { authPath, databasePath } = yield* openCodeStorePaths(env);
     const contents =
       env.OPENCODE_AUTH_CONTENT ||
       (yield* fs.readFileString(authPath).pipe(
@@ -119,17 +521,18 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
     const goKey = (Option.isSome(apiAuth) ? apiAuth.value.key : env.OPENCODE_API_KEY)?.trim();
     // Console supplies Go credentials in OpenCode 2. Inline auth explicitly
     // overrides local credentials, including the Console connection.
-    const databaseFile = env.OPENCODE_DB ?? "opencode.db";
-    const databasePath = path.resolve(dataHome, "opencode", databaseFile);
-    const storedKeys =
-      env.OPENCODE_AUTH_CONTENT || databaseFile === ":memory:"
-        ? []
-        : [
-            yield* readStoredApiKey(databasePath, "opencode"),
-            // OpenCode 2 imports auth.json once, so a replaced Go key only exists here.
-            yield* readStoredApiKey(databasePath, "opencode-go"),
-          ];
-    const keys = [...new Set([...storedKeys, goKey].filter((key): key is string => Boolean(key)))];
+    const storedCredentials =
+      env.OPENCODE_AUTH_CONTENT || env.OPENCODE_DB === ":memory:"
+        ? new Map<string, StoredCredential>()
+        : yield* readStoredCredentials(databasePath);
+    const consoleKey = ["opencode", "opencode-go"]
+      .map((integrationId) => storedCredentials.get(integrationId))
+      .filter(
+        (credential): credential is StoredCredential =>
+          credential !== undefined && isOfficialConsole(credential.server),
+      )
+      .map((credential) => credential.key);
+    const keys = [...new Set([...consoleKey, goKey].filter((key): key is string => Boolean(key)))];
     let apiKey = keys[0];
     if (!apiKey) return unsupported;
 
@@ -182,7 +585,12 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
       .digest(Digest.sha256, new TextEncoder().encode(`opencode-go\0${apiKey}`))
       .pipe(Effect.map(Hex.encode), Effect.orDie);
     return {
-      ...makeUsageLimits({ checkedAt, windows }),
+      ...makeUsageLimits({
+        checkedAt,
+        // The window names the credential that meters it, so a pool counts one
+        // Go account once even when two environments report it.
+        windows: windows.map((window) => ({ ...window, credentialFingerprint })),
+      }),
       credentialFingerprint,
     };
   }).pipe(
