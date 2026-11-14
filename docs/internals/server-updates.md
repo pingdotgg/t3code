@@ -1,7 +1,7 @@
 # Server updates
 
 A [stable launcher](../../apps/server/src/serviceLauncher.ts) owns the runtime
-selected by systemd or launchd. It is the only runtime writer of durable service
+selected by systemd, launchd, or Task Scheduler. It is the only runtime writer of durable service
 state. Server children request updates over inherited IPC; they never rewrite
 their service definition or select their own replacement. Local service commands
 may replace the launcher and state, optionally deferring the restart. Foreground
@@ -27,6 +27,11 @@ Protocol 4 changed the launcher alone, so its runtime still runs under protocol 
 The server names its launcher's protocol to preflight, not its own, since the two differ
 after the first such update.
 
+A client can stage the target early with `stageOnly`, which installs and preflights the
+runtime and restarts nothing. "Update everything" does this while provider installs run,
+because a restart would kill them. A server without the `serverUpdateStaging` capability
+ignores the flag and runs the whole update, so send it only to a server that advertises it.
+
 After a commit or rollback the launcher points the unit at the selected runtime and
 reloads the manager, so the next service start runs that version's launcher; the
 protocol check is what makes that safe. Each start after a finished update retries this, because
@@ -35,6 +40,17 @@ T3 home alone. A protocol-3 launcher does none of this: its unit keeps naming th
 runtime that installed it. Until a deferred local upgrade restarts, systemd (before
 daemon-reload) and launchd (before bootstrap) can respawn the old launcher, which
 rejects the state the new installer wrote.
+
+Task Scheduler tracks only the console host it started, not the launcher. `schtasks /End`
+kills that host and nothing else; the launcher takes its closed console as SIGTERM. The task
+reads as stopped at once, and `/Run` then starts a second launcher beside the first, so a
+Windows launcher holds a lock file for as long as it runs. A replacement waits for that lock,
+and the CLI treats its release as the stop having finished.
+
+Task Scheduler also runs its own copy of the task, and registering one enables it. So every
+write of the task file registers it, including an install that defers its restart. The CLI
+disables the task under the unit lease, and a registration under that lease keeps a disabled
+task disabled, so the repeating trigger cannot restart a service the CLI is holding stopped.
 
 ## Commit boundary
 

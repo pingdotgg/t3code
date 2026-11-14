@@ -69,6 +69,10 @@ export class ScratchProjectError extends Schema.TaggedError<ScratchProjectError>
   }
 }
 
+/** Where No project threads keep their folders, whether or not this T3 home allows them. */
+export const scratchFolderRoot = (baseDir: string, path: Path.Path) =>
+  path.resolve(baseDir, "scratch");
+
 export type ScratchError = ScratchUnavailableError | ScratchFolderError | ScratchProjectError;
 
 // The spawner checks cwd before spawning, so NotFound from spawn itself means a missing executable.
@@ -263,7 +267,7 @@ const make = Effect.gen(function* () {
       Effect.flatMap(
         (repositoryRoot): Effect.Effect<Result.Result<string, ScratchUnavailableError>> => {
           if (repositoryRoot === null) {
-            return Effect.succeed(Result.succeed(path.resolve(config.baseDir, "scratch")));
+            return Effect.succeed(Result.succeed(scratchFolderRoot(config.baseDir, path)));
           }
           const unavailable = new ScratchUnavailableError({
             baseDir: config.baseDir,
@@ -281,7 +285,25 @@ const make = Effect.gen(function* () {
     Duration.infinity,
   );
   const scratchProbe = probe.pipe(Effect.onInterrupt(() => invalidate));
-  const scratchRoot = scratchProbe.pipe(Effect.map(Result.getSuccess));
+  // A symlinked scratch folder lets the No project live at either the link or its target.
+  const scratchProjectRoot = (root: string) =>
+    fileSystem.realPath(root).pipe(
+      Effect.flatMap((target) =>
+        target === root
+          ? Effect.succeed(root)
+          : projects
+              .getByWorkspaceRoot(target)
+              .pipe(Effect.map((project) => (Option.isSome(project) ? target : root))),
+      ),
+      Effect.orElseSucceed(() => root),
+    );
+  const scratchRoot = scratchProbe.pipe(
+    Effect.flatMap((probed) =>
+      Result.isSuccess(probed)
+        ? scratchProjectRoot(probed.success).pipe(Effect.asSome)
+        : Effect.succeedNone,
+    ),
+  );
 
   const makeScratchFolder = (folder: string) =>
     fileSystem
@@ -290,8 +312,9 @@ const make = Effect.gen(function* () {
 
   const ensureScratchProject: ManagedProjectFolders["Service"]["ensureScratchProject"] = Effect.gen(
     function* () {
-      const workspaceRoot = yield* scratchProbe.pipe(Effect.flatMap(Effect.fromResult));
-      yield* makeScratchFolder(workspaceRoot);
+      const probedRoot = yield* scratchProbe.pipe(Effect.flatMap(Effect.fromResult));
+      yield* makeScratchFolder(probedRoot);
+      const workspaceRoot = yield* scratchProjectRoot(probedRoot);
       const id = yield* random
         .uuidV4()
         .pipe(Effect.mapError((cause) => new ScratchProjectError({ workspaceRoot, cause })));
