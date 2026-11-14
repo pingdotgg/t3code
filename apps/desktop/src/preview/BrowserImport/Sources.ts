@@ -16,6 +16,8 @@ export interface BrowserImportPathContext {
   readonly path: Path.Path;
   readonly platform: NodeJS.Platform;
   readonly home: string;
+  readonly linuxConfigHome: string;
+  readonly linuxChromeConfigHome: string;
   readonly appData: string | undefined;
   readonly localAppData: string | undefined;
 }
@@ -26,6 +28,7 @@ export interface BrowserImportSourceDefinition {
   readonly engine: BrowserImportEngine;
   readonly platforms: ReadonlyArray<NodeJS.Platform>;
   readonly userDataDirectory: (context: BrowserImportPathContext) => string | undefined;
+  readonly alternateLinuxRoots?: (context: BrowserImportPathContext) => ReadonlyArray<string>;
   readonly keychainService?: string;
   readonly keychainAccount?: string;
   readonly linuxSecretApplication?: string;
@@ -67,7 +70,10 @@ const chromiumSource = (input: {
         : undefined;
     }
     return input.linuxSegments
-      ? context.path.join(context.home, ".config", ...input.linuxSegments)
+      ? context.path.join(
+          input.id === "chrome" ? context.linuxChromeConfigHome : context.linuxConfigHome,
+          ...input.linuxSegments,
+        )
       : undefined;
   },
 });
@@ -108,7 +114,8 @@ export const BROWSER_IMPORT_SOURCES: ReadonlyArray<BrowserImportSourceDefinition
     keychainAccount: "Vivaldi",
     macSegments: ["Vivaldi"],
     linuxSegments: ["vivaldi"],
-    linuxSecretApplication: "vivaldi",
+    // Vivaldi stores its Linux libsecret key under Chrome's application name.
+    linuxSecretApplication: "chrome",
   }),
   chromiumSource({
     id: "opera",
@@ -169,6 +176,26 @@ export const BROWSER_IMPORT_SOURCES: ReadonlyArray<BrowserImportSourceDefinition
       }
       return context.path.join(context.home, ".mozilla", "firefox");
     },
+    alternateLinuxRoots: (context) => [
+      context.path.join(context.home, "snap", "firefox", "common", ".mozilla", "firefox"),
+    ],
+  },
+  {
+    id: "zen",
+    name: "Zen",
+    engine: "firefox",
+    platforms: ["darwin", "win32", "linux"],
+    userDataDirectory: (context) => {
+      if (context.platform === "darwin") return macApplicationSupport(context, "zen");
+      if (context.platform === "win32") {
+        return context.appData ? context.path.join(context.appData, "zen") : undefined;
+      }
+      return context.path.join(context.linuxConfigHome, "zen");
+    },
+    alternateLinuxRoots: (context) => [
+      context.path.join(context.home, ".zen"),
+      context.path.join(context.home, ".var", "app", "app.zen_browser.zen", "zen"),
+    ],
   },
 ];
 
@@ -270,10 +297,18 @@ export const sourcePathContext = Effect.gen(function* () {
   const path = yield* Path.Path;
   const platform = yield* HostProcess.Platform;
   const environment = yield* HostProcess.Environment;
+  const home = environment.HOME ?? environment.USERPROFILE ?? "";
+  const xdgConfigHome = environment.XDG_CONFIG_HOME;
+  const linuxConfigHome =
+    xdgConfigHome && path.isAbsolute(xdgConfigHome) ? xdgConfigHome : path.join(home, ".config");
+  const chromeConfigHome = environment.CHROME_CONFIG_HOME;
   return {
     path,
     platform,
-    home: environment.HOME ?? environment.USERPROFILE ?? "",
+    home,
+    linuxConfigHome,
+    linuxChromeConfigHome:
+      chromeConfigHome && path.isAbsolute(chromeConfigHome) ? chromeConfigHome : linuxConfigHome,
     appData: environment.APPDATA,
     localAppData: environment.LOCALAPPDATA,
   } satisfies BrowserImportPathContext;
@@ -470,7 +505,7 @@ const listSourceProfilesInDirectory = Effect.fnUntraced(function* (
   );
 });
 
-/** Keep Snap profile paths absolute so reads and locks distinguish native and Snap installations. */
+/** Keep alternate-root profile paths absolute so cookie reads and locks use the correct installation. */
 export const listSourceProfiles = Effect.fn("BrowserImportSources.listSourceProfiles")(function* (
   definition: BrowserImportSourceDefinition,
   context: BrowserImportPathContext,
@@ -481,10 +516,7 @@ export const listSourceProfiles = Effect.fn("BrowserImportSources.listSourceProf
 
   const root = definition.userDataDirectory(context);
   if (root === undefined) return [];
-  const roots = [
-    root,
-    context.path.join(context.home, "snap", "firefox", "common", ".mozilla", "firefox"),
-  ];
+  const roots = [root, ...(definition.alternateLinuxRoots?.(context) ?? [])];
   const profiles = new Map<string, BrowserImportSourceProfile>();
   for (const directory of roots) {
     const found = yield* listSourceProfilesInDirectory(

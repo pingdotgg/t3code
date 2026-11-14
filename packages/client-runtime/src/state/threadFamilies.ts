@@ -19,7 +19,13 @@ import { createEnvironmentQueryAtomFamily, selectEnvironmentQueryData } from "./
 import type { EnvironmentShellState } from "./shell.ts";
 
 const EMPTY_FAMILY: OrchestrationV2ThreadFamily = { snapshotSequence: 0, threads: [] };
-const EMPTY_MOUNTS: ReadonlyMap<ThreadId, number> = new Map();
+const EMPTY_READS: ReadonlyArray<OrchestrationV2ThreadFamily> = [];
+
+interface MountedRows {
+  readonly rows: Atom.Atom<ReadonlyArray<OrchestrationV2ThreadFamily>>;
+  readonly count: number;
+}
+const EMPTY_MOUNTS: ReadonlyMap<string, MountedRows> = new Map();
 // Generation 0 is the cached shell from before this session's first authoritative snapshot. A read
 // for it would be thrown away once that snapshot lands, so it waits instead.
 const AWAITING_AUTHORITATIVE_SHELL = AsyncResult.initial<never, never>(true);
@@ -60,9 +66,10 @@ export function threadFamilyRowsMissingFromShell(input: {
 }
 
 /**
- * Shells with `omitIdleSubagents` leave idle children to families: the subagent tree sharing a
- * `lineage.rootThreadId`, read once per shell generation and never persisted. Family rows merge
- * behind shell rows; shell deltas still carry every change, so a changed child's shell row wins.
+ * Shells with `omitIdleSubagents` or `omitOlderSettled` leave rows to on-demand reads: a family is
+ * every active thread sharing a `lineage.rootThreadId`, read once per shell generation; shelf pages
+ * and search rows mount through `mountRows`. All merge behind shell rows, which win (deltas carry
+ * every change), and are never persisted.
  */
 export function createThreadFamilyAtoms<R, ER, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, ER>,
@@ -71,7 +78,7 @@ export function createThreadFamilyAtoms<R, ER, E>(
   ) => Atom.Atom<AsyncResult.AsyncResult<EnvironmentShellState, E>>,
 ) {
   const shellStateValue = (state: AsyncResult.AsyncResult<EnvironmentShellState, E>) =>
-    Option.getOrNull(AsyncResult.value(state));
+    AsyncResult.getOrElse(state, () => null);
   const generationAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) => shellStateValue(get(shellStateAtom(environmentId)))?.generation ?? 0).pipe(
       Atom.withLabel(`environment-shell-generation:${environmentId}`),
@@ -137,31 +144,56 @@ export function createThreadFamilyAtoms<R, ER, E>(
     ),
   );
 
+  const familyRowsAtom = Atom.family((key: string) =>
+    Atom.make((get): ReadonlyArray<OrchestrationV2ThreadFamily> => {
+      const family = selectEnvironmentQueryData(get(familyAtom(key)));
+      return family === null ? EMPTY_READS : [family];
+    }).pipe(Atom.withLabel(`environment-thread-family-rows:${key}`)),
+  );
+
+  /**
+   * Merges `rows` behind the shell rows until the returned release runs. Reads read under `key`
+   * share one entry; each read's `snapshotSequence` decides which removals drop its rows.
+   */
+  const mountRows = (
+    registry: AtomRegistry.AtomRegistry,
+    environmentId: EnvironmentId,
+    key: string,
+    rows: Atom.Atom<ReadonlyArray<OrchestrationV2ThreadFamily>>,
+  ): (() => void) => {
+    const atom = mountsAtom(environmentId);
+    const mounts = registry.get(atom);
+    const entry = mounts.get(key);
+    registry.set(
+      atom,
+      new Map(mounts).set(key, { rows: entry?.rows ?? rows, count: (entry?.count ?? 0) + 1 }),
+    );
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const next = new Map(registry.get(atom));
+      const entry = next.get(key);
+      if (entry !== undefined && entry.count > 1)
+        next.set(key, { ...entry, count: entry.count - 1 });
+      else next.delete(key);
+      registry.set(atom, next);
+    };
+  };
+
   /** Keeps a thread's family in the merged rows until the returned release runs. */
   const mount = (
     registry: AtomRegistry.AtomRegistry,
     environmentId: EnvironmentId,
     threadId: ThreadId,
   ): (() => void) => {
-    const atom = mountsAtom(environmentId);
-    const mounts = registry.get(atom);
-    registry.set(atom, new Map(mounts).set(threadId, (mounts.get(threadId) ?? 0) + 1));
+    const key = familyKey(environmentId, threadId);
+    const release = mountRows(registry, environmentId, `family:${key}`, familyRowsAtom(key));
     // Mounting again after a failure retries instead of keeping the failure until reconnect.
-    if (
-      threadFamilyRead(registry.get(familyAtom(familyKey(environmentId, threadId)))) === "failed"
-    ) {
+    if (threadFamilyRead(registry.get(familyAtom(key))) === "failed") {
       refresh(registry, environmentId, threadId);
     }
-    let released = false;
-    return () => {
-      if (released) return;
-      released = true;
-      const next = new Map(registry.get(atom));
-      const count = (next.get(threadId) ?? 0) - 1;
-      if (count > 0) next.set(threadId, count);
-      else next.delete(threadId);
-      registry.set(atom, next);
-    };
+    return release;
   };
 
   const snapshotAtom = Atom.family((environmentId: EnvironmentId) => {
@@ -176,12 +208,12 @@ export function createThreadFamilyAtoms<R, ER, E>(
       const snapshot = state === null ? null : Option.getOrNull(state.snapshot);
       const mounts = get(mountsAtom(environmentId));
       if (snapshot === null || state === null || mounts.size === 0) return snapshot;
-      const families = [...mounts.keys()].flatMap((threadId) => {
-        const family = selectEnvironmentQueryData(
-          get(familyAtom(familyKey(environmentId, threadId))),
-        );
-        return family === null ? [] : [family];
-      });
+      // A read from before the latest authoritative snapshot can hold threads removed before it,
+      // and that snapshot cleared those removals; such reads (a cached search) wait for new ones.
+      const cut = snapshot.olderSettled?.asOfSequence ?? 0;
+      const families = [...mounts.values()].flatMap(({ rows }) =>
+        get(rows).filter((read) => read.snapshotSequence >= cut),
+      );
       // Most shell updates move only the cursor. With the same rows, removals and families, keep
       // the merged rows so thread lists skip their rebuild.
       const unchanged =
@@ -219,6 +251,7 @@ export function createThreadFamilyAtoms<R, ER, E>(
     familyAtom: (environmentId: EnvironmentId, threadId: ThreadId) =>
       familyAtom(familyKey(environmentId, threadId)),
     mount,
+    mountRows,
     refresh,
   };
 }

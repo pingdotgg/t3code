@@ -93,12 +93,16 @@ yield* Effect.annotateCurrentSpan("input", { nested }); // Effect-local
 
 ### Outcome
 
-Cloudflare has no outcome setter yet, so completion is recorded as the
-`effect.exit` attribute: `success`, `failure`, or `interrupted`.
+Completion is recorded as the `effect.exit` attribute: `success`,
+`failure`, or `interrupted`. A failure also sets the span status to
+`error`, with the first error's message, so OpenTelemetry destinations
+mark the span as failed. Success and interruption leave the status
+`unset`. The Workers Observability dashboard doesn't show span status
+yet, so filter on `effect.exit` there.
 
 ```typescript
 yield* Effect.fail(new Error("boom")).pipe(
-  Effect.withSpan("failing"), // effect.exit = "failure"
+  Effect.withSpan("failing"), // effect.exit = "failure", status = error
   Effect.ignore,
 );
 const fiber = yield* Effect.forkChild(

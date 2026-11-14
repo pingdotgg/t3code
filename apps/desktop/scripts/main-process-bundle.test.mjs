@@ -3,6 +3,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeVM from "node:vm";
+import * as NodeURL from "node:url";
 import { build } from "vite-plus/pack";
 import { assert, it } from "vite-plus/test";
 
@@ -114,18 +115,16 @@ it("loads the emitted packaged boot entry and backend cache preload", async () =
   const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-desktop-boot-"));
   try {
     const entries = ["src/boot.ts", "src/compileCache.ts"];
-    await NodeFSP.mkdir(NodePath.join(directory, "src"));
-    await Promise.all(
-      entries.map((entry) =>
-        NodeFSP.copyFile(new URL(`../${entry}`, import.meta.url), NodePath.join(directory, entry)),
-      ),
-    );
     assert.ok(Array.isArray(desktopConfig.pack));
     for (const packConfig of desktopConfig.pack) {
       if (!Array.isArray(packConfig.entry)) continue;
       if (!packConfig.entry.some((entry) => entries.includes(entry))) continue;
       await build({
         ...packConfig,
+        entry: packConfig.entry.map((entry) =>
+          NodeURL.fileURLToPath(new URL(`../${entry}`, import.meta.url)),
+        ),
+        outDir: NodePath.join(directory, "dist-electron"),
         config: false,
         cwd: directory,
         tsconfig: false,

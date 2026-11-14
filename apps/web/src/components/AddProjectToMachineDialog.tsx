@@ -3,8 +3,9 @@ import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
   getAddProjectInitialQuery,
   getCloneDestinationPath,
-  getCloneDirectoryName,
+  getCloneDirectoryPath,
 } from "@t3tools/client-runtime/operations/projects";
+import { resolvePastedPath } from "@t3tools/shared/path";
 import {
   type EnvironmentId,
   type ProjectIgnoredFile,
@@ -17,7 +18,7 @@ import {
   cloneUrlProtocol,
 } from "@t3tools/shared/cloneUrl";
 import { ArrowRightIcon } from "lucide-react";
-import { useEffect, useId, useState } from "react";
+import { useId, useState } from "react";
 import { create } from "zustand";
 
 import { type DraftId, useComposerDraftStore } from "../composerDraftStore";
@@ -25,15 +26,17 @@ import { useAddProjectTargets } from "../hooks/useAddProjectTargets";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useLogicalProjectEnvironments } from "../hooks/useLogicalProjectEnvironments";
 import {
+  COPIED_FILES_MAX_COUNT,
   COPYABLE_FILE_MAX_BYTES,
   addProjectToMachine,
   isDefaultCopiedFile,
 } from "../lib/addProjectToMachine";
 import { formatBytes } from "../lib/formatBytes";
 import { newProjectId } from "../lib/utils";
-import { useProject } from "../state/entities";
+import { readProject, subscribeProject, useProject } from "../state/entities";
 import { useEnvironments } from "../state/environments";
 import { projectEnvironment } from "../state/projects";
+import { useDebouncedValue } from "../state/queries";
 import { useEnvironmentQuery } from "../state/query";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { Button } from "./ui/button";
@@ -58,20 +61,35 @@ interface AddProjectToMachineRequest {
   readonly targetEnvironmentId: EnvironmentId | null;
 }
 
-const useRequest = create<{ request: AddProjectToMachineRequest | null }>(() => ({
+const useRequest = create<{ request: AddProjectToMachineRequest | null; session: number }>(() => ({
   request: null,
+  session: 0,
 }));
+
+let endRequestWithProject: (() => void) | null = null;
 
 /** Opens the dialog that clones a project onto another connected machine. */
 export function openAddProjectToMachine(request: AddProjectToMachineRequest) {
-  useRequest.setState({ request });
+  if (readProject(request.projectRef) === null) return;
+  endRequestWithProject?.();
+  // The request ends when its project goes away, so a project that comes back
+  // later cannot reopen a dialog nobody asked for.
+  endRequestWithProject = subscribeProject(request.projectRef, (project) => {
+    if (project === null) close();
+  });
+  useRequest.setState((state) => ({ request, session: state.session + 1 }));
 }
 
-const close = () => useRequest.setState({ request: null });
+function close() {
+  endRequestWithProject?.();
+  endRequestWithProject = null;
+  useRequest.setState({ request: null });
+}
 
 export function AddProjectToMachineDialogHost() {
   const request = useRequest((state) => state.request);
-  return request ? <AddProjectToMachineDialog request={request} /> : null;
+  const session = useRequest((state) => state.session);
+  return request ? <AddProjectToMachineDialog key={session} request={request} /> : null;
 }
 
 function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRequest }) {
@@ -97,13 +115,18 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
   const targetEnvironment = environments.find((env) => env.environmentId === target?.environmentId);
   const defaultPath = getCloneDestinationPath(
     getAddProjectInitialQuery(targetEnvironment?.serverConfig?.settings.addProjectBaseDirectory),
-    getCloneDirectoryName(sourceUrl),
+    getCloneDirectoryPath(
+      sourceUrl,
+      targetEnvironment?.serverConfig?.settings.ghqCloneLayout === true,
+    ),
   );
   const [pathOverride, setPathOverride] = useState<string | null>(null);
   const destinationPath = pathOverride ?? defaultPath;
 
-  const canListFiles = source?.serverConfig?.environment.capabilities.ignoredFileListing === true;
-  const ignoredFiles = useEnvironmentQuery(
+  const capabilities = source?.serverConfig?.environment.capabilities;
+  const canListFiles = capabilities?.ignoredFileListing === true;
+  const canSearchFiles = canListFiles && capabilities?.ignoredFileSearch === true;
+  const allIgnoredFiles = useEnvironmentQuery(
     project && canListFiles
       ? projectEnvironment.listIgnoredFiles({
           environmentId: project.environmentId,
@@ -111,13 +134,29 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
         })
       : null,
   );
+  const [fileQuery, setFileQuery] = useState("");
+  const sentFileQuery = useDebouncedValue(fileQuery.trim(), 120);
+  const searching = canSearchFiles && sentFileQuery.length > 0;
+  const searchedFiles = useEnvironmentQuery(
+    project && searching
+      ? projectEnvironment.listIgnoredFiles({
+          environmentId: project.environmentId,
+          input: { cwd: project.workspaceRoot, query: sentFileQuery },
+        })
+      : null,
+  );
+  const ignoredFiles = searching ? searchedFiles : allIgnoredFiles;
   const files = ignoredFiles.data?.files ?? [];
-  const [selected, setSelected] = useState<ReadonlySet<string> | null>(null);
-  const selectedFiles = selected ?? defaultSelection(files);
+  // Keyed by path with the file kept, so picks made under one search survive the next.
+  const [selected, setSelected] = useState<ReadonlyMap<string, ProjectIgnoredFile> | null>(null);
+  const selectedFiles = selected ?? defaultSelection(allIgnoredFiles.data?.files ?? []);
   const copyable = files.filter((file) => file.byteLength <= COPYABLE_FILE_MAX_BYTES);
-  const selectedBytes = files
-    .filter((file) => selectedFiles.has(file.path))
-    .reduce((total, file) => total + file.byteLength, 0);
+  const allCopyableSelected = copyable.every((file) => selectedFiles.has(file.path));
+  const atSelectionLimit = selectedFiles.size >= COPIED_FILES_MAX_COUNT;
+  const selectedBytes = [...selectedFiles.values()].reduce(
+    (total, file) => total + file.byteLength,
+    0,
+  );
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -127,15 +166,19 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
   const unavailable =
     project === null ||
     target === null ||
-    (canListFiles && ignoredFiles.data === null && ignoredFiles.error === null);
-  useEffect(() => {
-    if (project === null) close();
-  }, [project]);
-
-  const toggleFile = (path: string, checked: boolean) => {
-    const next = new Set(selectedFiles);
-    if (checked) next.add(path);
-    else next.delete(path);
+    (canListFiles && allIgnoredFiles.data === null && allIgnoredFiles.error === null);
+  const toggleFile = (file: ProjectIgnoredFile, checked: boolean) => {
+    const next = new Map(selectedFiles);
+    if (!checked) next.delete(file.path);
+    else if (!atSelectionLimit) next.set(file.path, file);
+    setSelected(next);
+  };
+  const toggleShownFiles = () => {
+    const next = new Map(selectedFiles);
+    for (const file of copyable) {
+      if (allCopyableSelected) next.delete(file.path);
+      else if (next.size < COPIED_FILES_MAX_COUNT) next.set(file.path, file);
+    }
     setSelected(next);
   };
 
@@ -171,20 +214,19 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
     }
     setSubmitting(true);
     setError(null);
-    const projectId = newProjectId();
     try {
-      await addProjectToMachine({
+      const projectId = await addProjectToMachine({
         source: { environmentId: project.environmentId, cwd: project.workspaceRoot },
         subdirectory: projectSubdirectory(
           project.repositoryIdentity?.rootPath,
           project.workspaceRoot,
         ),
         target: { environmentId: target.environmentId, label: target.label },
-        projectId,
+        projectId: newProjectId(),
         title: project.title,
         remoteUrl,
         destinationPath: destinationPath.trim(),
-        files: files.filter((file) => selectedFiles.has(file.path)).map((file) => file.path),
+        files: [...selectedFiles.keys()],
       });
       close();
       openClonedProject(scopeProjectRef(target.environmentId, projectId));
@@ -305,7 +347,9 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
               <Input
                 id={`${id}-path`}
                 value={destinationPath}
-                onChange={(event) => setPathOverride(event.target.value)}
+                onChange={(event) =>
+                  setPathOverride(resolvePastedPath(destinationPath, event.target.value))
+                }
                 spellCheck={false}
                 autoComplete="off"
               />
@@ -318,33 +362,41 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
                   {copyable.length > 0 ? (
                     <>
                       <span className="text-muted-foreground text-xs">
-                        {selectedFiles.size} of {files.length}
+                        {selectedFiles.size} of {allIgnoredFiles.data?.files.length ?? 0}
                         {selectedBytes > 0 ? ` · ${formatBytes(selectedBytes)}` : ""}
                       </span>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="xs"
-                        onClick={() =>
-                          setSelected(
-                            selectedFiles.size === copyable.length
-                              ? new Set()
-                              : new Set(copyable.map((file) => file.path)),
-                          )
-                        }
-                      >
-                        {selectedFiles.size === copyable.length ? "None" : "All"}
+                      <Button type="button" variant="ghost" size="xs" onClick={toggleShownFiles}>
+                        {allCopyableSelected ? "None" : "All"}
                       </Button>
                     </>
                   ) : null}
                 </div>
+                {canSearchFiles && (allIgnoredFiles.data?.truncated || fileQuery.length > 0) ? (
+                  <Input
+                    size="sm"
+                    type="search"
+                    aria-label="Search ignored files"
+                    placeholder="Search ignored files"
+                    value={fileQuery}
+                    maxLength={256}
+                    onChange={(event) => setFileQuery(event.target.value)}
+                    // Enter would otherwise submit the clone.
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") event.preventDefault();
+                    }}
+                    spellCheck={false}
+                    autoComplete="off"
+                  />
+                ) : null}
                 {ignoredFiles.error ? (
                   <p className="text-destructive-foreground text-xs">{ignoredFiles.error}</p>
                 ) : files.length === 0 ? (
                   <p className="text-muted-foreground text-xs">
-                    {ignoredFiles.isSuccess
-                      ? "No ignored files to copy."
-                      : "Finding ignored files…"}
+                    {!ignoredFiles.isSuccess
+                      ? "Finding ignored files…"
+                      : searching
+                        ? "No ignored files match."
+                        : "No ignored files to copy."}
                   </p>
                 ) : (
                   <div className="max-h-52 overflow-y-auto rounded-md border">
@@ -353,7 +405,8 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
                         key={file.path}
                         file={file}
                         checked={selectedFiles.has(file.path)}
-                        onCheckedChange={(checked) => toggleFile(file.path, checked)}
+                        disabled={atSelectionLimit && !selectedFiles.has(file.path)}
+                        onCheckedChange={(checked) => toggleFile(file, checked)}
                       />
                     ))}
                   </div>
@@ -361,6 +414,7 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
                 {ignoredFiles.data?.truncated ? (
                   <p className="text-muted-foreground text-xs">
                     Showing the first {files.length} files.
+                    {canSearchFiles ? " Search to find the rest." : ""}
                   </p>
                 ) : null}
                 <p className="text-muted-foreground text-xs">
@@ -399,29 +453,37 @@ function projectSubdirectory(repositoryRoot: string | undefined, workspaceRoot: 
     : "";
 }
 
-function defaultSelection(files: readonly ProjectIgnoredFile[]): ReadonlySet<string> {
-  return new Set(
+function defaultSelection(
+  files: readonly ProjectIgnoredFile[],
+): ReadonlyMap<string, ProjectIgnoredFile> {
+  return new Map(
     files
       .filter(
         (file) => file.byteLength <= COPYABLE_FILE_MAX_BYTES && isDefaultCopiedFile(file.path),
       )
-      .map((file) => file.path),
+      .map((file) => [file.path, file]),
   );
 }
 
 function IgnoredFileRow({
   file,
   checked,
+  disabled,
   onCheckedChange,
 }: {
   file: ProjectIgnoredFile;
   checked: boolean;
+  disabled: boolean;
   onCheckedChange: (checked: boolean) => void;
 }) {
   const tooLarge = file.byteLength > COPYABLE_FILE_MAX_BYTES;
   return (
     <label className="flex cursor-pointer items-center gap-2 px-2.5 py-1.5 text-sm not-last:border-b has-disabled:cursor-not-allowed has-disabled:opacity-64">
-      <Checkbox checked={checked} disabled={tooLarge} onCheckedChange={onCheckedChange} />
+      <Checkbox
+        checked={checked}
+        disabled={tooLarge || disabled}
+        onCheckedChange={onCheckedChange}
+      />
       <span className="min-w-0 flex-1 truncate font-mono text-xs">{file.path}</span>
       <span className="shrink-0 text-muted-foreground text-xs tabular-nums">
         {tooLarge ? "Over 1 MB" : formatBytes(file.byteLength)}
