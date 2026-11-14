@@ -22,6 +22,11 @@ a connected one if any is connected.
 When you change a new thread's project, T3 Code stays in the current environment
 if that project exists there. Otherwise it selects an environment that has it.
 
+On iOS, add the **Quick actions** widget to your Home Screen or Lock Screen to
+start a thread or reopen the last one you had open. The medium widget offers
+both. The small and Lock Screen widgets open one of the two: use **Edit Widget**
+to choose.
+
 ### Start without a project
 
 A thread does not need a project. To start one without a project, click **or
