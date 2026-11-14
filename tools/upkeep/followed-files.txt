@@ -87,6 +87,23 @@ apps/server/src/keybindings.ts
 packages/shared/src/keybindings.ts
 packages/contracts/src/keybindings.ts
 
+[crates/conn-server/src/text_generation]
+apps/server/src/textGeneration/TextGenerators.ts
+apps/server/src/textGeneration/textGeneratorDrivers.ts
+apps/server/src/textGeneration/ThreadTitleLinks.ts
+apps/server/src/orchestration-v2/ThreadTitleRegenerationService.ts
+packages/provider-core/src/server/textGeneration.ts
+packages/provider-core/src/server/textGenerationOperations.ts
+packages/provider-core/src/server/textGenerationPolicy.ts
+packages/provider-core/src/server/textGenerationPrompts.ts
+packages/provider-core/src/server/textGenerationUtils.ts
+packages/provider-core/src/server/threadTitleContext.ts
+
+[crates/conn-support/src/login_env.rs]
+apps/server/src/os-jank.ts
+packages/shared/src/shell.ts
+apps/server/src/sourceControl/SourceControlDiscovery.ts
+
 [crates/conn-vcs]
 apps/server/src/vcs
 apps/server/src/git
