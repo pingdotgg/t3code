@@ -3002,32 +3002,36 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const destination = yield* resolvePushDestination(cwd, branch, details.hasUpstream);
     if (hasNoLocalDelta && details.hasUpstream) {
       if (!destination?.pushRemote) {
-        return {
-          status: "skipped_up_to_date" as const,
-          branch,
-          ...(details.upstreamRef ? { upstreamBranch: details.upstreamRef } : {}),
-        };
-      }
-      const { pushRemote, branchName } = destination;
-      const pushRemoteRef = `${pushRemote}/${branchName}`;
-      // The local ref can be stale when the branch was deleted or rewound elsewhere.
-      const pushRemoteHasHead =
-        (yield* pushesOnlyToFetchUrl(cwd, pushRemote)) &&
-        (yield* fetchRemoteTrackingBranch({
-          cwd,
-          remoteName: pushRemote,
-          remoteBranch: branchName,
-        }).pipe(
-          Effect.andThen(remoteRefContainsHead(cwd, pushRemoteRef)),
-          Effect.orElseSucceed(() => false),
-        ));
-      if (pushRemoteHasHead) {
-        return {
-          status: "skipped_up_to_date" as const,
-          branch,
-          upstreamBranch: pushRemoteRef,
-          pushRemote,
-        };
+        // The tracking ref reflects the fetch URL, so it says nothing about a separate push URL.
+        if (!destination || (yield* pushesOnlyToFetchUrl(cwd, destination.remoteName))) {
+          return {
+            status: "skipped_up_to_date" as const,
+            branch,
+            ...(details.upstreamRef ? { upstreamBranch: details.upstreamRef } : {}),
+          };
+        }
+      } else {
+        const { pushRemote, branchName } = destination;
+        const pushRemoteRef = `${pushRemote}/${branchName}`;
+        // The local ref can be stale when the branch was deleted or rewound elsewhere.
+        const pushRemoteHasHead =
+          (yield* pushesOnlyToFetchUrl(cwd, pushRemote)) &&
+          (yield* fetchRemoteTrackingBranch({
+            cwd,
+            remoteName: pushRemote,
+            remoteBranch: branchName,
+          }).pipe(
+            Effect.andThen(remoteRefContainsHead(cwd, pushRemoteRef)),
+            Effect.orElseSucceed(() => false),
+          ));
+        if (pushRemoteHasHead) {
+          return {
+            status: "skipped_up_to_date" as const,
+            branch,
+            upstreamBranch: pushRemoteRef,
+            pushRemote,
+          };
+        }
       }
     } else if (hasNoLocalDelta) {
       const comparableBaseBranch = yield* resolveBaseBranchForNoUpstream(cwd, branch).pipe(

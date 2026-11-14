@@ -8252,6 +8252,30 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }),
     );
 
+    it.effect("pushes an up-to-date branch whose tracked remote has a separate push URL", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const fetchRemote = yield* makeTmpDir("git-fetch-remote-");
+        const pushRemote = yield* makeTmpDir("git-push-remote-");
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(fetchRemote, ["init", "--bare"]);
+        yield* git(pushRemote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", fetchRemote]);
+        yield* git(cwd, ["checkout", "-b", "topic"]);
+        yield* git(cwd, ["push", "-u", "origin", "topic"]);
+        yield* git(cwd, ["remote", "set-url", "--push", "origin", pushRemote]);
+
+        const pushed = yield* driver.pushCurrentBranch(cwd, null);
+
+        assert.deepInclude(pushed, { status: "pushed", upstreamBranch: "origin/topic" });
+        assert.equal(
+          yield* git(pushRemote, ["--git-dir=.", "rev-parse", "refs/heads/topic"]),
+          yield* git(cwd, ["rev-parse", "HEAD"]),
+        );
+      }),
+    );
+
     it.effect("skips an up-to-date branch whose differently named upstream is its base", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
