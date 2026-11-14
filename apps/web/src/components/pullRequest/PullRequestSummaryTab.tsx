@@ -731,7 +731,6 @@ export function PullRequestSummaryTab({
             ? null
             : { kind: "comment", comment }
           : { kind: "thread", thread };
-    // A reply's card has no thread of its own; the panel sends it with its conversation.
     const chat = chatSubject(comment, thread);
     return (
       <article

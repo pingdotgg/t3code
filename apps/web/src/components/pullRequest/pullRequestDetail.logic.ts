@@ -729,8 +729,17 @@ function visibleTextFirst(body: string): string {
     // Quoted values are dropped first so `title="open logs"` does not read as the attribute.
     const attributes = opener?.[1]?.replace(/"[^"]*"|'[^']*'/gu, "") ?? "";
     if (opener) sections.push(!/(?:^|\s)open(?:[\s=/]|$)/iu.test(attributes));
-    (sections.includes(true) ? folded : shown).push(line);
-    if (!inCode && sections.length > 0 && /<\/details>/iu.test(line)) sections.pop();
+    const closer = inCode || sections.length === 0 ? null : /<\/details>/iu.exec(line);
+    if (closer === null) {
+      (sections.includes(true) ? folded : shown).push(line);
+      continue;
+    }
+    // Text after the closing tag is outside the section, so it goes with what follows.
+    const end = closer.index + closer[0].length;
+    (sections.includes(true) ? folded : shown).push(line.slice(0, end));
+    sections.pop();
+    const after = line.slice(end).trim();
+    if (after !== "") (sections.includes(true) ? folded : shown).push(after);
   }
   return folded.length === 0 ? body : [...shown, "", ...folded].join("\n").trim();
 }
