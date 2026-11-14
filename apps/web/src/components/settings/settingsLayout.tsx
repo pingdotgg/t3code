@@ -492,7 +492,7 @@ export function SettingsRow({
     <div
       {...rowProps}
       ref={targetRef}
-      tabIndex={rowProps.id ? -1 : rowProps.tabIndex}
+      tabIndex={rowProps.tabIndex ?? -1}
       data-slot="settings-row"
       className={cn(
         "group/settings-row @container/settings-row rounded-xl px-3 sm:px-4 aria-disabled:opacity-64 aria-disabled:[&_*]:text-muted-foreground",
@@ -569,6 +569,11 @@ export function SettingResetButton({
             disabled={disabled}
             onClick={(event) => {
               event.stopPropagation();
+              // A reset usually unmounts this button. Keep focus beside the setting, or focus
+              // recovery sends it to the area's default control and scrolls that into view.
+              event.currentTarget.parentElement
+                ?.closest<HTMLElement>("[tabindex]")
+                ?.focus({ preventScroll: true });
               onClick();
             }}
           >
