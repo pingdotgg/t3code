@@ -387,7 +387,9 @@ export const layer = Layer.mergeAll(
 
 export const layerProduction = Layer.mergeAll(
   WorktreeBranchSync.layer.pipe(
-    Layer.provide(Layer.merge(layerThreadManagementProvided, ProjectionStore.layer)),
+    Layer.provide(
+      Layer.mergeAll(layerThreadManagementProvided, ProjectionStore.layer, layerProjectService),
+    ),
   ),
   layer,
   layerManagedProjectFoldersProvided,

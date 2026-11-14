@@ -2015,6 +2015,7 @@ export function makeClaudeQueryOptions(input: {
   readonly supportedDialogKinds?: ClaudeQueryOptions["supportedDialogKinds"];
   readonly allowDangerouslySkipPermissions?: boolean;
   readonly appendSystemPromptFileText?: string;
+  readonly hooks?: ClaudeQueryOptions["hooks"];
   // Flag settings, because a user's settings.json env beats the process env in Claude Code.
   readonly toolSearchOverride?: "true";
 }): ClaudeAgentSdkQueryOptions {
@@ -2163,9 +2164,16 @@ export function makeClaudeQueryOptions(input: {
         ...launchAppendSystemPrompt,
       ].join("\n\n"),
     },
-    ...(deviceInstructions
-      ? { hooks: { SubagentStart: [{ hooks: [subagentDeviceInstructions] }] } }
-      : {}),
+    ...(input.hooks === undefined && !deviceInstructions
+      ? {}
+      : {
+          hooks: {
+            ...input.hooks,
+            ...(deviceInstructions
+              ? { SubagentStart: [{ hooks: [subagentDeviceInstructions] }] }
+              : {}),
+          },
+        }),
     ...(Object.keys(extraArgs).length === 0 ? {} : { extraArgs }),
   };
   const additionalDirectories = [
@@ -6027,6 +6035,38 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
           return Queue.offer(events, event).pipe(Effect.asVoid);
         };
+
+        // EnterWorktree/ExitWorktree move the live process without a T3 handoff.
+        let liveSession = session;
+        const moveSession = Effect.fn("ClaudeAdapterV2.moveSession")(function* (
+          cwd: string,
+          cwdChangeSource: string | undefined,
+        ) {
+          if (cwd === liveSession.cwd && cwdChangeSource === liveSession.cwdChangeSource) return;
+          const { cwdChangeSource: _previousSource, ...rest } = liveSession;
+          liveSession = {
+            ...rest,
+            cwd,
+            ...(cwdChangeSource === undefined ? {} : { cwdChangeSource }),
+            updatedAt: yield* DateTime.now,
+          };
+          yield* emitProviderEvent({
+            type: "provider_session.updated",
+            driver: CLAUDE_PROVIDER,
+            providerSession: liveSession,
+          });
+        });
+        const onWorktreeTool: HookCallback = (hookInput) =>
+          runPromise(
+            Effect.gen(function* () {
+              // Subagent worktrees do not move the root session.
+              if (hookInput.agent_id !== undefined || hookInput.cwd.length === 0) return {};
+              const turn = yield* Ref.get(activeTurn);
+              const source = turn?.input.runtimePolicy.cwd ?? undefined;
+              if (source !== undefined) yield* moveSession(hookInput.cwd, source);
+              return {};
+            }),
+          );
 
         const persistAttachmentBudget = Effect.fnUntraced(function* (nativeThreadId: string) {
           const providerThread = (yield* Ref.get(lastProviderThreadByNativeThread)).get(
@@ -12296,6 +12336,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             supportedDialogKinds: ["resume_return"],
             ...(appendSystemPromptFileText === undefined ? {} : { appendSystemPromptFileText }),
             ...(toolSearchOverride === undefined ? {} : { toolSearchOverride }),
+            hooks: {
+              PostToolUse: [{ matcher: "^(EnterWorktree|ExitWorktree)$", hooks: [onWorktreeTool] }],
+            },
           });
           const resolvedTurnCwd = yield* fileSystem
             .realPath(turnInput.runtimePolicy.cwd ?? ".")
@@ -12322,6 +12365,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 : Effect.void,
             ),
           );
+          // A new process starts at its requested cwd, not where the previous one moved.
+          yield* moveSession(queryOptions.cwd ?? process.cwd(), undefined);
           // Mark only successful opens; retries must not resume sessions that failed to create.
           yield* Ref.update(openedNativeThreads, (current) => {
             if (current.has(nativeThreadId)) {
@@ -13260,7 +13305,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           instanceId: adapterOptions.instanceId,
           driver: CLAUDE_PROVIDER,
           providerSessionId: input.providerSessionId,
-          providerSession: session,
+          get providerSession() {
+            return liveSession;
+          },
           getModelContextWindow: (selection) => claudeContextWindow(selection) ?? undefined,
           events: Stream.fromEffectRepeat(Queue.take(events)),
           backgroundTasksEndWithProcess: true,

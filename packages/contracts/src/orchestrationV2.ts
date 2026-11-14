@@ -987,6 +987,8 @@ export const OrchestrationV2ProviderSession = Schema.Struct({
   providerInstanceId: ProviderInstanceId,
   status: Schema.Literals(["starting", "ready", "running", "waiting", "stopped", "error"]),
   cwd: TrimmedNonEmptyString,
+  // The thread checkout a native move started from; set only after the provider moved itself.
+  cwdChangeSource: Schema.optional(TrimmedNonEmptyString),
   model: Schema.NullOr(TrimmedNonEmptyString),
   capabilities: OrchestrationV2ProviderCapabilities,
   extensionStatuses: Schema.optional(
@@ -3214,6 +3216,8 @@ export const OrchestrationV2Command = Schema.Union([
     continuation: Schema.optional(Schema.Struct({ messageId: MessageId, text: Schema.String })),
     /** Reject unless no message or run has landed on this thread. */
     expectedEmpty: Schema.optional(Schema.Boolean),
+    /** Reject while a run is active, so a worktree change cannot detach its session. */
+    expectedIdle: Schema.optional(Schema.Boolean),
     limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecoveryUpdate)),
     /** Link (object) or unlink (null) a pull request; absent leaves it unchanged. */
     linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),

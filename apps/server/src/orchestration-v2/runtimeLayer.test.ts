@@ -6177,6 +6177,16 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         })
         .pipe(Effect.flip);
       assert.instanceOf(nonEmptyClaim, Orchestrator.OrchestratorDispatchError);
+      const busyMove = yield* orchestrator
+        .dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make("runtime-layer-active-settle-idle-move"),
+          threadId,
+          worktreePath: "/tmp/moved-while-running",
+          expectedIdle: true,
+        })
+        .pipe(Effect.flip);
+      assert.instanceOf(busyMove, Orchestrator.OrchestratorDispatchError);
 
       const error = yield* orchestrator
         .dispatch({
@@ -6190,6 +6200,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.equal(error.cause, `Thread ${threadId} is still running. Stop it before settling.`);
       const projection = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(projection.runs[0]?.status, "starting");
+      assert.equal(projection.thread.worktreePath, "/tmp/runtime-layer-active-settle");
       assert.isNull(projection.thread.settledOverride);
       assert.isNull(projection.thread.settledAt);
       assert.isNotNull(projection.thread.unsettledAt);
