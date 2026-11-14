@@ -6432,10 +6432,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         modelSelection,
         dispatchMode: { type: "start_immediately" },
       });
-      const queueMessage = (
-        id: string,
-        sender: "notification" | "agent" | "scheduled" | "system" | "user",
-      ) =>
+      const queueMessage = (id: string, sender: "notification" | "agent" | "scheduled" | "user") =>
         orchestrator.dispatch({
           type: "message.dispatch",
           ...(
@@ -6459,7 +6456,6 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                 creationSource: "web",
                 scheduledTaskId: ScheduledTaskId.make("settle-automatic-schedule"),
               },
-              system: { createdBy: "system", creationSource: "server" },
               user: { createdBy: "user", creationSource: "web" },
             } as const
           )[sender],
@@ -6474,7 +6470,6 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* queueMessage("settle-automatic-notification", "notification");
       yield* queueMessage("settle-automatic-agent", "agent");
       yield* queueMessage("settle-automatic-scheduled", "scheduled");
-      yield* queueMessage("settle-automatic-system", "system");
 
       const holdQueueAfterRestart = (commandId: string) =>
         Effect.gen(function* () {
