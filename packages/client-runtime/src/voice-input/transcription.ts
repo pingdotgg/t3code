@@ -5,12 +5,35 @@ export type VoiceTranscriptionOptions = {
   readonly signal: AbortSignal;
 };
 
+export type LiveVoiceOptions = VoiceTranscriptionOptions & {
+  /** The complete transcript so far, including revisions to interim words. */
+  readonly onTranscript: (text: string) => void;
+  readonly onError: (message: string) => void;
+  readonly onEnd: () => void;
+};
+
+export type LiveVoiceSession = {
+  /** Resolves with the final transcript once capture and recognition have stopped. */
+  readonly stop: () => Promise<string>;
+  readonly cancel: () => Promise<void>;
+  readonly getStatus: () => {
+    readonly durationMillis: number;
+    readonly metering: number | undefined;
+  } | null;
+};
+
 export type VoiceStreamingSession = {
   readonly finish: (options: VoiceTranscriptionOptions) => Promise<string>;
 };
 
 export type PreparedVoiceTranscription = {
   readonly locale: string;
+  /** Live capture streams words while recording; the controller owns the microphone otherwise. */
+  readonly startStreaming?: (options: LiveVoiceOptions) => Promise<LiveVoiceSession>;
+  /** Prepares record-then-transcribe capture when live capture cannot start. */
+  readonly prepareFileFallback?: (
+    options: VoiceTranscriptionOptions,
+  ) => Promise<PreparedVoiceTranscription>;
   /**
    * Runs alongside capture once recording starts. Resolves with the transcript when it
    * transcribed live, or null when `transcribe` still runs after the recording stops.

@@ -4,6 +4,7 @@ import { replaceTextRange } from "@t3tools/shared/composerTrigger";
 import {
   VoiceTranscriptionError,
   type PreparedVoiceTranscription,
+  type LiveVoiceSession,
   type VoiceTranscriber,
 } from "./transcription.ts";
 
@@ -95,6 +96,8 @@ export type VoiceInputControllerDependencies = {
     selection: { readonly start: number; readonly end: number },
   ) => void;
   readonly onStateChange: (state: VoiceInputState) => void;
+  /** Live capture reports the dictated text so far, before it is final. */
+  readonly onLiveTranscript?: (transcript: string) => void;
 };
 
 type TranscriptCommitResult =
@@ -264,6 +267,9 @@ export class VoiceInputController {
   private postProcessingAbortController: AbortController | null = null;
   private skipPostProcessingRequested = false;
   private capturedDraft: VoiceDraftSnapshot | null = null;
+  private liveSession: LiveVoiceSession | null = null;
+  /** The draft as live dictation last wrote it; anything else is someone else's edit. */
+  private expectedDraft: VoiceDraftSnapshot | null = null;
   private recordingUri: string | null = null;
   private readonly ownedRecordingUris = new Set<string>();
   private recordingConfigured = false;
@@ -280,6 +286,11 @@ export class VoiceInputController {
 
   get currentState(): VoiceInputState {
     return this.state;
+  }
+
+  /** Live capture owns the microphone, so its levels replace the file recorder's. */
+  get streamingStatus(): ReturnType<LiveVoiceSession["getStatus"]> {
+    return this.liveSession?.getStatus() ?? null;
   }
 
   async start(): Promise<void> {
@@ -356,6 +367,27 @@ export class VoiceInputController {
       if (!this.isCurrent(operationToken)) return;
       this.recordingUri = this.dependencies.recorder.uri;
       this.rememberRecordingUri(this.recordingUri);
+      // Preparing the recorder also routes the preferred microphone for live capture.
+      if (this.transcription.startStreaming) {
+        const fallback = await this.startStreaming(
+          this.transcription,
+          initiatingDraft.ownerKey,
+          operationToken,
+          abortController,
+        );
+        if (!fallback || !this.isCurrent(operationToken)) return;
+        try {
+          this.transcription = await runTranscriptionOperation(() =>
+            fallback({ signal: abortController.signal }),
+          );
+        } catch (error) {
+          if (this.isCurrent(operationToken)) {
+            this.setError(preparationErrorMessage(error), "retry");
+          }
+          return;
+        }
+        if (!this.isCurrent(operationToken)) return;
+      }
 
       const capturedDraft = this.dependencies.readDraft();
       if (!capturedDraft || capturedDraft.ownerKey !== initiatingDraft.ownerKey) {
@@ -414,14 +446,17 @@ export class VoiceInputController {
         this.setState(IDLE_STATE);
         return;
       case "preparing":
+        this.restoreBeforeDictation();
         this.invalidateOperation();
         this.setState(IDLE_STATE);
         return;
       case "recording":
+        this.restoreBeforeDictation();
         this.discardRecording(null);
         return;
       case "transcribing":
       case "post-processing":
+        this.restoreBeforeDictation();
         this.invalidateOperation();
         this.setState(IDLE_STATE);
         return;
@@ -458,7 +493,7 @@ export class VoiceInputController {
   }
 
   handleRecorderStatus(status: VoiceRecorderStatus): Promise<void> | void {
-    if (this.state.phase !== "recording") return;
+    if (this.state.phase !== "recording" || this.liveSession) return;
     if (status.url && this.recordingUri && status.url !== this.recordingUri) return;
     if (status.hasError) {
       return this.interruptRecording(
@@ -506,6 +541,19 @@ export class VoiceInputController {
     this.setState({ phase: "transcribing", error: null, errorAction: null });
 
     try {
+      if (this.liveSession) {
+        const transcript = await this.liveSession.stop();
+        if (!this.isCurrent(operationToken)) return;
+        // The final pass may still correct words shown while recording.
+        this.updateLiveTranscript(transcript);
+        if (!this.isCurrent(operationToken)) return;
+        if (transcript.trim().length === 0) {
+          this.setError("No speech was detected.", "retry");
+        } else {
+          this.setState(IDLE_STATE);
+        }
+        return;
+      }
       if (!alreadyStopped) await this.dependencies.recorder.stop();
       await this.releaseAudioSession();
       this.recordingUri = completedUri ?? this.dependencies.recorder.uri ?? this.recordingUri;
@@ -630,9 +678,117 @@ export class VoiceInputController {
     await this.releaseResources();
   }
 
+  /** Returns the file fallback to prepare when live capture fails before any speech. */
+  private async startStreaming(
+    transcription: PreparedVoiceTranscription,
+    ownerKey: string,
+    operationToken: number,
+    abortController: AbortController,
+  ): Promise<PreparedVoiceTranscription["prepareFileFallback"] | null> {
+    const startStreaming = transcription.startStreaming;
+    if (!startStreaming) return null;
+    const capturedDraft = this.dependencies.readDraft();
+    if (!capturedDraft || capturedDraft.ownerKey !== ownerKey) {
+      this.setError("This draft is no longer available.", "retry");
+      return null;
+    }
+    this.capturedDraft = capturedDraft;
+    this.expectedDraft = capturedDraft;
+    let heardSpeech = false;
+    try {
+      this.liveSession = await startStreaming({
+        signal: abortController.signal,
+        onTranscript: (text) => {
+          heardSpeech ||= text.trim().length > 0;
+          if (this.isCurrent(operationToken)) this.updateLiveTranscript(text);
+        },
+        onError: (message) => {
+          if (this.isCurrent(operationToken)) this.failStreaming(message);
+        },
+        onEnd: () => {
+          if (this.isCurrent(operationToken)) void this.stop();
+        },
+      });
+    } catch (error) {
+      if (!this.isCurrent(operationToken)) return null;
+      // Words already in the draft stay; recording again would duplicate them.
+      if (heardSpeech || !transcription.prepareFileFallback || !this.draftIsUnchanged()) {
+        this.setError(
+          isVoiceTranscriptionError(error) ? error.message : "Could not start voice recording.",
+          "retry",
+        );
+        return null;
+      }
+      this.capturedDraft = null;
+      this.expectedDraft = null;
+      return transcription.prepareFileFallback;
+    }
+    if (this.isCurrent(operationToken)) {
+      this.setState({ phase: "recording", error: null, errorAction: null });
+    }
+    return null;
+  }
+
+  private failStreaming(message: string): void {
+    if (this.state.phase === "preparing" || this.finishing) {
+      // Startup and finalization release resources once their native work settles.
+      this.invalidateOperation();
+      this.setError(message, "retry");
+    } else {
+      void this.discardRecording(message);
+    }
+  }
+
+  private draftIsUnchanged(): boolean {
+    const current = this.dependencies.readDraft();
+    const expected = this.expectedDraft;
+    return (
+      current !== null &&
+      expected !== null &&
+      current.ownerKey === expected.ownerKey &&
+      current.text === expected.text
+    );
+  }
+
+  /** Cancel removes live words, but never text someone else has written since. */
+  private restoreBeforeDictation(): void {
+    const captured = this.capturedDraft;
+    if (!captured || !this.expectedDraft || !this.draftIsUnchanged()) return;
+    if (this.expectedDraft.text !== captured.text) {
+      this.dependencies.commitDraft(captured.text, captured.selection);
+    }
+    this.expectedDraft = null;
+  }
+
+  private updateLiveTranscript(transcript: string): void {
+    const captured = this.capturedDraft;
+    if (!captured || !this.expectedDraft || !this.transcription) return;
+    if (!this.draftIsUnchanged()) {
+      this.failStreaming("The draft changed while voice input was running. Dictation stopped.");
+      return;
+    }
+    this.dependencies.onLiveTranscript?.(transcript);
+    // Each hypothesis replaces the captured selection; successive ones never append.
+    const result = resolveTranscriptCommit(
+      captured,
+      captured,
+      transcript,
+      this.transcription.locale,
+    );
+    if (result.kind === "stale") return;
+    const next = result.kind === "empty" ? captured : result;
+    if (next.text === this.expectedDraft.text) return;
+    this.dependencies.commitDraft(next.text, next.selection);
+    this.expectedDraft = this.dependencies.readDraft();
+  }
+
   private async releaseResources(): Promise<void> {
     this.transcriptionAbortController?.abort();
     this.postProcessingAbortController?.abort();
+    const liveSession = this.liveSession;
+    this.liveSession = null;
+    this.expectedDraft = null;
+    if (liveSession) await liveSession.cancel().catch(() => undefined);
     this.rememberRecordingUri(this.recordingUri);
     try {
       this.rememberRecordingUri(this.dependencies.recorder.uri);

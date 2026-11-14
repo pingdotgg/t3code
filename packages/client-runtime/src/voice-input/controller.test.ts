@@ -5,6 +5,7 @@ import {
   resolveTranscriptCommit,
   VoiceInputController,
   VOICE_RECORDING_LIMIT_SECONDS,
+  voiceInputBlocksSubmission,
   type VoiceDraftSnapshot,
   type VoiceInputControllerDependencies,
   type VoiceRecorder,
@@ -12,6 +13,8 @@ import {
 import {
   VoiceTranscriptionError,
   type PreparedVoiceTranscription,
+  type LiveVoiceOptions,
+  type LiveVoiceSession,
   type VoiceTranscriber,
 } from "./transcription.ts";
 
@@ -907,5 +910,198 @@ describe("VoiceInputController", () => {
 
     expect(harness.recorder.record).not.toHaveBeenCalled();
     expect(harness.controller.currentState.error).toContain("background");
+  });
+});
+
+function createLiveHarness(startStreaming?: PreparedVoiceTranscription["startStreaming"]) {
+  let callbacks!: LiveVoiceOptions;
+  let current = draft();
+  const reported: string[] = [];
+  const stop = vi.fn(async () => "new words.");
+  const cancel = vi.fn(async () => undefined);
+  const prepareFileFallback = vi.fn(async () => preparedTranscription(async () => "file words"));
+  const harness = createHarness({
+    readDraft: () => current,
+    commitDraft: (text, selection) => {
+      current = { ...current, text, selection };
+    },
+    onLiveTranscript: (text) => reported.push(text),
+    getTranscriber: () => ({
+      prepare: async () => ({
+        locale: "en-US",
+        transcribe: async () => "",
+        prepareFileFallback,
+        startStreaming:
+          startStreaming ??
+          (async (options) => {
+            callbacks = options;
+            return { stop, cancel, getStatus: () => null };
+          }),
+      }),
+    }),
+  });
+  return {
+    ...harness,
+    stop,
+    cancel,
+    reported,
+    prepareFileFallback,
+    get text() {
+      return current.text;
+    },
+    emit: (text: string) => callbacks.onTranscript(text),
+    fail: () => callbacks.onError("Interrupted"),
+    edit: (text: string) => {
+      current = { ...current, text };
+    },
+    changeOwner: () => {
+      current = { ...draft(), ownerKey: "other" };
+    },
+  };
+}
+
+describe("live voice input", () => {
+  beforeEach(() => resetVoiceInputGlobalsForTests());
+
+  it("revises live words in place, then applies the final correction", async () => {
+    const h = createLiveHarness();
+    const correction = deferred<string>();
+    h.stop.mockReturnValue(correction.promise);
+    await h.controller.start();
+    h.emit("knew");
+    expect(h.text).toBe("hello knew");
+    h.emit("new words");
+    expect(h.text).toBe("hello new words");
+    expect(h.recorder.record).not.toHaveBeenCalled();
+
+    const finishing = h.controller.stop();
+    expect(voiceInputBlocksSubmission(h.controller.currentState)).toBe(true);
+    correction.resolve("New words.");
+    await finishing;
+    expect(h.text).toBe("hello New words.");
+    expect(h.reported).toEqual(["knew", "new words", "New words."]);
+    expect(h.controller.currentState.phase).toBe("idle");
+  });
+
+  it("ignores the idle file recorder while live capture owns the microphone", async () => {
+    const h = createLiveHarness();
+    await h.controller.start();
+    await h.controller.handleRecorderStatus({
+      isFinished: true,
+      hasError: false,
+      error: null,
+      url: "file:///idle.m4a",
+    });
+    expect(h.controller.currentState.phase).toBe("recording");
+    expect(h.stop).not.toHaveBeenCalled();
+    h.controller.cancel();
+  });
+
+  it("falls back to file capture when live capture fails before any speech", async () => {
+    const h = createLiveHarness(async (options) => {
+      options.onTranscript("   ");
+      throw new Error("live capture unavailable");
+    });
+    await h.controller.start();
+    expect(h.prepareFileFallback).toHaveBeenCalledOnce();
+    expect(h.recorder.record).toHaveBeenCalledWith({ forDuration: VOICE_RECORDING_LIMIT_SECONDS });
+    await h.controller.stop();
+    expect(h.text).toBe("hello file words");
+  });
+
+  it("keeps words and skips the fallback when live capture fails after speech", async () => {
+    const h = createLiveHarness(async (options) => {
+      options.onTranscript("recognized words");
+      throw new Error("live capture failed after speech");
+    });
+    await h.controller.start();
+    expect(h.text).toBe("hello recognized words");
+    expect(h.controller.currentState.phase).toBe("error");
+    expect(h.prepareFileFallback).not.toHaveBeenCalled();
+  });
+
+  it("never overwrites a manual edit or replacement owner, live or at Finish", async () => {
+    for (const change of ["edit", "owner"] as const) {
+      for (const moment of ["live", "finish"] as const) {
+        resetVoiceInputGlobalsForTests();
+        const h = createLiveHarness();
+        const correction = deferred<string>();
+        h.stop.mockReturnValue(correction.promise);
+        await h.controller.start();
+        h.emit("new");
+        const finishing = moment === "finish" ? h.controller.stop() : null;
+        if (change === "edit") h.edit("my edit");
+        else h.changeOwner();
+        h.emit("late text");
+        correction.resolve("corrected words");
+        await finishing;
+        expect(h.text).toBe(change === "edit" ? "my edit" : "hello world");
+        expect(h.controller.currentState.phase).toBe("error");
+      }
+    }
+  });
+
+  it("cancel restores the draft and ignores late speech, even during Finish", async () => {
+    for (const moment of ["recording", "finish"] as const) {
+      resetVoiceInputGlobalsForTests();
+      const h = createLiveHarness();
+      const final = deferred<string>();
+      h.stop.mockReturnValue(final.promise);
+      await h.controller.start();
+      h.emit("new");
+      const finishing = moment === "finish" ? h.controller.stop() : null;
+      h.controller.cancel();
+      h.emit("late text");
+      final.resolve("late final words");
+      await finishing;
+      expect(h.text).toBe("hello world");
+      expect(h.controller.currentState.phase).toBe("idle");
+    }
+  });
+
+  it("keeps recognized words when capture is interrupted", async () => {
+    const h = createLiveHarness();
+    await h.controller.start();
+    h.emit("new");
+    h.fail();
+    h.emit("late text");
+    expect(h.text).toBe("hello new");
+    expect(h.controller.currentState.error).toBe("Interrupted");
+  });
+
+  it("restores the draft when the recognizer retracts all speech", async () => {
+    const h = createLiveHarness();
+    h.stop.mockResolvedValue("");
+    await h.controller.start();
+    h.emit("noise");
+    h.emit("");
+    expect(h.text).toBe("hello world");
+    await h.controller.stop();
+    expect(h.controller.currentState.error).toBe("No speech was detected.");
+  });
+
+  it("holds the microphone until a cancelled startup releases it", async () => {
+    const entered = deferred<void>();
+    const start = deferred<LiveVoiceSession>();
+    const cancel = vi.fn(async () => undefined);
+    const h = createLiveHarness(() => {
+      entered.resolve();
+      return start.promise;
+    });
+    const starting = h.controller.start();
+    await entered.promise;
+    h.controller.cancel();
+
+    const next = createHarness();
+    const nextStarting = next.controller.start();
+    await Promise.resolve();
+    expect(next.controller.currentState.phase).toBe("preparing");
+
+    start.resolve({ stop: async () => "", cancel, getStatus: () => null });
+    await starting;
+    await nextStarting;
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(next.controller.currentState.phase).toBe("recording");
+    await next.controller.stop();
   });
 });

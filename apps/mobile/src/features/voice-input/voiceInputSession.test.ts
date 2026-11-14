@@ -397,3 +397,94 @@ describe("global voice input", () => {
     expect(session.getSnapshot().focusedOwners.size).toBe(0);
   });
 });
+
+describe("live voice input session", () => {
+  beforeEach(() => resetVoiceInputGlobalsForTests());
+
+  it.each(["finish", "cancel", "manual edit", "retry caret", "retry selection"] as const)(
+    "publishes live words and streamed levels, then handles %s",
+    async (ending) => {
+      let onTranscript!: (text: string) => void;
+      let text = ending === "retry selection" ? "Draft: world" : "Draft: ";
+      let starts = 0;
+      const publishAudioLevels = vi.fn();
+      const session = new VoiceInputSession({
+        recorder: {
+          uri: null,
+          prepareToRecordAsync: vi.fn(async () => {}),
+          record: vi.fn(),
+          stop: vi.fn(async () => {}),
+        },
+        getTranscriber: () => ({
+          prepare: async () => ({
+            locale: "en-US",
+            transcribe: async () => "",
+            startStreaming: async (options) => {
+              onTranscript = options.onTranscript;
+              options.onTranscript(starts++ === 0 ? "Use exponential backup" : "and more");
+              return {
+                stop: async () => "Use exponential backoff.",
+                cancel: async () => {},
+                getStatus: () => ({ durationMillis: 3_200, metering: -12 }),
+              };
+            },
+          }),
+        }),
+        requestPermission: async () => ({ granted: true, canAskAgain: true }),
+        configureRecording: async () => {},
+        releaseRecording: async () => {},
+        deleteRecording: vi.fn(),
+        sampleRecording: () => null,
+        publishAudioLevels,
+        keepAwake: () => () => {},
+      });
+
+      await session.start(
+        createVoiceInputTarget(
+          "owner",
+          () => text,
+          (next) => {
+            text = next;
+          },
+          { start: 7, end: ending === "retry selection" ? 12 : 7 },
+        ),
+      );
+
+      expect(session.getSnapshot()).toMatchObject({
+        state: { phase: "recording" },
+        liveTranscript: "Use exponential backup",
+        elapsedSeconds: 3,
+      });
+      expect(publishAudioLevels).toHaveBeenCalled();
+      expect(text).toBe("Draft: Use exponential backup");
+
+      onTranscript("Use exponential backoff and");
+      expect(session.getSnapshot().liveTranscript).toBe("Use exponential backoff and");
+
+      expect(text).toBe("Draft: Use exponential backoff and");
+      if (ending === "finish") {
+        await session.controller.stop();
+        expect(text).toBe("Draft: Use exponential backoff.");
+      } else if (ending === "cancel") {
+        session.controller.cancel();
+        onTranscript("late words");
+        expect(text).toBe("Draft: ");
+      } else if (ending === "retry caret" || ending === "retry selection") {
+        await session.controller.interruptRecording();
+        expect(text).toBe("Draft: Use exponential backoff and");
+        await session.retry();
+        expect(text).toBe("Draft: Use exponential backoff and and more");
+        await session.controller.stop();
+      } else {
+        text = "My manual edit";
+        onTranscript("late words");
+        expect(text).toBe("My manual edit");
+      }
+      expect(session.getSnapshot()).toMatchObject({
+        state: { phase: ending === "manual edit" ? "error" : "idle" },
+        liveTranscript: null,
+      });
+      session.dispose();
+    },
+  );
+});

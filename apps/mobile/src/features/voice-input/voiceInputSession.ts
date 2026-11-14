@@ -26,6 +26,8 @@ export type VoiceInputSnapshot = {
   readonly ownerKey: string | null;
   readonly label: string | null;
   readonly elapsedSeconds: number;
+  /** Words recognized so far by live capture, which may still be corrected. */
+  readonly liveTranscript: string | null;
   readonly focusedOwners: ReadonlySet<string>;
 };
 
@@ -52,13 +54,17 @@ export function createVoiceInputTarget(
   commitDraft: VoiceInputTarget["commitDraft"],
   selection: VoiceDraftSnapshot["selection"],
 ): VoiceInputTarget {
+  let currentSelection = selection;
   return {
     ownerKey,
     readDraft: () => {
       const text = readText();
-      return text === null ? null : { ownerKey, text, selection };
+      return text === null ? null : { ownerKey, text, selection: currentSelection };
     },
-    commitDraft,
+    commitDraft: (text, nextSelection) => {
+      commitDraft(text, nextSelection);
+      currentSelection = nextSelection;
+    },
   };
 }
 
@@ -70,12 +76,13 @@ export class VoiceInputSession {
   readonly controller: VoiceInputController;
   private readonly dependencies: VoiceInputSessionDependencies;
   private target: VoiceInputTarget | null = null;
-  private startText: string | null = null;
+  private expectedText: string | null = null;
   private snapshot: VoiceInputSnapshot = {
     state: IDLE_STATE,
     ownerKey: null,
     label: null,
     elapsedSeconds: 0,
+    liveTranscript: null,
     focusedOwners: new Set(),
   };
   private readonly listeners = new Set<() => void>();
@@ -88,12 +95,21 @@ export class VoiceInputSession {
     this.controller = new VoiceInputController({
       ...dependencies,
       onStateChange: (state) => this.handleStateChange(state),
-      // The target's selection is fixed at start, so a draft changed since refuses the transcript.
+      // Keep the starting selection and refuse edits outside this session.
       readDraft: () => {
         const draft = this.target?.readDraft() ?? null;
-        return draft?.text === this.startText ? draft : null;
+        return draft?.text === this.expectedText ? draft : null;
       },
-      commitDraft: (text, selection) => this.target?.commitDraft(text, selection),
+      commitDraft: (text, selection) => {
+        this.target?.commitDraft(text, selection);
+        this.expectedText = text;
+      },
+      onLiveTranscript: (transcript) => {
+        const liveTranscript = transcript.trim() || null;
+        if (liveTranscript !== this.snapshot.liveTranscript) {
+          this.publish({ ...this.snapshot, liveTranscript });
+        }
+      },
     });
   }
 
@@ -131,7 +147,7 @@ export class VoiceInputSession {
   start(target: VoiceInputTarget): Promise<void> {
     if (voiceInputBlocksSubmission(this.controller.currentState)) return Promise.resolve();
     this.target = target;
-    this.startText = target.readDraft()?.text ?? null;
+    this.expectedText = target.readDraft()?.text ?? null;
     return this.controller.start();
   }
 
@@ -144,6 +160,7 @@ export class VoiceInputSession {
   private handleStateChange(state: VoiceInputState): void {
     const previousPhase = this.snapshot.state.phase;
     let elapsedSeconds = this.snapshot.elapsedSeconds;
+    const liveTranscript = voiceInputBlocksSubmission(state) ? this.snapshot.liveTranscript : null;
     if (state.phase !== previousPhase) {
       if (previousPhase === "recording") this.stopRecordingActivity();
       if (capturesAudio(state.phase)) {
@@ -157,6 +174,7 @@ export class VoiceInputSession {
       ownerKey: this.ownerKey,
       label: this.label,
       elapsedSeconds,
+      liveTranscript: state.phase === "preparing" ? null : liveTranscript,
     });
     if (state.phase === "recording" && previousPhase !== "recording") {
       this.startRecordingActivity();
@@ -178,7 +196,7 @@ export class VoiceInputSession {
 
   private sampleRecording(): void {
     if (this.controller.currentState.phase !== "recording") return;
-    const sample = this.dependencies.sampleRecording();
+    const sample = this.controller.streamingStatus ?? this.dependencies.sampleRecording();
     if (!sample) return;
 
     const level = normalizeVoiceInputDecibels(sample.metering);

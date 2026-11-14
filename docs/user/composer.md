@@ -208,6 +208,12 @@ Use the composer's microphone to record, then confirm to transcribe. Text is
 inserted where your selection was when recording started, ready for you to review
 and edit before sending.
 
+On iPhone with local transcription, your words appear while you speak and may be
+corrected as recognition continues. Confirm applies the final corrections. Cancel
+restores the draft you had before dictating; an interruption keeps the words already
+shown. If live dictation can't start, the iPhone records and transcribes after you
+confirm, as on Android.
+
 By default, audio stays on the phone. Local transcription needs a supported iPhone
 with iOS 26 or later, or Android 12 or later with compatible Google speech services.
 To use a paired environment instead, open **Settings → Voice → Transcribe on**,
@@ -240,8 +246,9 @@ microphone on iOS. Swipe a device left to forget it. Android may use another inp
 when the preferred microphone cannot be routed. Devices with the same name may share
 a saved preference, but simultaneous same-name inputs remain separately selectable.
 
-T3 Code deletes the temporary recording from your phone after transcription or
-cancellation. The transcript stays in your draft until you send the message to the agent.
+Live dictation on iPhone saves no audio. Otherwise T3 Code deletes the temporary
+recording from your phone after transcription or cancellation. The transcript stays
+in your draft until you send the message to the agent.
 
 ## Queued messages
 

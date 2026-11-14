@@ -350,10 +350,13 @@ export function ComposerDictationError(props: {
 export function ComposerDictationStatus(props: {
   readonly audioLevels: SharedValue<ReadonlyArray<number>>;
   readonly elapsedSeconds: number;
+  readonly liveTranscript?: string | null;
   readonly phase: VoiceInputPhase;
   readonly presentation: VoiceComposerPresentation;
 }) {
   const recording = props.phase === "recording";
+  const liveTranscript =
+    recording || props.phase === "transcribing" ? (props.liveTranscript ?? null) : null;
   const waveformStyle = useAnimatedStyle(() => ({
     opacity: withTiming(recording ? 1 : 0, DICTATION_TIMING),
   }));
@@ -362,6 +365,30 @@ export function ComposerDictationStatus(props: {
   }));
 
   if (!props.presentation.statusLabel || props.presentation.statusKind === "error") return null;
+  if (liveTranscript !== null) {
+    return (
+      <View
+        accessible
+        accessibilityLabel={`${props.presentation.statusLabel}: ${liveTranscript}`}
+        accessibilityLiveRegion={recording ? "none" : "polite"}
+        className="h-11 min-w-0 flex-1 flex-row items-center gap-2 px-1"
+      >
+        {/* Head truncation keeps the newest words, and their corrections, in view. */}
+        <Text
+          className={cn(
+            "min-w-0 flex-1 text-sm",
+            recording ? "text-foreground" : "text-foreground-muted",
+          )}
+          ellipsizeMode="head"
+          numberOfLines={1}
+        >
+          {liveTranscript}
+        </Text>
+        {recording ? <CompactVoiceWaveform audioLevels={props.audioLevels} /> : null}
+        <DictationElapsedTime className="text-foreground-muted" seconds={props.elapsedSeconds} />
+      </View>
+    );
+  }
   return (
     <View className="relative h-11 min-w-0 flex-1 justify-center">
       <View
