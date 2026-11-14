@@ -64,6 +64,8 @@ describe("RPC authorization scopes", () => {
       WS_METHODS.terminalClear,
       WS_METHODS.terminalClose,
       WS_METHODS.previewStopLocalServer,
+      // Proxy grants open raw TCP tunnels to loopback ports, not just browser traffic.
+      WS_METHODS.previewIssueProxyGrant,
     ]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthTerminalOperateScope);
     }

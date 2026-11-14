@@ -64,6 +64,31 @@ describe("browser target resolver", () => {
     }
   });
 
+  it("keeps a remote server's localhost origin when the desktop proxy carries it", async () => {
+    const { resolveDiscoveredServerUrl } = await import("./browserTargetResolver");
+    env.isElectron = true;
+    vi.stubGlobal("window", { desktopBridge: { preview: { remoteProxy: {} } } });
+    try {
+      for (const connection of [
+        {
+          httpBaseUrl: "http://192.168.1.25:3773",
+          target: { _tag: "BearerConnectionTarget", connectionId: "saved:remote" },
+        },
+        { httpBaseUrl: "https://relay.example.com", target: { _tag: "RelayConnectionTarget" } },
+        // Not connected yet: still never this computer's server under a rewritten host.
+        null,
+      ]) {
+        readPreparedConnection.mockReturnValue(connection);
+        expect(
+          resolveDiscoveredServerUrl(EnvironmentId.make("environment-1"), "localhost:3001/app"),
+        ).toBe("http://localhost:3001/app");
+      }
+    } finally {
+      env.isElectron = false;
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("classifies exact private IPv4 and IPv6 boundaries", async () => {
     const privateHosts = [
       "0.0.0.0",

@@ -71,6 +71,7 @@ import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as MacPermissions from "../permissions/MacPermissions.ts";
 import * as PreviewManager from "../preview/Manager.ts";
+import * as RemotePreviewProxy from "../preview/RemotePreviewProxy.ts";
 
 it.effect.each([false, true])(
   "stops backends together before flushing history and cancels Linux registration, stop defect=%s",
@@ -248,6 +249,9 @@ it.effect.each([false, true])(
             }),
             FileSystem.layerNoop({}),
             Layer.mock(NetService.NetService, {}),
+            Layer.mock(RemotePreviewProxy.RemotePreviewProxy, {
+              embeddedCredentialForPort: () => null,
+            }),
             Path.layer,
             Layer.succeed(
               HttpClient.HttpClient,

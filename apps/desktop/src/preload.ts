@@ -3,6 +3,7 @@ import type {
   DesktopPreviewAnnotationVoiceEvent,
   DesktopPreviewFindResultEvent,
   DesktopPreviewOpenLinkEvent,
+  DesktopRemotePreviewProxyStatus,
   DesktopPreviewPointerEvent,
   DesktopPreviewRecordingInputEvent,
   DesktopPreviewTabState,
@@ -423,8 +424,12 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.invoke(IpcChannels.PREVIEW_CLEAR_COOKIES_CHANNEL, { environmentId, profileId }),
     clearCache: (environmentId, profileId) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_CLEAR_CACHE_CHANNEL, { environmentId, profileId }),
-    getPreviewConfig: (environmentId, profileId) =>
-      ipcRenderer.invoke(IpcChannels.PREVIEW_GET_CONFIG_CHANNEL, { environmentId, profileId }),
+    getPreviewConfig: (environmentId, profileId, options) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_GET_CONFIG_CHANNEL, {
+        environmentId,
+        profileId,
+        remoteProxy: options?.remoteProxy,
+      }),
     setAnnotationTheme: (theme) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_SET_ANNOTATION_THEME_CHANNEL, { theme }),
     setAnnotationSendEnabled: (tabId, enabled) =>
@@ -520,6 +525,35 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.on(IpcChannels.PREVIEW_FIND_RESULT_CHANNEL, wrappedListener);
       return () =>
         ipcRenderer.removeListener(IpcChannels.PREVIEW_FIND_RESULT_CHANNEL, wrappedListener);
+    },
+    remoteProxy: {
+      getStatuses: () => ipcRenderer.invoke(IpcChannels.REMOTE_PREVIEW_PROXY_STATUSES_CHANNEL),
+      configure: (input) =>
+        ipcRenderer.invoke(IpcChannels.REMOTE_PREVIEW_PROXY_CONFIGURE_CHANNEL, input),
+      getStatus: (environmentId) =>
+        ipcRenderer.invoke(IpcChannels.REMOTE_PREVIEW_PROXY_STATUS_CHANNEL, { environmentId }),
+      issueExternalAccess: (environmentId) =>
+        ipcRenderer.invoke(IpcChannels.REMOTE_PREVIEW_PROXY_ISSUE_EXTERNAL_CHANNEL, {
+          environmentId,
+        }),
+      revokeExternalAccess: (environmentId) =>
+        ipcRenderer.invoke(IpcChannels.REMOTE_PREVIEW_PROXY_REVOKE_EXTERNAL_CHANNEL, {
+          environmentId,
+        }),
+      revoke: (environmentId) =>
+        ipcRenderer.invoke(IpcChannels.REMOTE_PREVIEW_PROXY_REVOKE_CHANNEL, { environmentId }),
+      onStatus: (listener) => {
+        const wrappedListener = (_event: Electron.IpcRendererEvent, status: unknown) => {
+          if (typeof status !== "object" || status === null) return;
+          listener(status as DesktopRemotePreviewProxyStatus);
+        };
+        ipcRenderer.on(IpcChannels.REMOTE_PREVIEW_PROXY_STATUS_CHANGE_CHANNEL, wrappedListener);
+        return () =>
+          ipcRenderer.removeListener(
+            IpcChannels.REMOTE_PREVIEW_PROXY_STATUS_CHANGE_CHANNEL,
+            wrappedListener,
+          );
+      },
     },
   },
 } satisfies DesktopBridge);

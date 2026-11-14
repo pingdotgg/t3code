@@ -12,12 +12,20 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { act, fakeTimers, render } from "../../test/render";
 
 const mocks = vi.hoisted(() => ({
+  remoteProxy: false,
+  approveRemotePreviewPorts: vi.fn(async () => null),
   getClientSettings: vi.fn<() => Promise<ClientSettings | null>>(),
   setClientSettings: vi.fn<(settings: ClientSettings) => Promise<void>>(),
   createTab: vi.fn<DesktopPreviewBridge["createTab"]>(),
   closeTab: vi.fn<DesktopPreviewBridge["closeTab"]>(),
   registerWebview: vi.fn<DesktopPreviewBridge["registerWebview"]>(),
   getPreviewConfig: vi.fn<DesktopPreviewBridge["getPreviewConfig"]>(),
+}));
+
+vi.mock(import("./remotePreviewProxy"), async (original) => ({
+  ...(await original()),
+  needsRemotePreviewProxy: () => mocks.remoteProxy,
+  approveRemotePreviewPorts: mocks.approveRemotePreviewPorts,
 }));
 
 vi.mock(import("~/env"), async (original) => ({ ...(await original()), isElectron: true }));
@@ -75,6 +83,8 @@ const snapshot = (tabId: string, updatedAt: string): PreviewSessionSnapshot => (
 
 function setup(): Disposable {
   __resetClientSettingsPersistenceForTests();
+  mocks.remoteProxy = false;
+  mocks.approveRemotePreviewPorts.mockReset().mockResolvedValue(null);
   mocks.getClientSettings.mockReset().mockResolvedValue(DEFAULT_CLIENT_SETTINGS);
   mocks.setClientSettings.mockReset().mockResolvedValue(undefined);
   mocks.createTab.mockReset().mockResolvedValue(undefined);
@@ -114,6 +124,38 @@ async function renderHost() {
 }
 
 describe("ElectronBrowserHost", () => {
+  it("registers the guest after remote port approval delays its mounting", async () => {
+    using _state = setup();
+    mocks.remoteProxy = true;
+    let approve!: () => void;
+    mocks.approveRemotePreviewPorts.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          approve = () => resolve(null);
+        }),
+    );
+    reconcilePreviewServerSessions(threadRef, {
+      sessions: [
+        {
+          ...snapshot("tab_remote", "2026-01-01T00:00:01.000Z"),
+          navStatus: { _tag: "Success", url: "http://localhost:3000", title: "remote" },
+        },
+      ],
+      serverEpoch: "server-a",
+      revision: 1,
+    });
+    await using screen = await renderHost();
+    expect(screen.container.querySelector("webview")).toBeNull();
+    await act(() => approve());
+    await vi.waitFor(() => expect(screen.container.querySelector("webview")).not.toBeNull());
+    const guest = screen.container.querySelector("webview")!;
+    Object.defineProperty(guest, "getWebContentsId", { value: () => 42 });
+    guest.dispatchEvent(new Event("dom-ready"));
+    await vi.waitFor(() =>
+      expect(mocks.registerWebview).toHaveBeenCalledWith(expect.any(String), 42),
+    );
+  });
+
   it("never moves a tab's webview when the server reorders tabs by last update", async () => {
     using _state = setup();
     reconcilePreviewServerSessions(threadRef, {
