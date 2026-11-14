@@ -377,6 +377,16 @@ export function isDiffToggleShortcut(
   return matchesCommandShortcut(event, keybindings, "diff.toggle", options);
 }
 
+export function isSidebarToggleShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  // Ctrl+letter is a control character the terminal needs (tmux's prefix is Ctrl+B); Cmd never reaches it.
+  if (event.ctrlKey && options?.context?.terminalFocus) return false;
+  return matchesCommandShortcut(event, keybindings, "sidebar.toggle", options);
+}
+
 export function isOpenFavoriteEditorShortcut(
   event: ShortcutEventLike,
   keybindings: ResolvedKeybindingsConfig,
