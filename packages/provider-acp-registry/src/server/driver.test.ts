@@ -721,7 +721,18 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   const { id, method } = JSON.parse(line);
   if (id === undefined) return;
   if (method === "initialize") {
-    send({ id, result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [] } });
+    send({
+      id,
+      result: {
+        protocolVersion: 1,
+        agentCapabilities: {
+          _meta: { "glm-acp-agent/usage": { version: 1, method: "_glm/usage" } },
+        },
+        authMethods: [],
+      },
+    });
+  } else if (method === "_glm/usage") {
+    send({ id, result: JSON.parse(readFileSync(process.argv[3], "utf8")) });
   } else if (method === "session/new") {
     const modelIds = JSON.parse(readFileSync(process.argv[2], "utf8"));
     send({
@@ -910,6 +921,73 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
       expect(effortBySlug(yield* instance.snapshot.getSnapshot)).toBe(
         "model-a:effort,model-b:effort",
       );
+    }),
+  );
+
+  it.effect("rereads GLM usage when the snapshot refreshes", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "acp-driver-glm-" });
+      const agentPath = path.join(directory, "agent.mjs");
+      const modelsPath = path.join(directory, "models.json");
+      const usagePath = path.join(directory, "usage.json");
+      yield* fileSystem.writeFileString(agentPath, fakeAgentSource);
+      yield* fileSystem.writeFileString(modelsPath, JSON.stringify(["glm-4.7"]));
+      const writeUsage = (percent: number) =>
+        fileSystem.writeFileString(
+          usagePath,
+          JSON.stringify({
+            checkedAt: "2026-11-05T22:29:01.960Z",
+            windows: [
+              {
+                id: "tokens_limit-3-5",
+                label: "5-hour Model quota",
+                kind: "session",
+                usedPercent: percent,
+                windowDurationMins: 300,
+              },
+            ],
+          }),
+        );
+      yield* writeUsage(27);
+      const instance = yield* AcpRegistryDriver.create({
+        instanceId: identity.instanceId,
+        displayName: identity.displayName,
+        enabled: true,
+        environment: [],
+        config: decodeSettings({ agentId: "glm-acp-agent" }),
+      }).pipe(
+        Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, {
+          ...catalogWithInspection({
+            status: "ready",
+            agentId: "glm-acp-agent",
+            version: "1.17.0",
+            distribution: "npx",
+          }),
+          resolve: () =>
+            Effect.succeed({
+              distribution: "npx" as const,
+              spawn: { command: process.execPath, args: [agentPath, modelsPath, usagePath] },
+            }),
+        }),
+      );
+      const usedPercent = (provider: ServerProvider) =>
+        provider.usageLimits?.windows[0]?.usedPercent;
+      const waitForUsage = (expected: number) =>
+        instance.snapshot.streamChanges.pipe(
+          Stream.filter((provider) => usedPercent(provider) === expected),
+          Stream.runHead,
+        );
+
+      const first = yield* waitForUsage(27).pipe(Effect.forkScoped({ startImmediately: true }));
+      yield* instance.snapshot.refresh;
+      yield* Fiber.join(first);
+
+      yield* writeUsage(41);
+      const reread = yield* waitForUsage(41).pipe(Effect.forkScoped({ startImmediately: true }));
+      yield* instance.snapshot.refresh;
+      yield* Fiber.join(reread);
     }),
   );
 });

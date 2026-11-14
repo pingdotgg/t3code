@@ -1074,7 +1074,12 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       auth,
       snapshot: {
         ...snapshot,
-        refresh: snapshot.refresh.pipe(Effect.tap(() => controller.refreshMethods ?? Effect.void)),
+        refresh:
+          // A manual refresh must re-read GLM usage; the enrichment it restarts then reads past the cache.
+          (glmUsageCache === null ? Effect.void : glmUsageCache.invalidate).pipe(
+            Effect.andThen(snapshot.refresh),
+            Effect.tap(() => controller.refreshMethods ?? Effect.void),
+          ),
       },
       invalidateCaches: (Option.isSome(runtimeCoordinator)
         ? runtimeCoordinator.value.clearLiveConfiguration(instanceId)
