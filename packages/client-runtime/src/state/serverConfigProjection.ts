@@ -181,5 +181,14 @@ export function applyServerConfigProjection(
         latestEvent: event,
         source: "live",
       }));
+    case "diskSpaceUpdated":
+      return Option.map(current, (projection) => {
+        const { diskSpace: _previous, ...rest } = projection.config;
+        return {
+          config: event.payload.level === "ok" ? rest : { ...rest, diskSpace: event.payload },
+          latestEvent: event,
+          source: "live",
+        };
+      });
   }
 }

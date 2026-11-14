@@ -231,6 +231,7 @@ import * as DirectEndpoints from "./environment/DirectEndpoints.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as DefectReporter from "./observability/DefectReporter.ts";
 import * as EventLoopMonitor from "./observability/EventLoopMonitor.ts";
+import * as DiskSpace from "./observability/DiskSpace.ts";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { requiredScopeForDeviceList, rpcAuthorizationError } from "./auth/RpcAuthorization.ts";
@@ -398,6 +399,12 @@ export const withLateConfigDiscovery = <E, R>(
             return [{ ...current, providers: event.payload.providers }, [event]];
           case "settingsUpdated":
             return [{ ...current, settings: event.payload.settings }, [event]];
+          case "diskSpaceUpdated": {
+            const { diskSpace: _previous, ...rest } = current;
+            const next =
+              event.payload.level === "ok" ? rest : { ...rest, diskSpace: event.payload };
+            return [next, [event]];
+          }
           // Themes and usage-limit sources survive snapshots because snapshots never include them.
           default:
             return [current, [event]];
@@ -1442,6 +1449,7 @@ export const layerWsRpc = (
       const managedFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
       const scratchThreadPromotion = yield* ScratchThreadPromotion.ScratchThreadPromotion;
       const eventLoopMonitor = yield* EventLoopMonitor.EventLoopMonitor;
+      const diskSpace = yield* DiskSpace.DiskSpace;
       const threadSearch = yield* ThreadSearch.ThreadSearch;
 
       const providerSessionsV2 = yield* ProviderSessionManager.ProviderSessionManagerV2;
@@ -1820,6 +1828,7 @@ export const layerWsRpc = (
         const auth = yield* serverAuth.getDescriptor();
         const scratchWorkspaceRoot = yield* managedFolders.scratchRoot;
         const lastEventLoopStall = yield* eventLoopMonitor.latestNoticeableStall;
+        const currentDiskSpace = yield* diskSpace.current;
         const discovery = yield* resolveOpenDiscoveryForConfig({
           editors: externalLauncher.resolveAvailableEditors(),
           fileManagerRevealKind: externalLauncher.resolveFileManagerRevealKind(),
@@ -1889,6 +1898,7 @@ export const layerWsRpc = (
           }),
           newProjectsRoot: managedFolders.namedProjectsRoot,
           ...(lastEventLoopStall === undefined ? {} : { lastEventLoopStall }),
+          ...(currentDiskSpace.level === "ok" ? {} : { diskSpace: currentDiskSpace }),
           serverTime: DateTime.formatIso(yield* DateTime.now),
         };
       });
@@ -3390,6 +3400,24 @@ export const layerWsRpc = (
                       })),
                     )
                   : Stream.empty;
+              const diskSpaceUpdates =
+                input.diskSpace === true
+                  ? diskSpace.streamChanges.pipe(
+                      // Compare with the snapshot, so a change between it and this subscription still goes out.
+                      (changes) =>
+                        Stream.concat(
+                          Stream.make(config.diskSpace ?? DiskSpace.EMPTY_DISK_SPACE),
+                          changes,
+                        ),
+                      Stream.changesWith(DiskSpace.sameDiskSpaceLevels),
+                      Stream.drop(1),
+                      Stream.map((payload) => ({
+                        version: 1 as const,
+                        type: "diskSpaceUpdated" as const,
+                        payload,
+                      })),
+                    )
+                  : Stream.empty;
               const settingsUpdates = settingsChanges.pipe(
                 Stream.map((settings) =>
                   ServerSettings.redactServerSettingsForClient(settings, settingsClient),
@@ -3407,7 +3435,10 @@ export const layerWsRpc = (
                   providerStatuses,
                   Stream.merge(
                     settingsUpdates,
-                    Stream.merge(environmentThemeUpdates, usageLimitSourceUpdates),
+                    Stream.merge(
+                      environmentThemeUpdates,
+                      Stream.merge(usageLimitSourceUpdates, diskSpaceUpdates),
+                    ),
                   ),
                 ),
               );
