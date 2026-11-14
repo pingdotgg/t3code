@@ -18,6 +18,7 @@ import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope"
 
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import {
+  changeDraftProject,
   scheduledTaskDefaultModel,
   defaultScheduledTaskProjectId,
   matchesScheduledTaskScope,
@@ -195,6 +196,17 @@ describe("scheduled task destination", () => {
       workspaceMode: "worktree",
       startFromOrigin: true,
     });
+  });
+
+  it("restores the saved thread when the project changes back", () => {
+    const task = {
+      ...legacyTask,
+      threadId: ThreadId.make("thread:bound"),
+      threadMode: "continue" as const,
+    };
+    const moved = changeDraftProject(taskToDraft(task), "project:other", task);
+    expect(moved.threadId).toBe("");
+    expect(changeDraftProject(moved, task.projectId, task).threadId).toBe("thread:bound");
   });
 });
 

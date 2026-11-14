@@ -1,7 +1,7 @@
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { LegendList } from "@legendapp/list/react-native";
 import { useNavigation } from "@react-navigation/native";
-import { isListedThreadLineage } from "@t3tools/contracts";
+import { scheduledTaskDestinationRows } from "@t3tools/client-runtime/scheduled-task-destination";
 import * as Haptics from "expo-haptics";
 import { useMemo, useState } from "react";
 import { Platform } from "react-native";
@@ -21,12 +21,7 @@ import { useDebouncedValue, usePaginatedBranches, useThreadSearch } from "../../
 import { BranchPickerScreen } from "../threads/NewTaskContextPickerScreens";
 import { ThreadSettingsPickerScreen } from "../threads/ThreadSettingsSheet";
 import { SettingsScreen } from "./components/SettingsScreen";
-import {
-  NEW_THREAD_DESTINATION_LABEL,
-  useScheduledTaskDestinationLabel,
-  useScheduledTaskEditor,
-} from "./scheduled-task-editor";
-import { moveDraftToThread, unbindDraftFromThread } from "./scheduledTaskDraft";
+import { useScheduledTaskDestinationLabel, useScheduledTaskEditor } from "./scheduled-task-editor";
 
 function MissingTaskDraft() {
   return (
@@ -213,38 +208,20 @@ export function ScheduledTaskThreadPickerRouteScreen() {
 
   if (!editor) return <MissingTaskDraft />;
 
-  const needle = query.trim().toLocaleLowerCase();
-  const rows = [
-    ...(needle ? [] : [{ key: "new-thread", title: NEW_THREAD_DESTINATION_LABEL, thread: null }]),
-    ...(threadId !== null && currentLabel.toLocaleLowerCase().includes(needle)
-      ? [{ key: threadId, title: currentLabel, thread: null }]
-      : []),
-    ...shells
-      .filter(
-        (thread) =>
-          thread.environmentId === environmentId &&
-          thread.projectId === projectId &&
-          thread.id !== threadId &&
-          thread.archivedAt === null &&
-          isListedThreadLineage(thread.lineage) &&
-          thread.title.toLocaleLowerCase().includes(needle),
-      )
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-      .map((thread) => ({
-        key: thread.id,
-        title: thread.title.trim() || "Untitled thread",
-        thread,
-      })),
-  ];
-  const selectedKey = threadId ?? (editor.draft.threadMode === "new_thread" ? "new-thread" : null);
+  const rows = scheduledTaskDestinationRows(shells, {
+    environmentId,
+    projectId,
+    current: threadId === null ? null : { id: threadId, title: currentLabel },
+    query,
+  });
 
   return (
     <SettingsScreen title="Destination" search={search}>
       <LegendList
         renderScrollComponent={NativeScrollView}
         data={rows}
-        keyExtractor={(row) => row.key}
-        extraData={selectedKey}
+        keyExtractor={(row) => row.id}
+        extraData={threadId}
         estimatedItemSize={56}
         recycleItems
         className="flex-1"
@@ -266,20 +243,15 @@ export function ScheduledTaskThreadPickerRouteScreen() {
         renderItem={({ item, index }) => (
           <SelectionRow
             title={item.title}
-            selected={item.key === selectedKey}
+            selected={item.id === threadId}
             isFirst={index === 0}
             isLast={index === rows.length - 1}
             onPress={() => {
               void Haptics.selectionAsync();
-              if (item.key !== selectedKey) {
+              if (item.id !== threadId) {
                 setEditor((current) =>
                   current
-                    ? {
-                        ...current,
-                        draft: item.thread
-                          ? moveDraftToThread(current.draft, item.thread)
-                          : { ...unbindDraftFromThread(current.draft), threadMode: "new_thread" },
-                      }
+                    ? { ...current, draft: { ...current.draft, threadId: item.id } }
                     : current,
                 );
               }
