@@ -270,7 +270,7 @@ export const layer: Layer.Layer<
           })
           .pipe(
             Effect.catchTags({
-              ProjectionStoreThreadNotFoundError: () => Effect.succeed(undefined),
+              ProjectionStoreThreadNotFoundError: () => Effect.undefined,
             }),
           );
         if (
