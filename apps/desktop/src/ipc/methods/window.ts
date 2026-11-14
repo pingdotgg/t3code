@@ -16,6 +16,7 @@ import {
   type PickedThemeFile,
 } from "@t3tools/contracts";
 import { PROJECT_FAVICON_EXTENSIONS } from "@t3tools/shared/projectFavicon";
+import { isWindowsDrivePath } from "@t3tools/shared/path";
 import { resolveEditorCommand } from "@t3tools/shared/editor";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { isRelayTracingEnabled } from "@t3tools/shared/otelEnvironment";
@@ -48,7 +49,6 @@ import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 import {
   extractDistroFromUncPath,
-  isWindowsDrivePath,
   resolveWslPickFolderDefaultPath,
   wslUncPathToLinuxPath,
 } from "../../wsl/wslPathParsing.ts";

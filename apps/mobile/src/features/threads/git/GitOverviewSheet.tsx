@@ -241,7 +241,13 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
         <RefreshControl refreshing={isRefreshing} onRefresh={() => void handleRefresh()} />
       }
     >
-      <ListSection>
+      <ListSection
+        footer={
+          gitStatus.data?.onWindowsDriveMount
+            ? "This checkout is on a Windows drive, where WSL makes git and file operations 100 to 350 times slower. Clone it into your WSL home folder for full speed."
+            : undefined
+        }
+      >
         {sheetMenuItems.map(({ item, disabledReason }) => (
           <ListRow
             key={`${item.id}-${item.label}`}

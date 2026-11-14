@@ -227,6 +227,8 @@ const VcsStatusLocalShape = {
   isDefaultRef: Schema.Boolean,
   refName: Schema.NullOr(TrimmedNonEmptyStringSchema),
   hasWorkingTreeChanges: Schema.Boolean,
+  // WSL reaches this checkout through its slow Windows drive mount (/mnt/c).
+  onWindowsDriveMount: Schema.optional(Schema.Boolean),
   workingTree: Schema.Struct({
     // Absolute worktree root on the environment that every files[].path is
     // relative to. Absent when the server could not resolve it.

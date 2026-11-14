@@ -91,6 +91,7 @@ import * as SourceControlProvider from "@t3tools/source-control-core/server/Sour
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import type { ChangeRequest } from "@t3tools/contracts";
+import { isOnWslDriveMount } from "../workspace/wslDrivePath.ts";
 
 export interface GitActionProgressReporter {
   readonly publish: (event: GitActionProgressEvent) => Effect.Effect<void, never>;
@@ -1184,6 +1185,7 @@ export const make = Effect.gen(function* () {
     const hostingProvider = details.isRepo
       ? yield* resolveHostingProvider(cwd, details.branch)
       : null;
+    const onWindowsDriveMount = yield* isOnWslDriveMount(yield* canonicalizeExistingPath(cwd));
 
     return {
       isRepo: details.isRepo,
@@ -1192,6 +1194,7 @@ export const make = Effect.gen(function* () {
       isDefaultRef: details.isDefaultBranch,
       refName: details.branch,
       hasWorkingTreeChanges: details.hasWorkingTreeChanges,
+      ...(onWindowsDriveMount ? { onWindowsDriveMount } : {}),
       workingTree: details.workingTree,
       ...(details.branchChanges ? { branchChanges: details.branchChanges } : {}),
     } satisfies VcsStatusLocalResult;

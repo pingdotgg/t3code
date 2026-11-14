@@ -1543,6 +1543,12 @@ export default function GitActionsControl({
           {changeRequestTerminology.singular} actions.
         </p>
       )}
+      {gitStatus?.onWindowsDriveMount && (
+        <p className="px-2 py-1.5 text-xs text-warning">
+          This checkout is on a Windows drive, where WSL makes git and file operations 100 to 350
+          times slower. Clone it into your WSL home folder for full speed.
+        </p>
+      )}
       {isCleanAndBehind && (
         <p className="px-2 py-1.5 text-xs text-warning">Behind upstream. Pull/rebase first.</p>
       )}
