@@ -168,4 +168,43 @@ describe.each([1.25, 2.2])("renderGhosttySnapshot at a %sx device pixel ratio", 
     expect(isDarkAt(context, x.outside, 12.5)).toBe(true);
     expect(isDarkAt(context, x.flat, 12.5)).toBe(false);
   });
+
+  // Cell 1 spans x 11.8 to 19.6 and row 0 spans y 4 to 21 in CSS pixels.
+  it.each([
+    ["lower left", "\ue0b8", { filled: [12.3, 20.5], empty: [19.1, 4.5] }],
+    ["lower right", "\ue0ba", { filled: [19.1, 20.5], empty: [12.3, 4.5] }],
+    ["upper left", "\ue0bc", { filled: [12.3, 4.5], empty: [19.1, 20.5] }],
+    ["upper right", "\ue0be", { filled: [19.1, 4.5], empty: [12.3, 20.5] }],
+  ])("fills the %s slant into its cell corner", (_corner, text, point) => {
+    const context = scaledContext(scale);
+    renderGhosttySnapshot({
+      ...layout,
+      context,
+      snapshot: {
+        cols: 3,
+        rows: 1,
+        foreground: { r: 0, g: 0, b: 0 },
+        background,
+        cursor: { r: 0, g: 0, b: 0 },
+        cursorX: -1,
+        cursorY: -1,
+        cursorVisible: false,
+        cursorBlinking: false,
+        cursorStyle: 1,
+        dirtyRows: new Set([0]),
+        rowData: [
+          {
+            cells: [blank, { ...blank, text }, blank],
+            text: "",
+            isWrapContinuation: false,
+            wrapsToNext: false,
+          },
+        ],
+      },
+      forceFull: true,
+      cursorOn: false,
+    });
+    expect(isDarkAt(context, point.filled[0]!, point.filled[1]!)).toBe(true);
+    expect(isDarkAt(context, point.empty[0]!, point.empty[1]!)).toBe(false);
+  });
 });
