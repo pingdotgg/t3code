@@ -793,9 +793,13 @@ effectIt.effect.each(["linux", "darwin", "win32"] as const)(
   },
 );
 
-effectIt.effect.each(["linux", "darwin"] as const)(
-  "attributes listeners to the agent thread in their environment on %s, after the agent exits",
-  (platform) => {
+effectIt.effect.each([
+  { platform: "linux", renamed: false },
+  { platform: "darwin", renamed: false },
+  { platform: "darwin", renamed: true },
+] as const)(
+  "attributes listeners after the agent exits on $platform (renamed: $renamed)",
+  ({ platform, renamed }) => {
     const agentPort = 43_124;
     const otherPort = 43_125;
     const agentListener = `p4242\ncnode\nn127.0.0.1:${agentPort}\n`;
@@ -839,7 +843,13 @@ effectIt.effect.each(["linux", "darwin"] as const)(
               }
               // A direct child of this process, so stop refuses it without signaling anything.
               if (input.args[0] === "-A") {
-                return Effect.succeed(processOutput(`4242 ${process.pid} 4242\n`));
+                return Effect.succeed(
+                  processOutput(
+                    renamed
+                      ? `4242 4240 4242\n4240 4241 4242\n4241 ${process.pid} 4242\n`
+                      : `4242 ${process.pid} 4242\n`,
+                  ),
+                );
               }
               if (environmentFails) {
                 return Effect.fail(
@@ -853,7 +863,11 @@ effectIt.effect.each(["linux", "darwin"] as const)(
               environmentReads += 1;
               return Effect.succeed(
                 processOutput(
-                  `  4242 node server.js PATH=/usr/bin ${PortScanner.AGENT_THREAD_ENV}=thread-agent HOME=/Users/dev\n` +
+                  (renamed
+                    ? input.args.at(-1)?.split(",").includes("4241")
+                      ? `  4240 node parent.js ${PortScanner.AGENT_THREAD_ENV}=thread-agent\n  4241 shell ${PortScanner.AGENT_THREAD_ENV}=other-thread\n`
+                      : "  4242 renamed-server\n"
+                    : `  4242 node server.js PATH=/usr/bin ${PortScanner.AGENT_THREAD_ENV}=thread-agent HOME=/Users/dev\n`) +
                     "  5000 postgres -D /data PATH=/usr/bin\n",
                 ),
               );
@@ -899,12 +913,12 @@ effectIt.effect.each(["linux", "darwin"] as const)(
       expect(requests).toEqual([]);
 
       expect(yield* scanner.scan()).toHaveLength(1);
-      expect(environmentReads).toBe(2);
+      expect(environmentReads).toBe(renamed ? 3 : 2);
 
       // Stop reads its target's environment again rather than trust the cache, and still finds it.
       const stop = yield* Effect.flip(scanner.stopServer({ pid: 4242, port: agentPort }));
       expect(stop.reason).toBe("shared-group");
-      expect(environmentReads).toBe(3);
+      expect(environmentReads).toBe(renamed ? 5 : 3);
 
       lsofStdout = otherListener;
       expect(yield* scanner.scan()).toEqual([]);
