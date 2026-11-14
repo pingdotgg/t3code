@@ -591,6 +591,7 @@ export class DeviceOperationError extends Schema.TaggedError<DeviceOperationErro
       "package_manager_missing",
     ]),
     exitCode: Schema.optional(Schema.Number),
+    diagnostics: Schema.optional(Schema.String.check(Schema.isMaxLength(2_000))),
     cause: Schema.Defect(),
   },
 ) {
@@ -604,7 +605,8 @@ export class DeviceOperationError extends Schema.TaggedError<DeviceOperationErro
       package_manager_missing:
         "Device support needs npm, which is not on the T3 server's PATH. Install npm (it comes with Node.js from nodejs.org), restart T3 Code, then retry.",
     }[this.reason];
-    return `Device ${this.operation} failed: ${explanation}`;
+    const summary = `Device ${this.operation} failed: ${explanation}`;
+    return this.diagnostics ? `${summary}\n\n${this.diagnostics}` : summary;
   }
 }
 
