@@ -5,6 +5,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -17,6 +18,9 @@ const SHELL_ENV_NAME_PATTERN = /^[A-Z0-9_]+$/;
 const WINDOWS_PATH_DELIMITER = ";";
 const POSIX_PATH_DELIMITER = ":";
 const WINDOWS_SHELL_CANDIDATES = ["pwsh.exe", "powershell.exe"] as const;
+const WINDOWS_SHELL_PROBE_TIMEOUT_MS = 5000;
+// A shell stuck in the kernel survives the kill and holds stdout, so execFile's callback never fires.
+const WINDOWS_SHELL_PROBE_DEADLINE = Duration.millis(WINDOWS_SHELL_PROBE_TIMEOUT_MS + 1000);
 
 type ExecFileSyncLike = (
   file: string,
@@ -128,7 +132,7 @@ function trimNonEmpty(value: string | null | undefined): string | undefined {
   return trimmed && trimmed.length > 0 ? trimmed : undefined;
 }
 
-function readUserLoginShell(): string | undefined {
+export function readUserLoginShell(): string | undefined {
   try {
     return trimNonEmpty(NodeOS.userInfo().shell);
   } catch {
@@ -204,14 +208,32 @@ function envCaptureEnd(name: string): string {
   return `__T3CODE_ENV_${name}_END__`;
 }
 
+const DEBUG_TRAP_SHELLS = new Set(["bash", "zsh", "sh", "ksh", "ksh93"]);
+const POSIX_CAPTURE_SYNTAX = { assignment: "__T3CODE_PRINTENV=$(", orElse: " || " };
+const PRINTENV_CAPTURE_SYNTAX = new Map(
+  [...DEBUG_TRAP_SHELLS, "dash", "ash"].map((shell) => [shell, POSIX_CAPTURE_SYNTAX] as const),
+).set("fish", { assignment: "set -l __T3CODE_PRINTENV (", orElse: "; or " });
+// Network PATH entries must be probed inside the shell's deadline, away from the desktop thread.
+const PRINTENV_LOOKUP_COMMAND = `/bin/sh -c 'command -v printenv || { [ -n "$1" ] && PATH="$1" command -v printenv; } || printf %s /usr/bin/printenv' t3`;
+
 export function buildEnvironmentCaptureCommand(
   shell: string,
   names: ReadonlyArray<string>,
 ): string {
   const executableName = NodePath.basename(shell).toLowerCase();
   const isNushell = executableName.startsWith("nu");
+  const syntax = PRINTENV_CAPTURE_SYNTAX.get(executableName);
+  const supportsFallback = syntax !== undefined;
+  const inheritedPath = resolvePathEnvironmentVariable(process.env)
+    .split(POSIX_PATH_DELIMITER)
+    .filter(Boolean)
+    .map((entry) => NodePath.posix.resolve(entry))
+    .join(POSIX_PATH_DELIMITER);
+  const lookupPrintenv = `${PRINTENV_LOOKUP_COMMAND} '${inheritedPath.replaceAll("'", "'\\''")}'`;
+  const { assignment, orElse } = syntax ?? POSIX_CAPTURE_SYNTAX;
+  const resolvePrintenv = `${assignment}${lookupPrintenv}); `;
 
-  return names
+  const capture = names
     .map((name) => {
       if (!SHELL_ENV_NAME_PATTERN.test(name)) {
         throw new Error(`Unsupported environment variable name: ${name}`);
@@ -240,11 +262,20 @@ export function buildEnvironmentCaptureCommand(
 
       return [
         `printf '%s\\n' '${envCaptureStart(name)}'`,
-        `printenv ${name} || true`,
+        supportsFallback
+          ? `printenv ${name}${orElse}"$__T3CODE_PRINTENV" ${name}${orElse}true`
+          : `printenv ${name} || true`,
         `printf '%s\\n' '${envCaptureEnd(name)}'`,
       ].join("; ");
     })
     .join("; ");
+
+  // A DEBUG trap that echoes each command (e.g. into the terminal title) would print the markers.
+  // OpenBSD ksh (also its /bin/sh) exits on `trap - DEBUG`, so try it in a subshell first.
+  const command = supportsFallback ? resolvePrintenv + capture : capture;
+  return DEBUG_TRAP_SHELLS.has(executableName)
+    ? `(trap - DEBUG) 2>/dev/null && trap - DEBUG; ${command}`
+    : command;
 }
 
 function buildWindowsEnvironmentCaptureCommand(names: ReadonlyArray<string>): string {
@@ -283,6 +314,21 @@ function extractEnvironmentValue(output: string, name: string): string | undefin
   return value.length > 0 ? value : undefined;
 }
 
+/** Reads the values `buildEnvironmentCaptureCommand` printed; unset or empty names are omitted. */
+export function extractEnvironmentValues(
+  output: string,
+  names: ReadonlyArray<string>,
+): Partial<Record<string, string>> {
+  const environment: Partial<Record<string, string>> = {};
+  for (const name of names) {
+    const value = extractEnvironmentValue(output, name);
+    if (value !== undefined) {
+      environment[name] = value;
+    }
+  }
+  return environment;
+}
+
 export type ShellEnvironmentReader = (
   shell: string,
   names: ReadonlyArray<string>,
@@ -308,15 +354,7 @@ export const readEnvironmentFromLoginShell: ShellEnvironmentReader = (
     stdio: ["ignore", "pipe", "ignore"],
   });
 
-  const environment: Partial<Record<string, string>> = {};
-  for (const name of names) {
-    const value = extractEnvironmentValue(output, name);
-    if (value !== undefined) {
-      environment[name] = value;
-    }
-  }
-
-  return environment;
+  return extractEnvironmentValues(output, names);
 };
 
 export type WindowsShellEnvironmentReader = (
@@ -360,6 +398,9 @@ const execWindowsEnvironmentProbe = (
     }
     return Effect.sync(() => {
       child.kill();
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+      child.unref();
     });
   });
 
@@ -380,7 +421,10 @@ export const readEnvironmentFromWindowsShell = Effect.fn("shell.readEnvironmentF
       command,
     ];
     for (const shell of WINDOWS_SHELL_CANDIDATES) {
-      const output = yield* execFile(shell, args, { encoding: "utf8", timeout: 5000 });
+      const output = yield* execFile(shell, args, {
+        encoding: "utf8",
+        timeout: WINDOWS_SHELL_PROBE_TIMEOUT_MS,
+      }).pipe(Effect.timeoutOption(WINDOWS_SHELL_PROBE_DEADLINE), Effect.map(Option.flatten));
       if (Option.isNone(output)) continue;
 
       const environment: Partial<Record<string, string>> = {};
@@ -596,6 +640,47 @@ const isExecutableFile = Effect.fnUntraced(function* (
   return canExecuteFile(filePath);
 });
 
+// Called within the traced command resolvers.
+const findOnPath = Effect.fnUntraced(function* (
+  pathValue: string,
+  commandCandidates: ReadonlyArray<string>,
+  platform: NodeJS.Platform,
+  windowsPathExtensions: ReadonlyArray<string>,
+  isLast: (match: string) => boolean,
+): Effect.fn.Return<ReadonlyArray<string>, never, FileSystem.FileSystem | Path.Path> {
+  const path = yield* Path.Path;
+  // Keep case variants: Windows can make PATH directories case-sensitive.
+  const pathEntries: string[] = [];
+  const seenPathEntries = new Set<string>();
+  for (const entry of pathValue.split(pathDelimiterForPlatform(platform))) {
+    const pathEntry = stripWrappingQuotes(entry.trim());
+    if (pathEntry.length === 0 || seenPathEntries.has(pathEntry)) continue;
+
+    seenPathEntries.add(pathEntry);
+    pathEntries.push(pathEntry);
+  }
+
+  const listings = yield* PathDirectoryListings;
+  const matches: string[] = [];
+  for (const pathEntry of pathEntries) {
+    let listing = listings && (yield* Cache.get(listings, pathEntry));
+    if (listings && listing?.names && listing.modified !== (yield* directoryMtime(pathEntry))) {
+      yield* Cache.invalidate(listings, pathEntry);
+      listing = yield* Cache.get(listings, pathEntry);
+    }
+    for (const candidate of commandCandidates) {
+      if (listing?.names && !listing.names.has(candidate.toLowerCase())) continue;
+      const candidatePath = path.join(pathEntry, candidate);
+      if (yield* isExecutableFile(candidatePath, platform, windowsPathExtensions)) {
+        matches.push(candidatePath);
+        if (isLast(candidatePath)) return matches;
+        break;
+      }
+    }
+  }
+  return matches;
+});
+
 const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlatform")(function* (
   command: string,
   options: CommandAvailabilityOptions & { readonly platform: NodeJS.Platform },
@@ -635,35 +720,15 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
     return cached.resolvedPath;
   }
 
-  // Keep case variants: Windows can make PATH directories case-sensitive.
-  const pathEntries: string[] = [];
-  const seenPathEntries = new Set<string>();
-  for (const entry of pathValue.split(pathDelimiterForPlatform(platform))) {
-    const pathEntry = stripWrappingQuotes(entry.trim());
-    if (pathEntry.length === 0 || seenPathEntries.has(pathEntry)) continue;
-
-    seenPathEntries.add(pathEntry);
-    pathEntries.push(pathEntry);
-  }
-
-  const listings = yield* PathDirectoryListings;
-  for (const pathEntry of pathEntries) {
-    let listing = listings && (yield* Cache.get(listings, pathEntry));
-    if (listings && listing?.names && listing.modified !== (yield* directoryMtime(pathEntry))) {
-      yield* Cache.invalidate(listings, pathEntry);
-      listing = yield* Cache.get(listings, pathEntry);
-    }
-    for (const candidate of commandCandidates) {
-      if (listing?.names && !listing.names.has(candidate.toLowerCase())) continue;
-      const candidatePath = path.join(pathEntry, candidate);
-      if (yield* isExecutableFile(candidatePath, platform, windowsPathExtensions)) {
-        cacheCommandResolution(cache, cacheKey, candidatePath, nowNanos);
-        return candidatePath;
-      }
-    }
-  }
-  cacheCommandResolution(cache, cacheKey, null, nowNanos);
-  return null;
+  const [resolvedPath = null] = yield* findOnPath(
+    pathValue,
+    commandCandidates,
+    platform,
+    windowsPathExtensions,
+    () => true,
+  );
+  cacheCommandResolution(cache, cacheKey, resolvedPath, nowNanos);
+  return resolvedPath;
 });
 
 export const resolveCommandPath = Effect.fn("shell.resolveCommandPath")(function* (
@@ -674,6 +739,24 @@ export const resolveCommandPath = Effect.fn("shell.resolveCommandPath")(function
     env: options.env ?? (yield* HostProcess.Environment),
     platform: yield* HostProcess.Platform,
   });
+});
+
+// Matches for a bare command in PATH order, up to the first one `until` accepts; not cached.
+export const resolveCommandPaths = Effect.fn("shell.resolveCommandPaths")(function* (
+  command: string,
+  options: CommandAvailabilityOptions & { readonly until: (match: string) => boolean },
+) {
+  const path = yield* Path.Path;
+  const platform = yield* HostProcess.Platform;
+  const env = options.env ?? (yield* HostProcess.Environment);
+  const windowsPathExtensions = platform === "win32" ? resolveWindowsPathExtensions(env) : [];
+  return yield* findOnPath(
+    resolvePathEnvironmentVariable(env),
+    resolveCommandCandidates(command, platform, windowsPathExtensions, path.extname),
+    platform,
+    windowsPathExtensions,
+    options.until,
+  );
 });
 
 // Git 2.56 x64 uses ucrt64; ARM64 uses clangarm64; older x64/32-bit builds use mingw64/mingw32.
@@ -815,6 +898,46 @@ const resolveMacosGit = Effect.fnUntraced(function* (
 export interface SpawnCommandOptions extends CommandAvailabilityOptions {
   /** Bypass npm cmd-shims; see npmShimExecutable for process-lifetime semantics. */
   readonly bypassNpmShim?: boolean;
+}
+
+// `*` is one argument that is not an option. These forms read refs or config
+// only, so git starts no hook, helper, pager, editor or lazy fetch for them.
+const CONSOLE_FREE_GIT_READS = [
+  "rev-parse --git-path index",
+  "rev-parse --git-common-dir",
+  "rev-parse --show-toplevel",
+  "rev-parse --symbolic-full-name HEAD",
+  "rev-parse --abbrev-ref --symbolic-full-name @{upstream}",
+  "symbolic-ref --quiet HEAD",
+  "symbolic-ref *",
+  "remote",
+  "remote get-url *",
+  "remote get-url -- *",
+  "config --get *",
+].map((form) => form.split(" "));
+
+export function runsGitWithoutConsole(
+  platform: NodeJS.Platform,
+  executable: string,
+  args: ReadonlyArray<string>,
+): boolean {
+  if (platform !== "win32") return false;
+  const { basename, dirname } = NodePath.win32;
+  const bin = dirname(executable);
+  const build = basename(dirname(bin)).toLowerCase();
+  if (basename(executable).toLowerCase() !== "git.exe" || basename(bin).toLowerCase() !== "bin") {
+    return false;
+  }
+  if (!GIT_FOR_WINDOWS_BUILDS.some((candidate) => candidate === build)) return false;
+  const rest =
+    args[0] === "--git-dir" && args[1] !== undefined && !args[1].startsWith("-")
+      ? args.slice(2)
+      : args;
+  return CONSOLE_FREE_GIT_READS.some(
+    (form) =>
+      form.length === rest.length &&
+      form.every((part, i) => part === rest[i] || (part === "*" && !rest[i]!.startsWith("-"))),
+  );
 }
 
 export const resolveSpawnCommand = Effect.fnUntraced(function* (
@@ -979,4 +1102,66 @@ export function applyShellEnvironment(
     else if (value === null) delete env[key];
     else env[key] = value;
   }
+}
+
+interface PathSetupInput {
+  readonly directory: string;
+  readonly home: string;
+  readonly shell: string | undefined;
+  readonly platform: NodeJS.Platform;
+  /** `XDG_CONFIG_HOME`, where fish reads its startup file when set. */
+  readonly configHome?: string | undefined;
+  /** `ZDOTDIR`, where zsh reads `.zshrc` when set. */
+  readonly zdotdir?: string | undefined;
+}
+
+/**
+ * The startup file (`~/...`, or absolute under `configHome`) and line that put `directory` last on
+ * PATH for new zsh, bash, or fish terminals, so it never shadows another `t3`. Undefined on Windows (writing PATH there would flatten the registry's
+ * `%VAR%` entries), for other shells, macOS bash, or unsafe paths.
+ */
+export function pathSetup(
+  input: PathSetupInput,
+): { readonly file: string; readonly line: string } | undefined {
+  // A relative folder on PATH would follow the working directory into any checkout.
+  if (input.platform === "win32" || !input.directory.startsWith("/")) return undefined;
+  const underHome = input.directory.startsWith(`${input.home}/`);
+  const rest = underHome ? input.directory.slice(input.home.length) : input.directory;
+  if (!/^[\w./-]+$/.test(rest)) return undefined;
+  const directory = underHome ? `$HOME${rest}` : rest;
+  const shell = input.shell?.split("/").pop();
+  // A set folder the shell reads from replaces the default; one unsafe to write means no setup,
+  // since the default file would never be read.
+  const readFrom = (value: string | undefined, fallback: string) =>
+    !value ? fallback : value.startsWith("/") && /^[\w./-]+$/.test(value) ? value : undefined;
+  if (shell === "fish") {
+    const configHome = readFrom(input.configHome, "~/.config");
+    if (configHome === undefined) return undefined;
+    // --path changes $PATH itself; fish_user_paths would go ahead of the system folders.
+    return {
+      file: `${configHome}/fish/config.fish`,
+      line: `fish_add_path --append --path ${directory}`,
+    };
+  }
+  // macOS bash reads only the first of .bash_profile, .bash_login, and .profile; no file is safe.
+  const zdotdir = readFrom(input.zdotdir, "~");
+  const file =
+    shell === "zsh"
+      ? zdotdir && `${zdotdir}/.zshrc`
+      : shell === "bash" && input.platform !== "darwin"
+        ? "~/.bashrc"
+        : undefined;
+  return file === undefined ? undefined : { file, line: `export PATH="$PATH:${directory}"` };
+}
+
+/** A command to paste that does what {@link pathSetup} describes. */
+export function pathSetupCommand(input: PathSetupInput): string | undefined {
+  const setup = pathSetup(input);
+  if (!setup) return undefined;
+  // The leading newline keeps the line out of a final comment with no newline after it.
+  const append = `printf '\\n%s\\n' '${setup.line}' >> ${setup.file}`;
+  // fish's config folder may not exist yet; `&&` works in fish 3 too.
+  return setup.file.endsWith(".fish")
+    ? `mkdir -p ${setup.file.slice(0, setup.file.lastIndexOf("/"))} && ${append}`
+    : append;
 }

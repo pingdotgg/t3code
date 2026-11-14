@@ -5,6 +5,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   type ServerSettings,
+  type ServerSettingsPatch,
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
@@ -13,10 +14,7 @@ import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import {
-  applyPendingScopedWrites,
-  appendPendingScopedWrites,
-  createScopedSettingsSaveQueue,
-  type PendingScopedWrite,
+  createScopedSettingsWriter,
   persistScopedSettingsPatch,
   planProjectOverridesClear,
   planScopedSettingsClear,
@@ -146,45 +144,6 @@ describe("scoped settings targets", () => {
 });
 
 describe("scoped settings writes", () => {
-  it("plans dependent project saves after their predecessor settles without carrying failed values", async () => {
-    for (const succeeds of [true, false]) {
-      const enqueue = createScopedSettingsSaveQueue();
-      let release: () => void = () => {};
-      const pending = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      let confirmed = environment("Server");
-      const first = enqueue(async () => {
-        const plan = planScopedSettingsPatch(checkout, [confirmed], { branchNamingMode: "custom" });
-        await pending;
-        if (succeeds) {
-          confirmed = environment("Server", {
-            settings: applyServerSettingsPatch(
-              confirmed.serverConfig!.settings,
-              plan.serverWrites[0]!.patch,
-            ),
-          });
-        }
-      });
-      const second = enqueue(async () => {
-        const plan = planScopedSettingsPatch(checkout, [confirmed], {
-          branchNameInstructions: "Use verify/ followed by a short description.",
-        });
-        confirmed = environment("Server", {
-          settings: applyServerSettingsPatch(
-            confirmed.serverConfig!.settings,
-            plan.serverWrites[0]!.patch,
-          ),
-        });
-      });
-      release();
-      await Promise.all([first, second]);
-      expect(confirmed.serverConfig!.settings.projectSettingsOverrides[projectId]).toEqual({
-        ...(succeeds ? { branchNamingMode: "custom" } : {}),
-        branchNameInstructions: "Use verify/ followed by a short description.",
-      });
-    }
-  });
   it("edits the effective machine policy without changing other machines' rules", () => {
     const custom = environment("Laptop", {
       settings: {
@@ -248,19 +207,6 @@ describe("scoped settings writes", () => {
     const legacy = { settings: { ...DEFAULT_SERVER_SETTINGS, compactIdleThreads: false } };
     expect(scopedIdleCompaction([fixed, modes])).toEqual({ mixed: false, neverAvailable: true });
     expect(scopedIdleCompaction([fixed, legacy])).toEqual({ mixed: false, neverAvailable: false });
-    const legacyEnvironment = environment("Legacy", { settings: legacy.settings });
-    const projected = applyPendingScopedWrites(
-      [legacyEnvironment],
-      [
-        {
-          environmentId: legacyEnvironment.environmentId,
-          patch: { defaultRuntimeMode: "auto" },
-        },
-      ],
-    );
-    expect(scopedIdleCompaction(resolveScopedSettingsTargets(all, projected)).neverAvailable).toBe(
-      false,
-    );
     expect(
       scopedIdleCompaction([fixed, { settings: { ...fixed.settings, idleCompaction: "off" } }])
         .mixed,
@@ -523,6 +469,31 @@ describe("scoped settings writes", () => {
     });
   });
 
+  // regression: #35093 client settings saved in project scope overwrote the global default
+  it("refuses client-only keys at project scope", () => {
+    for (const scope of [project, checkout]) {
+      expect(
+        planScopedSettingsPatch(scope, environments, {
+          browserDefaultViewport: { _tag: "freeform", width: 1440, height: 900 },
+        }),
+      ).toMatchObject({
+        clientPatch: {},
+        hasClientWrite: false,
+        serverWrites: [],
+        unavailableReason:
+          "This setting is environment-wide and cannot be overridden by a project.",
+      });
+      expect(
+        planScopedSettingsPatch(
+          scope,
+          environments,
+          { fontSizeInterface: 15 },
+          { deviceOnly: true },
+        ),
+      ).toMatchObject({ clientPatch: { fontSizeInterface: 15 }, unavailableReason: null });
+    }
+  });
+
   it("clears overrides per member and removes an emptied entry", () => {
     const withOverrides = environment("Server", {
       settings: {
@@ -596,6 +567,129 @@ describe("scoped settings writes", () => {
     ]);
     expect(persistServer).toHaveBeenCalledTimes(4);
   });
+
+  describe("rapid project saves on one environment", () => {
+    const saving = (initial: ServerSettings) => {
+      let stored = initial;
+      const persistServer = vi.fn(async ({ input }: { input: { patch: ServerSettingsPatch } }) => {
+        stored = applyServerSettingsPatch(stored, input.patch);
+        return { _tag: "Success" as const, value: stored };
+      });
+      return { persistServer, stored: () => stored };
+    };
+
+    // regression: #18426 rapid project saves rebuilt overrides from a copy that trailed them
+    it("keeps every edit and reset while the client's copy trails its saves", async () => {
+      let copy: ServerSettings = {
+        ...DEFAULT_SERVER_SETTINGS,
+        projectSettingsOverrides: { [projectId]: { enableAgentBrowserAccess: false } },
+      };
+      const host = saving(copy);
+      // No config push arrives, so the client's copy stays as it was before the first save.
+      const write = createScopedSettingsWriter(() => copy);
+      const save = (plan: Parameters<typeof write>[1]) =>
+        write([environment("Server", { settings: copy })], plan, host.persistServer, vi.fn());
+      await Promise.all([
+        save((current) => planScopedSettingsPatch(checkout, current, { defaultAutoPull: true })),
+        save((current) => planScopedSettingsClear(checkout, current, ["enableAgentBrowserAccess"])),
+        save((current) =>
+          planScopedSettingsPatch(checkout, current, { removeAgentCreditsOnMerge: true }),
+        ),
+      ]);
+      expect(host.stored().projectSettingsOverrides[projectId]).toEqual({
+        defaultAutoPull: true,
+        removeAgentCreditsOnMerge: true,
+      });
+      // The first save's push arrives late, after the newer saves have finished.
+      copy = (await host.persistServer.mock.results[0]!.value).value;
+      await save((current) =>
+        planScopedSettingsPatch(checkout, current, { defaultThreadEnvMode: "worktree" }),
+      );
+      expect(host.stored().projectSettingsOverrides[projectId]).toEqual({
+        defaultAutoPull: true,
+        removeAgentCreditsOnMerge: true,
+        defaultThreadEnvMode: "worktree",
+      });
+    });
+
+    it.each(["remote", "previous save"] as const)(
+      "keeps the current base when a %s push arrives during a save",
+      async (push) => {
+        let copy: ServerSettings = DEFAULT_SERVER_SETTINGS;
+        const host = saving(copy);
+        const write = createScopedSettingsWriter(() => copy);
+        const edit = (patch: ServerSettingsPatch) =>
+          write(
+            [environment("Server", { settings: copy })],
+            (current) => planScopedSettingsPatch(checkout, current, patch),
+            host.persistServer,
+            vi.fn(),
+          );
+        await edit({ defaultAutoPull: true });
+        const previous = host.stored();
+        const persist = host.persistServer.getMockImplementation()!;
+        host.persistServer.mockImplementationOnce(async (request) => {
+          const response = await persist(request);
+          if (push === "remote") {
+            await persist({
+              input: {
+                patch: {
+                  projectSettingsOverrides: {
+                    [projectId]: { enableAgentBrowserAccess: false },
+                  },
+                },
+              },
+            });
+            copy = host.stored();
+          } else {
+            copy = { ...previous };
+          }
+          return response;
+        });
+        await edit({ removeAgentCreditsOnMerge: true });
+        await edit({ defaultThreadEnvMode: "worktree" });
+        expect(host.stored().projectSettingsOverrides[projectId]).toEqual(
+          push === "remote"
+            ? { enableAgentBrowserAccess: false, defaultThreadEnvMode: "worktree" }
+            : {
+                defaultAutoPull: true,
+                removeAgentCreditsOnMerge: true,
+                defaultThreadEnvMode: "worktree",
+              },
+        );
+      },
+    );
+
+    it("plans from a copy that changed after the last save, and saves again after a failure", async () => {
+      let copy: ServerSettings = DEFAULT_SERVER_SETTINGS;
+      const host = saving(copy);
+      const write = createScopedSettingsWriter(() => copy);
+      const edit = (patch: ServerSettingsPatch) =>
+        write(
+          [environment("Server", { settings: copy })],
+          (current) => planScopedSettingsPatch(checkout, current, patch),
+          host.persistServer,
+          vi.fn(),
+        );
+      host.persistServer.mockRejectedValueOnce(new Error("Disconnected"));
+      expect((await edit({ defaultAutoPull: true })).failedEnvironments).toMatchObject([
+        { message: "Disconnected" },
+      ]);
+      expect((await edit({ defaultAutoPull: true })).savedEnvironmentCount).toBe(1);
+      // Another client replaces the override, and its push reaches this client.
+      await host.persistServer({
+        input: {
+          patch: { projectSettingsOverrides: { [projectId]: { enableAgentBrowserAccess: false } } },
+        },
+      });
+      copy = host.stored();
+      await edit({ removeAgentCreditsOnMerge: true });
+      expect(host.stored().projectSettingsOverrides[projectId]).toEqual({
+        enableAgentBrowserAccess: false,
+        removeAgentCreditsOnMerge: true,
+      });
+    });
+  });
 });
 
 describe("scoped settings mixed values", () => {
@@ -609,79 +703,6 @@ describe("scoped settings mixed values", () => {
     const second = environment("Second", { settings: { sourceControlWritingStyle: { ...style } } });
     const targets = resolveScopedSettingsTargets(all, [first, second]);
     expect(scopedSettingsAreMixed(targets, ["sourceControlWritingStyle"])).toBe(false);
-  });
-
-  it("agrees while a save is in flight and follows the environment once it reports back", () => {
-    const patch = { defaultRuntimeMode: "auto" as const };
-    const confirmed = environment("Laptop", { settings: patch });
-    const waiting = environment("Server");
-    const mixedAfter = (writes: readonly PendingScopedWrite[]) =>
-      scopedSettingsAreMixed(
-        resolveScopedSettingsTargets(all, applyPendingScopedWrites([confirmed, waiting], writes)),
-        ["defaultRuntimeMode"],
-      );
-    const inFlight = [confirmed, waiting].map(({ environmentId }) => ({ environmentId, patch }));
-    expect(mixedAfter([])).toBe(true);
-    expect(mixedAfter(inFlight)).toBe(false);
-
-    const saved = inFlight.map((write, index) => ({
-      ...write,
-      savedOver: [confirmed, waiting][index]!.serverConfig!.settings,
-    }));
-    expect(mixedAfter(saved)).toBe(false);
-
-    const baseline = waiting.serverConfig!.settings;
-    const rapid = appendPendingScopedWrites(
-      [
-        {
-          environmentId: waiting.environmentId,
-          savedOver: baseline,
-          patch: { defaultRuntimeMode: "auto" },
-        },
-      ],
-      [
-        {
-          environmentId: waiting.environmentId,
-          savedOver: baseline,
-          patch: { defaultRuntimeMode: "approval-required" },
-        },
-      ],
-    );
-    const earlierReply = environment("Server", {
-      settings: applyServerSettingsPatch(baseline, { defaultRuntimeMode: "auto" }),
-    });
-    expect(
-      applyPendingScopedWrites([earlierReply], rapid)[0]!.serverConfig!.settings.defaultRuntimeMode,
-    ).toBe("approval-required");
-    const first = applyServerSettingsPatch(baseline, { branchNamingMode: "custom" });
-    const second = applyServerSettingsPatch(first, { branchNameInstructions: "Use verify/" });
-    const intermediate = environment("Server", { settings: first });
-    const acknowledged = applyPendingScopedWrites(
-      [intermediate],
-      [
-        {
-          environmentId: intermediate.environmentId,
-          savedOver: baseline,
-          confirmed: second,
-          predecessors: [first],
-          patch: { branchNameInstructions: "Use verify/" },
-        },
-      ],
-    );
-    expect(acknowledged[0]!.serverConfig!.settings.branchNameInstructions).toBe("Use verify/");
-
-    const changedElsewhere = environment("Server", {
-      settings: { defaultRuntimeMode: "approval-required" },
-    });
-    expect(
-      scopedSettingsAreMixed(
-        resolveScopedSettingsTargets(
-          all,
-          applyPendingScopedWrites([confirmed, changedElsewhere], saved),
-        ),
-        ["defaultRuntimeMode"],
-      ),
-    ).toBe(true);
   });
 });
 

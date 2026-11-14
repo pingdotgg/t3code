@@ -55,9 +55,9 @@ export interface HarnessOptions {
 }
 
 /** Map the harness's options onto {@link TanStackStartOptions}. */
-export const fromHarnessOptions = (
-  options: HarnessOptions,
-): TanStackStartOptions => ({ outDir: options.tanstackStart?.outDir });
+export const fromHarnessOptions = (options: HarnessOptions): TanStackStartOptions => ({
+  outDir: options.tanstackStart?.outDir,
+});
 
 /**
  * The e2e-harness factory contract

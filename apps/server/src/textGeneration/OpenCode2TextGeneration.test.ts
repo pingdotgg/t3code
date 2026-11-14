@@ -1,12 +1,15 @@
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { ProviderInstanceId } from "@t3tools/contracts";
+import * as NodeURL from "node:url";
+import { ChatAttachmentId, ChatImageAttachment, ProviderInstanceId } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import { TestClock } from "effect/testing";
 
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as OpenCode2AdapterV2Testkit from "../orchestration-v2/Adapters/OpenCode2AdapterV2.testkit.ts";
 import * as OpenCode2Server from "@t3tools/provider-opencode/server/v2/OpenCode2Server";
@@ -16,28 +19,58 @@ import { OPENCODE2_TITLE_GENERATION } from "./OpenCode2TextGeneration.fixture.ts
 const layer = TestProviderHost.layer().pipe(Layer.provideMerge(NodeServices.layer));
 
 it.layer(layer)("OpenCode2TextGeneration", (it) => {
-  it.effect("generates a title in a temporary session on the free tier and removes it", () =>
-    Effect.gen(function* () {
-      const server = yield* OpenCode2AdapterV2Testkit.replayServer({
-        provider: "opencode",
-        protocol: OpenCode2AdapterV2Testkit.OPENCODE2_HTTP_PROTOCOL,
-        version: "2.0.18",
-        scenario: "opencode2_title_generation",
-        entries: [...OPENCODE2_TITLE_GENERATION, { type: "runtime_exit", status: "success" }],
-      });
-      const textGeneration = yield* OpenCode2TextGeneration.make().pipe(
-        Effect.provideService(OpenCode2Server.OpenCode2Server, server),
-      );
-      const title = yield* textGeneration.generateThreadTitle({
-        cwd: process.cwd(),
-        message: "fix the login redirect loop after oauth",
-        modelSelection: {
-          instanceId: ProviderInstanceId.make("opencode"),
-          model: "opencode/big-pickle",
-        },
-      });
-      assert.equal(title.title, "Fix OAuth Login Redirect Loop");
-    }).pipe(Effect.scoped),
+  it.effect.each([false, true] as const)(
+    "generates a title in a temporary session on the free tier and removes it (external: %s)",
+    (external) =>
+      Effect.gen(function* () {
+        const host = yield* ProviderHost.ProviderHost;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const image = (id: string, name: string, mimeType: string) =>
+          ChatImageAttachment.make({
+            type: "image",
+            id: ChatAttachmentId.make(id),
+            name,
+            mimeType,
+            sizeBytes: 4,
+          });
+        const screenshot = image("oc2-title-screenshot", "screen.png", "image/png");
+        const missing = image("oc2-title-missing", "missing.png", "image/png");
+        const unsupported = image("oc2-title-diagram", "diagram.svg", "image/svg+xml");
+        const screenshotPath = host.resolveAttachmentPath(screenshot)!;
+        yield* fileSystem.writeFileString(screenshotPath, "data");
+        yield* fileSystem.writeFileString(host.resolveAttachmentPath(unsupported)!, "<svg/>");
+        const prompts: Array<unknown> = [];
+        const server = yield* OpenCode2AdapterV2Testkit.replayServer(
+          {
+            provider: "opencode",
+            protocol: OpenCode2AdapterV2Testkit.OPENCODE2_HTTP_PROTOCOL,
+            version: "2.0.18",
+            scenario: "opencode2_title_generation",
+            entries: [...OPENCODE2_TITLE_GENERATION, { type: "runtime_exit", status: "success" }],
+          },
+          { external, onPrompt: (input) => prompts.push(input) },
+        );
+        const textGeneration = yield* OpenCode2TextGeneration.make().pipe(
+          Effect.provideService(OpenCode2Server.OpenCode2Server, server),
+        );
+        const title = yield* textGeneration.generateThreadTitle({
+          cwd: process.cwd(),
+          message: "fix the login redirect loop after oauth",
+          attachments: [screenshot, missing, unsupported],
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("opencode"),
+            model: "opencode/big-pickle",
+          },
+        });
+        assert.equal(title.title, "Fix OAuth Login Redirect Loop");
+        if (external) {
+          assert.notProperty(prompts[0], "files");
+        } else {
+          assert.deepInclude(prompts[0], {
+            files: [{ uri: NodeURL.pathToFileURL(screenshotPath).href, name: "screen.png" }],
+          });
+        }
+      }),
   );
 
   it.effect("keeps a provider's own error message out of the caller-visible detail", () =>
@@ -120,7 +153,7 @@ it.layer(layer)("OpenCode2TextGeneration", (it) => {
         .pipe(Effect.flip);
       assert.equal(failure.detail, "OpenCode could not generate the text.");
       assert.deepEqual(failure.cause, refusal);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("times out when the prompt request and its interrupt never answer", () =>
@@ -186,6 +219,6 @@ it.layer(layer)("OpenCode2TextGeneration", (it) => {
       yield* TestClock.adjust("5 seconds");
       const failure = yield* Fiber.join(generation);
       assert.equal(failure.detail, "OpenCode did not finish generating in time.");
-    }).pipe(Effect.scoped),
+    }),
   );
 });

@@ -71,10 +71,11 @@ struct Bounds {
     height: u32,
 }
 
-struct ScriptReply {
-    owner: String,
-    result: mpsc::SyncSender<String>,
-}
+const REPLY: &str = "/com/t3tools/KdeCapture";
+
+/// KWin's bus name and the channel of the script call in flight. `None` between calls.
+#[derive(Default)]
+struct ScriptReply(Option<(String, mpsc::SyncSender<String>)>);
 #[zbus::interface(name = "com.t3tools.KdeCapture")]
 impl ScriptReply {
     fn reply(
@@ -82,7 +83,12 @@ impl ScriptReply {
         value: &str,
         #[zbus(header)] header: zbus::message::Header<'_>,
     ) -> zbus::fdo::Result<()> {
-        if header.sender().map(|name| name.as_str()) != Some(self.owner.as_str()) {
+        let Some((owner, result)) = &self.0 else {
+            return Err(zbus::fdo::Error::AccessDenied(
+                "No script is running".into(),
+            ));
+        };
+        if header.sender().map(|name| name.as_str()) != Some(owner.as_str()) {
             return Err(zbus::fdo::Error::AccessDenied("Not KWin".into()));
         }
         if value.len() > 64 * 1024 {
@@ -90,9 +96,18 @@ impl ScriptReply {
                 "Oversized window metadata".into(),
             ));
         }
-        let _ = self.result.try_send(value.to_owned());
+        let _ = result.try_send(value.to_owned());
         Ok(())
     }
+}
+
+/// Serves the reply object from the start, so zbus waits for its method-call listener.
+/// A listener started after connecting can miss the first call from KWin.
+fn connect(builder: Builder<'_>) -> zbus::Result<Connection> {
+    builder
+        .method_timeout(DEADLINE)
+        .serve_at(REPLY, ScriptReply::default())?
+        .build()
 }
 
 /// Scripts exist only for this operation. Unload even when evaluation/callback fails.
@@ -100,13 +115,10 @@ fn script(connection: &Connection, directory: &Path, body: &str) -> Result<Strin
     let dbus = zbus::blocking::fdo::DBusProxy::new(connection)?;
     let owner = dbus.get_name_owner("org.kde.KWin".try_into()?)?.to_string();
     let (send, receive) = mpsc::sync_channel(1);
-    connection.object_server().at(
-        "/com/t3tools/KdeCapture",
-        ScriptReply {
-            owner,
-            result: send,
-        },
-    )?;
+    let reply = connection
+        .object_server()
+        .interface::<_, ScriptReply>(REPLY)?;
+    reply.get_mut().0 = Some((owner, send));
     let path = directory.join("window.js");
     let name = format!("t3-capture-{}", std::process::id());
     let destination = serde_json::to_string(
@@ -147,9 +159,7 @@ fn script(connection: &Connection, directory: &Path, body: &str) -> Result<Strin
         let _: std::result::Result<bool, _> = scripting.call("unloadScript", &(&name,));
         result
     })();
-    connection
-        .object_server()
-        .remove::<ScriptReply, _>("/com/t3tools/KdeCapture")?;
+    reply.get_mut().0 = None;
     let _ = std::fs::remove_file(path);
     result
 }
@@ -336,7 +346,7 @@ fn capture(connection: &Connection, directory: &Path) -> Result<Option<Window>> 
 
 fn run() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
-    let connection = Builder::session()?.method_timeout(DEADLINE).build()?;
+    let connection = connect(Builder::session()?)?;
     match args.get(1).map(String::as_str) {
         Some("check") => {
             check(&connection)?;
