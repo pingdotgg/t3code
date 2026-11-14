@@ -2992,6 +2992,29 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
         // A prompt OpenCode takes while no T3 turn runs starts a turn of its own. Its events are
         // kept for the run T3 starts for it; the offer waits for busy, which a prompt that asks
         // for no reply never reaches.
+        // Held events reach dispatch only on replay, so what must be known sooner is noted here.
+        const noteHeldEvent = (
+          root: OpenCodeThreadState,
+          sessionId: string,
+          event: OpenCodeEvent,
+        ) => {
+          if (event.type === "message.part.updated" && event.properties.part.type === "tool") {
+            const childSessionId =
+              event.properties.part.tool.toLowerCase() === "task"
+                ? taskSessionId(event.properties.part)
+                : null;
+            if (childSessionId !== null && !threads.has(childSessionId)) {
+              wakeChildOwners.set(childSessionId, root);
+            }
+          }
+          // The session stays open for a held subagent that is still working.
+          if (threads.has(sessionId)) return;
+          if (isBusyStatus(event)) busySessionIds.add(sessionId);
+          else if (event.type === "session.status" || event.type === "session.idle") {
+            busySessionIds.delete(sessionId);
+          }
+        };
+
         const holdForWake = Effect.fnUntraced(function* (event: OpenCodeEvent) {
           const sessionId = turnEventSessionId(event);
           if (sessionId === undefined) return false;
@@ -3009,6 +3032,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               return false;
             }
             root.wake.events.push(event);
+            noteHeldEvent(root, sessionId, event);
             return true;
           }
           const isRoot = state.parentSubagent === null;
@@ -3030,15 +3054,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           const wake = state.wake;
           if (wake === null) return false;
           wake.events.push(event);
-          if (event.type === "message.part.updated" && event.properties.part.type === "tool") {
-            const childSessionId =
-              event.properties.part.tool.toLowerCase() === "task"
-                ? taskSessionId(event.properties.part)
-                : null;
-            if (childSessionId !== null && !threads.has(childSessionId)) {
-              wakeChildOwners.set(childSessionId, state);
-            }
-          }
+          noteHeldEvent(state, sessionId, event);
           if (!wake.started && isBusyStatus(event)) yield* offerWake(state, wake);
           return false;
         });

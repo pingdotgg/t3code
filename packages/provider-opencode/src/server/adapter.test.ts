@@ -735,6 +735,54 @@ describe("OpenCodeAdapterV2", () => {
           },
         }),
       );
+      // It keeps working and launches a subagent of its own, still before the run starts.
+      yield* push(childEvent("session.status", { status: { type: "busy" } }));
+      const grandchild = "ses_wake_grandchild";
+      yield* push(
+        childEvent("message.part.updated", {
+          part: {
+            id: "prt_child_task",
+            sessionID: child,
+            messageID: "msg_child_reply",
+            type: "tool",
+            tool: "task",
+            callID: "call_child_task",
+            state: {
+              status: "running",
+              input: { description: "Dig", prompt: "dig", subagent_type: "general" },
+              title: "Dig",
+              metadata: { parentSessionId: child, sessionId: grandchild },
+              time: { start: 3 },
+            },
+          },
+        }),
+      );
+      yield* push({
+        type: "message.updated",
+        properties: {
+          sessionID: grandchild,
+          info: {
+            id: "msg_grandchild_prompt",
+            sessionID: grandchild,
+            role: "user",
+            time: { created: 3 },
+          },
+        },
+      });
+      yield* push({
+        type: "message.part.updated",
+        properties: {
+          sessionID: grandchild,
+          part: {
+            id: "prt_grandchild_text",
+            sessionID: grandchild,
+            messageID: "msg_grandchild_reply",
+            type: "text",
+            text: "GRANDCHILD_WAKE_OK",
+            time: { start: 3, end: 3 },
+          },
+        },
+      });
       const finish = Effect.gen(function* () {
         yield* push(text("msg_reply", { text: "WAKE_OK", time: { start: 3, end: 4 } }));
         yield* push(message("msg_reply", { ...reply, time: { created: 3, completed: 4 } }));
@@ -808,6 +856,15 @@ describe("OpenCodeAdapterV2", () => {
             event.turnItem.text === "CHILD_WAKE_OK",
         ),
         "a subagent the wake launched before its run started keeps its work",
+      );
+      assert.isTrue(
+        events.some(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "assistant_message" &&
+            event.turnItem.text === "GRANDCHILD_WAKE_OK",
+        ),
+        "so does a subagent it launched",
       );
       assert.equal(offers.length, endedFirst ? 2 : 1, "each turn OpenCode starts gets an offer");
       assert.equal(prompts.length, 1, "OpenCode already runs this turn; prompting would repeat it");
