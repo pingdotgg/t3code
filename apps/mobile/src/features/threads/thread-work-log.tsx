@@ -1428,7 +1428,7 @@ export function ThreadThinkingRow(props: {
       style={{ minHeight: props.rowSizing.estimatedRowHeight }}
     >
       <ShimmeringWorkContent
-        icon="brain"
+        icon={props.providerStartingLabel === undefined ? "brain" : "terminal"}
         iconSubtleColor={props.iconSubtleColor}
         label={label}
         showIcon

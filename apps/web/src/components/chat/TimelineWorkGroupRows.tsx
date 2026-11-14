@@ -437,7 +437,7 @@ export function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind:
   const activity = (
     <LiveActivityRow
       label={providerStartingLabel ?? row.label ?? liveAnswerPreview ?? "Thinking"}
-      iconName="brain"
+      iconName={providerStartingLabel === null ? "brain" : "terminal"}
       active={live}
       shimmer={live}
     />
