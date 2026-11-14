@@ -191,6 +191,7 @@ impl Inner {
             .as_ref()
             .is_some_and(|f| f["class"] != "validation_error");
         let checkpointing = self.checkpoints.is_some();
+        let inner = self.clone();
         let next = self
             .write(move |tx| {
                 // A run with a checkpoint scope is captured first (`checkpoint.capture`): a
@@ -209,7 +210,7 @@ impl Inner {
                 } else {
                     status
                 };
-                finish_run_as(
+                let ended = finish_run_as(
                     tx,
                     &thread_id,
                     &run_id,
@@ -218,21 +219,42 @@ impl Inner {
                     failure,
                     crate::commands::IdleWrite::TurnEnd,
                 )?;
-                // A failure holds the queue, so queued messages do not hit the same wall.
-                if held_on_failure {
+                // A failure holds the queue, so queued messages do not hit the same wall. A
+                // late end of a run that already ended (a start failing after Force stop)
+                // holds nothing.
+                if held_on_failure && ended {
                     hold_queue(tx, &thread_id)?;
                 }
-                if captured {
-                    return Ok(None);
-                }
-                let mut effects = crate::families::on_run_end(tx, &thread_id, &run_id)?;
-                effects.extend(start_next_queued(tx, &thread_id, None)?);
-                Ok(Some(effects))
+                // `checkpoint.capture` waits in the thread's lane, as T3's effect: a rollback
+                // admitted meanwhile runs after it and sees the run completed. The capture ends
+                // the run's end.
+                let effects = if captured {
+                    vec![crate::commands::Effect::CaptureCheckpoint {
+                        thread_id: thread_id.clone(),
+                        run_id: run_id.clone(),
+                    }]
+                } else {
+                    let mut effects = crate::families::on_run_end(tx, &thread_id, &run_id)?;
+                    effects.extend(start_next_queued(tx, &thread_id, None)?);
+                    effects
+                };
+                // Lane slots are taken under the store lock, so lane order is commit order.
+                let reserved = effects
+                    .into_iter()
+                    .map(|effect| inner.reserve_effect(effect))
+                    .collect::<Vec<_>>();
+                Ok((reserved, captured))
             })
             .await;
         match next {
-            Ok(Some(effects)) => effects.into_iter().for_each(|e| self.spawn_effect(e)),
-            Ok(None) => return self.capture_run(thread, run).await,
+            Ok((reserved, captured)) => {
+                reserved
+                    .into_iter()
+                    .for_each(crate::engine::ReservedEffect::start);
+                if captured {
+                    return;
+                }
+            }
             Err(e) => eprintln!("conn-engine: could not end run: {e}"),
         }
         if let Some(observer) = &self.observer {

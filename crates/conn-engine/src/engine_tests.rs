@@ -3359,3 +3359,94 @@ async fn a_message_to_a_disabled_instance_is_refused_at_dispatch() {
         1
     );
 }
+
+/// Force stop while the provider still starts the turn: the start's late failure finds the run
+/// ended and must not hold the queue (review finding 2.3). `hang` is the control: no late
+/// failure.
+#[tokio::test(flavor = "current_thread")]
+async fn a_late_start_failure_after_force_stop_does_not_hold_the_queue() {
+    for (case, text) in [("control", "hang"), ("race", "slowstart")] {
+        let db = TempDb::new(&format!("checker-force-{case}"));
+        let (engine, _) = open(&db);
+        dispatch(&engine, create("t1", "c1")).await;
+        let mut thread = engine
+            .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+            .await
+            .unwrap();
+        next(&mut thread).await;
+        dispatch(&engine, message("t1", "c2", text)).await;
+        if case == "control" {
+            until_provider_turn(&mut thread).await;
+        } else {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        dispatch(&engine, message("t1", "c3", "later")).await;
+        dispatch(&engine, message("t1", "c4", "even later")).await;
+        let stopped = call(
+            &engine,
+            "orchestration.forceStopThread",
+            json!({"threadId": "t1"}),
+        )
+        .await;
+        assert!(stopped.is_ok(), "{case}: {stopped:?}");
+        tokio::time::sleep(Duration::from_millis(800)).await;
+        let p = projection(&engine, "t1").await;
+        let runs: Vec<_> = p["runs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| {
+                (
+                    r["ordinal"].clone(),
+                    r["status"].clone(),
+                    r["queueHeld"] == true,
+                )
+            })
+            .collect();
+        assert_eq!(
+            runs,
+            [
+                (json!(1), json!("interrupted"), false),
+                (json!(2), json!("completed"), false),
+                (json!(3), json!("completed"), false),
+            ],
+            "{case}: a late failure of an ended run does not hold the queue"
+        );
+    }
+}
+
+/// A thread's effects run in the order their lane slots were taken, not the order they were
+/// started (review finding 2.1: dispatch takes the slot inside the store closure, so lane order
+/// is commit order). A slot given up without running (its commit failed) keeps that order.
+#[tokio::test(flavor = "current_thread")]
+async fn lane_order_is_reservation_order() {
+    let db = TempDb::new("lane-reserve");
+    let host = Arc::new(RecordingHost::default());
+    let mut config = EngineConfig::new(db.path());
+    config.host = Some(host.clone());
+    let engine = SqliteEngine::open(config).unwrap();
+    let inner = engine.inner();
+    let close = |reason| crate::commands::Effect::ThreadClosed {
+        thread_id: "t1".into(),
+        reason,
+    };
+    let first = inner.reserve_effect(close(crate::ThreadClose::Archived));
+    let given_up = inner.reserve_effect(close(crate::ThreadClose::Settled));
+    let last = inner.reserve_effect(close(crate::ThreadClose::Deleted));
+    drop(given_up);
+    last.start();
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    assert!(
+        host.closed.lock().unwrap().is_empty(),
+        "waits for the first"
+    );
+    first.start();
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    assert_eq!(
+        *host.closed.lock().unwrap(),
+        [
+            ("t1".to_owned(), crate::ThreadClose::Archived),
+            ("t1".to_owned(), crate::ThreadClose::Deleted),
+        ]
+    );
+}

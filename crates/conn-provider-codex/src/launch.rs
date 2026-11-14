@@ -88,11 +88,28 @@ impl CodexConfig {
 pub fn find_executable(binary: &Path, path_var: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
     let binary = expand_home(binary);
     if binary.components().count() > 1 {
-        return binary.is_file().then_some(binary);
+        return is_executable(&binary).then_some(binary);
     }
     std::env::split_paths(path_var?)
         .map(|dir| dir.join(&binary))
-        .find(|candidate| candidate.is_file())
+        .find(|candidate| is_executable(candidate))
+}
+
+/// A file the process may run: on Unix, a file with an execute bit, as a `PATH` search
+/// skips the rest.
+fn is_executable(path: &Path) -> bool {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        metadata.is_file()
+    }
 }
 
 pub(crate) fn expand_home(path: &Path) -> PathBuf {
@@ -554,6 +571,37 @@ fn is_amount(name: &str) -> bool {
 mod tests {
     use super::*;
     use conn_contract::from_json;
+
+    /// A `PATH` search skips a file without an execute bit, as the shell does (review
+    /// finding 10), and finds the runnable one after it.
+    #[cfg(unix)]
+    #[test]
+    fn find_executable_skips_a_file_that_cannot_run() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("conn-codex-exec-{}", std::process::id()));
+        let (plain, runnable) = (root.join("a"), root.join("b"));
+        for dir in [&plain, &runnable] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        std::fs::write(plain.join("codex"), "").unwrap();
+        std::fs::write(runnable.join("codex"), "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(
+            runnable.join("codex"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        let path = std::env::join_paths([&plain, &runnable]).unwrap();
+        assert_eq!(
+            find_executable(Path::new("codex"), Some(&path)),
+            Some(runnable.join("codex"))
+        );
+        assert_eq!(
+            find_executable(&plain.join("codex"), None),
+            None,
+            "a path too"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn t3_code_splits_its_wait_tool_onto_a_direct_server() {

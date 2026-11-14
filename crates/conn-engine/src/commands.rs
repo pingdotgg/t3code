@@ -1697,6 +1697,7 @@ pub(crate) fn finish_run(
         failure,
         IdleWrite::WhileActive,
     )
+    .map(drop)
 }
 
 /// When a run's end writes its provider thread `idle`.
@@ -1712,7 +1713,8 @@ pub(crate) enum IdleWrite {
 
 /// Ends a run's items with `status`, and the run and its root node with `persisted`: a
 /// completed provider turn whose checkpoint is still to be taken persists `waiting`, with no
-/// `completedAt` (`RunExecutionService.ts`).
+/// `completedAt` (`RunExecutionService.ts`). Returns whether it ended the run: `false` when
+/// the run is gone or already ended.
 pub(crate) fn finish_run_as(
     tx: &mut Tx<'_>,
     thread_id: &str,
@@ -1721,12 +1723,12 @@ pub(crate) fn finish_run_as(
     persisted: &str,
     failure: Option<Value>,
     idle: IdleWrite,
-) -> StoreResult<()> {
+) -> StoreResult<bool> {
     let Some(mut run) = tx.entity(thread_id, "runs", run_id)? else {
-        return Ok(());
+        return Ok(false);
     };
     if !is_live(&run) {
-        return Ok(());
+        return Ok(false);
     }
     if status == "interrupted" {
         write_interrupt_result(tx, thread_id, &run, None)?;
@@ -1832,7 +1834,8 @@ pub(crate) fn finish_run_as(
     }
     settle_provider_thread(tx, thread_id, &run, "idle", idle)?;
     // Positions held text took and never used.
-    tx.release_turn_item_positions(thread_id)
+    tx.release_turn_item_positions(thread_id)?;
+    Ok(true)
 }
 
 /// The run's provider thread when the run ends: `idle`, or `error` when the provider says the

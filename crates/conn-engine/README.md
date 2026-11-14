@@ -79,7 +79,17 @@ all 23 are.
   the files, deletes the stale refs, then commits the provider thread, the `stale`
   checkpoints and the `rolled_back` runs and nodes at once. A failure commits none of that and
   sets `rollbackFailure` with T3's client message, after T3's retries: up to 5 attempts, 100 ms
-  after the first failure and doubling, at most 30 s (`EffectWorker`).
+  after the first failure and doubling, at most 30 s (`EffectWorker`). **Deliberate difference
+  from T3:** a retry repeats only the step that failed, so the provider rollback is sent once
+  per request, and the live session moves to the rolled-back thread only after the commit. T3
+  repeats the provider rollback on every retry, which cuts a Codex thread again each time
+  (`docs/status.md`, "Faults found in the T3 server"). Test:
+  `a_failing_restore_rolls_the_provider_back_once`.
+  An admitted rollback stays in `pending_rollbacks` until it commits or fails. A restart runs
+  it again if the provider rollback was not sent, goes on from the file restore if its answer
+  was kept, and records a failure (`ROLLBACK_INTERRUPTED_MESSAGE`) if the server stopped in
+  between, where T3 would send the provider rollback again. Test:
+  `a_restart_finishes_or_fails_a_rollback_left_pending`.
 - **Fork** (`src/fork.rs`). `thread.fork` makes the fork thread and a pending `fork` transfer
   (`ThreadForkService.plan`). Its first turn forks the source's native thread from the source
   run's turn (`Session::fork_thread`) and consumes the transfer (`native_fork`). T3's portable
@@ -125,7 +135,9 @@ all 23 are.
 - **Effect order.** A thread's effects (turn start, Stop, steer, answer, rollback, capture,
   close) run one at a time, in the order they were made, as T3's effect outbox claims them
   (`EffectOutbox.ts`); title generation runs outside, as T3 gives it its own lane. A lane
-  entry exists only while its thread has an effect waiting or running.
+  entry exists only while its thread has an effect waiting or running. `dispatch` and the
+  run's end take the lane slot under the store lock (`reserve_effect`), so lane order is
+  commit order; the end-of-run capture is such an effect, as T3's `checkpoint.capture`.
 - **Busy thread.** While a run is active, a message queues (`queue_after_active`, or any start)
   or steers (`steer_active`, or the client's `deliveryIntent` steer). A steer before the
   provider turn runs waits as a queued run with `steerWhenReadyRunId`; a steer the provider

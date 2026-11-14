@@ -427,10 +427,10 @@ The fixture replay now passes 35 of 159 variants: Codex 17 of 25 (was 16), Claud
   caller that drives a session directly (the crate's tests and tools). Not removed: another
   worker is in that crate.
 - **Rollback retries.** Up to 5 attempts, 100 ms after the first failure and doubling (at most
-  30 s); only the last failure sets `rollbackFailure` (T3's `EffectWorker`). As in T3, a
-  failure after the provider rolled back (in the file restore) retries the provider rollback
-  too. Proof: `a_rollback_that_fails_twice_then_works_is_retried`; the failing test now
-  expects 5 tries.
+  30 s); only the last failure sets `rollbackFailure` (T3's `EffectWorker`). A failure after
+  the provider rolled back (in the file restore) retries only that step since the review
+  fixes ("Engine review fixes"); T3 retries the provider rollback too ("Faults found in the
+  T3 server"). Proof: `a_rollback_that_fails_twice_then_works_is_retried`.
 - **MCP elicitations for Codex** (`CodexMcpElicitation.ts`). A form elicitation is an
   approval with the app name and the persistence choices; the answer is the form's option,
   with `_meta.persist`. A URL elicitation, a form an approval cannot fill, or one without an
@@ -629,6 +629,79 @@ these fixes, one commit each, each with a test that fails without it:
 
 Left to another worker: host tokens that the T3 server moved to its secret store (finding 3).
 
+## Engine review fixes (2026-11-14)
+
+The confirmed findings of the engine and provider review, fixed on 2026-11-14.
+
+Deliberate differences from the T3 server:
+
+- **A rollback sends the provider rollback once per request.** A retry repeats only the step
+  that failed (file restore, stale refs, the commit). The live session moves to the
+  rolled-back provider thread only after the commit. T3 sends the provider rollback again on
+  every retry, which cuts a Codex thread again each time (see "Faults found in the T3
+  server"). In that failure path Codex gets fewer `thread/rollback` requests from us than from
+  T3. Nick decided this on 2026-11-14. Proof: `a_failing_restore_rolls_the_provider_back_once`,
+  `a_failed_restore_leaves_the_live_session_on_its_thread`.
+- **A rollback a crash interrupts after the provider rollback was sent fails on restart.** The
+  store keeps each admitted rollback until it commits or fails (`pending_rollbacks`, with its
+  phase), as T3 keeps `provider-thread.rollback` in its effect outbox. On open, a rollback that
+  had not reached the provider runs again, and one whose provider answer was kept goes on from
+  the file restore; both end as in T3, which requeues the effect. A rollback that stopped
+  between sending the provider rollback and keeping its answer is recorded as failed, with a
+  message that says the provider may already have rolled back. T3 runs it again from the
+  provider rollback, which can cut a Codex thread twice. Proof:
+  `a_restart_finishes_or_fails_a_rollback_left_pending` (fails without the recovery).
+
+Fixed to match the T3 server, each with a test that fails without the fix:
+
+- A start that fails after Force stop no longer holds the queue: `end_run` holds it only when
+  it ended the run (`a_late_start_failure_after_force_stop_does_not_hold_the_queue`).
+- The end-of-run checkpoint capture is an effect in the thread's lane, as T3's
+  `checkpoint.capture`, so a rollback admitted while a run waits rolls it back too
+  (`a_rollback_admitted_while_a_run_waits_for_its_capture_rolls_it_back`). Fixture replay: 42
+  of 159, as before.
+- `dispatch` and `end_run` take an effect's lane slot under the store lock, so lane order is
+  commit order (`lane_order_is_reservation_order`).
+- Rollback admission asks the provider instance for its capabilities, as T3's
+  `dispatchCheckpointRollback` (`rollback_asks_the_provider_instance_whether_it_can_roll_back`).
+- A rollback's own session gets the runtime policy override
+  (`a_rollback_session_gets_the_runtime_policy_override`); a dropped session-file call frees
+  its SDK host hold (`a_dropped_function_call_releases_its_hold`); the Codex `PATH` search
+  skips a file without an execute bit (`find_executable_skips_a_file_that_cannot_run`).
+
+Established, not fixed:
+
+- **Stop during a Claude cold start.** In T3 the run is marked `running` before
+  `session.startTurn` (`ProviderTurnStartService.ts` 1472-1475, start at 1652). When the
+  session has MCP servers, `openQuery` waits for `initializationResult` (up to 5 min) and
+  `setMcpServers` (up to 90 s) before it returns (`ClaudeAdapterV2.ts` 1470-1509, called at
+  12574), and the provider turn is emitted only after that (12701). A Stop in that window
+  finds no provider turn, so `dispatchRunInterrupt` takes its "before provider start" branch
+  (`Orchestrator.ts` 13013-13161): the run, attempt and root node end `interrupted` in the
+  Stop's own commit, with a `run_interrupt_result` "Run interrupted before provider start",
+  and `provider-turn.start` is cancelled (`cancelUnsettled`, `EventSink.ts` 783-794). The
+  worker races the running start against that cancellation (`EffectWorker.ts` 816 and 844),
+  so the start is interrupted and the half-open CLI is killed (`ClaudeAdapterV2.ts` 1530-1550).
+  A T3 client sees the run stop at once. Here, Stop records the request and queues an
+  `Interrupt` effect behind the `StartTurn` in the lane; the Claude provider's `start_turn`
+  also holds `turn_control` for the whole start (`conn-provider-claude/src/session.rs` 1392,
+  `interrupt_turn` waits on it at 1461). The client shows "Stopping" until the start returns,
+  up to about 6.5 minutes, and only then is the turn interrupted. Our Claude provider also
+  opens the provider turn before the boot (the cold-start change above), so a port of T3's
+  branch needs to know whether the provider accepted the turn, not only whether a provider
+  turn row exists. Without MCP servers T3 emits the provider turn right after `query()`, and
+  both servers take the normal interrupt path.
+- **`binaryPath` for Claude and Codex is not applied.** `crates/conn-server/src/main.rs`
+  builds `ClaudeConfig` and `CodexConfig` with their defaults (`claude`, `codex` on `PATH`) and
+  never reads `providerInstances.claudeAgent` or `.codex` from the settings; nothing applies a
+  later change either. The same holds for `homePath`, `launchArgs` and the instance
+  environment. T3 passes `binaryPath` (with `~` expanded) as `pathToClaudeCodeExecutable`
+  (`ClaudeAdapterV2.ts` 13884-13890 and 2145) and as the Codex command
+  (`CodexAdapterV2.ts` 1733). Only Grok follows its settings (`GrokSettings`, the server's
+  status task). This is an open parity gap: the fix needs the settings applied to the
+  provider configs at start and on change, as for Grok, with a conformance scenario that shows
+  the CLI each server starts.
+
 ## Faults found in the T3 server
 
 Faults that the T3 server has and this server fixes on purpose. Each is to be written up for
@@ -668,6 +741,24 @@ T3 Code.
   delete `auth.json`. Our fix: a folder name made only of dots is escaped (each `.` becomes
   `%2E`), the folder must be one child of the annotations root, the per-project lock is keyed
   by the folder name, and `project.create` refuses `.` and `..`.
+- **A rollback retry rolls a Codex thread back again.** (Paths in this entry are under
+  `apps/server/src/orchestration-v2/`.) `CheckpointRollbackService.ts`
+  `execute` (lines 335-346) calls `session.rollbackThread` first, then
+  `checkpoints.restore` and `checkpoints.deleteStaleRefs`, and only then writes the result.
+  When the restore or the ref delete fails (for example, `.git/index.lock` is held), the
+  effect fails and `EffectWorker.ts` (lines 842-886) runs the whole effect again, up to 5
+  attempts. Each attempt reads the same durable rows, and `CodexAdapterV2.ts`
+  `rollbackThread` (line 8526, with `resolveCodexRollbackTurnCount` at line 1102) counts the
+  turns to revert from those rows. Each attempt therefore asks Codex to revert the same number
+  of turns on a native thread that is already shorter. Example: three turns, roll back to turn
+  1, the index is locked. Codex is asked five times to drop 2 turns, so turn 1 and then the
+  whole conversation are dropped. The app still shows turn 1 and the later runs as completed
+  and records `rollbackFailure`. The next turn continues a Codex conversation that no longer
+  holds what the user sees. The Claude adapter's rollback only builds a row, so Claude is not
+  hurt. A crash after the provider rollback has the same effect once: `EffectOutbox.ts`
+  requeues `provider-thread.rollback` after a process loss
+  (`REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS`, line 135), and the effect starts again from
+  the provider rollback.
 
 
 ## What is left, in the planned order
