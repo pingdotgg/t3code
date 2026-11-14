@@ -1,7 +1,9 @@
 import {
   createPullRequestEnvironmentAtoms,
+  editHeldPullRequestListEntries,
   createPullRequestStackAtomFamily,
   patchPullRequestListEntries,
+  pullRequestPendingEditsAtom,
 } from "@t3tools/client-runtime/state/pull-requests";
 import type { EnvironmentId, PullRequestListInput, PullRequestRef } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -66,8 +68,27 @@ export const composerPullRequests = createPullRequestEnvironmentAtoms(connection
             pages.entries,
             target.input,
             reply,
+            registry.get(pullRequestPendingEditsAtom(target.environmentId)),
           );
           return entries === "refresh" || entries === pages.entries ? pages : { ...pages, entries };
+        });
+      }
+    }),
+  acceptedEdit: (target, edit, registry) =>
+    Effect.sync(() => {
+      for (const atom of registry.getNodes().keys()) {
+        const listing =
+          typeof atom === "string" ? undefined : pullRequestListPagesTargets.get(atom);
+        if (listing === undefined || listing[0] !== target.environmentId) continue;
+        registry.update(atom as Atom.Writable<PullRequestListPages | null>, (pages) => {
+          if (pages === null) return pages;
+          const entries = editHeldPullRequestListEntries(
+            listing[1],
+            pages.entries,
+            () => [edit],
+            registry.get(pullRequestPendingEditsAtom(target.environmentId)),
+          );
+          return entries === pages.entries ? pages : { ...pages, entries };
         });
       }
     }),
