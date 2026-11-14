@@ -17,6 +17,7 @@ import {
   type ProjectId,
   type ProjectIconOverride,
   type ProjectScript,
+  type ProjectTrackedFolder,
   type ProviderApprovalDecision,
   type ProviderInteractionMode,
   type ProviderUserInputAnswers,
@@ -59,6 +60,7 @@ export interface CreateProjectInput extends CommandMetadata {
   readonly createWorkspaceRootIfMissing?: boolean;
   readonly defaultModelSelection?: ModelSelection | null;
   readonly scripts?: ReadonlyArray<ProjectScript>;
+  readonly trackedFolders?: ReadonlyArray<ProjectTrackedFolder>;
 }
 
 export interface UpdateProjectInput extends CommandMetadata {
@@ -71,6 +73,8 @@ export interface UpdateProjectInput extends CommandMetadata {
   readonly faviconPath?: string | null;
   readonly defaultThreadEnvMode?: ThreadEnvMode | null;
   readonly scripts?: ReadonlyArray<ProjectScript>;
+  /** Replaces the whole list. Paths only mean something on the project's own environment. */
+  readonly trackedFolders?: ReadonlyArray<ProjectTrackedFolder>;
   readonly pinned?: boolean;
   readonly archived?: boolean;
 }
@@ -390,6 +394,7 @@ const mutateProject = Effect.fn("EnvironmentCommands.mutateProject")(function* (
         readonly createWorkspaceRootIfMissing?: boolean;
         readonly defaultModelSelection?: ModelSelection | null;
         readonly scripts?: ReadonlyArray<ProjectScript>;
+        readonly trackedFolders?: ReadonlyArray<ProjectTrackedFolder>;
       }
     | {
         readonly type: "project.update";
@@ -399,6 +404,7 @@ const mutateProject = Effect.fn("EnvironmentCommands.mutateProject")(function* (
         readonly workspaceRoot?: string;
         readonly defaultModelSelection?: ModelSelection | null;
         readonly scripts?: ReadonlyArray<ProjectScript>;
+        readonly trackedFolders?: ReadonlyArray<ProjectTrackedFolder>;
       }
     | {
         readonly type: "project.delete";
@@ -426,6 +432,7 @@ export const createProject = Effect.fn("EnvironmentCommands.createProject")(func
       ? {}
       : { defaultModelSelection: input.defaultModelSelection }),
     ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
+    ...(input.trackedFolders === undefined ? {} : { trackedFolders: input.trackedFolders }),
   });
 });
 
@@ -448,6 +455,7 @@ export const updateProject = Effect.fn("EnvironmentCommands.updateProject")(func
       ? {}
       : { defaultThreadEnvMode: input.defaultThreadEnvMode }),
     ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
+    ...(input.trackedFolders === undefined ? {} : { trackedFolders: input.trackedFolders }),
     ...(input.pinned === undefined ? {} : { pinned: input.pinned }),
     ...(input.archived === undefined ? {} : { archived: input.archived }),
   });

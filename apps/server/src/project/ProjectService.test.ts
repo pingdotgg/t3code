@@ -5,7 +5,14 @@ import * as Tracer from "effect/Tracer";
 import { assert, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { CommandId, type Project, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  CommandId,
+  type Project,
+  ProjectId,
+  type ProjectTrackedFolder,
+  type ProjectUpdatePayload,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -337,6 +344,62 @@ it.layer(layerTest)("ProjectService", (it) => {
         changes.map((change) => change.event_type),
         ["project.created", "project.meta-updated", "project.meta-updated", "project.deleted"],
       );
+    }),
+  );
+
+  it.effect("keeps a valid tracked folder list and refuses the others", () =>
+    Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      const projectId = ProjectId.make("project:tracked-folders");
+      const folder = (path: string) => ({ path, name: "Folder" });
+      const invalid = [
+        ["relative", [folder("sibling")]],
+        ["own-folder", [folder("/work/tracked/app/")]],
+        ["parent", [folder("/work/tracked")]],
+        ["duplicate", [folder("/work/tracked/api"), folder("/work/tracked/api/")]],
+      ] as const;
+      const create = (key: string, trackedFolders: ReadonlyArray<ProjectTrackedFolder>) =>
+        service.create({
+          commandId: CommandId.make(`command:tracked:create:${key}`),
+          projectId,
+          title: "Tracked",
+          workspaceRoot: "/work/tracked/app",
+          trackedFolders,
+        });
+      const update = (key: string, change: Partial<ProjectUpdatePayload>) =>
+        service.update({
+          commandId: CommandId.make(`command:tracked:update:${key}`),
+          projectId,
+          ...change,
+        });
+
+      for (const [key, trackedFolders] of invalid) {
+        assert.equal(
+          (yield* create(key, trackedFolders).pipe(Effect.flip))._tag,
+          "ProjectInvalidError",
+        );
+      }
+      const tracked = [folder("/work/tracked/api"), folder("/work/tracked/app/packages/web")];
+      const created = yield* create("valid", [folder("/work/tracked/api/"), tracked[1]!]);
+      assert.deepEqual(created.trackedFolders, tracked);
+
+      for (const [key, trackedFolders] of invalid) {
+        assert.equal(
+          (yield* update(key, { trackedFolders }).pipe(Effect.flip))._tag,
+          "ProjectInvalidError",
+        );
+      }
+      // The kept list is checked against the new folder, and stays as it was when refused.
+      assert.equal(
+        (yield* update("move-onto", { workspaceRoot: "/work/tracked/api" }).pipe(Effect.flip))._tag,
+        "ProjectInvalidError",
+      );
+      assert.deepEqual((yield* update("rename", { title: "Renamed" })).trackedFolders, tracked);
+      assert.deepEqual(
+        Option.getOrThrow(yield* service.getById(projectId)).trackedFolders,
+        tracked,
+      );
+      assert.deepEqual((yield* update("clear", { trackedFolders: [] })).trackedFolders, []);
     }),
   );
 

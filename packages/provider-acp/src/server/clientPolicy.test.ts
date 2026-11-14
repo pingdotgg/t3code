@@ -66,6 +66,16 @@ describe("acpPermissionDisposition", () => {
       ),
       "allow",
     );
+    // A multi-folder thread's other folders are writable roots too.
+    const tracked: AcpRuntimePolicy = {
+      ...policy,
+      sandboxPolicy: { type: "workspaceWrite", networkAccess: false },
+      workspace: { extraRoots: [writableRoot] },
+    };
+    const edit = (path: string) =>
+      acpPermissionDisposition(tracked, permissionRequest("edit", [{ path }]));
+    assert.equal(edit(NodePath.join(writableRoot, "generated.ts")), "allow");
+    assert.equal(edit(NodePath.resolve(process.cwd(), "untracked-folder", "file.ts")), "deny");
   });
 
   it("denies missing or out-of-root mutation locations", () => {

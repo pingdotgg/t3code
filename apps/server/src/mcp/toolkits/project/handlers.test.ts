@@ -879,7 +879,7 @@ it.effect("deleting a project through MCP also discards its clone record", () =>
   }),
 );
 
-it.effect("an update the project refuses tells the agent why", () =>
+it.effect("a project update or create that is refused tells the agent why", () =>
   Effect.gen(function* () {
     const harness = clientLaunchHarness({ runtimeModeCeiling: "full-access", launched: [] });
     const detail = "Project monograms must contain at most two characters.";
@@ -904,5 +904,14 @@ it.effect("an update the project refuses tells the agent why", () =>
       .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
 
     expect(refused.at(-1)?.result).toMatchObject({ code: "invalid_request", message: detail });
+
+    // A project started from its title has no folder yet for tracked folders to be checked against.
+    const dropped = yield* toolkit
+      .handle("t3_project_create", {
+        title: "Wrapper",
+        trackedFolders: [{ path: "/repos/api", name: "api" }],
+      })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+    expect(dropped.at(-1)?.result).toMatchObject({ code: "invalid_request" });
   }),
 );

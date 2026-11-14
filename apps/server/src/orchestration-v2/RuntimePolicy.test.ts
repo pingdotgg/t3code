@@ -20,6 +20,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import * as WorkspaceFolders from "../workspace/WorkspaceFolders.ts";
 
 const projectId = ProjectId.make("project:runtime-policy");
 const providerInstanceId = ProviderInstanceId.make("codex");
@@ -78,9 +79,24 @@ const providerInstanceFor = (instanceId: ProviderInstanceId) =>
     },
   }) as ProviderInstance;
 
+const noWorkspace = { folders: [], extraRoots: [] };
+const trackedWorkspace = {
+  folders: [
+    { name: "api", path: "/project-root/api", isGitRepository: true },
+    { name: "docs", path: "/elsewhere/docs", isGitRepository: false },
+  ],
+  extraRoots: ["/elsewhere/docs"],
+};
+
 const layerWithPolicy = (policy?: ManagedPolicySummary) =>
   RuntimePolicy.layerFromProjectStore.pipe(
     Layer.provide(ServerSettings.layerTest({}, policy)),
+    Layer.provide(
+      Layer.mock(WorkspaceFolders.WorkspaceFolders)({
+        forThread: (input) =>
+          Effect.succeed(input.worktreePath === null ? trackedWorkspace : noWorkspace),
+      }),
+    ),
     Layer.provide(
       Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
         getInstance: (instanceId) => Effect.succeed(providerInstanceFor(instanceId)),
@@ -104,6 +120,7 @@ const layerWithPolicy = (policy?: ManagedPolicySummary) =>
             faviconPath: null,
             projectIcon: null,
             scripts: [],
+            trackedFolders: [],
             pinnedAt: null,
             archivedAt: null,
             createdAt: "2026-06-21T00:00:00.000Z",
@@ -155,6 +172,18 @@ it.layer(layerTest)("RuntimePolicyV2", (it) => {
       assert.equal(yield* modeFor(grokInstanceId, "auto"), "auto");
       assert.equal(yield* modeFor(grokInstanceId, "full-access"), "full-access");
       assert.equal(yield* modeFor(providerInstanceId, "auto-accept-edits"), "auto-accept-edits");
+    }),
+  );
+
+  it.effect("carries tracked folders only for a thread in the project's own checkout", () =>
+    Effect.gen(function* () {
+      const policy = yield* RuntimePolicy.RuntimePolicyV2;
+      const now = yield* DateTime.now;
+      const resolve = (worktreePath: string | null) =>
+        policy.resolve({ thread: makeThread({ now, worktreePath }), modelSelection });
+
+      assert.deepEqual((yield* resolve(null)).workspace, trackedWorkspace);
+      assert.notProperty(yield* resolve("/work"), "workspace");
     }),
   );
 });
