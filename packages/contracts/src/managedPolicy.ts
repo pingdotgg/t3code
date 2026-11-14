@@ -47,10 +47,14 @@ export type ManagedProviderLimits = typeof ManagedProviderLimits.Type;
 export const ManagedUpdatesMode = Schema.Literals(["auto", "off"]);
 export type ManagedUpdatesMode = typeof ManagedUpdatesMode.Type;
 
-const HttpsUrl = TrimmedNonEmptyString.check(
-  Schema.makeFilter((value: string) => /^https:\/\/[^\s/]+/i.test(value.trim()), {
-    expected: "an https URL",
-  }),
+const isHttpsUrl = Schema.makeFilter((value: string) => /^https:\/\/[^\s/]+/i.test(value.trim()), {
+  expected: "an https URL",
+  toJsonSchema: () => [{ pattern: "^\\s*[Hh][Tt][Tt][Pp][Ss]://[^\\s/]+" }, true],
+});
+
+// The published JSON Schema only sees the check on the encoded string.
+const HttpsUrl = Schema.String.check(isHttpsUrl).pipe(
+  Schema.decodeTo(TrimmedNonEmptyString.check(isHttpsUrl)),
 );
 
 export const ManagedUpdatesPolicy = Schema.Struct({
@@ -115,12 +119,19 @@ export const ManagedPolicySummaryLimits = Schema.Struct({
 });
 export type ManagedPolicySummaryLimits = typeof ManagedPolicySummaryLimits.Type;
 
+export const MANAGED_POLICY_SCHEMA_URL = "https://t3.codes/schema/policy.json";
+
 /**
  * The machine-wide policy file an administrator deploys. Decoded with excess properties
  * rejected: a key this build does not know might be a restriction it cannot enforce, and
  * starting anyway would look managed without being managed.
  */
 export const ManagedPolicyDocument = Schema.Struct({
+  $schema: Schema.optionalKey(
+    Schema.String.annotate({
+      description: `URL of the JSON Schema for this file, typically "${MANAGED_POLICY_SCHEMA_URL}".`,
+    }),
+  ),
   schemaVersion: Schema.Literal(1),
   /** Shown to users as "Managed by <organization>". */
   organization: TrimmedNonEmptyString,

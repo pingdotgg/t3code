@@ -40,6 +40,10 @@ The desktop app includes the `t3` command; see [The `t3` command](./install.md#t
 and beside each control the policy locks, with a link to `supportUrl` if you set one. [`settings`](#settings)
 sets defaults and locks, and [`limits`](#limits) restricts what T3 Code may do.
 
+To get completion and errors in your editor, add `"$schema": "https://t3.codes/schema/policy.json"`
+at the top of the file. The schema catches misspelled keys and wrong types, not every rule, and it does not know each
+setting's path, so still run `t3 policy check`.
+
 Every user on the machine can read the policy, so do not put credentials in it.
 
 ## Where the policy goes
