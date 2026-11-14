@@ -144,6 +144,7 @@ import {
   makeProviderFailure,
   makeProviderFailureTurnItem,
   makeProviderRetryTurnItem,
+  PROVIDER_RETRY_BUDGET_MS,
 } from "@t3tools/provider-core/server/failure";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import {
@@ -162,8 +163,6 @@ const CODEX_PROVIDER = ProviderDriverKind.make("codex");
 const CODEX_CAPACITY_MAX_RETRIES = 5;
 // How long Stop waits for Codex to end the turn before the user is offered Force stop.
 const CODEX_STOP_CONFIRM_TIMEOUT_MS = 10_000;
-// Codex can announce a retry and never resume. Recovered retries resume model output within ~75s.
-const CODEX_PROVIDER_RETRY_STALL_TIMEOUT = "10 minutes";
 export const CODEX_DRIVER_KIND = CODEX_PROVIDER;
 export const CODEX_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CODEX_DRIVER_KIND);
 
@@ -5173,7 +5172,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               return updated;
             });
             yield* failStalledProviderRetry(context, state, payload.error.codexErrorInfo).pipe(
-              Effect.delay(CODEX_PROVIDER_RETRY_STALL_TIMEOUT),
+              // Every notice aims at the same deadline, so repeated notices cannot extend it.
+              Effect.delay(
+                Math.max(
+                  0,
+                  PROVIDER_RETRY_BUDGET_MS -
+                    (DateTime.toEpochMillis(updatedAt) - DateTime.toEpochMillis(state.startedAt)),
+                ),
+              ),
               Effect.forkIn(scope, { startImmediately: true }),
             );
             yield* emitProviderEvent({

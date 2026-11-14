@@ -60,7 +60,11 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import type { ChatComposerHandle } from "./ChatComposer";
 import { fileAttachmentCapabilityBlockReason } from "./composerAttachmentFiles";
-import { prepareQueuedEditAttachments, recoverQueuedMessageEdit } from "./queuedMessageEdit";
+import {
+  discardQueuedEditDraft,
+  prepareQueuedEditAttachments,
+  recoverQueuedMessageEdit,
+} from "./queuedMessageEdit";
 import type { EditQueuedRunRequest } from "./QueuedRunsControl";
 
 interface EditingQueuedRun {
@@ -232,10 +236,12 @@ export function useQueuedRunEdit(input: {
   const focusComposerSoon = () => {
     window.requestAnimationFrame(() => composerRef.current?.focusAtEnd());
   };
-  const clearEditDraft = (runId: RunId) =>
-    useComposerDraftStore
-      .getState()
-      .clearComposerContent(queuedRunEditDraftId(routeThreadRef, runId));
+  const clearEditDraft = (runId: RunId) => {
+    const target = queuedRunEditDraftId(routeThreadRef, runId);
+    // A save in flight still sends these uploads.
+    if (isSaving) useComposerDraftStore.getState().clearComposerContent(target);
+    else discardQueuedEditDraft(target);
+  };
 
   const beginEdit = useStableCallback((request: EditQueuedRunRequest) => {
     if (activeThreadId === null) return;
@@ -366,10 +372,29 @@ export function useQueuedRunEdit(input: {
     });
     setThreadError(editing.threadId, error);
     const current = finishSave(error === null);
+    if (!current) {
+      // A failed save can recover into the thread draft; a newer edit can also retain resources.
+      const drafts = Object.values(useComposerDraftStore.getState().draftsByThreadKey);
+      const retainedIds = new Set(
+        drafts.flatMap((draft) =>
+          [...draft.images, ...draft.files].map((attachment) => attachment.id),
+        ),
+      );
+      releaseDraftAttachments(
+        newAttachments.filter((attachment) => !retainedIds.has(attachment.id)),
+      );
+      const retainedPreviews = new Set(
+        drafts.flatMap((draft) => draft.images.map((image) => image.previewUrl)),
+      );
+      for (const image of content.images) {
+        if (image.previewUrl.startsWith("blob:") && !retainedPreviews.has(image.previewUrl)) {
+          URL.revokeObjectURL(image.previewUrl);
+        }
+      }
+      return;
+    }
     if (error !== null) return;
     releaseDraftAttachments(newAttachments);
-    // The edit was cancelled or begun again while this save ran; its drafts are the newer edit's.
-    if (!current) return;
     promptRef.current = "";
     clearEditDraft(editing.runId);
     composerRef.current?.resetCursorState();

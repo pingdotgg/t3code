@@ -166,6 +166,25 @@ describe("CursorAdapterV2", () => {
                             : {}),
                         },
                       })),
+                      {
+                        type: "tool-call-completed",
+                        modelCallId: "native-model-call",
+                        callId: "shell-exit-1",
+                        toolCall: {
+                          type: "shell",
+                          args: { command: "vp test" },
+                          result: {
+                            status: "success",
+                            value: {
+                              exitCode: 1,
+                              signal: "",
+                              stdout: "",
+                              stderr: "1 failed",
+                              executionTime: 1,
+                            },
+                          },
+                        },
+                      },
                     ];
                     for (const update of readUpdates) {
                       yield* input.onDelta!(update);
@@ -294,6 +313,7 @@ describe("CursorAdapterV2", () => {
         assert.deepEqual(Object.fromEntries(finalNodes), {
           "read-secret": unfinished,
           "read-open": "completed",
+          "shell-exit-1": "failed",
         });
       }).pipe(
         Effect.scoped,

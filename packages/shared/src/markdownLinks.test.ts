@@ -198,7 +198,7 @@ describe("resolveMarkdownFileLinkTarget", () => {
   });
 
   it("keeps a backslash in a relative link that already names a file", () => {
-    expect(resolveMarkdownFileLinkTarget("./foo%5Cbar.ts", "/repo")).toBe("/repo/./foo\\bar.ts");
+    expect(resolveMarkdownFileLinkTarget("./foo%5Cbar.ts", "/repo")).toBe("/repo/foo\\bar.ts");
   });
 
   it("does not treat filename line references as external schemes", () => {

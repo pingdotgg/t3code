@@ -457,12 +457,13 @@ Third}`;
   it.each(["odt", "odp"] as const)("reads %s text and rejects XML entities", async (kind) => {
     const archive = new JSZip().file(
       "content.xml",
-      `<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"><office:body>${kind === "odt" ? "<office:text><text:p>Field notes</text:p></office:text>" : '<draw:page draw:name="Overview"><text:h>Launch plan</text:h></draw:page>'}</office:body></office:document-content>`,
+      `<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:presentation="urn:oasis:names:tc:opendocument:xmlns:presentation:1.0"><office:body>${kind === "odt" ? "<office:text><text:p>Field notes</text:p></office:text>" : '<draw:page draw:name="Overview"><text:h>Launch plan</text:h><presentation:notes><draw:frame><draw:text-box><text:p>Speaker only</text:p></draw:text-box></draw:frame></presentation:notes></draw:page>'}</office:body></office:document-content>`,
     );
     const result = await openDocument(archive, kind);
     expect(result.type).toBe("document");
     if (result.type !== "document") throw new Error("Expected document");
     expect(result.pages[0]!.html).toContain(kind === "odt" ? "Field notes" : "Launch plan");
+    expect(result.pages[0]!.html).not.toContain("Speaker only");
     archive.file(
       "content.xml",
       '<!DOCTYPE x [<!ENTITY external SYSTEM "file:///etc/passwd">]><x>&external;</x>',

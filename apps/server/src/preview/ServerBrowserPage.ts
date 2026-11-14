@@ -917,14 +917,15 @@ export const hover = async (
   input: PreviewAutomationHoverInput,
   pointer: PointerReporter = noPointer,
 ) => {
-  const timeout = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const deadline = Date.now() + (input.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  const remaining = () => Math.max(1, deadline - Date.now());
   const locator = targetLocator(page, input);
-  await pointer(await targetPoint(page, locator, input, () => timeout), "move");
+  await pointer(await targetPoint(page, locator, input, remaining), "move");
   if (locator === null) {
     await page.mouse.move(input.x ?? 0, input.y ?? 0);
     return;
   }
-  await locator.hover({ timeout });
+  await locator.hover({ timeout: remaining() });
 };
 
 export const select = async (
@@ -967,17 +968,18 @@ export const drag = async (
   input: PreviewAutomationDragInput,
   pointer: PointerReporter = noPointer,
 ) => {
-  const timeout = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const deadline = Date.now() + (input.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  const remaining = () => Math.max(1, deadline - Date.now());
   const source = targetLocator(page, { locator: input.source })!;
   const target = targetLocator(page, { locator: input.target })!;
-  await pointer(await targetPoint(page, source, {}, () => timeout), "move");
+  await pointer(await targetPoint(page, source, {}, remaining), "move");
   // Observe drag rejection immediately; an unhandled rejection during cursor movement exits the server.
   // Chromium delivers a single move before dragstart; steps give the page mousemoves during the drag.
-  const dragFailure = source.dragTo(target, { timeout, steps: 5 }).then(
+  const dragFailure = source.dragTo(target, { timeout: remaining(), steps: 5 }).then(
     () => null,
     (error: unknown) => ({ error }),
   );
-  const end = await target.boundingBox({ timeout }).catch(() => null);
+  const end = await target.boundingBox({ timeout: remaining() }).catch(() => null);
   if (end) await pointer({ x: end.x + end.width / 2, y: end.y + end.height / 2 }, "move");
   const failure = await dragFailure;
   if (failure) throw failure.error;
