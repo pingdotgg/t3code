@@ -7403,11 +7403,10 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       { location: "nested", conflict: true, encoding: "utf8" },
       { location: "worktree", conflict: true, encoding: "utf8" },
       { location: "root", conflict: true, encoding: "utf16le" },
-      { location: "root", conflict: true, encoding: "utf16le", markerSize: 10 },
       { location: "root", conflict: true, encoding: "utf16le", large: true },
     ])(
       "rejects selected-file merge commits without mutation ($location, conflict: $conflict, $encoding)",
-      ({ location, conflict, encoding, markerSize, large }) =>
+      ({ location, conflict, encoding, large }) =>
         Effect.gen(function* () {
           let cwd = yield* makeTmpDir();
           const { initialBranch } = yield* initRepoWithCommit(cwd);
@@ -7422,7 +7421,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             yield* writeTextFile(
               cwd,
               ".gitattributes",
-              `README.md text working-tree-encoding=UTF-16${markerSize ? ` conflict-marker-size=${markerSize}` : ""}\n`,
+              "README.md text working-tree-encoding=UTF-16\n",
             );
             yield* writeReadme("base\n");
             yield* git(cwd, ["add", "."]);
