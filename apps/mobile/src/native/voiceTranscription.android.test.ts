@@ -78,10 +78,11 @@ it.each([
     selection: { start: 16, end: 16 },
     revision: 1,
   };
+  const prepareToRecordAsync = vi.fn(async () => {});
   const controller = new VoiceInputController({
     recorder: {
       uri: "file:///acceptance.m4a",
-      prepareToRecordAsync: async () => {},
+      prepareToRecordAsync,
       record: () => {},
       stop: async () => {},
     },
@@ -101,4 +102,5 @@ it.each([
   expect(commit).not.toHaveBeenCalled();
   expect(draft.text).toBe("Preserved draft.");
   expect(controller.currentState.error).toMatch(expected);
+  expect(prepareToRecordAsync).toHaveBeenCalledTimes(phase === "preparation" ? 0 : 1);
 });

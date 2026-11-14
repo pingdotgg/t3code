@@ -6,16 +6,23 @@ import {
   mcpClientScopes,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as HttpEffect from "effect/http/HttpEffect";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
+import { DEFAULT_HOSTED_APP_URL } from "@t3tools/shared/connectAuth";
+
+import * as CloudLink from "../cloud/CloudLink.ts";
+import { agentApprovalAppUrlConfig } from "../cloud/publicConfig.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as McpOAuth from "./McpOAuth.ts";
 import { renderErrorPage } from "./mcpOAuthHtml.ts";
 
 const APPROVAL_PAGE_PATH = "/connect-agent";
+const HOSTED_APPROVAL_PATH = "/approve-agent";
 
 const PAGE_HEADERS = {
   "content-security-policy":
@@ -62,6 +69,28 @@ export const layer = HttpApiBuilder.group(
   "mcpOAuth",
   Effect.fnUntraced(function* (handlers) {
     const oauth = yield* McpOAuth.McpOAuth;
+    const cloudLink = yield* CloudLink.CloudLink;
+    const serverEnvironment = yield* ServerEnvironment.ServerEnvironmentIdentity;
+    const hostedAppUrl = yield* agentApprovalAppUrlConfig.pipe(
+      Effect.orElseSucceed(() => DEFAULT_HOSTED_APP_URL),
+    );
+    // T3 Connect serves this host, so the owner can approve on the hosted app by signing in there.
+    const hostedApprovalUrl = (issuer: string, search: string) =>
+      cloudLink.linkState().pipe(
+        Effect.flatMap((state) =>
+          state.linked && !state.linkRevoked && state.tunnelHostname === new URL(issuer).hostname
+            ? serverEnvironment.getEnvironmentId.pipe(
+                Effect.map((environmentId) => {
+                  const url = new URL(HOSTED_APPROVAL_PATH, hostedAppUrl);
+                  url.search = search;
+                  url.searchParams.set("environment", environmentId);
+                  return Option.some(url.toString());
+                }),
+              )
+            : Effect.succeedNone,
+        ),
+        Effect.orElseSucceed(Option.none),
+      );
     const protectedResource = () =>
       requestUrls.pipe(Effect.map(McpOAuth.protectedResourceMetadata));
 
@@ -96,7 +125,14 @@ export const layer = HttpApiBuilder.group(
             .pipe(Effect.result);
           const headers = { "cache-control": "no-store", "referrer-policy": "no-referrer" };
           if (Result.isSuccess(authorization)) {
-            return HttpServerResponse.redirect(`${APPROVAL_PAGE_PATH}${url.search}`, { headers });
+            // A link needs a plain pairing code, so it stays on this environment's own page.
+            const hosted = authorization.success.client.peerLink
+              ? Option.none()
+              : yield* hostedApprovalUrl(urls.issuer, url.search);
+            return HttpServerResponse.redirect(
+              Option.getOrElse(hosted, () => `${APPROVAL_PAGE_PATH}${url.search}`),
+              { headers },
+            );
           }
           const error = authorization.failure;
           return error._tag === "McpOAuthPageError"
@@ -115,7 +151,7 @@ export const layer = HttpApiBuilder.group(
           const resolved = yield* forwardedAuthorization(oauth, payload);
           if ("redirectTo" in resolved) return resolved;
           const urls = yield* requestUrls;
-          const session = yield* oauth.approvingBrowserSession(request, resolved);
+          const session = yield* oauth.approvingSession(request, resolved);
           yield* noStore;
           return {
             clientName: resolved.client.name,
