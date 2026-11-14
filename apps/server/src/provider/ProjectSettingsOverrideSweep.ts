@@ -1,3 +1,5 @@
+import * as NodeUtil from "node:util";
+
 import { type ProjectSettingsOverrides } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
@@ -6,7 +8,7 @@ import * as Settings from "../serverSettings.ts";
 
 export function deletedProjectOverridePatch(entry: ProjectSettingsOverrides | undefined) {
   // Keep cleanup policy for deleted threads; omitting providerInstances would preserve obsolete references in the merge.
-  return entry?.worktreeCleanup
+  return entry?.worktreeCleanup !== undefined
     ? { worktreeCleanup: entry.worktreeCleanup, providerInstances: {} }
     : null;
 }
@@ -25,7 +27,9 @@ export const sweep = Effect.gen(function* () {
     ([projectId, entry]) => {
       const project = projectsById.get(projectId);
       if (project?.deletedAt === null) return [];
-      return [[projectId, project ? deletedProjectOverridePatch(entry) : null] as const];
+      const patch = project ? deletedProjectOverridePatch(entry) : null;
+      if (NodeUtil.isDeepStrictEqual(entry, patch)) return [];
+      return [[projectId, patch] as const];
     },
   );
   if (overrides.length === 0) return;

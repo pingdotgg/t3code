@@ -521,6 +521,7 @@ it.effect("deletes a project without force once its imported threads were delete
 it.effect.each([
   { policy: "no", worktreeCleanup: undefined },
   { policy: "its off", worktreeCleanup: { mode: "off" } as const },
+  { policy: "its legacy", worktreeCleanup: null },
 ])(
   "clears a deleted project's settings overrides, keeping $policy worktree cleanup policy, so a machine-disabled instance cannot stay alive",
   ({ worktreeCleanup }) =>
@@ -582,6 +583,22 @@ it.effect.each([
 
 it.live.each([
   {
+    storageCleanup: { worktreeOnDelete: false },
+    machinePolicy: {
+      mode: "custom",
+      rules: {
+        worktreeKeepWhen: "uncommitted-changes",
+        worktreeAfterDays: null,
+        worktreeSettledAfterDays: null,
+        worktreeOnMerge: false,
+        worktreeOnDelete: true,
+        worktreeUnchanged: false,
+      },
+    },
+    override: null,
+    removed: false,
+  },
+  {
     storageCleanup: { worktreeOnDelete: true },
     override: { mode: "off" },
     removed: false,
@@ -603,7 +620,7 @@ it.live.each([
   },
 ] as const)(
   "storage cleanup follows a deleted project's $override.mode worktree cleanup policy after the startup sweep",
-  ({ storageCleanup, override, removed }) =>
+  ({ storageCleanup, override, removed, ...configuration }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const config = yield* ServerConfig.ServerConfig;
@@ -645,6 +662,9 @@ it.live.each([
         });
         yield* serverSettings.updateSettings({
           storageCleanup: { ...storageCleanup, worktreeAfterDays: null },
+          ...("machinePolicy" in configuration
+            ? { worktreeCleanup: configuration.machinePolicy }
+            : {}),
           projectSettingsOverrides: { [projectId]: { worktreeCleanup: override } },
         });
         yield* service.delete({
