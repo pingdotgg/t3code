@@ -66,9 +66,14 @@ export const ServerProviderUsageLimits = Schema.Struct({
 });
 export type ServerProviderUsageLimits = typeof ServerProviderUsageLimits.Type;
 
-/** Partial updates merge windows by id; omitted windows remain unchanged. */
+/**
+ * Partial updates merge windows by id; omitted windows remain unchanged.
+ * `clearsProbeFailure` marks an update carrying every window the provider
+ * currently reports, so it can stand in for a failed probe.
+ */
 export const ProviderUsageLimitsUpdate = Schema.Struct({
   windows: Schema.Array(ServerProviderUsageWindow),
+  clearsProbeFailure: Schema.optional(Schema.Boolean),
 });
 export type ProviderUsageLimitsUpdate = typeof ProviderUsageLimitsUpdate.Type;
 
