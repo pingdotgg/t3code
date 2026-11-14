@@ -14,7 +14,7 @@ import {
   type SourceControlAppSignIn,
 } from "@t3tools/source-control-core/shared/definition";
 
-import { gitHubMediaUrl } from "./gitHubMedia.ts";
+import { gitHubMediaUrl, gitHubRawFileUrl } from "./gitHubMedia.ts";
 import { icon } from "./icon.ts";
 import { gitHubReferenceAutolinks } from "./referenceAutolinks.ts";
 
@@ -125,7 +125,8 @@ export const definition = defineSourceControl({
   ] as const),
   checkoutCommand: ({ number }) => `gh pr checkout ${number}`,
   changeRequestCloseCommand: /\bgh\s+(?:pr\s+(?:merge|close)|stack\s+merge)\b/u,
-  changeRequestCreateCommand: /\bgh\s+pr\s+create\b/u,
+  // `new` is gh's alias for `create`.
+  changeRequestCreateCommand: /\bgh\s+pr\s+(?:create|new)\b/u,
   authorProfileUrl: (login, repositoryUrl) =>
     login.endsWith("[bot]")
       ? null
@@ -156,5 +157,6 @@ export const definition = defineSourceControl({
   canReadChangeRequestOnHost: (identity, link) =>
     isChangeRequestOnProjectHost(projectChangeRequestHost(identity, KIND), identity, link),
   mediaUrl: gitHubMediaUrl,
+  rawFileUrl: gitHubRawFileUrl,
   settings,
 });

@@ -171,9 +171,20 @@ const themeServerConfigAtom = Atom.make((get): ServerConfig | null => {
   return environmentId === null ? null : get(serverEnvironment.configValueAtom(environmentId));
 }).pipe(Atom.withLabel("web-theme-server-config"));
 
+/**
+ * Null until the theme environment says what it publishes. Cached configs and
+ * snapshots never carry themes, so a capable server has none until its theme
+ * event lands.
+ */
 export const themeServerEnvironmentThemesAtom = Atom.make(
-  (get): ReadonlyArray<EnvironmentTheme> =>
-    get(themeServerConfigAtom)?.environmentThemes ?? EMPTY_ENVIRONMENT_THEMES,
+  (get): ReadonlyArray<EnvironmentTheme> | null => {
+    const config = get(themeServerConfigAtom);
+    if (config === null) return null;
+    if (config.environmentThemes !== undefined) return config.environmentThemes;
+    return config.environment.capabilities.environmentThemes === true
+      ? null
+      : EMPTY_ENVIRONMENT_THEMES;
+  },
 ).pipe(Atom.withLabel("web-theme-server-environment-themes"));
 
 export const themeServerSettingsAtom = Atom.make(
