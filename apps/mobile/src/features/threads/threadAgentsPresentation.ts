@@ -36,19 +36,19 @@ export interface SubagentRowPresentation {
 
 /**
  * Where an agent's thread opens: here, or in the linked environment that runs
- * it. Null when there is no thread, or this app is not connected to that
- * environment.
+ * it. Null when there is no thread, or that environment is not saved and
+ * enabled in this app.
  */
 export function subagentThreadTarget(
   subagent: Pick<OrchestrationV2Subagent, "childThreadId" | "remoteChild">,
   environmentId: EnvironmentId,
-  isKnownEnvironment: (environmentId: EnvironmentId) => boolean,
+  environments: ReadonlyMap<EnvironmentId, { readonly entry: { readonly enabled: boolean } }>,
 ): { readonly environmentId: EnvironmentId; readonly threadId: ThreadId } | null {
   if (subagent.childThreadId !== null) {
     return { environmentId, threadId: subagent.childThreadId };
   }
   const remote = subagent.remoteChild;
-  return remote !== undefined && isKnownEnvironment(remote.environmentId)
+  return remote !== undefined && environments.get(remote.environmentId)?.entry.enabled === true
     ? { environmentId: remote.environmentId, threadId: remote.threadId }
     : null;
 }

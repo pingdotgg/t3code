@@ -266,6 +266,8 @@ function RemoteSubagentRow(props: {
 }) {
   const navigate = useNavigate();
   const environment = useEnvironment(props.agent.remoteChild.environmentId);
+  // A saved environment that is switched off can't open its threads.
+  const canOpen = environment?.entry.enabled === true;
   const { remoteChild } = props.agent;
   const status = props.agent.status;
   const failed = status === "failed";
@@ -283,9 +285,9 @@ function RemoteSubagentRow(props: {
               size="sm"
               variant="ghost"
               part="row"
-              aria-disabled={environment === null || undefined}
+              aria-disabled={!canOpen || undefined}
               onClick={() => {
-                if (environment === null) return;
+                if (!canOpen) return;
                 void navigate({
                   to: "/$environmentId/$threadId",
                   params: buildThreadRouteParams(
@@ -319,9 +321,11 @@ function RemoteSubagentRow(props: {
           <LineageTooltipContent
             title={title}
             hint={
-              environment === null
-                ? `Runs on ${remoteChild.label}. Connect to it to open the thread there.`
-                : `Open on ${remoteChild.label}`
+              canOpen
+                ? `Open on ${remoteChild.label}`
+                : environment === null
+                  ? `Runs on ${remoteChild.label}. Connect to it to open the thread there.`
+                  : `Runs on ${remoteChild.label}. Turn it on in Settings to open the thread there.`
             }
           />
         </TooltipPopup>
@@ -342,6 +346,7 @@ function DelegatedFromRow(props: {
   const router = useRouter();
   const { delegatedFrom } = props;
   const environment = useEnvironment(delegatedFrom.environmentId);
+  const canOpen = environment?.entry.enabled === true;
   const parentRef = scopeThreadRef(delegatedFrom.environmentId, delegatedFrom.threadId);
   // The title it had at delegation, until this client sees the parent itself.
   const parent = useQuietThreadShell(parentRef);
@@ -386,9 +391,9 @@ function DelegatedFromRow(props: {
               size="sm"
               variant="ghost"
               part="row"
-              aria-disabled={environment === null || undefined}
+              aria-disabled={!canOpen || undefined}
               onClick={() => {
-                if (environment === null) return;
+                if (!canOpen) return;
                 void openParent();
               }}
             />
@@ -410,9 +415,11 @@ function DelegatedFromRow(props: {
           <LineageTooltipContent
             title={title}
             hint={
-              environment === null
-                ? `Delegated from ${label ?? "a linked environment"}. Connect to it to open the parent thread.`
-                : `Open parent agent on ${environment.label}`
+              canOpen
+                ? `Open parent agent on ${label}`
+                : environment === null
+                  ? `Delegated from ${label ?? "a linked environment"}. Connect to it to open the parent thread.`
+                  : `Delegated from ${label}. Turn it on in Settings to open the parent thread.`
             }
           />
         </TooltipPopup>
