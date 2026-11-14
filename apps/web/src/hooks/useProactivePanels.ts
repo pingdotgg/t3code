@@ -176,6 +176,7 @@ export function useProactivePanels(input: {
         diffAction === "defer" || shouldDeferLink ? previousRunningTurnId : activeRunningTurnId,
     };
     if (diffAction !== "open" || newlyCompletedTurnId === null) return;
+    const alreadyReviewingDiff = openSurface?.kind === "diff";
     if (
       !panels.openProactive(
         threadRef,
@@ -185,7 +186,9 @@ export function useProactivePanels(input: {
     ) {
       return;
     }
-    useDiffPanelStore.getState().selectGitScope(threadRef, "branch");
+    if (!alreadyReviewingDiff) {
+      useDiffPanelStore.getState().selectGitScope(threadRef, "branch");
+    }
     onDiffPanelOpen?.();
   }, [
     activeLatestRun?.runId,

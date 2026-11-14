@@ -5,21 +5,29 @@ import type {
   ReviewDiffPreviewInput,
   ReviewDiffPreviewSource,
 } from "@t3tools/contracts";
-import * as Option from "effect/Option";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Atom from "effect/reactivity/Atom";
 import { useContext, useState } from "react";
 import { useStableCallback } from "~/hooks/useStableCallback";
-import { getRenderablePatch, resolveFileDiffPath, type RenderablePatch } from "~/lib/diffRendering";
+import {
+  getRenderablePatch,
+  resolveFileDiffPath,
+  retainedReviewFile,
+  retainLoadedReviewFiles,
+  type RenderablePatch,
+} from "~/lib/diffRendering";
 import { reviewEnvironment } from "~/state/review";
+
+const EMPTY_RETAINED_FILES: ReadonlyMap<string, FileDiffMetadata> = new Map();
 
 const filePathCollator = new Intl.Collator(undefined, {
   numeric: true,
   sensitivity: "base",
 });
-const INITIAL_FILE_COUNT = 4;
+const PAGE_SIZE = 4;
 
 export function useReviewFilePatches({
+  reviewKey,
   environmentId,
   cwd,
   source,
@@ -29,6 +37,7 @@ export function useReviewFilePatches({
   previewInput,
   preview,
 }: {
+  reviewKey: string | null;
   environmentId: EnvironmentId | undefined;
   cwd: string | undefined;
   source: ReviewDiffPreviewSource | null;
@@ -40,22 +49,48 @@ export function useReviewFilePatches({
   preview: RenderablePatch | null;
 }) {
   const registry = useContext(RegistryContext);
-  const scope = JSON.stringify([
+  const family = JSON.stringify([
+    reviewKey,
     environmentId,
     cwd,
+    source?.id,
     source?.kind,
     source?.baseRef,
-    source?.headRef,
     baseRef,
+    source?.headRef,
     ignoreWhitespace,
   ]);
-  const files = sortedReviewFiles(source);
-  const automaticPaths = files.slice(0, INITIAL_FILE_COUNT).map((file) => file.path);
-  const [requested, setRequested] = useState(() => ({ scope, paths: automaticPaths }));
-  const previousPaths = requested.scope === scope ? requested.paths : [];
-  const paths = [...new Set([...previousPaths, ...automaticPaths])];
-  if (requested.scope !== scope || paths.length !== previousPaths.length) {
-    setRequested({ scope, paths });
+  const scope = JSON.stringify([family, source?.diffHash]);
+  const lazy =
+    (source?.truncated === true || source?.patchesDeferred === true) && source.files !== undefined;
+  const files = lazy ? sortedReviewFiles(source) : [];
+  const [requested, setRequested] = useState<{ family: string; paths: readonly string[] }>({
+    family,
+    paths: [],
+  });
+  const [retained, setRetained] = useState(() => ({
+    family,
+    source,
+    byKey:
+      !lazy && preview?.kind === "files"
+        ? retainLoadedReviewFiles(EMPTY_RETAINED_FILES, preview.files)
+        : EMPTY_RETAINED_FILES,
+  }));
+  const previousByKey = retained.family === family ? retained.byKey : EMPTY_RETAINED_FILES;
+  const previousByPath = new Map<string, FileDiffMetadata[]>();
+  for (const file of previousByKey.values()) {
+    const path = resolveFileDiffPath(file);
+    const entries = previousByPath.get(path) ?? [];
+    entries.push(file);
+    previousByPath.set(path, entries);
+  }
+  const requestedPaths = new Set([
+    ...files.slice(0, PAGE_SIZE).map((file) => file.path),
+    ...(requested.family === family ? requested.paths : []),
+    ...previousByPath.keys(),
+  ]);
+  if (requested.family !== family || requested.paths.length !== requestedPaths.size) {
+    setRequested({ family, paths: [...requestedPaths] });
   }
   const queries = reviewFileQueries({
     environmentId,
@@ -65,74 +100,97 @@ export function useReviewFilePatches({
     ignoreWhitespace,
     previewInput,
     scope,
-    requested,
+    files,
+    requestedPaths,
   });
   const queriedPatchesAtom = reviewPatchesAtom(
     JSON.stringify([theme, queries.map(({ index, target }) => [index, target])]),
   );
   const patches = useAtomValue(queriedPatchesAtom);
   const retry = useStableCallback((path: string) => {
-    const files = sortedReviewFiles(source);
     const query = queries.find(({ index }) => files[index]?.path === path)?.query;
     if (query) registry.refresh(query);
   });
-  const pendingIndex = files.findIndex((_, index) => {
-    const patch = patches.get(index);
-    return !patch || patch._tag === "Initial";
-  });
-  const settledFileCount = source
-    ? pendingIndex < 0
-      ? files.length
-      : pendingIndex
-    : preview?.kind === "files"
-      ? preview.files.length
-      : 0;
   const requestFiles = (indices: number[]) =>
     setRequested((current) => {
-      const previous = current.scope === scope ? current.paths : [];
-      const added = indices.flatMap((index) => {
-        const path = files[index]?.path;
-        return path !== undefined && !previous.includes(path) ? [path] : [];
-      });
-      return added.length === 0 ? current : { scope, paths: [...previous, ...added] };
+      const paths = new Set(current.family === family ? current.paths : []);
+      for (const index of indices) {
+        const file = files[index];
+        if (file) paths.add(file.path);
+      }
+      return current.family === family && paths.size === current.paths.length
+        ? current
+        : { family, paths: [...paths] };
     });
-  // The first unsettled file already requested means a batch is in flight; wait for it.
-  const loadNextFiles = () => {
-    if (queries.some(({ index }) => index === settledFileCount)) return;
-    requestFiles(Array.from({ length: 4 }, (_, index) => settledFileCount + index));
-  };
-  const requestFile = (path: string) =>
-    requestFiles([files.findIndex((file) => file.path === path)]);
-  const renderableFiles = source
+  const renderableFiles = lazy
     ? files.flatMap((file, index): FileDiffMetadata[] => {
         const result = patches.get(index);
-        const value = result && Option.getOrUndefined(AsyncResult.value(result));
-        if (value?.patch?.kind === "files") {
-          const loaded = value.patch.files.filter(
-            (candidate) => resolveFileDiffPath(candidate) === file.path,
-          );
-          if (loaded.length > 0) return loaded;
-        }
-        return [
-          {
-            name: file.path,
-            ...(file.previousPath ? { prevName: file.previousPath } : {}),
-            type: file.previousPath ? "rename-changed" : "change",
-            hunks: [],
-            additionLines: [],
-            deletionLines: [],
-            additionCharacterCount: 0,
-            deletionCharacterCount: 0,
-            splitLineCount: 0,
-            unifiedLineCount: 0,
-            isPartial: true,
-            cacheKey: `${scope}:${file.path}:pending`,
-          },
-        ];
+        const loaded =
+          result?._tag === "Success" && result.value.patch?.kind === "files"
+            ? result.value.patch.files.filter(
+                (candidate) => resolveFileDiffPath(candidate) === file.path,
+              )
+            : [];
+        if (loaded.length > 0) return loaded;
+        const pending =
+          result === undefined ||
+          result._tag === "Initial" ||
+          (result._tag === "Success" && result.waiting);
+        const previous = pending ? previousByPath.get(file.path) : undefined;
+        return (previous ?? [undefined]).map((previous) =>
+          retainedReviewFile({
+            loaded: null,
+            previous,
+            sameFamily: true,
+            pending,
+            placeholder: {
+              name: file.path,
+              ...(file.previousPath ? { prevName: file.previousPath } : {}),
+              type: file.previousPath ? "rename-changed" : "change",
+              hunks: [],
+              additionLines: [],
+              deletionLines: [],
+              additionCharacterCount: 0,
+              deletionCharacterCount: 0,
+              splitLineCount: 0,
+              unifiedLineCount: 0,
+              isPartial: true,
+              cacheKey: `${scope}:${file.path}:pending`,
+            },
+          }),
+        );
       })
     : (preview?.kind === "files" ? preview.files : []).toSorted((a, b) =>
         filePathCollator.compare(resolveFileDiffPath(a), resolveFileDiffPath(b)),
       );
+  const nextRetained = !source
+    ? EMPTY_RETAINED_FILES
+    : !lazy && retained.family === family && retained.source === source
+      ? previousByKey
+      : retainLoadedReviewFiles(previousByKey, renderableFiles);
+  if (retained.family !== family || retained.source !== source || retained.byKey !== nextRetained) {
+    setRetained({ family, source, byKey: nextRetained });
+  }
+  const retainedPaths = new Set(
+    renderableFiles.filter((file) => !file.cacheKey?.endsWith(":pending")).map(resolveFileDiffPath),
+  );
+  const readyFilePaths = new Set(
+    files
+      .filter((_, index) => {
+        const result = patches.get(index);
+        return (
+          (result !== undefined && result._tag !== "Initial") ||
+          retainedPaths.has(files[index]!.path)
+        );
+      })
+      .map((file) => file.path),
+  );
+  const pendingIndex = files.findIndex((file) => !readyFilePaths.has(file.path));
+  const settledFileCount = lazy
+    ? pendingIndex < 0
+      ? files.length
+      : pendingIndex
+    : renderableFiles.length;
   const fileStates = new Map(
     files.map((file, index) => {
       const patch = patches.get(index);
@@ -142,6 +200,7 @@ export function useReviewFilePatches({
           error:
             patch?._tag === "Failure" ||
             (patch?._tag === "Success" &&
+              !patch.waiting &&
               (patch.value.patch?.kind !== "files" ||
                 !patch.value.patch.files.some(
                   (candidate) => resolveFileDiffPath(candidate) === file.path,
@@ -152,16 +211,23 @@ export function useReviewFilePatches({
     }),
   );
   return {
+    scope,
+    family,
     fileStates,
     isPending: [...patches.values()].some((patch) => patch._tag === "Initial" || patch.waiting),
     retry,
-    requestFile,
+    requestFile: (path: string) => requestFiles([files.findIndex((file) => file.path === path)]),
+    readyFilePaths,
     renderableFiles,
-    remainingFileCount: source ? files.length - settledFileCount : 0,
-    loadNextFiles,
+    remainingFileCount: lazy ? files.length - settledFileCount : 0,
+    loadNextFiles: () => {
+      if (queries.some(({ index }) => index === settledFileCount)) return;
+      requestFiles(Array.from({ length: PAGE_SIZE }, (_, index) => settledFileCount + index));
+    },
   };
 }
 
+// The refresh effect keys on the identity of these queries.
 function reviewFileQueries({
   environmentId,
   cwd,
@@ -170,7 +236,8 @@ function reviewFileQueries({
   ignoreWhitespace,
   previewInput,
   scope,
-  requested,
+  files,
+  requestedPaths,
 }: {
   environmentId: EnvironmentId | undefined;
   cwd: string | undefined;
@@ -179,18 +246,15 @@ function reviewFileQueries({
   ignoreWhitespace: boolean;
   previewInput: ReviewDiffPreviewInput | undefined;
   scope: string;
-  requested: { scope: string; paths: string[] };
+  files: ReturnType<typeof sortedReviewFiles>;
+  requestedPaths: ReadonlySet<string>;
 }) {
-  const files = sortedReviewFiles(source);
-  const paths = new Set([
-    ...files.slice(0, INITIAL_FILE_COUNT).map((file) => file.path),
-    ...(requested.scope === scope ? requested.paths : []),
-  ]);
   const queries =
     !environmentId || !cwd || !source
       ? []
       : files
-          .flatMap((file, index) => (paths.has(file.path) ? [{ file, index }] : []))
+          .map((file, index) => ({ file, index }))
+          .filter(({ file }) => requestedPaths.has(file.path))
           .map(({ file, index }) => {
             const target: ReviewPatchTarget = {
               environmentId,
@@ -221,6 +285,7 @@ function sortedReviewFiles(source: ReviewDiffPreviewSource | null) {
 
 type ReviewPatchTarget = Parameters<typeof reviewEnvironment.diffFilePatch>[0];
 
+// Derived atoms parse each query result once, even when another file finishes loading.
 const parsedPatchAtom = Atom.family((key: string) => {
   const [theme, target] = JSON.parse(key) as ["light" | "dark", ReviewPatchTarget];
   return Atom.map(reviewEnvironment.diffFilePatch(target), (result) =>
@@ -240,6 +305,7 @@ const parsedPatchAtom = Atom.family((key: string) => {
   );
 });
 
+// Keyed by theme and query targets so every render with the same files reads the same atom.
 const reviewPatchesAtom = Atom.family((key: string) => {
   const [theme, entries] = JSON.parse(key) as [
     "light" | "dark",

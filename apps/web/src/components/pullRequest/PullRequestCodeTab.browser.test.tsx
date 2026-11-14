@@ -1,5 +1,7 @@
 import { sha256 } from "@noble/hashes/sha2";
 import { bytesToHex } from "@noble/hashes/utils";
+import { RegistryContext } from "@effect/atom-react";
+import { AsyncResult, AtomRegistry } from "effect/reactivity";
 import {
   EnvironmentId,
   ProjectId,
@@ -13,7 +15,7 @@ import "~/index.css";
 import { __setClientSettingsForTests } from "../../hooks/useSettings";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 
-const { diffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
+const { diffAtom, pagedDiffAtom, pageResults, pages } = await vi.hoisted(async () => {
   const { AsyncResult, Atom } = await import("effect/reactivity");
   const filePatch = (path: string) =>
     [
@@ -46,19 +48,23 @@ const { diffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
     },
     "page-2": { patch: filePatch("late.test.ts"), truncated: false, nextCursor: null },
   };
+  const pageResults = Atom.family((cursor: string) =>
+    Atom.make<AsyncResult.AsyncResult<PullRequestDiffResult>>(AsyncResult.success(pages[cursor]!)),
+  );
   return {
     // An environment query whose refetch returns equal content hands back the previous value
     // itself, so a refresh publishes a new result around the very same page.
     diffAtom: Atom.make(() => AsyncResult.success(firstPage)),
-    pagedDiffAtom: Atom.family((cursor: string) =>
-      Atom.make(() => AsyncResult.success(pages[cursor]!)),
-    ),
+    pagedDiffAtom: Atom.family((cursor: string) => Atom.make((get) => get(pageResults(cursor)))),
+    pageResults,
+    pages,
   };
 });
 
 const mocks = vi.hoisted(() => ({
   paged: false,
   diffCommits: [] as Array<string | undefined>,
+  diffCursors: [] as Array<string | undefined>,
   viewedPaths: null as ReadonlySet<string> | null,
   viewedListeners: new Set<() => void>(),
 }));
@@ -101,13 +107,14 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
       ...actual.pullRequestEnvironment,
       diff: (({ input }: { input: { cursor?: string; commit?: string } }) => {
         mocks.diffCommits.push(input.commit);
+        mocks.diffCursors.push(input.cursor);
         return mocks.paged ? pagedDiffAtom(input.cursor ?? "first") : diffAtom;
       }) as never,
     },
   };
 });
 
-import { render } from "../../../test/render";
+import { act, render } from "../../../test/render";
 import PullRequestCodeTab from "./PullRequestCodeTab";
 
 const detail: PullRequestDetailView = {
@@ -167,6 +174,7 @@ function setup({ paged }: { paged: boolean }) {
   __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
   mocks.paged = paged;
   mocks.diffCommits = [];
+  mocks.diffCursors = [];
   mocks.viewedPaths = null;
   mocks.viewedListeners.clear();
 }
@@ -205,6 +213,37 @@ it("keeps the diff after a refresh that brings back the same page", async () => 
     .element(screen.getByText("This pull request has no file changes."))
     .not.toBeInTheDocument();
   await expect.element(screen.getByText("1 file", { exact: true })).toBeVisible();
+});
+
+it("restarts a refresh without advancing the cursor of the replaced page walk", async () => {
+  setup({ paged: true });
+  const registry = AtomRegistry.make();
+  using _registry = { [Symbol.dispose]: () => registry.dispose() };
+  using _firstPage = { [Symbol.dispose]: registry.mount(pageResults("first")) };
+  const url = `${detail.url}/files#diff-${bytesToHex(sha256(new TextEncoder().encode("late.test.ts")))}R4-R5`;
+  const settled = vi.fn();
+  const content = (token: number, revealUrl?: string) => (
+    <RegistryContext value={registry}>
+      {tab(token, { path: "late.test.ts", nonce: 1 }, revealUrl, settled)}
+    </RegistryContext>
+  );
+  await using screen = await render(content(0), { container: pagedContainer() });
+  await expect.element(screen.getByText("41 files", { exact: true })).toBeVisible();
+
+  await act(() => registry.set(pageResults("first"), AsyncResult.initial()));
+  await screen.rerender(content(1));
+  await screen.rerender(content(1, url));
+  expect(settled).not.toHaveBeenCalled();
+  await act(async () => {
+    registry.set(pageResults("first"), AsyncResult.success(pages.first!));
+    await screen.rerender(content(2, url));
+  });
+
+  await vi.waitFor(() => expect(mocks.diffCursors.at(-1)).toBe("page-2"));
+  await expect.element(screen.getByText("41 files", { exact: true })).toBeVisible();
+  await vi.waitFor(() => expect(settled).toHaveBeenCalledWith(url));
+  await screen.rerender(content(3));
+  await expect.element(screen.getByText("41 files", { exact: true })).toBeVisible();
 });
 
 // regression: #13279 a Viewed answer that lands after a link reveals a file must not fold it

@@ -46,6 +46,7 @@ function source(paths: string[], hash: string): ReviewDiffPreviewSource {
 
 function Probe({ source }: { source: ReviewDiffPreviewSource }) {
   const files = useReviewFilePatches({
+    reviewKey: "review",
     environmentId: EnvironmentId.make("environment"),
     cwd: "/project",
     source,
@@ -108,14 +109,17 @@ it("retains automatic and explicitly opened files through metadata insertion, re
   );
   await expect.element(screen.getByText("e.txt:loaded")).toBeVisible();
   await expect.element(screen.getByText("f.txt:loaded")).toBeVisible();
+  const refreshedAtom = [...state.patches]
+    .filter(([key]) => JSON.parse(key)[1] === "f.txt")
+    .at(-1)![1];
   await act(() =>
     registry.set(
-      atom,
+      refreshedAtom,
       AsyncResult.fail(new Error("refresh failed"), { previousSuccess: Option.some(loaded) }),
     ),
   );
-  await expect.element(screen.getByText("f.txt:loaded")).toBeVisible();
-  await act(() => registry.set(atom, loaded));
+  await expect.element(screen.getByText("f.txt:pending")).toBeVisible();
+  await act(() => registry.set(refreshedAtom, loaded));
   await expect.element(screen.getByText("f.txt:loaded")).toBeVisible();
 });
 
@@ -142,4 +146,11 @@ it("preserves deletion and addition patches for a file replaced by a symlink", a
   await expect.element(screen.getByText("deleted", { exact: true })).toBeVisible();
   await expect.element(screen.getByText("new", { exact: true })).toBeVisible();
   await expect.element(screen.getByText("Pending files: 0")).toBeVisible();
+  await screen.rerender(
+    <RegistryContext.Provider value={registry}>
+      <Probe source={{ ...metadata, diffHash: "refreshed-type-change" }} />
+    </RegistryContext.Provider>,
+  );
+  await expect.element(screen.getByText("deleted", { exact: true })).toBeVisible();
+  await expect.element(screen.getByText("new", { exact: true })).toBeVisible();
 });
