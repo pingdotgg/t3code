@@ -275,9 +275,10 @@ export function composerFileNeedsReattach(file: ComposerFileAttachment): boolean
   return file.file === null && file.uploadedAttachmentId === undefined;
 }
 
+/** Strips upload ids another environment owns; local bytes re-upload, byte-less files need reattaching. */
 function clearStaleFileUploadMetadata(
   draft: ComposerThreadDraftState,
-  environmentId: EnvironmentId,
+  environmentId: EnvironmentId | null,
 ): ComposerThreadDraftState {
   let changed = false;
   const files = draft.files.map((file) => {
@@ -756,7 +757,7 @@ interface ComposerDraftStoreState {
   clearComposerContent: (threadRef: ComposerThreadTarget) => void;
   /** Clears text and attachments, preserving terminal/element contexts, preview annotations, and review comments. */
   clearComposerPromptAndImages: (threadRef: ComposerThreadTarget) => void;
-  /** Moves all user content into a destination without any; only another environment's byte-less uploads stay in source. */
+  /** Moves all user content into a destination that has none; otherwise leaves both drafts alone. */
   moveComposerContent: (from: ComposerThreadTarget, to: ComposerThreadTarget) => void;
 }
 
@@ -4299,17 +4300,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             }
             const nextDraft: ComposerThreadDraftState = {
               ...current,
-              prompt: "",
-              images: [],
-              files: [],
-              nonPersistedImageIds: [],
-              persistedAttachments: [],
-              terminalContexts: [],
-              previewAnnotations: [],
-              reviewComments: [],
-              threadContexts: [],
-              environmentContexts: [],
-              replyTo: null,
+              ...composerDraftContent(createEmptyThreadDraft()),
             };
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
             if (shouldRemoveDraft(nextDraft)) {
@@ -4374,25 +4365,14 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                   parseScopedThreadKey(toKey)?.environmentId ??
                   null)
                 : to.environmentId;
-            const movedFiles = source.files.flatMap((file) => {
-              if (file.uploadEnvironmentId === destinationEnvironmentId) return [file];
-              if (file.file === null) return [];
-              if (file.uploadEnvironmentId === undefined) return [file];
-              // Re-upload local bytes across environments; the destination cannot reach source upload ids.
-              const { uploadedAttachmentId: _a, uploadEnvironmentId: _e, ...rest } = file;
-              return [rest];
-            });
-            const movedFileIds = new Set(movedFiles.map((file) => file.id));
+            const nextDestination = clearStaleFileUploadMetadata(
+              { ...destination, ...composerDraftContent(source) },
+              destinationEnvironmentId,
+            );
             // Moved images still use these blob URLs at the destination; do not revoke them.
-            const nextDestination: ComposerThreadDraftState = {
-              ...destination,
-              ...composerDraftContent(source),
-              files: movedFiles,
-            };
             const nextSource: ComposerThreadDraftState = {
               ...source,
               ...composerDraftContent(createEmptyThreadDraft()),
-              files: source.files.filter((file) => !movedFileIds.has(file.id)),
             };
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
             if (shouldRemoveDraft(nextSource)) {

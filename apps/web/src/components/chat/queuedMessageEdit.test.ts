@@ -79,12 +79,22 @@ describe("queued message file edits", () => {
   it("keeps file-only edits when another client starts the queued run", () => {
     const store = useComposerDraftStore.getState();
     store.setPrompt(editTarget, "Original message");
-    store.addFiles(editTarget, [file]);
+    const elsewhere: ComposerFileAttachment = {
+      ...uploadedFile,
+      id: "file:elsewhere",
+      name: "elsewhere.pdf",
+      file: null,
+      uploadedAttachmentId: "upload:elsewhere",
+      uploadEnvironmentId: EnvironmentId.make("other-environment"),
+    };
+    store.addFiles(editTarget, [file, elsewhere]);
     expect(
       recoverQueuedMessageEdit({ editTarget, threadTarget, originalText: "Original message" }),
     ).toBe("kept");
     expect(store.getComposerDraft(threadTarget)?.prompt).toBe("Original message");
-    expect(store.getComposerDraft(threadTarget)?.files).toEqual([file]);
+    // An upload this environment cannot reach comes back as a file to reattach, not a dropped chip.
+    const { uploadedAttachmentId: _id, uploadEnvironmentId: _env, ...reattach } = elsewhere;
+    expect(store.getComposerDraft(threadTarget)?.files).toEqual([file, reattach]);
     expect(store.getComposerDraft(editTarget)).toBeNull();
   });
 
