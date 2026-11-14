@@ -19,9 +19,9 @@ function imageSupportFromInput(value: unknown): boolean | undefined {
 /**
  * Read native image input support from provider model metadata.
  *
- * OpenCode exposes `capabilities.input.image`, while Pi reports an `input`
- * modality list. Missing or unrecognized metadata is intentionally unknown,
- * not false, so other providers retain their previous attachment behavior.
+ * OpenCode exposes `capabilities.input` and Pi reports an `input`
+ * modality list. Both report supported modalities. Missing or unrecognized
+ * metadata is intentionally unknown, not false, to preserve existing behavior.
  */
 export function modelImageInputSupport(model: unknown): boolean | undefined {
   return (
@@ -37,8 +37,5 @@ export function shouldSendNativeImage(input: {
   readonly attachment: ChatAttachment;
   readonly supportsImageInput: boolean | undefined;
 }): boolean {
-  return (
-    input.supportsImageInput !== false &&
-    isProviderNativeImageAttachment(input.attachment)
-  );
+  return input.supportsImageInput !== false && isProviderNativeImageAttachment(input.attachment);
 }
