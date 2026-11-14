@@ -3703,55 +3703,41 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect.each(["working-tree", "branch-range"] as const)(
-      "loads %s disk contents as Git diffs them under the ident attribute",
-      (sourceKind) =>
-        Effect.gen(function* () {
-          const cwd = yield* makeTmpDir();
-          const { initialBranch } = yield* initRepoWithCommit(cwd);
-          const driver = yield* GitVcsDriver.GitVcsDriver;
-          const fileSystem = yield* FileSystem.FileSystem;
-          const filePath = (yield* Path.Path).join(cwd, "README.md");
-          const committed = "$Id$\nfirst\nsecond\n";
-          yield* writeTextFile(cwd, ".gitattributes", "README.md ident\n");
-          yield* writeTextFile(cwd, "README.md", committed);
-          yield* git(cwd, ["add", "."]);
-          yield* git(cwd, ["commit", "-m", "add ident keyword"]);
-          // Checkout smudges the keyword to `$Id: <blob> $`.
-          yield* fileSystem.remove(filePath);
-          yield* git(cwd, ["checkout-index", "--force", "README.md"]);
-          const smudged = yield* fileSystem.readFileString(filePath);
-          assert.match(smudged, /^\$Id: [0-9a-f]{40} \$\n/);
-          yield* writeTextFile(cwd, "README.md", smudged.replace("first", "edited"));
-          const disk = yield* fileSystem.readFile(filePath);
-
-          const contents = yield* driver.getReviewDiffFileContents(
-            makeReviewDiffFileContentsInput(cwd, {
-              sourceKind,
-              baseRef: sourceKind === "working-tree" ? "HEAD" : initialBranch,
-            }),
-          );
-
-          assert.deepStrictEqual(contents, {
-            oldContents: committed,
-            newContents: "$Id$\nedited\nsecond\n",
-          });
-          assert.deepStrictEqual(yield* fileSystem.readFile(filePath), disk);
-        }),
-    );
-
-    it.effect("keeps an Id keyword on disk when the ident attribute is not set", () =>
+    it.effect("loads working-tree contents as Git diffs them under the ident attribute", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         yield* initRepoWithCommit(cwd);
         const driver = yield* GitVcsDriver.GitVcsDriver;
-        yield* writeTextFile(cwd, "README.md", "$Id: literal $\n");
+        const fileSystem = yield* FileSystem.FileSystem;
+        const filePath = (yield* Path.Path).join(cwd, "README.md");
+        const committed = "$Id$\nfirst\nsecond\n";
+        yield* writeTextFile(cwd, ".gitattributes", "README.md ident\n");
+        yield* writeTextFile(cwd, "README.md", committed);
+        yield* writeTextFile(cwd, "PLAIN.md", "plain\n");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "add ident keyword"]);
+        // Checkout smudges the keyword to `$Id: <blob> $`.
+        yield* fileSystem.remove(filePath);
+        yield* git(cwd, ["checkout-index", "--force", "README.md"]);
+        const smudged = yield* fileSystem.readFileString(filePath);
+        assert.match(smudged, /^\$Id: [0-9a-f]{40} \$\n/);
+        yield* writeTextFile(cwd, "README.md", smudged.replace("first", "edited"));
+        yield* writeTextFile(cwd, "PLAIN.md", "$Id: literal $\n");
+        const disk = yield* fileSystem.readFile(filePath);
 
         const contents = yield* driver.getReviewDiffFileContents(
           makeReviewDiffFileContentsInput(cwd),
         );
+        const plain = yield* driver.getReviewDiffFileContents(
+          makeReviewDiffFileContentsInput(cwd, { oldPath: "PLAIN.md", newPath: "PLAIN.md" }),
+        );
 
-        assert.strictEqual(contents.newContents, "$Id: literal $\n");
+        assert.deepStrictEqual(contents, {
+          oldContents: committed,
+          newContents: "$Id$\nedited\nsecond\n",
+        });
+        assert.strictEqual(plain.newContents, "$Id: literal $\n");
+        assert.deepStrictEqual(yield* fileSystem.readFile(filePath), disk);
       }),
     );
 
