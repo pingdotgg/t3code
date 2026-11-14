@@ -550,6 +550,57 @@ mod tests {
         assert!(stderr.contains("not a git repository"), "{stderr}");
     }
 
+    /// The state letter of process `pid` from `ps`, or `None` when it is gone.
+    fn process_state(pid: &str) -> Option<String> {
+        let out = std::process::Command::new("ps")
+            .args(["-o", "stat=", "-p", pid])
+            .output()
+            .unwrap();
+        let state = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+        (!state.is_empty()).then_some(state)
+    }
+
+    /// A child whose run is cancelled (the caller's future dropped, as when a client call
+    /// ends) and one that times out are killed and reaped: no zombie stays while the server
+    /// runs. Each case runs `sh`, which writes its pid and then sleeps.
+    #[tokio::test]
+    async fn cancelled_and_timed_out_children_are_reaped() {
+        let dir = tempdir();
+        for (case, cancel) in [("cancelled", true), ("timed-out", false)] {
+            let pid_file = dir.join(format!("{case}.pid"));
+            let script = format!("echo $$ > '{}'; exec sleep 30", pid_file.display());
+            let command = GitCommand::host_cli("test", "sh", &dir, ["-c", script.as_str()])
+                .timeout(Duration::from_millis(if cancel { 30_000 } else { 300 }));
+            if cancel {
+                let ran = tokio::time::timeout(Duration::from_millis(300), command.run()).await;
+                assert!(ran.is_err(), "{case}: the run is cancelled");
+            } else {
+                let err = command.run().await.unwrap_err();
+                assert!(
+                    matches!(err, ProcessError::Timeout { .. }),
+                    "{case}: {err:?}"
+                );
+            }
+            let pid = std::fs::read_to_string(&pid_file)
+                .unwrap()
+                .trim()
+                .to_owned();
+            let mut state = process_state(&pid);
+            for _ in 0..100 {
+                if state.is_none() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                state = process_state(&pid);
+            }
+            assert_eq!(
+                state, None,
+                "{case}: child {pid} is still there (Z is a zombie)"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     fn tempdir() -> PathBuf {
         let dir = std::env::temp_dir().join(format!("conn-vcs-proc-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
