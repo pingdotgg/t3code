@@ -26,11 +26,17 @@ function createStorageStub(): Storage {
   };
 }
 
-function setup(input: { readonly reachable: boolean; readonly storage?: Storage }) {
+function setup(input: {
+  readonly reachable: boolean;
+  readonly storage?: Storage;
+  /** Clerk's status before the watcher subscribes, replayed when it asks for `notify`. */
+  readonly status?: Status;
+}) {
   let handler: ((status: Status) => void) | null = null;
   const source: ClerkStatusSource = {
-    on: (_event, next) => {
+    on: (_event, next, options) => {
       handler = next;
+      if (options?.notify && input.status !== undefined) next(input.status);
     },
     off: () => {
       handler = null;
@@ -72,8 +78,8 @@ function setup(input: { readonly reachable: boolean; readonly storage?: Storage 
 
 describe("watchClerkLoadRecovery", () => {
   it("reloads once Clerk is reachable again after it failed to load", async () => {
-    const harness = setup({ reachable: false });
-    harness.emit("error");
+    // Clerk fails at startup, before the provider subscribes.
+    const harness = setup({ reachable: false, status: "error" });
     expect(harness.state.failed).toBe(true);
     await harness.fire();
     expect(harness.reload).not.toHaveBeenCalled();
