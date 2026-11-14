@@ -741,6 +741,7 @@ export const OrchestrationV2Run = Schema.Struct({
   checkpointId: Schema.NullOr(CheckpointId),
   contextHandoffId: Schema.NullOr(ContextHandoffId),
   restartContinuationOfRunId: Schema.optional(RunId),
+  manualContinuationOfRunId: Schema.optional(RunId),
   usageLimitContinuationOfRunId: Schema.optional(RunId),
   delegatedTaskId: Schema.optional(NodeId),
   workStartedAt: Schema.optional(Schema.DateTimeUtc),
@@ -1454,7 +1455,8 @@ export const OrchestrationV2PlanArtifact = Schema.Union([
 export type OrchestrationV2PlanArtifact = typeof OrchestrationV2PlanArtifact.Type;
 
 export const OrchestrationV2CheckpointFileSummary = Schema.Struct({
-  path: TrimmedNonEmptyString,
+  // Exact, as git reports it: file names may start or end with whitespace.
+  path: Schema.NonEmptyString,
   kind: TrimmedNonEmptyString,
   additions: NonNegativeInt,
   deletions: NonNegativeInt,

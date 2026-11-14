@@ -5,6 +5,7 @@ import { projectTurnItemForWire } from "./WireProjection.ts";
 import * as Stream from "effect/Stream";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { makeThreadFind } from "./ThreadFind.ts";
+import { unsentManualContinuationSource } from "./manualContinuation.ts";
 import type {
   OrchestrationV2ThreadLinkMetadata,
   OrchestrationV2SearchThreadInput,
@@ -1204,7 +1205,7 @@ const encodeRunAttemptPayload = Schema.encodeEffect(
 const encodeNodePayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2ExecutionNodeJsonSchema),
 );
-const encodeSubagentPayload = Schema.encodeEffect(
+export const encodeSubagentPayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2SubagentJsonSchema),
 );
 const encodeProviderSessionPayload = Schema.encodeEffect(
@@ -5128,11 +5129,19 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               WHERE bindings.thread_id = ${threadId}
               ORDER BY sessions.updated_at ASC, sessions.provider_session_id ASC
             `.pipe(Effect.flatMap(decodeRows(decodeProviderSessionPayload, threadId)));
+            const run = runs.find((source) => source.id === runId);
+            const unsentSource = unsentManualContinuationSource(run, {
+              runs,
+              attempts,
+              providerTurns,
+            });
+            const messageIds = [run, unsentSource].flatMap((source) =>
+              source === undefined ? [] : [source.userMessageId],
+            );
             const messages = yield* sql<PayloadRow>`
               SELECT payload_json FROM orchestration_v2_projection_messages
               WHERE thread_id = ${threadId} AND (
-                message_id IN (SELECT json_extract(payload_json, '$.userMessageId') FROM orchestration_v2_projection_runs
-                  WHERE thread_id = ${threadId} AND run_id = ${runId})
+                message_id IN ${sql.in(messageIds)}
                 OR (role = 'user' AND lower(trim(json_extract(payload_json, '$.text'), ${javascriptTrimWhitespace})) = '/compact')
                 -- Earlier /goal turns defer context too; parseGoalCommand narrows this prefix match.
                 OR (role = 'user' AND trim(json_extract(payload_json, '$.text'), ${javascriptTrimWhitespace}) GLOB '/goal*')
