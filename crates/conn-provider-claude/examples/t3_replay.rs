@@ -3,8 +3,11 @@
 //! match the transcript's `expect_outbound` frame (T3's projection). No CLI, no model.
 //!
 //! ```sh
-//! t3_replay <fixtures-dir> <fake-host.mjs> <scenarios.json> <out-dir> [scenario...]
+//! t3_replay <fixtures-dir> <fake-host.mjs> <scenarios.json> <policies.json> <out-dir> [scenario...]
 //! ```
+//!
+//! `policies.json` comes from `tools/t3-replay/policies.mjs`: each scenario's runtime policy as
+//! T3's replay harness builds it (thread modes plus `runtimePolicyOverride`).
 //!
 //! Prints one line per scenario (PASS, or FAIL with the first mismatch) and exits 1 on a FAIL.
 
@@ -37,7 +40,14 @@ async fn next(events: &mut mpsc::Receiver<ProviderEvent>) -> Option<Value> {
 }
 
 /// Runs one scenario; returns the fake host's result file.
-async fn run(name: &str, steps: &[Value], fixtures: &Path, fake: &Path, out: &Path) -> Value {
+async fn run(
+    name: &str,
+    steps: &[Value],
+    policy: &Value,
+    fixtures: &Path,
+    fake: &Path,
+    out: &Path,
+) -> Value {
     let transcript = fixtures.join(name).join("claude_transcript.ndjson");
     let entries = read_lines(&transcript);
     let meta = entries
@@ -73,14 +83,14 @@ async fn run(name: &str, steps: &[Value], fixtures: &Path, fake: &Path, out: &Pa
         ..ClaudeConfig::default()
     };
     let provider = ClaudeProvider::new("claudeAgent".into(), config);
-    let mode = match meta["permissionMode"].as_str() {
-        Some("default") => "approval-required",
-        Some("acceptEdits") => "auto-accept-edits",
-        _ => "full-access",
-    };
+    let mode = policy["runtimeMode"].as_str().unwrap_or("full-access");
+    let interaction = policy["interactionMode"].as_str().unwrap_or("default");
     let model = json!({"instanceId": "claudeAgent", "model": meta["model"].as_str().unwrap_or("claude-sonnet-4-6")});
     let cwd = format!("/tmp/claude-replay-{name}");
-    let policy = json!({"runtimeMode": mode, "interactionMode": "default", "cwd": cwd});
+    let mut policy = policy.clone();
+    if let Some(map) = policy.as_object_mut() {
+        map.insert("cwd".into(), json!(cwd));
+    }
     let Ok(opened) = provider
         .open_session(OpenSessionInput {
             thread_id: "thread-replay".into(),
@@ -88,6 +98,8 @@ async fn run(name: &str, steps: &[Value], fixtures: &Path, fake: &Path, out: &Pa
             model_selection: from_json(model.clone()).unwrap_or_else(|e| panic!("{e}")),
             runtime_policy: from_json(policy.clone()).unwrap_or_else(|e| panic!("{e}")),
             resume_from_session: None,
+            mcp_servers: vec![],
+            host: None,
         })
         .await
     else {
@@ -128,10 +140,13 @@ async fn run(name: &str, steps: &[Value], fixtures: &Path, fake: &Path, out: &Pa
         n += 1;
         let interrupt = steps.get(index).and_then(|s| s.get("interrupt")).cloned();
         let input = TurnInput {
+            native_thread_has_turns: None,
+            restart_continuation_of_run_id: None,
+            app_context: vec![],
             app_thread: from_json(json!({
                 "createdBy": "user", "creationSource": "web", "id": "thread-replay",
                 "projectId": "project-replay", "title": name, "providerInstanceId": "claudeAgent",
-                "modelSelection": model, "runtimeMode": mode, "interactionMode": "default",
+                "modelSelection": model, "runtimeMode": mode, "interactionMode": interaction,
                 "branch": null, "worktreePath": null, "activeProviderThreadId": null,
                 "lineage": {"parentThreadId": null, "relationshipToParent": null, "rootThreadId": "thread-replay"},
                 "forkedFrom": null, "createdAt": "2026-11-13T00:00:00.000Z",
@@ -146,6 +161,10 @@ async fn run(name: &str, steps: &[Value], fixtures: &Path, fake: &Path, out: &Pa
             root_node_id: format!("node-{n}").as_str().into(),
             provider_thread: thread.clone(),
             message: TurnMessage {
+                created_by: conn_contract::OrchestrationV2Actor::User,
+                creation_source: conn_contract::OrchestrationV2CreationSource::Web,
+                scheduled_task_id: None,
+                sender_thread_id: None,
                 message_id: format!("message-{n}").as_str().into(),
                 text,
                 attachments: vec![],
@@ -226,14 +245,17 @@ async fn run(name: &str, steps: &[Value], fixtures: &Path, fake: &Path, out: &Pa
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let [fixtures, fake, scenarios, out, only @ ..] = args.as_slice() else {
+    let [fixtures, fake, scenarios, policies, out, only @ ..] = args.as_slice() else {
         eprintln!(
-            "usage: t3_replay <fixtures-dir> <fake-host.mjs> <scenarios.json> <out-dir> [scenario...]"
+            "usage: t3_replay <fixtures-dir> <fake-host.mjs> <scenarios.json> <policies.json> <out-dir> [scenario...]"
         );
         std::process::exit(2);
     };
     let spec: Value = serde_json::from_str(&std::fs::read_to_string(scenarios).unwrap_or_default())
         .unwrap_or_else(|e| panic!("{scenarios}: {e}"));
+    let policies: Value =
+        serde_json::from_str(&std::fs::read_to_string(policies).unwrap_or_default())
+            .unwrap_or_else(|e| panic!("{policies}: {e}"));
     let _ = std::fs::create_dir_all(out);
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -246,9 +268,15 @@ fn main() {
                 continue;
             }
             let steps = steps.as_array().cloned().unwrap_or_default();
+            let Some(policy) = policies.get(name) else {
+                failed += 1;
+                println!("FAIL {name} at entry 0 of 0: T3's fixture table has no Claude scenario of this name");
+                continue;
+            };
             let result = run(
                 name,
                 &steps,
+                policy,
                 Path::new(fixtures),
                 Path::new(fake),
                 Path::new(out),

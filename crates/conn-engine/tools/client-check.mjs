@@ -27,6 +27,10 @@ const { applyShellStreamEvents, mergeShellSnapshotProjects } = await load(
 const { applyOrchestrationV2ProjectionEvent } = await load(
   "packages/client-runtime/src/state/orchestrationV2Projection.ts",
 );
+const { presentRunStop } = await load("packages/client-runtime/src/state/threadExecution.ts");
+const { derivePendingBackgroundWork } = await load(
+  "packages/shared/src/orchestrationV2PendingBackgroundWork.ts",
+);
 const { boundedSnapshotProjection } = await load(
   "packages/shared/src/orchestrationV2BoundedSnapshot.ts",
 );
@@ -230,15 +234,57 @@ check("queue: a message sent during a turn runs after it", () => {
     visible(queue.projection).map(({ type, text }) => [type, text]),
     [
       ["user_message", "hang"],
+      ["run_interrupt_request", null],
+      ["run_interrupt_result", null],
       ["user_message", "after that"],
       ["assistant_message", "echo: after that"],
     ],
   );
-  const queued = queue.projection.visibleTurnItems[1].item;
+  const queued = queue.projection.visibleTurnItems.find(
+    (row) => row.item.type === "user_message" && row.item.text === "after that",
+  ).item;
   assert.equal(queued.inputIntent, "queued_turn");
 });
 
-// 8. Projects added and removed at runtime reach the shell.
+// 8. A Stop the provider never confirms offers Force stop; Force stop ends the run.
+check("stop: an unconfirmed Stop is unresponsive until Force stop", () => {
+  const before = followThread(exported.stopItems.slice(0, exported.stopUnresponsiveAt));
+  const shown = presentRunStop(before.projection);
+  assert.equal(shown?.state, "unresponsive");
+  assert.equal(shown?.background, false);
+  const after = followThread(exported.stopItems);
+  assert.deepEqual(
+    after.projection.runs.map((run) => run.status),
+    ["interrupted"],
+  );
+  assert.equal(presentRunStop(after.projection), null);
+});
+
+// 9. Background work left running: the shell row's roster is what T3's own
+// derivePendingBackgroundWork makes of the same thread.
+check("background: the shell roster matches T3's derivePendingBackgroundWork", () => {
+  const [row] = Schema.decodeUnknownSync(
+    Schema.toCodecJson(Schema.NonEmptyArray(contracts.OrchestrationV2ThreadShell)),
+  )([exported.backgroundShell]);
+  const { projection } = followThread(exported.backgroundItems);
+  const started = projection.runs.filter((run) => run.status !== "queued");
+  const latestRun = started.reduce(
+    (latest, run) => (latest === null || run.ordinal > latest.ordinal ? run : latest),
+    null,
+  );
+  const expected = derivePendingBackgroundWork({
+    latestRun,
+    providerThreads: projection.providerThreads,
+    turnItems: projection.turnItems,
+    activeProviderThreadId: projection.thread.activeProviderThreadId,
+    runs: projection.runs,
+    pullRequests: projection.thread.pullRequests,
+  });
+  assert.ok(expected.length > 0, "the scenario leaves background work");
+  assert.deepEqual(row.pendingBackgroundTasks, expected);
+});
+
+// 10. Projects added and removed at runtime reach the shell.
 check("projects: added and removed at runtime", () => {
   const kinds = exported.shellItems.map((item) => item.kind);
   assert.ok(kinds.includes("project.updated") && kinds.includes("project.removed"));

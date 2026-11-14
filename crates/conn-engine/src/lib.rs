@@ -18,6 +18,7 @@
 
 use std::{future::Future, pin::Pin};
 
+mod background;
 mod calls;
 mod commands;
 mod engine;
@@ -106,6 +107,12 @@ pub trait EngineHost: Send + Sync {
 
     /// A provider session closed: revoke what [`EngineHost::agent_tools`] issued under `key`.
     fn session_closed(&self, _key: &str) {}
+
+    /// The host handle a new provider session gets for its agent's file and terminal
+    /// callbacks (`ProviderHost`). `None`: the server offers none (today's server).
+    fn provider_host(&self, _session: AgentSession) -> Option<conn_provider::HostHandle> {
+        None
+    }
 
     /// Copies a message's pending uploads to the thread before the message is written. The
     /// result replaces the command's `attachments`; an error refuses the command.

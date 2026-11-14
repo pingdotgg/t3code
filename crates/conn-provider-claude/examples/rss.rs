@@ -163,6 +163,8 @@ async fn run() {
             model_selection: from_json(model.clone()).expect("model"),
             runtime_policy: from_json(policy.clone()).expect("policy"),
             resume_from_session: None,
+            mcp_servers: vec![],
+            host: None,
         })
         .await
         .expect("session");
@@ -183,6 +185,9 @@ async fn run() {
     for n in 1..=turns {
         session
             .start_turn(TurnInput {
+                native_thread_has_turns: None,
+                restart_continuation_of_run_id: None,
+                app_context: vec![],
                 app_thread: from_json(app_thread.clone()).expect("app thread"),
                 thread_id: "thread-rss".into(),
                 run_id: format!("run-{n}").as_str().into(),
@@ -192,6 +197,10 @@ async fn run() {
                 root_node_id: format!("node-{n}").as_str().into(),
                 provider_thread: thread.clone(),
                 message: TurnMessage {
+                    created_by: conn_contract::OrchestrationV2Actor::User,
+                    creation_source: conn_contract::OrchestrationV2CreationSource::Web,
+                    scheduled_task_id: None,
+                    sender_thread_id: None,
                     message_id: format!("message-{n}").as_str().into(),
                     text: "Write a 120-word paragraph about tides. No tools.".into(),
                     attachments: vec![],

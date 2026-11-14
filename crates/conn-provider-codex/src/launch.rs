@@ -26,6 +26,9 @@ pub const AGENT_THREAD_ENV: &str = "T3CODE_THREAD_ID";
 /// the pinned `apps/server` version, the one Conn Server reports as its server version.
 pub const CLIENT_VERSION: &str = conn_contract::T3_SERVER_VERSION;
 
+/// T3's `CODEX_STOP_CONFIRM_TIMEOUT_MS`.
+pub const STOP_CONFIRM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// The Codex instance's settings that shape a launch (`CodexSettings` in contracts).
 #[derive(Clone, Debug)]
 pub struct CodexConfig {
@@ -40,6 +43,9 @@ pub struct CodexConfig {
     /// T3's attachment store (`<state>/attachments`): attachments are read from
     /// `<dir>/<id><ext>`. `None`: attachments are listed as unavailable.
     pub attachments_dir: Option<PathBuf>,
+    /// How long Stop waits for Codex to end the turn before it reports an interrupt timeout
+    /// (T3's `CODEX_STOP_CONFIRM_TIMEOUT_MS`, 10 s). Tests shorten it.
+    pub stop_confirm_timeout: std::time::Duration,
 }
 
 impl Default for CodexConfig {
@@ -50,6 +56,7 @@ impl Default for CodexConfig {
             launch_args: String::new(),
             instance_env: Vec::new(),
             attachments_dir: None,
+            stop_confirm_timeout: STOP_CONFIRM_TIMEOUT,
         }
     }
 }
@@ -344,6 +351,7 @@ pub fn turn_start_params(
     selection: &ModelSelection,
     configured_summary: Option<&str>,
     t3_tools: Option<ToolAvailability>,
+    app_context: &[conn_provider::AppContextEntry],
 ) -> Value {
     let runtime_mode = to_json(&policy.runtime_mode);
     let interaction_mode = to_json(&policy.interaction_mode);
@@ -379,8 +387,19 @@ pub fn turn_start_params(
         "sandboxPolicy": sandbox,
         "collaborationMode": {"mode": interaction_mode, "settings": settings},
     });
-    if let Some(tools) = t3_tools {
-        params["additionalContext"] = additional_context(&model, effort.as_deref(), tools);
+    // T3's context, then MCP app context as quoted user input (`kind: untrusted`).
+    let mut context = t3_tools
+        .map(|tools| additional_context(&model, effort.as_deref(), tools))
+        .and_then(|c| c.as_object().cloned())
+        .unwrap_or_default();
+    for entry in app_context {
+        context.insert(
+            entry.key.clone(),
+            json!({"kind": "untrusted", "value": entry.text}),
+        );
+    }
+    if !context.is_empty() {
+        params["additionalContext"] = Value::Object(context);
     }
     if let Some(effort) = effort {
         params["effort"] = json!(effort);
@@ -569,6 +588,29 @@ mod tests {
         assert_eq!(&from_env.args[3..], ["--disable", "bar"]);
     }
 
+    /// `buildCodexTurnStartParams`: MCP app context goes in `additionalContext` as quoted user
+    /// input, beside T3's own entries.
+    #[test]
+    fn app_context_is_untrusted_additional_context() {
+        let policy: RuntimePolicy = from_json(
+            json!({"runtimeMode": "full-access", "interactionMode": "default", "cwd": "/w"}),
+        )
+        .unwrap();
+        let selection: ModelSelection =
+            from_json(json!({"instanceId": "codex", "model": "gpt-6-luna"})).unwrap();
+        let entry = conn_provider::AppContextEntry {
+            key: "mcp_app_item_1".into(),
+            text: "chart shows 3".into(),
+        };
+        let params = turn_start_params("th", json!([]), &policy, &selection, None, None, &[entry]);
+        assert_eq!(
+            params["additionalContext"],
+            json!({"mcp_app_item_1": {"kind": "untrusted", "value": "chart shows 3"}})
+        );
+        let params = turn_start_params("th", json!([]), &policy, &selection, None, None, &[]);
+        assert!(params.get("additionalContext").is_none());
+    }
+
     #[test]
     fn turn_start_matches_the_recorded_frame() {
         let policy: RuntimePolicy = from_json(
@@ -589,6 +631,7 @@ mod tests {
             &selection,
             None,
             None,
+            &[],
         );
         assert_eq!(
             params,

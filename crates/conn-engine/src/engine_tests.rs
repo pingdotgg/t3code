@@ -184,6 +184,7 @@ async fn a_turn_streams_through_the_shell_and_thread_streams() {
             "node.updated root_turn pending",
             "message.updated user",
             "turn-item.updated user_message completed",
+            "provider-session.updated ready",
             "provider-thread.updated active",
             "thread.metadata-updated",
             "run-attempt.created running",
@@ -689,6 +690,8 @@ async fn a_message_sent_during_a_turn_queues_and_starts_after_it() {
         item_texts(&p),
         [
             "turn_start hang",
+            "run_interrupt_request ",
+            "run_interrupt_result ",
             "queued_turn third",
             "assistant_message echo: third",
             "queued_turn second, edited",
@@ -897,6 +900,8 @@ async fn a_declined_steer_waits_first_in_the_queue() {
         [
             "turn_start hang",
             "queued_turn steer me",
+            "run_interrupt_request ",
+            "run_interrupt_result ",
             "assistant_message echo: steer me",
             "queued_turn queued first",
             "assistant_message echo: queued first",
@@ -2173,6 +2178,54 @@ async fn background_work_holds_an_idle_session_up_to_the_limit() {
     );
 }
 
+/// `background_work.updated` (pending) holds an idle session as the provider's own probe does,
+/// and the shell row lists the still-running background command as T3's
+/// `derivePendingBackgroundWork` does: `/mcp` and the client read it there.
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn reported_background_work_holds_the_session_and_shows_in_the_shell() {
+    let db = TempDb::new("bg-reported");
+    let provider = Arc::new(FakeProvider::new("claudeAgent"));
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers = vec![provider.clone()];
+    config.idle_session = Some(Duration::from_secs(60));
+    config.idle_max_hold = Duration::from_secs(600);
+    let engine = SqliteEngine::open(config).unwrap();
+    dispatch(&engine, create("t1", "c1")).await;
+    dispatch(&engine, message("t1", "c2", "background-reported")).await;
+    run_to_end(&engine, "t1", "run:t1:1").await;
+
+    let shell = engine
+        .inner()
+        .db(|store| {
+            let tx = store.tx()?;
+            let row = crate::shell::thread_shell(&tx, "t1");
+            tx.rollback();
+            row
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        shell["pendingBackgroundTasks"],
+        json!([{"taskId": "bg-1", "description": "sleep 600", "kind": "command"}])
+    );
+    tokio::time::sleep(Duration::from_secs(300)).await;
+    assert_eq!(
+        engine.inner().live_count(),
+        1,
+        "held by reported background work"
+    );
+    tokio::time::sleep(Duration::from_secs(600)).await;
+    assert_eq!(
+        engine.inner().live_count(),
+        0,
+        "released after the hold limit"
+    );
+}
+
 #[derive(Default)]
 struct RecordingHost {
     revoked: Mutex<Vec<String>>,
@@ -2305,6 +2358,175 @@ fn model_selection_set(command: &str, instance: &str) -> Value {
         "type": "thread.model-selection.set", "commandId": command, "threadId": "t1",
         "modelSelection": {"instanceId": instance, "model": "m"},
     })
+}
+
+/// `planSelectionTransition` decides a same-instance model change once a session row exists:
+/// `reject` refuses the command, `restart_session` releases the session between turns
+/// (`restart_and_resume`) and refuses while a run is active.
+#[tokio::test(flavor = "current_thread")]
+async fn the_provider_plans_a_model_change() {
+    let selection = |command: &str, model: &str| {
+        json!({
+            "type": "thread.model-selection.set", "commandId": command, "threadId": "t1",
+            "modelSelection": {"instanceId": "claudeAgent", "model": model},
+        })
+    };
+    // Reject.
+    let db = TempDb::new("plan-reject");
+    let (engine, _) = open_with(
+        &db,
+        FakeProvider::new("claudeAgent").with_selection_plan(
+            conn_provider::SelectionTransitionPlan::Reject {
+                reason: "no model switch here".into(),
+            },
+        ),
+    );
+    dispatch(&engine, create("t1", "c1")).await;
+    // No session yet: the change applies at the next turn.
+    dispatch(&engine, selection("c2", "m1")).await;
+    dispatch(&engine, message("t1", "c3", "hi")).await;
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    let refused = engine
+        .dispatch(from_json(selection("c4", "m2")).unwrap())
+        .await;
+    assert!(
+        matches!(&refused, Err(EngineError::Rejected(e)) if to_json(e).to_string().contains("no model switch here")),
+        "{refused:?}"
+    );
+
+    // Restart.
+    let db = TempDb::new("plan-restart");
+    let (engine, provider) = open_with(
+        &db,
+        FakeProvider::new("claudeAgent")
+            .with_selection_plan(conn_provider::SelectionTransitionPlan::RestartSession),
+    );
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    let busy = engine
+        .dispatch(from_json(selection("c3", "m2")).unwrap())
+        .await;
+    assert!(
+        matches!(busy, Err(EngineError::Rejected(_))),
+        "a busy thread keeps its session"
+    );
+    dispatch(
+        &engine,
+        json!({"type": "thread.stop", "commandId": "c4", "threadId": "t1"}),
+    )
+    .await;
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    dispatch(&engine, selection("c5", "m2")).await;
+    for _ in 0..200 {
+        if count(&provider.closed) == 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    assert_eq!(count(&provider.closed), 1, "the session was released");
+}
+
+/// A Stop the provider does not confirm (Codex since T3 b5b470542a) leaves the run running and
+/// marks its `run_interrupt_request` unresponsive, so clients offer Force stop
+/// (`thread.interrupt.unresponsive`). Force stop then ends it with its own Stop result.
+#[tokio::test(flavor = "current_thread")]
+async fn an_unconfirmed_stop_offers_force_stop() {
+    let db = TempDb::new("unresponsive-stop");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "stuck")).await;
+    until_provider_turn(&mut thread).await;
+    dispatch(
+        &engine,
+        json!({"type": "thread.stop", "commandId": "c3", "threadId": "t1"}),
+    )
+    .await;
+    let request = loop {
+        let item = next(&mut thread).await;
+        let payload = &item["event"]["payload"];
+        if payload["type"] == "run_interrupt_request" && payload["unresponsiveAt"].is_string() {
+            break payload.clone();
+        }
+    };
+    assert_eq!(request["message"], "Stopped by user");
+    let p = projection(&engine, "t1").await;
+    assert_eq!(
+        run_statuses(&p),
+        [("run:t1:1".into(), "running".into())],
+        "the run stays open"
+    );
+
+    call(
+        &engine,
+        "orchestration.forceStopThread",
+        json!({"threadId": "t1"}),
+    )
+    .await
+    .unwrap();
+    let p = projection(&engine, "t1").await;
+    assert_eq!(
+        run_statuses(&p),
+        [("run:t1:1".into(), "interrupted".into())]
+    );
+    let result = p["turnItems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["type"] == "run_interrupt_result")
+        .cloned()
+        .unwrap();
+    assert_eq!(result["message"], "Force stopped by user");
+    assert_eq!(result["parentItemId"], request["id"]);
+}
+
+/// A model change on the thread's instance during a provider turn goes to the running session
+/// (`provider-session.apply-model-selection` in `Orchestrator.ts`); with no provider turn
+/// running it only changes the thread, and the next turn carries it.
+#[tokio::test(flavor = "current_thread")]
+async fn a_model_change_during_a_turn_reaches_the_running_session() {
+    let db = TempDb::new("live-selection");
+    let (engine, claude, _codex) = open_two(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    // Idle thread: nothing is sent to a provider.
+    dispatch(&engine, model_selection_set("c2", "claudeAgent")).await;
+    assert!(crate::lock(&claude.applied_selections).is_empty());
+
+    dispatch(&engine, message("t1", "c3", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    dispatch(
+        &engine,
+        json!({
+            "type": "thread.model-selection.set", "commandId": "c4", "threadId": "t1",
+            "modelSelection": {"instanceId": "claudeAgent", "model": "m2"},
+        }),
+    )
+    .await;
+    for _ in 0..200 {
+        if !crate::lock(&claude.applied_selections).is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    let applied = crate::lock(&claude.applied_selections).clone();
+    assert_eq!(applied.len(), 1, "{applied:?}");
+    assert_eq!(applied[0]["model"], "m2");
+    assert_eq!(count(&claude.closed), 0, "the session stays open");
 }
 
 /// `thread.model-selection.set` to another instance is a provider switch, as in

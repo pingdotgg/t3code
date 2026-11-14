@@ -35,8 +35,7 @@ use std::sync::{Arc, Mutex};
 
 use conn_contract::{ProviderCapabilities, ProviderInstanceId, from_json};
 use conn_provider::{
-    BoxFuture, OpenSessionInput, OpenedSession, Provider, ProviderError, ProviderEvent,
-    ProviderResult,
+    BoxFuture, OpenSessionInput, OpenedSession, Provider, ProviderError, ProviderResult,
 };
 use conn_provider_support::ids::{Env, SystemEnv};
 use serde_json::{Value, json};
@@ -134,7 +133,6 @@ impl Provider for CodexProvider {
             let (tx, events) = mpsc::channel(session::EVENT_CAPACITY);
             let now = SystemEnv.now();
             let model = conn_contract::to_json(&input.model_selection)["model"].clone();
-            // The trait returns no ProviderSession; the engine learns it from this event.
             let row = json!({
                 "id": input.provider_session_id.as_str(),
                 "driver": DRIVER,
@@ -147,27 +145,27 @@ impl Provider for CodexProvider {
                 "updatedAt": now,
                 "lastError": null,
             });
-            let event = ProviderEvent::ProviderSessionUpdated {
-                provider_session: from_json(row).map_err(|e| ProviderError::Protocol {
-                    detail: e.to_string(),
-                })?,
-            };
-            tx.try_send(event)
-                .map_err(|_| ProviderError::SessionStopped)?;
+            let provider_session = from_json(row).map_err(|e| ProviderError::Protocol {
+                detail: e.to_string(),
+            })?;
             let session = CodexSession::open(
                 input.provider_session_id,
                 &self.instance_id,
                 self.server.clone(),
                 tx,
-                self.config.attachments_dir.clone(),
+                &self.config,
                 (
                     Some(launch::selection_model(&input.model_selection)),
                     input.runtime_policy.cwd.clone(),
                 ),
+                input.mcp_servers,
             );
             Ok(OpenedSession {
                 session: Box::new(session),
                 events,
+                provider_session,
+                // CodexAdapterV2 does not set it.
+                background_tasks_end_with_process: false,
             })
         })
     }

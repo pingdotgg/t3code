@@ -11,7 +11,7 @@ in the Conn monorepo at the pinned commit.
 
 | Module             | Holds                                                                                   |
 | ------------------ | --------------------------------------------------------------------------------------- |
-| `helper`           | The shared SDK host process: start on first query, stop after the last, a router per process |
+| `helper`           | The `claude` driver of the SDK host (`conn_provider_support::sdk_host`), with T3's key order |
 | `launch`           | The `query()` option object, its environment, the runtime policy → permission mode       |
 | `catalog`          | `compileClaudeModelSelection` over T3's bundled catalog (`model_catalog.json`, generated) |
 | `ordered`          | JSON with T3's key order for what the SDK writes to the CLI verbatim                    |
@@ -54,9 +54,23 @@ result equal, byte for byte.
   `MCP_CONNECTION_NONBLOCKING=0` on resume, `T3CODE_THREAD_ID`. The SDK adds its own.
 - **Bypass downgrade:** when bypass is asked, the SDK's `resolveSettings` plus the home's and
   remote settings decide; settings that forbid bypass give `auto` (or `default`), as T3.
-- **MCP servers:** `setMcpServers` after `initializationResult`, as the query runner does.
-- **Live changes:** model by `setModel` (only when the CLI opened in the policy's mode) then
-  `applyFlagSettings`; permission mode by `setPermissionMode`; anything else a new query.
+- **MCP servers:** taken at open (`OpenSessionInput::mcp_servers`) and registered with
+  `setMcpServers` after `initializationResult`, as the query runner does;
+  `Session::set_mcp_servers` changes them on a live query.
+- **Runtime policy:** `permissionModeForClaudeRuntimePolicy` and
+  `claudeRuntimeQueryPolicyForRuntimePolicy` over the runtime mode, interaction mode,
+  `approvalPolicy` and `sandboxPolicy` kind: a read-only sandbox gives the tools
+  `["Read","Glob","Grep"]` (also as `allowedTools` with `access: fullAccess`) and the read-only
+  `t3-code` tools; `approvalPolicy: never` gives `dontAsk` or bypass; plan mode with approvals
+  off denies every tool that would ask. The T3 server sets the two policies only through
+  `RuntimePolicy.layerWithOverride` (its replay harness); its engine never does, and neither
+  does ours.
+- **Live changes:** at a turn start, model by `setModel` (only when the CLI opened in the
+  policy's mode) then `applyFlagSettings`; permission mode by `setPermissionMode`; anything
+  else a new query. A selection sent to a running turn (`applyModelSelection`) applies effort
+  and settings live, and never a new model: that waits for the next turn, as T3. A steer's
+  selection applies live when T3's `liveSteerSelection` would, and only then sets the steer's
+  prompt effort.
 - **Fork:** the SDK's `forkSession` at fork time; the fork's first turn resumes it.
 - **Prompts:** trimmed, `Ultrathink:` for the ultrathink effort, as T3.
 
@@ -86,7 +100,7 @@ counts as background work (`Session::has_pending_background_work`).
 | `system` `task_progress` / `task_notification`    | `subagent.updated` and row with progress / result; child result message                                                |
 | frames with `parent_tool_use_id`                  | child-thread messages, reasoning and tool rows; held (capped) until `task_started`                                     |
 | Agent `tool_result`                               | settles a foreground subagent; a background launch ack is ignored                                                      |
-| root frames with no turn running                  | held (capped) and `continuation.requested`; `start_continuation_turn` replays them                                     |
+| root frames with no turn running                  | held (capped) and `continuation.requested`; the continuation turn (`creationSource: provider`) replays them                                     |
 | steer written (`priority: "now"`)                 | `steer.updated` pending; completed on `command_lifecycle` started or an echo; the `aborted_*` result folds in          |
 | `can_use_tool`                                    | approval: `node` + `runtime_request` + `turn_item` (`approval_request`)                                                |
 | `can_use_tool` AskUserQuestion / ExitPlanMode     | `user_input_request` / `plan.updated` (proposed plan)                                                                  |
@@ -129,12 +143,16 @@ Normalized in the comparison:
 - **Subagents:** no workflow subagents (`local_workflow`), no recovery of running subagents
   after a restart (`getSubagentMessages` is offered by the helper but not used), `stopSubagent`
   and `stop_task` / `background_tasks` not sent.
+- **Background roster:** T3 keeps a roster of background tasks per native thread (Bash
+  `run_in_background`, Monitor, background subagents) on `providerThread.pendingBackgroundTasks`,
+  emits `background_work.updated`, and serves `stopTask` (workflow tasks) and
+  `awaitBackgroundTasks`. This provider reports an empty roster, sends no
+  `background_work.updated`, and leaves both session methods unsupported. The engine still lists
+  running background rows from the turn items.
 - **Task list:** starts from the task tools it sees; TS first reads the list Claude saved on
   disk.
 - **Attachments:** PDFs stay path-only. No skill splitting of slash commands. The 28 MiB
   inline budget lives in memory and starts over after a restart.
-- **Read-only sandbox and `dontAsk`:** implemented in `launch::query_policy`, but the provider
-  trait carries no `approvalPolicy` or `sandboxPolicy`, so they never apply.
 - **Not passed:** `launchArgs` and their `--settings`/append-file text, `autoCompactWindow`,
   `ENABLE_TOOL_SEARCH`, the delegated child's prompt cache TTL, prompt suggestions, the
   device-tool text and hook (no device tools), custom models.

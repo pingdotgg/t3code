@@ -252,11 +252,80 @@ impl Inner {
         command: Value,
     ) -> Result<(u64, bool), DispatchError> {
         let (command, claimed) = self.claim_attachments(command).await?;
+        let command = self.plan_selection(command).await?;
         let result = self.dispatch_claimed(command).await;
         if let (Err(_), Some(claimed), Some(host)) = (&result, claimed, &self.host) {
             host.release_attachments(claimed).await;
         }
         result
+    }
+
+    /// `ProviderSwitchService.plan` for a model change on the thread's instance: the provider
+    /// classifies it (`planSelectionTransition`) against its live session's capabilities.
+    /// Without a session row the change applies at the next turn, as in T3. The plan travels
+    /// with the command to its handler as `selectionTransition`.
+    async fn plan_selection(&self, mut command: Value) -> Result<Value, DispatchError> {
+        if command["type"] != "thread.model-selection.set" {
+            return Ok(command);
+        }
+        let target = commands::normalize_model_selection(&command["modelSelection"]);
+        let thread_id = command["threadId"].as_str().unwrap_or_default().to_owned();
+        let instance = target["instanceId"].as_str().unwrap_or_default().to_owned();
+        let tid = thread_id.clone();
+        let inst = instance.clone();
+        let (current, capabilities) = self
+            .db(move |store| -> Result<(Value, Option<Value>), String> {
+                let tx = store.tx()?;
+                let current = tx
+                    .thread(&tid)?
+                    .map(|t| t["modelSelection"].clone())
+                    .unwrap_or(Value::Null);
+                let capabilities = tx
+                    .entities_where(&tid, "providerSessions", "providerInstanceId", &inst)?
+                    .into_iter()
+                    .max_by_key(|s| s["updatedAt"].as_str().unwrap_or_default().to_owned())
+                    .map(|s| s["capabilities"].clone());
+                tx.rollback();
+                Ok((current, capabilities))
+            })
+            .await
+            .map_err(DispatchError::Internal)?;
+        let current = commands::normalize_model_selection(&current);
+        let same_instance = current["instanceId"] == target["instanceId"];
+        let plan = match (same_instance && current != target, capabilities) {
+            (true, Some(capabilities)) => {
+                let provider = self
+                    .providers
+                    .iter()
+                    .find(|p| p.instance_id().as_str() == instance);
+                let decoded = (from_json(current), from_json(target));
+                match (provider, decoded) {
+                    (Some(provider), (Ok(current), Ok(target))) => provider
+                        .plan_selection_transition(&conn_provider::SelectionTransitionInput {
+                            current,
+                            target,
+                            session_capabilities: capabilities,
+                        }),
+                    _ => conn_provider::SelectionTransitionPlan::ApplyOnNextTurn,
+                }
+            }
+            _ => conn_provider::SelectionTransitionPlan::ApplyOnNextTurn,
+        };
+        command["selectionTransition"] = match plan {
+            conn_provider::SelectionTransitionPlan::ApplyOnNextTurn => {
+                json!({"type": "apply_on_next_turn"})
+            }
+            conn_provider::SelectionTransitionPlan::RestartSession => {
+                json!({"type": "restart_session"})
+            }
+            conn_provider::SelectionTransitionPlan::CreateWithHandoff => {
+                json!({"type": "create_with_handoff"})
+            }
+            conn_provider::SelectionTransitionPlan::Reject { reason } => {
+                json!({"type": "reject", "reason": reason})
+            }
+        };
+        Ok(command)
     }
 
     /// A new message's pending uploads become the thread's files before the message is
@@ -354,6 +423,10 @@ impl Inner {
             Effect::Interrupt { thread_id, run_id } => self.interrupt(thread_id, run_id).await,
             Effect::Respond { thread_id, request } => self.respond(thread_id, request).await,
             Effect::CloseSession { thread_id } => self.close_session(&thread_id).await,
+            Effect::ApplyModelSelection {
+                thread_id,
+                selection,
+            } => self.apply_model_selection(&thread_id, selection).await,
             Effect::ThreadClosed { thread_id, reason } => {
                 if let Some(host) = &self.host {
                     host.thread_closed(&thread_id, reason);

@@ -63,8 +63,9 @@ settings; about 140 MiB for the `claude` program alone).
 Proven:
 
 - **Claude** runs through Anthropic's official Claude Agent SDK in the SDK host
-  (`helpers/sdk-host`). In 10 scenarios the `claude` CLI gets the same argv, environment and
-  stdin as from the T3 server. 15 of the T3 server's 39 Claude transcripts pass. 11 live tests
+  (`helpers/sdk-host`). In 13 scenarios the `claude` CLI gets the same argv, environment and
+  stdin as from the T3 server. 18 of the T3 server's 39 Claude transcripts pass (all that the
+  driver runs). 11 live tests
   pass on Claude Haiku on macOS.
 - **Codex** runs on `codex app-server`, as in the T3 server. 35 scenarios show no difference,
   20 of them the T3 server's own recordings. **No live Codex turn has run.**
@@ -145,6 +146,21 @@ range and literal failures in Effect's words and keeps `null` where the schema t
 one needs. 17 tools that a text we send to an agent names are still not served; a test holds
 that list.
 
+## Provider interface, brought up to the T3 server's (2026-11-14)
+
+Closed, each with a test or a T3 recording: Claude's read-only sandbox and `dontAsk` (the
+three failing T3 transcripts pass; the replay takes each scenario's policy from T3's fixture
+table); a model change during a turn (sent to the running session; Claude applies effort live
+and never a new model, as T3; ours used to send `set_model`); Codex Stop that waits and offers
+Force stop (`InterruptTimeout`, `run_interrupt_request` with `unresponsiveAt`, Force stop's own
+result); fork with the fork's model and cwd; background work as T3 derives it for the shell
+and `/mcp` (`derivePendingBackgroundWork`, compared with T3's own function); `ThreadInUse`
+from Codex; a Codex restart continuation starts the native turn without input; MCP servers
+at open; the session row from `open_session`; `planSelectionTransition` in the engine;
+continuation turns through `start_turn`; the SDK host client in `conn-provider-support`.
+Trait additions with no provider behind them yet: `ProviderHost` (only a rooted file host),
+`stop_task`, `await_background_tasks`, `background_work.updated` (Claude reports no roster).
+
 ## What is left, in the planned order
 
 1. **Rust hygiene, step 1: done (2026-11-14).** The toolchain is pinned to 1.99.1; BeautifulRust's
@@ -156,11 +172,11 @@ that list.
    `Drop` on `CodexSession`, and the find offset in `reads.rs`, each with a test. Next stages
    (bool parameters, `clone_on_ref_ptr`, print lints with `tracing`, pedantic; then the cast
    lints) are in `CRATES.md`, "Lint set".
-2. **Provider interface.** A sandbox and approval policy (closes Claude's read-only sandbox and
-   `dontAsk`, and 3 failing transcripts); MCP servers at session open; a host handle for
-   agents that ask the server for files and terminals; `background_work.updated`; a
-   selection-transition hook; `stop_task` and `background_tasks`. Move the Rust side of the
-   SDK host (`helper.rs`) into `conn-provider-support` before a second SDK driver.
+2. **Provider interface.** The server side of the host handle
+   (`ProviderHost`: only the trait and a rooted file host exist; no terminals, and the
+   server passes none); Claude's background roster
+   (`background_work.updated`, `stopTask`, `awaitBackgroundTasks`: in the trait, not built in
+   the provider).
 3. **Other providers.** One ACP provider for Grok, Kiro, fx, Antigravity and the ACP registry.
    The T3 server offers ACP protocol version 2 with version 1 as fallback and uses a
    hand-written client. The official Rust crate (`agent-client-protocol` 5.2.0) runs on a
@@ -172,8 +188,7 @@ that list.
    and passed. It needs an event export without pruning and a clock seam in the engine.
 5. **Engine.** Bounded thread snapshots and the `/history`, `/bounded` and `/transcript`
    routes (a full snapshot of a long thread peaks at about 13 bytes per byte of JSON);
-   checkpoints and diffs per turn; rollback, fork and merge-back; a model change during a
-   turn; a workspace strategy for delegated tasks; search details (no NFC normalization, the
+   checkpoints and diffs per turn; rollback, fork and merge-back; a workspace strategy for delegated tasks; search details (no NFC normalization, the
    old snippet rule).
 6. **Features.** `pullRequests.*` (34), `sourceControl.*` and `git.*`; the Conn-only methods
    (annotations, panels, scheduled tasks, peer links, test logins, credentials, secrets, guest
@@ -190,8 +205,7 @@ that list.
 9. **Upkeep.** Wire the bump into the nightly sync (its script is outside the Conn
    repository; `FORK.md` there says the Grok bot runs it). The first real bump
    (2026-11-14, `docs/upkeep.md` "Bumps") took about four hours. The provider gaps it left:
-   Codex Stop with "Force stop" (needs an interrupt-timeout error in the provider trait and
-   an unresponsive Stop in the engine), reaping a recorded Claude CLI after a restart, Claude
+   reaping a recorded Claude CLI after a restart, Claude
    Monitor wakes, `workState: "waiting_for_children"` in `/mcp`.
 
 ### Where the review reports are

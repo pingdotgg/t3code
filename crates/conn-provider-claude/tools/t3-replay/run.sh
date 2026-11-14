@@ -11,4 +11,7 @@ fixtures="$repo/apps/server/src/orchestration-v2/testkit/fixtures"
 out="$(mktemp -d "${TMPDIR:-/tmp}/conn-t3-replay.XXXXXX")"
 trap 'rm -rf "$out"' EXIT
 (cd "$root" && cargo build -q -p conn-provider-claude --example t3_replay)
-"$root/target/debug/examples/t3_replay" "$fixtures" "$here/fake-host.mjs" "$here/scenarios.json" "$out" "$@"
+# Each scenario's runtime policy, from T3's own fixture table (runs from $out: the monorepo
+# gets no new file).
+(cd "$out" && node "$here/policies.mjs" "$repo") > "$out/policies.json"
+"$root/target/debug/examples/t3_replay" "$fixtures" "$here/fake-host.mjs" "$here/scenarios.json" "$out/policies.json" "$out" "$@"

@@ -144,6 +144,9 @@ pub(crate) fn replay(name: &str) -> (Replay, Vec<Value>, String) {
 /// The TS `startTurn` input as the trait's `TurnInput`.
 fn turn_input(v: &Value) -> TurnInput {
     TurnInput {
+        native_thread_has_turns: None,
+        restart_continuation_of_run_id: None,
+        app_context: vec![],
         app_thread: from_json(v["appThread"].clone()).unwrap(),
         thread_id: from_json(v["threadId"].clone()).unwrap(),
         run_id: from_json(v["runId"].clone()).unwrap(),
@@ -152,11 +155,11 @@ fn turn_input(v: &Value) -> TurnInput {
         attempt_id: from_json(v["attemptId"].clone()).unwrap(),
         root_node_id: from_json(v["rootNodeId"].clone()).unwrap(),
         provider_thread: from_json(v["providerThread"].clone()).unwrap(),
-        message: conn_provider::TurnMessage {
-            message_id: from_json(v["message"]["messageId"].clone()).unwrap(),
-            text: v["message"]["text"].as_str().unwrap().into(),
-            attachments: vec![],
-        },
+        message: conn_provider::TurnMessage::user(
+            from_json(v["message"]["messageId"].clone()).unwrap(),
+            v["message"]["text"].as_str().unwrap().into(),
+            vec![],
+        ),
         model_selection: from_json(v["modelSelection"].clone()).unwrap(),
         runtime_policy: from_json(v["runtimePolicy"].clone()).unwrap(),
     }

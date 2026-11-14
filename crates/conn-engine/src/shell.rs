@@ -22,6 +22,68 @@ fn one(tx: &Tx<'_>, sql: &str, args: &[&dyn rusqlite::ToSql]) -> StoreResult<Opt
         .map_err(|e| format!("store: {e}"))
 }
 
+/// The shell's `pendingBackgroundTasks` (`derivePendingBackgroundWork`). Only background
+/// turn items in an active status are read, so the cost stays with the work that still runs.
+fn pending_background_tasks(
+    tx: &Tx<'_>,
+    thread_id: &str,
+    thread: &Value,
+    latest_run: Option<&Value>,
+    provider_threads: &[Value],
+) -> StoreResult<Vec<Value>> {
+    let has_active_run = latest_run.is_some_and(|run| {
+        matches!(
+            run["status"].as_str(),
+            Some("preparing" | "starting" | "running")
+        )
+    });
+    if has_active_run {
+        return Ok(vec![]);
+    }
+    let read = |sql: &str| -> StoreResult<Vec<Value>> {
+        let mut statement = tx.conn().prepare(sql).map_err(|e| format!("store: {e}"))?;
+        let rows = statement
+            .query_map(params![thread_id], |row| row.get::<_, String>(0))
+            .map_err(|e| format!("store: {e}"))?;
+        let mut out = Vec::new();
+        for row in rows {
+            let text = row.map_err(|e| format!("store: {e}"))?;
+            if let Ok(value) = serde_json::from_str(&text) {
+                out.push(value);
+            }
+        }
+        Ok(out)
+    };
+    let items = read(
+        "SELECT body FROM entities WHERE thread_id = ?1 AND kind = 'turnItems'
+         AND json_extract(body, '$.type') IN ('command_execution', 'dynamic_tool', 'subagent')
+         AND json_extract(body, '$.status') IN ('pending', 'running', 'waiting')
+         ORDER BY first_seq",
+    )?;
+    let rolled_back: std::collections::HashSet<String> = read(
+        "SELECT body FROM entities WHERE thread_id = ?1 AND kind = 'runs'
+         AND json_extract(body, '$.status') = 'rolled_back'",
+    )?
+    .iter()
+    .filter_map(|run| run["id"].as_str().map(str::to_owned))
+    .collect();
+    let pull_requests = thread["pullRequests"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    Ok(crate::background::derive_pending_background_work(
+        &crate::background::BackgroundInput {
+            latest_run,
+            has_active_run,
+            provider_threads,
+            turn_items: &items,
+            active_provider_thread_id: thread["activeProviderThreadId"].as_str(),
+            rolled_back_run_ids: &rolled_back,
+            pull_requests: &pull_requests,
+        },
+    ))
+}
+
 pub(crate) fn thread_shell(tx: &Tx<'_>, thread_id: &str) -> StoreResult<Value> {
     let thread = tx
         .thread(thread_id)?
@@ -76,13 +138,21 @@ pub(crate) fn thread_shell(tx: &Tx<'_>, thread_id: &str) -> StoreResult<Value> {
         _ => None,
     };
     let item_count = tx.count(thread_id, "turnItems")?;
+    let provider_threads = tx.entities(thread_id, "providerThreads")?;
     let mut history: Vec<Value> = Vec::new();
-    for provider_thread in tx.entities(thread_id, "providerThreads")? {
+    for provider_thread in &provider_threads {
         let id = provider_thread["providerInstanceId"].clone();
         if id.is_string() && !history.contains(&id) {
             history.push(id);
         }
     }
+    let pending_background = pending_background_tasks(
+        tx,
+        thread_id,
+        &thread,
+        latest_run.as_ref(),
+        &provider_threads,
+    )?;
 
     let field = |name: &str| thread.get(name).cloned().unwrap_or(Value::Null);
     let run_field = |name: &str| {
@@ -145,7 +215,7 @@ pub(crate) fn thread_shell(tx: &Tx<'_>, thread_id: &str) -> StoreResult<Value> {
             .filter(|m| m["createdBy"] == "user")
             .map_or(Value::Null, |m| m["updatedAt"].clone()),
         "hasActionableProposedPlan": false,
-        "pendingBackgroundTasks": [],
+        "pendingBackgroundTasks": pending_background,
         "providerInstanceHistory": history,
         "goal": null,
         "itemCount": item_count,

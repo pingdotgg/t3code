@@ -32,6 +32,8 @@ struct Run {
     helper: conn_provider_claude::HelperCommand,
     model: String,
     mode: String,
+    /// `policyOverride`: `approvalPolicy` and `sandboxPolicy` laid over the policy.
+    policy_override: Value,
     cwd: String,
     attachments: PathBuf,
 }
@@ -42,7 +44,14 @@ impl Run {
     }
 
     fn policy(&self) -> Value {
-        json!({"runtimeMode": self.mode, "interactionMode": "default", "cwd": self.cwd})
+        let mut policy =
+            json!({"runtimeMode": self.mode, "interactionMode": "default", "cwd": self.cwd});
+        if let (Some(policy), Some(over)) =
+            (policy.as_object_mut(), self.policy_override.as_object())
+        {
+            policy.extend(over.clone());
+        }
+        policy
     }
 
     fn turn(
@@ -65,6 +74,9 @@ impl Run {
             Vec::new()
         };
         TurnInput {
+            native_thread_has_turns: None,
+            restart_continuation_of_run_id: None,
+            app_context: vec![],
             app_thread: from_json(json!({
                 "createdBy": "user", "creationSource": "web", "id": app_thread,
                 "projectId": "project-conformance", "title": "Conformance",
@@ -85,6 +97,10 @@ impl Run {
             root_node_id: format!("node-{n}").as_str().into(),
             provider_thread: thread.clone(),
             message: TurnMessage {
+                created_by: conn_contract::OrchestrationV2Actor::User,
+                creation_source: conn_contract::OrchestrationV2CreationSource::Web,
+                scheduled_task_id: None,
+                sender_thread_id: None,
                 message_id: format!("message-{n}").as_str().into(),
                 text: step["turn"].as_str().unwrap_or_default().into(),
                 attachments,
@@ -111,26 +127,30 @@ async fn open(
     run: &Run,
     mcp: bool,
 ) -> (Box<dyn Session>, mpsc::Receiver<ProviderEvent>) {
-    let OpenedSession { session, events } = provider
+    // The MCP servers go in at open, as the engine passes them.
+    let mcp_servers = if mcp {
+        vec![McpServer {
+            name: "t3-code".into(),
+            url: MCP_URL.into(),
+            headers: vec![("Authorization".into(), MCP_AUTHORIZATION.into())],
+        }]
+    } else {
+        vec![]
+    };
+    let OpenedSession {
+        session, events, ..
+    } = provider
         .open_session(OpenSessionInput {
             thread_id: THREAD.into(),
             provider_session_id: "provider-session-conformance".into(),
             model_selection: from_json(run.model_selection(None)).unwrap_or_else(|e| panic!("{e}")),
             runtime_policy: from_json(run.policy()).unwrap_or_else(|e| panic!("{e}")),
             resume_from_session: None,
+            mcp_servers,
+            host: None,
         })
         .await
         .unwrap_or_else(|e| panic!("open_session: {e}"));
-    if mcp {
-        session
-            .set_mcp_servers(vec![McpServer {
-                name: "t3-code".into(),
-                url: MCP_URL.into(),
-                headers: vec![("Authorization".into(), MCP_AUTHORIZATION.into())],
-            }])
-            .await
-            .unwrap_or_else(|e| panic!("set_mcp_servers: {e}"));
-    }
     (session, events)
 }
 
@@ -159,6 +179,7 @@ async fn scenario(root: &std::path::Path, run: &Run, model: &str, spec: &Value) 
         helper: run.helper.clone(),
         model: model.into(),
         mode: spec["runtimeMode"].as_str().unwrap_or("full-access").into(),
+        policy_override: spec["policyOverride"].clone(),
         cwd: run.cwd.clone(),
         attachments: run.attachments.clone(),
     };
@@ -206,6 +227,8 @@ async fn scenario(root: &std::path::Path, run: &Run, model: &str, spec: &Value) 
                     provider_turn_id: None,
                     target_thread_id: "thread-conformance-fork".into(),
                     owner_node_id: None,
+                    model_selection: None,
+                    runtime_policy: None,
                 })
                 .await
                 .unwrap_or_else(|e| panic!("fork_thread: {e}"));
@@ -228,6 +251,7 @@ async fn scenario(root: &std::path::Path, run: &Run, model: &str, spec: &Value) 
             .collect();
         answers.reverse();
         let mut interrupted = step["interrupt"] != json!(true);
+        let mut live_selection = step.get("liveSelection").cloned();
         loop {
             let Some(event) = next(&mut events).await else {
                 eprintln!("{name}: turn {n}: no provider event in time; scenario stopped");
@@ -240,6 +264,23 @@ async fn scenario(root: &std::path::Path, run: &Run, model: &str, spec: &Value) 
                 }
                 Some("provider_turn.updated") => {
                     let turn = event["providerTurn"].clone();
+                    if let Some(change) = live_selection
+                        .as_ref()
+                        .filter(|_| turn["tokenUsage"].is_object())
+                    {
+                        let mut selection = run.model_selection(change["model"].as_str());
+                        if let Some(options) = change.get("options") {
+                            selection["options"] = options.clone();
+                        }
+                        session
+                            .apply_model_selection(
+                                thread.clone(),
+                                from_json(selection).unwrap_or_else(|e| panic!("{e}")),
+                            )
+                            .await
+                            .unwrap_or_else(|e| panic!("apply_model_selection: {e}"));
+                        live_selection = None;
+                    }
                     if !interrupted && turn["tokenUsage"].is_object() {
                         interrupted = true;
                         session
@@ -304,6 +345,7 @@ fn main() {
         helper: conn_provider_claude::HelperCommand::from_path(helper),
         model: model.clone(),
         mode: String::new(),
+        policy_override: Value::Null,
         cwd: cwd.clone(),
         attachments: PathBuf::from(attachments),
     };

@@ -12,6 +12,8 @@ conn-contract.workspace = true
 serde.workspace = true
 # `Provider::server_provider_entry` returns a `ServerProvider` JSON value.
 serde_json.workspace = true
+# `HostError`, as the other boundary error types.
+thiserror.workspace = true
 tokio = { workspace = true, features = ["sync"] }
 
 [dev-dependencies]

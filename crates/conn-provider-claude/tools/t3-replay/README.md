@@ -20,16 +20,17 @@ texts come from the transcript). Every outbound frame must equal the recorded on
 
 ## Result at the pinned commit
 
-15 of 39 pass: `simple`, `multi_turn`, `command_output_streaming`, `subagent`, `web_search`,
-`claude_local_bash_task`, `claude_mcp_tool_presentation`, `claude_nested_subagent_model`,
-`claude_result_is_error`, `claude_background_task_interrupt`, `tool_call_workspace_never`,
-`tool_call_denied_write`, `turn_interrupt`, `turn_interrupt_mid_tool`, `turn_interrupt_restart`.
+18 of 39 pass, all that are driven: `simple`, `multi_turn`, `command_output_streaming`,
+`subagent`, `web_search`, `claude_local_bash_task`, `claude_mcp_tool_presentation`,
+`claude_nested_subagent_model`, `claude_result_is_error`, `claude_background_task_interrupt`,
+`tool_call_workspace_never`, `tool_call_denied_write`, `tool_call_read_only`,
+`tool_call_read_only_on_request`, `tool_call_restricted_granular`, `turn_interrupt`,
+`turn_interrupt_mid_tool`, `turn_interrupt_restart`.
 
-Fail (in `scenarios.json`, kept to show the gap): `tool_call_read_only`,
-`tool_call_read_only_on_request`, `tool_call_restricted_granular`. They run with a read-only or
-restricted sandbox policy; the provider trait carries no `sandboxPolicy`/`approvalPolicy`, so
-the session sends the preset tools instead of `["Read","Glob","Grep"]` (and `default`/bypass
-instead of `dontAsk`). `launch::query_policy` already does it once the trait carries the policy.
+Each scenario's runtime policy comes from T3's own fixture table: `policies.mjs` imports
+`testkit/fixtures/index.ts` from `CONN_MONOREPO` and prints the thread's modes and the
+scenario's `runtimePolicyOverride`, which T3's harness lays over the policy
+(`RuntimePolicy.layerWithOverride`).
 
 Not driven yet (their steps need more than this driver has):
 

@@ -66,11 +66,18 @@ interface Step {
   readonly reopen?: boolean;
   readonly fork?: boolean;
   readonly model?: string;
+  /** A selection sent to the running turn (applyModelSelection) once it reports token usage. */
+  readonly liveSelection?: {
+    readonly model?: string;
+    readonly options?: ReadonlyArray<{ readonly id: string; readonly value: unknown }>;
+  };
 }
 interface Scenario {
   readonly name: string;
   readonly runtimeMode: "full-access" | "approval-required";
   readonly mcp?: boolean;
+  /** Spread over the runtime policy, as T3's RuntimePolicy.layerWithOverride does. */
+  readonly policyOverride?: { readonly approvalPolicy?: unknown; readonly sandboxPolicy?: unknown };
   readonly claudeSettings?: unknown;
   readonly steps: ReadonlyArray<Step>;
 }
@@ -169,6 +176,7 @@ const runScenario = (scenario: Scenario) =>
       runtimeMode: scenario.runtimeMode,
       interactionMode: "default",
       cwd: WORKSPACE,
+      ...scenario.policyOverride,
     });
     const providerSessionId = ProviderSessionId.make("provider-session-conformance");
     if (scenario.mcp === true) {
@@ -267,11 +275,23 @@ const runScenario = (scenario: Scenario) =>
       });
       const answers = [...(step.answers ?? [])];
       let interrupted = step.interrupt !== true;
+      let liveSelection = step.liveSelection;
       for (;;) {
         const event = yield* Queue.take(session.events).pipe(Effect.timeout("60 seconds"));
         if (event.type === "provider_thread.updated") thread = event.providerThread;
         if (event.type === "provider_turn.updated") {
           turns.set(event.providerTurn.id, event.providerTurn);
+          if (liveSelection !== undefined && event.providerTurn.tokenUsage != null) {
+            const change = liveSelection;
+            liveSelection = undefined;
+            yield* session.runtime.applyModelSelection!({
+              providerThread: thread,
+              modelSelection: {
+                ...selection(change.model),
+                ...(change.options === undefined ? {} : { options: change.options }),
+              } as ModelSelection,
+            });
+          }
           if (!interrupted && event.providerTurn.tokenUsage != null) {
             interrupted = true;
             yield* session.runtime

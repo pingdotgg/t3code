@@ -8,6 +8,7 @@ publish.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+conn-provider.workspace = true
 conn-support.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["sync", "process", "io-util", "time", "rt", "macros"] }

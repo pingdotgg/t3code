@@ -25,10 +25,10 @@ use crate::launch;
 use crate::mapper::{DRIVER, Mapper, Out};
 
 pub const EVENT_CAPACITY: usize = 256;
+/// `CODEX_THREAD_IN_USE_MESSAGE`.
+const CODEX_THREAD_IN_USE_MESSAGE: &str = "This conversation is open in another Codex client, such as the Codex app, the Codex CLI, or an IDE extension. Codex lets one client write to a conversation at a time. Quit that client, then send your message again.";
 const FLUSH_INTERVAL: Duration = Duration::from_millis(50);
 const PLAN_FLUSH_INTERVAL: Duration = Duration::from_millis(400);
-/// How long an interrupted turn may take to report `turn/completed` (TS: 10 s).
-const INTERRUPT_WAIT: Duration = Duration::from_secs(10);
 
 pub struct CodexSession {
     id: ProviderSessionId,
@@ -64,6 +64,8 @@ struct Inner {
     instance_id: String,
     /// Where chat attachments are read from (`CodexConfig::attachments_dir`).
     attachments_dir: Option<std::path::PathBuf>,
+    /// `CodexConfig::stop_confirm_timeout`.
+    stop_confirm_timeout: Duration,
     /// The model and working folder the session opened with: TS resumes a thread for a
     /// rollback, and forks one, with the session's own selection and policy.
     open_model: Option<String>,
@@ -93,15 +95,17 @@ impl CodexSession {
         instance_id: &ProviderInstanceId,
         server: Arc<AppServer>,
         events: mpsc::Sender<ProviderEvent>,
-        attachments_dir: Option<std::path::PathBuf>,
+        config: &crate::CodexConfig,
         open: (Option<String>, Option<String>),
+        mcp_servers: Vec<McpServer>,
     ) -> Self {
         let (inbox, rx) = mpsc::channel(EVENT_CAPACITY);
         server.add_session(id.as_str(), inbox.clone());
         let inner = Arc::new(Inner {
             id: id.as_str().to_owned(),
             instance_id: instance_id.as_str().to_owned(),
-            attachments_dir,
+            attachments_dir: config.attachments_dir.clone(),
+            stop_confirm_timeout: config.stop_confirm_timeout,
             open_model: open.0,
             open_cwd: open.1,
             server,
@@ -111,7 +115,8 @@ impl CodexSession {
                 events: Some(events),
                 thread: None,
                 app_thread_id: None,
-                mcp_servers: Vec::new(),
+                // Codex reads them from each thread's config (`thread/start`, resume, fork).
+                mcp_servers,
                 closed: false,
                 logged: HashSet::new(),
             }),
@@ -243,10 +248,14 @@ impl Inner {
             other => other,
         };
         let result = result.map_err(|e| match &e {
-            CallError::Rpc(rpc) if rpc.message.contains("already has an active writer") => failed(
-                "resume_thread",
-                "This conversation is open in another Codex client, such as the Codex app, the Codex CLI, or an IDE extension. Codex lets one client write to a conversation at a time. Quit that client, then send your message again.",
-            ),
+            // `isCodexActiveWriterError`.
+            CallError::Rpc(rpc)
+                if rpc.code == -32600 && rpc.message.contains("already has an active writer") =>
+            {
+                ProviderError::ThreadInUse {
+                    detail: CODEX_THREAD_IN_USE_MESSAGE.to_owned(),
+                }
+            }
             _ => call_failed("resume_thread")(e),
         })?;
         self.server.mark_loaded(native);
@@ -585,12 +594,18 @@ impl Session for CodexSession {
                         .map(str::to_owned)
                 });
             inner.check_open()?;
-            let codex_input = launch::user_input(
-                &input.message.text,
-                &input.message.attachments,
-                inner.attachments_dir.as_deref(),
-            )
-            .map_err(|detail| ProviderError::Protocol { detail })?;
+            // A restart continuation starts the native turn without input: Codex resumes on
+            // its own (`startTurn`, `restartContinuationOfRunId`).
+            let codex_input = if input.restart_continuation_of_run_id.is_some() {
+                json!([])
+            } else {
+                launch::user_input(
+                    &input.message.text,
+                    &input.message.attachments,
+                    inner.attachments_dir.as_deref(),
+                )
+                .map_err(|detail| ProviderError::Protocol { detail })?
+            };
             // TS: `hasT3Mcp` when the thread has an MCP session; the engine passes it as the
             // `t3-code` server. Browser tools on, device tools off: the session carries no
             // finer answer (TS reads `browserToolsAvailable` and the `device` capability).
@@ -607,6 +622,7 @@ impl Session for CodexSession {
                 &input.model_selection,
                 summary.as_deref(),
                 t3_tools,
+                &input.app_context,
             );
             inner.lock().mapper.begin_turn(&native, &input);
             match inner.server.request("turn/start", params).await {
@@ -696,13 +712,23 @@ impl Session for CodexSession {
                     progressed.await;
                 }
             };
-            if tokio::time::timeout(INTERRUPT_WAIT, wait).await.is_err() {
-                let outs = inner.lock().mapper.force_interrupted(&native_turn);
-                inner.deliver(outs).await;
-            }
+            let confirmed = tokio::time::timeout(inner.stop_confirm_timeout, wait)
+                .await
+                .is_ok();
             match sent {
-                Ok(_) | Err(CallError::Stopped) => Ok(()),
-                Err(e) => Err(failed("interrupt_turn", e.to_string())),
+                Ok(_) | Err(CallError::Stopped) => {}
+                Err(e) => return Err(failed("interrupt_turn", e.to_string())),
+            }
+            // Codex may still be working: the turn stays open and marked interrupting, and
+            // whatever ends it later (Codex's `turn/completed`, a close, Force stop) settles it
+            // (T3 since b5b470542a, `deferToActiveRoots`).
+            if confirmed || inner.lock().closed {
+                Ok(())
+            } else {
+                Err(ProviderError::InterruptTimeout {
+                    timeout_ms: u64::try_from(inner.stop_confirm_timeout.as_millis())
+                        .unwrap_or(u64::MAX),
+                })
             }
         })
     }
@@ -843,10 +869,13 @@ impl Session for CodexSession {
                 }
             };
             let mcp = inner.lock().mcp_servers.clone();
+            // `codexThreadRuntimeParams`: the fork's own model and cwd, left out when absent.
+            let model = input.model_selection.as_ref().map(launch::selection_model);
+            let cwd = input.runtime_policy.as_ref().and_then(|p| p.cwd.clone());
             let mut params = launch::thread_params(
                 Some(input.target_thread_id.as_str()),
-                inner.open_cwd.as_deref(),
-                inner.open_model.as_deref(),
+                cwd.as_deref(),
+                model.as_deref(),
                 &mcp,
             );
             params["threadId"] = json!(native);
@@ -959,6 +988,7 @@ mod tests {
     const FAKE: &str = r#"
 emit() { printf '%s\n' "$1"; }
 while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$0.stdin"
   id=$(printf '%s' "$line" | sed -n 's/^{"id":\([0-9]*\).*/\1/p')
   case "$line" in
     *'"method":"initialize"'*) emit "{\"id\":$id,\"result\":{\"userAgent\":\"t3code_desktop/0.167.0 (x)\"}}" ;;
@@ -970,6 +1000,10 @@ while IFS= read -r line; do
       emit '{"method":"item/commandExecution/requestApproval","id":0,"params":{"threadId":"th1","turnId":"tu1","itemId":"c1","command":"ls"}}' ;;
     *'"method":"turn/start"'*'stop me'*)
       emit "{\"id\":$id,\"result\":{\"turn\":{\"id\":\"tu2\",\"startedAt\":null}}}" ;;
+    *'"method":"turn/start"'*'stuck'*)
+      emit "{\"id\":$id,\"result\":{\"turn\":{\"id\":\"tu3\",\"startedAt\":null}}}" ;;
+    *'"method":"turn/interrupt"'*'"tu3"'*)
+      emit "{\"id\":$id,\"result\":{}}" ;;
     *'"method":"turn/start"'*)
       emit "{\"id\":$id,\"result\":{\"turn\":{\"id\":\"tu0\",\"startedAt\":null}}}"
       emit '{"method":"item/completed","params":{"threadId":"th1","turnId":"tu0","item":{"type":"agentMessage","id":"m1","text":"pong","phase":"final_answer"},"completedAtMs":5}}'
@@ -980,11 +1014,18 @@ while IFS= read -r line; do
       emit "{\"id\":$id,\"result\":{}}"
       emit '{"method":"turn/completed","params":{"threadId":"th1","turn":{"id":"tu2","status":"interrupted","completedAt":3}}}' ;;
     *'"method":"thread/unsubscribe"'*) emit "{\"id\":$id,\"result\":{}}" ;;
+    *'"method":"thread/resume"'*'th-busy'*)
+      emit "{\"id\":$id,\"error\":{\"code\":-32600,\"message\":\"thread th-busy already has an active writer\"}}" ;;
+    *'"method":"thread/fork"'*) emit "{\"id\":$id,\"result\":{\"thread\":{\"id\":\"th9\",\"createdAt\":1,\"updatedAt\":2}}}" ;;
   esac
 done
 "#;
 
     fn provider() -> CodexProvider {
+        provider_with(CodexConfig::default())
+    }
+
+    fn provider_with(config: CodexConfig) -> CodexProvider {
         let dir = std::env::temp_dir().join(format!("conn-codex-fake-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let script = dir.join("codex");
@@ -996,7 +1037,7 @@ done
             CodexConfig {
                 binary: script,
                 home_path: Some(dir),
-                ..CodexConfig::default()
+                ..config
             },
         )
     }
@@ -1009,6 +1050,9 @@ done
         let selection: conn_contract::ModelSelection =
             from_json(json!({"instanceId": "codex", "model": "gpt-6-luna"})).unwrap();
         TurnInput {
+            native_thread_has_turns: None,
+            restart_continuation_of_run_id: None,
+            app_context: vec![],
             app_thread: from_json(json!({
                 "createdBy": "user", "creationSource": "web", "id": "t1", "projectId": "p1",
                 "title": "T", "providerInstanceId": "codex", "modelSelection": to_json(&selection),
@@ -1025,7 +1069,7 @@ done
             attempt_id: format!("a{n}").as_str().into(),
             root_node_id: format!("n{n}").as_str().into(),
             provider_thread: thread.clone(),
-            message: TurnMessage { message_id: "m".into(), text: text.into(), attachments: vec![] },
+            message: TurnMessage::user("m".into(), text.into(), vec![]),
             model_selection: selection,
             runtime_policy: policy(),
         }
@@ -1050,7 +1094,8 @@ done
         let provider = provider();
         let OpenedSession {
             session,
-            mut events,
+            provider_session,
+            ..
         } = provider
             .open_session(OpenSessionInput {
                 thread_id: "t1".into(),
@@ -1059,10 +1104,12 @@ done
                     .unwrap(),
                 runtime_policy: policy(),
                 resume_from_session: None,
+                mcp_servers: vec![],
+                host: None,
             })
             .await
             .unwrap();
-        until(&mut events, "provider_session.updated").await;
+        assert_eq!(to_json(&provider_session)["id"], "s1");
         session
             .ensure_thread(EnsureThreadInput {
                 thread_id: "t1".into(),
@@ -1112,6 +1159,7 @@ done
         let OpenedSession {
             session,
             mut events,
+            ..
         } = provider
             .open_session(OpenSessionInput {
                 thread_id: "t1".into(),
@@ -1120,13 +1168,12 @@ done
                     .unwrap(),
                 runtime_policy: policy(),
                 resume_from_session: None,
+                mcp_servers: vec![],
+                host: None,
             })
             .await
             .unwrap();
-        assert_eq!(
-            until(&mut events, "provider_session.updated").await.len(),
-            1
-        );
+        // The session row comes back from `open_session`, not as an event.
         let thread = session
             .ensure_thread(EnsureThreadInput {
                 thread_id: "t1".into(),
@@ -1201,5 +1248,273 @@ done
         assert!(provider.app_server_pid().is_none());
         let alive = conn_provider_support::process::pid_alive(pid);
         assert!(!alive, "the app-server outlived its last session");
+    }
+
+    /// T3 since b5b470542a: a Stop that Codex does not confirm in time leaves the turn open and
+    /// returns `ProviderAdapterInterruptTimeoutError`; no terminal is invented. Closing the
+    /// session (Force stop) then ends the turn as interrupted.
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_unconfirmed_stop_times_out_and_keeps_the_turn_open() {
+        let provider = provider_with(CodexConfig {
+            stop_confirm_timeout: Duration::from_millis(300),
+            ..CodexConfig::default()
+        });
+        let OpenedSession {
+            session,
+            mut events,
+            ..
+        } = provider
+            .open_session(OpenSessionInput {
+                thread_id: "t1".into(),
+                provider_session_id: "s1".into(),
+                model_selection: from_json(json!({"instanceId": "codex", "model": "gpt-6-luna"}))
+                    .unwrap(),
+                runtime_policy: policy(),
+                resume_from_session: None,
+                mcp_servers: vec![],
+                host: None,
+            })
+            .await
+            .unwrap();
+        let thread = session
+            .ensure_thread(EnsureThreadInput {
+                thread_id: "t1".into(),
+                title: None,
+                model_selection: from_json(json!({"instanceId": "codex", "model": "gpt-6-luna"}))
+                    .unwrap(),
+                runtime_policy: policy(),
+                existing_provider_thread: None,
+            })
+            .await
+            .unwrap();
+        session.start_turn(turn(&thread, 1, "stuck")).await.unwrap();
+        let running = until(&mut events, "provider_turn.updated").await;
+        let provider_turn = running.last().unwrap()["providerTurn"]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let stopped = session
+            .interrupt_turn(InterruptInput {
+                provider_thread: thread.clone(),
+                provider_turn_id: provider_turn.as_str().into(),
+            })
+            .await;
+        assert_eq!(
+            stopped,
+            Err(ProviderError::InterruptTimeout { timeout_ms: 300 })
+        );
+        // No terminal: the turn is still open.
+        let quiet = tokio::time::timeout(Duration::from_millis(300), async {
+            loop {
+                let event = serde_json::to_value(events.recv().await?).unwrap();
+                if event["type"] == "turn.terminal" {
+                    return Some(event);
+                }
+            }
+        })
+        .await;
+        assert!(quiet.is_err(), "no terminal after the timeout: {quiet:?}");
+
+        session.close().await;
+        let ended = until(&mut events, "turn.terminal").await;
+        assert_eq!(ended.last().unwrap()["status"], "interrupted");
+    }
+
+    /// `forkThread` sends the fork's own model and cwd (`codexThreadRuntimeParams`), and
+    /// leaves both out when the input has none, as T3 does.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_fork_sends_its_own_model_and_cwd() {
+        let dir = std::env::temp_dir().join(format!("conn-codex-fork-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("codex");
+        std::fs::write(&script, format!("#!/bin/sh\n{FAKE}")).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let log = dir.join("codex.stdin");
+        let _ = std::fs::remove_file(&log);
+        let provider = CodexProvider::new(
+            "codex".into(),
+            CodexConfig {
+                binary: script,
+                home_path: Some(dir.clone()),
+                ..CodexConfig::default()
+            },
+        );
+        let OpenedSession { session, .. } = provider
+            .open_session(OpenSessionInput {
+                thread_id: "t1".into(),
+                provider_session_id: "s1".into(),
+                model_selection: from_json(json!({"instanceId": "codex", "model": "gpt-6-luna"}))
+                    .unwrap(),
+                runtime_policy: policy(),
+                resume_from_session: None,
+                mcp_servers: vec![],
+                host: None,
+            })
+            .await
+            .unwrap();
+        let thread = session
+            .ensure_thread(EnsureThreadInput {
+                thread_id: "t1".into(),
+                title: None,
+                model_selection: from_json(json!({"instanceId": "codex", "model": "gpt-6-luna"}))
+                    .unwrap(),
+                runtime_policy: policy(),
+                existing_provider_thread: None,
+            })
+            .await
+            .unwrap();
+        let fork = |selection: Option<Value>, cwd: Option<&str>| ForkThreadInput {
+            source_provider_thread: thread.clone(),
+            source_provider_turns: vec![],
+            provider_turn_id: None,
+            target_thread_id: "t2".into(),
+            owner_node_id: None,
+            model_selection: selection.map(|s| from_json(s).unwrap()),
+            runtime_policy: cwd.map(|cwd| {
+                from_json(
+                    json!({"runtimeMode": "full-access", "interactionMode": "default", "cwd": cwd}),
+                )
+                .unwrap()
+            }),
+        };
+        session
+            .fork_thread(fork(
+                Some(json!({"instanceId": "codex", "model": "gpt-6-astra"})),
+                Some("/work/fork"),
+            ))
+            .await
+            .unwrap();
+        session.fork_thread(fork(None, None)).await.unwrap();
+        session.close().await;
+        let forks: Vec<Value> = std::fs::read_to_string(&log)
+            .unwrap()
+            .lines()
+            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+            .filter(|f| f["method"] == "thread/fork")
+            .map(|f| f["params"].clone())
+            .collect();
+        assert_eq!(forks.len(), 2, "{forks:?}");
+        assert_eq!(forks[0]["model"], "gpt-6-astra");
+        assert_eq!(forks[0]["cwd"], "/work/fork");
+        assert!(forks[1].get("model").is_none(), "{:?}", forks[1]);
+        assert!(forks[1].get("cwd").is_none(), "{:?}", forks[1]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `isCodexActiveWriterError` on resume becomes `ProviderAdapterThreadInUseError` with T3's
+    /// text, which the engine shows as the failure message.
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_active_writer_on_resume_is_thread_in_use() {
+        let provider = provider();
+        let OpenedSession { session, .. } = provider
+            .open_session(OpenSessionInput {
+                thread_id: "t1".into(),
+                provider_session_id: "s1".into(),
+                model_selection: from_json(json!({"instanceId": "codex", "model": "gpt-6-luna"}))
+                    .unwrap(),
+                runtime_policy: policy(),
+                resume_from_session: None,
+                mcp_servers: vec![],
+                host: None,
+            })
+            .await
+            .unwrap();
+        let stored: ProviderThread = from_json(json!({
+            "id": "provider-thread:codex:th-busy", "driver": "codex",
+            "providerInstanceId": "codex", "providerSessionId": "s0", "appThreadId": "t1",
+            "ownerNodeId": null,
+            "nativeThreadRef": {"driver": "codex", "nativeId": "th-busy", "strength": "strong"},
+            "nativeConversationHeadRef": null, "status": "idle", "firstRunOrdinal": 1,
+            "lastRunOrdinal": 1, "handoffIds": [], "forkedFrom": null,
+            "createdAt": "2026-11-14T00:00:00.000Z", "updatedAt": "2026-11-14T00:00:00.000Z",
+        }))
+        .unwrap();
+        let resumed = session
+            .resume_thread(conn_provider::ResumeThreadInput {
+                provider_thread: stored,
+                thread_id: Some("t1".into()),
+                model_selection: None,
+                runtime_policy: Some(policy()),
+            })
+            .await;
+        let Err(ProviderError::ThreadInUse { detail }) = resumed else {
+            panic!("expected ThreadInUse, got {resumed:?}")
+        };
+        assert_eq!(detail, CODEX_THREAD_IN_USE_MESSAGE);
+        assert_eq!(
+            ProviderError::ThreadInUse {
+                detail: detail.clone()
+            }
+            .to_string(),
+            detail,
+            "the engine's failure message is T3's text alone"
+        );
+        session.close().await;
+    }
+
+    /// A restart continuation (`restartContinuationOfRunId`) starts the native turn with no
+    /// input: Codex continues on its own, as T3's `startTurn` does.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_restart_continuation_starts_the_turn_without_input() {
+        let dir = std::env::temp_dir().join(format!("conn-codex-restart-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("codex");
+        std::fs::write(&script, format!("#!/bin/sh\n{FAKE}")).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let log = dir.join("codex.stdin");
+        let _ = std::fs::remove_file(&log);
+        let provider = CodexProvider::new(
+            "codex".into(),
+            CodexConfig {
+                binary: script,
+                home_path: Some(dir.clone()),
+                ..CodexConfig::default()
+            },
+        );
+        let OpenedSession {
+            session,
+            mut events,
+            ..
+        } = provider
+            .open_session(OpenSessionInput {
+                thread_id: "t1".into(),
+                provider_session_id: "s1".into(),
+                model_selection: from_json(json!({"instanceId": "codex", "model": "gpt-6-luna"}))
+                    .unwrap(),
+                runtime_policy: policy(),
+                resume_from_session: None,
+                mcp_servers: vec![],
+                host: None,
+            })
+            .await
+            .unwrap();
+        let thread = session
+            .ensure_thread(EnsureThreadInput {
+                thread_id: "t1".into(),
+                title: None,
+                model_selection: from_json(json!({"instanceId": "codex", "model": "gpt-6-luna"}))
+                    .unwrap(),
+                runtime_policy: policy(),
+                existing_provider_thread: None,
+            })
+            .await
+            .unwrap();
+        let mut input = turn(&thread, 2, "Continue where you left off.");
+        input.restart_continuation_of_run_id = Some("r1".into());
+        session.start_turn(input).await.unwrap();
+        until(&mut events, "turn.terminal").await;
+        session.close().await;
+        let starts: Vec<Value> = std::fs::read_to_string(&log)
+            .unwrap()
+            .lines()
+            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+            .filter(|f| f["method"] == "turn/start")
+            .map(|f| f["params"].clone())
+            .collect();
+        assert_eq!(starts.len(), 1);
+        assert_eq!(starts[0]["input"], json!([]));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

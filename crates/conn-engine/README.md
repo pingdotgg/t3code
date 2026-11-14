@@ -54,6 +54,31 @@ with a reason the client shows (`commands::refusal`).
   build already has FTS5. Every word of three characters or more must match; shorter words
   only narrow, and a query without a long word searches no messages (two CJK characters count
   as long). Hidden threads drop out in SQL before the limit. Titles are the client's to match.
+- **Background work.** A run that completes leaves its open command, dynamic tool and
+  subagent rows running, as T3 does. The shell row's `pendingBackgroundTasks` is
+  `derivePendingBackgroundWork` (`src/background.rs`): provider thread rosters, then those
+  rows, then pull request watches; `/mcp` reads it for its thread list and the live-caller
+  rule. `background_work.updated` (not persisted) holds an idle session like the provider's
+  own probe, at most 64 provider turns tracked. `client-check.mjs` compares the roster with
+  T3's own function.
+- **Stop.** `thread.stop` and `run.interrupt` record a `run_interrupt_request` item on the
+  active run (`markStoppedRun`, message "Stopped by user" or the command's reason); a run that
+  ends interrupted gets a `run_interrupt_result` (`makeInterruptResultTurnItem`). When the
+  provider answers Stop with `InterruptTimeout`, the run stays open and the request gets
+  `unresponsiveAt` (`thread.interrupt.unresponsive`): clients offer Force stop, whose result
+  says "Force stopped by user".
+- **Model change during a turn.** A `thread.model-selection.set` on the thread's instance
+  goes to the running provider turn's session (`provider-session.apply-model-selection`,
+  `ProviderTurnControlService.applyModelSelection`); the provider applies what it can live.
+  Without a running provider turn only the thread changes. Codex has no live change (as T3).
+- **Selection plan.** A model change on the thread's instance asks that provider's
+  `plan_selection_transition` with the live session's capabilities (`ProviderSwitchService`):
+  `reject` refuses the command; `restart_session` releases the session between turns and is
+  refused during a run; `create_with_handoff` is refused (no handoff here). Without a session
+  row the change applies at the next turn. Claude and Codex answer `apply_on_next_turn`.
+- **Session row.** `open_session` returns the provider session; the engine stores it before
+  any event. A session whose background tasks end with its process (Claude) clears its
+  provider threads' rosters when it is released.
 - **Provider switch.** A `thread.model-selection.set` to another instance is a provider switch
   (refused while a run is active). A run on another instance than the live session closes it
   and opens one on its own instance; a provider thread of another instance is never resumed.

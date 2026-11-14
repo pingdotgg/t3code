@@ -63,10 +63,11 @@ Turns with streamed text and reasoning, token usage, the executed model (reroute
 command rows with output deltas, file changes, web search, MCP and dynamic tool rows,
 image-view rows, proposed plans, todo lists, context compaction rows, MCP start-up failure
 notices, command / file-change / permission / legacy approvals with session allowances,
-structured questions, steering, interrupt (with background terminals stopped and a 10 s
-fallback), usage-limit and provider failures (redacted, `conn_provider_support::redact`),
+structured questions, steering, interrupt (with background terminals stopped; a Stop not
+confirmed in 10 s reports an interrupt timeout), usage-limit and provider failures (redacted, `conn_provider_support::redact`),
 thread resume after a restart, rollback (`CodexThreadRevert.ts`), fork (native, inclusive
-`lastTurnId`, or reverted to the boundary), requests Codex resolved itself
+`lastTurnId`, or reverted to the boundary; the fork's own model and cwd, as
+`codexThreadRuntimeParams`), requests Codex resolved itself
 (`serverRequest/resolved`).
 
 ## Not implemented
@@ -76,12 +77,11 @@ thread resume after a restart, rollback (`CodexThreadRevert.ts`), fork (native, 
   four `subagent_v2*` recordings.
 - **Thread operations:** snapshots, compaction requests, history injection, goals, archive,
   feedback upload; the `additionalContext` restore after compaction (`thread/inject_items`).
-- **Fork input:** the trait's `ForkThreadInput` has no model or policy; the fork uses the
-  session's own (TS passes the fork's when the orchestrator gives them).
 - **Retries:** `error` with `willRetry: true` makes no retry row; the turn keeps running.
 - **Rate limits:** `account/rateLimits/*` is ignored, so usage-limit failures have no `resetAt`.
 - **T3 context details:** browser tools are assumed on and device tools off (TS reads both
-  from the MCP session); app context entries are not sent. Snap-shot window context of image
+  from the MCP session); app context entries go in `additionalContext` as `untrusted`, but
+  the engine has no MCP apps and passes none. Snap-shot window context of image
   attachments is not added.
 - **Tool rows:** MCP presentation (titles, icons, surfaces) and MCP apps.
 - **Elicitations:** declined. `item/tool/call` and auth-refresh requests get an error reply.
@@ -96,12 +96,12 @@ thread resume after a restart, rollback (`CodexThreadRevert.ts`), fork (native, 
 
 ## Stop that Codex never confirms
 
-T3 (since b5b470542a) leaves the turn open and marked interrupting when Codex does not end
-it within 10 s of `turn/interrupt`, and returns `ProviderAdapterInterruptTimeoutError`; the
-engine then offers "Force stop". This crate ends the turn as interrupted after 10 s, as T3
-did before. The provider trait has no interrupt-timeout error and the engine no
-"unresponsive" Stop result, so following T3 alone would leave the turn open with no prompt
-to force it.
+As T3 since b5b470542a: when Codex does not end the turn within 10 s of `turn/interrupt`
+(`CodexConfig::stop_confirm_timeout`, T3's `CODEX_STOP_CONFIRM_TIMEOUT_MS`), the turn stays
+open and marked interrupting, and `interrupt_turn` returns
+`ProviderError::InterruptTimeout`. A later `turn/completed` ends it as usual; closing the
+session (Force stop) ends it as interrupted. The engine marks the Stop unresponsive and clients
+offer Force stop. Proof: `an_unconfirmed_stop_times_out_and_keeps_the_turn_open`.
 
 ## Version tie
 

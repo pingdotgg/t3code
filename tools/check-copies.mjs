@@ -143,6 +143,17 @@ same(
   /export const CLAUDE_T3_MCP_TOOL_WILDCARD = "([^"]*)";/.exec(claudeTs)?.[1],
 );
 
+// ---- Codex texts the Codex provider shows as they are ------------------------------------------
+{
+  const codexRs = rust("crates/conn-provider-codex/src/session.rs");
+  const codexTs = ts("apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts");
+  same(
+    "conn-provider-codex CODEX_THREAD_IN_USE_MESSAGE = CodexAdapterV2's",
+    /const CODEX_THREAD_IN_USE_MESSAGE: &str = "([^"]*)";/.exec(codexRs)?.[1],
+    /const CODEX_THREAD_IN_USE_MESSAGE =\s*"([^"]*)";/.exec(codexTs)?.[1],
+  );
+}
+
 // ---- The Claude Agent SDK version (AGENTS.md: the same SDK version as the T3 server) ----------
 // T3 pins a range in apps/server/package.json; its pnpm lockfile holds the version it runs.
 const t3Sdk = [...ts("pnpm-lock.yaml").matchAll(/\n {2}'?@anthropic-ai\/claude-agent-sdk@([0-9][^':(]*)'?:/g)].map(

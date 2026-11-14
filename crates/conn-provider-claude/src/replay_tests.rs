@@ -39,6 +39,9 @@ fn provider_thread(native: &str) -> Value {
 fn turn_input(n: u32, thread: &Value, text: &str, runtime_mode: &str) -> TurnInput {
     let attempt = format!("attempt-{n}");
     TurnInput {
+        native_thread_has_turns: None,
+        restart_continuation_of_run_id: None,
+        app_context: vec![],
         app_thread: from_json(json!({
             "createdBy": "user", "creationSource": "web", "id": THREAD, "projectId": "project-thread-claude-wake",
             "title": "Claude attachment test", "providerInstanceId": "claudeAgent",
@@ -58,6 +61,10 @@ fn turn_input(n: u32, thread: &Value, text: &str, runtime_mode: &str) -> TurnInp
         root_node_id: format!("node-{attempt}").as_str().into(),
         provider_thread: from_json(thread.clone()).unwrap(),
         message: TurnMessage {
+            created_by: conn_contract::OrchestrationV2Actor::User,
+            creation_source: conn_contract::OrchestrationV2CreationSource::Web,
+            scheduled_task_id: None,
+            sender_thread_id: None,
             message_id: format!("message-{attempt}").as_str().into(),
             text: text.into(),
             attachments: vec![],
@@ -650,4 +657,31 @@ fn mapper_state_stays_bounded_over_many_turns() {
         }
     }
     assert_eq!(sizes[0], sizes[1], "state after round 2 vs round 200");
+}
+
+#[test]
+fn plan_mode_without_approvals_denies_tools() {
+    // `interactionMode: plan` with `approvalPolicy: never`: T3's callback denies the tool
+    // without a prompt (ClaudeAdapterV2 canUseTool).
+    let mut mapper = Mapper::new(FixedEnv::default(), SESSION);
+    mapper.begin_turn(
+        &turn_input(1, &provider_thread("n1"), "plan", "approval-required"),
+        "plan",
+    );
+    mapper.set_policy_asks(true);
+    mapper.set_plan_without_approvals(true);
+    let outs = mapper.handle(Inbound::from_value(json!({
+        "type": "control_request", "request_id": "cli-w",
+        "request": {"subtype": "can_use_tool", "tool_name": "Write",
+                    "input": {"file_path": "/x"}, "tool_use_id": "toolu_w"},
+    })));
+    assert!(
+        !outs
+            .iter()
+            .any(|o| matches!(o, Out::Event(ProviderEvent::RuntimeRequestUpdated { .. })))
+    );
+    let Some(Out::Write(deny)) = outs.last() else {
+        panic!("a reply expected: {outs:?}")
+    };
+    assert!(deny.contains("approvals are disabled for this thread"));
 }

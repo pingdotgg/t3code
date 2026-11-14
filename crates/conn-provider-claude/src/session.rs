@@ -123,6 +123,7 @@ impl ClaudeSession {
         config: ClaudeConfig,
         helper: Helper,
         events: mpsc::Sender<ProviderEvent>,
+        mcp_servers: Vec<McpServer>,
     ) -> Self {
         let mapper = Mapper::new(SystemEnv, id.as_str());
         let inner = Arc::new(Inner {
@@ -135,7 +136,9 @@ impl ClaudeSession {
                 live: None,
                 generation: 0,
                 resumable: HashSet::new(),
-                mcp_servers: Vec::new(),
+                // Registered with `setMcpServers` once the first query is initialized, as
+                // T3's query runner does, so taking them at open sends the same.
+                mcp_servers,
                 attachment_bytes: 0,
                 turn_prompt_effort: None,
                 bypass_cache: None,
@@ -528,24 +531,85 @@ fn model_selection(
     (compiled.api_model_id, compiled.effort, compiled.settings)
 }
 
-fn policy_input(policy: &RuntimePolicy) -> (String, String) {
-    let runtime = to_json(&policy.runtime_mode);
-    let interaction = to_json(&policy.interaction_mode);
-    (
-        runtime.as_str().unwrap_or("full-access").to_string(),
-        interaction.as_str().unwrap_or("default").to_string(),
-    )
+/// Whether a live selection change may also change the API model.
+#[derive(Clone, Copy, Debug)]
+enum ModelChange {
+    Never,
+    WhenOpenedInMode,
+}
+
+/// The runtime policy as T3's Claude adapter reads it: modes, `approvalPolicy` and the
+/// `sandboxPolicy` kind (`sandboxPolicyKindForClaudeRuntimePolicy`,
+/// `readOnlyPolicyAllowsGlobalReads`).
+#[derive(Debug)]
+struct OwnedPolicyInput {
+    runtime_mode: String,
+    interaction_mode: String,
+    /// The approval policy when it is a string; `Some("")` for any other set value (an object
+    /// such as `granular`), which T3 treats as "set, not never".
+    approval_policy: Option<String>,
+    sandbox: Option<&'static str>,
+    read_only_global_reads: bool,
+}
+
+impl OwnedPolicyInput {
+    fn new(policy: &RuntimePolicy) -> Self {
+        let runtime = to_json(&policy.runtime_mode);
+        let interaction = to_json(&policy.interaction_mode);
+        let approval_policy = policy
+            .approval_policy
+            .as_ref()
+            .map(|v| v.as_str().unwrap_or_default().to_string());
+        let sandbox_type = policy
+            .sandbox_policy
+            .as_ref()
+            .and_then(|v| v.get("type"))
+            .and_then(Value::as_str);
+        let sandbox = match sandbox_type {
+            Some("dangerFullAccess") => Some("dangerFullAccess"),
+            Some("externalSandbox") => Some("externalSandbox"),
+            Some("readOnly") => Some("readOnly"),
+            Some("workspaceWrite") => Some("workspaceWrite"),
+            _ => None,
+        };
+        let read_only_global_reads = sandbox == Some("readOnly")
+            && policy
+                .sandbox_policy
+                .as_ref()
+                .and_then(|v| v.get("access"))
+                .and_then(|a| a.get("type"))
+                .and_then(Value::as_str)
+                == Some("fullAccess");
+        Self {
+            runtime_mode: runtime.as_str().unwrap_or("full-access").to_string(),
+            interaction_mode: interaction.as_str().unwrap_or("default").to_string(),
+            approval_policy,
+            sandbox,
+            read_only_global_reads,
+        }
+    }
+
+    fn input(&self) -> PolicyInput<'_> {
+        PolicyInput {
+            runtime_mode: &self.runtime_mode,
+            interaction_mode: &self.interaction_mode,
+            approval_policy: self.approval_policy.as_deref(),
+            sandbox: self.sandbox,
+            read_only_global_reads: self.read_only_global_reads,
+        }
+    }
+
+    /// `interactionMode === "plan" && approvalPolicy === "never"`: the permission callback
+    /// denies every tool that would ask.
+    fn plan_without_approvals(&self) -> bool {
+        self.interaction_mode == "plan" && self.approval_policy.as_deref() == Some("never")
+    }
 }
 
 /// The policy without settings (no bypass check): for live mode changes.
 fn plain_policy(policy: &RuntimePolicy) -> QueryPolicy {
-    let (runtime, interaction) = policy_input(policy);
     launch::query_policy(
-        &PolicyInput {
-            runtime_mode: &runtime,
-            interaction_mode: &interaction,
-            ..PolicyInput::default()
-        },
+        &OwnedPolicyInput::new(policy).input(),
         BypassAvailability::default(),
     )
 }
@@ -723,15 +787,7 @@ impl ClaudeSession {
             return plain;
         }
         let availability = self.bypass_availability(policy.cwd.as_deref()).await;
-        let (runtime, interaction) = policy_input(policy);
-        launch::query_policy(
-            &PolicyInput {
-                runtime_mode: &runtime,
-                interaction_mode: &interaction,
-                ..PolicyInput::default()
-            },
-            availability,
-        )
+        launch::query_policy(&OwnedPolicyInput::new(policy).input(), availability)
     }
 
     /// Ensures a query for the turn's thread, with its model, effort, mode and MCP servers.
@@ -784,10 +840,14 @@ impl ClaudeSession {
                 (plan, None)
             } else {
                 // A persisted turn requires resume, also after an idle release.
+                // `hasPersistedProviderTurn`: nativeThreadHasTurns ?? providerTurnOrdinal > 1.
                 let resume = state.resumable.contains(&native)
-                    || input.provider_turn_ordinal > 1
+                    || input
+                        .native_thread_has_turns
+                        .unwrap_or(input.provider_turn_ordinal > 1)
                     || conversation_head(&thread).is_some();
-                let read_only = false;
+                let read_only =
+                    OwnedPolicyInput::new(&input.runtime_policy).sandbox == Some("readOnly");
                 let query = QueryInput {
                     thread_id: input.thread_id.as_str().into(),
                     native_thread_id: native.clone(),
@@ -849,6 +909,9 @@ impl ClaudeSession {
         state.resumable.insert(native);
         touch(&mut state, None);
         state.mapper.set_policy_asks(launch::asks_user(&policy));
+        state.mapper.set_plan_without_approvals(
+            OwnedPolicyInput::new(&input.runtime_policy).plan_without_approvals(),
+        );
         Ok(policy)
     }
 
@@ -893,33 +956,63 @@ impl ClaudeSession {
         Ok(())
     }
 
-    /// Applies a selection to the live query, or marks it for a new one when the change
-    /// cannot apply live (thinking toggled, effort cleared).
+    /// Applies a selection to the live query when T3 would (`canApplyClaudeSelectionLive`, a
+    /// different `queryIdentity`), and returns whether it did. `model_change` allows a new API
+    /// model too: a steer may change it when the CLI opened in the turn's mode; a selection sent
+    /// on its own (`applyModelSelection`) may not, so a model change waits for the next turn.
+    /// `native` limits it to the live query of that native thread.
     async fn apply_selection(
         &self,
         selection: &conn_contract::ModelSelection,
-    ) -> ProviderResult<()> {
+        native: Option<&str>,
+        model_change: ModelChange,
+    ) -> ProviderResult<bool> {
         let (model, effort, settings) = model_selection(selection);
         let live_change = {
-            let mut state = self.inner.lock();
-            match &mut state.live {
-                Some(live) => {
-                    let can_apply = live.selection_settings.get("alwaysThinkingEnabled")
-                        == settings.get("alwaysThinkingEnabled")
-                        && (effort.is_some() || live.effort.is_none());
-                    live.restart_needed |= !can_apply;
-                    can_apply
-                        && (live.model != model
-                            || live.effort != effort
-                            || live.selection_settings != settings)
-                }
-                None => false,
-            }
+            let state = self.inner.lock();
+            state.live.as_ref().is_some_and(|live| {
+                let same_identity = live.model == model
+                    && live.effort == effort
+                    && live.selection_settings == settings;
+                let can_apply = live.selection_settings.get("alwaysThinkingEnabled")
+                    == settings.get("alwaysThinkingEnabled")
+                    && (effort.is_some() || live.effort.is_none());
+                let model_ok = live.model == model
+                    || match model_change {
+                        ModelChange::Never => false,
+                        ModelChange::WhenOpenedInMode => {
+                            live.opened_permission_mode == live.policy.permission_mode
+                        }
+                    };
+                live.query.is_open()
+                    && native.is_none_or(|n| n == live.native_thread_id)
+                    && !same_identity
+                    && can_apply
+                    && model_ok
+            })
         };
         if live_change {
             self.apply_live_selection(&model, effort.as_deref(), &settings)
                 .await?;
         }
+        Ok(live_change)
+    }
+
+    /// The provider's continuation turn: replays the output held for it.
+    async fn start_continuation(&self, input: TurnInput) -> ProviderResult<()> {
+        let (outs, query) = {
+            let mut state = self.inner.lock();
+            if state.mapper.turn_active() {
+                return Err(failed_err("start_turn", "a turn is running"));
+            }
+            let Some(live) = &state.live else {
+                return Err(ProviderError::SessionStopped);
+            };
+            let query = live.query.clone();
+            let mode = live.permission_mode.clone();
+            (state.mapper.begin_continuation(&input, &mode), query)
+        };
+        self.inner.deliver(Some(&query), outs).await;
         Ok(())
     }
 
@@ -1197,36 +1290,29 @@ impl Session for ClaudeSession {
         })
     }
 
+    /// A message the provider asked for (`createdBy: agent`, `creationSource: provider`) starts
+    /// a turn that shows the output Claude already holds, and sends no prompt
+    /// (`isClaudeProviderContinuationTurn`).
     fn start_turn(&self, input: TurnInput) -> BoxFuture<'_, ProviderResult<()>> {
-        Box::pin(self.start_turn_inner(input))
-    }
-
-    fn start_continuation_turn(&self, input: TurnInput) -> BoxFuture<'_, ProviderResult<()>> {
-        Box::pin(async move {
-            let (outs, query) = {
-                let mut state = self.inner.lock();
-                if state.mapper.turn_active() {
-                    return Err(failed_err("start_continuation_turn", "a turn is running"));
-                }
-                let Some(live) = &state.live else {
-                    return Err(ProviderError::SessionStopped);
-                };
-                let query = live.query.clone();
-                let mode = live.permission_mode.clone();
-                (state.mapper.begin_continuation(&input, &mode), query)
-            };
-            self.inner.deliver(Some(&query), outs).await;
-            Ok(())
-        })
+        if input.message.is_provider_continuation() {
+            Box::pin(self.start_continuation(input))
+        } else {
+            Box::pin(self.start_turn_inner(input))
+        }
     }
 
     fn steer_turn(&self, input: SteerInput) -> BoxFuture<'_, ProviderResult<()>> {
         Box::pin(async move {
-            if let Some(selection) = &input.model_selection {
-                self.apply_selection(selection).await?;
-            }
-            // The steer's own selection, else the running turn's (T3's liveSteerSelection).
-            let effort = match &input.model_selection {
+            // The steer's own selection when it applies live, else the running turn's (T3's
+            // liveSteerSelection).
+            let live_selection = match &input.model_selection {
+                Some(selection) => self
+                    .apply_selection(selection, None, ModelChange::WhenOpenedInMode)
+                    .await?
+                    .then_some(selection),
+                None => None,
+            };
+            let effort = match live_selection {
                 Some(selection) => catalog::compile(&to_json(selection)).prompt_effort,
                 None => self.inner.lock().turn_prompt_effort.clone(),
             };
@@ -1283,12 +1369,25 @@ impl Session for ClaudeSession {
         })
     }
 
+    /// `ClaudeAdapterV2.applyModelSelection`: effort and settings apply to the live query of
+    /// this thread; a new model waits for the next turn. A failed update is logged, as T3 does.
     fn apply_model_selection(
         &self,
-        _thread: ProviderThread,
+        thread: ProviderThread,
         selection: conn_contract::ModelSelection,
     ) -> BoxFuture<'_, ProviderResult<()>> {
-        Box::pin(async move { self.apply_selection(&selection).await })
+        Box::pin(async move {
+            let Some(native) = native_thread_id(&thread) else {
+                return Ok(());
+            };
+            if let Err(e) = self
+                .apply_selection(&selection, Some(&native), ModelChange::Never)
+                .await
+            {
+                eprintln!("conn-provider-claude: the live selection change failed: {e}");
+            }
+            Ok(())
+        })
     }
 
     fn apply_runtime_policy(
@@ -1330,6 +1429,9 @@ impl Session for ClaudeSession {
             }
             state.mapper.set_permission_mode(&mode);
             state.mapper.set_policy_asks(launch::asks_user(&next));
+            state.mapper.set_plan_without_approvals(
+                OwnedPolicyInput::new(&policy).plan_without_approvals(),
+            );
             Ok(())
         })
     }
@@ -1597,6 +1699,52 @@ mod tests {
                 auto_disabled: false
             }
         );
+    }
+
+    fn runtime_policy(value: Value) -> RuntimePolicy {
+        from_json(value).unwrap_or_else(|e| panic!("{e}"))
+    }
+
+    #[test]
+    fn approval_and_sandbox_policy_are_read_like_t3() {
+        // READ_ONLY_NEVER_POLICY of T3's fixtures: dontAsk, read-only tools, allowed globally.
+        let read_only = runtime_policy(json!({
+            "runtimeMode": "full-access", "interactionMode": "default", "cwd": null,
+            "approvalPolicy": "never",
+            "sandboxPolicy": {"type": "readOnly", "access": {"type": "fullAccess"}},
+        }));
+        let policy = plain_policy(&read_only);
+        assert_eq!(policy.permission_mode, "dontAsk");
+        assert_eq!(
+            policy.tools,
+            launch::Tools::List(vec!["Read".into(), "Glob".into(), "Grep".into()])
+        );
+        assert!(policy.allowed_tools.is_some());
+        assert!(!policy.install_permission_callback);
+
+        // RESTRICTED_GRANULAR_POLICY: an object approval policy counts as "set, not never".
+        let granular = runtime_policy(json!({
+            "runtimeMode": "full-access", "interactionMode": "default", "cwd": null,
+            "approvalPolicy": {"granular": {"rules": true}},
+            "sandboxPolicy": {"type": "readOnly", "access": {"type": "restricted"}},
+        }));
+        let policy = plain_policy(&granular);
+        assert_eq!(policy.permission_mode, "default");
+        assert_eq!(policy.allowed_tools, None);
+        assert!(policy.install_permission_callback);
+
+        // No override: the runtime mode alone decides, as before.
+        let plain = runtime_policy(
+            json!({"runtimeMode": "full-access", "interactionMode": "default", "cwd": null}),
+        );
+        assert_eq!(plain_policy(&plain).permission_mode, "bypassPermissions");
+
+        let plan_never = runtime_policy(json!({
+            "runtimeMode": "full-access", "interactionMode": "plan", "cwd": null,
+            "approvalPolicy": "never",
+        }));
+        assert!(OwnedPolicyInput::new(&plan_never).plan_without_approvals());
+        assert!(!OwnedPolicyInput::new(&plain).plan_without_approvals());
     }
 
     #[test]

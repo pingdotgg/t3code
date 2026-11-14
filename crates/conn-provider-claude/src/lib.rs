@@ -36,8 +36,7 @@ pub(crate) mod testdata;
 
 use conn_contract::{ProviderCapabilities, ProviderInstanceId, from_json};
 use conn_provider::{
-    BoxFuture, OpenSessionInput, OpenedSession, Provider, ProviderError, ProviderEvent,
-    ProviderResult,
+    BoxFuture, OpenSessionInput, OpenedSession, Provider, ProviderError, ProviderResult,
 };
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
@@ -67,7 +66,7 @@ impl std::fmt::Debug for ClaudeProvider {
 
 impl ClaudeProvider {
     pub fn new(instance_id: ProviderInstanceId, config: ClaudeConfig) -> Self {
-        let helper = Helper::new(config.helper.clone(), instance_id.as_str());
+        let helper = helper::claude_host(config.helper.clone(), instance_id.as_str());
         Self {
             instance_id,
             config,
@@ -113,7 +112,6 @@ impl Provider for ClaudeProvider {
             let (tx, events) = mpsc::channel(session::EVENT_CAPACITY);
             let now = ids::Env::now(&mut ids::SystemEnv);
             let model = conn_contract::to_json(&input.model_selection)["model"].clone();
-            // The trait returns no ProviderSession; the engine learns it from this event.
             let provider_session = json!({
                 "id": input.provider_session_id.as_str(),
                 "driver": DRIVER,
@@ -126,25 +124,24 @@ impl Provider for ClaudeProvider {
                 "updatedAt": now,
                 "lastError": null,
             });
-            let event = ProviderEvent::ProviderSessionUpdated {
-                provider_session: from_json(provider_session).map_err(|e| {
-                    ProviderError::Protocol {
-                        detail: e.to_string(),
-                    }
-                })?,
-            };
-            tx.try_send(event)
-                .map_err(|_| ProviderError::SessionStopped)?;
+            let provider_session =
+                from_json(provider_session).map_err(|e| ProviderError::Protocol {
+                    detail: e.to_string(),
+                })?;
             let session = ClaudeSession::open(
                 input.provider_session_id,
                 self.instance_id.as_str(),
                 self.config.clone(),
                 self.helper.clone(),
                 tx,
+                input.mcp_servers,
             );
             Ok(OpenedSession {
                 session: Box::new(session),
                 events,
+                provider_session,
+                // `backgroundTasksEndWithProcess: true` in ClaudeAdapterV2.
+                background_tasks_end_with_process: true,
             })
         })
     }

@@ -475,15 +475,6 @@ impl<E: Env> Mapper<E> {
             .unwrap_or_default()
     }
 
-    /// Ends a turn Codex did not finish after an interrupt.
-    pub fn force_interrupted(&mut self, native_turn_id: &str) -> Vec<Out> {
-        let mut out = Vec::new();
-        let now = self.env.now();
-        self.finalize(native_turn_id, "interrupted", now, None, None, &mut out);
-        self.interrupting.remove(native_turn_id);
-        out
-    }
-
     /// The app-server is gone: every open turn ends. `expected` (a close) ends them as
     /// interrupted, a crash as failed.
     pub fn on_exit(&mut self, expected: bool, detail: &str) -> Vec<Out> {

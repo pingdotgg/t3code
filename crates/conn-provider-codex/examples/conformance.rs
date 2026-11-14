@@ -150,6 +150,10 @@ fn json<T: serde::de::DeserializeOwned>(value: &Value) -> Result<T, String> {
 fn message(input: &Value) -> Result<TurnMessage, String> {
     let m = &input["message"];
     Ok(TurnMessage {
+        created_by: conn_contract::OrchestrationV2Actor::User,
+        creation_source: conn_contract::OrchestrationV2CreationSource::Web,
+        scheduled_task_id: None,
+        sender_thread_id: None,
         message_id: m["messageId"].as_str().unwrap_or("m").into(),
         text: m["text"].as_str().unwrap_or_default().to_owned(),
         attachments: json(&m["attachments"]).unwrap_or_default(),
@@ -219,6 +223,7 @@ async fn scenario(plan: &Value, scenario: &Value) -> Result<(), String> {
                 let OpenedSession {
                     session: opened,
                     events,
+                    ..
                 } = provider
                     .open_session(OpenSessionInput {
                         thread_id: input["threadId"].as_str().unwrap_or("t").into(),
@@ -229,25 +234,25 @@ async fn scenario(plan: &Value, scenario: &Value) -> Result<(), String> {
                         model_selection: json(&input["modelSelection"])?,
                         runtime_policy: json(&input["runtimePolicy"])?,
                         resume_from_session: None,
+                        // What the engine passes when the thread has T3's MCP session; the
+                        // TS side gets the same endpoint and token from its McpProviderSessions.
+                        mcp_servers: if scenario["mcp"] == true {
+                            vec![McpServer {
+                                name: "t3-code".into(),
+                                url: "http://127.0.0.1:3773/mcp".into(),
+                                headers: vec![(
+                                    "Authorization".into(),
+                                    "Bearer conformance-token".into(),
+                                )],
+                            }]
+                        } else {
+                            vec![]
+                        },
+                        host: None,
                     })
                     .await
                     .map_err(|e| e.to_string())?;
                 pump(&run, events);
-                if scenario["mcp"] == true {
-                    // What the engine passes when the thread has T3's MCP session; the TS
-                    // side gets the same endpoint and token from its McpProviderSessions.
-                    opened
-                        .set_mcp_servers(vec![McpServer {
-                            name: "t3-code".into(),
-                            url: "http://127.0.0.1:3773/mcp".into(),
-                            headers: vec![(
-                                "Authorization".into(),
-                                "Bearer conformance-token".into(),
-                            )],
-                        }])
-                        .await
-                        .map_err(|e| e.to_string())?;
-                }
                 session = Some(opened);
             }
             "ensureThread" => {
@@ -300,6 +305,7 @@ async fn scenario(plan: &Value, scenario: &Value) -> Result<(), String> {
                     let OpenedSession {
                         session: opened,
                         events,
+                        ..
                     } = provider
                         .open_session(OpenSessionInput {
                             thread_id: input["threadId"].as_str().unwrap_or("t").into(),
@@ -307,6 +313,8 @@ async fn scenario(plan: &Value, scenario: &Value) -> Result<(), String> {
                             model_selection: json(&input["modelSelection"])?,
                             runtime_policy: json(&input["runtimePolicy"])?,
                             resume_from_session: None,
+                            mcp_servers: vec![],
+                            host: None,
                         })
                         .await
                         .map_err(|e| e.to_string())?;
@@ -322,6 +330,9 @@ async fn scenario(plan: &Value, scenario: &Value) -> Result<(), String> {
                 let model_selection: ModelSelection = json(&input["modelSelection"])?;
                 let runtime_policy: RuntimePolicy = json(&input["runtimePolicy"])?;
                 s.start_turn(TurnInput {
+                    native_thread_has_turns: None,
+                    restart_continuation_of_run_id: None,
+                    app_context: vec![],
                     app_thread: json(&input["appThread"])?,
                     thread_id: input["threadId"].as_str().unwrap_or("t").into(),
                     run_id: input["runId"].as_str().unwrap_or("r").into(),
@@ -436,6 +447,8 @@ async fn scenario(plan: &Value, scenario: &Value) -> Result<(), String> {
                         provider_turn_id: input["providerTurnId"].as_str().map(Into::into),
                         target_thread_id: input["targetThreadId"].as_str().unwrap_or("t").into(),
                         owner_node_id: input["ownerNodeId"].as_str().map(Into::into),
+                        model_selection: json(&input["modelSelection"])?,
+                        runtime_policy: json(&input["runtimePolicy"])?,
                     })
                     .await
                     .map_err(|e| e.to_string())?;

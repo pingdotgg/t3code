@@ -193,6 +193,7 @@ dependencies = [
  "conn-contract",
  "serde",
  "serde_json",
+ "thiserror",
  "tokio",
 ]
 
@@ -229,6 +230,7 @@ dependencies = [
 name = "conn-provider-support"
 version = "0.1.0"
 dependencies = [
+ "conn-provider",
  "conn-support",
  "rustix",
  "serde_json",

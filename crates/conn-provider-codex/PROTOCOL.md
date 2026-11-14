@@ -101,15 +101,16 @@ process before a thread call (the TS server lists models in a separate probe pro
   - `effort` and `serviceTier`, when the model selection sets them
   - `collaborationMode: {"mode": <interaction mode>, "settings": {"model",
     "reasoning_effort"?}}`
-  - `additionalContext`, only with T3 MCP
+  - `additionalContext`: with T3 MCP, T3's entries; MCP app context as `{"kind": "untrusted"}`
+  - `input: []` for a restart continuation (`restartContinuationOfRunId`): Codex resumes
 
   The result is `{"turn": {"id", "status": "inProgress", "startedAt": null | secs, ...}}`. A
   `turn/started` notification can come before the result.
 
 - **Steer:** `turn/steer` `{"expectedTurnId", "input", "threadId"}` → `{"turnId"}`.
 - **Interrupt:** `turn/interrupt` `{"threadId", "turnId"}` → `{}`. Codex then sends
-  `turn/completed` with status `interrupted`. TS waits up to 10 s for it, then finalizes the
-  turn as interrupted itself. Running background terminals are stopped with
+  `turn/completed` with status `interrupted`. TS waits up to 10 s for it; without it the turn
+  stays open and Stop fails with `ProviderAdapterInterruptTimeoutError` (Force stop), as here. Running background terminals are stopped with
   `thread/backgroundTerminals/terminate` `{"threadId", "processId"}`.
 - **Model change:** none in session. Each `turn/start` carries the model and effort.
 - **Runtime mode change:** none in session. Each `turn/start` carries the policies.
@@ -185,7 +186,8 @@ fuzzy-search and fs families.
 - The process exits: the event stream fails, so every open turn ends.
 - A request error is `{"code", "message"}`. TS checks these codes:
   - `-32600 "Already initialized"`: success
-  - `-32600` "already has an active writer": thread in use
+  - `-32600` "already has an active writer": thread in use (`ProviderError::ThreadInUse` with
+    T3's `CODEX_THREAD_IN_USE_MESSAGE`; `tools/check-copies.mjs` holds the text)
   - `-32601`: unknown method; `thread/inject_items` falls back
   - `-32600 "thread not found:"` on terminate: nothing is left to stop
 - A usage limit: the `error` notification or `turn.error` carries `codexErrorInfo` (HTTP

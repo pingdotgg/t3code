@@ -61,6 +61,31 @@ pub(crate) fn is_settled(thread: &Value) -> bool {
     settled(thread).0
 }
 
+/// `threadBackgroundWork`: the shell's pending background tasks without provider-internal
+/// links (`parentTaskId`, `providerInstanceId`).
+fn background_work(tasks: &Value) -> Value {
+    let tasks = tasks.as_array().map(Vec::as_slice).unwrap_or_default();
+    Value::Array(
+        tasks
+            .iter()
+            .map(|task| {
+                let mut out = json!({"taskId": task["taskId"], "kind": task["kind"]});
+                for key in ["description", "awaited"] {
+                    if let Some(value) = task.get(key).filter(|v| !v.is_null()) {
+                        out[key] = value.clone();
+                    }
+                }
+                if task["kind"] == "subagent"
+                    && let Some(child) = task.get("childThreadId").filter(|v| !v.is_null())
+                {
+                    out["childThreadId"] = child.clone();
+                }
+                out
+            })
+            .collect(),
+    )
+}
+
 /// `OrchestratorMcpThreadListItem` from a shell row.
 pub(crate) fn list_item(config: &McpConfig, caller: &Caller, shell: &Value, now: &str) -> Value {
     let id = shell["id"].as_str().unwrap_or_default();
@@ -86,7 +111,7 @@ pub(crate) fn list_item(config: &McpConfig, caller: &Caller, shell: &Value, now:
         "snoozed": snoozed,
         "snoozedUntil": snoozed_until,
         "blockedOnThreadWait": shell["blockedOnThreadWait"] == true,
-        "pendingBackgroundTasks": [],
+        "pendingBackgroundTasks": background_work(&shell["pendingBackgroundTasks"]),
         "parentThreadId": shell["lineage"]["parentThreadId"],
         "relationshipToParent": shell["lineage"]["relationshipToParent"],
         "itemCount": shell["visibleItemCount"].as_u64().unwrap_or(0),

@@ -112,13 +112,17 @@ async fn open(
     mode: &str,
     cwd: &str,
 ) -> (Box<dyn Session>, mpsc::Receiver<ProviderEvent>) {
-    let OpenedSession { session, events } = provider
+    let OpenedSession {
+        session, events, ..
+    } = provider
         .open_session(OpenSessionInput {
             thread_id: "thread-live".into(),
             provider_session_id: "provider-session-live".into(),
             model_selection: from_json(model()).unwrap(),
             runtime_policy: from_json(policy(mode, cwd)).unwrap(),
             resume_from_session: None,
+            mcp_servers: vec![],
+            host: None,
         })
         .await
         .unwrap();
@@ -133,6 +137,9 @@ fn turn(
     cwd: &str,
 ) -> TurnInput {
     TurnInput {
+        native_thread_has_turns: None,
+        restart_continuation_of_run_id: None,
+        app_context: vec![],
         app_thread: from_json(json!({
             "createdBy": "user", "creationSource": "web", "id": "thread-live",
             "projectId": "project-live", "title": "Live test", "providerInstanceId": "claudeAgent",
@@ -151,6 +158,10 @@ fn turn(
         root_node_id: format!("node-{n}").as_str().into(),
         provider_thread: thread.clone(),
         message: TurnMessage {
+            created_by: conn_contract::OrchestrationV2Actor::User,
+            creation_source: conn_contract::OrchestrationV2CreationSource::Web,
+            scheduled_task_id: None,
+            sender_thread_id: None,
             message_id: format!("message-{n}").as_str().into(),
             text: text.into(),
             attachments: vec![],
@@ -306,13 +317,14 @@ async fn live_interrupt_then_continue() {
     // The concrete session, to check which process served each turn.
     let (tx, mut events) = mpsc::channel(crate::session::EVENT_CAPACITY);
     let config = provider().config().clone();
-    let helper = crate::Helper::new(config.helper.clone(), "claudeAgent");
+    let helper = crate::helper::claude_host(config.helper.clone(), "claudeAgent");
     let session = ClaudeSession::open(
         "provider-session-live".into(),
         "claudeAgent",
         config,
         helper,
         tx,
+        vec![],
     );
     let thread = new_thread(&session, "full-access", &scratch.cwd()).await;
     session
@@ -456,7 +468,7 @@ fn thread_of(events: &[Value]) -> conn_contract::ProviderThread {
 
 fn concrete(config: ClaudeConfig) -> (ClaudeSession, crate::Helper, mpsc::Receiver<ProviderEvent>) {
     let (tx, events) = mpsc::channel(crate::session::EVENT_CAPACITY);
-    let helper = crate::Helper::new(config.helper.clone(), "claudeAgent");
+    let helper = crate::helper::claude_host(config.helper.clone(), "claudeAgent");
     (
         ClaudeSession::open(
             "provider-session-live".into(),
@@ -464,6 +476,7 @@ fn concrete(config: ClaudeConfig) -> (ClaudeSession, crate::Helper, mpsc::Receiv
             config,
             helper.clone(),
             tx,
+            vec![],
         ),
         helper,
         events,
@@ -517,6 +530,10 @@ async fn live_steer_is_taken_into_the_running_turn() {
             provider_thread: thread.clone(),
             provider_turn_id: turn_id.as_str().into(),
             message: TurnMessage {
+                created_by: conn_contract::OrchestrationV2Actor::User,
+                creation_source: conn_contract::OrchestrationV2CreationSource::Web,
+                scheduled_task_id: None,
+                sender_thread_id: None,
                 message_id: "message-steer".into(),
                 text: "Also end your reply with the word banana.".into(),
                 attachments: vec![],
@@ -810,6 +827,8 @@ async fn live_fork_from_a_turn() {
             provider_turn_id: Some(turns[0]["id"].as_str().unwrap().into()),
             target_thread_id: "thread-fork".into(),
             owner_node_id: None,
+            model_selection: None,
+            runtime_policy: None,
         })
         .await
         .unwrap();

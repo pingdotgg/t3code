@@ -40,6 +40,10 @@ pub(crate) struct LiveThread {
     closed: tokio::sync::Notify,
     /// Since when background work has kept this idle session open.
     held_since: Mutex<Option<Instant>>,
+    /// The provider session's id, for its provider threads.
+    provider_session_id: String,
+    /// `backgroundTasksEndWithProcess`: releasing the session clears its threads' rosters.
+    background_tasks_end_with_process: bool,
     /// Revokes the agent tools this session got ([`crate::EngineHost::session_closed`]).
     tools_key: Option<String>,
 }
@@ -48,7 +52,14 @@ pub(crate) struct LiveThread {
 struct LiveState {
     provider_thread: Option<ProviderThread>,
     active: Option<ActiveRun>,
+    /// Provider turns whose work goes on after their terminal (`background_work.updated`).
+    /// Bounded by [`MAX_BACKGROUND_TURNS`].
+    background_turns: std::collections::HashSet<String>,
 }
+
+/// At most this many provider turns are tracked as having background work; a provider that
+/// never clears them cannot grow the set without bound.
+const MAX_BACKGROUND_TURNS: usize = 64;
 
 #[derive(Clone)]
 struct ActiveRun {
@@ -69,7 +80,8 @@ impl LiveThread {
             return false;
         }
         let mut held = lock(&self.held_since);
-        if !self.session.has_pending_background_work() {
+        let reported = !lock(&self.state).background_turns.is_empty();
+        if !reported && !self.session.has_pending_background_work() {
             *held = None;
             return true;
         }
@@ -299,6 +311,18 @@ impl Inner {
                         model_selection: model_selection.clone(),
                         runtime_policy: runtime_policy.clone(),
                         resume_from_session: None,
+                        mcp_servers: tools
+                            .as_ref()
+                            .map(|tools| tools.servers.clone())
+                            .unwrap_or_default(),
+                        host: self.host.as_ref().and_then(|host| {
+                            host.provider_host(crate::AgentSession {
+                                thread_id: thread_id.to_owned(),
+                                provider_instance_id: provider.instance_id().as_str().to_owned(),
+                                subagent: context.thread["lineage"]["relationshipToParent"]
+                                    == "subagent",
+                            })
+                        }),
                     })
                     .await
                     .map_err(|e| {
@@ -306,12 +330,8 @@ impl Inner {
                         e.to_string()
                     })?;
                 let session: Arc<dyn Session> = Arc::from(opened.session);
-                if let Some(tools) = &tools
-                    && let Err(e) = session.set_mcp_servers(tools.servers.clone()).await
-                {
-                    eprintln!("conn-engine: the provider takes no MCP servers: {e}");
-                }
-                // `open_session` and `set_mcp_servers` must not yield before the session is in
+                let provider_session = to_json(&opened.provider_session);
+                // `open_session` must not yield before the session is in
                 // `live`: on the one runtime thread, nothing else can then open a session for
                 // this thread or begin shutdown in between. Check again anyway, so a provider
                 // that does yield never leaks a session or overwrites one.
@@ -331,9 +351,25 @@ impl Inner {
                         last_used: Mutex::new(Instant::now()),
                         closed: tokio::sync::Notify::new(),
                         held_since: Mutex::new(None),
+                        provider_session_id: provider_session["id"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .to_owned(),
+                        background_tasks_end_with_process: opened.background_tasks_end_with_process,
                         tools_key: tools.map(|t| t.key),
                     });
                     lock(&self.live).insert(thread_id.to_owned(), live.clone());
+                    // The session's row, from `open_session` (T3: the runtime's
+                    // `providerSession`), before any of its events.
+                    let tid = thread_id.to_owned();
+                    self.write(move |tx| {
+                        tx.append(Draft::new(
+                            &tid,
+                            "provider-session.updated",
+                            provider_session,
+                        ))
+                    })
+                    .await?;
                     tokio::spawn(self.clone().pump(
                         thread_id.to_owned(),
                         live.clone(),
@@ -475,9 +511,14 @@ impl Inner {
                 .await;
         }
 
-        // A run the provider asked for (`continuation.requested`) shows output it already holds.
-        let continuation = context.message["creationSource"] == "provider";
         let input = TurnInput {
+            // The provider decides from the turn ordinal, as before.
+            native_thread_has_turns: None,
+            restart_continuation_of_run_id: context.run["restartContinuationOfRunId"]
+                .as_str()
+                .map(Into::into),
+            // No MCP apps here, so no app model context.
+            app_context: vec![],
             app_thread: from_json(context.thread.clone()).map_err(|e| e.to_string())?,
             thread_id: thread_id.into(),
             run_id: run_id.into(),
@@ -487,6 +528,16 @@ impl Inner {
             root_node_id: root.as_str().into(),
             provider_thread,
             message: TurnMessage {
+                created_by: from_json(context.message["createdBy"].clone())
+                    .unwrap_or(conn_contract::OrchestrationV2Actor::User),
+                creation_source: from_json(context.message["creationSource"].clone())
+                    .unwrap_or(conn_contract::OrchestrationV2CreationSource::Web),
+                scheduled_task_id: context.message["scheduledTaskId"]
+                    .as_str()
+                    .map(str::to_owned),
+                sender_thread_id: context.message["senderThreadId"]
+                    .as_str()
+                    .map(str::to_owned),
                 message_id: context.run["userMessageId"]
                     .as_str()
                     .unwrap_or_default()
@@ -500,12 +551,12 @@ impl Inner {
             model_selection,
             runtime_policy,
         };
-        let started = if continuation {
-            live.session.start_continuation_turn(input).await
-        } else {
-            live.session.start_turn(input).await
-        };
-        started.map_err(|e| StartError::Failed(e.to_string()))
+        // A run the provider asked for (`continuation.requested`) is an agent message with
+        // `creationSource: provider`; the provider shows the output it holds for it.
+        live.session
+            .start_turn(input)
+            .await
+            .map_err(|e| StartError::Failed(e.to_string()))
     }
 
     /// Reads one session's events until it closes. Ends a run the session leaves open.
@@ -544,6 +595,25 @@ impl Inner {
             {
                 self.command_output
                     .append(output_thread.as_str(), item_id.as_str(), chunk);
+                continue;
+            }
+            // Not persisted (`ProviderEventIngestor`); it holds the idle session while any
+            // provider turn has work left (`RunExecutionService` pendingBackgroundProviderTurns).
+            if let ProviderEvent::BackgroundWorkUpdated {
+                provider_turn_id,
+                pending,
+            } = &event
+            {
+                let mut state = lock(&live.state);
+                if *pending {
+                    if state.background_turns.len() < MAX_BACKGROUND_TURNS {
+                        state
+                            .background_turns
+                            .insert(provider_turn_id.as_str().to_owned());
+                    }
+                } else {
+                    state.background_turns.remove(provider_turn_id.as_str());
+                }
                 continue;
             }
             let active = live.active();
@@ -774,9 +844,23 @@ impl Inner {
                     provider_turn_id,
                 })
                 .await;
-            // The provider reports the end with a terminal event.
-            if interrupted.is_ok() {
-                return;
+            match interrupted {
+                // The provider reports the end with a terminal event.
+                Ok(()) => return,
+                // The agent may still run: settling here would end a run that is not over.
+                // The Stop shows as unresponsive and the user decides with Force stop
+                // (`EffectWorker.ts`, `thread.interrupt.unresponsive`).
+                Err(conn_provider::ProviderError::InterruptTimeout { .. }) => {
+                    let (tid, rid) = (thread_id.clone(), run_id.clone());
+                    if let Err(e) = self
+                        .write(move |tx| crate::commands::mark_stop_unresponsive(tx, &tid, &rid))
+                        .await
+                    {
+                        eprintln!("conn-engine: could not mark a Stop unresponsive: {e}");
+                    }
+                    return;
+                }
+                Err(_) => {}
             }
         }
         // No provider turn to stop: end the run here, and drop a session that may still run it.
@@ -787,6 +871,41 @@ impl Inner {
             self.close_session(&thread_id).await;
         }
         self.end_run(&thread_id, &run_id, "interrupted", None).await;
+    }
+
+    /// `ProviderTurnControlService.applyModelSelection`: only a running provider turn on the
+    /// live session gets the selection. A provider that cannot apply it live keeps it for the
+    /// next turn, which carries the thread's selection anyway.
+    pub(crate) async fn apply_model_selection(&self, thread_id: &str, selection: Value) {
+        let Some(live) = self.live_thread(thread_id) else {
+            return;
+        };
+        let provider_thread = {
+            let state = lock(&live.state);
+            let running = state
+                .active
+                .as_ref()
+                .is_some_and(|a| a.provider_turn_id.is_some());
+            match (&state.provider_thread, running) {
+                (Some(thread), true) => thread.clone(),
+                _ => return,
+            }
+        };
+        let selection: conn_contract::ModelSelection = match from_json(selection) {
+            Ok(selection) => selection,
+            Err(e) => {
+                eprintln!("conn-engine: a model selection does not decode: {e}");
+                return;
+            }
+        };
+        match live
+            .session
+            .apply_model_selection(provider_thread, selection)
+            .await
+        {
+            Ok(()) | Err(conn_provider::ProviderError::Unsupported { .. }) => {}
+            Err(e) => eprintln!("conn-engine: the provider did not take the model change: {e}"),
+        }
     }
 
     /// Turns the messages that waited for this run's provider turn into steers, in queue order.
@@ -860,6 +979,12 @@ impl Inner {
                     provider_thread,
                     provider_turn_id,
                     message: TurnMessage {
+                        created_by: from_json(message["createdBy"].clone())
+                            .unwrap_or(conn_contract::OrchestrationV2Actor::User),
+                        creation_source: from_json(message["creationSource"].clone())
+                            .unwrap_or(conn_contract::OrchestrationV2CreationSource::Web),
+                        scheduled_task_id: message["scheduledTaskId"].as_str().map(str::to_owned),
+                        sender_thread_id: message["senderThreadId"].as_str().map(str::to_owned),
                         message_id: message_id.as_str().into(),
                         text: message["text"].as_str().unwrap_or_default().to_owned(),
                         attachments: from_json(message["attachments"].clone()).unwrap_or_default(),
@@ -937,6 +1062,21 @@ impl Inner {
         }
         self.close_session(&thread_id).await;
         if let Some(run_id) = run_id {
+            // The Stop result says Force stop ended it.
+            let (tid, run) = (thread_id.clone(), run.clone().unwrap_or_default());
+            if let Err(e) = self
+                .write(move |tx| {
+                    crate::commands::write_interrupt_result(
+                        tx,
+                        &tid,
+                        &run,
+                        Some(crate::commands::FORCE_STOP_REASON),
+                    )
+                })
+                .await
+            {
+                eprintln!("conn-engine: could not record the Force stop: {e}");
+            }
             self.end_run(&thread_id, &run_id, "interrupted", None).await;
         }
         Ok(json!({"outcome": "killed", "sharedWithThreadIds": []}))
@@ -1077,6 +1217,33 @@ impl Inner {
             live.session.close().await;
             // `notify_one` keeps a permit, so a pump not yet waiting still sees it.
             live.closed.notify_one();
+            if live.background_tasks_end_with_process && !self.shutting_down() {
+                self.clear_released_rosters(thread_id, &live.provider_session_id)
+                    .await;
+            }
+        }
+    }
+
+    /// `readReleasedProviderThreads`: the session's background tasks ended with its process,
+    /// so its provider threads' rosters (`pendingBackgroundTasks`) are cleared.
+    async fn clear_released_rosters(&self, thread_id: &str, provider_session_id: &str) {
+        let (tid, sid) = (thread_id.to_owned(), provider_session_id.to_owned());
+        let cleared = self
+            .write(move |tx| {
+                for mut thread in tx.entities(&tid, "providerThreads")? {
+                    let held = thread["pendingBackgroundTasks"]
+                        .as_array()
+                        .is_some_and(|tasks| !tasks.is_empty());
+                    if thread["providerSessionId"] == sid.as_str() && held {
+                        thread["pendingBackgroundTasks"] = json!([]);
+                        tx.append(Draft::new(&tid, "provider-thread.updated", thread))?;
+                    }
+                }
+                Ok(())
+            })
+            .await;
+        if let Err(e) = cleared {
+            eprintln!("conn-engine: could not clear released background tasks: {e}");
         }
     }
 }
@@ -1202,5 +1369,7 @@ fn translate(thread_id: &str, active: Option<&ActiveRun>, event: ProviderEvent) 
             },
         },
         ProviderEvent::ContinuationRequested(request) => Translated::Continuation(request.detail),
+        // Handled before translation.
+        ProviderEvent::BackgroundWorkUpdated { .. } => Translated::Ignore,
     }
 }

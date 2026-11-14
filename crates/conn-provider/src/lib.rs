@@ -5,12 +5,15 @@
 //! process or connection). A session owns provider threads, runs turns on them, and reports
 //! everything that happens as [`ProviderEvent`]s on one channel.
 //!
-//! Kept from the TS interface: open session, ensure/resume thread, start/steer/interrupt
-//! turn, apply model selection, respond to runtime requests (permission prompts and user
-//! questions), the event stream. Added: [`Session::apply_runtime_policy`], so a permission
-//! mode change reaches a running process (Claude `setPermissionMode`); TS passes the policy
-//! per turn only. Left out until needed: compact, rollback, fork, thread snapshots, history
-//! injection, background tasks, subagent stop, MCP apps, feedback upload.
+//! Kept from the TS interface: plan a selection transition; open session (with its MCP
+//! servers and a host handle, returning the session row); ensure/resume/fork/roll back a
+//! thread; start/steer/interrupt a turn; apply a model selection; stop and await background
+//! tasks; respond to runtime requests; the event stream; the error tags that change what
+//! the engine does, condensed into [`ProviderError`]. Added: [`Session::apply_runtime_policy`], so
+//! a permission mode change reaches a running process (Claude `setPermissionMode`); TS passes
+//! the policy per turn only; [`ProviderEvent::ContinuationRequested`], where TS uses a
+//! separate service. Left out until needed: compact, thread unload, subagent stop, MCP apps,
+//! feedback upload, prompt suggestions, context-window hooks.
 //!
 //! To add a provider: make a crate that depends on this one and implements both traits.
 
@@ -18,11 +21,11 @@ use std::{future::Future, pin::Pin};
 
 use conn_contract::{
     AppThread, ApprovalDecision, ChatAttachment, ConversationMessage, ExecutionNode,
-    InteractionMode, MessageId, ModelSelection, NodeId, PlanArtifact, ProviderCapabilities,
-    ProviderFailure, ProviderInstanceId, ProviderRetry, ProviderSession, ProviderSessionId,
-    ProviderThread, ProviderThreadId, ProviderTurn, ProviderTurnId, RunAttemptId, RunId,
-    RuntimeMode, RuntimeRequest, RuntimeRequestId, Subagent, ThreadId, TurnItem, TurnItemId,
-    UserInputAnswers,
+    InteractionMode, MessageId, ModelSelection, NodeId, OrchestrationV2Actor,
+    OrchestrationV2CreationSource, PlanArtifact, ProviderCapabilities, ProviderFailure,
+    ProviderInstanceId, ProviderRetry, ProviderSession, ProviderSessionId, ProviderThread,
+    ProviderThreadId, ProviderTurn, ProviderTurnId, RunAttemptId, RunId, RuntimeMode,
+    RuntimeRequest, RuntimeRequestId, Subagent, ThreadId, TurnItem, TurnItemId, UserInputAnswers,
 };
 
 pub use conn_contract::AppThread as ProviderAppThread;
@@ -46,6 +49,17 @@ pub trait Provider: Send + Sync {
     fn open_session(&self, input: OpenSessionInput)
     -> BoxFuture<'_, ProviderResult<OpenedSession>>;
 
+    /// `planSelectionTransition`: how a model selection change on this instance takes effect,
+    /// given the live session's negotiated capabilities. Claude and Codex carry the selection
+    /// per turn (`turnScopedSelectionTransition`); ACP rejects a model change its session
+    /// cannot switch (`acpSelectionTransition`).
+    fn plan_selection_transition(
+        &self,
+        _input: &SelectionTransitionInput,
+    ) -> SelectionTransitionPlan {
+        SelectionTransitionPlan::ApplyOnNextTurn
+    }
+
     /// The `ServerProvider` entry (`packages/contracts/src/server.ts`) for
     /// `ServerConfig.providers`, or `None` when the server builds it another way.
     /// `checked_at` is ISO-8601.
@@ -54,9 +68,37 @@ pub trait Provider: Send + Sync {
     }
 }
 
+/// `ProviderSelectionTransitionInput`.
+#[derive(Clone, Debug)]
+pub struct SelectionTransitionInput {
+    pub current: ModelSelection,
+    pub target: ModelSelection,
+    /// The live session's `capabilities` (`OrchestrationV2ProviderCapabilities`).
+    pub session_capabilities: serde_json::Value,
+}
+
+/// `ProviderSelectionTransitionPlan`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SelectionTransitionPlan {
+    ApplyOnNextTurn,
+    /// The live session must end; the next turn resumes the thread in a new one.
+    RestartSession,
+    /// A new native thread with the history handed over.
+    CreateWithHandoff,
+    Reject {
+        reason: String,
+    },
+}
+
+/// What `open_session` gives the engine (`ProviderAdapterV2SessionRuntime`).
 pub struct OpenedSession {
     pub session: Box<dyn Session>,
     pub events: mpsc::Receiver<ProviderEvent>,
+    /// The session's row (`providerSession`), which the engine stores before any event.
+    pub provider_session: ProviderSession,
+    /// `backgroundTasksEndWithProcess`: every background task of the session ends with its
+    /// process, so releasing the session clears its provider threads' rosters.
+    pub background_tasks_end_with_process: bool,
 }
 
 impl std::fmt::Debug for OpenedSession {
@@ -121,13 +163,6 @@ pub trait Session: Send + Sync {
     /// Ends the native process. The event channel closes after it.
     fn close(&self) -> BoxFuture<'_, ()>;
 
-    /// Starts a turn the provider asked for with [`ProviderEvent::ContinuationRequested`]
-    /// (`createdBy: agent`, `creationSource: provider` in TS). No user message is sent; the
-    /// turn shows the output the provider already holds for it.
-    fn start_continuation_turn(&self, _input: TurnInput) -> BoxFuture<'_, ProviderResult<()>> {
-        unsupported("start_continuation_turn")
-    }
-
     /// Sets the MCP servers every later turn of this session can use, replacing the previous
     /// list. A running process picks them up when the provider supports a live change.
     fn set_mcp_servers(&self, _servers: Vec<McpServer>) -> BoxFuture<'_, ProviderResult<()>> {
@@ -164,6 +199,21 @@ pub trait Session: Send + Sync {
         false
     }
 
+    /// `stopTask`: stops one background task the agent started on this thread (Claude: a
+    /// workflow task). Errors when no such task runs.
+    fn stop_task(&self, _input: StopTaskInput) -> BoxFuture<'_, ProviderResult<()>> {
+        unsupported("stop_task")
+    }
+
+    /// `awaitBackgroundTasks`: marks (or unmarks) background tasks the agent resumes from, by
+    /// the ids the agent saw. Returns the ids that run on this thread; others change nothing.
+    fn await_background_tasks(
+        &self,
+        _input: AwaitBackgroundTasksInput,
+    ) -> BoxFuture<'_, ProviderResult<Vec<String>>> {
+        unsupported("await_background_tasks")
+    }
+
     /// `injectHistory`: gives the native thread earlier conversation as context. `Ok(false)`
     /// means the native protocol cannot take it.
     fn inject_history(&self, _input: InjectHistoryInput) -> BoxFuture<'_, ProviderResult<bool>> {
@@ -196,6 +246,21 @@ impl std::fmt::Debug for McpServer {
     }
 }
 
+/// `ProviderAdapterV2SessionRuntime.stopTask` input.
+#[derive(Clone, Debug)]
+pub struct StopTaskInput {
+    pub provider_thread: ProviderThread,
+    pub task_id: String,
+}
+
+/// `ProviderAdapterV2SessionRuntime.awaitBackgroundTasks` input.
+#[derive(Clone, Debug)]
+pub struct AwaitBackgroundTasksInput {
+    pub provider_thread: ProviderThread,
+    pub task_ids: Vec<String>,
+    pub awaited: bool,
+}
+
 /// `ProviderAdapterV2RollbackTarget`.
 #[expect(clippy::large_enum_variant, reason = "built once per rollback")]
 #[derive(Clone, Debug)]
@@ -226,6 +291,10 @@ pub struct ForkThreadInput {
     pub provider_turn_id: Option<ProviderTurnId>,
     pub target_thread_id: ThreadId,
     pub owner_node_id: Option<NodeId>,
+    /// The fork's run selection (T3 passes `run.modelSelection`). Codex sends its model.
+    pub model_selection: Option<ModelSelection>,
+    /// The fork's resolved runtime policy. Codex sends its `cwd`.
+    pub runtime_policy: Option<RuntimePolicy>,
 }
 
 /// `ProviderAdapterV2ThreadSnapshot`.
@@ -285,7 +354,9 @@ pub struct RuntimePolicy {
     pub sandbox_policy: Option<serde_json::Value>,
 }
 
-/// `ProviderAdapterV2OpenSessionInput`.
+/// `ProviderAdapterV2OpenSessionInput`, plus what this server hands a session at open: its
+/// MCP servers (ACP declares them in `session/new`, load, resume and fork; vendor SDKs take
+/// them at open) and the host handle for agents that call back for files and terminals.
 #[derive(Clone, Debug)]
 pub struct OpenSessionInput {
     pub thread_id: ThreadId,
@@ -293,6 +364,132 @@ pub struct OpenSessionInput {
     pub model_selection: ModelSelection,
     pub runtime_policy: RuntimePolicy,
     pub resume_from_session: Option<ProviderSession>,
+    /// The MCP servers the session starts with. [`Session::set_mcp_servers`] changes them on
+    /// a live session.
+    pub mcp_servers: Vec<McpServer>,
+    /// The server's side of an agent's client callbacks; `None` when the server offers none.
+    pub host: Option<HostHandle>,
+}
+
+/// A shared [`ProviderHost`].
+#[derive(Clone)]
+pub struct HostHandle(pub std::sync::Arc<dyn ProviderHost>);
+
+impl std::fmt::Debug for HostHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("HostHandle")
+    }
+}
+
+/// What an agent may ask of the server through its provider: read and write files and run
+/// terminals, as ACP clients serve them (`fs/read_text_file`, `fs/write_text_file`,
+/// `terminal/*`; T3: `AntigravityClientFiles.ts`, `clientTerminals.ts`). The server decides
+/// which roots a session may touch; a request outside them is [`HostError::InvalidParams`].
+///
+/// Only the trait and a file host for tests exist; no provider calls it yet.
+pub trait ProviderHost: Send + Sync {
+    /// `fs/read_text_file`: UTF-8 text; `line` (1-based) and `limit` (lines) cut it.
+    fn read_text_file(&self, request: ReadTextFile) -> BoxFuture<'_, HostResult<String>>;
+    /// `fs/write_text_file`: replaces the file's content.
+    fn write_text_file(&self, request: WriteTextFile) -> BoxFuture<'_, HostResult<()>>;
+    /// `terminal/create`: starts a command; returns the terminal id.
+    fn create_terminal(&self, _request: CreateTerminal) -> BoxFuture<'_, HostResult<String>> {
+        host_unsupported()
+    }
+    /// `terminal/output`: the output so far (truncated from the start at the byte limit).
+    fn terminal_output(&self, _terminal_id: String) -> BoxFuture<'_, HostResult<TerminalOutput>> {
+        host_unsupported()
+    }
+    /// `terminal/wait_for_exit`.
+    fn wait_for_terminal_exit(
+        &self,
+        _terminal_id: String,
+    ) -> BoxFuture<'_, HostResult<TerminalExitStatus>> {
+        host_unsupported()
+    }
+    /// `terminal/kill`: stops the command; the terminal stays readable.
+    fn kill_terminal(&self, _terminal_id: String) -> BoxFuture<'_, HostResult<()>> {
+        host_unsupported()
+    }
+    /// `terminal/release`: kills the command if it runs and frees the terminal.
+    fn release_terminal(&self, _terminal_id: String) -> BoxFuture<'_, HostResult<()>> {
+        host_unsupported()
+    }
+}
+
+fn host_unsupported<T: Send + 'static>() -> BoxFuture<'static, HostResult<T>> {
+    Box::pin(async { Err(HostError::MethodNotFound) })
+}
+
+pub type HostResult<T> = Result<T, HostError>;
+
+/// A host callback failure, as the ACP error a provider answers the agent with.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum HostError {
+    /// JSON-RPC -32601: the server does not offer this callback.
+    #[error("method not found")]
+    MethodNotFound,
+    /// -32602: a path outside the session's roots, not a text file, too large.
+    #[error("{0}")]
+    InvalidParams(String),
+    /// ACP -32002: the file does not exist.
+    #[error("{0}")]
+    ResourceNotFound(String),
+    /// -32603.
+    #[error("{0}")]
+    Internal(String),
+}
+
+impl HostError {
+    /// The JSON-RPC error code.
+    pub fn code(&self) -> i64 {
+        match self {
+            Self::MethodNotFound => -32601,
+            Self::InvalidParams(_) => -32602,
+            Self::ResourceNotFound(_) => -32002,
+            Self::Internal(_) => -32603,
+        }
+    }
+}
+
+/// `ReadTextFileRequest`.
+#[derive(Clone, Debug)]
+pub struct ReadTextFile {
+    pub path: std::path::PathBuf,
+    pub line: Option<u32>,
+    pub limit: Option<u32>,
+}
+
+/// `WriteTextFileRequest`.
+#[derive(Clone, Debug)]
+pub struct WriteTextFile {
+    pub path: std::path::PathBuf,
+    pub content: String,
+}
+
+/// `CreateTerminalRequest`.
+#[derive(Clone, Debug)]
+pub struct CreateTerminal {
+    pub command: String,
+    pub args: Vec<String>,
+    pub env: Vec<(String, String)>,
+    pub cwd: Option<std::path::PathBuf>,
+    pub output_byte_limit: Option<u64>,
+}
+
+/// `TerminalOutputResponse`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalOutput {
+    pub output: String,
+    pub truncated: bool,
+    pub exit_status: Option<TerminalExitStatus>,
+}
+
+/// `TerminalExitStatus`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalExitStatus {
+    pub exit_code: Option<i32>,
+    pub signal: Option<String>,
 }
 
 /// `ProviderAdapterV2EnsureThreadInput`.
@@ -319,6 +516,40 @@ pub struct TurnMessage {
     pub message_id: MessageId,
     pub text: String,
     pub attachments: Vec<ChatAttachment>,
+    /// Who wrote the message. With `creation_source` `provider` and `created_by` `agent` it
+    /// is the provider's own continuation (`isClaudeProviderContinuationTurn`).
+    pub created_by: OrchestrationV2Actor,
+    pub creation_source: OrchestrationV2CreationSource,
+    pub scheduled_task_id: Option<String>,
+    pub sender_thread_id: Option<String>,
+}
+
+impl TurnMessage {
+    /// A message a person sent from the web client.
+    pub fn user(message_id: MessageId, text: String, attachments: Vec<ChatAttachment>) -> Self {
+        Self {
+            message_id,
+            text,
+            attachments,
+            created_by: OrchestrationV2Actor::User,
+            creation_source: OrchestrationV2CreationSource::Web,
+            scheduled_task_id: None,
+            sender_thread_id: None,
+        }
+    }
+
+    /// The provider's own continuation: `createdBy: agent`, `creationSource: provider`.
+    pub fn is_provider_continuation(&self) -> bool {
+        self.created_by == OrchestrationV2Actor::Agent
+            && self.creation_source == OrchestrationV2CreationSource::Provider
+    }
+}
+
+/// An `appContext` entry: text an MCP app wrote for the model, keyed by its item.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AppContextEntry {
+    pub key: String,
+    pub text: String,
 }
 
 /// `ProviderAdapterV2TurnInput`.
@@ -328,13 +559,21 @@ pub struct TurnInput {
     pub thread_id: ThreadId,
     pub run_id: RunId,
     pub run_ordinal: u32,
+    /// Whether the native thread already holds turns (`nativeThreadHasTurns`); `None` leaves
+    /// it to the provider (Claude: `providerTurnOrdinal > 1`).
+    pub native_thread_has_turns: Option<bool>,
     pub provider_turn_ordinal: u32,
+    /// The run a server restart cut short, when this turn continues it
+    /// (`restartContinuationOfRunId`). Codex then starts the native turn without input.
+    pub restart_continuation_of_run_id: Option<RunId>,
     pub attempt_id: RunAttemptId,
     pub root_node_id: NodeId,
     pub provider_thread: ProviderThread,
     pub message: TurnMessage,
     pub model_selection: ModelSelection,
     pub runtime_policy: RuntimePolicy,
+    /// `appContext`: MCP app text for the model (Codex: untrusted `additionalContext`).
+    pub app_context: Vec<AppContextEntry>,
 }
 
 /// `ProviderAdapterV2SteerInput`.
@@ -405,6 +644,14 @@ pub enum ProviderEvent {
     },
     #[serde(rename = "plan.updated")]
     PlanUpdated { plan: PlanArtifact },
+    /// Work of this provider turn goes on after its terminal (`pending: true`, sent before the
+    /// terminal), or has ended. Not persisted; the engine holds the session while any is
+    /// pending.
+    #[serde(rename = "background_work.updated")]
+    BackgroundWorkUpdated {
+        provider_turn_id: ProviderTurnId,
+        pending: bool,
+    },
     #[serde(rename = "turn.terminal")]
     TurnTerminal(TurnTerminal),
     /// A provider-made thread, such as a subagent's child thread. `create_only`: create it
@@ -424,8 +671,9 @@ pub enum ProviderEvent {
         status: SteerStatus,
     },
     /// Not in `ProviderAdapterV2Event` (TS uses a separate service): the provider produced
-    /// output with no turn running and asks the engine to start a turn for it with
-    /// [`Session::start_continuation_turn`].
+    /// output with no turn running and asks the engine for a turn. The engine queues an agent
+    /// message with `creationSource: provider`; its turn reaches [`Session::start_turn`], which
+    /// shows the held output instead of sending a prompt.
     #[serde(rename = "continuation.requested")]
     ContinuationRequested(ContinuationRequest),
 }
@@ -472,6 +720,15 @@ pub enum ProviderError {
     SignInRequired,
     /// The native protocol sent something unexpected.
     Protocol { detail: String },
+    /// `ProviderAdapterThreadInUseError`: another process owns the native thread's writes
+    /// (Codex: "already has an active writer"). Starting a replacement would split the
+    /// conversation, so the engine must not fall back to a new native thread; `detail` is
+    /// T3's text and is shown as the failure message.
+    ThreadInUse { detail: String },
+    /// `ProviderAdapterInterruptTimeoutError`: the provider did not confirm a stop in time and
+    /// its turn stays open, so the agent may still run. The engine marks the Stop unresponsive
+    /// and leaves the run to the provider's own terminal or to Force stop.
+    InterruptTimeout { timeout_ms: u64 },
     /// An operation failed; `detail` is safe to show the user.
     Failed {
         operation: &'static str,
@@ -486,6 +743,11 @@ impl std::fmt::Display for ProviderError {
             Self::SessionStopped => f.write_str("no running provider session owns this thread"),
             Self::SignInRequired => f.write_str("provider requires sign-in"),
             Self::Protocol { detail } => write!(f, "provider protocol error: {detail}"),
+            Self::ThreadInUse { detail } => f.write_str(detail),
+            Self::InterruptTimeout { timeout_ms } => write!(
+                f,
+                "the provider did not confirm stopping the turn within {timeout_ms} ms"
+            ),
             Self::Failed { operation, detail } => {
                 write!(f, "provider {operation} failed: {detail}")
             }
@@ -494,6 +756,108 @@ impl std::fmt::Display for ProviderError {
 }
 
 impl std::error::Error for ProviderError {}
+
+/// Helpers for tests of providers and of the engine's fake provider.
+#[doc(hidden)]
+pub mod testing {
+    use serde_json::{Value, json};
+
+    /// A whole `OrchestrationV2ProviderCapabilities` (Claude's), for test session rows.
+    pub fn session_capabilities() -> Value {
+        json!({
+            "sessions": {
+                "supportsMultipleProviderThreadsPerSession": false,
+                "supportsModelSwitchInSession": true,
+                "supportsProviderSwitchingViaHandoff": false,
+                "supportsRuntimeModeSwitchInSession": false,
+                "pendingRequestsSurviveRestart": false,
+            },
+            "threads": {
+                "canCreateEmptyThread": true,
+                "canReadThreadSnapshot": false,
+                "canRollbackThread": true,
+                "canForkThread": true,
+                "canForkFromTurn": true,
+                "canForkFromSubagentThread": false,
+                "exposesNativeThreadId": true,
+            },
+            "turns": {
+                "exposesNativeTurnId": false,
+                "emitsTurnStarted": true,
+                "emitsTurnCompleted": true,
+                "supportsInterrupt": true,
+                "supportsActiveSteering": true,
+                "activeSteeringInterruptsTools": true,
+                "supportsSteeringByInterruptRestart": false,
+                "supportsQueuedMessages": false,
+                "terminalStatusQuality": "strong",
+            },
+            "streaming": {
+                "streamsAssistantText": true,
+                "streamsReasoning": true,
+                "streamsToolOutput": false,
+                "streamsPlanText": false,
+                "emitsMessageCompleted": true,
+            },
+            "tools": {
+                "exposesToolItemIds": true,
+                "emitsToolStarted": true,
+                "emitsToolCompleted": true,
+                "emitsToolOutput": true,
+                "supportsMcpTools": true,
+                "supportsDynamicToolCallbacks": false,
+            },
+            "approvals": {
+                "supportsCommandApproval": true,
+                "supportsFileReadApproval": true,
+                "supportsFileChangeApproval": true,
+                "supportsApplyPatchApproval": false,
+                "approvalsHaveNativeRequestIds": true,
+                "approvalCallbacksAreLiveOnly": true,
+                "approvalsCanOriginateFromSubagents": false,
+            },
+            "planning": {
+                "emitsPlanUpdated": true,
+                "emitsTodoList": true,
+                "emitsProposedPlan": true,
+                "supportsStructuredQuestions": true,
+                "planDeltasHaveItemIds": false,
+            },
+            "subagents": {
+                "supportsSubagents": true,
+                "exposesSubagentThreadIds": false,
+                "emitsSubagentLifecycle": true,
+                "canWaitForSubagents": false,
+                "canCloseSubagents": false,
+                "canForkSubagentThread": false,
+            },
+            "context": {
+                "acceptsSystemContext": false,
+                "acceptsDeveloperContext": false,
+                "acceptsSyntheticUserContext": false,
+                "canGenerateSummaries": false,
+                "canConsumeHandoffSummaries": false,
+                "supportsDeltaHandoff": false,
+                "supportsFullThreadHandoff": false,
+                "maxRecommendedHandoffChars": null,
+            },
+            "checkpointing": {
+                "appCanCheckpointFilesystem": true,
+                "supportsNestedCheckpointScopes": false,
+                "providerCanRollbackConversation": true,
+                "providerRollbackReturnsSnapshot": true,
+                "providerCanReadConversationSnapshot": false,
+            },
+            "identity": {
+                "nativeThreadIds": "strong",
+                "nativeTurnIds": "weak",
+                "nativeItemIds": "strong",
+                "nativeRequestIds": "strong",
+            },
+            "runtimePolicy": {"enforcement": "native"},
+        })
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -530,6 +894,15 @@ mod tests {
             Box::pin(async move {
                 let (tx, rx) = mpsc::channel(16);
                 Ok(OpenedSession {
+                    provider_session: from_json(json!({
+                        "id": input.provider_session_id, "driver": "echo",
+                        "providerInstanceId": "claude", "status": "ready", "cwd": "/tmp",
+                        "model": null, "capabilities": crate::testing::session_capabilities(),
+                        "createdAt": NOW, "updatedAt": NOW,
+                        "lastError": null,
+                    }))
+                    .unwrap(),
+                    background_tasks_end_with_process: false,
                     session: Box::new(EchoSession {
                         id: input.provider_session_id,
                         events: tx,
@@ -621,6 +994,7 @@ mod tests {
         let OpenedSession {
             session,
             mut events,
+            ..
         } = provider
             .open_session(OpenSessionInput {
                 thread_id: "t1".into(),
@@ -628,6 +1002,8 @@ mod tests {
                 model_selection: model.clone(),
                 runtime_policy: policy(),
                 resume_from_session: None,
+                mcp_servers: vec![],
+                host: None,
             })
             .await
             .unwrap();
@@ -643,6 +1019,9 @@ mod tests {
             .unwrap();
         session
             .start_turn(TurnInput {
+                native_thread_has_turns: None,
+                restart_continuation_of_run_id: None,
+                app_context: vec![],
                 app_thread: from_json(json!({
                     "createdBy": "user", "creationSource": "web", "id": "t1", "projectId": "p1",
                     "title": "T", "providerInstanceId": "claude",
@@ -661,6 +1040,10 @@ mod tests {
                 root_node_id: "n1".into(),
                 provider_thread: thread.clone(),
                 message: TurnMessage {
+                    created_by: conn_contract::OrchestrationV2Actor::User,
+                    creation_source: conn_contract::OrchestrationV2CreationSource::Web,
+                    scheduled_task_id: None,
+                    sender_thread_id: None,
                     message_id: "u1".into(),
                     text: "hi".into(),
                     attachments: vec![],

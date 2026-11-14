@@ -32,6 +32,13 @@ pub(crate) enum Effect {
     CloseSession {
         thread_id: String,
     },
+    /// Sends a model selection to the thread's running provider turn
+    /// (`provider-session.apply-model-selection`). The provider applies what it can live; the
+    /// rest waits for the next turn.
+    ApplyModelSelection {
+        thread_id: String,
+        selection: Value,
+    },
     /// Tells the host a thread was archived, deleted or settled (its terminals close).
     ThreadClosed {
         thread_id: String,
@@ -924,6 +931,7 @@ struct RunInterrupt {
     thread_id: String,
     run_id: String,
     hold_queue: Option<bool>,
+    reason: Option<String>,
 }
 
 fn run_interrupt(tx: &mut Tx<'_>, command: Value) -> Outcome {
@@ -937,9 +945,12 @@ fn run_interrupt(tx: &mut Tx<'_>, command: Value) -> Outcome {
     if c.hold_queue == Some(true) {
         hold_queue(tx, &c.thread_id)?;
     }
-    let live = run.is_some_and(|run| is_active(&run));
+    let live = run.filter(is_active);
+    if let Some(run) = &live {
+        mark_stopped_run(tx, &c.thread_id, run, c.reason.as_deref())?;
+    }
     // Stopping a run that already ended changes nothing, so a retry succeeds.
-    Ok(if live {
+    Ok(if live.is_some() {
         vec![Effect::Interrupt {
             thread_id: c.thread_id,
             run_id: c.run_id,
@@ -955,19 +966,188 @@ struct ThreadOnly {
     thread_id: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ThreadStop {
+    thread_id: String,
+    reason: Option<String>,
+}
+
 fn thread_stop(tx: &mut Tx<'_>, command: Value) -> Outcome {
-    let c: ThreadOnly = decode(command)?;
+    let c: ThreadStop = decode(command)?;
     live_thread(tx, &c.thread_id)?;
     // Stop means stop: queued messages wait until the user sends again or resumes the queue.
     hold_queue(tx, &c.thread_id)?;
     let children = crate::families::stop_children(tx, &c.thread_id)?;
-    let own = active_run(tx, &c.thread_id)?
+    let active = active_run(tx, &c.thread_id)?;
+    if let Some(run) = &active {
+        mark_stopped_run(tx, &c.thread_id, run, c.reason.as_deref())?;
+    }
+    let own = active
         .and_then(|run| run["id"].as_str().map(str::to_owned))
         .map(|run_id| Effect::Interrupt {
             thread_id: c.thread_id,
             run_id,
         });
     Ok(children.into_iter().chain(own).collect())
+}
+
+/// `RunExecutionService.USER_STOP_REASON`: a Stop without a reason came from a person.
+const USER_STOP_REASON: &str = "Stopped by user";
+/// `ThreadManagementService.FORCE_STOP_REASON`.
+pub(crate) const FORCE_STOP_REASON: &str = "Force stopped by user";
+
+/// `runSignalTurnItem` for a run: its Stop request and its Stop result.
+fn interrupt_item_id(run_id: &str, signal: &str) -> String {
+    format!("turn-item:{run_id}:{signal}")
+}
+
+/// The `run_interrupt_request` item of a run, when Stop asked for it.
+fn interrupt_request(tx: &Tx<'_>, thread_id: &str, run_id: &str) -> StoreResult<Option<Value>> {
+    tx.entity(
+        thread_id,
+        "turnItems",
+        &interrupt_item_id(run_id, "interrupt-request"),
+    )
+}
+
+/// `Orchestrator.markStoppedRun`: records the Stop on the run as a `run_interrupt_request`
+/// item, once per run. Clients show "Stopping" from it, and "Force stop" once it is marked
+/// unresponsive. A run with no root node or provider thread yet gets none, as in T3.
+fn mark_stopped_run(
+    tx: &mut Tx<'_>,
+    thread_id: &str,
+    run: &Value,
+    reason: Option<&str>,
+) -> StoreResult<()> {
+    let (Some(run_id), Some(root)) = (run["id"].as_str(), run["rootNodeId"].as_str()) else {
+        return Ok(());
+    };
+    if run["providerThreadId"].is_null() || interrupt_request(tx, thread_id, run_id)?.is_some() {
+        return Ok(());
+    }
+    let ordinal = tx
+        .entities_where(thread_id, "turnItems", "runId", run_id)?
+        .iter()
+        .filter_map(|item| item["ordinal"].as_u64())
+        .max()
+        .map_or(0, |max| max + 1);
+    let now = tx.now().to_owned();
+    let item = json!({
+        "id": interrupt_item_id(run_id, "interrupt-request"),
+        "threadId": thread_id,
+        "runId": run_id,
+        "nodeId": root,
+        "providerThreadId": run["providerThreadId"],
+        "providerTurnId": null,
+        "nativeItemRef": null,
+        "parentItemId": null,
+        "ordinal": ordinal,
+        "status": "completed",
+        "title": "Interrupt requested",
+        "startedAt": now,
+        "completedAt": now,
+        "updatedAt": now,
+        "type": "run_interrupt_request",
+        "message": reason.unwrap_or(USER_STOP_REASON),
+    });
+    tx.append(
+        Draft::new(thread_id, "turn-item.updated", item)
+            .run(Some(run_id))
+            .node(Some(root)),
+    )?;
+    Ok(())
+}
+
+/// `thread.interrupt.unresponsive`: the provider did not confirm the Stop in time, so the
+/// run's Stop request gets `unresponsiveAt` and clients offer Force stop. Nothing changes once
+/// the run has its Stop result, or when it was marked already.
+pub(crate) fn mark_stop_unresponsive(
+    tx: &mut Tx<'_>,
+    thread_id: &str,
+    run_id: &str,
+) -> StoreResult<()> {
+    if tx
+        .entity(
+            thread_id,
+            "turnItems",
+            &interrupt_item_id(run_id, "interrupt-result"),
+        )?
+        .is_some()
+    {
+        return Ok(());
+    }
+    let Some(mut request) = interrupt_request(tx, thread_id, run_id)? else {
+        return Ok(());
+    };
+    if request.get("unresponsiveAt").is_some_and(|v| !v.is_null()) {
+        return Ok(());
+    }
+    let now = tx.now().to_owned();
+    request["unresponsiveAt"] = json!(now);
+    request["updatedAt"] = json!(now);
+    let node = request["nodeId"].as_str().map(str::to_owned);
+    tx.append(
+        Draft::new(thread_id, "turn-item.updated", request)
+            .run(Some(run_id))
+            .node(node.as_deref()),
+    )?;
+    Ok(())
+}
+
+/// `makeInterruptResultTurnItem`: the Stop result of a run that ended interrupted. Its message
+/// is `reason`, else the Stop request's, else "Stopped by the provider". Written once.
+pub(crate) fn write_interrupt_result(
+    tx: &mut Tx<'_>,
+    thread_id: &str,
+    run: &Value,
+    reason: Option<&str>,
+) -> StoreResult<()> {
+    let (Some(run_id), Some(root)) = (run["id"].as_str(), run["rootNodeId"].as_str()) else {
+        return Ok(());
+    };
+    let id = interrupt_item_id(run_id, "interrupt-result");
+    if run["providerThreadId"].is_null() || tx.entity(thread_id, "turnItems", &id)?.is_some() {
+        return Ok(());
+    }
+    let request = interrupt_request(tx, thread_id, run_id)?;
+    let message = reason
+        .map(str::to_owned)
+        .or_else(|| {
+            request
+                .as_ref()
+                .and_then(|r| r["message"].as_str().map(str::to_owned))
+        })
+        .unwrap_or_else(|| "Stopped by the provider".to_owned());
+    let provider_turn = tx
+        .entity(thread_id, "nodes", root)?
+        .map(|node| node["providerTurnId"].clone())
+        .unwrap_or(Value::Null);
+    let now = tx.now().to_owned();
+    let item = json!({
+        "id": id,
+        "threadId": thread_id,
+        "runId": run_id,
+        "nodeId": root,
+        "providerThreadId": run["providerThreadId"],
+        "providerTurnId": provider_turn,
+        "nativeItemRef": null,
+        "parentItemId": interrupt_item_id(run_id, "interrupt-request"),
+        "ordinal": run["ordinal"].as_u64().unwrap_or(0) * 100 + 98,
+        "status": "interrupted",
+        "title": "Interrupted",
+        "startedAt": now,
+        "completedAt": now,
+        "updatedAt": now,
+        "type": "run_interrupt_result",
+        "message": message,
+    });
+    tx.append(
+        Draft::new(thread_id, "turn-item.updated", item)
+            .run(Some(run_id))
+            .node(Some(root)),
+    )?;
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -1193,8 +1373,9 @@ fn thread_interaction_mode_set(tx: &mut Tx<'_>, command: Value) -> Outcome {
     Ok(vec![])
 }
 
-/// A model change on the thread's instance applies at the next turn. A change of instance is a
-/// provider switch, as `Orchestrator.ts` plans it for `thread.model-selection.set`.
+/// A model change on the thread's instance changes the thread, and goes to a running provider
+/// turn as `ApplyModelSelection` (the runner checks that a turn runs). A change of instance is
+/// a provider switch, as `Orchestrator.ts` plans it for `thread.model-selection.set`.
 fn thread_model_selection_set(tx: &mut Tx<'_>, command: Value) -> Outcome {
     let thread_id = command["threadId"].as_str().unwrap_or_default().to_owned();
     let Some(selection) = command
@@ -1207,16 +1388,53 @@ fn thread_model_selection_set(tx: &mut Tx<'_>, command: Value) -> Outcome {
     if live_thread(tx, &thread_id)?["providerInstanceId"] != selection["instanceId"] {
         return switch_provider(tx, &command, selection);
     }
+    // The provider's plan (`Engine::plan_selection`; `decideProviderSessionTransition`).
+    let transition = &command["selectionTransition"];
+    match transition["type"].as_str() {
+        Some("reject") => {
+            return reject(
+                transition["reason"]
+                    .as_str()
+                    .unwrap_or("The provider refused this model change."),
+            );
+        }
+        // No handoff here: a new native thread would lose the conversation.
+        Some("create_with_handoff") => {
+            return reject("This provider needs a new conversation for this model.");
+        }
+        Some("restart_session") => {
+            // `restart_and_resume`: the live session is released; a busy thread keeps it.
+            if active_run(tx, &thread_id)?.is_some() {
+                return reject(format!(
+                    "Thread {thread_id} is running; change the model between turns."
+                ));
+            }
+            patch_thread(
+                tx,
+                &thread_id,
+                "thread.model-selection-updated",
+                true,
+                |t, _| {
+                    t["modelSelection"] = selection;
+                },
+            )?;
+            return Ok(vec![Effect::CloseSession { thread_id }]);
+        }
+        _ => {}
+    }
     patch_thread(
         tx,
         &thread_id,
         "thread.model-selection-updated",
         true,
         |t, _| {
-            t["modelSelection"] = selection;
+            t["modelSelection"] = selection.clone();
         },
     )?;
-    Ok(vec![])
+    Ok(vec![Effect::ApplyModelSelection {
+        thread_id,
+        selection,
+    }])
 }
 
 /// Ends a live run: final versions of its streaming rows, its open requests, attempt, run and
@@ -1234,6 +1452,9 @@ pub(crate) fn finish_run(
     };
     if !is_live(&run) {
         return Ok(());
+    }
+    if status == "interrupted" {
+        write_interrupt_result(tx, thread_id, &run, None)?;
     }
     let now = tx.now().to_owned();
     let root = run["rootNodeId"].as_str().map(str::to_owned);
@@ -1257,10 +1478,17 @@ pub(crate) fn finish_run(
         }
     }
     for mut item in tx.entities_where(thread_id, "turnItems", "runId", run_id)? {
-        let open = matches!(
-            item["status"].as_str(),
-            Some("idle" | "pending" | "running" | "waiting")
-        );
+        // A completed run leaves its background work running (a command, tool or subagent
+        // the provider did not end): T3 settles only the rows its provider closes, and the
+        // shell lists the rest as pending background work.
+        let background = status == "completed"
+            && crate::background::BACKGROUND_ITEM_TYPES
+                .contains(&item["type"].as_str().unwrap_or_default());
+        let open = !background
+            && matches!(
+                item["status"].as_str(),
+                Some("idle" | "pending" | "running" | "waiting")
+            );
         if item["streaming"] == true || open {
             if item.get("streaming").is_some() {
                 item["streaming"] = json!(false);

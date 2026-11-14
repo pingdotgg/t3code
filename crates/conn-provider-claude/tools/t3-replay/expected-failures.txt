@@ -1,7 +1,2 @@
 # T3 replay scenarios that fail on purpose, one per line: <scenario> <reason>.
 # check.mjs fails when a scenario not listed here fails, and when a listed one passes.
-# All three: the provider trait carries no sandboxPolicy/approvalPolicy, so the session sends the
-# preset tools and default/bypass mode instead of T3's read-only tools and dontAsk (README.md).
-tool_call_read_only no sandbox policy in the provider trait
-tool_call_read_only_on_request no sandbox policy in the provider trait
-tool_call_restricted_granular no sandbox policy in the provider trait
