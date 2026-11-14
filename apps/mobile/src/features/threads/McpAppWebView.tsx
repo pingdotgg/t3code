@@ -488,8 +488,8 @@ export function ThreadMcpApp(props: {
   if (presentedFullscreen) {
     return (
       <View
-        style={{ height, marginBottom: ROW_BOTTOM_MARGIN }}
-        className="items-center justify-center rounded-lg border border-border"
+        style={{ minHeight: height, marginBottom: ROW_BOTTOM_MARGIN }}
+        className="items-center justify-center rounded-lg border border-border py-2"
       >
         <Text className="text-sm text-foreground-muted">
           The {app.server} app is open full screen
@@ -501,8 +501,8 @@ export function ThreadMcpApp(props: {
   if (closed) {
     return (
       <View
-        style={{ height, marginBottom: ROW_BOTTOM_MARGIN }}
-        className="items-center justify-center gap-2 rounded-lg border border-border"
+        style={{ minHeight: height, marginBottom: ROW_BOTTOM_MARGIN }}
+        className="items-center justify-center gap-2 rounded-lg border border-border py-2"
       >
         <Text className="text-sm text-foreground-muted">The {app.server} app was closed</Text>
         <View className="items-center">
