@@ -1,3 +1,4 @@
+import { MISSING_FILE_ACCESS_MESSAGE } from "@t3tools/client-runtime/state/assets";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { type ReactElement } from "react";
@@ -72,6 +73,17 @@ vi.mock(import("../state/session"), async (original) => {
     ...(await original()),
     useEnvironmentScope: hasScope as never,
     readEnvironmentScope: hasScope as never,
+  };
+});
+const deniedEnvironmentId = vi.hoisted(() => "denied-environment");
+vi.mock(import("../state/filesystem"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    useFilesystemReadAccess: ((environmentId: EnvironmentId | null) =>
+      environmentId === deniedEnvironmentId
+        ? { canReadFiles: false, isPending: false, error: null }
+        : actual.useFilesystemReadAccess(environmentId)) as never,
   };
 });
 vi.mock(import("../remoteOpen"), async (original) => ({
@@ -249,13 +261,40 @@ it("loads the <picture> source for the current theme through the image route", a
     .toHaveAttribute("src", `${pixel}#/work/dark.png`);
 });
 
+it("sizes a raw HTML image by width and height written with px units", async () => {
+  setup();
+  const largeImage = `data:image/svg+xml,${encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"/>',
+  )}`;
+  await using screen = await render(
+    <HostImageUrlContext value={() => largeImage}>
+      <ChatMarkdown
+        cwd={undefined}
+        parseRawHtml
+        text={
+          '### PR Review in progress <img src="/work/spinner.gif" alt="spinner" width="14px" height="7px" />'
+        }
+      />
+    </HostImageUrlContext>,
+  );
+  const image = screen.getByAltText("spinner");
+  await expect.element(image).toHaveAttribute("src", largeImage);
+  const element = image.element() as HTMLImageElement;
+  await element.decode();
+  const { width, height } = element.getBoundingClientRect();
+  expect({ width, height }).toEqual({ width: 14, height: 7 });
+});
+
 it("reuses the parse of a streaming reply's finished blocks when it remounts", async () => {
   setup();
   const message = (
     <ChatMarkdown cwd="/tmp/project" text={"Finished block\n\nStill growing"} isStreaming />
   );
   {
-    await using _first = await render(message);
+    await using first = await render(
+      <ChatMarkdown cwd="/tmp/project" text={"Finished block\n\n"} isStreaming />,
+    );
+    await first.rerender(message);
   }
   await using screen = await render(message);
   await expect.element(screen.getByText("Still growing")).toBeVisible();
@@ -270,11 +309,28 @@ it("reuses the parse of a remounted message that has stable extra plugins", asyn
     <ChatMarkdown cwd="/tmp/project" text="Cached text" extraRemarkPlugins={countingPlugins} />
   );
   {
-    await using _first = await render(message);
+    await using first = await render(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text="Cached text"
+        extraRemarkPlugins={countingPlugins}
+        isStreaming
+      />,
+    );
+    await first.rerender(message);
   }
   await using screen = await render(message);
   await expect.element(screen.getByText("Cached text")).toBeVisible();
   expect(parsed).toHaveBeenCalledTimes(1);
+  const changed = vi.fn();
+  await screen.rerender(
+    <ChatMarkdown
+      cwd="/tmp/project"
+      text="Cached text"
+      extraRemarkPlugins={[() => () => void changed()]}
+    />,
+  );
+  expect(changed).toHaveBeenCalledTimes(1);
 });
 
 it("highlights a code block's own source when an earlier block of the same length was cached", async () => {
@@ -716,5 +772,21 @@ describe("ChatMarkdown Windows file links", () => {
       expect(container.innerHTML).not.toContain("d:alert");
       expect(fileHrefs(container)).toEqual([]);
     }
+  });
+});
+
+describe("ChatMarkdown host media", () => {
+  it("explains a host video the connection cannot read instead of offering a retry", async () => {
+    setup();
+    await using screen = await renderText("![Demo](/tmp/demo.mp4)", {
+      threadRef: {
+        environmentId: EnvironmentId.make(deniedEnvironmentId),
+        threadId: ThreadId.make("thread"),
+      },
+    });
+    await vi.waitFor(() =>
+      expect(screen.container.textContent).toContain(MISSING_FILE_ACCESS_MESSAGE),
+    );
+    expect(screen.container.textContent).not.toContain("Retry video");
   });
 });
