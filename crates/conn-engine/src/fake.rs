@@ -522,7 +522,6 @@ impl Session for FakeSession {
                 "long-stream" => {
                     let id = format!("{}:a", turn.run_id);
                     let streamed = turn.clone();
-                    let tx = tx.clone();
                     tokio::spawn(async move {
                         let turn = streamed;
                         emit(&tx, started).await;
