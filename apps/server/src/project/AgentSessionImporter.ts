@@ -242,18 +242,20 @@ const make = Effect.gen(function* () {
           (cause) => new AgentSessionScanError({ operation: "read-projects", cause }),
         ),
       );
-    const completedSources = runtimeRows.flatMap((runtime) => {
-      const payload = AgentSessionScanner.decodeImportedTranscriptPayload(runtime.runtimePayload);
-      if (
-        Option.isNone(payload) ||
-        payload.value.cwd === undefined ||
-        normalizeProjectPathForComparison(payload.value.cwd) !==
-          normalizeProjectPathForComparison(project.workspaceRoot)
-      ) {
-        return [];
-      }
-      return payload.value.importedTranscripts ?? [];
-    });
+    // The thread's project owns its transcripts: a linked worktree import records the worktree as cwd.
+    const completedSources = (yield* Effect.forEach(runtimeRows, (runtime) => {
+      const imported = AgentSessionScanner.decodeImportedTranscriptPayload(
+        runtime.runtimePayload,
+      ).pipe(Option.flatMapNullishOr((payload) => payload.importedTranscripts));
+      if (Option.isNone(imported) || imported.value.length === 0) return Effect.succeed([]);
+      return Effect.option(orchestrator.getThreadRecords(runtime.threadId, [])).pipe(
+        Effect.map((records) =>
+          Option.isSome(records) && records.value.thread.projectId === input.projectId
+            ? imported.value
+            : [],
+        ),
+      );
+    })).flat();
     const outcomes = scanner.recentThreads(project.workspaceRoot, completedSources);
     const importedThreadIds = new Set<ThreadId>();
     let importedCount = 0;
