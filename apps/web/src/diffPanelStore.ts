@@ -107,7 +107,7 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
               [threadKey]: {
                 kind: "turn",
                 turnId,
-                filePath: filePath?.trim() || null,
+                filePath: filePath ?? null,
                 revealRequestId: previous?.kind === "turn" ? previous.revealRequestId + 1 : 1,
               },
             },
