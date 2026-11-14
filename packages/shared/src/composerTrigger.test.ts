@@ -1,3 +1,5 @@
+import remarkParse from "remark-parse";
+import { unified } from "unified";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -5,6 +7,21 @@ import {
   parseSideChatCommand,
   serializeComposerFileLink,
 } from "./composerTrigger.ts";
+
+interface MarkdownNode {
+  readonly type: string;
+  readonly value?: string;
+  readonly children?: ReadonlyArray<MarkdownNode>;
+}
+
+function parsedLinkLabel(markdown: string): string | undefined {
+  const textOf = (node: MarkdownNode): string =>
+    node.value ?? (node.children ?? []).map(textOf).join("");
+  const find = (node: MarkdownNode): MarkdownNode | undefined =>
+    node.type === "link" ? node : node.children?.map(find).find(Boolean);
+  const link = find(unified().use(remarkParse).parse(markdown) as MarkdownNode);
+  return link && textOf(link);
+}
 
 describe("detectComposerTrigger", () => {
   it.each([
@@ -89,6 +106,15 @@ describe("serializeComposerFileLink", () => {
     expect(serializeComposerFileLink("C:\\repo\\src\\index.ts")).toBe(
       "[index.ts](C:%5Crepo%5Csrc%5Cindex.ts)",
     );
+  });
+
+  it.each([
+    ["pkg/__init__.py", "__init__.py"],
+    ["app/__main__.py", "__main__.py"],
+    ["notes/*draft*.md", "*draft*.md"],
+    ["src/`tick`.ts", "`tick`.ts"],
+  ])("renders the mention of %j with its file name as the label", (path, basename) => {
+    expect(parsedLinkLabel(serializeComposerFileLink(path))).toBe(basename);
   });
 
   it("preserves paths that legitimately start with an at sign", () => {

@@ -18,8 +18,10 @@ function composerFileLinkBasename(path: string): string {
   return separatorIndex >= 0 ? path.slice(separatorIndex + 1) : path;
 }
 
+// Emphasis and code markers too: `__init__.py` would otherwise render as bold
+// "init.py", which no longer matches the path, so the label shows beside the chip.
 function escapeMarkdownLinkLabel(label: string): string {
-  return label.replaceAll("\\", "\\\\").replaceAll("[", "\\[").replaceAll("]", "\\]");
+  return label.replace(/[\\[\]*_`]/g, "\\$&");
 }
 
 function encodeMarkdownLinkDestination(path: string): string {
