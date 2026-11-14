@@ -4008,7 +4008,6 @@ it("hands the list rows whose spacing, wake-up span or setup placement changed",
     id: "setup",
     createdAt: null,
     snapshot: {} as never,
-    embedded: false,
   };
   const previous = computeStableMessagesTimelineRows([fold, wakeUps, setup], {
     result: [],
@@ -4017,7 +4016,7 @@ it("hands the list rows whose spacing, wake-up span or setup placement changed",
   const next = [
     { ...fold, continuesWorkLog: true },
     { ...wakeUps, revealedRowIds: ["first", "second"] },
-    { ...setup, embedded: true },
+    { ...setup, snapshot: { phase: "failed" } as never },
   ];
   expect(computeStableMessagesTimelineRows(next, previous).result).toEqual(next);
 });
@@ -4879,15 +4878,9 @@ it("keeps the working header in place across worktree setup handoff", () => {
     supportsConversationRollback: false,
     worktreeSetup: snapshot,
   });
+  // The working row draws a running setup's stages itself.
   expect(withoutMessages).toEqual([
     { kind: "working", id: "working-indicator-row", createdAt: snapshot.startedAt },
-    {
-      kind: "worktree-setup",
-      id: "worktree-setup-row",
-      createdAt: "2026-01-01T00:00:00Z",
-      snapshot,
-      embedded: false,
-    },
   ]);
 
   const withMessages = deriveMessagesTimelineRows({
@@ -4945,8 +4938,7 @@ it("keeps the working header in place across worktree setup handoff", () => {
     supportsConversationRollback: false,
     worktreeSetup: asyncSnapshot,
   });
-  expect(handoffRows.map((row) => row.kind)).toEqual(["message", "working", "worktree-setup"]);
-  expect(handoffRows[2]).toMatchObject({ kind: "worktree-setup", embedded: false });
+  expect(handoffRows.map((row) => row.kind)).toEqual(["message", "working"]);
 
   const settledRows = deriveMessagesTimelineRows({
     timelineEntries: [userEntry],
@@ -4960,7 +4952,7 @@ it("keeps the working header in place across worktree setup handoff", () => {
       stages: [stage("setup-script", "done"), stage("agent", "done")],
     },
   });
-  expect(settledRows.map((row) => row.kind)).toEqual(["message", "working", "worktree-setup"]);
+  expect(settledRows.map((row) => row.kind)).toEqual(["message", "working"]);
 
   const finishedRows = deriveMessagesTimelineRows({
     timelineEntries: [userEntry],
@@ -4975,6 +4967,59 @@ it("keeps the working header in place across worktree setup handoff", () => {
     },
   });
   expect(finishedRows.map((row) => row.kind)).toEqual(["message", "working", "thinking"]);
+
+  // A run that prepared a worktree counts from its send, live and in its final duration.
+  const preparedTurn = {
+    ...liveTurn,
+    requestedAt: "2026-01-01T00:00:00Z",
+    preparedWorktree: true,
+  } as const;
+  const preparedRows = deriveMessagesTimelineRows({
+    timelineEntries: [userEntry],
+    latestRun: preparedTurn,
+    isWorking: true,
+    activeTurnStartedAt: preparedTurn.startedAt,
+    turnDiffSummaries: [],
+    supportsConversationRollback: false,
+  });
+  expect(preparedRows.find((row) => row.kind === "working")?.createdAt).toBe(
+    preparedTurn.requestedAt,
+  );
+  const { preparedWorktree: _prepared, ...queuedTurn } = preparedTurn;
+  const queuedRows = deriveMessagesTimelineRows({
+    timelineEntries: [userEntry],
+    latestRun: queuedTurn,
+    isWorking: true,
+    activeTurnStartedAt: preparedTurn.startedAt,
+    turnDiffSummaries: [],
+    supportsConversationRollback: false,
+  });
+  expect(queuedRows.find((row) => row.kind === "working")?.createdAt).toBe(preparedTurn.startedAt);
+  const doneEntry = {
+    ...assistantEntry,
+    createdAt: "2026-01-01T00:00:20Z",
+    message: { ...assistantEntry.message, streaming: false, updatedAt: "2026-01-01T00:00:20Z" },
+  };
+  const toolEntry = {
+    id: "tool-entry",
+    kind: "work",
+    createdAt: "2026-01-01T00:00:15Z",
+    entry: {
+      id: "tool-1",
+      createdAt: "2026-01-01T00:00:15Z",
+      runId: "turn-1" as never,
+      label: "Ran command",
+      tone: "tool",
+    },
+  } as const;
+  const preparedFold = deriveMessagesTimelineRows({
+    timelineEntries: [userEntry, toolEntry, doneEntry],
+    latestRun: { ...preparedTurn, status: "completed", completedAt: "2026-01-01T00:00:20Z" },
+    isWorking: false,
+    turnDiffSummaries: [],
+    supportsConversationRollback: false,
+  }).find((row) => row.kind === "turn-fold");
+  expect(preparedFold).toMatchObject({ label: "Worked for 20s" });
 });
 
 describe("failed turn transcript", () => {
