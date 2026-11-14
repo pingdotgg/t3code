@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { useSyncExternalStore } from "react";
 import type { EnvironmentId, PreviewRuntime, PreviewSessionSnapshot } from "@t3tools/contracts";
 
 import { isElectron } from "~/env";
@@ -61,17 +62,47 @@ function desktopHostsServerTab(
   );
 }
 
-// Fixed when a tab first appears: moving a page between hosts would replace it.
-const backgroundHostedTabs = new Map<string, boolean>();
+// Fixed when a tab first appears, until T3 is on screen again: moving a page between hosts replaces it.
+let backgroundHostedTabs = new Map<string, boolean>();
+const hostingListeners = new Set<() => void>();
+
+// Its window takes focus when T3 is shown again. Background tabs then move to panel webviews, where
+// every desktop tool works, and a new map makes memoized callers look again.
+const returnBackgroundTabsToPanel = () => {
+  if (![...backgroundHostedTabs.values()].some(Boolean)) return;
+  backgroundHostedTabs = new Map([...backgroundHostedTabs.keys()].map((key) => [key, false]));
+  for (const listener of hostingListeners) listener();
+};
+
+const subscribeBackgroundHosting = (listener: () => void) => {
+  hostingListeners.add(listener);
+  if (hostingListeners.size === 1) window.addEventListener("focus", returnBackgroundTabsToPanel);
+  return () => {
+    hostingListeners.delete(listener);
+    if (hostingListeners.size === 0) {
+      window.removeEventListener("focus", returnBackgroundTabsToPanel);
+    }
+  };
+};
+
+export type BackgroundHosting = ReadonlyMap<string, boolean>;
+
+export const readBackgroundHosting = (): BackgroundHosting => backgroundHostedTabs;
+
+export function useBackgroundHosting(): BackgroundHosting {
+  return useSyncExternalStore(subscribeBackgroundHosting, readBackgroundHosting);
+}
 
 /**
  * A panel `<webview>` created while the app window is hidden or minimized never paints, so an
  * agent tab that appears then runs in a never-shown desktop window and the panel streams it.
+ * `hosting` is the map from `useBackgroundHosting`, passed so memoized callers recompute.
  */
 export function hostsServerTabInBackground(
   environmentId: EnvironmentId,
   primaryEnvironmentId: EnvironmentId | null,
   snapshot: RuntimeSnapshot | null | undefined,
+  hosting: BackgroundHosting,
 ): boolean {
   if (
     !snapshot ||
@@ -81,11 +112,10 @@ export function hostsServerTabInBackground(
     return false;
   }
   const key = `${environmentId}\u0000${snapshot.threadId}\u0000${snapshot.tabId}`;
-  let background = backgroundHostedTabs.get(key);
-  if (background === undefined) {
-    background = window.desktopBridge?.getWindowShown?.() === false;
-    backgroundHostedTabs.set(key, background);
-  }
+  const decided = backgroundHostedTabs.get(key) ?? hosting.get(key);
+  if (decided !== undefined) return decided;
+  const background = window.desktopBridge?.getWindowShown?.() === false;
+  backgroundHostedTabs.set(key, background);
   return background;
 }
 
@@ -93,10 +123,11 @@ export function rendersServerTabNatively(
   environmentId: EnvironmentId,
   primaryEnvironmentId: EnvironmentId | null,
   snapshot: RuntimeSnapshot | null | undefined,
+  hosting: BackgroundHosting,
 ): boolean {
   return (
     desktopHostsServerTab(environmentId, primaryEnvironmentId, snapshot) &&
-    !hostsServerTabInBackground(environmentId, primaryEnvironmentId, snapshot)
+    !hostsServerTabInBackground(environmentId, primaryEnvironmentId, snapshot, hosting)
   );
 }
 
@@ -104,5 +135,10 @@ export function useRendersServerTabNatively(
   environmentId: EnvironmentId,
   snapshot: RuntimeSnapshot | null | undefined,
 ): boolean {
-  return rendersServerTabNatively(environmentId, useAtomValue(primaryEnvironmentIdAtom), snapshot);
+  return rendersServerTabNatively(
+    environmentId,
+    useAtomValue(primaryEnvironmentIdAtom),
+    snapshot,
+    useBackgroundHosting(),
+  );
 }

@@ -218,6 +218,9 @@ describe("ElectronBrowserHost", () => {
           url: `https://example.com/${tabId}`,
         });
         expect(screen.container.querySelectorAll("webview")).toHaveLength(0);
+        // Back on screen, the tab moves into the panel, where every desktop tool works.
+        await act(() => window.dispatchEvent(new Event("focus")));
+        expect(screen.container.querySelectorAll("webview")).toHaveLength(1);
       }
     },
   );

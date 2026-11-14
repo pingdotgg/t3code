@@ -31,13 +31,20 @@ import { useBrowserPointerStore } from "./browserPointerStore";
 import { HostedBrowserWebview } from "./HostedBrowserWebview";
 import { openUrlInPreview } from "./openFileInPreview";
 import { acquireDesktopTab } from "./desktopTabLifetime";
-import { hostsServerTabInBackground, rendersServerTabNatively } from "./previewRuntime";
+import {
+  type BackgroundHosting,
+  hostsServerTabInBackground,
+  readBackgroundHosting,
+  rendersServerTabNatively,
+  useBackgroundHosting,
+} from "./previewRuntime";
 import { previewRuntimeTabId } from "./previewRuntimeTabId";
 
 /** Every session this window renders as a hosted webview, in a fixed (non-display) order. */
 function hostedBrowserSessions(
   previewByThreadKey: Record<string, ThreadPreviewState>,
   primaryEnvironmentId: EnvironmentId | null,
+  hosting: BackgroundHosting,
 ) {
   const activeSessions = Object.entries(previewByThreadKey).flatMap(([threadKey, previewState]) => {
     const threadRef = parseScopedThreadKey(threadKey);
@@ -46,8 +53,18 @@ function hostedBrowserSessions(
           .filter(
             (snapshot) =>
               snapshot.runtime !== "server" ||
-              rendersServerTabNatively(threadRef.environmentId, primaryEnvironmentId, snapshot) ||
-              hostsServerTabInBackground(threadRef.environmentId, primaryEnvironmentId, snapshot),
+              rendersServerTabNatively(
+                threadRef.environmentId,
+                primaryEnvironmentId,
+                snapshot,
+                hosting,
+              ) ||
+              hostsServerTabInBackground(
+                threadRef.environmentId,
+                primaryEnvironmentId,
+                snapshot,
+                hosting,
+              ),
           )
           .map((snapshot) => ({
             threadRef,
@@ -56,6 +73,7 @@ function hostedBrowserSessions(
               threadRef.environmentId,
               primaryEnvironmentId,
               snapshot,
+              hosting,
             ),
             runtimeTabId: previewRuntimeTabId(threadRef, previewState.serverEpoch, snapshot.tabId),
             pictureInPicture:
@@ -106,6 +124,7 @@ function openLinkInPreview({ tabId, url, background }: DesktopPreviewOpenLinkEve
   const source = hostedBrowserSessions(
     readActivePreviewSessions(),
     appAtomRegistry.get(primaryEnvironmentIdAtom),
+    readBackgroundHosting(),
   ).find((session) => session.runtimeTabId === tabId);
   if (!source) return;
   void openUrlInPreview({
@@ -137,7 +156,11 @@ export function ElectronBrowserHost() {
   const previewByThreadKey = useActivePreviewSessions();
   const primaryEnvironmentId = useAtomValue(primaryEnvironmentIdAtom);
   useDesktopHostedPreviewSessions(primaryEnvironmentId);
-  const sessions = hostedBrowserSessions(previewByThreadKey, primaryEnvironmentId);
+  const sessions = hostedBrowserSessions(
+    previewByThreadKey,
+    primaryEnvironmentId,
+    useBackgroundHosting(),
+  );
 
   if (!isElectron) return null;
   return (
