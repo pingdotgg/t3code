@@ -1451,10 +1451,12 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               () => client.session.get({ sessionID: childSessionId }),
             );
             const nativeChildSession = unwrapData("session.get", childSessionResponse);
+            const inheritedPermission =
+              state.parentSubagent === null ? state.permission : state.inheritedPermission;
             const childPermission = openCodeChildPermissionRules(
               turn.runtimePolicy,
               nativeChildSession.permission ?? [],
-              state.parentSubagent === null ? state.permission : state.inheritedPermission,
+              inheritedPermission,
             );
             yield* sdkCall(
               "session.update",
@@ -1487,8 +1489,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               nextChildTurnOrdinal,
               nextAdmissionGeneration: 1,
               permission: childPermission,
-              inheritedPermission:
-                state.parentSubagent === null ? state.permission : state.inheritedPermission,
+              inheritedPermission,
             });
             yield* emitProviderEvent({
               type: "app_thread.created",
