@@ -309,11 +309,7 @@ setInterval(() => {}, 1_000);
             ) {
               throw new Error("statfs unavailable");
             }
-            if (
-              scenario === "failed trial start" &&
-              !recovered &&
-              (await fs.exists(backupPath).pipe(Effect.runPromise))
-            )
+            if (scenario === "failed trial start" && !recovered && NodeFS.existsSync(backupPath))
               low = true;
             return { ...stats, bavail: low ? 0 : 1024 ** 4, bsize: 1 };
           });
