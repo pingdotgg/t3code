@@ -41,6 +41,7 @@ import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
+import * as CommandOutputHub from "../orchestration-v2/CommandOutputHub.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
@@ -183,7 +184,12 @@ const layerTools = Layer.mergeAll(
   Layer.provide(
     Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/p" }),
   ),
-  Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+  Layer.provide(
+    Layer.merge(
+      Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+      Layer.mock(CommandOutputHub.CommandOutputHub)({}),
+    ),
+  ),
   Layer.provide(
     Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({
       cloneRepository: (input) =>

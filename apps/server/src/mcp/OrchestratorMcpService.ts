@@ -88,6 +88,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import * as CommandOutputHub from "../orchestration-v2/CommandOutputHub.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import {
   subagentResultForRun,
@@ -1195,6 +1196,7 @@ const make = Effect.gen(function* () {
   const gitDriver = yield* GitVcsDriver.GitVcsDriver;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const remoteDelegation = yield* RemoteDelegation.RemoteDelegation;
+  const commandOutput = yield* CommandOutputHub.CommandOutputHub;
 
   const requireProject = (projectId: ProjectId) =>
     projects.getById(projectId).pipe(
@@ -3193,8 +3195,22 @@ const make = Effect.gen(function* () {
           ...(input.itemId === undefined ? {} : { itemId: input.itemId }),
         })
         .pipe(Effect.mapError(threadManagementFailure));
+      // Providers that stream command output store it on the item only when the command ends.
+      const rows = yield* Effect.forEach(timeline.items, (row) =>
+        row.item.type !== "command_execution" ||
+        row.item.output !== undefined ||
+        !isOrchestrationV2WorkActive(row.item.status)
+          ? Effect.succeed(row)
+          : commandOutput
+              .read({ threadId: row.item.threadId, itemId: row.item.id })
+              .pipe(
+                Effect.map((output) =>
+                  output === undefined ? row : { ...row, item: { ...row.item, output } },
+                ),
+              ),
+      );
       const messageIdsByThread = new Map<ThreadId, Array<MessageId>>();
-      for (const row of timeline.items) {
+      for (const row of rows) {
         if (row.item.type !== "user_message" && row.item.type !== "assistant_message") continue;
         const ids = messageIdsByThread.get(row.sourceThreadId) ?? [];
         ids.push(row.item.messageId);
@@ -3226,7 +3242,7 @@ const make = Effect.gen(function* () {
         .map((run) => threadRun(target, run));
       const { items, start } = timelineItemsWithinBudget(
         { thread, recentRuns, nextPosition: null, hasMore: false, earlierPosition: null },
-        timeline.items.map((row) => ({
+        rows.map((row) => ({
           row,
           maxChars,
           messagesByThreadId,
@@ -3234,7 +3250,7 @@ const make = Effect.gen(function* () {
         })),
         newestFirst,
       );
-      const page = timeline.items.slice(start, start + items.length);
+      const page = rows.slice(start, start + items.length);
       const returnedRunIds = new Set(
         page.filter((row) => row.sourceThreadId === target.thread.id).map((row) => row.item.runId),
       );
@@ -3503,4 +3519,5 @@ export const layer: Layer.Layer<
   | SecretRequests.SecretRequests
   | ServerSettings.ServerSettingsService
   | RemoteDelegation.RemoteDelegation
+  | CommandOutputHub.CommandOutputHub
 > = Layer.effect(OrchestratorMcpService, make);
