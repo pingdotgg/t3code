@@ -31,6 +31,7 @@ import {
   resolveWorkspaceRelativeFilePath,
 } from "../files/filePath";
 import { useLiveThreadLinkLabels } from "../../state/entities";
+import { enrichedThreadLinkCustomization } from "../../native/useEnrichedLinkVariants";
 import {
   isPendingUserInputOptionSelected,
   type PendingUserInputDraftAnswer,
@@ -84,7 +85,7 @@ function QuestionText(props: {
   readonly preserveSoftBreaks?: boolean;
 }) {
   const styles = useMarkdownPreviewStyles();
-  const markdown = useLiveThreadLinkLabels(props.markdown, props.environmentId);
+  const live = useLiveThreadLinkLabels(props.markdown, props.environmentId);
   const navigation = useNavigation();
   const openPullRequest = useOpenPullRequest();
   const openLink = (href: string) => {
@@ -106,14 +107,19 @@ function QuestionText(props: {
   };
   return (
     <SelectableMarkdownText
-      markdown={markdown}
+      markdown={live.markdown}
       textStyle={styles.nativeTextStyle}
-      writingDirection={markdownProseDirection(markdown)}
+      writingDirection={markdownProseDirection(live.markdown)}
       // Android's renderer aligns relative to each paragraph's direction.
       textAlign={
         Platform.OS === "android" ? undefined : props.setDirection === "rtl" ? "right" : "left"
       }
-      onLinkPress={openLink}
+      onLinkPress={(href) => {
+        if (!live.unavailable.has(href)) void openLink(href);
+      }}
+      linkCustomization={(href) =>
+        live.unavailable.has(href) ? enrichedThreadLinkCustomization(href, false) : undefined
+      }
       preserveSoftBreaks={props.preserveSoftBreaks}
     />
   );
