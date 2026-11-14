@@ -439,10 +439,7 @@ impl AttachmentStore {
     }
 
     fn maybe_sweep(&self, now_ms: u64) {
-        let mut last = self
-            .last_sweep_ms
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut last = crate::lock(&self.last_sweep_ms);
         if last.is_some_and(|at| now_ms.saturating_sub(at) < SWEEP_INTERVAL_MS) {
             return;
         }

@@ -541,12 +541,12 @@ impl AuthStore {
 
     /// Accept Conn desktop's bootstrap credential from now on.
     pub fn set_desktop_bootstrap(&self, bootstrap: DesktopBootstrap) {
-        *self.desktop.lock().unwrap_or_else(|p| p.into_inner()) = Some(bootstrap);
+        *crate::lock(&self.desktop) = Some(bootstrap);
     }
 
     /// `ServerAuthDescriptor`, as `EnvironmentAuthPolicy` resolves it for how this server started.
     pub fn descriptor(&self) -> serde_json::Value {
-        match &*self.desktop.lock().unwrap_or_else(|p| p.into_inner()) {
+        match &*crate::lock(&self.desktop) {
             Some(desktop) if desktop.remote_reachable => {
                 descriptor_for("remote-reachable", &["desktop-bootstrap", "one-time-token"])
             }
@@ -556,9 +556,7 @@ impl AuthStore {
     }
 
     fn desktop_accepts(&self, credential: &str) -> bool {
-        self.desktop
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
+        crate::lock(&self.desktop)
             .as_ref()
             .is_some_and(|d| d.accepts(credential, now_ms()))
     }
@@ -924,9 +922,7 @@ impl AuthStore {
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
-        self.state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        crate::lock(&self.state)
     }
 
     /// Reloads the file when another process changed it, and announces what moved.

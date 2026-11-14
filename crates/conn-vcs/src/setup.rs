@@ -78,7 +78,7 @@ impl WorktreeSetups {
     }
 
     fn with<R>(&self, f: impl FnOnce(&mut HashMap<String, Entry>) -> R) -> R {
-        f(&mut self.entries.lock().expect("setup lock"))
+        f(&mut crate::lock(&self.entries))
     }
 
     fn sweep(entries: &mut HashMap<String, Entry>) {

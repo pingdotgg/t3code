@@ -46,7 +46,7 @@ impl<T> Feed<T> {
     }
 
     pub(crate) fn push(&self, item: T, size: usize) {
-        let mut state = self.state.lock().expect("feed lock");
+        let mut state = crate::lock(&self.state);
         if state.overflowed {
             return;
         }
@@ -65,7 +65,7 @@ impl<T> Feed<T> {
 
     /// Replaces everything queued with `item`, as a resync does.
     pub(crate) fn reset(&self, item: T, size: usize) {
-        let mut state = self.state.lock().expect("feed lock");
+        let mut state = crate::lock(&self.state);
         state.items = VecDeque::from([(item, size)]);
         state.bytes = size;
         state.overflowed = false;
@@ -83,7 +83,7 @@ impl<T> Feed<T> {
         loop {
             let notified = self.notify.notified();
             {
-                let mut state = self.state.lock().expect("feed lock");
+                let mut state = crate::lock(&self.state);
                 if state.overflowed {
                     state.overflowed = false;
                     return Take::Resync;

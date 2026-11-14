@@ -215,9 +215,7 @@ impl Inner {
     ) -> T {
         let store = self.store.clone();
         tokio::task::spawn_blocking(move || {
-            let mut guard = store
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut guard = crate::lock(&store);
             f(&mut guard)
         })
         .await
@@ -698,7 +696,7 @@ impl Engine for SqliteEngine {
 #[cfg(test)]
 impl Inner {
     pub(crate) fn live_count(&self) -> usize {
-        self.live.lock().map_or(0, |live| live.len())
+        crate::lock(&self.live).len()
     }
 }
 

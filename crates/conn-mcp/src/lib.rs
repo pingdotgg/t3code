@@ -235,11 +235,11 @@ impl McpService {
     }
 
     fn lock_credentials(&self) -> std::sync::MutexGuard<'_, credentials::Credentials> {
-        self.credentials.lock().unwrap_or_else(|e| e.into_inner())
+        crate::lock(&self.credentials)
     }
 
     fn lock_sessions(&self) -> std::sync::MutexGuard<'_, sessions::Sessions> {
-        self.sessions.lock().unwrap_or_else(|e| e.into_inner())
+        crate::lock(&self.sessions)
     }
 }
 
@@ -265,6 +265,12 @@ fn uuid_v4() -> String {
         &h[16..20],
         &h[20..32]
     )
+}
+
+/// Locks a std mutex. A poisoned lock means a thread panicked while it held the lock: a bug.
+/// With `panic = "abort"` a release build stops at the panic itself.
+pub(crate) fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().expect("conn-mcp lock poisoned")
 }
 
 #[cfg(test)]

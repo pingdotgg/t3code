@@ -232,9 +232,7 @@ impl SettingsStore {
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Map<String, Value>> {
-        self.sparse
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        crate::lock(&self.sparse)
     }
 }
 

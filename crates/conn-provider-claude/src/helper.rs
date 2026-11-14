@@ -302,7 +302,7 @@ impl Helper {
 
 impl Inner {
     fn lock(&self) -> MutexGuard<'_, State> {
-        self.state.lock().unwrap_or_else(|e| e.into_inner())
+        crate::lock(&self.state)
     }
 
     /// The running helper's stdin, starting the helper first if needed.

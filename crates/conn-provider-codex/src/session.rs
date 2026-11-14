@@ -108,7 +108,7 @@ impl CodexSession {
 
 impl Inner {
     fn lock(&self) -> MutexGuard<'_, State> {
-        self.state.lock().unwrap_or_else(|e| e.into_inner())
+        crate::lock(&self.state)
     }
 
     /// Fails once the session closed; checked after each await of a multi-step call.

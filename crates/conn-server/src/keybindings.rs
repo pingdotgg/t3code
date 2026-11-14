@@ -166,9 +166,7 @@ impl KeybindingsStore {
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Snapshot> {
-        self.snapshot
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        crate::lock(&self.snapshot)
     }
 }
 

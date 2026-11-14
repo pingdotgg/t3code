@@ -542,7 +542,7 @@ impl TerminalManager {
 
 impl Inner {
     fn lock(&self) -> MutexGuard<'_, State> {
-        self.state.lock().expect("terminal state lock")
+        crate::lock(&self.state)
     }
 
     fn open_locked(
@@ -1420,6 +1420,12 @@ async fn process_name(pid: i32) -> Option<String> {
         .trim_end_matches([')', ']'])
         .trim_start_matches('-');
     (!name.is_empty()).then(|| name.chars().take(MAX_LABEL_CHARS).collect())
+}
+
+/// Locks a std mutex. A poisoned lock means a thread panicked while it held the lock: a bug.
+/// With `panic = "abort"` a release build stops at the panic itself.
+pub(crate) fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().expect("conn-terminal lock poisoned")
 }
 
 #[cfg(test)]
