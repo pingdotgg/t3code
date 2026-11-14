@@ -60,7 +60,7 @@ const cursorBackendUrl = await vi.hoisted(async () => {
   return url;
 });
 
-const { Agent, ConfigurationError } = loadCursorSdk();
+const { Agent, ConfigurationError, NetworkError } = loadCursorSdk();
 
 describe("CursorAdapterV2", () => {
   it.effect.each([
@@ -304,6 +304,42 @@ describe("CursorAdapterV2", () => {
   );
 
   it.effect.each([
+    ...([true, false] as const).map((isRetryable) => ({
+      reason: `a returned SDK error with retryable=${isRetryable}`,
+      updates: [],
+      answers: undefined,
+      wait: Effect.succeed({
+        id: "native-cursor-run",
+        status: "error" as const,
+        error: { message: "Connection stalled", code: "connection_stalled", isRetryable },
+      }),
+      failure: {
+        class: "provider_error",
+        message: "Connection stalled",
+        code: "connection_stalled",
+        retryable: isRetryable,
+      },
+    })),
+    ...([true, false] as const).map((isRetryable) => ({
+      reason: `the SDK network failure with retryable=${isRetryable}`,
+      updates: [],
+      answers: undefined,
+      wait: Effect.fail(
+        new CursorAgentSdk.CursorAgentSdkRunnerError({
+          method: "run.wait",
+          cause: new NetworkError("Connection stalled", {
+            code: "connection_stalled",
+            isRetryable,
+          }),
+        }),
+      ),
+      failure: {
+        class: "transport_error",
+        message: "Cursor Agent SDK run.wait failed: Connection stalled (connection_stalled)",
+        code: "connection_stalled",
+        retryable: isRetryable,
+      },
+    })),
     {
       reason: "the SDK's detailed plan usage limit code",
       wait: Effect.succeed({
@@ -553,6 +589,10 @@ describe("CursorAdapterV2", () => {
       assert.equal(terminal?.status, failure === null ? "completed" : "failed");
       assert.equal(terminal?.failure?.class, failure?.class);
       assert.equal(terminal?.failure?.message, failure?.message);
+      if (failure !== null && "retryable" in failure) {
+        assert.equal(terminal?.failure?.retryable, failure.retryable);
+        assert.equal(terminal?.failure?.code, failure.code);
+      }
       if (answers !== undefined) {
         assert.deepEqual(
           events.flatMap((event) =>
