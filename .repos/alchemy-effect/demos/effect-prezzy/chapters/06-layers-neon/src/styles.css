@@ -1,0 +1,10 @@
+@import "tailwindcss";
+
+@theme {
+  --font-serif: "Source Serif 4", Georgia, serif;
+}
+
+body {
+  background: #14110d;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+}

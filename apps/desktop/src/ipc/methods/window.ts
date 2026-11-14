@@ -1,7 +1,9 @@
 import {
   ContextMenuItemSchema,
+  ContextMenuSource,
   DesktopAppBrandingSchema,
   DesktopEnvironmentBootstrapSchema,
+  DesktopMediaReadSchema,
   DesktopThemeSchema,
   EDITORS,
   EditorId,
@@ -24,9 +26,12 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as DesktopBackendConfiguration from "../../backend/DesktopBackendConfiguration.ts";
+import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as DesktopLocalEnvironmentAuth from "../../backend/DesktopLocalEnvironmentAuth.ts";
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
+import * as DesktopManagedPolicy from "../../app/DesktopManagedPolicy.ts";
+import * as DesktopPrimaryPaste from "../../app/DesktopPrimaryPaste.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as DesktopWslBackend from "../../wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
@@ -55,6 +60,7 @@ const ContextMenuPosition = Schema.Struct({
 const ContextMenuInput = Schema.Struct({
   items: Schema.Array(ContextMenuItemSchema),
   position: Schema.optionalKey(ContextMenuPosition),
+  source: Schema.optionalKey(ContextMenuSource),
 });
 
 function toWebSocketBaseUrl(httpBaseUrl: URL): string {
@@ -72,13 +78,28 @@ export const getAppBranding = DesktopIpc.makeSyncIpcMethod({
   }),
 });
 
-export const getRelayTelemetryEnabled = DesktopIpc.makeSyncIpcMethod({
-  channel: IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL,
-  result: Schema.Boolean,
-  handler: Effect.fn("desktop.ipc.window.getRelayTelemetryEnabled")(function* () {
-    return isRelayTracingEnabled(yield* HostProcess.Environment);
-  }),
-});
+/**
+ * Relay traces leave the machine, so a policy with `telemetry: false`, or one that cannot be read,
+ * stops them. Read once here: a sync IPC handler cannot wait on the filesystem.
+ */
+export const installRelayTelemetryEnabled = Effect.fn("desktop.ipc.window.installRelayTelemetry")(
+  function* () {
+    const ipc = yield* DesktopIpc.DesktopIpc;
+    const enabled =
+      isRelayTracingEnabled(yield* HostProcess.Environment) &&
+      (yield* (yield* DesktopManagedPolicy.DesktopManagedPolicy).read.pipe(
+        Effect.map((found) => found?.document.limits?.telemetry !== false),
+        Effect.orElseSucceed(() => false),
+      ));
+    yield* ipc.handleSync(
+      DesktopIpc.makeSyncIpcMethod({
+        channel: IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL,
+        result: Schema.Boolean,
+        handler: () => Effect.succeed(enabled),
+      }),
+    );
+  },
+);
 
 export const getSystemLocale = DesktopIpc.makeSyncIpcMethod({
   channel: IpcChannels.GET_SYSTEM_LOCALE_CHANNEL,
@@ -86,6 +107,24 @@ export const getSystemLocale = DesktopIpc.makeSyncIpcMethod({
   handler: Effect.fn("desktop.ipc.window.getSystemLocale")(function* () {
     const electronApp = yield* ElectronApp.ElectronApp;
     return yield* electronApp.systemLocale;
+  }),
+});
+
+export const getPrimaryPasteEnabled = DesktopIpc.makeSyncIpcMethod({
+  channel: IpcChannels.GET_PRIMARY_PASTE_ENABLED_CHANNEL,
+  result: Schema.Boolean,
+  handler: Effect.fn("desktop.ipc.window.getPrimaryPasteEnabled")(function* () {
+    const primaryPaste = yield* DesktopPrimaryPaste.DesktopPrimaryPaste;
+    return primaryPaste.enabled;
+  }),
+});
+
+export const getPreferredSystemLanguages = DesktopIpc.makeSyncIpcMethod({
+  channel: IpcChannels.GET_PREFERRED_SYSTEM_LANGUAGES_CHANNEL,
+  result: Schema.Array(Schema.String),
+  handler: Effect.fn("desktop.ipc.window.getPreferredSystemLanguages")(function* () {
+    const electronApp = yield* ElectronApp.ElectronApp;
+    return yield* electronApp.preferredSystemLanguages;
   }),
 });
 
@@ -168,6 +207,20 @@ export const getLocalEnvironmentBearerToken = DesktopIpc.makeIpcMethod({
   }),
 });
 
+// Ask the distro: its automount root is configurable, so /mnt/<drive> is only the default.
+const windowsPathToWsl = Effect.fn("desktop.ipc.window.windowsPathToWsl")(function* (
+  distro: string | null,
+  windowsPath: string,
+) {
+  const linuxUncPath = wslUncPathToLinuxPath(windowsPath);
+  if (linuxUncPath !== null) return Option.some(linuxUncPath);
+  const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
+  return yield* wslEnvironment.windowsToWslPath(
+    extractDistroFromUncPath(windowsPath) ?? distro,
+    windowsPath,
+  );
+});
+
 export const pickFolder = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PICK_FOLDER_CHANNEL,
   payload: Schema.UndefinedOr(PickFolderOptionsSchema),
@@ -214,17 +267,26 @@ export const pickFolder = DesktopIpc.makeIpcMethod({
     if (!useWsl) {
       return selectedPath.value;
     }
-
-    const linuxUncPath = wslUncPathToLinuxPath(selectedPath.value);
-    if (linuxUncPath !== null) {
-      return linuxUncPath;
-    }
-
-    const converted = yield* wslEnvironment.windowsToWslPath(
-      extractDistroFromUncPath(selectedPath.value) ?? wslDistro,
-      selectedPath.value,
-    );
+    const converted = yield* windowsPathToWsl(wslDistro, selectedPath.value);
     return Option.getOrElse(converted, () => selectedPath.value);
+  }),
+});
+
+export const toLocalBackendPath = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.TO_LOCAL_BACKEND_PATH_CHANNEL,
+  payload: Schema.Struct({ backendId: Schema.String, path: Schema.String }),
+  result: Schema.NullOr(Schema.String),
+  handler: Effect.fn("desktop.ipc.window.toLocalBackendPath")(function* ({ backendId, path }) {
+    const pool = yield* DesktopBackendPool.DesktopBackendPool;
+    const instance = yield* pool.get(DesktopBackendManager.BackendInstanceId(backendId));
+    if (Option.isNone(instance)) return null;
+    const config = yield* instance.value.currentConfig;
+    if (Option.isNone(config) || Option.isSome(config.value.preflightFailure)) return null;
+    const { runningDistro } = config.value;
+    if (runningDistro === undefined) return path;
+    const uncDistro = extractDistroFromUncPath(path);
+    if (uncDistro !== null && uncDistro.toLowerCase() !== runningDistro.toLowerCase()) return null;
+    return Option.getOrNull(yield* windowsPathToWsl(runningDistro, path));
   }),
 });
 
@@ -280,6 +342,7 @@ export const showContextMenu = DesktopIpc.makeIpcMethod({
       window: window.value,
       items: input.items,
       position: Option.fromNullishOr(input.position),
+      source: Option.fromNullishOr(input.source),
     });
     return Option.getOrNull(selectedItemId);
   }),
@@ -292,6 +355,56 @@ export const openExternal = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.window.openExternal")(function* (url) {
     const shell = yield* ElectronShell.ElectronShell;
     return yield* shell.openExternal(url);
+  }),
+});
+
+const READ_MEDIA_MAX_BYTES = 256 * 1024 * 1024;
+
+// No URL field: media URLs can carry signed query tokens.
+class MediaReadError extends Schema.TaggedError<MediaReadError>()("MediaReadError", {
+  message: Schema.String,
+  cause: Schema.Defect(),
+}) {}
+
+// The renderer can display media it cannot fetch(); reading here keeps Save and Copy working for it.
+export const readMedia = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.READ_MEDIA_CHANNEL,
+  payload: Schema.String,
+  result: Schema.NullOr(DesktopMediaReadSchema),
+  handler: Effect.fn("desktop.ipc.window.readMedia")(function* (url, event) {
+    const window = yield* (yield* ElectronWindow.ElectronWindow).main;
+    if (
+      event === undefined ||
+      Option.isNone(window) ||
+      window.value.webContents.id !== event.sender.id ||
+      !/^https?:$/.test(URL.parse(url)?.protocol ?? "")
+    ) {
+      return null;
+    }
+    const session = window.value.webContents.session;
+    return yield* Effect.tryPromise({
+      try: async () => {
+        // Like an <img>, send the session's cookies.
+        const response = await session.fetch(url, { credentials: "include" });
+        const mimeType = response.headers.get("content-type") ?? "";
+        if (!response.ok || !response.body) {
+          await response.body?.cancel();
+          return { status: response.status, mimeType, data: new Uint8Array() };
+        }
+        // The whole body crosses IPC, so stop before a huge file can exhaust main-process memory.
+        const chunks: Uint8Array[] = [];
+        let size = 0;
+        for await (const chunk of response.body) {
+          size += chunk.byteLength;
+          if (size > READ_MEDIA_MAX_BYTES) {
+            return { status: 413, mimeType, data: new Uint8Array() };
+          }
+          chunks.push(chunk);
+        }
+        return { status: response.status, mimeType, data: Buffer.concat(chunks) };
+      },
+      catch: (cause) => new MediaReadError({ message: "Could not read media.", cause }),
+    }).pipe(Effect.orElseSucceed(() => null));
   }),
 });
 
@@ -372,6 +485,56 @@ export const revealWindow = DesktopIpc.makeIpcMethod({
       return;
     }
     yield* electronWindow.reveal(window.value);
+  }),
+});
+
+const htmlFullscreenStates = new WeakMap<
+  Electron.BrowserWindow,
+  { owned: boolean; leaving: boolean }
+>();
+
+const htmlFullscreenState = (window: Electron.BrowserWindow) => {
+  const existing = htmlFullscreenStates.get(window);
+  if (existing !== undefined) return existing;
+  const state = { owned: false, leaving: false };
+  window.on("leave-full-screen", () => {
+    // Leaving OS fullscreen any other way, such as F11, hands the window back to the user.
+    if (!state.leaving) state.owned = false;
+    state.leaving = false;
+  });
+  htmlFullscreenStates.set(window, state);
+  return state;
+};
+
+// The main window keeps HTML fullscreen inside itself so preview guests stay in their webview,
+// so the app's own fullscreen elements, such as chat videos, take the screen here.
+export const syncHtmlFullscreen = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.SYNC_HTML_FULLSCREEN_CHANNEL,
+  payload: Schema.Boolean,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.window.syncHtmlFullscreen")(function* (fullscreen, event) {
+    const electronWindow = yield* ElectronWindow.ElectronWindow;
+    const main = yield* electronWindow.main;
+    if (
+      event === undefined ||
+      Option.isNone(main) ||
+      main.value.isDestroyed() ||
+      main.value.webContents.id !== event.sender.id
+    ) {
+      return;
+    }
+    const window = main.value;
+    const state = htmlFullscreenState(window);
+    if (fullscreen) {
+      // macOS reports fullscreen until its exit animation ends, and Electron queues the re-entry.
+      if (state.owned || (window.isFullScreen() && !state.leaving)) return;
+      state.owned = true;
+      window.setFullScreen(true);
+    } else if (state.owned) {
+      state.owned = false;
+      state.leaving = window.isFullScreen();
+      window.setFullScreen(false);
+    }
   }),
 });
 
