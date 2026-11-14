@@ -576,9 +576,13 @@ export const make = Effect.gen(function* () {
       })
       .pipe(Effect.orElseSucceed(() => undefined));
     if (!result || result.exitCode !== 0) return { files: [], truncated: false };
+    // Filter before the cap so files sorting past it stay reachable by search.
+    const query = input.query?.toLowerCase() ?? "";
     const paths = result.stdout
       .split("\0")
-      .filter((entry) => entry.length > 0 && !entry.endsWith("/"))
+      .filter(
+        (entry) => entry.length > 0 && !entry.endsWith("/") && entry.toLowerCase().includes(query),
+      )
       .toSorted();
     const files = yield* Effect.promise(() =>
       Promise.all(
