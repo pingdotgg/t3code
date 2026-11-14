@@ -5777,6 +5777,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const opaqueBackgroundTaskReplayTombstonesByNativeThread = yield* Ref.make(
           new Map<string, Set<string>>(),
         );
+        // A finished subagent's turn item stops holding the parent before the wake that reports
+        // it starts, so its buffered notification holds the roster until replay or retirement.
+        const bufferedSubagentWakesByNativeThread = yield* Ref.make(new Map<string, Set<string>>());
         const lastProviderThreadByNativeThread = yield* Ref.make(
           new Map<string, OrchestrationV2ProviderThread>(),
         );
@@ -6420,6 +6423,20 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             )
               tasks.push(task);
           }
+          const subagents = yield* Ref.get(sessionSubagentsByTaskId);
+          for (const taskId of taskIdSetForNativeThread(
+            yield* Ref.get(bufferedSubagentWakesByNativeThread),
+            nativeThreadId,
+          )) {
+            const registered = subagents.get(taskId);
+            const description = registered?.task.title?.trim();
+            tasks.push({
+              taskId,
+              kind: "subagent",
+              ...(description ? { description } : {}),
+              ...(registered === undefined ? {} : { childThreadId: registered.childThreadId }),
+            });
+          }
           return tasks;
         });
 
@@ -6692,6 +6709,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const preservedOpaqueTombstones = [...priorOpaqueTombstones].filter((taskId) =>
             bufferedTaskNotificationIds.has(taskId),
           );
+          const preservedSubagentWakes = [
+            ...taskIdSetForNativeThread(
+              yield* Ref.get(bufferedSubagentWakesByNativeThread),
+              nativeThreadId,
+            ),
+          ].filter((taskId) => bufferedTaskNotificationIds.has(taskId));
           scheduledWakeupsByNativeThread.delete(nativeThreadId);
           possibleEarlyWakeNativeThreads.delete(nativeThreadId);
           yield* clearPendingBackgroundTasksForNativeThread(nativeThreadId);
@@ -6710,6 +6733,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               preservedOpaqueTombstones,
             );
           }
+          yield* clearNativeThreadTaskIdSet(bufferedSubagentWakesByNativeThread, nativeThreadId);
+          yield* addTaskIdsToNativeThreadSet(
+            bufferedSubagentWakesByNativeThread,
+            nativeThreadId,
+            preservedSubagentWakes,
+          );
           if (!hadRoster && !hadPersistedRoster) {
             return;
           }
@@ -9224,6 +9253,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                       opaqueBackgroundTaskReplayTombstonesByNativeThread,
                       nativeThreadId,
                     );
+                    yield* clearNativeThreadTaskIdSet(
+                      bufferedSubagentWakesByNativeThread,
+                      nativeThreadId,
+                    );
                   }
                 }
                 const roster =
@@ -9675,6 +9708,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               wakeInput.nativeThreadId,
               message.task_id,
             );
+          } else if (isPendingSubagentNotification) {
+            yield* addTaskIdsToNativeThreadSet(
+              bufferedSubagentWakesByNativeThread,
+              wakeInput.nativeThreadId,
+              [message.task_id],
+            );
           }
           if (message.type === "result" && !isClaudeEmptyTaskNotificationSuccess(message)) {
             yield* Ref.update(requestedContinuations, (current) => {
@@ -9805,6 +9844,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               taskId,
             );
             yield* clearOpaqueBackgroundTaskReplayTombstone(nativeThreadId, taskId);
+            yield* clearTaskIdFromNativeThreadSet(
+              bufferedSubagentWakesByNativeThread,
+              nativeThreadId,
+              taskId,
+            );
           }
           yield* endClaudeMonitorTasks((taskId) => retiredTaskIds.has(taskId));
           const providerThread = (yield* Ref.get(lastProviderThreadByNativeThread)).get(
@@ -9893,7 +9937,20 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             );
           });
           if (kept.length === messages.length) return;
-          yield* replaceWakeBuffer(nativeThreadId, buffered, kept, settledTaskIds);
+          if (!(yield* replaceWakeBuffer(nativeThreadId, buffered, kept, settledTaskIds))) return;
+          const held = taskIdSetForNativeThread(
+            yield* Ref.get(bufferedSubagentWakesByNativeThread),
+            nativeThreadId,
+          );
+          const released = [...settledTaskIds].filter((taskId) => held.has(taskId));
+          if (released.length === 0) return;
+          for (const taskId of released)
+            yield* clearTaskIdFromNativeThreadSet(
+              bufferedSubagentWakesByNativeThread,
+              nativeThreadId,
+              taskId,
+            );
+          yield* emitRosterUpdate(nativeThreadId, null);
         });
 
         // After a retired wake releases its latch, a wake buffered behind it has had no offer of its own.
@@ -10278,11 +10335,21 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             // Buffer wake evidence before clearing the task from the roster.
             if (message.type === "system" && message.subtype === "task_notification") {
               yield* bufferWakeMessage({ nativeThreadId: liveQuery.nativeThreadId, message });
-              yield* applyBackgroundTaskRosterMessage({
+              const rosterEmitted = yield* applyBackgroundTaskRosterMessage({
                 nativeThreadId: liveQuery.nativeThreadId,
                 message,
                 activeContext: null,
               });
+              if (
+                !rosterEmitted &&
+                taskIdSetForNativeThread(
+                  yield* Ref.get(bufferedSubagentWakesByNativeThread),
+                  liveQuery.nativeThreadId,
+                ).has(message.task_id)
+              ) {
+                // Publish the hold before the subagent's terminal item releases the parent.
+                yield* emitRosterUpdate(liveQuery.nativeThreadId, null);
+              }
               const registered = (yield* Ref.get(sessionSubagentsByTaskId)).get(message.task_id);
               const settled = settledTurnByNativeThread.get(liveQuery.nativeThreadId);
               const hasBufferedStart =
@@ -11143,6 +11210,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 message.task_id,
               );
             }
+            yield* clearTaskIdFromNativeThreadSet(
+              bufferedSubagentWakesByNativeThread,
+              liveQuery.nativeThreadId,
+              message.task_id,
+            );
           }
 
           const toolPresentations = claudeToolPresentationsFromAssistantMessage(message);

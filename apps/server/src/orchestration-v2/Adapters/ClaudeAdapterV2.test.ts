@@ -15264,6 +15264,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     { ending: "notification", cancelled: "after its result" },
     { ending: "tool result", cancelled: "after its result" },
     { ending: "tool result", cancelled: "while the subagent ran" },
+    { ending: "notification and tool result", cancelled: "while the subagent ran" },
   ] as const)(
     "does not replay a subagent that finished inside a cancelled wake (ended by $ending, cancelled $cancelled)",
     ({ ending, cancelled }) =>
@@ -15328,36 +15329,41 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         if (cancelled === "while the subagent ran") {
           yield* harness.continuationRequests[0]!.onRunEndedWithoutStarting!();
         }
-        yield* harness.offerAndWait(
-          ending === "notification"
-            ? claudeSdkFrame({
-                type: "system",
-                subtype: "task_notification",
-                task_id: SUBAGENT_TASK_ID,
-                tool_use_id: SUBAGENT_TOOL_USE_ID,
-                status: "completed",
-                output_file: "/tmp/fg-agent.output",
-                summary: "Inspected",
-                uuid: "00000000-0000-4000-8000-000000000163",
-                session_id: WAKE_NATIVE_SESSION,
-              })
-            : claudeSdkFrame({
-                type: "user",
-                uuid: "00000000-0000-4000-8000-000000000163",
-                session_id: WAKE_NATIVE_SESSION,
-                parent_tool_use_id: null,
-                message: {
-                  role: "user",
-                  content: [
-                    {
-                      type: "tool_result",
-                      tool_use_id: SUBAGENT_TOOL_USE_ID,
-                      content: "Inspected",
-                    },
-                  ],
-                },
-              }),
-        );
+        if (ending !== "tool result") {
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "system",
+              subtype: "task_notification",
+              task_id: SUBAGENT_TASK_ID,
+              tool_use_id: SUBAGENT_TOOL_USE_ID,
+              status: "completed",
+              output_file: "/tmp/fg-agent.output",
+              summary: "Inspected",
+              uuid: "00000000-0000-4000-8000-000000000163",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+        }
+        if (ending !== "notification") {
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "user",
+              uuid: "00000000-0000-4000-8000-000000000169",
+              session_id: WAKE_NATIVE_SESSION,
+              parent_tool_use_id: null,
+              message: {
+                role: "user",
+                content: [
+                  {
+                    type: "tool_result",
+                    tool_use_id: SUBAGENT_TOOL_USE_ID,
+                    content: "Inspected",
+                  },
+                ],
+              },
+            }),
+          );
+        }
         yield* harness.offerAndWait(wakeResult);
         if (cancelled === "after its result") {
           yield* harness.continuationRequests[0]!.onRunEndedWithoutStarting!();
@@ -15416,6 +15422,18 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           "a subagent that finished in the cancelled wake must not be replayed as running",
         );
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
+        const lastRoster = harness.events.findLast(
+          (event) =>
+            event.type === "provider_thread.updated" &&
+            event.providerThread.id === harness.providerThread.id,
+        );
+        assert.notInclude(
+          lastRoster?.type === "provider_thread.updated"
+            ? (lastRoster.providerThread.pendingBackgroundTasks ?? []).map((task) => task.taskId)
+            : [],
+          SUBAGENT_TASK_ID,
+          "a subagent the cancelled wake settled must not keep holding the parent",
+        );
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -17177,6 +17195,40 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         finalSubagent?.type === "subagent.updated" && finalSubagent.subagent.status,
         "completed",
       );
+      // The finished subagent stops holding the parent through its item before the wake starts.
+      const subagentEnd = harness.events.findIndex(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.threadId === harness.threadId &&
+          event.turnItem.type === "subagent" &&
+          event.turnItem.status === "completed",
+      );
+      const wakeStart = harness.events.findIndex(
+        (event) =>
+          event.type === "provider_turn.updated" &&
+          event.providerTurn.runAttemptId === RunAttemptId.make("attempt-claude-live-idle-2"),
+      );
+      assert.isAbove(wakeStart, subagentEnd);
+      const rosters = harness.events.flatMap((event, index) =>
+        event.type === "provider_thread.updated" &&
+        event.providerThread.id === harness.providerThread.id
+          ? [
+              {
+                index,
+                held: (event.providerThread.pendingBackgroundTasks ?? []).some(
+                  (task) => task.taskId === TASK_ID && task.kind === "subagent",
+                ),
+              },
+            ]
+          : [],
+      );
+      assert.isTrue(rosters.findLast((roster) => roster.index < subagentEnd)?.held);
+      assert.isTrue(
+        rosters
+          .filter((roster) => roster.index > subagentEnd && roster.index < wakeStart)
+          .every((roster) => roster.held),
+      );
+      assert.isFalse(rosters.at(-1)?.held);
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
