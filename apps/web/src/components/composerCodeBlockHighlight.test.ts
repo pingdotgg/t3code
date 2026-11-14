@@ -45,7 +45,7 @@ describe("highlighting edited fences", () => {
     vi.unstubAllGlobals();
   });
 
-  async function mountFence(text: string, resolveTheme = () => THEME) {
+  async function mountFence(text: string, resolveTheme = () => THEME, language = "ts") {
     vi.useFakeTimers();
     const highlighter = fakeHighlighter((content) =>
       content.startsWith("x") ? "#ff0000" : undefined,
@@ -60,9 +60,7 @@ describe("highlighting edited fences", () => {
       ],
       content: {
         type: "doc",
-        content: [
-          { type: "codeBlock", attrs: { language: "ts" }, content: [{ type: "text", text }] },
-        ],
+        content: [{ type: "codeBlock", attrs: { language }, content: [{ type: "text", text }] }],
       },
     });
     vi.stubGlobal("document", { documentElement: {} });
@@ -133,5 +131,11 @@ describe("highlighting edited fences", () => {
       [3_010, 6_010],
     ]);
     expect(fence.colored()).toEqual(["x".repeat(3_000), "x".repeat(3_000)]);
+  });
+
+  it("highlights a gitignore fence with the ini grammar, as chat does", async () => {
+    await mountFence("*.log\n!keep.log", () => THEME, 'gitignore title=".gitignore"');
+
+    expect(vi.mocked(getSyntaxHighlighterPromise)).toHaveBeenLastCalledWith("ini");
   });
 });

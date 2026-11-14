@@ -144,7 +144,8 @@ export const make = Effect.gen(function* () {
   const projectFileLoader = yield* T3ProjectFileLoader.T3ProjectFileLoader;
 
   const resolveIconHref = (href: string): ReadonlyArray<string> => {
-    const clean = href.replace(/^\//, "");
+    // Browsers strip surrounding whitespace from URL attributes; file paths keep theirs.
+    const clean = href.trim().replace(/^\//, "");
     return [path.join("public", clean), clean];
   };
 
