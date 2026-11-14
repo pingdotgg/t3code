@@ -15456,61 +15456,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   );
 
   it.effect.each([
-    {
-      standaloneEvent: true,
-      expiredBeforeReplay: false,
-      newerTurnBeforeReplay: false,
-      resetOffsetMs: null,
-    },
-    {
-      standaloneEvent: false,
-      expiredBeforeReplay: false,
-      newerTurnBeforeReplay: false,
-      resetOffsetMs: null,
-    },
-    {
-      standaloneEvent: true,
-      expiredBeforeReplay: true,
-      newerTurnBeforeReplay: false,
-      resetOffsetMs: null,
-    },
-    {
-      standaloneEvent: false,
-      expiredBeforeReplay: true,
-      newerTurnBeforeReplay: false,
-      resetOffsetMs: null,
-    },
-    {
-      standaloneEvent: true,
-      expiredBeforeReplay: true,
-      newerTurnBeforeReplay: true,
-      resetOffsetMs: null,
-    },
-    {
-      standaloneEvent: true,
-      expiredBeforeReplay: true,
-      newerTurnBeforeReplay: false,
-      resetOffsetMs: 0,
-    },
-    {
-      standaloneEvent: true,
-      expiredBeforeReplay: false,
-      newerTurnBeforeReplay: false,
-      resetOffsetMs: -1,
-    },
-    {
-      standaloneEvent: true,
-      expiredBeforeReplay: false,
-      newerTurnBeforeReplay: false,
-      resetOffsetMs: null,
-      arrivedAfterReset: true,
-    },
+    { standaloneEvent: true, arrivedAfterReset: false, expired: false, newerTurn: false },
+    { standaloneEvent: false, arrivedAfterReset: false, expired: false, newerTurn: false },
+    { standaloneEvent: true, arrivedAfterReset: false, expired: true, newerTurn: false },
+    { standaloneEvent: false, arrivedAfterReset: false, expired: true, newerTurn: false },
+    { standaloneEvent: true, arrivedAfterReset: false, expired: true, newerTurn: true },
+    { standaloneEvent: true, arrivedAfterReset: true, expired: false, newerTurn: false },
   ])(
-    "replays a rejected wake rate limit without a stale failure (event=$standaloneEvent expired=$expiredBeforeReplay newerTurn=$newerTurnBeforeReplay offset=$resetOffsetMs arrived=$arrivedAfterReset)",
-    (scenario) =>
+    "replays a rejected wake rate limit only while it is current (event=$standaloneEvent arrivedAfterReset=$arrivedAfterReset expired=$expired newerTurn=$newerTurn)",
+    ({ standaloneEvent, arrivedAfterReset, expired, newerTurn }) =>
       Effect.gen(function* () {
-        const { standaloneEvent, expiredBeforeReplay, newerTurnBeforeReplay, resetOffsetMs } =
-          scenario;
         const harness = yield* makeWakeHarness;
         const now = yield* DateTime.now;
         const resetsAt = 1790298600;
@@ -15528,7 +15483,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
         yield* Queue.offer(harness.sdkMessages, turnOneResult);
         yield* Queue.take(harness.terminalReceipts);
-        if ("arrivedAfterReset" in scenario && scenario.arrivedAfterReset) {
+        if (arrivedAfterReset) {
           yield* TestClock.setTime(resetsAt * 1_000 + 1_000);
         }
         yield* Queue.offer(harness.sdkMessages, wakeNotification);
@@ -15588,12 +15543,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }),
         );
 
-        if (resetOffsetMs !== null) {
-          yield* TestClock.setTime(resetsAt * 1_000 + resetOffsetMs);
-        } else if (expiredBeforeReplay) {
+        if (expired) {
           yield* TestClock.setTime(resetsAt * 1_000 + 60_000);
         }
-        if (newerTurnBeforeReplay) {
+        if (newerTurn) {
           // A queued continuation may run behind an ordinary turn served after reset.
           yield* harness.runtime.startTurn(
             makeClaudeTestTurnInput({
@@ -15622,13 +15575,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             attemptId: RunAttemptId.make("attempt-claude-wake-limit-2"),
             text: "Background task completed.",
             attachments: [],
-            providerTurnOrdinal: newerTurnBeforeReplay ? 3 : 2,
+            providerTurnOrdinal: newerTurn ? 3 : 2,
             messageCreatedBy: "agent",
             messageCreationSource: "provider",
           }),
         );
         const terminal = yield* Queue.take(harness.terminalReceipts);
-        if (expiredBeforeReplay) {
+        if (expired) {
           assert.equal(terminal.status, "completed");
           assert.isFalse(
             harness.events.some(
