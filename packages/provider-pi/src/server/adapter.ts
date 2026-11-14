@@ -359,6 +359,7 @@ interface ActivePiTurn {
   readonly streamItems: Map<string, PiStreamItemState>;
   readonly toolArgs: Map<string, unknown>;
   readonly toolStartedAt: Map<string, DateTime.Utc>;
+  readonly commandOutputBytes: Map<string, number>;
   interrupted: boolean;
   nativeAborted: boolean;
   sawAgentActivity: boolean;
@@ -1193,6 +1194,33 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           { discard: true },
         );
 
+      // Pi resends the whole output tail on every update; stored snapshots grow quadratically.
+      const emitCommandOutputDelta = (turn: ActivePiTurn, toolCallId: string, result: unknown) =>
+        Effect.suspend(() => {
+          const text = contentText(recordField(result, "content"));
+          const tail = Buffer.from(text, "utf8");
+          const totalBytes =
+            recordNumber(recordField(recordField(result, "details"), "truncation"), "totalBytes") ??
+            tail.length;
+          const previousBytes = turn.commandOutputBytes.get(toolCallId) ?? 0;
+          turn.commandOutputBytes.set(toolCallId, totalBytes);
+          if (totalBytes <= previousBytes) return Effect.void;
+          let start = Math.max(0, tail.length - (totalBytes - previousBytes));
+          while (start < tail.length && (tail[start]! & 0xc0) === 0x80) start++;
+          const chunk = tail.subarray(start).toString("utf8");
+          if (chunk.length === 0) return Effect.void;
+          return emit({
+            type: "command_output.delta",
+            driver: PI_PROVIDER,
+            threadId: turn.turnInput.threadId,
+            itemId: idAllocator.derive.turnItemFromProviderItem({
+              driver: PI_PROVIDER,
+              nativeItemId: toolCallId,
+            }),
+            chunk,
+          });
+        });
+
       const emitToolItem = Effect.fnUntraced(function* (
         turn: ActivePiTurn,
         event: PiRpcRecord,
@@ -1203,6 +1231,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         // Pi tags every phase of a call made through ctx.executeTool, such as from a codemode script.
         const parentToolCallId = recordString(event, "parentToolCallId");
         if (toolCallId === undefined) return;
+        if (phase === "update" && (toolName === "bash" || toolName === "powershell")) {
+          yield* emitCommandOutputDelta(turn, toolCallId, event["partialResult"]);
+          return;
+        }
         if (phase === "start") {
           turn.toolArgs.set(toolCallId, event["args"]);
         }
@@ -1439,6 +1471,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         turn: ActivePiTurn,
         nativeItemId: string,
         message: string,
+        level?: "info" | "warning" | "error",
       ) {
         const emittedAt = yield* DateTime.now;
         yield* emitItemNode(turn, nativeItemId, "system", "completed", emittedAt, emittedAt);
@@ -1452,6 +1485,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             title: message,
             type: "system_notice",
             message,
+            ...(level === undefined ? {} : { level }),
           },
         });
       });
@@ -1497,10 +1531,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           const turn = state?.activeTurn ?? null;
           const message = recordString(event, "message") ?? "";
           if (turn === null || message.length === 0) return;
+          const notifyType = recordString(event, "notifyType");
           yield* emitSystemNotice(
             turn,
             `notify:${turn.providerTurn.id}:${turn.nextItemOrdinal}`,
             message,
+            notifyType === "warning" || notifyType === "error" ? notifyType : "info",
           );
           return;
         }
@@ -2546,6 +2582,82 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         }
       });
 
+      // CLI --fork uses Pi's own session format and sets the destination cwd. RPC
+      // switch_session/clone alone would retain the source cwd.
+      const forkSessionIntoCwd = Effect.fnUntraced(function* (
+        sourceFile: string,
+        boundary: PiForkBoundary,
+        providerThreadCreatedAt: DateTime.Utc,
+      ) {
+        const forkLaunch = buildPiRpcLaunch({
+          launchArgs: resolvedLaunchArgs.args,
+          environment: options.environment,
+          mcpSession: undefined,
+          extensionPath: undefined,
+          shortLived: true,
+          disableExtensions: true,
+          disableTools: true,
+        });
+        return yield* Effect.scoped(
+          Effect.gen(function* () {
+            const forkConnection = yield* makePiRpcConnection({
+              command: options.settings.binaryPath || "pi",
+              args: [...forkLaunch.args, "--fork", sourceFile],
+              cwd,
+              env: forkLaunch.env,
+            });
+            yield* Stream.fromQueue(forkConnection.events).pipe(
+              Stream.runDrain,
+              Effect.ignore,
+              Effect.forkScoped,
+            );
+            const beforeEntry =
+              boundary.type === "nothing"
+                ? null
+                : yield* piForkEntry(
+                    boundary,
+                    providerThreadCreatedAt,
+                    forkConnection.request({ type: "get_entries" }),
+                  );
+            if (beforeEntry !== null) {
+              const result = yield* forkConnection.request({
+                type: "fork",
+                entryId: beforeEntry,
+              });
+              if (recordField(result, "cancelled") === true) {
+                return yield* protocolError("A Pi extension cancelled the session fork");
+              }
+            }
+            const state = yield* forkConnection.request({ type: "get_state" });
+            const file = recordString(state, "sessionFile");
+            if (file === undefined || file === sourceFile) {
+              return yield* protocolError("Pi fork did not create a distinct session file");
+            }
+            return file;
+          }),
+        ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+      });
+
+      // A workspace handoff restarts Pi in a new cwd, but the session header still names the old one.
+      const sessionFileInCwd = Effect.fnUntraced(function* (
+        sessionFile: string,
+        providerThreadCreatedAt: DateTime.Utc,
+      ) {
+        const header = yield* fileSystem.stream(sessionFile).pipe(
+          Stream.decodeText(),
+          Stream.splitLines,
+          Stream.runHead,
+          Effect.map(Option.getOrUndefined),
+          Effect.orElseSucceed(() => undefined),
+        );
+        if (header === undefined) return sessionFile;
+        const sessionCwd = recordString(Option.getOrUndefined(decodeSessionHeader(header)), "cwd");
+        if (sessionCwd === undefined || sessionCwd === cwd) return sessionFile;
+        const realCwd = yield* fileSystem.realPath(cwd).pipe(Effect.orElseSucceed(() => cwd));
+        if (sessionCwd === realCwd) return sessionFile;
+        return yield* forkSessionIntoCwd(sessionFile, { type: "nothing" }, providerThreadCreatedAt);
+      });
+
       const registerThread = Effect.fnUntraced(function* (
         threadInput: ProviderAdapter.ProviderAdapterV2EnsureThreadInput,
         publish = true,
@@ -2585,8 +2697,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           baselineThinking = null;
           contextWindow = null;
           const result = yield* lifecycleRequest(
-            resumeId != null
-              ? { type: "switch_session", sessionPath: resumeId }
+            resumeId != null && existing !== undefined
+              ? {
+                  type: "switch_session",
+                  sessionPath: yield* sessionFileInCwd(resumeId, existing.createdAt),
+                }
               : { type: "new_session" },
           );
           if (recordField(result, "cancelled") === true) {
@@ -2906,6 +3021,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               streamItems: new Map(),
               toolArgs: new Map(),
               toolStartedAt: new Map(),
+              commandOutputBytes: new Map(),
               interrupted: false,
               nativeAborted: false,
               sawAgentActivity: false,
@@ -3437,55 +3553,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                     target: { type: "provider_turn", providerTurn: target },
                     providerThreadTurns: sourceTurns,
                   });
-            // CLI --fork uses Pi's own session format and sets the destination cwd. RPC
-            // switch_session/clone alone would retain the source cwd.
-            const forkLaunch = buildPiRpcLaunch({
-              launchArgs: resolvedLaunchArgs.args,
-              environment: options.environment,
-              mcpSession: undefined,
-              extensionPath: undefined,
-              shortLived: true,
-              disableExtensions: true,
-              disableTools: true,
-            });
-            const nativeId = yield* Effect.scoped(
-              Effect.gen(function* () {
-                const forkConnection = yield* makePiRpcConnection({
-                  command: options.settings.binaryPath || "pi",
-                  args: [...forkLaunch.args, "--fork", sourceFile],
-                  cwd,
-                  env: forkLaunch.env,
-                });
-                yield* Stream.fromQueue(forkConnection.events).pipe(
-                  Stream.runDrain,
-                  Effect.ignore,
-                  Effect.forkScoped,
-                );
-                const beforeEntry =
-                  boundary.type === "nothing"
-                    ? null
-                    : yield* piForkEntry(
-                        boundary,
-                        source.createdAt,
-                        forkConnection.request({ type: "get_entries" }),
-                      );
-                if (beforeEntry !== null) {
-                  const result = yield* forkConnection.request({
-                    type: "fork",
-                    entryId: beforeEntry,
-                  });
-                  if (recordField(result, "cancelled") === true) {
-                    return yield* protocolError("A Pi extension cancelled the session fork");
-                  }
-                }
-                const state = yield* forkConnection.request({ type: "get_state" });
-                const file = recordString(state, "sessionFile");
-                if (file === undefined || file === sourceFile) {
-                  return yield* protocolError("Pi fork did not create a distinct session file");
-                }
-                return file;
-              }),
-            ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+            const nativeId = yield* forkSessionIntoCwd(sourceFile, boundary, source.createdAt);
             const now = yield* DateTime.now;
             return yield* registerThread(
               {
@@ -3538,6 +3606,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
     }),
   });
 });
+
+const decodeSessionHeader = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
 interface PiSessionEntry {
   readonly parentId: string | null;
