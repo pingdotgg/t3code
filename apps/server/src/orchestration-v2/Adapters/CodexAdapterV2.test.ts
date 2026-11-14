@@ -4596,27 +4596,30 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       const scenario = "codex-provider-retry-stall";
       const nativeThreadId = `native-${scenario}-thread`;
       const nativeTurnId = `native-${scenario}-turn`;
+      const retryNotice = (attempt: number) => ({
+        type: "emit_inbound" as const,
+        label: `error/retry-${attempt}`,
+        frame: {
+          method: "error",
+          params: {
+            threadId: nativeThreadId,
+            turnId: nativeTurnId,
+            willRetry: true,
+            error: {
+              message: `Reconnecting... ${attempt}/5`,
+              additionalDetails: "exceeded retry limit, last status: 429 Too Many Requests",
+              codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: 429 } },
+            },
+          },
+        },
+      });
       const transcript = makeCodexReplayTranscript({
         scenario,
         entries: [
           ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Continue." }),
-          {
-            type: "emit_inbound",
-            label: "error/retry",
-            frame: {
-              method: "error",
-              params: {
-                threadId: nativeThreadId,
-                turnId: nativeTurnId,
-                willRetry: true,
-                error: {
-                  message: "Reconnecting... 1/5",
-                  additionalDetails: "exceeded retry limit, last status: 429 Too Many Requests",
-                  codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: 429 } },
-                },
-              },
-            },
-          },
+          retryNotice(1),
+          // A later notice in the same retry window must not push the deadline back.
+          { ...retryNotice(2), afterMs: 5 * 60 * 1000 },
           {
             type: "expect_outbound",
             label: "turn/interrupt",
@@ -4675,7 +4678,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         terminal.failure.message,
         "exceeded retry limit, last status: 429 Too Many Requests",
       );
-      assert.equal(terminal.retry?.attempt, 1);
+      assert.equal(terminal.retry?.attempt, 2);
       assert.equal(terminal.threadDisposition, "reusable");
     }).pipe(
       Effect.provide(

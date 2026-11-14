@@ -396,12 +396,14 @@ function makeLocalCommandHarness(input: {
   readonly failReadsAfterRunning?: boolean;
   readonly recoveryReadFailure?: string;
   readonly previousTurn?: {
-    readonly runStatus: "failed" | "completed";
+    readonly runStatus: "failed" | "completed" | "interrupted";
     readonly turnStatus: "running" | "completed" | "interrupted";
     readonly differentThread?: boolean;
     readonly liveSession?: boolean;
     readonly interruptFailure?: boolean;
     readonly interruptCurrentRun?: boolean;
+    /** Puts the running turn on an attempt a steering restart superseded. */
+    readonly supersededTurn?: boolean;
   };
   /**
    * A side chat whose context targets this run, an earlier run that failed or was cancelled before
@@ -861,19 +863,57 @@ function makeLocalCommandHarness(input: {
   if (input.previousTurn !== undefined) {
     const previousRunId = RunId.make("previous-failed-run");
     const previousAttemptId = RunAttemptId.make("previous-failed-attempt");
+    const steeredAttemptId = RunAttemptId.make("previous-steered-attempt");
     const previousProviderThreadId = input.previousTurn.differentThread
       ? oldProviderThreadId
       : providerThreadId;
     projection = {
       ...projection,
+      attempts: [
+        {
+          id: previousAttemptId,
+          runId: previousRunId,
+          attemptOrdinal: 1,
+          rootNodeId: NodeId.make("previous-root"),
+          providerInstanceId: newInstanceId,
+          providerThreadId: previousProviderThreadId,
+          providerTurnId: null,
+          reason: "initial",
+          status: input.previousTurn.supersededTurn === true ? "superseded" : "interrupted",
+          startedAt: now,
+          completedAt: now,
+        },
+        ...(input.previousTurn.supersededTurn === true
+          ? [
+              {
+                id: steeredAttemptId,
+                runId: previousRunId,
+                attemptOrdinal: 2,
+                rootNodeId: NodeId.make("previous-steered-root"),
+                providerInstanceId: newInstanceId,
+                providerThreadId: previousProviderThreadId,
+                providerTurnId: null,
+                reason: "steering_restart" as const,
+                status: "interrupted" as const,
+                startedAt: null,
+                completedAt: now,
+              },
+            ]
+          : []),
+        ...projection.attempts,
+      ],
       runs: [
         {
           ...run,
           id: previousRunId,
           ordinal: 1,
           status: input.previousTurn.runStatus,
-          rootNodeId: NodeId.make("previous-root"),
-          activeAttemptId: previousAttemptId,
+          rootNodeId:
+            input.previousTurn.supersededTurn === true
+              ? NodeId.make("previous-steered-root")
+              : NodeId.make("previous-root"),
+          activeAttemptId:
+            input.previousTurn.supersededTurn === true ? steeredAttemptId : previousAttemptId,
           providerThreadId: previousProviderThreadId,
           completedAt: now,
         },
@@ -890,6 +930,23 @@ function makeLocalCommandHarness(input: {
         },
       ],
       providerTurns: [
+        // The steered attempt reached the provider once; only the earlier attempt's
+        // turn is still running when the run was interrupted.
+        ...(input.previousTurn.supersededTurn === true
+          ? [
+              {
+                id: ProviderTurnId.make("previous-steered-turn"),
+                providerThreadId: previousProviderThreadId,
+                nodeId: NodeId.make("previous-steered-root"),
+                runAttemptId: steeredAttemptId,
+                ordinal: 0,
+                nativeTurnRef: null,
+                status: "interrupted" as const,
+                startedAt: now,
+                completedAt: now,
+              },
+            ]
+          : []),
         {
           id: previousTurnId,
           providerThreadId: previousProviderThreadId,
@@ -905,7 +962,8 @@ function makeLocalCommandHarness(input: {
     };
   }
   let providerBusy =
-    input.previousTurn?.runStatus === "failed" &&
+    (input.previousTurn?.runStatus === "failed" ||
+      input.previousTurn?.runStatus === "interrupted") &&
     input.previousTurn.turnStatus === "running" &&
     !input.previousTurn.differentThread &&
     input.previousTurn.liveSession !== false;
@@ -1527,6 +1585,32 @@ effectIt.effect("recovers an abandoned failed turn before continuing its native 
       "existing-native-conversation",
     );
   }),
+);
+
+effectIt.effect(
+  "recovers a running turn its interrupted run left behind on a superseded attempt",
+  () =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({
+        text: "Continue",
+        previousTurn: { runStatus: "interrupted", turnStatus: "running", supersededTurn: true },
+      });
+
+      yield* harness.start;
+
+      expect(harness.interruptTurn).toHaveBeenCalledOnce();
+      // The steered attempt's turn was already interrupted in the fixture; the
+      // repair this asserts is the running turn left on the superseded attempt.
+      const abandoned = harness
+        .projection()
+        .providerTurns.find((turn) => turn.id === ProviderTurnId.make("previous-provider-turn"));
+      expect(abandoned).toMatchObject({
+        status: "interrupted",
+        completedAt: expect.anything(),
+      });
+      expect(harness.projection().runs.at(-1)?.status).toBe("running");
+      expect(harness.startRootRun).toHaveBeenCalledOnce();
+    }),
 );
 
 effectIt.effect("sends new steering text when restarting a manual continuation", () =>
