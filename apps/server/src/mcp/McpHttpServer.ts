@@ -89,6 +89,7 @@ import * as HtmlHandlers from "./toolkits/html/handlers.ts";
 import { MessageToolkit } from "./toolkits/message/tools.ts";
 import * as MessageHandlers from "./toolkits/message/handlers.ts";
 import { HtmlPreviewTool, HtmlPreviewToolkit, HtmlRenderToolkit } from "./toolkits/html/tools.ts";
+import { MCP_HTTP_PATH } from "../httpCors.ts";
 import { requestUrl } from "../requestUrl.ts";
 
 const mcpResourceMetadataUrl = (request: HttpServerRequest.HttpServerRequest) =>
@@ -279,7 +280,10 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
   });
   // Untraced: a span here would wrap the tool call; the HTTP server span already covers it.
   return Effect.fnUntraced(function* (httpEffect) {
-    const admitted = yield* authenticateRequest(yield* HttpServerRequest.HttpServerRequest);
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    // The transport allows no browser Origin; refuse it before credentials, as the MCP spec requires.
+    if (request.headers.origin !== undefined) return HttpServerResponse.empty({ status: 403 });
+    const admitted = yield* authenticateRequest(request);
     if (HttpServerResponse.isHttpServerResponse(admitted)) return admitted;
     return yield* httpEffect.pipe(
       Effect.provideService(McpInvocationContext.McpInvocationContext, admitted),
@@ -1315,7 +1319,7 @@ export const layerMcpTransport = <RA, RE, RR>(registrations: Layer.Layer<RA, RE,
   McpServer.layerHttp({
     name: "T3 Code",
     version: packageJson.version,
-    path: "/mcp",
+    path: MCP_HTTP_PATH,
     // The first protocol is the fallback for clients that offer an unknown version.
     protocols: [McpProtocol.v2025_06_18, McpProtocol.v2026_07_28],
     allowSessionTermination: true,
