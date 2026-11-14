@@ -21,6 +21,10 @@ import {
   PreviewAutomationError,
   PreviewAutomationUnavailableError,
   ProviderInstanceId,
+  PullRequestCheck,
+  PullRequestComment,
+  PullRequestReviewThread,
+  ThreadPullRequestWatch,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -294,6 +298,36 @@ const McpToolUseWorld = Schema.StructWithRest(
 );
 
 /** One fake thread, one JSON object per line in a case file. */
+/** The parts of a PR watch wake that cases use, typed by the contracts `pullRequestWatchMessage` reads. */
+const PullRequestWake = Schema.Struct({
+  number: Schema.Number,
+  url: Schema.String,
+  baseBranch: Schema.String,
+  headSha: Schema.NullOr(Schema.String),
+  report: Schema.Struct({
+    changes: Schema.Array(
+      Schema.Union([
+        Schema.Struct({
+          kind: Schema.Literal("checks-failed"),
+          failed: Schema.Array(PullRequestCheck),
+        }),
+        Schema.Struct({
+          kind: Schema.Literal("remarks"),
+          remarks: Schema.Array(PullRequestComment),
+        }),
+      ]),
+    ),
+    next: ThreadPullRequestWatch,
+    exhausted: Schema.Boolean,
+  }),
+  state: Schema.Struct({
+    checks: Schema.Array(PullRequestCheck),
+    reviewThreads: Schema.NullOr(
+      Schema.Struct({ threads: Schema.Array(PullRequestReviewThread), truncated: Schema.Boolean }),
+    ),
+  }),
+});
+
 export const McpToolUseCase = Schema.Struct({
   id: Schema.String,
   area: Schema.String,
@@ -340,7 +374,7 @@ export const McpToolUseCase = Schema.Struct({
   /** Empty to resume a top-level thread without side-chat context after its last tool result. */
   prompt: Schema.String,
   /** `pullRequestWatchMessage` input; its text replaces `prompt`, so the case reads T3's current wake. */
-  wake: Schema.optional(Schema.Unknown),
+  wake: Schema.optional(PullRequestWake),
   /** Records for the context chips `prompt` links, projected as T3 sends them. */
   promptContext: Schema.optional(Schema.Struct({ records: Schema.Array(ComposerContextRecord) })),
   expect: McpToolUseExpect,
@@ -2455,9 +2489,7 @@ const withWake = (testCase: McpToolUseCase): McpToolUseCase =>
     ? testCase
     : {
         ...testCase,
-        prompt: pullRequestWatchMessage(
-          testCase.wake as Parameters<typeof pullRequestWatchMessage>[0],
-        ).text,
+        prompt: pullRequestWatchMessage(testCase.wake).text,
       };
 const decodeBaselineRow = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
