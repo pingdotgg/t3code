@@ -33,7 +33,11 @@ import {
   type ThreadSearchSubject,
 } from "@t3tools/shared/paletteSearch";
 import { threadSearchPullRequests } from "@t3tools/shared/threadPullRequests";
-import { indexedMessageCondition, nonPlaceholderMessageCondition } from "./messageSearchIndex.ts";
+import {
+  indexedMessageCondition,
+  messageSearchText,
+  nonPlaceholderMessageCondition,
+} from "./messageSearchIndex.ts";
 import { loadOlderSettledThreadsPage } from "./ShellStream.ts";
 
 // When the user last wrote in the thread aliased `threads`, as the clients
@@ -65,8 +69,10 @@ const TokenList = Schema.fromJsonString(Schema.Array(Schema.String));
 const SearchRequest = Schema.Struct({
   /** The FTS5 query, or null to scan messages instead. */
   match: Schema.NullOr(Schema.String),
-  /** Tokens every hit must contain, checked on the text. */
-  substrings: TokenList,
+  /** Tokens every hit must contain, as typed or as their GLOB folding case and Latin accents. */
+  substrings: Schema.fromJsonString(
+    Schema.Array(Schema.Struct({ token: Schema.String, accentInsensitive: Schema.String })),
+  ),
   /** For each short word outside ASCII, the spellings a hit must contain one of. */
   shortSpellings: Schema.fromJsonString(Schema.Array(Schema.Array(Schema.String))),
   projectId: Schema.NullOr(ProjectId),
@@ -116,6 +122,37 @@ function shortTokenSpellings(token: string): ReadonlyArray<string> {
   return [...new Set(spellings)];
 }
 
+// Latin-1 Supplement and Extended-A/B/Additional letters that fold to ASCII,
+// including Romanian and Vietnamese letters SQLite's lower() leaves alone.
+const accentedForms = Map.groupBy(
+  [
+    ...Array.from({ length: 0x250 - 0xc0 }, (_, offset) => String.fromCharCode(0xc0 + offset)),
+    ...Array.from({ length: 0x1f00 - 0x1e00 }, (_, offset) => String.fromCharCode(0x1e00 + offset)),
+  ].filter((char) => /^[a-z]$/.test(foldSearchQuery(char))),
+  (char) => foldSearchQuery(char),
+);
+// Only text that may hold one of those letters (by UTF-8 lead byte) needs the GLOB:
+// lower() already folds ASCII case.
+const MESSAGE_HOLDS_ACCENTED_LATIN = [
+  ...new Set(
+    [...accentedForms.values()].flat().map((char) => Buffer.from(char).toString("hex", 0, 1)),
+  ),
+]
+  .map((lead) => `instr(CAST(message.text AS BLOB), x'${lead}') > 0`)
+  .join(" OR ");
+
+/** A GLOB pattern for `token` anywhere, in any case and with or without Latin accents. */
+function accentInsensitiveGlob(token: string): string {
+  const pattern = Array.from(token, (char) => {
+    const letter = foldSearchQuery(char);
+    if (/^[a-z]$/.test(letter)) {
+      return `[${letter}${letter.toUpperCase()}${accentedForms.get(letter)?.join("") ?? ""}]`;
+    }
+    return /[*?[]/.test(char) ? `[${char}]` : char;
+  });
+  return `*${pattern.join("")}*`;
+}
+
 /**
  * The SQL inputs for a message search, or null when the query has no token
  * long enough to search. Tokens of three or more characters go to the
@@ -133,7 +170,10 @@ function buildMessageSearch(
   const narrowing = short.filter((token) => !NON_ASCII.test(token));
   return {
     match: indexed ? long.map((token) => `"${token.replaceAll('"', '""')}"`).join(" ") : null,
-    substrings: indexed ? narrowing : [...long, ...narrowing],
+    substrings: (indexed ? narrowing : [...long, ...narrowing]).map((token) => ({
+      token,
+      accentInsensitive: accentInsensitiveGlob(token),
+    })),
     shortSpellings: short.filter((token) => NON_ASCII.test(token)).map(shortTokenSpellings),
   };
 }
@@ -172,10 +212,10 @@ export function buildSearchSnippet(text: string, matchStart: number): string {
   return `${start > 0 ? "…" : ""}${shown.slice(0, end)}${cut ? "…" : ""}`;
 }
 
-// Filter hidden subagents and side chats before the hit limit so visible matches aren't lost.
-// Word starts and ranking follow the title rules in JS.
-// Without FTS5 trigrams, or for two-character CJK words, scan the same eligible messages.
-// The scan folds ASCII case only, so accent variants and non-ASCII case variants may not match.
+// Filter hidden subagents and side chats before the hit limit; JS checks word starts and ranking.
+// Both paths narrow ASCII tokens with Latin-1 and Extended-A/B/Additional accent variants.
+// Without FTS5 trigrams, or for two-character CJK words, scan the same eligible messages;
+// accented queries and non-Latin case can still miss: "fermée"/"fermee", "ОШИБКА"/"ошибка".
 export const messageHitsQuery = (
   sql: SqlClient.SqlClient,
   { match, substrings, shortSpellings, projectId, excludedThreadIds }: typeof SearchRequest.Encoded,
@@ -203,7 +243,7 @@ export const messageHitsQuery = (
             messages.thread_id AS "threadId",
             eligible.project_id AS "projectId",
             messages.role AS source,
-            json_extract(messages.payload_json, '$.text') AS text,
+            ${messageSearchText(sql)} AS text,
             messages.created_at AS "messageCreatedAt"
           FROM orchestration_v2_projection_messages AS messages
           INNER JOIN eligible ON eligible.thread_id = messages.thread_id
@@ -220,7 +260,7 @@ export const messageHitsQuery = (
             messages.thread_id AS "threadId",
             eligible.project_id AS "projectId",
             messages.role AS source,
-            json_extract(messages.payload_json, '$.text') AS text,
+            ${messageSearchText(sql)} AS text,
             messages.created_at AS "messageCreatedAt"
           FROM orchestration_v2_message_search
           INNER JOIN orchestration_v2_projection_messages AS messages
@@ -239,15 +279,39 @@ export const messageHitsQuery = (
       -- Answers to an agent's question show inside its question card, where
       -- neither find nor a jump can reach them.
       AND messages.message_id NOT LIKE 'async-answer:%'
+      -- Nor can they reach a rolled-back turn, or a message of a stopped turn
+      -- that no shown item carries, such as a queued prompt that never ran.
       AND NOT EXISTS (
-        SELECT 1 FROM json_each(${substrings}) AS token
-        WHERE instr(lower(json_extract(messages.payload_json, '$.text')), token.value) = 0
+        SELECT 1 FROM orchestration_v2_projection_runs AS runs
+        WHERE runs.run_id = messages.run_id
+          AND (
+            runs.status = 'rolled_back'
+            OR (
+              runs.status = 'cancelled'
+              AND NOT EXISTS (
+                SELECT 1 FROM orchestration_v2_projection_turn_items AS items
+                WHERE items.run_id = runs.run_id
+                  AND json_extract(items.payload_json, '$.messageId') = messages.message_id
+                  AND json_extract(items.payload_json, '$.inputIntent') IS NOT 'queued_turn'
+              )
+            )
+          )
+      )
+      AND NOT EXISTS (
+        -- The text read once, not once per check.
+        SELECT 1 FROM (SELECT ${messageSearchText(sql)} AS text) AS message,
+          json_each(${substrings}) AS substring
+        WHERE instr(lower(message.text), json_extract(substring.value, '$.token')) = 0
+          AND NOT (
+            (${sql.literal(MESSAGE_HOLDS_ACCENTED_LATIN)})
+            AND message.text GLOB json_extract(substring.value, '$.accentInsensitive')
+          )
       )
       AND NOT EXISTS (
         SELECT 1 FROM json_each(${shortSpellings}) AS token
         WHERE NOT EXISTS (
           SELECT 1 FROM json_each(token.value) AS spelling
-          WHERE instr(json_extract(messages.payload_json, '$.text'), spelling.value) > 0
+          WHERE instr(${messageSearchText(sql)}, spelling.value) > 0
         )
       )
     -- The index's own rowid, so FTS5 returns hits newest first and stops at
