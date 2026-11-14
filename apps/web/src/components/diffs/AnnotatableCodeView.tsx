@@ -6,7 +6,7 @@ import type {
   FileDiffMetadata,
   SelectedLineRange,
 } from "@pierre/diffs";
-import type { CodeViewHandle } from "@pierre/diffs/react";
+import type { CodeViewHandle, CodeViewProps } from "@pierre/diffs/react";
 import type { EnvironmentId, ProjectId, ScopedThreadRef } from "@t3tools/contracts";
 import { useState, type ReactNode, type Ref } from "react";
 
@@ -88,6 +88,7 @@ interface AnnotatableCodeViewProps {
   composerDraftTarget: ScopedThreadRef | DraftId;
   options: StyledDiffCodeViewOptions<DiffCommentAnnotationGroup>;
   viewerRef?: Ref<AnnotatableCodeViewHandle>;
+  onScroll?: CodeViewProps<DiffCommentAnnotationGroup, undefined>["onScroll"];
   className?: string;
   renderCodeViewFooter?: () => ReactNode;
   unsafeCSSExtra?: string;
@@ -116,6 +117,7 @@ export function AnnotatableCodeView({
   composerDraftTarget,
   options,
   viewerRef,
+  onScroll,
   className,
   renderCodeViewFooter,
   unsafeCSSExtra,
@@ -260,6 +262,7 @@ export function AnnotatableCodeView({
     <StyledDiffCodeView<DiffCommentAnnotationGroup>
       key={codeViewKey}
       {...(viewerRef ? { viewerRef } : {})}
+      {...(onScroll ? { onScroll } : {})}
       {...(className ? { className } : {})}
       {...(unsafeCSSExtra ? { unsafeCSSExtra } : {})}
       {...(renderHeaderMetadata
@@ -272,12 +275,12 @@ export function AnnotatableCodeView({
       items={items}
       selectedLines={selectedLines}
       onSelectedLinesChange={setSelectedLines}
-      onRevealSearchMatch={(item) => onRevealSearchMatch(item.id)}
       options={{
         ...options,
         enableGutterUtility: draft === null,
         enableLineSelection: draft === null,
         onGutterUtilityClick: beginComment,
+        onRevealSearchMatch: (item) => onRevealSearchMatch(item.id),
       }}
       renderHeaderFilenameSuffix={(item) =>
         item.type === "diff" ? renderHeaderFilenameSuffix(item.fileDiff) : null

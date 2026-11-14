@@ -1,6 +1,33 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { splitMarkdownDetails } from "./markdownDetails";
+import {
+  markdownForNativeParsing,
+  markdownReferenceDefinitions,
+  withReferenceDefinitions,
+} from "./markdownDocument";
+import { parseMarkdown } from "react-native-enriched-markdown/src/web/parseMarkdown";
+
+type NativeNode = Awaited<ReturnType<typeof parseMarkdown>>;
+
+/** Where the native parser sends each link and image in one rendered fragment of a reply. */
+async function referenceDestinations(reply: string, pick: number) {
+  const segment = splitMarkdownDetails(reply)[pick];
+  const fragment = segment?.kind === "details" ? segment.body : (segment?.markdown ?? "");
+  const urls: Array<string | undefined> = [];
+  const visit = (node: NativeNode) => {
+    if (node.type === "Link" || node.type === "Image") urls.push(node.attributes?.url);
+    node.children?.forEach(visit);
+  };
+  visit(
+    await parseMarkdown(
+      markdownForNativeParsing(
+        withReferenceDefinitions(fragment, markdownReferenceDefinitions(reply)),
+      ),
+    ),
+  );
+  return urls;
+}
 
 describe("splitMarkdownDetails", () => {
   // regression: #28059 mobile chat showed every <details> fold open
@@ -76,5 +103,59 @@ describe("splitMarkdownDetails", () => {
     expect(
       splitMarkdownDetails('<details title="is open">\n<summary>Plan</summary>\n</details>'),
     ).toMatchObject([{ kind: "details", open: false }]);
+  });
+});
+
+describe("withReferenceDefinitions", () => {
+  it("resolves a fragment's references from the whole reply, its own definitions first", async () => {
+    const fold = "\n\n<details><summary>A</summary>a</details>\n\n";
+    for (const [reply, pick, expected] of [
+      // Into a fold, with an escaped label and a Windows destination kept as written.
+      [
+        "<details>\n<summary>A</summary>\n\n[config][c] ![B][a\\]b]\n\n</details>\n\n[c]: C:\\work\\.t3\\settings.json\n[a\\]b]: https://example.com/a",
+        0,
+        ["C:\\work\\.t3\\settings.json", "https://example.com/a"],
+      ],
+      // Out of a fold.
+      [
+        "See [d].\n\n<details>\n<summary>A</summary>\n\n[d]: https://example.com\n\n</details>",
+        0,
+        ["https://example.com"],
+      ],
+      // A quoted definition that wraps onto continuation lines.
+      [`See [d].${fold}> [d]:\n> https://example.com\n> "Title"`, 0, ["https://example.com"]],
+      // A definition the compact HTML block hides from the reply's parse, with a label that wraps.
+      [
+        "See [the\n  doc].\n\n<details><summary>A</summary>a</details>\n[The Doc]: https://example.com",
+        0,
+        ["https://example.com"],
+      ],
+      // A literal ">" in a wrapped label is part of the label, not a quote marker.
+      [
+        `[part rest] and [part > rest]${fold}[part\n    > rest]: https://example.com/a\n\n[part rest]: https://example.com/b`,
+        0,
+        ["https://example.com/b", "https://example.com/a"],
+      ],
+      // A fragment's own definition wins, however the parser equates the two labels.
+      [
+        "[ x ]: https://outside.example\n\n<details>\n<summary>S</summary>\n\nSee [x].\n\n[X]: https://inside.example\n\n</details>",
+        1,
+        ["https://inside.example"],
+      ],
+      [
+        "[SS]: https://outside.example\n\n<details>\n<summary>S</summary>\n\nSee [SS].\n\n[\u00df]: https://inside.example\n\n</details>",
+        1,
+        ["https://inside.example"],
+      ],
+    ] as const) {
+      expect(await referenceDestinations(reply, pick)).toEqual(expected);
+    }
+  });
+
+  it("leaves a fragment with nothing to resolve as written", () => {
+    expect(withReferenceDefinitions("See [d].", [])).toBe("See [d].");
+    expect(withReferenceDefinitions("Plain text.", ["[d]: https://example.com"])).toBe(
+      "Plain text.",
+    );
   });
 });
