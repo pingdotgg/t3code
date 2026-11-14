@@ -31,10 +31,11 @@ import {
 import * as NativeTelemetryClient from "./NativeTelemetryClient.ts";
 import * as ResourceAttribution from "./ResourceAttribution.ts";
 import {
-  buildResourceTelemetryHistory,
   normalizeResourceTelemetryHistoryInput,
   type ResourceTelemetryHistoryWithLegacyBuckets,
 } from "./ResourceTelemetryHistory.ts";
+import { readResourceTelemetryHistory } from "./ResourceTelemetryHistoryReader.ts";
+import { ResourceTelemetryHistoryError } from "@t3tools/contracts";
 import { subscribeBeforeSnapshot } from "../utils/subscribeBeforeSnapshot.ts";
 
 export class ResourceTelemetryRefreshFailed extends Schema.TaggedError<ResourceTelemetryRefreshFailed>()(
@@ -64,7 +65,7 @@ export class ResourceTelemetry extends Context.Service<
     >;
     readonly readHistory: (
       input: ResourceTelemetryHistoryInput,
-    ) => Effect.Effect<ResourceTelemetryHistoryWithLegacyBuckets>;
+    ) => Effect.Effect<ResourceTelemetryHistoryWithLegacyBuckets, ResourceTelemetryHistoryError>;
     readonly refresh: Effect.Effect<ResourceTelemetrySnapshot, ResourceTelemetryRefreshFailed>;
     readonly retry: Effect.Effect<ResourceTelemetryRetryResult>;
   }
@@ -141,6 +142,7 @@ function buildHealth(input: {
 /** @public */
 export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(function* () {
   const nativeClient = yield* NativeTelemetryClient.NativeTelemetryClient;
+  const historyMutex = yield* Semaphore.make(1);
   const desktopReceiver = yield* DesktopTelemetryReceiver.DesktopTelemetryReceiver;
   const attribution = yield* ResourceAttribution.ResourceAttribution;
   const mutex = yield* Semaphore.make(1);
@@ -425,7 +427,7 @@ export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(functi
       desktopReceiver.health,
     ]);
     const current = yield* Ref.get(state);
-    return buildResourceTelemetryHistory({
+    const historyInput = {
       readAt,
       windowMs: normalizedInput.windowMs,
       bucketMs: normalizedInput.bucketMs,
@@ -439,8 +441,11 @@ export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(functi
         desktop: desktopHealth,
         nativeSnapshot: current.nativeSnapshot,
       }),
-    });
-  });
+    };
+    return yield* readResourceTelemetryHistory(historyInput).pipe(
+      Effect.mapError((cause) => new ResourceTelemetryHistoryError({ cause })),
+    );
+  }, historyMutex.withPermits(1));
   yield* nativeHealthSubscription.changes.pipe(
     Stream.runForEach(() => refreshHealth),
     Effect.forkScoped,
