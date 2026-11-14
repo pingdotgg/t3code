@@ -81,6 +81,13 @@ request the sandbox and cannot start on Windows. Explicit sandbox policies remai
 including restrictive policies that the Windows SDK rejects. Explicit approval policy overrides
 control Auto-review, which is not represented as an interactive T3 Code approval flow.
 
+Sandboxed Cursor threads do not get the Cursor CLI's built-in network allowlist (npm, PyPI,
+crates.io, GitHub content hosts, and so on), because the SDK does not offer it. Without
+`~/.cursor/sandbox.json`, sandboxed commands have no network access; with it, they reach only the
+hosts its `networkPolicy` allows. List the package registries your projects need there. Cursor text
+generation still runs when that file sets only `type` (`workspace_readwrite` or
+`workspace_readonly`) and network settings, and refuses when it changes filesystem access.
+
 The existing Cursor binary path and API endpoint settings belong to the CLI/ACP integration. Cursor
 V2 execution does not launch that binary, and the SDK does not expose an API endpoint override.
 

@@ -50,6 +50,28 @@ function cursorSandboxUnsupported(cause: unknown): boolean {
   return false;
 }
 
+// The SDK defaults a missing type to workspace_readwrite, the policy T3 requests; network keys leave files alone.
+const NETWORK_SANDBOX_POLICY_KEYS = new Set([
+  "networkPolicy",
+  "networkAccess",
+  "networkPolicyStrict",
+]);
+
+function sandboxPolicyKeepsFilesystemIsolation(text: string): boolean {
+  let policy: unknown;
+  try {
+    policy = JSON.parse(text);
+  } catch {
+    return false;
+  }
+  if (typeof policy !== "object" || policy === null || Array.isArray(policy)) return false;
+  return Object.entries(policy).every(([key, value]) =>
+    key === "type"
+      ? value === "workspace_readwrite" || value === "workspace_readonly"
+      : NETWORK_SANDBOX_POLICY_KEYS.has(key),
+  );
+}
+
 export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(function* (
   cursorSettings: CursorSettings,
   environment?: NodeJS.ProcessEnv,
@@ -97,8 +119,14 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
         try: sdk.load,
         catch: sdkFailure("Cursor SDK could not be loaded."),
       });
-      // sandbox.json expands writable paths independently of settingSources; the public API cannot override it.
-      if (yield* fs.exists(`${yield* HostProcess.HomeDirectory}/.cursor/sandbox.json`)) {
+      // sandbox.json can expand writable paths independently of settingSources; the public API cannot override it.
+      const sandboxPolicyPath = `${yield* HostProcess.HomeDirectory}/.cursor/sandbox.json`;
+      if (
+        (yield* fs.exists(sandboxPolicyPath)) &&
+        !sandboxPolicyKeepsFilesystemIsolation(
+          yield* fs.readFileString(sandboxPolicyPath).pipe(Effect.orElseSucceed(() => "")),
+        )
+      ) {
         return yield* new TextGenerationError({
           operation,
           detail:
