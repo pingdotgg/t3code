@@ -20,6 +20,7 @@ import { act, fakeTimers, render } from "../../../test/render";
 import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { makeThreadProjectionFixture } from "../../test-fixtures";
 import { toastManager } from "../ui/toast";
+import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { usePendingThreadRequests } from "./usePendingThreadRequests";
 
 const threadRef = { environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("thread") };
@@ -237,6 +238,52 @@ it("stays on an unanswered question when the composer submits", async () => {
   await userEvent.click(screen.getByRole("button", { name: "Choose Incremental" }));
   await userEvent.click(submit);
   await expect.element(screen.getByRole("status")).toHaveTextContent("Question 2");
+});
+
+function PanelProbe(props: ProbeProps) {
+  const state = useProbeRequests(props);
+  return (
+    <>
+      <button type="button">Elsewhere</button>
+      <ComposerPendingUserInputPanel
+        pendingUserInputs={state.pendingUserInputs}
+        cwd={undefined}
+        threadRef={threadRef}
+        respondingRequestIds={[]}
+        answers={state.activePendingDraftAnswers}
+        questionIndex={state.activePendingQuestionIndex}
+        onToggleOption={state.onSelectActivePendingUserInputOption}
+        onAdvance={state.onAdvanceActivePendingUserInput}
+        onDismiss={() => {}}
+      />
+    </>
+  );
+}
+
+it("keeps keyboard focus on the options when an answer moves to the next question", async () => {
+  await using screen = await render(
+    <PanelProbe
+      environmentId={EnvironmentId.make("focus-environment")}
+      projection={questionProjection(threadRef.threadId)}
+    />,
+  );
+  using _timers = fakeTimers();
+  const option = screen.getByRole("button", { name: /Incremental/ });
+  option.element().focus();
+  await userEvent.keyboard("{Enter}");
+  await act(() => vi.advanceTimersByTime(200));
+  await expect.element(screen.getByText("Choose for question 2")).toBeVisible();
+  await expect.element(option).toHaveFocus();
+  await expect
+    .element(screen.getByRole("group", { name: "Choose for question 2" }))
+    .toContainElement(option.element() as HTMLElement);
+
+  const elsewhere = screen.getByRole("button", { name: "Elsewhere" });
+  elsewhere.element().focus();
+  await userEvent.keyboard("1");
+  await act(() => vi.advanceTimersByTime(200));
+  await expect.element(screen.getByText("Choose for question 3")).toBeVisible();
+  await expect.element(elsewhere).toHaveFocus();
 });
 
 it("isolates drafts by environment, thread and request and discards only resolved requests", async () => {
