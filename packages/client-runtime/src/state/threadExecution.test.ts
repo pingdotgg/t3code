@@ -9,9 +9,11 @@ import {
   ProviderTurnId,
   RunAttemptId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2RunStatus,
+  type OrchestrationV2RuntimeRequest,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { createModelCapabilities, createModelSelection } from "@t3tools/shared/model";
@@ -20,6 +22,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { v2Projection } from "./orchestrationV2TestFixtures.ts";
 import {
+  canResumeThread,
   deriveReportedModelSelection,
   deriveLatestThreadRun,
   deriveProviderSubagentStatus,
@@ -37,6 +40,23 @@ import {
 } from "./threadExecution.ts";
 
 const now = DateTime.makeUnsafe("2026-07-28T10:00:00.000Z");
+
+function request(
+  id: string,
+  status: OrchestrationV2RuntimeRequest["status"],
+): OrchestrationV2RuntimeRequest {
+  return {
+    id: RuntimeRequestId.make(id),
+    nodeId: NodeId.make(`node-${id}`),
+    providerTurnId: null,
+    nativeRequestRef: null,
+    kind: "command",
+    status,
+    responseCapability: { type: "not_resumable", reason: "Session ended." },
+    createdAt: now,
+    resolvedAt: status === "pending" ? null : now,
+  };
+}
 
 function run(id: string, ordinal: number, status: OrchestrationV2RunStatus) {
   return {
@@ -369,6 +389,47 @@ describe("thread execution presentation", () => {
     expect(deriveThreadRuntime(onlyHeld)).toBeNull();
   });
 
+  it.each([
+    { name: "no requests", requests: [], runId: "run-stopped", held: false, expected: true },
+    {
+      name: "a pending request",
+      requests: [request("approval", "pending")],
+      runId: "run-stopped",
+      held: false,
+      expected: false,
+    },
+    {
+      name: "only a resolved request",
+      requests: [request("approval", "resolved")],
+      runId: "run-stopped",
+      held: false,
+      expected: true,
+    },
+    {
+      name: "a held queue behind a blocked continuation",
+      requests: [request("approval", "pending")],
+      runId: "run-stopped",
+      held: true,
+      expected: false,
+    },
+    {
+      name: "a held queue with no run to continue",
+      requests: [request("approval", "pending")],
+      runId: null,
+      held: true,
+      expected: true,
+    },
+    { name: "nothing to resume", requests: [], runId: null, held: false, expected: false },
+  ])("decides whether Resume can start with $name", ({ requests, runId, held, expected }) => {
+    expect(
+      canResumeThread(
+        { runtimeRequests: requests },
+        runId === null ? null : RunId.make(runId),
+        held,
+      ),
+    ).toBe(expected);
+  });
+
   it("does not expose a queued-only run as interruptible", () => {
     const queuedRun = run("run-queued", 1, "queued");
     const projection = { ...v2Projection, runs: [queuedRun], updatedAt: now };
@@ -492,7 +553,14 @@ describe("deriveRunlessWorkStartedAt", () => {
   };
 
   it("times a provider-native subagent from its runless root turn while it works", () => {
-    const projection = { ...nativeChild, nodes: [rootTurn("running", later)] };
+    const projection = {
+      ...nativeChild,
+      thread: {
+        ...nativeChild.thread,
+        activeProviderThreadId: ProviderThreadId.make("native-child"),
+      },
+      nodes: [rootTurn("running", later)],
+    };
     expect(deriveRunlessWorkStartedAt(projection)).toBe("2026-07-28T10:05:00.000Z");
     expect(deriveThreadRuntime(projection)).toBeNull();
   });

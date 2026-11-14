@@ -12,6 +12,7 @@ import type { CellRange } from "@betteroffice/xlsx/headless";
 import { anchorRange, attempt, lastCell, parseRange, parseSpans } from "./sheet-cells";
 import type { WorkbookView } from "../officePreviewProtocol";
 import { chartFonts, drawFrame, paintFrame, withoutGridlines } from "./sheet-frame";
+import { maximumTrackSize, minimumTrackSize } from "./sheet-sizing";
 import { sheetFonts } from "./sheet-fonts";
 import { frozenSize } from "./sheet-paint";
 import type { SheetLayout, SheetMethods, SheetTab } from "./sheet-protocol";
@@ -77,6 +78,34 @@ serveWorker<SheetMethods>({
     attempt(() => show(opened, current));
 
     throw new Error(`Sheet ${input.sheet} could not open`);
+  },
+  resize: (input) => {
+    const opened = active(input.sheet);
+    if (
+      !Number.isInteger(input.index) ||
+      input.index < 0 ||
+      input.index > (input.axis === "row" ? lastCell.row : lastCell.col) ||
+      !Number.isFinite(input.delta)
+    )
+      throw new Error("Invalid track resize");
+    const rect = opened.workbook.cellRect(
+      input.sheet,
+      input.axis === "row" ? input.index : 0,
+      input.axis === "column" ? input.index : 0,
+    );
+    const current = input.axis === "column" ? rect.w : rect.h;
+    const size = Math.max(
+      minimumTrackSize,
+      Math.min(maximumTrackSize[input.axis], current + input.delta),
+    );
+    const operation =
+      input.axis === "column"
+        ? { type: "setColWidth", sheet: input.sheet, col: input.index, width: (size - 5) / 7 }
+        : { type: "setRowHeight", sheet: input.sheet, row: input.index, height: size * 0.75 };
+    opened.info = opened.workbook.applyOps([operation]).sheetInfo;
+    opened.ends.clear();
+    const { chartWidth, chartHeight } = layout(opened.workbook, input.sheet);
+    return { info: opened.info, chartWidth, chartHeight };
   },
   frame: async (input) => {
     const opened = active(input.sheet);
