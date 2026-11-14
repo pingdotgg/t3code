@@ -58,6 +58,9 @@ thiserror = "2"
 # Without its `v4` feature, which would bring getrandom 0.4 next to the 0.3 already in the
 # tree; conn-support fills the bytes from getrandom 0.3.
 uuid = { version = "1.29", default-features = false, features = ["std"] }
+# Text generator answers that the endpoint compresses: the T3 server's fetch asks for gzip and
+# deflate, so this server asks for them too and must decode them. Pure Rust (miniz_oxide).
+flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
 axum = { version = "0.8", default-features = false, features = [
   "http1",
   "json",

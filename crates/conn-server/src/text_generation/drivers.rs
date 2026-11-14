@@ -24,9 +24,49 @@ pub const LIST_MODELS_TIMEOUT: Duration = Duration::from_secs(25);
 const MAX_MODEL_PAGES: usize = 10;
 /// `ANTHROPIC_VERSION`.
 const ANTHROPIC_VERSION: &str = "2023-06-01";
-/// The T3 server reads a whole answer; this server stops at 8 MiB, and a longer answer reads
-/// as one it could not read.
+/// The T3 server reads a whole answer; this server stops at 8 MiB, after decoding, and a
+/// longer answer reads as one it could not read.
 const MAX_ANSWER_BYTES: usize = 8 * 1024 * 1024;
+
+/// The headers Node's `fetch` (undici) adds to each request the T3 server sends. An endpoint
+/// sees them, so this server sends the same. `connection: keep-alive` is sent as fetch sends
+/// it, though this client opens one connection per request.
+const FETCH_HEADERS: [(&str, &str); 6] = [
+    ("accept", "*/*"),
+    ("accept-language", "*"),
+    ("sec-fetch-mode", "cors"),
+    ("user-agent", "node"),
+    ("accept-encoding", "gzip, deflate"),
+    ("connection", "keep-alive"),
+];
+
+/// Decodes an answer as fetch does for `content-encoding: gzip` (or `x-gzip`) and `deflate`
+/// (zlib, or raw deflate when the first byte is not a zlib header). `None` when it does not
+/// decode or grows past [`MAX_ANSWER_BYTES`]: the answer then reads as unreadable, as a
+/// failed `response.json` does in T3.
+fn decode_body(encoding: Option<&str>, body: Vec<u8>) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let encoding = encoding.map(|e| e.trim().to_ascii_lowercase());
+    let limit = u64::try_from(MAX_ANSWER_BYTES).unwrap_or(u64::MAX) + 1;
+    let mut out = Vec::new();
+    let read = match encoding.as_deref() {
+        None | Some("" | "identity") => return Some(body),
+        Some("gzip" | "x-gzip") => flate2::read::MultiGzDecoder::new(body.as_slice())
+            .take(limit)
+            .read_to_end(&mut out),
+        Some("deflate") if body.first().is_some_and(|b| b & 0x0f == 0x08) => {
+            flate2::read::ZlibDecoder::new(body.as_slice())
+                .take(limit)
+                .read_to_end(&mut out)
+        }
+        Some("deflate") => flate2::read::DeflateDecoder::new(body.as_slice())
+            .take(limit)
+            .read_to_end(&mut out),
+        // An encoding fetch does not decode: the body stays as it came.
+        Some(_) => return Some(body),
+    };
+    (read.is_ok() && out.len() <= MAX_ANSWER_BYTES).then_some(out)
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -101,6 +141,11 @@ impl Connection {
         request: HttpRequest,
         timeout: Duration,
     ) -> Result<Value, RequestError> {
+        let request = FETCH_HEADERS
+            .iter()
+            .fold(request, |request, &(name, value)| {
+                request.header(name, value)
+            });
         let request = HttpRequest {
             max_response_bytes: MAX_ANSWER_BYTES,
             ..request.timeout(timeout)
@@ -115,7 +160,19 @@ impl Connection {
         let body: Option<Value> = if response.truncated {
             None
         } else {
-            serde_json::from_slice(&response.body).ok()
+            let encoding = response.header("content-encoding").map(str::to_owned);
+            // Inflating up to 8 MiB is CPU work: off the runtime thread.
+            let decoded = match encoding {
+                None => Some(response.body),
+                Some(encoding) => {
+                    let body = response.body;
+                    tokio::task::spawn_blocking(move || decode_body(Some(&encoding), body))
+                        .await
+                        .ok()
+                        .flatten()
+                }
+            };
+            decoded.and_then(|bytes| serde_json::from_slice(&bytes).ok())
         };
         if !(200..300).contains(&response.status) {
             let message = body
@@ -409,5 +466,34 @@ mod tests {
         let model = read_model(" a ", Some("  ")).unwrap();
         assert_eq!((model.id.as_str(), model.name.as_str()), ("a", "a"));
         assert_eq!(form_encode("a b/c"), "a+b%2Fc");
+    }
+
+    #[test]
+    fn compressed_answers_decode_as_fetch_decodes_them_within_the_cap() {
+        use std::io::Write;
+        let json = br#"{"data":[{"id":"m"}]}"#.to_vec();
+        let mut gzip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        gzip.write_all(&json).unwrap();
+        let gzip = gzip.finish().unwrap();
+        let mut zlib = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        zlib.write_all(&json).unwrap();
+        let zlib = zlib.finish().unwrap();
+        let mut raw =
+            flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+        raw.write_all(&json).unwrap();
+        let raw = raw.finish().unwrap();
+        assert_eq!(decode_body(Some("gzip"), gzip.clone()), Some(json.clone()));
+        assert_eq!(decode_body(Some(" X-Gzip "), gzip), Some(json.clone()));
+        assert_eq!(decode_body(Some("deflate"), zlib), Some(json.clone()));
+        assert_eq!(decode_body(Some("deflate"), raw), Some(json.clone()));
+        assert_eq!(decode_body(None, json.clone()), Some(json.clone()));
+        assert_eq!(decode_body(Some("br"), json.clone()), Some(json.clone()));
+        assert_eq!(decode_body(Some("gzip"), json), None, "not gzip");
+        // A small body that inflates past 8 MiB reads as unreadable, not as memory.
+        let mut bomb = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+        bomb.write_all(&vec![b' '; MAX_ANSWER_BYTES + 1]).unwrap();
+        let bomb = bomb.finish().unwrap();
+        assert!(bomb.len() < 64 * 1024);
+        assert_eq!(decode_body(Some("gzip"), bomb), None);
     }
 }
