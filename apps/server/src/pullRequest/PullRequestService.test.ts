@@ -2411,6 +2411,7 @@ it.effect("refuses Azure cross-organization reads and writes without its checkou
     // regression: #36946 Azure is supported; the refusal must name the missing checkout.
     if (readError._tag === "PullRequestUnavailableError") {
       assert.notStrictEqual(readError.reason, "provider-unsupported");
+      assert.match(readError.message, /Add the repository as a project/);
     }
   }),
 );

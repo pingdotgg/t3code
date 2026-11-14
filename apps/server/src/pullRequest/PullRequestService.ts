@@ -451,6 +451,9 @@ function providerDetail(
   return unavailableRequirement(requirementOf, error) ?? error.detail;
 }
 
+const CHECKOUT_REQUIREMENT =
+  "This change request's repository is not a project here. Add the repository as a project to read it.";
+
 function toPullRequestErrorWith(
   requirementOf: UnavailableRequirementOf,
 ): (operation: string) => (error: PullRequestProviderError) => PullRequestError {
@@ -1084,7 +1087,18 @@ export const make = Effect.gen(function* () {
                     };
                   }
                 }
-                return yield* new PullRequestUnavailableError({ reason: "provider-unsupported" });
+                const supportedHost =
+                  publicHost ?? sourceControlDefinitions.findByRepositoryKey(referenceKey);
+                const reader =
+                  supportedHost === undefined ? null : registry.get(supportedHost.kind);
+                // A host that is read here, but only from a checkout of the repository.
+                return yield* reader === null || reader.servesHost?.(host) === false
+                  ? new PullRequestUnavailableError({ reason: "provider-unsupported" })
+                  : new PullRequestUnavailableError({
+                      reason: "cli-missing",
+                      provider: reader.kind,
+                      requirement: CHECKOUT_REQUIREMENT,
+                    });
               });
             }
             return Effect.succeed(

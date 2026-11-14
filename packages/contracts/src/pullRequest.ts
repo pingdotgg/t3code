@@ -955,7 +955,8 @@ export type PullRequestLabelChangeInput = typeof PullRequestLabelChangeInput.Typ
 
 /**
  * The names keep their `cli-` prefix for wire compatibility; for a host read with a credential
- * rather than a tool they mean "no credential" and "a refused credential".
+ * rather than a tool they mean "no credential" and "a refused credential", and for one read
+ * through a checkout `cli-missing` also means "no project has this repository".
  */
 export const PullRequestUnavailableReason = Schema.Literals([
   "cli-missing",
