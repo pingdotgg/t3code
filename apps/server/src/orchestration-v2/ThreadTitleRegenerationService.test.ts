@@ -272,7 +272,7 @@ function armRegeneration(input: { readonly command: string; readonly threadId: T
 }
 
 /** Forks a source thread at its middle run, between a rolled-back run and later work. */
-function forkSeededSource(prefix: string) {
+function forkSeededSource(prefix: string, sideChat = false) {
   return Effect.gen(function* () {
     const threads = yield* ThreadManagement.ThreadManagementService;
     const sourceThreadId = yield* createThread({
@@ -309,6 +309,7 @@ function forkSeededSource(prefix: string) {
       sourceThreadId,
       targetThreadId: forkThreadId,
       sourcePoint: { type: "run", runId: forkRunId },
+      sideChat,
       createdBy: "user",
       creationSource: "web",
     });
@@ -531,55 +532,212 @@ describe("ThreadTitleRegenerationService", () => {
         assert.include(call?.forkSource?.history, "Sessions now persist in the Postgres");
         assert.notInclude(call?.forkSource?.history, "Later work the fork never saw");
         assert.notInclude(call?.forkSource?.history, "Rolled back attempt");
-        const fork = yield* threads.getThreadProjection(forkThreadId);
+        const fork = yield* threads.getThreadRecords(forkThreadId, []);
         assert.equal(fork.thread.title, "Generated title");
       }).pipe(Effect.provide(harness.layer));
     }),
   );
 
-  it.effect("refuses to title a fork whose inherited history was rolled back", () =>
+  it.effect.each(["plain", "side chat", "missing source"] as const)(
+    "refuses to title an empty thread with %s history",
+    (history) =>
+      Effect.gen(function* () {
+        const harness = makeHarness();
+        yield* Effect.gen(function* () {
+          const threads = yield* ThreadManagement.ThreadManagementService;
+          const titleRegeneration = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
+          const { forkThreadId } = yield* forkSeededSource(
+            "thread:title:empty",
+            history === "side chat",
+          );
+          if (history !== "side chat") {
+            const { thread } = yield* threads.getThreadProjection(forkThreadId);
+            const eventSink = yield* EventSink.EventSinkV2;
+            yield* eventSink.write({
+              events: [
+                {
+                  id: EventId.make("empty:lineage"),
+                  type: "thread.metadata-updated",
+                  threadId: forkThreadId,
+                  occurredAt: yield* DateTime.now,
+                  payload: {
+                    ...thread,
+                    forkedFrom:
+                      history === "plain"
+                        ? null
+                        : {
+                            type: "run",
+                            threadId: ThreadId.make("absent"),
+                            runId: RunId.make("absent"),
+                          },
+                  },
+                },
+              ],
+            });
+          }
+          const requestId = yield* armRegeneration({
+            command: "empty:request",
+            threadId: forkThreadId,
+          });
+          yield* titleRegeneration.execute({
+            threadId: forkThreadId,
+            requestId,
+            kind: { type: "regenerate" },
+          });
+          assert.equal(harness.generateThreadTitle.mock.calls.length, 0);
+          const fork = yield* threads.getThreadRecords(forkThreadId, []);
+          assert.deepInclude(fork.thread.lastTitleRegeneration, {
+            requestId,
+            status: "failed",
+            message: "This thread has no messages to title yet.",
+          });
+        }).pipe(Effect.provide(harness.layer));
+      }),
+  );
+
+  it.effect.each([
+    { nested: false, missing: false },
+    { nested: true, missing: false },
+    { nested: true, missing: true },
+  ])("rejects invalid fork history (nested: $nested, missing: $missing)", ({ nested, missing }) =>
     Effect.gen(function* () {
       const harness = makeHarness();
       yield* Effect.gen(function* () {
         const threads = yield* ThreadManagement.ThreadManagementService;
         const titleRegeneration = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
-        const { sourceThreadId, forkRunId, forkThreadId } = yield* forkSeededSource(
-          "thread:title:fork-rolled-back",
-        );
-        const source = yield* threads.getThreadProjection(sourceThreadId);
-        const forkRun = source.runs.find((run) => run.id === forkRunId);
-        assert.isDefined(forkRun);
+        const seeded = yield* forkSeededSource("thread:title:invalid");
+        let sourceThreadId = seeded.sourceThreadId;
+        let forkRunId = seeded.forkRunId;
+        let forkThreadId = seeded.forkThreadId;
+        if (nested) {
+          sourceThreadId = forkThreadId;
+          forkRunId = RunId.make("nested:run");
+          yield* recordRun({
+            threadId: sourceThreadId,
+            runId: forkRunId,
+            ordinal: 1,
+            user: "Intermediate work",
+            assistant: "Completed intermediate work.",
+          });
+          forkThreadId = ThreadId.make("nested:leaf");
+          yield* threads.dispatch({
+            type: "thread.fork",
+            commandId: CommandId.make("nested:fork"),
+            sourceThreadId,
+            targetThreadId: forkThreadId,
+            sourcePoint: { type: "run", runId: forkRunId },
+            createdBy: "user",
+            creationSource: "web",
+          });
+        }
         const eventSink = yield* EventSink.EventSinkV2;
-        yield* eventSink.write({
-          events: [
-            {
-              id: EventId.make(`${forkRunId}:rolled-back`),
-              type: "run.updated",
-              threadId: sourceThreadId,
-              runId: forkRunId,
-              occurredAt: yield* DateTime.now,
-              payload: { ...forkRun, status: "rolled_back" },
-            },
-          ],
-        });
+        if (missing) {
+          // Imported unassigned messages must not bypass a missing fork point.
+          yield* dispatchUserMessage({
+            command: "imported:message",
+            threadId: sourceThreadId,
+            text: "Imported history",
+          });
+          const source = yield* threads.getThreadRecords(sourceThreadId, []);
+          const fork = yield* threads.getThreadRecords(forkThreadId, []);
+          yield* eventSink.write({
+            events: [
+              {
+                id: EventId.make("source:imported"),
+                type: "thread.metadata-updated",
+                threadId: sourceThreadId,
+                occurredAt: yield* DateTime.now,
+                payload: { ...source.thread, historyOrigin: "v1_import" },
+              },
+              {
+                id: EventId.make("fork:missing-run"),
+                type: "thread.metadata-updated",
+                threadId: forkThreadId,
+                occurredAt: yield* DateTime.now,
+                payload: {
+                  ...fork.thread,
+                  forkedFrom: {
+                    type: "run",
+                    threadId: sourceThreadId,
+                    runId: RunId.make("absent:run"),
+                  },
+                },
+              },
+            ],
+          });
+        } else {
+          const source = yield* threads.getThreadRecords(sourceThreadId, ["runs"]);
+          const forkRun = source.runs.find((run) => run.id === forkRunId);
+          assert.isDefined(forkRun);
+          yield* eventSink.write({
+            events: [
+              {
+                id: EventId.make(`${forkRunId}:rolled-back`),
+                type: "run.updated",
+                threadId: sourceThreadId,
+                runId: forkRunId,
+                occurredAt: yield* DateTime.now,
+                payload: { ...forkRun, status: "rolled_back" },
+              },
+            ],
+          });
+        }
         const requestId = yield* armRegeneration({
-          command: "command:title:fork-rolled-back:request",
+          command: "invalid:request",
           threadId: forkThreadId,
         });
-
         yield* titleRegeneration.execute({
           threadId: forkThreadId,
           requestId,
           kind: { type: "regenerate" },
         });
-
         assert.equal(harness.generateThreadTitle.mock.calls.length, 0);
-        const fork = yield* threads.getThreadProjection(forkThreadId);
+        const fork = yield* threads.getThreadRecords(forkThreadId, []);
         assert.deepInclude(fork.thread.lastTitleRegeneration, {
           requestId,
           status: "failed",
           message: "This thread has no messages to title yet.",
         });
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("inherits a side chat's own exchange without its parent's history", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness();
+      yield* Effect.gen(function* () {
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const titleRegeneration = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
+        const { forkThreadId: sideChatId } = yield* forkSeededSource(
+          "thread:title:side-ancestor",
+          true,
+        );
+        const runId = RunId.make("side:run");
+        yield* recordRun({
+          threadId: sideChatId,
+          runId,
+          ordinal: 1,
+          user: "Side topic",
+          assistant: "Side answer",
+        });
+        const threadId = ThreadId.make("side:fork");
+        yield* threads.dispatch({
+          type: "thread.fork",
+          commandId: CommandId.make("side:fork"),
+          sourceThreadId: sideChatId,
+          targetThreadId: threadId,
+          sourcePoint: { type: "run", runId },
+          title: "Side fork",
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const requestId = yield* armRegeneration({ command: "side:request", threadId });
+        yield* titleRegeneration.execute({ threadId, requestId, kind: { type: "regenerate" } });
+        const call = harness.generateThreadTitle.mock.calls[0]?.[0];
+        assert.equal(call?.forkSource?.title, "Seed title fork");
+        assert.include(call?.forkSource?.history, "Side topic");
+        assert.include(call?.forkSource?.history, "Side answer");
+        assert.notInclude(call?.forkSource?.history, "Move session storage");
       }).pipe(Effect.provide(harness.layer));
     }),
   );

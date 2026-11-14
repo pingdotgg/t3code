@@ -112,7 +112,8 @@ const make = Effect.gen(function* () {
           .filter((run) => run.status !== "rolled_back")
           .map((run) => [run.id, run.ordinal]),
       );
-      const forkOrdinal = ordinals.get(runId) ?? -1;
+      const forkOrdinal = ordinals.get(runId);
+      if (forkOrdinal === undefined) return undefined;
       const messages = source.messages.filter((message) => {
         if (message.streaming) return false;
         if (message.runId === null) return source.thread.historyOrigin === "v1_import";
@@ -128,12 +129,20 @@ const make = Effect.gen(function* () {
   ) {
     let title: string | undefined;
     const history: Array<ReadonlyArray<OrchestrationV2ConversationMessage>> = [];
-    let forkedFrom = thread.forkedFrom;
-    while (forkedFrom?.type === "run") {
-      const source = yield* messagesThroughRun(forkedFrom.threadId, forkedFrom.runId);
+    const seen = new Set([thread.id]);
+    let current = thread;
+    while (
+      current.forkedFrom?.type === "run" &&
+      current.lineage.sideChat !== true &&
+      !seen.has(current.forkedFrom.threadId)
+    ) {
+      const { threadId, runId } = current.forkedFrom;
+      seen.add(threadId);
+      const source = yield* messagesThroughRun(threadId, runId);
+      if (source === undefined) break;
       history.push(source.messages);
       title ??= source.thread.title;
-      forkedFrom = source.thread.forkedFrom;
+      current = source.thread;
     }
     const context = formatThreadTitleContext(history.reverse().flat());
     return title === undefined || context.message.length === 0
