@@ -1,3 +1,4 @@
+// A project bound to a standalone tracker (Linear) in settings lists it beside its git host's.
 // References outside the project's canonical repository may be read on the same host,
 // but every write must pass through requireWritable.
 import * as Context from "effect/Context";
@@ -33,9 +34,11 @@ import {
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import {
   IssueTrackerError,
+  isStandaloneIssueTracker,
   type IssueTrackerApi,
 } from "@t3tools/source-control-core/server/IssueTracker";
 
+import * as IssueTrackerBindings from "../persistence/IssueTrackerBindings.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
@@ -55,7 +58,7 @@ const traced =
     call(input).pipe(Effect.withSpan(`IssueService.${operation}`));
 
 /** A tracker may fail with no detail; the wire errors carry a non-empty one. */
-function trackerDetail(error: IssueTrackerError): string {
+export function trackerDetail(error: IssueTrackerError): string {
   return error.detail.trim() || "The issue tracker request failed.";
 }
 
@@ -164,16 +167,44 @@ const make = Effect.gen(function* () {
   const registry = yield* IssueTrackerRegistry.IssueTrackerRegistry;
   const projects = yield* ProjectService.ProjectService;
   const repositoryIdentities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+  const bindings = yield* IssueTrackerBindings.IssueTrackerBindingsRepository;
 
-  const resolveProjectTracker = (
+  // Read per resolution so a binding saved in Settings applies without a restart.
+  const resolveStandaloneBinding = (
     project: OrchestrationProjectShell,
   ): Effect.Effect<ProjectTrackerBinding | null> =>
-    (project.repositoryIdentity != null
-      ? Effect.succeed(project.repositoryIdentity)
-      : repositoryIdentities.resolve(project.workspaceRoot)
-    ).pipe(
-      Effect.map((repositoryIdentity) => resolveGitHostBinding({ ...project, repositoryIdentity })),
+    bindings.list.pipe(
+      Effect.map((bound) => {
+        const binding = bound.get(project.id);
+        const api = binding === undefined ? null : registry.get(binding.tracker);
+        if (binding === undefined || api === null || !isStandaloneIssueTracker(api)) return null;
+        return {
+          tracker: binding.tracker,
+          host: api.standalone.host,
+          scope: binding.scope,
+        };
+      }),
+      Effect.orElseSucceed(() => null),
     );
+
+  /**
+   * Where a project's issues live: its bound standalone tracker, its git host's, or both. The
+   * tracker bound in Settings leads, as the one the user chose for the project.
+   */
+  const resolveProjectTracker = (
+    project: OrchestrationProjectShell,
+  ): Effect.Effect<ReadonlyArray<ProjectTrackerBinding>> =>
+    Effect.all([
+      resolveStandaloneBinding(project),
+      (project.repositoryIdentity != null
+        ? Effect.succeed(project.repositoryIdentity)
+        : repositoryIdentities.resolve(project.workspaceRoot)
+      ).pipe(
+        Effect.map((repositoryIdentity) =>
+          resolveGitHostBinding({ ...project, repositoryIdentity }),
+        ),
+      ),
+    ]).pipe(Effect.map((resolved) => resolved.filter((binding) => binding !== null)));
 
   const listProjects = (filter: {
     readonly projectId?: IssueListInput["projectId"];
@@ -196,7 +227,7 @@ const make = Effect.gen(function* () {
           shells,
           (project) =>
             resolveProjectTracker(project).pipe(
-              Effect.map((binding) => (binding === null ? [] : [{ project, ...binding }])),
+              Effect.map((bindings) => bindings.map((binding) => ({ project, ...binding }))),
             ),
           { concurrency: SCOPE_CONCURRENCY },
         ),
@@ -227,15 +258,16 @@ const make = Effect.gen(function* () {
   /**
    * The project whose checkout and credentials serve a reference, and whether the reference is
    * the project's own scope. A reference naming another scope on the same tracker and host is
-   * served by the project but marked read-only.
+   * served by the project but marked read-only. A project with two trackers serves the one the
+   * reference names.
    */
   const requireProject = (
     ref: IssueScopeRef,
   ): Effect.Effect<SupportedProject & { readonly writable: boolean }, IssueError> =>
     listProjects({ projectId: ref.projectId }).pipe(
       Effect.flatMap(({ supported }) => {
-        const own = supported[0];
-        if (own === undefined || own.tracker !== ref.tracker) {
+        const own = supported.find((candidate) => candidate.tracker === ref.tracker);
+        if (own === undefined) {
           return Effect.fail(new IssueUnavailableError({ reason: "tracker-unsupported" }));
         }
         const host = ref.host?.trim().toLowerCase() ?? own.host;
