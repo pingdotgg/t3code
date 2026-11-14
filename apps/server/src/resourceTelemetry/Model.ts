@@ -176,9 +176,8 @@ function processDepths(
 
   const depths = new Map<number, number>();
   const queue = [...roots].map((pid) => ({ pid, depth: 0 }));
-  while (queue.length > 0) {
-    const current = queue.shift();
-    if (!current || depths.has(current.pid)) continue;
+  for (const current of queue) {
+    if (depths.has(current.pid)) continue;
     depths.set(current.pid, current.depth);
     for (const childPid of childrenByParent.get(current.pid) ?? []) {
       queue.push({ pid: childPid, depth: current.depth + 1 });
