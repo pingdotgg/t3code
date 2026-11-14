@@ -573,99 +573,116 @@ const make = Effect.gen(function* () {
           }
         }
         if (shouldFetch) yield* setupTracker.stageStatus(threadId, "fetch", "done");
-        if (branch !== null && (generatedTemporaryBranch || isTemporaryWorktreeBranch(branch))) {
-          const parts = branch.split("/");
-          for (let depth = 1; depth < parts.length; depth++) {
-            if (
-              yield* git
-                .hasCommit({
-                  cwd: project.workspaceRoot,
-                  refName: `refs/heads/${parts.slice(0, depth).join("/")}`,
-                })
-                .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)))
-            ) {
-              branch = generatedTemporaryBranch
-                ? branch.replaceAll("/", "-")
-                : flattenTemporaryWorktreeBranchName(branch);
-              break;
+        const unborn = yield* Effect.gen(function* () {
+          const cwd = project.workspaceRoot;
+          if (yield* git.hasCommit({ cwd, refName: "HEAD" })) return null;
+          // Only the unborn branch itself has nothing to check out; Git resolves any other base.
+          const current = yield* git.currentBranch(cwd);
+          if (startRef !== "HEAD" && startRef !== current) return null;
+          if (yield* git.hasCommit({ cwd, refName: startRef })) return null;
+          return { branch: current };
+        }).pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
+        if (unborn !== null) {
+          // A branch with no commits has nothing to check out; run in the project folder.
+          branch = unborn.branch;
+          yield* setupTracker.update(threadId, (snapshot) => ({ ...snapshot, branch }));
+          yield* setupTracker.stageStatus(threadId, "checkout", "skipped");
+          yield* setupTracker.stageStatus(threadId, "submodules", "skipped");
+        } else {
+          if (branch !== null && (generatedTemporaryBranch || isTemporaryWorktreeBranch(branch))) {
+            const parts = branch.split("/");
+            for (let depth = 1; depth < parts.length; depth++) {
+              if (
+                yield* git
+                  .hasCommit({
+                    cwd: project.workspaceRoot,
+                    refName: `refs/heads/${parts.slice(0, depth).join("/")}`,
+                  })
+                  .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)))
+              ) {
+                branch = generatedTemporaryBranch
+                  ? branch.replaceAll("/", "-")
+                  : flattenTemporaryWorktreeBranchName(branch);
+                break;
+              }
             }
           }
-        }
-        yield* setupTracker.stageStatus(threadId, "checkout", "running");
-        let submoduleProgressReportedAt = Number.NEGATIVE_INFINITY;
-        const worktree = yield* git
-          .createWorktree(
-            {
-              cwd: project.workspaceRoot,
-              refName: startRef,
-              newRefName: branch!,
-              baseRefName,
-              path: null,
-            },
-            {
-              progress: {
-                onWorktreeClaimed: (path) =>
-                  Effect.sync(() => {
-                    createdWorktreePath = path;
-                    createdBranch = branch;
-                  }),
-                onCheckoutProgress: (progress) =>
-                  setupTracker.stage(threadId, "checkout", { percent: progress.percent }),
-                onSubmodulesStarted: () =>
-                  setupTracker
-                    .stageStatus(threadId, "checkout", "done")
-                    .pipe(
-                      Effect.andThen(setupTracker.stageStatus(threadId, "submodules", "running")),
-                    ),
-                onSubmodulesDisabled: ({ source }) =>
-                  setupTracker.stageStatus(
-                    threadId,
-                    "submodules",
-                    "skipped",
-                    `disabled in ${source}`,
-                  ),
-                onSubmoduleLine: (line) => {
-                  // Paths may contain quotes; git closes the path with "': ".
-                  const submodulePath = /^\s*Submodule path '(.+)': /.exec(line)?.[1];
-                  if (submodulePath !== undefined) {
-                    return setupTracker.stage(threadId, "submodules", { detail: submodulePath });
-                  }
-                  if (parseGitCloneProgressLine(line) === null) return Effect.void;
-                  // Git redraws on every percent; hold the websocket to one update a second.
-                  return Effect.flatMap(Clock.currentTimeMillis, (now) => {
-                    if (now - submoduleProgressReportedAt < 1000) return Effect.void;
-                    submoduleProgressReportedAt = now;
-                    return setupTracker.stage(threadId, "submodules", {
-                      detail: line.trim().replace(/\s+/g, " "),
-                    });
-                  });
-                },
-                onSubmodulesFinished: ({ ok, detail }) =>
-                  setupTracker.stageStatus(
-                    threadId,
-                    "submodules",
-                    ok ? "done" : "warning",
-                    ok ? undefined : (detail ?? "submodule checkout failed"),
-                  ),
+          yield* setupTracker.stageStatus(threadId, "checkout", "running");
+          let submoduleProgressReportedAt = Number.NEGATIVE_INFINITY;
+          const worktree = yield* git
+            .createWorktree(
+              {
+                cwd: project.workspaceRoot,
+                refName: startRef,
+                newRefName: branch!,
+                baseRefName,
+                path: null,
               },
-            },
-          )
-          .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
-        worktreePath = worktree.worktree.path;
-        branch = worktree.worktree.refName;
-        createdWorktreePath = worktreePath;
-        createdBranch = branch;
-        yield* setupTracker.update(threadId, (snapshot) => ({
-          ...snapshot,
-          worktreePath,
-          branch,
-          stages: snapshot.stages.map((stage) =>
-            stage.id === "submodules" && stage.status === "pending"
-              ? { ...stage, status: "skipped", detail: "none" }
-              : stage,
-          ),
-        }));
-        yield* setupTracker.stageStatus(threadId, "checkout", "done");
+              {
+                progress: {
+                  onWorktreeClaimed: (path) =>
+                    Effect.sync(() => {
+                      createdWorktreePath = path;
+                      createdBranch = branch;
+                    }),
+                  onCheckoutProgress: (progress) =>
+                    setupTracker.stage(threadId, "checkout", { percent: progress.percent }),
+                  onSubmodulesStarted: () =>
+                    setupTracker
+                      .stageStatus(threadId, "checkout", "done")
+                      .pipe(
+                        Effect.andThen(setupTracker.stageStatus(threadId, "submodules", "running")),
+                      ),
+                  onSubmodulesDisabled: ({ source }) =>
+                    setupTracker.stageStatus(
+                      threadId,
+                      "submodules",
+                      "skipped",
+                      `disabled in ${source}`,
+                    ),
+                  onSubmoduleLine: (line) => {
+                    // Paths may contain quotes; git closes the path with "': ".
+                    const submodulePath = /^\s*Submodule path '(.+)': /.exec(line)?.[1];
+                    if (submodulePath !== undefined) {
+                      return setupTracker.stage(threadId, "submodules", { detail: submodulePath });
+                    }
+                    if (parseGitCloneProgressLine(line) === null) return Effect.void;
+                    // Git redraws on every percent; hold the websocket to one update a second.
+                    return Effect.flatMap(Clock.currentTimeMillis, (now) => {
+                      if (now - submoduleProgressReportedAt < 1000) return Effect.void;
+                      submoduleProgressReportedAt = now;
+                      return setupTracker.stage(threadId, "submodules", {
+                        detail: line.trim().replace(/\s+/g, " "),
+                      });
+                    });
+                  },
+                  onSubmodulesFinished: ({ ok, detail }) =>
+                    setupTracker.stageStatus(
+                      threadId,
+                      "submodules",
+                      ok ? "done" : "warning",
+                      ok ? undefined : (detail ?? "submodule checkout failed"),
+                    ),
+                },
+              },
+            )
+            .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
+          worktreePath = worktree.worktree.path;
+          branch = worktree.worktree.refName;
+          createdWorktreePath = worktreePath;
+          createdBranch = branch;
+          yield* setupTracker.update(threadId, (snapshot) => ({
+            ...snapshot,
+            worktreePath,
+            branch,
+            stages: snapshot.stages.map((stage) =>
+              stage.id === "submodules" && stage.status === "pending"
+                ? { ...stage, status: "skipped", detail: "none" }
+                : stage,
+            ),
+          }));
+          yield* setupTracker.stageStatus(threadId, "checkout", "done");
+        }
       }
 
       // Do not rewrite reused worktrees; that could undo the original branch rename.
