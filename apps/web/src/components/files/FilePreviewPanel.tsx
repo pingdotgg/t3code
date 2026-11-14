@@ -64,6 +64,7 @@ import { MediaActions, type MediaActionSource } from "~/components/media/MediaAc
 import { useRemoteOpenState } from "~/remoteOpen";
 import { useClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
+import { useDeadlinePassed } from "~/hooks/useDeadline";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "~/hooks/useLocalStorage";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
@@ -269,6 +270,20 @@ export function WorkspaceBrowserPreview(props: {
     revision === null
       ? ""
       : `${assetUrl._tag === "Success" && assetUrl.url.includes("?") ? "&" : "?"}${fileRevision !== undefined ? "file" : "workspace"}-revision=${encodeURIComponent(revision)}`;
+  const documentKey = `${props.environmentId}:${resource._tag}:${props.threadRef.threadId}:${props.absolutePath}:${revision}`;
+  // The page's later asset requests use the grant it loaded with, so a page kept open across
+  // commands reloads with a renewed URL shortly before that grant expires.
+  const [grant, setGrant] = useState<{ documentKey: string; expiresAt: number } | null>(null);
+  const grantExpiring = useDeadlinePassed(grant === null ? null : grant.expiresAt - 60_000);
+  if (
+    !pdf &&
+    assetUrl._tag === "Success" &&
+    (grant === null ||
+      grant.documentKey !== documentKey ||
+      (grantExpiring && assetUrl.expiresAt > grant.expiresAt))
+  ) {
+    setGrant({ documentKey, expiresAt: assetUrl.expiresAt });
+  }
 
   if (assetUrl._tag === "Failure") {
     return (
@@ -290,7 +305,7 @@ export function WorkspaceBrowserPreview(props: {
   return (
     <BrowserDocumentFrame
       src={`${assetUrl.url}${revisionSuffix}`}
-      documentKey={`${props.environmentId}:${resource._tag}:${props.threadRef.threadId}:${props.absolutePath}:${revision}`}
+      documentKey={pdf ? documentKey : `${documentKey}:${grant?.expiresAt}`}
       documentId={`${props.environmentId}:${resource._tag}:${props.threadRef.threadId}:${props.absolutePath}`}
       title={props.title}
       pdf={pdf}
