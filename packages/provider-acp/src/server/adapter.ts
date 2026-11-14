@@ -9410,7 +9410,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     );
                   }).pipe(
                     Effect.ensuring(runtimeTransitionPermit.release(1)),
-                    Effect.forkIn(sessionScope, { startImmediately: true, uninterruptible: true }),
+                    // forkIn on a closed scope never starts the fiber, which would leak the permit.
+                    sessionScope.state._tag === "Closed"
+                      ? Effect.forkDetach({ startImmediately: true, uninterruptible: true })
+                      : Effect.forkIn(sessionScope, {
+                          startImmediately: true,
+                          uninterruptible: true,
+                        }),
                   );
                   return yield* restore(Fiber.join(transitionFiber)).pipe(
                     Effect.onInterrupt(() =>
