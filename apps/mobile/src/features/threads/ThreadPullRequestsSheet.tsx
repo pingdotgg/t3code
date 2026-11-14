@@ -5,6 +5,7 @@ import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
+import { DialogSheetHost } from "../../components/ui/DialogHost";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { SheetHeader } from "../../components/ui/SheetHeader";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
@@ -103,6 +104,7 @@ export function ThreadPullRequestsSheet(
         }
       />
       <ScreenContent>{content}</ScreenContent>
+      <DialogSheetHost />
     </View>
   );
 }

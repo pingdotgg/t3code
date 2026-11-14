@@ -1,6 +1,7 @@
 import { createContext, useRef, useState } from "react";
 import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { DialogSheetHost } from "../../components/ui/DialogHost";
 import { PaneContext } from "../../components/ui/Pane";
 import { PaneSheet } from "../../components/ui/PaneSheet";
 import { RoutedFormSheetContext } from "../../components/ui/RoutedFormSheetContext";
@@ -66,6 +67,7 @@ export function WorkspaceInspectorSheet(props: {
           <SafeAreaInsetsContext value={{ ...insets, top: 0 }}>
             <PaneContext value="inspector">
               <InspectorPanes content={props.content} onClose={() => close()} />
+              <DialogSheetHost />
             </PaneContext>
           </SafeAreaInsetsContext>
         </RoutedFormSheetContext>

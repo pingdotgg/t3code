@@ -1,4 +1,5 @@
 import * as Dialog from "../../../components/ui/Dialog";
+import { DialogSheetHost } from "../../../components/ui/DialogHost";
 import { useOpenPullRequest } from "../../../native/useOpenPullRequest";
 import {
   type GitActionRequestInput,
@@ -57,7 +58,12 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
     if (isBlankLink) navigation.goBack();
   }, [isBlankLink, navigation]);
   if (isBlankLink) return null;
-  return <GitOverviewSheetContent {...props} />;
+  return (
+    <>
+      <GitOverviewSheetContent {...props} />
+      {props.presentation !== "inspector" ? <DialogSheetHost /> : null}
+    </>
+  );
 }
 
 function GitOverviewSheetContent(props: GitOverviewSheetProps) {
