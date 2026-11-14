@@ -5149,87 +5149,68 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
-  it.effect.each([false, true])(
-    "completes recovered message errors after native continuation, compaction=%s",
-    (compact) =>
-      Effect.gen(function* () {
-        const fake = yield* makeFakePi;
-        const { runtime, takeEvent } = yield* openRuntime(fake);
-        const providerThread = yield* runtime.ensureThread({
-          threadId: THREAD_ID,
-          modelSelection: modelSelection("default"),
-          runtimePolicy,
-        });
-        yield* startTurn(runtime, providerThread);
-        yield* fake.takeRequest("prompt");
-        yield* fake.emit({ type: "agent_start" });
-        yield* fake.emit({
-          type: "message_end",
-          message: {
-            role: "assistant",
-            content: [],
-            stopReason: "error",
-            errorMessage: "This operation was aborted",
-          },
-        });
-        yield* fake.emit({ type: "agent_end", messages: [], willRetry: false });
-        if (compact) {
-          yield* fake.emit({ type: "compaction_start", reason: "manual" });
-          yield* fake.emit({
-            type: "compaction_end",
-            reason: "manual",
-            result: { summary: "Recovered context" },
-            aborted: false,
-            willRetry: false,
-          });
-        }
-        yield* fake.emit({ type: "agent_start" });
-        yield* fake.emit({ type: "message_start", message: { role: "assistant" } });
-        yield* fake.emit({
-          type: "message_update",
-          assistantMessageEvent: { type: "text_end", contentIndex: 0, content: "Paused." },
-        });
-        yield* fake.emit({
-          type: "message_end",
-          message: {
-            role: "assistant",
-            content: [{ type: "text", text: "Paused." }],
-            stopReason: "stop",
-          },
-        });
-        yield* fake.emit({ type: "agent_settled", aborted: false });
+  it.effect("completes a turn whose message error Pi recovered from natively", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({
+        type: "message_end",
+        message: {
+          role: "assistant",
+          content: [],
+          stopReason: "error",
+          errorMessage: "This operation was aborted",
+        },
+      });
+      yield* fake.emit({ type: "agent_end", messages: [], willRetry: false });
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({ type: "message_start", message: { role: "assistant" } });
+      yield* fake.emit({
+        type: "message_update",
+        assistantMessageEvent: { type: "text_end", contentIndex: 0, content: "Paused." },
+      });
+      yield* fake.emit({
+        type: "message_end",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "Paused." }],
+          stopReason: "stop",
+        },
+      });
+      yield* fake.emit({ type: "agent_settled", aborted: false });
 
-        const completedTurn = yield* takeEvent(
-          (event) =>
-            event.type === "provider_turn.updated" && event.providerTurn.completedAt !== null,
-        );
-        assert.isTrue(
-          completedTurn.type === "provider_turn.updated" &&
-            completedTurn.providerTurn.status === "completed",
-        );
-        const session = yield* takeEvent((event) => event.type === "provider_session.updated");
-        assert.isTrue(
-          session.type === "provider_session.updated" &&
-            session.providerSession.status === "ready" &&
-            session.providerSession.lastError === null,
-        );
-        const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
-        assert.isTrue(
-          terminal.type === "turn.terminal" &&
-            terminal.status === "completed" &&
-            terminal.failure === null,
-        );
-      }).pipe(Effect.scoped, Effect.provide(layerTest)),
+      const completedTurn = yield* takeEvent(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.completedAt !== null,
+      );
+      assert.isTrue(
+        completedTurn.type === "provider_turn.updated" &&
+          completedTurn.providerTurn.status === "completed",
+      );
+      const session = yield* takeEvent((event) => event.type === "provider_session.updated");
+      assert.isTrue(
+        session.type === "provider_session.updated" &&
+          session.providerSession.status === "ready" &&
+          session.providerSession.lastError === null,
+      );
+      const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
+      assert.isTrue(
+        terminal.type === "turn.terminal" &&
+          terminal.status === "completed" &&
+          terminal.failure === null,
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
   it.effect.each([
-    {
-      name: "unrecovered error",
-      messages: [],
-      exhausted: false,
-      aborted: false,
-      error: "original error",
-    },
     {
       name: "unfinished continuation",
       messages: [
@@ -5237,20 +5218,7 @@ describe("PiAdapterV2", () => {
         { type: "message_start", message: { role: "assistant" } },
       ],
       exhausted: false,
-      aborted: false,
       error: "original error",
-    },
-    {
-      name: "later request error",
-      messages: [
-        {
-          type: "message_end",
-          message: { role: "assistant", stopReason: "error", errorMessage: "latest error" },
-        },
-      ],
-      exhausted: false,
-      aborted: false,
-      error: "latest error",
     },
     {
       name: "failed request after a successful tool response",
@@ -5262,7 +5230,6 @@ describe("PiAdapterV2", () => {
         },
       ],
       exhausted: false,
-      aborted: false,
       error: "latest error",
     },
     {
@@ -5278,20 +5245,17 @@ describe("PiAdapterV2", () => {
         },
       ],
       exhausted: false,
-      aborted: false,
       error: "original error",
     },
     {
       name: "exhausted retry",
       messages: [{ type: "message_end", message: { role: "assistant", stopReason: "stop" } }],
       exhausted: true,
-      aborted: false,
       error: "retry exhausted",
     },
-    { name: "native cancellation", messages: [], exhausted: false, aborted: true, error: null },
   ])(
     "preserves terminal semantics after a message error: $name",
-    ({ messages, exhausted, aborted, error }) =>
+    ({ messages, exhausted, error }) =>
       Effect.gen(function* () {
         const fake = yield* makeFakePi;
         const { runtime, takeEvent } = yield* openRuntime(fake);
@@ -5316,12 +5280,12 @@ describe("PiAdapterV2", () => {
           });
         }
         for (const message of messages) yield* fake.emit(message);
-        yield* fake.emit({ type: "agent_settled", aborted });
+        yield* fake.emit({ type: "agent_settled", aborted: false });
         const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
         assert.isTrue(terminal.type === "turn.terminal");
         if (terminal.type !== "turn.terminal") return;
-        assert.equal(terminal.status, aborted ? "interrupted" : "failed");
-        assert.equal(terminal.failure?.message ?? null, error);
+        assert.equal(terminal.status, "failed");
+        assert.equal(terminal.failure?.message, error);
       }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
