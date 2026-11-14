@@ -907,6 +907,7 @@ it.effect("repeated imports reach linked-worktree sessions behind the scan budge
                   driver: ProviderDriverKind.make("codex"),
                   config: { homePath: codexHome },
                 },
+                // Keeps the default Pi instance off the developer's real ~/.pi.
                 [ProviderInstanceId.make("pi")]: {
                   driver: ProviderDriverKind.make("pi"),
                   enabled: false,

@@ -248,12 +248,9 @@ const make = Effect.gen(function* () {
         runtime.runtimePayload,
       ).pipe(Option.flatMapNullishOr((payload) => payload.importedTranscripts));
       if (Option.isNone(imported) || imported.value.length === 0) return Effect.succeed([]);
-      return Effect.option(orchestrator.getThreadRecords(runtime.threadId, [])).pipe(
-        Effect.map((records) =>
-          Option.isSome(records) && records.value.thread.projectId === input.projectId
-            ? imported.value
-            : [],
-        ),
+      return orchestrator.getThreadRecords(runtime.threadId, []).pipe(
+        Effect.map(({ thread }) => (thread.projectId === input.projectId ? imported.value : [])),
+        Effect.orElseSucceed(() => []),
       );
     })).flat();
     const outcomes = scanner.recentThreads(project.workspaceRoot, completedSources);
