@@ -122,12 +122,17 @@ function readPersistedEntries(): ReadonlyArray<PromptStashEntry> | null {
   }
 }
 
-/** Starts each write from storage so entries other tabs stashed or took are not overwritten. */
+/**
+ * Starts each write from storage so other tabs' stashes, takes and finalized images survive.
+ * Only this tab's encoding entries keep their memory copy: reads clear pending counts as orphaned.
+ */
 function latestEntries(memory: ReadonlyArray<PromptStashEntry>): ReadonlyArray<PromptStashEntry> {
   const stored = readPersistedEntries();
   if (!stored) return memory;
-  const memoryById = new Map(memory.map((entry) => [entry.id, entry]));
-  return stored.map((entry) => memoryById.get(entry.id) ?? entry);
+  const encodingById = new Map(
+    memory.filter((entry) => entry.pendingImageCount).map((entry) => [entry.id, entry]),
+  );
+  return stored.map((entry) => encodingById.get(entry.id) ?? entry);
 }
 
 interface PromptStashStoreState {

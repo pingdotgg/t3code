@@ -143,6 +143,11 @@ describe("promptStashStore", () => {
     store.stashEntry({ ...makeEntry({ id: "pending-restore" }), pendingImageCount: 1 });
     const menuSnapshot = usePromptStashStore.getState().entries[0];
     expect(menuSnapshot?.attachments).toEqual([]);
+    store.stashEntry(makeEntry({ id: "stashed-while-encoding" }));
+    expect(
+      usePromptStashStore.getState().entries.find((entry) => entry.id === "pending-restore")
+        ?.pendingImageCount,
+    ).toBe(1);
 
     store.finalizeEntryImages("pending-restore", {
       attachments: [
@@ -259,6 +264,28 @@ describe("promptStashStore", () => {
         "this-tab",
         "other-tab",
       ]);
+
+      thisTab.usePromptStashStore.getState().stashEntry({
+        ...makeEntry({ id: "encoding-image" }),
+        pendingImageCount: 1,
+      });
+      vi.resetModules();
+      const secondTab = await import("./promptStashStore");
+      const finalized = makeEntry({ id: "encoding-image", attachmentChars: 12 }).attachments;
+      thisTab.usePromptStashStore.getState().finalizeEntryImages("encoding-image", {
+        attachments: finalized,
+        droppedImageNames: [],
+        unreadableImageNames: [],
+      });
+      secondTab.usePromptStashStore.getState().stashEntry(makeEntry({ id: "second-tab-new" }));
+      const afterFinalization = JSON.parse(
+        sharedStorage.getItem(PROMPT_STASH_STORAGE_KEY) as string,
+      );
+      expect(
+        afterFinalization.state.entries.find(
+          (entry: PromptStashEntry) => entry.id === "encoding-image",
+        )?.attachments,
+      ).toEqual(finalized);
     } finally {
       vi.unstubAllGlobals();
       vi.resetModules();
