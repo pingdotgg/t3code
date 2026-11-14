@@ -47,7 +47,15 @@ const run = Effect.fn("test.run")(function* (
   return { stdout, stderr, exitCode };
 }, Effect.scoped);
 
-const serveFakeRelease = Effect.fn("test.serveFakeRelease")(function* (root: string) {
+const serveFakeRelease = Effect.fn("test.serveFakeRelease")(function* (
+  root: string,
+  executable = `#!/bin/sh
+if [ -n "$T3CODE_TEST_CALLS" ]; then echo "$*|$T3CODE_NPM_LAUNCHER_PATH" >> "$T3CODE_TEST_CALLS"; fi
+if [ "$1" = "--version" ]; then echo "${VERSION}"; exit 0; fi
+echo "stub $* launcher=$T3CODE_NPM_LAUNCHER_PATH"
+exit 7
+`,
+) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const key = `${yield* HostProcess.Platform}-${yield* HostProcess.Architecture}`;
@@ -56,22 +64,23 @@ const serveFakeRelease = Effect.fn("test.serveFakeRelease")(function* (root: str
   yield* fs.makeDirectory(path.join(root, "release", stem, "node_modules/native"), {
     recursive: true,
   });
-  yield* fs.writeFileString(
-    path.join(root, "release", stem, "t3"),
-    '#!/bin/sh\necho "stub $* launcher=$T3CODE_NPM_LAUNCHER_PATH"\nexit 7\n',
-  );
+  yield* fs.writeFileString(path.join(root, "release", stem, "t3"), executable);
   yield* fs.chmod(path.join(root, "release", stem, "t3"), 0o755);
   const tar = yield* run("tar", ["-czf", archiveName, stem], {
     cwd: path.join(root, "release"),
-    env: { PATH: process.env.PATH },
+    env: { PATH: (yield* HostProcess.Environment).PATH },
   });
   assert.equal(tar.exitCode, 0, tar.stderr);
   const archive = yield* fs.readFile(path.join(root, "release", archiveName));
   let checksum = NodeCrypto.createHash("sha256").update(archive).digest("hex");
   const requests: Array<string> = [];
+  const failures: Array<number> = [];
   const server = NodeHttp.createServer((request, response) => {
     requests.push(request.url ?? "");
-    if (request.url === `/v${VERSION}/SHA256SUMS`) {
+    const failure = failures.shift();
+    if (failure !== undefined) {
+      response.writeHead(failure).end("upstream timed out");
+    } else if (request.url === `/v${VERSION}/SHA256SUMS`) {
       response.end(`${checksum}  ${archiveName}\n`);
     } else if (request.url === `/v${VERSION}/${archiveName}`) {
       response.writeHead(200, { "Content-Length": archive.length }).end(archive);
@@ -95,6 +104,9 @@ const serveFakeRelease = Effect.fn("test.serveFakeRelease")(function* (root: str
     requests,
     corruptChecksum: () => {
       checksum = "0".repeat(64);
+    },
+    failNextRequests: (...statuses: Array<number>) => {
+      failures.push(...statuses);
     },
   };
 });
@@ -126,16 +138,19 @@ it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
         yield* fs.makeDirectory(installed);
         const unpack = yield* run("tar", ["-xzf", output.tarball, "-C", installed], {
           cwd: root,
-          env: { PATH: process.env.PATH },
+          env: { PATH: (yield* HostProcess.Environment).PATH },
         });
         assert.equal(unpack.exitCode, 0, unpack.stderr);
         const packageDir = path.join(installed, "package");
 
         const release = yield* serveFakeRelease(root);
+        // regression: #32897
+        release.failNextRequests(504, 524);
         const home = path.join(root, "home");
         const env = {
-          PATH: process.env.PATH,
+          PATH: (yield* HostProcess.Environment).PATH,
           T3CODE_HOME: home,
+          T3CODE_TEST_CALLS: path.join(root, "calls"),
           T3CODE_RELEASE_BASE_URL: release.baseUrl,
         };
         const launcher = path.join(packageDir, "bin/t3.mjs");
@@ -145,6 +160,10 @@ it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
         });
         assert.equal(first.stdout.trim(), `stub serve a b launcher=${launcher}`, first.stderr);
         assert.equal(first.exitCode, 7);
+        assert.deepStrictEqual(
+          (yield* fs.readFileString(env.T3CODE_TEST_CALLS)).trim().split("\n"),
+          ["--version|", `serve a b|${launcher}`],
+        );
         const versionDir = path.join(home, "runtime/versions", VERSION);
         assert.equal(
           (yield* fs.readFileString(path.join(versionDir, ".install-complete"))).trim(),
@@ -158,8 +177,24 @@ it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
 
         const requestsAfterFirst = release.requests.length;
         const second = yield* run(process.execPath, [launcher, "--version"], { cwd: root, env });
-        assert.equal(second.exitCode, 7);
+        assert.equal(second.exitCode, 0);
         assert.equal(release.requests.length, requestsAfterFirst);
+        assert.deepStrictEqual(
+          (yield* fs.readFileString(env.T3CODE_TEST_CALLS)).trim().split("\n"),
+          ["--version|", `serve a b|${launcher}`, `--version|${launcher}`],
+        );
+
+        yield* fs.writeFileString(path.join(versionDir, "t3"), "#!/t3-test-missing-loader\n");
+        for (const _attempt of [1, 2]) {
+          const cached = yield* run(process.execPath, [launcher, "serve"], { cwd: root, env });
+          assert.equal(cached.exitCode, 1, cached.stderr);
+          assert.include(cached.stderr, "could not run");
+          assert.equal(release.requests.length, requestsAfterFirst);
+          assert.equal(
+            yield* fs.readFileString(path.join(versionDir, ".install-complete")),
+            `${VERSION}\n`,
+          );
+        }
 
         const ipcServer = path.join(home, "runtime/versions", VERSION, "t3");
         yield* fs.writeFileString(
@@ -189,8 +224,8 @@ it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
           env: { ...env, T3CODE_HOME: raceHome },
         });
         const [one, two] = yield* Effect.all([launch, launch], { concurrency: "unbounded" });
-        assert.equal(one.exitCode, 7, one.stderr);
-        assert.equal(two.exitCode, 7, two.stderr);
+        assert.equal(one.exitCode, 0, one.stderr);
+        assert.equal(two.exitCode, 0, two.stderr);
         assert.deepStrictEqual(yield* fs.readDirectory(path.join(raceHome, "runtime/versions")), [
           VERSION,
         ]);
@@ -296,12 +331,8 @@ fs.readFileSync = (file, ...rest) => {
           cwd: root,
           env: { ...env, T3CODE_HOME: staleOnlyHome },
         });
-        assert.equal(
-          replaced.stdout.trim(),
-          `stub --version launcher=${launcher}`,
-          replaced.stderr,
-        );
-        assert.equal(replaced.exitCode, 7);
+        assert.equal(replaced.stdout.trim(), VERSION, replaced.stderr);
+        assert.equal(replaced.exitCode, 0);
         assert.deepStrictEqual(
           yield* fs.readDirectory(path.join(staleOnlyHome, "runtime/versions")),
           [VERSION],
@@ -318,6 +349,143 @@ fs.readFileSync = (file, ...rest) => {
           yield* fs.readDirectory(path.join(root, "other-home/runtime/versions")),
           [],
         );
+      }),
+  );
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "does not publish an unusable release",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        for (const executable of [
+          "#!/t3-test-missing-loader\n",
+          '#!/bin/sh\necho "runtime loader failed" >&2\nexit 42\n',
+          "#!/bin/sh\nkill -TERM $$\n",
+          '#!/bin/sh\ntrap \'echo caught > "$T3CODE_TEST_TERM"; exit 42\' TERM\necho ready > "$T3CODE_TEST_READY"\nwhile :; do :; done\n',
+        ]) {
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-npm-validation-test-" });
+          const output = yield* buildNpmLauncher({
+            version: VERSION,
+            outputDir: path.join(root, "out"),
+          });
+          const release = yield* serveFakeRelease(root, executable);
+          const home = path.join(root, "home");
+          const dir = path.join(home, "runtime/versions", VERSION);
+          const probeTimeoutHook = path.join(root, "probe-timeout.mjs");
+          yield* fs.writeFileString(
+            probeTimeoutHook,
+            `import childProcess from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
+const { spawnSync } = childProcess;
+childProcess.spawnSync = (command, args, options) => spawnSync(command, args,
+  options?.timeout === undefined ? options : { ...options, timeout: 500 });
+syncBuiltinESMExports();
+`,
+          );
+          const env = {
+            PATH: (yield* HostProcess.Environment).PATH,
+            T3CODE_HOME: home,
+            T3CODE_RELEASE_BASE_URL: release.baseUrl,
+            T3CODE_TEST_READY: path.join(root, "probe-ready"),
+            T3CODE_TEST_TERM: path.join(root, "probe-term"),
+          };
+          const launcher = path.join(output.packageDir, "bin/t3.mjs");
+          const failed = yield* run(
+            process.execPath,
+            ["--import", probeTimeoutHook, launcher, "serve"],
+            { cwd: root, env },
+          );
+          assert.equal(failed.exitCode, 1, failed.stderr);
+          assert.deepStrictEqual(yield* fs.readDirectory(path.dirname(dir)), [], failed.stderr);
+          assert.include(failed.stderr, "could not run");
+          if (executable.includes("runtime loader failed")) {
+            assert.include(failed.stderr, "runtime loader failed");
+          }
+          if (executable.includes("trap")) {
+            assert.isTrue(yield* fs.exists(env.T3CODE_TEST_READY));
+            assert.isFalse(yield* fs.exists(env.T3CODE_TEST_TERM));
+          }
+          if ((yield* HostProcess.Platform) === "linux") {
+            assert.include(failed.stderr, "glibc");
+            assert.include(failed.stderr, "musl");
+          }
+        }
+      }),
+  );
+
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "kills a runtime that ignores the forwarded SIGTERM, and its providers, so the launcher exits",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-npm-launcher-test-" });
+        const output = yield* buildNpmLauncher({
+          version: VERSION,
+          outputDir: path.join(root, "out"),
+        });
+        const hostPath = (yield* HostProcess.Environment).PATH;
+        const installed = path.join(root, "installed");
+        yield* fs.makeDirectory(installed);
+        const unpack = yield* run("tar", ["-xzf", output.tarball, "-C", installed], {
+          cwd: root,
+          env: { PATH: hostPath },
+        });
+        assert.equal(unpack.exitCode, 0, unpack.stderr);
+
+        const home = path.join(root, "home");
+        const versionDir = path.join(home, "runtime/versions", VERSION);
+        yield* fs.makeDirectory(versionDir, { recursive: true });
+        yield* fs.writeFileString(path.join(versionDir, ".install-complete"), `${VERSION}\n`);
+        // Stands in for a runtime whose exit is stuck behind blocked filesystem calls, with a
+        // provider it never gets to stop. Both give up on their own well inside the project
+        // timeout so an unescalated stop fails descriptively.
+        const stuck = "runtime ignored SIGTERM and was still running 30s later";
+        const orphaned = "provider outlived the runtime by 30s";
+        const provider = `process.on("SIGTERM", () => {}); setTimeout(() => { console.log(${JSON.stringify(orphaned)}); process.exit(0); }, 30_000);`;
+        yield* fs.writeFileString(
+          path.join(versionDir, "t3"),
+          `#!${process.execPath}
+const provider = require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(provider)}], { stdio: "inherit" });
+process.on("SIGTERM", () => setTimeout(() => { console.log(${JSON.stringify(stuck)}); process.exit(0); }, 30_000));
+setInterval(() => {}, 1 << 30);
+console.log(process.pid, provider.pid);
+`,
+        );
+        yield* fs.chmod(path.join(versionDir, "t3"), 0o755);
+
+        const launcher = NodeChildProcess.spawn(
+          process.execPath,
+          [path.join(installed, "package/bin/t3.mjs"), "serve"],
+          { cwd: root, env: { PATH: hostPath, T3CODE_HOME: home }, stdio: "pipe" },
+        );
+        let pids: Array<number> = [];
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            for (const pid of [...pids, launcher.pid]) {
+              try {
+                if (pid !== undefined) process.kill(pid, "SIGKILL");
+              } catch {}
+            }
+          }),
+        );
+        let stdout = "";
+        const started = Promise.withResolvers<void>();
+        launcher.stdout.setEncoding("utf8");
+        launcher.stdout.on("data", (chunk: string) => {
+          stdout += chunk;
+          if (stdout.includes("\n")) started.resolve();
+        });
+        // The runtime and provider inherit this pipe, so it closes only once all three are gone.
+        const closed = NodeEvents.EventEmitter.once(launcher.stdout, "close");
+        yield* Effect.promise(() => started.promise);
+        pids = stdout.trim().split(" ").map(Number);
+        assert.isTrue(pids.length === 2 && pids.every(Number.isInteger), stdout);
+
+        launcher.kill("SIGTERM");
+        yield* Effect.promise(() => closed);
+        assert.notInclude(stdout, stuck, "the launcher waited on a runtime that ignored SIGTERM");
+        assert.notInclude(stdout, orphaned, "the runtime's provider outlived the launcher");
       }),
   );
 });

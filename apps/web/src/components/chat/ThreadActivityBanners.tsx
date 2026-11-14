@@ -2,6 +2,7 @@ import type {
   EnvironmentId,
   OrchestrationV2PendingBackgroundTask,
   OrchestrationV2ProviderGoal,
+  OrchestrationV2ProviderSession,
   ThreadId,
 } from "@t3tools/contracts";
 import type { EnvironmentThreadShell, ThreadStructure } from "@t3tools/client-runtime/state/shell";
@@ -26,10 +27,23 @@ import {
 } from "lucide-react";
 import { Fragment } from "react";
 import { tickTextContent } from "~/lib/tickTextContent";
+import { BackgroundWorkDetails } from "./BackgroundWorkDetails";
 import { Button, InlineButton } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
 import type { ThreadNowItem } from "./ThreadNow";
+
+export function extensionStatusBannerItem(
+  statuses: NonNullable<OrchestrationV2ProviderSession["extensionStatuses"]>,
+): ComposerBannerStackItem | null {
+  if (statuses.length === 0) return null;
+  return {
+    id: "pi-extension-status",
+    variant: "default",
+    icon: <span>▸</span>,
+    title: <output>{`Pi · ${statuses.map((status) => status.text).join(" · ")}`}</output>,
+  };
+}
 
 /** Subagents and side chats waiting on the user, unless the parent is itself waiting on them. */
 export function childInputNowItem(input: {
@@ -155,6 +169,7 @@ export function runStopNowItem(input: {
 
 /** Background commands and subagents, for the end of the timeline. */
 export function backgroundWorkNowItem(input: {
+  readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>;
   readonly turnItems: ThreadStructure["turnItems"];
@@ -167,9 +182,11 @@ export function backgroundWorkNowItem(input: {
   const presentation = presentPendingBackgroundWork(input.tasks);
   if (presentation === null) return null;
   const rows = presentation.items.map((task) => {
+    const itemKey =
+      input.tasks.find((pending) => pending.taskId === task.taskId)?.nativeItemId ?? task.taskId;
     // Same key derivePendingBackgroundWork gives turn-item tasks; subagent items carry progress.
     const item = input.turnItems.findLast(
-      (candidate) => (candidate.nativeItemRef?.nativeId || candidate.id) === task.taskId,
+      (candidate) => (candidate.nativeItemRef?.nativeId || candidate.id) === itemKey,
     );
     const subagent = item?.type === "subagent" ? item : undefined;
     return {
@@ -233,6 +250,13 @@ export function backgroundWorkNowItem(input: {
             className="tabular-nums"
           />
         )}
+        <BackgroundWorkDetails
+          environmentId={input.environmentId}
+          threadId={input.threadId}
+          tasks={input.tasks}
+          turnItems={input.turnItems}
+          onOpenThread={onOpenThread}
+        />
         {onlyThreadId === undefined ? null : (
           <InlineButton tone="muted" onClick={() => onOpenThread(onlyThreadId)}>
             Open
