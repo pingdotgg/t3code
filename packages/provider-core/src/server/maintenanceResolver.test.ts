@@ -175,8 +175,16 @@ function miseSpawner(
       exitCode = latest.exitCode ?? 0;
     } else if (args[0] === "ls") {
       // `mise ls --json <tool>` lists one tool's installs; without a tool, every tool's.
+      // A registry short name also lists installs configured under a backend, like `npm:<pkg>`.
       const tool = args.slice(1).find((arg) => !arg.startsWith("-"));
-      stdout = JSON.stringify(tool ? (answers.installed[tool] ?? []) : answers.installed);
+      const configured = tool
+        ? Object.keys(answers.installed).find((name) => name.replace(/^[^:]+:/, "") === tool)
+        : undefined;
+      stdout = JSON.stringify(
+        tool
+          ? (answers.installed[tool] ?? answers.installed[configured ?? ""] ?? [])
+          : answers.installed,
+      );
     } else {
       exitCode = 1;
     }
@@ -208,6 +216,8 @@ function miseFixture(
     readonly misePresent?: boolean;
     readonly tool?: string;
     readonly dataDir?: string;
+    /** The backend name the config requests the tool by, such as `npm:package-tool`. */
+    readonly backend?: string;
   } = {},
 ) {
   const miseBinDir = NodePath.join(tempDir, "mise-bin");
@@ -216,8 +226,15 @@ function miseFixture(
   const toolDir = NodePath.join(
     options.dataDir ?? NodePath.join(tempDir, "mise"),
     "installs",
-    "package-tool",
+    options.backend ? options.backend.replace(/[:@/]+/g, "-") : "package-tool",
   );
+  if (options.backend) {
+    NodeFS.mkdirSync(toolDir, { recursive: true });
+    NodeFS.writeFileSync(
+      NodePath.join(toolDir, ".mise.backend.toml"),
+      `short = "${options.backend}"\nfull = "${options.backend}"\nexplicit_backend = true\n`,
+    );
+  }
   const latestDir = NodePath.join(toolDir, "latest");
   let installPath = "";
   let binaryPath = "";
@@ -236,7 +253,7 @@ function miseFixture(
   const installed = (
     install: { readonly requested_version?: string; readonly active?: boolean } = {},
   ) => ({
-    [options.tool ?? "package-tool"]: [
+    [options.tool ?? options.backend ?? "package-tool"]: [
       { install_path: installPath, requested_version: "latest", active: true, ...install },
     ],
   });
@@ -427,6 +444,74 @@ it.layer(
         );
       }),
     { skip: !symlinksSupported || windowsHost },
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "does not offer a Vite+ update npm's release-age policy will not install",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-release-age");
+        const npmBinDir = NodePath.join(tempDir, "npm-bin");
+        const npmPath = NodePath.join(npmBinDir, "npm");
+        writeExecutable(npmPath);
+        const vitePlusNodePath = NodePath.join(tempDir, "vite-plus-node/bin/node");
+        const binaryPath = NodePath.join(tempDir, ".vite-plus/bin/package-tool");
+        writeExecutable(binaryPath);
+        const advise = (env: NodeJS.ProcessEnv, vitePlusPacks: string, nodeSource = "lts") =>
+          resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
+            binaryPath,
+            env: { PATH: npmBinDir, ...env },
+          }).pipe(
+            Effect.provideService(
+              ChildProcessSpawner.ChildProcessSpawner,
+              // `vp i -g` runs the npm beside Vite+'s Node; `npm view` ignores min-release-age.
+              stdoutSpawner((command, args) => {
+                if (command === "vp") {
+                  return JSON.stringify({
+                    node: { source: nodeSource, bin_path: vitePlusNodePath, installed: true },
+                  });
+                }
+                if (command === npmPath) {
+                  return args[0] === "view" ? '"1.2.0"' : "example-package-tool-1.2.0.tgz\n";
+                }
+                return command === NodePath.join(NodePath.dirname(vitePlusNodePath), "npm") &&
+                  args[0] === "pack"
+                  ? `example-package-tool-${vitePlusPacks}.tgz\n`
+                  : "";
+              }),
+            ),
+            Effect.flatMap((capabilities) =>
+              enrichProviderSnapshotWithVersionAdvisory(
+                { ...installedPackageToolProvider, version: "1.1.0" },
+                capabilities,
+              ),
+            ),
+            Effect.map((snapshot) => snapshot.versionAdvisory),
+          );
+
+        expect(yield* advise({ npm_config_min_release_age: "7" }, "1.1.0")).toMatchObject({
+          status: "current",
+          currentVersion: "1.1.0",
+          latestVersion: "1.1.0",
+        });
+        expect((yield* advise({}, "1.2.0"))?.latestVersion).toBe("1.2.0");
+        // Install never uses the system Node `vp env off` reports, so this falls back to `npm view`.
+        expect(
+          (yield* advise(
+            { npm_config_min_release_age: "7", VP_HOME: "system-first" },
+            "1.1.0",
+            "system PATH",
+          ))?.latestVersion,
+        ).toBe("1.2.0");
+      }).pipe(
+        Effect.provide(ProviderLatestVersions.layer),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make(() =>
+            Effect.die("a configured npm lookup must not fall back to public npm"),
+          ),
+        ),
+      ),
   );
 
   it.effect.skipIf(!symlinksSupported || windowsHost)(
@@ -1566,6 +1651,55 @@ it.layer(
       }),
   );
 
+  for (const fixture of [
+    {
+      name: "an npm-shaped package",
+      definition: packageToolUpdate,
+      target: ["lib", "node_modules", "@example", "package-tool", "bin", "package-tool.exe"],
+    },
+    {
+      name: "a launcher script",
+      definition: nativePackageToolUpdate,
+      target: ["share", "native-package-tool", "native-package-tool"],
+    },
+  ]) {
+    it.effect.skipIf(!symlinksSupported || windowsHost)(
+      `leaves ${fixture.name} owned by MacPorts to MacPorts`,
+      () =>
+        Effect.gen(function* () {
+          const prefix = yield* makeTempDir("t3-macports");
+          writeExecutable(NodePath.join(prefix, "bin", "port"));
+          const target = NodePath.join(prefix, ...fixture.target);
+          writeExecutable(target);
+          const launcher = NodePath.join(prefix, "bin", NodePath.basename(target, ".exe"));
+          NodeFS.symlinkSync(target, launcher);
+
+          const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+            fixture.definition,
+            { binaryPath: launcher, env: { PATH: NodePath.join(prefix, "bin") } },
+          ).pipe(
+            Effect.provideService(HostProcess.Platform, "darwin"),
+            Effect.provideService(
+              ChildProcessSpawner.ChildProcessSpawner,
+              stdoutSpawner((command, args) =>
+                NodePath.basename(command) === "port" && args.includes("provides")
+                  ? args.includes("-q")
+                    ? "package-tool\n"
+                    : args
+                        .filter((arg) => arg.startsWith("/"))
+                        .map((file) => `${file} is provided by: package-tool\n`)
+                        .join("")
+                  : "",
+              ),
+            ),
+          );
+
+          expect(capabilities.update).toBeNull();
+          expect(capabilities.manualCommand).toBe("sudo port upgrade package-tool");
+        }),
+    );
+  }
+
   it("quotes copyable command words the shell would split", () => {
     const posix = makeProviderMaintenanceCapabilities({
       provider: driver("packageTool"),
@@ -1861,15 +1995,18 @@ it.layer(
     { name: "its latest link", via: "latest" },
     { name: "a latest link in a custom data dir", via: "latest", dataDir: "data" },
     { name: "a shim", via: "shim" },
+    // `mise upgrade package-tool` skips a tool configured by its backend name.
+    { name: "a shim to a backend-configured install", via: "shim", backend: "npm:package-tool" },
   ])(
     "upgrades the mapped mise tool through $name requested as latest",
     (fixture) =>
       Effect.gen(function* () {
         const tempDir = yield* makeTempDir("t3-mise-upgrade");
-        const mise = miseFixture(
-          tempDir,
-          fixture.dataDir ? { dataDir: NodePath.join(tempDir, fixture.dataDir) } : {},
-        );
+        const mise = miseFixture(tempDir, {
+          ...(fixture.dataDir ? { dataDir: NodePath.join(tempDir, fixture.dataDir) } : {}),
+          ...(fixture.backend ? { backend: fixture.backend } : {}),
+        });
+        const upgradeTool = fixture.backend ?? "package-tool";
         const binaryPath =
           fixture.via === "latest"
             ? mise.latestBinaryPath
@@ -1887,9 +2024,9 @@ it.layer(
         );
 
         expect(capabilities.update).toMatchObject({
-          command: "mise upgrade package-tool",
+          command: `mise upgrade ${upgradeTool}`,
           executable: mise.misePath,
-          args: ["upgrade", "package-tool"],
+          args: ["upgrade", upgradeTool],
         });
         expect(spawned).toContainEqual([mise.misePath, "which", "package-tool"]);
         // Resolution proves ownership but never asks mise for releases.
