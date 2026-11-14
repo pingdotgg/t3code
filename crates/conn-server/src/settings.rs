@@ -238,7 +238,7 @@ impl SettingsStore {
     }
 }
 
-fn read(path: &Path) -> io::Result<Map<String, Value>> {
+pub(crate) fn read(path: &Path) -> io::Result<Map<String, Value>> {
     match fs::read(path) {
         Ok(bytes) => match serde_json::from_slice(&bytes) {
             Ok(Value::Object(map)) => Ok(map),

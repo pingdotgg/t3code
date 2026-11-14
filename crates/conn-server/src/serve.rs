@@ -23,6 +23,17 @@ use crate::{
     router,
 };
 
+/// Grok's `providerInstances.grok` settings as stored in `<state_dir>/settings.json`, so a Grok
+/// task due at start does not meet a disabled instance before the first status refresh. Reads
+/// the file with `std::fs`: call it before the runtime starts. A file that does not parse
+/// gives Grok's default (off); the settings store logs it.
+pub fn stored_grok_settings(state_dir: &std::path::Path) -> conn_provider_acp::GrokSettings {
+    let stored = crate::settings::read(&state_dir.join("settings.json")).unwrap_or_default();
+    conn_provider_acp::GrokSettings::from_instance(
+        stored.get("providerInstances").and_then(|p| p.get("grok")),
+    )
+}
+
 #[derive(Debug)]
 pub struct ServeOptions {
     pub listen: SocketAddr,
@@ -314,5 +325,35 @@ async fn shutdown_signal(watch_parent: bool) -> &'static str {
         let _ = watch_parent;
         let _ = tokio::signal::ctrl_c().await;
         "Ctrl-C"
+    }
+}
+
+#[cfg(test)]
+mod stored_grok_settings_tests {
+    use super::stored_grok_settings;
+
+    /// Finding 6: Grok starts with the stored settings, not the default (off).
+    #[test]
+    fn grok_starts_with_the_stored_settings() {
+        let dir = std::env::temp_dir().join(format!(
+            "conn-serve-grok-{}-{}",
+            std::process::id(),
+            conn_support::uuid_v4()
+        ));
+        std::fs::create_dir_all(&dir).expect("dir");
+        assert!(!stored_grok_settings(&dir).enabled, "no file: off");
+        std::fs::write(
+            dir.join("settings.json"),
+            r#"{"providerInstances":{"grok":{"driver":"grok","enabled":true,
+                "config":{"binaryPath":"/opt/grok"}}}}"#,
+        )
+        .expect("settings");
+        let settings = stored_grok_settings(&dir);
+        std::fs::write(dir.join("settings.json"), "{not json").expect("settings");
+        let broken = stored_grok_settings(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(settings.enabled);
+        assert_eq!(settings.binary_path, "/opt/grok");
+        assert!(!broken.enabled, "a broken file: off");
     }
 }
