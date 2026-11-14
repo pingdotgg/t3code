@@ -5686,23 +5686,21 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           effect.pipe(Effect.mapError(controlReadError(threadId))),
       );
 
-    const hasRunInterruptRequest: ProjectionStoreV2Shape["hasRunInterruptRequest"] = (
-      threadId,
-      runId,
-    ) =>
-      sql
-        .withTransaction(
-          Effect.gen(function* () {
-            yield* requireThread(threadId);
-            // The literal type lets SQLite use the partial stop-request index.
-            const rows = yield* sql<{ readonly found: number }>`
+    const hasRunInterruptRequest: ProjectionStoreV2Shape["hasRunInterruptRequest"] = Effect.fn(
+      "ProjectionStore.hasRunInterruptRequest",
+    )(
+      function* (threadId, runId) {
+        yield* requireThread(threadId);
+        // The literal type lets SQLite use the partial stop-request index.
+        const rows = yield* sql<{ readonly found: number }>`
           SELECT 1 AS found FROM orchestration_v2_projection_turn_items
           WHERE thread_id = ${threadId} AND run_id = ${runId} AND type = 'run_interrupt_request'
           LIMIT 1`;
-            return rows.length > 0;
-          }),
-        )
-        .pipe(Effect.mapError(controlReadError(threadId)));
+        return rows.length > 0;
+      },
+      (effect, threadId, _runId) =>
+        sql.withTransaction(effect).pipe(Effect.mapError(controlReadError(threadId))),
+    );
 
     const isNodeStored: ProjectionStoreV2Shape["isNodeStored"] = Effect.fn(
       "ProjectionStore.isNodeStored",
@@ -6408,40 +6406,37 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.mapError(controlReadError(threadId)),
       );
 
-    const getRunProviderRecords: ProjectionStoreV2Shape["getRunProviderRecords"] = (
-      threadId,
-      runId,
-      nodeId,
-    ) =>
-      sql
-        .withTransaction(
-          Effect.gen(function* () {
-            const controls = yield* getThreadRecords(threadId, ["runs", "nodes"], {
-              runIds: [runId],
-              nodeIds: [nodeId],
-            });
-            const run = controls.runs[0];
-            const attemptIds = run?.activeAttemptId == null ? [] : [run.activeAttemptId];
-            const records = yield* getThreadRecords(
-              threadId,
-              ["providerThreads", "providerTurns", "attempts"],
-              {
-                providerThreadIds: run?.providerThreadId == null ? [] : [run.providerThreadId],
-                providerTurnAttemptIds: attemptIds,
-                attemptIds,
-              },
-            );
-            const attemptTurnId = records.attempts[0]?.providerTurnId;
-            if (records.providerTurns.length > 0 || attemptTurnId == null)
-              return { ...controls, ...records };
-            // A steered run's attempt can point at a provider turn that another attempt started.
-            const { providerTurns } = yield* getThreadRecords(threadId, ["providerTurns"], {
-              providerTurnIds: [attemptTurnId],
-            });
-            return { ...controls, ...records, providerTurns };
-          }),
-        )
-        .pipe(Effect.mapError(controlReadError(threadId)));
+    const getRunProviderRecords: ProjectionStoreV2Shape["getRunProviderRecords"] = Effect.fn(
+      "ProjectionStore.getRunProviderRecords",
+    )(
+      function* (threadId, runId, nodeId) {
+        const controls = yield* getThreadRecords(threadId, ["runs", "nodes"], {
+          runIds: [runId],
+          nodeIds: [nodeId],
+        });
+        const run = controls.runs[0];
+        const attemptIds = run?.activeAttemptId == null ? [] : [run.activeAttemptId];
+        const records = yield* getThreadRecords(
+          threadId,
+          ["providerThreads", "providerTurns", "attempts"],
+          {
+            providerThreadIds: run?.providerThreadId == null ? [] : [run.providerThreadId],
+            providerTurnAttemptIds: attemptIds,
+            attemptIds,
+          },
+        );
+        const attemptTurnId = records.attempts[0]?.providerTurnId;
+        if (records.providerTurns.length > 0 || attemptTurnId == null)
+          return { ...controls, ...records };
+        // A steered run's attempt can point at a provider turn that another attempt started.
+        const { providerTurns } = yield* getThreadRecords(threadId, ["providerTurns"], {
+          providerTurnIds: [attemptTurnId],
+        });
+        return { ...controls, ...records, providerTurns };
+      },
+      (effect, threadId, _runId, _nodeId) =>
+        sql.withTransaction(effect).pipe(Effect.mapError(controlReadError(threadId))),
+    );
 
     const getThreadSnapshot: ProjectionStoreV2Shape["getThreadSnapshot"] = (threadId) =>
       sql
