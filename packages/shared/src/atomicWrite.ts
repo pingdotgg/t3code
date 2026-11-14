@@ -22,6 +22,8 @@ const CHUNK_WRITE_LENGTH = 1 << 20;
 export const writeFileStringAtomically = (input: {
   readonly filePath: string;
   readonly contents: string | Iterable<string>;
+  /** Applied to the temp file before the rename; without it the rename widens the target to the default mode. */
+  readonly mode?: number;
 }) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -44,12 +46,15 @@ export const writeFileStringAtomically = (input: {
 
       const contents = input.contents;
       if (typeof contents === "string") {
-        yield* fs.writeFileString(tempPath, contents);
+        yield* fs.writeFileString(tempPath, contents, { mode: input.mode ?? 0o666 });
       } else {
         // Closed before the rename, which Windows refuses for open files.
         yield* Effect.scoped(
           Effect.gen(function* () {
-            const file = yield* fs.open(tempPath, { flag: "w" });
+            const file = yield* fs.open(tempPath, {
+              flag: "w",
+              mode: input.mode ?? 0o666,
+            });
             const encoder = new TextEncoder();
             let batch: string[] = [];
             let batchLength = 0;

@@ -32,6 +32,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
+import { KimiUsageLimitsLive } from "./kimiUsageLimits.ts";
 import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -539,7 +540,7 @@ export const layerFromHost = Layer.merge(
       });
     }),
   ),
-  AcpRegistryRuntimeCoordinator.layer,
+  AcpRegistryRuntimeCoordinator.layer.pipe(Layer.merge(KimiUsageLimitsLive)),
 );
 
 export interface AcpRegistryCatalogOptions {
