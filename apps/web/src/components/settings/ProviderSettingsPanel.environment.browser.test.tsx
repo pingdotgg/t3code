@@ -8,6 +8,7 @@ import {
   type ServerProvider,
   type UnifiedSettings,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import { AsyncResult, type Atom } from "effect/reactivity";
 import type { ReactNode } from "react";
@@ -335,6 +336,93 @@ describe("EnvironmentProviderSettings routing", () => {
       await screen.rerender(panel({ targetInstanceId: customId }));
       await rename("model-a", "Again A");
       expect(state.mutateProviderInstance.mock.calls[2]?.[0].instance.config.customModels).toEqual([
+        { ...first, name: "Again A" },
+        { ...second, name: "Entered B" },
+      ]);
+    },
+  );
+
+  it("preserves a failed model draft for retry without including it in another edit", async () => {
+    await setup();
+    const first = { slug: "model-a", name: "Original A" };
+    const second = { slug: "model-b", name: "Original B" };
+    state.settings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [customId]: {
+          driver: ProviderDriverKind.make("codex"),
+          config: { customModels: [first, second] },
+        },
+      },
+    };
+    state.mutateProviderInstance
+      .mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("Save failed"))))
+      .mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("Still offline"))));
+    await using screen = await render(panel({ targetInstanceId: customId }));
+    await screen.getByRole("button", { name: "Edit model-a", exact: true }).click();
+    const displayName = screen.getByRole("textbox", { name: "Display name", exact: true });
+    await userEvent.fill(displayName, "Entered A");
+    const save = screen.getByRole("button", { name: "Save", exact: true });
+    await save.click();
+    await expect.element(save).toBeEnabled();
+    await expect.element(displayName).toHaveValue("Entered A");
+    await save.click();
+    await expect.element(save).toBeEnabled();
+    expect(state.mutateProviderInstance.mock.calls[1]?.[0].instance.config.customModels).toEqual([
+      { ...first, name: "Entered A" },
+      second,
+    ]);
+    await screen.getByRole("button", { name: "Cancel", exact: true }).click();
+    await screen.getByRole("button", { name: "Edit model-b", exact: true }).click();
+    await userEvent.fill(displayName, "Entered B");
+    await save.click();
+    await expect.element(displayName).not.toBeInTheDocument();
+    expect(state.mutateProviderInstance.mock.calls[2]?.[0].instance.config.customModels).toEqual([
+      first,
+      { ...second, name: "Entered B" },
+    ]);
+  });
+
+  it.each(["before", "between", "after"] as const)(
+    "keeps a later edit through rename/restore echoes (third reply %s echoes)",
+    async (replyOrder) => {
+      await setup();
+      const first = { slug: "model-a", name: "Original A" };
+      const second = { slug: "model-b", name: "Original B" };
+      const stored = (customModels: ReadonlyArray<{ slug: string; name: string }>) => ({
+        ...DEFAULT_UNIFIED_SETTINGS,
+        providerInstances: {
+          [customId]: { driver: ProviderDriverKind.make("codex"), config: { customModels } },
+        },
+      });
+      state.settings = stored([first, second]);
+      const replies: Array<() => void> = [];
+      state.mutateProviderInstance.mockImplementation(
+        () => new Promise((resolve) => replies.push(() => resolve(AsyncResult.success({})))),
+      );
+      await using screen = await render(panel({ targetInstanceId: customId }));
+      const rename = async (slug: string, name: string) => {
+        await screen.getByRole("button", { name: `Edit ${slug}`, exact: true }).click();
+        await userEvent.fill(
+          screen.getByRole("textbox", { name: "Display name", exact: true }),
+          name,
+        );
+        await screen.getByRole("button", { name: "Save", exact: true }).click();
+      };
+      await rename("model-a", "Entered A");
+      await act(() => replies[0]!());
+      await rename("model-a", "Original A");
+      await act(() => replies[1]!());
+      await rename("model-b", "Entered B");
+      if (replyOrder === "before") await act(() => replies[2]!());
+      state.settings = stored([{ ...first, name: "Entered A" }, second]);
+      await screen.rerender(panel({ targetInstanceId: customId }));
+      if (replyOrder === "between") await act(() => replies[2]!());
+      state.settings = stored([first, second]);
+      await screen.rerender(panel({ targetInstanceId: customId }));
+      if (replyOrder === "after") await act(() => replies[2]!());
+      await rename("model-a", "Again A");
+      expect(state.mutateProviderInstance.mock.calls[3]?.[0].instance.config.customModels).toEqual([
         { ...first, name: "Again A" },
         { ...second, name: "Entered B" },
       ]);
