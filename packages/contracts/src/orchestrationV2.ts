@@ -727,6 +727,9 @@ export const OrchestrationV2Run = Schema.Struct({
   ordinal: PositiveInt,
   providerInstanceId: ProviderInstanceId,
   modelSelection: ModelSelection,
+  /** The thread's modes when the run was sent; runs recorded without them use the thread's. */
+  runtimeMode: Schema.optional(RuntimeMode),
+  interactionMode: Schema.optional(ProviderInteractionMode),
   providerThreadId: Schema.NullOr(ProviderThreadId),
   userMessageId: MessageId,
   rootNodeId: Schema.NullOr(NodeId),

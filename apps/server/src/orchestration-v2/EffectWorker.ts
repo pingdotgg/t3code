@@ -400,7 +400,8 @@ export const layerExecutor: Layer.Layer<
                     ? providerSessions.detach({
                         providerSessionId: effect.request.providerSessionId,
                         threadId: effect.threadId,
-                        detail: "Selection change requires a provider session restart.",
+                        detail:
+                          "Selection or runtime mode change requires a provider session restart.",
                       })
                     : effect.request.sessionTransition?.type === "detach"
                       ? providerSessions.detach({

@@ -223,6 +223,7 @@ describe("orchestrator MCP toolkit", () => {
       const threadRecordReads: Array<{
         readonly threadId: ThreadId;
         readonly fields: ReadonlyArray<string>;
+        readonly byRunId: boolean;
       }> = [];
       const layerOrchestration = Layer.merge(
         layerOrchestrator,
@@ -233,9 +234,13 @@ describe("orchestrator MCP toolkit", () => {
             return ThreadManagementService.ThreadManagementService.of({
               ...service,
               getThreadRecords: (threadId, fields, filter) =>
-                Effect.sync(() => threadRecordReads.push({ threadId, fields })).pipe(
-                  Effect.andThen(service.getThreadRecords(threadId, fields, filter)),
-                ),
+                Effect.sync(() =>
+                  threadRecordReads.push({
+                    threadId,
+                    fields,
+                    byRunId: filter?.runIds !== undefined,
+                  }),
+                ).pipe(Effect.andThen(service.getThreadRecords(threadId, fields, filter))),
             });
           }),
         ).pipe(
@@ -651,7 +656,11 @@ describe("orchestrator MCP toolkit", () => {
               if (/SELECT[\s\S]*FROM orchestration_v2_projection_context_transfers/i.test(query)) {
                 transferReads.push(query);
               }
-              if (/SELECT\s+payload_json\s+FROM orchestration_v2_projection_runs/i.test(query)) {
+              // The caller's own active run, read by id for its modes, is not history.
+              if (
+                /SELECT\s+payload_json\s+FROM orchestration_v2_projection_runs/i.test(query) &&
+                !/\brun_id IN\b/i.test(query)
+              ) {
                 runReads.push(query);
               }
               if (
@@ -780,9 +789,9 @@ describe("orchestrator MCP toolkit", () => {
         );
         expect(capabilities.isError).not.toBe(true);
         expect(messageReads).toHaveLength(messageReadsBeforeCapabilities);
-        // The caller check reads only the thread row, never its history.
+        // The caller check reads only the thread row and its active runs, never its history.
         expect(new Set(projectionTableReads.slice(tableReadsBeforeCapabilities))).toEqual(
-          new Set(["threads"]),
+          new Set(["threads", "runs"]),
         );
         const runReadsBeforeStatus = runReads.length;
         const transferReadsBeforeStatus = transferReads.length;
@@ -797,7 +806,10 @@ describe("orchestrator MCP toolkit", () => {
         expect(
           threadRecordReads
             .slice(threadRecordReadsBeforeStatus)
-            .filter(({ fields }) => fields.includes("runs") || fields.includes("contextTransfers"))
+            .filter(
+              ({ fields, byRunId }) =>
+                !byRunId && (fields.includes("runs") || fields.includes("contextTransfers")),
+            )
             .map(({ threadId }) => threadId),
         ).toEqual([delegated.childThreadId]);
       }).pipe(Effect.provide(layerTest));
