@@ -5,9 +5,9 @@
 
 use conn_contract::support::JsNumber;
 use conn_contract::{
-    GitCommandError, ReviewGetDiffPreviewError, VcsInitError, VcsProcessExitError,
-    VcsProcessExitErrorFailureKind, VcsProcessOutputLimitError, VcsProcessSpawnError,
-    VcsProcessTimeoutError, VcsUnsupportedOperationError, lit,
+    GitActionProgressStream, GitCommandError, ReviewGetDiffPreviewError, VcsDriverKind,
+    VcsInitError, VcsProcessExitError, VcsProcessExitErrorFailureKind, VcsProcessOutputLimitError,
+    VcsProcessSpawnError, VcsProcessTimeoutError, VcsUnsupportedOperationError, lit,
 };
 use serde_json::Value;
 
@@ -27,7 +27,7 @@ pub enum VcsError {
     },
     Unsupported {
         operation: &'static str,
-        kind: &'static str,
+        kind: VcsDriverKind,
         detail: String,
     },
 }
@@ -180,7 +180,7 @@ impl VcsError {
                 kind,
                 detail,
             } => ReviewGetDiffPreviewError::VcsUnsupportedOperationError(unsupported(
-                operation, kind, detail,
+                operation, *kind, detail,
             )),
             VcsError::Invalid { .. } => {
                 ReviewGetDiffPreviewError::GitCommandError(self.to_git_command_error())
@@ -201,22 +201,25 @@ impl VcsError {
                 operation,
                 kind,
                 detail,
-            } => VcsInitError::VcsUnsupportedOperationError(unsupported(operation, kind, detail)),
+            } => VcsInitError::VcsUnsupportedOperationError(unsupported(operation, *kind, detail)),
             VcsError::Invalid {
                 operation, detail, ..
-            } => VcsInitError::VcsUnsupportedOperationError(unsupported(operation, "git", detail)),
+            } => VcsInitError::VcsUnsupportedOperationError(unsupported(
+                operation,
+                VcsDriverKind::Git,
+                detail,
+            )),
         }
     }
 }
 
-fn unsupported(operation: &str, kind: &str, detail: &str) -> VcsUnsupportedOperationError {
-    serde_json::from_value(serde_json::json!({
-        "_tag": "VcsUnsupportedOperationError",
-        "operation": operation,
-        "kind": kind,
-        "detail": detail,
-    }))
-    .expect("valid VcsUnsupportedOperationError")
+fn unsupported(operation: &str, kind: VcsDriverKind, detail: &str) -> VcsUnsupportedOperationError {
+    VcsUnsupportedOperationError {
+        tag: lit::VcsUnsupportedOperationError,
+        operation: operation.into(),
+        kind,
+        detail: detail.into(),
+    }
 }
 
 enum ProcessErrorShape {
@@ -291,7 +294,7 @@ fn process_error(error: &ProcessError) -> ProcessErrorShape {
             command,
             cwd,
             argument_count: Some(argument_count as i64),
-            stream: serde_json::from_value(serde_json::json!("stdout")).expect("stdout literal"),
+            stream: GitActionProgressStream::Stdout,
             max_bytes: *max_bytes as i64,
             observed_bytes: *observed_bytes as i64,
         }),

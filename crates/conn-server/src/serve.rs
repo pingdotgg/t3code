@@ -131,16 +131,20 @@ pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
             workspace_root: root.to_string_lossy().into_owned(),
         })
         .collect();
-    let environment = Arc::new(Environment::load(&state_dir, label, cwd).expect("state directory"));
+    let environment = Arc::new(or_exit(
+        Environment::load(&state_dir, label, cwd),
+        "cannot load the state directory",
+    ));
     let auth = environment.auth.clone();
     let is_desktop = desktop.is_some();
     if let Some(desktop) = desktop {
         auth.set_desktop_bootstrap(desktop);
     }
 
-    let files = Some(Arc::new(
-        conn_files::Files::open(&state_dir).expect("files store"),
-    ));
+    let files = Some(Arc::new(or_exit(
+        conn_files::Files::open(&state_dir),
+        "cannot open the files store",
+    )));
     let vcs = VcsShared::default();
     let terminals = crate::methods::terminal::manager(Some(&environment));
     let host = Arc::new(Host {
@@ -157,7 +161,10 @@ pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
     config.idle_session = session_idle;
     config.host = Some(host.clone());
     config.turn_observer = Some(host.clone());
-    let engine: Arc<dyn Engine> = Arc::new(SqliteEngine::open(config).expect("engine"));
+    let engine: Arc<dyn Engine> = Arc::new(or_exit(
+        SqliteEngine::open(config),
+        "cannot open the engine",
+    ));
     let mut deps = Deps {
         engine: Some(engine.clone()),
         providers,
@@ -186,7 +193,7 @@ pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
             std::process::exit(1);
         }
     };
-    let addr = listener.local_addr().expect("local addr");
+    let addr = or_exit(listener.local_addr(), "cannot read the listening address");
     let runtime = RuntimeState::new(&addr.ip().to_string(), addr.port(), auth::random_uuid());
     if let Err(error) = runtime.publish(&state_dir) {
         eprintln!("conn-server: could not write server-runtime.json: {error}");
@@ -235,14 +242,25 @@ pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
     runtime.clear(&state_dir);
 }
 
+/// A start-up step that failed: print why and exit with status 1 instead of a panic.
+pub fn or_exit<T, E: std::fmt::Display>(result: Result<T, E>, what: &str) -> T {
+    match result {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("conn-server: {what}: {error}");
+            std::process::exit(1);
+        }
+    }
+}
+
 /// Resolves on SIGTERM (systemd, Conn desktop) or SIGINT (a terminal), or, for a desktop
 /// backend, when the desktop that started it is gone (`launcherWatch.ts`).
 async fn shutdown_signal(watch_parent: bool) -> &'static str {
     #[cfg(unix)]
     {
         use tokio::signal::unix::{SignalKind, signal};
-        let mut term = signal(SignalKind::terminate()).expect("SIGTERM handler");
-        let mut int = signal(SignalKind::interrupt()).expect("SIGINT handler");
+        let mut term = or_exit(signal(SignalKind::terminate()), "cannot handle SIGTERM");
+        let mut int = or_exit(signal(SignalKind::interrupt()), "cannot handle SIGINT");
         let parent = std::os::unix::process::parent_id();
         let parent_gone = async move {
             if !watch_parent {
