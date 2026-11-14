@@ -1756,6 +1756,9 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
                 props.isHighlighted || props.isRouteActive
                   ? "bg-sidebar-row-active text-sidebar-foreground"
                   : "text-sidebar-muted-foreground/75 hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
+                // Forced colors drops box-shadow rings, so the highlight needs an outline there.
+                props.isHighlighted &&
+                  "ring-2 ring-inset ring-ring forced-colors:outline-solid forced-colors:outline-2 forced-colors:-outline-offset-2",
                 isFileDragOver && "ring-1 ring-inset ring-primary/70",
                 isFileDragOver && !props.isRouteActive && "bg-sidebar-row-hover",
               )}
