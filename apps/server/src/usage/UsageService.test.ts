@@ -51,6 +51,7 @@ import * as AntigravityUsage from "../provider/Drivers/AntigravityUsage.ts";
 import * as ProviderHostLive from "../provider/ProviderHostLive.ts";
 import { totalTokens, type UsageRecord } from "@t3tools/provider-core/server/usage";
 import * as UsageService from "./UsageService.ts";
+import { DESKTOP_HOST_SCOPE_ENV, physicalSourceIdOf } from "./usageTranscriptReader.ts";
 import * as MuseSdk from "../../../../packages/provider-muse/src/server/sdk.ts";
 import { MuseUsageHome } from "@t3tools/provider-muse/server";
 import { makeScanCacheWriter, SCAN_CACHE_FILE_NAME } from "./usageScanCache.ts";
@@ -521,6 +522,73 @@ describe("Codex usage history", () => {
 });
 
 describe("UsageService", () => {
+  it.effect("keeps pricing metadata paired with the rates used during a concurrent refresh", () =>
+    Effect.gen(function* () {
+      const { home, settings } = yield* setup;
+      const sessions = NodePath.join(home, "codex", "sessions");
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(sessions, { recursive: true });
+        await NodeFSP.writeFile(
+          NodePath.join(sessions, "session.jsonl"),
+          [
+            { type: "session_meta", payload: { id: "session", model_provider: "openai" } },
+            { type: "turn_context", payload: { model: "gpt-6-astra", turn_id: "turn" } },
+            {
+              type: "event_msg",
+              timestamp: "2026-08-01T10:00:00Z",
+              payload: {
+                type: "token_count",
+                info: { last_token_usage: { input_tokens: 0, output_tokens: 1 } },
+              },
+            },
+          ]
+            .map((record) => encodeUnknownJsonString(record))
+            .join("\n") + "\n",
+        );
+      });
+      let rate = 0;
+      yield* Effect.gen(function* () {
+        const resolving = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const service = yield* UsageService.make.pipe(
+          Effect.provideService(CodexUsageHistory.CodexUsageHistory, {
+            resolve: () =>
+              Deferred.succeed(resolving, undefined).pipe(
+                Effect.andThen(Deferred.await(release)),
+                Effect.as(new Map()),
+              ),
+          }),
+        );
+        const initialPricing = yield* service.refreshRates;
+        yield* TestClock.adjust(61_000);
+        const pending = yield* service.readSummary(WINDOW).pipe(Effect.forkChild);
+        yield* Deferred.await(resolving);
+        yield* service.refreshRates;
+        yield* Deferred.succeed(release, undefined);
+        const original = yield* Fiber.join(pending);
+        assert.strictEqual(original.buckets[0]?.costUsd, 1);
+        assert.strictEqual(original.pricing.fetchedAt, initialPricing.fetchedAt);
+        const updated = yield* service.readSummary(WINDOW);
+        assert.strictEqual(updated.buckets[0]?.costUsd, 2);
+        assert.notStrictEqual(updated.pricing.fetchedAt, initialPricing.fetchedAt);
+      }).pipe(
+        Effect.provide(
+          layerService({
+            prefix: "concurrent-rates",
+            home,
+            settings,
+            ratesResponse: () =>
+              Effect.succeed(
+                Response.json({
+                  "gpt-6-astra": { input_cost_per_token: 0, output_cost_per_token: ++rate },
+                }),
+              ),
+          }),
+        ),
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("counts compressed Codex rollouts across refresh, rewrites, and cache restarts", () =>
     Effect.gen(function* () {
       const { home, settings } = yield* setup;
@@ -1437,6 +1505,39 @@ describe("UsageService", () => {
       assert.deepStrictEqual(museSources(refreshed), [
         [NodePath.join(museHome, "sessions"), "ok", undefined],
       ]);
+    }),
+  );
+
+  it.effect("identifies a transcript directory created after the server first read usage", () =>
+    Effect.gen(function* () {
+      const { home, settings } = yield* setup;
+      const scope = "0123456789abcdef0123456789abcdef";
+      const dir = NodePath.join(home, "pi", "sessions");
+      yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        const piFingerprint = (summary: UsageSummary) =>
+          summary.sources.find((source) => source.fingerprint.provider === "pi")?.fingerprint;
+        const missing = piFingerprint(yield* service.readSummary(WINDOW));
+        assert.strictEqual(missing?.resolvedHomePath, dir);
+        assert.isUndefined(missing?.physicalSourceId);
+        yield* Effect.promise(() => NodeFSP.mkdir(dir, { recursive: true }));
+        assert.strictEqual(
+          piFingerprint(yield* service.readSummary(WINDOW))?.physicalSourceId,
+          physicalSourceIdOf(scope, yield* Effect.promise(() => NodeFSP.realpath(dir))),
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          layerService({
+            prefix: "usage-physical-source-created",
+            home,
+            settings,
+            // The native Windows server reads identity from realpath alone.
+            platform: "win32",
+            environment: { [DESKTOP_HOST_SCOPE_ENV]: scope },
+          }),
+        ),
+      );
     }),
   );
 
