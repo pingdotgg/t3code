@@ -18,32 +18,37 @@ import type { MouseEvent, ReactNode } from "react";
 import { cn } from "~/lib/utils";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { useNowMinute } from "../../hooks/useNowMinute";
-import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
+import { deriveProjectIdentity } from "../../projectIdentity";
 import { useUiStateStore } from "../../uiStateStore";
 import { resolveSidebarFolderDot, resolveThreadLastVisitedAt } from "../Sidebar.logic";
 import { ProjectFavicon } from "../ProjectFavicon";
+import { ProjectMonogram } from "../ProjectMonogram";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { type ProjectRailDot, resolveProjectRailTileStates } from "./ProjectRail.logic";
+import {
+  type ProjectRailDot,
+  type ProjectRailTile,
+  resolveProjectRailTileStates,
+} from "./ProjectRail.logic";
 import { FOLDER_DOT_CLASS_NAME, FOLDER_DOT_LABEL } from "./SidebarProjectFolderHeader";
 
 const HIDE_IDLE_KEY = "t3code:sidebar:project-rail-hide-idle";
 
 /**
- * A column of project tiles beside the thread list. It is another view of the
- * sidebar's project filter: a tile shows only its project, Shift or Ctrl adds
- * it to the projects shown, and the top tile shows every project.
+ * A column of project and folder tiles beside the thread list. It is another
+ * view of the sidebar's filter: a tile shows only its threads, Shift or Ctrl
+ * adds it to what is shown, and the top tile shows everything.
  * Tile state reads the minute clock here, so only the rail re-renders on it.
  */
 export function ProjectRail(props: {
-  groups: readonly SidebarProjectSnapshot[];
+  tiles: readonly ProjectRailTile[];
   threads: readonly EnvironmentThreadShell[];
   selectedKeys: readonly string[];
   onSelectAll: () => void;
   onSelect: (key: string, additive: boolean) => void;
   onMove: (activeKey: string, overKey: string) => void;
 }) {
-  const { groups, selectedKeys } = props;
+  const { selectedKeys } = props;
   const nowMinute = useNowMinute();
   const localLastVisitedAtById = useUiStateStore((store) => store.threadLastVisitedAtById);
   const [hideIdle, setHideIdle] = useLocalStorage(HIDE_IDLE_KEY, false, Schema.Boolean);
@@ -54,12 +59,11 @@ export function ProjectRail(props: {
       localLastVisitedAtById[scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))],
     ),
   }));
-  const states = resolveProjectRailTileStates(groups, threads, `${nowMinute}:00.000Z`);
+  const states = resolveProjectRailTileStates(props.tiles, threads, `${nowMinute}:00.000Z`);
   const allDot = resolveSidebarFolderDot(threads);
-  // A shown project keeps its tile, so the way back out of its filter stays on the rail.
-  const tiles = groups.filter(
-    (group) =>
-      !hideIdle || !states.get(group.projectKey)?.idle || selectedKeys.includes(group.projectKey),
+  // A shown tile stays, so the way back out of its filter stays on the rail.
+  const tiles = props.tiles.filter(
+    (tile) => !hideIdle || !states.get(tile.key)?.idle || selectedKeys.includes(tile.key),
   );
   // A finger holds before a tile lifts, so a swipe still scrolls the rail.
   const sensors = useSensors(
@@ -107,16 +111,16 @@ export function ProjectRail(props: {
         onDragEnd={onDragEnd}
       >
         <SortableContext
-          items={tiles.map((group) => group.projectKey)}
+          items={tiles.map((tile) => tile.key)}
           strategy={verticalListSortingStrategy}
         >
-          {tiles.map((group) => (
+          {tiles.map((tile) => (
             <SortableRailTile
-              key={group.projectKey}
-              group={group}
-              dot={states.get(group.projectKey)?.dot ?? null}
-              idle={states.get(group.projectKey)?.idle ?? false}
-              selected={selectedKeys.includes(group.projectKey)}
+              key={tile.key}
+              tile={tile}
+              dot={states.get(tile.key)?.dot ?? null}
+              idle={states.get(tile.key)?.idle ?? false}
+              selected={selectedKeys.includes(tile.key)}
               onSelect={props.onSelect}
             />
           ))}
@@ -127,15 +131,15 @@ export function ProjectRail(props: {
 }
 
 function SortableRailTile(props: {
-  group: SidebarProjectSnapshot;
+  tile: ProjectRailTile;
   dot: ProjectRailDot;
   idle: boolean;
   selected: boolean;
   onSelect: (key: string, additive: boolean) => void;
 }) {
-  const { group, dot, idle } = props;
+  const { tile, dot, idle } = props;
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: group.projectKey,
+    id: tile.key,
   });
   return (
     <div
@@ -148,19 +152,28 @@ function SortableRailTile(props: {
       tabIndex={-1}
     >
       <RailTileButton
-        label={group.displayName}
-        detail={group.workspaceRoot}
+        label={tile.kind === "project" ? tile.group.displayName : tile.tag}
+        detail={tile.kind === "project" ? tile.group.workspaceRoot : "Folder"}
         selected={props.selected}
         quiet={idle}
         dot={dot}
         onClick={(event) =>
-          props.onSelect(group.projectKey, event.shiftKey || event.ctrlKey || event.metaKey)
+          props.onSelect(tile.key, event.shiftKey || event.ctrlKey || event.metaKey)
         }
       >
-        <ProjectFavicon project={group} className="size-5" />
+        {tile.kind === "project" ? (
+          <ProjectFavicon project={tile.group} className="size-5" />
+        ) : (
+          <FolderMonogram tag={tile.tag} />
+        )}
       </RailTileButton>
     </div>
   );
+}
+
+function FolderMonogram(props: { tag: string }) {
+  const identity = deriveProjectIdentity(props.tag);
+  return <ProjectMonogram text={identity.monogram} color={identity.color} className="size-5" />;
 }
 
 function RailTileButton(props: {

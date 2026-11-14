@@ -22,6 +22,7 @@ const LEGACY_PERSISTED_STATE_KEYS = [
 export interface PersistedUiState {
   projectExpandedById?: Record<string, boolean>;
   projectOrder?: string[];
+  railOrder?: string[];
   threadLastVisitedAtById?: Record<string, string>;
   collapsedProjectCwds?: string[];
   expandedProjectCwds?: string[];
@@ -37,6 +38,8 @@ export interface PersistedUiState {
 export interface UiProjectState {
   projectExpandedById: Record<string, boolean>;
   projectOrder: string[];
+  /** Sidebar rail tile keys (projects and folders) in the order the user dragged them. */
+  railOrder: string[];
   sidebarProjectScopeKeys: string[];
 }
 
@@ -59,6 +62,7 @@ export interface UiState
 const initialState: UiState = {
   projectExpandedById: {},
   projectOrder: [],
+  railOrder: [],
   sidebarProjectScopeKeys: [],
   threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
@@ -144,6 +148,7 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
   return {
     projectExpandedById,
     projectOrder,
+    railOrder: sanitizeStringArray(parsed.railOrder),
     threadLastVisitedAtById: sanitizeTimestampRecord(parsed.threadLastVisitedAtById),
     threadChangedFilesExpandedById:
       parsed.threadChangedFilesExpansionVersion === THREAD_CHANGED_FILES_EXPANSION_VERSION
@@ -219,6 +224,7 @@ export function persistState(state: UiState): void {
       JSON.stringify({
         projectExpandedById: state.projectExpandedById,
         projectOrder: state.projectOrder,
+        railOrder: state.railOrder,
         threadLastVisitedAtById: state.threadLastVisitedAtById,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
         sidebarProjectScopeKeys: state.sidebarProjectScopeKeys,
@@ -435,7 +441,7 @@ interface UiStateStore extends UiState {
     draggedProjectIds: readonly string[],
     targetProjectIds: readonly string[],
   ) => void;
-  setProjectOrder: (projectOrder: readonly string[]) => void;
+  setRailOrder: (order: { railOrder: readonly string[]; projectOrder: readonly string[] }) => void;
 }
 
 export const useUiStateStore = create<UiStateStore>((set) => ({
@@ -457,7 +463,8 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) =>
       reorderProjects(state, currentProjectOrder, draggedProjectIds, targetProjectIds),
     ),
-  setProjectOrder: (projectOrder) => set({ projectOrder: [...projectOrder] }),
+  setRailOrder: ({ railOrder, projectOrder }) =>
+    set({ railOrder: [...railOrder], projectOrder: [...projectOrder] }),
 }));
 
 useUiStateStore.subscribe((state) => debouncedPersistState.maybeExecute(state));

@@ -36,6 +36,8 @@ import {
   groupSidebarThreadsByProject,
   resolveSidebarFolderDot,
   sidebarFolderExpansionKeys,
+  isThreadInSidebarScope,
+  resolveSidebarThreadScope,
 } from "./Sidebar.logic";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
@@ -1519,8 +1521,57 @@ describe("pendingSidebarRouteReveal", () => {
   });
 });
 
+describe("isThreadInSidebarScope", () => {
+  const scope = {
+    projectKeys: new Set(["env:project-a"]),
+    tags: new Set(["release"]),
+  };
+  it.each([
+    {
+      name: "an untagged thread of a scoped project",
+      projectId: "project-a",
+      tags: [],
+      shown: true,
+    },
+    {
+      name: "a tagged thread of a scoped project",
+      projectId: "project-a",
+      tags: ["ops"],
+      shown: false,
+    },
+    {
+      name: "a thread in a scoped folder",
+      projectId: "project-b",
+      tags: ["ops", "release"],
+      shown: true,
+    },
+    { name: "an untagged thread elsewhere", projectId: "project-b", tags: [], shown: false },
+    {
+      name: "a thread from before tags existed",
+      projectId: "project-a",
+      tags: undefined,
+      shown: true,
+    },
+  ])("shows $name: $shown", ({ projectId, tags, shown }) => {
+    const thread = { environmentId: "env", projectId, tags };
+    expect(isThreadInSidebarScope(scope, thread)).toBe(shown);
+    expect(isThreadInSidebarScope(null, thread)).toBe(true);
+  });
+
+  it("builds no scope while neither a project nor a folder is chosen", () => {
+    expect(resolveSidebarThreadScope({ projectGroups: [], scopeKeys: [] })).toBeNull();
+    expect(resolveSidebarThreadScope({ projectGroups: [], scopeKeys: ["tag:release"] })).toEqual({
+      projectKeys: new Set(),
+      tags: new Set(["release"]),
+    });
+  });
+});
+
 describe("resolveSidebarRouteReveal", () => {
-  const scopedProjectKeys = new Set(["environment-test:project-scoped"]);
+  const scope = {
+    projectKeys: new Set(["environment-test:project-scoped"]),
+    tags: new Set<string>(),
+  };
   const hidden = makeThreadFixture({ projectId: ProjectId.make("project-other") });
   const hiddenKey = "environment-test:thread-test";
   const findThread = (key: string) => (key === hiddenKey ? hidden : undefined);
@@ -1531,11 +1582,25 @@ describe("resolveSidebarRouteReveal", () => {
         reveal: { observedKey: "environment-test:other", pendingKey: null },
         routeKey: hiddenKey,
         isSearching: false,
-        scopedProjectKeys,
+        scope,
         delegatedUnderParent: new Set(),
         findThread,
       }),
     ).toEqual({ pendingKey: hiddenKey, widensScope: true });
+  });
+
+  it("widens for a scoped project's thread that moved into a folder", () => {
+    const tagged = makeThreadFixture({ projectId: ProjectId.make("project-scoped") });
+    expect(
+      resolveSidebarRouteReveal({
+        reveal: { observedKey: null, pendingKey: null },
+        routeKey: hiddenKey,
+        isSearching: false,
+        scope,
+        delegatedUnderParent: new Set(),
+        findThread: () => ({ ...tagged, tags: ["release"] }),
+      }).widensScope,
+    ).toBe(true);
   });
 
   it("never widens for a thread whose reveal already completed", () => {
@@ -1545,7 +1610,7 @@ describe("resolveSidebarRouteReveal", () => {
         reveal: { observedKey: hiddenKey, pendingKey: null },
         routeKey: hiddenKey,
         isSearching: false,
-        scopedProjectKeys,
+        scope,
         delegatedUnderParent: new Set(),
         findThread,
       }),
@@ -1561,7 +1626,7 @@ describe("resolveSidebarRouteReveal", () => {
         reveal,
         routeKey,
         isSearching: false,
-        scopedProjectKeys,
+        scope,
         delegatedUnderParent: new Set(),
         findThread,
       });
@@ -1575,7 +1640,7 @@ describe("resolveSidebarRouteReveal", () => {
         reveal: { observedKey: hiddenKey, pendingKey: hiddenKey },
         routeKey: hiddenKey,
         isSearching: true,
-        scopedProjectKeys,
+        scope,
         delegatedUnderParent: new Set(),
         findThread,
       }),

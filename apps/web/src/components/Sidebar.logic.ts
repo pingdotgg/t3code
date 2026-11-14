@@ -46,6 +46,7 @@ import { observeIntersection } from "../lib/observeIntersection";
 import { deadlineAfter, deadlineStore, type ClockStore } from "@t3tools/client-runtime/clock";
 import { useDeadlinePassed } from "../hooks/useDeadline";
 import { legacyProjectCwdPreferenceKey } from "../uiStateStore";
+import { folderTagOfScopeKey, type SidebarProjectSnapshot } from "../sidebarProjectGrouping";
 import { isElectron } from "../env";
 import { shouldShowThreadJumpHintsForModifiers } from "../keybindings";
 import { isTerminalFocused, subscribeToTerminalFocusChanges } from "../lib/terminalFocus";
@@ -611,12 +612,11 @@ export function resolveSidebarRowThreadId(
  * the sidebar lists, by thread key; they show under that thread, as subagents do.
  */
 export function filterSidebarV2VisibleThreads<
-  T extends Pick<SidebarThreadSummary, "archivedAt" | "environmentId" | "id" | "lineage"> & {
-    projectId: string;
-  },
+  T extends Pick<SidebarThreadSummary, "archivedAt" | "environmentId" | "id" | "lineage"> &
+    SidebarScopedThread,
 >(
   threads: readonly T[],
-  scopedProjectKeys: ReadonlySet<string> | null,
+  scope: SidebarThreadScope | null,
   delegatedUnderParent: ReadonlySet<string>,
 ): T[] {
   return threads.filter(
@@ -627,9 +627,49 @@ export function filterSidebarV2VisibleThreads<
         thread.lineage,
         delegatedUnderParent,
       ) &&
-      (scopedProjectKeys === null ||
-        scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
+      isThreadInSidebarScope(scope, thread),
   );
+}
+
+/** The sidebar filter: projects (by `environmentId:projectId`) and folders (thread tags). */
+export interface SidebarThreadScope {
+  readonly projectKeys: ReadonlySet<string>;
+  readonly tags: ReadonlySet<string>;
+}
+
+type SidebarScopedThread = {
+  readonly environmentId: string;
+  readonly projectId: string;
+  readonly tags?: ReadonlyArray<string> | undefined;
+};
+
+/** Null while nothing is scoped, so every thread shows. */
+export function resolveSidebarThreadScope(input: {
+  readonly projectGroups: ReadonlyArray<Pick<SidebarProjectSnapshot, "memberProjectRefs">>;
+  readonly scopeKeys: ReadonlyArray<string>;
+}): SidebarThreadScope | null {
+  const tags = new Set(input.scopeKeys.flatMap((key) => folderTagOfScopeKey(key) ?? []));
+  if (input.projectGroups.length === 0 && tags.size === 0) return null;
+  return {
+    projectKeys: new Set(
+      input.projectGroups.flatMap((group) =>
+        group.memberProjectRefs.map((ref) => `${ref.environmentId}:${ref.projectId}`),
+      ),
+    ),
+    tags,
+  };
+}
+
+/** A tagged thread lives in its folders, not its project, so a project scope shows only untagged threads. */
+export function isThreadInSidebarScope(
+  scope: SidebarThreadScope | null,
+  thread: SidebarScopedThread,
+): boolean {
+  if (scope === null) return true;
+  const tags = thread.tags ?? [];
+  return tags.length === 0
+    ? scope.projectKeys.has(`${thread.environmentId}:${thread.projectId}`)
+    : tags.some((tag) => scope.tags.has(tag));
 }
 
 export function buildBulkTitleRegenerationContextMenuItem(input: {

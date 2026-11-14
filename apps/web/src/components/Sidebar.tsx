@@ -110,6 +110,7 @@ import {
 import {
   projectGroupsSpanEnvironments,
   resolveSidebarProjectScopeKeys,
+  folderTagOfScopeKey,
   getSidebarProjectSettingsKey,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
@@ -180,6 +181,8 @@ import {
 import {
   applySidebarThreadDrop,
   filterSidebarV2VisibleThreads,
+  resolveSidebarThreadScope,
+  type SidebarThreadScope,
   groupSidebarThreadsByProject,
   sidebarFolderExpansionKeys,
   buildBulkTitleRegenerationContextMenuItem,
@@ -223,8 +226,8 @@ import { SidebarPointerSensor } from "./Sidebar.pointer";
 import { ProjectRail } from "./sidebar/ProjectRail";
 import {
   nextProjectRailScope,
-  orderProjectRailGroups,
-  projectOrderAfterRailMove,
+  buildProjectRailTiles,
+  railOrderAfterMove,
 } from "./sidebar/ProjectRail.logic";
 import { createSidebarListMotion } from "./Sidebar.motion";
 import { createSidebarShiftGuard } from "./Sidebar.shiftGuard";
@@ -359,7 +362,7 @@ type SidebarOptimisticDrop = {
 
 interface SidebarThreadPartitionInput {
   readonly threads: readonly EnvironmentThreadShell[];
-  readonly scopedProjectKeys: ReadonlySet<string> | null;
+  readonly scope: SidebarThreadScope | null;
   /** Tasks linked environments run for a listed thread; they show under it. */
   readonly delegatedUnderParent: ReadonlySet<string>;
   readonly serverConfigs: ReadonlyMap<EnvironmentId, EnvironmentServerConfig>;
@@ -426,7 +429,7 @@ function routeThreadOnly(
 // Separate hooks cache maps independently of later Sidebar hooks and preserve dnd-kit inputs.
 function useSidebarThreads(input: {
   readonly projectScopeKey: string | null;
-  readonly scopedProjectKeys: ReadonlySet<string> | null;
+  readonly scope: SidebarThreadScope | null;
   readonly serverConfigs: ReadonlyMap<EnvironmentId, EnvironmentServerConfig>;
   readonly connectedEnvironmentIds: readonly EnvironmentId[];
   readonly optimisticDrop: SidebarOptimisticDrop | null;
@@ -440,7 +443,7 @@ function useSidebarThreads(input: {
 }) {
   const {
     projectScopeKey,
-    scopedProjectKeys,
+    scope,
     serverConfigs,
     connectedEnvironmentIds,
     optimisticDrop,
@@ -490,7 +493,7 @@ function useSidebarThreads(input: {
 
   const partition = partitionSidebarThreads({
     threads,
-    scopedProjectKeys,
+    scope,
     delegatedUnderParent,
     serverConfigs,
     connectedEnvironmentIds,
@@ -504,7 +507,7 @@ function useSidebarThreads(input: {
     partition;
   // Older settled threads load in pages; the shelf lists them only as far as they are loaded.
   const olderSettledShelf = useOlderSettledShelf({
-    scopes: olderSettledScopes([...serverConfigs.keys()], scopedProjectKeys),
+    scopes: olderSettledScopes([...serverConfigs.keys()], scope),
     expanded: settledShelfExpanded,
     visibleCount: settledVisibleCount,
   });
@@ -626,7 +629,7 @@ function useSidebarThreads(input: {
 function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
   const {
     threads,
-    scopedProjectKeys,
+    scope,
     delegatedUnderParent,
     serverConfigs,
     optimisticDrop,
@@ -634,7 +637,7 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
     sortActiveBySend,
   } = input;
   const preciseNow = new Date().toISOString();
-  const visible = filterSidebarV2VisibleThreads(threads, scopedProjectKeys, delegatedUnderParent);
+  const visible = filterSidebarV2VisibleThreads(threads, scope, delegatedUnderParent);
   const inboxObservation = inboxReturns.observe(workingShelfEnabled ? threads : null);
   const pinned: EnvironmentThreadShell[] = [];
   const active: EnvironmentThreadShell[] = [];
@@ -725,17 +728,20 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
   };
 }
 
-/** The sidebar's scope per environment: the scoped projects there, or every project. */
+/**
+ * The sidebar's scope per environment: the scoped projects there, or every project.
+ * Older settled pages are read by project, so a folder scope does not page them in.
+ */
 function olderSettledScopes(
   environmentIds: ReadonlyArray<EnvironmentId>,
-  scopedProjectKeys: ReadonlySet<string> | null,
+  scope: SidebarThreadScope | null,
 ): ReadonlyArray<OlderSettledScope> {
-  if (scopedProjectKeys === null) {
+  if (scope === null) {
     return environmentIds.map((environmentId) => ({ environmentId, projectIds: null }));
   }
   return environmentIds.flatMap((environmentId) => {
     const prefix = `${environmentId}:`;
-    const projectIds = [...scopedProjectKeys].flatMap((key) =>
+    const projectIds = [...scope.projectKeys].flatMap((key) =>
       key.startsWith(prefix) ? [ProjectId.make(key.slice(prefix.length))] : [],
     );
     return projectIds.length === 0 ? [] : [{ environmentId, projectIds }];
@@ -1084,6 +1090,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   // loaded. The stored keys are left alone, so the scope returns with its project.
   // An archived project's scope reads as all projects, matching the menu.
   const scopeGroups = pickableProjectGroups(projectGroups);
+  const threads = useQuietThreadShells();
   const archivedProjectKeys = new Set(
     projectGroups.filter((project) => project.archived).map((project) => project.projectKey),
   );
@@ -1096,17 +1103,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const chosenProjectGroups = scopeGroups.filter((project) =>
     chosenProjectScopeKeys.includes(project.projectKey),
   );
-  const chosenScopeProjectKeys =
-    chosenProjectGroups.length === 0
-      ? null
-      : new Set(
-          chosenProjectGroups.flatMap((project) =>
-            project.memberProjectRefs.map(
-              (projectRef) => `${projectRef.environmentId}:${projectRef.projectId}`,
-            ),
-          ),
-        );
-  const threads = useQuietThreadShells();
+  const chosenScope = resolveSidebarThreadScope({
+    projectGroups: chosenProjectGroups,
+    scopeKeys: chosenProjectScopeKeys,
+  });
   const promotingDraftThreadKeys = usePromotingDraftThreadKeys();
   const listedThreads =
     promotingDraftThreadKeys.length === 0
@@ -1139,7 +1139,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     reveal: routeReveal,
     routeKey: routeRowThreadKey,
     isSearching: isSearchingThreads,
-    scopedProjectKeys: chosenScopeProjectKeys,
+    scope: chosenScope,
     delegatedUnderParent,
     findThread: (key) => threads.find((candidate) => threadShellKey(candidate) === key),
   });
@@ -1152,8 +1152,16 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         : [...projectScopeKeys, key],
     );
   const projectOrder = useUiStateStore((store) => store.projectOrder);
-  const setProjectOrder = useUiStateStore((store) => store.setProjectOrder);
-  const railGroups = orderProjectRailGroups(scopeGroups, projectOrder);
+  const railOrder = useUiStateStore((store) => store.railOrder);
+  const setRailOrder = useUiStateStore((store) => store.setRailOrder);
+  const railThreads = filterSidebarV2VisibleThreads(threads, null, delegatedUnderParent);
+  const railTiles = buildProjectRailTiles({
+    groups: scopeGroups,
+    threads: railThreads,
+    selectedKeys: projectScopeKeys,
+    projectOrder,
+    railOrder,
+  });
   // The widened scope outlives the reveal, so it is written back to the persisted
   // scope. Route changes arrive from history, links and the palette, and only this
   // component holds the project groups that decide a widening, so no single
@@ -1185,8 +1193,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     (item) => item.value,
     projectScopeMenuState.open,
   );
+  // The combobox picks projects; a folder in the scope is the rail's to show.
   const selectedProjectScopeItem =
-    projectScopeKeys.length > 1
+    projectScopeKeys.length > 1 || projectScopeKeys.some((key) => folderTagOfScopeKey(key) !== null)
       ? null
       : (projectScopeItems.find((item) => item.value === (projectScopeKeys[0] ?? "all")) ??
         projectScopeItems[0]!);
@@ -1198,11 +1207,19 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   });
   const scopedProjectGroups = revealWidensScope ? [] : chosenProjectGroups;
   const scopedProjectRefs = scopedProjectGroups.flatMap((project) => project.memberProjectRefs);
-  const scopedProjectKeys = revealWidensScope ? null : chosenScopeProjectKeys;
+  const scope = revealWidensScope ? null : chosenScope;
+  const scopeLabels = [
+    ...scopedProjectGroups.map((project) => project.displayName),
+    ...(scope?.tags ?? []),
+  ];
+  // Drafts have no tags, so they show only under their project.
+  const scopedProjectKeys = scope?.projectKeys ?? null;
+  // A folder holds threads from any project, so search and folders span every project.
+  const scopeSpansAllProjects = scope === null || scope.tags.size > 0;
   const threadSearch = useThreadSearch(
     connectedEnvironmentIds,
     threadSearchQuery,
-    scopedProjectGroups.length === 0
+    scopeSpansAllProjects
       ? {}
       : { projectIds: scopedProjectRefs.map((projectRef) => projectRef.projectId) },
   );
@@ -1346,7 +1363,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     activeKeysById,
   } = useSidebarThreads({
     projectScopeKey,
-    scopedProjectKeys,
+    scope,
     serverConfigs,
     connectedEnvironmentIds,
     optimisticDrop,
@@ -1354,13 +1371,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     delegatedUnderParent,
     routeRowThreadKey,
     folderGroups: boringSidebarEnabled
-      ? scopedProjectGroups.length === 0
+      ? scopeSpansAllProjects
         ? // An archived project keeps a folder for its active threads, below the rest.
           [...scopeGroups, ...projectGroups.filter((project) => project.archived)]
         : scopedProjectGroups
       : null,
     keepEmptyFolders: (group) =>
-      scopedProjectGroups.length > 0 || (group.pinned && !group.archived),
+      scope === null ? group.pinned && !group.archived : scopedProjectGroups.includes(group),
   });
 
   // Ranked across environments as the palette ranks them, so one
@@ -3038,16 +3055,16 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       <div className="flex min-h-0 flex-1">
         {projectGroups.length > 0 ? (
           <ProjectRail
-            groups={railGroups}
-            threads={filterSidebarV2VisibleThreads(threads, null, delegatedUnderParent)}
+            tiles={railTiles}
+            threads={railThreads}
             selectedKeys={projectScopeKeys}
             onSelectAll={() => setProjectScopeKeys([])}
             onSelect={(key, additive) =>
               setProjectScopeKeys(nextProjectRailScope(projectScopeKeys, key, additive))
             }
             onMove={(activeKey, overKey) => {
-              const next = projectOrderAfterRailMove(railGroups, activeKey, overKey);
-              if (next !== null) setProjectOrder(next);
+              const next = railOrderAfterMove(railTiles, activeKey, overKey);
+              if (next !== null) setRailOrder(next);
             }}
           />
         ) : null}
@@ -3378,7 +3395,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 workingThreads.length +
                 snoozedThreads.length ===
                 0 &&
-              (settledCount === 0 || scopedProjectGroups.length > 0) ? (
+              (settledCount === 0 || scope !== null) ? (
                 <div className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-muted-foreground/60">
                   {projects.length === 0 ? (
                     <>
@@ -3392,13 +3409,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         Add project
                       </button>
                     </>
-                  ) : scopedProjectGroups.length > 0 ? (
+                  ) : scopeLabels.length > 0 ? (
                     <>
                       <span>
                         {`No ${settledCount > 0 ? "active threads" : "threads"} in ${
-                          scopedProjectGroups.length > 1
-                            ? "these projects"
-                            : scopedProjectGroups[0]!.displayName
+                          scopeLabels.length > 1 ? "this filter" : scopeLabels[0]
                         }${settledCount > 0 ? "" : " yet"}`}
                       </span>
                       <button

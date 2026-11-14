@@ -202,6 +202,8 @@ export interface EnvironmentThreadShell {
   readonly opens?: import("@t3tools/contracts").OrchestrationV2ThreadOpens | null;
   readonly titleRegeneration?: { readonly requestId: string; readonly startedAt: string } | null;
   readonly deletedAt: string | null;
+  /** Folders the thread sits in; empty for a thread in its project's folder. */
+  readonly tags?: ReadonlyArray<string>;
   readonly source: OrchestrationV2ThreadShell;
 }
 
@@ -356,6 +358,7 @@ export function presentThreadShell(
             startedAt: iso(thread.titleRegeneration.startedAt),
           },
     deletedAt: nullableIso(thread.deletedAt),
+    tags: thread.tags ?? [],
     source: thread,
   };
 }

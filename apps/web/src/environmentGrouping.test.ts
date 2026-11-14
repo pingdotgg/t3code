@@ -125,6 +125,12 @@ describe("environment grouping", () => {
     expect(resolveSidebarProjectScopeKey({ groups, key, canClearMissingScope: true })).toBe(key);
   });
 
+  it("keeps a folder scope key, which names a tag rather than a project", () => {
+    expect(
+      resolveSidebarProjectScopeKey({ groups: [], key: "tag:release", canClearMissingScope: true }),
+    ).toBe("tag:release");
+  });
+
   it("dedupes stale project rows with the same environment and workspace path", () => {
     const duplicate = makeProject({
       id: ProjectId.make("project-duplicate"),

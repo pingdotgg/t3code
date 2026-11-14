@@ -89,6 +89,17 @@ export function getSidebarProjectSettingsKey(
   );
 }
 
+const FOLDER_SCOPE_KEY_PREFIX = "tag:";
+
+/** A sidebar scope key for a folder, which is a thread tag. */
+export function folderScopeKey(tag: string): string {
+  return `${FOLDER_SCOPE_KEY_PREFIX}${tag}`;
+}
+
+export function folderTagOfScopeKey(key: string): string | null {
+  return key.startsWith(FOLDER_SCOPE_KEY_PREFIX) ? key.slice(FOLDER_SCOPE_KEY_PREFIX.length) : null;
+}
+
 export function resolveSidebarProjectScopeKey(input: {
   readonly groups: ReadonlyArray<SidebarProjectSnapshot>;
   readonly key: string | null;
@@ -96,6 +107,8 @@ export function resolveSidebarProjectScopeKey(input: {
   readonly canClearMissingScope?: boolean;
 }): string | null {
   if (input.key === null) return null;
+  // Folder keys name a tag, not a project; the caller decides whether that tag still exists.
+  if (folderTagOfScopeKey(input.key) !== null) return input.key;
   const group =
     input.groups.find((candidate) => candidate.projectKey === input.key) ??
     input.groups.find(
