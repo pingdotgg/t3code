@@ -205,6 +205,7 @@ import {
   restoreComposerDraftSnapshotState,
   restoreCloudComposerDrafts,
   retargetNewTaskDraft,
+  retargetSavedNewTaskDraft,
   setComposerDraftText,
   insertComposerDraftContext,
   insertComposerDraftText,
@@ -457,7 +458,7 @@ describe("mobile composer drafts", () => {
         const restored = history.restore(text, getComposerDraftSnapshot(key));
         setComposerDraftText(key, text);
         setComposerDraftContext(key, restored.context);
-        appendComposerDraftAttachments(key, restored.attachments, { allowOverflow: true });
+        appendComposerDraftAttachments(key, restored.attachments, { restore: true });
       };
       try {
         changeText("");
@@ -1053,10 +1054,43 @@ describe("mobile composer drafts", () => {
     const overflowRejected = appendComposerDraftAttachments(
       draftKey,
       [makeAttachment("restored-1")],
-      { allowOverflow: true },
+      { restore: true },
     );
     expect(overflowRejected).toBe(0);
     expect(appAtomRegistry.get(composerDraftsAtom)[draftKey]?.attachments).toHaveLength(101);
+  });
+
+  it("drops duplicate attachments, releases their files, and keeps them on restore", async () => {
+    const outboxLoad = vi.spyOn(threadOutboxManager, "load").mockResolvedValue(true);
+    onTestFinished(() => outboxLoad.mockRestore());
+    const cleanup = Promise.withResolvers<void>();
+    composerAttachmentCleanupMocks.remove.mockImplementationOnce(async () => {
+      cleanup.resolve();
+    });
+    const makeVideo = (id: string) => ({
+      id,
+      type: "file" as const,
+      name: "clip.mov",
+      mimeType: "video/quicktime",
+      sizeBytes: 42,
+      fileUri: `file:///documents/t3-composer-attachments/${id}.mov`,
+    });
+    const draftKey = "new-task:environment-1:project-duplicates";
+    appAtomRegistry.set(composerDraftsAtom, {
+      [draftKey]: { text: "", attachments: [makeVideo("held")] },
+    });
+
+    expect(
+      appendComposerDraftAttachments(draftKey, [makeVideo("again"), makeVideo("again-2")]),
+    ).toBe(0);
+    expect(appAtomRegistry.get(composerDraftsAtom)[draftKey]?.attachments).toEqual([
+      makeVideo("held"),
+    ]);
+    await cleanup.promise;
+    expect(composerAttachmentCleanupMocks.remove).toHaveBeenCalledWith(makeVideo("again").fileUri);
+
+    appendComposerDraftAttachments(draftKey, [makeVideo("restored")], { restore: true });
+    expect(appAtomRegistry.get(composerDraftsAtom)[draftKey]?.attachments).toHaveLength(2);
   });
 
   it("keeps shared attachment files until every draft releases them", async () => {
@@ -1900,7 +1934,7 @@ describe("mobile composer drafts", () => {
     expect(getComposerDraftSnapshot(second).text).toBe("second idea");
   });
 
-  it("retargets a new-task draft to another project without losing its text", () => {
+  it("retargets a new-task draft to another project, keeping only a pull request workspace", () => {
     const from = {
       environmentId: EnvironmentId.make("environment-1"),
       projectId: ProjectId.make("project-1"),
@@ -1921,7 +1955,7 @@ describe("mobile composer drafts", () => {
     });
     const createdAt = getComposerDraftSnapshot(key).project?.createdAt;
 
-    retargetNewTaskDraft(key, to);
+    retargetNewTaskDraft(key, to, { keepPullRequestWorkspace: true });
 
     const moved = getComposerDraftSnapshot(key);
     expect(moved.text).toBe("moving house");
@@ -1931,6 +1965,46 @@ describe("mobile composer drafts", () => {
     expect(moved.project).toEqual({ ...to, createdAt });
     expect(findNewTaskDraftKeys(appAtomRegistry.get(composerDraftsAtom), from)).toEqual([]);
     expect(findNewTaskDraftKeys(appAtomRegistry.get(composerDraftsAtom), to)).toEqual([key]);
+
+    const pullRequestSelection = {
+      mode: "worktree" as const,
+      branch: "feature/pr-head",
+      worktreePath: "/old-machine/worktrees/pr-42",
+      startFromOrigin: false,
+      pullRequestReference: "https://github.com/acme/repo/pull/42",
+    };
+    updateComposerDraftSettings(key, { workspaceSelection: pullRequestSelection });
+    retargetNewTaskDraft(key, from, { keepPullRequestWorkspace: true });
+    expect(getComposerDraftSnapshot(key).workspaceSelection).toEqual({
+      ...pullRequestSelection,
+      worktreePath: null,
+    });
+    retargetNewTaskDraft(key, to);
+    expect(getComposerDraftSnapshot(key).workspaceSelection).toBeUndefined();
+  });
+
+  it("retargets a saved new-task draft only after drafts load", async () => {
+    const from = {
+      environmentId: EnvironmentId.make("environment-1"),
+      projectId: ProjectId.make("project-1"),
+    };
+    const to = {
+      environmentId: EnvironmentId.make("environment-1"),
+      projectId: ProjectId.make("project-2"),
+    };
+    const key = createNewTaskDraft(from);
+    setComposerDraftText(key, "kept through a cold start");
+    await flushComposerDrafts();
+    appAtomRegistry.set(composerDraftsAtom, {});
+    resetComposerDraftsLoadState();
+
+    await expect(retargetSavedNewTaskDraft(key, to)).resolves.toBe(true);
+    expect(getComposerDraftSnapshot(key)).toMatchObject({
+      text: "kept through a cold start",
+      project: to,
+    });
+    await expect(retargetSavedNewTaskDraft(`${key}-gone`, to)).resolves.toBe(false);
+    expect(appAtomRegistry.get(composerDraftsAtom)[`${key}-gone`]).toBeUndefined();
   });
 
   it("merges persisted option memory without replacing newer choices", async () => {
