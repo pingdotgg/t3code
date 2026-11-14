@@ -52,7 +52,12 @@ export function truncateText(value: string, maxLength: number): string {
   if (trimmed.length <= maxLength) {
     return trimmed;
   }
-  return trimmed.slice(0, maxLength - 3).trimEnd() + "...";
+  return (
+    trimmed
+      .slice(0, maxLength - 3)
+      .replace(/[\uD800-\uDBFF]$/, "")
+      .trimEnd() + "..."
+  );
 }
 
 function sanitizeDeepLink(value: string): string {
