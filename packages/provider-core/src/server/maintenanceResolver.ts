@@ -1193,21 +1193,9 @@ const withConfiguredNpmVersionLookup = Effect.fn("withConfiguredNpmVersionLookup
   const npmPath = yield* resolveCommandPath("npm", { env });
   if (!npmPath) return capabilities;
   const services = yield* Effect.context<ProviderMaintenanceResolverServices>();
-  const update = capabilities.update;
-  const prefixIndex = update?.lockKey.startsWith("npm-global:")
-    ? update.args.indexOf("--prefix")
-    : -1;
-  const prefix = prefixIndex >= 0 ? update?.args[prefixIndex + 1] : undefined;
   const lookup = runProbe(
     npmPath,
-    [
-      "view",
-      "--global",
-      ...(prefix ? ["--prefix", prefix] : []),
-      "--json",
-      `${packageName}@latest`,
-      "version",
-    ],
+    ["view", "--global", "--json", `${packageName}@latest`, "version"],
     env,
   ).pipe(
     Effect.map((stdout) => {
@@ -1229,7 +1217,6 @@ const withConfiguredNpmVersionLookup = Effect.fn("withConfiguredNpmVersionLookup
       "configured-npm",
       npmPath,
       packageName,
-      prefix ?? "",
       environmentCacheKey(env),
       installerLatestVersionKey(capabilities) ?? "",
     ].join("\0"),
