@@ -47,6 +47,7 @@ import {
 import { syncBrowserChromeTheme } from "./hooks/useTheme";
 import { startThreadVisitedMigration } from "./hooks/useThreadVisitedMigration";
 import { installDesktopPasteAsText } from "./lib/desktopPasteAsText";
+import { installDesktopZoomInFallback } from "./lib/desktopZoomInFallback";
 import {
   syncDocumentElectronPlatformClasses,
   syncDocumentWindowControlsOverlayClass,
@@ -258,6 +259,7 @@ export function startAppServices(): AppRouter {
   }
 
   installDesktopPasteAsText(window.desktopBridge, window);
+  installDesktopZoomInFallback(window.desktopBridge, navigator.platform);
 
   startClientAppearance();
   startI18n();
