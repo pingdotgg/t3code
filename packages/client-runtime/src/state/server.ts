@@ -758,6 +758,7 @@ const snapshotBasis = (provider: ServerProviderEntry | undefined) =>
     ...(provider.catalogDigest === undefined
       ? { slashCommands: provider.slashCommands, skills: provider.skills }
       : { catalogDigest: provider.catalogDigest }),
+    workspaceSnapshotsRevision: provider.workspaceSnapshotsRevision,
   };
 
 interface FetchedWorkspaceSnapshot {

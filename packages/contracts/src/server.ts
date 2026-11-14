@@ -276,6 +276,9 @@ export const ServerProvider = Schema.Struct({
   ),
   skills: Schema.Array(ServerProviderSkill).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   workspaceSnapshots: Schema.optionalKey(Schema.Array(ServerProviderWorkspaceSnapshot)),
+  // Changes when a cwd's inventory changes outside a scan (a live session), so cwd snapshots
+  // taken before it are dropped and fetched again even if the machine inventory is unchanged.
+  workspaceSnapshotsRevision: Schema.optionalKey(Schema.Number),
   usageLimits: Schema.optional(ServerProviderUsageLimits),
   versionAdvisory: Schema.optionalKey(ServerProviderVersionAdvisory),
   compatibilityAdvisory: Schema.optionalKey(ServerProviderCompatibilityAdvisory),

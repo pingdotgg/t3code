@@ -282,10 +282,11 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     ...(runtimeCoordinator === undefined
       ? {}
       : {
-          onAvailableCommandsUpdate: (commands) =>
+          onAvailableCommandsUpdate: (commands, cwd) =>
             runtimeCoordinator.publishAvailableCommands(
               options.instanceId,
               normalizeAcpRegistryCommands(commands),
+              cwd,
             ),
           // A new Copilot session starts at its own effort, not the one the composer shows.
           ...(isCopilot
