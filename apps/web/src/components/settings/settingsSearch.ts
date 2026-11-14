@@ -481,7 +481,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "tool-call-visibility",
-    title: "Tool calls in chat",
+    title: msg("Tool calls in chat"),
     to: "/settings/chat",
     searchTerms: [
       "hide tool calls commands edits searches work log activity quiet chat zen final answers only",
@@ -489,7 +489,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "screen-reader-announcements",
-    title: "Screen reader announcements",
+    title: msg("Screen reader announcements"),
     to: "/settings/chat",
     searchTerms: [
       "accessibility a11y screen reader nvda jaws voiceover orca narrator speech announce read aloud messages activity steps",
@@ -497,7 +497,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "screen-reader-window-title",
-    title: "Screen reader window title",
+    title: msg("Screen reader window title"),
     to: "/settings/chat",
     searchTerms: [
       "accessibility a11y screen reader nvda jaws voiceover orca narrator window title tab title alt tab taskbar thread status order working approval",
@@ -737,25 +737,25 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "skills-in-slash-menu",
-    title: "Show skills in slash menu",
+    title: msg("Show skills in slash menu"),
     to: "/settings/chat",
     searchTerms: ["command menu dollar $ slash /"],
   },
   {
     id: "composer-rich-text",
-    title: "Rich text composer",
+    title: msg("Rich text composer"),
     to: "/settings/chat",
     searchTerms: ["composer rich text tiptap bold italic markdown styled wysiwyg"],
   },
   {
     id: "send-shortcut",
-    title: "Send shortcut",
+    title: msg("Send shortcut"),
     to: "/settings/chat",
     searchTerms: ["enter return command ctrl multiline prompt new line composer"],
   },
   {
     id: "follow-up-behavior",
-    title: "Follow-up behavior",
+    title: msg("Follow-up behavior"),
     to: "/settings/chat",
     searchTerms: ["queue steer running turn send default behavior composer"],
   },
