@@ -12,6 +12,7 @@ import { create } from "zustand";
 
 import { environmentCatalog } from "../connection/catalog";
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { refreshOrbitThreadIndexHeld } from "./orbitThreadIndex";
 
 /**
  * Conn: asleep Orbit Instances. An Instance Orbit lists as `stopped` and that no window shows is
@@ -389,6 +390,8 @@ const controller = createOrbitInstanceSleepController({
       { environmentId: environmentId as EnvironmentId, parked },
       { reportFailure: false },
     );
+    // Conn (C3, flag on only): the Orbit list shows an asleep server from the index.
+    await refreshOrbitThreadIndexHeld();
   },
   retryNow: async (environmentId) => {
     await runAtomCommand(

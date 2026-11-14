@@ -15,6 +15,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 
 import { environmentCatalog } from "../connection/catalog";
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { refreshOrbitThreadIndexHeld } from "./orbitThreadIndex";
 import {
   ATTACHED_SERVERS_RECORD_KEY,
   loadAttachedServersRecord,
@@ -149,6 +150,8 @@ function appAttachedServers(): ReturnType<typeof createAttachedServers> {
         { environmentId: environmentId as EnvironmentId, reason: "not-attached", held },
         { reportFailure: false },
       );
+      // The Orbit list shows a held-off server from the index, a released one live (C3).
+      await refreshOrbitThreadIndexHeld();
     },
   });
   return attachedServers;

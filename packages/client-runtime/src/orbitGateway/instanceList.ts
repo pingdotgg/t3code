@@ -188,7 +188,8 @@ export function joinOrbitInstanceThreads(
       ...row,
       threads: sorted,
       workingCount: sorted.filter((thread) => thread.working).length,
-      lastUsedAt: sorted[0]?.updatedAt ?? null,
+      // An index row without a time (C3) is no last use.
+      lastUsedAt: sorted.find((thread) => thread.updatedAt !== "")?.updatedAt ?? null,
     };
   });
   const rank = (row: OrbitInstanceListRow) =>

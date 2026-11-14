@@ -5,6 +5,7 @@ import {
 import { create } from "zustand";
 
 import { desktopOrbitGatewayClient } from "./OrbitProfileSync";
+import { loadOrbitThreadIndex } from "./orbitThreadIndex";
 
 export type OrbitInstanceListState =
   | { readonly status: "loading" }
@@ -28,6 +29,9 @@ export async function loadOrbitInstanceList(): Promise<void> {
     state: state.status === "loaded" ? state : { status: "loading" },
   });
   const client = desktopOrbitGatewayClient();
+  // Conn (flag `connAttachedServers` only): the threads of held-off servers, read with the list.
+  // Not awaited: the list never waits for the index.
+  void loadOrbitThreadIndex(client).catch(() => {});
   let next: OrbitInstanceListState;
   try {
     if (client === null) throw new Error("The Orbit Gateway is not available here.");
