@@ -1,0 +1,38 @@
+import type * as licensemanager from "@distilled.cloud/aws/license-manager";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+
+/**
+ * Request for {@link ListTokens}.
+ */
+export interface ListTokensRequest extends licensemanager.ListTokensRequest {}
+
+/**
+ * Runtime binding for `license-manager:ListTokens` — enumerate the refresh
+ * tokens minted for the account's licenses (token metadata only; the token
+ * material itself is returned once by `CreateToken`).
+ *
+ * Provide the implementation with
+ * `Effect.provide(AWS.LicenseManager.ListTokensHttp)`.
+ * ### License Checkout Data Plane
+ * **Example:** List Activation Tokens
+ * ```typescript
+ * // init
+ * const listTokens = yield* AWS.LicenseManager.ListTokens();
+ *
+ * // runtime
+ * const { Tokens } = yield* listTokens();
+ * ```
+ *
+ * @binding
+ */
+export interface ListTokens extends Binding.Service<
+  ListTokens,
+  "AWS.LicenseManager.ListTokens",
+  () => Effect.Effect<
+    (
+      request?: ListTokensRequest,
+    ) => Effect.Effect<licensemanager.ListTokensResponse, licensemanager.ListTokensError>
+  >
+> {}
+export const ListTokens = Binding.Service<ListTokens>("AWS.LicenseManager.ListTokens");
