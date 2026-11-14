@@ -84,7 +84,6 @@ const MAX_METADATA_RECORDS_PER_TRANSCRIPT = 1_000;
 const RECENT_THREAD_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 // Screenshot-heavy transcripts can reach GiB; select fields while streaming to avoid allocating payloads.
 const MAX_IMPORTED_TRANSCRIPT_BYTES = 4 * 1024 * 1024 * 1024;
-const MAX_IMPORTED_MESSAGES = 200;
 const MAX_IMPORT_HISTORY_BYTES = 32 * 1024 * 1024;
 const MAX_IMPORT_BYTES = 4 * 1024 * 1024 * 1024;
 const MAX_IMPORT_TRANSCRIPTS = 100;
@@ -473,10 +472,13 @@ function parseAgentSessionRecords(
   let model = claudeFields.model ?? null;
   let derivedTitle: string | undefined;
   let hasCodexSessionId = false;
-  const messages: Array<AgentSessionThreadMessage & { readonly codexResponseUser: boolean }> = [];
-  let firstUserMessage:
-    | (AgentSessionThreadMessage & { readonly codexResponseUser: boolean })
-    | undefined;
+  type RetainedMessage = AgentSessionThreadMessage & { readonly codexResponseUser: boolean };
+  const messages: Array<RetainedMessage> = [];
+  // Codex prompt copies are matched within the turn since the last assistant message. Indexes
+  // keep that linear: scanning back per record is quadratic on a long run of user records.
+  let codexEventTextsInTurn = new Set<string>();
+  let codexResponseCopiesInTurn = new Map<string, Array<RetainedMessage>>();
+  const removedCodexResponseCopies = new Set<RetainedMessage>();
   const canonicalCodexResponseUserIndices = new Set<number>();
   let canonicalUserTextsInTurn = new Set<string>();
   let responseUsersInTurn: Array<{
@@ -530,35 +532,23 @@ function parseAgentSessionRecords(
     finishCodexTurn();
   }
 
-  let conversationMessageCount = 0;
-  const retainMessage = (
-    message: AgentSessionThreadMessage & { readonly codexResponseUser: boolean },
-  ) => {
-    if (firstUserMessage === undefined && message.role === "user") {
-      firstUserMessage = message;
-    }
+  const retainMessage = (message: RetainedMessage) => {
     if (derivedTitle === undefined && message.role === "user") {
       derivedTitle = deriveTitle(input.source, message.text);
     }
-    conversationMessageCount += 1;
     messages.push(message);
-    if (messages.length > MAX_IMPORTED_MESSAGES) messages.shift();
-  };
-
-  const hasMatchingCodexEventInTurn = (text: string) => {
-    const comparisonText = text.trim();
-    for (let index = messages.length - 1; index >= 0; index--) {
-      const message = messages[index];
-      if (message?.role === "assistant") return false;
-      if (
-        message?.role === "user" &&
-        !message.codexResponseUser &&
-        message.text.trim() === comparisonText
-      ) {
-        return true;
-      }
+    if (input.source !== "codex") return;
+    if (message.role === "assistant") {
+      codexEventTextsInTurn = new Set();
+      codexResponseCopiesInTurn = new Map();
+    } else if (message.codexResponseUser) {
+      const text = message.text.trim();
+      const copies = codexResponseCopiesInTurn.get(text);
+      if (copies === undefined) codexResponseCopiesInTurn.set(text, [message]);
+      else copies.push(message);
+    } else {
+      codexEventTextsInTurn.add(message.text.trim());
     }
-    return false;
   };
 
   let recordIndex = -1;
@@ -605,17 +595,9 @@ function parseAgentSessionRecords(
     if (record.type === "event_msg" && record.payload?.type === "user_message") {
       const text = record.payload.message ?? "";
       if (text.trim().length === 0) continue;
-      // Codex can duplicate prompts across formats; remove only matching response copies.
-      for (let index = messages.length - 1; index >= 0; index--) {
-        const message = messages[index];
-        if (message?.role === "assistant") break;
-        if (message?.codexResponseUser === true && message.text.trim() === text.trim()) {
-          if (firstUserMessage === message) firstUserMessage = undefined;
-          messages.splice(index, 1);
-          conversationMessageCount -= 1;
-          break;
-        }
-      }
+      // Codex can duplicate prompts across formats; remove only the latest matching response copy.
+      const copy = codexResponseCopiesInTurn.get(text.trim())?.pop();
+      if (copy !== undefined) removedCodexResponseCopies.add(copy);
       retainMessage({
         role: "user",
         text,
@@ -637,7 +619,7 @@ function parseAgentSessionRecords(
     if (record.payload.role === "user" && canonicalCodexResponseUserIndices.has(recordIndex)) {
       continue;
     }
-    if (record.payload.role === "user" && hasMatchingCodexEventInTurn(extractedText)) {
+    if (record.payload.role === "user" && codexEventTextsInTurn.has(extractedText.trim())) {
       continue;
     }
     retainMessage({
@@ -648,15 +630,16 @@ function parseAgentSessionRecords(
     });
   }
 
-  const visibleMessages = messages.map(
+  const visibleMessages = messages.filter((message) => !removedCodexResponseCopies.has(message));
+  if (
+    providerSessionId.trim().length === 0 ||
+    !visibleMessages.some((message) => message.role === "user")
+  ) {
+    return null;
+  }
+  const retainedMessages = visibleMessages.map(
     ({ codexResponseUser: _codexResponseUser, ...message }) => message,
   );
-  if (providerSessionId.trim().length === 0 || firstUserMessage === undefined) return null;
-  const firstUserMessageRetained = messages.includes(firstUserMessage);
-  const { codexResponseUser: _codexResponseUser, ...visibleFirstUserMessage } = firstUserMessage;
-  const retainedMessages = firstUserMessageRetained
-    ? visibleMessages
-    : [visibleFirstUserMessage, ...visibleMessages.slice(-(MAX_IMPORTED_MESSAGES - 1))];
 
   return {
     source: input.source,
@@ -667,7 +650,7 @@ function parseAgentSessionRecords(
     createdAt: retainedMessages[0]?.createdAt ?? fallbackTimestamp,
     updatedAt: fallbackTimestamp,
     messages: retainedMessages,
-    omittedMessageCount: conversationMessageCount + droppedMessageCount - retainedMessages.length,
+    omittedMessageCount: droppedMessageCount,
   };
 }
 
@@ -704,26 +687,39 @@ function shouldRetainDecodedRecord(
   );
 }
 
-// The import shows only the first user message and the latest messages, so a
-// long Claude session holds just those and counts the rest as dropped.
+// A Claude session longer than the memory budget keeps its first user message
+// and drops its oldest other messages, counting them as dropped.
 function createClaudeHistoryWindow() {
-  const recent: Array<{ readonly record: DecodedTranscriptRecord; readonly bytes: number }> = [];
+  const held: Array<{ readonly record: DecodedTranscriptRecord; readonly bytes: number }> = [];
+  let start = 0;
   let firstUser: DecodedTranscriptRecord | undefined;
   let droppedMessageCount = 0;
   return {
-    // Takes a record shouldRetainDecodedRecord kept; returns the bytes it released.
-    push: (record: DecodedTranscriptRecord, bytes: number): number => {
+    // Takes a record shouldRetainDecodedRecord kept.
+    push: (record: DecodedTranscriptRecord, bytes: number) => {
       if (firstUser === undefined && record.type === "user") firstUser = record;
-      recent.push({ record, bytes });
-      if (recent.length <= MAX_IMPORTED_MESSAGES) return 0;
-      const evicted = recent.shift();
-      if (evicted === undefined || evicted.record === firstUser) return 0;
-      droppedMessageCount += 1;
-      return evicted.bytes;
+      held.push({ record, bytes });
+    },
+    // Drops the oldest message other than the first user message; null when none is left.
+    evict: (): number | null => {
+      while (start < held.length) {
+        const evicted = held[start++];
+        if (evicted === undefined || evicted.record === firstUser) continue;
+        droppedMessageCount += 1;
+        // Compact once most of the array is dropped, so evicting stays linear.
+        if (start * 2 > held.length) {
+          held.splice(0, start);
+          start = 0;
+        }
+        return evicted.bytes;
+      }
+      return null;
     },
     records: () => {
-      const held = recent.map((entry) => entry.record);
-      return firstUser === undefined || held.includes(firstUser) ? held : [firstUser, ...held];
+      const records = held.slice(start).map((entry) => entry.record);
+      return firstUser === undefined || records.includes(firstUser)
+        ? records
+        : [firstUser, ...records];
     },
     droppedMessageCount: () => droppedMessageCount,
   };
@@ -1233,10 +1229,14 @@ export const make = Effect.gen(function* () {
             let bytesRead = 0;
             const reserve = (bytes: number) => {
               recordBytes += bytes;
-              if (historyBytes + recordBytes > MAX_IMPORT_HISTORY_BYTES) {
-                throw new TranscriptJsonLimitError({
-                  message: "Transcript selected history exceeds the 32 MiB memory budget",
-                });
+              while (historyBytes + recordBytes > MAX_IMPORT_HISTORY_BYTES) {
+                const released = source === "claudeAgent" ? claudeHistory.evict() : null;
+                if (released === null) {
+                  throw new TranscriptJsonLimitError({
+                    message: "Transcript selected history exceeds the 32 MiB memory budget",
+                  });
+                }
+                historyBytes -= released;
               }
             };
             let reader = createTranscriptJsonReader(reserve, selectTranscriptPath);
@@ -1260,7 +1260,8 @@ export const make = Effect.gen(function* () {
                 }
                 if (shouldRetainDecodedRecord(source, decoded.value)) {
                   if (source === "claudeAgent") {
-                    historyBytes += recordBytes - claudeHistory.push(decoded.value, recordBytes);
+                    claudeHistory.push(decoded.value, recordBytes);
+                    historyBytes += recordBytes;
                   } else if (
                     source === "pi" &&
                     decoded.value.type === "message" &&
