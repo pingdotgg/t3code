@@ -2334,6 +2334,7 @@ describe("EnvironmentSupervisor routes", () => {
         const discoveryStarted = yield* Deferred.make<void>();
         const finishDiscovery = yield* Deferred.make<void>();
         const lateAddress = "https://fixture.tail1234.ts.net/";
+        const reportedLabel = discovery === "late" ? "Renamed environment" : TARGET.label;
         const learned = yield* Ref.make<ReadonlyArray<string>>([]);
         const harness = yield* makeHarness({
           configEvents:
@@ -2343,8 +2344,11 @@ describe("EnvironmentSupervisor routes", () => {
                     version: 1 as const,
                     type: "snapshot" as const,
                     config: (discovery === "omitted"
-                      ? {}
-                      : { directEndpoints: [] }) as unknown as ServerConfig,
+                      ? { environment: { label: TARGET.label } }
+                      : {
+                          environment: { label: TARGET.label },
+                          directEndpoints: [],
+                        }) as unknown as ServerConfig,
                   }).pipe(Stream.ensuring(Deferred.succeed(initialProcessed, undefined))),
                   Stream.fromEffect(
                     Deferred.await(finishDiscovery).pipe(
@@ -2352,6 +2356,7 @@ describe("EnvironmentSupervisor routes", () => {
                         version: 1 as const,
                         type: "snapshot" as const,
                         config: {
+                          environment: { label: reportedLabel },
                           directEndpoints: [{ kind: "tailnet", httpBaseUrl: lateAddress }],
                         } as unknown as ServerConfig,
                       }),
@@ -2366,6 +2371,7 @@ describe("EnvironmentSupervisor routes", () => {
           prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
           initialConfig: () =>
             Effect.succeed({
+              environment: { label: TARGET.label },
               directEndpoints:
                 discovery !== "initial"
                   ? []
@@ -2375,7 +2381,7 @@ describe("EnvironmentSupervisor routes", () => {
         const current = yield* Ref.make(relayEntry);
         const supervisor = yield* EnvironmentSupervisor.make(relayEntry, {
           initiallyDesired: true,
-          learnRoutes: ({ activeRoute, reported }) =>
+          learnRoutes: ({ activeRoute, reported, label }) =>
             Effect.gen(function* () {
               yield* Deferred.succeed(discoveryStarted, undefined);
               const entry = yield* Ref.get(current);
@@ -2383,6 +2389,7 @@ describe("EnvironmentSupervisor routes", () => {
                 entry,
                 activeRoute,
                 reported,
+                label,
                 allowInsecure: true,
               });
               if (routes === null) return Option.none();
@@ -2425,6 +2432,7 @@ describe("EnvironmentSupervisor routes", () => {
         expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
           "BearerConnectionTarget",
         );
+        expect((yield* Ref.get(current)).target.label).toBe(reportedLabel);
         expect(yield* Ref.get(learned)).toEqual([
           `learned:${TARGET.environmentId}:${discovery !== "initial" ? "https://fixture.tail1234.ts.net" : "http://192.168.1.10:3773"}`,
         ]);
