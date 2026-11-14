@@ -40,7 +40,11 @@ import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { projectEnvironment } from "../../state/projects";
 import type { AssetUrlFailureReason } from "../../state/asset-url-state";
-import { Inspector, useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
+import {
+  Inspector,
+  useAdaptiveWorkspaceLayout,
+  useWorkspacePaneState,
+} from "../layout/AdaptiveWorkspaceLayout";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { ThreadRouteScreen } from "../threads/ThreadRouteScreen";
 import { FilePreviewLoading, FilePreviewNotice } from "./FilePreviewFeedback";
@@ -111,7 +115,8 @@ function FileHeader(props: {
     readonly onPress: () => unknown;
   }>;
 }) {
-  const { panes, toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
+  const { toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
+  const { panes } = useWorkspacePaneState();
   const modes = props.actions.filter(({ inline }) => inline);
   return (
     <AppBar
@@ -221,7 +226,7 @@ function FileSourceSurface(props: ComponentProps<typeof SourceFileSurface>) {
     <SourceFileSurface
       {...props}
       initialLine={selection?.line ?? props.initialLine}
-      selectable={selection?.active === true}
+      selectable={props.selectable === true || selection?.active === true}
       onLongPressLine={
         Platform.OS === "android" ? (line) => setSelection({ line, active: true }) : undefined
       }
@@ -245,6 +250,7 @@ function FileContent(props: {
   readonly threadId: ThreadId | null;
   readonly initialLine: number | null;
   readonly truncated: boolean;
+  readonly selectable: boolean;
   readonly onRefresh?: () => Promise<void> | void;
 }) {
   // Reopening a mutable host file must not reuse a poster from an earlier visit.
@@ -346,6 +352,7 @@ function FileContent(props: {
           path={props.relativePath}
           initialLine={props.initialLine}
           headerInsetTop={props.truncated ? 0 : undefined}
+          selectable={props.selectable}
           onRefresh={props.onRefresh}
         />
       )}
@@ -453,7 +460,7 @@ function FilesToolbarBottomFade() {
 
 export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
   const navigation = useNavigation();
-  const { fileInspector } = useAdaptiveWorkspaceLayout();
+  const { fileInspector } = useWorkspacePaneState();
   const [searchQuery, setSearchQuery] = useState("");
   const { themeAppearance: highlightTheme } = useAppearancePreferences();
   const { cwd, environmentId, projectName, selectedThread, threadId } = useThreadFilesWorkspace(
@@ -609,7 +616,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
 
 export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   const navigation = useNavigation();
-  const { fileInspector } = useAdaptiveWorkspaceLayout();
+  const { fileInspector } = useWorkspacePaneState();
   const { appearance, setCodeWordBreak } = useAppearancePreferences();
   const params = props.route.params;
   const targetLine = normalizeRouteLine(firstRouteParam(params.line));
@@ -645,6 +652,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     readonly path: string;
     readonly mode: FileViewMode;
   } | null>(null);
+  const [textSelectionPath, setTextSelectionPath] = useState<string | null>(null);
   const [previewRevision, setPreviewRevision] = useState(0);
   const previewKey = JSON.stringify([environmentId, cwd, relativePath, previewRevision]);
   const [fullScreenPreview, setFullScreenPreview] = useState<FilePreviewSource | null>(null);
@@ -744,6 +752,10 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
       : null,
   );
   const fileData = fileQuery.data as ProjectReadFileResult | null;
+  // iOS only: Android lays out a whole-file selectable TextView on the UI thread, which stalls.
+  const canSelectText =
+    Platform.OS === "ios" && resolvedActiveMode === "source" && fileData?.contents != null;
+  const selectingText = canSelectText && textSelectionPath === relativePath;
 
   const handleSelectFile = (path: string) => {
     const targetPath =
@@ -830,6 +842,15 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
             icon: "text.alignleft",
             inline: false,
             onPress: () => setCodeWordBreak(!appearance.codeWordBreak),
+          } as const)
+        : null,
+      canSelectText
+        ? ({
+            id: "select-text",
+            title: selectingText ? "Done selecting" : "Select text",
+            icon: "character.cursor.ibeam",
+            inline: false,
+            onPress: () => setTextSelectionPath(selectingText ? null : relativePath),
           } as const)
         : null,
       ...(mediaSource
@@ -1041,6 +1062,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
           relativePath={relativePath}
           threadId={threadId}
           truncated={fileData?.truncated ?? false}
+          selectable={selectingText}
           onRefresh={() => fileQuery.refresh()}
         />
       </ScreenContent>
