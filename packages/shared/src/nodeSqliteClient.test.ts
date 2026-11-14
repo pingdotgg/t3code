@@ -703,6 +703,7 @@ it.effect.each([
     withLogLines((lines) =>
       withReaderClient((sql) =>
         Effect.gen(function* () {
+          assert.deepEqual(yield* readerPoolAvailable, [1]);
           // The failed read's own metric attributes must not label the pool's gauge.
           const failed = yield* withWorkers(
             workers,
