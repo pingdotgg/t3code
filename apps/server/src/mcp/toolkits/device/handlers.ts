@@ -144,8 +144,21 @@ const mapLocateErrors = <A, R>(
     }),
   );
 
+const failedHosts = <H extends { readonly id: DeviceHostId }>(
+  state: { readonly hostStatuses: DeviceServiceState["hostStatuses"] },
+  hosts: ReadonlyArray<H>,
+) =>
+  hosts.flatMap((host) => {
+    const status = state.hostStatuses[host.id];
+    return status?.status === "failed" && status.detail ? [{ host, detail: status.detail }] : [];
+  });
+
 const pickDevice = Effect.fn("handlers.pickDevice")(function* (
-  state: DeviceServiceState,
+  state: {
+    readonly hosts: ReadonlyArray<DeviceHostSummary>;
+    readonly hostStatuses: DeviceServiceState["hostStatuses"];
+    readonly devices: ReadonlyArray<DeviceSummary>;
+  },
   input: {
     readonly deviceId?: DeviceId | undefined;
     readonly platform?: DevicePlatform | undefined;
@@ -155,34 +168,28 @@ const pickDevice = Effect.fn("handlers.pickDevice")(function* (
   if (input.deviceId !== undefined) {
     const { deviceId, hostId } = input;
     const devices = yield* DeviceService.DeviceService;
+    const target =
+      hostId === undefined
+        ? undefined
+        : (state.hosts.find((host) => host.id === hostId) ?? { id: hostId });
     // A failed refresh keeps the previous devices, so the device may be there unlisted.
-    const failed = state.hosts.filter(
-      (host) =>
-        (hostId === undefined || host.id === hostId) &&
-        state.hostStatuses[host.id]?.status === "failed",
-    );
+    const failures = failedHosts(state, target === undefined ? state.hosts : [target]);
     const located = yield* devices.locateDevice({ deviceId, hostId }).pipe(
       Effect.catchTags({
         DeviceOnOtherHostError: (error) =>
-          failed.length > 0 ? Effect.succeedNone : Effect.fail(error),
+          failures.length > 0 ? Effect.succeedNone : Effect.fail(error),
       }),
       mapLocateErrors,
     );
     // An AVD-name match could be on another host than the one whose list failed.
-    if (Option.isSome(located) && (failed.length === 0 || located.value.id === deviceId)) {
+    if (Option.isSome(located) && (failures.length === 0 || located.value.id === deviceId)) {
       return located.value;
     }
-    if (failed.length > 0) {
-      const failures = failed.map((host) => {
-        const detail = state.hostStatuses[host.id]?.detail;
-        return detail ? `${hostName(host)} (${detail})` : hostName(host);
-      });
-      return yield* new DeviceToolUnavailableError({
-        reason: `Device ${deviceId} is not in the last device list, and listing devices failed on ${failures.join(", ")}. Call device_list to retry.`,
-      });
-    }
     return yield* new DeviceToolUnavailableError({
-      reason: `No device ${deviceId} on ${hostId === undefined ? "any host" : hostName(state.hosts.find((host) => host.id === hostId) ?? { id: hostId })}. Call device_list for current ids.`,
+      reason:
+        failures.length > 0
+          ? `Device ${deviceId} is not in the last device list, and listing devices failed on ${failures.map(({ host, detail }) => `${hostName(host)} (${detail})`).join(", ")}. Call device_list to retry.`
+          : `No device ${deviceId} on ${target === undefined ? "any host" : hostName(target)}. Call device_list for current ids.`,
     });
   }
   const hostId = input.hostId ?? LOCAL_DEVICE_HOST_ID;
@@ -192,11 +199,14 @@ const pickDevice = Effect.fn("handlers.pickDevice")(function* (
       (input.platform === undefined || device.platform === input.platform),
   );
   if (candidates.length === 0) {
+    const [failure] = failedHosts(state, [{ id: hostId }]);
     return yield* new DeviceToolUnavailableError({
       reason:
-        input.platform === undefined
-          ? "No simulators or emulators were found. Call device_list to see why."
-          : `No ${input.platform} devices were found on host ${hostId}. Call device_list to see why.`,
+        failure !== undefined
+          ? failure.detail
+          : input.platform === undefined
+            ? "No simulators or emulators were found. Call device_list to see why."
+            : `No ${input.platform} devices were found on host ${hostId}. Call device_list to see why.`,
     });
   }
   const platforms = new Set(candidates.map((device) => device.platform));

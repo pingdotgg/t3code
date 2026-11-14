@@ -45,6 +45,19 @@ export const isWindowsCommandNotFound = Effect.fn("isWindowsCommandNotFound")(fu
 export const DEFAULT_TIMEOUT_MS = 4_000;
 export const AUTH_PROBE_TIMEOUT_MS = 10_000;
 
+export const resolveProviderProbeTimeoutMs = (
+  provider: string,
+  defaultTimeoutMs: number,
+  environment: NodeJS.ProcessEnv = process.env,
+): number => {
+  const timeoutMs = Number(environment[`T3CODE_${provider.toUpperCase()}_PROBE_TIMEOUT_MS`]);
+  // Overrides only extend: callers nest these deadlines and size optional work inside them
+  // against the defaults. Node timers overflow above a signed 32-bit delay.
+  return Number.isInteger(timeoutMs) && timeoutMs > defaultTimeoutMs && timeoutMs <= 2_147_483_647
+    ? timeoutMs
+    : defaultTimeoutMs;
+};
+
 export const COMPACT_SLASH_COMMAND = {
   name: "compact",
   description: "Summarize the conversation and reduce context usage",
@@ -112,12 +125,26 @@ export function providerProbeEnvironment(environment: NodeJS.ProcessEnv): NodeJS
   return { ...environment, MISE_OFFLINE: "1" };
 }
 
+// A timed-out probe interrupts the child with SIGTERM and then waits for it to exit,
+// so a CLI that ignores SIGTERM would hold the caller's timeout open without this.
+const PROBE_FORCE_KILL_AFTER = "1 second";
+
+function withProbeForceKill(command: ChildProcess.Command): ChildProcess.Command {
+  if (!ChildProcess.isStandardCommand(command) || command.options.forceKillAfter !== undefined) {
+    return command;
+  }
+  return ChildProcess.make(command.command, command.args, {
+    ...command.options,
+    forceKillAfter: PROBE_FORCE_KILL_AFTER,
+  });
+}
+
 export const spawnAndCollect = Effect.fn("snapshotProbe.spawnAndCollect")(function* (
   binaryPath: string,
   command: ChildProcess.Command,
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const child = yield* spawner.spawn(command);
+  const child = yield* spawner.spawn(withProbeForceKill(command));
   const [stdout, stderr, exitCode] = yield* Effect.all(
     [
       collectStreamAsString(child.stdout),

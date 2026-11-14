@@ -3,6 +3,7 @@ import {
   UsageLimitSourceError,
   type UsageLimitSourceConsumeResetCreditInput,
   type ProviderConsumeResetCreditResult,
+  type ProviderDriverKind,
   type ServerSettings,
   UsageLimitSourceConfig,
   settingsSecretLiteral,
@@ -26,6 +27,7 @@ import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretReso
 import * as SecretResolverLayer from "../secrets/SecretResolver.ts";
 import { resolveSettingsSecrets } from "../secrets/settingsSecretValue.ts";
 import * as Settings from "../serverSettings.ts";
+import { windowLimitsModel } from "../provider/claudeUsageLimits.ts";
 import { makeCliproxyApi } from "./cliproxyApi.ts";
 
 export class UsageLimitSources extends Context.Service<
@@ -79,7 +81,14 @@ export const make = Effect.gen(function* () {
     config: UsageLimitSourceConfig,
   ) {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
-    const base = { id, kind: config.kind, label: sourceLabel(id, config), checkedAt } as const;
+    const url = URL.parse(config.url);
+    const base = {
+      id,
+      kind: config.kind,
+      label: sourceLabel(id, config),
+      ...(url && /^https?:$/.test(url.protocol) ? { origin: url.origin } : {}),
+      checkedAt,
+    } as const;
     const managementKey = yield* readManagementKey(config);
     if (managementKey.length === 0) {
       return { ...base, accounts: [], error: missingManagementKey(config) };
@@ -197,4 +206,65 @@ export const make = Effect.gen(function* () {
 
 export const layer = Layer.effect(UsageLimitSources, make).pipe(
   Layer.provide(SecretResolverLayer.layer),
+);
+
+/** A hub answers with a usage limit only when every account it routes the driver to is spent. */
+export function hubPoolResetAt(
+  sources: ReadonlyArray<UsageLimitSourceSnapshot>,
+  driver: ProviderDriverKind,
+  model: string | null,
+  now: number,
+): string | null {
+  let earliest: number | null = null;
+  for (const source of sources) {
+    for (const account of source.accounts) {
+      if (account.driver !== driver) continue;
+      // An unread account may be the one still blocked, so its refill is unknown.
+      if (account.usageLimits.unavailable) return null;
+      const spent = account.usageLimits.windows.filter(
+        (window) => window.usedPercent >= 100 && windowLimitsModel(window, model),
+      );
+      if (spent.length === 0) return null;
+      const resets = spent.map((window) => Date.parse(window.resetsAt ?? ""));
+      if (resets.some((reset) => !Number.isFinite(reset))) return null;
+      const recoversAt = Math.max(...resets);
+      if (recoversAt <= now) return null;
+      earliest = earliest === null ? recoversAt : Math.min(earliest, recoversAt);
+    }
+  }
+  return earliest === null ? null : DateTime.formatIso(DateTime.makeUnsafe(earliest));
+}
+
+export class UsageLimitResetFallback extends Context.Reference<{
+  readonly resetAt: (
+    driver: ProviderDriverKind,
+    endpoint: string,
+    model: string | null,
+  ) => Effect.Effect<string | null>;
+}>("t3/usage/UsageLimitResetFallback", {
+  defaultValue: () => ({ resetAt: () => Effect.succeed(null) }),
+}) {}
+
+export const layerResetFallback = Layer.effect(
+  UsageLimitResetFallback,
+  Effect.gen(function* () {
+    const sources = yield* UsageLimitSources;
+    return {
+      resetAt: Effect.fn("UsageLimitResetFallback.resetAt")(function* (driver, endpoint, model) {
+        // Only the hub at the instance's endpoint serves its turns.
+        const atEndpoint = Effect.map(sources.current, (current) =>
+          current.filter((source) => source.origin === endpoint),
+        );
+        if ((yield* atEndpoint).length === 0) return null;
+        // The pool usually ran out after the last poll, so the cached accounts still show room.
+        yield* sources.refresh.pipe(Effect.timeout("5 seconds"), Effect.ignore);
+        return hubPoolResetAt(
+          yield* atEndpoint,
+          driver,
+          model,
+          DateTime.toEpochMillis(yield* DateTime.now),
+        );
+      }),
+    };
+  }),
 );
