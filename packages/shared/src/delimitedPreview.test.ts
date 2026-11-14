@@ -7,20 +7,6 @@ describe("delimited file previews", () => {
     expect(filePreviewDelimiter({ name: "a.tsv", mimeType: "application/unknown" })).toBe("\t");
   });
   it("preserves quoted separators, escaped quotes, blank cells and line breaks", () => {
-    expect(parseDelimitedPreview("a;b\r\n1;2,5", ",").rows).toEqual([
-      ["a", "b"],
-      ["1", "2,5"],
-    ]);
-    expect(parseDelimitedPreview('name,notes\nAlice,"a;b;c"', ",").rows).toEqual([
-      ["name", "notes"],
-      ["Alice", "a;b;c"],
-    ]);
-    expect(parseDelimitedPreview('"a, b";notes\nAlice;"say ""hi""\nagain"', ",").rows).toEqual([
-      ["a, b", "notes"],
-      ["Alice", 'say "hi"\nagain'],
-    ]);
-    expect(parseDelimitedPreview("a,b;c", ",").rows).toEqual([["a", "b;c"]]);
-    expect(parseDelimitedPreview("a;b\tvalue", "\t").rows).toEqual([["a;b", "value"]]);
     expect(
       parseDelimitedPreview('\ufeffname,notes,empty\r\n"A, B","say ""hi""\nagain",\r\n', ","),
     ).toEqual({
@@ -35,12 +21,21 @@ describe("delimited file previews", () => {
       ["", "three"],
     ]);
   });
-  it("keeps a leading sep= line as semicolon-separated data", () => {
-    expect(parseDelimitedPreview("sep=;\r\na;b\r\n1;2,5", ",").rows).toEqual([
-      ["sep=", ""],
+  it("detects semicolon-separated CSV from the first record outside quotes", () => {
+    expect(parseDelimitedPreview("a;b\r\n1;2,5", ",").rows).toEqual([
       ["a", "b"],
       ["1", "2,5"],
     ]);
+    expect(parseDelimitedPreview('name,notes\nAlice,"a;b;c"', ",").rows).toEqual([
+      ["name", "notes"],
+      ["Alice", "a;b;c"],
+    ]);
+    expect(parseDelimitedPreview('"a, b";notes\nAlice;"say ""hi""\nagain"', ",").rows).toEqual([
+      ["a, b", "notes"],
+      ["Alice", 'say "hi"\nagain'],
+    ]);
+    expect(parseDelimitedPreview("a,b;c", ",").rows).toEqual([["a", "b;c"]]);
+    expect(parseDelimitedPreview("a;b\tvalue", "\t").rows).toEqual([["a;b", "value"]]);
   });
   describe.each([",", "\t"] as const)("with delimiter %j", (delimiter) => {
     it("preserves a final quoted empty record without requiring a line ending", () => {

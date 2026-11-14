@@ -78,11 +78,14 @@ export function parseDelimitedPreview(
 export function csvPreviewDelimiter(text: string) {
   let commas = 0;
   let semicolons = 0;
-  for (const match of text.matchAll(/"(?:[^"]|"")*"|([,;\r\n])/g)) {
-    const separator = match[1];
-    if (separator === "\r" || separator === "\n") break;
-    if (separator === ",") commas++;
-    if (separator === ";") semicolons++;
+  let quoted = false;
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index];
+    if (char === '"') quoted = !quoted;
+    else if (quoted) continue;
+    else if (char === "\n" || char === "\r") break;
+    else if (char === ",") commas++;
+    else if (char === ";") semicolons++;
   }
   return semicolons > commas ? ";" : ",";
 }
