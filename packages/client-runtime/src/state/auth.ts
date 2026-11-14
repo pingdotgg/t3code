@@ -1,5 +1,7 @@
 import type {
   AuthAccessSnapshot,
+  AuthApproveConnectDeviceInput,
+  AuthRevokeConnectDeviceInput,
   AuthAccessStreamEvent,
   AuthAccessStreamSnapshotEvent,
   AuthCreatePairingCredentialInput,
@@ -131,6 +133,29 @@ export function createAuthEnvironmentAtoms<R, E>(
           timeoutMs: ACCESS_REQUEST_TIMEOUT_MS,
           request: ({ client, headers }) => client.revokeOtherClients({ headers }),
         }).pipe(Effect.map((result) => result.revokedCount)),
+    }),
+    approveConnectDevice: createEnvironmentCommand(runtime, {
+      label: "environment-data:server:auth-approve-connect-device",
+      execute: (input: AuthApproveConnectDeviceInput) =>
+        executeConnectedEnvironmentHttpRequest({
+          group: "auth",
+          method: "POST",
+          url: (urls) => urls.approveConnectDevice(),
+          timeoutMs: ACCESS_REQUEST_TIMEOUT_MS,
+          request: ({ client, headers }) =>
+            client.approveConnectDevice({ headers, payload: input }),
+        }),
+    }),
+    revokeConnectDevice: createEnvironmentCommand(runtime, {
+      label: "environment-data:server:auth-revoke-connect-device",
+      execute: (input: AuthRevokeConnectDeviceInput) =>
+        executeConnectedEnvironmentHttpRequest({
+          group: "auth",
+          method: "POST",
+          url: (urls) => urls.revokeConnectDevice(),
+          timeoutMs: ACCESS_REQUEST_TIMEOUT_MS,
+          request: ({ client, headers }) => client.revokeConnectDevice({ headers, payload: input }),
+        }),
     }),
     accessChanges: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:auth-access-changes",

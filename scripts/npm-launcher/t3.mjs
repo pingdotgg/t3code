@@ -11,6 +11,8 @@ const { version } = JSON.parse(
 );
 
 const SUPPORTED = ["darwin-arm64", "linux-arm64", "linux-x64", "win32-arm64", "win32-x64"];
+// Well inside launchd's 20 s ExitTimeOut, which SIGKILLs only the launcher and orphans the runtime.
+const TERMINATE_GRACE_MS = 5_000;
 
 function t3Home() {
   const raw = (process.env.T3CODE_HOME || "").trim();
@@ -199,13 +201,41 @@ async function main() {
     child.on("message", (message) => process.connected && process.send(message));
     process.on("disconnect", () => child.connected && child.disconnect());
   }
+  let force;
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
-    process.on(signal, () => (ipc || signal !== "SIGINT") && child.kill(signal));
+    process.on(signal, () => {
+      if (!ipc && signal === "SIGINT") return;
+      child.kill(signal);
+      force ??= setTimeout(() => killTree(child), TERMINATE_GRACE_MS).unref();
+    });
   }
   child.on("error", (error) => fail(executableError(key, error.message)));
   child.on("exit", (code, signal) =>
     process.exit(code ?? 128 + (os.constants.signals[signal] || 1)),
   );
+}
+
+/** SIGKILL the runtime and its providers, which a runtime stuck on shutdown never stops. */
+function killTree(child) {
+  const pids = [child.pid];
+  if (process.platform !== "win32") {
+    const table =
+      spawnSync("ps", ["-A", "-o", "pid=,ppid="], { encoding: "utf8", timeout: 2_000 }).stdout ||
+      "";
+    const rows = table
+      .trim()
+      .split("\n")
+      .map((line) => line.trim().split(/\s+/).map(Number));
+    for (let i = 0; i < pids.length; i++) {
+      for (const [pid, ppid] of rows) if (ppid === pids[i]) pids.push(pid);
+    }
+  }
+  for (const pid of pids.slice(1)) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {}
+  }
+  child.kill("SIGKILL");
 }
 
 function executableError(key, detail) {

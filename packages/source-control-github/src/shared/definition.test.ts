@@ -194,4 +194,19 @@ describe("GitHub media URLs", () => {
       expect(media(url), url).toBeNull();
     }
   });
+
+  it("addresses a committed file at a full SHA as immutable credentialed media", () => {
+    const sha = "0123456789abcdef0123456789abcdef01234567";
+    const rawFileUrl = (repositoryUrl: string, path: string, revision = sha) =>
+      definition.rawFileUrl?.({ repositoryUrl, sha: revision, path }) ?? null;
+    const url = rawFileUrl("https://github.com/owner/repo", "docs/a #1?.png");
+    expect(url).toBe(`https://github.com/owner/repo/raw/${sha}/docs/a%20%231%3F.png`);
+    expect(media(url ?? "")).toEqual({
+      fetchUrl: `https://raw.githubusercontent.com/owner/repo/${sha}/docs/a%20%231%3F.png`,
+      fileName: "a #1?.png",
+      immutable: true,
+    });
+    expect(rawFileUrl("https://github.com/owner/repo", "a.png", "main")).toBeNull();
+    expect(rawFileUrl("https://github.example.com/owner/repo", "a.png")).toBeNull();
+  });
 });
