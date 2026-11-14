@@ -54,6 +54,8 @@ import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import { DispatchModeLimit } from "./DispatchModeLimit.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import { makeThreadLaunchService } from "./ThreadLaunchOperations.ts";
+import { ThreadLaunchBaseRefError, ThreadLaunchError } from "./ThreadLaunchOperations-part2.ts";
+export { ThreadLaunchBaseRefError, ThreadLaunchError } from "./ThreadLaunchOperations-part2.ts";
 
 export type ThreadLaunchWorkspaceStrategy =
   | { readonly type: "root"; readonly branch?: string | undefined }
@@ -125,46 +127,6 @@ export interface ThreadLaunchResult {
   /** The launch's last write (the initial message, else the thread claim) was accepted before this call. */
   readonly resumed: boolean;
   readonly sequence?: number;
-}
-
-export class ThreadLaunchError extends Schema.TaggedError<ThreadLaunchError>()(
-  "ThreadLaunchError",
-  {
-    operation: Schema.Literals([
-      "resolve-project",
-      "read-receipt",
-      "generate-metadata",
-      "provision-worktree",
-      "run-setup-script",
-      "create-thread",
-      "update-thread",
-      "dispatch-message",
-      "release-run",
-      "fail-run",
-    ]),
-    commandId: CommandId,
-    projectId: ProjectId,
-    threadId: Schema.optional(ThreadId),
-    cause: Schema.Defect(),
-  },
-) {
-  override get message(): string {
-    return `Thread launch ${this.commandId} failed during ${this.operation}.`;
-  }
-}
-
-export class ThreadLaunchBaseRefError extends Schema.TaggedError<ThreadLaunchBaseRefError>()(
-  "ThreadLaunchBaseRefError",
-  {
-    projectId: ProjectId,
-    projectTitle: Schema.String,
-    workspaceRoot: Schema.String,
-    baseRef: Schema.String,
-  },
-) {
-  override get message(): string {
-    return `Base ref "${this.baseRef}" does not resolve to a commit in project "${this.projectTitle}" (${this.workspaceRoot}).`;
-  }
 }
 
 export class ThreadLaunchService extends Context.Service<

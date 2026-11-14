@@ -22,7 +22,10 @@ import type { SettleInterruptedRunPart } from "./SettleInterruptedRun.ts";
 import type { SettleBackgroundWorkPart } from "./SettleBackgroundWork.ts";
 import type { DispatchRunInterruptPart } from "./DispatchRunInterrupt.ts";
 
-type Deps = Record<never, never> & FailQueuedRunStartPart & StartNextQueuedRunPart & DispatchDelegatedTaskCompletionDeliveryResolutionPart & RecordSubagentFollowupPart & DispatchSteerIntoRunPart & SettleInterruptedRunPart & SettleBackgroundWorkPart & DispatchRunInterruptPart;
+type AllParts =
+  FailQueuedRunStartPart & StartNextQueuedRunPart & DispatchDelegatedTaskCompletionDeliveryResolutionPart & RecordSubagentFollowupPart & DispatchSteerIntoRunPart & SettleInterruptedRunPart & SettleBackgroundWorkPart & DispatchRunInterruptPart;
+
+type Deps = Pick<AllParts, "checkpointService" | "closePendingLinkRequests" | "commandPolicy" | "contextHandoffService" | "dispatchQueuedRunCancel" | "dispatchSteerIntoRun" | "disposeAllDelegatedCompletionCohorts" | "emit" | "ensureGoalCommandSupported" | "eventSink" | "getProjectionWithPendingEvents" | "goalDriverFor" | "idAllocator" | "loadProjectionForCommand" | "nextTurnItemOrdinal" | "notificationTasks" | "projectionStore" | "projects" | "providerAdapters" | "providerSessionIdFor" | "providerSessions" | "providerSwitchService" | "readHandoffItems" | "readInheritedItems" | "recordSubagentFollowup" | "releaseGuestAttachments" | "runtimeModeCeiling" | "runtimePolicy" | "serverSettings" | "sessionHasBackgroundWork" | "stopReachedRun" | "stopRunForQueuedCommand">;
 
 export const installDispatchRuntimeRequestRespond = Effect.fnUntraced(function* (deps: Deps) {
   const { checkpointService, closePendingLinkRequests, commandPolicy, contextHandoffService, dispatchQueuedRunCancel, dispatchSteerIntoRun, disposeAllDelegatedCompletionCohorts, emit, ensureGoalCommandSupported, eventSink, getProjectionWithPendingEvents, goalDriverFor, idAllocator, loadProjectionForCommand, nextTurnItemOrdinal, notificationTasks, projectionStore, projects, providerAdapters, providerSessionIdFor, providerSessions, providerSwitchService, readHandoffItems, readInheritedItems, recordSubagentFollowup, releaseGuestAttachments, runtimeModeCeiling, runtimePolicy, serverSettings, sessionHasBackgroundWork, stopReachedRun, stopRunForQueuedCommand } = deps;

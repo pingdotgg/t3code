@@ -18,7 +18,10 @@ import type { StartNextQueuedRunPart } from "./StartNextQueuedRun.ts";
 import type { DispatchDelegatedTaskCompletionDeliveryResolutionPart } from "./DispatchDelegatedTaskCompletionDeliveryResolution.ts";
 import type { RecordSubagentFollowupPart } from "./RecordSubagentFollowup.ts";
 
-type Deps = Record<never, never> & FailQueuedRunStartPart & StartNextQueuedRunPart & DispatchDelegatedTaskCompletionDeliveryResolutionPart & RecordSubagentFollowupPart;
+type AllParts =
+  FailQueuedRunStartPart & StartNextQueuedRunPart & DispatchDelegatedTaskCompletionDeliveryResolutionPart & RecordSubagentFollowupPart;
+
+type Deps = Pick<AllParts, "checkpointService" | "commandPolicy" | "contextHandoffService" | "emit" | "idAllocator" | "nextTurnItemOrdinal" | "notificationTasks" | "providerAdapters" | "providerSessionIdFor" | "providerSessions" | "providerSwitchService" | "readHandoffItems" | "runtimePolicy" | "stopReachedRun">;
 
 export const installDispatchSteerIntoRun = Effect.fnUntraced(function* (deps: Deps) {
   const { checkpointService, commandPolicy, contextHandoffService, emit, idAllocator, nextTurnItemOrdinal, notificationTasks, providerAdapters, providerSessionIdFor, providerSessions, providerSwitchService, readHandoffItems, runtimePolicy, stopReachedRun } = deps;

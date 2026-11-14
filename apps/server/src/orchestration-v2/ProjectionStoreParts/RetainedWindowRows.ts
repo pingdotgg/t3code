@@ -8,7 +8,10 @@ import { ProjectionStoreApplyEventError } from "../ProjectionStorePrelude/Projec
 import type { ApplyRecordTailPart } from "./ApplyRecordTail.ts";
 import type { ApplyRunTailPart } from "./ApplyRunTail.ts";
 
-type Deps = Record<never, never> & ApplyRecordTailPart & ApplyRunTailPart;
+type AllParts =
+  ApplyRecordTailPart & ApplyRunTailPart;
+
+type Deps = Pick<AllParts, "applyRunTail" | "getThread" | "inlineWorkOutput" | "sql">;
 
 export const installRetainedWindowRows = Effect.fnUntraced(function* (deps: Deps) {
   const { applyRunTail, getThread, inlineWorkOutput, sql } = deps;

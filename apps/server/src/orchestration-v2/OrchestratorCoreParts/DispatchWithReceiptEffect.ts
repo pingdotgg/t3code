@@ -27,7 +27,10 @@ import type { DispatchSubagentStopPart } from "./DispatchSubagentStop.ts";
 import type { FinalizeAppOwnedSubagentTaskPart } from "./FinalizeAppOwnedSubagentTask.ts";
 import type { DispatchOncePart } from "./DispatchOnce.ts";
 
-type Deps = Record<never, never> & FailQueuedRunStartPart & StartNextQueuedRunPart & DispatchDelegatedTaskCompletionDeliveryResolutionPart & RecordSubagentFollowupPart & DispatchSteerIntoRunPart & SettleInterruptedRunPart & SettleBackgroundWorkPart & DispatchRunInterruptPart & DispatchRuntimeRequestRespondPart & DispatchThreadMergeBackPart & DispatchDelegatedTaskRequestPart & DispatchRemoteDelegatedTaskCompletePart & DispatchSubagentStopPart & FinalizeAppOwnedSubagentTaskPart & DispatchOncePart;
+type AllParts =
+  FailQueuedRunStartPart & StartNextQueuedRunPart & DispatchDelegatedTaskCompletionDeliveryResolutionPart & RecordSubagentFollowupPart & DispatchSteerIntoRunPart & SettleInterruptedRunPart & SettleBackgroundWorkPart & DispatchRunInterruptPart & DispatchRuntimeRequestRespondPart & DispatchThreadMergeBackPart & DispatchDelegatedTaskRequestPart & DispatchRemoteDelegatedTaskCompletePart & DispatchSubagentStopPart & FinalizeAppOwnedSubagentTaskPart & DispatchOncePart;
+
+type Deps = Pick<AllParts, "appOwnedSubagentParentThreadId" | "childAwaitsRestartContinuation" | "commandReceipts" | "dispatchOnce" | "eventSink" | "finalizeAppOwnedSubagentTask" | "findThread" | "idAllocator" | "liveSideChatIds" | "mapDelegatedCompletionError" | "offerDelegatedCompletionDeliveries" | "offerDelegatedCompletionDelivery" | "projectionStore" | "refuseAboveDispatchModeLimit" | "refuseAboveRuntimeModeCeiling" | "runtimeModeCeiling" | "startNextQueuedRun" | "threadDispatch" | "writeSystemEvents">;
 
 export const installDispatchWithReceiptEffect = Effect.fnUntraced(function* (deps: Deps) {
   const { appOwnedSubagentParentThreadId, childAwaitsRestartContinuation, commandReceipts, dispatchOnce, eventSink, finalizeAppOwnedSubagentTask, findThread, idAllocator, liveSideChatIds, mapDelegatedCompletionError, offerDelegatedCompletionDeliveries, offerDelegatedCompletionDelivery, projectionStore, refuseAboveDispatchModeLimit, refuseAboveRuntimeModeCeiling, runtimeModeCeiling, startNextQueuedRun, threadDispatch, writeSystemEvents } = deps;

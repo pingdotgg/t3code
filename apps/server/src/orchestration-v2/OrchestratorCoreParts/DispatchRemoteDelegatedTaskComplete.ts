@@ -20,7 +20,10 @@ import type { DispatchRuntimeRequestRespondPart } from "./DispatchRuntimeRequest
 import type { DispatchThreadMergeBackPart } from "./DispatchThreadMergeBack.ts";
 import type { DispatchDelegatedTaskRequestPart } from "./DispatchDelegatedTaskRequest.ts";
 
-type Deps = Record<never, never> & FailQueuedRunStartPart & StartNextQueuedRunPart & DispatchDelegatedTaskCompletionDeliveryResolutionPart & RecordSubagentFollowupPart & DispatchSteerIntoRunPart & SettleInterruptedRunPart & SettleBackgroundWorkPart & DispatchRunInterruptPart & DispatchRuntimeRequestRespondPart & DispatchThreadMergeBackPart & DispatchDelegatedTaskRequestPart;
+type AllParts =
+  FailQueuedRunStartPart & StartNextQueuedRunPart & DispatchDelegatedTaskCompletionDeliveryResolutionPart & RecordSubagentFollowupPart & DispatchSteerIntoRunPart & SettleInterruptedRunPart & SettleBackgroundWorkPart & DispatchRunInterruptPart & DispatchRuntimeRequestRespondPart & DispatchThreadMergeBackPart & DispatchDelegatedTaskRequestPart;
+
+type Deps = Pick<AllParts, "dispatchMessage" | "emit" | "emitRemoteStopOwed" | "idAllocator" | "nextTurnItemOrdinal" | "planDelegatedCompletionDelivery" | "projectionStore" | "settleBackgroundWork" | "settleInterruptedRun" | "stopReachedRun">;
 
 export const installDispatchRemoteDelegatedTaskComplete = Effect.fnUntraced(function* (deps: Deps) {
   const { dispatchMessage, emit, emitRemoteStopOwed, idAllocator, nextTurnItemOrdinal, planDelegatedCompletionDelivery, projectionStore, settleBackgroundWork, settleInterruptedRun, stopReachedRun } = deps;

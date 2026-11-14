@@ -19,7 +19,10 @@ import type { GetCheckpointRollbackContextPart } from "./GetCheckpointRollbackCo
 import type { TimelineIndexItem } from "./GetCheckpointRollbackContext.ts";
 import type { TimelineIndexRow } from "./GetCheckpointRollbackContext.ts";
 
-type Deps = Record<never, never> & ApplyRecordTailPart & ApplyRunTailPart & RetainedWindowRowsPart & ReadCanonicalProjectionPart & ReadProjectionPart & GetUnreadableThreadIdsPart & GetRuntimeRecoveryProjectionPart & GetCheckpointRollbackContextPart;
+type AllParts =
+  ApplyRecordTailPart & ApplyRunTailPart & RetainedWindowRowsPart & ReadCanonicalProjectionPart & ReadProjectionPart & GetUnreadableThreadIdsPart & GetRuntimeRecoveryProjectionPart & GetCheckpointRollbackContextPart;
+
+type Deps = Pick<AllParts, "controlReadError" | "getThreadRecords" | "inlineWorkOutput" | "readProjection" | "sql">;
 
 export const installReadTimelineIndex = Effect.fnUntraced(function* (deps: Deps) {
   const { controlReadError, getThreadRecords, inlineWorkOutput, readProjection, sql } = deps;

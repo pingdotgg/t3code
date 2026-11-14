@@ -9,7 +9,10 @@ import type { ApplyRecordTailPart } from "./ApplyRecordTail.ts";
 import type { ApplyRunTailPart } from "./ApplyRunTail.ts";
 import type { RetainedWindowRowsPart } from "./RetainedWindowRows.ts";
 
-type Deps = Record<never, never> & ApplyRecordTailPart & ApplyRunTailPart & RetainedWindowRowsPart;
+type AllParts =
+  ApplyRecordTailPart & ApplyRunTailPart & RetainedWindowRowsPart;
+
+type Deps = Pick<AllParts, "retainedWindowRows" | "sql">;
 
 export const installReadCanonicalProjection = Effect.fnUntraced(function* (deps: Deps) {
   const { retainedWindowRows, sql } = deps;

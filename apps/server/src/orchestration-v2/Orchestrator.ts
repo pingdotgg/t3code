@@ -201,6 +201,16 @@ import {
 import { planThreadDeletion } from "./ThreadDeletion.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ServerSettings from "../serverSettings.ts";
+import {
+  OrchestratorCommandIdConflictError,
+  OrchestratorCommandPreviouslyRejectedError,
+  OrchestratorRuntimeModeAboveCeilingError,
+} from "./OrchestratorCorePrelude/OrchestratorV2Shape.ts";
+export {
+  OrchestratorCommandIdConflictError,
+  OrchestratorCommandPreviouslyRejectedError,
+  OrchestratorRuntimeModeAboveCeilingError,
+} from "./OrchestratorCorePrelude/OrchestratorV2Shape.ts";
 
 const isMessageQuestionAnswer = Schema.is(
   Schema.Union([TrimmedNonEmptyString, Schema.NonEmptyArray(TrimmedNonEmptyString)]),
@@ -270,50 +280,6 @@ function runtimePolicyCeilingCause(error: unknown) {
   let current = error;
   while (isOrchestratorDispatchError(current)) current = current.cause;
   return isRuntimePolicyAboveCeilingError(current) ? current : undefined;
-}
-
-export class OrchestratorRuntimeModeAboveCeilingError extends Schema.TaggedError<OrchestratorRuntimeModeAboveCeilingError>()(
-  "OrchestratorRuntimeModeAboveCeilingError",
-  {
-    commandId: CommandId,
-    threadId: ThreadId,
-    refused: Schema.Literals(["mode", "turn"]),
-    runtimeMode: RuntimeMode,
-    maxRuntimeMode: RuntimeMode,
-    organization: Schema.String,
-  },
-) {
-  override get message(): string {
-    const limit = managedRuntimeModeCeilingMessage(this.organization, this.maxRuntimeMode);
-    return this.refused === "turn" ? `${limit} Switch this thread's mode to continue.` : limit;
-  }
-}
-
-export class OrchestratorCommandPreviouslyRejectedError extends Schema.TaggedError<OrchestratorCommandPreviouslyRejectedError>()(
-  "OrchestratorCommandPreviouslyRejectedError",
-  {
-    commandId: CommandId,
-    commandType: Schema.String,
-    detail: Schema.String,
-  },
-) {
-  override get message(): string {
-    return `Command ${this.commandId} was previously rejected: ${this.detail}`;
-  }
-}
-
-class OrchestratorCommandIdConflictError extends Schema.TaggedError<OrchestratorCommandIdConflictError>()(
-  "OrchestratorCommandIdConflictError",
-  {
-    commandId: CommandId,
-    commandType: Schema.String,
-    receiptThreadId: ThreadId,
-    commandThreadId: ThreadId,
-  },
-) {
-  override get message(): string {
-    return `Command ${this.commandId} was already handled for thread ${this.receiptThreadId} and cannot be replayed for ${this.commandThreadId}.`;
-  }
 }
 
 export const OrchestratorV2Error = Schema.Union([

@@ -21,7 +21,10 @@ import type { GetCheckpointRollbackContextPart } from "./GetCheckpointRollbackCo
 import type { ReadTimelineIndexPart } from "./ReadTimelineIndex.ts";
 import type { SelectShellThreadRowsPart } from "./SelectShellThreadRows.ts";
 
-type Deps = Record<never, never> & ApplyRecordTailPart & ApplyRunTailPart & RetainedWindowRowsPart & ReadCanonicalProjectionPart & ReadProjectionPart & GetUnreadableThreadIdsPart & GetRuntimeRecoveryProjectionPart & GetCheckpointRollbackContextPart & ReadTimelineIndexPart & SelectShellThreadRowsPart;
+type AllParts =
+  ApplyRecordTailPart & ApplyRunTailPart & RetainedWindowRowsPart & ReadCanonicalProjectionPart & ReadProjectionPart & GetUnreadableThreadIdsPart & GetRuntimeRecoveryProjectionPart & GetCheckpointRollbackContextPart & ReadTimelineIndexPart & SelectShellThreadRowsPart;
+
+type Deps = Pick<AllParts, "pendingBackgroundDataByThreadId" | "runMapsByThreadId" | "selectShellItemCounts" | "selectShellPendingTurnItemRows" | "selectShellProviderThreadRows" | "selectShellRunItemCounts" | "selectShellRunRows" | "selectShellThreadRows" | "shellItemCountMap" | "sql">;
 
 export const installShellThreadStateFromRow = Effect.fnUntraced(function* (deps: Deps) {
   const { pendingBackgroundDataByThreadId, runMapsByThreadId, selectShellItemCounts, selectShellPendingTurnItemRows, selectShellProviderThreadRows, selectShellRunItemCounts, selectShellRunRows, selectShellThreadRows, shellItemCountMap, sql } = deps;

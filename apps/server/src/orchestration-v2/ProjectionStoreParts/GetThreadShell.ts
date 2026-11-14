@@ -17,7 +17,10 @@ import type { ReadTimelineIndexPart } from "./ReadTimelineIndex.ts";
 import type { SelectShellThreadRowsPart } from "./SelectShellThreadRows.ts";
 import type { ShellThreadStateFromRowPart } from "./ShellThreadStateFromRow.ts";
 
-type Deps = Record<never, never> & ApplyRecordTailPart & ApplyRunTailPart & RetainedWindowRowsPart & ReadCanonicalProjectionPart & ReadProjectionPart & GetUnreadableThreadIdsPart & GetRuntimeRecoveryProjectionPart & GetCheckpointRollbackContextPart & ReadTimelineIndexPart & SelectShellThreadRowsPart & ShellThreadStateFromRowPart;
+type AllParts =
+  ApplyRecordTailPart & ApplyRunTailPart & RetainedWindowRowsPart & ReadCanonicalProjectionPart & ReadProjectionPart & GetUnreadableThreadIdsPart & GetRuntimeRecoveryProjectionPart & GetCheckpointRollbackContextPart & ReadTimelineIndexPart & SelectShellThreadRowsPart & ShellThreadStateFromRowPart;
+
+type Deps = Pick<AllParts, "pendingBackgroundDataByThreadId" | "runMapsByThreadId" | "selectShellItemCounts" | "selectShellPendingTurnItemRows" | "selectShellProviderThreadRows" | "selectShellRunItemCounts" | "selectShellRunRows" | "selectShellThreadRows" | "shellItemCountMap" | "shellThreadStateFromRow" | "sql">;
 
 export const installGetThreadShell = Effect.fnUntraced(function* (deps: Deps) {
   const { pendingBackgroundDataByThreadId, runMapsByThreadId, selectShellItemCounts, selectShellPendingTurnItemRows, selectShellProviderThreadRows, selectShellRunItemCounts, selectShellRunRows, selectShellThreadRows, shellItemCountMap, shellThreadStateFromRow, sql } = deps;

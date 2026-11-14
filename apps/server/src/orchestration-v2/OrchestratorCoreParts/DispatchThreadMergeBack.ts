@@ -17,7 +17,10 @@ import type { SettleBackgroundWorkPart } from "./SettleBackgroundWork.ts";
 import type { DispatchRunInterruptPart } from "./DispatchRunInterrupt.ts";
 import type { DispatchRuntimeRequestRespondPart } from "./DispatchRuntimeRequestRespond.ts";
 
-type Deps = Record<never, never> & FailQueuedRunStartPart & StartNextQueuedRunPart & DispatchDelegatedTaskCompletionDeliveryResolutionPart & RecordSubagentFollowupPart & DispatchSteerIntoRunPart & SettleInterruptedRunPart & SettleBackgroundWorkPart & DispatchRunInterruptPart & DispatchRuntimeRequestRespondPart;
+type AllParts =
+  FailQueuedRunStartPart & StartNextQueuedRunPart & DispatchDelegatedTaskCompletionDeliveryResolutionPart & RecordSubagentFollowupPart & DispatchSteerIntoRunPart & SettleInterruptedRunPart & SettleBackgroundWorkPart & DispatchRunInterruptPart & DispatchRuntimeRequestRespondPart;
+
+type Deps = Pick<AllParts, "emit" | "findThread" | "idAllocator" | "projectionStore" | "refuseAboveDispatchModeLimit" | "threadForkService">;
 
 export const installDispatchThreadMergeBack = Effect.fnUntraced(function* (deps: Deps) {
   const { emit, findThread, idAllocator, projectionStore, refuseAboveDispatchModeLimit, threadForkService } = deps;

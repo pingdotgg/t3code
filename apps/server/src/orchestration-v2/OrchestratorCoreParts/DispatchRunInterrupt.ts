@@ -23,7 +23,10 @@ import type { DispatchSteerIntoRunPart } from "./DispatchSteerIntoRun.ts";
 import type { SettleInterruptedRunPart } from "./SettleInterruptedRun.ts";
 import type { SettleBackgroundWorkPart } from "./SettleBackgroundWork.ts";
 
-type Deps = Record<never, never> & FailQueuedRunStartPart & StartNextQueuedRunPart & DispatchDelegatedTaskCompletionDeliveryResolutionPart & RecordSubagentFollowupPart & DispatchSteerIntoRunPart & SettleInterruptedRunPart & SettleBackgroundWorkPart;
+type AllParts =
+  FailQueuedRunStartPart & StartNextQueuedRunPart & DispatchDelegatedTaskCompletionDeliveryResolutionPart & RecordSubagentFollowupPart & DispatchSteerIntoRunPart & SettleInterruptedRunPart & SettleBackgroundWorkPart;
+
+type Deps = Pick<AllParts, "awaitsRestartContinuation" | "checkpointService" | "closePendingLinkRequests" | "commandPolicy" | "dispatchSteerIntoRun" | "disposeDelegatedCompletionCohort" | "emit" | "emitRemoteStopOwed" | "ensureGoalCommandSupported" | "getProjectionWithPendingEvents" | "goalDriverFor" | "idAllocator" | "loadProjectionForCommand" | "markStoppedRun" | "nextTurnItemOrdinal" | "planDelegatedCompletionDelivery" | "preparedRunState" | "projectionStore" | "providerSessions" | "runtimePolicy" | "settleBackgroundWork" | "settleInterruptedRun" | "stopReachedRun">;
 
 export const installDispatchRunInterrupt = Effect.fnUntraced(function* (deps: Deps) {
   const { awaitsRestartContinuation, checkpointService, closePendingLinkRequests, commandPolicy, dispatchSteerIntoRun, disposeDelegatedCompletionCohort, emit, emitRemoteStopOwed, ensureGoalCommandSupported, getProjectionWithPendingEvents, goalDriverFor, idAllocator, loadProjectionForCommand, markStoppedRun, nextTurnItemOrdinal, planDelegatedCompletionDelivery, preparedRunState, projectionStore, providerSessions, runtimePolicy, settleBackgroundWork, settleInterruptedRun, stopReachedRun } = deps;

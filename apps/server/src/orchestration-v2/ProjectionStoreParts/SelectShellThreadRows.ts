@@ -19,7 +19,10 @@ import type { GetRuntimeRecoveryProjectionPart } from "./GetRuntimeRecoveryProje
 import type { GetCheckpointRollbackContextPart } from "./GetCheckpointRollbackContext.ts";
 import type { ReadTimelineIndexPart } from "./ReadTimelineIndex.ts";
 
-type Deps = Record<never, never> & ApplyRecordTailPart & ApplyRunTailPart & RetainedWindowRowsPart & ReadCanonicalProjectionPart & ReadProjectionPart & GetUnreadableThreadIdsPart & GetRuntimeRecoveryProjectionPart & GetCheckpointRollbackContextPart & ReadTimelineIndexPart;
+type AllParts =
+  ApplyRecordTailPart & ApplyRunTailPart & RetainedWindowRowsPart & ReadCanonicalProjectionPart & ReadProjectionPart & GetUnreadableThreadIdsPart & GetRuntimeRecoveryProjectionPart & GetCheckpointRollbackContextPart & ReadTimelineIndexPart;
+
+type Deps = Pick<AllParts, "isIdleCompactionMessage" | "isSilentShellRun" | "sql">;
 
 export const installSelectShellThreadRows = Effect.fnUntraced(function* (deps: Deps) {
   const { isIdleCompactionMessage, isSilentShellRun, sql } = deps;

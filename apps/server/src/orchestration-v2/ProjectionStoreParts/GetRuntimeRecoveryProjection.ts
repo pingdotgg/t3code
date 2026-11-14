@@ -11,7 +11,10 @@ import type { ReadCanonicalProjectionPart } from "./ReadCanonicalProjection.ts";
 import type { ReadProjectionPart } from "./ReadProjection.ts";
 import type { GetUnreadableThreadIdsPart } from "./GetUnreadableThreadIds.ts";
 
-type Deps = Record<never, never> & ApplyRecordTailPart & ApplyRunTailPart & RetainedWindowRowsPart & ReadCanonicalProjectionPart & ReadProjectionPart & GetUnreadableThreadIdsPart;
+type AllParts =
+  ApplyRecordTailPart & ApplyRunTailPart & RetainedWindowRowsPart & ReadCanonicalProjectionPart & ReadProjectionPart & GetUnreadableThreadIdsPart;
+
+type Deps = Pick<AllParts, "sql">;
 
 export const installGetRuntimeRecoveryProjection = Effect.fnUntraced(function* (deps: Deps) {
   const { sql } = deps;

@@ -23,7 +23,10 @@ import type { DispatchDelegatedTaskRequestPart } from "./DispatchDelegatedTaskRe
 import type { DispatchRemoteDelegatedTaskCompletePart } from "./DispatchRemoteDelegatedTaskComplete.ts";
 import type { DispatchSubagentStopPart } from "./DispatchSubagentStop.ts";
 
-type Deps = Record<never, never> & FailQueuedRunStartPart & StartNextQueuedRunPart & DispatchDelegatedTaskCompletionDeliveryResolutionPart & RecordSubagentFollowupPart & DispatchSteerIntoRunPart & SettleInterruptedRunPart & SettleBackgroundWorkPart & DispatchRunInterruptPart & DispatchRuntimeRequestRespondPart & DispatchThreadMergeBackPart & DispatchDelegatedTaskRequestPart & DispatchRemoteDelegatedTaskCompletePart & DispatchSubagentStopPart;
+type AllParts =
+  FailQueuedRunStartPart & StartNextQueuedRunPart & DispatchDelegatedTaskCompletionDeliveryResolutionPart & RecordSubagentFollowupPart & DispatchSteerIntoRunPart & SettleInterruptedRunPart & SettleBackgroundWorkPart & DispatchRunInterruptPart & DispatchRuntimeRequestRespondPart & DispatchThreadMergeBackPart & DispatchDelegatedTaskRequestPart & DispatchRemoteDelegatedTaskCompletePart & DispatchSubagentStopPart;
+
+type Deps = Pick<AllParts, "childAwaitsRestartContinuation" | "dispatchRuntimeRequestRespond" | "emit" | "getProjectionWithPendingEvents" | "idAllocator" | "loadProjectionForCommand" | "mapDelegatedCompletionError" | "nextTurnItemOrdinal" | "offerDelegatedCompletionDelivery" | "planDelegatedCompletionDelivery" | "projectionStore" | "projects" | "releaseGuestAttachments" | "writeSystemEvents">;
 
 export const installFinalizeAppOwnedSubagentTask = Effect.fnUntraced(function* (deps: Deps) {
   const { childAwaitsRestartContinuation, dispatchRuntimeRequestRespond, emit, getProjectionWithPendingEvents, idAllocator, loadProjectionForCommand, mapDelegatedCompletionError, nextTurnItemOrdinal, offerDelegatedCompletionDelivery, planDelegatedCompletionDelivery, projectionStore, projects, releaseGuestAttachments, writeSystemEvents } = deps;

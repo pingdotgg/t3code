@@ -22,7 +22,10 @@ import type { FinalizeAppOwnedSubagentTaskPart } from "./FinalizeAppOwnedSubagen
 import type { DispatchOncePart } from "./DispatchOnce.ts";
 import type { DispatchWithReceiptEffectPart } from "./DispatchWithReceiptEffect.ts";
 
-type Deps = Record<never, never> & FailQueuedRunStartPart & StartNextQueuedRunPart & DispatchDelegatedTaskCompletionDeliveryResolutionPart & RecordSubagentFollowupPart & DispatchSteerIntoRunPart & SettleInterruptedRunPart & SettleBackgroundWorkPart & DispatchRunInterruptPart & DispatchRuntimeRequestRespondPart & DispatchThreadMergeBackPart & DispatchDelegatedTaskRequestPart & DispatchRemoteDelegatedTaskCompletePart & DispatchSubagentStopPart & FinalizeAppOwnedSubagentTaskPart & DispatchOncePart & DispatchWithReceiptEffectPart;
+type AllParts =
+  FailQueuedRunStartPart & StartNextQueuedRunPart & DispatchDelegatedTaskCompletionDeliveryResolutionPart & RecordSubagentFollowupPart & DispatchSteerIntoRunPart & SettleInterruptedRunPart & SettleBackgroundWorkPart & DispatchRunInterruptPart & DispatchRuntimeRequestRespondPart & DispatchThreadMergeBackPart & DispatchDelegatedTaskRequestPart & DispatchRemoteDelegatedTaskCompletePart & DispatchSubagentStopPart & FinalizeAppOwnedSubagentTaskPart & DispatchOncePart & DispatchWithReceiptEffectPart;
+
+type Deps = Pick<AllParts, "appOwnedSubagentParentThreadId" | "childAwaitsRestartContinuation" | "eventSink" | "finalizeAppOwnedSubagent" | "finalizeDelegatedCompletionDelivery" | "offerDelegatedCompletionDelivery" | "projectionStore" | "releaseUnattendedHolds" | "retryContinuationStart" | "startNextQueuedRun" | "threadDispatch">;
 
 export const installRecoverDelegatedTasks = Effect.fnUntraced(function* (deps: Deps) {
   const { appOwnedSubagentParentThreadId, childAwaitsRestartContinuation, eventSink, finalizeAppOwnedSubagent, finalizeDelegatedCompletionDelivery, offerDelegatedCompletionDelivery, projectionStore, releaseUnattendedHolds, retryContinuationStart, startNextQueuedRun, threadDispatch } = deps;

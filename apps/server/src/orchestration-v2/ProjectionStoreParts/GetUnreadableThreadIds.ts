@@ -10,7 +10,10 @@ import type { RetainedWindowRowsPart } from "./RetainedWindowRows.ts";
 import type { ReadCanonicalProjectionPart } from "./ReadCanonicalProjection.ts";
 import type { ReadProjectionPart } from "./ReadProjection.ts";
 
-type Deps = Record<never, never> & ApplyRecordTailPart & ApplyRunTailPart & RetainedWindowRowsPart & ReadCanonicalProjectionPart & ReadProjectionPart;
+type AllParts =
+  ApplyRecordTailPart & ApplyRunTailPart & RetainedWindowRowsPart & ReadCanonicalProjectionPart & ReadProjectionPart;
+
+type Deps = Pick<AllParts, "getThread" | "readProjection" | "sql">;
 
 export const installGetUnreadableThreadIds = Effect.fnUntraced(function* (deps: Deps) {
   const { getThread, readProjection, sql } = deps;

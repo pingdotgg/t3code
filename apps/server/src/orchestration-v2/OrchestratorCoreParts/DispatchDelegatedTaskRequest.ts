@@ -19,7 +19,10 @@ import type { DispatchRunInterruptPart } from "./DispatchRunInterrupt.ts";
 import type { DispatchRuntimeRequestRespondPart } from "./DispatchRuntimeRequestRespond.ts";
 import type { DispatchThreadMergeBackPart } from "./DispatchThreadMergeBack.ts";
 
-type Deps = Record<never, never> & FailQueuedRunStartPart & StartNextQueuedRunPart & DispatchDelegatedTaskCompletionDeliveryResolutionPart & RecordSubagentFollowupPart & DispatchSteerIntoRunPart & SettleInterruptedRunPart & SettleBackgroundWorkPart & DispatchRunInterruptPart & DispatchRuntimeRequestRespondPart & DispatchThreadMergeBackPart;
+type AllParts =
+  FailQueuedRunStartPart & StartNextQueuedRunPart & DispatchDelegatedTaskCompletionDeliveryResolutionPart & RecordSubagentFollowupPart & DispatchSteerIntoRunPart & SettleInterruptedRunPart & SettleBackgroundWorkPart & DispatchRunInterruptPart & DispatchRuntimeRequestRespondPart & DispatchThreadMergeBackPart;
+
+type Deps = Pick<AllParts, "dispatchMessage" | "emit" | "getProjectionWithPendingEvents" | "idAllocator" | "nextTurnItemOrdinal" | "projectionStore" | "providerAdapters" | "stopReachedRun" | "subagentCount">;
 
 export const installDispatchDelegatedTaskRequest = Effect.fnUntraced(function* (deps: Deps) {
   const { dispatchMessage, emit, getProjectionWithPendingEvents, idAllocator, nextTurnItemOrdinal, projectionStore, providerAdapters, stopReachedRun, subagentCount } = deps;

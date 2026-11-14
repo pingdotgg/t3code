@@ -11,7 +11,10 @@ import { worktreeSetupPending } from "../OrchestratorCorePrelude/OrchestratorV2S
 import type { FailQueuedRunStartPart } from "./FailQueuedRunStart.ts";
 import type { StartNextQueuedRunPart } from "./StartNextQueuedRun.ts";
 
-type Deps = Record<never, never> & FailQueuedRunStartPart & StartNextQueuedRunPart;
+type AllParts =
+  FailQueuedRunStartPart & StartNextQueuedRunPart;
+
+type Deps = Pick<AllParts, "completionDeliveryMessage" | "completionDeliveryRun" | "emit" | "emitQueuedRunCancellation" | "projectionStore" | "startNextQueuedRun" | "threadDispatch" | "writeSystemEvents">;
 
 export const installDispatchDelegatedTaskCompletionDeliveryResolution = Effect.fnUntraced(function* (deps: Deps) {
   const { completionDeliveryMessage, completionDeliveryRun, emit, emitQueuedRunCancellation, projectionStore, startNextQueuedRun, threadDispatch, writeSystemEvents } = deps;

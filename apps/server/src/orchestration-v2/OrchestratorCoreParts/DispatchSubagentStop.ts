@@ -26,7 +26,10 @@ import type { DispatchThreadMergeBackPart } from "./DispatchThreadMergeBack.ts";
 import type { DispatchDelegatedTaskRequestPart } from "./DispatchDelegatedTaskRequest.ts";
 import type { DispatchRemoteDelegatedTaskCompletePart } from "./DispatchRemoteDelegatedTaskComplete.ts";
 
-type Deps = Record<never, never> & FailQueuedRunStartPart & StartNextQueuedRunPart & DispatchDelegatedTaskCompletionDeliveryResolutionPart & RecordSubagentFollowupPart & DispatchSteerIntoRunPart & SettleInterruptedRunPart & SettleBackgroundWorkPart & DispatchRunInterruptPart & DispatchRuntimeRequestRespondPart & DispatchThreadMergeBackPart & DispatchDelegatedTaskRequestPart & DispatchRemoteDelegatedTaskCompletePart;
+type AllParts =
+  FailQueuedRunStartPart & StartNextQueuedRunPart & DispatchDelegatedTaskCompletionDeliveryResolutionPart & RecordSubagentFollowupPart & DispatchSteerIntoRunPart & SettleInterruptedRunPart & SettleBackgroundWorkPart & DispatchRunInterruptPart & DispatchRuntimeRequestRespondPart & DispatchThreadMergeBackPart & DispatchDelegatedTaskRequestPart & DispatchRemoteDelegatedTaskCompletePart;
+
+type Deps = Pick<AllParts, "awaitsRestartContinuation" | "commandPolicy" | "dispatchRunInterrupt" | "emit" | "fileSystem" | "holdStoppedThread" | "loadProjectionForCommand" | "markStoppedRun" | "path" | "projectionStore" | "projects" | "providerAdapters" | "writeAppOwnedTask">;
 
 export const installDispatchSubagentStop = Effect.fnUntraced(function* (deps: Deps) {
   const { awaitsRestartContinuation, commandPolicy, dispatchRunInterrupt, emit, fileSystem, holdStoppedThread, loadProjectionForCommand, markStoppedRun, path, projectionStore, projects, providerAdapters, writeAppOwnedTask } = deps;

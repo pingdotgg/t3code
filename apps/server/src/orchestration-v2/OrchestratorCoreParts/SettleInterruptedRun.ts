@@ -18,7 +18,10 @@ import type { DispatchDelegatedTaskCompletionDeliveryResolutionPart } from "./Di
 import type { RecordSubagentFollowupPart } from "./RecordSubagentFollowup.ts";
 import type { DispatchSteerIntoRunPart } from "./DispatchSteerIntoRun.ts";
 
-type Deps = Record<never, never> & FailQueuedRunStartPart & StartNextQueuedRunPart & DispatchDelegatedTaskCompletionDeliveryResolutionPart & RecordSubagentFollowupPart & DispatchSteerIntoRunPart;
+type AllParts =
+  FailQueuedRunStartPart & StartNextQueuedRunPart & DispatchDelegatedTaskCompletionDeliveryResolutionPart & RecordSubagentFollowupPart & DispatchSteerIntoRunPart;
+
+type Deps = Pick<AllParts, "completionDeliveryMessage" | "completionDeliveryRun" | "effectOutbox" | "emit" | "idAllocator" | "mapDelegatedCompletionError" | "nextTurnItemOrdinal" | "projectionStore" | "stopReachedRun">;
 
 export const installSettleInterruptedRun = Effect.fnUntraced(function* (deps: Deps) {
   const { completionDeliveryMessage, completionDeliveryRun, effectOutbox, emit, idAllocator, mapDelegatedCompletionError, nextTurnItemOrdinal, projectionStore, stopReachedRun } = deps;

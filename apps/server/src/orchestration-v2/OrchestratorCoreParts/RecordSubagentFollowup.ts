@@ -10,7 +10,10 @@ import type { FailQueuedRunStartPart } from "./FailQueuedRunStart.ts";
 import type { StartNextQueuedRunPart } from "./StartNextQueuedRun.ts";
 import type { DispatchDelegatedTaskCompletionDeliveryResolutionPart } from "./DispatchDelegatedTaskCompletionDeliveryResolution.ts";
 
-type Deps = Record<never, never> & FailQueuedRunStartPart & StartNextQueuedRunPart & DispatchDelegatedTaskCompletionDeliveryResolutionPart;
+type AllParts =
+  FailQueuedRunStartPart & StartNextQueuedRunPart & DispatchDelegatedTaskCompletionDeliveryResolutionPart;
+
+type Deps = Pick<AllParts, "emit" | "idAllocator" | "nextTurnItemOrdinal" | "projectionStore" | "providerAdapters">;
 
 export const installRecordSubagentFollowup = Effect.fnUntraced(function* (deps: Deps) {
   const { emit, idAllocator, nextTurnItemOrdinal, projectionStore, providerAdapters } = deps;

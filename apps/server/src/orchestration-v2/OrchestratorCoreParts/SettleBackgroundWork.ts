@@ -13,7 +13,10 @@ import type { RecordSubagentFollowupPart } from "./RecordSubagentFollowup.ts";
 import type { DispatchSteerIntoRunPart } from "./DispatchSteerIntoRun.ts";
 import type { SettleInterruptedRunPart } from "./SettleInterruptedRun.ts";
 
-type Deps = Record<never, never> & FailQueuedRunStartPart & StartNextQueuedRunPart & DispatchDelegatedTaskCompletionDeliveryResolutionPart & RecordSubagentFollowupPart & DispatchSteerIntoRunPart & SettleInterruptedRunPart;
+type AllParts =
+  FailQueuedRunStartPart & StartNextQueuedRunPart & DispatchDelegatedTaskCompletionDeliveryResolutionPart & RecordSubagentFollowupPart & DispatchSteerIntoRunPart & SettleInterruptedRunPart;
+
+type Deps = Pick<AllParts, "emit" | "idAllocator" | "projectionStore" | "providerSessions">;
 
 export const installSettleBackgroundWork = Effect.fnUntraced(function* (deps: Deps) {
   const { emit, idAllocator, projectionStore, providerSessions } = deps;

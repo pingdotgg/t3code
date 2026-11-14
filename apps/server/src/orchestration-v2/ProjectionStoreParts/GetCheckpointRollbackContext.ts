@@ -39,7 +39,10 @@ import type { ReadProjectionPart } from "./ReadProjection.ts";
 import type { GetUnreadableThreadIdsPart } from "./GetUnreadableThreadIds.ts";
 import type { GetRuntimeRecoveryProjectionPart } from "./GetRuntimeRecoveryProjection.ts";
 
-type Deps = Record<never, never> & ApplyRecordTailPart & ApplyRunTailPart & RetainedWindowRowsPart & ReadCanonicalProjectionPart & ReadProjectionPart & GetUnreadableThreadIdsPart & GetRuntimeRecoveryProjectionPart;
+type AllParts =
+  ApplyRecordTailPart & ApplyRunTailPart & RetainedWindowRowsPart & ReadCanonicalProjectionPart & ReadProjectionPart & GetUnreadableThreadIdsPart & GetRuntimeRecoveryProjectionPart;
+
+type Deps = Pick<AllParts, "controlReadError" | "getRuntimeRequest" | "getThread" | "getThreadProjection" | "readCanonicalProjection" | "requireThread" | "sql">;
 
 export const installGetCheckpointRollbackContext = Effect.fnUntraced(function* (deps: Deps) {
   const { controlReadError, getRuntimeRequest, getThread, getThreadProjection, readCanonicalProjection, requireThread, sql } = deps;
