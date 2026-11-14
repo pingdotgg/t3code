@@ -31,6 +31,7 @@ import { environmentContextRecord } from "~/lib/composerContextRecords";
 import { usePromptStashStore } from "~/promptStashStore";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { getRouter } from "~/router";
+import { useLayoutStore } from "~/layout/layoutStore";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { environmentThreadDetails } from "~/state/threads";
 import {
@@ -197,6 +198,8 @@ it("a question that opens while a stashed file is checked keeps a machine stash"
 
 it("imports Pi conversations through the environment RPC and can retry a changed project", async () => {
   await using _viewport = await appViewport();
+  useLayoutStore.getState().reset();
+  using _layout = { [Symbol.dispose]: () => useLayoutStore.getState().reset() };
   using _environment = installFakeEnvironment([], { acceptCommands: true });
   const scan = vi.fn(() =>
     Effect.succeed({
@@ -276,6 +279,7 @@ it("imports Pi conversations through the environment RPC and can retry a changed
   await expect
     .element(page.getByRole("heading", { name: "Welcome to T3 Code" }))
     .not.toBeInTheDocument();
+  await vi.waitFor(() => expect(router.state.location.pathname).not.toBe("/welcome"));
   changed = false;
   await router.navigate({ to: "/welcome" });
   await expect.element(page.getByRole("heading", { name: "Welcome to T3 Code" })).toBeVisible();
@@ -327,6 +331,7 @@ it("a new draft does not load its reserved thread before the server lists it", a
 });
 
 it("answers a pending question while an oversized message draft is set aside", async () => {
+  await using _viewport = await appViewport();
   const thread = threadWithHistory("oversized-question-draft", 0);
   using _environment = installFakeEnvironment([thread]);
   __setClientSettingsForTests({
@@ -340,7 +345,10 @@ it("answers a pending question while an oversized message draft is set aside", a
   );
   await router.load();
   // AppRoot owns the router.
-  await using _app = await render(<AppRoot router={router} />, { router: false });
+  await using _app = await render(<AppRoot router={router} />, {
+    container: appContainer(),
+    router: false,
+  });
   await expect.element(page.getByTestId("composer-editor")).toBeVisible();
 
   const requestId = RuntimeRequestId.make("oversized-draft-question");
