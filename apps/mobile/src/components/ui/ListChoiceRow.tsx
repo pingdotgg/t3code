@@ -7,6 +7,7 @@ import { SymbolView } from "./AppSymbol";
 import { ListRowLayout } from "./ListRowLayout";
 import { RadioIndicator } from "./RadioIndicator";
 import { RowPressable } from "./RowPressable";
+import { SettingResetButton } from "./SettingResetButton";
 
 export function ListChoiceRow(props: {
   readonly label: string;
@@ -17,8 +18,18 @@ export function ListChoiceRow(props: {
   readonly separated?: boolean;
   readonly disabled?: boolean;
   readonly onPress: () => void;
+  readonly resetVisible?: boolean;
+  readonly resetLabel?: string;
+  readonly resetDisabled?: boolean;
+  readonly onReset?: () => void;
 }) {
   const rippleStyle = useResolveClassNames("bg-subtle-strong");
+  const showReset = props.resetVisible === true && props.onReset !== undefined;
+  // Disabled rows and clean rows hide the button: it only offers an action when dirty.
+  const reset =
+    showReset && props.disabled !== true && props.resetDisabled === false ? (
+      <SettingResetButton label={props.resetLabel ?? props.label} onPress={props.onReset} />
+    ) : null;
   return (
     <RowPressable
       accessibilityRole="radio"
@@ -57,6 +68,7 @@ export function ListChoiceRow(props: {
             ) : null}
           </View>
         }
+        trailing={reset}
       />
     </RowPressable>
   );

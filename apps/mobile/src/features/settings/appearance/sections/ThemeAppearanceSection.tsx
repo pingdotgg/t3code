@@ -7,7 +7,10 @@ import { mixThemePreviewBase, THEME_PREVIEW_RENDER_SPECS } from "@t3tools/shared
 
 import { SymbolView } from "../../../../components/ui/AppSymbol";
 import { AppText as Text } from "../../../../components/ui/AppText";
+import { SettingResetButton } from "../../../../components/ui/SettingResetButton";
+import { DEFAULT_BASE_FONT_SIZE } from "../../../../lib/appearancePreferences";
 import {
+  DEFAULT_MOBILE_THEME_ID,
   getMobileThemePreviewColors,
   MOBILE_THEME_OPTIONS,
   type MobileThemeAppearance,
@@ -290,15 +293,27 @@ export function ThemeAppearanceSection() {
     setThemeIdForAppearance,
     setThemeIdForBothAppearances,
     setThemeMode,
+    setBaseFontSize,
     themeIds,
     themeMode,
+    appearance,
     systemColorsAvailable,
   } = useAppearancePreferences();
+  const dirtyMode = isReady && themeMode !== "system";
+  const dirtyThemes =
+    isReady &&
+    (themeIds.light !== DEFAULT_MOBILE_THEME_ID || themeIds.dark !== DEFAULT_MOBILE_THEME_ID);
+  const dirtyTextSize = isReady && appearance.baseFontSize !== DEFAULT_BASE_FONT_SIZE;
 
   return (
     <View className="gap-6">
       <View className="gap-2">
-        <SectionLabel>Color scheme</SectionLabel>
+        <View className="flex-row items-center justify-between px-2">
+          <SectionLabel>Color scheme</SectionLabel>
+          {dirtyMode ? (
+            <SettingResetButton label="Color scheme" onPress={() => setThemeMode("system")} />
+          ) : null}
+        </View>
         <View accessibilityRole="radiogroup" className="flex-row gap-2">
           {APPEARANCE_MODES.map((mode) => (
             <ModeCard
@@ -315,7 +330,15 @@ export function ThemeAppearanceSection() {
       </View>
 
       <View className="gap-3">
-        <SectionLabel>Themes</SectionLabel>
+        <View className="flex-row items-center justify-between px-2">
+          <SectionLabel>Themes</SectionLabel>
+          {dirtyThemes ? (
+            <SettingResetButton
+              label="Themes"
+              onPress={() => setThemeIdForBothAppearances(DEFAULT_MOBILE_THEME_ID)}
+            />
+          ) : null}
+        </View>
         <View className="flex-row flex-wrap gap-3">
           {MOBILE_THEME_OPTIONS.filter(
             (theme) => theme.id !== "material-you" || systemColorsAvailable,
@@ -333,6 +356,19 @@ export function ThemeAppearanceSection() {
           ))}
         </View>
       </View>
+      {/* Text size lives in TextAppearanceSection; surfaced here as a dirty marker only. */}
+      {dirtyTextSize ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Text size changed, reset to default"
+          onPress={() => setBaseFontSize(DEFAULT_BASE_FONT_SIZE)}
+          className="flex-row items-center gap-2 px-2"
+        >
+          <Text className="text-sm text-foreground-muted">
+            Text size {appearance.baseFontSize} pt · tap to reset
+          </Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }

@@ -21,6 +21,7 @@ import {
   useHiddenNavigationTabs,
   useEnabledNavigationTabs,
 } from "../layout/workspace/navigation-tabs";
+import { RestoreDeviceDefaultsInlineRow } from "./RestoreDeviceDefaultsSection";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
 import { resolveWorkspaceTabOrder } from "../layout/workspace/workspace-tabs-state";
@@ -37,7 +38,10 @@ export function SettingsNavigationRouteScreen() {
   const ready = customizable && AsyncResult.isSuccess(preferences) && !preferences.waiting;
   const save = useAtomSet(updateMobilePreferencesAtom);
   return (
-    <SettingsScreen title="Navigation tabs">
+    <SettingsScreen
+      title="Navigation tabs"
+      trailing={Platform.OS === "android" ? <RestoreDeviceDefaultsInlineRow /> : undefined}
+    >
       <ScreenScrollView
         contentInsetAdjustmentBehavior="automatic"
         contentContainerClassName="gap-4 px-5 pt-4"
