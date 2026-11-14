@@ -39,18 +39,15 @@ export function GuideNotice({ state }: { readonly state: ReturnType<typeof useRe
       <View style={compact ? undefined : { minHeight: 100 }} className="pt-3 pb-4">
         <Text className="text-sm leading-6 text-foreground-muted">{notice.description}</Text>
       </View>
-      <View className="min-h-12 flex-row items-center justify-between gap-3">
+      <View className="min-h-12 flex-row flex-wrap items-center justify-between gap-3">
         {state.canWrite || busy || notice.kind === "unavailable" ? (
-          <View className="w-40">
-            <Button
-              label={notice.action}
-              tone={compact ? "secondary" : "contrast"}
-              disabled={busy}
-              onPress={() => (notice.kind === "unavailable" ? state.refresh() : void state.write())}
-              fullWidth
-              loading={busy}
-            />
-          </View>
+          <Button
+            label={notice.action}
+            tone={compact ? "secondary" : "contrast"}
+            disabled={busy}
+            onPress={() => (notice.kind === "unavailable" ? state.refresh() : void state.write())}
+            loading={busy}
+          />
         ) : (
           <Text className="text-xs text-foreground-muted">
             {notice.kind === "failed"

@@ -1,3 +1,4 @@
+import { pipe } from "effect/Function";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { ProviderReplayEntry, ProviderReplayTranscript } from "@t3tools/contracts";
 import * as Console from "effect/Console";
@@ -29,16 +30,10 @@ import {
   makeCheckpointWorkspace,
 } from "@t3tools/provider-testing/replayWorkspace";
 
-/**
- * Keeps the user's skills, templates and context files out of the recording.
- * `--approve` trusts the throwaway workspace so its `.pi/settings.json` loads.
- */
+// Exclude user context; --approve lets the throwaway workspace's `.pi/settings.json` load.
 const HERMETIC_LAUNCH_ARGS =
   "--no-extensions --no-skills --no-prompt-templates --no-context-files --approve";
-/**
- * Pi keeps the last ~20k tokens out of a compaction, so a short fixture
- * conversation has nothing to compact. A tiny budget makes `/compact` real.
- */
+// Pi excludes ~20k recent tokens from compaction; lower the budget for this short fixture.
 const WORKSPACE_PI_SETTINGS = { compaction: { keepRecentTokens: 50 } };
 const CLOCK_TICK = Duration.millis(20);
 
@@ -74,12 +69,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/**
- * Session files, the workspace, the home directory, UUIDs and wall-clock times
- * become stable placeholders applied consistently to both directions, so values
- * the adapter echoes back (a session path in `switch_session`, `--fork <file>`)
- * still line up on replay.
- */
+// Normalize both directions consistently so echoed paths, UUIDs and times still match on replay.
 function normalizeEntries(input: {
   readonly entries: ReadonlyArray<ProviderReplayEntry>;
   readonly workspace: string;
@@ -110,8 +100,12 @@ function normalizeEntries(input: {
       .replaceAll(input.workspace, "<workspace>")
       .replaceAll(home.length > 1 ? home : "\0", "~")
       .replace(ISO_TIMESTAMP_PATTERN, (iso) =>
-        DateTime.formatIso(
-          DateTime.makeUnsafe(shiftTime(DateTime.toEpochMillis(DateTime.makeUnsafe(iso)))),
+        pipe(
+          DateTime.makeUnsafe(iso),
+          DateTime.toEpochMillis,
+          shiftTime,
+          DateTime.makeUnsafe,
+          DateTime.formatIso,
         ),
       )
       .replace(UUID_PATTERN, (uuid) => {
@@ -125,8 +119,7 @@ function normalizeEntries(input: {
     if (typeof value === "string") return normalizeString(value);
     if (Array.isArray(value)) return value.map(normalizeValue);
     if (!isRecord(value)) return value;
-    // Pi's system prompt lists the machine's skills, docs and cwd, and the
-    // adapter never reads system messages. Keep the shape, drop the text.
+    // Pi's unread system messages contain machine-specific context; retain only their shape.
     if (value.role === "system" && isRecord(value.sections)) {
       return {
         ...value,
@@ -185,11 +178,7 @@ function encodeTranscriptNdjson(transcript: ProviderReplayTranscript): string {
   ].join("\n");
 }
 
-/**
- * Replay runs on a frozen TestClock; recording shares that runtime so fixture
- * `advance_clock` steps behave identically, but lets it follow wall time so a
- * live Pi's timeouts and termination grace periods still elapse.
- */
+// Follow wall time for live Pi timers while retaining replay's TestClock steps.
 const followWallClock = Effect.gen(function* () {
   while (true) {
     yield* TestClock.withLive(Effect.sleep(CLOCK_TICK));
@@ -295,9 +284,7 @@ const record = Effect.gen(function* () {
     }),
   } satisfies ProviderReplayTranscript;
 
-  // The live projection still holds raw session paths, so the fixture's
-  // assertions run on a replay of the normalized transcript. A recording that
-  // fails them never replaces the existing fixture.
+  // Assert on normalized replay; the live projection has raw paths. Failed assertions preserve the fixture.
   yield* Effect.gen(function* () {
     const replayWorkspace = yield* checkpointWorkspace(fixture.name, fixtureInput.workspaceFiles);
     const materialized = yield* materializeInput;
