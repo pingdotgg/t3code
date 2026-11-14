@@ -1,6 +1,8 @@
 import { assert, it, afterEach, expect, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as DateTime from "effect/DateTime";
+import * as Option from "effect/Option";
 import { ChildProcessSpawner } from "effect/process";
 
 import { VcsProcessExitError } from "@t3tools/contracts";
@@ -23,6 +25,177 @@ function processOutput(stdout: string): SourceControlHost.SourceControlProcessOu
     stderrTruncated: false,
   };
 }
+
+it.effect.each([
+  { operation: "view", requestedHost: "gitlab.example.test:8443", mapped: true },
+  { operation: "checkout", requestedHost: "gitlab.example.test:8443", mapped: true },
+  { operation: "api", requestedHost: "gitlab.example.test:8443", mapped: true },
+  {
+    operation: "api",
+    requestedHost: "gitlab.example.test:8443",
+    mapped: true,
+    configFailure: "first",
+  },
+  {
+    operation: "api",
+    requestedHost: "gitlab.example.test:8443",
+    mapped: false,
+    configFailure: "all",
+  },
+  {
+    operation: "api",
+    requestedHost: "gitlab.example.test:8443",
+    mapped: false,
+    configFailure: "recover",
+  },
+  {
+    operation: "api",
+    requestedHost: "gitlab.example.test:8443",
+    mapped: false,
+    configFailure: "recover",
+    requestedApiHost: "gitlab.example.test:8443",
+  },
+  {
+    operation: "api",
+    requestedHost: "gitlab.example.test:8443",
+    mapped: false,
+    configFailure: "recover",
+    requestedApiHost: "api.example.test:8443",
+  },
+  { operation: "api", requestedHost: "other.gitlab.example.test:8443", mapped: false },
+  { operation: "api", requestedHost: "gitlab.example.test:9443", mapped: false },
+  {
+    operation: "api",
+    requestedHost: "gitlab.example.test:8443",
+    mapped: false,
+    apiHost: "https://user:password@gitlab.example.test:8443",
+  },
+] as const)(
+  "routes $operation for $requestedHost using the configured host (mapped: $mapped, failed query: $configFailure, requested API host: $requestedApiHost)",
+  (scenario) =>
+    Effect.gen(function* () {
+      const { operation, requestedHost, mapped } = scenario;
+      const recovering = "configFailure" in scenario && scenario.configFailure === "recover";
+      const allQueriesFail = "configFailure" in scenario && scenario.configFailure === "all";
+      let recovered = false;
+      const calls: SourceControlHost.SourceControlProcessInput[] = [];
+      const webHost = "gitlab.example.test:8443";
+      const cliHost = "GitLab-SSH.example.test";
+      const path = "/team/nested/repo/-/merge_requests/42";
+      const glab = yield* GitLabCli.make.pipe(
+        Effect.provide(
+          TestSourceControlHost.layer({
+            git: {
+              remotes: () =>
+                Effect.succeed(
+                  Effect.succeed({
+                    remotes: [
+                      ...("configFailure" in scenario && scenario.configFailure === "first"
+                        ? [
+                            {
+                              name: "upstream",
+                              url: "git@unavailable.example.test:team/repo.git",
+                              pushUrl: Option.none(),
+                              isPrimary: true,
+                            },
+                          ]
+                        : []),
+                      {
+                        name: "origin",
+                        url: `git@${cliHost}:team/nested/repo.git`,
+                        pushUrl: Option.none(),
+                        isPrimary: true,
+                      },
+                    ],
+                    freshness: {
+                      source: "live-local",
+                      observedAt: DateTime.makeUnsafe(0),
+                      expiresAt: Option.none(),
+                    },
+                  }),
+                ),
+            },
+            process: {
+              run: (input) => {
+                calls.push(input);
+                if (input.args[0] === "config") {
+                  assert.strictEqual(input.timeoutMs, 3_000);
+                  const candidate = input.args[4];
+                  if (
+                    candidate === "unavailable.example.test" ||
+                    allQueriesFail ||
+                    (recovering && candidate === cliHost && !recovered)
+                  ) {
+                    return Effect.fail(
+                      new VcsProcessExitError({
+                        operation: input.operation,
+                        command: input.command,
+                        cwd: input.cwd,
+                        exitCode: 1,
+                        detail: "Host configuration is unavailable.",
+                        failureKind: "command-failed",
+                      }),
+                    );
+                  }
+                  assert.ok(candidate === cliHost || candidate === requestedHost);
+                  return Effect.succeed(
+                    processOutput(
+                      candidate === cliHost
+                        ? `${"apiHost" in scenario ? scenario.apiHost : webHost}\n`
+                        : "requestedApiHost" in scenario
+                          ? `${scenario.requestedApiHost}\n`
+                          : "",
+                    ),
+                  );
+                }
+                assert.strictEqual(
+                  input.env?.GITLAB_HOST,
+                  mapped || (recovering && recovered) ? cliHost : requestedHost,
+                );
+                if (recovering) recovered = true;
+                if (operation !== "api") {
+                  assert.strictEqual(input.args.at(-1), `https://${cliHost}${path}`);
+                }
+                return Effect.succeed(
+                  processOutput(
+                    JSON.stringify({
+                      iid: 42,
+                      title: "Split-host MR",
+                      web_url: `https://${webHost}${path}`,
+                      target_branch: "main",
+                      source_branch: "feature/mr",
+                    }),
+                  ),
+                );
+              },
+            },
+          }),
+        ),
+      );
+      const input = { cwd: "/repo", reference: `https://${webHost}${path}` };
+      if (operation === "view") {
+        const result = yield* glab.getMergeRequest(input);
+        assert.strictEqual(result.number, 42);
+        assert.strictEqual(result.url, input.reference);
+      } else if (operation === "checkout") {
+        yield* glab.checkoutMergeRequest(input);
+      } else {
+        yield* glab.execute({ cwd: "/repo", host: requestedHost, args: ["api", "user"] });
+        yield* glab.execute({ cwd: "/repo", host: requestedHost, args: ["api", "user"] });
+        if (recovering)
+          yield* glab.execute({ cwd: "/repo", host: requestedHost, args: ["api", "user"] });
+      }
+      assert.strictEqual(
+        calls.filter((input) => input.args[0] !== "config").length,
+        operation === "api" ? (recovering ? 3 : 2) : 1,
+      );
+      assert.strictEqual(
+        calls.filter((input) => input.args[0] === "config").length,
+        (recovering ? 3 : allQueriesFail ? 4 : mapped ? 1 : 2) +
+          ("configFailure" in scenario && scenario.configFailure === "first" ? 1 : 0),
+      );
+    }),
+);
 
 afterEach(() => {
   mockedRun.mockReset();

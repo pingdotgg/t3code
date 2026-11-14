@@ -1,4 +1,8 @@
 import * as Context from "effect/Context";
+import * as Cache from "effect/Cache";
+import * as Data from "effect/Data";
+import * as Duration from "effect/Duration";
+import * as Exit from "effect/Exit";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Match from "effect/Match";
@@ -20,8 +24,16 @@ import {
   decodeGitLabMergeRequestListJson,
 } from "./gitLabMergeRequests.ts";
 import type * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
+import { definition } from "../shared/definition.ts";
+import { gitLabApiHost, gitLabRemoteHost } from "./gitLabHost.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+
+class HostLookup extends Data.Class<{
+  readonly cwd: string;
+  readonly host: string;
+  readonly remoteUrl: string | null;
+}> {}
 
 const gitLabCliExecutionErrorContext = {
   operation: Schema.Literal("execute"),
@@ -271,6 +283,11 @@ export interface GitLabRepositoryCloneUrls {
 export class GitLabCli extends Context.Service<
   GitLabCli,
   {
+    readonly resolveHost: (input: {
+      readonly cwd: string;
+      readonly host: string;
+      readonly remoteUrl?: string;
+    }) => Effect.Effect<{ readonly cliHost: string; readonly webHost: string }, GitLabCliError>;
     readonly execute: (input: {
       readonly cwd: string;
       readonly host?: string | undefined;
@@ -432,7 +449,7 @@ const classifyGlabFailure = (stderr: string): VcsProcessExitFailureKind | null =
 
 /** @public */
 export const make = Effect.gen(function* () {
-  const { process } = yield* SourceControlHost.SourceControlHost;
+  const { process, git } = yield* SourceControlHost.SourceControlHost;
 
   const run = (
     input: Parameters<GitLabCli["Service"]["execute"]>[0],
@@ -454,32 +471,116 @@ export const make = Effect.gen(function* () {
       })
       .pipe(Effect.mapError(mapError));
 
-  const execute: GitLabCli["Service"]["execute"] = (input) =>
-    run(input, (error) =>
-      GitLabCliCommandError.fromVcsError(
-        { operation: "execute", command: "glab", cwd: input.cwd },
-        error,
-      ),
-    );
+  // glab keeps credentials under the login host even when api_host points elsewhere.
+  const resolveHostUncached = Effect.fn("GitLabCli.resolveHost")(function* ({
+    cwd,
+    host,
+    remoteUrl,
+  }: HostLookup) {
+    const remoteUrls =
+      remoteUrl === null
+        ? yield* git.remotes(cwd).pipe(
+            Effect.flatten,
+            Effect.map(({ remotes }) =>
+              remotes
+                .toSorted((a, b) => Number(b.isPrimary) - Number(a.isPrimary))
+                .map((remote) => remote.url),
+            ),
+            Effect.orElseSucceed(() => [] as string[]),
+          )
+        : [remoteUrl];
+    const remoteHosts = remoteUrls.flatMap((url) => gitLabRemoteHost(url) ?? []);
+    const fallbackHost =
+      remoteHosts.find((candidate) => candidate.toLowerCase() === host.toLowerCase()) ?? host;
+    const candidates = new Set([...remoteHosts, fallbackHost]);
+    let settled = true;
+    for (const cliHost of candidates) {
+      const result = yield* run(
+        {
+          cwd,
+          args: ["config", "get", "api_host", "--host", cliHost],
+          maxOutputBytes: 4_096,
+          timeoutMs: 3_000,
+        },
+        (error) =>
+          GitLabCliCommandError.fromVcsError({ operation: "execute", command: "glab", cwd }, error),
+      ).pipe(Effect.option);
+      if (Option.isNone(result)) {
+        settled = false;
+        continue;
+      }
+      const apiHost = gitLabApiHost(result.value.stdout);
+      const webHost = apiHost ?? cliHost.toLowerCase();
+      if (cliHost.toLowerCase() === host.toLowerCase() || webHost === host.toLowerCase()) {
+        return {
+          route: { cliHost, webHost },
+          settled: settled || cliHost.toLowerCase() !== host.toLowerCase(),
+        };
+      }
+    }
+    return { route: { cliHost: fallbackHost, webHost: host.toLowerCase() }, settled };
+  });
+  const hosts = yield* Cache.makeWith(resolveHostUncached, {
+    capacity: 128,
+    timeToLive: (exit) =>
+      Exit.isSuccess(exit) && exit.value.settled ? Duration.minutes(1) : Duration.zero,
+  });
+  const resolveHost: GitLabCli["Service"]["resolveHost"] = (input) =>
+    Cache.get(
+      hosts,
+      new HostLookup({ cwd: input.cwd, host: input.host, remoteUrl: input.remoteUrl ?? null }),
+    ).pipe(Effect.map(({ route }) => route));
 
-  const executeMergeRequest = (input: {
+  const execute: GitLabCli["Service"]["execute"] = Effect.fn("GitLabCli.execute")(
+    function* (input) {
+      const host =
+        input.host === undefined
+          ? undefined
+          : (yield* resolveHost({ cwd: input.cwd, host: input.host })).cliHost;
+      return yield* run({ ...input, ...(host === undefined ? {} : { host }) }, (error) =>
+        GitLabCliCommandError.fromVcsError(
+          { operation: "execute", command: "glab", cwd: input.cwd },
+          error,
+        ),
+      );
+    },
+  );
+
+  const executeMergeRequest = Effect.fn("GitLabCli.executeMergeRequest")(function* (input: {
     readonly cwd: string;
     readonly reference: string;
     readonly args: ReadonlyArray<string>;
-  }) =>
-    run(input, (error) =>
-      GitLabMergeRequestNotFoundError.fromVcsError(
-        {
-          operation: "execute",
-          command: "glab",
-          cwd: input.cwd,
-          reference: input.reference,
-        },
-        error,
-      ),
+  }) {
+    const url = URL.parse(input.reference);
+    const host =
+      url === null || definition.parseChangeRequestUrl(url) === null
+        ? undefined
+        : (yield* resolveHost({ cwd: input.cwd, host: url.host })).cliHost;
+    const reference =
+      host === undefined || url === null
+        ? input.reference
+        : `${url.protocol}//${host}${url.pathname}${url.search}${url.hash}`;
+    return yield* run(
+      {
+        ...input,
+        args: [...input.args.slice(0, -1), reference],
+        ...(host === undefined ? {} : { host }),
+      },
+      (error) =>
+        GitLabMergeRequestNotFoundError.fromVcsError(
+          {
+            operation: "execute",
+            command: "glab",
+            cwd: input.cwd,
+            reference: input.reference,
+          },
+          error,
+        ),
     );
+  });
 
   return GitLabCli.of({
+    resolveHost,
     execute,
     listMergeRequests: Effect.fn("GitLabCli.listMergeRequests")(function (input) {
       return execute({
