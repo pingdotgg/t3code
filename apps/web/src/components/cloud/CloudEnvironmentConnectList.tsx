@@ -36,6 +36,7 @@ import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "../settings/itemRo
 import { Checkbox } from "../ui/checkbox";
 import { Button } from "../ui/button";
 import { Skeleton } from "../ui/skeleton";
+import { Spinner } from "../ui/spinner";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { presentSavedCloudEnvironmentConnection } from "./cloudEnvironmentConnectionPresentation";
@@ -499,11 +500,16 @@ export function CloudEnvironmentConnectRows({
               disabled={connectingEnvironmentIds.size > 0}
               onClick={() => void connectEnvironment(environment)}
             >
-              {connectingEnvironmentIds.has(environment.environmentId)
-                ? "Adding…"
-                : savedWithoutRelay.has(environment.environmentId)
-                  ? "Add route"
-                  : "Add"}
+              {connectingEnvironmentIds.has(environment.environmentId) ? (
+                <>
+                  <Spinner aria-hidden />
+                  Adding…
+                </>
+              ) : savedWithoutRelay.has(environment.environmentId) ? (
+                "Add route"
+              ) : (
+                "Add"
+              )}
             </Button>
           )}
         </div>
