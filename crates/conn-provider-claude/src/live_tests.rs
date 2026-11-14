@@ -112,7 +112,9 @@ async fn open(
     mode: &str,
     cwd: &str,
 ) -> (Box<dyn Session>, mpsc::Receiver<ProviderEvent>) {
-    let OpenedSession { session, events } = provider
+    let OpenedSession {
+        session, events, ..
+    } = provider
         .open_session(OpenSessionInput {
             thread_id: "thread-live".into(),
             provider_session_id: "provider-session-live".into(),

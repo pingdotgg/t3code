@@ -223,6 +223,7 @@ async fn scenario(plan: &Value, scenario: &Value) -> Result<(), String> {
                 let OpenedSession {
                     session: opened,
                     events,
+                    ..
                 } = provider
                     .open_session(OpenSessionInput {
                         thread_id: input["threadId"].as_str().unwrap_or("t").into(),
@@ -304,6 +305,7 @@ async fn scenario(plan: &Value, scenario: &Value) -> Result<(), String> {
                     let OpenedSession {
                         session: opened,
                         events,
+                        ..
                     } = provider
                         .open_session(OpenSessionInput {
                             thread_id: input["threadId"].as_str().unwrap_or("t").into(),

@@ -46,6 +46,7 @@ pub struct FakeProvider {
     pub applied_selections: Arc<Mutex<Vec<Value>>>,
     steering: bool,
     close_delay: std::time::Duration,
+    selection_plan: Option<conn_provider::SelectionTransitionPlan>,
 }
 
 impl std::fmt::Debug for FakeProvider {
@@ -68,7 +69,14 @@ impl FakeProvider {
             applied_selections: Arc::new(Mutex::new(vec![])),
             steering: true,
             close_delay: std::time::Duration::ZERO,
+            selection_plan: None,
         }
+    }
+
+    /// A provider whose `plan_selection_transition` answers `plan`.
+    pub fn with_selection_plan(mut self, plan: conn_provider::SelectionTransitionPlan) -> Self {
+        self.selection_plan = Some(plan);
+        self
     }
 
     /// A provider whose sessions take `delay` to close, as a process given time to exit.
@@ -115,6 +123,14 @@ impl Provider for FakeProvider {
     fn driver(&self) -> &str {
         "claudeAgent"
     }
+    fn plan_selection_transition(
+        &self,
+        _input: &conn_provider::SelectionTransitionInput,
+    ) -> conn_provider::SelectionTransitionPlan {
+        self.selection_plan
+            .clone()
+            .unwrap_or(conn_provider::SelectionTransitionPlan::ApplyOnNextTurn)
+    }
     fn capabilities(&self) -> BoxFuture<'_, ProviderResult<ProviderCapabilities>> {
         Box::pin(async { Ok(from_json(json!({})).expect("placeholder")) })
     }
@@ -127,6 +143,16 @@ impl Provider for FakeProvider {
             *crate::lock(&self.mcp_servers) = input.mcp_servers.clone();
             let (tx, rx) = mpsc::channel(64);
             Ok(OpenedSession {
+                provider_session: from_json(json!({
+                    "id": input.provider_session_id, "driver": "claudeAgent",
+                    "providerInstanceId": self.id, "status": "ready",
+                    "cwd": input.runtime_policy.cwd, "model": null, "capabilities": conn_provider::testing::session_capabilities(),
+                    "createdAt": now_iso(), "updatedAt": now_iso(), "lastError": null,
+                }))
+                .map_err(|e| ProviderError::Protocol {
+                    detail: e.to_string(),
+                })?,
+                background_tasks_end_with_process: true,
                 session: Box::new(FakeSession {
                     id: input.provider_session_id,
                     instance: self.id.as_str().to_owned(),

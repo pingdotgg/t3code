@@ -46,6 +46,17 @@ pub trait Provider: Send + Sync {
     fn open_session(&self, input: OpenSessionInput)
     -> BoxFuture<'_, ProviderResult<OpenedSession>>;
 
+    /// `planSelectionTransition`: how a model selection change on this instance takes effect,
+    /// given the live session's negotiated capabilities. Claude and Codex carry the selection
+    /// per turn (`turnScopedSelectionTransition`); ACP rejects a model change its session
+    /// cannot switch (`acpSelectionTransition`).
+    fn plan_selection_transition(
+        &self,
+        _input: &SelectionTransitionInput,
+    ) -> SelectionTransitionPlan {
+        SelectionTransitionPlan::ApplyOnNextTurn
+    }
+
     /// The `ServerProvider` entry (`packages/contracts/src/server.ts`) for
     /// `ServerConfig.providers`, or `None` when the server builds it another way.
     /// `checked_at` is ISO-8601.
@@ -54,9 +65,37 @@ pub trait Provider: Send + Sync {
     }
 }
 
+/// `ProviderSelectionTransitionInput`.
+#[derive(Clone, Debug)]
+pub struct SelectionTransitionInput {
+    pub current: ModelSelection,
+    pub target: ModelSelection,
+    /// The live session's `capabilities` (`OrchestrationV2ProviderCapabilities`).
+    pub session_capabilities: serde_json::Value,
+}
+
+/// `ProviderSelectionTransitionPlan`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SelectionTransitionPlan {
+    ApplyOnNextTurn,
+    /// The live session must end; the next turn resumes the thread in a new one.
+    RestartSession,
+    /// A new native thread with the history handed over.
+    CreateWithHandoff,
+    Reject {
+        reason: String,
+    },
+}
+
+/// What `open_session` gives the engine (`ProviderAdapterV2SessionRuntime`).
 pub struct OpenedSession {
     pub session: Box<dyn Session>,
     pub events: mpsc::Receiver<ProviderEvent>,
+    /// The session's row (`providerSession`), which the engine stores before any event.
+    pub provider_session: ProviderSession,
+    /// `backgroundTasksEndWithProcess`: every background task of the session ends with its
+    /// process, so releasing the session clears its provider threads' rosters.
+    pub background_tasks_end_with_process: bool,
 }
 
 impl std::fmt::Debug for OpenedSession {
@@ -715,6 +754,108 @@ impl std::fmt::Display for ProviderError {
 
 impl std::error::Error for ProviderError {}
 
+/// Helpers for tests of providers and of the engine's fake provider.
+#[doc(hidden)]
+pub mod testing {
+    use serde_json::{Value, json};
+
+    /// A whole `OrchestrationV2ProviderCapabilities` (Claude's), for test session rows.
+    pub fn session_capabilities() -> Value {
+        json!({
+            "sessions": {
+                "supportsMultipleProviderThreadsPerSession": false,
+                "supportsModelSwitchInSession": true,
+                "supportsProviderSwitchingViaHandoff": false,
+                "supportsRuntimeModeSwitchInSession": false,
+                "pendingRequestsSurviveRestart": false,
+            },
+            "threads": {
+                "canCreateEmptyThread": true,
+                "canReadThreadSnapshot": false,
+                "canRollbackThread": true,
+                "canForkThread": true,
+                "canForkFromTurn": true,
+                "canForkFromSubagentThread": false,
+                "exposesNativeThreadId": true,
+            },
+            "turns": {
+                "exposesNativeTurnId": false,
+                "emitsTurnStarted": true,
+                "emitsTurnCompleted": true,
+                "supportsInterrupt": true,
+                "supportsActiveSteering": true,
+                "activeSteeringInterruptsTools": true,
+                "supportsSteeringByInterruptRestart": false,
+                "supportsQueuedMessages": false,
+                "terminalStatusQuality": "strong",
+            },
+            "streaming": {
+                "streamsAssistantText": true,
+                "streamsReasoning": true,
+                "streamsToolOutput": false,
+                "streamsPlanText": false,
+                "emitsMessageCompleted": true,
+            },
+            "tools": {
+                "exposesToolItemIds": true,
+                "emitsToolStarted": true,
+                "emitsToolCompleted": true,
+                "emitsToolOutput": true,
+                "supportsMcpTools": true,
+                "supportsDynamicToolCallbacks": false,
+            },
+            "approvals": {
+                "supportsCommandApproval": true,
+                "supportsFileReadApproval": true,
+                "supportsFileChangeApproval": true,
+                "supportsApplyPatchApproval": false,
+                "approvalsHaveNativeRequestIds": true,
+                "approvalCallbacksAreLiveOnly": true,
+                "approvalsCanOriginateFromSubagents": false,
+            },
+            "planning": {
+                "emitsPlanUpdated": true,
+                "emitsTodoList": true,
+                "emitsProposedPlan": true,
+                "supportsStructuredQuestions": true,
+                "planDeltasHaveItemIds": false,
+            },
+            "subagents": {
+                "supportsSubagents": true,
+                "exposesSubagentThreadIds": false,
+                "emitsSubagentLifecycle": true,
+                "canWaitForSubagents": false,
+                "canCloseSubagents": false,
+                "canForkSubagentThread": false,
+            },
+            "context": {
+                "acceptsSystemContext": false,
+                "acceptsDeveloperContext": false,
+                "acceptsSyntheticUserContext": false,
+                "canGenerateSummaries": false,
+                "canConsumeHandoffSummaries": false,
+                "supportsDeltaHandoff": false,
+                "supportsFullThreadHandoff": false,
+                "maxRecommendedHandoffChars": null,
+            },
+            "checkpointing": {
+                "appCanCheckpointFilesystem": true,
+                "supportsNestedCheckpointScopes": false,
+                "providerCanRollbackConversation": true,
+                "providerRollbackReturnsSnapshot": true,
+                "providerCanReadConversationSnapshot": false,
+            },
+            "identity": {
+                "nativeThreadIds": "strong",
+                "nativeTurnIds": "weak",
+                "nativeItemIds": "strong",
+                "nativeRequestIds": "strong",
+            },
+            "runtimePolicy": {"enforcement": "native"},
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -750,6 +891,15 @@ mod tests {
             Box::pin(async move {
                 let (tx, rx) = mpsc::channel(16);
                 Ok(OpenedSession {
+                    provider_session: from_json(json!({
+                        "id": input.provider_session_id, "driver": "echo",
+                        "providerInstanceId": "claude", "status": "ready", "cwd": "/tmp",
+                        "model": null, "capabilities": crate::testing::session_capabilities(),
+                        "createdAt": NOW, "updatedAt": NOW,
+                        "lastError": null,
+                    }))
+                    .unwrap(),
+                    background_tasks_end_with_process: false,
                     session: Box::new(EchoSession {
                         id: input.provider_session_id,
                         events: tx,
@@ -841,6 +991,7 @@ mod tests {
         let OpenedSession {
             session,
             mut events,
+            ..
         } = provider
             .open_session(OpenSessionInput {
                 thread_id: "t1".into(),

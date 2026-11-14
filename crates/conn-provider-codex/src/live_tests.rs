@@ -98,7 +98,9 @@ async fn open(
 ) {
     let provider = CodexProvider::detect("codex".into(), CodexConfig::default())
         .expect("the codex CLI is installed");
-    let OpenedSession { session, events } = provider
+    let OpenedSession {
+        session, events, ..
+    } = provider
         .open_session(OpenSessionInput {
             thread_id: "live-thread".into(),
             provider_session_id: "live-session".into(),

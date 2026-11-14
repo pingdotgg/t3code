@@ -1094,7 +1094,8 @@ done
         let provider = provider();
         let OpenedSession {
             session,
-            mut events,
+            provider_session,
+            ..
         } = provider
             .open_session(OpenSessionInput {
                 thread_id: "t1".into(),
@@ -1108,7 +1109,7 @@ done
             })
             .await
             .unwrap();
-        until(&mut events, "provider_session.updated").await;
+        assert_eq!(to_json(&provider_session)["id"], "s1");
         session
             .ensure_thread(EnsureThreadInput {
                 thread_id: "t1".into(),
@@ -1158,6 +1159,7 @@ done
         let OpenedSession {
             session,
             mut events,
+            ..
         } = provider
             .open_session(OpenSessionInput {
                 thread_id: "t1".into(),
@@ -1171,10 +1173,7 @@ done
             })
             .await
             .unwrap();
-        assert_eq!(
-            until(&mut events, "provider_session.updated").await.len(),
-            1
-        );
+        // The session row comes back from `open_session`, not as an event.
         let thread = session
             .ensure_thread(EnsureThreadInput {
                 thread_id: "t1".into(),
@@ -1263,6 +1262,7 @@ done
         let OpenedSession {
             session,
             mut events,
+            ..
         } = provider
             .open_session(OpenSessionInput {
                 thread_id: "t1".into(),
@@ -1476,6 +1476,7 @@ done
         let OpenedSession {
             session,
             mut events,
+            ..
         } = provider
             .open_session(OpenSessionInput {
                 thread_id: "t1".into(),

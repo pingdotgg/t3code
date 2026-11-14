@@ -71,6 +71,14 @@ with a reason the client shows (`commands::refusal`).
   goes to the running provider turn's session (`provider-session.apply-model-selection`,
   `ProviderTurnControlService.applyModelSelection`); the provider applies what it can live.
   Without a running provider turn only the thread changes. Codex has no live change (as T3).
+- **Selection plan.** A model change on the thread's instance asks that provider's
+  `plan_selection_transition` with the live session's capabilities (`ProviderSwitchService`):
+  `reject` refuses the command; `restart_session` releases the session between turns and is
+  refused during a run; `create_with_handoff` is refused (no handoff here). Without a session
+  row the change applies at the next turn. Claude and Codex answer `apply_on_next_turn`.
+- **Session row.** `open_session` returns the provider session; the engine stores it before
+  any event. A session whose background tasks end with its process (Claude) clears its
+  provider threads' rosters when it is released.
 - **Provider switch.** A `thread.model-selection.set` to another instance is a provider switch
   (refused while a run is active). A run on another instance than the live session closes it
   and opens one on its own instance; a provider thread of another instance is never resumed.

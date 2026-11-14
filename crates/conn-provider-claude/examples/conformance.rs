@@ -137,7 +137,9 @@ async fn open(
     } else {
         vec![]
     };
-    let OpenedSession { session, events } = provider
+    let OpenedSession {
+        session, events, ..
+    } = provider
         .open_session(OpenSessionInput {
             thread_id: THREAD.into(),
             provider_session_id: "provider-session-conformance".into(),

@@ -40,6 +40,10 @@ pub(crate) struct LiveThread {
     closed: tokio::sync::Notify,
     /// Since when background work has kept this idle session open.
     held_since: Mutex<Option<Instant>>,
+    /// The provider session's id, for its provider threads.
+    provider_session_id: String,
+    /// `backgroundTasksEndWithProcess`: releasing the session clears its threads' rosters.
+    background_tasks_end_with_process: bool,
     /// Revokes the agent tools this session got ([`crate::EngineHost::session_closed`]).
     tools_key: Option<String>,
 }
@@ -326,6 +330,7 @@ impl Inner {
                         e.to_string()
                     })?;
                 let session: Arc<dyn Session> = Arc::from(opened.session);
+                let provider_session = to_json(&opened.provider_session);
                 // `open_session` must not yield before the session is in
                 // `live`: on the one runtime thread, nothing else can then open a session for
                 // this thread or begin shutdown in between. Check again anyway, so a provider
@@ -346,9 +351,25 @@ impl Inner {
                         last_used: Mutex::new(Instant::now()),
                         closed: tokio::sync::Notify::new(),
                         held_since: Mutex::new(None),
+                        provider_session_id: provider_session["id"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .to_owned(),
+                        background_tasks_end_with_process: opened.background_tasks_end_with_process,
                         tools_key: tools.map(|t| t.key),
                     });
                     lock(&self.live).insert(thread_id.to_owned(), live.clone());
+                    // The session's row, from `open_session` (T3: the runtime's
+                    // `providerSession`), before any of its events.
+                    let tid = thread_id.to_owned();
+                    self.write(move |tx| {
+                        tx.append(Draft::new(
+                            &tid,
+                            "provider-session.updated",
+                            provider_session,
+                        ))
+                    })
+                    .await?;
                     tokio::spawn(self.clone().pump(
                         thread_id.to_owned(),
                         live.clone(),
@@ -1196,6 +1217,33 @@ impl Inner {
             live.session.close().await;
             // `notify_one` keeps a permit, so a pump not yet waiting still sees it.
             live.closed.notify_one();
+            if live.background_tasks_end_with_process && !self.shutting_down() {
+                self.clear_released_rosters(thread_id, &live.provider_session_id)
+                    .await;
+            }
+        }
+    }
+
+    /// `readReleasedProviderThreads`: the session's background tasks ended with its process,
+    /// so its provider threads' rosters (`pendingBackgroundTasks`) are cleared.
+    async fn clear_released_rosters(&self, thread_id: &str, provider_session_id: &str) {
+        let (tid, sid) = (thread_id.to_owned(), provider_session_id.to_owned());
+        let cleared = self
+            .write(move |tx| {
+                for mut thread in tx.entities(&tid, "providerThreads")? {
+                    let held = thread["pendingBackgroundTasks"]
+                        .as_array()
+                        .is_some_and(|tasks| !tasks.is_empty());
+                    if thread["providerSessionId"] == sid.as_str() && held {
+                        thread["pendingBackgroundTasks"] = json!([]);
+                        tx.append(Draft::new(&tid, "provider-thread.updated", thread))?;
+                    }
+                }
+                Ok(())
+            })
+            .await;
+        if let Err(e) = cleared {
+            eprintln!("conn-engine: could not clear released background tasks: {e}");
         }
     }
 }

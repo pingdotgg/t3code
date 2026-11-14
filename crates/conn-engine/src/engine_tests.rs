@@ -184,6 +184,7 @@ async fn a_turn_streams_through_the_shell_and_thread_streams() {
             "node.updated root_turn pending",
             "message.updated user",
             "turn-item.updated user_message completed",
+            "provider-session.updated ready",
             "provider-thread.updated active",
             "thread.metadata-updated",
             "run-attempt.created running",
@@ -2357,6 +2358,78 @@ fn model_selection_set(command: &str, instance: &str) -> Value {
         "type": "thread.model-selection.set", "commandId": command, "threadId": "t1",
         "modelSelection": {"instanceId": instance, "model": "m"},
     })
+}
+
+/// `planSelectionTransition` decides a same-instance model change once a session row exists:
+/// `reject` refuses the command, `restart_session` releases the session between turns
+/// (`restart_and_resume`) and refuses while a run is active.
+#[tokio::test(flavor = "current_thread")]
+async fn the_provider_plans_a_model_change() {
+    let selection = |command: &str, model: &str| {
+        json!({
+            "type": "thread.model-selection.set", "commandId": command, "threadId": "t1",
+            "modelSelection": {"instanceId": "claudeAgent", "model": model},
+        })
+    };
+    // Reject.
+    let db = TempDb::new("plan-reject");
+    let (engine, _) = open_with(
+        &db,
+        FakeProvider::new("claudeAgent").with_selection_plan(
+            conn_provider::SelectionTransitionPlan::Reject {
+                reason: "no model switch here".into(),
+            },
+        ),
+    );
+    dispatch(&engine, create("t1", "c1")).await;
+    // No session yet: the change applies at the next turn.
+    dispatch(&engine, selection("c2", "m1")).await;
+    dispatch(&engine, message("t1", "c3", "hi")).await;
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    let refused = engine
+        .dispatch(from_json(selection("c4", "m2")).unwrap())
+        .await;
+    assert!(
+        matches!(&refused, Err(EngineError::Rejected(e)) if to_json(e).to_string().contains("no model switch here")),
+        "{refused:?}"
+    );
+
+    // Restart.
+    let db = TempDb::new("plan-restart");
+    let (engine, provider) = open_with(
+        &db,
+        FakeProvider::new("claudeAgent")
+            .with_selection_plan(conn_provider::SelectionTransitionPlan::RestartSession),
+    );
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    let busy = engine
+        .dispatch(from_json(selection("c3", "m2")).unwrap())
+        .await;
+    assert!(
+        matches!(busy, Err(EngineError::Rejected(_))),
+        "a busy thread keeps its session"
+    );
+    dispatch(
+        &engine,
+        json!({"type": "thread.stop", "commandId": "c4", "threadId": "t1"}),
+    )
+    .await;
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    dispatch(&engine, selection("c5", "m2")).await;
+    for _ in 0..200 {
+        if count(&provider.closed) == 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    assert_eq!(count(&provider.closed), 1, "the session was released");
 }
 
 /// A Stop the provider does not confirm (Codex since T3 b5b470542a) leaves the run running and

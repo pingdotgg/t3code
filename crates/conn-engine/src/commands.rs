@@ -1388,6 +1388,40 @@ fn thread_model_selection_set(tx: &mut Tx<'_>, command: Value) -> Outcome {
     if live_thread(tx, &thread_id)?["providerInstanceId"] != selection["instanceId"] {
         return switch_provider(tx, &command, selection);
     }
+    // The provider's plan (`Engine::plan_selection`; `decideProviderSessionTransition`).
+    let transition = &command["selectionTransition"];
+    match transition["type"].as_str() {
+        Some("reject") => {
+            return reject(
+                transition["reason"]
+                    .as_str()
+                    .unwrap_or("The provider refused this model change."),
+            );
+        }
+        // No handoff here: a new native thread would lose the conversation.
+        Some("create_with_handoff") => {
+            return reject("This provider needs a new conversation for this model.");
+        }
+        Some("restart_session") => {
+            // `restart_and_resume`: the live session is released; a busy thread keeps it.
+            if active_run(tx, &thread_id)?.is_some() {
+                return reject(format!(
+                    "Thread {thread_id} is running; change the model between turns."
+                ));
+            }
+            patch_thread(
+                tx,
+                &thread_id,
+                "thread.model-selection-updated",
+                true,
+                |t, _| {
+                    t["modelSelection"] = selection;
+                },
+            )?;
+            return Ok(vec![Effect::CloseSession { thread_id }]);
+        }
+        _ => {}
+    }
     patch_thread(
         tx,
         &thread_id,
