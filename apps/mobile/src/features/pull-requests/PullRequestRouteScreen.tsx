@@ -61,7 +61,8 @@ import { PullRequestOverviewLoading } from "./PullRequestOverviewLoading";
 import { copyPullRequestLink, sharePullRequestLink } from "./pullRequestLink";
 import { pullRequestStatus } from "./pullRequestStatus";
 import { use, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
-import { Linking, Platform, Pressable, RefreshControl, StyleSheet, View } from "react-native";
+import { Linking, Platform, Pressable, StyleSheet, View } from "react-native";
+import { RefreshControl } from "../../components/ui/RefreshControl";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -141,15 +142,13 @@ function usePullRequestActivityRows(params: PullRequestParams, filter: ActivityF
   const filtered = result.data ? filterPullRequestActivity(result.data, filter) : null;
   const rows = (() => {
     if (!filtered) return [];
-    const rows = pullRequestTimelineRows(filtered.activity, params, navigation, {
-      permissions,
-      onChanged: result.refresh,
-    });
-    if (filter.newestFirst) {
-      const notice = rows.at(-1)?.key === "truncated" ? rows.pop() : undefined;
-      rows.reverse();
-      if (notice) rows.push(notice);
-    }
+    const rows = pullRequestTimelineRows(
+      filtered.activity,
+      params,
+      navigation,
+      { permissions, onChanged: result.refresh },
+      filter.newestFirst,
+    );
     if (!rows.length)
       rows.push({
         key: "empty",
@@ -358,7 +357,7 @@ function usePullRequestToolbarHeight(bottomInset: number) {
 }
 
 export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestParams>) {
-  const returnToList = useAndroidWorkspaceBack("pullRequests");
+  const returnToList = useAndroidWorkspaceBack();
   const { layout } = useAdaptiveWorkspaceLayout();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
