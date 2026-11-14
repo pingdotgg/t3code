@@ -29,11 +29,6 @@ vi.mock("../../../../packages/client-runtime/src/connection/driver.ts", async (i
   return { ...actual, layer: Layer.succeed(actual.ConnectionDriver, fakeDriver) };
 });
 
-vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
-  ...(await original()),
-  trackRpcRequestSent: () => {},
-}));
-
 vi.mock(import("~/state/server"), async (original) => {
   const actual = await original();
   const { Atom } = await import("effect/reactivity");

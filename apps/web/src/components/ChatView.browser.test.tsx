@@ -40,11 +40,6 @@ vi.mock("../../../../packages/client-runtime/src/connection/driver.ts", async (i
   return { ...actual, layer: Layer.succeed(actual.ConnectionDriver, fakeDriver) };
 });
 
-vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
-  ...(await original()),
-  trackRpcRequestSent: () => {},
-}));
-
 it("a new draft does not load its reserved thread before the server lists it", async () => {
   using _environment = installFakeEnvironment([]);
   using fetchSpy = vi.spyOn(globalThis, "fetch");

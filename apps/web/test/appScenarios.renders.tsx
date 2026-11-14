@@ -47,13 +47,6 @@ vi.mock("../../../packages/client-runtime/src/connection/driver.ts", async (impo
   return { ...actual, layer: Layer.succeed(actual.ConnectionDriver, fakeDriver) };
 });
 
-// The fake server leaves most requests unanswered, which would raise the slow-request toast
-// 15s of wall clock after each one, at a different point in every run.
-vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
-  ...(await original()),
-  trackRpcRequestSent: () => {},
-}));
-
 const GIT_STATUS_UPDATES = 20;
 const HISTORY_TURNS = 20;
 const STREAM_DELTAS = 30;

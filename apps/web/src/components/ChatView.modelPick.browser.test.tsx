@@ -29,11 +29,6 @@ vi.mock("../../../../packages/client-runtime/src/connection/driver.ts", async (i
   return { ...actual, layer: Layer.succeed(actual.ConnectionDriver, fakeDriver) };
 });
 
-vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
-  ...(await original()),
-  trackRpcRequestSent: () => {},
-}));
-
 // Its own file: the app's shell subscription outlives a test, and it must list this thread.
 it("a model picked for an existing thread reaches the server before any message is sent", async () => {
   const thread = threadWithHistory("thread-model-pick", 1);
