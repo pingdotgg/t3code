@@ -72,6 +72,8 @@ import {
   selectHistory,
 } from "@t3tools/provider-core/server/handoffBudget";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import type { TextGenerationPolicyKind } from "@t3tools/provider-core/server/textGenerationPolicy";
+import { sanitizeCommitSubject } from "@t3tools/provider-core/server/textGenerationUtils";
 import {
   conventionalCommitsTextGenerationPolicy,
   customTextGenerationPolicy,
@@ -528,20 +530,20 @@ function summarizeGitActionResult(
   return { title: "Done" };
 }
 
-function sanitizeCommitMessage(generated: {
-  subject: string;
-  body: string;
-  branch?: string | undefined;
-}): {
+function sanitizeCommitMessage(
+  generated: {
+    subject: string;
+    body: string;
+    branch?: string | undefined;
+  },
+  policyKind: TextGenerationPolicyKind,
+): {
   subject: string;
   body: string;
   branch?: string | undefined;
 } {
-  const rawSubject = generated.subject.trim().split(/\r?\n/g)[0]?.trim() ?? "";
-  const subject = rawSubject.replace(/[.]+$/g, "").trim();
-  const safeSubject = subject.length > 0 ? subject.slice(0, 72).trimEnd() : "Update project files";
   return {
-    subject: safeSubject,
+    subject: sanitizeCommitSubject(generated.subject, policyKind),
     body: generated.body.trim(),
     ...(generated.branch !== undefined ? { branch: generated.branch } : {}),
   };
@@ -889,23 +891,29 @@ export const make = Effect.gen(function* () {
         const claudeInstructions = isClaudeWriter
           ? yield* readRepositoryInstructions(cwd, "CLAUDE.md")
           : "";
-        const examples = [
+        const repositoryContext = [
+          ...(agentInstructions
+            ? [
+                `Instructions from this repository's AGENTS.md (take precedence over the examples below):\n${agentInstructions}`,
+              ]
+            : []),
+          // CLAUDE.md is often a symlink or copy of AGENTS.md; skip the duplicate.
+          ...(claudeInstructions && claudeInstructions !== agentInstructions
+            ? [
+                `Instructions from this repository's CLAUDE.md (take precedence over the examples below):\n${claudeInstructions}`,
+              ]
+            : []),
           ...(subjects.length > 0
             ? [["Recent commit subjects from this repository:", ...subjects].join("\n")]
             : []),
-          ...(agentInstructions ? [`Local AGENTS.md:\n${agentInstructions}`] : []),
-          // CLAUDE.md is often a symlink or copy of AGENTS.md; skip the duplicate.
-          ...(claudeInstructions && claudeInstructions !== agentInstructions
-            ? [`Local CLAUDE.md:\n${claudeInstructions}`]
-            : []),
         ].join("\n\n");
-        if (!examples) {
+        if (!repositoryContext) {
           return repositoryConventionsTextGenerationPolicy;
         }
         return {
           ...repositoryConventionsTextGenerationPolicy,
-          commitInstructions: `${repositoryConventionsTextGenerationPolicy.commitInstructions}\n\n${examples}`,
-          changeRequestInstructions: `${repositoryConventionsTextGenerationPolicy.changeRequestInstructions}\n\n${examples}`,
+          commitInstructions: `${repositoryConventionsTextGenerationPolicy.commitInstructions}\n\n${repositoryContext}`,
+          changeRequestInstructions: `${repositoryConventionsTextGenerationPolicy.changeRequestInstructions}\n\n${repositoryContext}`,
         };
       }
     }
@@ -2217,7 +2225,7 @@ export const make = Effect.gen(function* () {
           modelSelection: input.settings.modelSelection,
           projectId: input.settings.projectId,
         })
-        .pipe(Effect.map((result) => sanitizeCommitMessage(result)));
+        .pipe(Effect.map((result) => sanitizeCommitMessage(result, policy.kind)));
 
       return {
         subject: generated.subject,

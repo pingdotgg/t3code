@@ -19,6 +19,12 @@ describe("sanitizeCommitSubject", () => {
 
     expect(sanitizeCommitSubject(`${prefix}${character} more`)).toBe(prefix);
   });
+
+  it("keeps a repository-conventions subject's length and trailing period", () => {
+    const subject = `${"a".repeat(80)}.`;
+    expect(sanitizeCommitSubject(`  ${subject}\nignored`, "repo_conventions")).toBe(subject);
+    expect(sanitizeCommitSubject(subject)).toBe("a".repeat(72));
+  });
 });
 
 describe("sanitizeThreadTitle", () => {
