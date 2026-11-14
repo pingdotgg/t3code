@@ -1777,7 +1777,8 @@ function ScheduledTaskEditorForm({
             <div>
               <ProviderModelPicker
                 environmentId={environmentId}
-                disabled={saving || !connected}
+                // Bound runs use the thread's current model; the saved selection only seeds new threads.
+                disabled={saving || !connected || draft.threadId !== ""}
                 activeInstanceId={activeInstanceId}
                 model={activeModel}
                 lockedProvider={null}

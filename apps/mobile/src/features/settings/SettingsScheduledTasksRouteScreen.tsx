@@ -904,7 +904,10 @@ function TaskForm({
               (modelOptions.length ? "Choose model" : "No models available")
             }
             onPress={() => navigation.navigate("SettingsScheduledTaskModel")}
-            disabled={saving || dictationPending || environmentUnavailable}
+            // Bound runs use the thread's current model; the saved selection only seeds new threads.
+            disabled={
+              saving || dictationPending || environmentUnavailable || draft.threadId !== null
+            }
           />
         </SettingsSection>
 
