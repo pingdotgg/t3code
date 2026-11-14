@@ -10,6 +10,10 @@ rebases, the files Git brought in are left out. A file stays in the list when th
 committed it, or fixed a conflict in it. Use the branch comparison to review everything that changed
 against your base branch. Restore still returns the complete saved workspace.
 
+On web and desktop, the changed files show under the agent's reply. To keep them out of the chat,
+turn off **Changed files in chat** in **Settings → Diffs**; the Diff pane's **Latest turn** and
+**Turn** sources still show each turn's changes.
+
 On web and desktop, open the Diff pane source picker and choose **Commits** to review one local
 commit at a time. The list shows the newest 100 commits in the branch comparison. A merge commit
 shows its changes against its first parent.

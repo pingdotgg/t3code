@@ -27,6 +27,7 @@ import { resolveAssistantMessageCopyState } from "./MessagesTimeline.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
 import { useUiStateStore } from "~/uiStateStore";
+import { useClientSettings } from "~/hooks/useSettings";
 import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
 import { readThreadTurnItems } from "../../state/entities";
 import { useV2ItemSupport } from "../../state/v2ItemSupport";
@@ -408,7 +409,8 @@ const AssistantChangedFilesSection = memo(function AssistantChangedFilesSection(
   displayThreadKey?: string;
   onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
 }) {
-  if (!turnSummary) return null;
+  const showChangedFiles = useClientSettings((settings) => settings.showChangedFilesInChat);
+  if (!showChangedFiles || !turnSummary) return null;
   const checkpointFiles = turnSummary.files;
   if (checkpointFiles.length === 0) return null;
 
