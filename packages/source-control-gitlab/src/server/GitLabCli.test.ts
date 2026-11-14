@@ -173,7 +173,8 @@ layer("GitLabCli.layer", (it) => {
         const entries = Array.from({ length: 4 }, (_, index) => ({
           iid: index + 1,
           title: "MR " + index,
-          description: "x".repeat(300_000),
+          // The first alone escapes past the default 1 MB cap; together they pass the list cap.
+          description: index === 0 ? '"'.repeat(600_000) : "x".repeat(3_000_000),
           web_url: "https://gitlab.com/acme/web/-/merge_requests/" + (index + 1),
           target_branch: "main",
           source_branch: "feature",
@@ -185,9 +186,10 @@ layer("GitLabCli.layer", (it) => {
           const pageIndex = input.args.indexOf("--page");
           const page = pageIndex < 0 ? 1 : Number(input.args[pageIndex + 1]);
           const raw = JSON.stringify(entries.slice((page - 1) * size, page * size));
+          const cap = input.maxOutputBytes ?? 1_000_000;
           return Effect.succeed({
-            ...processOutput(raw.slice(0, 1_000_000)),
-            stdoutTruncated: raw.length > 1_000_000,
+            ...processOutput(raw.slice(0, cap)),
+            stdoutTruncated: raw.length > cap,
           });
         });
         const glab = yield* GitLabCli.GitLabCli;

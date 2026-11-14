@@ -23,6 +23,8 @@ import {
 import type * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+// GitLab allows ~1M-character descriptions; glab's JSON escaping (`\u003c`) can grow one sixfold.
+const MERGE_REQUEST_LIST_MAX_BYTES = 8_000_000;
 const decodeJsonArray = Schema.decodeUnknownExit(
   Schema.fromJsonString(Schema.Array(Schema.Unknown)),
 );
@@ -505,6 +507,7 @@ export const make = Effect.gen(function* () {
             "--output",
             "json",
           ],
+          maxOutputBytes: MERGE_REQUEST_LIST_MAX_BYTES,
         });
         if (result.stdoutTruncated && pageSize > 1) {
           pageSize = Math.max(1, Math.floor(pageSize / 2));
