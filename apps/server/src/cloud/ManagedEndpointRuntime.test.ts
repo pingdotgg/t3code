@@ -22,7 +22,7 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import { HttpClient } from "effect/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
 import * as RelayClient from "@t3tools/shared/relayClient";
 
@@ -30,6 +30,7 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import * as RelayClientLedger from "./RelayClientLedger.ts";
 
 const layerRelayClientAvailable = Layer.succeed(
   RelayClient.RelayClient,
@@ -74,6 +75,7 @@ const runtimeDependencies = (
     Layer.succeed(HttpClient.HttpClient, httpClient),
     relayClientLayer,
     secretStoreLayer,
+    RelayClientLedger.layerTest,
     ServerConfig.layerTest(process.cwd(), { prefix: "t3-managed-endpoint-" }),
   ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
@@ -257,6 +259,68 @@ describe("CloudManagedEndpointRuntime", () => {
     }),
   );
 
+  it.effect("reads the public hostname and its origin from cloudflared's remote config", () =>
+    Effect.gen(function* () {
+      let ingress: unknown = [
+        { hostname: "env.example.t3.codes", service: "http://127.0.0.1:3773" },
+        { service: "http_status:404" },
+      ];
+      const httpClient = HttpClient.make((request) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            Response.json(
+              request.url.endsWith("/config")
+                ? { config: ingress === undefined ? {} : { ingress } }
+                : { readyConnections: 4 },
+            ),
+          ),
+        ),
+      );
+      const output = yield* Queue.unbounded<Uint8Array>();
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.gen(function* () {
+          const handle = makeHandle({
+            pid: 702,
+            onKill: () => {},
+            output: Stream.fromQueue(output),
+          });
+          yield* Effect.addFinalizer(() => handle.kill().pipe(Effect.ignore));
+          return handle;
+        }),
+      );
+      const runtime = yield* buildCloudManagedEndpointRuntime(
+        spawner,
+        layerRelayClientAvailable,
+        httpClient,
+      );
+      yield* runtime.applyConfig({
+        providerKind: "cloudflare_tunnel",
+        connectorToken: "connector-token",
+        tunnelId: "tunnel-1",
+      });
+      yield* Queue.offer(
+        output,
+        new TextEncoder().encode(
+          "2026-10-06T00:00:01Z INF Starting metrics server on 127.0.0.1:20241/metrics\n" +
+            "2026-10-06T00:00:01Z INF Registered tunnel connection connIndex=0\n",
+        ),
+      );
+      yield* Stream.runHead(runtime.tunnelConnected);
+
+      expect(yield* runtime.inspectConnector).toMatchObject({
+        readyConnections: 4,
+        hostname: "env.example.t3.codes",
+        origin: "http://127.0.0.1:3773",
+      });
+      // Before the edge pushes a config, the origin is unknown rather than wrong.
+      for (const missing of [null, undefined]) {
+        ingress = missing;
+        expect(yield* runtime.inspectConnector).toMatchObject({ hostname: null, origin: null });
+      }
+    }),
+  );
+
   it.effect("logs a connection unregistration at info with the connector token redacted", () => {
     const logs: Array<{ readonly level: string; readonly message: unknown }> = [];
     const unregistrationLogged = Deferred.makeUnsafe<void>();
@@ -428,6 +492,51 @@ describe("CloudManagedEndpointRuntime", () => {
       expect(yield* runtime.restartConnector(800, Effect.succeed(true))).toBe(false);
       expect(yield* runtime.inspectConnector).toMatchObject({ pid: 801 });
     }),
+  );
+
+  it.effect("still owns a relay client when activation is interrupted while recording it", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeTransportSpawner();
+      const recording = yield* Deferred.make<void>();
+      const recorded = yield* Deferred.make<void>();
+      const ledger = Layer.succeed(
+        RelayClientLedger.RelayClientLedger,
+        RelayClientLedger.RelayClientLedger.of({
+          track: () =>
+            Deferred.succeed(recording, undefined).pipe(
+              Effect.andThen(Deferred.await(recorded)),
+              Effect.as(Effect.void),
+            ),
+        }),
+      );
+      const context = yield* Layer.build(
+        ManagedEndpointRuntime.layer.pipe(
+          Layer.provide(Layer.merge(runtimeDependencies(fixture.spawner), ledger)),
+        ),
+      );
+      const runtime = yield* Effect.service(
+        ManagedEndpointRuntime.CloudManagedEndpointRuntime,
+      ).pipe(Effect.provide(context));
+
+      const activation = yield* Effect.forkChild(runtime.applyConfig(tunnelConfig));
+      yield* Deferred.await(recording);
+      const interrupting = yield* Effect.forkChild(Fiber.interrupt(activation), {
+        startImmediately: true,
+      });
+      yield* Deferred.succeed(recorded, undefined);
+      yield* Fiber.join(interrupting);
+
+      // The handed-over connector is supervised: its exit starts a replacement.
+      expect(yield* Queue.take(fixture.started)).toBe(0);
+      yield* Deferred.succeed(fixture.exits[0]!, ChildProcessSpawner.ExitCode(1));
+      expect(yield* Queue.take(fixture.started)).toBe(1);
+
+      yield* runtime.applyConfig(null);
+      expect(fixture.killed).toEqual([800, 801]);
+    }).pipe(
+      Effect.provideService(HostProcess.Environment, {}),
+      Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
+    ),
   );
 
   it.effect("preserves an explicit transport choice despite repeated QUIC stalls", () =>

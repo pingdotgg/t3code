@@ -3,6 +3,7 @@ import { AuthFilesystemReadScope, AuthOrchestrationReadScope } from "@t3tools/co
 
 import {
   createBrowseNavigationCoordinator,
+  filterFilesystemBrowseEntries,
   getFilesystemBrowsePath,
   getFilesystemBrowseTabCompletion,
   resolveFilesystemReadAccess,
@@ -106,6 +107,27 @@ describe("filesystem browse model", () => {
       isComplete: false,
     });
     expect(getFilesystemBrowseTabCompletion([], "x")).toBeNull();
+  });
+
+  it("matches folder names stored decomposed, as macOS Finder names them", () => {
+    const entry = { name: "De\u0301veloppement", fullPath: "/Users/me/De\u0301veloppement" };
+    expect(filterFilesystemBrowseEntries([entry], "d\u00e9v")).toEqual({
+      visibleEntries: [entry],
+      exactEntry: null,
+    });
+    expect(filterFilesystemBrowseEntries([entry], "De").visibleEntries).toEqual([entry]);
+    expect(filterFilesystemBrowseEntries([entry], "D\u00e9veloppement").exactEntry).toBe(entry);
+    // Linux keeps both spellings as separate folders; the one typed exactly wins.
+    const composed = { name: "D\u00e9veloppement", fullPath: "/home/me/D\u00e9veloppement" };
+    expect(filterFilesystemBrowseEntries([entry, composed], "D\u00e9veloppement").exactEntry).toBe(
+      composed,
+    );
+    // Two spellings that both normalize to the query are ambiguous; neither is picked.
+    const angstroms = [
+      { name: "\u212B", fullPath: "/home/me/\u212B" },
+      { name: "A\u030A", fullPath: "/home/me/A\u030A" },
+    ];
+    expect(filterFilesystemBrowseEntries(angstroms, "\u00C5").exactEntry).toBeNull();
   });
 });
 

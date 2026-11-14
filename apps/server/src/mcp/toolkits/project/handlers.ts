@@ -67,7 +67,7 @@ function worktreeCheckHint(
   }
   return `Pass a branch, tag, or commit that exists there${
     strategy.startFromOrigin === true
-      ? "; the project has no usable remote to fetch it from."
+      ? "; no remote of the project has it either."
       : ", or set startFromOrigin:true if it exists only on a remote."
   }`;
 }
