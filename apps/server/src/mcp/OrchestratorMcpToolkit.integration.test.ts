@@ -482,11 +482,17 @@ describe("orchestrator MCP toolkit", () => {
         const completedChild = yield* orchestrator.getThreadProjection(
           localChild(delegatedStart.childThreadId),
         );
-        const completedRun = completedChild.runs.find((run) => run.id === delegatedStart.childRunId);
+        const completedRun = completedChild.runs.find(
+          (run) => run.id === delegatedStart.childRunId,
+        );
         expect(completedRun).toBeDefined();
-        expect(completedReceipt.requestedAt).toEqual(DateTime.formatIso(completedRun!.requestedAt!));
+        expect(completedReceipt.requestedAt).toEqual(
+          DateTime.formatIso(completedRun!.requestedAt!),
+        );
         expect(completedReceipt.startedAt).toEqual(DateTime.formatIso(completedRun!.startedAt!));
-        expect(completedReceipt.completedAt).toEqual(DateTime.formatIso(completedRun!.completedAt!));
+        expect(completedReceipt.completedAt).toEqual(
+          DateTime.formatIso(completedRun!.completedAt!),
+        );
         expect(completedReceipt.completedAt).not.toBeNull();
         const delegatedStatusCall = yield* invoke("task_status", {
           taskId: delegatedStart.taskId,
