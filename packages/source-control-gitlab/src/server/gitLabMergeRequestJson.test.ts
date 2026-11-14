@@ -827,7 +827,7 @@ describe("decodeOwnAwardIdJson", () => {
   it("finds the reader's own award of that name, which is the one a removal deletes", () => {
     expect(
       expectSuccess(decodeOwnAwardIdJson(awards, { content: "thumbs-up", viewer: "bilal" })),
-    ).toBe(102);
+    ).toEqual({ id: 102, empty: false });
   });
 });
 
