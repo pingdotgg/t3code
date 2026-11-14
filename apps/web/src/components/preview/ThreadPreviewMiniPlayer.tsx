@@ -68,6 +68,11 @@ import {
   resolvePreviewMiniPlayerSourceSize,
 } from "./previewMiniPlayerLayout";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`preview:${key}`, options);
+
 interface PointerGesture {
   readonly pointerId: number;
   readonly pointerType: string;
@@ -251,8 +256,8 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
     } catch (error) {
       toastManager.add({
         type: "error",
-        title: serverTab ? "Unable to pop out preview" : "Unable to update popped-out preview",
-        description: error instanceof Error ? error.message : "An error occurred.",
+        title: serverTab ? td("errors.popOut") : td("errors.updatePopup"),
+        description: error instanceof Error ? error.message : td("errors.generic"),
       });
     }
   };
@@ -272,7 +277,7 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
       threadRef={threadRef}
       miniPlayer={miniPlayer}
       sourceSize={sourceSize}
-      label="Floating browser preview"
+      label={td("mini.floatingPreview")}
       recording={recording}
       onOpenInPanel={openInPanel}
       pillActions={
@@ -283,9 +288,7 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
                 <Button
                   variant={poppedOut ? "secondary" : "ghost"}
                   size="icon-xs"
-                  aria-label={
-                    poppedOut ? "Close popped-out preview" : "Pop preview into separate window"
-                  }
+                  aria-label={poppedOut ? td("mini.closePoppedOut") : td("mini.popIntoWindow")}
                   disabled={!serverTab && !desktopOverlay?.hasWebContents}
                   onPointerDown={(event) => event.stopPropagation()}
                   onClick={toggleNativePictureInPicture}
@@ -295,7 +298,7 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
               <PictureInPicture2 />
             </TooltipTrigger>
             <TooltipPopup side="top">
-              {poppedOut ? "Close separate window" : "Pop into separate window"}
+              {poppedOut ? td("mini.closeSeparateWindow") : td("mini.popIntoSeparateWindow")}
             </TooltipPopup>
           </Tooltip>
         ) : null
@@ -367,7 +370,7 @@ function DeviceMiniPlayer({
     (entry) => entry.hostId === source.hostId && entry.id === source.deviceId,
   );
   const host = deviceState.hosts.find((entry) => entry.id === source.hostId);
-  const hostLabel = host?.label ?? "Device host";
+  const hostLabel = host?.label ?? td("device.hostFallback");
   const cornerRadius = (player: PreviewMiniPlayerSize) =>
     resolveDeviceMiniPlayerCornerRadius(source.platform, player);
 

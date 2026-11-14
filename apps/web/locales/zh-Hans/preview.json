@@ -1,0 +1,103 @@
+{
+  "nav": {
+    "group": "导航",
+    "back": "后退",
+    "forward": "前进",
+    "stop": "停止",
+    "refresh": "刷新",
+    "loading": "加载中…",
+    "openInSystemBrowser": "在系统浏览器中打开"
+  },
+  "address": {
+    "placeholder": "搜索或输入 URL"
+  },
+  "annotate": {
+    "start": "标注预览",
+    "cancel": "取消标注",
+    "cancelHint": "取消标注（Esc）",
+    "hint": "标注元素、区域和涂画",
+    "pageNotLoaded": "页面未加载。页面渲染前无法拾取"
+  },
+  "capture": {
+    "screenshot": "截屏",
+    "stopRecording": "停止录制",
+    "screenshotHint": "截屏 · Shift-点击可录制"
+  },
+  "pip": {
+    "close": "关闭悬浮预览",
+    "float": "把预览悬浮在对话上方"
+  },
+  "appearance": {
+    "system": "跟随系统",
+    "light": "浅色",
+    "dark": "深色"
+  },
+  "menu": {
+    "open": "预览菜单",
+    "more": "更多",
+    "closePopup": "关闭独立预览窗口",
+    "openPopup": "打开独立预览窗口",
+    "hideDeviceToolbar": "隐藏设备工具栏",
+    "showDeviceToolbar": "显示设备工具栏",
+    "appearance": "外观",
+    "zoom": "缩放",
+    "zoomOut": "缩小",
+    "zoomIn": "放大",
+    "resetZoom": "重置缩放",
+    "clearCookies": "清除 Cookie",
+    "clearCache": "清除缓存"
+  },
+  "errors": {
+    "generic": "发生错误。",
+    "openBrowser": "无法打开浏览器",
+    "openAddress": "无法打开此地址",
+    "enterHttpUrl": "请输入 http 或 https URL。",
+    "changeTab": "无法更改浏览器标签页",
+    "moveTab": "无法移动浏览器标签页",
+    "updatePopup": "无法更新已弹出的预览",
+    "copyRecordingPath": "无法复制录制文件路径",
+    "clipboardUnavailable": "剪贴板 API 不可用。",
+    "stopRecording": "无法停止录制",
+    "startRecording": "无法开始录制",
+    "copyScreenshot": "无法复制截屏",
+    "copyScreenshotPath": "无法复制截屏路径",
+    "captureScreenshot": "无法截屏",
+    "capturePicked": "无法截取所选元素",
+    "annotationKept": "标注已保留，但没有附上截屏。",
+    "popOut": "无法弹出预览"
+  },
+  "recording": {
+    "saved": "录制已保存"
+  },
+  "screenshot": {
+    "saved": "截屏已保存"
+  },
+  "copied": "已复制！",
+  "copyPath": "复制路径",
+  "copyImage": "复制图片",
+  "removedProfile": "已移除的配置",
+  "openInEnvironmentBrowser": "在 {{label}} 的浏览器中打开",
+  "openOnThisComputer": "在这台电脑上打开",
+  "empty": {
+    "title": "还没有预览"
+  },
+  "listening": "监听中",
+  "checkConnection": "正在检查你的连接",
+  "confirmDevServer": "正在确认开发服务器是否在运行",
+  "checkProxyFirewall": "正在检查代理和防火墙",
+  "hideDetails": "隐藏详情",
+  "details": "详情",
+  "revealInFinder": "在 Finder 中显示",
+  "revealInFileExplorer": "在文件资源管理器中显示",
+  "revealInFiles": "在文件中显示",
+  "mini": {
+    "floatingPreview": "悬浮浏览器预览",
+    "closePoppedOut": "关闭已弹出的预览",
+    "popIntoWindow": "把预览弹出到独立窗口",
+    "closeSeparateWindow": "关闭独立窗口",
+    "popIntoSeparateWindow": "弹出到独立窗口"
+  },
+  "device": {
+    "hostFallback": "设备主机"
+  }
+}

@@ -9,6 +9,11 @@ import { PreviewLocalServerCard } from "./PreviewLocalServerCard";
 import { PreviewRecentUrlCard } from "./PreviewRecentUrlCard";
 import { useDiscoveredLocalServers } from "./useDiscoveredLocalServers";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`preview:${key}`, options);
+
 interface Props {
   threadRef: ScopedThreadRef;
   environmentId: EnvironmentId;
@@ -38,7 +43,7 @@ export function PreviewEmptyState({
         <EmptyMedia variant="icon">
           <Globe className="size-4.5 text-muted-foreground" />
         </EmptyMedia>
-        <EmptyTitle>No preview yet</EmptyTitle>
+        <EmptyTitle>{td("empty.title")}</EmptyTitle>
         <EmptyDescription>
           Type a URL above, or run a dev script. Local servers this thread starts will show up here
           automatically.

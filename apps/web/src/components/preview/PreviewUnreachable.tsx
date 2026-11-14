@@ -4,6 +4,11 @@ import { Button } from "~/components/ui/button";
 
 import { describePreviewError } from "./errorCodeMessages";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`preview:${key}`, options);
+
 interface Props {
   url: string;
   code: number;
@@ -72,12 +77,12 @@ export function PreviewUnreachable({ url, code, description, onReload, move }: P
           <div className="mt-6 rounded-lg border border-border bg-muted/40 p-4 text-sm">
             <p className="mb-2 font-medium text-foreground">Try:</p>
             <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
-              <li>Checking your connection</li>
-              <li>Confirming the dev server is running</li>
+              <li>{td("checkConnection")}</li>
+              <li>{td("confirmDevServer")}</li>
               {move ? (
                 <li>Opening it in the environment&rsquo;s browser, which reaches its network</li>
               ) : null}
-              <li>Checking the proxy and the firewall</li>
+              <li>{td("checkProxyFirewall")}</li>
             </ul>
           </div>
         ) : null}
@@ -93,7 +98,7 @@ export function PreviewUnreachable({ url, code, description, onReload, move }: P
             size="sm"
             onClick={() => setShowDetails((value) => !value)}
           >
-            {showDetails ? "Hide details" : "Details"}
+            {showDetails ? td("hideDetails") : td("details")}
           </Button>
           <div className="flex-1" />
           {move ? (

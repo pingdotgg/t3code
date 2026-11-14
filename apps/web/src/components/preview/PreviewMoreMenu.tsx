@@ -18,13 +18,18 @@ import {
 } from "~/components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`preview:${key}`, options);
+
 const COLOR_SCHEME_OPTIONS: ReadonlyArray<{
   value: DesktopPreviewColorScheme;
   label: string;
 }> = [
-  { value: "system", label: "System" },
-  { value: "light", label: "Light" },
-  { value: "dark", label: "Dark" },
+  { value: "system", label: td("appearance.system") },
+  { value: "light", label: td("appearance.light") },
+  { value: "dark", label: td("appearance.dark") },
 ];
 
 export interface PreviewMoreMenuActions {
@@ -56,13 +61,15 @@ const MenuTriggerButton = () => (
     <TooltipTrigger
       render={
         <MenuTrigger
-          render={<Button variant="ghost" size="icon-xs" type="button" aria-label="Preview menu" />}
+          render={
+            <Button variant="ghost" size="icon-xs" type="button" aria-label={td("menu.open")} />
+          }
         />
       }
     >
       <MoreVertical />
     </TooltipTrigger>
-    <TooltipPopup>More</TooltipPopup>
+    <TooltipPopup>{td("menu.more")}</TooltipPopup>
   </Tooltip>
 );
 
@@ -93,17 +100,15 @@ export function PreviewMoreMenu({
         ) : null}
         {actions.toggleNativePictureInPicture ? (
           <MenuItem onClick={actions.toggleNativePictureInPicture} disabled={disabled}>
-            {nativePictureInPicture
-              ? "Close separate preview window"
-              : "Open separate preview window"}
+            {nativePictureInPicture ? td("menu.closePopup") : td("menu.openPopup")}
           </MenuItem>
         ) : null}
         {move ? <MenuItem onClick={move.onMove}>{move.label}</MenuItem> : null}
         <MenuItem onClick={onToggleDeviceToolbar} disabled={disabled}>
-          {deviceToolbarVisible ? "Hide device toolbar" : "Show device toolbar"}
+          {deviceToolbarVisible ? td("menu.hideDeviceToolbar") : td("menu.showDeviceToolbar")}
         </MenuItem>
         <MenuSub>
-          <MenuSubTrigger disabled={disabled}>Appearance</MenuSubTrigger>
+          <MenuSubTrigger disabled={disabled}>{td("menu.appearance")}</MenuSubTrigger>
           <MenuSubPopup>
             <MenuRadioGroup
               value={colorScheme}
@@ -124,14 +129,14 @@ export function PreviewMoreMenu({
           className="justify-between"
           disabled={disabled}
         >
-          <span>Zoom</span>
+          <span>{td("menu.zoom")}</span>
           <span className="flex items-center gap-1">
             <Button
               variant="outline"
               size="icon-xs"
               type="button"
               onClick={actions.zoomOut}
-              aria-label="Zoom out"
+              aria-label={td("menu.zoomOut")}
               disabled={disabled}
             >
               <Minus />
@@ -144,7 +149,7 @@ export function PreviewMoreMenu({
               size="icon-xs"
               type="button"
               onClick={actions.zoomIn}
-              aria-label="Zoom in"
+              aria-label={td("menu.zoomIn")}
               disabled={disabled}
             >
               <PlusIcon />
@@ -154,7 +159,7 @@ export function PreviewMoreMenu({
               size="icon-xs"
               type="button"
               onClick={actions.resetZoom}
-              aria-label="Reset zoom"
+              aria-label={td("menu.resetZoom")}
               disabled={disabled}
             >
               <RotateCcw />
@@ -168,8 +173,8 @@ export function PreviewMoreMenu({
               <span className="block truncate">Profile: {profileName}</span>
             </MenuGroupLabel>
           ) : null}
-          <MenuItem onClick={actions.clearCookies}>Clear cookies</MenuItem>
-          <MenuItem onClick={actions.clearCache}>Clear cache</MenuItem>
+          <MenuItem onClick={actions.clearCookies}>{td("menu.clearCookies")}</MenuItem>
+          <MenuItem onClick={actions.clearCache}>{td("menu.clearCache")}</MenuItem>
         </MenuGroup>
       </MenuPopup>
     </Menu>
