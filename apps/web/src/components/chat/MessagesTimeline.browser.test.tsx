@@ -2,7 +2,7 @@ import { injectHtmlRenderBootstrap } from "@t3tools/shared/htmlRender";
 import { HtmlRenderDocument } from "../files/BrowserDocumentFrame";
 import { flushSync } from "react-dom";
 import { AudioPreview } from "../files/AudioPreview";
-import { cdp, page } from "vite-plus/test/browser";
+import { cdp, page, userEvent } from "vite-plus/test/browser";
 import {
   ComposerContextId,
   EnvironmentId,
@@ -37,6 +37,7 @@ import { environmentThreadDetails } from "../../state/threads";
 import { act, fakeTimers, render, stubGlobal } from "../../../test/render";
 import { ChangedFilesCard } from "./ChangedFilesTree";
 import { MessagesTimeline } from "./MessagesTimeline";
+import { createWorkspaceFocusController, workspaceAreaProps } from "../../lib/workspaceFocus";
 import { resolveTimelineIsAtEnd } from "./MessagesTimeline.logic";
 import { makeStreamingTimelineFixture } from "../../test-fixtures";
 import {
@@ -85,6 +86,10 @@ vi.mock(import("~/assets/assetUrls"), async (original) => {
       stubbedAsset.url
         ? { _tag: "Success", url: stubbedAsset.url }
         : actual.useAssetUrlState(...args)) as typeof actual.useAssetUrlState,
+    useAssetUrls: ((...args: Parameters<typeof actual.useAssetUrls>) =>
+      stubbedAsset.url
+        ? args[1].map(() => stubbedAsset.url)
+        : actual.useAssetUrls(...args)) as typeof actual.useAssetUrls,
   };
 });
 
@@ -565,6 +570,38 @@ describe("MessagesTimeline messages", () => {
     await expectHeadingInView("Last turn", "Turn 118:");
   });
 
+  it("scrolls from the keyboard once F6 moves into the conversation", async () => {
+    setup();
+    const props = baseProps();
+    const entries = Array.from({ length: 40 }, (_, index) =>
+      message(`Turn ${index}:\n\n${"x ".repeat(200)}`, {}, `turn-${index}`),
+    );
+    await using _screen = await renderElement(
+      <>
+        <div
+          {...workspaceAreaProps("conversation", 1, "Conversation")}
+          className="relative flex min-h-0 flex-1 flex-col"
+        >
+          <MessagesTimeline {...props} timelineEntries={entries} />
+        </div>
+        <div {...workspaceAreaProps("composer", 2, "Message input")}>
+          <button type="button">Send</button>
+        </div>
+      </>,
+    );
+    const focus = createWorkspaceFocusController(document);
+    using _focus = { [Symbol.dispose]: focus.dispose };
+    const viewport = props.listRef.current!.getScrollableNode()!;
+    await vi.waitFor(() => expect(viewport.scrollTop).toBeGreaterThan(0));
+    const atEnd = viewport.scrollTop;
+    page.getByRole("button", { name: "Send" }).element().focus();
+    await userEvent.keyboard("{F6}");
+    focus.move(-1);
+    expect(viewport).toHaveAttribute("data-workspace-keyboard-focus");
+    await userEvent.keyboard("{PageUp}");
+    await vi.waitFor(() => expect(viewport.scrollTop).toBeLessThan(atEnd));
+  });
+
   it("disables the minimap's next turn button at the bottom of the thread", async () => {
     setup();
     const props = baseProps();
@@ -763,6 +800,50 @@ describe("MessagesTimeline messages", () => {
     expect(turns).toEqual(turns.toSorted((a, b) => a - b));
   });
 
+  it("steps the minimap's next turn past two adjacent user messages", async () => {
+    const props = baseProps();
+    const reply = (id: string) => message("Reply.\n\n".repeat(120), { role: "assistant" }, id);
+    const userIds = ["turn-0", "turn-1", "turn-2", "pair-a", "pair-b", "turn-3", "turn-4"];
+    const entries = [
+      ...["turn-0", "turn-1", "turn-2"].flatMap((id) => [message(id, {}, id), reply(`${id}-r`)]),
+      message("pair-a", {}, "pair-a"),
+      message("pair-b", {}, "pair-b"),
+      reply("pair-b-r"),
+      ...["turn-3", "turn-4"].flatMap((id) => [message(id, {}, id), reply(`${id}-r`)]),
+    ];
+    const session = cdp();
+    await session.send("Emulation.setEmulatedMedia", {
+      features: [{ name: "prefers-reduced-motion", value: "reduce" }],
+    });
+    try {
+      await using screen = await renderTimeline(entries, props);
+      const viewport = props.listRef.current!.getScrollableNode()!;
+      const strips = () => [...screen.container.querySelectorAll("[data-minimap-strip]")];
+      const turnAtTop = () =>
+        userIds.find((id) => {
+          const row = screen.container.querySelector(`[data-message-id="${id}"]`);
+          if (!row) return false;
+          const offset = row.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
+          return offset >= 0 && offset < 100;
+        });
+      await act(() => {
+        void props.listRef.current!.scrollToIndex({ index: 0, animated: false });
+      });
+      await vi.waitFor(() => expect(strips()[0]?.getAttribute("data-in-view")).toBe("true"));
+
+      // Clicks again while the view has not moved, as a user would.
+      for (const id of userIds.slice(1)) {
+        const from = turnAtTop();
+        await vi.waitFor(async () => {
+          if (turnAtTop() === from) await click(screen.button("Next turn"));
+          expect(turnAtTop(), "turn at the top after Next turn").toBe(id);
+        });
+      }
+    } finally {
+      await session.send("Emulation.setEmulatedMedia", { features: [] });
+    }
+  });
+
   it("preserves XML-like tags and comparisons in user messages as text", async () => {
     const source = [
       'Without reading a file, do you have <global-agent-instructions scope="workspace">',
@@ -782,6 +863,25 @@ describe("MessagesTimeline messages", () => {
     expect(screen.text()).toContain(source);
     expect(screen.container.querySelector("script, img")).toBeNull();
     expect((globalThis as { __t3Xss?: number }).__t3Xss).toBeUndefined();
+  });
+
+  it("keeps single tildes in user paths literal without changing double tildes or assistant text", async () => {
+    const source =
+      "Install the skill as ~/folder-a/skills/x, then follow the guide (~/folder-a/guide.md).";
+    await using screen = await renderTimeline([
+      message(source),
+      message("Drop ~~the old plan~~", {}, "message-2"),
+      message(source, { role: "assistant" }, "assistant-1"),
+    ]);
+    const [user, doubleTilde, assistant] = screen.container.querySelectorAll<HTMLElement>(
+      "[data-timeline-row-kind=message]",
+    );
+    expect(user?.textContent).toContain(source);
+    expect(user?.querySelector("del")).toBeNull();
+    expect(doubleTilde?.querySelector("del")?.textContent).toBe("the old plan");
+    expect(assistant?.querySelector("del")?.textContent).toBe(
+      "/folder-a/skills/x, then follow the guide (",
+    );
   });
 
   it("renders sanitized raw HTML in assistant messages", async () => {
@@ -1615,6 +1715,47 @@ describe("MessagesTimeline attachments", () => {
       }),
     );
   });
+
+  it("opens an image from an expanded tool row as a gallery of the turn's viewed images", async () => {
+    stubbedAsset.url =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+    onTestFinished(() => {
+      stubbedAsset.url = "";
+    });
+    const onImageExpand = vi.fn<ComponentProps<typeof MessagesTimeline>["onImageExpand"]>();
+    const read = (name: string) =>
+      work(`read-${name}`, {
+        label: `Read ${name}`,
+        toolTitle: "Read",
+        tone: "tool",
+        itemType: "dynamic_tool",
+        toolLifecycleStatus: "completed",
+        viewedImagePath: `/repo/${name}`,
+      });
+    await using screen = await renderTimeline(
+      [read("first.png"), read("second.png"), read("third.png")],
+      { onImageExpand, workspaceRoot: "/repo" },
+    );
+    await click(screen.button(/^Read 3 files/));
+    await vi.waitFor(() => expect(screen.buttons("Read")).toHaveLength(3));
+    await click(screen.buttons("Read")[1]!);
+    const inRow = await vi.waitFor(() => {
+      const image = [...screen.container.querySelectorAll("img")].find(
+        (img) => img.alt === "second.png" && !img.closest("[data-image-gallery]"),
+      );
+      expect(image).toBeTruthy();
+      return image!;
+    });
+    await click(inRow.closest<HTMLElement>("button, [role=button]")!);
+    expect(onImageExpand).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        index: 1,
+        images: ["first.png", "second.png", "third.png"].map((name) =>
+          expect.objectContaining({ name }),
+        ),
+      }),
+    );
+  });
 });
 
 describe("MessagesTimeline thread find", () => {
@@ -1800,6 +1941,10 @@ describe("compact reasoning math", () => {
     [
       "line one\r\nline two\r\n\r\nnext  nbsp　wide 😀𝑥 end",
       [["text", "line one line two next nbsp wide 😀𝑥 end"]],
+    ],
+    [
+      `${"x".repeat(THOUGHT_PREVIEW_MAX_LENGTH - 1)}😀 tail`,
+      [["text", "x".repeat(THOUGHT_PREVIEW_MAX_LENGTH - 1)]],
     ],
     ["\\$5 and \\$6, \\*not em\\*", [["text", "$5 and $6, *not em*"]]],
     ["hard  \nbreak\\\nagain", [["text", "hard break again"]]],

@@ -599,6 +599,33 @@ it("keeps punctuation in a saved dictionary term and its alias", async () => {
   ]);
 });
 
+it("keeps a dictionary term and alias draft on the Enter that confirms an IME candidate", async () => {
+  const previous = getClientSettings();
+  using cleanup = new DisposableStack();
+  cleanup.defer(() => __setClientSettingsForTests(previous));
+  __setClientSettingsForTests({
+    ...previous,
+    speechCustomWords: [{ term: "日本語", aliases: [] }],
+  });
+  await using screen = await render(
+    <SettingsScopeProvider search={{}} onChange={() => {}}>
+      <VoiceSettingsPanel />
+    </SettingsScopeProvider>,
+  );
+  const composingEnter = () =>
+    new KeyboardEvent("keydown", { key: "Enter", isComposing: true, bubbles: true });
+  const term = screen.getByRole("textbox", { name: "Add a word or phrase to the dictionary" });
+  await userEvent.fill(term, "にほん");
+  term.element().dispatchEvent(composingEnter());
+  await expect.element(term).toHaveValue("にほん");
+  await userEvent.click(screen.getByRole("button", { name: "Add an alias for 日本語" }));
+  const alias = screen.getByRole("textbox", { name: "Alias for 日本語" });
+  await userEvent.fill(alias, "にほん");
+  alias.element().dispatchEvent(composingEnter());
+  expect(getClientSettings().speechCustomWords).toEqual([{ term: "日本語", aliases: [] }]);
+  await expect.element(alias).toHaveValue("にほん");
+});
+
 it("records from the first connected microphone in the saved order", async () => {
   const previous = getClientSettings();
   using cleanup = new DisposableStack();

@@ -931,10 +931,13 @@ describe("standalone Mermaid previews", () => {
       .spyOn(HTMLImageElement.prototype, "src", "set")
       .mockImplementation(() => {});
     await using screen = await render(<MermaidFilePreview text={`flowchart LR\n${node}`} />);
-    await vi.waitFor(() =>
-      expect(screen.container.querySelector('[role="alert"]')?.textContent).toContain(
-        "Show Mermaid source",
-      ),
+    // The first case loads the Mermaid viewer chunk, which can take over a second on a slow runner.
+    await vi.waitFor(
+      () =>
+        expect(screen.container.querySelector('[role="alert"]')?.textContent).toContain(
+          "Show Mermaid source",
+        ),
+      { timeout: 10_000 },
     );
     expect(imageSource).not.toHaveBeenCalled();
     expect(screen.container.querySelector("svg")).toBeNull();
@@ -1491,6 +1494,42 @@ it("keeps a workspace PDF open across URL renewals and reloads it when the file 
     URL.revokeObjectURL(edited);
   }
 });
+
+it("loads an edited HTML file outside the workspace from a renewed URL", async () => {
+  const { WorkspaceBrowserPreview } = await import("./FilePreviewPanel");
+  const preview = (mutation: string) => (
+    <WorkspaceBrowserPreview
+      environmentId={EnvironmentId.make("test")}
+      threadRef={{ environmentId: EnvironmentId.make("test"), threadId: ThreadId.make("test") }}
+      draft={false}
+      workspaceRoot="/repo"
+      absolutePath="/tmp/report.html"
+      title="Report"
+      workspaceMutationId={mutation}
+    />
+  );
+  assetUrlState.mockReturnValue({ _tag: "Success", url: "data:text/html,original", expiresAt: 0 });
+  await using screen = await render(preview("first"));
+  const opened = screen.container.querySelector("iframe");
+  expect(opened?.getAttribute("src")).toMatch(/^data:text\/html,original/);
+
+  assetUrlState.mockReturnValue({
+    _tag: "Success",
+    url: "data:text/html,original",
+    expiresAt: 0,
+    waiting: true,
+  });
+  await screen.rerender(preview("second"));
+  expect(assetUrlState).toHaveBeenLastCalledWith(expect.anything(), expect.anything(), "second");
+  expect(screen.container.querySelector("iframe")).toBe(opened);
+
+  assetUrlState.mockReturnValue({ _tag: "Success", url: "data:text/html,edited", expiresAt: 0 });
+  await screen.rerender(preview("second"));
+  expect(screen.container.querySelector("iframe")?.getAttribute("src")).toMatch(
+    /^data:text\/html,edited/,
+  );
+});
+
 function planningPdf(
   titles = ["Quarterly outlook", "Delivery milestones", "Budget and risks"],
   firstHeight = 140,
