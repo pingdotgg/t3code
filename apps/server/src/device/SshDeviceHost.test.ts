@@ -2,7 +2,9 @@ import { expect, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Net from "@t3tools/shared/Net";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
@@ -191,6 +193,97 @@ it.effect("preserves installed status after probes and cleans failed agent activ
     for (const args of commandArgs) {
       for (const option of multiplexingOff) expect(args).not.toContain(option);
     }
+    yield* host.stop;
+    expect(forwards).toBe(0);
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
+it.effect("releases the forward of a bootstrap interrupted before its hub answered", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const home = yield* fs.makeTempDirectoryScoped();
+    const probing = yield* Deferred.make<void>();
+    let holdReadiness = true;
+    let forwards = 0;
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.gen(function* () {
+        const forwarding = command._tag === "StandardCommand" && command.args.includes("-L");
+        if (forwarding) {
+          forwards++;
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              forwards--;
+            }),
+          );
+        }
+        const output = forwarding
+          ? ""
+          : JSON.stringify({
+              nodePath: "/node",
+              platforms: [{ platform: "ios", available: true }],
+              hubPort: 1234,
+              helpers: { serveSimAxSettings: null, serveSimCli: null },
+            });
+        return ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(123),
+          stdout: Stream.make(new TextEncoder().encode(output)),
+          stderr: Stream.empty,
+          all: Stream.empty,
+          exitCode: forwarding ? Effect.never : Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+          isRunning: Effect.succeed(forwarding),
+          kill: () => Effect.void,
+          stdin: Sink.drain,
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+          unref: Effect.succeed(Effect.void),
+        });
+      }),
+    );
+    const publishing = yield* Deferred.make<void>();
+    let holdReadyStatus = false;
+    const host = yield* SshDeviceHost.make(
+      {
+        kind: "ssh",
+        id: "test",
+        label: "Test",
+        target: "test.example",
+      },
+      undefined,
+      (status) =>
+        status === "ready" && holdReadyStatus
+          ? Deferred.succeed(publishing, undefined).pipe(Effect.andThen(Effect.never))
+          : Effect.void,
+    ).pipe(
+      Effect.provide(Layer.mergeAll(ServerConfig.layerTest(home, home), Net.layer)),
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.gen(function* () {
+            if (holdReadiness) {
+              yield* Deferred.succeed(probing, undefined);
+              return yield* Effect.never;
+            }
+            return HttpClientResponse.fromWeb(request, new Response("ok"));
+          }),
+        ),
+      ),
+    );
+    const first = yield* host.ensureReady(() => Effect.void).pipe(Effect.forkChild);
+    yield* Deferred.await(probing);
+    yield* Fiber.interrupt(first);
+    expect(forwards).toBe(0);
+    holdReadiness = false;
+    yield* host.ensureReady(() => Effect.void);
+    yield* host.stop;
+    expect(forwards).toBe(0);
+    holdReadyStatus = true;
+    const second = yield* host.ensureReady(() => Effect.void).pipe(Effect.forkChild);
+    yield* Deferred.await(publishing);
+    yield* Fiber.interrupt(second);
+    holdReadyStatus = false;
+    yield* host.ensureReady(() => Effect.void);
+    expect(forwards).toBe(1);
     yield* host.stop;
     expect(forwards).toBe(0);
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
