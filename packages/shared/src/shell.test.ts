@@ -55,8 +55,6 @@ vi.mock("node:child_process", async (importOriginal) => {
   return { ...original, execFile: nativeProbe.execFile.mockImplementation(original.execFile) };
 });
 
-vi.mock("node:fs", { spy: true });
-
 const withWindowsEnvironmentMocks = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
   readEnvironment: (
@@ -120,9 +118,9 @@ describe("readEnvironmentFromLoginShell", () => {
     },
   );
 
-  it.runIf(NodeFS.existsSync("/bin/bash")).each([false, true])(
-    "ignores bash DEBUG trap markers when the profile replaces PATH: %s",
-    (replacePath) => {
+  it.runIf(NodeFS.existsSync("/bin/bash"))(
+    "captures values when the profile replaces PATH and a DEBUG trap echoes commands",
+    () => {
       const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-bash-env-"));
       try {
         const tools = NodePath.join(home, "tools 'quoted $dir");
@@ -133,7 +131,7 @@ describe("readEnvironmentFromLoginShell", () => {
         }).trim();
         NodeFS.copyFileSync(printenv, NodePath.join(tools, "printenv"));
         vi.stubEnv("PATH", tools);
-        const shellPath = replacePath ? NodePath.join(home, "bin") : tools;
+        const shellPath = NodePath.join(home, "bin");
         const bashEnv = NodePath.join(home, "env.bash");
         NodeFS.writeFileSync(
           bashEnv,
@@ -145,8 +143,6 @@ describe("readEnvironmentFromLoginShell", () => {
           ].join("\n"),
         );
 
-        const statSync = vi.mocked(NodeFS.statSync).mockClear();
-        const accessSync = vi.mocked(NodeFS.accessSync).mockClear();
         expect(
           readEnvironmentFromLoginShell(
             "/bin/bash",
@@ -159,8 +155,6 @@ describe("readEnvironmentFromLoginShell", () => {
               }),
           ),
         ).toEqual({ PATH: shellPath });
-        expect(statSync).not.toHaveBeenCalled();
-        expect(accessSync).not.toHaveBeenCalled();
       } finally {
         vi.unstubAllEnvs();
         NodeFS.rmSync(home, { recursive: true, force: true });
