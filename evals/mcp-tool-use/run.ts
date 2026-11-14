@@ -18,6 +18,7 @@ import {
   DeviceOperationError,
   DeviceSummary,
   OrchestratorMcpTaskRole,
+  OrchestrationV2UserInputQuestion,
   PreviewAutomationError,
   PreviewAutomationUnavailableError,
   ProviderInstanceId,
@@ -38,6 +39,7 @@ import * as McpSchema from "effect/ai/McpSchema";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
 import { taskPrompt } from "../../apps/server/src/mcp/delegatedTaskModes.ts";
+import { formatAsyncUserInputAnswer } from "../../apps/server/src/orchestration-v2/asyncUserInputAnswer.ts";
 import * as McpInvocationContext from "../../apps/server/src/mcp/McpInvocationContext.ts";
 import { advertisedJsonSchema } from "../../apps/server/src/mcp/advertisedJsonSchema.ts";
 import * as Contracts from "@t3tools/contracts";
@@ -312,6 +314,13 @@ export const McpToolUseCase = Schema.Struct({
     /** delegate_task `role` for a delegated child. T3 builds the child's first message from it. */
     delegateRole: Schema.optional(OrchestratorMcpTaskRole),
     context: Schema.optional(Schema.String),
+    /** Builds the latest user turn with the production async-answer formatter. */
+    asyncAnswer: Schema.optional(
+      Schema.Struct({
+        question: OrchestrationV2UserInputQuestion,
+        answer: Schema.Union([Schema.String, Schema.Array(Schema.String)]),
+      }),
+    ),
     priorTurns: Schema.optional(
       Schema.Array(
         Schema.Struct({
@@ -1094,15 +1103,19 @@ export const buildMessages = (sample: Sample) => {
     }
     if (turn.text) push(turn.role, text(turn.text));
   }
+  const asyncAnswer = testCase.setup.asyncAnswer;
+  const userPrompt =
+    asyncAnswer === undefined
+      ? testCase.prompt
+      : formatAsyncUserInputAnswer(asyncAnswer.question, asyncAnswer.answer);
   const userText =
     testCase.promptContext === undefined
-      ? testCase.prompt
-      : projectComposerContextForProvider({ text: testCase.prompt, ...testCase.promptContext });
+      ? userPrompt
+      : projectComposerContextForProvider({ text: userPrompt, ...testCase.promptContext });
   const prompt =
     sideChatContext === undefined ? userText : withInlineContext(sideChatContext, userText);
   const childPrompt = () => taskPrompt({ task: prompt, role: delegateRole });
-  if (testCase.prompt !== "")
-    push("user", text(role === "delegated-child" ? childPrompt() : prompt));
+  if (userPrompt !== "") push("user", text(role === "delegated-child" ? childPrompt() : prompt));
   // Claude Code gives a subagent its SubagentStart hooks' context as a reminder after the task.
   if (native && base.subagentContext) {
     push("user", reminder(`SubagentStart hook additional context: ${base.subagentContext}`));

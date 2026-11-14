@@ -1980,7 +1980,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
         assert.equal(answered.messages.at(-1)?.runId, answered.runs.at(-1)?.id);
         assert.equal(
           answered.messages.at(-1)?.text,
-          "Which color?\nBlue\n\nWhich sizes?\nSmall, Large",
+          "Question (from assistant):\nWhich color?\n\nUser answer:\nBlue\n\nQuestion (from assistant):\nWhich sizes?\n\nUser answer:\nSmall, Large",
         );
         assert.deepEqual(
           (yield* (yield* EffectOutbox.EffectOutboxV2).listByCommandId(
@@ -2114,7 +2114,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
         });
       }
       assert.equal(answered.messages.length, 1);
-      assert.equal(answered.messages[0]?.text, "Which color?\nBlue\n\nWhich sizes?\nSmall, Large");
+      assert.equal(
+        answered.messages[0]?.text,
+        "Question (from assistant):\nWhich color?\n\nUser answer:\nBlue\n\nQuestion (from assistant):\nWhich sizes?\n\nUser answer:\nSmall, Large",
+      );
       assert.equal(answered.messages[0]?.role, "user");
       assert.equal(answered.runs.length, 1);
       assert.deepEqual(
