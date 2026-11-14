@@ -37,6 +37,7 @@ import {
   storeAttachmentUpload,
   validateAttachmentUploadToken,
 } from "./assets/AttachmentUpload.ts";
+import * as PreviewManager from "./preview/Manager.ts";
 import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { traceRelayRequest } from "./cloud/traceRelayRequest.ts";
@@ -419,9 +420,13 @@ export const layerAssetRoute = HttpRouter.add(
       return HttpServerResponse.text("Not Found", { status: 404 });
     }
 
+    const token = suffix.slice(0, separatorIndex);
+    const previews = yield* PreviewManager.PreviewManager;
+    // A Browser tab reloads its URL at any time; the token stays valid while a tab shows it.
     const asset = yield* resolveAsset(
-      suffix.slice(0, separatorIndex),
+      token,
       suffix.slice(separatorIndex + 1),
+      previews.showsPathPrefix(`${ASSET_ROUTE_PREFIX}/${token}/`),
     );
     if (!asset) {
       return HttpServerResponse.text("Not Found", { status: 404 });
