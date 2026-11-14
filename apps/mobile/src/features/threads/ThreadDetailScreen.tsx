@@ -1450,15 +1450,18 @@ function ThreadDetailBody(
     feedTouchStartRef.current = null;
   };
 
+  // The sticky view lowers the open composer by composerKeyboardOffset, onto the keyboard.
+  const draftComposerClearance =
+    liveKeyboardHeight +
+    estimatedOverlayHeight +
+    24 -
+    (liveKeyboardHeight > 0 && keyboardStickyEnabled ? composerKeyboardOffset : 0);
+
   return (
     <View className="flex-1" onLayout={handleScreenLayout}>
       {!usesNativeWorkspaceColumns ? <NativeLayoutObserver onChange={setScreenMetrics} /> : null}
       {props.draftMode ? (
-        props.draftMode.content(
-          navigationHeaderHeight,
-          liveKeyboardHeight + estimatedOverlayHeight + 24,
-          draftViewportHeight,
-        )
+        props.draftMode.content(navigationHeaderHeight, draftComposerClearance, draftViewportHeight)
       ) : showContent ? (
         <View
           style={{ flex: 1 }}
