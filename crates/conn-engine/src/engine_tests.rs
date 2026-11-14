@@ -680,11 +680,15 @@ async fn a_message_sent_during_a_turn_queues_and_starts_after_it() {
     );
     assert_eq!(p["runs"][1]["queuePosition"], 1);
     assert_eq!(p["runs"][2]["queuePosition"], 2);
-    // Queued messages have no turn item yet, and the shell still shows the running run.
+    // Queued messages have no turn item yet. The shell's latest run is the newest queued one
+    // (T3's `latestUnheldRun`; `idle-diff.mjs` compares it with the T3 server); the running
+    // run stays the active and the activity run.
     assert_eq!(item_texts(&p), ["turn_start hang"]);
     let shell = engine.shell_snapshot().await.unwrap();
-    assert_eq!(shell["threads"][0]["status"], "running");
+    assert_eq!(shell["threads"][0]["status"], "queued");
+    assert_eq!(shell["threads"][0]["latestRunId"], "run:t1:3");
     assert_eq!(shell["threads"][0]["activeRunId"], "run:t1:1");
+    assert_eq!(shell["threads"][0]["activityRunStatus"], "running");
 
     // Reorder: third before second.
     dispatch(
