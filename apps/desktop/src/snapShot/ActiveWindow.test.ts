@@ -128,6 +128,18 @@ it.each([
       { id: 80, title: "Other document", bounds: { x: 0, y: 39, width: 1_800, height: 1_130 } },
     ],
   },
+  {
+    name: "the screen-sharing indicator",
+    helpers: [
+      { id: 90, title: "Window", bounds: { x: 723, y: 33, width: 66, height: 20 } },
+      { id: 91, title: "", bounds: { x: 0, y: 0, width: 1_512, height: 32 }, alpha: 0 },
+    ],
+    content: {
+      id: 92,
+      title: "T3 Code (Nightly)",
+      bounds: { x: 0, y: 33, width: 1_512, height: 949 },
+    },
+  },
 ])("selects the content window behind $name", async ({ helpers, content, background = [] }) => {
   stubMacLookup(macLookup([...helpers, content, ...background]));
 
@@ -140,6 +152,16 @@ it.each([
 it.each([
   { name: "untitled dialog", title: "", bounds: { x: 300, y: 200, width: 400, height: 240 } },
   { name: "titled palette", title: "Palette", bounds: { x: 0, y: 0, width: 800, height: 50 } },
+  {
+    name: "small titled palette",
+    title: "Timer",
+    bounds: { x: 200, y: 200, width: 80, height: 60 },
+  },
+  {
+    name: "small titled palette on the document's top edge",
+    title: "Timer",
+    bounds: { x: 200, y: 0, width: 80, height: 60 },
+  },
   { name: "offset untitled strip", title: "", bounds: { x: 100, y: 100, width: 800, height: 50 } },
   { name: "tall untitled window", title: "", bounds: { x: 0, y: 0, width: 800, height: 900 } },
   {
