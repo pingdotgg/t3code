@@ -5,7 +5,7 @@ import { ProjectReadFileError } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { remapFileCommentAnnotations } from "./fileCommentAnnotations";
+import { remapFileCommentAnnotations, retainPromptFileComments } from "./fileCommentAnnotations";
 import {
   filePreviewReadErrorMessage,
   isMarkdownPreviewFile,
@@ -62,6 +62,27 @@ describe("file comment annotations", () => {
         },
       },
     ]);
+  });
+
+  it("drops comments that left the prompt so edits cannot re-add them", () => {
+    const entry = (id: string, kind: "draft" | "comment") => ({
+      id,
+      kind,
+      startLine: 3,
+      endLine: 3,
+      text: "",
+    });
+    const annotations = [
+      { lineNumber: 3, metadata: { entries: [entry("sent", "comment"), entry("new", "draft")] } },
+      { lineNumber: 5, metadata: { entries: [entry("removed", "comment")] } },
+      { lineNumber: 8, metadata: { entries: [entry("kept", "comment")] } },
+    ];
+    expect(retainPromptFileComments(annotations, new Set(["kept"]))).toEqual([
+      { lineNumber: 3, metadata: { entries: [entry("new", "draft")] } },
+      { lineNumber: 8, metadata: { entries: [entry("kept", "comment")] } },
+    ]);
+    const unchanged = [annotations[2]!];
+    expect(retainPromptFileComments(unchanged, new Set(["kept"]))).toBe(unchanged);
   });
 });
 
