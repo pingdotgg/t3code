@@ -140,6 +140,7 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import { Input } from "../ui/input";
+import { TimeInput } from "../TimeInput";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
@@ -2044,18 +2045,16 @@ function ScheduledTaskEditorForm({
               <div className="flex flex-wrap items-center gap-3">
                 <div className="flex items-center gap-2">
                   <Label htmlFor="scheduled-task-time">Run at</Label>
-                  <Input
-                    type="time"
+                  <TimeInput
                     id="scheduled-task-time"
                     aria-describedby={
                       runAtZone === undefined ? undefined : "scheduled-task-time-zone"
                     }
-                    nativeInput
                     className="w-32"
                     value={draft.timeOfDay}
-                    onChange={(event) =>
-                      setDraft((current) => ({ ...current, timeOfDay: event.target.value }))
-                    }
+                    onChange={(timeOfDay) => {
+                      if (timeOfDay !== null) setDraft((current) => ({ ...current, timeOfDay }));
+                    }}
                   />
                   {runAtZone === undefined ? null : (
                     <span id="scheduled-task-time-zone" className="text-xs text-muted-foreground">
