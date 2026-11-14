@@ -24,6 +24,8 @@ import {
   type LinkedPrompt,
   type PromptLinkPullRequest,
   type PromptLinkRepository,
+  promptLinkRepositoryCloneUrl,
+  promptLinkRepositoryName,
 } from "@t3tools/shared/promptLinks";
 import { Atom, type AsyncResult } from "effect/reactivity";
 
@@ -46,7 +48,6 @@ import { applyLinkedPromptToThreadDraft, showPromptLinkNotice } from "./prompt-l
 import {
   latestThreadEnvironmentIds,
   promptLinkNotice,
-  promptLinkRepositoryName,
   promptLinkScratchEnvironmentId,
   promptLinkSearchFromParams,
   stepPendingPromptLink,
@@ -340,7 +341,7 @@ function cloneRepository(repository: PromptLinkRepository, request: LinkedDraftR
   dispatchFromNewTask(
     StackActions.push("AddProjectDestination", {
       environmentId,
-      remoteUrl: `https://github.com/${name}.git`,
+      remoteUrl: promptLinkRepositoryCloneUrl(repository),
       repositoryTitle: name,
       repositoryName: repository.name,
       ...(prompt ? { prompt: prompt.text } : {}),

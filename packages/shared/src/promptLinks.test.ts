@@ -7,6 +7,7 @@ import {
   parseThreadLinkPrompt,
   promptLinkAppPath,
   promptLinkDeepLink,
+  promptLinkRepositoryName,
   sanitizeLinkedPrompt,
   withoutPromptLinkParams,
 } from "./promptLinks.ts";
@@ -53,6 +54,37 @@ describe("parseNewThreadLink", () => {
         model: "gpt-5",
       },
     });
+  });
+
+  it("reads a repository URL on another host, with nested groups", () => {
+    const repositoryOf = (repo: string) => {
+      const result = parseNewThreadLink(`?prompt=x&repo=${encodeURIComponent(repo)}`);
+      return result.ok && result.value.kind === "new" ? result.value.repository : null;
+    };
+    expect(repositoryOf("https://gitlab.example.com:8443/acme_corp/infra/mono.git/")).toEqual({
+      host: "gitlab.example.com:8443",
+      owner: "acme_corp/infra",
+      name: "mono",
+    });
+    expect(repositoryOf("https://github.com/pingdotgg/t3code")).toEqual({
+      owner: "pingdotgg",
+      name: "t3code",
+    });
+    // Another host's repository must not be shown as the GitHub repository with the same path.
+    expect(promptLinkRepositoryName(repositoryOf("https://evil.example/pingdotgg/t3code")!)).toBe(
+      "evil.example/pingdotgg/t3code",
+    );
+    expect(promptLinkRepositoryName(repositoryOf("pingdotgg/t3code")!)).toBe("pingdotgg/t3code");
+    for (const refused of [
+      "https://github.com/pingdotgg/t3code/tree/main",
+      "https://gitlab.example.com/mono",
+      "https://gitlab.example.com/acme/../mono",
+      "https://gitlab.example.com/acme/mono?ref=main",
+      "https://user:token@gitlab.example.com/acme/mono",
+      "ssh://gitlab.example.com/acme/mono",
+    ]) {
+      expect(repositoryOf(refused)).toBeNull();
+    }
   });
 
   it("reads a pull request link, whose prompt is optional", () => {

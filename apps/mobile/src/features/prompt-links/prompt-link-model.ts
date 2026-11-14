@@ -1,5 +1,3 @@
-import type { PromptLinkRepository } from "@t3tools/shared/promptLinks";
-
 const PROMPT_LINK_PARAM_KEYS = ["prompt", "repo", "pr", "provider", "model"] as const;
 
 type RouteParams = Readonly<Record<string, unknown>> | undefined;
@@ -74,9 +72,6 @@ export function latestThreadEnvironmentIds<Id extends string>(
     (latest.get(right) ?? "").localeCompare(latest.get(left) ?? ""),
   );
 }
-
-export const promptLinkRepositoryName = (repository: PromptLinkRepository) =>
-  `${repository.owner}/${repository.name}`;
 
 /**
  * Advances a parsed link at each navigation state; `resolve` is the link to apply. The first

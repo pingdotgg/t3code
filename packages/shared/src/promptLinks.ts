@@ -3,6 +3,8 @@ import { DEFAULT_HOSTED_APP_URL } from "./connectAuth.ts";
 export const PROMPT_LINK_MAX_PROMPT_LENGTH = 8_000;
 
 export interface PromptLinkRepository {
+  /** Set only for a full URL on a host other than github.com, with its port; `owner` may hold subgroups. */
+  readonly host?: string;
   readonly owner: string;
   readonly name: string;
 }
@@ -75,12 +77,40 @@ function repositoryOf(owner: string, name: string): PromptLinkRepository | null 
   return { owner, name: trimmedName };
 }
 
+const PATH_SEGMENT = /^[A-Za-z0-9._-]{1,100}$/;
+
+// Other hosts, such as GitLab, nest repositories under groups and allow `_` in their names.
+function hostedRepositoryOf(value: string): PromptLinkRepository | null {
+  if (!/^https?:\/\//i.test(value) || !URL.canParse(value)) return null;
+  const url = new URL(value);
+  if (url.username || url.password || url.search || url.hash) return null;
+  const segments = url.pathname.replace(/\/$/, "").split("/").slice(1);
+  const name = segments.pop()?.replace(/\.git$/i, "");
+  if (name === undefined || segments.length === 0) return null;
+  const valid = [...segments, name].every(
+    (segment) => PATH_SEGMENT.test(segment) && !/^\.+$/.test(segment),
+  );
+  return valid ? { host: url.host, owner: segments.join("/"), name } : null;
+}
+
 export function parsePromptLinkRepository(value: string): PromptLinkRepository | null {
   const trimmed = value.trim();
   const url = /^https?:\/\/(?:www\.)?github\.com\/([^/?#]+)\/([^/?#]+)\/?$/i.exec(trimmed);
+  if (url === null && /^https?:\/\/(?:www\.)?github\.com(?:[/?#:]|$)/i.test(trimmed)) return null;
+  if (url === null && /^https?:\/\//i.test(trimmed)) return hostedRepositoryOf(trimmed);
   const short = /^([^/\s]+)\/([^/\s]+)$/.exec(trimmed);
   const match = url ?? short;
   return match?.[1] && match[2] ? repositoryOf(match[1], match[2]) : null;
+}
+
+/** `owner/name`, prefixed with the host when the link named one, so it cannot pass for GitHub's. */
+export function promptLinkRepositoryName(repository: PromptLinkRepository): string {
+  return `${repository.host ? `${repository.host}/` : ""}${repository.owner}/${repository.name}`;
+}
+
+/** HTTPS clone URL, on github.com unless the link named another host. */
+export function promptLinkRepositoryCloneUrl(repository: PromptLinkRepository): string {
+  return `https://${repository.host ?? "github.com"}/${repository.owner}/${repository.name}.git`;
 }
 
 function parsePromptLinkPullRequest(value: string): PromptLinkPullRequest | null {

@@ -20,6 +20,8 @@ import {
   type NewThreadLink,
   type PromptLinkRepository,
   promptLinkPullRequestUrl,
+  promptLinkRepositoryCloneUrl,
+  promptLinkRepositoryName,
 } from "@t3tools/shared/promptLinks";
 import { useAtomValue } from "@effect/atom-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
@@ -213,7 +215,7 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
       return;
     }
     setState({ status: "opening" });
-    const remoteUrl = `https://github.com/${repository.owner}/${repository.name}.git`;
+    const remoteUrl = promptLinkRepositoryCloneUrl(repository);
     const settings = serverConfig.settings;
     const result = await startProjectClone({
       environmentId,
@@ -244,10 +246,7 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
       setState({ status: "missing-repository", repository });
       return;
     }
-    void suggestAppAccessForRemote(
-      environmentId,
-      `https://github.com/${repository.owner}/${repository.name}.git`,
-    );
+    void suggestAppAccessForRemote(environmentId, remoteUrl);
     const project = await waitForProject(
       scopeProjectRef(environmentId, result.value.projectId),
       5_000,
@@ -259,7 +258,7 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
     if (link.kind === "pull-request") {
       setState({
         status: "failed",
-        title: `Cloning ${repository.owner}/${repository.name}`,
+        title: `Cloning ${promptLinkRepositoryName(repository)}`,
         message: "Open this link again when the clone finishes.",
       });
       return;
@@ -368,7 +367,7 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
         <LinkPage title={state.title ?? "Could not open the link"} description={state.message} />
       );
     case "missing-repository": {
-      const name = `${state.repository.owner}/${state.repository.name}`;
+      const name = promptLinkRepositoryName(state.repository);
       return (
         <LinkPage
           title={`You don't have ${name}`}
