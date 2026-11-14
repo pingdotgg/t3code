@@ -1,3 +1,12 @@
+import * as NodeFs from "node:fs";
+import * as NodePath from "node:path";
+import { pathToFileURL } from "node:url";
+import type { Adapter } from "@sveltejs/kit";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import type * as ViteModule from "vite";
 import * as FrameworkCore from "../core/index.ts";
 import {
   Framework,
@@ -5,25 +14,11 @@ import {
   type DeployTarget,
   type DeployTargetInput,
 } from "../core/index.ts";
-import type { Adapter } from "@sveltejs/kit";
-import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
-import * as Path from "effect/Path";
-import * as NodeFs from "node:fs";
-import * as NodePath from "node:path";
-import { pathToFileURL } from "node:url";
-import type * as ViteModule from "vite";
-import {
-  DEFAULT_VITE_CONFIG_FILES,
-  makeSvelteKitConfigPlugin,
-} from "./UserConfig.ts";
+import { DEFAULT_VITE_CONFIG_FILES, makeSvelteKitConfigPlugin } from "./UserConfig.ts";
 
 /** The shape of the project's `@sveltejs/kit/vite` module. */
 interface KitViteModule {
-  readonly sveltekit: (
-    config?: Record<string, unknown>,
-  ) => Promise<ViteModule.PluginOption>;
+  readonly sveltekit: (config?: Record<string, unknown>) => Promise<ViteModule.PluginOption>;
 }
 
 /**
@@ -47,11 +42,7 @@ export interface SvelteKitAdapterOptions {
    * target's worker shim defers them to the assets layer).
    * @default "none"
    */
-  readonly notFoundHandling?:
-    | "none"
-    | "404-page"
-    | "single-page-application"
-    | undefined;
+  readonly notFoundHandling?: "none" | "404-page" | "single-page-application" | undefined;
   /**
    * With `notFoundHandling: "404-page"`: `"spa"` renders the app shell as the
    * fallback, `"plaintext"` writes a plain `Not Found` page.
@@ -113,6 +104,18 @@ export interface SvelteKitAdapterContext {
          * remote()-lowered bindings; without it the platform is local-only.
          */
         readonly services?: unknown;
+        /**
+         * Overrides for the dev platform's workerd process (opaque to the
+         * framework half; the Cloudflare target takes `cloudflare-runtime`
+         * `WorkerdOptions`).
+         */
+        readonly workerd?: unknown;
+        /**
+         * Absolute path of kit's static directory (`kit.files.assets`), for
+         * a target whose dev platform serves its files (the Cloudflare
+         * target's `ASSETS` binding).
+         */
+        readonly assetsDirectory?: string | undefined;
       }
     | undefined;
 }
@@ -163,17 +166,13 @@ export interface SvelteKitTarget extends DeployTarget<SvelteKitTargetConfig> {
  * the *project's* `node_modules` (default-export — or named export `target` —
  * a value or factory).
  */
-export type SvelteKitTargetInput = DeployTargetInput<
-  SvelteKitTarget,
-  SvelteKitTargetConfig
->;
+export type SvelteKitTargetInput = DeployTargetInput<SvelteKitTarget, SvelteKitTargetConfig>;
 
 /**
  * The default deploy target: this package's own Cloudflare Workers target
  * module (`src/cloudflare.ts`), loaded from the project's dependency tree.
  */
-export const DEFAULT_TARGET_SPECIFIER =
-  "@alchemy.run/frontend-frameworks/sveltekit/cloudflare";
+export const DEFAULT_TARGET_SPECIFIER = "@alchemy.run/frontend-frameworks/sveltekit/cloudflare";
 
 export interface SvelteKitOptions {
   /**
@@ -238,6 +237,12 @@ export interface SvelteKitOptions {
          * remote()-lowered bindings; without it the platform is local-only.
          */
         readonly services?: unknown;
+        /**
+         * Overrides for the dev platform's workerd process (opaque to the
+         * framework half; the Cloudflare target takes `cloudflare-runtime`
+         * `WorkerdOptions`).
+         */
+        readonly workerd?: unknown;
       }
     | undefined;
 }
@@ -291,9 +296,7 @@ const KIT_PACKAGE_MARKER = "/@sveltejs/kit/";
  * onto the project's real kit installation. Ids that resolve to an existing
  * file are never touched.
  */
-const makeKitRuntimeRealignPlugin = (
-  kitDirectory: string,
-): ViteModule.Plugin => {
+const makeKitRuntimeRealignPlugin = (kitDirectory: string): ViteModule.Plugin => {
   const realign = (candidate: string, query: string): string | undefined => {
     if (NodeFs.existsSync(candidate)) {
       return undefined;
@@ -323,20 +326,14 @@ const makeKitRuntimeRealignPlugin = (
         // Vite serves absolute fs paths as `/@fs/<path>` (`/@fs/C:/...` on
         // Windows — strip the extra leading slash before a drive letter).
         const fsPath = bare.slice("/@fs".length);
-        return realign(
-          /^\/[A-Za-z]:[/\\]/.test(fsPath) ? fsPath.slice(1) : fsPath,
-          query,
-        );
+        return realign(/^\/[A-Za-z]:[/\\]/.test(fsPath) ? fsPath.slice(1) : fsPath, query);
       }
       if (NodePath.isAbsolute(bare)) {
         return realign(bare, query);
       }
       if (bare.startsWith(".") && importer !== undefined) {
         const importerPath = importer.split("?")[0] ?? importer;
-        return realign(
-          NodePath.resolve(NodePath.dirname(importerPath), bare),
-          query,
-        );
+        return realign(NodePath.resolve(NodePath.dirname(importerPath), bare), query);
       }
       return undefined;
     },
@@ -362,161 +359,142 @@ const makeKitRuntimeRealignPlugin = (
  */
 export const make: (
   options?: SvelteKitOptions,
-) => Effect.Effect<
-  Framework["Service"],
-  never,
-  FileSystem.FileSystem | Path.Path
-> = Effect.fnUntraced(function* (options?: SvelteKitOptions) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const baseRoot = options?.root ?? (yield* Effect.sync(() => process.cwd()));
+) => Effect.Effect<Framework["Service"], never, FileSystem.FileSystem | Path.Path> =
+  Effect.fnUntraced(function* (options?: SvelteKitOptions) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const baseRoot = options?.root ?? (yield* Effect.sync(() => process.cwd()));
 
-  const targetConfig: SvelteKitTargetConfig = {
-    compatibilityDate: options?.compatibilityDate,
-    compatibilityFlags: options?.compatibilityFlags,
-    adapter: options?.adapter,
-    kit: options?.kit,
-  };
+    const targetConfig: SvelteKitTargetConfig = {
+      compatibilityDate: options?.compatibilityDate,
+      compatibilityFlags: options?.compatibilityFlags,
+      adapter: options?.adapter,
+      kit: options?.kit,
+    };
 
-  const resolveTarget = (root: string) =>
-    FrameworkCore.resolveDeployTarget<SvelteKitTarget, SvelteKitTargetConfig>(
-      root,
-      options?.target ?? DEFAULT_TARGET_SPECIFIER,
-      targetConfig,
-    ).pipe(Effect.mapError((error) => fail(error.message, error.cause)));
+    const resolveTarget = (root: string) =>
+      FrameworkCore.resolveDeployTarget<SvelteKitTarget, SvelteKitTargetConfig>(
+        root,
+        options?.target ?? DEFAULT_TARGET_SPECIFIER,
+        targetConfig,
+      ).pipe(Effect.mapError((error) => fail(error.message, error.cause)));
 
-  const requireAdapterHook = (target: SvelteKitTarget) =>
-    typeof target.adapter === "function"
-      ? Effect.succeed(target)
-      : Effect.fail(
-          fail(
-            `The resolved "${target.platform}" deploy target does not implement the SvelteKit ` +
-              "adapter hook (`adapter(context)`) and has no wholesale `build`",
-          ),
-        );
+    const requireAdapterHook = (target: SvelteKitTarget) =>
+      typeof target.adapter === "function"
+        ? Effect.succeed(target)
+        : Effect.fail(
+            fail(
+              `The resolved "${target.platform}" deploy target does not implement the SvelteKit ` +
+                "adapter hook (`adapter(context)`) and has no wholesale `build`",
+            ),
+          );
 
-  const loadVite = (root: string) =>
-    FrameworkCore.loadProjectModule<typeof ViteModule>(root, "vite").pipe(
-      Effect.mapError((error) =>
-        fail("Failed to load the project's Vite", error.cause),
-      ),
-    );
+    const loadVite = (root: string) =>
+      FrameworkCore.loadProjectModule<typeof ViteModule>(root, "vite").pipe(
+        Effect.mapError((error) => fail("Failed to load the project's Vite", error.cause)),
+      );
 
-  const resolveKitDirectory = (root: string) =>
-    FrameworkCore.resolveProjectPackageDirectory(root, "@sveltejs/kit").pipe(
-      Effect.mapError((error) =>
-        fail("Failed to locate the project's @sveltejs/kit", error.cause),
-      ),
-    );
-
-  // `@sveltejs/kit`'s `./vite` export carries only an `import` condition, so
-  // framework-core's `createRequire().resolve` dance cannot resolve it.
-  // Resolve the package directory (via its universally-exported
-  // `./package.json`) and walk the exports map instead.
-  const loadKitViteModule = Effect.fn(function* (root: string) {
-    const kitDirectory = yield* resolveKitDirectory(root);
-    const manifest = yield* fs
-      .readFileString(path.join(kitDirectory, "package.json"))
-      .pipe(
+    const resolveKitDirectory = (root: string) =>
+      FrameworkCore.resolveProjectPackageDirectory(root, "@sveltejs/kit").pipe(
         Effect.mapError((error) =>
-          fail("Failed to read @sveltejs/kit's package.json", error),
+          fail("Failed to locate the project's @sveltejs/kit", error.cause),
         ),
       );
-    const parsed = yield* Effect.try({
-      try: () => JSON.parse(manifest) as { exports?: Record<string, unknown> },
-      catch: (error) =>
-        fail("Failed to parse @sveltejs/kit's package.json", error),
-    });
-    const target = resolveExportTarget(parsed.exports?.["./vite"]);
-    if (target === undefined) {
-      return yield* Effect.fail(
-        fail(
-          `The project's @sveltejs/kit (${kitDirectory}) has no "./vite" export`,
-        ),
-      );
-    }
-    return yield* Effect.tryPromise({
-      try: async () =>
-        (await import(
-          /* @vite-ignore */ pathToFileURL(path.join(kitDirectory, target)).href
-        )) as KitViteModule,
-      catch: (error) =>
-        fail("Failed to load the project's @sveltejs/kit/vite", error),
-    });
-  });
 
-  const loadKitPlugins = Effect.fn(function* (root: string, adapter: Adapter) {
-    const kitVite = yield* loadKitViteModule(root);
-    return yield* Effect.tryPromise({
-      try: async () => await kitVite.sveltekit({ ...options?.kit, adapter }),
-      catch: (error) => fail("Failed to construct the SvelteKit plugin", error),
-    });
-  });
-
-  const findViteConfigFile = Effect.fnUntraced(function* (root: string) {
-    for (const name of DEFAULT_VITE_CONFIG_FILES) {
-      const exists = yield* fs
-        .exists(path.join(root, name))
-        .pipe(Effect.catchTag("PlatformError", () => Effect.succeed(false)));
-      if (exists) {
-        return name;
+    // `@sveltejs/kit`'s `./vite` export carries only an `import` condition, so
+    // framework-core's `createRequire().resolve` dance cannot resolve it.
+    // Resolve the package directory (via its universally-exported
+    // `./package.json`) and walk the exports map instead.
+    const loadKitViteModule = Effect.fn(function* (root: string) {
+      const kitDirectory = yield* resolveKitDirectory(root);
+      const manifest = yield* fs
+        .readFileString(path.join(kitDirectory, "package.json"))
+        .pipe(
+          Effect.mapError((error) => fail("Failed to read @sveltejs/kit's package.json", error)),
+        );
+      const parsed = yield* Effect.try({
+        try: () => JSON.parse(manifest) as { exports?: Record<string, unknown> },
+        catch: (error) => fail("Failed to parse @sveltejs/kit's package.json", error),
+      });
+      const target = resolveExportTarget(parsed.exports?.["./vite"]);
+      if (target === undefined) {
+        return yield* fail(`The project's @sveltejs/kit (${kitDirectory}) has no "./vite" export`);
       }
-    }
-    return undefined;
-  });
+      return yield* Effect.tryPromise({
+        try: async () =>
+          (await import(
+            /* @vite-ignore */ pathToFileURL(path.join(kitDirectory, target)).href
+          )) as KitViteModule,
+        catch: (error) => fail("Failed to load the project's @sveltejs/kit/vite", error),
+      });
+    });
 
-  /**
-   * Assemble the Vite inline config for a build/dev invocation.
-   *
-   * - Project has its own Vite config file: the file loads natively
-   *   (`configFile` is left to Vite's discovery — the user's plugins,
-   *   including their `sveltekit(...)` call, all apply) and the inline
-   *   config only injects `makeSvelteKitConfigPlugin`, which installs the
-   *   deploy target's adapter (and `options.kit` overrides) into the
-   *   user's kit config before kit processes it.
-   * - No config file on disk: internal fallback — `configFile: false` with
-   *   the `sveltekit()` plugin constructed programmatically from
-   *   `options.kit` + the target's adapter.
-   */
-  const resolveViteConfig = Effect.fn(function* (
-    root: string,
-    adapter: Adapter,
-  ) {
-    // Kit resolves the manifest's `..`-relative fallback-component ids
-    // against `process.cwd()` instead of the Vite root; the realign plugin
-    // repairs them when the two differ (see makeKitRuntimeRealignPlugin).
-    const realign = makeKitRuntimeRealignPlugin(
-      yield* resolveKitDirectory(root),
-    );
-    const userConfigFile = yield* findViteConfigFile(root);
-    if (userConfigFile === undefined) {
-      const plugins = yield* loadKitPlugins(root, adapter);
+    const loadKitPlugins = Effect.fn(function* (root: string, adapter: Adapter) {
+      const kitVite = yield* loadKitViteModule(root);
+      return yield* Effect.tryPromise({
+        try: async () => await kitVite.sveltekit({ ...options?.kit, adapter }),
+        catch: (error) => fail("Failed to construct the SvelteKit plugin", error),
+      });
+    });
+
+    const findViteConfigFile = Effect.fnUntraced(function* (root: string) {
+      for (const name of DEFAULT_VITE_CONFIG_FILES) {
+        const exists = yield* fs
+          .exists(path.join(root, name))
+          .pipe(Effect.catchTag("PlatformError", () => Effect.succeed(false)));
+        if (exists) {
+          return name;
+        }
+      }
+      return undefined;
+    });
+
+    /**
+     * Assemble the Vite inline config for a build/dev invocation.
+     *
+     * - Project has its own Vite config file: the file loads natively
+     *   (`configFile` is left to Vite's discovery — the user's plugins,
+     *   including their `sveltekit(...)` call, all apply) and the inline
+     *   config only injects `makeSvelteKitConfigPlugin`, which installs the
+     *   deploy target's adapter (and `options.kit` overrides) into the
+     *   user's kit config before kit processes it.
+     * - No config file on disk: internal fallback — `configFile: false` with
+     *   the `sveltekit()` plugin constructed programmatically from
+     *   `options.kit` + the target's adapter.
+     */
+    const resolveViteConfig = Effect.fn(function* (root: string, adapter: Adapter) {
+      // Kit resolves the manifest's `..`-relative fallback-component ids
+      // against `process.cwd()` instead of the Vite root; the realign plugin
+      // repairs them when the two differ (see makeKitRuntimeRealignPlugin).
+      const realign = makeKitRuntimeRealignPlugin(yield* resolveKitDirectory(root));
+      const userConfigFile = yield* findViteConfigFile(root);
+      if (userConfigFile === undefined) {
+        const plugins = yield* loadKitPlugins(root, adapter);
+        return {
+          root,
+          configFile: false,
+          // Default to warn: rolldown-vite's native progress reporter
+          // ("transforming...") writes straight to the fd, which corrupts
+          // hosting-process reporters (e.g. alchemy-test) that can only
+          // intercept JS-level writers.
+          logLevel: "warn",
+          ...options?.vite,
+          plugins: [realign, ...(options?.vite?.plugins ?? []), plugins],
+        } satisfies ViteModule.InlineConfig;
+      }
       return {
         root,
-        configFile: false,
-        // Default to warn: rolldown-vite's native progress reporter
-        // ("transforming...") writes straight to the fd, which corrupts
-        // hosting-process reporters (e.g. alchemy-test) that can only
-        // intercept JS-level writers.
         logLevel: "warn",
         ...options?.vite,
-        plugins: [realign, ...(options?.vite?.plugins ?? []), plugins],
+        plugins: [
+          realign,
+          ...(options?.vite?.plugins ?? []),
+          makeSvelteKitConfigPlugin({ adapter, kit: options?.kit }),
+        ],
       } satisfies ViteModule.InlineConfig;
-    }
-    return {
-      root,
-      logLevel: "warn",
-      ...options?.vite,
-      plugins: [
-        realign,
-        ...(options?.vite?.plugins ?? []),
-        makeSvelteKitConfigPlugin({ adapter, kit: options?.kit }),
-      ],
-    } satisfies ViteModule.InlineConfig;
-  });
+    });
 
-  const build: Framework["Service"]["build"] = Effect.fn(
-    function* (buildOptions) {
+    const build: Framework["Service"]["build"] = Effect.fn(function* (buildOptions) {
       const root = buildOptions?.root ?? baseRoot;
       const target = yield* resolveTarget(root);
       const targetContext = {
@@ -549,9 +527,7 @@ export const make: (
 
       const result = adapter.result.current;
       if (result === undefined) {
-        return yield* Effect.fail(
-          fail("The SvelteKit build completed without running the adapter"),
-        );
+        return yield* fail("The SvelteKit build completed without running the adapter");
       }
 
       const output: FrameworkCore.BuildOutput = {
@@ -572,11 +548,9 @@ export const make: (
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
       );
-    },
-  );
+    });
 
-  const devInProcess: Framework["Service"]["dev"] = Effect.fn(
-    function* (devOptions) {
+    const devInProcess: Framework["Service"]["dev"] = Effect.fn(function* (devOptions) {
       const root = devOptions?.root ?? baseRoot;
       const target = yield* resolveTarget(root);
       yield* requireAdapterHook(target);
@@ -586,6 +560,11 @@ export const make: (
           env: options?.dev?.env,
           bindings: options?.dev?.bindings,
           services: options?.dev?.services,
+          workerd: options?.dev?.workerd,
+          assetsDirectory: NodePath.resolve(
+            root,
+            (options?.kit?.files as { assets?: string } | undefined)?.assets ?? "static",
+          ),
         },
       });
       // Registered before the server is acquired so it runs after the server
@@ -629,48 +608,42 @@ export const make: (
       );
       const url = server.resolvedUrls?.local[0];
       if (url === undefined) {
-        return yield* Effect.fail(
-          fail("Could not determine the dev server URL"),
-        );
+        return yield* fail("Could not determine the dev server URL");
       }
       return { url };
-    },
-  );
-
-  // Constructing the SvelteKit plugin loads the project's `@sveltejs/kit`
-  // module graph, which misbehaves when several projects load it
-  // concurrently in one process (partially-initialized module bindings —
-  // `Cannot access 'kit_options' before initialization`). A process hosting
-  // many sites' dev servers (the alchemy dev sidecar) hits exactly that, so
-  // run the dev server in a dedicated child process instead (see
-  // core/DevChild.ts). Inside that child — or when the options cannot cross
-  // the process boundary (deploy-target VALUES, live vite plugins from the
-  // e2e harness) — the in-process path runs directly.
-  const dev: Framework["Service"]["dev"] = (devOptions) => {
-    if (
-      FrameworkCore.isInsideDevChild() ||
-      !FrameworkCore.isJsonSerializable(options)
-    ) {
-      return devInProcess(devOptions);
-    }
-    const root = devOptions?.root ?? baseRoot;
-    const port = devOptions?.port ?? options?.dev?.port;
-    return FrameworkCore.runDevChild({
-      framework: "sveltekit",
-      module: "@alchemy.run/frontend-frameworks/sveltekit",
-      callerUrl: import.meta.url,
-      rootDir: root,
-      makeOptions: { ...options, root },
-      devOptions: {
-        root,
-        ...(port !== undefined ? { port } : {}),
-        ...(devOptions?.host !== undefined ? { host: devOptions.host } : {}),
-      },
     });
-  };
 
-  return Framework.of({ build, dev });
-});
+    // Constructing the SvelteKit plugin loads the project's `@sveltejs/kit`
+    // module graph, which misbehaves when several projects load it
+    // concurrently in one process (partially-initialized module bindings —
+    // `Cannot access 'kit_options' before initialization`). A process hosting
+    // many sites' dev servers (the alchemy dev sidecar) hits exactly that, so
+    // run the dev server in a dedicated child process instead (see
+    // core/DevChild.ts). Inside that child — or when the options cannot cross
+    // the process boundary (deploy-target VALUES, live vite plugins from the
+    // e2e harness) — the in-process path runs directly.
+    const dev: Framework["Service"]["dev"] = (devOptions) => {
+      if (FrameworkCore.isInsideDevChild() || !FrameworkCore.isJsonSerializable(options)) {
+        return devInProcess(devOptions);
+      }
+      const root = devOptions?.root ?? baseRoot;
+      const port = devOptions?.port ?? options?.dev?.port;
+      return FrameworkCore.runDevChild({
+        framework: "sveltekit",
+        module: "@alchemy.run/frontend-frameworks/sveltekit",
+        callerUrl: import.meta.url,
+        rootDir: root,
+        makeOptions: { ...options, root },
+        devOptions: {
+          root,
+          ...(port !== undefined ? { port } : {}),
+          ...(devOptions?.host !== undefined ? { host: devOptions.host } : {}),
+        },
+      });
+    };
+
+    return Framework.of({ build, dev });
+  });
 
 /**
  * A `Layer` providing framework-core's `Framework` service for a SvelteKit
