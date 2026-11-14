@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
@@ -22,6 +23,7 @@ export class RuntimeRequestResponseExecutionError extends Schema.TaggedError<Run
       "request-not-ready",
       "request-not-resumable",
       "provider-session-not-active",
+      "request-closed",
       "unexpected-failure",
     ]),
     threadId: ThreadId,
@@ -40,6 +42,8 @@ export class RuntimeRequestResponseExecutionError extends Schema.TaggedError<Run
         return `Runtime request ${this.requestId} on thread ${this.threadId} is not resumable on provider session ${this.providerSessionId}.`;
       case "provider-session-not-active":
         return `Provider session ${this.providerSessionId} is not active for runtime request ${this.requestId} on thread ${this.threadId}.`;
+      case "request-closed":
+        return `The provider closed runtime request ${this.requestId} on thread ${this.threadId} before it received the response.`;
       case "unexpected-failure":
         return `Failed to respond to runtime request ${this.requestId} on thread ${this.threadId} via provider session ${this.providerSessionId}.`;
     }
@@ -47,6 +51,9 @@ export class RuntimeRequestResponseExecutionError extends Schema.TaggedError<Run
 }
 
 const isRuntimeRequestResponseExecutionError = Schema.is(RuntimeRequestResponseExecutionError);
+const isProviderResponseError = Schema.is(
+  ProviderAdapter.ProviderAdapterRuntimeRequestResponseError,
+);
 
 export interface RuntimeRequestServiceV2Shape {
   readonly respond: (input: {
@@ -128,7 +135,10 @@ export const layer: Layer.Layer<
               isRuntimeRequestResponseExecutionError(cause)
                 ? cause
                 : new RuntimeRequestResponseExecutionError({
-                    reason: "unexpected-failure",
+                    reason:
+                      isProviderResponseError(cause) && cause.reason === "request_closed"
+                        ? "request-closed"
+                        : "unexpected-failure",
                     threadId: input.threadId,
                     providerSessionId: input.providerSessionId,
                     requestId: input.requestId,

@@ -801,6 +801,28 @@ it.effect(
               },
             ],
           );
+          yield* orchestrator.dispatch({
+            type: "runtime-request.delivery.fail",
+            commandId: CommandId.make("respond:live:delivery-failed"),
+            threadId,
+            requestId,
+            closed: true,
+          });
+          const closed = yield* projections.getRuntimeResponseContext(threadId, requestId);
+          assert.equal(closed.request?.status, "cancelled");
+          assert.isUndefined(closed.request?.answers);
+          assert.equal(closed.node?.status, "cancelled");
+          assert.equal(closed.item?.status, "cancelled");
+          assert.isUndefined(
+            closed.item?.type === "user_input_request" ? closed.item.questionAnswer : undefined,
+          );
+          const notices = yield* sql<{ readonly payload_json: string }>`
+            SELECT payload_json FROM orchestration_v2_projection_turn_items
+            WHERE thread_id = ${threadId} AND type = 'error'`;
+          assert.deepEqual(
+            notices.map((row) => JSON.parse(row.payload_json).title),
+            ["Answer not delivered"],
+          );
         }
       }
       yield* orchestrator.dispatch({

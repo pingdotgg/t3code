@@ -3693,6 +3693,8 @@ const OrchestrationV2InternalCommand = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     requestId: RuntimeRequestId,
+    /** The provider closed the request before the answer reached it. */
+    closed: Schema.optional(Schema.Boolean),
   }),
   /** The provider did not confirm a Stop of this turn in time. */
   Schema.Struct({

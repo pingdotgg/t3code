@@ -5133,6 +5133,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               })
               .pipe(Effect.timeout(REQUEST_REPLY_TIMEOUT), Effect.ignore({ log: true }));
           }
+          // OpenCode cancels open forms when it reloads a location and continues without the answer.
+          // Only a first attempt proves that: a retry can find the form our lost reply settled.
+          let attempts = 0;
+          let formClosed = false;
+          const closeForm = () =>
+            Effect.sync(() => {
+              formClosed = attempts === 1;
+            });
           const delivered = yield* native.type === "permission"
             ? deliver(
                 client.permission
@@ -5145,20 +5153,34 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                   .pipe(Effect.catchTags(permissionGone)),
               )
             : deliver(
-                (answers === undefined || decision === "decline" || decision === "cancel"
-                  ? client.session.form.cancel({
-                      sessionID: entry.sessionId,
-                      formID: Form.ID.make(native.id),
-                    })
-                  : client.session.form.reply({
-                      sessionID: entry.sessionId,
-                      formID: Form.ID.make(native.id),
-                      answer: formAnswer(native.form, answers),
-                    })
-                ).pipe(Effect.catchTags(formGone)),
+                answers === undefined || decision === "decline" || decision === "cancel"
+                  ? client.session.form
+                      .cancel({ sessionID: entry.sessionId, formID: Form.ID.make(native.id) })
+                      .pipe(Effect.catchTags(formGone))
+                  : Effect.sync(() => attempts++).pipe(
+                      Effect.andThen(
+                        client.session.form.reply({
+                          sessionID: entry.sessionId,
+                          formID: Form.ID.make(native.id),
+                          answer: formAnswer(native.form, answers),
+                        }),
+                      ),
+                      Effect.catchTags({
+                        ...formGone,
+                        FormNotFoundError: closeForm,
+                        FormAlreadySettledError: closeForm,
+                      }),
+                    ),
               );
           yield* forgetRequest(entry);
           if (!delivered) yield* abandonRequest(asker, "answer not delivered");
+          if (formClosed) {
+            return yield* new ProviderAdapter.ProviderAdapterRuntimeRequestResponseError({
+              driver,
+              requestId: requestInput.requestId,
+              reason: "request_closed",
+            });
+          }
         },
         (effect, requestInput) =>
           effect.pipe(

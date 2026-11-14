@@ -435,11 +435,15 @@ export class ProviderAdapterRuntimeRequestResponseError extends Schema.TaggedErr
   {
     driver: ProviderDriverKind,
     requestId: RuntimeRequestId,
+    /** The provider closed the request before it received the response. */
+    reason: Schema.optional(Schema.Literal("request_closed")),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return `Failed to respond to ${this.driver} runtime request ${this.requestId}.`;
+    return this.reason === "request_closed"
+      ? `The ${this.driver} provider closed runtime request ${this.requestId} before it received the response.`
+      : `Failed to respond to ${this.driver} runtime request ${this.requestId}.`;
   }
 }
 

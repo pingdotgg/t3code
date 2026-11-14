@@ -3021,6 +3021,45 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
+  it.effect.each([
+    { name: "cancelled (a location reload)", refused: ["FormAlreadySettledError"], closed: true },
+    { name: "dropped (a server restart)", refused: ["FormNotFoundError"], closed: true },
+    {
+      name: "settled with a reply whose response was lost",
+      refused: ["UnknownError", "FormAlreadySettledError"],
+      closed: false,
+    },
+  ])("reports an answer to a form OpenCode $name", ({ refused, closed }) =>
+    Effect.gen(function* () {
+      const replyOut = out("session.form.reply", {
+        sessionID: SESSION,
+        formID: colorForm.id,
+        answer: { q0: "Red" },
+      });
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("form.created", { form: colorForm }),
+        ...refused.flatMap((tag) => [
+          replyOut,
+          reply("session.form.reply", {
+            status: tag === "UnknownError" ? 500 : tag === "FormNotFoundError" ? 404 : 409,
+            body: { _tag: tag, id: colorForm.id, message: tag },
+          }),
+        ]),
+      ]);
+      const requested = yield* requestOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(turnInput(thread));
+      const request = yield* Fiber.join(requested);
+      const answer = runtime.respondToRuntimeRequest({
+        requestId: request!.id,
+        answers: { q0: "Red" },
+      });
+      if (closed) assert.deepInclude(yield* Effect.flip(answer), { reason: "request_closed" });
+      else yield* answer;
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("declines a form T3 cannot show with the reason, instead of leaving it open", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([

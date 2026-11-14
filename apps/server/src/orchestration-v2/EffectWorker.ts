@@ -444,6 +444,20 @@ export const layerExecutor: Layer.Layer<
                   : { answers: effect.request.answers }),
               })
               .pipe(
+                // Retrying cannot reach a request the provider already closed.
+                Effect.catchIf(
+                  (error) => error.reason === "request-closed",
+                  () =>
+                    threads
+                      .dispatch({
+                        type: "runtime-request.delivery.fail",
+                        commandId: CommandId.make(`${effect.commandId}:delivery-failed`),
+                        threadId: effect.threadId,
+                        requestId,
+                        closed: true,
+                      })
+                      .pipe(Effect.asVoid),
+                ),
                 Effect.tapCause((cause) =>
                   willRetry || Cause.hasInterruptsOnly(cause)
                     ? Effect.void

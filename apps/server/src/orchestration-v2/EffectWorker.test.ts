@@ -329,6 +329,50 @@ it.effect("does not report an answer whose last delivery attempt is interrupted"
   }),
 );
 
+it.effect("records an answer to a request the provider closed once, without retrying", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const requestId = RuntimeRequestId.make("runtime-request:effect-worker-closed");
+    const reported = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
+    const layer = layerExecutorFor({
+      events: yield* Ref.make<ReadonlyArray<string>>([]),
+      respond: () =>
+        Effect.fail(
+          new RuntimeRequestService.RuntimeRequestResponseExecutionError({
+            reason: "request-closed",
+            threadId,
+            providerSessionId: oldSessionId,
+            requestId,
+          }),
+        ),
+      threads: {
+        dispatch: (command) =>
+          Ref.update(reported, (current) =>
+            command.type === "runtime-request.delivery.fail"
+              ? [...current, command.closed]
+              : current,
+          ).pipe(Effect.as({ sequence: 1, storedEvents: [] })),
+      },
+    });
+    yield* Effect.gen(function* () {
+      const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
+      yield* executor.execute(
+        {
+          ...restartEffect(now, { type: "detach" }),
+          request: {
+            type: "runtime-request.respond",
+            providerSessionId: oldSessionId,
+            requestId,
+            answers: { next: "Ship it" },
+          },
+        },
+        { willRetry: true },
+      );
+    }).pipe(Effect.provide(layer));
+    assert.deepEqual(yield* Ref.get(reported), [true]);
+  }),
+);
+
 it.effect("requeues a claim when a pre-execution worker check fails", () =>
   Effect.gen(function* () {
     const now = DateTime.formatIso(yield* DateTime.now);
