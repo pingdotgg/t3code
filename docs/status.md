@@ -159,7 +159,21 @@ are built and proven against the T3 server's own CLI on macOS.
   after a failed try), only with `enableProviderUpdateChecks`, kept when it decodes and is not
   older than the bundled or cached one, written atomically. The URL, the times and the bundled
   `updatedAt` are generated (`gen-upstream.mjs`). **The server now makes this one outbound
-  request, as the T3 server does.**
+  request, as the T3 server does.** Test seam: `CONN_MODEL_MANIFEST_URL` (`off` never
+  fetches; an `http(s)` URL fetches from there). Every check sets `off`; `orbit-flow` fetches
+  from a loopback stub, and also starts once with a stub that answers 500 and once with no
+  listener (no file, the server ready).
+- **No check reaches the network for a manifest.** Our servers get the seam `off`
+  (`check.sh`, `sealed-env.mjs`, each tool that builds its own environment). T3's code in a
+  check (the vitest files the conformance and replay tools write, `policies.mjs`, the T3
+  servers and CLI of `parity` and `thread-cli-diff`) imports `tools/no-outside-fetch.mjs`
+  first, which limits `fetch` to loopback; `parity`'s T3 server also gets
+  `enableProviderUpdateChecks: false`. Before this, T3's code fetched T3 Code's manifest
+  from GitHub in Claude conformance, Claude probe conformance, Claude t3-replay, Codex
+  conformance and the fixture replay (37 lookups in one run, mDNSResponder's log), and
+  `parity`'s T3 server could (it ran with the real HOME and default settings).
+- **A project-folder launch records the folder's branch** (`EngineHost::current_branch`), as
+  T3's `launchBranch`.
 - Two `/mcp` faults found on the way and fixed: `t3_thread_wait` ended on a run in `waiting`
   (the step between a provider's end and its checkpoint), and it ignored
   `untilDelegatedWorkSettled` and `resultRun`; `t3_thread_launch` answered a text T3 does not
@@ -167,8 +181,11 @@ are built and proven against the T3 server's own CLI on macOS.
 
 Proven (macOS): `thread-cli-diff` runs Orbit's commands on the T3 server with its `t3` and on
 this server with ours, each with a stub `codex` and T3's recorded transcripts: 30 steps, the
-same stdout, stderr and exit code, except `branch` (null here) and `itemCount` (one less
-here), which the engine fills differently. It covers a turn that completes, fails and asks, a
+same stdout, stderr and exit code, except `itemCount` (one less here): T3's launch starts
+its first message deferred and records a "Workspace ready" item
+(`ThreadLaunchService.ts:1209`, `Orchestrator.ts:8000-8025`); this engine starts at once and
+refuses `prepared-run.*` (`commands.rs:160-163`). Orbit reads neither `itemCount` nor
+`branch` (its result step, `task-copy-turn/mod.ts:77-80` at Orbit `aa33299`). It covers a turn that completes, fails and asks, a
 send, unknown thread, model and provider, usage errors, no server, and `t3_copy_rpc.mjs`'s
 ticket, `/ws`, `getThreadProjection`, `run.interrupt` and revoke. `model-manifest-diff`: our
 file text equals T3's `encodeManifestCache`, byte for byte. `orbit-flow` runs the path in
@@ -1064,7 +1081,11 @@ The check is the one to trust; several review findings did not hold.
 - `t3/32cd278b` (text generators, titles, `runNow`, the redacting `Debug`): all 31 checks pass
   on macOS (2026-11-14). No new dependency; the release binary grew by 93,648 bytes
   (16,558,944 to 16,652,592, macOS arm64).
-- `t3/ea388396` (Orbit's task-turn path, 2026-11-14, not merged): see "Orbit's task-turn path".
+- `t3/ea388396` (Orbit's task-turn path, 2026-11-14, `main` `c5242fa` merged in): 38 checks
+  with `CONN_MONOREPO`. One run passed all 38; a second failed only `cargo test` on
+  `conn-terminal`'s `clears_and_reports_the_foreground_command` (no idle upsert after
+  Ctrl-C, while another agent's checks loaded the machine), which then passed alone twice
+  and in the crate's full run. macOS only.
 - `main`: verified. All 36 checks pass on macOS (2026-11-14, with the ACP provider, scheduled
   tasks and annotations). The last Linux pass (all tests, 20 runs on the gnu target and 5 on
   musl, 2026-11-14) is older than those merges.
