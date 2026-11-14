@@ -8,8 +8,8 @@ Run Drizzle in a Railway container beside [Railway MySQL](/railway/data/mysql). 
 ## Install the database dependencies
 
 ```sh
-pnpm add drizzle-orm@1.0.0-rc.5-ab785fc @effect/sql-mysql2 mysql2
-pnpm add -D drizzle-kit@1.0.0-rc.5-ab785fc
+pnpm add @alchemy.run/drizzle drizzle-orm@1.0.0-rc.5 @effect/sql-mysql2
+pnpm add -D drizzle-kit@1.0.0-rc.5
 ```
 
 The Drizzle versions match the repository's Effect integration.
@@ -55,7 +55,7 @@ Commit the schema, SQL, and snapshots together; deployment must consume the revi
 
 ```typescript
 // src/db.ts
-import * as Railway from "alchemy/Railway";
+import * as Railway from "@alchemy.run/railway";
 import { Site } from "./project.ts";
 
 export const Db = Railway.MySQL("Db", { project: Site });
@@ -111,7 +111,7 @@ Supply `publicConnectionUri` as secret `DATABASE_URL` for an external runner, or
 ## Open the runtime client
 
 ```diff lang="typescript"
-+import * as Drizzle from "alchemy/Drizzle/MySQL";
++import * as Drizzle from "@alchemy.run/drizzle/MySQL";
 
  const conn = yield* Railway.ConnectMySQL(Db);
 +const db = yield* Drizzle.MySQL(conn.connectionString);

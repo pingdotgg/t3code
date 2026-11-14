@@ -66,6 +66,8 @@ export const UsageBucket = Schema.Struct({
   costSource: UsageCostSource,
   records: NonNegativeInt,
   unpricedRecords: NonNegativeInt,
+  /** Absent from older servers; merges then estimate it from the unpriced record share. */
+  unpricedTokens: Schema.optional(NonNegativeInt),
   sessions: NonNegativeInt,
 });
 export type UsageBucket = typeof UsageBucket.Type;
@@ -76,6 +78,13 @@ export const UsageSourceFingerprint = Schema.Struct({
   resolvedHomePath: TrimmedNonEmptyString,
   /** Transcript directory device:inode distinguishes machines sharing a hostname and home path. */
   volumeId: Schema.String,
+  /**
+   * Opaque identity of a directory that the Windows server of a desktop install
+   * reads natively and its managed WSL server reads through a drvfs mount. Path
+   * and `volumeId` differ between the two sides, so clients treat sources with
+   * an equal value as one directory in addition to the fields above.
+   */
+  physicalSourceId: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type UsageSourceFingerprint = typeof UsageSourceFingerprint.Type;
 
@@ -91,7 +100,6 @@ export const UsageSource = Schema.Struct({
   /** Total this count; bucket counts double-count sessions spanning days or models. */
   distinctSessions: NonNegativeInt,
   message: Schema.NullOr(TrimmedNonEmptyString),
-  action: Schema.optionalKey(Schema.Literal("enableCursorKeychain")),
   /** Cached response during refresh; repeat with awaitRefresh for fresh data. */
   refreshing: Schema.optionalKey(Schema.Literal(true)),
 });
@@ -108,6 +116,23 @@ export const UsagePricing = Schema.Struct({
 });
 export type UsagePricing = typeof UsagePricing.Type;
 
+/**
+ * Matches a provider's original model ID, before usage model aliases apply. Omit provider to
+ * match any; a string provider lets older clients carry selectors for providers they lack.
+ */
+export const UsageModelSelector = Schema.Struct({
+  provider: Schema.optional(TrimmedNonEmptyString),
+  model: TrimmedNonEmptyString,
+});
+export type UsageModelSelector = typeof UsageModelSelector.Type;
+
+/** Keeps records matching `include` (all when omitted) and not matching `exclude`. */
+export const UsageModelFilter = Schema.Struct({
+  include: Schema.optional(Schema.Array(UsageModelSelector)),
+  exclude: Schema.optional(Schema.Array(UsageModelSelector)),
+});
+export type UsageModelFilter = typeof UsageModelFilter.Type;
+
 export const UsageSummaryInput = Schema.Struct({
   sinceDay: UsageDay,
   untilDay: UsageDay,
@@ -117,6 +142,9 @@ export const UsageSummaryInput = Schema.Struct({
   sinceTime: Schema.optional(TrimmedNonEmptyString),
   untilTime: Schema.optional(TrimmedNonEmptyString),
   awaitRefresh: Schema.optional(Schema.Boolean),
+  /** Accept an immediate answer from the last scan; its sources are marked refreshing. */
+  provisional: Schema.optional(Schema.Boolean),
+  modelFilter: Schema.optional(UsageModelFilter),
 });
 export type UsageSummaryInput = typeof UsageSummaryInput.Type;
 
@@ -130,6 +158,8 @@ export const UsageSummary = Schema.Struct({
   sources: ForwardCompatibleArray(UsageSource),
   pricing: UsagePricing,
   scanDurationMs: NonNegativeInt,
+  /** The filter the server applied; absent means unfiltered, including servers that predate filters. */
+  modelFilter: Schema.optional(UsageModelFilter),
 });
 export type UsageSummary = typeof UsageSummary.Type;
 

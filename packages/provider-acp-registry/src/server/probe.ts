@@ -1,3 +1,4 @@
+import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import {
   AcpRegistryListProvidersResult,
   AcpRegistryOperationError,
@@ -12,7 +13,7 @@ import {
 } from "@t3tools/contracts";
 import { AcpRegistrySettings } from "../settings.ts";
 import { discoverCopilotSkills, isCopilotAcpSettings } from "./copilotSkills.ts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -44,11 +45,10 @@ const MAX_MODELS = 256;
 const MAX_ID_LENGTH = 128;
 const MAX_NAME_LENGTH = 160;
 const MAX_DESCRIPTION_LENGTH = 1_024;
-const MAX_COMMANDS = 128;
 const MAX_COMMAND_LINE_LENGTH = 2_048;
-const PROBE_TIMEOUT_SECONDS = 60;
-const PROBE_TIMEOUT = `${PROBE_TIMEOUT_SECONDS} seconds`;
+const PROBE_TIMEOUT_MS = 60_000;
 const COMMAND_ADVERTISEMENT_GRACE = "500 millis";
+const PROBE_SESSION_DELETE_TIMEOUT = "5 seconds";
 
 const boundedText = (value: string, maximumLength: number): string =>
   value.trim().slice(0, maximumLength);
@@ -171,6 +171,7 @@ export interface AcpRegistryLiveConfiguration {
   readonly models: ReadonlyArray<AcpRegistryProbeModel>;
   readonly currentModelId: string | null;
   readonly configOptions: AcpRegistryProbeResult["configOptions"];
+  readonly modelOptionIds?: NonNullable<AcpRegistryProbeResult["modelOptionIds"]>;
 }
 
 export function normalizeAcpRegistryLiveConfiguration(
@@ -198,12 +199,21 @@ export function normalizeAcpRegistryLiveConfiguration(
       ? null
       : (boundedOpaqueValue(currentModelId, MAX_ID_LENGTH) ?? null);
   const models = normalizeModels(candidates, boundedCurrentModelId);
+  const descriptors = acpProviderOptionDescriptors({ configOptions, modeState });
+  const modelOptionIds = new Set(
+    configOptions
+      .filter((option) => option.category === "thought_level" || option.category === "model_config")
+      .map((option) => option.id),
+  );
   return {
     models,
     currentModelId: models.some((model) => model.id === boundedCurrentModelId)
       ? boundedCurrentModelId
       : null,
-    configOptions: acpProviderOptionDescriptors({ configOptions, modeState }),
+    configOptions: descriptors,
+    modelOptionIds: descriptors
+      .filter((descriptor) => modelOptionIds.has(descriptor.id))
+      .map((descriptor) => descriptor.id),
   };
 }
 
@@ -217,7 +227,6 @@ export function normalizeAcpRegistryCommands(
   const seen = new Set<string>();
   const slashCommands: Array<ServerProviderSlashCommand> = [];
   const skills: Array<ServerProviderSkill> = [];
-  let accepted = 0;
   for (const command of commands) {
     const name = boundedOpaqueValue(command.name, MAX_ID_LENGTH);
     if (name === undefined) continue;
@@ -255,8 +264,6 @@ export function normalizeAcpRegistryCommands(
         ...(hint ? { input: { hint } } : {}),
       });
     }
-    accepted += 1;
-    if (accepted === MAX_COMMANDS) break;
   }
   return { slashCommands, skills };
 }
@@ -336,13 +343,18 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
     AcpRegistryOperationError,
     | AcpRegistrySupport.AcpRegistryCatalog
     | ChildProcessSpawner.ChildProcessSpawner
-    | Crypto.Crypto
+    | SecureRandom.SecureRandom
     | FileSystem.FileSystem
     | Path.Path
   > {
     const catalog = yield* AcpRegistrySupport.AcpRegistryCatalog;
+    const probeTimeoutMs = resolveProviderProbeTimeoutMs(
+      "acp_registry",
+      PROBE_TIMEOUT_MS,
+      input.environment,
+    );
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const crypto = yield* Crypto.Crypto;
+    const random = yield* SecureRandom.SecureRandom;
     const pty = yield* Effect.serviceOption(PtyAdapter.PtyAdapter);
 
     const result = yield* Effect.gen(function* () {
@@ -380,7 +392,7 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
           Layer.provide(
             Layer.mergeAll(
               Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
-              Layer.succeed(Crypto.Crypto, crypto),
+              Layer.succeed(SecureRandom.SecureRandom, random),
             ),
           ),
         ),
@@ -437,6 +449,13 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
         );
       }
       const started = startResult.success;
+      // Agents that persist sessions (OpenCode) would otherwise keep one empty session per probe.
+      // The runtime only sends session/delete when the agent advertises it.
+      yield* Effect.addFinalizer(() =>
+        runtime
+          .deleteSession(started.sessionId)
+          .pipe(Effect.timeoutOption(PROBE_SESSION_DELETE_TIMEOUT), Effect.ignore),
+      );
       yield* Deferred.await(commandsAdvertised).pipe(
         Effect.timeoutOption(COMMAND_ADVERTISEMENT_GRACE),
       );
@@ -451,12 +470,12 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
     }).pipe(
       Effect.scoped,
       Effect.timeoutOrElse({
-        duration: PROBE_TIMEOUT,
+        duration: probeTimeoutMs,
         orElse: () =>
           Effect.fail(
             new AcpRegistryOperationError({
               reason: "probe_failed",
-              message: `The ACP agent did not resolve and create a test session within ${PROBE_TIMEOUT_SECONDS} seconds. Package installation or agent startup may be slow; this check retries on the next provider refresh.`,
+              message: `The ACP agent did not resolve and create a test session within ${probeTimeoutMs / 1_000} seconds. Package installation or agent startup may be slow; this check retries on the next provider refresh.`,
             }),
           ),
       }),
@@ -486,7 +505,7 @@ const makeAcpRegistryManagementRuntime = Effect.fn("AcpRegistryProbe.makeManagem
   function* (input: AcpRegistryManagementInput) {
     const catalog = yield* AcpRegistrySupport.AcpRegistryCatalog;
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const crypto = yield* Crypto.Crypto;
+    const random = yield* SecureRandom.SecureRandom;
     const runtimeCoordinator = yield* Effect.serviceOption(
       AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator,
     );
@@ -510,7 +529,7 @@ const makeAcpRegistryManagementRuntime = Effect.fn("AcpRegistryProbe.makeManagem
         Layer.provide(
           Layer.mergeAll(
             Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
-            Layer.succeed(Crypto.Crypto, crypto),
+            Layer.succeed(SecureRandom.SecureRandom, random),
           ),
         ),
       ),

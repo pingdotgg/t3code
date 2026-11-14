@@ -92,6 +92,26 @@ describe("normalizeDesktopUpdateReleaseNotes", () => {
     ]);
   });
 
+  it.each([
+    "**v1.2.4** · 3 changes from 2 contributors\n- **One-time tasks.** Pick a date.\n\n### Plus 2 more bug fixes and performance improvements.",
+    "<p><strong>v1.2.4</strong> · 3 changes from 2 contributors</p><ul><li><strong>One-time tasks.</strong> Pick a date.</li></ul><h3>Plus 2 more bug fixes and performance improvements.</h3>",
+  ])("keeps highlight labels and the remaining change count from the feed", (summary) => {
+    const { releaseNotes } = normalizeDesktopUpdateReleaseNotes(
+      summary + "\n<details><summary>Full changelog</summary>raw list</details>",
+      "1.2.4",
+      "latest",
+    );
+    expect(releaseNotes).toEqual([
+      {
+        version: "1.2.4",
+        stats: "3 changes from 2 contributors",
+        items: ["**One-time tasks.** Pick a date."],
+        totalItems: 1,
+        footer: "Plus 2 more bug fixes and performance improvements.",
+      },
+    ]);
+  });
+
   it("does not count Markdown or HTML section headings as changes", () => {
     const changes = Array.from({ length: 8 }, (_, index) => `Change ${index + 1}`);
     const result = normalizeDesktopUpdateReleaseNotes(
@@ -221,14 +241,20 @@ describe("normalizeDesktopUpdateReleaseNotes", () => {
     });
   });
 
-  it("does not throw on out-of-range numeric entities and keeps the literal", () => {
+  it("keeps unsupported entities literal, including out-of-range and Object.prototype names", () => {
     const result = normalizeDesktopUpdateReleaseNotes(
-      "- Broken entity &#9999999999;",
+      "- Broken entity &#9999999999;\n- Mentions &constructor; and &toString;",
       "1.0.0",
       "latest",
     );
     expect(result).toEqual({
-      releaseNotes: [{ version: "1.0.0", items: ["Broken entity &#9999999999;"], totalItems: 1 }],
+      releaseNotes: [
+        {
+          version: "1.0.0",
+          items: ["Mentions &constructor; and &toString;", "Broken entity &#9999999999;"],
+          totalItems: 2,
+        },
+      ],
       omittedReleaseCount: 0,
     });
   });

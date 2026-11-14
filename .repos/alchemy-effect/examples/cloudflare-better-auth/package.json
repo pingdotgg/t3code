@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@alchemy.run/better-auth": "workspace:*",
+    "@alchemy.run/cloudflare": "workspace:*",
     "alchemy": "workspace:*",
     "better-auth": "catalog:",
     "effect": "catalog:",
