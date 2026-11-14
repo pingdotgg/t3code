@@ -1043,6 +1043,8 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
         const busySessionIds = new Set<string>();
         // A background task returns before its new child session reports busy.
         const unstartedSessionIds = new Set<string>();
+        // A child can error before any turn of it is projected; its next idle settles the launch.
+        const sessionErrorOutcomes = new Map<string, TerminalTurnStatus>();
         // Remember settled requests across routing retries to prevent resurrection; only recent IDs matter.
         const settledNativeRequestIds = new Set<string>();
         const pendingChildRequestRoutes = new Set<string>();
@@ -1612,8 +1614,11 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           const lastTurn = Array.from(threads.get(childSessionId)?.providerTurns.values() ?? []).at(
             -1,
           )?.status;
+          const errorOutcome = sessionErrorOutcomes.get(childSessionId);
+          sessionErrorOutcomes.delete(childSessionId);
           const childOutcome =
             outcome ??
+            errorOutcome ??
             (lastTurn === "interrupted" || lastTurn === "failed" || lastTurn === "cancelled"
               ? lastTurn
               : "completed");
@@ -2827,6 +2832,12 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 });
                 return;
               }
+              if (event.properties.sessionID !== undefined) {
+                sessionErrorOutcomes.set(
+                  event.properties.sessionID,
+                  isMessageAbortedError(event) ? "interrupted" : "failed",
+                );
+              }
               const states =
                 event.properties.sessionID === undefined
                   ? Array.from(threads.values()).filter((state) => state.activeTurn !== null)
@@ -2892,6 +2903,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             Effect.gen(function* () {
               busySessionIds.clear();
               unstartedSessionIds.clear();
+              sessionErrorOutcomes.clear();
               if (closing || abortController.signal.aborted) return;
               const detail = Exit.isSuccess(exit)
                 ? "OpenCode event stream ended unexpectedly."

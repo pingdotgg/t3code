@@ -1391,6 +1391,7 @@ describe("OpenCodeAdapterV2", () => {
   it.effect.each([
     { case: "finishes", ending: "idle", outcome: "completed" },
     { case: "is aborted", ending: "abort", outcome: "interrupted" },
+    { case: "fails before its first turn", ending: "error", outcome: "failed" },
     { case: "never starts and the thread is stopped", ending: "stop", outcome: "interrupted" },
   ])("keeps a background task's subagent running until its child $case", ({ ending, outcome }) =>
     Effect.gen(function* () {
@@ -1477,7 +1478,7 @@ describe("OpenCodeAdapterV2", () => {
         },
       });
       yield* push(taskPart("running"));
-      const starts = ending !== "stop";
+      const starts = ending !== "stop" && ending !== "error";
       if (starts) {
         yield* push({
           type: "message.updated",
@@ -1499,10 +1500,16 @@ describe("OpenCodeAdapterV2", () => {
           requestRuntimeRestart: true,
         });
       } else {
-        if (ending === "abort") {
+        if (ending !== "idle") {
           yield* push({
             type: "session.error",
-            properties: { sessionID: child, error: { name: "MessageAbortedError", data: {} } },
+            properties: {
+              sessionID: child,
+              error:
+                ending === "abort"
+                  ? { name: "MessageAbortedError", data: {} }
+                  : { name: "UnknownError", data: { message: "model unavailable" } },
+            },
           });
         }
         yield* push(status(child, "idle"));
