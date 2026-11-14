@@ -97,13 +97,25 @@ export const ThreadPullRequestWatch = Schema.Struct({
   /** Reported remarks at remarksThrough, so late arrivals at that timestamp still count. */
   remarkIds: Schema.Array(TrimmedNonEmptyString),
   conflicting: Schema.Boolean,
+  /** Last removal seen; null after an empty read, absent before the first read. */
+  mergeQueueRemovalId: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   /** Consecutive comment-only wakes; limited to prevent bot loops. */
   wakes: NonNegativeInt,
+  /**
+   * What is already on the pull request is recorded, not reported: conflicts on the first read, and
+   * checks on the first read that can be trusted to show them (one with a head and a full check read).
+   */
+  awaitingBaseline: Schema.optional(Schema.Literals(["all", "checks"])),
   /**
    * When the head was first read without any check, until a check shows up or the agent is told
    * none did. Null once either happened; absent on watches saved before it existed.
    */
   checksAwaitedSince: Schema.optional(Schema.NullOr(IsoDateTime)),
+  /**
+   * Whether the host was still running checks on the head at the last read. Only then does the
+   * watch keep its thread waiting; absent on watches not read since it existed.
+   */
+  checksPending: Schema.optional(Schema.Boolean),
 });
 export type ThreadPullRequestWatch = typeof ThreadPullRequestWatch.Type;
 

@@ -202,6 +202,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
     text = "hello",
     startProviderThread: OrchestrationV2ProviderThread = providerThread,
     turnPolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy = policy,
+    resume = false,
   ) =>
     runtime.startTurn({
       appThread: {
@@ -234,6 +235,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
       attemptId: RunAttemptId.make(`attempt-opencode-${suffix}`),
       rootNodeId: NodeId.make(`node-opencode-${suffix}`),
       providerThread: startProviderThread,
+      ...(resume ? { resume: true as const } : {}),
       message: {
         createdBy: "user",
         creationSource: "web",
@@ -264,6 +266,7 @@ describe("OpenCodeAdapterV2", () => {
     ["unknown", "prompt"],
     ["failure", "prompt"],
     ["unset", "prompt"],
+    ["unset", "resume"],
   ] as const)("normalizes reasoning variants for %s inventory at %s dispatch", ([kind, request]) =>
     Effect.gen(function* () {
       const suffix = `variant-${kind}-${request}`;
@@ -329,20 +332,23 @@ describe("OpenCodeAdapterV2", () => {
           ],
         },
       );
-      yield* harness.startTurn(request === "command" ? "/review staged changes" : "hello");
+      yield* harness.startTurn(
+        request === "command" ? "/review staged changes" : request === "resume" ? "" : "hello",
+        harness.providerThread,
+        harness.policy,
+        request === "resume",
+      );
       assert.equal(inputs.length, 1);
       const payload = inputs[0]!;
       assert.equal(payload.agent, "plan");
+      if (request === "resume") assert.deepEqual(payload.parts, []);
       if (kind === "supported" || kind === "unknown" || kind === "failure") {
         assert.equal(payload.variant, "medium");
       } else {
         assert.equal(Object.hasOwn(payload, "variant"), false);
       }
       if (kind === "unset") assert.equal(inventoryCalls, 0);
-    }).pipe(
-      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
-      Effect.scoped,
-    ),
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
   it.effect("reuses successful model variants for the session and retries failed inventories", () =>
@@ -418,10 +424,7 @@ describe("OpenCodeAdapterV2", () => {
       variants = { medium: {} };
       assert.isFalse(Object.hasOwn(yield* submit(), "variant"));
       assert.equal(inventoryCalls, 2);
-    }).pipe(
-      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
-      Effect.scoped,
-    ),
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
   it.effect("keeps queued steers behind a cold catalog lookup and cancels them on stop", () =>
@@ -511,10 +514,7 @@ describe("OpenCodeAdapterV2", () => {
       assert.isTrue(Exit.isFailure(yield* Fiber.join(firstSteer)));
       assert.isTrue(Exit.isFailure(yield* Fiber.join(secondSteer)));
       assert.deepEqual(calls, ["catalog", "catalog-aborted", "abort"]);
-    }).pipe(
-      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
-      Effect.scoped,
-    ),
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
   it.effect.each([
@@ -575,10 +575,7 @@ describe("OpenCodeAdapterV2", () => {
       const terminal = events.findLast((event) => event.type === "turn.terminal");
       assert.strictEqual(session?.providerSession.lastError, sample.expected);
       assert.strictEqual(terminal?.failure?.message, sample.expected);
-    }).pipe(
-      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
-      Effect.scoped,
-    ),
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
   it.effect("classifies APIError 429 as a usage limit", () =>
@@ -620,10 +617,7 @@ describe("OpenCodeAdapterV2", () => {
       );
       assert.equal(terminal?.status, "failed");
       assert.equal(terminal?.failure?.class, "usage_limit");
-    }).pipe(
-      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
-      Effect.scoped,
-    ),
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
   it.effect("applies a changed runtime policy to the session on resume and turn start", () =>
@@ -676,10 +670,7 @@ describe("OpenCodeAdapterV2", () => {
       assert.deepStrictEqual(updates.slice(1), [
         { sessionID: "root", permission: openCodePermissionRules(fullAccess) },
       ]);
-    }).pipe(
-      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
-      Effect.scoped,
-    ),
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
   it.effect("applies a changed runtime policy to existing subagent sessions", () =>
@@ -782,10 +773,7 @@ describe("OpenCodeAdapterV2", () => {
       });
       assert.equal(permissionAction(nativePermissions.get(child)!, "bash"), "ask");
       assert.equal(permissionAction(nativePermissions.get(child)!, "task"), "deny");
-    }).pipe(
-      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
-      Effect.scoped,
-    ),
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
   it.effect.each(["completed", "failed", "unavailable"] as const)(
@@ -796,6 +784,18 @@ describe("OpenCodeAdapterV2", () => {
         let promptId = "";
         const harness = yield* makeOpenCodeRuntimeHarness(`usage-${ending}`, "root", {
           event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+          provider: {
+            list: async () => ({
+              data: {
+                all: [
+                  {
+                    id: "anthropic",
+                    models: { "claude-sonnet": { limit: { context: 200_000, output: 8_000 } } },
+                  },
+                ],
+              },
+            }),
+          },
           session: {
             create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
             promptAsync: async (input: { messageID: string }) => {
@@ -916,10 +916,12 @@ describe("OpenCodeAdapterV2", () => {
                 hasSubagents: false,
               },
         );
-      }).pipe(
-        Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
-        Effect.scoped,
-      ),
+        // The thread's context window reads tokenUsage: the last step's context fill.
+        if (ending === "completed") {
+          assert.equal(completed?.providerTurn.tokenUsage?.usedTokens, 22);
+          assert.equal(completed?.providerTurn.tokenUsage?.maxTokens, 200_000);
+        }
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
   // OpenCode 1.18.18 reports a context overflow as session.error, then auto-compacts and continues.
@@ -1022,10 +1024,7 @@ describe("OpenCodeAdapterV2", () => {
             event.turnItem.text === "Post-compaction step",
         ),
       );
-    }).pipe(
-      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
-      Effect.scoped,
-    ),
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
   it.effect("fails an explicit compaction that OpenCode reports as a context overflow", () =>
@@ -1069,10 +1068,7 @@ describe("OpenCodeAdapterV2", () => {
           (event) => event.type === "turn_item.updated" && event.turnItem.type === "compaction",
         ),
       );
-    }).pipe(
-      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
-      Effect.scoped,
-    ),
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
   it.effect("preserves native multi-select and custom-answer flags through a live reply", () =>
@@ -1147,10 +1143,7 @@ describe("OpenCodeAdapterV2", () => {
         answers: { "question-0-drinks": ["Tea", "Water"] },
       });
       assert.deepInclude(delivered, { answers: [["Tea", "Water"]] });
-    }).pipe(
-      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
-      Effect.scoped,
-    ),
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
   it.effect(
@@ -1399,14 +1392,17 @@ describe("OpenCodeAdapterV2", () => {
         const assistant = items.filter((item) => item.type === "assistant_message");
         assert.equal(assistant.at(-1)?.text, "Tool results received");
         assert.equal(assistant.at(-1)?.status, "completed");
-      }).pipe(
-        Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
-        Effect.scoped,
-      ),
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
   // OpenCode 1.18.32 background tasks complete at launch; children stay busy after root settlement.
-  it.effect("reports a background task child as pending work after the root turn settles", () =>
+  // Event order from a live 1.19.5 run: the child reports busy only after the launch completes.
+  it.effect.each([
+    { case: "finishes", ending: "idle", outcome: "completed" },
+    { case: "is aborted", ending: "abort", outcome: "interrupted" },
+    { case: "fails before its first turn", ending: "error", outcome: "failed" },
+    { case: "never starts and the thread is stopped", ending: "stop", outcome: "interrupted" },
+  ])("keeps a background task's subagent running until its child $case", ({ ending, outcome }) =>
     Effect.gen(function* () {
       const nativeEvents = asyncEventStream();
       const push = (event: unknown) => Effect.promise(() => nativeEvents.push(event));
@@ -1434,9 +1430,14 @@ describe("OpenCodeAdapterV2", () => {
         return yield* Effect.die("OpenCode runtime must expose hasPendingBackgroundWork.");
       }
       yield* harness.startTurn();
-      const terminal = yield* harness.runtime.events.pipe(
-        Stream.filter((event) => event.type === "turn.terminal"),
-        Stream.runHead,
+      const received = yield* harness.runtime.events.pipe(
+        Stream.takeUntil(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "subagent" &&
+            event.turnItem.status !== "running",
+        ),
+        Stream.runCollect,
         Effect.forkScoped,
       );
       const taskPart = (status: "running" | "completed") => ({
@@ -1478,7 +1479,6 @@ describe("OpenCodeAdapterV2", () => {
         },
       });
       yield* push(status(root, "busy"));
-      yield* push(taskPart("running"));
       yield* push({
         type: "session.created",
         properties: {
@@ -1486,15 +1486,172 @@ describe("OpenCodeAdapterV2", () => {
           info: { id: child, parentID: root, time: { created: 2, updated: 2 } },
         },
       });
-      yield* push(status(child, "busy"));
+      yield* push(taskPart("running"));
+      const starts = ending !== "stop" && ending !== "error";
+      if (starts) {
+        yield* push({
+          type: "message.updated",
+          properties: {
+            sessionID: child,
+            info: { id: "msg_child_prompt", sessionID: child, role: "user", time: { created: 2 } },
+          },
+        });
+      }
       yield* push(taskPart("completed"));
+      if (starts) yield* push(status(child, "busy"));
       yield* push(status(root, "idle"));
-      assert.equal(Option.getOrUndefined(yield* Fiber.join(terminal))?.status, "completed");
-      assert.isTrue(yield* hasPendingBackgroundWork, "the running child must pin idle release");
+      assert.equal(yield* hasPendingBackgroundWork, starts, "a running child pins idle release");
 
-      yield* push(status(child, "idle"));
-      yield* push({ type: "session.idle", properties: { sessionID: child } });
+      if (ending === "stop") {
+        yield* harness.runtime.interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId: ProviderTurnId.make("provider-turn:settled"),
+          requestRuntimeRestart: true,
+        });
+      } else {
+        if (ending !== "idle") {
+          yield* push({
+            type: "session.error",
+            properties: {
+              sessionID: child,
+              error:
+                ending === "abort"
+                  ? { name: "MessageAbortedError", data: {} }
+                  : { name: "UnknownError", data: { message: "model unavailable" } },
+            },
+          });
+        }
+        yield* push(status(child, "idle"));
+        yield* push({ type: "session.idle", properties: { sessionID: child } });
+      }
       assert.isFalse(yield* hasPendingBackgroundWork, "an idle child must not pin idle release");
+      assert.deepEqual(
+        (yield* Fiber.join(received)).flatMap((event) =>
+          event.type === "subagent.updated"
+            ? [`subagent ${event.subagent.status}`]
+            : event.type === "turn.terminal"
+              ? [`root turn ${event.status}`]
+              : [],
+        ),
+        ["subagent running", "subagent running", "root turn completed", `subagent ${outcome}`],
+      );
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
+  );
+
+  // After a restart the adapter no longer holds the child, so its earlier turns come from OpenCode.
+  it.effect.each([
+    { case: "in memory", restarted: false },
+    { case: "after a restart", restarted: true },
+  ])("appends a resumed task child's turn after its earlier turns ($case)", ({ restarted }) =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const push = (event: unknown) => Effect.promise(() => nativeEvents.push(event));
+      const root = "ses_root";
+      const child = "ses_child";
+      let promptId = "";
+      const harness = yield* makeOpenCodeRuntimeHarness("resumed-child", root, {
+        event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+        session: {
+          create: async () => ({ data: { id: root, time: { created: 1, updated: 1 } } }),
+          get: async () => ({
+            data: { id: child, parentID: root, permission: [], time: { created: 2, updated: 2 } },
+          }),
+          update: async () => ({ data: { id: child, parentID: root } }),
+          promptAsync: async (input: { messageID: string }) => {
+            promptId = input.messageID;
+            return { data: true };
+          },
+          abort: async () => ({ data: true }),
+          children: async () => ({ data: [] }),
+          // OpenCode may have stored the resume prompt before its event reaches the adapter.
+          messages: async () => ({
+            data: [
+              { info: { id: "msg_child_first", role: "user" }, parts: [] },
+              { info: { id: "msg_child_resume", role: "user" }, parts: [] },
+            ],
+          }),
+        },
+      });
+      yield* harness.startTurn();
+      const childTurns = yield* harness.runtime.events.pipe(
+        Stream.filter(
+          (event) =>
+            event.type === "provider_turn.updated" &&
+            event.providerTurn.status === "running" &&
+            event.providerTurn.providerThreadId.includes(child),
+        ),
+        Stream.take(restarted ? 1 : 2),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      const taskPart = (partId: string, status: "running" | "completed", taskId?: string) => ({
+        type: "message.part.updated",
+        properties: {
+          sessionID: root,
+          part: {
+            id: partId,
+            sessionID: root,
+            messageID: "msg_root_assistant",
+            type: "tool",
+            tool: "task",
+            callID: `call_${partId}`,
+            state: {
+              status,
+              input: {
+                description: "Explore",
+                prompt: "look around",
+                subagent_type: "general",
+                ...(taskId === undefined ? {} : { task_id: taskId }),
+              },
+              title: "Explore",
+              metadata: { parentSessionId: root, sessionId: child },
+              time: { start: 3, ...(status === "completed" ? { end: 4 } : {}) },
+              ...(status === "completed" ? { output: "done" } : {}),
+            },
+          },
+        },
+      });
+      const childPrompt = (id: string, created: number) => ({
+        type: "message.updated",
+        properties: {
+          sessionID: child,
+          info: { id, sessionID: child, role: "user", time: { created } },
+        },
+      });
+      const status = (sessionID: string, type: "busy" | "idle") => ({
+        type: "session.status",
+        properties: { sessionID, status: { type } },
+      });
+
+      yield* push({
+        type: "message.updated",
+        properties: {
+          sessionID: root,
+          info: { id: promptId, sessionID: root, role: "user", time: { created: 1 } },
+        },
+      });
+      yield* push(status(root, "busy"));
+      if (!restarted) {
+        yield* push(taskPart("prt_task_first", "running"));
+        yield* push(childPrompt("msg_child_first", 3));
+        yield* push(status(child, "busy"));
+        yield* push(status(child, "idle"));
+        yield* push({ type: "session.idle", properties: { sessionID: child } });
+        yield* push(taskPart("prt_task_first", "completed"));
+      }
+      // The lead resumes the same child session by passing its task_id.
+      yield* push(taskPart("prt_task_resume", "running", child));
+      yield* push(childPrompt("msg_child_resume", 5));
+      yield* push(status(child, "busy"));
+
+      const turns = Array.from(yield* Fiber.join(childTurns)).flatMap((event) =>
+        event.type === "provider_turn.updated" ? [event.providerTurn] : [],
+      );
+      assert.equal(new Set(turns.map((turn) => turn.providerThreadId)).size, 1);
+      assert.deepEqual(
+        turns.map((turn) => turn.ordinal),
+        restarted ? [2] : [1, 2],
+      );
     }).pipe(
       Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
       Effect.scoped,
@@ -1625,10 +1782,7 @@ describe("OpenCodeAdapterV2", () => {
       );
       assert.ok(emptyWebSearch?.type === "web_search");
       assert.equal(emptyWebSearch.results, undefined);
-    }).pipe(
-      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
-      Effect.scoped,
-    ),
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
   it.effect("drops cancelled OpenCode todos so a finished list completes", () =>
@@ -1681,10 +1835,7 @@ describe("OpenCodeAdapterV2", () => {
         ],
       );
       assert.equal(plan.status, "completed");
-    }).pipe(
-      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
-      Effect.scoped,
-    ),
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
   it.effect("presents OpenCode MCP calls without treating remote tools as local edits", () =>
@@ -1852,10 +2003,7 @@ describe("OpenCodeAdapterV2", () => {
       assert.equal(items[3]?.toolName, "ambiguous_server_edit_document");
       assert.isUndefined(items[3]?.toolSource);
       assert.equal(statusReads, 1);
-    }).pipe(
-      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
-      Effect.scoped,
-    ),
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
   it.effect("admits a native command on its user receipt before generation completes", () =>
@@ -1918,10 +2066,7 @@ describe("OpenCodeAdapterV2", () => {
       yield* Fiber.join(start);
       assert.equal(promptCalls, 0);
       release.resolve();
-    }).pipe(
-      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
-      Effect.scoped,
-    ),
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
   it.effect("keeps an admitted native command running when its HTTP request times out", () =>
@@ -1998,10 +2143,7 @@ describe("OpenCodeAdapterV2", () => {
         "completed",
         "a command admitted by its user receipt must not fail when its HTTP request times out",
       );
-    }).pipe(
-      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
-      Effect.scoped,
-    ),
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
   it.effect("compacts with the native summarize API and emits a completed compaction", () =>
@@ -2056,10 +2198,7 @@ describe("OpenCodeAdapterV2", () => {
       assert.isTrue(
         events.some((event) => event.type === "turn.terminal" && event.status === "completed"),
       );
-    }).pipe(
-      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
-      Effect.scoped,
-    ),
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
   it.effect("ends a turn on the provider thread it started on", () =>
@@ -2096,10 +2235,7 @@ describe("OpenCodeAdapterV2", () => {
         Stream.runHead,
       );
       assert.equal(Option.getOrUndefined(terminal)?.providerThreadId, forkedRow.id);
-    }).pipe(
-      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
-      Effect.scoped,
-    ),
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
   it.effect("does not restore messages beyond OpenCode's persisted revert boundary", () =>
@@ -2184,10 +2320,7 @@ describe("OpenCodeAdapterV2", () => {
         ["user-kept", "assistant-kept"],
       );
       assert.equal(snapshot.providerThread.nativeConversationHeadRef?.nativeId, "user-kept");
-    }).pipe(
-      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
-      Effect.scoped,
-    ),
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
   it.effect("steers with the turn's agent, reasoning variant and system instructions", () =>
@@ -2240,10 +2373,7 @@ describe("OpenCodeAdapterV2", () => {
         { agent: steer?.agent, variant: steer?.variant, system: steer?.system },
         { agent: start?.agent, variant: start?.variant, system: start?.system },
       );
-    }).pipe(
-      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
-      Effect.scoped,
-    ),
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
   it.effect("keeps a newly admitted prompt alive across stale idle and delayed busy evidence", () =>
@@ -2560,10 +2690,7 @@ describe("OpenCodeAdapterV2", () => {
       );
       const interrupted = yield* runtime.readThreadSnapshot({ providerThread });
       assert.equal(interrupted.providerTurns.at(-1)?.status, "interrupted");
-    }).pipe(
-      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
-      Effect.scoped,
-    ),
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
   it.effect("rejects steering when stop wins the extracted-text lookup", () =>
@@ -2651,10 +2778,269 @@ describe("OpenCodeAdapterV2", () => {
         providerThread: harness.providerThread,
       });
       assert.equal(stopped.providerTurns.at(-1)?.status, "interrupted");
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
+  );
+
+  it.effect.each([
+    "during",
+    "idle-during-status",
+    "busy-during-status",
+    "after-refused-connection",
+  ] as const)("completes the turn when the session goes idle %s a rejected steer", (idleTiming) =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const sessionId = `native-steer-rejected-${idleTiming}`;
+      const idle = {
+        type: "session.status",
+        properties: { sessionID: sessionId, status: { type: "idle" } },
+      };
+      const promptIds: Array<string> = [];
+      const terminal = yield* Deferred.make<void>();
+      const statusRead = promiseGate<void>();
+      const statusRechecked = promiseGate<void>();
+      let statusCalls = 0;
+      const harness = yield* makeOpenCodeRuntimeHarness(`steer-rejected-${idleTiming}`, sessionId, {
+        event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+        session: {
+          create: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
+          get: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
+          messages: async () => ({ data: [] }),
+          status: async () => {
+            statusCalls++;
+            statusRead.resolve();
+            if (idleTiming === "busy-during-status") {
+              if (statusCalls === 1) {
+                await nativeEvents.push({
+                  type: "session.status",
+                  properties: { sessionID: sessionId, status: { type: "busy" } },
+                });
+                return { data: { [sessionId]: { type: "idle" } } };
+              }
+              statusRechecked.resolve();
+              return { data: { [sessionId]: { type: statusCalls === 2 ? "busy" : "idle" } } };
+            }
+            if (idleTiming === "idle-during-status" && statusCalls === 1) {
+              await nativeEvents.push(idle);
+              return { data: { [sessionId]: { type: "busy" } } };
+            }
+            return {
+              data: {
+                [sessionId]: { type: idleTiming === "after-refused-connection" ? "busy" : "idle" },
+              },
+            };
+          },
+          promptAsync: async (input: { messageID: string }) => {
+            promptIds.push(input.messageID);
+            if (promptIds.length === 1) return { data: true };
+            if (idleTiming === "during") await nativeEvents.push(idle);
+            if (idleTiming === "after-refused-connection") {
+              throw new TypeError("fetch failed", {
+                cause: Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }),
+              });
+            }
+            // The SDK wraps an HTTP error reply in an Error with its status on `cause`.
+            throw new Error("steer rejected", { cause: { body: "steer rejected", status: 503 } });
+          },
+          abort: async () => ({ data: true }),
+          children: async () => ({ data: [] }),
+        },
+      });
+      yield* harness.startTurn();
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "message.updated",
+          properties: {
+            sessionID: sessionId,
+            info: {
+              id: promptIds[0],
+              sessionID: sessionId,
+              role: "user",
+              time: { created: DateTime.toEpochMillis(harness.now) },
+            },
+          },
+        }),
+      );
+      const running = yield* harness.runtime.readThreadSnapshot({
+        providerThread: harness.providerThread,
+      });
+      yield* harness.runtime.events.pipe(
+        Stream.tap((event) =>
+          event.type === "turn.terminal" ? Deferred.succeed(terminal, undefined) : Effect.void,
+        ),
+        Stream.runDrain,
+        Effect.forkScoped,
+      );
+      const steer = yield* Effect.exit(
+        harness.runtime.steerTurn({
+          threadId: harness.threadId,
+          runId: harness.runId,
+          providerThread: harness.providerThread,
+          providerTurnId: running.providerTurns.at(-1)!.id,
+          message: {
+            messageId: MessageId.make(`message-steer-rejected-${idleTiming}`),
+            text: "also cover the README",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+          },
+        }),
+      );
+      assert.isTrue(Exit.isFailure(steer));
+      yield* Effect.promise(() => statusRead.promise);
+      if (idleTiming === "busy-during-status") {
+        const outcome = yield* Effect.raceFirst(
+          Effect.promise(() => statusRechecked.promise).pipe(Effect.as("rechecked")),
+          Deferred.await(terminal).pipe(Effect.as("completed")),
+        );
+        assert.equal(outcome, "rechecked");
+        const active = yield* harness.runtime.readThreadSnapshot({
+          providerThread: harness.providerThread,
+        });
+        assert.equal(active.providerTurns.at(-1)?.status, "running");
+        yield* Effect.promise(() => nativeEvents.push(idle));
+      }
+      if (idleTiming === "after-refused-connection") {
+        const active = yield* harness.runtime.readThreadSnapshot({
+          providerThread: harness.providerThread,
+        });
+        assert.equal(active.providerTurns.at(-1)?.status, "running");
+        yield* Effect.promise(() => nativeEvents.push(idle));
+      }
+      yield* Deferred.await(terminal);
+      if (idleTiming !== "busy-during-status") {
+        assert.equal(statusCalls, idleTiming === "idle-during-status" ? 2 : 1);
+      }
+
+      const settled = yield* harness.runtime.readThreadSnapshot({
+        providerThread: harness.providerThread,
+      });
+      assert.equal(settled.providerTurns.at(-1)?.status, "completed");
     }).pipe(
       Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
       Effect.scoped,
     ),
+  );
+
+  it.effect(
+    "keeps the turn for a steer whose reply was lost until its output lands, even after a retry is rejected",
+    () =>
+      Effect.gen(function* () {
+        const nativeEvents = asyncEventStream();
+        const sessionId = "native-steer-reply-lost";
+        const promptIds: Array<string> = [];
+        const harness = yield* makeOpenCodeRuntimeHarness(sessionId, sessionId, {
+          event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+          session: {
+            create: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
+            get: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
+            messages: async () => ({ data: [] }),
+            // OpenCode took the steer but has not saved its message yet.
+            status: async () => ({ data: { [sessionId]: { type: "idle" } } }),
+            promptAsync: async (input: { messageID: string }) => {
+              promptIds.push(input.messageID);
+              if (promptIds.length === 1) return { data: true };
+              if (promptIds.length === 3) {
+                throw new Error("Service Unavailable", { cause: { status: 503 } });
+              }
+              throw new TypeError("fetch failed", {
+                cause: Object.assign(new Error("other side closed"), { code: "UND_ERR_SOCKET" }),
+              });
+            },
+            abort: async () => ({ data: true }),
+            children: async () => ({ data: [] }),
+          },
+        });
+        yield* harness.startTurn();
+        const userMessage = (id: string | undefined) =>
+          Effect.promise(() =>
+            nativeEvents.push({
+              type: "message.updated",
+              properties: {
+                sessionID: sessionId,
+                info: { id, sessionID: sessionId, role: "user", time: { created: 1 } },
+              },
+            }),
+          );
+        yield* userMessage(promptIds[0]);
+        const running = yield* harness.runtime.readThreadSnapshot({
+          providerThread: harness.providerThread,
+        });
+        const received = yield* harness.runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        const steer = harness.runtime.steerTurn({
+          threadId: harness.threadId,
+          runId: harness.runId,
+          providerThread: harness.providerThread,
+          providerTurnId: running.providerTurns.at(-1)!.id,
+          message: {
+            messageId: MessageId.make("message-steer-reply-lost"),
+            text: "also cover the README",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+          },
+        });
+        assert.isTrue(Exit.isFailure(yield* Effect.exit(steer)));
+        // T3 retries a failed steer; this retry's request is refused outright.
+        assert.isTrue(Exit.isFailure(yield* Effect.exit(steer)));
+        // A real status read answers before OpenCode saves the steer's message.
+        yield* Effect.yieldNow;
+        yield* userMessage(promptIds[1]);
+        const assistant = (completed?: number) =>
+          Effect.promise(() =>
+            nativeEvents.push({
+              type: "message.updated",
+              properties: {
+                sessionID: sessionId,
+                info: {
+                  id: "steer-answer",
+                  sessionID: sessionId,
+                  role: "assistant",
+                  time: completed === undefined ? { created: 2 } : { created: 2, completed },
+                },
+              },
+            }),
+          );
+        yield* assistant();
+        yield* Effect.promise(() =>
+          nativeEvents.push({
+            type: "message.part.updated",
+            properties: {
+              sessionID: sessionId,
+              part: {
+                id: "steer-answer-text",
+                sessionID: sessionId,
+                messageID: "steer-answer",
+                type: "text",
+                text: "README covered",
+                time: { start: 2 },
+              },
+            },
+          }),
+        );
+        yield* assistant(3);
+        yield* Effect.promise(() =>
+          nativeEvents.push({
+            type: "session.status",
+            properties: { sessionID: sessionId, status: { type: "idle" } },
+          }),
+        );
+        const events = yield* Fiber.join(received);
+        const answers = events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+            ? [event.turnItem.text]
+            : [],
+        );
+        assert.include(answers, "README covered");
+        const terminal = events.at(-1);
+        assert.equal(terminal?.type === "turn.terminal" ? terminal.status : undefined, "completed");
+      }).pipe(
+        Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+        Effect.scoped,
+      ),
   );
 
   it.effect("interrupts an initial prompt while its SDK request is pending", () =>
@@ -2819,10 +3205,7 @@ describe("OpenCodeAdapterV2", () => {
             (event.type === "provider_session.updated" && event.providerSession.status === "error"),
         ),
       );
-    }).pipe(
-      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
-      Effect.scoped,
-    ),
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
   it.effect("fails an active turn when the OpenCode event stream ends cleanly", () =>
@@ -2865,10 +3248,7 @@ describe("OpenCodeAdapterV2", () => {
       assert.equal(terminal?.failure?.class, "transport_error");
       assert.equal(terminal?.threadDisposition, "broken");
       assert.equal((yield* Effect.exit(harness.startTurn()))._tag, "Failure");
-    }).pipe(
-      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
-      Effect.scoped,
-    ),
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
   it.effect("fails compaction when its response races stream termination", () =>
@@ -2929,10 +3309,7 @@ describe("OpenCodeAdapterV2", () => {
             event.turnItem.status === "completed",
         ),
       );
-    }).pipe(
-      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
-      Effect.scoped,
-    ),
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
   it.effect("does not register a turn after the OpenCode event stream ends", () =>
@@ -2990,10 +3367,7 @@ describe("OpenCodeAdapterV2", () => {
 
       assert.isTrue(Exit.isFailure(yield* Fiber.join(start)));
       assert.equal(promptCalls, 0);
-    }).pipe(
-      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
-      Effect.scoped,
-    ),
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
   it("holds stale idle through prompt admission until the new user message is observed", () => {
@@ -3048,6 +3422,15 @@ describe("OpenCodeAdapterV2", () => {
         yield* reconcileOpenCodePromptAdmissionStatus(admission, 4, Effect.succeed("unknown")),
         "unknown",
       );
+      assert.isTrue(admission.admissionPending);
+      const stalled = yield* reconcileOpenCodePromptAdmissionStatus(
+        admission,
+        4,
+        Effect.never,
+      ).pipe(Effect.forkChild({ startImmediately: true }));
+      yield* TestClock.adjust("10 seconds");
+      assert.isDefined(stalled.pollUnsafe());
+      assert.equal(yield* Fiber.join(stalled), "unknown");
       assert.isTrue(admission.admissionPending);
       assert.equal(
         yield* reconcileOpenCodePromptAdmissionStatus(admission, 4, Effect.succeed("idle")),
@@ -3401,10 +3784,7 @@ it.effect.each([false, true])(
         assert.equal(result.messages.length, 0);
         assert.deepEqual(calls, ["fork", "permissions"]);
       }
-    }).pipe(
-      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
-      Effect.scoped,
-    ),
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
 );
 
 it.live.each([true, false])("opens an authenticated OpenCode session (external=%s)", (external) =>

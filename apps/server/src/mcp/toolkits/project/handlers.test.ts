@@ -788,6 +788,7 @@ it.effect("an agent's clone is not cut off while git is still transferring", () 
       ),
       Layer.provide(
         Layer.mock(GitVcsDriver.GitVcsDriver)({
+          invalidateRefs: () => Effect.void,
           // Like the real driver, the clone fails once it outlives the deadline it was given.
           execute: (input) =>
             Deferred.succeed(started, undefined).pipe(
