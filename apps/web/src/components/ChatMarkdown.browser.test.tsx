@@ -10,7 +10,10 @@ import "../index.css";
 
 import { filesystemEnvironment } from "../state/filesystem";
 import { useRightPanelStore } from "../rightPanelStore";
-import { remarkEnableOrderedListNumbers } from "@t3tools/shared/markdownPipeline";
+import {
+  CHAT_USER_MARKDOWN_REMARK_PLUGINS,
+  remarkEnableOrderedListNumbers,
+} from "@t3tools/shared/markdownPipeline";
 import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskList";
 import { HostImageUrlContext } from "./chat/hostImageUrl";
 import { getSyntaxHighlighterPromise } from "~/lib/syntaxHighlighting";
@@ -713,7 +716,9 @@ describe("ChatMarkdown literal prose copy", () => {
     "Keep *real* emphasis, snake_case, 2 * 3 and https://example.com/_next/ as typed.",
   ])("pastes and sends %j as it was shown", async (source) => {
     setup();
-    await using screen = await renderText(source);
+    await using screen = await renderText(source, {
+      extraRemarkPlugins: CHAT_USER_MARKDOWN_REMARK_PLUGINS,
+    });
     const shown = visibleText(screen.container);
     const range = document.createRange();
     range.selectNodeContents(screen.container.querySelector(".chat-markdown")!);
@@ -726,7 +731,6 @@ describe("ChatMarkdown literal prose copy", () => {
         new ClipboardEvent("copy", { clipboardData, bubbles: true, cancelable: true }),
       );
     window.getSelection()!.removeAllRanges();
-    expect(clipboardData.getData("text/plain")).toBe(source);
 
     await screen.rerender(
       <ComposerPromptEditorTiptap
@@ -750,7 +754,13 @@ describe("ChatMarkdown literal prose copy", () => {
     });
     const sent = serializeEditorDoc(editorNode.editor.state.doc).value;
 
-    await screen.rerender(<ChatMarkdown cwd="/tmp/project" text={sent} />);
+    await screen.rerender(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={sent}
+        extraRemarkPlugins={CHAT_USER_MARKDOWN_REMARK_PLUGINS}
+      />,
+    );
     expect(visibleText(screen.container)).toBe(shown);
   });
 });

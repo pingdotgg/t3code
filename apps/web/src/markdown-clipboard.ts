@@ -1,3 +1,5 @@
+import { UNFINISHED_DRIVE_PATH } from "@t3tools/shared/markdownWindowsPaths";
+
 const SKIPPED_TAGS = new Set(["BUTTON", "INPUT", "SCRIPT", "STYLE", "TEMPLATE"]);
 const SKIPPED_CLASS_NAMES = ["select-none", "sr-only"];
 const SANITIZED_HTML_SELECTOR = [
@@ -203,21 +205,28 @@ function serializeDetails(details: Element): string {
 }
 
 // Prose that would read as inline Markdown once pasted back: a backslash before punctuation,
-// backticks, link openers, and emphasis or strikethrough runs (`~` alone never strikes in sent text).
-const INLINE_MARKDOWN = /\\(?=[!-/:-@[-`{-~\n]|$)|[`[]|\*+|_+|~{2,}/g;
+// backticks, brackets, and emphasis or strikethrough runs (user remark-gfm sets singleTilde: false).
+const INLINE_MARKDOWN = /\\(?=[!-/:-@[-`{-~\n]|$)|[`[\]]|\*+|_+|~{2,}/g;
 const ESCAPED_PUNCTUATION = /\\([!-/:-@[-`{-~])/g;
 
 /** Escapes rendered prose so it parses back to the same text, leaving runs that cannot open or close. */
 function escapeProse(text: string): string {
-  return text.replace(INLINE_MARKDOWN, (match, offset: number) => {
-    const before = text[offset - 1];
-    const after = text[offset + match.length];
-    // A text node's edge may touch another node's markers, so it counts as neither.
-    const between = (pattern: RegExp) =>
-      before !== undefined && after !== undefined && pattern.test(before) && pattern.test(after);
-    if (/[*_~]/.test(match[0]!) && between(/\s/)) return match;
-    if (match[0] === "_" && between(/[\p{L}\p{N}]/u)) return match;
-    return match.replace(/[\s\S]/g, "\\$&");
+  return text.replace(/\S+/g, (word, wordOffset: number) => {
+    // Check each word once; testing every escape's growing prefix would be quadratic.
+    const drive = UNFINISHED_DRIVE_PATH.exec(word);
+    const driveStart = drive ? drive.index + drive[0].search(/[A-Za-z]/) + 2 : Infinity;
+    return word.replace(INLINE_MARKDOWN, (match: string, offset: number) => {
+      if (offset >= driveStart) return match;
+      const before = text[wordOffset + offset - 1];
+      const after = text[wordOffset + offset + match.length];
+      if (match === "\\" && after !== undefined && /[^\S\n]/.test(after)) return match;
+      // A text node's edge may touch another node's markers, so it counts as neither.
+      const between = (pattern: RegExp) =>
+        before !== undefined && after !== undefined && pattern.test(before) && pattern.test(after);
+      if (/[*_~]/.test(match[0]!) && between(/\s/)) return match;
+      if (match[0] === "_" && between(/[\p{L}\p{N}]/u)) return match;
+      return match.replace(/[\s\S]/g, "\\$&");
+    });
   });
 }
 
