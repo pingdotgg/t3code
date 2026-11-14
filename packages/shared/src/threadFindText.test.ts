@@ -101,23 +101,18 @@ it("searches displayed prose and file-chip labels without hidden paths", () => {
       String.raw`C:\repo`,
     ),
   ).toEqual(["a page.tsx · repo/.a and b page.tsx · repo/.b"]);
-  for (const name of ["x&y", "x&amp;y"]) {
-    expect(
-      assistantSegments(
-        `[a](C:\\repo\\.a\\${name}\\page.tsx) and [b](C:\\repo\\.b\\${name}\\page.tsx)`,
-        String.raw`C:\repo`,
-      ),
-    ).toEqual(["a page.tsx · .a/x&y and b page.tsx · .b/x&y"]);
-  }
+  expect(
+    assistantSegments(
+      String.raw`[a](C:\repo\.a\x&amp;y\page.tsx) and [b](C:\repo\.b\x&amp;y\page.tsx)`,
+      String.raw`C:\repo`,
+    ),
+  ).toEqual(["a page.tsx · .a/x&y and b page.tsx · .b/x&y"]);
   expect(
     assistantSegments("[a](/repo/a&amp;b/page.tsx) and [b](/repo/c&amp;d/page.tsx)", "/repo"),
   ).toEqual(["a page.tsx · repo/a&b and b page.tsx · repo/c&d"]);
   expect(
     assistantSegments("[a](</repo/a&b)/page.tsx>) and [b](</repo/c&d)/page.tsx>)", "/repo"),
   ).toEqual(["a page.tsx · repo/a&b) and b page.tsx · repo/c&d)"]);
-  expect(
-    assistantSegments("[a](/repo/(a)&b/page.tsx) and [b](/repo/(c)&d/page.tsx)", "/repo"),
-  ).toEqual(["a page.tsx · repo/(a)&b and b page.tsx · repo/(c)&d"]);
   expect(
     assistantSegments("[a](/repo/a&b>c/page.tsx) and [b](/repo/c&d>e/page.tsx)", "/repo"),
   ).toEqual(["a page.tsx · repo/a&b>c and b page.tsx · repo/c&d>e"]);

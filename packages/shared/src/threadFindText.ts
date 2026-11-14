@@ -37,8 +37,8 @@ import {
   CHAT_MARKDOWN_REHYPE_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
-  decodeMarkdownLinkEscapes,
   CHAT_USER_MARKDOWN_REMARK_PLUGINS,
+  decodeMarkdownLinkEscapes,
 } from "./markdownPipeline.ts";
 
 // Inline wrappers (including Shiki token spans) must not split a search phrase.
