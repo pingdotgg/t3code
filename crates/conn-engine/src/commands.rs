@@ -1607,7 +1607,26 @@ pub(crate) fn finish_run(
     status: &str,
     failure: Option<Value>,
 ) -> StoreResult<()> {
-    finish_run_as(tx, thread_id, run_id, status, status, failure)
+    finish_run_as(
+        tx,
+        thread_id,
+        run_id,
+        status,
+        status,
+        failure,
+        IdleWrite::WhileActive,
+    )
+}
+
+/// When a run's end writes its provider thread `idle`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum IdleWrite {
+    /// A provider terminal or a failed start: always, as T3's `writeFinalRunEvents` writes
+    /// the run's provider thread at every turn end.
+    TurnEnd,
+    /// A cancel, Force stop, delete or restart recovery: only while the row still says
+    /// `active`.
+    WhileActive,
 }
 
 /// Ends a run's items with `status`, and the run and its root node with `persisted`: a
@@ -1620,6 +1639,7 @@ pub(crate) fn finish_run_as(
     status: &str,
     persisted: &str,
     failure: Option<Value>,
+    idle: IdleWrite,
 ) -> StoreResult<()> {
     let Some(mut run) = tx.entity(thread_id, "runs", run_id)? else {
         return Ok(());
@@ -1729,20 +1749,21 @@ pub(crate) fn finish_run_as(
         node["completedAt"] = completed_at;
         tx.append(draft("node.updated", node))?;
     }
-    settle_provider_thread(tx, thread_id, &run, "idle")?;
+    settle_provider_thread(tx, thread_id, &run, "idle", idle)?;
     // Positions held text took and never used.
     tx.release_turn_item_positions(thread_id)
 }
 
-/// The run's provider thread goes back from `active` when the run ends: `idle`, or `error`
-/// when the provider says the native thread cannot take another turn
-/// (`finalProviderThreadStatus` in T3's `RunExecutionService`). Only while this run is the
-/// thread's last (`lastRunOrdinal`), so a later run's row is never overwritten.
+/// The run's provider thread when the run ends: `idle`, or `error` when the provider says the
+/// native thread cannot take another turn (`finalProviderThreadStatus` in T3's
+/// `RunExecutionService`). Only while this run is the thread's last (`lastRunOrdinal`), so a
+/// later run's row is never overwritten; with [`IdleWrite::WhileActive`] only from `active`.
 pub(crate) fn settle_provider_thread(
     tx: &mut Tx<'_>,
     thread_id: &str,
     run: &Value,
     status: &str,
+    idle: IdleWrite,
 ) -> StoreResult<()> {
     let Some(id) = run["providerThreadId"].as_str() else {
         return Ok(());
@@ -1751,9 +1772,11 @@ pub(crate) fn settle_provider_thread(
         return Ok(());
     };
     let current = thread["status"].as_str().unwrap_or_default();
-    if !(current == "active" || (status == "error" && current == "idle"))
-        || thread["lastRunOrdinal"] != run["ordinal"]
-    {
+    let from_ok = match idle {
+        IdleWrite::TurnEnd => true,
+        IdleWrite::WhileActive => current == "active" || (status == "error" && current == "idle"),
+    };
+    if !from_ok || thread["lastRunOrdinal"] != run["ordinal"] {
         return Ok(());
     }
     thread["status"] = json!(status);

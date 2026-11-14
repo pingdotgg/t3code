@@ -209,7 +209,15 @@ impl Inner {
                 } else {
                     status
                 };
-                finish_run_as(tx, &thread_id, &run_id, status, persisted, failure)?;
+                finish_run_as(
+                    tx,
+                    &thread_id,
+                    &run_id,
+                    status,
+                    persisted,
+                    failure,
+                    crate::commands::IdleWrite::TurnEnd,
+                )?;
                 // A failure holds the queue, so queued messages do not hit the same wall.
                 if held_on_failure {
                     hold_queue(tx, &thread_id)?;
@@ -238,7 +246,13 @@ impl Inner {
         let (tid, rid) = (thread_id.to_owned(), run_id.to_owned());
         let result = self
             .write(move |tx| match tx.entity(&tid, "runs", &rid)? {
-                Some(run) => crate::commands::settle_provider_thread(tx, &tid, &run, "error"),
+                Some(run) => crate::commands::settle_provider_thread(
+                    tx,
+                    &tid,
+                    &run,
+                    "error",
+                    crate::commands::IdleWrite::TurnEnd,
+                ),
                 None => Ok(()),
             })
             .await;

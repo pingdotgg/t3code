@@ -505,6 +505,18 @@ impl Session for FakeSession {
                         "type": "command_execution", "input": "ls",
                     }})));
                 }
+                // `thread-idle`: the provider reports its thread `idle` before the turn ends,
+                // then answers.
+                "thread-idle" => {
+                    let mut row = conn_contract::to_json(&input.provider_thread);
+                    row["status"] = json!("idle");
+                    started.push(event(
+                        json!({"type": "provider_thread.updated", "providerThread": row}),
+                    ));
+                    started.extend(assistant(&turn, &format!("{}:a", turn.run_id), "done", false));
+                    started.push(provider_turn(&turn, "completed"));
+                    started.push(terminal(&turn, TurnStatus::Completed, None));
+                }
                 // `long-stream`: 400 growing snapshots of one reply (about 40 KB at the end),
                 // 2 ms apart, then the final text. For memory under a long streaming turn.
                 "long-stream" => {

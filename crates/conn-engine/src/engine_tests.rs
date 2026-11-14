@@ -3273,6 +3273,28 @@ async fn the_provider_thread_is_active_during_a_turn_and_idle_after() {
     assert_eq!(p["providerThreads"][0]["lastRunOrdinal"], 2);
 }
 
+/// T3's `writeFinalRunEvents` writes the run's provider thread at every turn end, also when
+/// the provider already reported it `idle` during the turn (before, ours wrote it only from
+/// `active`).
+#[tokio::test(flavor = "current_thread")]
+async fn every_turn_end_writes_the_provider_thread_idle() {
+    let db = TempDb::new("thread-idle-every-end");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    dispatch(&engine, message("t1", "c2", "thread-idle")).await;
+    let p = run_to_end(&engine, "t1", "run:t1:1").await;
+    assert_eq!(p["providerThreads"][0]["status"], "idle");
+    let events = engine.stored_events(0, 10_000).await.unwrap();
+    let idle = events
+        .iter()
+        .filter(|stored| {
+            stored["event"]["type"] == "provider-thread.updated"
+                && stored["event"]["payload"]["status"] == "idle"
+        })
+        .count();
+    assert_eq!(idle, 2, "the provider's own idle, then the turn end's");
+}
+
 /// Allows every instance but `off`.
 struct OneInstanceOff;
 
