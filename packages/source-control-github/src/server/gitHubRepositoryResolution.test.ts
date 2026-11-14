@@ -33,6 +33,18 @@ describe("selectGitHubBaseRepository", () => {
       select({ remotes: fork, resolved: "remote.origin.gh-resolved acme/other" }),
       { owner: "acme", name: "other" },
     );
+    assert.deepStrictEqual(
+      select({
+        remotes: remotes(
+          ["origin", "github.com:me/web.git"],
+          ["upstream", "https://github.com/acme/web.git"],
+          ["local", "/tmp/local.git"],
+          ["file", "file:///tmp/local.git"],
+        ),
+        resolved: "remote.origin.gh-resolved base",
+      }),
+      { owner: "me", name: "web" },
+    );
     const partialClone = fork.replaceAll("(fetch)", "(fetch) [blob:none]");
     assert.deepStrictEqual(
       select({ remotes: partialClone, resolved: "remote.origin.gh-resolved base" }),
@@ -118,6 +130,15 @@ describe("selectGitHubBaseRepository", () => {
           ["origin", "git@github.com:me/web.git"],
           ["mirror", "git@gitlab.com:me/web.git"],
         ),
+      },
+      {
+        remotes: remotes(
+          ["origin", "git@github.com:me/web.git"],
+          ["mirror", "gitlab.com:me/web.git"],
+        ),
+      },
+      {
+        remotes: remotes(["origin", "git@github.com:me/web.git"], ["bad", "https://github.com/me"]),
       },
       { remotes: remotes(["origin", "git@work:me/web.git"]) },
       {
