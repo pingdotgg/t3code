@@ -91,6 +91,7 @@ function layerTestFor(state: {
   headPathCalls?: number;
   failLocalStatus?: boolean;
   onLocalStatusFailure?: Effect.Effect<void>;
+  statusFetchCount?: number;
 }) {
   return VcsStatusBroadcaster.layer.pipe(
     Layer.provideMerge(
@@ -159,6 +160,7 @@ function layerTestFor(state: {
               ),
             );
           }),
+        statusFetchCount: Effect.sync(() => state.statusFetchCount ?? 0),
         invalidateLocalStatus: () =>
           Effect.sync(() => {
             state.localInvalidationCalls += 1;
@@ -745,6 +747,7 @@ describe("VcsStatusBroadcaster", () => {
         ),
         Layer.provide(
           Layer.mock(GitWorkflowService.GitWorkflowService)({
+            statusFetchCount: Effect.succeed(0),
             localStatus: () => Effect.succeed(localStatus),
             currentBranch: () => Effect.succeed(localStatus.refName),
             remoteStatus: () => Effect.succeed(remoteStatus),
@@ -841,6 +844,7 @@ describe("VcsStatusBroadcaster", () => {
       Layer.provide(layerBackgroundPolicy(() => true)),
       Layer.provide(
         Layer.mock(GitWorkflowService.GitWorkflowService)({
+          statusFetchCount: Effect.succeed(0),
           localStatus: () => Effect.succeed(baseLocalStatus),
           currentBranch: () => Effect.succeed(baseLocalStatus.refName),
           remoteStatus: () =>
@@ -887,6 +891,7 @@ describe("VcsStatusBroadcaster", () => {
       Layer.provide(layerBackgroundPolicy(() => true)),
       Layer.provide(
         Layer.mock(GitWorkflowService.GitWorkflowService)({
+          statusFetchCount: Effect.succeed(0),
           localStatus: () => Effect.succeed(baseLocalStatus),
           currentBranch: () => Effect.succeed(baseLocalStatus.refName),
           remoteStatus: () =>
@@ -936,6 +941,7 @@ describe("VcsStatusBroadcaster", () => {
       Layer.provide(layerBackgroundPolicy(() => true)),
       Layer.provide(
         Layer.mock(GitWorkflowService.GitWorkflowService)({
+          statusFetchCount: Effect.succeed(0),
           localStatus: () =>
             Effect.sync(() => {
               state.localStatusCalls += 1;
@@ -1019,6 +1025,7 @@ describe("VcsStatusBroadcaster", () => {
         Layer.provide(layerBackgroundPolicy(() => true)),
         Layer.provide(
           Layer.mock(GitWorkflowService.GitWorkflowService)({
+            statusFetchCount: Effect.succeed(0),
             localStatus: (input) =>
               Effect.sync(() => {
                 seenCwds.push(input.cwd);
@@ -1107,7 +1114,7 @@ describe("VcsStatusBroadcaster", () => {
     }).pipe(Effect.provide(layerTestFor(state)));
   });
 
-  it.effect("an explicit refresh reads local totals after the fetch", () => {
+  it.effect("an explicit refresh reads local totals again only after a fetch", () => {
     return Effect.gen(function* () {
       const fetchStarted = yield* Deferred.make<void>();
       const finishFetch = yield* Deferred.make<void>();
@@ -1116,7 +1123,14 @@ describe("VcsStatusBroadcaster", () => {
         branchChanges: { baseRef: "origin/main", insertions: 745, deletions: 24 },
       };
       let cachedLocal: VcsStatusLocalResult | undefined;
-      const readLocalStatus = () => Effect.sync(() => (cachedLocal ??= local));
+      let localStatusReads = 0;
+      let fetches = 0;
+      let fetchNext = true;
+      const readLocalStatus = () =>
+        Effect.sync(() => {
+          localStatusReads += 1;
+          return (cachedLocal ??= local);
+        });
       const layerTest = VcsStatusBroadcaster.layer.pipe(
         Layer.provideMerge(NodeServices.layer),
         Layer.provide(layerBackgroundPolicy(() => true)),
@@ -1133,11 +1147,19 @@ describe("VcsStatusBroadcaster", () => {
               }),
             currentBranch: () => Effect.succeed(baseLocalStatus.refName),
             invalidateRemoteStatus: () => Effect.void,
+            statusFetchCount: Effect.sync(() => fetches),
             remoteStatus: () =>
-              Deferred.succeed(fetchStarted, undefined).pipe(
-                Effect.andThen(Deferred.await(finishFetch)),
-                Effect.as(baseRemoteStatus),
-              ),
+              fetchNext
+                ? Deferred.succeed(fetchStarted, undefined).pipe(
+                    Effect.andThen(Deferred.await(finishFetch)),
+                    Effect.andThen(
+                      Effect.sync(() => {
+                        fetches += 1;
+                      }),
+                    ),
+                    Effect.as(baseRemoteStatus),
+                  )
+                : Effect.succeed(baseRemoteStatus),
           }),
         ),
       );
@@ -1154,6 +1176,12 @@ describe("VcsStatusBroadcaster", () => {
         yield* Deferred.succeed(finishFetch, undefined);
         const status = yield* Fiber.join(refresh);
         assert.deepStrictEqual(status.branchChanges, local.branchChanges);
+
+        // Without a fetch nothing can move the base, so the working tree is scanned once.
+        fetchNext = false;
+        localStatusReads = 0;
+        yield* broadcaster.refreshStatus("/repo");
+        assert.equal(localStatusReads, 1);
       }).pipe(Effect.provide(layerTest));
     });
   });
@@ -1761,6 +1789,7 @@ describe("VcsStatusBroadcaster", () => {
       Layer.provide(layerBackgroundPolicy(() => true)),
       Layer.provide(
         Layer.mock(GitWorkflowService.GitWorkflowService)({
+          statusFetchCount: Effect.succeed(0),
           localStatus: () =>
             Effect.sync(() => {
               state.localStatusCalls += 1;

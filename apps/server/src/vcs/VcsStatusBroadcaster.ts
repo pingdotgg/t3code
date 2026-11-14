@@ -607,6 +607,7 @@ export const make = Effect.gen(function* () {
     "VcsStatusBroadcaster.refreshStatus",
   )(function* (rawCwd, options) {
     const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
+    const fetchesBeforeLocalRead = yield* workflow.statusFetchCount;
     yield* refreshLocalStatusCore(cwd);
     if (options?.localOnly) {
       // Never cache a remote here: readers take `value: null` as "read and found no PR".
@@ -620,8 +621,10 @@ export const make = Effect.gen(function* () {
         // Bump the PR lookup epoch after earlier remote writers have finished.
         yield* workflow.invalidateStatus(cwd);
         const remoteRead = yield* readRemoteStatus(cwd, { refreshUpstream });
-        // Fetch can move the base used for local Changes totals.
-        yield* refreshLocalStatusCore(cwd);
+        // A fetch can move the base used for local Changes totals; without one, the first read stands.
+        if ((yield* workflow.statusFetchCount) !== fetchesBeforeLocalRead) {
+          yield* refreshLocalStatusCore(cwd);
+        }
         // Without a fetch, the cached behind count cannot justify an automatic pull.
         const pulled = refreshUpstream ? yield* maybeAutoPull(cwd, remoteRead, [rawCwd]) : null;
         if (pulled !== null) return mergeGitStatusParts(pulled.local, pulled.remote);

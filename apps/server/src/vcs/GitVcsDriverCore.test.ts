@@ -4642,13 +4642,16 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* git(updater, ["push", "origin", initialBranch]);
 
         const driver = yield* GitVcsDriver.GitVcsDriver;
+        const fetchesBefore = yield* driver.statusFetchCount;
         const cachedStatus = yield* driver.statusDetailsRemote(cwd, {
           refreshUpstream: false,
         });
+        assert.equal(yield* driver.statusFetchCount, fetchesBefore);
         const refreshedStatus = yield* driver.statusDetailsRemote(cwd);
 
         assert.equal(cachedStatus.behindCount, 0);
         assert.equal(refreshedStatus.behindCount, 1);
+        assert.equal(yield* driver.statusFetchCount, fetchesBefore + 1);
       }),
     );
 

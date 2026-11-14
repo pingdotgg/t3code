@@ -1671,11 +1671,18 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }
     }
   });
+  let statusFetchCount = 0;
   const refreshStatusRemoteCacheEntry = Effect.fn("refreshStatusRemoteCacheEntry")(function* (
     cacheKey: StatusRemoteRefreshCacheKey,
   ) {
     return yield* fetchRemoteForStatus(cacheKey.gitCommonDir, cacheKey.remoteName).pipe(
       Effect.as(true as const),
+      // A failed or interrupted fetch can still have updated some refs.
+      Effect.ensuring(
+        Effect.sync(() => {
+          statusFetchCount += 1;
+        }),
+      ),
     );
   });
 
@@ -5623,6 +5630,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     statusDetails,
     statusDetailsLocal,
     statusDetailsRemote,
+    statusFetchCount: Effect.sync(() => statusFetchCount),
     prepareCommitContext,
     commit: Effect.fnUntraced(function* (cwd, subject, body, options) {
       return yield* withListRefsInvalidation(cwd, commit(cwd, subject, body, options));
