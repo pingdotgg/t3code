@@ -722,24 +722,31 @@ it.effect("reads a branch whose name starts with a parenthesis as attached", () 
   ).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("follows a checkout made outside the driver after refs were cached", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const cwd = yield* makeTmpDir();
-      const { initialBranch } = yield* initRepoWithCommit(cwd);
-      yield* git(cwd, ["branch", "feature/outside"]);
-      const driver = yield* GitVcsDriver.GitVcsDriver;
-      yield* driver.listRefs({ cwd });
+it.effect.each(["an existing", "a new"] as const)(
+  "follows a checkout of %s branch made outside the driver after refs were cached",
+  (branch) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        if (branch === "an existing") yield* git(cwd, ["branch", "feature/outside"]);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.listRefs({ cwd });
 
-      yield* git(cwd, ["switch", "feature/outside"]);
+        yield* git(
+          cwd,
+          branch === "an existing"
+            ? ["switch", "feature/outside"]
+            : ["switch", "-c", "feature/outside"],
+        );
 
-      const refs = (yield* driver.listRefs({ cwd })).refs;
-      const previous = refs.find((ref) => ref.name === initialBranch);
-      assert.isTrue(refs.find((ref) => ref.name === "feature/outside")?.current);
-      assert.isFalse(previous?.current);
-      assert.isNull(previous?.worktreePath ?? null);
-    }),
-  ).pipe(Effect.provide(layerTest)),
+        const refs = (yield* driver.listRefs({ cwd })).refs;
+        const previous = refs.find((ref) => ref.name === initialBranch);
+        assert.isTrue(refs.find((ref) => ref.name === "feature/outside")?.current);
+        assert.isFalse(previous?.current);
+        assert.isNull(previous?.worktreePath ?? null);
+      }),
+    ).pipe(Effect.provide(layerTest)),
 );
 
 it.effect.each(["on a branch", "detached", "unborn"] as const)(
