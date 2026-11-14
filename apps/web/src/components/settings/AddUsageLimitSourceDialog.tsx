@@ -84,6 +84,7 @@ export function AddUsageLimitSourceDialog({
         </DialogHeader>
         <DialogPanel>
           <form
+            id="add-usage-limit-source"
             className="grid gap-4"
             onSubmit={(event) => {
               event.preventDefault();
@@ -134,7 +135,7 @@ export function AddUsageLimitSourceDialog({
           >
             Cancel
           </Button>
-          <Button onClick={save} disabled={!canSave}>
+          <Button type="submit" form="add-usage-limit-source" disabled={!canSave}>
             Add hub
           </Button>
         </DialogFooter>
