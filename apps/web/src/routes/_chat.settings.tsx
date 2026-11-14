@@ -1,9 +1,7 @@
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { Outlet, createFileRoute, redirect, useLocation } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
-import { RotateCcwIcon } from "lucide-react";
-import { Button } from "../components/ui/button";
-import { useSettingsRestore } from "../components/settings/SettingsPanels";
+import { RestoreDeviceDefaultsButton } from "../components/settings/SettingsPanels";
 
 import { AppRouteModal, AppRouteModalClose } from "../components/AppRouteModal";
 import { SettingsBreadcrumb } from "../components/settings/SettingsBreadcrumb";
@@ -26,21 +24,6 @@ import {
   isSettingsSearchScopeAvailable,
   movedSettingsPath,
 } from "../components/settings/settingsSearch";
-
-function RestoreDeviceDefaultsButton({ onRestored }: { onRestored: () => void }) {
-  const { changedSettingLabels, restoreDefaults } = useSettingsRestore(onRestored);
-  return (
-    <Button
-      size="xs"
-      variant="ghost"
-      disabled={changedSettingLabels.length === 0}
-      onClick={() => void restoreDefaults()}
-    >
-      <RotateCcwIcon className="mx-1 size-3.5" />
-      <span className="max-sm:sr-only">Restore device defaults</span>
-    </Button>
-  );
-}
 
 function SettingsScopeBoundary({ pathname, children }: { pathname: string; children: ReactNode }) {
   const { scope, connectedEnvironments } = useSettingsScope();

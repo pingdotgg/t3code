@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { NotificationSettings } from "./NotificationSettings";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
-import { CheckIcon } from "lucide-react";
+import { CheckIcon, RotateCcwIcon } from "lucide-react";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useRef, useState } from "react";
@@ -59,7 +59,11 @@ import {
   useUpdateScopedSettings,
 } from "./useScopedSettings";
 import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
-import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
+import {
+  SettingsScopeProvider,
+  useOptionalSettingsScope,
+  useSettingsScope,
+} from "./SettingsScopeContext";
 import { scopedIdleCompaction } from "./scopedSettings";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
 import { ThreadTitleInstructionsSettings } from "./ThreadTitleInstructionsSettings";
@@ -433,7 +437,7 @@ function AboutVersionSection() {
   );
 }
 
-export function useSettingsRestore(onRestored?: () => void) {
+function useSettingsRestore(onRestored?: () => void) {
   const {
     theme,
     setTheme,
@@ -729,6 +733,34 @@ export function useSettingsRestore(onRestored?: () => void) {
     changedSettingLabels,
     restoreDefaults,
   };
+}
+
+export function RestoreDeviceDefaultsButton({ onRestored }: { onRestored: () => void }) {
+  const { search, selectScope } = useSettingsScope();
+  // Restore resets environment-wide settings, which a project or checkout scope cannot write.
+  return (
+    <SettingsScopeProvider
+      search={search.machine === undefined ? {} : { machine: search.machine }}
+      onChange={selectScope}
+    >
+      <RestoreDeviceDefaultsAction onRestored={onRestored} />
+    </SettingsScopeProvider>
+  );
+}
+
+function RestoreDeviceDefaultsAction({ onRestored }: { onRestored: () => void }) {
+  const { changedSettingLabels, restoreDefaults } = useSettingsRestore(onRestored);
+  return (
+    <Button
+      size="xs"
+      variant="ghost"
+      disabled={changedSettingLabels.length === 0}
+      onClick={() => void restoreDefaults()}
+    >
+      <RotateCcwIcon className="mx-1 size-3.5" />
+      <span className="max-sm:sr-only">Restore device defaults</span>
+    </Button>
+  );
 }
 
 const AUTO_SETTLE_DEFAULT_DAYS = DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays ?? 7;
