@@ -12,6 +12,7 @@ import { vi } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as ServerSettings from "../serverSettings.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
@@ -25,6 +26,7 @@ const layerTest = Layer.empty.pipe(
   Layer.provideMerge(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
   Layer.provideMerge(WorkspacePaths.layer),
   Layer.provideMerge(VcsProcess.layer),
+  Layer.provideMerge(ServerSettings.ServerSettingsService.layerTest()),
   Layer.provide(
     ServerConfig.ServerConfig.layerTest(process.cwd(), {
       prefix: "t3-workspace-entries-test-",
@@ -1017,6 +1019,39 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
   });
 
   describe("browse", () => {
+    it.effect("walks only the server's configured search roots for fuzzy folder queries", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const serverSettings = yield* ServerSettings.ServerSettingsService;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir({ prefix: "t3code-folder-search-" });
+        const other = yield* makeTempDir({ prefix: "t3code-folder-search-other-" });
+        yield* writeTextFile(cwd, "hello-wall/package.json", "{}");
+        yield* writeTextFile(cwd, "team/hello-world/package.json", "{}");
+        yield* writeTextFile(cwd, "node_modules/hello-world/package.json", "{}");
+        yield* writeTextFile(other, "hello-web/package.json", "{}");
+        const search = workspaceEntries
+          .browse({ partialPath: `${cwd}${path.sep}`, searchQuery: "hlw" })
+          .pipe(
+            Effect.map((result) => result.entries.map((entry) => entry.fullPath).toSorted()),
+            Effect.provideService(HostProcess.HomeDirectory, path.dirname(other)),
+          );
+
+        expect(yield* search).toEqual([path.join(cwd, "hello-wall")]);
+
+        yield* serverSettings.updateSettings({
+          projectSearchDirectories: [cwd, path.basename(other), cwd],
+        });
+        expect(yield* search).toEqual(
+          [
+            path.join(cwd, "hello-wall"),
+            path.join(cwd, "team/hello-world"),
+            path.join(other, "hello-web"),
+          ].toSorted(),
+        );
+      }),
+    );
+
     it.effect("shows dot directories in directory mode and hidden-prefix mode", () =>
       Effect.gen(function* () {
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
@@ -1033,6 +1068,10 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
           partialPath: `${cwdWithSeparator}.c`,
         });
 
+        const fuzzyResult = yield* workspaceEntries.browse({
+          partialPath: `${cwdWithSeparator}cnfg`,
+        });
+        expect(fuzzyResult.entries.map((entry) => entry.name)).toEqual(["config"]);
         expect(directoryResult.entries.map((entry) => entry.name)).toEqual([".config", "config"]);
         expect(hiddenPrefixResult).toEqual({
           parentPath: cwd,

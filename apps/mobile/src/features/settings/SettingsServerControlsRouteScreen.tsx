@@ -3,7 +3,7 @@ import { SettingsRow } from "./components/SettingsRow";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
 import { readEnvironmentScope, useEnvironmentsWithScope } from "../../state/session";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
-import { AppText as Text } from "../../components/ui/AppText";
+import { AppText as Text, AppTextInput } from "../../components/ui/AppText";
 import {
   type ResponseStreamingMode,
   type ServerSettings,
@@ -38,6 +38,7 @@ import {
   planMobileScopedSettingsPatch,
   resolveMobileSettingsTargets,
   uniformMobileSetting,
+  mobileSettingValuesEqual,
   type ScopedMobileSettingsTarget,
 } from "./settings-scoped-server";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
@@ -189,6 +190,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
   );
   const [pendingWrites, setPendingWrites] = useState(0);
   const writeInFlight = useRef(false);
+  const editedDirectoryInputs = useRef(new Set<string>());
   // Closing views can save after controls disable; queue those patches behind the pending write.
   const queuedPatch = useRef<{ key: string; patch: ServerSettingsPatch } | null>(null);
   const targetsKey = targets
@@ -208,7 +210,9 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
   // `uniform` folds a real null into "mixed"; nullable keys need the distinction.
   const isMixed = (key: keyof ServerSettings) =>
     reference === null ||
-    displayTargets.some((entry) => entry.settings[key] !== reference.settings[key]);
+    displayTargets.some(
+      (entry) => !mobileSettingValuesEqual(entry.settings[key], reference.settings[key]),
+    );
   const writeSettings = useSettingsWriter();
   const write = (patch: ServerSettingsPatch) => {
     if (writeInFlight.current) {
@@ -398,6 +402,71 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                 </SettingsSection>
                 <AutoSettleSettingsRows write={write} pending={pendingWrites > 0} />
               </>
+            ) : null}
+
+            {props.page === "threads" ? (
+              <SettingsSection title="New projects">
+                {(["projectSearchDirectories", "addProjectBaseDirectory"] as const).map((key) => {
+                  const saved = uniform(key);
+                  const value = Array.isArray(saved)
+                    ? saved.join("; ")
+                    : typeof saved === "string"
+                      ? saved
+                      : "";
+                  const inputKey = `${targetsKey}:${key}:${value}`;
+                  const label =
+                    key === "projectSearchDirectories"
+                      ? "Project search folders"
+                      : "Add project starts in";
+                  return (
+                    <View key={key} className="gap-2 px-4 py-3">
+                      <Text>{label}</Text>
+                      <Text className="text-sm text-foreground-muted">
+                        {key === "projectSearchDirectories"
+                          ? "Search nested folders. Separate base paths with semicolons."
+                          : "Leave empty to start in your home folder."}
+                      </Text>
+                      <AppTextInput
+                        key={inputKey}
+                        accessibilityLabel={label}
+                        defaultValue={value}
+                        placeholder={
+                          isMixed(key)
+                            ? "Mixed"
+                            : key === "projectSearchDirectories"
+                              ? "~/projects; ~/work"
+                              : "Default folder"
+                        }
+                        editable={!disabledFor(key)}
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        className="min-h-10 rounded-xl px-3 py-2 text-base text-foreground"
+                        onFocus={() => editedDirectoryInputs.current.delete(inputKey)}
+                        onChangeText={() => editedDirectoryInputs.current.add(inputKey)}
+                        onEndEditing={(event) => {
+                          if (!editedDirectoryInputs.current.delete(inputKey)) return;
+                          const text = event.nativeEvent.text.trim();
+                          if (text === value && !isMixed(key)) return;
+                          write(
+                            key === "projectSearchDirectories"
+                              ? {
+                                  projectSearchDirectories: [
+                                    ...new Set(
+                                      text
+                                        .split(";")
+                                        .map((path) => path.trim())
+                                        .filter(Boolean),
+                                    ),
+                                  ].slice(0, 32),
+                                }
+                              : { [key]: text },
+                          );
+                        }}
+                      />
+                    </View>
+                  );
+                })}
+              </SettingsSection>
             ) : null}
 
             {props.page === "source-control" ? (

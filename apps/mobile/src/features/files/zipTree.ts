@@ -1,3 +1,5 @@
+import { scoreFilePathMatch } from "@t3tools/shared/searchRanking";
+
 export interface ZipEntry {
   readonly path: string;
   readonly name: string;
@@ -89,7 +91,7 @@ function flatten(
   query: string,
 ): boolean {
   if (node.entry) {
-    if (query && !node.entry.path.toLowerCase().includes(query)) return false;
+    if (query && scoreFilePathMatch(node.entry.path, query) === null) return false;
     output.push({ node, depth });
     return true;
   }

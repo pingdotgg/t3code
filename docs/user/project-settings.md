@@ -283,3 +283,22 @@ On mobile, use **Settings → Source control** to change selected environment de
 T3 Code only pulls when it can fast-forward and the checkout has no changed files, untracked files,
 or local commits. It skips checkouts on another branch or without an upstream. If a checkout has
 local work, resolve it yourself before automatic pulls can resume.
+
+## Project folders
+
+In Settings > Threads > New projects, set Project search folders to the base folders
+that contain your projects. Separate paths with semicolons. In Add Project's local
+folder browser, type part of a folder name to find nested folders across those locations.
+Letters can be skipped, so `hlw` finds `hello-world`. With no search folders configured,
+search matches only the folders directly inside the one you are browsing. Relative search
+folders start from your home folder.
+
+Search skips hidden folders, `node_modules`, `vendor`, and symlinks. It scans up to
+20,000 folders per search folder and returns the best 100 matches. Results are reused for
+30 seconds, so a folder created in that time can take a moment to appear. Use narrower search
+folders for large directory trees.
+
+Folder pickers, the Files tree, and mobile ZIP filters also accept fuzzy name queries.
+Content searches keep their existing matching options.
+
+Search folders belong to each environment, including when you connect remotely.

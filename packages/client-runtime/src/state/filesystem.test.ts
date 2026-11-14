@@ -3,6 +3,8 @@ import { AuthFilesystemReadScope, AuthOrchestrationReadScope } from "@t3tools/co
 
 import {
   createBrowseNavigationCoordinator,
+  filterFilesystemBrowseEntries,
+  findExactFilesystemBrowseEntry,
   getFilesystemBrowsePath,
   getFilesystemBrowseTabCompletion,
   resolveFilesystemReadAccess,
@@ -77,6 +79,13 @@ describe("filesystem browse model", () => {
       parentPath: "~/",
       canBrowseUp: true,
     });
+    expect(getFilesystemBrowsePath("hlw", "", true, "~/projects")).toEqual({
+      isBrowsing: true,
+      directoryPath: "~/projects/",
+      filterQuery: "hlw",
+      parentPath: "~/",
+      canBrowseUp: true,
+    });
     expect(getFilesystemBrowsePath("C:\\Users\\test", "MacIntel").isBrowsing).toBe(false);
     expect(getFilesystemBrowsePath("~/projects/", "", false).isBrowsing).toBe(false);
   });
@@ -132,4 +141,31 @@ describe("browse navigation", () => {
     await expect(invalidatedRun).resolves.toBe(false);
     expect(commits).toEqual(["second"]);
   });
+});
+
+it("fuzzy-matches and ranks folder names for every folder browser", () => {
+  const entries = ["my-t3code", "t3code", "cotton", "T3Code-old", ".t3", "docs"].map((name) => ({
+    name,
+    fullPath: `/code/${name}`,
+  }));
+  expect(
+    filterFilesystemBrowseEntries(entries, "tcd").visibleEntries.map((entry) => entry.name),
+  ).toEqual(["t3code", "T3Code-old", "my-t3code"]);
+  expect(filterFilesystemBrowseEntries(entries, "t3code").exactEntry?.name).toBe("t3code");
+  expect(
+    filterFilesystemBrowseEntries(entries, "t3").visibleEntries.some(
+      (entry) => entry.name === ".t3",
+    ),
+  ).toBe(false);
+});
+
+it("resolves only a unique exact basename from recursive folder results", () => {
+  const entries = [
+    { name: "team/project", fullPath: "/work/team/project" },
+    { name: "other/project", fullPath: "/work/other/project" },
+  ];
+  expect(findExactFilesystemBrowseEntry(entries.slice(0, 1), "project")).toEqual(entries[0]);
+  expect(findExactFilesystemBrowseEntry(entries, "project")).toBeNull();
+  expect(findExactFilesystemBrowseEntry(entries, "proj")).toBeNull();
+  expect(findExactFilesystemBrowseEntry(entries, "/work/team/project")).toEqual(entries[0]);
 });

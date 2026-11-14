@@ -195,3 +195,18 @@ export function insertRankedSearchResult<T>(
   rankedEntries.splice(insertionIndex, 0, candidate);
   rankedEntries.pop();
 }
+
+export function scoreFilePathMatch(value: string, query: string): number | null {
+  const normalizedQuery = normalizeSearchQuery(query);
+  if (!normalizedQuery) return 0;
+  return scoreQueryMatch({
+    value: value.toLowerCase(),
+    query: normalizedQuery,
+    exactBase: 0,
+    prefixBase: 1000,
+    boundaryBase: 2000,
+    includesBase: 3000,
+    fuzzyBase: 4000,
+    boundaryMarkers: ["/", "\\", "-", "_", ".", " "],
+  });
+}

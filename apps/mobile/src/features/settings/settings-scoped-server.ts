@@ -102,6 +102,12 @@ export function planMobileScopedSettingsPatch(
   }));
 }
 
+export function mobileSettingValuesEqual(left: unknown, right: unknown): boolean {
+  return Array.isArray(left) && Array.isArray(right)
+    ? left.length === right.length && left.every((value, index) => value === right[index])
+    : left === right;
+}
+
 export function uniformMobileSetting<K extends keyof ServerSettings>(
   targets: readonly Pick<ScopedMobileSettingsTarget, "settings">[],
   key: K,
@@ -109,7 +115,9 @@ export function uniformMobileSetting<K extends keyof ServerSettings>(
   const reference = targets[0];
   if (!reference) return null;
   const value = reference.settings[key];
-  return targets.every((target) => target.settings[key] === value) ? value : null;
+  return targets.every((target) => mobileSettingValuesEqual(target.settings[key], value))
+    ? value
+    : null;
 }
 
 export function planMobileScopedSettingsClear(

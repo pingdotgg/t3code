@@ -1,3 +1,4 @@
+import { scoreFilePathMatch } from "@t3tools/shared/searchRanking";
 import {
   AuthFilesystemReadScope,
   type FilesystemBrowseEntry,
@@ -15,6 +16,7 @@ import type { EnvironmentRegistry } from "../connection/registry.ts";
 import {
   canNavigateUp,
   getBrowseDirectoryPath,
+  ensureBrowseDirectoryPath,
   getBrowseLeafPathSegment,
   getBrowseParentPath,
   hasTrailingPathSeparator,
@@ -54,11 +56,28 @@ export function resolveFilesystemReadAccess(input: {
   };
 }
 
-export function getFilesystemBrowsePath(query: string, platform = "", enabled = true) {
-  const isBrowsing = enabled && isFilesystemBrowseQuery(query, platform);
-  const directoryPath = isBrowsing ? getBrowseDirectoryPath(query) : "";
-  const filterQuery =
-    isBrowsing && !hasTrailingPathSeparator(query) ? getBrowseLeafPathSegment(query) : "";
+export function getFilesystemBrowsePath(
+  query: string,
+  platform = "",
+  enabled = true,
+  searchBaseDirectory?: string,
+) {
+  const isSearch =
+    enabled &&
+    searchBaseDirectory !== undefined &&
+    query.trim().length > 0 &&
+    !isFilesystemBrowseQuery(query, platform);
+  const isBrowsing = enabled && (isSearch || isFilesystemBrowseQuery(query, platform));
+  const directoryPath = isSearch
+    ? ensureBrowseDirectoryPath(searchBaseDirectory || "~/")
+    : isBrowsing
+      ? getBrowseDirectoryPath(query)
+      : "";
+  const filterQuery = isSearch
+    ? query.trim()
+    : isBrowsing && !hasTrailingPathSeparator(query)
+      ? getBrowseLeafPathSegment(query)
+      : "";
   const parentPath = isBrowsing ? getBrowseParentPath(directoryPath) : null;
 
   return {
@@ -70,17 +89,32 @@ export function getFilesystemBrowsePath(query: string, platform = "", enabled = 
   };
 }
 
+export function findExactFilesystemBrowseEntry(
+  entries: ReadonlyArray<FilesystemBrowseEntry>,
+  query: string,
+) {
+  if (!query.trim()) return null;
+  const fullPathMatch = entries.find((entry) => entry.fullPath === query.trim());
+  if (fullPathMatch) return fullPathMatch;
+  const matches = entries.filter((entry) => entry.name.split(/[\\/]/).at(-1) === query);
+  return matches.length === 1 ? matches[0]! : null;
+}
+
 export function filterFilesystemBrowseEntries(
   entries: ReadonlyArray<FilesystemBrowseEntry>,
   query: string,
 ) {
-  const lowerQuery = query.toLowerCase();
   const showHidden = query.startsWith(".");
-  const visibleEntries = entries.filter(
-    (entry) =>
-      entry.name.toLowerCase().startsWith(lowerQuery) &&
-      (showHidden || !entry.name.startsWith(".")),
-  );
+  const candidates = entries.filter((entry) => showHidden || !entry.name.startsWith("."));
+  const visibleEntries = !query.trim()
+    ? candidates
+    : candidates
+        .flatMap((entry) => {
+          const score = scoreFilePathMatch(entry.name, query);
+          return score === null ? [] : [{ entry, score }];
+        })
+        .sort((left, right) => left.score - right.score)
+        .map(({ entry }) => entry);
   const exactEntry =
     query.length > 0 ? (visibleEntries.find((entry) => entry.name === query) ?? null) : null;
 
