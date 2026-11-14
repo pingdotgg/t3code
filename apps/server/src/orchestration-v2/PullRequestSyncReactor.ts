@@ -371,7 +371,14 @@ export const make = Effect.gen(function* () {
   // Pause per project and host because credentials are project-specific; leave paused PRs due until reset.
   const pausedUntil = new Map<string, number>();
 
-  const isDue = (key: string, entries: ReadonlyArray<LinkEntry>, nowMs: number): boolean => {
+  // Unbatched hosts spend a CLI process per read (`az` on Azure DevOps), so they read even
+  // active open pull requests on the quiet cadence.
+  const isDue = (
+    key: string,
+    entries: ReadonlyArray<LinkEntry>,
+    nowMs: number,
+    batches: boolean,
+  ): boolean => {
     if (requested.has(key)) return true;
     const active = entries.filter((entry) => isUnsettled(entry.thread));
     if (active.length === 0) return false;
@@ -388,10 +395,12 @@ export const make = Effect.gen(function* () {
     if (active.every(isFinal)) return false;
     const open = active.filter((entry) => entry.link.snapshot?.state === "open");
     if (open.length > 0) {
-      const quiet = open.every((entry) => {
-        const updatedAt = entry.link.snapshot?.updatedAt;
-        return updatedAt != null && nowMs - Date.parse(updatedAt) >= QUIET_AFTER_MS;
-      });
+      const quiet =
+        !batches ||
+        open.every((entry) => {
+          const updatedAt = entry.link.snapshot?.updatedAt;
+          return updatedAt != null && nowMs - Date.parse(updatedAt) >= QUIET_AFTER_MS;
+        });
       return !quiet || sinceLastMs >= QUIET_SYNC_INTERVAL_MS;
     }
     return sinceLastMs >= SLOW_SYNC_INTERVAL_MS;
@@ -642,10 +651,11 @@ export const make = Effect.gen(function* () {
       entries: ReadonlyArray<LinkEntry>,
       pauseKey: string,
       reads: Semaphore.Semaphore,
+      batches: boolean,
     ) =>
       reads.withPermits(1)(
         Effect.suspend(() =>
-          isDue(key, entries, nowMs)
+          isDue(key, entries, nowMs, batches)
             ? Clock.currentTimeMillis.pipe(
                 Effect.flatMap((startedAtMs) =>
                   isPaused(pauseKey, startedAtMs) ? Effect.void : readGroup(key, entries, pauseKey),
@@ -661,11 +671,12 @@ export const make = Effect.gen(function* () {
     yield* Effect.forEach(
       groupsByHost,
       ([pauseKey, hostGroups]) => {
-        // A host paused or with nothing due skips the lookup. Stack retries only flag groups on
-        // the flagging group's own host, so nothing on it becomes due this sweep.
+        // A host paused or with nothing due even at the batched cadence skips the lookup. Stack
+        // retries only flag groups on the flagging group's own host, so nothing on it becomes due
+        // this sweep.
         if (
           isPaused(pauseKey, nowMs) ||
-          !hostGroups.some(([key, entries]) => isDue(key, entries, nowMs))
+          !hostGroups.some(([key, entries]) => isDue(key, entries, nowMs, true))
         ) {
           return Effect.void;
         }
@@ -674,7 +685,7 @@ export const make = Effect.gen(function* () {
             const { width, reads } = batches ? pools.batched : pools.unbatched;
             return Effect.forEach(
               hostGroups,
-              ([key, entries]) => readIfDue(key, entries, pauseKey, reads),
+              ([key, entries]) => readIfDue(key, entries, pauseKey, reads, batches),
               {
                 concurrency: width,
                 discard: true,
