@@ -22,12 +22,14 @@ import type {
   PullRequestListState,
   PullRequestMergeCapabilities,
   PullRequestMergeMethod,
+  PullRequestMergeQueueRemoval,
   PullRequestMergeability,
   PullRequestOmittedFileStat,
   PullRequestReaction,
   PullRequestReactionContent,
   PullRequestReviewCommentDraft,
   PullRequestReviewDecision,
+  PullRequestOverviewThread,
   PullRequestReviewThread,
   PullRequestThreadCommentsResult,
   PullRequestReviewVerdict,
@@ -73,6 +75,8 @@ export class PullRequestProviderError extends Schema.TaggedError<PullRequestProv
 export interface ProviderChangeRequestWatchFingerprint {
   readonly status: string;
   readonly remarks: string;
+  /** True when `status` changes with every check and mergeability change, so pending work needs no detail read. */
+  readonly coversDetail?: boolean;
 }
 
 export interface PullRequestProviderFailure {
@@ -174,6 +178,16 @@ export interface ProviderListCursor {
   readonly resumeAfter?: string | undefined;
 }
 
+/** One search spans several repositories, so the rows seen at the boundary name theirs. */
+export interface ProviderAcrossListCursor extends Omit<ProviderListCursor, "seenAt"> {
+  readonly seenAt?: ReadonlyArray<ProviderRepositoryNumber> | undefined;
+}
+
+export interface ProviderRepositoryNumber {
+  readonly repository: string;
+  readonly number: number;
+}
+
 export interface ProviderBatchedChangeRequest extends ProviderChangeRequest {
   readonly repository: string;
 }
@@ -211,6 +225,7 @@ export interface ProviderChangeRequestDetail extends ProviderChangeRequest {
   readonly autoMergeEnabled?: boolean;
   readonly autoMergeMethod?: PullRequestMergeMethod;
   readonly workflowApprovalsRequired?: number;
+  readonly mergeQueueRemoval?: PullRequestMergeQueueRemoval;
 }
 
 export interface ProviderChangeRequestActivity {
@@ -221,6 +236,7 @@ export interface ProviderChangeRequestActivity {
   readonly commentsTruncated: boolean;
   readonly reviewThreadsTruncated?: boolean;
   readonly reviewThreads: ReadonlyArray<PullRequestReviewThread>;
+  readonly overviewThreads?: ReadonlyArray<PullRequestOverviewThread>;
   readonly commits: ReadonlyArray<PullRequestCommit>;
   readonly reactions?: ReadonlyArray<PullRequestReaction>;
 }
@@ -316,6 +332,8 @@ export interface PullRequestProviderApi {
    * definition's `publicHost` can be read from a project with no checkout of its repository.
    */
   readonly readsPublicHostWithoutCheckout?: boolean;
+  /** Concurrent summary reads share requests, so callers may keep many in flight. */
+  readonly batchesReads?: boolean;
   /**
    * Absent means every host detected as this kind is read. A host it refuses is listed as one that
    * cannot be browsed here, and nothing is sent for it.
@@ -351,7 +369,7 @@ export interface PullRequestProviderApi {
     readonly viewer: string;
     readonly limit: number;
     readonly query?: string | undefined;
-    readonly cursor?: ProviderListCursor | undefined;
+    readonly cursor?: ProviderAcrossListCursor | undefined;
     readonly filters?: PullRequestListFilters | undefined;
   }) => Effect.Effect<ProviderBatchedChangeRequestPage, PullRequestProviderError>;
 

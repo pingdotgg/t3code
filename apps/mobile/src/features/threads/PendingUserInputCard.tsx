@@ -89,6 +89,7 @@ function QuestionText(props: {
   readonly setDirection: TextDirection | undefined;
   readonly resolveImageSource: MarkdownImageSourceResolver;
   readonly onImagePress: (href: string) => void;
+  readonly preserveSoftBreaks?: boolean;
 }) {
   const styles = useMarkdownPreviewStyles();
   const markdown = useLiveThreadLinkLabels(props.markdown, props.environmentId);
@@ -123,6 +124,7 @@ function QuestionText(props: {
       onLinkPress={openLink}
       resolveImageSource={props.resolveImageSource}
       onImagePress={props.onImagePress}
+      preserveSoftBreaks={props.preserveSoftBreaks}
     />
   );
 }
@@ -298,6 +300,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                 setDirection={setDirection}
                 resolveImageSource={resolveImageSource}
                 onImagePress={openImagePreview}
+                preserveSoftBreaks
               />
               <View className="gap-2">
                 {question.options.map((option) => {
@@ -305,7 +308,6 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                   const selected = isPendingUserInputOptionSelected(question, draft, optionValue);
                   const description =
                     option.description !== option.label ? option.description : undefined;
-                  const preview = option.preview?.trim() ? option.preview : undefined;
                   return (
                     <View key={optionValue} className="gap-1.5">
                       <Pressable
@@ -344,16 +346,17 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                           ) : null}
                         </View>
                       </Pressable>
-                      {preview ? (
+                      {option.preview ? (
                         <View className="px-3.5">
                           <QuestionText
-                            markdown={preview}
+                            markdown={option.preview}
                             environmentId={props.environmentId}
                             threadId={props.threadId}
                             workspaceRoot={props.workspaceRoot}
                             setDirection={setDirection}
                             resolveImageSource={resolveImageSource}
                             onImagePress={openImagePreview}
+                            preserveSoftBreaks
                           />
                         </View>
                       ) : null}

@@ -159,7 +159,9 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       }
       if (
         target instanceof HTMLElement &&
-        target.closest('[contenteditable]:not([contenteditable="false"])')
+        target.closest(
+          'select, [contenteditable]:not([contenteditable="false"]), [role="dialog"], [aria-modal="true"], [role="menu"], [role="combobox"], [data-slot$="popup"]',
+        )
       ) {
         return;
       }
@@ -262,6 +264,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
               text={activeQuestion.question}
               cwd={cwd}
               threadRef={threadRef}
+              lineBreaks
               className={cn("pt-0.5 text-foreground/85", questionTextAlign)}
             />
             {/* Rows span the header row's width so the radios align with the question text and the shortcut column sits under the dismiss button. */}
@@ -310,7 +313,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                     ) : null}
                   </>
                 );
-                const preview = option.preview?.trim() ? option.preview : undefined;
+                // The preview sits outside the button: it can hold links, and a click on a single-select option advances.
                 return (
                   <div key={`${activeQuestion.id}:${optionValue}`}>
                     <button
@@ -324,17 +327,13 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                     >
                       {content}
                     </button>
-                    {/* Outside the button: previews hold links and expandable images, and single-select
-                        advances on click. Thumbnail-sized images keep every option in view. */}
-                    {preview ? (
+                    {option.preview ? (
                       <ChatMarkdown
-                        text={preview}
+                        text={option.preview}
                         cwd={cwd}
                         threadRef={threadRef}
-                        className={cn(
-                          "mb-2 ms-9 me-9 w-auto text-xs text-foreground/85 sm:ms-8 sm:me-8 [&_img]:max-w-[min(100%,18rem)]!",
-                          questionTextAlign,
-                        )}
+                        lineBreaks
+                        className="ps-9 pe-2 pb-1.5 text-xs text-foreground/70 sm:ps-8"
                       />
                     ) : null}
                   </div>
