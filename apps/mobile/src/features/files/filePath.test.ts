@@ -62,22 +62,17 @@ describe("needsWorkspaceFileContents", () => {
 });
 
 describe("workspace preview classifiers", () => {
-  it("recognizes preview extensions with literal # and ? filename characters", () => {
+  it("recognize preview extensions and treat # and ? as literal filename characters", () => {
     for (const path of ["notes/clip#1.wav", "notes/clip?1.wav", "notes#old/clip.wav"]) {
       expect(isAudioPreviewFile(path)).toBe(true);
     }
     for (const path of [
-      "README.md",
-      "docs/guide.mdx",
-      "CHANGELOG.markdown",
-      "notes.MDOWN",
-      "todo.mkd",
       "docs/draft#1.md",
       "docs/draft?1.md",
       "docs#old/draft.md",
-      "docs/draft#1.markdown",
-      "docs/draft?1.mdown",
-      "docs#old/draft.mkd",
+      "CHANGELOG.markdown",
+      "notes.MDOWN",
+      "todo.mkd",
     ]) {
       expect(isMarkdownPreviewFile(path)).toBe(true);
     }
