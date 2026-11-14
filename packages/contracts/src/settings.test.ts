@@ -317,6 +317,17 @@ describe("resolveIdleCompaction", () => {
   });
 });
 
+describe("ClientSettings large paste threshold", () => {
+  it("falls back to the default for a stored preset this build no longer offers", () => {
+    const settings = decodeClientSettings({
+      pastedTextAttachmentThreshold: 4_000,
+      sendShortcut: "mod-enter",
+    });
+    expect(settings.pastedTextAttachmentThreshold).toBe(32_768);
+    expect(settings.sendShortcut).toBe("mod-enter");
+  });
+});
+
 describe("ClientSettings notifications", () => {
   it("requires opt-in when existing settings omit notification preferences", () => {
     expect(decodeClientSettings({}).notificationMode).toBe("off");

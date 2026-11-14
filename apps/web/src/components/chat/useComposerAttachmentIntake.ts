@@ -70,6 +70,7 @@ export function useComposerAttachmentIntake(input: {
   readonly questionAttachmentTarget: DraftId | null;
   readonly attachmentTargetKey: string;
   readonly fileStagingLimit: number | null;
+  readonly pastedTextAttachmentThreshold: number;
   readonly promptRef: ChatComposerProps["promptRef"];
   readonly composerImagesRef: ChatComposerProps["composerImagesRef"];
   readonly composerFilesRef: ChatComposerProps["composerFilesRef"];
@@ -97,6 +98,7 @@ export function useComposerAttachmentIntake(input: {
     questionAttachmentTarget,
     attachmentTargetKey,
     fileStagingLimit,
+    pastedTextAttachmentThreshold,
     promptRef,
     composerImagesRef,
     composerFilesRef,
@@ -393,6 +395,7 @@ export function useComposerAttachmentIntake(input: {
         bypassAutoAttachment,
         wouldExceedInputLimit,
         canAttach: true,
+        thresholdBytes: pastedTextAttachmentThreshold,
       }) === "attachment";
     if (!shouldFold) {
       return false;

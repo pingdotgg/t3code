@@ -15,11 +15,13 @@ import {
   type ProviderInstanceId,
   type SidebarProjectGroupingMode,
 } from "@t3tools/contracts";
+import { pastedTextThresholdLabel } from "@t3tools/client-runtime/text-paste";
 import {
   DEFAULT_UNIFIED_SETTINGS,
   type DiffLayout,
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+  PASTED_TEXT_ATTACHMENT_THRESHOLDS,
   type ResponseStreamingMode,
   type QuitConfirmationMode,
   SidebarProjectSortOrder,
@@ -538,6 +540,10 @@ export function useSettingsRestore(onRestored?: () => void) {
       ? ["Rich text composer"]
       : []),
     ...(settings.sendShortcut !== DEFAULT_UNIFIED_SETTINGS.sendShortcut ? ["Send shortcut"] : []),
+    ...(settings.pastedTextAttachmentThreshold !==
+    DEFAULT_UNIFIED_SETTINGS.pastedTextAttachmentThreshold
+      ? ["Large paste threshold"]
+      : []),
     ...(settings.followUpBehavior !== DEFAULT_UNIFIED_SETTINGS.followUpBehavior
       ? ["Follow-up behavior"]
       : []),
@@ -667,6 +673,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
       composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
       sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,
+      pastedTextAttachmentThreshold: DEFAULT_UNIFIED_SETTINGS.pastedTextAttachmentThreshold,
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
       toolCallVisibility: DEFAULT_UNIFIED_SETTINGS.toolCallVisibility,
       screenReaderAnnouncements: DEFAULT_UNIFIED_SETTINGS.screenReaderAnnouncements,
@@ -1228,6 +1235,57 @@ export function ChatSettingsPanel() {
                     <span className="flex items-center justify-between gap-4">
                       {option.label}
                       {settings.sendShortcut === option.value && <CheckIcon aria-hidden="true" />}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("large-paste-threshold")}
+          description={`Pastes this size or larger become a text file attachment. Non-Latin text and emoji use more bytes per character, so they reach it sooner. Press ${modifierLabel} + Shift + V to paste inline instead.`}
+          resetAction={
+            settings.pastedTextAttachmentThreshold !==
+            DEFAULT_UNIFIED_SETTINGS.pastedTextAttachmentThreshold ? (
+              <SettingResetButton
+                label="large paste threshold"
+                onClick={() =>
+                  updateSettings({
+                    pastedTextAttachmentThreshold:
+                      DEFAULT_UNIFIED_SETTINGS.pastedTextAttachmentThreshold,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={String(settings.pastedTextAttachmentThreshold)}
+              onValueChange={(value) => {
+                const next = PASTED_TEXT_ATTACHMENT_THRESHOLDS.find(
+                  (threshold) => String(threshold) === value,
+                );
+                if (next !== undefined) updateSettings({ pastedTextAttachmentThreshold: next });
+              }}
+            >
+              <SelectTrigger
+                size="sm"
+                className="w-auto min-w-0 max-w-full"
+                aria-label="Large paste threshold"
+              >
+                <SelectValue>
+                  {pastedTextThresholdLabel(settings.pastedTextAttachmentThreshold)}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {PASTED_TEXT_ATTACHMENT_THRESHOLDS.map((threshold) => (
+                  <SelectItem key={threshold} value={String(threshold)}>
+                    <span className="flex items-center justify-between gap-4">
+                      {pastedTextThresholdLabel(threshold)}
+                      {settings.pastedTextAttachmentThreshold === threshold && (
+                        <CheckIcon aria-hidden="true" />
+                      )}
                     </span>
                   </SelectItem>
                 ))}

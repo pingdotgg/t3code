@@ -1,4 +1,3 @@
-import { PASTED_TEXT_ATTACHMENT_THRESHOLD_BYTES } from "@t3tools/client-runtime/text-paste";
 import { PROVIDER_SEND_TURN_MAX_INPUT_CHARS } from "@t3tools/contracts";
 import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
 import { composerContextEditorTokens, composerSkillLabels } from "../lib/composerContext";
@@ -27,6 +26,7 @@ import { contextChipIconUri, modelChipIcon, modelChipIconUri } from "../lib/cont
 import { useUniwindTheme } from "../lib/useUniwindTheme";
 import { createNativeComposerTheme } from "../lib/nativeComposerTheme";
 import { FONT_FAMILIES } from "../lib/fontFamilies";
+import { usePastedTextAttachmentThreshold } from "../lib/usePastedTextAttachmentThreshold";
 import { useScaledTextRole } from "../features/settings/appearance/useScaledTextRole";
 import {
   acknowledgeComposerNativeEvent,
@@ -179,6 +179,7 @@ export function ComposerEditor({
   const bodyText = useScaledTextRole("body");
   const theme = useUniwindTheme();
   const fontFamily = FONT_FAMILIES.regular;
+  const pastedTextAttachmentThreshold = usePastedTextAttachmentThreshold();
 
   const skillLabels = useMemo(() => composerSkillLabels(skills), [skills]);
   const { modelsBySource, modelTokens } = useComposerModelTokens(props.value, models);
@@ -372,7 +373,7 @@ export function ComposerEditor({
       autoFocus={props.autoFocus ?? false}
       autoCorrect={props.autoCorrect ?? true}
       spellCheck={props.spellCheck ?? true}
-      textPasteThresholdBytes={onPasteText ? PASTED_TEXT_ATTACHMENT_THRESHOLD_BYTES : 0}
+      textPasteThresholdBytes={onPasteText ? pastedTextAttachmentThreshold : 0}
       maxInputChars={PROVIDER_SEND_TURN_MAX_INPUT_CHARS}
       style={style as StyleProp<ViewStyle>}
       onComposerChange={(event) => applyNativeChange(event.nativeEvent)}
