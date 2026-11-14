@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 import { buildNativeReviewDiffData } from "../review/nativeReviewDiffAdapter";
 import { buildReviewParsedDiff } from "../review/reviewModel";
-import { filterPullRequestTestFiles } from "./pullRequestFileFilters";
+import {
+  filterPullRequestTestFiles,
+  filterPullRequestViewedFiles,
+  viewedFilePaths,
+} from "./pullRequestFileFilters";
 
 function patch(path: string) {
   return `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-old\n+new\n`;
@@ -40,6 +44,31 @@ describe("mobile PR test file filter", () => {
     if (parsed.kind !== "files" || visible.kind !== "files") throw new Error("Expected files");
     expect(visible.files.map((file) => file.path)).toEqual(["src/app.ts", "src/second.test.ts"]);
     expect(visible.files[1]).toBe(parsed.files[2]);
+  });
+
+  it("hides viewed files except those kept on screen", () => {
+    const parsed = buildReviewParsedDiff(
+      ["src/read.ts", "src/opened.ts", "src/drafted.ts", "src/unread.ts"].map(patch).join("\n"),
+      "pr",
+    );
+    const paths = viewedFilePaths(
+      parsed,
+      (path) => path !== "src/unread.ts",
+      (path) => path === "src/opened.ts" || path === "src/drafted.ts",
+    );
+    expect(paths).toEqual({
+      viewed: ["src/read.ts", "src/opened.ts", "src/drafted.ts"],
+      hidden: ["src/read.ts"],
+    });
+    const visible = filterPullRequestViewedFiles(parsed, new Set(paths.hidden));
+    if (parsed.kind !== "files" || visible.kind !== "files") throw new Error("Expected files");
+    expect(visible.files.map((file) => file.path)).toEqual([
+      "src/opened.ts",
+      "src/drafted.ts",
+      "src/unread.ts",
+    ]);
+    expect(visible.fileCount).toBe(3);
+    expect(filterPullRequestViewedFiles(parsed, new Set())).toBe(parsed);
   });
 
   it("uses the current path when a file is renamed out of a test directory", () => {

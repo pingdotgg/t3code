@@ -30,6 +30,7 @@ import {
 } from "./usePullRequestDiff";
 import { usePullRequestFileFilter } from "./usePullRequestFileFilter";
 import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
+import { usePullRequestReviewDraft } from "./usePullRequestReviewDraft";
 import { pullRequestFileJumpScope, requestPullRequestFileJump } from "./pullRequestFileJump";
 
 const BREAKDOWN_LABELS = {
@@ -54,7 +55,13 @@ function useChangedFiles(params: PullRequestDiffParams) {
   ).changeRequest;
   const diff = usePullRequestDiff(params, terminology);
   const viewed = usePullRequestFilesViewed(params, pr);
-  const filter = usePullRequestFileFilter(diff.parsed);
+  const reviewDraft = usePullRequestReviewDraft(params);
+  const filter = usePullRequestFileFilter(
+    diff.parsed,
+    viewed,
+    undefined,
+    reviewDraft.draft.comments.map((comment) => comment.path),
+  );
   const parsed = filter.parsed;
   return {
     diff,
@@ -78,11 +85,14 @@ function describeFiles(
   { filter, viewed }: ChangedFiles,
 ) {
   const noun = (count: number) => (count === 1 ? "file" : "files");
+  const hiding = filter.hiddenCount > 0 || filter.hiddenViewedCount > 0;
   return [
-    `${parsed.fileCount} ${filter.hiddenCount ? "visible" : "changed"} ${noun(parsed.fileCount)}`,
-    viewed.supported
-      ? `${parsed.files.filter((file) => viewed.isViewed(file.path)).length} viewed`
-      : null,
+    `${parsed.fileCount} ${hiding ? "visible" : "changed"} ${noun(parsed.fileCount)}`,
+    !viewed.supported
+      ? null
+      : filter.hideViewedFiles
+        ? `${filter.hiddenViewedCount} viewed ${noun(filter.hiddenViewedCount)} hidden`
+        : `${filter.viewedCount} viewed`,
     filter.hideTestFiles
       ? `${filter.hiddenCount} test ${noun(filter.hiddenCount)} hidden`
       : "Test files included",
@@ -166,14 +176,26 @@ function FileFilterMenu({ filter }: { readonly filter: ChangedFiles["filter"] })
           image: "line.3.horizontal.decrease",
           state: filter.hideTestFiles ? "on" : "off",
         },
+        ...(filter.canHideViewedFiles
+          ? [
+              {
+                id: "hide-viewed",
+                title: "Hide viewed files",
+                image: "eye.slash",
+                state: filter.hideViewedFiles ? ("on" as const) : ("off" as const),
+              },
+            ]
+          : []),
       ]}
-      onPressAction={filter.toggle}
+      onPressAction={({ nativeEvent }) =>
+        nativeEvent.event === "hide-viewed" ? filter.toggleViewedFiles() : filter.toggle()
+      }
     >
       <View pointerEvents="none">
         <IconButton
           icon="line.3.horizontal.decrease"
           accessibilityLabel="Filter review files"
-          selected={filter.hideTestFiles}
+          selected={filter.hideTestFiles || filter.hideViewedFiles}
         />
       </View>
     </Menu>
@@ -182,6 +204,18 @@ function FileFilterMenu({ filter }: { readonly filter: ChangedFiles["filter"] })
 
 function NoVisibleFiles({ files }: { readonly files: ChangedFiles }) {
   const { diff, filter, parsed } = files;
+  if (parsed.kind === "files" && parsed.files.length === 0 && filter.hiddenViewedCount > 0) {
+    return (
+      <EmptyState
+        title={diff.nextCursor ? "No unviewed files loaded yet" : "All files are hidden"}
+        detail="Viewed files are hidden from this review."
+        action={
+          <Button label="Show viewed files" tone="contrast" onPress={filter.showViewedFiles} />
+        }
+        variant="plain"
+      />
+    );
+  }
   if (parsed.kind === "files") {
     return parsed.files.length === 0 && filter.hiddenCount > 0 ? (
       <EmptyState
@@ -427,6 +461,17 @@ export function PullRequestFilesSheet({ route }: StaticScreenProps<PullRequestDi
                 selected: filter.hideTestFiles,
                 onPress: filter.toggle,
               },
+              ...(filter.canHideViewedFiles
+                ? [
+                    {
+                      id: "hide-viewed",
+                      title: "Hide viewed files",
+                      icon: "eye.slash",
+                      selected: filter.hideViewedFiles,
+                      onPress: filter.toggleViewedFiles,
+                    },
+                  ]
+                : []),
             ],
           },
         ]}

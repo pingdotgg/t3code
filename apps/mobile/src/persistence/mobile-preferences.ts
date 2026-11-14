@@ -92,6 +92,7 @@ export interface Preferences {
   readonly navigationTabOrder?: readonly string[];
   readonly hiddenNavigationTabs?: readonly string[];
   readonly pullRequestHideTestFiles?: boolean;
+  readonly pullRequestHideViewedFiles?: boolean;
   readonly pullRequestMergeMethod?: PullRequestMergeMethod;
   readonly liveActivitiesEnabled?: boolean;
   readonly themeId?: MobileThemeId;
@@ -181,6 +182,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     navigationTabOrder?: readonly string[];
     hiddenNavigationTabs?: readonly string[];
     pullRequestHideTestFiles?: boolean;
+    pullRequestHideViewedFiles?: boolean;
     pullRequestMergeMethod?: PullRequestMergeMethod;
     liveActivitiesEnabled?: boolean;
     themeId?: MobileThemeId;
@@ -231,6 +233,10 @@ function sanitizePreferences(parsed: Preferences): Preferences {
 
   if (typeof parsed.pullRequestHideTestFiles === "boolean") {
     preferences.pullRequestHideTestFiles = parsed.pullRequestHideTestFiles;
+  }
+
+  if (typeof parsed.pullRequestHideViewedFiles === "boolean") {
+    preferences.pullRequestHideViewedFiles = parsed.pullRequestHideViewedFiles;
   }
 
   if (isPullRequestMergeMethod(parsed.pullRequestMergeMethod)) {
