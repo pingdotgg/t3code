@@ -41,7 +41,9 @@ selected runtime's executable at a fixed path instead of the runtime, because TC
 privacy grants to its program path. Installs and the launcher replace that copy by
 rename under the unit lease rather than rewriting the plist, so a running launcher
 keeps its old inode. A launcher that finds a plist still naming a versioned runtime
-moves it to the copy, so services that only update remotely migrate too.
+moves it to the copy, so services that only update remotely migrate too. When an older
+launcher committed the update, that happens once the new launcher starts, and launchd
+uses the copy from the bootstrap after that.
 
 Task Scheduler tracks only the console host it started, not the launcher. `schtasks /End`
 kills that host and nothing else; the launcher takes its closed console as SIGTERM. The task

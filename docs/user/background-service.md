@@ -158,7 +158,7 @@ Downloads, it may need Full Disk Access for the `t3` executable listed in
 `~/Library/LaunchAgents/com.t3tools.t3code.service.plist`. That path stays the
 same across updates, so the grant carries over. A service installed by an
 older version moves to this path after an update and needs the grant once
-more. After a remote update, the move takes effect at the next login or restart.
+more. After a remote update, the move can take until the second login or restart.
 
 For failures after signing in to T3 Connect, see
 [connection troubleshooting](./t3-connect-troubleshooting.md).
