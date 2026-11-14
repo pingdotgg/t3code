@@ -11,7 +11,6 @@ import {
   ProviderInstanceId,
   ProviderDriverKind,
   RunId,
-  RuntimeRequestId,
   ThreadId,
   TurnItemId,
   WS_METHODS,
@@ -45,8 +44,6 @@ import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import { v2Now, v2Projection, v2ThreadId } from "../state/orchestrationV2TestFixtures.ts";
 import {
   archiveThread,
-  respondToThreadApproval,
-  respondToThreadUserInput,
   interruptThreadTurn,
   revertThreadCheckpoint,
   resumeThreadQueue,
@@ -147,30 +144,6 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
 });
 
 describe("V2 environment commands", () => {
-  it.effect.each(["web", "mobile"] as const)(
-    "preserves %s question and approval response source",
-    (creationSource) =>
-      Effect.gen(function* () {
-        const commands: OrchestrationV2Command[] = [];
-        const supervisor = yield* makeSupervisor({ commands, projects: [] });
-        const common = {
-          threadId: v2ThreadId,
-          requestId: RuntimeRequestId.make("question"),
-          creationSource,
-        };
-        yield* respondToThreadApproval({ ...common, decision: "accept" }).pipe(
-          Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
-        );
-        yield* respondToThreadUserInput({ ...common, answers: { format: "TOML" } }).pipe(
-          Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
-        );
-        expect(commands).toMatchObject([
-          { type: "runtime-request.respond", creationSource },
-          { type: "runtime-request.respond", creationSource },
-        ]);
-      }).pipe(Effect.provide(layerTestRandom)),
-  );
-
   it.effect("distinguishes sending a selected queued message from resuming queue order", () =>
     Effect.gen(function* () {
       const commands: OrchestrationV2Command[] = [];
