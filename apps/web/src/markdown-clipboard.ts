@@ -504,13 +504,9 @@ function sanitizedHtmlFrom(container: Element): string {
   return `<meta charset="utf-8">${container.innerHTML}`;
 }
 
-/**
- * A range that starts inside a list clones the list without its earlier items, so the
- * first copied item would take the list's first number. Restarts each such clone at the
- * number its first copied item shows.
- */
+/** A list cloned from a later item would renumber from its start; restart it at the shown number. */
 function keepStartListNumbers(range: Range, container: Element): void {
-  // The range's start-side ancestors below the common ancestor clone as a first-child chain.
+  // The start's ancestors below the common ancestor clone as the fragment's first-child chain.
   const chain: Node[] = [];
   for (
     let node: Node | null = range.startContainer;
@@ -522,9 +518,8 @@ function keepStartListNumbers(range: Range, container: Element): void {
   let clone: Node | null = container;
   for (const [depth, source] of chain.entries()) {
     clone = clone?.firstChild ?? null;
-    if (!(clone instanceof Element) || !(source instanceof Element) || source.tagName !== "OL") {
+    if (!(clone instanceof Element) || !(source instanceof Element) || source.tagName !== "OL")
       continue;
-    }
     const firstCopied = chain[depth + 1] ?? source.childNodes[range.startOffset];
     if (!firstCopied) continue;
     const shown = numberedListItems(source).find(

@@ -12,6 +12,7 @@ import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 
 import { APP_DIR, T3_HOME } from "../e2e.config.ts";
 import { run } from "./shell.ts";
+import { REPLAY } from "./start-app.ts";
 
 export interface T3State {
   /** Creates a git repository holding `files` and adds it as a project. Returns its path. */
@@ -22,7 +23,7 @@ export interface T3State {
   /**
    * Starts a thread in a project and plays one replayed turn per message before returning.
    * `model` is a dev replay recording: showcase, todo-list, approval, question, multi-turn,
-   * command-output.
+   * command-output, ordered-list.
    */
   readonly thread: (input: {
     readonly project: string;
@@ -110,7 +111,7 @@ export function makeState(home: string, env: NodeJS.ProcessEnv = {}) {
     const turn = (args: ReadonlyArray<string>) =>
       cli(["thread", ...args, "--wait", "--json"], [0, 2]);
     const [first = "Start", ...rest] = input.messages;
-    const replay = ["--provider", "devReplay", "--model", input.model ?? "multi-turn"];
+    const replay = ["--provider", REPLAY.instanceId, "--model", input.model ?? "multi-turn"];
     const started = yield* turn(["start", input.project, first, "--title", input.title, ...replay]);
     const { threadId } = yield* decodeLaunched(started.stdout);
     for (const message of rest) yield* turn(["send", threadId, message]);
