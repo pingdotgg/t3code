@@ -45,8 +45,8 @@ const THEME_FILE_SUFFIX = ".json";
 
 const MAX_THEME_FILES = 32;
 /** Shared with publishing so it cannot accept files the watcher skips. */
-export const MAX_THEME_FILE_BYTES = 32 * 1024;
-const MAX_THEME_TOTAL_BYTES = 192 * 1024;
+export const MAX_THEME_FILE_BYTES = 80 * 1024;
+const MAX_THEME_TOTAL_BYTES = 480 * 1024;
 
 interface PublishedThemes {
   readonly seq: number;
