@@ -588,7 +588,7 @@ it("keeps an image on its own line under a label but leaves inline images inline
   expect(render("Hard-wrapped\nprose")).toBe("Hard-wrapped\nprose");
 });
 
-it("keeps the number written on each ordered list item only when enabled", () => {
+it("keeps written ordered list numbers unless they are shorthand or a sequence, and always when enabled", () => {
   type Node = { tagName?: string; properties?: { value?: unknown }; children?: Node[] };
   const values = (node: Node): unknown[] => [
     ...(node.tagName === "li" ? [node.properties?.value] : []),
@@ -622,11 +622,18 @@ it("keeps the number written on each ordered list item only when enabled", () =>
     undefined,
     "5",
   ]);
+  const renderDefault = renderer(CHAT_MARKDOWN_REMARK_PLUGINS);
+  expect(renderDefault("8. sınıf etüdü tamamlandı.\n\n6. sınıf görsel aşaması da bitti.")).toEqual([
+    undefined,
+    "6",
+  ]);
+  expect(renderDefault("1. one\n1. two\n1. three")).toEqual([undefined, undefined, undefined]);
+  expect(renderDefault("4. four\n5. five")).toEqual([undefined, undefined]);
   expect(
-    renderer(CHAT_MARKDOWN_REMARK_PLUGINS)(
+    renderDefault(
       "3. first\n5. second\n\n-       first block\n\n        3. first\n        5. second",
     ),
-  ).toEqual([undefined, undefined, undefined, undefined, undefined]);
+  ).toEqual([undefined, "5", undefined, undefined, "5"]);
 });
 
 it("moves a <picture>'s color-scheme sources onto its <img>, which the renderer resolves", () => {
