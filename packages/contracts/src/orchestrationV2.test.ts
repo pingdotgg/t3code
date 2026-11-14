@@ -645,13 +645,10 @@ describe("orchestrationV2SteerRejectionReason", () => {
   const image = { type: "image", id: "image", name: "a.png", mimeType: "image/png", sizeBytes: 1 };
 
   it.each([
-    ["/goal finish the refactor", [], "Goal commands must run as a separate turn."],
-    ["  /goal", [], "Goal commands must run as a separate turn."],
     [" /COMPACT ", [], "Context compaction must run as a separate turn."],
     ["/logout", [], "Signing out must run as a separate turn."],
-    ["/goalie", [], null],
-    ["please /goal later", [], null],
-    ["/goal with a screenshot", [image], null],
+    ["/goal finish the refactor", [], null],
+    ["please /compact later", [], null],
     ["/compact", [image], null],
   ] as const)("%j with %j attachments", (text, attachments, reason) => {
     expect(orchestrationV2SteerRejectionReason({ text, attachments: attachments as never })).toBe(

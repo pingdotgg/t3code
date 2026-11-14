@@ -268,10 +268,10 @@ it.each([
     canReorder: true,
     queuedRuns: [
       {
-        run: { id: "run:goal", userMessageId: "message:goal" },
-        text: "/goal finish the refactor",
+        run: { id: "run:compact", userMessageId: "message:compact" },
+        text: "/compact",
         attachments: [],
-        steerRejectionReason: "Goal commands must run as a separate turn.",
+        steerRejectionReason: "Context compaction must run as a separate turn.",
       },
       {
         run: { id: "run:plain", userMessageId: "message:plain" },
@@ -297,9 +297,9 @@ it.each([
     expect.objectContaining({
       input: expect.objectContaining(
         canSendNow
-          ? { runId: "run:goal" }
+          ? { runId: "run:compact" }
           : {
-              queuedRunId: promoteSkipsCompaction ? "run:goal" : "run:plain",
+              queuedRunId: promoteSkipsCompaction ? "run:compact" : "run:plain",
               targetRunId: "run:active",
             },
       ),

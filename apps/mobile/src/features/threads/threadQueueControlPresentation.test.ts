@@ -16,8 +16,8 @@ describe("threadQueueControlPresentation", () => {
         isEditing,
         canPromoteToSteer: false,
         canSendNow: true,
-        steerRejectionReason: "Goal commands must run as a separate turn.",
-        text: "/goal finish the refactor",
+        steerRejectionReason: "Context compaction must run as a separate turn.",
+        text: "/compact",
       });
 
       expect(controls.canSend).toBe(expected);
@@ -25,14 +25,14 @@ describe("threadQueueControlPresentation", () => {
   );
 
   it.each([false, true])(
-    "gates a queued goal with compaction skip %s",
+    "gates a queued /compact with compaction skip %s",
     (promoteSkipsCompaction) => {
       const controls = resolveThreadQueueRowControls({
         busy: false,
         canPromoteToSteer: true,
         canSendNow: false,
-        steerRejectionReason: "Goal commands must run as a separate turn.",
-        text: "/goal finish the refactor",
+        steerRejectionReason: "Context compaction must run as a separate turn.",
+        text: "/compact",
         promoteSkipsCompaction,
       });
       expect(controls.canSend).toBe(promoteSkipsCompaction);

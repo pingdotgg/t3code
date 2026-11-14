@@ -142,13 +142,13 @@ describe("thread workflows", () => {
     const state = deriveThreadQueueWorkflowState({
       thread: { id: "thread", activeProviderThreadId: null },
       runs: [
-        { id: "goal", status: "queued", userMessageId: "message-goal", ordinal: 1 },
-        { id: "plain", status: "queued", userMessageId: "message-plain", ordinal: 2 },
+        { id: "compact", status: "queued", userMessageId: "message-compact", ordinal: 1 },
+        { id: "goal", status: "queued", userMessageId: "message-goal", ordinal: 2 },
         { id: "loading", status: "queued", userMessageId: "message-loading", ordinal: 3 },
       ],
       messages: [
+        { id: "message-compact", text: "/compact", attachments: [] },
         { id: "message-goal", text: "/goal finish the refactor", attachments: [] },
-        { id: "message-plain", text: "Also update the docs", attachments: [] },
       ],
       providerTurns: [],
       providerThreads: [],
@@ -158,8 +158,8 @@ describe("thread workflows", () => {
     expect(
       state.queuedRuns.map(({ run, steerRejectionReason }) => [run.id, steerRejectionReason]),
     ).toEqual([
-      ["goal", "Goal commands must run as a separate turn."],
-      ["plain", null],
+      ["compact", "Context compaction must run as a separate turn."],
+      ["goal", null],
       ["loading", "Queued message is still loading."],
     ]);
   });

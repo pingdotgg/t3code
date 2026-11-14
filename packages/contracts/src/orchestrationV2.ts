@@ -1414,18 +1414,14 @@ export function isNativeMaintenanceCommand(message: OrchestrationV2CommandMessag
   );
 }
 
+/** Why a message cannot steer an active turn. Queued goals promote through their own path. */
 export function orchestrationV2SteerRejectionReason(
   message: OrchestrationV2CommandMessage,
 ): string | null {
-  if (isNativeMaintenanceCommand(message)) {
-    return message.text.trim().toLowerCase() === "/compact"
-      ? "Context compaction must run as a separate turn."
-      : "Signing out must run as a separate turn.";
-  }
-  if (parseGoalCommand(message) !== null) {
-    return "Goal commands must run as a separate turn.";
-  }
-  return null;
+  if (!isNativeMaintenanceCommand(message)) return null;
+  return message.text.trim().toLowerCase() === "/compact"
+    ? "Context compaction must run as a separate turn."
+    : "Signing out must run as a separate turn.";
 }
 
 export const OrchestrationV2PlanStep = Schema.Struct({
