@@ -1057,6 +1057,50 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect.each([false, true])(
+    "keeps paths but only forwards native images to image-capable Pi models, support=%s",
+    (supportsImages) =>
+      Effect.gen(function* () {
+        const host = yield* ProviderHost.ProviderHost;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const attachment: ChatAttachment = {
+          id: ChatAttachmentId.make("model-sensitive-image"),
+          type: "image",
+          name: "image.png",
+          mimeType: "image/png",
+          sizeBytes: 3,
+        };
+        const path = host.resolveAttachmentPath(attachment)!;
+        yield* fileSystem.writeFile(path, new Uint8Array([1, 2, 3]));
+        const modelId = supportsImages ? "glm-5.3-flash" : "glm-5.3";
+        const slug = `opencode-go/${modelId}`;
+        const fake = yield* makeFakePi;
+        fake.queueModels([
+          {
+            provider: "opencode-go",
+            id: modelId,
+            input: supportsImages ? ["text", "image"] : ["text"],
+          },
+        ]);
+        const { runtime } = yield* openRuntime(fake);
+        const providerThread = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection(slug),
+          runtimePolicy,
+        });
+        yield* startTurn(runtime, providerThread, slug, [attachment]);
+        const prompt = yield* fake.takeRequest("prompt");
+        assert.include(String(prompt["message"]), path);
+        if (supportsImages) {
+          assert.deepEqual(prompt["images"], [
+            { type: "image", data: "AQID", mimeType: "image/png" },
+          ]);
+        } else {
+          assert.isUndefined(prompt["images"]);
+        }
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("lists unavailable attachments alongside resolvable files in the native prompt", () =>
     Effect.gen(function* () {
       const host = yield* ProviderHost.ProviderHost;
