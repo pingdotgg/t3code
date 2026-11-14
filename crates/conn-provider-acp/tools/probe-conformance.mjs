@@ -256,11 +256,8 @@ it.live("conn grok probe: every scenario", () =>
 `;
 
 const pkg = NodePath.join(MONOREPO, "packages/provider-grok");
-const testFile = NodePath.join(pkg, "src/server/ConnGrokProbe.tmp.test.ts");
-if (NodeFS.existsSync(testFile)) {
-  console.error(`another probe-conformance run has ${testFile} in place; wait a minute and run again.`);
-  process.exit(3);
-}
+// The name carries this run's PID, so runs side by side on one checkout do not collide.
+const testFile = NodePath.join(pkg, "src/server", `ConnGrokProbe.${process.pid}.tmp.test.ts`);
 const tsParentEnv = NodePath.join(work, "ts-parent-env.json");
 const tsServerCwd = NodePath.join(work, "ts-server-cwd.txt");
 NodeFS.writeFileSync(

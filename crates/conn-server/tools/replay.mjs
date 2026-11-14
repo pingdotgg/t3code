@@ -61,7 +61,8 @@ async function start() {
   NodeChildProcess.execFileSync("git", ["init", "-q", "-b", "main"], { cwd: project });
   const server = NodeChildProcess.spawn(
     binary,
-    ["--state-dir", NodePath.join(tmp, "state"), "--project", project],
+    // Its own free port: the default port is taken when another check runs beside this one.
+    ["--listen", "127.0.0.1:0", "--state-dir", NodePath.join(tmp, "state"), "--project", project],
     { stdio: ["ignore", "pipe", "pipe"], env: sealedEnv(tmp) },
   );
   const stderr = [];

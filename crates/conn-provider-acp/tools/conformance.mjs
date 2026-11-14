@@ -164,7 +164,12 @@ describe("conn acp conformance", () => {
 `;
 
 const server = NodePath.join(MONOREPO, "apps/server");
-const testFile = NodePath.join(server, "src/orchestration-v2/testkit/ConnAcpConformance.tmp.test.ts");
+// The name carries this run's PID, so runs side by side on one checkout do not collide.
+const testFile = NodePath.join(
+  server,
+  "src/orchestration-v2/testkit",
+  `ConnAcpConformance.${process.pid}.tmp.test.ts`,
+);
 const tsParentEnv = NodePath.join(work, "ts-parent-env.json");
 NodeFS.writeFileSync(
   testFile,

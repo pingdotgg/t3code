@@ -13,11 +13,12 @@ crate="$(cd "$here/../.." && pwd)"
 workspace_root="$(cd "$crate/../.." && pwd)"
 repo="${CONN_MONOREPO:?set CONN_MONOREPO to a Conn monorepo checkout at conn.pin, after vp i}"
 adapters="$repo/apps/server/src/orchestration-v2/Adapters"
-copy="$adapters/claudeConformance.test.ts"
+# The copy's name carries this run's PID, so runs side by side on one checkout do not collide.
+name="claudeConformance.$$.tmp.test.ts"
+copy="$adapters/$name"
 node_bin="$(dirname "$(command -v node)")"
 
 [ -d "$adapters" ] || { echo "CONN_MONOREPO=$repo has no apps/server Adapters directory" >&2; exit 1; }
-[ ! -e "$copy" ] || { echo "$copy already exists; refusing to overwrite it" >&2; exit 1; }
 [ -d "$workspace_root/helpers/sdk-host/node_modules" ] || {
   echo "run 'npm ci' in helpers/sdk-host first" >&2
   exit 1
@@ -98,7 +99,7 @@ if [ "${CONFORMANCE_SKIP_T3:-}" != "1" ]; then
       CONFORMANCE_WORKSPACE="$OUT/workspace" CONFORMANCE_ATTACHMENTS="$OUT/attachments" \
       CONFORMANCE_ONLY="$*" CONFORMANCE_BASE_ENV="$OUT/base.env" \
       "$node_bin/node" "$repo/node_modules/vite-plus/bin/vp" test run \
-      src/orchestration-v2/Adapters/claudeConformance.test.ts
+      "src/orchestration-v2/Adapters/$name"
   ) 2>&1 | tee "$OUT/t3.log"
   set -e
   rm -f "$copy"
