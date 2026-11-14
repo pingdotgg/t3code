@@ -286,6 +286,11 @@ describe("question answer paths", () => {
       "A\u2002B\u2003C\u2005D\u00a0E\u2011FG",
     ],
     [
+      "joiner and direction marks",
+      String.raw`{\rtf1\ansi A\zwj B\zwnj C\ltrmark D\rtlmark E}`,
+      "A\u200dB\u200cC\u200eD\u200fE",
+    ],
+    [
       "text symbol fallback",
       String.raw`{\rtf1\ansi\uc10\u945\endash\emdash\enspace\emspace\qmspace\lquote\rquote\ldblquote\rdblquote\bullet Z}`,
       "αZ",
