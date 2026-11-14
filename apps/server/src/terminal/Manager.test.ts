@@ -708,9 +708,13 @@ it.layer(
   it.effect("gives the PTY back to a wider viewer once a client stops attaching", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
+      const restored = yield* Deferred.make<void>();
       const stopWide = yield* manager.attachStream(
         openInput({ cols: 130, rows: 30 }),
-        () => Effect.void,
+        (event) =>
+          event.type === "activity" && event.cols === 130 && event.rows === 30
+            ? Deferred.succeed(restored, undefined).pipe(Effect.asVoid)
+            : Effect.void,
         undefined,
         "socket-wide:0",
       );
@@ -739,6 +743,7 @@ it.layer(
       const registry = AtomRegistry.make();
       yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
       const input = openInput({ cols: 54, rows: 15 });
+      let exited = false;
       const session = atoms.createSession({
         target: {
           environmentId,
@@ -748,7 +753,7 @@ it.layer(
         gridSize: { cols: 54, rows: 15 },
         canOperate: () => true,
         onExit: () => {
-          throw new Error("running shell unexpectedly exited");
+          exited = true;
         },
       });
       const closeDriver = registry.mount(session.driver({ kind: "attached", input }));
@@ -768,15 +773,9 @@ it.layer(
 
       closeDriver();
       closeViewer();
-      // Unused atoms are released on the registry's next scheduled task.
-      yield* Effect.callback<void>((resume) => {
-        registry.schedulerAsync.makeDispatcher().scheduleTask(() => resume(Effect.void), 0);
-      });
-      yield* manager.resize(
-        { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID, cols: 130, rows: 30 },
-        "socket-wide:0",
-      );
+      yield* Deferred.await(restored);
       expect(process.resizeCalls.at(-1)).toEqual({ cols: 130, rows: 30 });
+      expect(exited).toBe(false);
     }),
   );
 
