@@ -69,12 +69,17 @@ export class GitHubApiNotFoundError extends Schema.TaggedError<GitHubApiNotFound
   {
     host: Schema.String,
     operation: Schema.String,
+    githubErrors: Schema.optionalKey(Schema.Array(Schema.String)),
     /** The source of the credential the refused request carried, when known. */
     credential: Schema.optionalKey(GitHubCredentials.GitHubCredentialSource),
   },
 ) {
   override get message(): string {
-    return "GitHub could not find the requested resource, or the credential cannot see it.";
+    const missing =
+      "GitHub could not find the requested resource, or the credential cannot see it.";
+    return this.githubErrors !== undefined && this.githubErrors.length > 0
+      ? `${missing} GitHub said: ${this.githubErrors.join("; ")}`
+      : missing;
   }
 }
 
@@ -85,6 +90,7 @@ export class GitHubApiResponseError extends Schema.TaggedError<GitHubApiResponse
     operation: Schema.String,
     status: Schema.Int,
     githubErrors: Schema.optionalKey(Schema.Array(Schema.String)),
+    githubErrorTypes: Schema.optionalKey(Schema.Array(Schema.NullOr(Schema.String))),
   },
 ) {
   override get message(): string {
@@ -146,7 +152,11 @@ function retryAtFrom(
   return Number.isFinite(reset) && reset > now ? reset : undefined;
 }
 
-/** HTTP 200 GraphQL rate limits use RATE_LIMITED or untyped errors with quota headers. */
+/**
+ * HTTP 200 GraphQL rate limits use RATE_LIMITED or untyped errors with quota headers. A 403 is a
+ * limit only when its quota, body or GraphQL errors name one (older hosts say "abuse detection
+ * mechanism"): a proxy in front of GitHub Enterprise can refuse with `Retry-After` alone.
+ */
 export function isRateLimited(input: {
   readonly status: number;
   readonly headers: Readonly<Record<string, string | undefined>>;
@@ -166,9 +176,13 @@ export function isRateLimited(input: {
         ))) ||
     (status === 403 &&
       (headers["x-ratelimit-remaining"] === "0" ||
-        headers["retry-after"] !== undefined ||
-        /rate limit/i.test(input.body ?? "")))
+        namesLimit(input.body) ||
+        (errors ?? []).some((error) => namesLimit(error.message))))
   );
+}
+
+function namesLimit(text: unknown): boolean {
+  return typeof text === "string" && /rate limit|abuse detection mechanism/i.test(text);
 }
 
 export type GitHubAnswer<A> = {

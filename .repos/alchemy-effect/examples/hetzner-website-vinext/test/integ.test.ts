@@ -1,7 +1,7 @@
-import * as Alchemy from "alchemy";
-import * as Hetzner from "alchemy/Hetzner";
-import * as Test from "alchemy/Test/Bun";
 import { expect } from "bun:test";
+import * as Hetzner from "@alchemy.run/hetzner";
+import * as Test from "@alchemy.run/test/Bun";
+import * as Alchemy from "alchemy";
 import * as Console from "effect/Console";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
@@ -26,10 +26,7 @@ const getBodyWhenReady = (url: string, expected: string) =>
   }).pipe(
     Effect.retry({
       while: (error) => error instanceof AssetNotReady,
-      schedule: Schedule.min([
-        Schedule.exponential("500 millis"),
-        Schedule.spaced("3 seconds"),
-      ]),
+      schedule: Schedule.min([Schedule.exponential("500 millis"), Schedule.spaced("3 seconds")]),
       times: 10,
     }),
   );
