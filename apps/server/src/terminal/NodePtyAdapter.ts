@@ -141,18 +141,28 @@ const waitForWindowsPid = (
     return Effect.sync(cleanup);
   });
 
-// The private agent cancels pending connections before a child exists; public kill waits for first output.
+// Public WindowsTerminal.kill waits for first output; the private agent kills immediately.
+const windowsPtyAgentKill = (process: import("node-pty").IPty): (() => void) | undefined => {
+  if (
+    "_agent" in process &&
+    typeof process._agent === "object" &&
+    process._agent !== null &&
+    "kill" in process._agent &&
+    typeof process._agent.kill === "function"
+  ) {
+    const agent = process._agent;
+    const kill = process._agent.kill;
+    return () => kill.call(agent);
+  }
+  return undefined;
+};
+
 const killStartingWindowsPty = (process: import("node-pty").IPty) =>
   Effect.try({
     try: () => {
-      if (
-        "_agent" in process &&
-        typeof process._agent === "object" &&
-        process._agent !== null &&
-        "kill" in process._agent &&
-        typeof process._agent.kill === "function"
-      ) {
-        process._agent.kill();
+      const killAgent = windowsPtyAgentKill(process);
+      if (killAgent) {
+        killAgent();
       } else {
         process.kill();
       }
@@ -199,8 +209,20 @@ class NodePtyProcess implements PtyAdapter.PtyProcess {
   }
 
   kill(signal?: string): void {
+    if (this.platform !== "win32") {
+      this.process.kill(signal);
+      return;
+    }
     // node-pty terminates the Windows process tree without a POSIX signal.
-    this.process.kill(this.platform === "win32" ? undefined : signal);
+    const killAgent = windowsPtyAgentKill(this.process);
+    if (!killAgent) {
+      this.process.kill();
+      return;
+    }
+    if ("_close" in this.process && typeof this.process._close === "function") {
+      this.process._close();
+    }
+    killAgent();
   }
 
   onData(callback: (data: string) => void): () => void {
