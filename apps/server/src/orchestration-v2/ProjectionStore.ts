@@ -673,15 +673,28 @@ export interface ProjectionStoreV2Shape {
     threadId: ThreadId,
     runIds?: ReadonlyArray<RunId>,
   ) => Effect.Effect<ReadonlyArray<OrchestrationV2TurnItem>, ProjectionStoreV2Error>;
-  /** The newest `limit` history items plus the first and latest user messages; the rest are only counted. */
+  /**
+   * Every history item in order with a lower bound on its text length, and the newest `limit`
+   * items loaded plus the first and latest user message and the latest other one.
+   */
   readonly getHandoffHistory: (
     threadId: ThreadId,
     runIds: ReadonlyArray<RunId> | undefined,
     limit: number,
   ) => Effect.Effect<
-    { readonly items: ReadonlyArray<OrchestrationV2TurnItem>; readonly omittedItems: number },
+    {
+      readonly candidates: ReadonlyArray<{
+        readonly itemId: TurnItemId;
+        readonly minTextLength: number;
+      }>;
+      readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
+    },
     ProjectionStoreV2Error
   >;
+  readonly getHandoffHistoryItems: (
+    threadId: ThreadId,
+    itemIds: ReadonlyArray<TurnItemId>,
+  ) => Effect.Effect<ReadonlyArray<OrchestrationV2TurnItem>, ProjectionStoreV2Error>;
   readonly getThreadProjection: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadProjection, ProjectionStoreV2Error>;
@@ -5217,47 +5230,90 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         const where = sql`thread_id = ${threadId}
           AND type IN ('user_message','assistant_message','command_execution','error',
             'run_interrupt_result','file_change','proposed_plan')
-          AND ${runIds === undefined ? sql`1` : sql`run_id IN ${sql.in(runIds)}`}`;
-        const newestRows = yield* sql<PayloadRow & { readonly turnItemId: string }>`
-          SELECT payload_json, turn_item_id AS "turnItemId" FROM (
-            SELECT payload_json, ordinal, turn_item_id
-            FROM orchestration_v2_projection_turn_items
-            WHERE ${where}
-            ORDER BY ordinal DESC, turn_item_id DESC
-            LIMIT ${limit}
-          ) ORDER BY ordinal ASC, turn_item_id ASC
-        `;
-        const firstUser = yield* sql<PayloadRow & { readonly turnItemId: string }>`
-          SELECT payload_json, turn_item_id AS "turnItemId"
+          AND ${runIds === undefined ? sql`1` : sql`run_id IN (SELECT value FROM json_each(${encodeIdList(runIds)}))`}`;
+        type Row = PayloadRow & { readonly turnItemId: TurnItemId; readonly ordinal: number };
+        // Character counts never exceed a string's UTF-16 length, so these stay lower bounds.
+        const candidates = yield* sql<{
+          readonly itemId: TurnItemId;
+          readonly minTextLength: number;
+        }>`
+          SELECT turn_item_id AS "itemId", COALESCE(CASE type
+            WHEN 'command_execution' THEN length(json_extract(payload_json, '$.input'))
+              + COALESCE(length(json_extract(payload_json, '$.output')), 0)
+            WHEN 'error' THEN length(json_extract(payload_json, '$.failure.message'))
+            WHEN 'run_interrupt_result' THEN length(json_extract(payload_json, '$.message'))
+            WHEN 'proposed_plan' THEN length(json_extract(payload_json, '$.markdown'))
+            WHEN 'file_change' THEN 0
+            ELSE length(json_extract(payload_json, '$.text'))
+          END, 0) AS "minTextLength"
           FROM orchestration_v2_projection_turn_items
-          WHERE ${where} AND type = 'user_message'
+          WHERE ${where}
           ORDER BY ordinal ASC, turn_item_id ASC
-          LIMIT 1
         `;
-        const latestUser = yield* sql<PayloadRow & { readonly turnItemId: string }>`
-          SELECT payload_json, turn_item_id AS "turnItemId"
-          FROM orchestration_v2_projection_turn_items
-          WHERE ${where} AND type = 'user_message'
-          ORDER BY ordinal DESC, turn_item_id DESC
-          LIMIT 1
-        `;
-        const countRows = yield* sql<{ readonly count: number }>`
-          SELECT COUNT(*) AS count FROM orchestration_v2_projection_turn_items WHERE ${where}
-        `;
-        // Selection always tries the first and latest user messages; outside the window both
-        // precede it, so this order stays ascending.
-        const outside = new Map(
-          [...firstUser, ...latestUser]
-            .filter((row) => !newestRows.some((newest) => newest.turnItemId === row.turnItemId))
-            .map((row) => [row.turnItemId, row]),
-        );
-        const rows = [...outside.values(), ...newestRows];
+        const rowsWhere = (
+          kind: "any" | "user" | "other",
+          direction: "first" | "last",
+          count: number,
+        ) => {
+          const filter =
+            kind === "any"
+              ? sql`1`
+              : kind === "user"
+                ? sql`type = 'user_message'`
+                : sql`type <> 'user_message'`;
+          return direction === "first"
+            ? sql<Row>`
+                SELECT payload_json, turn_item_id AS "turnItemId", ordinal
+                FROM orchestration_v2_projection_turn_items
+                WHERE ${where} AND ${filter}
+                ORDER BY ordinal ASC, turn_item_id ASC
+                LIMIT ${count}
+              `
+            : sql<Row>`
+                SELECT payload_json, turn_item_id AS "turnItemId", ordinal
+                FROM orchestration_v2_projection_turn_items
+                WHERE ${where} AND ${filter}
+                ORDER BY ordinal DESC, turn_item_id DESC
+                LIMIT ${count}
+              `;
+        };
+        const rows = new Map<TurnItemId, Row>();
+        for (const batch of [
+          yield* rowsWhere("any", "last", limit),
+          yield* rowsWhere("user", "first", 1),
+          yield* rowsWhere("user", "last", 1),
+          yield* rowsWhere("other", "last", 1),
+        ])
+          for (const row of batch) rows.set(row.turnItemId, row);
         return {
-          items: yield* decodeRows(decodeTurnItemPayload, threadId)(rows),
-          omittedItems: (countRows[0]?.count ?? 0) - rows.length,
+          candidates,
+          items: yield* decodeRows(
+            decodeTurnItemPayload,
+            threadId,
+          )(
+            [...rows.values()].toSorted(
+              (a, b) => a.ordinal - b.ordinal || (a.turnItemId < b.turnItemId ? -1 : 1),
+            ),
+          ),
         };
       },
       (effect, threadId, _runIds, _limit) =>
+        effect.pipe(Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause }))),
+    );
+
+    const getHandoffHistoryItems: ProjectionStoreV2Shape["getHandoffHistoryItems"] = Effect.fn(
+      "ProjectionStore.getHandoffHistoryItems",
+    )(
+      function* (threadId, itemIds) {
+        const rows = yield* sql<PayloadRow>`
+          SELECT payload_json FROM orchestration_v2_projection_turn_items
+          WHERE thread_id = ${threadId}
+            AND turn_item_id IN (SELECT value FROM json_each(${encodeIdList(itemIds)}))
+          ORDER BY ordinal ASC, turn_item_id ASC
+        `;
+        return yield* decodeRows(decodeTurnItemPayload, threadId)(rows);
+      },
+      (effect, threadId, _itemIds) =>
         effect.pipe(Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause }))),
     );
 
@@ -9138,6 +9194,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getTurnStartContext: readOnReader(getTurnStartContext),
       getTurnStartHistory: readOnReader(getTurnStartHistory),
       getHandoffHistory: readOnReader(getHandoffHistory),
+      getHandoffHistoryItems: readOnReader(getHandoffHistoryItems),
       getRuntimeRecoveryProjection: readOnReader(getRuntimeRecoveryProjection),
       getRunningTurnContext: readOnReader(getRunningTurnContext),
       getThreadProviderContext: readOnReader(getThreadProviderContext),

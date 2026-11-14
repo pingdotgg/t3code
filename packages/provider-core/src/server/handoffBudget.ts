@@ -273,9 +273,6 @@ const RESPONSE_ENVELOPE_BYTES = {
   assistant: envelopeBytes("assistant"),
 };
 const MIN_MESSAGE_COST = Math.min(RESPONSE_ENVELOPE_BYTES.user, RESPONSE_ENVELOPE_BYTES.assistant);
-// The byte cap holds no more messages than this, so handoffs read only the newest this many
-// candidates (plus the first user message) and count older ones as omitted.
-export const HANDOFF_HISTORY_WINDOW = Math.ceil(HANDOFF_BYTE_CAP / MIN_MESSAGE_COST);
 
 function messageCost(message: OrchestrationV2HistoricalMessage): number {
   const rendered =
@@ -307,16 +304,46 @@ export function selectHistory(input: {
   readonly omittedItemIds?: ReadonlyArray<string>;
   readonly budget: number;
 }) {
-  const messages = input.messages;
-  const selected = new Set<number>();
+  const selected = selectLoadedHistory({
+    ...input,
+    candidates: input.messages.map((message) => ({
+      itemId: message.itemId,
+      minTextLength: message.text.length,
+    })),
+  });
+  if (selected.missingItemIds !== undefined) throw new Error("Every candidate is loaded.");
+  return selected;
+}
+
+/**
+ * Selects from `candidates`, oldest first, when only `messages` are loaded. They must include
+ * the first and latest user message and the latest other message. When the budget could still
+ * take a candidate that is not loaded, returns every unloaded candidate that might fit.
+ */
+export function selectLoadedHistory(input: {
+  readonly candidates: ReadonlyArray<{
+    readonly itemId: OrchestrationV2HistoricalMessage["itemId"];
+    /** At most the message's `text.length`. */
+    readonly minTextLength: number;
+  }>;
+  readonly messages: ReadonlyArray<OrchestrationV2HistoricalMessage>;
+  readonly coverage: string;
+  readonly omittedItems?: number;
+  readonly omittedItemIds?: ReadonlyArray<string>;
+  readonly budget: number;
+}) {
+  const { candidates, messages } = input;
+  const itemIds = candidates.map((candidate) => candidate.itemId);
+  const loaded = new Map(messages.map((message) => [message.itemId, message]));
+  const selected = new Set<OrchestrationV2HistoricalMessage["itemId"]>();
   const priorOmittedIds = input.omittedItemIds ?? [];
   const omittedList = (ids: ReadonlyArray<string>, total: number) =>
     ids.length === 0
       ? ""
       : ` Omitted item IDs, newest last: ${ids.join(", ")}.${total > ids.length ? ` ${total - ids.length} older omitted items are not listed.` : ""}`;
-  const maxOmitted = (input.omittedItems ?? 0) + messages.length;
+  const maxOmitted = (input.omittedItems ?? 0) + itemIds.length;
   // Reserve room for the widest IDs so the final list cannot exceed it; cap it at an eighth of the budget.
-  const widestIds = [...priorOmittedIds, ...messages.map((message) => message.itemId)]
+  const widestIds = [...priorOmittedIds, ...itemIds]
     .toSorted((a, b) => b.length - a.length)
     .slice(0, MAX_LISTED_OMITTED_ITEMS);
   while (
@@ -329,29 +356,37 @@ export function selectHistory(input: {
   let remaining =
     input.budget -
     // Reserve both counters and the ID list at maximum width so the final context cannot exceed the budget.
-    historyCost([], contextFor(messages.length, maxOmitted, widestIds));
-  const tryAdd = (index: number) => {
-    const message = messages[index];
-    if (message === undefined || selected.has(index) || message.text.length > remaining) return;
+    historyCost([], contextFor(itemIds.length, maxOmitted, widestIds));
+  const fits = (candidate: (typeof candidates)[number]) =>
+    candidate.minTextLength + MIN_MESSAGE_COST <= remaining;
+  const tryAdd = (message: OrchestrationV2HistoricalMessage | undefined) => {
+    if (message === undefined || selected.has(message.itemId) || message.text.length > remaining)
+      return;
     const cost = messageCost(message);
     if (cost > remaining) return;
-    selected.add(index);
+    selected.add(message.itemId);
     remaining -= cost;
   };
-  tryAdd(messages.findLastIndex((message) => message.role === "user"));
-  tryAdd(messages.findLastIndex((message) => message.role === "assistant"));
-  tryAdd(messages.findIndex((message) => message.role === "user"));
-  for (let index = messages.length - 1; index >= 0 && remaining >= MIN_MESSAGE_COST; index--)
-    tryAdd(index);
-  const selectedMessages: Array<OrchestrationV2HistoricalMessage> = [];
-  const omittedItemIds: Array<OrchestrationV2HistoricalMessage["itemId"]> = [];
-  for (const [index, message] of messages.entries()) {
-    if (selected.has(index)) selectedMessages.push(message);
-    else omittedItemIds.push(message.itemId);
+  tryAdd(messages.findLast((message) => message.role === "user"));
+  tryAdd(messages.findLast((message) => message.role === "assistant"));
+  tryAdd(messages.find((message) => message.role === "user"));
+  for (let index = itemIds.length - 1; index >= 0 && remaining >= MIN_MESSAGE_COST; index--) {
+    const candidate = candidates[index]!;
+    const message = loaded.get(candidate.itemId);
+    if (message !== undefined) tryAdd(message);
+    // A message costs at least its text plus an envelope; `remaining` only shrinks from here.
+    else if (fits(candidate))
+      return {
+        missingItemIds: candidates
+          .slice(0, index + 1)
+          .filter((older) => !loaded.has(older.itemId) && fits(older))
+          .map((older) => older.itemId),
+      };
   }
+  const omittedItemIds = itemIds.filter((id) => !selected.has(id));
   const omittedItems = maxOmitted - selected.size;
   return {
-    messages: selectedMessages,
+    messages: messages.filter((message) => selected.has(message.itemId)),
     omittedItemIds,
     context: contextFor(selected.size, omittedItems, [...priorOmittedIds, ...omittedItemIds]),
     omittedItems,
@@ -361,7 +396,7 @@ export function selectHistory(input: {
 export function handoffCoverage(input: {
   readonly threadId: string;
   readonly coveredRunOrdinals: OrchestrationV2ContextHandoff["coveredRunOrdinals"];
-  readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
+  readonly items: ReadonlyArray<{ readonly id: string }>;
 }): string {
   return [
     `Provider context handoff. Thread: ${input.threadId}. Covered app runs: ${input.coveredRunOrdinals.from}-${input.coveredRunOrdinals.to}.`,

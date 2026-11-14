@@ -3152,113 +3152,120 @@ it.effect("SQL snapshot windows keep cards for requests still pending", () =>
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("handoff history reads the newest window and the first and latest user messages", () =>
-  Effect.gen(function* () {
-    const store = yield* ProjectionStore.ProjectionStoreV2;
-    const now = yield* DateTime.now;
-    const threadId = ThreadId.make("thread:handoff-window");
-    const runId = RunId.make("run:handoff-window");
-    yield* store.apply({
-      id: EventId.make("event:handoff-window:thread"),
-      type: "thread.created",
-      threadId,
-      occurredAt: now,
-      payload: {
-        createdBy: "user",
-        creationSource: "web",
-        id: threadId,
-        projectId: ProjectId.make("project:handoff-window"),
-        title: "Handoff window",
-        providerInstanceId,
-        modelSelection,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        branch: null,
-        worktreePath: null,
-        activeProviderThreadId: null,
-        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
-        forkedFrom: null,
-        createdAt: now,
-        updatedAt: now,
-        archivedAt: null,
-        settledOverride: null,
-        settledAt: null,
-        lastVisitedAt: null,
-        deletedAt: null,
-      },
-    });
-    const base = (ordinal: number) => ({
-      id: TurnItemId.make(`item:handoff-window:${ordinal}`),
-      threadId,
-      runId,
-      nodeId: null,
-      providerThreadId: null,
-      providerTurnId: null,
-      nativeItemRef: null,
-      parentItemId: null,
-      ordinal,
-      status: "completed" as const,
-      title: null,
-      startedAt: now,
-      completedAt: now,
-      updatedAt: now,
-    });
-    const assistant = (ordinal: number): OrchestrationV2TurnItem => ({
-      ...base(ordinal),
-      type: "assistant_message",
-      messageId: MessageId.make(`message:handoff-window:${ordinal}`),
-      text: `Answer ${ordinal}`,
-      streaming: false,
-    });
-    const items: Array<OrchestrationV2TurnItem> = [
-      {
-        ...base(1),
-        type: "user_message",
-        createdBy: "user",
-        creationSource: "web",
-        messageId: MessageId.make("message:handoff-window:1"),
-        inputIntent: "turn_start",
-        text: "Start",
-        attachments: [],
-      },
-      assistant(2),
-      { ...base(3), type: "reasoning", text: "Thinking", streaming: false },
-      {
-        ...base(4),
-        type: "user_message",
-        createdBy: "user",
-        creationSource: "web",
-        messageId: MessageId.make("message:handoff-window:4"),
-        inputIntent: "turn_start",
-        text: "Continue",
-        attachments: [],
-      },
-      assistant(5),
-      assistant(6),
-      assistant(7),
-    ];
-    for (const item of items) {
+it.effect(
+  "handoff history lists every candidate and loads the newest page and priority messages",
+  () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:handoff-window");
+      const runId = RunId.make("run:handoff-window");
       yield* store.apply({
-        id: EventId.make(`event:handoff-window:item:${item.ordinal}`),
-        type: "turn-item.updated",
+        id: EventId.make("event:handoff-window:thread"),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make("project:handoff-window"),
+          title: "Handoff window",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      const base = (ordinal: number) => ({
+        id: TurnItemId.make(`item:handoff-window:${ordinal}`),
         threadId,
         runId,
-        occurredAt: now,
-        payload: item,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal,
+        status: "completed" as const,
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
       });
-    }
-    const read = (limit: number, runIds?: ReadonlyArray<RunId>) =>
-      store.getHandoffHistory(threadId, runIds, limit).pipe(
-        Effect.map(({ items, omittedItems }) => ({
-          ordinals: items.map((item) => item.ordinal),
-          omittedItems,
-        })),
+      const assistant = (ordinal: number): OrchestrationV2TurnItem => ({
+        ...base(ordinal),
+        type: "assistant_message",
+        messageId: MessageId.make(`message:handoff-window:${ordinal}`),
+        text: `Answer ${ordinal}`,
+        streaming: false,
+      });
+      const items: Array<OrchestrationV2TurnItem> = [
+        {
+          ...base(1),
+          type: "user_message",
+          createdBy: "user",
+          creationSource: "web",
+          messageId: MessageId.make("message:handoff-window:1"),
+          inputIntent: "turn_start",
+          text: "Start",
+          attachments: [],
+        },
+        assistant(2),
+        { ...base(3), type: "reasoning", text: "Thinking", streaming: false },
+        {
+          ...base(4),
+          type: "user_message",
+          createdBy: "user",
+          creationSource: "web",
+          messageId: MessageId.make("message:handoff-window:4"),
+          inputIntent: "turn_start",
+          text: "Continue",
+          attachments: [],
+        },
+        assistant(5),
+        assistant(6),
+        assistant(7),
+      ];
+      for (const item of items) {
+        yield* store.apply({
+          id: EventId.make(`event:handoff-window:item:${item.ordinal}`),
+          type: "turn-item.updated",
+          threadId,
+          runId,
+          occurredAt: now,
+          payload: item,
+        });
+      }
+      const read = (limit: number, runIds?: ReadonlyArray<RunId>) =>
+        store.getHandoffHistory(threadId, runIds, limit).pipe(
+          Effect.map(({ candidates, items }) => ({
+            ids: candidates.length,
+            loaded: items.map((item) => item.ordinal),
+          })),
+        );
+      assert.deepEqual(yield* read(2), { ids: 6, loaded: [1, 4, 6, 7] });
+      assert.deepEqual(yield* read(4), { ids: 6, loaded: [1, 4, 5, 6, 7] });
+      assert.deepEqual(yield* read(10), { ids: 6, loaded: [1, 2, 4, 5, 6, 7] });
+      assert.deepEqual(yield* read(10, []), { ids: 0, loaded: [] });
+      const all = yield* store.getHandoffHistory(threadId, undefined, 10);
+      assert.deepEqual(
+        all.candidates.map((candidate) => candidate.minTextLength),
+        all.items.map((item) => ("text" in item ? item.text.length : undefined)),
       );
-    assert.deepEqual(yield* read(2), { ordinals: [1, 4, 6, 7], omittedItems: 2 });
-    assert.deepEqual(yield* read(4), { ordinals: [1, 4, 5, 6, 7], omittedItems: 1 });
-    assert.deepEqual(yield* read(10), { ordinals: [1, 2, 4, 5, 6, 7], omittedItems: 0 });
-    assert.deepEqual(yield* read(10, []), { ordinals: [], omittedItems: 0 });
-  }).pipe(Effect.provide(layerTest)),
+    }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("SQL snapshot windows leave handoff bodies in SQLite without changing the wire", () =>

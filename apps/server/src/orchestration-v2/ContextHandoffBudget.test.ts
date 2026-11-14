@@ -23,6 +23,7 @@ import {
   historyCost,
   historyResponseItems,
   selectHistory,
+  selectLoadedHistory,
   historicalMessage,
   jsonEscapedByteLength,
 } from "@t3tools/provider-core/server/handoffBudget";
@@ -232,6 +233,44 @@ describe("handoff budget", () => {
         Buffer.byteLength(JSON.stringify(sample)) - 2,
       );
     }
+  });
+
+  it("asks only for older candidates that could still fit past oversized newer ones", () => {
+    const candidates = [
+      message("early:user", "user", "Migrate the billing tables."),
+      message("early:answer", "assistant", "Constraint: keep invoice IDs stable."),
+      message("later:user", "user", "Continue the migration."),
+      ...Array.from({ length: 865 }, (_, index) =>
+        message(`command:${index}`, "assistant", "x".repeat(20_000)),
+      ),
+    ];
+    const input = {
+      coverage: "Recover",
+      budget: 16_000,
+      candidates: candidates.map((candidate) => ({
+        itemId: candidate.itemId,
+        minTextLength: candidate.text.length,
+      })),
+    };
+    const all = selectHistory({ ...input, messages: candidates });
+    assert.includeMembers(
+      all.messages.map((selected) => selected.itemId),
+      ["early:user", "early:answer", "later:user"].map((id) => TurnItemId.make(id)),
+    );
+    const newestPage = [candidates[0]!, candidates[2]!, ...candidates.slice(-256)];
+    assert.deepEqual(selectLoadedHistory({ ...input, messages: newestPage }), {
+      missingItemIds: [TurnItemId.make("early:answer")],
+    });
+    assert.deepEqual(selectLoadedHistory({ ...input, messages: candidates }), all);
+    const withoutAnswer = candidates.filter((candidate) => candidate.itemId !== "early:answer");
+    assert.deepEqual(
+      selectLoadedHistory({
+        ...input,
+        candidates: input.candidates.filter((candidate) => candidate.itemId !== "early:answer"),
+        messages: [withoutAnswer[0]!, withoutAnswer[1]!, ...withoutAnswer.slice(-256)],
+      }),
+      selectHistory({ ...input, messages: withoutAnswer }),
+    );
   });
 
   it("never selects past the serialized envelope at any budget edge", () => {

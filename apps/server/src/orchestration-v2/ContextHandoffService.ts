@@ -1,6 +1,7 @@
 import {
   type OrchestrationV2AppThread,
   OrchestrationV2ContextHandoff,
+  type OrchestrationV2HistoricalMessage,
   type OrchestrationV2TurnItem,
   type OrchestrationV2Run,
   type OrchestrationV2ThreadProjection,
@@ -22,6 +23,7 @@ import {
   historicalMessage,
   renderHistory,
   selectHistory,
+  selectLoadedHistory,
 } from "@t3tools/provider-core/server/handoffBudget";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { createOrchestrationV2TurnItemVisibility } from "@t3tools/shared/orchestrationV2Timeline";
@@ -41,6 +43,15 @@ export class ContextHandoffPrepareError extends Schema.TaggedError<ContextHandof
     return `Failed to prepare context handoff for run ${this.targetRunId} in thread ${this.threadId}.`;
   }
 }
+
+export interface HandoffHistoryReader {
+  readonly page: (limit: number) => ReturnType<ProjectionStoreV2Shape["getHandoffHistory"]>;
+  readonly items: (
+    itemIds: ReadonlyArray<OrchestrationV2HistoricalMessage["itemId"]>,
+  ) => ReturnType<ProjectionStoreV2Shape["getHandoffHistoryItems"]>;
+}
+
+const HANDOFF_HISTORY_PAGE = 256;
 
 export const ContextHandoffServiceV2Error = Schema.Union([ContextHandoffPrepareError]);
 export type ContextHandoffServiceV2Error = typeof ContextHandoffServiceV2Error.Type;
@@ -84,8 +95,8 @@ export interface ContextHandoffServiceV2Shape {
       "delta_since_target_last_seen" | "full_thread_summary"
     >;
     readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
-    /** Older history items left out of `items` that still count as omitted. */
-    readonly omittedItems?: number;
+    /** History after `items`, read a page at a time until the budget is settled. */
+    readonly readHistory?: HandoffHistoryReader;
     readonly createdAt: DateTime.Utc;
   }) => Effect.Effect<OrchestrationV2ContextHandoff, ContextHandoffServiceV2Error>;
   /** Parent activity after the fork point, prepended to a side chat's first provider turn. */
@@ -505,7 +516,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
         "delta_since_target_last_seen" | "full_thread_summary"
       >;
       readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
-      readonly omittedItems?: number;
+      readonly readHistory?: HandoffHistoryReader;
       readonly createdAt: DateTime.Utc;
     }) {
       const handoffId = yield* idAllocator.allocate
@@ -527,22 +538,78 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
           ),
         );
       const runStatuses = new Map(input.runs?.map((run) => [run.id, run.status]));
-      const coverage = handoffCoverage({
-        ...input,
-        threadId: input.sourceThreadId ?? input.threadId,
-      });
-      const selected = selectHistory({
-        messages: input.items.flatMap((item) => {
+      const historical = (items: ReadonlyArray<OrchestrationV2TurnItem>) =>
+        items.flatMap((item) => {
           const message = historicalMessage(
             item,
             item.runId === null ? undefined : runStatuses.get(item.runId),
           );
           return message === null ? [] : [message];
-        }),
-        coverage,
-        ...(input.omittedItems === undefined ? {} : { omittedItems: input.omittedItems }),
-        budget: tokenCap,
-      });
+        });
+      const prefix = historical(input.items);
+      const candidatesOf = (messages: ReadonlyArray<OrchestrationV2HistoricalMessage>) =>
+        messages.map((message) => ({ itemId: message.itemId, minTextLength: message.text.length }));
+      const select = (
+        candidates: Parameters<typeof selectLoadedHistory>[0]["candidates"],
+        messages: ReadonlyArray<OrchestrationV2HistoricalMessage>,
+        sourceItems: ReadonlyArray<{ readonly id: string }>,
+      ) => {
+        const coverage = handoffCoverage({
+          ...input,
+          threadId: input.sourceThreadId ?? input.threadId,
+          items: sourceItems,
+        });
+        const selected = selectLoadedHistory({ candidates, messages, coverage, budget: tokenCap });
+        return selected.missingItemIds === undefined ? { ...selected, coverage } : selected;
+      };
+      const readFailed = (cause: unknown) =>
+        new ContextHandoffPrepareError({
+          threadId: input.threadId,
+          targetRunId: input.targetRunId,
+          fromProviderThreadIds: Array.from(input.fromProviderThreadIds),
+          toProviderThreadId: input.toProviderThreadId,
+          cause,
+        });
+      let candidates = candidatesOf(prefix);
+      let loaded = prefix;
+      if (input.readHistory !== undefined) {
+        const page = yield* input.readHistory
+          .page(HANDOFF_HISTORY_PAGE)
+          .pipe(Effect.mapError(readFailed));
+        candidates = [...candidates, ...page.candidates];
+        loaded = [...prefix, ...historical(page.items)];
+      }
+      const order = new Map(candidates.map((candidate, index) => [candidate.itemId, index]));
+      let selected = select(
+        candidates,
+        loaded,
+        input.readHistory === undefined
+          ? input.items
+          : candidates.map((candidate) => ({ id: candidate.itemId })),
+      );
+      // Oversized items are skipped, so how far back selection reaches depends on their sizes.
+      while (selected.missingItemIds !== undefined) {
+        const requested = new Set(selected.missingItemIds);
+        const more = historical(
+          yield* input
+            .readHistory!.items(selected.missingItemIds)
+            .pipe(Effect.mapError(readFailed)),
+        );
+        const found = new Set(more.map((message) => message.itemId));
+        // An item removed since the first read drops out instead of being requested again.
+        candidates = candidates.filter(
+          (candidate) => !requested.has(candidate.itemId) || found.has(candidate.itemId),
+        );
+        loaded = [...loaded, ...more].toSorted(
+          (a, b) => order.get(a.itemId)! - order.get(b.itemId)!,
+        );
+        selected = select(
+          candidates,
+          loaded,
+          candidates.map((candidate) => ({ id: candidate.itemId })),
+        );
+      }
+      const coverage = selected.coverage;
       return {
         id: handoffId,
         transferId: input.transferId,
