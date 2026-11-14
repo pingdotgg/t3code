@@ -207,6 +207,7 @@ export interface AcpAdapterV2RuntimeInput {
   readonly processEnvironment?: NodeJS.ProcessEnv;
   readonly resumeSessionId?: string;
   readonly interruptPromptOnCancel?: boolean;
+  readonly sessionMeta?: NonNullable<AcpSessionRuntime.AcpSessionRuntimeOptions["sessionMeta"]>;
   readonly clientCapabilities: EffectAcpSchema.InitializeRequest["clientCapabilities"];
   readonly clientInfo: AcpSessionRuntime.AcpSessionRuntimeOptions["clientInfo"];
   readonly requestLogger?: NonNullable<AcpSessionRuntime.AcpSessionRuntimeOptions["requestLogger"]>;
