@@ -147,7 +147,7 @@ const layerDeviceServiceMock = Layer.mock(DeviceService.DeviceService)({
 });
 
 const layerTest = McpHttpServer.layerDeviceToolkit.pipe(
-  Layer.provideMerge(McpServer.McpServer.layer),
+  Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
   Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
   Layer.provideMerge(layerDeviceServiceMock),
   Layer.provide(layerProjectsMock),
@@ -210,6 +210,22 @@ it.effect("registers the device tools and returns the screenshot as image conten
       expect(foreign.isError).toBe(true);
       expect(foreign.content.map((entry) => entry.type)).toEqual(["text"]);
 
+      const listed = yield* server
+        .callTool({ name: "device_list", arguments: { hostId: "THIS MACHINE" } })
+        .pipe(callWith(["device"]), Effect.provideService(McpSchema.McpServerClient, client));
+      expect(listed.structuredContent).toMatchObject({
+        hosts: [{ id: "local" }],
+        devices: [device],
+      });
+
+      const unknownHost = yield* server
+        .callTool({ name: "device_screenshot", arguments: { hostId: "oliverMac" } })
+        .pipe(callWith(["device"]), Effect.provideService(McpSchema.McpServerClient, client));
+      expect(unknownHost.isError).toBe(true);
+      expect(unknownHost.content).toEqual([
+        { type: "text", text: "No device host oliverMac. Known hosts: This machine (local)." },
+      ]);
+
       const denied = yield* server
         .callTool({ name: "device_list", arguments: {} })
         .pipe(callWith(["preview"]), Effect.provideService(McpSchema.McpServerClient, client));
@@ -256,9 +272,61 @@ it.effect("rejects unavailable agent access before booting or opening a device",
     Effect.scoped,
     Effect.provide(
       McpHttpServer.layerDeviceToolkit.pipe(
-        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
         Layer.provide(layerUnavailable),
+        Layer.provide(layerProjectsMock),
+        Layer.provide(
+          ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-device-toolkit-test-" }),
+        ),
+        Layer.provide(NodeServices.layer),
+      ),
+    ),
+  );
+});
+
+it.effect("device_open reports a failed host's setup error instead of no devices", () => {
+  const failure = "Device support failed: npm was not found. Install Node.js, which includes npm.";
+  const failedState = {
+    ...state,
+    hostStatus: "failed" as const,
+    hostStatusDetail: failure,
+    hostStatuses: { local: { status: "failed" as const, detail: failure } },
+    devices: [],
+  };
+  const layerFailed = Layer.mock(DeviceService.DeviceService)({
+    state: Effect.succeed(failedState),
+    list: Effect.succeed(failedState),
+    locateDevice: () => Effect.succeedNone,
+    open: () => Effect.die("Must not open a device on a host whose setup failed"),
+  });
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    for (const args of [
+      { platform: "android" },
+      { deviceId: "Pixel_API_35", hostId: "local" },
+      { deviceId: "Pixel_API_35" },
+    ]) {
+      const result = yield* server
+        .callTool({ name: "device_open", arguments: args })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation(["device"])),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      const text = result.content
+        .flatMap((entry) => (entry.type === "text" ? [entry.text] : []))
+        .join("\n");
+      expect(result.isError).toBe(true);
+      expect(text).not.toContain("No android devices were found");
+      expect(text).toContain(failure);
+    }
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      McpHttpServer.layerDeviceToolkit.pipe(
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+        Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
+        Layer.provide(layerFailed),
         Layer.provide(layerProjectsMock),
         Layer.provide(
           ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-device-toolkit-test-" }),
@@ -329,11 +397,7 @@ describe("device targeting across hosts", () => {
       readonly call: (
         name: string,
         args: Record<string, unknown>,
-      ) => Effect.Effect<
-        McpSchema.CallToolResult,
-        McpSchema.InternalError | McpSchema.InvalidParams,
-        McpServer.McpServer
-      >;
+      ) => Effect.Effect<McpSchema.CallToolResult, McpSchema.McpErrorBase, McpServer.McpServer>;
     }) => Effect.Effect<A, E, McpServer.McpServer>,
     overrides: Partial<DeviceService.DeviceService["Service"]> = {},
   ) => {
@@ -400,7 +464,7 @@ describe("device targeting across hosts", () => {
       Effect.scoped,
       Effect.provide(
         McpHttpServer.layerDeviceToolkit.pipe(
-          Layer.provideMerge(McpServer.McpServer.layer),
+          Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
           Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
           Layer.provide(layerDevices),
           Layer.provide(layerProjectsMock),
@@ -419,9 +483,14 @@ describe("device targeting across hosts", () => {
     run([], ({ opened, call }) =>
       Effect.gen(function* () {
         const result = yield* call("device_open", { deviceId: "MAC-UDID" });
+        const byLabel = yield* call("device_open", { platform: "ios", hostId: "MAC MINI" });
+        expect(byLabel.isError).toBe(false);
         expect(text(result)).not.toContain("No device");
         expect(result.isError).toBe(false);
-        expect(opened).toEqual([{ hostId: "mac-mini", deviceId: "MAC-UDID" }]);
+        expect(opened).toEqual([
+          { hostId: "mac-mini", deviceId: "MAC-UDID" },
+          { hostId: "mac-mini", deviceId: "MAC-UDID" },
+        ]);
       }),
     ),
   );
@@ -515,7 +584,7 @@ describe("device targeting across hosts", () => {
           "No device Pixel_9 on 'Mac Mini' (hostId mac-mini). Call device_list for current ids.",
         );
         expect(yield* missing({ hostId: "unknown-host" })).toBe(
-          "No device Pixel_9 on hostId unknown-host. Call device_list for current ids.",
+          "No device host unknown-host. Known hosts: This machine (local), Mac Mini (mac-mini).",
         );
         expect(opened).toEqual([]);
       }),
@@ -528,6 +597,9 @@ describe("device targeting across hosts", () => {
         const result = yield* call("device_screenshot", { deviceId: "MAC-UDID" });
         expect(result.isError).toBe(false);
         expect(result.structuredContent).toMatchObject({ device: { hostId: "mac-mini" } });
+        const byLabel = yield* call("device_screenshot", { hostId: "MAC MINI" });
+        expect(byLabel.isError).toBe(false);
+        expect(byLabel.structuredContent).toMatchObject({ device: { hostId: "mac-mini" } });
       }),
     ),
   );
@@ -548,6 +620,19 @@ describe("device targeting across hosts", () => {
           );
         }),
       { locateSession: () => Effect.fail(onTheMac) },
+    ),
+  );
+
+  it.effect("names a device_screenshot argument the tool does not declare", () =>
+    run([session("mac-mini", "MAC-UDID", "ios")], ({ call }) =>
+      Effect.gen(function* () {
+        const result = yield* call("device_screenshot", {
+          deviceId: "MAC-UDID",
+          includeImage: false,
+        });
+        expect(result.isError).toBe(true);
+        expect(text(result)).toContain('Unknown argument "includeImage"');
+      }),
     ),
   );
 
@@ -598,9 +683,14 @@ describe("device targeting across hosts", () => {
       Effect.gen(function* () {
         expect((yield* call("device_close", { deviceId: "MAC-UDID" })).isError).toBe(false);
         expect((yield* call("device_close", { deviceId: "Pixel_9" })).isError).toBe(false);
+        expect((yield* call("device_close", { hostId: "MAC MINI" })).isError).toBe(false);
+        const unknown = yield* call("device_close", { hostId: "unknown-host" });
+        expect(unknown.isError).toBe(true);
+        expect(text(unknown)).toContain("No device host unknown-host.");
         expect(closed).toEqual([
           { hostId: "mac-mini", deviceId: "MAC-UDID" },
           { hostId: undefined, deviceId: "Pixel_9" },
+          { hostId: "mac-mini", deviceId: undefined },
         ]);
       }),
     ),

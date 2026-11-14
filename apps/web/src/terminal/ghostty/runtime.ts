@@ -24,6 +24,7 @@ export class GhosttyRuntime {
   readonly layouts: TypeLayouts;
   private readonly exports: WebAssembly.Exports;
   private memoryView: DataView;
+  private memoryU8: Uint8Array;
   private readonly ptyWriters = new Map<number, (data: string) => void>();
   private nextPtyWriterId = 1;
   private writePtyFunctionIndex = 0;
@@ -36,6 +37,7 @@ export class GhosttyRuntime {
     }
     this.memory = memory;
     this.memoryView = new DataView(memory.buffer);
+    this.memoryU8 = new Uint8Array(memory.buffer);
     const jsonPointer = this.call("ghostty_type_json");
     const bytes = new Uint8Array(memory.buffer);
     let end = jsonPointer;
@@ -68,11 +70,15 @@ export class GhosttyRuntime {
   }
 
   call(name: string, ...args: Array<number | bigint>): number {
+    return this.fn(name)(...args);
+  }
+
+  fn(name: string): WasmFunction {
     const fn = this.exports[name];
     if (typeof fn !== "function") {
       throw new Error(`libghostty-vt export is unavailable: ${name}`);
     }
-    return (fn as WasmFunction)(...args);
+    return fn as WasmFunction;
   }
 
   layout(name: string): TypeLayout {
@@ -126,18 +132,29 @@ export class GhosttyRuntime {
   }
 
   view(pointer: number, size?: number): DataView {
-    return new DataView(this.memory.buffer, pointer, size);
+    return new DataView(this.memoryDataView().buffer, pointer, size);
   }
 
   bytes(pointer: number, size: number): Uint8Array {
-    return new Uint8Array(this.memory.buffer, pointer, size);
+    return new Uint8Array(this.memoryDataView().buffer, pointer, size);
   }
 
   memoryDataView(): DataView {
-    if (this.memoryView.buffer !== this.memory.buffer) {
-      this.memoryView = new DataView(this.memory.buffer);
-    }
+    this.refreshMemoryViews();
     return this.memoryView;
+  }
+
+  memoryBytes(): Uint8Array {
+    this.refreshMemoryViews();
+    return this.memoryU8;
+  }
+
+  private refreshMemoryViews(): void {
+    // Growing memory detaches the old buffer. Reading `memory.buffer` costs far more than this check.
+    if (this.memoryU8.byteLength === 0) {
+      this.memoryView = new DataView(this.memory.buffer);
+      this.memoryU8 = new Uint8Array(this.memory.buffer);
+    }
   }
 
   setField(pointer: number, structName: string, fieldName: string, value: number): void {

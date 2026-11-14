@@ -1,12 +1,11 @@
-import * as Alchemy from "alchemy";
-import * as GCP from "alchemy/GCP";
-import * as Test from "alchemy/Test/Bun";
 import { describe, expect } from "bun:test";
+import * as GCP from "@alchemy.run/gcp";
+import * as Test from "@alchemy.run/test/Bun";
+import * as Alchemy from "alchemy";
 import * as Console from "effect/Console";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import { spawnSync } from "node:child_process";
 import Stack from "../alchemy.run.ts";
 
 // A fresh Cloud Run revision can answer transient 404/5xx responses while
@@ -33,10 +32,7 @@ const getBodyWhenReady = (url: string, expected: string) =>
     Effect.retry({
       while: (error) => error instanceof AssetNotReady,
       schedule: Schedule.max([
-        Schedule.min([
-          Schedule.exponential("500 millis"),
-          Schedule.spaced("3 seconds"),
-        ]),
+        Schedule.min([Schedule.exponential("500 millis"), Schedule.spaced("3 seconds")]),
         Schedule.recurs(20),
       ]),
     }),
@@ -47,12 +43,7 @@ const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
   state: Alchemy.localState(),
 });
 
-// The image is built locally, so the whole suite needs Docker.
-const dockerAvailable =
-  spawnSync("docker", ["info"], { stdio: "ignore", timeout: 15_000 }).status ===
-  0;
-
-describe.skipIf(!dockerAvailable)("gcp-website-astro", () => {
+describe("gcp-website-astro", () => {
   // The first deploy runs the Astro build, builds and pushes the image, and
   // rolls out Cloud Run, so give the hook far more headroom than the default.
   const stack = beforeAll(deploy(Stack).pipe(Effect.tap(Console.log)), {
@@ -114,9 +105,7 @@ describe.skipIf(!dockerAvailable)("gcp-website-astro", () => {
       // ones as a <style> block — accept both, but the compiled rule for the
       // utility must be served either way. That rule only exists if the
       // @tailwindcss/vite plugin from the project's own astro.config.ts ran.
-      const link = html.match(
-        /<link[^>]*rel="stylesheet"[^>]*href="([^"]+)"[^>]*>/,
-      );
+      const link = html.match(/<link[^>]*rel="stylesheet"[^>]*href="([^"]+)"[^>]*>/);
       if (link) {
         const href = link[1]!;
         const cssUrl = href.startsWith("http")
@@ -137,10 +126,7 @@ describe.skipIf(!dockerAvailable)("gcp-website-astro", () => {
     "serves a static asset from public/",
     Effect.gen(function* () {
       const url = yield* base;
-      const body = yield* getBodyWhenReady(
-        `${url}/robots.txt`,
-        "User-agent: *",
-      );
+      const body = yield* getBodyWhenReady(`${url}/robots.txt`, "User-agent: *");
       expect(body).toContain("User-agent: *");
     }),
     { timeout: 180_000 },
