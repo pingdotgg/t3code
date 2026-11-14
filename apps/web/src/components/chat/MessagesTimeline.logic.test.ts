@@ -27,6 +27,7 @@ import type { TurnDiffSummary } from "../../types";
 import { describe, expect, it } from "vite-plus/test";
 import { MessageId, RunId } from "@t3tools/contracts";
 import {
+  citationSourceId,
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRows,
   timelineTurnFoldRunIdsByEntryId,
@@ -5144,5 +5145,13 @@ describe("subagent continued by a later turn", () => {
       `turn-fold:${run2}`,
       "closing-2",
     ]);
+  });
+});
+
+describe("citationSourceId", () => {
+  it("identifies messages and proposed plans, not other rows", () => {
+    expect(citationSourceId({ kind: "message", message: { id: "m1" } })).toBe("m1");
+    expect(citationSourceId({ kind: "proposed-plan", id: "plan-item" })).toBe("plan-item");
+    expect(citationSourceId({ kind: "event" })).toBeNull();
   });
 });
