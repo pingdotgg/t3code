@@ -70,6 +70,7 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import { t3OrchestrationSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
+import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
@@ -97,7 +98,11 @@ import {
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import { OPENCODE_PROVIDER, openCodePermissionRequestKind } from "../adapter.ts";
-import { openCodeCommandFailed, openCodeToolTurnItem } from "../toolItems.ts";
+import {
+  openCodeCodeModeHtmlRenders,
+  openCodeCommandFailed,
+  openCodeToolTurnItem,
+} from "../toolItems.ts";
 
 const NativeGoal = Schema.NullOr(
   Schema.Struct({
@@ -263,6 +268,8 @@ interface ActiveTurn {
   unsent: boolean;
   readonly steers: Set<string>;
   readonly settledInbox: Set<string>;
+  // Reconnects replay finished tools, so each nested html_render takes a page only once.
+  readonly takenPages: Set<string>;
   heldEnd: TurnTerminal | undefined;
   awaitingStart: boolean;
   /** Scope child tool IDs because model-generated IDs can repeat parent IDs. */
@@ -1379,6 +1386,30 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           },
         ),
       });
+      if (status === "running") return;
+      const pages = openCodeCodeModeHtmlRenders(
+        result?.metadata,
+        yield* mcpServerNameFor(turn.input.threadId),
+      );
+      for (const { index, input } of pages) {
+        const pageId = `${nativeId}:${HTML_RENDER_TOOL_NAME}:${index}`;
+        if (turn.takenPages.has(pageId)) continue;
+        turn.takenPages.add(pageId);
+        const page = yield* mcpSessions.takeHtmlRender(turn.input.threadId, input);
+        if (page === undefined) continue;
+        yield* emitNode(state, turn, pageId, "tool_call", "completed", startedAt, updatedAt);
+        yield* emit({
+          type: "turn_item.updated",
+          driver,
+          turnItem: {
+            ...itemBase(state, turn, pageId, "completed", startedAt, updatedAt, updatedAt),
+            type: "dynamic_tool",
+            toolName: `t3-code.${HTML_RENDER_TOOL_NAME}`,
+            input: { title: page.title, height: page.height },
+            output: { htmlRender: page },
+          },
+        });
+      }
     });
 
     const emitCompaction = Effect.fnUntraced(function* (
@@ -1515,6 +1546,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       unsent: false,
       steers: new Set(),
       settledInbox: new Set(),
+      takenPages: new Set(),
       heldEnd: undefined,
       awaitingStart: options.awaitingStart,
       scope: options.scope,
