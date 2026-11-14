@@ -17,7 +17,10 @@ import { useTerminalUiStateStore } from "../../terminalUiStateStore";
 import type { Thread } from "../../types";
 import { focusTerminal } from "../../lib/terminalFocus";
 import { resolveVisibleWorktreeSetup, resolveWorktreeSetupProgress } from "../ChatView.logic";
-import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
+import {
+  compareWorktreeSetupSnapshots,
+  worktreeSetupAgentStarted,
+} from "@t3tools/client-runtime/worktree-setup";
 
 // Share in-flight preparation retries across ChatView instances.
 const retryingWorkspacePreparationRunIds = new Set<RunId>();
@@ -84,7 +87,8 @@ export function useWorktreeSetup(input: {
       setHeldSnapshot(null);
     } else if (latestSnapshot) {
       setHeldSnapshot((current) =>
-        current?.threadId === latestSnapshot.threadId && current.sequence > latestSnapshot.sequence
+        current?.threadId === latestSnapshot.threadId &&
+        compareWorktreeSetupSnapshots(current, latestSnapshot) > 0
           ? current
           : latestSnapshot,
       );
