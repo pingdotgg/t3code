@@ -16,11 +16,10 @@ interface Mounted {
   readonly end: number;
 }
 
+/** Lines break where the renderer breaks them: at `\n`, `\r\n`, and a lone `\r`. */
 function lineStarts(text: string) {
   const starts = [0];
-  for (let index = text.indexOf("\n"); index !== -1; index = text.indexOf("\n", index + 1)) {
-    starts.push(index + 1);
-  }
+  for (const match of text.matchAll(/\r\n|\r|\n/g)) starts.push(match.index + match[0].length);
   return starts;
 }
 
