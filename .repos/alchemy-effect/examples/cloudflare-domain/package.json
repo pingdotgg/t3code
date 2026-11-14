@@ -1,0 +1,43 @@
+{
+  "name": "cloudflare-domain",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/cloudflare-domain"
+  },
+  "type": "module",
+  "scripts": {
+    "deploy": "alchemy deploy",
+    "dev": "alchemy dev",
+    "destroy": "alchemy destroy",
+    "test": "pnpm -r --filter './packages/*' test",
+    "test:integ": "bun test test/integ.test.ts"
+  },
+  "dependencies": {
+    "@alchemy.run/axiom": "workspace:*",
+    "@alchemy.run/cloudflare": "workspace:*",
+    "@alchemy.run/domain": "workspace:*",
+    "@alchemy.run/stripe": "workspace:*",
+    "@bank/domain": "workspace:*",
+    "@bank/server": "workspace:*",
+    "@bank/web": "workspace:*",
+    "@distilled.cloud/stripe": "workspace:*",
+    "@effect/platform-bun": "catalog:",
+    "@effect/platform-node": "catalog:",
+    "alchemy": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@alchemy.run/test": "workspace:*",
+    "@cloudflare/workers-types": "catalog:",
+    "@effect/platform-browser": "catalog:",
+    "@effect/vitest": "catalog:",
+    "@foldkit/vite-plugin": "catalog:",
+    "foldkit": "catalog:",
+    "vite": "catalog:",
+    "vitest": "catalog:"
+  }
+}

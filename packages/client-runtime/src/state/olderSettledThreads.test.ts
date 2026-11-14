@@ -93,6 +93,10 @@ describe("olderSettledCountKey", () => {
     expect(key([...base, row("woken", { createdDay: 5 })])).not.toBe(start);
     // A local row that turns older (a backdated auto-settle).
     expect(key([base[0]!, row("open", { createdDay: 60, settledDay: 20 })])).not.toBe(start);
+    // An older row that moves to another project.
+    expect(key([{ ...base[0]!, projectId: ProjectId.make("project-b") }, base[1]!])).not.toBe(
+      start,
+    );
   });
 
   it("stays put for new threads and subagents", () => {
@@ -520,7 +524,7 @@ describe("createOlderSettledThreadAtoms", () => {
       yield* Queue.offer(replies, Effect.succeed({ ...found, snapshotSequence: 8 }));
       yield* until(
         search,
-        (result) => Option.getOrNull(AsyncResult.value(result))?.snapshotSequence === 8,
+        (result) => AsyncResult.getOrElse(result, () => null)?.snapshotSequence === 8,
       );
       expect(requests).toEqual([input, input]);
     }),

@@ -4,9 +4,12 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { createDraft } from "./scheduledTaskDraft";
 import {
+  discardScheduledTaskEditor,
+  markScheduledTaskEditorSaved,
   readScheduledTaskEditor,
   scheduledTaskEditorSessionAtom,
   startScheduledTaskEditor,
+  takeScheduledTaskNewLink,
   updateScheduledTaskEditor,
 } from "./scheduled-task-editor-state";
 
@@ -53,5 +56,63 @@ describe("scheduled task voice draft", () => {
     expect(readScheduledTaskEditor(`scheduled-task:${session.id}`, editor)).toBeNull();
     updateScheduledTaskEditor((current) => current, editor);
     expect(appAtomRegistry.get(scheduledTaskEditorSessionAtom)?.current).toBeNull();
+  });
+});
+
+describe("new scheduled task link", () => {
+  const editing = {
+    environmentId: EnvironmentId.make("environment"),
+    environmentLabel: "Environment",
+    draft: createDraft(null, null),
+  };
+  const newTaskLink = {
+    routes: [
+      { name: "Home" },
+      {
+        name: "SettingsSheet",
+        state: {
+          routes: [{ name: "SettingsScheduledTasks" }, { name: "SettingsScheduledTaskNew" }],
+        },
+      },
+    ],
+  };
+
+  it("drops the last edited task so the new-task screen starts from the default", () => {
+    startScheduledTaskEditor(editing);
+    expect(takeScheduledTaskNewLink(newTaskLink)).toBe(newTaskLink);
+    expect(appAtomRegistry.get(scheduledTaskEditorSessionAtom)).toBeNull();
+  });
+
+  it("keeps unsaved changes until the editor's removal guard discards them", () => {
+    startScheduledTaskEditor(editing);
+    const edited = { ...editing, draft: { ...editing.draft, prompt: "unsaved" } };
+    updateScheduledTaskEditor(edited, null);
+
+    takeScheduledTaskNewLink(newTaskLink);
+    expect(appAtomRegistry.get(scheduledTaskEditorSessionAtom)?.current).toBe(edited);
+
+    discardScheduledTaskEditor();
+    expect(appAtomRegistry.get(scheduledTaskEditorSessionAtom)).toBeNull();
+  });
+
+  it("starts the new-task screen fresh after the edited task was saved", () => {
+    startScheduledTaskEditor(editing);
+    updateScheduledTaskEditor({ ...editing, draft: { ...editing.draft, prompt: "saved" } }, null);
+    markScheduledTaskEditorSaved();
+
+    takeScheduledTaskNewLink(newTaskLink);
+    expect(appAtomRegistry.get(scheduledTaskEditorSessionAtom)).toBeNull();
+  });
+
+  it("closes a discarded editor as empty when no new-task link is waiting", () => {
+    startScheduledTaskEditor(editing);
+    discardScheduledTaskEditor();
+    expect(appAtomRegistry.get(scheduledTaskEditorSessionAtom)?.current).toBeNull();
+  });
+
+  it("keeps the editor for links to other screens", () => {
+    startScheduledTaskEditor(editing);
+    takeScheduledTaskNewLink({ routes: [{ name: "SettingsSheet" }] });
+    expect(appAtomRegistry.get(scheduledTaskEditorSessionAtom)?.current).toBe(editing);
   });
 });

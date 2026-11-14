@@ -1,3 +1,8 @@
+import {
+  requireSettingsSecretLiteral,
+  type SettingsSecretUnresolvedError,
+} from "@t3tools/contracts";
+import { normalizeHost } from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -53,7 +58,8 @@ export class GitCafeCliFailedError extends Schema.TaggedError<GitCafeCliFailedEr
 export type GitCafeCredentialUnavailableError =
   | GitCafeCliMissingError
   | GitCafeNotSignedInError
-  | GitCafeCliFailedError;
+  | GitCafeCliFailedError
+  | SettingsSecretUnresolvedError;
 
 export class GitCafeCredentials extends Context.Service<
   GitCafeCredentials,
@@ -62,11 +68,12 @@ export class GitCafeCredentials extends Context.Service<
       host: string,
     ) => Effect.Effect<GitCafeCredential, GitCafeCredentialUnavailableError>;
     readonly invalidate: (host: string) => Effect.Effect<void>;
-    readonly cliEnv: (host: string) => Effect.Effect<Readonly<Record<string, string>>>;
+    readonly cliEnv: (
+      host: string,
+    ) => Effect.Effect<Readonly<Record<string, string>>, SettingsSecretUnresolvedError>;
   }
 >()("@t3tools/source-control-gitcafe/server/GitCafeCredentials") {}
 
-const normalizeHost = (host: string) => host.trim().toLowerCase();
 const DEFAULT_HOST = "git.cafe";
 
 /** Restrict CAFE_TOKEN to CAFE_HOST (default git.cafe), including for staging remotes. */
@@ -128,15 +135,19 @@ export const make = Effect.gen(function* () {
   const fromSettings = (host: string) =>
     normalizeHost(host) !== DEFAULT_HOST
       ? Effect.succeed(null)
-      : sourceControlHost.settings.get.pipe(
-          Effect.map(
-            (settings) =>
-              readSourceControlHostSettings(
-                GitCafeClient.settings,
-                settings.sourceControlHosts[GitCafeClient.definition.kind],
-              ).token || null,
+      : sourceControlHost.settings.getWithSecrets(GitCafeClient.definition.kind).pipe(
+          Effect.map((settings) => ({
+            token: readSourceControlHostSettings(
+              GitCafeClient.settings,
+              settings.sourceControlHosts[GitCafeClient.definition.kind],
+            ).token,
+            secretProviders: settings.secretProviders,
+          })),
+          Effect.orElseSucceed(() => ({ token: undefined, secretProviders: {} })),
+          Effect.flatMap(({ token, secretProviders }) =>
+            requireSettingsSecretLiteral(token, secretProviders),
           ),
-          Effect.orElseSucceed(() => null),
+          Effect.map((token) => token || null),
         );
 
   const lookup = Effect.fn("GitCafeCredentials.lookup")(function* (
@@ -160,8 +171,8 @@ export const make = Effect.gen(function* () {
   });
 
   return GitCafeCredentials.of({
-    get: (host) =>
-      fromSettings(host).pipe(
+    get: Effect.fn("GitCafeCredentials.get")(function (host) {
+      return fromSettings(host).pipe(
         Effect.flatMap(
           (saved): Effect.Effect<GitCafeCredential, GitCafeCredentialUnavailableError> =>
             saved === null
@@ -172,10 +183,16 @@ export const make = Effect.gen(function* () {
                   source: "settings",
                 }),
         ),
-      ),
-    invalidate: (host) => Cache.invalidate(cache, normalizeHost(host)),
-    cliEnv: (host) =>
-      fromSettings(host).pipe(Effect.map((saved) => (saved === null ? {} : { CAFE_TOKEN: saved }))),
+      );
+    }),
+    invalidate: Effect.fn("GitCafeCredentials.invalidate")(function (host) {
+      return Cache.invalidate(cache, normalizeHost(host));
+    }),
+    cliEnv: Effect.fn("GitCafeCredentials.cliEnv")(function (host) {
+      return fromSettings(host).pipe(
+        Effect.map((saved) => (saved === null ? {} : { CAFE_TOKEN: saved })),
+      );
+    }),
   });
 });
 

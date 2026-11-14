@@ -1,0 +1,35 @@
+import type * as securityhub from "@distilled.cloud/aws/securityhub";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+
+/**
+ * Runtime binding for `securityhub:DescribeStandards`.
+ *
+ * Lists the security standards available in Security Hub.
+ * Account-level operation — invoked with the caller's request as-is.
+ * Provide the implementation with
+ * `Effect.provide(AWS.SecurityHub.DescribeStandardsHttp)`.
+ * ### Standards & Controls
+ * **Example:** List Available Standards
+ * ```typescript
+ * // init — account-level binding, no resource argument
+ * const describeStandards = yield* AWS.SecurityHub.DescribeStandards();
+ *
+ * // runtime
+ * const { Standards } = yield* describeStandards();
+ * ```
+ *
+ * @binding
+ */
+export interface DescribeStandards extends Binding.Service<
+  DescribeStandards,
+  "AWS.SecurityHub.DescribeStandards",
+  () => Effect.Effect<
+    (
+      request?: securityhub.DescribeStandardsRequest,
+    ) => Effect.Effect<securityhub.DescribeStandardsResponse, securityhub.DescribeStandardsError>
+  >
+> {}
+export const DescribeStandards = Binding.Service<DescribeStandards>(
+  "AWS.SecurityHub.DescribeStandards",
+);

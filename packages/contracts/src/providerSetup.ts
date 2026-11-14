@@ -14,27 +14,17 @@ export const ProviderSetupInput = Schema.Struct({
 });
 export type ProviderSetupInput = typeof ProviderSetupInput.Type;
 
-export const CodexAuthCallbackInput = Schema.Struct({
-  authorizationUrl: Schema.String.check(Schema.isMaxLength(16_384)),
-  returnUrl: Schema.String.check(Schema.isMaxLength(4_096)),
-  environmentId: EnvironmentId,
-  instanceId: ProviderInstanceId,
-  flowId: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
-});
-export type CodexAuthCallbackInput = typeof CodexAuthCallbackInput.Type;
-export const CodexAuthCallbackState = Schema.Union([
-  Schema.Struct({ phase: Schema.Literal("ready") }),
-  Schema.Struct({
-    phase: Schema.Literal("finished"),
-    callbackUrl: Schema.String.check(Schema.isMaxLength(16_384)),
-  }),
-]);
-
 const SetupOperationId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
+// Environments supply these and clients open them, so a `javascript:` URL would run as the client.
+const SignInUrl = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(16_384),
+  Schema.isPattern(/^https?:\/\//i),
+);
 
 export const ProviderAuthMethod = Schema.Struct({
   id: SetupOperationId,
   accountEmail: Schema.optional(TrimmedNonEmptyString),
+  canRemove: Schema.optionalKey(Schema.Boolean),
   name: TrimmedNonEmptyString,
   description: Schema.NullOr(Schema.String),
   type: Schema.Literals(["agent", "terminal", "credentials"]),
@@ -45,14 +35,14 @@ export const ProviderAuthInteraction = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("browser"),
     id: SetupOperationId,
-    url: TrimmedNonEmptyString.check(Schema.isMaxLength(16_384)),
+    url: SignInUrl,
     requiresConsent: Schema.Boolean,
     acceptsCallback: Schema.optionalKey(Schema.Boolean),
   }),
   Schema.Struct({
     type: Schema.Literal("deviceCode"),
     id: SetupOperationId,
-    url: TrimmedNonEmptyString.check(Schema.isMaxLength(16_384)),
+    url: SignInUrl,
     userCode: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
   }),
   Schema.Struct({
@@ -107,6 +97,11 @@ export const ProviderAuthStartInput = Schema.Struct({
 });
 export type ProviderAuthStartInput = typeof ProviderAuthStartInput.Type;
 
+export const ProviderAuthRemoveMethodInput = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  methodId: SetupOperationId,
+});
+
 export const ProviderAuthRespondInput = Schema.Struct({
   instanceId: ProviderInstanceId,
   flowId: SetupOperationId,
@@ -127,7 +122,7 @@ export const ProviderAuthState = Schema.Struct({
     "cancelled",
   ]),
   flowId: Schema.NullOr(SetupOperationId),
-  authorizationUrl: Schema.NullOr(Schema.String),
+  authorizationUrl: Schema.NullOr(SignInUrl),
   expiresAt: Schema.NullOr(IsoDateTime),
   message: Schema.NullOr(Schema.String),
   // Drop unknown auth methods rather than rejecting the entire state.

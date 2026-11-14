@@ -1,0 +1,418 @@
+---
+title: Lambda Web Functions
+description: Run an HTTP server on AWS Lambda Web Functions — an Effect fetch handler or any Node server, with streaming responses, many concurrent requests per environment, and a built-in HTTPS endpoint.
+---
+
+A **Lambda Web Function** runs your HTTP server on Lambda. Each execution
+environment serves many requests at once (up to 128), responses stream to
+the client as you produce them, and every function gets an HTTPS endpoint.
+It scales to zero when idle.
+
+Use it for anything that answers HTTP: APIs, server-rendered apps, AI
+responses streamed token by token. The [AWS websites](/aws/frontend/websites)
+(Nuxt, SvelteKit, Astro, and the rest) run their server on one by
+default. For queues, streams, schedules, and
+other event sources, use a [Lambda Function](/aws/compute/lambda).
+
+:::caution
+Web Functions run Node.js 24 on Arm64. They launched in `us-east-1`,
+`us-east-2`, `us-west-2`, `eu-west-1`, and `ap-northeast-1`, and AWS is
+adding Regions: check the [Lambda pricing page](https://aws.amazon.com/lambda/pricing/)
+for where they run today. Code ships through the Alchemy assets bucket, so
+run `alchemy provider aws bootstrap` once per account and Region.
+:::
+
+## Declare a Web Function
+
+Create `src/api.ts` and return a `fetch` handler:
+
+```typescript
+// src/api.ts
+import * as AWS from "@alchemy.run/aws";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+
+export default class Api extends AWS.Lambda.WebFunction<Api>()(
+  "Api",
+  { main: import.meta.url, authType: "ApplicationManaged" },
+  Effect.gen(function* () {
+    return {
+      fetch: Effect.succeed(HttpServerResponse.text("Hello from Lambda!")),
+    };
+  }),
+) {}
+```
+
+Your `fetch` handler runs on a Node HTTP server inside the Web Function, so
+the same `effect/http` code you'd run anywhere else works unchanged.
+`authType: "ApplicationManaged"` makes its endpoint public: every request
+reaches your code.
+
+## Deploy it
+
+Yield the class in your Stack and return its `url`:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as AWS from "@alchemy.run/aws";
+import * as Effect from "effect/Effect";
+import Api from "./src/api.ts";
+
+export default Alchemy.Stack(
+  "MyApp",
+  {
+    providers: AWS.providers(),
+    state: AWS.state(),
+  },
+  Effect.gen(function* () {
+    const api = yield* Api;
+    return { url: api.url };
+  }),
+);
+```
+
+```sh
+bun alchemy deploy
+```
+
+The `url` looks like `https://<id>.<shard>.lambda-web.us-west-2.on.aws`.
+Every deploy publishes a new revision and moves all traffic to it.
+
+## Stream a response
+
+Return a streamed body and the client receives each chunk as soon as you
+produce it:
+
+```diff lang="typescript"
+// src/api.ts
+import * as AWS from "@alchemy.run/aws";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
++import * as Stream from "effect/Stream";
+
+export default class Api extends AWS.Lambda.WebFunction<Api>()(
+  "Api",
+  { main: import.meta.url, authType: "ApplicationManaged" },
+  Effect.gen(function* () {
+    return {
+-      fetch: Effect.succeed(HttpServerResponse.text("Hello from Lambda!")),
++      fetch: Effect.succeed(
++        HttpServerResponse.stream(
++          Stream.make("Hello", " from", " Lambda!").pipe(
++            Stream.tap(() => Effect.sleep("200 millis")),
++            Stream.encodeText,
++          ),
++          { contentType: "text/plain" },
++        ),
++      ),
+    };
+  }),
+) {}
+```
+
+## Use AWS resources
+
+Bindings work the same as on a Lambda Function. Binding an operation
+grants the function's role exactly that permission:
+
+```diff lang="typescript"
+// src/api.ts
+import * as AWS from "@alchemy.run/aws";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+
+export default class Api extends AWS.Lambda.WebFunction<Api>()(
+  "Api",
+  { main: import.meta.url, authType: "ApplicationManaged" },
+  Effect.gen(function* () {
++    const bucket = yield* AWS.S3.Bucket("Uploads");
++    const putObject = yield* AWS.S3.PutObject(bucket);
+    return {
+-      fetch: Effect.succeed(HttpServerResponse.text("Hello from Lambda!")),
++      fetch: Effect.gen(function* () {
++        yield* putObject({ Key: "hello.txt", Body: "Hello!" });
++        return HttpServerResponse.text("Saved");
++      }).pipe(Effect.orDie),
+    };
+-  }),
++  }).pipe(Effect.provide(AWS.S3.PutObjectHttp)),
+) {}
+```
+
+## Bring an existing server
+
+You don't need Effect. Point `main` at your own Node server, such as a Hono
+app. Alchemy bundles it as it is, with no wrapper and no Effect runtime.
+Listen on the address Lambda passes in `AWS_LAMBDA_HTTP_ENDPOINT`:
+
+```typescript
+// src/server.ts
+import { serve } from "@hono/node-server";
+import { Hono } from "hono";
+
+const app = new Hono();
+app.get("/", (c) => c.text(`Hello from ${c.req.path}`));
+
+const [hostname, port] = (process.env.AWS_LAMBDA_HTTP_ENDPOINT ?? "localhost:3000").split(":");
+serve({ fetch: app.fetch, hostname, port: Number(port) });
+```
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as AWS from "@alchemy.run/aws";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MyApp",
+  { providers: AWS.providers(), state: AWS.state() },
+  Effect.gen(function* () {
+    const api = yield* AWS.Lambda.WebFunction("Api", {
+      main: "./src/server.ts",
+      authType: "ApplicationManaged",
+    });
+    return { url: api.url };
+  }),
+);
+```
+
+Express, Fastify and plain `node:http` work the same way:
+
+```typescript
+// src/server.ts
+import express from "express";
+
+const app = express();
+app.get("/", (_req, res) => res.send("Hello from Express"));
+
+const [host, port] = (process.env.AWS_LAMBDA_HTTP_ENDPOINT ?? "localhost:3000").split(":");
+app.listen(Number(port), host);
+```
+
+For a framework's standalone build output, set `bundle: false` to deploy
+the directory as it is. Lambda starts `main`, so it must listen on
+`AWS_LAMBDA_HTTP_ENDPOINT` too:
+
+```typescript
+const site = yield* AWS.Lambda.WebFunction("Site", {
+  main: "./.output/server/index.mjs",
+  bundle: false,
+  authType: "ApplicationManaged",
+});
+```
+
+## Tune concurrency and traffic
+
+Set how many requests one environment serves, the per-request timeout,
+and caps on environments and requests per second:
+
+```typescript
+const api = yield* AWS.Lambda.WebFunction("Api", {
+  main: "./src/server.ts",
+  authType: "ApplicationManaged",
+  maxConcurrencyPerEnvironment: 128,
+  timeout: Duration.minutes(5),
+  maxEnvironments: 10,
+  rateLimit: 500,
+});
+```
+
+`maxConcurrencyPerEnvironment` is a cap per environment, not a total: at
+most `maxEnvironments × maxConcurrencyPerEnvironment` requests are in
+flight. Lower it for CPU-heavy servers. Requests beyond `rateLimit` get
+HTTP 429. A value Lambda doesn't accept, such as `rateLimit: 1500`, fails
+at plan with the allowed range.
+
+Each environment has 2 GB of memory and 2 vCPUs, and you can't change
+that. Node's heap defaults to 1 GB; raise it with
+`env: { NODE_OPTIONS: "--max-old-space-size=1536" }`.
+
+## Roll out gradually
+
+Set `canary` to send a share of traffic to each new deploy while the
+previous revision keeps the rest:
+
+```typescript
+const api = yield* AWS.Lambda.WebFunction("Api", {
+  main: "./src/server.ts",
+  authType: "ApplicationManaged",
+  canary: { weight: 10 },
+});
+```
+
+The next deploy that changes code or configuration sends 10% of requests
+to the new revision and 90% to the one before. Changing `weight` shifts
+traffic without publishing a new revision. Set it to `100`, or remove
+`canary`, to promote the new revision. Set it to `0` to roll back: all
+traffic returns to the previous revision.
+
+Deploying again during a canary replaces the canary and keeps the
+previous revision, so traffic never lands on more than two revisions.
+`api.revisionWeights` shows the current split. Lambda splits each request
+on its own, so one client can reach both revisions; keep the two
+compatible with each other.
+
+Each endpoint has its own split. Set `canary` on a `WebFunctionEndpoint`
+to roll it out on its own schedule; an endpoint without `canary` moves to
+each new revision at once.
+
+## Serve from several Regions
+
+List extra Regions to get one global domain that routes each request to
+the nearest Region:
+
+```typescript
+const api = yield* AWS.Lambda.WebFunction("Api", {
+  main: "./src/server.ts",
+  authType: "ApplicationManaged",
+  regions: ["us-east-1", "eu-west-1"],
+});
+```
+
+Changing `regions` gives the endpoint a new URL.
+
+## Require signed requests
+
+Set `authType: "IamAuth"` to accept only SigV4-signed requests from
+callers allowed to call `lambda:InvokeWebFunctionEndpoint`, such as a
+CloudFront distribution:
+
+```typescript
+const internal = yield* AWS.Lambda.WebFunction("Internal", {
+  main: "./src/server.ts",
+  authType: "IamAuth",
+});
+```
+
+To let a specific caller in, such as a role in another account, grant it
+access to the endpoint:
+
+```typescript
+yield* AWS.Lambda.WebFunctionPermission("PartnerInvoke", {
+  endpoint: internal,
+  principal: "arn:aws:iam::444455556666:role/partner-caller",
+});
+```
+
+## Put CloudFront in front
+
+Serve the function through CloudFront for a custom domain, caching, or
+AWS WAF. Set `webFunction` on the origin and keep `authType: "IamAuth"`:
+
+```typescript
+const api = yield* AWS.Lambda.WebFunction("Api", {
+  main: "./src/server.ts",
+  authType: "IamAuth",
+});
+
+const cdn = yield* AWS.CloudFront.Distribution("Cdn", {
+  origins: [{ id: "api", webFunction: api }],
+  defaultCacheBehavior: { targetOriginId: "api" },
+});
+```
+
+CloudFront signs every request to the function, and only this
+distribution may call it, so requests to the function's own URL are
+refused. Requests pass through uncached with their method, query string,
+cookies and headers, including your app's own `Authorization` header.
+Set `cachePolicyId` on a behavior to cache a path, such as static assets.
+This works for a function with `regions` too: Alchemy signs requests to
+its global domain with SigV4A.
+
+## Reach private resources
+
+Set `vpc` to send the server's outbound traffic through your VPC, for
+example to reach a database in private subnets:
+
+```typescript
+const api = yield* AWS.Lambda.WebFunction("Api", {
+  main: "./src/server.ts",
+  authType: "ApplicationManaged",
+  vpc: {
+    subnetIds: network.privateSubnetIds,
+    securityGroupIds: [appSg.groupId],
+  },
+});
+```
+
+Use at least two subnets in different Availability Zones, and allow the
+security group on the database. Private subnets need a NAT gateway to
+reach the internet. A function with `vpc` can't also use `regions`.
+Remove `vpc` and the next deploy deletes the connector once no endpoint
+serves through it.
+
+## Add another endpoint
+
+Each endpoint is a separate way in, with its own URL, auth, and limits.
+Add one with `WebFunctionEndpoint`, for example a public endpoint for
+webhooks next to a private one:
+
+```typescript
+const api = yield* AWS.Lambda.WebFunction("Api", {
+  main: "./src/server.ts",
+  authType: "IamAuth",
+  maxEnvironments: 50,
+});
+
+const webhooks = yield* AWS.Lambda.WebFunctionEndpoint("Webhooks", {
+  function: api,
+  authType: "ApplicationManaged",
+  rateLimit: 100,
+  maxEnvironments: 2,
+});
+```
+
+`api.url` is the function's own endpoint and `webhooks.url` is the new
+one. Both serve the same code and follow every deploy, but each scales on
+its own, so a webhook burst can't use up the other endpoint's capacity.
+
+For a Web Function declared as a class, like `Api` above, pass the class
+itself:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as AWS from "@alchemy.run/aws";
+import * as Effect from "effect/Effect";
+import Api from "./src/api.ts";
+
+export default Alchemy.Stack(
+  "MyApp",
+  { providers: AWS.providers(), state: AWS.state() },
+  Effect.gen(function* () {
+    const api = yield* Api;
+    const webhooks = yield* AWS.Lambda.WebFunctionEndpoint("Webhooks", {
+      function: Api,
+      authType: "ApplicationManaged",
+    });
+    return { url: api.url, webhooks: webhooks.url };
+  }),
+);
+```
+
+Your server sees which endpoint a request came through in the
+`lambda-web-endpoint-name` header. Use it to keep each endpoint to its own
+routes:
+
+```typescript
+// src/server.ts
+app.use(async (c, next) => {
+  const endpoint = c.req.header("lambda-web-endpoint-name");
+  if (endpoint === "Webhooks" && !c.req.path.startsWith("/webhooks/")) {
+    return c.notFound();
+  }
+  await next();
+});
+```
+
+## Shutdown
+
+Lambda stops idle environments with `SIGTERM` and gives them 1 second.
+In-flight responses finish first, then init-level finalizers run, so keep
+them short.
+
+:::note
+Every prop and attribute is listed in the
+[`WebFunction` reference](/providers/aws/lambda#webfunction).
+:::

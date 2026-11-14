@@ -11,7 +11,7 @@ import {
 } from "@t3tools/contracts";
 
 export const DEFAULT_SANS_FONT_STACK =
-  '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
+  '-apple-system, BlinkMacSystemFont, "Inter Variable", "Segoe UI", system-ui, sans-serif';
 
 // Some engines map `ui-monospace` to a proportional font, so prefer concrete names.
 export const DEFAULT_CODE_FONT_STACK =
@@ -66,9 +66,10 @@ export interface AppearanceFontPreferences {
   readonly sizePrompt: number;
   readonly sizeCode: number;
   readonly smoothing: boolean;
+  readonly separate: boolean;
 }
 
-/** Always writes sizes: interface size sets the root; prompt and code use pixels to avoid double scaling. */
+/** Interface size sets the root; prompt and code use pixels to avoid double scaling. */
 export function applyAppearanceFontVariables(
   root: HTMLElement,
   preferences: AppearanceFontPreferences,
@@ -76,7 +77,7 @@ export function applyAppearanceFontVariables(
   const families: ReadonlyArray<readonly [variable: string, custom: string, fallback: string]> = [
     ["--font-sans", preferences.sans, DEFAULT_SANS_FONT_STACK],
     ["--font-mono", preferences.code, DEFAULT_CODE_FONT_STACK],
-    ["--font-composer", preferences.composer, "var(--font-sans)"],
+    ["--font-composer", preferences.separate ? preferences.composer : "", "var(--font-sans)"],
   ];
   for (const [variable, custom, fallback] of families) {
     const list = cssFontFamilies(custom);
@@ -87,8 +88,21 @@ export function applyAppearanceFontVariables(
     }
   }
 
+  const markerWidth = probeWidth(
+    appearanceFontStack(preferences.sans, DEFAULT_SANS_FONT_STACK),
+    LIST_MARKER_PROBE_TEXT,
+  );
+  if (markerWidth === null) {
+    root.style.removeProperty("--list-marker-sans");
+  } else {
+    root.style.setProperty("--list-marker-sans", `${(markerWidth / PROBE_FONT_SIZE).toFixed(3)}em`);
+  }
+
   root.style.fontSize = `${clampInterfaceFontSize(preferences.sizeInterface)}px`;
-  root.style.setProperty("--font-size-prompt", `${clampPromptFontSize(preferences.sizePrompt)}px`);
+  root.style.setProperty(
+    "--font-size-prompt",
+    preferences.separate ? `${clampPromptFontSize(preferences.sizePrompt)}px` : "var(--text-sm)",
+  );
   const code = clampCodeFontSize(preferences.sizeCode);
   root.style.setProperty("--font-size-code", `${code}px`);
   root.style.setProperty("--diffs-font-size", `${code}px`);
@@ -123,15 +137,18 @@ function clampCodeFontSize(value: number): number {
 }
 
 const FONT_PROBE_TEXT = "mmmmmmmmMMWli1O0@# fjord";
+// The widest single-digit `ol` marker; CSS can't measure it to size the list gutter.
+const LIST_MARKER_PROBE_TEXT = "0. ";
+const PROBE_FONT_SIZE = 16;
 let fontProbeContext: CanvasRenderingContext2D | null | undefined;
 
-function probeWidth(fontList: string): number | null {
+function probeWidth(fontList: string, text = FONT_PROBE_TEXT): number | null {
   if (fontProbeContext === undefined) {
     fontProbeContext = document.createElement("canvas").getContext("2d");
   }
   if (fontProbeContext === null) return null;
-  fontProbeContext.font = `16px ${fontList}`;
-  return fontProbeContext.measureText(FONT_PROBE_TEXT).width;
+  fontProbeContext.font = `${PROBE_FONT_SIZE}px ${fontList}`;
+  return fontProbeContext.measureText(text).width;
 }
 
 /** Probes canvas metrics because document.fonts.check() accepts uninstalled families. */

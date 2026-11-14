@@ -233,14 +233,6 @@ export class VcsProcessMissingExitCodeError extends Schema.TaggedError<VcsProces
   }
 }
 
-export const VcsOutputDecodeError = Schema.Union([
-  VcsProcessStdinWriteError,
-  VcsProcessOutputReadError,
-  VcsProcessOutputLimitError,
-  VcsProcessMissingExitCodeError,
-]);
-export type VcsOutputDecodeError = typeof VcsOutputDecodeError.Type;
-
 export class VcsRepositoryDetectionError extends Schema.TaggedError<VcsRepositoryDetectionError>()(
   "VcsRepositoryDetectionError",
   {
