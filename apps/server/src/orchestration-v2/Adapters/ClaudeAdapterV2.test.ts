@@ -13713,6 +13713,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
   const openAdapterWhoseFirstQueryEndsBeforeItsFirstFrame = Effect.fnUntraced(function* (
     name: string,
+    firstQueryExit: Stream.Stream<
+      SDKMessage,
+      ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError
+    > = Stream.empty,
   ) {
     const fileSystem = yield* FileSystem.FileSystem;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -13751,7 +13755,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               // The first CLI exits without writing a frame.
               messages:
                 opened === 1
-                  ? Stream.empty.pipe(Stream.ensuring(Deferred.succeed(deadStreamEnded, undefined)))
+                  ? firstQueryExit.pipe(
+                      Stream.ensuring(Deferred.succeed(deadStreamEnded, undefined)),
+                    )
                   : Stream.fromQueue(sdkMessages),
               offer: () => Effect.void,
               setModel: () => Effect.void,
@@ -13799,6 +13805,43 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       });
     return { runtime, turnInput };
   });
+
+  it.effect("shows Claude's root refusal when its query exits before the turn starts", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* openAdapterWhoseFirstQueryEndsBeforeItsFirstFrame(
+          "claude-query-refuses-root-before-frame",
+          Stream.fail(
+            new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+              method: "fromAsyncIterable",
+              cause: new ClaudeAdapterV2.ClaudeCodeRootRefusalError({
+                cause: new Error("Claude Code process exited with code 1"),
+              }),
+            }),
+          ),
+        );
+        const started = yield* harness.runtime
+          .startTurn(harness.turnInput("a", 1))
+          .pipe(Effect.exit);
+        assert.isTrue(Exit.isFailure(started));
+        if (Exit.isFailure(started)) {
+          assert.strictEqual(
+            makeProviderFailure({ cause: started.cause, class: "transport_error" }).message,
+            "Claude Code exited before it started: --dangerously-skip-permissions cannot be used with root/sudo privileges for security reasons",
+          );
+        }
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
 
   it.effect("fails a turn whose Claude query ends before its first frame", () =>
     Effect.gen(function* () {
