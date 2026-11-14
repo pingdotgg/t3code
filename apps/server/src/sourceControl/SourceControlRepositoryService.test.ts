@@ -3,12 +3,15 @@ import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/process";
+import * as TestClock from "effect/testing/TestClock";
 
 import {
   GitCommandError,
@@ -75,6 +78,7 @@ function layer(input: {
     Layer.provide(
       Layer.mock(GitVcsDriver.GitVcsDriver)({
         execute: () => Effect.succeed(processOutput()),
+        invalidateRefs: () => Effect.void,
         ensureRemote: () => Effect.succeed("origin"),
         pushCurrentBranch: () =>
           Effect.succeed({
@@ -217,7 +221,7 @@ it.effect.each(["--bare", "source.git"])(
         });
         assert.strictEqual(result.cwd, destinationPath);
         assert.isTrue(yield* fs.exists(path.join(destinationPath, ".git")));
-      }).pipe(Effect.provide(layer({ git: { execute: git.execute } })));
+      }).pipe(Effect.provide(layer({ git })));
     }).pipe(
       Effect.provide(
         GitVcsDriver.layer.pipe(
@@ -230,6 +234,72 @@ it.effect.each(["--bare", "source.git"])(
         ),
       ),
     ),
+);
+
+it.effect.each([
+  { readsWhen: "before git creates the repository", readBeforeInit: true },
+  { readsWhen: "while HEAD is unborn", readBeforeInit: false },
+])("lists the cloned branches after a ref list was read $readsWhen", ({ readBeforeInit }) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const git = yield* GitVcsDriver.GitVcsDriver;
+    const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-clone-refs-" });
+    const source = path.join(parent, "source");
+    const destinationPath = path.join(parent, "checkout");
+    const run = (cwd: string, args: ReadonlyArray<string>) =>
+      git.execute({ operation: "test.git", cwd, args });
+    yield* run(parent, ["init", "--initial-branch=staging", source]);
+    yield* run(source, [
+      "-c",
+      "user.name=Test",
+      "-c",
+      "user.email=test@example.com",
+      "commit",
+      "--allow-empty",
+      "-m",
+      "init",
+    ]);
+    const refNames = git
+      .listRefs({ cwd: destinationPath })
+      .pipe(Effect.map((result) => result.refs.map((ref) => ref.name)));
+    let duringClone: ReadonlyArray<string> | null = null;
+    // Stands in for git clone so the read lands at a chosen point inside it.
+    const cloneInTwoSteps = Effect.gen(function* () {
+      yield* fs.makeDirectory(destinationPath).pipe(Effect.orDie);
+      if (readBeforeInit) duringClone = yield* refNames;
+      yield* run(parent, ["init", "--initial-branch=staging", destinationPath]);
+      if (!readBeforeInit) duringClone = yield* refNames;
+      return yield* run(destinationPath, ["pull", source, "staging"]);
+    });
+    yield* Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      yield* service.cloneRepository({ remoteUrl: source, destinationPath });
+    }).pipe(
+      Effect.provide(
+        layer({
+          git: {
+            ...git,
+            execute: (input) => (input.args[0] === "clone" ? cloneInTwoSteps : git.execute(input)),
+          },
+        }),
+      ),
+    );
+
+    assert.deepStrictEqual(duringClone, []);
+    assert.deepStrictEqual(yield* refNames, ["staging"]);
+  }).pipe(
+    Effect.provide(
+      GitVcsDriver.layer.pipe(
+        Layer.provide(
+          ServerConfig.layerTest(process.cwd(), {
+            prefix: "t3-clone-refs-config-",
+          }),
+        ),
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      ),
+    ),
+  ),
 );
 
 it.effect("reports clone progress from git's stderr and keeps its error text on failure", () =>
@@ -290,6 +360,65 @@ it.effect("reports clone progress from git's stderr and keeps its error text on 
       "fatal: early EOF fatal: unable to access 'https://github.com/octocat/t3code.git/': could not resolve host",
     );
   }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
+it.effect("says a clone that ran out of time timed out, not git's last remote line", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const parent = yield* fs.makeTempDirectoryScoped({
+      prefix: "t3-source-control-clone-timeout-",
+    });
+    const started = yield* Deferred.make<void>();
+    const clone = yield* Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      return yield* Effect.flip(
+        service.cloneRepository({
+          remoteUrl: CLONE_URLS.url,
+          destinationPath: path.join(parent, "t3code"),
+        }),
+      );
+    }).pipe(
+      Effect.provide(
+        layer({
+          git: {
+            // Like the real driver: the transfer outlives its deadline and git's last line is
+            // a remote summary.
+            execute: (input) =>
+              Effect.gen(function* () {
+                yield* (
+                  input.progress?.onStderrLine?.(
+                    "remote: Total 4 (delta 0), reused 0 (delta 0), pack-reused 0",
+                  ) ?? Effect.void
+                );
+                yield* Deferred.succeed(started, undefined);
+                return yield* Effect.never;
+              }).pipe(
+                Effect.timeoutOrElse({
+                  duration: input.timeoutMs ?? Infinity,
+                  orElse: () =>
+                    Effect.fail(
+                      new GitCommandError({
+                        operation: input.operation,
+                        command: "git",
+                        cwd: input.cwd,
+                        detail: "Git command timed out.",
+                      }),
+                    ),
+                }),
+              ),
+          },
+        }),
+      ),
+      Effect.forkChild,
+    );
+
+    yield* Deferred.await(started);
+    yield* TestClock.adjust("2 minutes");
+    const error = yield* Fiber.join(clone);
+
+    assert.match(error.detail, /timed out/i);
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 function rejectingSsh(
