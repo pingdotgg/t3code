@@ -317,7 +317,7 @@ class LinuxCaptureConnection {
     const bytes: unknown = reply.body[0];
     if (!(bytes instanceof Uint8Array)) throw new Error("Invalid extension screenshot.");
     const window = decodeWindow(reply.body[1]);
-    const png = resizeLinuxCapture(Buffer.from(bytes));
+    const png = await resizeLinuxCapture(Buffer.from(bytes));
     if (!withFeedback) return { png, window };
     const animationStarted = decodeBoolean(reply.body[2]);
     // Keep the same authenticated sender alive through activation and the compositor flight.

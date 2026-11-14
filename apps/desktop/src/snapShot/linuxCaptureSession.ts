@@ -3,7 +3,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeURL from "node:url";
 import type { SnapShotKeyChord } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { nativeImage } from "electron";
+import { resizeLinuxCaptureInRenderer } from "./LinuxCaptureResize.ts";
 
 // Keep dbus-next out of desktop detection and PNG reads in the main process.
 
@@ -120,23 +120,11 @@ export function portalShortcutTrigger(shortcut: SnapShotKeyChord): string {
 const PNG_HEADER = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 const MAX_PNG_BYTES = 32 * 1024 * 1024;
 
-export function resizeLinuxCapture(png: Buffer): Buffer {
+export async function resizeLinuxCapture(png: Buffer): Promise<Buffer> {
   if (png.length > MAX_PNG_BYTES || !png.subarray(0, 8).equals(PNG_HEADER)) {
     throw new Error("Invalid or oversized window screenshot.");
   }
-  const image = nativeImage.createFromBuffer(png);
-  if (image.isEmpty()) throw new Error("The window screenshot is empty.");
-  const { width, height } = image.getSize();
-  const scale = Math.min(2_560 / width, 1_600 / height, 1);
-  return scale < 1
-    ? image
-        .resize({
-          width: Math.max(1, Math.round(width * scale)),
-          height: Math.max(1, Math.round(height * scale)),
-          quality: "best",
-        })
-        .toPNG()
-    : png;
+  return resizeLinuxCaptureInRenderer(png);
 }
 
 export async function readPortalPng(uri: string): Promise<Buffer> {
@@ -152,7 +140,7 @@ export async function readPortalPng(uri: string): Promise<Buffer> {
       if (!bytesRead) throw new Error("Incomplete screenshot file.");
       offset += bytesRead;
     }
-    return resizeLinuxCapture(buffer);
+    return await resizeLinuxCapture(buffer);
   } finally {
     await file.close();
   }
