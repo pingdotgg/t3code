@@ -33,7 +33,7 @@ const SPREAD_LATER = /\.\.\./;
 // Space, a comment, or an opening parenthesis: what may sit between `...`
 // and the thing spread. Sticky, so the scan moves through the file once.
 const SPREAD_FILLER = /(?:\s+|\/\/[^\n\r\u2028\u2029]*|\/\*(?:[^*]|\*(?!\/))*\*\/|\()/y;
-// `config`'s `extra` and `extra.eas` entries, the holders of the EAS id
+// `config`'s `extra` and `extra.eas` entries, the holders of the Expo project id
 // (dotted, optional-chained or in brackets).
 const EXTRA_OF_CONFIG = String.raw`config(?:\s*\??\.\s*extra|\s*(?:\?\.)?\s*\[\s*["'\x60]extra["'\x60]\s*\])`;
 const EAS_OF_CONFIG =
@@ -197,7 +197,7 @@ const projectIdsOf = Effect.fn("easProjectId.projectIdsOf")(function* (dir: stri
 });
 
 /**
- * The EAS project of a workspace's Expo app: its root, or one app below
+ * The Expo project of a workspace's Expo app: its root, or one app below
  * `apps/` or `packages/`. None when there is none, a config is ambiguous, or
  * the apps disagree, so the caller asks for an explicit choice instead of
  * billing the wrong project.
