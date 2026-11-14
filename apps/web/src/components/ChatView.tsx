@@ -350,6 +350,7 @@ import {
 import {
   buildLocalDraftThread,
   deriveCommittedServerUserMessageIds,
+  deriveTimelineWorking,
   dismissBranchMismatchForSession,
   shouldRenderPreviewMiniPlayer,
   deriveLockedProvider,
@@ -1495,8 +1496,12 @@ export default function ChatView(props: ChatViewProps) {
     run: serverProjection?.runs.find((run) => run.id === activeRuntime?.activeRunId),
     messages: serverProjection?.messages,
   });
-  const isWorking =
-    phase === "running" || isSendBusy || isCompacting || runlessWorkStartedAt !== null;
+  const isWorking = deriveTimelineWorking({
+    phase,
+    isSendBusy,
+    isCompacting,
+    runlessWorkStartedAt,
+  });
   const activeContextWindow = deriveLatestContextWindowSnapshot(
     serverVisibleTurnItems ?? [],
     activeThreadLiveTokenUsage,
