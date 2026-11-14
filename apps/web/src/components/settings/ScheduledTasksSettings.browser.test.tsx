@@ -45,7 +45,13 @@ const task: ScheduledTask = {
 // Stands in for the thread family read the editor makes when the shell lacks the bound thread.
 const threadFamilyRead = {
   snapshotSequence: 1,
-  threads: [{ id: task.threadId, title: "Fix login bug" }],
+  threads: [
+    {
+      id: task.threadId,
+      title: "Fix login bug",
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.5" },
+    },
+  ],
 };
 
 const state = vi.hoisted(() => ({
@@ -252,6 +258,9 @@ describe("ScheduledTasksSettings", () => {
       '[role="dialog"] [data-chat-provider-model-picker]:not(:disabled)',
     );
     expect(enabledPicker).toBeNull();
+    await expect
+      .element(page.getByRole("dialog").getByRole("button", { name: "gpt-5.5", exact: true }))
+      .toBeDisabled();
   });
 
   it("keeps an editor the user opened when the linked task loads later", async () => {
