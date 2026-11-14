@@ -19138,6 +19138,143 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("shows a SubagentHandback report instead of the Agent result's pointer", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const pointer = `This agent's report was delivered to you as a message from "agent" (its SubagentHandback call). Read it there; it is not repeated here.`;
+        const cases = [
+          {
+            name: "delivered",
+            handback: "ran",
+            isError: false,
+            text: pointer,
+            expected: "## Report",
+          },
+          { name: "failed", handback: "ran", isError: true, text: "Boom.", expected: "Boom." },
+          {
+            name: "refused",
+            handback: "refused",
+            isError: false,
+            text: "Final.",
+            expected: "Final.",
+          },
+          {
+            name: "cancelled",
+            handback: "cancelled",
+            isError: false,
+            text: "Final.",
+            expected: "Final.",
+          },
+        ];
+        for (const [index, testCase] of cases.entries()) {
+          const harness = yield* makeWakeHarness;
+          const launchId = `toolu-handback-launch-${testCase.name}`;
+          const uuid = (n: number) => `00000000-0000-4000-8000-0000000009${index}${n}`;
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make(`attempt-claude-handback-${testCase.name}`),
+              text: "Delegate this task.",
+              attachments: [],
+            }),
+          );
+          yield* harness.offerAndWait(
+            makeSubagentTaskStartedFrame({
+              taskId: `agent-handback-${testCase.name}`,
+              toolUseId: launchId,
+              uuid: uuid(1),
+            }),
+          );
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "assistant",
+              uuid: uuid(2),
+              session_id: WAKE_NATIVE_SESSION,
+              parent_tool_use_id: launchId,
+              message: {
+                id: `handback-message-${testCase.name}`,
+                type: "message",
+                role: "assistant",
+                model: "claude-sonnet-4-6",
+                content: [
+                  {
+                    type: "tool_use",
+                    id: `toolu-handback-${testCase.name}`,
+                    name: "SubagentHandback",
+                    input: { message: "## Report" },
+                  },
+                ],
+              },
+            }),
+          );
+          if (testCase.handback !== "ran") {
+            yield* harness.offerAndWait(
+              claudeSdkFrame({
+                type: "user",
+                message: {
+                  role: "user",
+                  content: [
+                    {
+                      type: "tool_result",
+                      tool_use_id: `toolu-handback-${testCase.name}`,
+                      content: "Permission denied.",
+                      ...(testCase.handback === "refused" ? { is_error: true } : {}),
+                    },
+                  ],
+                },
+                ...(testCase.handback === "cancelled"
+                  ? {
+                      tool_result_meta: [
+                        { id: `toolu-handback-${testCase.name}`, non_execution_kind: "cancelled" },
+                      ],
+                    }
+                  : {}),
+                parent_tool_use_id: launchId,
+                uuid: uuid(3),
+                session_id: WAKE_NATIVE_SESSION,
+              }),
+            );
+          }
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "user",
+              message: {
+                role: "user",
+                content: [
+                  {
+                    type: "tool_result",
+                    tool_use_id: launchId,
+                    content: testCase.text,
+                    ...(testCase.isError ? { is_error: true } : {}),
+                  },
+                ],
+              },
+              parent_tool_use_id: null,
+              uuid: uuid(4),
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+          let settled = yield* Queue.take(harness.subagentReceipts);
+          while (settled.subagent.status === "running") {
+            settled = yield* Queue.take(harness.subagentReceipts);
+          }
+          assert.equal(settled.subagent.result, testCase.expected, testCase.name);
+        }
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
   it.effect("keeps a foreground fork running past the placeholder result for its own launch", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;
