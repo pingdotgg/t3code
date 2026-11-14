@@ -158,7 +158,7 @@ export function resolveProjectFileQueryData(
   data: ProjectReadFileResult | null,
 ): ProjectReadFileResult | null {
   if (relativePath === null) return data;
-  return getOptimisticProjectFileQueryData(environmentId, cwd, relativePath) ?? data;
+  return appAtomRegistry.get(optimisticFileAtom(environmentId, cwd, relativePath))?.data ?? data;
 }
 
 export function clearProjectFileQueryData(
@@ -259,10 +259,10 @@ export function useProjectFileQuery(
   const optimisticResult = useAtomValue(
     optimisticFileAtom(environmentId, cwd, relativePath ?? EMPTY_PROJECT_FILE_PATH),
   );
-  const optimisticFile = relativePath === null ? null : (optimisticResult?.data ?? null);
+  const optimisticFile = relativePath === null ? null : optimisticResult;
   const cause = failureCause(result);
   const readError = isProjectReadFileError(cause) ? cause : null;
-  const data = canReadFiles ? (optimisticFile ?? (isMissing ? null : readData)) : null;
+  const data = canReadFiles ? (optimisticFile?.data ?? (isMissing ? null : readData)) : null;
   const isNotFile = readError?.failure === "path_not_file";
 
   return {
