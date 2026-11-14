@@ -77,6 +77,8 @@ import {
 import { readLocalApi } from "~/localApi";
 import { confirmTerminalClose } from "~/lib/terminalCloseConfirm";
 import { useClientSettings } from "../hooks/useSettings";
+import { copySelectionIfEnabled } from "../hooks/useCopyOnSelect";
+import { observeSelectionActions } from "~/lib/selectionActions";
 import { getFileMetadataQueryAtom } from "../hooks/useFileMetadata";
 import { FileMetadataThreadContext } from "../hooks/FileMetadataThreadProvider";
 import { useLocalStorage } from "../hooks/useLocalStorage";
@@ -914,6 +916,18 @@ function TerminalSessionViewport({
             return;
         }
       };
+
+      // Selection end only copies; the selection menu opens on right-click.
+      const copyOnSelectActions = observeSelectionActions({
+        element: mount,
+        onSelection: () => {
+          const action = readSelectionAction();
+          // Writes through the Clipboard API, never Ghostty's hidden input, so a failure can't touch IME text.
+          if (action) copySelectionIfEnabled(action.clipboardText);
+        },
+        onDismiss: () => {},
+      });
+      setupCleanups.push(() => copyOnSelectActions.dispose());
 
       const sendTerminalInput = async (data: string, fallbackError: string) => {
         if (!hasTerminalWriteAccess()) return;
