@@ -680,3 +680,39 @@ fn plan_mode_without_approvals_denies_tools() {
     };
     assert!(deny.contains("approvals are disabled for this thread"));
 }
+
+/// The background roster keeps its bounds when Claude starts many tasks and never reports
+/// them done: at most 64 tasks and 64 task-to-call links.
+#[test]
+fn the_background_roster_stays_bounded() {
+    let mut mapper = Mapper::new(FixedEnv::default(), SESSION);
+    mapper.begin_turn(
+        &turn_input(1, &provider_thread("n-roster"), "x", "full-access"),
+        "default",
+    );
+    for n in 0..1_000 {
+        let started = json!({
+            "type": "system", "subtype": "task_started", "session_id": "s",
+            "task_id": format!("task-{n}"), "tool_use_id": format!("toolu-{n}"),
+            "task_type": "local_bash", "description": "sleep", "is_backgrounded": true,
+        });
+        mapper.handle(Inbound::from_value(started));
+        let monitor = json!({
+            "type": "assistant", "parent_tool_use_id": null, "uuid": format!("u-{n}"),
+            "message": {"id": format!("m-{n}"), "content": [
+                {"type": "tool_use", "id": format!("mon-{n}"), "name": "Monitor", "input": {}}
+            ]},
+        });
+        mapper.handle(Inbound::from_value(monitor));
+    }
+    let [.., roster] = mapper.held_sizes();
+    assert!(roster <= 64 * 4, "roster state: {roster}");
+    let outs = mapper.on_exit(false, "done");
+    let cleared = outs.iter().rev().find_map(|o| match o {
+        Out::Event(ProviderEvent::ProviderThreadUpdated { provider_thread }) => {
+            Some(serde_json::to_value(provider_thread).unwrap()["pendingBackgroundTasks"].clone())
+        }
+        _ => None,
+    });
+    assert_eq!(cleared, Some(json!([])), "a failed turn clears the roster");
+}
