@@ -11,6 +11,7 @@
     {
       "path": "../alchemy/tsconfig.json"
     },
+    { "path": "../cloudflare/tsconfig.json" },
     {
       "path": "../../submodules/distilled/packages/github/tsconfig.json"
     }
