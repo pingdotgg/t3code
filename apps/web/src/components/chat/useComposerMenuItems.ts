@@ -51,7 +51,7 @@ import type { ComposerCommandItem } from "./ComposerCommandMenu";
 import { matchComposerModelItems } from "./composerModelMentions";
 import type { ModelEsque } from "./providerIconUtils";
 import type { ProviderInstanceEntry } from "../../providerInstances";
-import { THREAD_ALREADY_IN_NO_PROJECT, slashMenuRowText } from "./composerSend.logic";
+import { folderMoveSlashCommandItems } from "./composerMenuItems.logic";
 import { useFolderMoveMenu } from "./useFolderMoveMenu";
 import {
   searchSlashCommandItems,
@@ -279,27 +279,11 @@ export function useComposerMenuItems({
               },
             ] as const)
           : []),
-        ...(folderMoveAvailable
-          ? (["cd", "no"] as const).map((command) => {
-              // `/no` has nowhere to go from No project, so the row says so before it runs.
-              const blockReason =
-                folderMoveDisabledReason ??
-                (command === "no" && folderMoveInNoProject ? THREAD_ALREADY_IN_NO_PROJECT : null);
-              return {
-                id: `slash:${command}`,
-                type: "slash-command" as const,
-                command,
-                label: `/${command}`,
-                description:
-                  blockReason !== null
-                    ? slashMenuRowText(blockReason)
-                    : command === "cd"
-                      ? "Move this thread to another folder"
-                      : "Move to No project in a new scratch folder",
-                ...(blockReason === null ? {} : { blockReason }),
-              };
-            })
-          : []),
+        ...folderMoveSlashCommandItems({
+          available: folderMoveAvailable,
+          disabledReason: folderMoveDisabledReason,
+          inNoProject: folderMoveInNoProject,
+        }),
         ...(freshSessionAvailable
           ? ([
               {

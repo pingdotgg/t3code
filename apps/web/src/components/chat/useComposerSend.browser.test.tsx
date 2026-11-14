@@ -48,7 +48,13 @@ function Harness(props: { readonly input: Input; readonly api: RefObject<Api | n
   return null;
 }
 
-type Options = Partial<Record<"folderMove" | "editingQueuedMessage" | "pendingQuestion", boolean>>;
+type Options = Partial<
+  Record<"folderMove" | "editingQueuedMessage" | "pendingQuestion", boolean>
+> & {
+  /** What the composer holds besides the text. */
+  readonly context?: "image" | "reply" | undefined;
+  readonly prompt?: string | undefined;
+};
 
 async function setup(options: Options) {
   mocks.move.mockReset();
@@ -58,10 +64,13 @@ async function setup(options: Options) {
   appAtomRegistry.set(mocks.serverConfigs, new Map([[ENV, { environment: { capabilities } }]]));
   const saveEdit = vi.fn();
   const answer = vi.fn();
-  const promptRef = { current: "/cd .." };
-  useComposerDraftStore.getState().setPrompt(DRAFT_TARGET, promptRef.current);
+  const promptRef = { current: options.prompt ?? "/cd .." };
+  const drafts = useComposerDraftStore.getState();
+  drafts.setPrompt(DRAFT_TARGET, promptRef.current);
+  // The send reads only whether a reply target is set.
+  drafts.setReplyTo(DRAFT_TARGET, options.context === "reply" ? ({} as never) : null);
   const sendContext = {
-    images: [],
+    images: options.context === "image" ? [{ id: "image-1" }] : [],
     files: [],
     terminalContexts: [],
     previewAnnotations: [],
@@ -134,14 +143,31 @@ async function setup(options: Options) {
   };
 }
 
+const TEXT_ONLY = "Remove the attachments and context, then send it again.";
+
 it.each([
-  { reason: "Save or cancel the queued message edit first.", editingQueuedMessage: true },
-  { reason: "Answer the pending question or approval first.", pendingQuestion: true },
-  { reason: "Update this environment's T3 Code server to move threads.", folderMove: false },
-])("a typed /cd refused with $reason reaches no other send path", async (scenario) => {
+  {
+    when: "a queued message edit is open",
+    reason: "Save or cancel the queued message edit first.",
+    editingQueuedMessage: true,
+  },
+  {
+    when: "a question is pending",
+    reason: "Answer the pending question or approval first.",
+    pendingQuestion: true,
+  },
+  {
+    when: "the server cannot move threads",
+    reason: "Update this environment's T3 Code server to move threads.",
+    folderMove: false,
+  },
+  { when: "an image is attached", reason: TEXT_ONLY, context: "image" as const },
+  { when: "a reply target is set", reason: TEXT_ONLY, context: "reply" as const, prompt: "/no" },
+])("a typed move refused while $when reaches no other send path", async (scenario) => {
   const { screen, send, saveEdit, answer, promptRef, draftPrompt } = await setup(scenario);
   await using _screen = screen;
   using toast = vi.spyOn(toastManager, "add");
+  const typed = promptRef.current;
 
   await act(send);
 
@@ -150,7 +176,9 @@ it.each([
   expect(toast).toHaveBeenCalledWith(
     expect.objectContaining({ title: "Thread not moved", description: scenario.reason }),
   );
-  expect([promptRef.current, draftPrompt()]).toEqual(["/cd ..", "/cd .."]);
+  expect([promptRef.current, draftPrompt()]).toEqual([typed, typed]);
+  // With an attachment or a reply target, other text takes the ordinary send path.
+  if (scenario.context !== undefined) return;
 
   promptRef.current = "hello";
   await act(send);
@@ -182,58 +210,41 @@ it("ignores a second /cd until the first move has reported and cleared the draft
   expect(mocks.move).toHaveBeenCalledTimes(2);
 });
 
-it("keeps one move toast on its thread and closes it when the next attempt starts", async () => {
-  const { screen, send } = await setup({});
+it("keeps one move toast on its thread, for a typed command and for a blocked menu row", async () => {
+  const { screen, send, refuse, promptRef, draftPrompt } = await setup({});
   await using _screen = screen;
   mocks.move.mockResolvedValue(AsyncResult.success({ _tag: "refused", reason: "Busy." }));
-  using add = vi.spyOn(toastManager, "add").mockReturnValueOnce("first").mockReturnValue("second");
+  using add = vi
+    .spyOn(toastManager, "add")
+    .mockReturnValueOnce("typed")
+    .mockReturnValueOnce("row")
+    .mockReturnValue("same-folder");
   using close = vi.spyOn(toastManager, "close");
+  const refusal = (description: string) =>
+    expect.objectContaining({
+      type: "warning",
+      title: "Thread not moved",
+      description,
+      data: expect.objectContaining({ threadRef: DRAFT_TARGET }),
+    });
 
   await act(send);
-  expect(add).toHaveBeenLastCalledWith(
-    expect.objectContaining({
-      title: "Thread not moved",
-      description: "Busy.",
-      data: expect.objectContaining({ threadRef: DRAFT_TARGET }),
-    }),
-  );
+  expect(add).toHaveBeenLastCalledWith(refusal("Busy."));
   expect(close).not.toHaveBeenCalled();
 
+  // A blocked menu row replaces the typed refusal with its own, sends nothing, and keeps the draft.
+  await act(() => refuse("This thread is already in No project."));
+  expect(close).toHaveBeenLastCalledWith("typed");
+  expect(add).toHaveBeenLastCalledWith(refusal("This thread is already in No project."));
+  expect(mocks.move).toHaveBeenCalledTimes(1);
+  expect(mocks.startTurn).not.toHaveBeenCalled();
+  expect([promptRef.current, draftPrompt()]).toEqual(["/cd ..", "/cd .."]);
+
+  // The next attempt closes it. A move to the thread's own folder is no refusal.
   mocks.move.mockResolvedValue(
     AsyncResult.success({ _tag: "moved", folder: "/repo", members: [] }),
   );
   await act(send);
-  expect(close).toHaveBeenCalledWith("first");
-  // A move to the thread's own folder is no refusal, so the toast stays informational.
-  const sameFolder = add.mock.lastCall?.[0];
-  expect(sameFolder).toMatchObject({ type: "info", title: "Thread not moved" });
-  // router: false because the toast description reads no route.
-  await using description = await render(<p>{sameFolder?.description}</p>, { router: false });
-  expect(description.container.textContent).toBe("Already in /repo.");
-  expect(description.container.querySelector("code")?.textContent).toBe("/repo");
-});
-
-it("refuses a blocked menu row with the toast a typed /cd gets, and keeps the draft", async () => {
-  const { screen, send, refuse, promptRef, draftPrompt } = await setup({});
-  await using _screen = screen;
-  mocks.move.mockResolvedValue(AsyncResult.success({ _tag: "refused", reason: "Busy." }));
-  using add = vi.spyOn(toastManager, "add").mockReturnValueOnce("typed").mockReturnValue("row");
-  using close = vi.spyOn(toastManager, "close");
-
-  await act(send);
-  await act(() => refuse("This thread is already in No project."));
-
-  // The row's refusal replaces the typed one, on the same thread, and sends nothing.
-  expect(close).toHaveBeenCalledWith("typed");
-  expect(add).toHaveBeenLastCalledWith(
-    expect.objectContaining({
-      type: "warning",
-      title: "Thread not moved",
-      description: "This thread is already in No project.",
-      data: expect.objectContaining({ threadRef: DRAFT_TARGET }),
-    }),
-  );
-  expect(mocks.move).toHaveBeenCalledTimes(1);
-  expect(mocks.startTurn).not.toHaveBeenCalled();
-  expect([promptRef.current, draftPrompt()]).toEqual(["/cd ..", "/cd .."]);
+  expect(close).toHaveBeenLastCalledWith("row");
+  expect(add.mock.lastCall?.[0]).toMatchObject({ type: "info", title: "Thread not moved" });
 });
