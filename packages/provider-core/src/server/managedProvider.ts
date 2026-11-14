@@ -439,8 +439,14 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
 
   // Probes spawn provider CLIs; starting them during server startup slows the first client load.
   yield* (host.awaitServerReady ?? Effect.void).pipe(
-    Effect.andThen(Ref.get(settingsRef)),
-    Effect.flatMap((settings) => applySnapshot(settings, { forceRefresh: true })),
+    Effect.andThen(
+      // Read under the lock, so a settings check in flight cannot be overwritten with older settings.
+      refreshSemaphore.withPermits(1)(
+        Ref.get(settingsRef).pipe(
+          Effect.flatMap((settings) => applySnapshotBase(settings, { forceRefresh: true })),
+        ),
+      ),
+    ),
     Effect.ignoreCause({ log: true }),
     Effect.forkScoped,
   );
