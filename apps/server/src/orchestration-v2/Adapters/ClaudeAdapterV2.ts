@@ -13287,7 +13287,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   (message) =>
                     message.type === "user" ||
                     message.type === "assistant" ||
-                    message.type === "result",
+                    (message.type === "result" && !isClaudeEmptyTaskNotificationSuccess(message)),
                 )
               ) {
                 return true;
