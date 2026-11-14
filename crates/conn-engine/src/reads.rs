@@ -205,7 +205,7 @@ impl Store {
             });
         }
         if omit_older {
-            let now = millis_from_iso(&crate::time::now_iso()).unwrap_or(0);
+            let now = i64::try_from(self.now_millis()).unwrap_or(i64::MAX);
             let before = older_settled_cut(&rows).unwrap_or(now);
             let ancestors: Vec<Value> = rows
                 .iter()

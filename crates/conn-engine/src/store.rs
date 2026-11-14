@@ -14,7 +14,6 @@ use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde_json::{Value, json};
 
 use crate::shell;
-use crate::time::now_iso;
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS events (
@@ -159,6 +158,8 @@ fn keyed_rows(
 pub(crate) struct Store {
     conn: Connection,
     next_seq: u64,
+    /// Every transaction's `now` (`EngineConfig::clock`).
+    clock: std::sync::Arc<dyn crate::clock::Clock>,
     /// A title generator is configured, so commands may ask for titles.
     pub(crate) generates_titles: bool,
 }
@@ -188,6 +189,7 @@ impl Store {
         Ok(Self {
             conn,
             next_seq: high as u64 + 1,
+            clock: std::sync::Arc::new(crate::clock::SystemClock),
             generates_titles: false,
         })
     }
@@ -204,6 +206,15 @@ impl Store {
             .unwrap_or_default()
     }
 
+    pub(crate) fn set_clock(&mut self, clock: std::sync::Arc<dyn crate::clock::Clock>) {
+        self.clock = clock;
+    }
+
+    /// Now, by the engine's clock, in milliseconds since the epoch.
+    pub(crate) fn now_millis(&self) -> u64 {
+        self.clock.now_millis()
+    }
+
     /// The sequence of the last committed change.
     pub(crate) fn high_water(&self) -> u64 {
         self.next_seq - 1
@@ -218,7 +229,7 @@ impl Store {
             store_seq: &mut self.next_seq,
             next_seq: start,
             start,
-            now: now_iso(),
+            now: conn_support::time::iso_from_ms(self.clock.now_millis()),
             touched: Vec::new(),
         })
     }

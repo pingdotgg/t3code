@@ -636,6 +636,42 @@ async fn rollback_to_the_thread_start_and_a_conversation_only_rewind() {
     assert_eq!(repo.read("b.txt").as_deref(), Some("two\n"), "files stay");
 }
 
+/// A message sent right after a rollback starts its turn only after the rollback ended, as
+/// T3's effect outbox runs a thread's effects in order (`thread_rollback_after_restart`).
+#[tokio::test(flavor = "current_thread")]
+async fn a_turn_sent_during_a_rollback_starts_after_it() {
+    let db = TempDb::new("rollback-then-send");
+    let repo = Repo::new("rollback-then-send");
+    let (engine, provider) = with_turns(
+        &db,
+        &repo,
+        FakeProvider::new("claudeAgent"),
+        create_in(&repo, "t1", "c1"),
+        &["write a.txt one", "write b.txt two"],
+    )
+    .await;
+    let p = projection(&engine, "t1").await;
+    let first = checkpoint_at(&p, 1);
+    dispatch(&engine, rollback("rb-1", &first, Some(false))).await;
+    dispatch(&engine, message("t1", "c3", "after")).await;
+    let p = until(&engine, |p| p["runs"][2]["status"] == "completed").await;
+    assert_eq!(p["runs"][1]["status"], "rolled_back", "{}", p["runs"]);
+    assert_eq!(*provider.rollbacks.lock().unwrap(), ["turn 1"]);
+    let events = engine.test_events("t1").await;
+    let rolled_back = events
+        .iter()
+        .position(|(kind, payload)| kind == "run.updated" && payload["status"] == "rolled_back")
+        .unwrap();
+    let started = events
+        .iter()
+        .position(|(kind, payload)| kind == "run-attempt.created" && payload["runId"] == "run:t1:3")
+        .unwrap();
+    assert!(
+        rolled_back < started,
+        "the rollback commits before the next turn starts"
+    );
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn a_failed_provider_rollback_changes_nothing_and_tells_the_client() {
     let db = TempDb::new("rollback-fail");

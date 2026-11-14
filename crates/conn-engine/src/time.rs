@@ -2,7 +2,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub(crate) use conn_support::time::{iso_from_millis, millis_from_iso, now_iso};
+pub(crate) use conn_support::time::{iso_from_millis, millis_from_iso};
 
 /// A suffix no earlier call in this process returned: epoch nanoseconds, then a counter.
 pub(crate) fn unique_suffix() -> String {

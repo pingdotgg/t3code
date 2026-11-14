@@ -32,7 +32,7 @@ use conn_provider::{
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
-use crate::time::now_iso;
+use conn_support::time::now_iso;
 
 pub struct FakeProvider {
     id: ProviderInstanceId,

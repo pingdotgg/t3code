@@ -34,12 +34,13 @@ pub(crate) struct LiveThread {
     instance: String,
     state: Mutex<LiveState>,
     /// When the session last did anything; the idle reaper closes it after `idle_session`.
-    last_used: Mutex<Instant>,
+    /// Milliseconds by the engine's clock.
+    last_used: Mutex<u64>,
     /// Ends the event pump. The pump holds this thread, whose session may hold the event
     /// sender, so a closed channel alone would never end it.
     closed: tokio::sync::Notify,
     /// Since when background work has kept this idle session open.
-    held_since: Mutex<Option<Instant>>,
+    held_since: Mutex<Option<u64>>,
     /// The provider session's id, for its provider threads.
     provider_session_id: String,
     /// `backgroundTasksEndWithProcess`: releasing the session clears its threads' rosters.
@@ -69,8 +70,8 @@ struct ActiveRun {
 }
 
 impl LiveThread {
-    pub(crate) fn touch(&self) {
-        *lock(&self.last_used) = Instant::now();
+    pub(crate) fn touch(&self, now: u64) {
+        *lock(&self.last_used) = now;
     }
 
     pub(crate) fn session(&self) -> &Arc<dyn Session> {
@@ -88,8 +89,9 @@ impl LiveThread {
 
     /// Idle: no run and no provider event for `idle`, and no background work, which holds the
     /// session at most `max_hold` past that (T3's idle pin).
-    pub(crate) fn idle_for(&self, idle: Duration, max_hold: Duration) -> bool {
-        if lock(&self.state).active.is_some() || lock(&self.last_used).elapsed() < idle {
+    pub(crate) fn idle_for(&self, now: u64, idle: Duration, max_hold: Duration) -> bool {
+        let elapsed = |since: u64| Duration::from_millis(now.saturating_sub(since));
+        if lock(&self.state).active.is_some() || elapsed(*lock(&self.last_used)) < idle {
             return false;
         }
         let mut held = lock(&self.held_since);
@@ -98,7 +100,7 @@ impl LiveThread {
             *held = None;
             return true;
         }
-        held.get_or_insert_with(Instant::now).elapsed() >= max_hold
+        elapsed(*held.get_or_insert(now)) >= max_hold
     }
 
     fn active(&self) -> Option<ActiveRun> {
@@ -143,6 +145,7 @@ fn status_name(status: TurnStatus) -> &'static str {
 
 impl Inner {
     pub(crate) async fn start_turn(self: Arc<Self>, thread_id: String, run_id: String) {
+        self.after_rollback(&thread_id).await;
         match self.try_start_turn(&thread_id, &run_id).await {
             Ok(()) | Err(StartError::Abandoned) => {}
             Err(StartError::Failed(message)) => {
@@ -294,7 +297,7 @@ impl Inner {
                 session,
                 instance: instance.to_owned(),
                 state: Mutex::new(LiveState::default()),
-                last_used: Mutex::new(Instant::now()),
+                last_used: Mutex::new(self.clock.now_millis()),
                 closed: tokio::sync::Notify::new(),
                 held_since: Mutex::new(None),
                 provider_session_id: provider_session["id"]
@@ -451,7 +454,7 @@ impl Inner {
             }
         };
 
-        live.touch();
+        live.touch(self.clock.now_millis());
         let known = lock(&live.state).provider_thread.clone();
         let provider_thread =
             match (known, context.provider_thread) {
@@ -702,7 +705,7 @@ impl Inner {
                 },
             };
             let Some(event) = event else { break };
-            live.touch();
+            live.touch(self.clock.now_millis());
             // Live command output goes to the hub, not the store.
             if let ProviderEvent::CommandOutputDelta {
                 thread_id: output_thread,
@@ -1298,7 +1301,7 @@ impl Inner {
     pub(crate) async fn reap_idle(&self, idle: Duration) {
         let idle_threads: Vec<String> = lock(&self.live)
             .iter()
-            .filter(|(_, live)| live.idle_for(idle, self.idle_max_hold))
+            .filter(|(_, live)| live.idle_for(self.clock.now_millis(), idle, self.idle_max_hold))
             .map(|(id, _)| id.clone())
             .collect();
         for thread_id in idle_threads {

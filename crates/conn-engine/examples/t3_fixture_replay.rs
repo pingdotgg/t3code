@@ -21,7 +21,7 @@
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 
 use conn_contract::from_json;
-use conn_engine::{Engine, EngineConfig, RuntimePolicyOverride, SqliteEngine};
+use conn_engine::{Engine, EngineConfig, ManualClock, RuntimePolicyOverride, SqliteEngine};
 use conn_provider::Provider;
 use serde_json::{Map, Value, json};
 use tokio::task::JoinHandle;
@@ -62,6 +62,8 @@ fn provider(plan: &Value) -> Result<Arc<dyn Provider>, Failure> {
 
 struct Run {
     engine: Arc<SqliteEngine>,
+    /// The engine's clock: at the epoch, moved only by `advance_clock`, as T3's `TestClock`.
+    clock: Arc<ManualClock>,
     background: HashMap<String, JoinHandle<Result<(), Failure>>>,
     anonymous: usize,
     captured: Map<String, Value>,
@@ -156,10 +158,20 @@ impl Run {
                 Ok(())
             }
             "advance_clock" => {
-                if step.get("awaitProviderSessionRelease").is_some() {
-                    return Err("advance_clock: an idle release on a test clock".into());
-                }
-                Ok(())
+                // T3's `TestClock.adjust` runs every timer that came due, its idle release too.
+                self.clock.advance(duration(&step["duration"])?);
+                self.engine.release_idle_sessions().await;
+                let Some(tid) = step["awaitProviderSessionRelease"].as_str() else {
+                    return Ok(());
+                };
+                // The step waits until the session's row says `stopped`.
+                self.wait_for(
+                    tid,
+                    &format!("advance_clock:{tid}:no_provider_session_release"),
+                    |p| rows(p, "providerSessions").any(|s| s["status"] == "stopped"),
+                )
+                .await
+                .map(drop)
             }
             "await_thread_idle" => {
                 let tid = thread()?;
@@ -296,6 +308,29 @@ impl Run {
     }
 }
 
+/// An Effect `Duration.Input` as the fixtures write it: `"1 millis"`, `"31 minutes"`, or a
+/// number of milliseconds.
+fn duration(value: &Value) -> Result<Duration, Failure> {
+    if let Some(millis) = value.as_u64() {
+        return Ok(Duration::from_millis(millis));
+    }
+    let text = value.as_str().ok_or_else(|| format!("duration {value}"))?;
+    let mut parts = text.split_whitespace();
+    let (Some(amount), Some(unit), None) = (parts.next(), parts.next(), parts.next()) else {
+        return Err(format!("duration {text}"));
+    };
+    let amount: u64 = amount.parse().map_err(|_| format!("duration {text}"))?;
+    let unit_millis = match unit.trim_end_matches('s') {
+        "milli" => 1,
+        "second" => 1_000,
+        "minute" => 60_000,
+        "hour" => 3_600_000,
+        "day" => 86_400_000,
+        _ => return Err(format!("duration unit {unit}")),
+    };
+    Ok(Duration::from_millis(amount * unit_millis))
+}
+
 fn rows<'a>(projection: &'a Value, key: &str) -> impl Iterator<Item = &'a Value> {
     projection[key].as_array().into_iter().flatten()
 }
@@ -308,6 +343,8 @@ async fn replay(plan: &Value) -> Result<Value, Value> {
     // comes from the policy override, as in T3's harness.
     config.providers = vec![provider(plan).map_err(Value::String)?];
     config.checkpoints = true;
+    let clock = Arc::new(ManualClock::at(0));
+    config.clock = clock.clone();
     let policy = &plan["runtimePolicyOverride"];
     config.runtime_policy_override = Some(RuntimePolicyOverride {
         cwd: policy["cwd"].as_str().map(str::to_owned),
@@ -328,6 +365,7 @@ async fn replay(plan: &Value) -> Result<Value, Value> {
     let engine = Arc::new(SqliteEngine::open(config).map_err(Value::String)?);
     let mut run = Run {
         engine: engine.clone(),
+        clock,
         background: HashMap::new(),
         anonymous: 0,
         captured: Map::new(),

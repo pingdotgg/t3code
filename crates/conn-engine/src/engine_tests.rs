@@ -1873,6 +1873,20 @@ async fn compact_snapshots_for_clients_that_opt_in() {
     assert_eq!(snapshot["projection"]["messages"][1]["text"], "echo: hello");
 }
 
+/// A clock on tokio's paused time, so the idle tests move it with `sleep`, and the server's
+/// own reaper loop runs as it does in production.
+struct PausedClock(tokio::time::Instant);
+
+impl crate::Clock for PausedClock {
+    fn now_millis(&self) -> u64 {
+        u64::try_from(self.0.elapsed().as_millis()).unwrap_or(u64::MAX)
+    }
+}
+
+fn paused_clock() -> Arc<dyn crate::Clock> {
+    Arc::new(PausedClock(tokio::time::Instant::now()))
+}
+
 #[tokio::test(flavor = "current_thread", start_paused = true)]
 async fn an_idle_session_closes_and_the_next_turn_resumes_it() {
     let db = TempDb::new("idle");
@@ -1883,6 +1897,7 @@ async fn an_idle_session_closes_and_the_next_turn_resumes_it() {
         workspace_root: ROOT.into(),
     }];
     config.providers = vec![provider.clone()];
+    config.clock = paused_clock();
     config.idle_session = Some(Duration::from_secs(60));
     let engine = SqliteEngine::open(config).unwrap();
     dispatch(&engine, create("t1", "c1")).await;
@@ -2212,6 +2227,7 @@ async fn background_work_holds_an_idle_session_up_to_the_limit() {
         workspace_root: ROOT.into(),
     }];
     config.providers = vec![provider.clone()];
+    config.clock = paused_clock();
     config.idle_session = Some(Duration::from_secs(60));
     config.idle_max_hold = Duration::from_secs(600);
     let engine = SqliteEngine::open(config).unwrap();
@@ -2242,6 +2258,7 @@ async fn reported_background_work_holds_the_session_and_shows_in_the_shell() {
         workspace_root: ROOT.into(),
     }];
     config.providers = vec![provider.clone()];
+    config.clock = paused_clock();
     config.idle_session = Some(Duration::from_secs(60));
     config.idle_max_hold = Duration::from_secs(600);
     let engine = SqliteEngine::open(config).unwrap();

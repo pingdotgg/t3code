@@ -21,6 +21,7 @@ use std::{future::Future, pin::Pin};
 mod background;
 mod calls;
 mod checkpoint;
+mod clock;
 mod commands;
 mod engine;
 
@@ -49,6 +50,7 @@ mod time;
 mod titles;
 mod visibility;
 
+pub use clock::{Clock, ManualClock, SystemClock};
 pub use engine::{
     CommandOutputTap, DEFAULT_IDLE_SESSION, EngineConfig, ProjectConfig, RuntimePolicyOverride,
     SqliteEngine,
