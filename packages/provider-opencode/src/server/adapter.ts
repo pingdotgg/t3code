@@ -2882,10 +2882,21 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           const isRoot = sessionId === owner.nativeSessionId;
           const rootStatus =
             isRoot && event.type === "session.status" ? event.properties.status.type : undefined;
-          // A later execution buffered into the same wake is unsettled until its own idle.
+          // A later execution buffered into the same wake is unsettled until its own idle. Its new
+          // user message comes before busy, while prompt.ts may still be registering it.
+          const newRootUserMessage =
+            wake !== null &&
+            isRoot &&
+            event.type === "message.updated" &&
+            event.properties.info.role === "user" &&
+            !wake.events.some(
+              (held) =>
+                held.type === "message.updated" &&
+                held.properties.info.id === event.properties.info.id,
+            );
           if (
             wake !== null &&
-            (rootStatus === "busy" || rootStatus === "retry") &&
+            (rootStatus === "busy" || rootStatus === "retry" || newRootUserMessage) &&
             (yield* Deferred.isDone(wake.settled))
           ) {
             wake.settled = Deferred.makeUnsafe<void>();

@@ -1489,6 +1489,8 @@ describe("OpenCodeAdapterV2", () => {
     { state: "settled", end: "sequential" },
     { state: "settled", end: "sequential-buffered" },
     { state: "settled", end: "foreground-second-busy" },
+    { state: "settled", end: "foreground-second-saved" },
+    { state: "settled", end: "foreground-reemitted" },
     { state: "settled", end: "idle-only" },
     { state: "settled", end: "error-only" },
     { state: "settled", end: "routing-stalled" },
@@ -2418,17 +2420,52 @@ describe("OpenCodeAdapterV2", () => {
         yield* push(status("idle"));
         yield* push({ type: "session.idle", properties: { sessionID: root } });
         if (foreground !== null) yield* Fiber.join(foreground);
-        if (end === "foreground-second-busy") {
+        if (end === "foreground-reemitted") {
+          yield* push(user("msg_background_result"));
+          yield* harness.startTurn("follow up", undefined, undefined, false, "next");
+          assert.equal(promptIds.length, 2, "a re-sent saved message is not a later execution");
+          return;
+        }
+        if (end === "foreground-second-busy" || end === "foreground-second-saved") {
           yield* push(user("msg_second_background_result"));
-          yield* push(status("busy"));
+          // A saved user message registers before OpenCode reports busy.
+          if (end === "foreground-second-busy") yield* push(status("busy"));
           const starting = yield* harness
             .startTurn("follow up", undefined, undefined, false, "next")
             .pipe(Effect.forkScoped);
           yield* TestClock.adjust(0);
           assert.equal(promptIds.length, 1, "foreground waits for the later buffered execution");
+          if (end === "foreground-second-saved") {
+            yield* push(status("busy"));
+            yield* push({
+              type: "message.updated",
+              properties: {
+                sessionID: root,
+                info: {
+                  id: "msg_second_wake_assistant",
+                  sessionID: root,
+                  role: "assistant",
+                  parentID: "msg_second_background_result",
+                  time: { created: 4, completed: 5 },
+                },
+              },
+            });
+            assert.equal(promptIds.length, 1, "the later execution's reply cannot release it");
+          }
           yield* push(status("idle"));
           yield* Fiber.join(starting);
           assert.equal(promptIds.length, 2);
+          if (end === "foreground-second-saved") {
+            yield* push({ type: "session.idle", properties: { sessionID: root } });
+            const snapshot = yield* harness.runtime.readThreadSnapshot({
+              providerThread: harness.providerThread,
+            });
+            assert.equal(
+              snapshot.providerTurns.at(-1)?.status,
+              "running",
+              "an earlier reply cannot admit the foreground prompt",
+            );
+          }
           return;
         }
         if (end === "sequential" || end === "sequential-buffered") {
