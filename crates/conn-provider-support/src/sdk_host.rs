@@ -134,10 +134,12 @@ impl QueryEnd {
     }
 }
 
-/// The shared helper. Cloning shares the same process.
+/// The shared helper. Cloning shares the same process; so does [`Helper::for_instance`].
 #[derive(Clone)]
 pub struct Helper {
     inner: Arc<Inner>,
+    /// The provider instance, named on every message.
+    instance_id: Arc<str>,
 }
 
 impl std::fmt::Debug for Helper {
@@ -173,8 +175,6 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 struct Inner {
     command: HelperCommand,
-    /// The provider instance, named on every message.
-    instance_id: String,
     driver: HostDriver,
     state: Mutex<State>,
 }
@@ -215,10 +215,21 @@ impl Helper {
         Self {
             inner: Arc::new(Inner {
                 command,
-                instance_id: instance_id.to_string(),
                 driver,
                 state: Mutex::new(State::default()),
             }),
+            instance_id: Arc::from(instance_id),
+        }
+    }
+
+    /// The same host process for another provider instance: one host serves every instance
+    /// of a driver (its messages name the instance), so a second Claude instance starts no
+    /// second Node process.
+    #[must_use]
+    pub fn for_instance(&self, instance_id: &str) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            instance_id: Arc::from(instance_id),
         }
     }
 
@@ -245,7 +256,7 @@ impl Helper {
             (id, writer)
         };
         let mut command = json!({
-            "t": "open", "driver": self.inner.driver.name, "instanceId": self.inner.instance_id,
+            "t": "open", "driver": self.inner.driver.name, "instanceId": &*self.instance_id,
             "sessionId": id, "options": options,
         });
         if let (Some(target), Value::Object(extra)) = (command.as_object_mut(), extra) {
@@ -283,7 +294,7 @@ impl Helper {
         };
         let hold = Hold(self.inner.clone());
         let mut command = json!({
-            "t": "fn", "driver": self.inner.driver.name, "instanceId": self.inner.instance_id,
+            "t": "fn", "driver": self.inner.driver.name, "instanceId": &*self.instance_id,
             "name": name, "args": args,
         });
         if let Some(dir) = config_dir {

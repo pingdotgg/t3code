@@ -36,6 +36,11 @@ fn main() {
         attachments_dir: Some(options.state_dir.join("attachments")),
         ..Default::default()
     };
+    // One SDK host process for every Claude instance (it runs only while a query is open).
+    let claude_host = conn_provider_claude::helper::claude_host(
+        claude.helper.clone(),
+        conn_provider_claude::DRIVER,
+    );
     // `claudeAgent` and `codex`, and one more provider per `providerInstances` entry of either
     // driver, each with its entry's settings (`conn_server::instances`).
     let instances = Arc::new(conn_server::instances::Instances::new(
@@ -47,6 +52,7 @@ fn main() {
                         id.into(),
                         claude.clone(),
                         entry,
+                        &claude_host,
                     ))
                 } else {
                     Arc::new(conn_provider_codex::CodexProvider::for_instance(

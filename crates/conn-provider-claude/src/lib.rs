@@ -87,10 +87,13 @@ impl ClaudeProvider {
     /// entry), over the server's base configuration. Until the first status probe its entry
     /// is T3's pending snapshot for these settings (`makePendingClaudeProvider` with
     /// `withInstanceIdentity`), disabled when the instance is.
+    ///
+    /// `helper` is the server's one SDK host; this instance's messages carry its id.
     pub fn for_instance(
         instance_id: ProviderInstanceId,
         base: ClaudeConfig,
         entry: Option<&Value>,
+        helper: &Helper,
     ) -> Self {
         let config = base.with_instance(entry);
         let settings = status::StatusSettings::from_instance(entry);
@@ -100,9 +103,13 @@ impl ClaudeProvider {
             &config,
             &conn_support::time::now_iso(),
         );
-        let provider = Self::new(instance_id, config);
-        *lock(&provider.status) = Some(pending);
-        provider
+        let helper = helper.for_instance(instance_id.as_str());
+        Self {
+            instance_id,
+            config,
+            helper,
+            status: std::sync::Mutex::new(Some(pending)),
+        }
     }
 
     /// The instance settings for the status probe: the stored `providerInstances` entry, and
