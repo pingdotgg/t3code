@@ -1,0 +1,183 @@
+---
+title: Provider Contributions
+description: Ship a provider's auth, state stores and CLI commands in a package, so the alchemy CLI finds them without a stack.
+---
+
+Some of a provider runs before any stack is loaded: `alchemy profile`
+configures its credentials, `alchemy state --backend` opens its state
+store, and `alchemy provider <name>` runs its commands. A provider
+package declares these in a **contributions** module, and the CLI reads it
+from the project's dependencies.
+
+This guide packages the Stripe provider from
+[Custom Provider](/infrastructure-as-code/custom-provider) and
+[Custom Auth Provider](/environments/custom-auth-provider) as
+`@acme/alchemy-stripe`.
+
+## Declare the module
+
+List the module under `alchemy.contributes` in the package's
+`package.json`, and export it:
+
+```json
+{
+  "name": "@acme/alchemy-stripe",
+  "exports": {
+    ".": "./src/index.ts",
+    "./Contributions": "./src/Contributions.ts"
+  },
+  "alchemy": { "contributes": ["@acme/alchemy-stripe/Contributions"] }
+}
+```
+
+A specifier must name the package that declares it. It resolves through
+that package's `exports`.
+
+## Name the provider
+
+The module's default export is the provider's contributions:
+
+```typescript
+// src/Contributions.ts
+import * as Contributions from "alchemy/Contributions";
+
+export default Contributions.make({
+  name: "stripe",
+});
+```
+
+`name` identifies the provider: it's the subcommand in
+`alchemy provider stripe`.
+
+## Load fields lazily
+
+The CLI imports every contributions module on start, so a field points
+at code instead of importing it. `Contributions.lazy` imports a module
+the first time the field is used:
+
+```diff lang="typescript"
+ export default Contributions.make({
+   name: "stripe",
++  auth: Contributions.lazy(
++    () => import("./AuthProvider.ts"),
++    (module) => module.StripeAuth,
++  ),
+ });
+```
+
+`auth` is the Auth Provider layer. With it, `alchemy profile edit` can
+configure Stripe credentials in a project whose stack hasn't run yet.
+
+## Add a CLI command
+
+`cli.provider` adds a subcommand under `alchemy provider`. The
+description shows in `--help` without loading the command:
+
+```diff lang="typescript"
++  cli: {
++    provider: {
++      description: "Manage Stripe prerequisites",
++      load: Contributions.lazy(
++        () => import("./Cli.ts"),
++        (module) => module.stripeCommand,
++      ),
++    },
++  },
+```
+
+`stripeCommand` is an `effect/cli` `Command` named `stripe`. A provider
+whose command fails to load doesn't break the others: running it reports
+the error.
+
+## Add a state store
+
+`stateStores` maps a `--backend` name to a store:
+
+```diff lang="typescript"
++  stateStores: {
++    stripe: {
++      description: "State in the profile's Stripe account",
++      load: Contributions.lazy(
++        () => import("./StateStore.ts"),
++        (module) => module.stateStore,
++      ),
++    },
++  },
+```
+
+The store's `layer` is the provider's own `state` function: the one a
+stack passes as `state:`.
+
+```typescript
+// src/StateStore.ts
+import type { StateStoreImpl } from "alchemy/Contributions";
+import { state } from "./State.ts";
+
+export const stateStore: StateStoreImpl = { layer: state };
+```
+
+`state` takes `{ name }` and returns a `State` layer. A missing `name` is the
+account's default store, and any other name is a separate store. With
+the store contributed, `alchemy state list --backend stripe --name team-a`
+opens it from the profile alone.
+
+## Add a store lifecycle
+
+A store that needs provisioning adds a `lifecycle`. Each operation is
+optional, and `alchemy state` reports the ones a store doesn't have:
+
+```diff lang="typescript"
+-export const stateStore: StateStoreImpl = { layer: state };
++export const stateStore: StateStoreImpl = {
++  layer: state,
++  lifecycle: { bootstrap, teardown },
++};
+```
+
+| Operation   | Runs for                     |
+| ----------- | ---------------------------- |
+| `bootstrap` | `alchemy state bootstrap`    |
+| `teardown`  | `alchemy state teardown`     |
+| `logs`      | `alchemy state logs`         |
+| `tailLogs`  | `alchemy state logs --tail`  |
+
+Each operation receives the store's `name`, and Alchemy provides the
+profile's config and the provider's `auth`. The built-in stores are
+the reference:
+[`AWS/Alchemist/StateStore.ts`](https://github.com/alchemy-run/alchemy/blob/main/packages/alchemy/src/AWS/Alchemist/StateStore.ts)
+and
+[`Cloudflare/Alchemist/StateStore.ts`](https://github.com/alchemy-run/alchemy/blob/main/packages/cloudflare/src/Alchemist/StateStore.ts).
+
+## What contributed code can use
+
+Every host of contributed code provides the same services:
+`Contributions.ContributionServices` for auth and state stores (platform,
+HTTP client, profiles, credentials, the auth registry), and
+`Contributions.CliServices` for commands (those plus the terminal). A
+field that needs anything else doesn't type-check. Provide it in the
+field's own layer:
+
+```typescript
+auth: Contributions.lazy(
+  () => import("./AuthProvider.ts"),
+  (module) => module.StripeAuth.pipe(Layer.provide(StripeHttpClient)),
+),
+```
+
+## How the CLI picks providers
+
+- The project's dependencies are read first, then alchemy's own
+  providers.
+- When two providers share a name, the first one found is used. A
+  provider in its own package therefore replaces the copy still inside
+  alchemy.
+- A provider that fails to load is skipped with a warning.
+- State store names are global. Two providers contributing the same
+  name, or `local` or `configured`, is an error.
+
+## Where next
+
+- [Custom Auth Provider](/environments/custom-auth-provider): the
+  `auth` layer
+- [`alchemy state`](/cli/state): the commands a state store serves
+- [State Store](/state-store): where resource state lives

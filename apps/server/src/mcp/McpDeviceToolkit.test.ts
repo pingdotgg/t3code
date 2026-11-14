@@ -147,7 +147,7 @@ const layerDeviceServiceMock = Layer.mock(DeviceService.DeviceService)({
 });
 
 const layerTest = McpHttpServer.layerDeviceToolkit.pipe(
-  Layer.provideMerge(McpServer.McpServer.layer),
+  Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
   Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
   Layer.provideMerge(layerDeviceServiceMock),
   Layer.provide(layerProjectsMock),
@@ -272,9 +272,61 @@ it.effect("rejects unavailable agent access before booting or opening a device",
     Effect.scoped,
     Effect.provide(
       McpHttpServer.layerDeviceToolkit.pipe(
-        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
         Layer.provide(layerUnavailable),
+        Layer.provide(layerProjectsMock),
+        Layer.provide(
+          ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-device-toolkit-test-" }),
+        ),
+        Layer.provide(NodeServices.layer),
+      ),
+    ),
+  );
+});
+
+it.effect("device_open reports a failed host's setup error instead of no devices", () => {
+  const failure = "Device support failed: npm was not found. Install Node.js, which includes npm.";
+  const failedState = {
+    ...state,
+    hostStatus: "failed" as const,
+    hostStatusDetail: failure,
+    hostStatuses: { local: { status: "failed" as const, detail: failure } },
+    devices: [],
+  };
+  const layerFailed = Layer.mock(DeviceService.DeviceService)({
+    state: Effect.succeed(failedState),
+    list: Effect.succeed(failedState),
+    locateDevice: () => Effect.succeedNone,
+    open: () => Effect.die("Must not open a device on a host whose setup failed"),
+  });
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    for (const args of [
+      { platform: "android" },
+      { deviceId: "Pixel_API_35", hostId: "local" },
+      { deviceId: "Pixel_API_35" },
+    ]) {
+      const result = yield* server
+        .callTool({ name: "device_open", arguments: args })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation(["device"])),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      const text = result.content
+        .flatMap((entry) => (entry.type === "text" ? [entry.text] : []))
+        .join("\n");
+      expect(result.isError).toBe(true);
+      expect(text).not.toContain("No android devices were found");
+      expect(text).toContain(failure);
+    }
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      McpHttpServer.layerDeviceToolkit.pipe(
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+        Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
+        Layer.provide(layerFailed),
         Layer.provide(layerProjectsMock),
         Layer.provide(
           ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-device-toolkit-test-" }),
@@ -345,11 +397,7 @@ describe("device targeting across hosts", () => {
       readonly call: (
         name: string,
         args: Record<string, unknown>,
-      ) => Effect.Effect<
-        McpSchema.CallToolResult,
-        McpSchema.InternalError | McpSchema.InvalidParams,
-        McpServer.McpServer
-      >;
+      ) => Effect.Effect<McpSchema.CallToolResult, McpSchema.McpErrorBase, McpServer.McpServer>;
     }) => Effect.Effect<A, E, McpServer.McpServer>,
     overrides: Partial<DeviceService.DeviceService["Service"]> = {},
   ) => {
@@ -416,7 +464,7 @@ describe("device targeting across hosts", () => {
       Effect.scoped,
       Effect.provide(
         McpHttpServer.layerDeviceToolkit.pipe(
-          Layer.provideMerge(McpServer.McpServer.layer),
+          Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
           Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
           Layer.provide(layerDevices),
           Layer.provide(layerProjectsMock),
@@ -572,6 +620,19 @@ describe("device targeting across hosts", () => {
           );
         }),
       { locateSession: () => Effect.fail(onTheMac) },
+    ),
+  );
+
+  it.effect("names a device_screenshot argument the tool does not declare", () =>
+    run([session("mac-mini", "MAC-UDID", "ios")], ({ call }) =>
+      Effect.gen(function* () {
+        const result = yield* call("device_screenshot", {
+          deviceId: "MAC-UDID",
+          includeImage: false,
+        });
+        expect(result.isError).toBe(true);
+        expect(text(result)).toContain('Unknown argument "includeImage"');
+      }),
     ),
   );
 

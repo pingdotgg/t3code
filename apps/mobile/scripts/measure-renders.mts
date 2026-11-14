@@ -1,8 +1,9 @@
 // See docs/internals/mobile-development.md#measuring-renders.
 import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as NodeSocket from "@effect/platform-node/NodeSocket";
+import * as NodeWS from "@effect/platform-node/NodeWS";
 import {
   CommandId,
   EnvironmentId,
@@ -17,7 +18,7 @@ import {
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import * as Console from "effect/Console";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -71,7 +72,7 @@ interface Options {
   readonly projectRoot: string;
 }
 
-const uuid = Effect.flatMap(Crypto.Crypto, (crypto) => crypto.randomUUIDv4());
+const uuid = Effect.flatMap(SecureRandom.SecureRandom, (random) => random.uuidV4());
 
 const median = (values: ReadonlyArray<number>) => {
   const sorted = [...values].sort((a, b) => a - b);
@@ -398,8 +399,9 @@ Command.run(command, { version: "0.0.0" }).pipe(
   Effect.provide(
     Layer.mergeAll(
       NodeServices.layer,
+      NodeCrypto.layer,
       NodeHttpClient.layerUndici,
-      NodeSocket.layerWebSocketConstructorWS,
+      NodeWS.layerWebSocketConstructor,
     ),
   ),
   NodeRuntime.runMain,

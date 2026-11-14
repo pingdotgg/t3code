@@ -1,16 +1,15 @@
-import * as Alchemy from "alchemy";
-import * as GCP from "alchemy/GCP";
-import * as Test from "alchemy/Test/Bun";
+import { describe, expect } from "bun:test";
+import * as GCP from "@alchemy.run/gcp";
+import * as Test from "@alchemy.run/test/Bun";
 import * as bigquery from "@distilled.cloud/gcp/bigquery_v2";
 import * as scheduler from "@distilled.cloud/gcp/cloudscheduler_v1";
-import { describe, expect } from "bun:test";
+import * as Alchemy from "alchemy";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Schedule from "effect/Schedule";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
-import { spawnSync } from "node:child_process";
+import * as Layer from "effect/Layer";
+import * as Schedule from "effect/Schedule";
 import Stack from "../alchemy.run.ts";
 
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
@@ -22,16 +21,7 @@ const { getWhenReady } = Test;
 
 // Out-of-band calls to the Google APIs resolve the same stored credentials
 // the deploy uses, so the test runs against the configured profile.
-const GcpHttp = Layer.mergeAll(
-  GCP.GcpAuth,
-  GCP.fromAuthProvider(),
-  FetchHttpClient.layer,
-);
-
-// The service is built from `main`, which needs a local image build.
-const dockerAvailable =
-  spawnSync("docker", ["info"], { stdio: "ignore", timeout: 15_000 }).status ===
-  0;
+const GcpHttp = Layer.mergeAll(GCP.GcpAuth, GCP.fromAuthProvider(), FetchHttpClient.layer);
 
 interface Heartbeat {
   kind: "heartbeat" | "daily";
@@ -55,16 +45,14 @@ const jobsFor = (project: string, location: string, baseUrl: string) =>
     })
     .pipe(
       Effect.map(({ jobs = [] }) =>
-        jobs.filter((job) =>
-          job.httpTarget?.uri?.startsWith(`${baseUrl}/__alchemy/scheduler/`),
-        ),
+        jobs.filter((job) => job.httpTarget?.uri?.startsWith(`${baseUrl}/__alchemy/scheduler/`)),
       ),
       Effect.orDie,
       Effect.provide(GcpHttp),
     );
 
 // Deploy, tests and destroy all sit behind the same Docker guard.
-describe.skipIf(!dockerAvailable)("gcp-cron", () => {
+describe("gcp-cron", () => {
   const stack = beforeAll(deploy(Stack), { timeout: 900_000 });
 
   afterAll.skipIf(!!process.env.NO_DESTROY)(
@@ -99,8 +87,7 @@ describe.skipIf(!dockerAvailable)("gcp-cron", () => {
         HttpClientRequest.get(`${baseUrl}/heartbeats?kind=${kind}&limit=50`),
       );
       expect(res.status).toBe(200);
-      return ((yield* res.json) as unknown as { heartbeats: Heartbeat[] })
-        .heartbeats;
+      return ((yield* res.json) as unknown as { heartbeats: Heartbeat[] }).heartbeats;
     });
 
   test(
@@ -117,17 +104,11 @@ describe.skipIf(!dockerAvailable)("gcp-cron", () => {
         "/__alchemy/scheduler/dailyrollup",
         "/__alchemy/scheduler/heartbeat",
       ]);
-      expect(byPath["/__alchemy/scheduler/heartbeat"]!.schedule).toEqual(
-        "* * * * *",
-      );
-      expect(byPath["/__alchemy/scheduler/dailyrollup"]!.schedule).toEqual(
-        "0 0 * * *",
-      );
+      expect(byPath["/__alchemy/scheduler/heartbeat"]!.schedule).toEqual("* * * * *");
+      expect(byPath["/__alchemy/scheduler/dailyrollup"]!.schedule).toEqual("0 0 * * *");
       for (const job of jobs) {
         expect(job.httpTarget?.httpMethod).toEqual("POST");
-        expect(job.httpTarget?.oidcToken?.audience).toEqual(
-          job.httpTarget?.uri,
-        );
+        expect(job.httpTarget?.oidcToken?.audience).toEqual(job.httpTarget?.uri);
       }
 
       // The service is public, but the schedule routes are not: a request
@@ -150,9 +131,7 @@ describe.skipIf(!dockerAvailable)("gcp-cron", () => {
 
       const jobs = yield* jobsFor(project, location, baseUrl);
       const jobNamed = (path: string) => {
-        const job = jobs.find((candidate) =>
-          candidate.httpTarget?.uri?.endsWith(path),
-        );
+        const job = jobs.find((candidate) => candidate.httpTarget?.uri?.endsWith(path));
         if (job?.name === undefined) throw new Error(`no job for ${path}`);
         return job.name;
       };
@@ -170,9 +149,7 @@ describe.skipIf(!dockerAvailable)("gcp-cron", () => {
       const shortName = (name: string) => name.split("/").pop()!;
 
       const heartbeat = yield* heartbeatsOf(baseUrl, "heartbeat").pipe(
-        Effect.map((rows) =>
-          rows.find((row) => row.jobName === shortName(heartbeatJob)),
-        ),
+        Effect.map((rows) => rows.find((row) => row.jobName === shortName(heartbeatJob))),
         Effect.repeat({
           schedule: Schedule.spaced("10 seconds"),
           until: (row) => row !== undefined,
@@ -185,9 +162,7 @@ describe.skipIf(!dockerAvailable)("gcp-cron", () => {
 
       // The daily cron cannot fire during the test, so its row is the forced run.
       const daily = yield* heartbeatsOf(baseUrl, "daily").pipe(
-        Effect.map((rows) =>
-          rows.find((row) => row.jobName === shortName(dailyJob)),
-        ),
+        Effect.map((rows) => rows.find((row) => row.jobName === shortName(dailyJob))),
         Effect.repeat({
           schedule: Schedule.spaced("10 seconds"),
           until: (row) => row !== undefined,
@@ -211,10 +186,7 @@ describe.skipIf(!dockerAvailable)("gcp-cron", () => {
         .pipe(Effect.orDie, Effect.provide(GcpHttp));
       expect(result.jobComplete).toBe(true);
       const counts = Object.fromEntries(
-        (result.rows ?? []).map((row) => [
-          row.f?.[0]?.v as string,
-          Number(row.f?.[1]?.v),
-        ]),
+        (result.rows ?? []).map((row) => [row.f?.[0]?.v as string, Number(row.f?.[1]?.v)]),
       );
       expect(counts.heartbeat).toBeGreaterThanOrEqual(1);
       expect(counts.daily).toBeGreaterThanOrEqual(1);
