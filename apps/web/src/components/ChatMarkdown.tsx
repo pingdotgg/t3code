@@ -96,7 +96,7 @@ import { defaultUrlTransform } from "react-markdown";
 import { parseAssistantCitationHref } from "@t3tools/shared/assistantCitations";
 import { parseComposerContextHref } from "@t3tools/shared/composerContextReferences";
 import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
-import { AssistantCitationChip } from "./chat/AssistantCitationChip";
+import { AssistantCitationEmbed } from "./chat/AssistantCitationChip";
 import { MarkdownThreadLink } from "./chat/MarkdownThreadLink";
 import { mathKind } from "@t3tools/shared/markdownMath";
 import remarkMath from "remark-math";
@@ -173,7 +173,9 @@ import { projectEnvironment } from "../state/projects";
 import { filesystemEnvironment } from "../state/filesystem";
 import {
   claimWorkspaceBasenameLookup,
+  findAgentDirectoryMatch,
   needsWorkspaceBasenameLookup,
+  pickProjectLinkMatch,
   pickWorkspaceLinkMatch,
   WORKSPACE_BASENAME_LOOKUP_LIMIT,
   workspaceLinkLookupQuery,
@@ -233,6 +235,8 @@ interface ChatMarkdownProps {
   inline?: boolean;
   text: string;
   cwd: string | undefined;
+  /** Folders the agent worked in before writing `text`, the latest first; read when a link opens. */
+  agentDirectories?: (() => ReadonlyArray<string>) | undefined;
   threadRef?: ScopedThreadRef | undefined;
   pullRequestPanelRef?: ScopedThreadRef | undefined;
   environmentId?: EnvironmentId | undefined;
@@ -262,6 +266,9 @@ export interface ChatMarkdownContextReference {
   kind: string;
   contextId: string;
   label: string;
+  /** Whether it starts or ends its block, for a reference that renders as a block. */
+  leading?: boolean;
+  trailing?: boolean;
 }
 
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<ServerProviderSkill> = [];
@@ -498,6 +505,7 @@ function useChatMarkdownState({
   text,
   inline = false,
   cwd,
+  agentDirectories,
   threadRef,
   pullRequestPanelRef,
   environmentId: explicitEnvironmentId,
@@ -643,7 +651,7 @@ function useChatMarkdownState({
   const projects = useProjects();
   const [preferredEditor] = usePreferredEditor(availableEditors);
   const preferredEditorMenuLabel = openInEditorMenuLabel(preferredEditor);
-  const openInPreferredEditor = useOpenInPreferredEditor(environmentId, availableEditors);
+  const openInPreferredEditor = useOpenInPreferredEditor(environmentId, availableEditors, cwd);
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, {
     reportFailure: false,
   });
@@ -789,13 +797,57 @@ function useChatMarkdownState({
       });
       if (metadata._tag !== "Success" || metadata.value.entries[0] !== null) return null;
     }
-    const result = await searchProjectEntries({
-      environmentId,
-      input: { cwd, query, limit: WORKSPACE_BASENAME_LOOKUP_LIMIT, kind: "file" },
-    });
-    return result._tag === "Success"
-      ? pickWorkspaceLinkMatch(workspaceRelativePath, cwd, result.value.entries)
-      : null;
+    const searchRoot = async (root: string) => {
+      const rootQuery = workspaceLinkLookupQuery(workspaceRelativePath, root);
+      if (rootQuery === null) return { root, entries: [] };
+      const result = await searchProjectEntries({
+        environmentId,
+        input: {
+          cwd: root,
+          query: rootQuery,
+          limit: WORKSPACE_BASENAME_LOOKUP_LIMIT,
+          kind: "file",
+        },
+      });
+      return { root, entries: result._tag === "Success" ? result.value.entries : [] };
+    };
+    const own = await searchRoot(cwd);
+    const ownMatch = pickWorkspaceLinkMatch(workspaceRelativePath, cwd, own.entries);
+    if (ownMatch !== null) return ownMatch;
+    const threadProjectId = threadRef ? readThreadShell(threadRef)?.projectId : undefined;
+    const otherRoots = projects.flatMap((project) =>
+      project.environmentId === environmentId &&
+      project.id !== threadProjectId &&
+      project.workspaceRoot !== cwd
+        ? [project.workspaceRoot]
+        : [],
+    );
+    const agentRoots = (agentDirectories?.() ?? []).filter((root) => root !== cwd);
+    if (otherRoots.length === 0 && agentRoots.length === 0) return null;
+    // Another project's file never replaces a thread-local file the search missed.
+    if (needsWorkspaceBasenameLookup(workspaceRelativePath)) {
+      const metadata = await getFilesystemMetadata({
+        environmentId,
+        input: { paths: [resolveWorkspaceFilePath(workspaceRelativePath, cwd)] },
+      });
+      if (metadata._tag !== "Success" || metadata.value.entries[0] !== null) return null;
+    }
+    const projectMatch = pickProjectLinkMatch(
+      workspaceRelativePath,
+      await Promise.all(otherRoots.map(searchRoot)),
+    );
+    if (projectMatch !== null || agentRoots.length === 0) return projectMatch;
+    // No project has the file, so it opens where the agent last worked, as written.
+    const agentPaths = agentRoots.map((root) =>
+      resolveWorkspaceFilePath(workspaceRelativePath, root),
+    );
+    const metadata = await getFilesystemMetadata({ environmentId, input: { paths: agentPaths } });
+    if (metadata._tag !== "Success") return null;
+    const literal = agentPaths.find((_, index) => metadata.value.entries[index]?.kind === "file");
+    if (literal !== undefined || !needsWorkspaceBasenameLookup(workspaceRelativePath)) {
+      return literal ?? null;
+    }
+    return findAgentDirectoryMatch(workspaceRelativePath, agentRoots, searchRoot);
   };
   const openFileInPanel = (fileLinkMeta: MarkdownFileLinkMeta, panelPath: string) => {
     if (!threadRef) return;
@@ -964,6 +1016,15 @@ const ChatMarkdownRendererContext = React.createContext<
 // Isolate streamed source text from the renderer context; only offset-based renderers need it.
 const ChatMarkdownTextContext = React.createContext("");
 
+// A quote card is a block. These say nothing else shares its paragraph or list item on that side.
+const LIST_MARKER = String.raw`(?:[-*+]|\d+[.)])[ \t]+`;
+const CITATION_LEADS_BLOCK = new RegExp(
+  String.raw`(?:(?:^|\n[ \t]*\n)[ \t>]*(?:${LIST_MARKER})?|\n[ \t>]*${LIST_MARKER})$`,
+);
+const CITATION_ENDS_BLOCK = new RegExp(
+  String.raw`^[ \t]*(?:$|\n[ \t]*(?:\n|$)|\n[ \t>]*${LIST_MARKER})`,
+);
+
 function markdownHeadingRenderer(level: 1 | 2 | 3 | 4 | 5 | 6) {
   const Tag = `h${level}` as const;
   return function MarkdownHeading({
@@ -1011,19 +1072,21 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
   },
   blockquote: function MarkdownBlockquote({ node: _node, children, ...props }) {
-    const alert =
-      GITHUB_ALERT_PRESENTATIONS[String((props as Record<string, unknown>)["data-alert"] ?? "")];
+    const alertKind = String((props as Record<string, unknown>)["data-alert"] ?? "");
+    const alert = GITHUB_ALERT_PRESENTATIONS[alertKind];
     if (!alert) {
       return <blockquote {...props}>{children}</blockquote>;
     }
     return (
       <div
         role="note"
+        data-markdown-alert={alertKind}
         dir={props.dir}
         className={cn("my-1 border-s-2 ps-3", alert.borderClassName)}
       >
         <p
           data-thread-find-ignore="true"
+          data-markdown-alert-label=""
           className={cn("flex items-center gap-1.5 font-medium", alert.titleClassName)}
         >
           <alert.Icon aria-hidden className="size-3.5 shrink-0" />
@@ -1108,7 +1171,13 @@ const CHAT_MARKDOWN_COMPONENTS = {
     } = use(ChatMarkdownRendererContext);
     const text = use(ChatMarkdownTextContext);
     const citation = href ? parseAssistantCitationHref(href) : null;
-    if (citation) return <AssistantCitationChip citation={citation} />;
+    const before = node?.position?.start.offset;
+    const after = node?.position?.end.offset;
+    const leading = before !== undefined && CITATION_LEADS_BLOCK.test(text.slice(0, before));
+    const trailing = after !== undefined && CITATION_ENDS_BLOCK.test(text.slice(after));
+    if (citation) {
+      return <AssistantCitationEmbed citation={citation} leading={leading} trailing={trailing} />;
+    }
     const threadLink = href ? parseThreadLinkHref(href) : null;
     if (threadLink) {
       const written = hastPlainTextDeep(node);
@@ -1124,7 +1193,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
     if (contextReference) {
       const label = hastPlainTextDeep(node) || contextReference.contextId;
       return renderContextReference ? (
-        renderContextReference({ ...contextReference, label })
+        renderContextReference({ ...contextReference, label, leading, trailing })
       ) : (
         <span>{label}</span>
       );
@@ -1574,6 +1643,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
             _tag: "media-file",
             threadId: threadRef.threadId,
             path: imageSource.path,
+            ...(imageSource.relative ? { hostOnly: true as const } : {}),
           }}
           alt={altText}
           kind={kind}

@@ -211,10 +211,41 @@ const makeStrictNdJsonRpcParser = () => {
     },
     encode: (response: Parameters<typeof codec.encode>[0]) => {
       const encoded = codec.encode(response);
-      return encoded === undefined ? undefined : `${encoded}\n`;
+      if (encoded === undefined) return undefined;
+      const json = typeof encoded === "string" ? encoded : new TextDecoder().decode(encoded);
+      if (!json.includes('"_tag":"Cause"')) return `${json}\n`;
+      return `${JSON.stringify(normalizeOutgoingFrame(JSON.parse(json)))}\n`;
     },
   };
 };
+const isCauseResponse = Schema.is(
+  Schema.Struct({
+    error: Schema.TaggedStruct("Cause", { data: Schema.Array(Schema.Unknown) }),
+  }),
+);
+const isProtocolFailure = Schema.is(Schema.TaggedStruct("Fail", { error: AcpSchema.Error }));
+const isInterruptReason = Schema.is(Schema.TaggedStruct("Interrupt", {}));
+
+// Normalize only Effect's error envelope after the codec has completed batch tracking.
+function normalizeOutgoingFrame(frame: unknown): unknown {
+  if (Array.isArray(frame)) return frame.map(normalizeOutgoingFrame);
+  if (!isCauseResponse(frame)) return frame;
+  const reasons = frame.error.data.filter((reason) => !isInterruptReason(reason));
+  const [failure] = reasons;
+  const error =
+    reasons.length === 1 && isProtocolFailure(failure)
+      ? failure.error
+      : AcpError.AcpRequestError.internalError().toProtocolError();
+  return {
+    ...frame,
+    error: {
+      code: error.code,
+      message: error.message,
+      ...(error.data === undefined ? {} : { data: error.data }),
+    },
+  };
+}
+
 // Unread raw notifications are best-effort. The newest is always kept; older
 // ones are dropped once the backlog passes either limit. The length limit counts
 // JSON line characters (UTF-16 code units), not bytes or heap size.
@@ -282,9 +313,8 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
   const serverQueue = yield* Queue.unbounded<RpcMessage.FromClientEncoded>();
   const clientQueue = yield* Queue.unbounded<RpcMessage.FromServerEncoded>();
   const rawNotifications = yield* Queue.unbounded<AcpBufferedRawNotification, Cause.Done<void>>();
-  // JSON length of the notifications offered since the queue was last empty.
-  // `incoming` takes the whole backlog on every pull, so an empty queue holds
-  // nothing, and a read can only make this an overestimate.
+  // JSON length of the notifications still in the queue. `incoming` takes one
+  // at a time, so a slow reader holds at most one outside this budget.
   let rawNotificationsJsonLength = 0;
   // Raw readers finish with the connection: termination ends the queue, and so
   // does closing the scope, which interrupts the reader before it terminates.
@@ -463,7 +493,6 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
   // so readers never see more than the limits allow.
   const bufferRawNotification = (notification: AcpIncomingNotification, lineLength: number) =>
     Effect.sync(() => {
-      if (Queue.sizeUnsafe(rawNotifications) === 0) rawNotificationsJsonLength = 0;
       if (!Queue.offerUnsafe(rawNotifications, { notification, lineLength })) return;
       rawNotificationsJsonLength += lineLength;
       while (
@@ -1070,8 +1099,15 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     clientProtocol,
     serverProtocol,
     get incoming() {
-      return Stream.fromQueue(rawNotifications).pipe(
-        Stream.map(({ notification }) => notification),
+      return Stream.fromPull(
+        Effect.succeed(
+          Queue.take(rawNotifications).pipe(
+            Effect.map(({ notification, lineLength }) => {
+              rawNotificationsJsonLength -= lineLength;
+              return [notification] as const;
+            }),
+          ),
+        ),
       );
     },
     request: sendRequest,
