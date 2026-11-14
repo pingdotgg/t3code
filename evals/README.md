@@ -46,7 +46,7 @@ Every eval follows the same shape, so a new one is easy to write and an old one 
 
 ## Cost
 
-Run only the cases your change touches until they pass. Then do one full run per model before the PR merges. Each eval's summary records what the run cost.
+Before review, run only the touched cases until they pass, then run them plus controls once on a same-model baseline. After maintainer approval, run the full suite once per model on your change before merge. Run a full baseline only when every case changes. Each eval's summary records what the run cost.
 
 ## Add an eval
 
