@@ -131,6 +131,11 @@ export function isAutoModelSelection(selection: ModelSelection | null | undefine
 }
 
 /** A routed thread's model as the Auto level it came from, for pickers; others unchanged. */
+/** The Auto level a routed thread runs at, or undefined for a thread not on Auto. */
+export function routedAutoLevel(selection: ModelSelection | null | undefined) {
+  return stampedLevel(selection);
+}
+
 export function autoLevelSelection<T extends ModelSelection | null | undefined>(
   selection: T,
 ): T | ModelSelection {
@@ -252,9 +257,16 @@ export function resolveAutoModelSelection(input: {
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly now: number;
   readonly current?: ModelSelection | null;
+  /**
+   * Instances (and models) that just failed with a usage limit or no capacity, which the usage
+   * report may not show yet. Auto skips them, the thread's current model included.
+   */
+  readonly blocked?: (instanceId: string, model: string) => boolean;
 }): AutoResolution | null {
   const level = autoLevelOf(input.selection);
   const candidates = AUTO_CANDIDATES[level];
+  const open = (provider: ServerProvider, model: string) =>
+    usable(provider, model, input.now) && !input.blocked?.(provider.instanceId, model);
 
   const current = input.current;
   if (current && !isAutoModelSlug(current.model)) {
@@ -265,7 +277,7 @@ export function resolveAutoModelSelection(input: {
     if (
       provider &&
       candidate &&
-      usable(provider, candidate.model, input.now) &&
+      open(provider, candidate.model) &&
       peakUsedPercent(provider) < STICKY_MAX_USED_PERCENT
     ) {
       return { selection: toSelection(provider, candidate, level), level, sticky: true };
@@ -277,7 +289,7 @@ export function resolveAutoModelSelection(input: {
       .filter(
         (provider) =>
           provider.driver === (candidate.driver as ProviderDriverKind) &&
-          usable(provider, candidate.model, input.now),
+          open(provider, candidate.model),
       )
       // A copy: `filter` already returned a new array, and Hermes has no `toSorted`.
       .sort(compareInstances);

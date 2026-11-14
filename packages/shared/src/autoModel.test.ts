@@ -304,6 +304,24 @@ describe("resolveAutoModelSelection", () => {
     expect(autoLevelSelection(plain)).toBe(plain);
   });
 
+  it("skips blocked instances, the thread's current one included", () => {
+    const current = { instanceId: ProviderInstanceId.make("claudeAuto"), model: "claude-opus-5-5" };
+    const calm = [claude("claudeAuto", 20), claude("claudeAutoB", 5)];
+    const blocked = (instanceId: string) => instanceId === "claudeAuto";
+    expect(
+      resolveAutoModelSelection({ selection: auto(), providers: calm, now, current, blocked }),
+    ).toMatchObject({ sticky: false, selection: { instanceId: "claudeAutoB" } });
+    expect(
+      resolveAutoModelSelection({
+        selection: auto(),
+        providers: calm,
+        now,
+        current,
+        blocked: () => true,
+      }),
+    ).toBeNull();
+  });
+
   it("returns null when nothing is usable", () => {
     const providers = [claude("claudeAuto", 100), claude("claudeAutoB", 100)];
     expect(resolveAutoModelSelection({ selection: auto(), providers, now })).toBeNull();
