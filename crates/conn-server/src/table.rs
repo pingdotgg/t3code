@@ -15,7 +15,7 @@ use tokio::sync::mpsc;
 
 use conn_engine::BoxFuture;
 
-use crate::scopes;
+use crate::{limits, scopes};
 
 /// What a handler knows about its call. Grows with auth (track a) without changing handlers.
 #[derive(Clone, Debug, Default)]
@@ -106,7 +106,8 @@ impl MethodTable {
     }
 
     /// Registers a unary method. The payload is decoded into `I`; a payload that does not
-    /// decode ends the call with a defect, as Effect does for a schema failure.
+    /// decode, or breaks a contract limit (`limits.rs`), ends the call with a defect, as
+    /// Effect does for a schema failure.
     pub fn unary<I, O, F, Fut>(&mut self, tag: &'static str, handler: F)
     where
         I: DeserializeOwned + Send + 'static,
@@ -116,15 +117,17 @@ impl MethodTable {
     {
         self.insert(tag, false);
         let handler = Arc::new(handler);
-        let call =
-            move |ctx: CallContext, payload: Value| -> BoxFuture<'static, Result<Value, Failure>> {
-                let handler = handler.clone();
-                Box::pin(async move {
-                    scopes::check(tag, &ctx, &payload)?;
-                    let input = decode::<I>(tag, payload)?;
-                    handler(ctx, input).await.map(|output| to_json(&output))
-                })
-            };
+        let call = move |ctx: CallContext,
+                         mut payload: Value|
+              -> BoxFuture<'static, Result<Value, Failure>> {
+            let handler = handler.clone();
+            Box::pin(async move {
+                scopes::check(tag, &ctx, &payload)?;
+                limits::check(tag, &mut payload)?;
+                let input = decode::<I>(tag, payload)?;
+                handler(ctx, input).await.map(|output| to_json(&output))
+            })
+        };
         self.handlers.insert(tag, Handler::Unary(Arc::new(call)));
     }
 
@@ -138,11 +141,12 @@ impl MethodTable {
         self.insert(tag, true);
         let handler = Arc::new(handler);
         let call = move |ctx: CallContext,
-                         payload: Value|
+                         mut payload: Value|
               -> BoxFuture<'static, Result<ItemStream, Failure>> {
             let handler = handler.clone();
             Box::pin(async move {
                 scopes::check(tag, &ctx, &payload)?;
+                limits::check(tag, &mut payload)?;
                 handler(ctx, decode::<I>(tag, payload)?).await
             })
         };

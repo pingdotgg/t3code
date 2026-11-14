@@ -84,6 +84,7 @@ monorepo_checks=(
   "replay"
   "decode coverage"
   "settings-diff"
+  "limits-diff"
   "parity"
   "codex instructions --check"
   "codex conformance"
@@ -123,6 +124,7 @@ else
   run "decode coverage" \
     node crates/conn-server/tools/decode-coverage.mjs "$decoded" "$release/conn-server"
   run "settings-diff" node crates/conn-server/tools/settings-diff.mjs "$release/conn-server"
+  run "limits-diff" node crates/conn-server/tools/limits-diff.mjs
   run "parity" \
     node crates/conn-mcp/tools/parity.mjs "$release/examples/replay_server"
   run "codex instructions --check" \

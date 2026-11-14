@@ -33,6 +33,9 @@ axum = { workspace = true, features = ["form"] }
 getrandom.workspace = true
 # Hashes credentials at rest; shares `digest` with tungstenite's sha1.
 sha2.workspace = true
+# The payload limits' patterns (`limits.rs`). Already in the tree through conn-files'
+# grep-regex, at the same version and features.
+regex-automata = { version = "0.4", default-features = false, features = ["std", "syntax", "meta", "nfa-pikevm", "nfa-backtrack", "hybrid", "dfa-onepass", "perf", "unicode"] }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

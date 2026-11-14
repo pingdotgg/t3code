@@ -316,6 +316,85 @@ const upstreamRs = rustfmt(
   ].join("\n"),
 );
 
+// ---- Payload limits ----------------------------------------------------------------------
+//
+// The length, pattern, range and entry-count checks of a few methods' payload schemas, read
+// from the schema AST. The Rust contract types carry no checks, so `limits.rs` applies these
+// before decode, as Effect's decode does. Only the methods in LIMITED_METHODS: add a tag here
+// to cover one more.
+
+const LIMITED_METHODS = ["assets.createUrl", "terminal.attach", "terminal.open"];
+const rpcGroups = [rpc.OfficialWsRpcGroup, rpc.ForkWsRpcGroup];
+const payloadOf = (tag) => {
+  for (const group of rpcGroups) {
+    const found = group.requests.get(tag);
+    if (found) return found.payloadSchema;
+  }
+  throw new Error(`no RPC ${tag} in the contract`);
+};
+const representations = (ast) =>
+  (ast.checks ?? []).map((c) => c.annotations?.representation).filter((r) => r !== undefined);
+function limitNode(ast) {
+  if (ast._tag === "Suspend") return limitNode(ast.thunk());
+  if (ast._tag === "Union") {
+    const members = ast.types.filter((t) => t._tag !== "Undefined" && t._tag !== "Null");
+    const flat = members.flatMap((t) => (t._tag === "Union" ? t.types : [t])).filter((t) => t._tag !== "Undefined" && t._tag !== "Null");
+    const tagOf = (t) => t._tag === "Objects" && t.propertySignatures.find((p) => p.name === "_tag")?.type.literal;
+    if (flat.length > 1 && flat.every((t) => typeof tagOf(t) === "string")) {
+      const variants = {};
+      for (const t of flat) {
+        const node = limitNode(t);
+        if (node) variants[tagOf(t)] = node;
+      }
+      return Object.keys(variants).length ? { variants } : null;
+    }
+    return members.length === 1 ? limitNode(members[0]) : null;
+  }
+  const node = {};
+  for (const r of representations(ast)) {
+    const p = r.payload;
+    if (r.id === "effect/schema/isMaxLength") node.maxLength = p.maxLength;
+    else if (r.id === "effect/schema/isPattern") {
+      // JS `i`, `m`, `s` are inline flags in Rust's regex; `u` changes nothing for these.
+      const flags = p.flags.replace("u", "");
+      if (/[^ims]/.test(flags)) throw new Error(`pattern flags ${p.flags} are not supported`);
+      node.pattern = (flags ? `(?${flags})` : "") + p.source;
+    } else if (r.id === "effect/schema/isMaxProperties") node.maxProperties = p.maxProperties;
+    else if (r.id === "effect/schema/isInt") node.int = true;
+    else if (r.id === "effect/schema/isGreaterThanOrEqualTo") node.minimum = p.minimum;
+    else if (r.id === "effect/schema/isLessThanOrEqualTo") node.maximum = p.maximum;
+  }
+  if (ast._tag === "Objects") {
+    const fields = {};
+    for (const p of ast.propertySignatures) {
+      const child = limitNode(p.type);
+      if (child) fields[p.name] = child;
+    }
+    if (Object.keys(fields).length) node.fields = fields;
+    const [index] = ast.indexSignatures ?? [];
+    if (index) {
+      const key = limitNode(index.parameter);
+      const value = limitNode(index.type);
+      if (key) node.keys = key;
+      if (value) node.values = value;
+    }
+  }
+  return Object.keys(node).length ? node : null;
+}
+const limits = Object.fromEntries(LIMITED_METHODS.map((tag) => [tag, limitNode(payloadOf(tag).ast) ?? {}]));
+const limitsRs = rustfmt(
+  [
+    ...HEADER,
+    "// Source: the payload schemas of packages/contracts/src/rpc.ts, by reflection.",
+    "",
+    "/// The payload limits of each listed method, as JSON: `fields`, `keys`, `values`,",
+    "/// `variants` (by `_tag`), `maxLength`, `pattern`, `maxProperties`, `int`, `minimum`,",
+    "/// `maximum`.",
+    `pub(super) const LIMITS: &str = r#"${JSON.stringify(limits)}"#;`,
+    "",
+  ].join("\n"),
+);
+
 // ---- Write or check ----------------------------------------------------------------------
 
 const outputs = {
@@ -323,6 +402,7 @@ const outputs = {
   "tools/upkeep/http-routes.json": routesJson,
   "crates/conn-contract/src/upstream.rs": upstreamRs,
   "crates/conn-server/src/settings/generated.rs": secretsRs,
+  "crates/conn-server/src/limits/generated.rs": limitsRs,
 };
 
 let stale = false;
