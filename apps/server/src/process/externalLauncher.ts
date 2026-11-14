@@ -528,11 +528,7 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
 
   const target = expandHomePath(input.cwd, yield* HostProcess.HomeDirectory);
   if (input.reveal === true) {
-    const revealTarget = yield* resolveRevealTarget(
-      target,
-      platform,
-      platform === "win32" || command === "explorer.exe",
-    );
+    const revealTarget = yield* resolveRevealTarget(target, platform);
     return yield* resolveFileManagerRevealLaunch(revealTarget, platform, env, command);
   }
 
@@ -567,14 +563,13 @@ const WINDOWS_AMBIGUOUS_SEGMENT = /[\\:]|[. ]$/;
 const resolveRevealTarget = Effect.fn("externalLauncher.resolveRevealTarget")(function* (
   target: string,
   platform: NodeJS.Platform,
-  windowsBound: boolean,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path =
     platform === "win32"
       ? yield* Path.Path.pipe(Effect.provide(NodePath.layerWin32))
       : yield* Path.Path;
-  const revealTarget = windowsBound ? path.normalize(target) : target;
+  const revealTarget = platform === "win32" ? path.normalize(target) : target;
   // Relative paths resolve against the server's cwd here but the file manager's own cwd there.
   if (!path.isAbsolute(revealTarget)) {
     return yield* new ExternalLauncherRevealTargetError({
@@ -673,18 +668,32 @@ const resolveFileManagerRevealLaunch = Effect.fn("resolveFileManagerRevealLaunch
     shouldUseWindowsHostFromWsl(platform, env) &&
     env.WSL_DISTRO_NAME !== undefined
   ) {
-    const explorerTarget = resolveWslFileManagerPath(target, env.WSL_DISTRO_NAME);
     if (yield* isCommandAvailable(WSL_POWERSHELL_COMMAND, { env })) {
       // WSL names may contain quotes that Explorer's /select cannot encode.
       // Open the parent through the shell so replacement managers still apply.
       const path = yield* Path.Path;
-      yield* rejectWindowsAmbiguousName(target, path);
+      // Windows resolves `..` lexically where Linux follows symlinks, so check what Windows opens.
+      const windowsTarget = path.normalize(target);
+      yield* rejectWindowsAmbiguousName(windowsTarget, path);
+      if (
+        windowsTarget !== target &&
+        !(yield* (yield* FileSystem.FileSystem)
+          .exists(windowsTarget)
+          .pipe(Effect.orElseSucceed(() => false)))
+      ) {
+        return yield* new ExternalLauncherRevealTargetError({
+          editor: "file-manager",
+          target,
+          reason: "missing",
+        });
+      }
+      const explorerTarget = resolveWslFileManagerPath(windowsTarget, env.WSL_DISTRO_NAME);
       // .NET path parsing rejects characters that are legal in WSL filenames.
-      const parent = resolveWslFileManagerPath(path.dirname(target), env.WSL_DISTRO_NAME);
+      const parent = resolveWslFileManagerPath(path.dirname(windowsTarget), env.WSL_DISTRO_NAME);
       const source = explorerTarget.includes('"')
         ? `if ${testFolderPowerShellSource(parent)} { Invoke-Item -LiteralPath ${escapePowerShellStringLiteral(parent)} }`
         : buildFileManagerRevealPowerShellSource(explorerTarget, parent);
-      return powerShellFileManagerLaunch(target, source, WSL_POWERSHELL_COMMAND);
+      return powerShellFileManagerLaunch(windowsTarget, source, WSL_POWERSHELL_COMMAND);
     }
     if (hasGraphicalLinuxSession(env) && (yield* isUsableFileManagerCommand("xdg-open", env))) {
       const path = yield* Path.Path;

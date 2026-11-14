@@ -716,6 +716,54 @@ for (const wsl of [false, true]) {
   );
 }
 
+it.effect.skipIf(windowsHost)("keeps symlink semantics for the WSLg xdg-open reveal", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+    for (const name of ["xdg-open", "xdg-mime", "explorer.exe"]) {
+      const filePath = path.join(binDir, name);
+      yield* fileSystem.writeFileString(filePath, "#!/bin/sh\n");
+      yield* fileSystem.chmod(filePath, 0o755);
+    }
+    const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-reveal-" });
+    yield* fileSystem.makeDirectory(path.join(workspace, "real", "sub"), { recursive: true });
+    yield* fileSystem.writeFileString(path.join(workspace, "real", "file.txt"), "");
+    yield* fileSystem.symlink(path.join(workspace, "real", "sub"), path.join(workspace, "link"));
+    const spawned: ChildProcess.StandardCommand[] = [];
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      yield* launcher.launchEditor({
+        editor: "file-manager",
+        cwd: `${workspace}/link/../file.txt`,
+        reveal: true,
+      });
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          platform: "linux",
+          env: {
+            PATH: binDir,
+            WAYLAND_DISPLAY: "wayland-1",
+            WSL_DISTRO_NAME: "Ubuntu-24.04",
+            WSL_INTEROP: "/run/WSL/1_interop",
+          },
+          onSpawn: (command) => spawned.push(command),
+          spawnResult: (command) =>
+            command.command === "xdg-mime" ? { stdout: "org.gnome.Nautilus.desktop\n" } : undefined,
+        }),
+      ),
+    );
+
+    assert.deepEqual(
+      spawned
+        .filter((command) => command.command !== "xdg-mime")
+        .map((command) => [command.command, ...command.args]),
+      [["xdg-open", `${workspace}/link/..`]],
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 for (const cwd of ["/workspace with spaces/", "/workspace with spaces/file.ts:12:4"]) {
   it.effect.skipIf(windowsHost)(
     `opens ${cwd} with the macOS Zed bundle when another zed is on PATH`,
