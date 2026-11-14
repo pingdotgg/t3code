@@ -184,8 +184,10 @@ export function grantIsBroader(grant: RouteGrant, than: RouteGrant): boolean {
 }
 
 /**
- * Moves each route ahead of the routes whose known grant it strictly exceeds.
- * Equal, incomparable, and unknown grants keep the saved order.
+ * Moves each route ahead of every route whose known grant it strictly exceeds,
+ * keeping the saved order otherwise. A route may pass an incomparable one on
+ * the way: keeping every saved pair can leave no stable choice, and the
+ * supervisor would switch routes in a loop.
  */
 export function orderRoutesByGrant(
   routes: ReadonlyArray<ConnectionRoute>,
@@ -194,13 +196,15 @@ export function orderRoutesByGrant(
   const ordered: Array<ConnectionRoute> = [];
   for (const route of routes) {
     const grant = grants.get(connectionRouteId(route.target));
-    let index = ordered.length;
-    while (grant !== undefined && index > 0) {
-      const placedGrant = grants.get(connectionRouteId(ordered[index - 1]!.target));
-      if (placedGrant === undefined || !grantIsBroader(grant, placedGrant)) break;
-      index -= 1;
-    }
-    ordered.splice(index, 0, route);
+    const index =
+      grant === undefined
+        ? -1
+        : ordered.findIndex((placed) => {
+            const placedGrant = grants.get(connectionRouteId(placed.target));
+            return placedGrant !== undefined && grantIsBroader(grant, placedGrant);
+          });
+    if (index === -1) ordered.push(route);
+    else ordered.splice(index, 0, route);
   }
   return ordered;
 }
