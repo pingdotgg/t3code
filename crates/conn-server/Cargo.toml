@@ -23,6 +23,9 @@ conn-mcp.workspace = true
 conn-vcs.workspace = true
 conn-files.workspace = true
 conn-terminal.workspace = true
+conn-features.workspace = true
+# The scheduled tasks' time zone, as conn-features reads it (workspace dependency).
+jiff.workspace = true
 axum = { workspace = true, features = ["form"] }
 # Already in the tree through tungstenite; fills tokens from the OS random source.
 getrandom.workspace = true

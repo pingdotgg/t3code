@@ -13,6 +13,7 @@ mod files;
 mod orchestration;
 mod projects;
 pub mod provider;
+mod scheduled;
 pub mod server;
 pub mod terminal;
 pub mod vcs;
@@ -31,6 +32,8 @@ pub struct Deps {
     pub terminals: Option<conn_terminal::TerminalManager>,
     /// Files, assets and attachments; without it those methods and routes are not served.
     pub files: Option<Arc<conn_files::Files>>,
+    /// Scheduled tasks (`conn_features::scheduled`); without it `scheduledTasks.*` is not served.
+    pub scheduled_tasks: Option<conn_features::scheduled::ScheduledTasks>,
 }
 
 impl std::fmt::Debug for Deps {
@@ -50,4 +53,5 @@ pub fn register_all(table: &mut MethodTable, deps: &Deps) {
     vcs::register(table, deps);
     files::register(table, deps);
     terminal::register(table, deps);
+    scheduled::register(table, deps);
 }

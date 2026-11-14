@@ -224,6 +224,24 @@ const decodeEach = (client) =>
       title: "Repo",
       workspaceRoot: repo,
     });
+    // Scheduled tasks. `runNow` names a missing task: a run would start a real provider.
+    const scheduled = yield* call("scheduledTasks.upsert", {
+      commandId: "effect-client-task",
+      title: "Nightly review",
+      prompt: "Review the open pull requests.",
+      enabled: true,
+      schedule: { type: "fixed_time", timeOfDay: "09:00", weekdays: [1, 2, 3, 4, 5] },
+      projectId: "effect-client-p1",
+      workspaceStrategy: { type: "root" },
+      modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+      runtimeMode: "approval-required",
+      interactionMode: "default",
+    });
+    const taskId = Exit.isSuccess(scheduled) ? scheduled.value.task.id : none;
+    yield* call("scheduledTasks.subscribe", {});
+    yield* call("scheduledTasks.setEnabled", { id: taskId, enabled: false });
+    yield* call("scheduledTasks.runNow", { id: none });
+    yield* call("scheduledTasks.delete", { id: taskId });
     yield* call("projects.writeFile", { cwd: repo, relativePath: "b.txt", contents: "b\n" });
     yield* call("projects.listIgnoredFiles", { cwd: repo });
     yield* call("review.getDiffFileContents", {

@@ -57,6 +57,7 @@ fn fixture_with_host(name: &str, host: Option<Arc<dyn conn_engine::EngineHost>>)
             })]
         }),
         hosted_app_url: crate::DEFAULT_HOSTED_APP_URL.into(),
+        scheduled_tasks: None,
     });
     service.set_listen_address("0.0.0.0:4711".parse().unwrap());
     Fixture { service, dir }
@@ -1497,7 +1498,7 @@ async fn search_puts_titles_first_and_keeps_slots_for_messages() {
 /// Tools that a text we send to an agent names and that this server does not serve. An agent
 /// told to call one finds no such tool. Serve one, and this test makes you strike it here.
 /// `preview_*` in the orchestration text also names all 13 preview tools.
-const NAMED_NOT_SERVED: [&str; 17] = [
+const NAMED_NOT_SERVED: [&str; 16] = [
     "create_threads",
     "device_list",
     "device_open",
@@ -1509,7 +1510,6 @@ const NAMED_NOT_SERVED: [&str; 17] = [
     "preview_open",
     "preview_status",
     "request_secret",
-    "schedule_task",
     "t3_background_wait",
     "t3_environment_link",
     "t3_environment_links",
@@ -1571,4 +1571,303 @@ fn agent_texts_name_only_known_unserved_tools() {
     let mut expected: Vec<&str> = NAMED_NOT_SERVED.to_vec();
     expected.sort_unstable();
     assert_eq!(named, expected);
+}
+
+/// [`fixture`] with scheduled tasks on the same engine, their timer parked.
+async fn fixture_with_tasks(name: &str) -> Fixture {
+    let base = fixture(name);
+    let engine = base.service.config.engine.clone();
+    let tasks = conn_features::scheduled::ScheduledTasks::start(conn_features::scheduled::Config {
+        state_dir: base.dir.clone(),
+        clock: Arc::new(conn_features::clock::SystemClock),
+        zone: jiff::tz::TimeZone::UTC,
+        runner: Arc::new(conn_features::scheduled::EngineRunner::new(engine.clone())),
+        start_timer: false,
+    })
+    .await;
+    let config = &base.service.config;
+    let service = McpService::new(McpConfig {
+        engine,
+        environment_id: config.environment_id.clone(),
+        label: config.label.clone(),
+        server_version: config.server_version.clone(),
+        platform: config.platform.clone(),
+        providers: config.providers.clone(),
+        hosted_app_url: config.hosted_app_url.clone(),
+        scheduled_tasks: Some(tasks),
+    });
+    service.set_listen_address("0.0.0.0:4711".parse().unwrap());
+    let dir = base.dir.clone();
+    std::mem::forget(base);
+    Fixture { service, dir }
+}
+
+/// The access rules of the scheduled task tools (`schedule_task` is `either(startsThreads,
+/// writes)`, `list_scheduled_tasks` `reads`, `delete_scheduled_task` `writes`,
+/// `run_scheduled_task_now` `writesEnvironment`), each refusal before the handler runs.
+#[tokio::test(flavor = "current_thread")]
+async fn scheduled_task_tools_refuse_as_the_typescript_server() {
+    let f = fixture_with_tasks("scheduled-refusals").await;
+    let read_only =
+        "This tool changes the environment, and this MCP client was approved for read-only access.";
+    let mut reader = Client::open(&f.service, client(false)).await;
+    let schedule = json!({"type": "interval", "everyMs": 60_000});
+    for (tool, args) in [
+        (
+            "schedule_task",
+            json!({"projectId": project_id(), "prompt": "p", "schedule": schedule}),
+        ),
+        (
+            "schedule_task",
+            json!({"scheduledTaskId": "scheduled-task:x", "enabled": false}),
+        ),
+        (
+            "delete_scheduled_task",
+            json!({"scheduledTaskId": "scheduled-task:x"}),
+        ),
+        (
+            "run_scheduled_task_now",
+            json!({"taskId": "scheduled-task:x"}),
+        ),
+    ] {
+        assert_eq!(
+            reader.failure(tool, args).await,
+            ("capability_denied".to_owned(), read_only.to_owned()),
+            "{tool}"
+        );
+    }
+    // Reads need nothing.
+    assert_eq!(
+        reader.ok("list_scheduled_tasks", json!({})).await,
+        json!({"tasks": []})
+    );
+
+    let mut swamp = Client::open(&f.service, client(true)).await;
+    assert_eq!(
+        swamp
+            .failure("schedule_task", json!({"projectId": project_id()}))
+            .await,
+        (
+            "invalid_request".to_owned(),
+            "A new scheduled task needs `prompt` and `schedule`.".to_owned()
+        )
+    );
+    assert_eq!(
+        swamp
+            .failure(
+                "schedule_task",
+                json!({"prompt": "p", "schedule": schedule})
+            )
+            .await,
+        (
+            "target_required".to_owned(),
+            "Pass projectId: this MCP client is not running inside a T3 thread.".to_owned()
+        )
+    );
+    assert_eq!(
+        swamp
+            .failure("schedule_task", json!({"projectId": project_id(), "prompt": "p", "schedule": schedule, "bindToCurrentThread": true}))
+            .await,
+        ("invalid_request".to_owned(), "bindToCurrentThread needs an agent running inside a T3 thread.".to_owned())
+    );
+    assert_eq!(
+        swamp
+            .failure(
+                "schedule_task",
+                json!({"projectId": "project:none", "prompt": "p", "schedule": schedule})
+            )
+            .await,
+        (
+            "invalid_request".to_owned(),
+            "Project project:none was not found.".to_owned()
+        )
+    );
+    assert_eq!(
+        swamp
+            .failure(
+                "schedule_task",
+                json!({"projectId": project_id(), "prompt": "p", "schedule": schedule})
+            )
+            .await
+            .0,
+        "invalid_request",
+        "a project without a default model"
+    );
+    assert_eq!(
+        swamp
+            .failure(
+                "delete_scheduled_task",
+                json!({"scheduledTaskId": "scheduled-task:x"})
+            )
+            .await,
+        (
+            "task_not_found".to_owned(),
+            "Scheduled task scheduled-task:x was not found.".to_owned()
+        )
+    );
+    assert_eq!(
+        swamp
+            .failure(
+                "run_scheduled_task_now",
+                json!({"taskId": "scheduled-task:x"})
+            )
+            .await,
+        (
+            "invalid_request".to_owned(),
+            "The scheduled task was not found.".to_owned()
+        )
+    );
+
+    // A thread caller whose run ended cannot write.
+    let idle = launch_as_swamp(&mut swamp, "Idle", "done", "full-access", "default").await;
+    let mut idle_agent = Client::open(&f.service, agent_of(&f, &idle)).await;
+    let mut ended = false;
+    for _ in 0..200 {
+        let projection = f
+            .service
+            .config
+            .engine
+            .get_thread_projection(idle.as_str().into())
+            .await
+            .unwrap();
+        if !projection["runs"].as_array().unwrap().is_empty() && !tools::has_active_run(&projection)
+        {
+            ended = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(ended, "the idle thread's run ended");
+    assert_eq!(
+        idle_agent
+            .failure(
+                "schedule_task",
+                json!({"prompt": "p", "schedule": schedule})
+            )
+            .await
+            .0,
+        "parent_not_active"
+    );
+    // A live caller below full access may schedule, but not run a task now.
+    let narrow =
+        launch_as_swamp(&mut swamp, "Narrow", "hang", "approval-required", "default").await;
+    let mut narrow_agent = Client::open(&f.service, agent_of(&f, &narrow)).await;
+    let created = narrow_agent
+        .ok(
+            "schedule_task",
+            json!({"prompt": "Check progress", "schedule": schedule}),
+        )
+        .await;
+    assert_eq!(
+        created["boundThreadId"],
+        json!(narrow),
+        "bound in its own project"
+    );
+    let id = created["scheduledTaskId"].as_str().unwrap().to_owned();
+    assert_eq!(
+        narrow_agent
+            .failure("run_scheduled_task_now", json!({"taskId": id}))
+            .await,
+        ("capability_denied".to_owned(), FULL_ACCESS.to_owned())
+    );
+    // A task that runs broader than the caller cannot be changed by it.
+    let full = launch_as_swamp(&mut swamp, "Full", "hang", "full-access", "default").await;
+    let mut full_agent = Client::open(&f.service, agent_of(&f, &full)).await;
+    let broad = full_agent
+        .ok(
+            "schedule_task",
+            json!({"prompt": "Broad", "schedule": schedule}),
+        )
+        .await;
+    let broad_id = broad["scheduledTaskId"].as_str().unwrap();
+    for (tool, args) in [
+        (
+            "schedule_task",
+            json!({"scheduledTaskId": broad_id, "enabled": false}),
+        ),
+        (
+            "delete_scheduled_task",
+            json!({"scheduledTaskId": broad_id}),
+        ),
+    ] {
+        assert_eq!(
+            narrow_agent.failure(tool, args).await.0,
+            "runtime_mode_escalation_denied",
+            "{tool}"
+        );
+    }
+}
+
+const FULL_ACCESS: &str = "Changing projects or environment settings needs a live full-access/default calling thread or a full-access client.";
+
+/// The normal path: an agent schedules work in its thread, edits it, a client runs it now
+/// (queued behind the busy thread), and deletes it.
+#[tokio::test(flavor = "current_thread")]
+async fn an_agent_schedules_edits_and_a_client_runs_and_deletes_a_task() {
+    let f = fixture_with_tasks("scheduled-flow").await;
+    let mut swamp = Client::open(&f.service, client(true)).await;
+    let busy = launch_as_swamp(&mut swamp, "Busy", "hang", "full-access", "default").await;
+    let mut agent = Client::open(&f.service, agent_of(&f, &busy)).await;
+    let created = agent
+        .ok(
+            "schedule_task",
+            json!({"prompt": "Check progress\nand report", "schedule": {"type": "fixed_time", "timeOfDay": "09:00"},
+                   "clientRequestId": "k1"}),
+        )
+        .await;
+    assert_eq!(
+        created["title"], "Check progress",
+        "title from the first line"
+    );
+    assert_eq!(created["freshSession"], false);
+    assert_eq!(created["lastRunStatus"], "never");
+    assert!(created["nextRunAt"].is_string(), "{created}");
+    let id = created["scheduledTaskId"].as_str().unwrap().to_owned();
+    assert!(id.starts_with("scheduled-task:command:mcp:"), "{id}");
+    // The same clientRequestId replays onto the same task.
+    let again = agent
+        .ok("schedule_task", json!({"prompt": "Check progress", "schedule": {"type": "fixed_time", "timeOfDay": "09:00"}, "clientRequestId": "k1"}))
+        .await;
+    assert_eq!(again["scheduledTaskId"], json!(id));
+    // A task that starts new threads gets a worktree from the default branch.
+    let unbound = agent
+        .ok("schedule_task", json!({"prompt": "Nightly", "schedule": {"type": "interval", "everyMs": 3_600_000}, "bindToCurrentThread": false}))
+        .await;
+    assert_eq!(unbound["boundThreadId"], Value::Null);
+    let edited = agent
+        .ok(
+            "schedule_task",
+            json!({"scheduledTaskId": id, "title": "Renamed", "enabled": false}),
+        )
+        .await;
+    assert_eq!(
+        (
+            edited["title"].clone(),
+            edited["enabled"].clone(),
+            edited["nextRunAt"].clone()
+        ),
+        (json!("Renamed"), json!(false), Value::Null)
+    );
+    let listed = agent.ok("list_scheduled_tasks", json!({})).await;
+    assert_eq!(listed["tasks"].as_array().unwrap().len(), 2);
+    let ran = swamp
+        .ok("run_scheduled_task_now", json!({"taskId": id}))
+        .await;
+    assert_eq!(ran["threadId"], json!(busy));
+    assert_eq!(
+        (ran["lastRunStatus"].clone(), ran["runCount"].clone()),
+        (json!("succeeded"), json!(1))
+    );
+    assert!(ran["link"].is_string(), "{ran}");
+    let deleted = swamp
+        .ok("delete_scheduled_task", json!({"scheduledTaskId": id}))
+        .await;
+    assert_eq!(deleted, json!({"scheduledTaskId": id, "deleted": true}));
+    assert_eq!(
+        agent.ok("list_scheduled_tasks", json!({})).await["tasks"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
 }

@@ -20,3 +20,7 @@ send_to_user
 t3_thread_organize
 t3_queue
 t3_thread_configure
+schedule_task
+list_scheduled_tasks
+delete_scheduled_task
+run_scheduled_task_now

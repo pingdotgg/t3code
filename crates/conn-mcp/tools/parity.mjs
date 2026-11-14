@@ -367,6 +367,24 @@ const steps = [
   ["t3_thread_configure", (c) => ({ threadId: c.idleThreadId })],
   ["t3_thread_configure", () => ({ threadId: "thread:none" })],
   ["t3_thread_configure", () => ({})],
+  // Scheduled tasks, as an outside client: reads, then each refusal before a task is saved.
+  ["list_scheduled_tasks", () => ({})],
+  ["list_scheduled_tasks", (c) => ({ projectId: c.projectId })],
+  ...[
+    (c) => ({ projectId: c.projectId, prompt: "Check progress", schedule: { type: "interval", everyMs: 3_600_000 } }),
+    (c) => ({ projectId: c.projectId }),
+    () => ({ prompt: "p", schedule: { type: "interval", everyMs: 3_600_000 } }),
+    (c) => ({ projectId: c.projectId, prompt: "p", schedule: { type: "interval", everyMs: 3_600_000 }, bindToCurrentThread: true }),
+    () => ({ projectId: "project:none", prompt: "p", schedule: { type: "interval", everyMs: 3_600_000 } }),
+    () => ({ scheduledTaskId: "scheduled-task:none", enabled: false }),
+    (c) => ({ projectId: c.projectId, prompt: "p", schedule: { type: "interval", everyMs: 5 } }),
+    (c) => ({ projectId: c.projectId, prompt: "p", schedule: { type: "fixed_time", timeOfDay: "25:00" } }),
+    (c) => ({ projectId: c.projectId, prompt: "p", schedule: "daily" }),
+  ].map((input) => ["schedule_task", input]),
+  ["delete_scheduled_task", () => ({ scheduledTaskId: "scheduled-task:none" })],
+  ["delete_scheduled_task", () => ({})],
+  ["run_scheduled_task_now", () => ({ taskId: "scheduled-task:none" })],
+  ["run_scheduled_task_now", () => ({})],
   [
     "t3_thread_launch",
     (c) => ({

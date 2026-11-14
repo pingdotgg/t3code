@@ -14,6 +14,7 @@ use crate::{Caller, McpConfig, McpService};
 mod manage;
 mod message;
 mod projects;
+mod scheduled;
 mod tasks;
 mod threads;
 
@@ -40,7 +41,11 @@ pub(crate) fn fail(code: &'static str, message: impl Into<String>) -> ToolError 
 
 /// Every name in `tools.implemented` has an arm here; a test checks both ways.
 #[cfg(test)]
-pub(crate) const HANDLED: [&str; 20] = [
+pub(crate) const HANDLED: [&str; 24] = [
+    "schedule_task",
+    "list_scheduled_tasks",
+    "delete_scheduled_task",
+    "run_scheduled_task_now",
     "t3_queue",
     "t3_thread_configure",
     "t3_thread_organize",
@@ -100,6 +105,10 @@ pub(crate) async fn call(
         "delegate_task" => tasks::delegate(&cx, &args).await,
         "task_status" => tasks::status(&cx, &args).await,
         "task_cancel" => tasks::cancel(&cx, &args).await,
+        "schedule_task" => scheduled::schedule(&cx, &args).await,
+        "list_scheduled_tasks" => scheduled::list(&cx, &args).await,
+        "delete_scheduled_task" => scheduled::delete(&cx, &args).await,
+        "run_scheduled_task_now" => scheduled::run_now(&cx, &args).await,
         other => Err(fail(
             "capability_denied",
             format!("conn-server does not serve `{other}` yet."),

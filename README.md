@@ -143,6 +143,7 @@ See [`fixtures/README.md`](fixtures/README.md) for every scenario and which need
 | `conn-terminal`         | Shells on PTYs: sessions, scrollback, viewers (`terminal.*`)          |
 | `conn-server`           | Binary: HTTP, `/ws` session, pairing, method table, handlers          |
 | `conn-support`          | Helpers several crates share: time, hex, base64, HMAC, atomic writes, v4 ids |
+| `conn-features`         | Scheduled tasks and the Conn-only areas beside the engine; see its README |
 
 Dependencies point one way: `conn-server` → `conn-engine` → `conn-provider` → `conn-contract`;
 `conn-provider-claude` → `conn-provider`; `conn-server` → `conn-wire`. `conn-wire` and
@@ -383,7 +384,7 @@ to the socket.
 
 ## Status
 
-**Coverage:** 81 of 236 methods (20 of 33 streams), from the method table at startup. Every
+**Coverage:** 85 of 236 methods (20 of 33 streams), from the method table at startup. Every
 registered method checks the scope the T3 server requires (`src/scopes.rs`, its table
 generated). Every registered method but two has a run that decodes its answer with the real
 client (`tools/decode-coverage.mjs`; the rest are in `decode-coverage.pending`). The engine's

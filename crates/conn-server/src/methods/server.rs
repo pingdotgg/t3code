@@ -55,10 +55,6 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
     table.stream("panels.requests", |_, _: Value| async {
         Ok(open_stream(Vec::new()))
     });
-    // The thread panel's Automations card; without it the card shows an error.
-    table.stream("scheduledTasks.subscribe", |_, _: Value| async {
-        Ok(open_stream(vec![json!({ "tasks": [] })]))
-    });
 
     // File reads, and on macOS two subprocesses: off the event loop.
     table.unary("server.getHostResources", |_, _: Value| async move {
