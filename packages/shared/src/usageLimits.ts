@@ -676,17 +676,31 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
 
 /**
  * Pool refills with nearly identical clocks land together in the displayed minute.
- * The first positive reset alone would understate how much quota becomes usable.
+ * Find the earliest group whose combined unrounded shares restore a visible percent.
  */
+export function nextPoolRefill(
+  pool: LimitPoolWindow,
+): { readonly member: LimitPoolMember; readonly restoresPercent: number } | null {
+  // Resets are sorted by timestamp; do not include earlier, negligible refills.
+  for (let index = 0; index < pool.resets.length; index++) {
+    const first = pool.resets[index]!;
+    const oneMinuteLater = first.at + 60_000;
+    let refill = 0;
+    for (
+      let next = index;
+      next < pool.resets.length && pool.resets[next]!.at < oneMinuteLater;
+      next++
+    ) {
+      refill += pool.resets[next]!.poolSharePercent;
+    }
+    const restoresPercent = Math.round(refill);
+    if (restoresPercent > 0) return { member: first.member, restoresPercent };
+  }
+  return null;
+}
+
 export function nextPoolRefillPercent(pool: LimitPoolWindow): number | null {
-  const first = pool.resets.find((reset) => reset.restoresPercent > 0);
-  if (!first) return null;
-  const oneMinuteLater = first.at + 60_000;
-  const refill = pool.resets.reduce(
-    (total, reset) => (reset.at < oneMinuteLater ? total + reset.poolSharePercent : total),
-    0,
-  );
-  return Math.round(refill);
+  return nextPoolRefill(pool)?.restoresPercent ?? null;
 }
 
 export function limitsNotice(limits: ServerProviderUsageLimits): string | null {

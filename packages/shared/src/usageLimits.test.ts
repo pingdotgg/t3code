@@ -19,6 +19,7 @@ import {
   collectExternalUsageLinks,
   collectLimitNotices,
   collectLimitPools,
+  nextPoolRefill,
   nextPoolRefillPercent,
   elapsedShare,
   exhaustedUsageWindow,
@@ -1268,6 +1269,21 @@ describe("pooled account columns", () => {
     )[0]!.windows[0]!;
     expect(fractional.resets.map(({ restoresPercent }) => restoresPercent)).toEqual([7, 7]);
     expect(nextPoolRefillPercent(fractional)).toBe(13);
+
+    // Individually both accounts round to zero, but their combined 0.8% rounds to 1%.
+    const combinedFractional = collectLimitPools(
+      [
+        account("a", [{ ...window, usedPercent: 0.8, resetsAt: "2026-09-03T13:00:00.000Z" }]),
+        account("b", [{ ...window, usedPercent: 0.8, resetsAt: "2026-09-03T13:00:00.000Z" }]),
+      ],
+      now,
+    )[0]!.windows[0]!;
+    expect(combinedFractional.resets.map(({ restoresPercent }) => restoresPercent)).toEqual([0, 0]);
+    expect(nextPoolRefillPercent(combinedFractional)).toBe(1);
+    expect(nextPoolRefill(combinedFractional)).toMatchObject({
+      restoresPercent: 1,
+      member: { account: { key: "a" } },
+    });
   });
 
   it("counts all accounts refilling within the next minute, not just the first", () => {
@@ -1296,11 +1312,15 @@ describe("pooled account columns", () => {
     const negligibleFirst = collectLimitPools(
       [
         account("tiny", [{ ...window, usedPercent: 0.8, resetsAt: "2026-09-03T13:00:00.000Z" }]),
-        account("spent", [{ ...window, usedPercent: 80, resetsAt: "2026-09-03T14:00:00.000Z" }]),
+        account("spent", [{ ...window, usedPercent: 80.4, resetsAt: "2026-09-03T14:00:00.000Z" }]),
       ],
       now,
     )[0]!.windows[0]!;
     expect(nextPoolRefillPercent(negligibleFirst)).toBe(40);
+    expect(nextPoolRefill(negligibleFirst)).toMatchObject({
+      restoresPercent: 40,
+      member: { account: { key: "spent" } },
+    });
   });
 
   it("keeps the same account columns when their reset times change", () => {
