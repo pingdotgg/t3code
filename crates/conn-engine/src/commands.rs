@@ -1698,6 +1698,7 @@ pub(crate) fn finish_run_as(
     };
     run["status"] = json!(persisted);
     run["completedAt"] = completed_at.clone();
+    let provider_thread_id = run["providerThreadId"].as_str().map(str::to_owned);
     tx.append(draft("run.updated", run))?;
     if let Some(root) = &root
         && let Some(mut node) = tx.entity(thread_id, "nodes", root)?
@@ -1709,6 +1710,21 @@ pub(crate) fn finish_run_as(
         });
         node["completedAt"] = completed_at;
         tx.append(draft("node.updated", node))?;
+    }
+    // `writeFinalRunEvents` ends with the run's provider thread at rest:
+    // `finalProviderThreadStatus` gives `idle` (`error` for a broken thread, which no provider
+    // here reports).
+    if let Some(provider_thread_id) = provider_thread_id
+        && let Some(mut provider_thread) =
+            tx.entity(thread_id, "providerThreads", &provider_thread_id)?
+    {
+        provider_thread["status"] = json!("idle");
+        provider_thread["updatedAt"] = json!(now);
+        tx.append(Draft::new(
+            thread_id,
+            "provider-thread.updated",
+            provider_thread,
+        ))?;
     }
     tx.compact_streaming(thread_id)
 }

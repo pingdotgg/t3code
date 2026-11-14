@@ -1400,6 +1400,9 @@ impl Session for ClaudeSession {
 
     fn steer_turn(&self, input: SteerInput) -> BoxFuture<'_, ProviderResult<()>> {
         Box::pin(async move {
+            // A cold-start turn shows as running before its query exists; a steer waits for
+            // the start, as T3's steer always finds the query its provider turn came with.
+            drop(self.inner.turn_control.lock().await);
             // The steer's own selection when it applies live, else the running turn's (T3's
             // liveSteerSelection).
             let live_selection = match &input.model_selection {

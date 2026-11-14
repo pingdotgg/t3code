@@ -280,3 +280,54 @@ async fn a_cold_start_that_cannot_open_fails_the_early_turn() {
                 && e["providerTurn"]["status"] == "running")
     );
 }
+
+/// The engine steers once the provider turn runs; on a cold start that is before the query
+/// exists. The steer waits for the start and then reaches the query after the prompt.
+#[tokio::test(flavor = "current_thread")]
+async fn a_steer_during_a_cold_start_waits_for_the_query() {
+    if !node_available() {
+        eprintln!("skipped: no node");
+        return;
+    }
+    let scratch = Scratch::new("cold-start-steer");
+    let (helper, log) = fake_host_with_delay(&scratch.0, true, 800);
+    let (session, mut events) = session(&helper);
+    let cwd = scratch.cwd();
+    let thread = new_thread(&session, "full-access", &cwd).await;
+    let (started, steered) = tokio::join!(
+        session.start_turn(turn(1, &thread, "one", "full-access", &cwd)),
+        async {
+            let turn_id = running_turn_id(&mut events).await;
+            session
+                .steer_turn(conn_provider::SteerInput {
+                    thread_id: "thread-live".into(),
+                    run_id: "run-1".into(),
+                    provider_thread: thread.clone(),
+                    provider_turn_id: turn_id.as_str().into(),
+                    message: conn_provider::TurnMessage {
+                        created_by: conn_contract::OrchestrationV2Actor::User,
+                        creation_source: conn_contract::OrchestrationV2CreationSource::Web,
+                        scheduled_task_id: None,
+                        sender_thread_id: None,
+                        message_id: "message-steer".into(),
+                        text: "two".into(),
+                        attachments: vec![],
+                    },
+                    model_selection: None,
+                })
+                .await
+        },
+    );
+    started.unwrap();
+    steered.unwrap();
+    let lines: Vec<String> = std::fs::read_to_string(&log)
+        .unwrap()
+        .lines()
+        .map(str::to_string)
+        .collect();
+    assert_eq!(
+        lines,
+        ["fn resolveSettings", "open resume=-", "input", "input"]
+    );
+    session.close().await;
+}

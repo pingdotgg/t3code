@@ -30,10 +30,8 @@ claude_background_task_interrupt/claudeAgent         provider: no Claude backgro
 claude_background_wake_before_queued_prompt/claudeAgent  provider: Claude background wakes are not built; the wake and queued prompt order differs
 claude_compact_after_resume_wake/claudeAgent         provider: Claude background wakes are not built (the resumed wake's compaction differs)
 claude_compact_after_peer_turn/claudeAgent           provider: Claude background wakes are not built (the peer turn's run never reaches its status)
-claude_idle_resume/claudeAgent                       provider: Claude background wakes after an idle release are not built
 
 # --- Claude provider: event mapping differs from T3's ClaudeAdapterV2 ---
-turn_interrupt_restart/claudeAgent         provider: after a restarted turn completes, Claude's last thread update says active; T3's says idle
 
 # --- Engine: differences found, not fixed yet ---
 thread_rollback_after_restart/codex   engine: T3 calls resumeThread at every turn start (ProviderTurnStartService); after a rollback on a new process Codex gets thread/resume again before turn/start. Ours resumes only on a new session; matching it needs the Codex provider to skip a loaded thread, as T3's adapter does
