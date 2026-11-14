@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { isPublicFaviconHost } from "./hostClassification.ts";
+import { isInternalOnlyHost, isPublicFaviconHost } from "./hostClassification.ts";
 
 describe("isPublicFaviconHost", () => {
   it("treats public hosts as public", () => {
@@ -107,5 +107,37 @@ describe("isPublicFaviconHost", () => {
   it("rejects malformed IPv4 text as a public host", () => {
     expect(isPublicFaviconHost("10.0.0.999")).toBe(true);
     expect(isPublicFaviconHost("10.0.0")).toBe(true);
+  });
+});
+
+describe("isInternalOnlyHost", () => {
+  it("flags loopback, link-local, and unspecified addresses", () => {
+    for (const host of [
+      "localhost",
+      "app.localhost",
+      "127.0.0.1",
+      "0.0.0.0",
+      "169.254.169.254",
+      "::1",
+      "::",
+      "fe80::1",
+      "[fe80::abcd]",
+      "::ffff:169.254.169.254",
+    ]) {
+      expect(isInternalOnlyHost(host), host).toBe(true);
+    }
+  });
+
+  it("leaves private networks and public hosts alone", () => {
+    for (const host of [
+      "10.0.0.5",
+      "192.168.1.10",
+      "172.16.0.1",
+      "100.64.0.1",
+      "t3.example.dev",
+      "8.8.8.8",
+    ]) {
+      expect(isInternalOnlyHost(host), host).toBe(false);
+    }
   });
 });

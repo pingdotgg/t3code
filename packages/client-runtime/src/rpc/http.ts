@@ -83,9 +83,9 @@ export const layerRemoteHttpClient = (
     HttpObservability.layer,
   );
 
+// Keeps the base path: a relay channel serves the environment's API under `/env/<key>/`.
 const remoteApiBaseUrl = (httpBaseUrl: string): string => {
   const url = new URL(httpBaseUrl);
-  url.pathname = "/";
   url.search = "";
   url.hash = "";
   return url.toString();

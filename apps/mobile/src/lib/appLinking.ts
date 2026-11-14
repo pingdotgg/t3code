@@ -13,9 +13,16 @@ export function shouldHandleAppLink(url: string, cloudConfigured: boolean): bool
     !route.includes("expo-development-client") &&
     !route.includes("://expo-sharing") &&
     !/^t3code(-dev|-preview)?:\/*$/.test(url) &&
+    !OIDC_REDIRECT_PATH.test(route) &&
     (cloudConfigured || !CLOUD_ONLY_LINK_PATH.test(route))
   );
 }
+
+/**
+ * Where the identity provider sends a sign-in back. On Android it also arrives as an app link,
+ * but the sign-in's browser session consumes it; navigating would open the NotFound route.
+ */
+const OIDC_REDIRECT_PATH = /^[a-z][\w+.-]*:\/*(?:[^/]*\/--\/)?oidc\/*$/i;
 
 /**
  * Screens that only exist with T3 Connect configured. A build without it has

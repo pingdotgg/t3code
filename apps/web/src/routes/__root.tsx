@@ -160,7 +160,8 @@ function RootRouteBranch() {
     pathname === "/pair" ||
     pathname === "/connect" ||
     pathname === "/connect-agent" ||
-    pathname === "/approve-agent"
+    pathname === "/approve-agent" ||
+    pathname === "/oidc/callback"
   ) {
     return <Outlet />;
   }

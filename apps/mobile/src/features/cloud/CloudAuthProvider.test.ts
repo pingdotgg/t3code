@@ -45,6 +45,7 @@ vi.mock("../../state/use-composer-drafts", () => ({
 vi.mock("./publicConfig", () => ({
   resolveCloudPublicConfig: vi.fn(() => ({
     clerk: { publishableKey: null },
+    oidc: { issuer: null, clientId: null },
     relay: { url: null },
   })),
   resolveRelayClerkTokenOptions: vi.fn(),

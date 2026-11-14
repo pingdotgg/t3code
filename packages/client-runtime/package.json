@@ -7,6 +7,10 @@
       "types": "./src/assemblyHighlighting.ts",
       "default": "./src/assemblyHighlighting.ts"
     },
+    "./relay/self-hosted": {
+      "types": "./src/relay/selfHostedRelay.ts",
+      "default": "./src/relay/selfHostedRelay.ts"
+    },
     "./zip/bounded-zip": {
       "types": "./src/zip/boundedZip.ts",
       "default": "./src/zip/boundedZip.ts"

@@ -160,6 +160,7 @@ function layerConnectorTest(
   options?: {
     readonly links?: EnvironmentLinks.EnvironmentLinks["Service"];
     readonly allocations?: ManagedEndpointAllocations.ManagedEndpointAllocations["Service"];
+    readonly manualEndpoints?: RelayConfiguration.ManualEndpointsMode;
   },
 ) {
   return EnvironmentConnector.layer.pipe(
@@ -172,7 +173,13 @@ function layerConnectorTest(
         options?.allocations ?? makeAllocations(),
       ),
     ),
-    Layer.provide(RelayConfiguration.layer(settings)),
+    Layer.provide(
+      RelayConfiguration.layer(
+        options?.manualEndpoints === undefined
+          ? settings
+          : { ...settings, manualEndpoints: options.manualEndpoints },
+      ),
+    ),
     Layer.provide(Layer.succeed(HttpClient.HttpClient, HttpClient.make(execute))),
   );
 }
@@ -275,7 +282,7 @@ describe("EnvironmentConnector", () => {
     }).pipe(Effect.provide(layerConnectorTest(execute)));
   });
 
-  it.effect("rejects manual endpoints before sending a health request", () => {
+  it.effect("rejects manual endpoints by default before sending a health request", () => {
     let requestCount = 0;
     const execute = () =>
       Effect.sync(() => {
@@ -310,6 +317,46 @@ describe("EnvironmentConnector", () => {
             endpoint: {
               httpBaseUrl: "https://127.0.0.1/",
               wsBaseUrl: "wss://127.0.0.1/ws",
+              providerKind: "manual",
+            },
+          }),
+        }),
+      ),
+    );
+  });
+
+  it.effect("checks a self-declared HTTPS endpoint when the relay allows manual endpoints", () => {
+    const seenUrls: Array<string> = [];
+    const execute = (request: HttpClientRequest.HttpClientRequest) =>
+      Effect.sync(() => {
+        seenUrls.push(request.url);
+        return HttpClientResponse.fromWeb(
+          request,
+          Response.json(signHealthResponse(decodeHealthRequestBody(requestBodyText(request)))),
+        );
+      });
+
+    return Effect.gen(function* () {
+      const connector = yield* EnvironmentConnector.EnvironmentConnector;
+      const result = yield* connector.status({
+        userId: "user_123",
+        environmentId: "env-connector-test",
+      });
+
+      expect(seenUrls).toEqual(["https://t3.example.dev/api/t3-connect/health"]);
+      expect(result).toMatchObject({
+        status: "online",
+        endpoint: { providerKind: "manual", httpBaseUrl: "https://t3.example.dev/" },
+      });
+    }).pipe(
+      Effect.provide(
+        layerConnectorTest(execute, {
+          manualEndpoints: "public",
+          allocations: makeAllocations(null),
+          links: makeLinks({
+            endpoint: {
+              httpBaseUrl: "https://t3.example.dev/",
+              wsBaseUrl: "wss://t3.example.dev/ws",
               providerKind: "manual",
             },
           }),
@@ -702,5 +749,84 @@ describe("EnvironmentConnector", () => {
         expect(result.cause.toString()).toContain("EnvironmentMintResponseInvalid");
       }
     }).pipe(Effect.provide(layerConnectorTest(execute)));
+  });
+});
+
+describe("validateManualEndpoint", () => {
+  const endpoint = (httpBaseUrl: string, wsBaseUrl = httpBaseUrl.replace("https:", "wss:")) => ({
+    httpBaseUrl,
+    wsBaseUrl,
+    providerKind: "manual" as const,
+  });
+
+  it.each([
+    ["a plain HTTP address", "public", endpoint("http://t3.example.dev/", "ws://t3.example.dev/")],
+    ["a loopback address", "public", endpoint("https://127.0.0.1/")],
+    ["localhost", "public", endpoint("https://localhost:3773/")],
+    ["a private IPv4 address", "public", endpoint("https://10.0.0.5/")],
+    ["a link-local metadata address", "private", endpoint("https://169.254.169.254/")],
+    ["embedded credentials", "public", endpoint("https://user:pass@t3.example.dev/")],
+    [
+      "different WebSocket and HTTP hosts",
+      "public",
+      endpoint("https://a.example.dev/", "wss://b.example.dev/"),
+    ],
+  ] as const)("rejects %s", (_name, manualEndpoints, value) => {
+    expect(
+      Result.isFailure(
+        EnvironmentConnector.validateManualEndpoint({ endpoint: value, manualEndpoints }),
+      ),
+    ).toBe(true);
+  });
+
+  it("accepts private networks only when the relay opts in", () => {
+    const value = endpoint("https://10.0.0.5:8443/");
+    expect(
+      Result.isFailure(
+        EnvironmentConnector.validateManualEndpoint({ endpoint: value, manualEndpoints: "public" }),
+      ),
+    ).toBe(true);
+    expect(
+      Result.isSuccess(
+        EnvironmentConnector.validateManualEndpoint({
+          endpoint: value,
+          manualEndpoints: "private",
+        }),
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("validateConnectEndpoint with relay channels", () => {
+  const endpoint = (key: string) => ({
+    httpBaseUrl: `https://relay.example.test/env/${key}/`,
+    wsBaseUrl: `wss://relay.example.test/env/${key}/ws`,
+    providerKind: "t3_relay" as const,
+  });
+  const own = endpoint("a".repeat(32));
+  const validate = (linked: ReturnType<typeof endpoint>, channel: typeof own | null) =>
+    EnvironmentConnector.validateConnectEndpoint({
+      link: {
+        environmentId: "env-connector-test" as never,
+        label: "Channel Environment",
+        endpoint: linked,
+        linkedAt: "2026-05-25T00:00:00.000Z",
+        environmentPublicKey: environmentKeyPair.publicKey,
+      },
+      allocation: null,
+      baseDomain: undefined,
+      manualEndpoints: "off",
+      channelEndpoint: channel,
+    });
+
+  it.each([
+    ["another environment's channel", endpoint("b".repeat(32)), own],
+    ["a relay without channels", own, null],
+  ] as const)("rejects %s", (_name, linked, channel) => {
+    expect(Result.isFailure(validate(linked, channel))).toBe(true);
+  });
+
+  it("accepts the environment's own channel", () => {
+    expect(Result.isSuccess(validate(own, own))).toBe(true);
   });
 });

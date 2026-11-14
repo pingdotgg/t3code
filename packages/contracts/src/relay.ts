@@ -180,8 +180,63 @@ export const RelayManagedEndpointRuntimeConfig = Schema.Struct({
   connectorToken: TrimmedNonEmptyString,
   tunnelId: Schema.optional(TrimmedNonEmptyString),
   tunnelName: Schema.optional(TrimmedNonEmptyString),
+  /** `t3_relay` only: the relay WebSocket the environment dials to carry its traffic. */
+  channelUrl: Schema.optional(TrimmedNonEmptyString),
 });
 export type RelayManagedEndpointRuntimeConfig = typeof RelayManagedEndpointRuntimeConfig.Type;
+
+const RelayChannelHeaders = Schema.Record(Schema.String, Schema.String);
+
+/**
+ * Frames on a `t3_relay` channel: the relay forwards client HTTP requests and WebSockets to the
+ * environment over one socket the environment opened. Bodies and binary messages are base64.
+ */
+export const RelayChannelFrame = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("ping") }),
+  Schema.Struct({
+    type: Schema.Literal("http-request"),
+    id: Schema.Int,
+    method: Schema.String,
+    path: Schema.String,
+    headers: RelayChannelHeaders,
+    body: Schema.optional(Schema.String),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("http-response"),
+    id: Schema.Int,
+    status: Schema.Int,
+    headers: RelayChannelHeaders,
+    body: Schema.optional(Schema.String),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("ws-open"),
+    id: Schema.Int,
+    path: Schema.String,
+    headers: RelayChannelHeaders,
+  }),
+  Schema.Struct({ type: Schema.Literal("ws-opened"), id: Schema.Int }),
+  Schema.Struct({
+    type: Schema.Literal("ws-message"),
+    id: Schema.Int,
+    data: Schema.String,
+    binary: Schema.optional(Schema.Boolean),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("ws-close"),
+    id: Schema.Int,
+    code: Schema.optional(Schema.Int),
+    reason: Schema.optional(Schema.String),
+  }),
+]);
+export type RelayChannelFrame = typeof RelayChannelFrame.Type;
+
+/**
+ * A body crosses a channel in one frame. Base64 makes it a third larger, which keeps the largest
+ * one under the 100 MiB a WebSocket server accepts by default.
+ */
+export const RELAY_CHANNEL_MAX_BODY_BYTES = 64 * 1024 * 1024;
+/** How long the relay waits for an environment's HTTP response before answering 504. */
+export const RELAY_CHANNEL_RESPONSE_TIMEOUT_MS = 60_000;
 
 export const RelayManagedEndpointRecoveryRequest = Schema.Struct({
   cloudUserId: TrimmedNonEmptyString,
@@ -473,6 +528,7 @@ export const RelayEnvironmentConnectNotAuthorizedReason = Schema.Literals([
   "managed_endpoint_allocation_not_ready",
   "managed_endpoint_hostname_invalid",
   "managed_endpoint_mismatch",
+  "manual_endpoint_not_allowed",
 ]);
 export type RelayEnvironmentConnectNotAuthorizedReason =
   typeof RelayEnvironmentConnectNotAuthorizedReason.Type;
@@ -821,6 +877,20 @@ export const RelayProtectedResourceMetadata = Schema.Struct({
   dpop_signing_alg_values_supported: Schema.Array(Schema.Literal("ES256")),
 });
 
+/** What a client needs to use a relay given only its URL. */
+export const RelayServiceMetadata = Schema.Struct({
+  oidc: Schema.NullOr(
+    Schema.Struct({
+      issuer: TrimmedNonEmptyString,
+      clientId: TrimmedNonEmptyString,
+    }),
+  ).annotate({ description: "The OpenID Connect provider clients sign in with; null for Clerk." }),
+  managedTunnels: Schema.Boolean.annotate({
+    description: "Whether the relay can provision managed tunnels for linked environments.",
+  }),
+});
+export type RelayServiceMetadata = typeof RelayServiceMetadata.Type;
+
 export const RelayEnvironmentUnlinkParams = Schema.Struct({
   environmentId: EnvironmentId,
 });
@@ -1020,8 +1090,11 @@ const RelayMetadataGroup = HttpApiGroup.make("metadata")
     HttpApiEndpoint.get("protectedResource", "/.well-known/oauth-protected-resource", {
       success: RelayProtectedResourceMetadata,
     }).annotate(OpenApi.Summary, "Read OAuth protected-resource metadata"),
+    HttpApiEndpoint.get("service", "/.well-known/t3-relay", {
+      success: RelayServiceMetadata,
+    }).annotate(OpenApi.Summary, "Read how clients sign in to this relay"),
   )
-  .annotate(OpenApi.Description, "OAuth and DPoP discovery metadata.");
+  .annotate(OpenApi.Description, "OAuth, DPoP and relay discovery metadata.");
 
 export const RelayRegisterDeviceEndpoint = HttpApiEndpoint.post(
   "registerDevice",

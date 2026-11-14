@@ -16,11 +16,13 @@ declare const __T3CODE_BUILD_RELAY_URL__: string | undefined;
 declare const __T3CODE_BUILD_CHANNEL__: "nightly" | "latest" | undefined;
 declare const __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__: string | undefined;
 declare const __T3CODE_BUILD_CLERK_CLI_OAUTH_CLIENT_ID__: string | undefined;
+declare const __T3CODE_BUILD_OIDC_ISSUER__: string | undefined;
+declare const __T3CODE_BUILD_OIDC_CLIENT_ID__: string | undefined;
 declare const __T3CODE_BUILD_RELAY_CLIENT_OTLP_TRACES_URL__: string | undefined;
 declare const __T3CODE_BUILD_RELAY_CLIENT_OTLP_TRACES_DATASET__: string | undefined;
 declare const __T3CODE_BUILD_RELAY_CLIENT_OTLP_TRACES_TOKEN__: string | undefined;
 
-const CLOUD_CLI_OAUTH_LOOPBACK_PORT = 34338;
+export const CLOUD_CLI_OAUTH_LOOPBACK_PORT = 34338;
 const CLOUD_CLI_OAUTH_SCOPES = CONNECT_OAUTH_SCOPES;
 
 function validateRelayUrl(value: string) {
@@ -64,6 +66,14 @@ const buildTimeClerkCliOAuthClientId = readBuildTimeValue(
   typeof __T3CODE_BUILD_CLERK_CLI_OAUTH_CLIENT_ID__ === "undefined"
     ? undefined
     : __T3CODE_BUILD_CLERK_CLI_OAUTH_CLIENT_ID__,
+);
+const buildTimeOidcIssuer = readBuildTimeValue(
+  typeof __T3CODE_BUILD_OIDC_ISSUER__ === "undefined" ? undefined : __T3CODE_BUILD_OIDC_ISSUER__,
+);
+const buildTimeOidcClientId = readBuildTimeValue(
+  typeof __T3CODE_BUILD_OIDC_CLIENT_ID__ === "undefined"
+    ? undefined
+    : __T3CODE_BUILD_OIDC_CLIENT_ID__,
 );
 const buildTimeRelayClientTracing = {
   tracesUrl: readBuildTimeValue(
@@ -165,12 +175,28 @@ function makePublicValueConfig(name: string, fallback: string) {
 
 export interface CloudCliOAuthConfig {
   readonly tokenEndpoint: string;
-  readonly deviceAuthorizationEndpoint: string;
+  /** Null when the identity provider offers no device authorization (headless sign-in). */
+  readonly deviceAuthorizationEndpoint: string | null;
+  /**
+   * Set for an OpenID Connect provider, which the CLI sends users to directly. Clerk routes
+   * through the hosted sign-in page instead, so it has none.
+   */
+  readonly authorizationEndpoint: string | null;
+  /** Which token the relay verifies: Clerk's access token, or an OIDC provider's ID token. */
+  readonly bearerToken: "access_token" | "id_token";
   readonly clientId: string;
   readonly loopbackPort: number;
   readonly redirectUri: string;
-  readonly scopes: typeof CLOUD_CLI_OAUTH_SCOPES;
+  readonly scopes: ReadonlyArray<string>;
 }
+
+/** Present when an OpenID Connect provider is configured; it takes the place of Clerk. */
+export const oidcSettingsConfig = Config.option(
+  Config.all({
+    issuer: makePublicValueConfig("T3CODE_OIDC_ISSUER", buildTimeOidcIssuer),
+    clientId: makePublicValueConfig("T3CODE_OIDC_CLIENT_ID", buildTimeOidcClientId),
+  }),
+);
 
 export function makeCloudCliOAuthConfig({
   clerkPublishableKeyFallback = buildTimeClerkPublishableKey,
@@ -205,6 +231,8 @@ export function makeCloudCliOAuthConfig({
             ({
               tokenEndpoint: `${clerkFrontendApiUrl}/oauth/token`,
               deviceAuthorizationEndpoint: `${clerkFrontendApiUrl}/oauth/device_authorization`,
+              authorizationEndpoint: null,
+              bearerToken: "access_token",
               clientId,
               loopbackPort: CLOUD_CLI_OAUTH_LOOPBACK_PORT,
               redirectUri: connectLoopbackRedirectUri(CLOUD_CLI_OAUTH_LOOPBACK_PORT),
@@ -218,8 +246,16 @@ export function makeCloudCliOAuthConfig({
 
 export const cloudCliOAuthConfig = makeCloudCliOAuthConfig();
 
-export const hasCloudPublicConfig = Boolean(
-  (normalizeSecureRelayUrl(process.env.T3CODE_RELAY_URL ?? "") ?? buildTimeRelayUrl) &&
+const hasClerkPublicConfig = Boolean(
   (process.env.T3CODE_CLERK_PUBLISHABLE_KEY?.trim() || buildTimeClerkPublishableKey) &&
   (process.env.T3CODE_CLERK_CLI_OAUTH_CLIENT_ID?.trim() || buildTimeClerkCliOAuthClientId),
+);
+const hasOidcPublicConfig = Boolean(
+  (process.env.T3CODE_OIDC_ISSUER?.trim() || buildTimeOidcIssuer) &&
+  (process.env.T3CODE_OIDC_CLIENT_ID?.trim() || buildTimeOidcClientId),
+);
+
+export const hasCloudPublicConfig = Boolean(
+  (normalizeSecureRelayUrl(process.env.T3CODE_RELAY_URL ?? "") ?? buildTimeRelayUrl) &&
+  (hasClerkPublicConfig || hasOidcPublicConfig),
 );

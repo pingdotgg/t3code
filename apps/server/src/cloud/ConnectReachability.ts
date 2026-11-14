@@ -22,7 +22,7 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import { CLOUD_ENDPOINT_RUNTIME_CONFIG } from "./config.ts";
+import { CLOUD_ENDPOINT_RUNTIME_CONFIG, decodeRuntimeConfig } from "./config.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 
 // cloudflared finds the edge through the SRV record `_v2-origintunneld._tcp.argotunnel.com`,
@@ -58,6 +58,8 @@ export type EndpointProbe =
 /** Everything one check learned. `null` means that step did not run. */
 export interface ReachabilityFacts {
   readonly managedTunnelConfigured: boolean;
+  /** Set for an environment carried by a relay channel: whether the relay holds the channel. */
+  readonly relayChannelOpen?: boolean;
   readonly connector: ManagedEndpointRuntime.ConnectorFacts | null;
   readonly endpoint: EndpointProbe | null;
   readonly edgeReachable: boolean | null;
@@ -93,6 +95,15 @@ export function classifyReachability(
       "The server has not set up a T3 Connect tunnel.",
       "Run `t3 connect`, then restart T3 Code so it applies the link.",
     );
+  }
+  if (facts.relayChannelOpen !== undefined) {
+    return facts.relayChannelOpen
+      ? { status: "reachable", checkedAt, readyConnections: null, protocol: null }
+      : fail(
+          "connector_not_ready",
+          "The channel to the relay is not connected.",
+          "T3 Code reconnects on its own. If it stays down, check that this machine can reach the relay.",
+        );
   }
   if (connector === null) {
     return fail(
@@ -334,9 +345,28 @@ const make = Effect.gen(function* () {
   );
 
   const gatherFacts = Effect.gen(function* () {
-    const managedTunnelConfigured = Option.isSome(
-      yield* secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG).pipe(Effect.orElseSucceed(Option.none)),
-    );
+    const runtimeConfig = yield* secrets
+      .get(CLOUD_ENDPOINT_RUNTIME_CONFIG)
+      .pipe(Effect.orElseSucceed(Option.none));
+    const managedTunnelConfigured = Option.isSome(runtimeConfig);
+    // A relay channel dials out: there is no tunnel connector to inspect or address to probe.
+    if (
+      Option.exists(runtimeConfig, (bytes) =>
+        Option.exists(
+          decodeRuntimeConfig(new TextDecoder().decode(bytes)),
+          (config) => config.providerKind === "t3_relay",
+        ),
+      )
+    ) {
+      return {
+        managedTunnelConfigured,
+        connector: null,
+        endpoint: null,
+        edgeReachable: null,
+        exitNode: null,
+        relayChannelOpen: (yield* runtime.inspectRelayChannel) === true,
+      } satisfies ReachabilityFacts;
+    }
     const connector = managedTunnelConfigured ? yield* runtime.inspectConnector : null;
     const endpoint =
       connector?.hostname && connector.readyConnections !== 0

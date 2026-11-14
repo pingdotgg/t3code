@@ -475,6 +475,10 @@ const config: ExpoConfig = {
       publishableKey: repoEnv.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY ?? null,
       jwtTemplate: repoEnv.EXPO_PUBLIC_CLERK_JWT_TEMPLATE ?? null,
     },
+    oidc: {
+      issuer: repoEnv.EXPO_PUBLIC_OIDC_ISSUER ?? null,
+      clientId: repoEnv.EXPO_PUBLIC_OIDC_CLIENT_ID ?? null,
+    },
     // Clerk reads these exact names at prebuild. Omit unset values: manifest null becomes truthy {}.
     EXPO_PUBLIC_CLERK_GOOGLE_WEB_CLIENT_ID: repoEnv.EXPO_PUBLIC_CLERK_GOOGLE_WEB_CLIENT_ID,
     EXPO_PUBLIC_CLERK_GOOGLE_IOS_CLIENT_ID: repoEnv.EXPO_PUBLIC_CLERK_GOOGLE_IOS_CLIENT_ID,

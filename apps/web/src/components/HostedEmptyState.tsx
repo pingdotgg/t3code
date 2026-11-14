@@ -1,16 +1,16 @@
-import { useAuth } from "@clerk/react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { CheckIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
 import { APP_DISPLAY_NAME, DESKTOP_DOWNLOAD_URL } from "~/branding";
+import { useCloudAuth } from "~/cloud/cloudAuth";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { isElectron } from "../env";
 import { isLocalEnvironmentDisabled } from "../localEnvironment";
 import { useRelayEnvironmentDiscovery } from "../state/environments";
 import { InstallT3Commands } from "./InstallT3Commands";
-import { retryClerkLoad, useClerkLoadFailed } from "./clerk/clerkLoadFailure";
+import { retryClerkLoad } from "./clerk/clerkLoadFailure";
 import { useT3ConnectAuthPrompt } from "./clerk/useT3ConnectAuthPrompt";
 import { CloudEnvironmentConnectRows } from "./cloud/CloudEnvironmentConnectList";
 import { Button } from "./ui/button";
@@ -65,8 +65,7 @@ export function HostedEmptyState() {
 }
 
 function T3ConnectSteps() {
-  const { isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
-  const loadFailed = useClerkLoadFailed();
+  const { isLoaded, hasSession: isSignedIn, loadFailed } = useCloudAuth();
   const { openAuthPrompt } = useT3ConnectAuthPrompt();
   // Adding the first computer unmounts this screen. Wait for all health checks
   // so every compatible registration is queued before that happens.

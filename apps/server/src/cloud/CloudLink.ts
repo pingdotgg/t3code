@@ -39,6 +39,7 @@ import {
   verifyRelayJwt,
 } from "@t3tools/shared/relayJwt";
 import { isSecureRelayUrl } from "@t3tools/shared/relayUrl";
+import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Signature from "effect/crypto/Signature";
@@ -116,6 +117,7 @@ import {
   linkProofScopes,
   managedEndpointRuntimeConfigsMatch,
   parseManagedEndpointLocalOrigin,
+  parsePublicEndpoint,
   requestAbsoluteUrl,
 } from "./linkChecks.ts";
 import { desktopUpdateRestartPending, pendingUpdateHandoffExists } from "./updateHandoff.ts";
@@ -300,6 +302,14 @@ export const shouldRetryCloudLink = (error: unknown): boolean =>
 
 const rollbackFailed = (cause: unknown) =>
   Effect.logWarning("Could not roll back a T3 Connect preference", { cause });
+
+// Where a publish-only link says this machine can be reached; unset keeps the local placeholder.
+const publicEndpointConfig = Config.option(Config.NonEmptyString("T3CODE_PUBLIC_URL"));
+
+function localOriginUrl(origin: RelayManagedEndpointOrigin): string {
+  const host = origin.localHttpHost;
+  return `http://${host.includes(":") && !host.startsWith("[") ? `[${host}]` : host}:${origin.localHttpPort}`;
+}
 
 const requireRelayUrl = relayUrlConfig.pipe(
   Effect.mapError(
@@ -727,6 +737,17 @@ const make = Effect.gen(function* () {
         ]);
         if (Option.isNone(runtimeBytes)) return false;
         const config = Option.getOrNull(decodeRuntimeConfig(bytesToString(runtimeBytes.value)));
+        if (config?.providerKind === "t3_relay") {
+          // The channel dials out and forwards to whatever port this server listens on now.
+          const status = yield* endpointRuntime.applyConfig(config, localOrigin);
+          if (status.status !== "running") {
+            return yield* new CloudLinkEndpointUnavailableError({
+              reason: "runtime-not-started",
+              endpointRuntimeStatus: status,
+            });
+          }
+          return true;
+        }
         if (config === null || config.providerKind !== "cloudflare_tunnel") return false;
         // Require the relay-confirmed port unless falling back after the relay stayed unreachable.
         if (requireConfirmedOrigin) {
@@ -767,7 +788,8 @@ const make = Effect.gen(function* () {
       // Reject unsupported runtimes before they can stop a healthy tunnel.
       if (
         payload.endpointRuntime !== null &&
-        payload.endpointRuntime.providerKind !== "cloudflare_tunnel"
+        payload.endpointRuntime.providerKind !== "cloudflare_tunnel" &&
+        payload.endpointRuntime.providerKind !== "t3_relay"
       ) {
         return yield* new CloudLinkEndpointUnavailableError({
           reason: "runtime-not-started",
@@ -807,7 +829,10 @@ const make = Effect.gen(function* () {
           endpointRuntimeStatus: { status: "disabled" },
         } satisfies EnvironmentCloudRelayConfigResult;
       }
-      const endpointRuntimeStatus = yield* endpointRuntime.applyConfig(payload.endpointRuntime);
+      const endpointRuntimeStatus = yield* endpointRuntime.applyConfig(
+        payload.endpointRuntime,
+        localOriginUrl(options.confirmedOrigin),
+      );
       if (endpointRuntimeStatus.status !== "running") {
         return yield* new CloudLinkEndpointUnavailableError({
           reason: "runtime-not-started",
@@ -858,6 +883,17 @@ const make = Effect.gen(function* () {
       );
       const mode = yield* readCliDesiredLinkMode.pipe(withSecrets);
       const managedTunnelsEnabled = mode !== "publish_only";
+      const configuredPublicEndpoint = managedTunnelsEnabled
+        ? Option.none()
+        : yield* publicEndpointConfig.pipe(
+            Effect.mapError(() => new CloudLinkOriginInvalidError({ origin: "endpoint" })),
+          );
+      const publicEndpoint = Option.isSome(configuredPublicEndpoint)
+        ? yield* Effect.try({
+            try: () => parsePublicEndpoint(configuredPublicEndpoint.value),
+            catch: () => new CloudLinkOriginInvalidError({ origin: "endpoint" }),
+          })
+        : null;
       const relayUrl = yield* requireRelayUrl;
       const challenge = yield* relayClientRequest({
         url: `${relayUrl}/v1/client/environment-link-challenges`,
@@ -874,8 +910,8 @@ const make = Effect.gen(function* () {
           challenge: challenge.challenge,
           relayIssuer: relayUrl,
           endpoint: {
-            httpBaseUrl: parsedOrigin.httpBaseUrl,
-            wsBaseUrl: parsedOrigin.wsBaseUrl,
+            httpBaseUrl: publicEndpoint?.httpBaseUrl ?? parsedOrigin.httpBaseUrl,
+            wsBaseUrl: publicEndpoint?.wsBaseUrl ?? parsedOrigin.wsBaseUrl,
             providerKind: managedTunnelsEnabled ? "cloudflare_tunnel" : "manual",
           },
           origin: parsedOrigin.origin,
@@ -1170,6 +1206,21 @@ const make = Effect.gen(function* () {
   const applyRelayConfig = Effect.fn("environment.cloud.relayConfig")(
     function* (payload: RelayEnvironmentConfigRequest) {
       const result = yield* applyCloudRelayConfig(payload);
+      if (payload.endpointRuntime?.providerKind === "t3_relay") {
+        const address = httpServer.address;
+        if (typeof address === "string" || !("port" in address)) {
+          return yield* new CloudLinkInternalError({ operation: "resolve-server-origin" });
+        }
+        const started = yield* startManagedTunnelIfOriginConfirmed(
+          `http://${loopbackUrlHostForAddress(address)}:${address.port}`,
+        );
+        return started
+          ? ({
+              ok: true,
+              endpointRuntimeStatus: { status: "running", providerKind: "t3_relay" },
+            } satisfies EnvironmentCloudRelayConfigResult)
+          : result;
+      }
       if (payload.endpointRuntime?.providerKind === "cloudflare_tunnel") {
         const address = httpServer.address;
         if (typeof address === "string" || !("port" in address)) {
@@ -1214,7 +1265,14 @@ const make = Effect.gen(function* () {
     "environment.cloud.releaseManagedTunnelOnShutdown",
   )(function* () {
     const runtimeConfig = yield* secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG);
-    if (Option.isNone(runtimeConfig)) {
+    // A relay channel has no tunnel to release, and the next start needs its config.
+    if (
+      Option.isNone(runtimeConfig) ||
+      Option.exists(
+        decodeRuntimeConfig(bytesToString(runtimeConfig.value)),
+        (config) => config.providerKind === "t3_relay",
+      )
+    ) {
       return false;
     }
     // CLI authorization releases only CLI-desired managed links; web/mobile links recover by credential and expire through the relay reaper.

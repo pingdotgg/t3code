@@ -234,6 +234,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
             restartConnector: () => Effect.succeed(false),
             tunnelConnected: Stream.empty,
             inspectConnector: Effect.succeed(harness.connector ?? null),
+            inspectRelayChannel: Effect.succeed(null),
             readinessChanged: Stream.empty,
             withLinkStateLock: (effect) => effect,
           }),
@@ -374,6 +375,31 @@ describe("releaseManagedTunnelOnShutdown", () => {
       expect(yield* link.reconcileDesiredLinkIfStillDesired("http://127.0.0.1:3773")).toBeNull();
       expect(requests).toEqual([]);
       expect(applyConfigCalls).toEqual([]);
+    }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
+  });
+
+  it.effect("keeps a relay channel's config at shutdown", () => {
+    const { store, values } = makeMemorySecretStore([
+      ...managedLinkSecrets.filter(([name]) => name !== CLOUD_ENDPOINT_RUNTIME_CONFIG),
+      [
+        CLOUD_ENDPOINT_RUNTIME_CONFIG,
+        JSON.stringify({
+          providerKind: "t3_relay",
+          connectorToken: "credential",
+          channelUrl: "wss://relay.example.test/v1/environments/env_123/channel",
+        }),
+      ],
+    ]);
+    const applyConfigCalls: Array<unknown> = [];
+    const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+
+    return Effect.gen(function* () {
+      const link = yield* CloudLink.CloudLink;
+
+      expect(yield* link.releaseManagedTunnelOnShutdown()).toBe(false);
+      expect(requests).toEqual([]);
+      expect(applyConfigCalls).toEqual([]);
+      expect(values.has(CLOUD_ENDPOINT_RUNTIME_CONFIG)).toBe(true);
     }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
   });
 

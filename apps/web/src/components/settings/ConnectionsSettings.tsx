@@ -44,6 +44,7 @@ import { searchableSetting } from "./settingsSearch";
 import { ConnectDeviceApprovalSettings } from "./ConnectDeviceApprovalSettings";
 import { EnvironmentIconMenu } from "./EnvironmentIconPicker";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
+import { T3ConnectServiceSettings } from "./T3ConnectServiceSettings";
 import { LinkedEnvironmentsSettings } from "./LinkedEnvironmentsSettings";
 import { usePeerLinkHosts } from "~/state/peerLinks";
 import { LoadBalancingSettings } from "./LoadBalancingSettings";
@@ -1679,6 +1680,7 @@ function ConnectionsSettingsContent({
           <LocalEnvironmentSetting />
         </SettingsSection>
       ) : null}
+      <T3ConnectServiceSettings />
       <SettingsSection
         {...searchableSetting("remote-environments")}
         title="Environments"

@@ -1,3 +1,4 @@
+import { resolveEnvironmentUrl } from "@t3tools/shared/advertisedEndpoint";
 import { encodeSpeechPcmRequest } from "@t3tools/shared/speech";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
@@ -39,7 +40,10 @@ const request = Effect.fn("clientRuntime.voiceInput.environmentRequest")(functio
   readonly method: "GET" | "POST" | "DELETE";
   readonly timeoutMs?: number;
   readonly canSend?: () => boolean;
-  readonly path: (urls: ReturnType<typeof makeEnvironmentHttpApiUrlBuilder>[G]) => string;
+  readonly path: (
+    urls: ReturnType<typeof makeEnvironmentHttpApiUrlBuilder>[G],
+    httpBaseUrl: string,
+  ) => string;
   readonly run: (input: {
     readonly client: EnvironmentApiClient<G>;
     readonly headers: { readonly authorization?: string; readonly dpop?: string };
@@ -160,19 +164,21 @@ export const transcribeCloudPcm = (
 };
 
 export const getEnvironmentSpeechStreamUrl = (prepared: PreparedConnection) => {
-  let endpoint = prepared.httpBaseUrl;
+  // The ticket request can move to a reauthorized endpoint, and the stream must follow it.
+  let streamBaseUrl = prepared.httpBaseUrl;
   return request({
     group: "auth",
     prepared,
     method: "POST",
-    path: (urls) => {
-      endpoint = urls.webSocketTicketFor({ params: { use: "media" } });
-      return endpoint;
+    path: (urls, httpBaseUrl) => {
+      streamBaseUrl = httpBaseUrl;
+      return urls.webSocketTicketFor({ params: { use: "media" } });
     },
     run: ({ client, headers }) => client.webSocketTicketFor({ headers, params: { use: "media" } }),
   }).pipe(
     Effect.map(({ ticket }) => {
-      const url = new URL(SPEECH_STREAM_PATH, endpoint);
+      // Keeps a base path, such as the `/env/<key>` a relay serves an environment under.
+      const url = resolveEnvironmentUrl(streamBaseUrl, SPEECH_STREAM_PATH);
       url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
       url.searchParams.set("wsTicket", Redacted.value(ticket));
       return url.toString();

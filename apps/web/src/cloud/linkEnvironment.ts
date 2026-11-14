@@ -172,7 +172,10 @@ function ensureLinkedEnvironmentMatches(input: {
       message: "Relay returned credentials for a different environment.",
     });
   }
-  if (input.link.endpoint.providerKind !== input.expectedProviderKind) {
+  const { providerKind } = input.link.endpoint;
+  // A self-hosted relay may carry a publish-only environment over its own channel.
+  const carriedByRelay = input.expectedProviderKind === "manual" && providerKind === "t3_relay";
+  if (providerKind !== input.expectedProviderKind && !carriedByRelay) {
     return new CloudEnvironmentLinkError({
       message: "Relay returned credentials for a different endpoint provider.",
     });

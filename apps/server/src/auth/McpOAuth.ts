@@ -46,7 +46,7 @@ import {
   deriveAuthClientMetadata,
   timingSafeEqualBase64Url,
 } from "./utils.ts";
-import { requestUrl } from "../requestUrl.ts";
+import { publicBaseUrl } from "../requestUrl.ts";
 
 // Request-derived origins support loopback, Tailscale and tunnels.
 // Signed client metadata keeps unauthenticated registration stateless.
@@ -69,11 +69,8 @@ export interface McpOAuthUrls {
 }
 
 export const requestUrls = (request: HttpServerRequest.HttpServerRequest): McpOAuthUrls => {
-  const origin = Option.match(requestUrl(request), {
-    onNone: () => "http://localhost",
-    onSome: (url) => url.origin,
-  });
-  return { issuer: origin, resource: `${origin}/mcp` };
+  const base = Option.getOrElse(publicBaseUrl(request), () => "http://localhost");
+  return { issuer: base, resource: `${base}/mcp` };
 };
 
 export const protectedResourceMetadata = (

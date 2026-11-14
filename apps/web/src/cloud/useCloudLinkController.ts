@@ -1,5 +1,4 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useAuth } from "@clerk/react";
 import { findErrorTraceId } from "@t3tools/client-runtime/errors";
 import { AuthRelayReadScope, AuthRelayWriteScope, type EnvironmentId } from "@t3tools/contracts";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
@@ -17,7 +16,9 @@ import { relayFailureReason } from "./relayFailureReason";
 import { relayEnvironmentDiscovery } from "../state/relay";
 import { readEnvironmentScope } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
+import { useCloudAuth } from "./cloudAuth";
 import { isCloudEnvironmentLinkError } from "./linkEnvironment";
+import { resolveCloudPublicConfig } from "./publicConfig";
 import { refreshManagedTunnelUsage } from "./managedRelayState";
 import {
   linkEnvironment as linkEnvironmentAtom,
@@ -25,7 +26,6 @@ import {
   updateEnvironmentPreferences as updateEnvironmentPreferencesAtom,
 } from "./linkEnvironmentAtoms";
 import { readCachedCloudLinkState, useCloudLinkState } from "./cloudLinkState";
-import { resolveRelayClerkTokenOptions } from "./publicConfig";
 import { isManagedTunnelActive } from "./t3ConnectState";
 
 export interface CloudLinkDesiredState {
@@ -48,7 +48,7 @@ function tunnelLimitFromLinkFailure(cause: unknown): number | null {
 }
 
 export function useCloudLinkController(environmentId: EnvironmentId | null) {
-  const { getToken, isSignedIn } = useAuth();
+  const { getToken, isSignedIn } = useCloudAuth();
   const refreshRelayEnvironments = useAtomCommand(relayEnvironmentDiscovery.refresh, {
     reportFailure: false,
   });
@@ -95,7 +95,13 @@ export function useCloudLinkController(environmentId: EnvironmentId | null) {
 
   const linkData = cloudLinkState.data;
   const linkRevoked = linkData?.linkRevoked ?? false;
-  const managedTunnelActive = linkData ? isManagedTunnelActive(linkData, relayProviderKind) : false;
+  // Without managed tunnels, a link is how other devices find the environment's own address.
+  const { managedTunnels } = resolveCloudPublicConfig();
+  const managedTunnelActive = linkData
+    ? managedTunnels
+      ? isManagedTunnelActive(linkData, relayProviderKind)
+      : linkData.linked && linkData.linkRevoked !== true
+    : false;
   const managedTunnelOutOfSync =
     linkData !== null && !managedTunnelActive && isManagedTunnelActive(linkData, undefined);
   const publishAgentActivity = cloudLinkState.data?.publishAgentActivity ?? false;
@@ -131,9 +137,11 @@ export function useCloudLinkController(environmentId: EnvironmentId | null) {
       return state;
     };
     if (!canManageLink()) return false;
-    const wantsLink = desired.managedTunnel || desired.publish;
+    // Without managed tunnels the link is also the way in, so turning access off unlinks.
+    const accessTurnedOff = !managedTunnels && managedTunnelActive && !desired.managedTunnel;
+    const wantsLink = !accessTurnedOff && (desired.managedTunnel || desired.publish);
     if (wantsLink && readLinkState() === null) return false;
-    const tokenResult = await settlePromise(() => getToken(resolveRelayClerkTokenOptions()));
+    const tokenResult = await settlePromise(() => getToken());
     if (!canManageLink()) return false;
 
     // A failed mutation may have partially applied, so refresh server state on every exit.
@@ -173,16 +181,18 @@ export function useCloudLinkController(environmentId: EnvironmentId | null) {
         reportUpdateFailure(new Error("Sign in to T3 Connect before enabling this."));
         return false;
       }
-      const currentManagedTunnel = isManagedTunnelActive(currentLinkState, relayProviderKind);
+      const currentManagedTunnel =
+        managedTunnels && isManagedTunnelActive(currentLinkState, relayProviderKind);
+      const desiredManagedTunnel = desired.managedTunnel && managedTunnels;
       if (
         !currentLinkState.linked ||
         currentLinkState.linkRevoked === true ||
-        currentManagedTunnel !== desired.managedTunnel
+        currentManagedTunnel !== desiredManagedTunnel
       ) {
         const linkResult = await linkEnvironment({
           target,
           clerkToken,
-          mode: desired.managedTunnel ? "managed" : "publish_only",
+          mode: desiredManagedTunnel ? "managed" : "publish_only",
         });
         // Any link attempt can change the account's tunnel count.
         refreshManagedTunnelUsage();

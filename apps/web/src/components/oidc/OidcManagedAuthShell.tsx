@@ -1,0 +1,93 @@
+import type { OidcController } from "@t3tools/client-runtime/relay";
+import { type ReactNode, useEffect, useState, useSyncExternalStore } from "react";
+
+import { CloudAuthProvider, type CloudAuth } from "../../cloud/cloudAuth";
+import { createManagedRelayAccountService } from "../../cloud/managedAuth";
+import { AppAtomRegistryProvider } from "../../rpc/atomRegistry";
+import {
+  getBrowserOidcController,
+  signInThroughDesktopBrowser,
+} from "../../cloud/oidc/browserOidc";
+import { T3ConnectUserProfilePage } from "../clerk/T3ConnectUserProfilePage";
+import { Dialog, DialogPanel, DialogPopup } from "../ui/dialog";
+import { toastManager } from "../ui/toast";
+
+// The relay verifies the ID token, so that is what the controller hands out as the relay token.
+const accountService = createManagedRelayAccountService<OidcController>(
+  (controller) => controller.getToken,
+);
+
+function reportSignInFailure(cause: unknown) {
+  toastManager.add({
+    type: "error",
+    title: "Could not start sign-in",
+    description: cause instanceof Error ? cause.message : "The identity provider did not respond.",
+  });
+}
+
+function ConfiguredOidcShell({
+  controller,
+  children,
+}: {
+  readonly controller: OidcController;
+  readonly children: ReactNode;
+}) {
+  const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
+  const [accountOpen, setAccountOpen] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches the OIDC controller to the managed relay account service for the provider's lifetime
+  useEffect(() => accountService.attach(controller), [controller]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- another tab signs in, refreshes, or signs out through shared storage
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === null || event.key === controller.storageKey) controller.syncFromStorage();
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [controller]);
+
+  const value: CloudAuth = {
+    provider: "oidc",
+    isLoaded: true,
+    isSignedIn: snapshot.userId !== null,
+    hasSession: snapshot.userId !== null,
+    loadFailed: false,
+    userId: snapshot.userId,
+    accountLabel: snapshot.label,
+    getToken: controller.getToken,
+    signIn: () => {
+      const signedIn =
+        signInThroughDesktopBrowser(controller) ??
+        controller.signIn(`${window.location.pathname}${window.location.search}`);
+      void signedIn.catch(reportSignInFailure);
+    },
+    signOut: controller.signOut,
+    // The relay's account page is the only one; it lists linked environments to deregister.
+    openAccount: () => setAccountOpen(true),
+  };
+
+  return (
+    <CloudAuthProvider value={value}>
+      {children}
+      {/* This shell wraps the app root, so the page needs the app's atom registry itself. */}
+      <AppAtomRegistryProvider>
+        <Dialog open={accountOpen} onOpenChange={setAccountOpen}>
+          <DialogPopup className="sm:max-w-2xl" aria-label="T3 Connect account">
+            <DialogPanel>
+              <T3ConnectUserProfilePage />
+            </DialogPanel>
+          </DialogPopup>
+        </Dialog>
+      </AppAtomRegistryProvider>
+    </CloudAuthProvider>
+  );
+}
+
+/** Lazy-loaded when the build configures an OpenID Connect provider; Clerk is not loaded then. */
+export default function OidcManagedAuthShell({ children }: { readonly children: ReactNode }) {
+  const controller = getBrowserOidcController();
+  return controller === null ? (
+    children
+  ) : (
+    <ConfiguredOidcShell controller={controller}>{children}</ConfiguredOidcShell>
+  );
+}
