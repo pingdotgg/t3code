@@ -368,6 +368,11 @@ fn main() {
         cwd: cwd.clone(),
         attachments: PathBuf::from(attachments),
     };
+    // The server's start-up step (`serve.rs`): PATH, __MISE_DIFF and JAVA_HOME from the login
+    // shell, which the provider gives the CLI (`ClaudeSession::environment`).
+    if std::env::var_os("SHELL").is_some() {
+        conn_support::login_env::hydrate();
+    }
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()

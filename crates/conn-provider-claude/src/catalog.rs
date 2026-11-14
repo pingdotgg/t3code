@@ -92,6 +92,55 @@ pub fn compile(selection: &Value) -> Compiled {
     }
 }
 
+/// The bundled catalog's slugs with their aliases, parsed once (a fixed, small table).
+fn slugs() -> &'static [(String, Vec<String>)] {
+    static SLUGS: std::sync::OnceLock<Vec<(String, Vec<String>)>> = std::sync::OnceLock::new();
+    SLUGS.get_or_init(|| {
+        let catalog: Value = serde_json::from_str(CATALOG).unwrap_or(Value::Null);
+        catalog["models"]
+            .as_array()
+            .map(|models| {
+                models
+                    .iter()
+                    .filter_map(|m| {
+                        let slug = m["slug"].as_str()?.to_string();
+                        let aliases = m["aliases"]
+                            .as_array()
+                            .map(|a| {
+                                a.iter()
+                                    .filter_map(Value::as_str)
+                                    .map(str::to_string)
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        Some((slug, aliases))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    })
+}
+
+/// `resolveClaudeModelSlug`: the catalog slug for a slug or an alias (any case), else the
+/// value unchanged. T3 shows a subagent's model this way (`canonicalClaudeSubagentModel`), so
+/// the CLI's dated id `claude-haiku-4-5-20251001` shows as `claude-haiku-4-5`.
+pub fn resolve_slug(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return value.to_string();
+    }
+    let table = slugs();
+    table
+        .iter()
+        .find(|(slug, _)| slug == trimmed)
+        .or_else(|| {
+            table
+                .iter()
+                .find(|(_, aliases)| aliases.iter().any(|a| a.eq_ignore_ascii_case(trimmed)))
+        })
+        .map_or_else(|| value.to_string(), |(slug, _)| slug.clone())
+}
+
 /// `applyClaudePromptEffortPrefix`: trims the text, and prefixes `Ultrathink:` for the
 /// `ultrathink` effort unless the text is a slash command or already has it.
 pub fn prompt_text(text: &str, prompt_effort: Option<&str>) -> String {
@@ -153,6 +202,18 @@ mod tests {
         ));
         assert_eq!(custom.api_model_id, "my-model");
         assert_eq!(custom.effort.as_deref(), Some("high"));
+    }
+
+    #[test]
+    fn resolve_slug_follows_resolve_claude_model_slug() {
+        assert_eq!(
+            resolve_slug("claude-haiku-4-5-20251001"),
+            "claude-haiku-4-5"
+        );
+        assert_eq!(resolve_slug("HAIKU-4.5"), "claude-haiku-4-5");
+        assert_eq!(resolve_slug("claude-opus-5-5"), "claude-opus-5-5");
+        assert_eq!(resolve_slug("claude-unknown-1"), "claude-unknown-1");
+        assert_eq!(resolve_slug(""), "");
     }
 
     #[test]

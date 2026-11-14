@@ -56,7 +56,7 @@ settings; about 140 MiB for the `claude` program alone).
 | --- | --- |
 | RPC methods | 99 of 236 served; 99 have a run that the real client's decoders accept |
 | Engine commands | 43 of 56 |
-| T3 testkit fixtures through this engine | 35 of 159 variants pass T3's own assertions (Claude 18 of 34, Codex 17 of 25; the other 100 are providers this server does not offer) |
+| T3 testkit fixtures through this engine | 42 of 159 variants pass T3's own assertions (Claude 24 of 34, Codex 17 of 25, Grok 1 of 15; the other 85 are providers this server does not offer) |
 | HTTP routes | 13 of 57 |
 | `/mcp` tools | 28 of 87 |
 | Providers | Claude, Codex and Grok, of the 10 the T3 server has without Pi |
@@ -64,8 +64,9 @@ settings; about 140 MiB for the `claude` program alone).
 Proven:
 
 - **Claude** runs through Anthropic's official Claude Agent SDK in the SDK host
-  (`helpers/sdk-host`). In 13 scenarios the `claude` CLI gets the same argv, environment and
-  stdin as from the T3 server. 18 of the T3 server's 39 Claude transcripts pass (all that the
+  (`helpers/sdk-host`). In 14 scenarios (and one more with `JAVA_HOME` set) the `claude` CLI
+  gets the same argv, environment (with the login shell's `PATH`, `__MISE_DIFF` and
+  `JAVA_HOME`) and stdin as from the T3 server. 18 of the T3 server's 39 Claude transcripts pass (all that the
   driver runs). 11 live tests
   pass on Claude Haiku on macOS.
 - **Codex** runs on `codex app-server`, as in the T3 server. 37 scenarios show no difference,
@@ -243,7 +244,8 @@ from Codex; a Codex restart continuation starts the native turn without input; M
 at open; the session row from `open_session`; `planSelectionTransition` in the engine;
 continuation turns through `start_turn`; the SDK host client in `conn-provider-support`.
 Trait additions with no provider behind them yet: `ProviderHost` (only a rooted file host),
-`stop_task`, `await_background_tasks`, `background_work.updated` (Claude reports no roster).
+`stop_task`, `await_background_tasks`, `background_work.updated` (Claude reports its roster on
+the provider thread since 2026-11-14, as T3; it sends no `background_work.updated`, as T3).
 
 ## Checkpoints, rollback and fork (2026-11-14)
 
@@ -343,14 +345,8 @@ tests and the ported test; no T3 fixture covers it. Not ported: T3 checks a sess
 background work with the live session's probe; this server reads the provider threads'
 rosters.
 
-**A turn shows as running late** (item 5 below): found, not fixed. The client shows
-"Starting" until the run's provider turn exists. Our Claude session emits it only after it
-works out the turn's permission policy, and that asks the SDK host for Claude's settings
-(`resolveBypassAvailability`). On a cold start this waits for the SDK host to launch. T3 runs
-it in-process and emits the provider turn right after `query()`, which returns at once. The
-fix belongs in `conn-provider-claude` (emit the turn before the settings call, or start the
-host earlier), where another worker is busy. Runs already pass through `waiting` (the
-checkpoint capture).
+**A turn shows as running late**: fixed on 2026-11-14 (see "Claude provider: what the
+fixture replay showed").
 
 Memory (macOS, `memory_load` 1,000 fake turns, release): live heap 365 KiB on `main` and
 366 KiB on this branch; RSS at the end 55.2 and 57.5 MiB (the whole-snapshot peak; the
@@ -436,6 +432,50 @@ definition registry, provider detection and GitHub's GraphQL documents first
 the macOS release binary grew from 16,558,944 to 16,605,712 bytes (+46,768). `tools/check.sh`
 passed all 30 checks with `CONN_MONOREPO` set; the fixture replay is unchanged.
 
+## Claude provider: what the fixture replay showed (2026-11-14)
+
+Claude passes 24 of T3's 34 fixture variants through this engine, up from 17. Each fix has a
+test; every change to what the CLI could see was compared with the T3 server.
+
+- **A cold-start turn shows as running at once.** T3 emits the provider turn right after
+  `query()`. Ours first asked the SDK host for Claude's settings, so on a cold start the turn
+  showed after the host launched (about 3.5 s). With no live query the turn now opens before
+  that call; a start that fails ends it as failed. A steer waits for the start in flight (the
+  full replay caught a steer into no query). Proven: a fake-host test (the turn shows within
+  1 s while `resolveSettings` takes 1.5 s; the host gets the same commands in the same order);
+  conformance 14 of 14 SAME in 5 runs in a row.
+- **Event mapping** (5 variants): a subagent's model through the catalog's slugs and aliases
+  (`claude-haiku-4-5-20251001` shows as `claude-haiku-4-5`); `otherUsage` from the CLI
+  process's `modelUsage` ledger (the crate replay now compares it: 8 of 8 equal); tool titles,
+  MCP `toolSource` and `toolIcon`, web search `patterns` and `results`; live Bash output from
+  the CLI's task file (`tail.rs`, as `ClaudeTaskOutputTail.ts`; the replay harness writes the
+  recorded output as T3's does); and the engine change below.
+- **Background roster** (1 of 9 variants): Bash and Monitor tasks on
+  `providerThread.pendingBackgroundTasks` (`mapper/roster.rs`), bounded to 64 tasks.
+  `claude_background_task_interrupt` passes.
+- **Login shell proof.** Both conformance harnesses now start with a stand-in login shell and
+  run their server's start-up step (T3's `fixPath`, our `login_env::hydrate`): the CLI's
+  `PATH` (merged, blank entries and repeats dropped), `__MISE_DIFF` and `JAVA_HOME` are equal
+  in all 14 scenarios, and `JAVA_HOME` already set is kept on both sides.
+- **Message steering on a cold start** passes again (it broke with the early turn and was fixed
+  before the merge-ready head).
+- **Engine change (small):** `finish_run_as` ends with `provider-thread.updated` status
+  `idle`, as T3's `writeFinalRunEvents` (`finalProviderThreadStatus`; `error` for a broken
+  thread is not carried, no provider reports one). This passed `turn_interrupt_restart` and
+  `claude_idle_resume`. Codex: still 16 of 25.
+
+Still failing for Claude (10): 7 background variants (subagents in the roster, Monitor and
+task wakes, wakes before a queued prompt, compaction after a resumed wake, a peer turn's
+run), 2 that need a replay gate in the fake SDK host, `queued_turn` (T3's test clock). Not built: a Stop with no running turn (T3's `requestRuntimeRestart` closes
+an idle query that runs background work; needs the engine to call the provider without a
+running turn); the Claude model list by CLI version (T3 probes `claude --version` and drops
+models outside their bounds; matching it in full also means T3's capabilities probe, without
+which T3 reports `status: warning`).
+
+Memory: the T3 transcript replay (18 scenarios, release) peaked at 4.11–4.16 MiB footprint on
+`main` and 3.94–4.28 MiB on the branch (3 runs each); the new state is bounded (64 roster
+tasks, 64 links, 8 tails per turn, 16 ledger models).
+
 ## What is left, in the planned order
 
 1. **Rust hygiene, step 1: done (2026-11-14).** The toolchain is pinned to 1.99.1; BeautifulRust's
@@ -449,9 +489,9 @@ passed all 30 checks with `CONN_MONOREPO` set; the fixture replay is unchanged.
    lints) are in `CRATES.md`, "Lint set".
 2. **Provider interface.** The server side of the host handle
    (`ProviderHost`: only the trait and a rooted file host exist; no terminals, and the
-   server passes none); Claude's background roster
-   (`background_work.updated`, `stopTask`, `awaitBackgroundTasks`: in the trait, not built in
-   the provider).
+   server passes none); the rest of Claude's background work: subagents in the roster,
+   monitors' and tasks' wakes, `stopTask`, `awaitBackgroundTasks` (in the trait, not built in
+   the provider), and a Stop with no running turn (T3's `requestRuntimeRestart`).
 3. **Other providers.** One ACP provider for Grok, Kiro, fx, Antigravity and the ACP registry:
    `crates/conn-provider-acp`. **Grok is offered by the server (2026-11-14):** T3's default
    `grok` instance, off until `providerInstances.grok` enables it, probed as T3 probes the CLI
@@ -481,9 +521,8 @@ passed all 30 checks with `CONN_MONOREPO` set; the fixture replay is unchanged.
    `/transcript` routes (a full snapshot of a long thread peaks at about 13 bytes per byte of
    JSON); a workspace strategy for delegated tasks; search details (no NFC normalization, the
    old snippet rule); titles only through a text generator (an agent title model keeps the seed
-   title; no fork source or linked pull request context in the prompt). A
-   provider turn shows as running only after about 3.5 s on a cold Claude start: the cause is
-   in the Claude provider ("Engine, part 2"). `freshContext` is served.
+   title; no fork source or linked pull request context in the prompt). `freshContext` is
+   served. A Claude turn shows as running at once since 2026-11-14.
 6. **Features.** Pull requests and source control: `crates/conn-source-control/README.md` maps
    the area (48 methods, 7 engine commands, 9 `/mcp` tools, 7 hosts). Served (2026-11-14):
    `server.discoverSourceControl` for all 7 hosts, and all 9 `sourceControl.*` (sign-in as a
@@ -559,6 +598,9 @@ The check is the one to trust; several review findings did not hold.
   `interrupt_twice` with 3). Open: the T3 server also closes an idle Claude query on a Stop
   with no running turn; and it runs one effect per thread at a time, which our engine does
   not do for Codex and ACP.
+- `t3/4a342c63` (2026-11-14, not merged): all 30 checks pass on macOS (`check exit: 0`, none
+  skipped). Claude provider, see "Claude provider: what the
+  fixture replay showed".
 - In the Conn repository there are local branches only (`rust/*`, `spike/rust-*`,
   `split/conn-server*`), with the same history under `native/conn-server`. They were never
   pushed. They change nothing under `apps/` or `packages/`.

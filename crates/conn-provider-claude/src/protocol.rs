@@ -282,6 +282,12 @@ pub struct SystemMsg {
     pub summary: Option<String>,
     #[serde(default)]
     pub is_backgrounded: Option<bool>,
+    /// `task_started`: the subagent task whose own background work this is (undeclared).
+    #[serde(default)]
+    pub parent_task_id: Option<Value>,
+    /// `background_tasks_changed`: the CLI's whole roster.
+    #[serde(default)]
+    pub tasks: Option<Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -463,6 +469,9 @@ pub struct AssistantMsg {
     /// The prompts this frame answers.
     #[serde(default)]
     pub user_message_uuids: Option<Vec<String>>,
+    /// Per MCP `tool_use`: `id`, `display_name`, `server_display_name`, `icon_url`.
+    #[serde(default)]
+    pub tool_use_meta: Option<Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]

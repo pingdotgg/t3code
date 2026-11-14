@@ -144,9 +144,17 @@ vi.mock("./ProviderReplayHarness.ts", async (importOriginal) => {
       fs.writeFileSync(ndjson, transcript.entries.map((e: any) => JSON.stringify(e)).join("\n") + "\n");
       // T3 pins the session id to the recording's (nativeSessionIdFor); the shim maps ours.
       const recorded = transcript.metadata?.nativeSessionId ?? "00000000-0000-4000-8000-000000000000";
+      // T3's harness writes each foreground Bash call's recorded output where Claude Code
+      // writes task output, under a CLAUDE_CODE_TMPDIR of the scenario's own
+      // (writeReplayTaskOutputFiles); the shim does it once it knows our session id.
+      const taskRoot = path.join(dir, "claude-tmp");
       return {
         binary: CONFIG.node,
-        helperArgs: [CONFIG.claudeShim, recorded, CONFIG.claudeFakeHost, ndjson, path.join(dir, "host-result.json")],
+        helperArgs: [
+          CONFIG.claudeShim, "--task-root", taskRoot,
+          recorded, CONFIG.claudeFakeHost, ndjson, path.join(dir, "host-result.json"),
+        ],
+        instanceEnv: { CLAUDE_CODE_TMPDIR: taskRoot },
       };
     }
     if (driver === "grok") {

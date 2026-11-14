@@ -6,6 +6,8 @@
 //! `finalizeActiveTurn`). Known differences are listed in the crate README.
 
 mod notices;
+mod presentation;
+mod roster;
 mod subagents;
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -42,6 +44,20 @@ pub enum Out {
     Write(String),
     /// A kind the mapper skipped; the session logs it.
     Skipped(String),
+    /// A foreground Bash call started a task: tail its output file for live output
+    /// (`tailClaudeTaskOutput`), as `command_output.delta` for the row `item_id`.
+    TailOutput {
+        tool_use_id: String,
+        thread_id: String,
+        item_id: String,
+        session_id: String,
+        task_id: String,
+    },
+    /// The call settled or the turn ended: read the file once more, then stop the tail.
+    /// Comes before the row's final update, so the live output lands first.
+    StopTail {
+        tool_use_id: String,
+    },
 }
 
 const DEFAULT_CONTEXT_TOKENS: u64 = 200_000;
@@ -75,6 +91,91 @@ pub struct Mapper<E: Env> {
     policy_asks: Option<bool>,
     /// Plan mode with `approvalPolicy: "never"`: every forwarded tool request is denied.
     plan_without_approvals: bool,
+    /// The CLI process's `modelUsage` at its last result (`context.modelLedger`): per model,
+    /// input (with cache) and output tokens. Empty at a process start; `None` once it went
+    /// backwards. At most [`LEDGER_MODELS`] models.
+    ledger: Option<Vec<(String, Ledger)>>,
+    /// The ledger growth of the result being handled (`resultLedgerUsage`).
+    result_growth: Option<Ledger>,
+    /// Background Bash calls and Monitors (`pendingBackgroundTasksByNativeThread`).
+    roster: roster::Roster,
+    /// The provider thread as last sent (`lastProviderThreadByNativeThread`).
+    last_provider_thread: Option<Value>,
+}
+
+/// Input and output tokens (`ClaudeLedgerUsage`).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub(crate) struct Ledger {
+    input: u64,
+    output: u64,
+}
+
+impl Ledger {
+    /// `addClaudeLedgerUsage`: unknown when either side is.
+    fn add(left: Option<Self>, right: Option<Self>) -> Option<Self> {
+        Some(Self {
+            input: left?.input + right?.input,
+            output: left?.output + right?.output,
+        })
+    }
+}
+
+const LEDGER_MODELS: usize = 16;
+
+/// `claudeModelLedger`: unknown when absent, empty, or an entry lacks its counts.
+fn model_ledger(model_usage: Option<&Value>) -> Option<Vec<(String, Ledger)>> {
+    let models = model_usage?.as_object()?;
+    if models.is_empty() {
+        return None;
+    }
+    models
+        .iter()
+        .take(LEDGER_MODELS)
+        .map(|(model, entry)| {
+            let count = |key: &str| {
+                entry
+                    .get(key)
+                    .and_then(Value::as_f64)
+                    .filter(|n| n.is_finite() && *n >= 0.0)
+            };
+            let round = |n: f64| n.round() as u64;
+            let input = round(count("inputTokens")?);
+            let output = round(count("outputTokens")?);
+            let cache = count("cacheReadInputTokens").map_or(0, round)
+                + count("cacheCreationInputTokens").map_or(0, round);
+            Some((
+                model.clone(),
+                Ledger {
+                    input: input + cache,
+                    output,
+                },
+            ))
+        })
+        .collect()
+}
+
+/// `claudeLedgerDelta`: unknown without a baseline or when a counter goes backwards.
+fn ledger_delta(
+    previous: Option<&[(String, Ledger)]>,
+    current: Option<&[(String, Ledger)]>,
+) -> Option<Ledger> {
+    let (previous, current) = (previous?, current?);
+    let find = |list: &[(String, Ledger)], model: &str| {
+        list.iter().find(|(m, _)| m == model).map(|(_, l)| *l)
+    };
+    for (model, before) in previous {
+        let after = find(current, model)?;
+        if after.input < before.input || after.output < before.output {
+            return None;
+        }
+    }
+    let mut growth = Ledger::default();
+    for (model, after) in current {
+        let before = find(previous, model).unwrap_or_default();
+        growth.input += after.input - before.input;
+        growth.output += after.output - before.output;
+    }
+    Some(growth)
 }
 
 impl<E: Env> std::fmt::Debug for Mapper<E> {
@@ -106,6 +207,7 @@ pub(crate) struct ToolCall {
     input: Value,
     ordinal: u32,
     started_at: String,
+    presentation: presentation::Presentation,
 }
 
 struct Turn {
@@ -130,6 +232,8 @@ struct Turn {
     stream_order: Vec<String>,
     emitted: HashSet<String>,
     tools: HashMap<String, ToolCall>,
+    /// Calls whose output file is tailed (`taskOutputTails`).
+    tailing: Vec<String>,
     tool_order: Vec<String>,
     usage: Option<(String, Usage, u64)>,
     model: Option<String>,
@@ -148,6 +252,8 @@ struct Turn {
     limits: LimitState,
     /// Usage of segments a steer cut short.
     steered_usage: Option<Usage>,
+    /// Ledger growth of the segments a steer cut short (`steeredLedgerUsage`).
+    steered_ledger: Option<Ledger>,
     had_subagents: bool,
 }
 
@@ -209,7 +315,18 @@ impl<E: Env> Mapper<E> {
             context_windows: HashMap::new(),
             policy_asks: None,
             plan_without_approvals: false,
+            ledger: Some(Vec::new()),
+            result_growth: None,
+            roster: roster::Roster::default(),
+            last_provider_thread: None,
         }
+    }
+
+    /// A new CLI process: its `modelUsage` starts from nothing (`modelLedger: new Map()`).
+    pub fn new_process(&mut self) {
+        self.ledger = Some(Vec::new());
+        // The SDK sends no first roster: a new process starts with none.
+        self.roster.clear();
     }
 
     /// `requiresClaudeApproval` from the query policy. Unset, the live permission mode decides
@@ -225,12 +342,12 @@ impl<E: Env> Mapper<E> {
 
     /// Subagents still running, or Claude output waiting for a continuation turn.
     pub fn has_pending_background_work(&self) -> bool {
-        self.subagents.any_running() || self.continuation_requested
+        self.subagents.any_running() || self.continuation_requested || !self.roster.is_empty()
     }
 
     /// Sizes of every collection that outlives a turn, for the memory checks.
     #[cfg(test)]
-    pub fn held_sizes(&self) -> [usize; 6] {
+    pub fn held_sizes(&self) -> [usize; 7] {
         [
             self.pending.len(),
             self.subagents.len(),
@@ -238,6 +355,7 @@ impl<E: Env> Mapper<E> {
             self.plan_ids.len(),
             self.context_windows.len(),
             self.task_list.as_ref().map_or(0, Vec::len),
+            self.roster.sizes(),
         ]
     }
 
@@ -337,6 +455,7 @@ impl<E: Env> Mapper<E> {
             stream_order: Vec::new(),
             emitted: HashSet::new(),
             tools: HashMap::new(),
+            tailing: Vec::new(),
             tool_order: Vec::new(),
             usage: None,
             model: None,
@@ -356,6 +475,7 @@ impl<E: Env> Mapper<E> {
             compaction: None,
             limits: LimitState::default(),
             steered_usage: None,
+            steered_ledger: Some(Ledger::default()),
             had_subagents: false,
         };
         let mut out = Vec::new();
@@ -370,6 +490,7 @@ impl<E: Env> Mapper<E> {
         provider_thread["status"] = json!("active");
         provider_thread["providerSessionId"] = json!(self.provider_session_id);
         provider_thread["updatedAt"] = json!(now);
+        self.last_provider_thread = Some(provider_thread.clone());
         emit(
             &mut out,
             |v| ProviderEvent::ProviderThreadUpdated { provider_thread: v },
@@ -393,6 +514,8 @@ impl<E: Env> Mapper<E> {
 
     pub fn handle(&mut self, message: Inbound) -> Vec<Out> {
         let mut out = Vec::new();
+        // Before routing: an idle Monitor reports its task before its call replays.
+        self.roster.track_monitor_calls(&message);
         if self.turn.is_none() && is_wake_frame(&message) {
             self.hold_wake(message, &mut out);
             return out;
@@ -601,7 +724,7 @@ impl<E: Env> Mapper<E> {
                     if name == "TodoWrite" {
                         todos.push((id.clone(), notices::todo_steps(input)));
                     }
-                    start_tool(turn, id, name, input, &now, out);
+                    start_tool(turn, id, name, input, msg.tool_use_meta.as_ref(), &now, out);
                 }
                 Block::ToolResult { .. } | Block::Other => {}
             }
@@ -678,6 +801,7 @@ impl<E: Env> Mapper<E> {
                 continue;
             };
             turn.tool_order.retain(|id| *id != tool_use_id);
+            stop_tail(turn, &tool_use_id, out);
             let kind = msg
                 .tool_result_meta
                 .iter()
@@ -725,10 +849,19 @@ impl<E: Env> Mapper<E> {
 
     fn on_system(&mut self, msg: SystemMsg, out: &mut Vec<Out>) {
         match msg.subtype.as_str() {
-            "task_started" => return self.on_task_started(&msg, out),
+            "task_started" => {
+                self.on_task_started(&msg, out);
+                self.apply_roster(&msg, out);
+                return;
+            }
             "task_progress" => return self.on_task_progress(&msg, out),
             "task_notification" => {
                 self.on_task_notification(&msg, out);
+                self.apply_roster(&msg, out);
+                return;
+            }
+            "background_tasks_changed" => {
+                self.apply_roster(&msg, out);
                 return;
             }
             _ => {}
@@ -883,6 +1016,16 @@ impl<E: Env> Mapper<E> {
     }
 
     fn on_result(&mut self, msg: ResultMsg, out: &mut Vec<Out>) {
+        // Growth of the process ledger, measured once per result as it arrives.
+        let ledger = model_ledger(msg.model_usage.as_ref());
+        let growth = ledger_delta(self.ledger.as_deref(), ledger.as_deref());
+        // A ledger that went backwards cannot anchor the next turn's growth.
+        self.ledger = if growth.is_none() && self.ledger.is_some() {
+            None
+        } else {
+            ledger
+        };
+        self.result_growth = growth;
         // A result that reports a context window not seen before refreshes the usage row.
         let mut new_window = false;
         if let Some(Value::Object(models)) = &msg.model_usage {
@@ -920,6 +1063,7 @@ impl<E: Env> Mapper<E> {
                     None => usage.clone(),
                 });
             }
+            turn.steered_ledger = Ledger::add(turn.steered_ledger, growth);
             // A steer cut this segment short; the turn goes on with the steer.
             for item_id in turn.stream_order.clone() {
                 complete_stream(turn, &item_id, None, "interrupted", &now, out);
@@ -962,6 +1106,22 @@ impl<E: Env> Mapper<E> {
     }
 
     /// The CLI exited. Ends a running turn as failed (or interrupted when we stopped it).
+    /// A turn opened before its query could not start (the SDK host, the options, the MCP
+    /// servers): it fails with the start error. Nothing else of the session changes.
+    pub fn fail_start(&mut self, detail: &str) -> Vec<Out> {
+        let mut out = Vec::new();
+        if self.turn.is_some() {
+            let failure = json!({
+                "class": "provider_error",
+                "message": detail,
+                "code": "claude_start_failed",
+                "retryable": true,
+            });
+            self.finalize(TurnStatus::Failed, Some(failure), None, &mut out);
+        }
+        out
+    }
+
     pub fn on_exit(&mut self, expected: bool, detail: &str) -> Vec<Out> {
         let mut out = Vec::new();
         self.cancel_all_pending(&mut out);
@@ -1010,6 +1170,9 @@ impl<E: Env> Mapper<E> {
             complete_stream(&mut turn, &item_id, None, item_status, &now, out);
         }
         let tool_status = if completed { "failed" } else { status_text };
+        for id in std::mem::take(&mut turn.tailing) {
+            out.push(Out::StopTail { tool_use_id: id });
+        }
         for id in std::mem::take(&mut turn.tool_order) {
             if let Some(call) = turn.tools.remove(&id) {
                 tool_artifacts(
@@ -1064,12 +1227,15 @@ impl<E: Env> Mapper<E> {
             (Some(steered), Some(last)) => Some(steered.plus(&last)),
             (steered, last) => last.or(steered),
         };
+        let ledger =
+            result.and_then(|_| Ledger::add(turn.steered_ledger, self.result_growth.take()));
         provider_turn["turnTokenUsage"] = turn_token_usage(
             &turn.models,
             result,
             usage.as_ref(),
             completed,
             turn.had_subagents || self.subagents.any_running(),
+            ledger,
         );
         emit(
             out,
@@ -1085,13 +1251,18 @@ impl<E: Env> Mapper<E> {
             thread["firstRunOrdinal"] = json!(turn.run_ordinal);
         }
         thread["lastRunOrdinal"] = json!(turn.run_ordinal);
-        thread["pendingBackgroundTasks"] = json!([]);
+        // A stopped or failed turn takes its background work with it.
+        if !completed {
+            self.roster.clear();
+        }
+        thread["pendingBackgroundTasks"] = self.roster.tasks();
         // A turn that wrote to the transcript moved past a rollback's pinned head.
         if completed || turn.cursor.is_some() {
             thread["nativeConversationHeadRef"] = Value::Null;
         }
         thread["status"] = json!(if completed { "active" } else { "idle" });
         thread["updatedAt"] = json!(now);
+        self.last_provider_thread = Some(thread.clone());
         emit(
             out,
             |v| ProviderEvent::ProviderThreadUpdated { provider_thread: v },
@@ -1145,7 +1316,15 @@ impl<E: Env> Mapper<E> {
             && req.tool_name != "AskUserQuestion"
             && !self.subagents.owns_tool(&tool_use_id)
         {
-            start_tool(turn, &tool_use_id, &req.tool_name, &req.input, &now, out);
+            start_tool(
+                turn,
+                &tool_use_id,
+                &req.tool_name,
+                &req.input,
+                None,
+                &now,
+                out,
+            );
         }
         if req.tool_name == "AskUserQuestion" {
             let questions = user_input_questions(&req.input);
@@ -1926,7 +2105,62 @@ pub fn classify_tool(name: &str) -> (&'static str, &'static str) {
     }
 }
 
-fn start_tool(turn: &mut Turn, id: &str, name: &str, input: &Value, now: &str, out: &mut Vec<Out>) {
+/// Stops the tail of a settled call, if it has one.
+fn stop_tail(turn: &mut Turn, tool_use_id: &str, out: &mut Vec<Out>) {
+    if let Some(index) = turn.tailing.iter().position(|id| id == tool_use_id) {
+        turn.tailing.remove(index);
+        out.push(Out::StopTail {
+            tool_use_id: tool_use_id.to_string(),
+        });
+    }
+}
+
+/// At most this many tailed calls per turn; Claude runs one foreground command at a time.
+const TAIL_CAP: usize = 8;
+
+impl<E: Env> Mapper<E> {
+    /// `task_started` of a foreground `local_bash` task for a command row of this turn: tail
+    /// its output file (T3 checks `is_backgrounded !== true`).
+    pub(super) fn tail_bash_task(&mut self, msg: &SystemMsg, out: &mut Vec<Out>) {
+        let (Some(task_id), Some(tool_use_id), Some(session_id)) =
+            (&msg.task_id, &msg.tool_use_id, &msg.session_id)
+        else {
+            return;
+        };
+        let Some(turn) = self.turn.as_mut() else {
+            return;
+        };
+        let is_command = turn
+            .tools
+            .get(tool_use_id)
+            .is_some_and(|call| classify_tool(&call.name).0 == "command_execution");
+        if msg.is_backgrounded == Some(true)
+            || !is_command
+            || turn.tailing.contains(tool_use_id)
+            || turn.tailing.len() >= TAIL_CAP
+        {
+            return;
+        }
+        turn.tailing.push(tool_use_id.clone());
+        out.push(Out::TailOutput {
+            tool_use_id: tool_use_id.clone(),
+            thread_id: turn.thread_id.clone(),
+            item_id: ids::turn_item_from_item(DRIVER, tool_use_id),
+            session_id: session_id.clone(),
+            task_id: task_id.clone(),
+        });
+    }
+}
+
+fn start_tool(
+    turn: &mut Turn,
+    id: &str,
+    name: &str,
+    input: &Value,
+    tool_use_meta: Option<&Value>,
+    now: &str,
+    out: &mut Vec<Out>,
+) {
     if turn.tools.contains_key(id) || name == "Agent" {
         return;
     }
@@ -1935,6 +2169,7 @@ fn start_tool(turn: &mut Turn, id: &str, name: &str, input: &Value, now: &str, o
         input: input.clone(),
         ordinal: ordinal(turn, id),
         started_at: now.to_string(),
+        presentation: presentation::for_tool_use(name, id, tool_use_meta),
     };
     turn.tools.insert(id.to_string(), call.clone());
     turn.tool_order.push(id.to_string());
@@ -2002,7 +2237,8 @@ pub(crate) fn tool_artifacts(
         "id": ids::turn_item_from_item(DRIVER, id), "threadId": scope.thread_id, "runId": scope.run_id,
         "nodeId": node_id, "providerThreadId": scope.provider_thread_id,
         "providerTurnId": scope.provider_turn_id, "nativeItemRef": native_ref,
-        "parentItemId": null, "ordinal": call.ordinal, "status": status, "title": null,
+        "parentItemId": null, "ordinal": call.ordinal, "status": status,
+        "title": presentation::title(&call.name, &call.input, &call.presentation),
         "startedAt": call.started_at, "completedAt": completed_at, "updatedAt": now,
     });
     item.extend(base.as_object().cloned().unwrap_or_default());
@@ -2039,9 +2275,16 @@ pub(crate) fn tool_artifacts(
         }
         "web_search" => {
             item.insert("type".into(), json!("web_search"));
+            presentation::web_search_fields(&call.name, &call.input, output.as_ref(), &mut item);
         }
         _ => {
             item.insert("type".into(), json!("dynamic_tool"));
+            if let Some(icon) = &call.presentation.icon {
+                item.insert("toolIcon".into(), icon.clone());
+            }
+            if let Some(source) = &call.presentation.source {
+                item.insert("toolSource".into(), source.clone());
+            }
             item.insert("toolName".into(), json!(call.name));
             item.insert("input".into(), call.input.clone());
             if let Some(output) = output {
@@ -2265,14 +2508,16 @@ fn elicitation_acceptance(req: &Elicitation) -> Option<Value> {
     empty.then(|| json!({"action": "accept", "content": {}}))
 }
 
-/// `normalizeClaudeTurnTokenUsage` (`provider/ClaudeTurnTokenUsage.ts`) without the
-/// process-wide ledger (`otherUsage`) and steered segments.
+/// `normalizeClaudeTurnTokenUsage` (`provider/ClaudeTurnTokenUsage.ts`). `ledger` is the
+/// process ledger's growth over the turn's results; what the result leaves out (subagents,
+/// compaction) becomes `otherUsage`.
 fn turn_token_usage(
     models: &[String],
     result: Option<&ResultMsg>,
     usage_total: Option<&Usage>,
     completed: bool,
     has_subagents: bool,
+    ledger: Option<Ledger>,
 ) -> Value {
     let mut usage = json!({"usageScope": "main_agent", "hasSubagents": has_subagents});
     if !models.is_empty() {
@@ -2298,6 +2543,14 @@ fn turn_token_usage(
     }
     usage["inputTokens"] = json!(u.input_total());
     usage["outputTokens"] = json!(u.output_tokens);
+    if let Some(ledger) =
+        ledger.filter(|l| l.input >= u.input_total() && l.output >= u.output_tokens)
+    {
+        usage["otherUsage"] = json!({
+            "inputTokens": ledger.input - u.input_total(),
+            "outputTokens": ledger.output - u.output_tokens,
+        });
+    }
     usage["usageStatus"] = json!(if completed && success {
         "complete"
     } else {

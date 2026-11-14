@@ -19,6 +19,9 @@ in the Conn monorepo at the pinned commit.
 | `mapper`           | Pure state machine: SDK messages → `ProviderEvent`s and callback answers                |
 | `mapper/subagents` | Subagent rows and their child threads                                                   |
 | `mapper/notices`   | Todo lists, API retries, usage limits, failure classes                                  |
+| `mapper/presentation` | Tool row titles, MCP tool source and icon (`mcpToolPresentation`), web search patterns and results |
+| `mapper/roster`    | The background roster: Bash and Monitor tasks on `pendingBackgroundTasks`               |
+| `tail`             | Live output of a foreground Bash call from the CLI's task file (`ClaudeTaskOutputTail.ts`) |
 | `attachments`      | Image blocks and attachment paths in a user message                                     |
 | `session`          | `Session`: lazy query, SDK calls, a driver and an idle watcher per query                |
 
@@ -97,9 +100,11 @@ counts as background work (`Session::has_pending_background_work`).
 | `stream_event` `message_start` / `message_delta`  | `provider_turn.updated` with `tokenUsage`                                                                              |
 | text / thinking deltas                            | every 50 ms: `node` + `message` + `turn_item` (`assistant_message`, streaming) or `reasoning`                          |
 | block stop or `assistant` snapshot                | the same, completed                                                                                                    |
-| `assistant` `tool_use`                            | `node` + `turn_item` (`command_execution`, `file_change`, `web_search`, `dynamic_tool`) running                        |
+| `assistant` `tool_use`                            | `node` + `turn_item` (`command_execution`, `file_change`, `web_search`, `dynamic_tool`) running, with T3's title; MCP tools get `toolSource`/`toolIcon` from `tool_use_meta`; web search rows get `patterns` and `results` |
 | `assistant` `tool_use` TodoWrite                  | also `node` + `plan.updated` + `turn_item` (`todo_list`); the previous list is superseded                              |
 | `user` `tool_result`                              | the tool row completed / failed / cancelled / interrupted, with output                                                 |
+| `system` `task_started` `local_bash` (foreground) | the CLI's task file is tailed every 250 ms: `command_output.delta`; the call's result reads it once more first          |
+| `task_started` `local_bash` (background), `task_notification`, `background_tasks_changed` | the roster on `providerThread.pendingBackgroundTasks` (`provider_thread.updated`); a Monitor call's task is `monitor` |
 | `tool_result` of TaskCreate/TaskUpdate/TaskList   | also a `todo_list` for the session's task list                                                                         |
 | `assistant` `tool_use` Agent                      | nothing; remembers the launch's model, effort and owner                                                                |
 | `system` `task_started`                           | `app_thread.created` (child thread), `node` (subagent, child root), `subagent.updated`, prompt message, `subagent` row |
@@ -116,7 +121,7 @@ counts as background work (`Session::has_pending_background_work`).
 | `system` `api_retry`                              | `error` row with `retry` (running, then recovered); on failure the retry goes on `turn.terminal`                       |
 | `rate_limit_event` rejected                       | `system_notice` with the window and the wait; the turn's failure becomes `usage_limit` with `resetAt`                  |
 | `system` `informational`                          | `system_notice` row                                                                                                    |
-| `result`                                          | open rows closed, pending requests cancelled, `provider_turn.updated`, `provider_thread.updated`, `turn.terminal`      |
+| `result`                                          | open rows closed, pending requests cancelled, `provider_turn.updated` (usage with `otherUsage` from the process's `modelUsage` ledger), `provider_thread.updated`, `turn.terminal` |
 | process exit mid-turn                             | running subagents end, `turn.terminal` failed, `transport_error` / `claude_process_exited`                             |
 
 Failure classes follow `providerFailureFromResult` and `terminalStatusFromResult`
@@ -138,7 +143,7 @@ Normalized in the comparison:
 - Runtime request ids end in a random uuid.
 - `threadId: null` appears where TS leaves the key out.
 - TS-only fields: `nativeMetadata` (attachment budget), `goal`, `pendingBackgroundWork`,
-  `pendingBackgroundTasks`, `failureItemOrdinal`, `turnTokenUsage.otherUsage`.
+  `pendingBackgroundTasks`, `failureItemOrdinal`. (`otherUsage` is compared since 2026-11-14.)
 - TS repeats an unchanged `provider_turn.updated` or `provider_thread.updated`.
 - `continuation.requested` is ours; TS uses a separate service.
 
@@ -146,17 +151,28 @@ Normalized in the comparison:
 
 - **Continuation timing:** TS asks for the continuation turn when the background task's
   notification arrives; this provider asks when Claude starts writing. The events match.
+- **Cold start:** with no live query the provider turn shows as running before the SDK host
+  answers `resolveSettings` (T3 resolves it in-process and emits the turn right after
+  `query()`). What the CLI gets is unchanged. A start that then fails ends the turn as failed
+  (`claude_start_failed`), where T3 emits no provider turn. A steer waits for the start.
 - **Subagents:** no workflow subagents (`local_workflow`), no recovery of running subagents
   after a restart (`getSubagentMessages` is offered by the helper but not used), `stopSubagent`
   and `stop_task` / `background_tasks` not sent.
-- **Background roster:** T3 keeps a roster of background tasks per native thread (Bash
-  `run_in_background`, Monitor, background subagents) on `providerThread.pendingBackgroundTasks`,
-  emits `background_work.updated`, and serves `stopTask` (workflow tasks) and
-  `awaitBackgroundTasks`. This provider reports an empty roster, sends no
-  `background_work.updated`, and leaves both session methods unsupported. The engine still lists
-  running background rows from the turn items.
+- **Background roster:** built for Bash and Monitor tasks (`mapper/roster`), bounded to 64
+  tasks. Not built: background subagents in the roster, awaited tasks
+  (`awaitBackgroundTasks`), owed wake tasks, the scheduled wakeup entry, `stopTask`, and the
+  re-emit when a new process clears a roster. An unchanged `background_tasks_changed` sends no
+  `provider_thread.updated` (T3 sends one with the same content).
+- **Live command output:** a relative `CLAUDE_CODE_TMPDIR` resolves against the cwd as given;
+  T3 uses the real path. Only the first 8 tailed calls of a turn are tailed.
 - **Task list:** starts from the task tools it sees; TS first reads the list Claude saved on
   disk.
+- **Tool titles:** T3's own `/mcp` tools (`t3-code` and its aliases) get no presentation, as
+  T3; T3 decides by its tool table, this provider by the server name. `normalizeMcpHttpUrl`
+  keeps an icon URL as sent, where T3 normalizes it with `new URL`.
+- **Model list:** every catalog model is offered and `version` is null; T3 probes
+  `claude --version` and drops models outside their version bounds
+  (`resolveClaudeModelsForVersion`). Not built (see `docs/status.md`).
 - **Attachments:** PDFs stay path-only. No skill splitting of slash commands. The 28 MiB
   inline budget lives in memory and starts over after a restart.
 - **Not passed:** `launchArgs` and their `--settings`/append-file text, `autoCompactWindow`,
@@ -198,6 +214,12 @@ The host process (this provider in a current-thread runtime) stays near 4–5 Mi
 after turn 1, 4.9 MiB after turn 12, the same after the child closed and the session dropped.
 A test replays 200 rounds of subagent, steer and permission recordings into one mapper and
 checks that every per-session collection keeps its size.
+
+The roster, the live-output tails and the `modelUsage` ledger (2026-11-14) are bounded (64
+tasks, 64 links, 8 tails per turn, 16 ledger models; `the_background_roster_stays_bounded`).
+The T3 transcript replay (18 scenarios through `ClaudeSession`, release build) peaked at
+4.11–4.16 MiB footprint on `main` and 3.94–4.28 MiB with them (3 runs each; max RSS 55.4 and
+55.1 MiB).
 
 These child-tree figures are from the CLI-only provider before the SDK helper; the CLI's own
 memory does not depend on who starts it. The helper adds one process for all sessions while

@@ -60,6 +60,24 @@ for (const s of JSON.parse(fs.readFileSync(scenarios, "utf8")).scenarios) {
 prepare t3
 prepare rust
 
+# A stand-in login shell. Both servers read PATH, __MISE_DIFF and JAVA_HOME from the login
+# shell at start (T3: fixPath in os-jank.ts; ours: conn_support::login_env::hydrate) and give
+# them to the CLI. Its PATH has a blank entry, a repeat, and an entry the base PATH has too, so
+# the merge rules (mergePathEntries) show; JAVA_HOME counts only when the base has none.
+cat > "$OUT/login-shell" <<'SHELL'
+#!/bin/sh
+for name in PATH __MISE_DIFF JAVA_HOME; do
+  printf '%s\n' "__T3CODE_ENV_${name}_START__"
+  case "$name" in
+    PATH) printf '%s\n' '/opt/login/bin: :/usr/bin:/opt/login/bin:/opt/login/tools' ;;
+    __MISE_DIFF) printf '%s\n' 'mise-diff-from-login-shell' ;;
+    JAVA_HOME) printf '%s\n' '/opt/login/java' ;;
+  esac
+  printf '%s\n' "__T3CODE_ENV_${name}_END__"
+done
+SHELL
+chmod 755 "$OUT/login-shell"
+
 # The same base environment for both runs. HOME is a throwaway, so neither side reads the
 # user's Claude settings; CLAUDE_CONFIG_DIR points at an empty Claude home.
 base_env=(
@@ -70,7 +88,11 @@ base_env=(
   "TMPDIR=$OUT"
   "CLAUDE_CONFIG_DIR=$OUT/claude-home"
   "CONFORMANCE_MARKER=1"
+  "SHELL=$OUT/login-shell"
 )
+if [ -n "${CONFORMANCE_BASE_JAVA_HOME:-}" ]; then
+  base_env+=("JAVA_HOME=$CONFORMANCE_BASE_JAVA_HOME")
+fi
 printf '%s\n' "${base_env[@]}" > "$OUT/base.env"
 
 if [ "${CONFORMANCE_SKIP_RUST:-}" != "1" ]; then
@@ -107,4 +129,17 @@ if [ "${CONFORMANCE_SKIP_T3:-}" != "1" ]; then
 fi
 
 node "$here/compare.mjs" "$OUT" "$@" | tee "$OUT/report.txt"
-exit "${PIPESTATUS[0]}"
+status="${PIPESTATUS[0]}"
+
+# A full run also compares one turn with JAVA_HOME already set, where the login shell's value
+# must not replace it.
+if [ "$#" -eq 0 ] && [ -z "${CONFORMANCE_BASE_JAVA_HOME:-}" ]; then
+  echo "== again with JAVA_HOME set in the server's environment"
+  set +e
+  CONFORMANCE_OUT="$OUT/java-home-set" CONFORMANCE_BASE_JAVA_HOME=/opt/server/java \
+    "${BASH_SOURCE[0]}" fresh_turn
+  nested=$?
+  set -e
+  [ "$nested" -eq 0 ] || status="$nested"
+fi
+exit "$status"

@@ -191,6 +191,7 @@ fn replay(name: &str, runtime_mode: &str) -> Replay {
                 }
                 Out::Write(line) => replay.writes.push(serde_json::from_str(&line).unwrap()),
                 Out::Skipped(kind) => replay.skipped.push(kind),
+                Out::TailOutput { .. } | Out::StopTail { .. } => {}
             }
         }
     }
@@ -201,7 +202,7 @@ fn replay(name: &str, runtime_mode: &str) -> Replay {
 /// - runtime request and plan ids end in a random uuid: renamed `REQ<n>` in order.
 /// - `threadId: null` (Rust `Option`) vs an absent key (TS) on `provider_turn.updated`.
 /// - TS-only fields: `nativeMetadata` (attachment budget), `goal`, `pendingBackgroundWork`,
-///   `turnTokenUsage.otherUsage` (side-model usage), `failureItemOrdinal`.
+///   `failureItemOrdinal`.
 /// - TS emits `provider_turn.updated` again with unchanged usage after `message_delta`; equal
 ///   consecutive usage updates are folded.
 /// - TS re-sends an unchanged provider thread when Claude's background-task roster changes
@@ -239,12 +240,6 @@ fn normalize(events: &[Value]) -> Vec<Value> {
             thread.remove("nativeMetadata");
             thread.remove("goal");
             thread.remove("pendingBackgroundTasks");
-        }
-        if let Some(usage) = event
-            .pointer_mut("/providerTurn/turnTokenUsage")
-            .and_then(Value::as_object_mut)
-        {
-            usage.remove("otherUsage");
         }
         if event["type"] == "provider_turn.updated" && out.last() == Some(&event) {
             continue;
@@ -582,7 +577,7 @@ fn subagent_compaction_and_retry_frames_decode_without_failing() {
                     kinds.push(serde_json::to_value(&event).unwrap()["type"].clone())
                 }
                 Out::Skipped(kind) => kinds.push(json!(format!("skip:{kind}"))),
-                Out::Write(_) => {}
+                Out::Write(_) | Out::TailOutput { .. } | Out::StopTail { .. } => {}
             }
         }
     }
@@ -684,4 +679,40 @@ fn plan_mode_without_approvals_denies_tools() {
         panic!("a reply expected: {outs:?}")
     };
     assert!(deny.contains("approvals are disabled for this thread"));
+}
+
+/// The background roster keeps its bounds when Claude starts many tasks and never reports
+/// them done: at most 64 tasks and 64 task-to-call links.
+#[test]
+fn the_background_roster_stays_bounded() {
+    let mut mapper = Mapper::new(FixedEnv::default(), SESSION);
+    mapper.begin_turn(
+        &turn_input(1, &provider_thread("n-roster"), "x", "full-access"),
+        "default",
+    );
+    for n in 0..1_000 {
+        let started = json!({
+            "type": "system", "subtype": "task_started", "session_id": "s",
+            "task_id": format!("task-{n}"), "tool_use_id": format!("toolu-{n}"),
+            "task_type": "local_bash", "description": "sleep", "is_backgrounded": true,
+        });
+        mapper.handle(Inbound::from_value(started));
+        let monitor = json!({
+            "type": "assistant", "parent_tool_use_id": null, "uuid": format!("u-{n}"),
+            "message": {"id": format!("m-{n}"), "content": [
+                {"type": "tool_use", "id": format!("mon-{n}"), "name": "Monitor", "input": {}}
+            ]},
+        });
+        mapper.handle(Inbound::from_value(monitor));
+    }
+    let [.., roster] = mapper.held_sizes();
+    assert!(roster <= 64 * 4, "roster state: {roster}");
+    let outs = mapper.on_exit(false, "done");
+    let cleared = outs.iter().rev().find_map(|o| match o {
+        Out::Event(ProviderEvent::ProviderThreadUpdated { provider_thread }) => {
+            Some(serde_json::to_value(provider_thread).unwrap()["pendingBackgroundTasks"].clone())
+        }
+        _ => None,
+    });
+    assert_eq!(cleared, Some(json!([])), "a failed turn clears the roster");
 }

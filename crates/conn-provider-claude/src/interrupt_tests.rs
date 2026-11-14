@@ -17,7 +17,7 @@ use crate::{ClaudeConfig, ClaudeSession};
 const FAKE_HOST: &str = r#"
 import * as fs from "node:fs";
 import { createInterface } from "node:readline";
-const [LOG, EXIT_ON_CLOSE] = [__LOG__, __EXIT__];
+const [LOG, EXIT_ON_CLOSE, FN_DELAY] = [__LOG__, __EXIT__, __DELAY__];
 const log = (text) => fs.appendFileSync(LOG, `${text}\n`);
 const write = (o) => process.stdout.write(`${JSON.stringify(o)}\n`);
 const reply = (id, value) => write({ ch: "reply", id, ok: true, value });
@@ -39,7 +39,11 @@ createInterface({ input: process.stdin }).on("line", (line) => {
       reply(cmd.id, null);
       break;
     case "fn":
-      reply(cmd.id, cmd.name === "resolveSettings" ? { effective: {}, provenance: {}, sources: [] } : null);
+      log(`fn ${cmd.name}`);
+      setTimeout(
+        () => reply(cmd.id, cmd.name === "resolveSettings" ? { effective: {}, provenance: {}, sources: [] } : null),
+        FN_DELAY,
+      );
       break;
     case "close": {
       log("close");
@@ -66,11 +70,22 @@ fn node_available() -> bool {
 }
 
 fn fake_host(dir: &Path, exit_on_close: bool) -> (Helper, std::path::PathBuf) {
+    fake_host_with_delay(dir, exit_on_close, 0)
+}
+
+/// `fn_delay_ms` holds each function reply, as a cold SDK host holds `resolveSettings` while
+/// it loads the SDK.
+fn fake_host_with_delay(
+    dir: &Path,
+    exit_on_close: bool,
+    fn_delay_ms: u64,
+) -> (Helper, std::path::PathBuf) {
     let log = dir.join("host.log");
     let script = dir.join("fake-host.mjs");
     let text = FAKE_HOST
         .replace("__LOG__", &serde_json::to_string(&log).unwrap())
-        .replace("__EXIT__", if exit_on_close { "true" } else { "false" });
+        .replace("__EXIT__", if exit_on_close { "true" } else { "false" })
+        .replace("__DELAY__", &fn_delay_ms.to_string());
     std::fs::write(&script, text).unwrap();
     (
         claude_host(HelperCommand::from_path(&script), "claudeAgent"),
@@ -191,4 +206,128 @@ async fn interrupt_times_out_when_the_cli_does_not_exit() {
     helper.stop().await;
     let seen = until(&mut events, is_terminal).await;
     assert_eq!(seen.last().unwrap()["status"], "interrupted");
+}
+
+/// T3 emits the provider turn right after `query()`. A cold SDK host holds `resolveSettings`
+/// (here 1.5 s); the turn must show as running before that, and the host must still get the
+/// same commands in the same order: `resolveSettings`, then `open`, then the prompt.
+#[tokio::test(flavor = "current_thread")]
+async fn a_cold_start_shows_the_turn_before_the_host_answers() {
+    if !node_available() {
+        eprintln!("skipped: no node");
+        return;
+    }
+    let scratch = Scratch::new("cold-start-turn");
+    let (helper, log) = fake_host_with_delay(&scratch.0, true, 1_500);
+    let (session, mut events) = session(&helper);
+    let cwd = scratch.cwd();
+    let thread = new_thread(&session, "full-access", &cwd).await;
+    let started = std::time::Instant::now();
+    let (result, shown_after) = tokio::join!(
+        async {
+            let result = session
+                .start_turn(turn(1, &thread, "one", "full-access", &cwd))
+                .await;
+            (result, started.elapsed())
+        },
+        async {
+            let seen = until(&mut events, |e| e["type"] == "provider_turn.updated").await;
+            assert_eq!(seen.last().unwrap()["providerTurn"]["status"], "running");
+            started.elapsed()
+        },
+    );
+    let (result, returned_after) = result;
+    result.unwrap();
+    assert!(
+        shown_after < Duration::from_millis(1_000)
+            && returned_after >= Duration::from_millis(1_400),
+        "the turn showed after {shown_after:?}, the start returned after {returned_after:?}"
+    );
+    let lines: Vec<String> = std::fs::read_to_string(&log)
+        .unwrap()
+        .lines()
+        .map(str::to_string)
+        .collect();
+    assert_eq!(
+        lines,
+        ["fn resolveSettings", "open resume=-", "input"],
+        "the host sees what it saw before"
+    );
+    session.close().await;
+}
+
+/// A turn opened before its query fails when the query cannot start, and the start returns
+/// the error.
+#[tokio::test(flavor = "current_thread")]
+async fn a_cold_start_that_cannot_open_fails_the_early_turn() {
+    let scratch = Scratch::new("cold-start-fail");
+    let helper = claude_host(
+        HelperCommand::from_path(scratch.0.join("missing-host.mjs")),
+        "claudeAgent",
+    );
+    let (session, mut events) = session(&helper);
+    let cwd = scratch.cwd();
+    let thread = new_thread(&session, "approval-required", &cwd).await;
+    let result = session
+        .start_turn(turn(1, &thread, "one", "approval-required", &cwd))
+        .await;
+    assert!(result.is_err(), "{result:?}");
+    let seen = until(&mut events, is_terminal).await;
+    assert_eq!(seen.last().unwrap()["status"], "failed");
+    assert!(
+        seen.iter()
+            .any(|e| e["type"] == "provider_turn.updated"
+                && e["providerTurn"]["status"] == "running")
+    );
+}
+
+/// The engine steers once the provider turn runs; on a cold start that is before the query
+/// exists. The steer waits for the start and then reaches the query after the prompt.
+#[tokio::test(flavor = "current_thread")]
+async fn a_steer_during_a_cold_start_waits_for_the_query() {
+    if !node_available() {
+        eprintln!("skipped: no node");
+        return;
+    }
+    let scratch = Scratch::new("cold-start-steer");
+    let (helper, log) = fake_host_with_delay(&scratch.0, true, 800);
+    let (session, mut events) = session(&helper);
+    let cwd = scratch.cwd();
+    let thread = new_thread(&session, "full-access", &cwd).await;
+    let (started, steered) = tokio::join!(
+        session.start_turn(turn(1, &thread, "one", "full-access", &cwd)),
+        async {
+            let turn_id = running_turn_id(&mut events).await;
+            session
+                .steer_turn(conn_provider::SteerInput {
+                    thread_id: "thread-live".into(),
+                    run_id: "run-1".into(),
+                    provider_thread: thread.clone(),
+                    provider_turn_id: turn_id.as_str().into(),
+                    message: conn_provider::TurnMessage {
+                        created_by: conn_contract::OrchestrationV2Actor::User,
+                        creation_source: conn_contract::OrchestrationV2CreationSource::Web,
+                        scheduled_task_id: None,
+                        sender_thread_id: None,
+                        message_id: "message-steer".into(),
+                        text: "two".into(),
+                        attachments: vec![],
+                    },
+                    model_selection: None,
+                })
+                .await
+        },
+    );
+    started.unwrap();
+    steered.unwrap();
+    let lines: Vec<String> = std::fs::read_to_string(&log)
+        .unwrap()
+        .lines()
+        .map(str::to_string)
+        .collect();
+    assert_eq!(
+        lines,
+        ["fn resolveSettings", "open resume=-", "input", "input"]
+    );
+    session.close().await;
 }

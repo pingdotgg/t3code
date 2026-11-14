@@ -71,6 +71,16 @@ fn provider(plan: &Value) -> Result<Arc<dyn Provider>, Failure> {
                     args,
                 },
                 idle_timeout: None,
+                // T3's harness sets CLAUDE_CODE_TMPDIR on the instance for the task files.
+                instance_env: plan
+                    .get("instanceEnv")
+                    .and_then(Value::as_object)
+                    .map(|env| {
+                        env.iter()
+                            .filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_owned())))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
                 ..conn_provider_claude::ClaudeConfig::default()
             };
             Ok(Arc::new(conn_provider_claude::ClaudeProvider::new(

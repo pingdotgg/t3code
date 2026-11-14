@@ -9,7 +9,7 @@
 //! behind one `std` mutex that is never held across an `.await`.
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     sync::{Arc, Mutex, MutexGuard},
     time::{Duration, Instant},
 };
@@ -97,6 +97,8 @@ struct State {
     bypass_cache: Option<(Option<String>, BypassAvailability)>,
     closed: bool,
     logged_skips: HashSet<String>,
+    /// Live output tails per Bash call (`taskOutputTails`); the mapper caps them per turn.
+    tails: HashMap<String, crate::tail::Tail>,
 }
 
 struct Live {
@@ -123,6 +125,8 @@ struct Live {
     last_activity: Instant,
     /// Since when background work keeps this idle query alive.
     held_since: Option<Instant>,
+    /// Where Claude Code writes task output (`claudeTaskOutputRoot`), from the CLI's environment.
+    task_output_root: std::path::PathBuf,
 }
 
 impl ClaudeSession {
@@ -153,6 +157,7 @@ impl ClaudeSession {
                 bypass_cache: None,
                 closed: false,
                 logged_skips: HashSet::new(),
+                tails: HashMap::new(),
             }),
             turn_control: tokio::sync::Mutex::new(()),
             stop_confirm_timeout: STOP_CONFIRM_TIMEOUT,
@@ -200,6 +205,35 @@ impl Inner {
                 Out::Write(line) => {
                     if let (Some(query), Some((id, result))) = (query, callback_answer(&line)) {
                         query.answer(&id, result).await;
+                    }
+                }
+                Out::TailOutput {
+                    tool_use_id,
+                    thread_id,
+                    item_id,
+                    session_id,
+                    task_id,
+                } => {
+                    let Some(events) = &events else { continue };
+                    let mut state = self.lock();
+                    let Some(root) = state.live.as_ref().map(|l| l.task_output_root.clone()) else {
+                        continue;
+                    };
+                    let target = crate::tail::Target {
+                        root,
+                        session_id,
+                        task_id,
+                        thread_id,
+                        item_id,
+                    };
+                    if let Some(tail) = crate::tail::spawn(target, events.clone()) {
+                        state.tails.insert(tool_use_id, tail);
+                    }
+                }
+                Out::StopTail { tool_use_id } => {
+                    let tail = self.lock().tails.remove(&tool_use_id);
+                    if let Some(tail) = tail {
+                        tail.finish().await;
                     }
                 }
                 Out::Skipped(kind) => {
@@ -1038,13 +1072,41 @@ impl ClaudeSession {
     }
 
     async fn start_turn_inner(&self, input: TurnInput) -> ProviderResult<()> {
-        if self.inner.lock().mapper.turn_active() {
-            return Err(failed_err(
-                "start_turn",
-                "the previous turn is still running",
-            ));
+        // T3 emits the provider turn right after `query()`, which returns at once. Ours opens
+        // the query through the SDK host, and on a cold start the host first has to launch
+        // (about 3.5 s, also for `resolveSettings`). With no live query the turn opens now, so
+        // the client shows it running as T3's does; what the CLI receives does not change.
+        // With a live query the host is up, and frames of that query must not reach the new
+        // turn before `prepare` decided to keep or close it, so the turn opens after it.
+        let early = {
+            let mut state = self.inner.lock();
+            if state.mapper.turn_active() {
+                return Err(failed_err(
+                    "start_turn",
+                    "the previous turn is still running",
+                ));
+            }
+            if state.live.is_none() && !state.closed {
+                let mode = plain_policy(&input.runtime_policy).permission_mode;
+                Some(state.mapper.begin_turn(&input, &mode))
+            } else {
+                None
+            }
+        };
+        let opened_early = early.is_some();
+        if let Some(outs) = early {
+            self.inner.deliver(None, outs).await;
         }
-        let policy = self.prepare(&input).await?;
+        let policy = match self.prepare(&input).await {
+            Ok(policy) => policy,
+            Err(error) => {
+                if opened_early {
+                    let outs = self.inner.lock().mapper.fail_start(&error.to_string());
+                    self.inner.deliver(None, outs).await;
+                }
+                return Err(error);
+            }
+        };
         let effort = catalog::compile(&to_json(&input.model_selection)).prompt_effort;
         self.inner.lock().turn_prompt_effort = effort.clone();
         let text = catalog::prompt_text(&input.message.text, effort.as_deref());
@@ -1063,7 +1125,12 @@ impl ClaudeSession {
                 .map_or(policy.permission_mode.clone(), |l| {
                     l.permission_mode.clone()
                 });
-            let outs = state.mapper.begin_turn(&input, &mode);
+            let outs = if opened_early {
+                state.mapper.set_permission_mode(&mode);
+                Vec::new()
+            } else {
+                state.mapper.begin_turn(&input, &mode)
+            };
             (outs, query, SystemEnv.uuid())
         };
         inner.deliver(Some(&query), outs).await;
@@ -1111,6 +1178,10 @@ impl ClaudeSession {
     async fn launch(&self, input: QueryInput) -> ProviderResult<()> {
         let inner = &self.inner;
         let env = self.environment(&input.thread_id, input.resume).await;
+        // T3 resolves a relative CLAUDE_CODE_TMPDIR against the real cwd; this uses the cwd
+        // as given (it differs only through a symlinked cwd and a relative value).
+        let task_output_root =
+            crate::tail::output_root(&env, input.cwd.as_deref().map(std::path::Path::new));
         let options = launch::query_options(&inner.config, &input, env);
         let mut query = inner.helper.open(options, json!({}))?;
         let Some(rx) = query.take_events() else {
@@ -1122,6 +1193,7 @@ impl ClaudeSession {
             let mut state = inner.lock();
             state.generation += 1;
             let generation = state.generation;
+            state.mapper.new_process();
             state.live = Some(Live {
                 query: handle.clone(),
                 generation,
@@ -1140,6 +1212,7 @@ impl ClaudeSession {
                 restart_needed: false,
                 last_activity: Instant::now(),
                 held_since: None,
+                task_output_root,
             });
             generation
         };
@@ -1327,6 +1400,9 @@ impl Session for ClaudeSession {
 
     fn steer_turn(&self, input: SteerInput) -> BoxFuture<'_, ProviderResult<()>> {
         Box::pin(async move {
+            // A cold-start turn shows as running before its query exists; a steer waits for
+            // the start, as T3's steer always finds the query its provider turn came with.
+            drop(self.inner.turn_control.lock().await);
             // The steer's own selection when it applies live, else the running turn's (T3's
             // liveSteerSelection).
             let live_selection = match &input.model_selection {
@@ -1701,7 +1777,9 @@ impl Session for ClaudeSession {
                 .mapper
                 .on_exit(true, "The session closed.");
             self.inner.deliver(None, outs).await;
-            self.inner.lock().events = None;
+            let mut state = self.inner.lock();
+            state.events = None;
+            state.tails.clear();
         })
     }
 }

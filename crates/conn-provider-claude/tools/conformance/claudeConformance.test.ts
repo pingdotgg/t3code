@@ -47,6 +47,8 @@ import { ProviderEventLoggers } from "@t3tools/provider-core/server/ProviderEven
 import * as PortScanner from "../../preview/PortScanner.ts";
 import { makeClaudeEnvironment, mergeClaudeProcessEnvironment } from "../../provider/Drivers/ClaudeHome.ts";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { fixPath } from "../../os-jank.ts";
 
 const SCENARIOS = process.env.CONFORMANCE_SCENARIOS ?? "";
 const ROOT = process.env.CONFORMANCE_ROOT ?? "";
@@ -99,6 +101,18 @@ const baseEnvironment: NodeJS.ProcessEnv = Object.fromEntries(
     .filter((line) => line.includes("="))
     .map((line) => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)]),
 );
+
+// The T3 server's start-up step: PATH, __MISE_DIFF and JAVA_HOME from the login shell into
+// its environment (fixPath, os-jank.ts), here into the base environment the adapter reads.
+if (baseEnvironment.SHELL !== undefined) {
+  await Effect.runPromise(
+    fixPath().pipe(
+      Effect.provideService(HostProcess.Environment, baseEnvironment),
+      Effect.provideService(HostProcess.Platform, process.platform),
+      Effect.provide(NodeServices.layer),
+    ),
+  );
+}
 
 const selection = (model?: string): ModelSelection => ({
   instanceId: ProviderInstanceId.make("claudeAgent"),
