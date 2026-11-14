@@ -49,6 +49,7 @@ import * as McpToolAccess from "./McpToolAccess.ts";
 import * as McpToolExposure from "./McpToolExposure.ts";
 import { MCP_TOOL_EXPOSURE_HEADER } from "@t3tools/provider-core/server/mcpSession";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
+import * as PendingUploadOwners from "./PendingUploadOwners.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
 import * as PreviewControlsHandlers from "./toolkits/previewControls/handlers.ts";
 import { EnvironmentToolkit } from "./toolkits/environment/tools.ts";
@@ -1265,12 +1266,16 @@ const layerThemeToolkit = toolkitRegistration(ThemeToolkit, ThemeHandlers.layer)
   Layer.provide(ThreadCommandExecutor.layer),
 );
 
-export const layerProjectRegistration = toolkitRegistration(ProjectToolkit, ProjectHandlers.layer);
+// Both toolkits get the same memoized owners layer, so a launch sees the uploads prepare recorded.
+export const layerProjectRegistration = toolkitRegistration(
+  ProjectToolkit,
+  ProjectHandlers.layer,
+).pipe(Layer.provide(PendingUploadOwners.layer));
 
 export const layerAttachmentToolkit = toolkitRegistration(
   AttachmentToolkit,
   AttachmentHandlers.layer,
-);
+).pipe(Layer.provide(PendingUploadOwners.layer));
 
 export const layerPullRequestsToolkit = toolkitRegistration(
   PullRequestsToolkit,
