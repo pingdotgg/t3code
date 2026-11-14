@@ -20,9 +20,11 @@ use tokio::sync::{Mutex, mpsc};
 
 use crate::connection::{CallError, Connection, Incoming};
 use crate::flavor::{Completion, Flavor, StopStyle};
-use crate::mapper::{Mapper, Out, PromptOutcome};
+use crate::mapper::{self, Disposition, Mapper, Out, PromptOutcome};
 use crate::ordered::{J, obj};
+use crate::policy;
 use crate::prompt::{self, InstructionState};
+use crate::protocol::RequestId;
 
 pub(crate) const EVENT_CAPACITY: usize = 256;
 /// `ACP_TEXT_FLUSH_INTERVAL`.
@@ -48,7 +50,8 @@ pub(crate) struct Config {
     pub provider_session_id: String,
     pub cwd: String,
     pub runtime_mode: String,
-    pub interaction_mode: String,
+    /// The session's runtime policy as JSON, until a turn brings its own.
+    pub policy: Value,
     pub model: String,
     pub mcp_servers: Vec<McpServer>,
     pub client_version: String,
@@ -71,6 +74,8 @@ struct State<E: Env> {
     setup: Value,
     /// Grok's `t3-xai-prompt-N` counter, per runtime.
     prompt_seq: u64,
+    /// The request id of the running `session/prompt`.
+    prompt_request: Option<i64>,
     /// The prompt id of the running turn, for Grok's `prompt_complete`.
     active_prompt: Option<(u64, String)>,
     instruction_state: Option<InstructionState>,
@@ -79,6 +84,10 @@ struct State<E: Env> {
     restart_required: bool,
     closed: bool,
     runtime_mode: String,
+    /// The model the session was configured for (`activeSelection`).
+    active_model: Option<String>,
+    /// The running turn's `ProviderAdapterV2RuntimePolicy` (or the session's), as JSON.
+    policy: Value,
 }
 
 pub struct AcpSession {
@@ -155,12 +164,15 @@ impl AcpSession {
                 setup: Value::Null,
                 prompt_seq: 0,
                 active_prompt: None,
+                prompt_request: None,
                 instruction_state: None,
                 delivered_notes: None,
                 flush_armed: false,
                 restart_required: false,
                 closed: false,
                 runtime_mode,
+                policy: config.policy.clone(),
+                active_model: None,
             }),
             config,
         });
@@ -181,6 +193,8 @@ impl AcpSession {
             state.initialize = initialize;
             state.setup = setup;
         }
+        let model = inner.config.model.clone();
+        inner.configure(&connection, &model).await?;
         let session = Self {
             id: inner.config.provider_session_id.as_str().into(),
             inner,
@@ -259,6 +273,35 @@ impl Inner {
             .call("initialize", params)
             .await
             .map_err(|e| failed("initialize", &e))
+    }
+
+    /// `configureSession`'s model part: switch the session's model when the flavor says so.
+    async fn configure(&self, connection: &Connection, model: &str) -> ProviderResult<()> {
+        let (session_id, switch) = {
+            let state = self.state.lock().await;
+            if state.active_model.as_deref() == Some(model) {
+                return Ok(());
+            }
+            let switch = (self.config.flavor.select_model)(&state.setup, &state.initialize, model);
+            (state.session_id.clone().unwrap_or_default(), switch)
+        };
+        if let Some(model_id) = &switch {
+            connection
+                .call(
+                    "session/set_model",
+                    obj()
+                        .with("sessionId", session_id)
+                        .with("modelId", model_id.clone()),
+                )
+                .await
+                .map_err(|e| failed("session/set_model", &e))?;
+        }
+        let mut state = self.state.lock().await;
+        if let Some(model_id) = switch {
+            state.setup["models"]["currentModelId"] = json!(model_id);
+        }
+        state.active_model = Some(model.to_owned());
+        Ok(())
     }
 
     /// `session/new` (or load) params: `cwd`, then `mcpServers`.
@@ -394,14 +437,32 @@ async fn drive(inner: Weak<Inner>, mut incoming: mpsc::Receiver<Incoming>, gener
                 handle_notification(&inner, generation, &method, &params).await;
             }
             Incoming::Request { id, method, params } => {
+                if method == "session/request_permission" {
+                    handle_permission(&inner, generation, id, &params).await;
+                    continue;
+                }
                 let mut state = inner.state.lock().await;
                 if state.generation != generation {
                     continue;
                 }
-                let outs = match method.as_str() {
-                    "session/request_permission" => {
-                        let mode = state.runtime_mode.clone();
-                        state.mapper.permission_request(id, &params, &mode)
+                let question = (inner.config.flavor.completion == Completion::XAiPromptComplete
+                    && matches!(
+                        method.as_str(),
+                        "x.ai/ask_user_question" | "_x.ai/ask_user_question"
+                    ))
+                .then(|| crate::grok::question_request(&params))
+                .flatten();
+                let outs = match question {
+                    Some((native_request_id, native_item_id, questions))
+                        if state.mapper.has_turn() =>
+                    {
+                        state.mapper.user_input_request(
+                            id,
+                            &native_item_id,
+                            &native_request_id,
+                            questions,
+                            mapper::Pending::XAiQuestion(params.clone()),
+                        )
                     }
                     _ => {
                         let label = format!("agent request {method}");
@@ -416,6 +477,29 @@ async fn drive(inner: Weak<Inner>, mut incoming: mpsc::Receiver<Incoming>, gener
                     }
                 };
                 inner.deliver(&mut state, outs).await;
+            }
+            Incoming::Reply { id, result } => {
+                let is_prompt = {
+                    let state = inner.state.lock().await;
+                    state.generation == generation && state.prompt_request == Some(id)
+                };
+                if !is_prompt {
+                    continue;
+                }
+                let outcome = match result {
+                    Ok(reply) => PromptOutcome::Stopped(
+                        reply["stopReason"]
+                            .as_str()
+                            .unwrap_or("end_turn")
+                            .to_owned(),
+                    ),
+                    Err(CallError::Rpc(error)) => PromptOutcome::Failed {
+                        message: error.message,
+                        code: Some(error.code),
+                    },
+                    Err(CallError::Closed) => continue,
+                };
+                inner.settle(generation, None, outcome).await;
             }
             Incoming::Closed(exit) => {
                 let mut state = inner.state.lock().await;
@@ -437,6 +521,54 @@ async fn drive(inner: Weak<Inner>, mut incoming: mpsc::Receiver<Incoming>, gener
     }
 }
 
+/// `handleRequestPermission`: an immediate allow or deny under the policy, or a request the
+/// user answers.
+async fn handle_permission(inner: &Arc<Inner>, generation: u64, id: RequestId, params: &Value) {
+    let (params, policy, kind) = {
+        let state = inner.state.lock().await;
+        if state.generation != generation {
+            return;
+        }
+        let params = state.mapper.with_tracked_tool(params);
+        let tool_call_id = params["toolCall"]["toolCallId"].as_str().unwrap_or("");
+        let kind = params["toolCall"]["kind"]
+            .as_str()
+            .map(str::to_owned)
+            .or_else(|| state.mapper.tracked_tool_kind(tool_call_id));
+        (params, state.policy.clone(), kind)
+    };
+    let locations: Vec<String> = params["toolCall"]["locations"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|l| l["path"].as_str().map(str::to_owned))
+        .collect();
+    let flavor = inner.config.flavor;
+    let disposition = match (flavor.permission_override)(&policy) {
+        Some(disposition) => disposition,
+        None => {
+            let policy = policy.clone();
+            tokio::task::spawn_blocking(move || {
+                policy::disposition(&policy, kind.as_deref(), &locations)
+            })
+            .await
+            .unwrap_or(Disposition::Ask)
+        }
+    };
+    let mut state = inner.state.lock().await;
+    if state.generation != generation {
+        return;
+    }
+    let outs = match disposition {
+        Disposition::Ask => state.mapper.permission_request(id, &params),
+        immediate => vec![Out::Reply {
+            id,
+            result: mapper::immediate_reply(&mapper::permission_options(&params), immediate),
+        }],
+    };
+    inner.deliver(&mut state, outs).await;
+}
+
 async fn handle_notification(inner: &Arc<Inner>, generation: u64, method: &str, params: &Value) {
     if method == "session/update" {
         let mut state = inner.state.lock().await;
@@ -447,56 +579,84 @@ async fn handle_notification(inner: &Arc<Inner>, generation: u64, method: &str, 
         inner.deliver(&mut state, outs).await;
         return;
     }
-    if inner.config.flavor.completion == Completion::XAiPromptComplete {
-        let complete = match method {
-            "x.ai/session/prompt_complete" | "_x.ai/session/prompt_complete" => Some((
-                params["promptId"].as_str().map(str::to_owned),
-                params["stopReason"].as_str().map(str::to_owned),
-            )),
-            "x.ai/session_notification" | "_x.ai/session_notification" | "_x.ai/session/update" => {
-                let update = &params["update"];
-                if update["sessionUpdate"] == "turn_completed" {
-                    let id = update["prompt_id"]
-                        .as_str()
-                        .or_else(|| update["promptId"].as_str())
-                        .filter(|id| !id.is_empty() && !id.starts_with("task-completed-"))
-                        .map(str::to_owned);
-                    id.map(|id| {
-                        (
-                            Some(id),
-                            update["stop_reason"]
-                                .as_str()
-                                .or_else(|| update["stopReason"].as_str())
-                                .map(str::to_owned),
-                        )
-                    })
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        };
-        if let Some((Some(prompt_id), stop_reason)) = complete {
-            // `normalizeXAiStopReason`.
-            let reason = match stop_reason.as_deref() {
-                Some(
-                    r @ ("cancelled" | "end_turn" | "max_tokens" | "max_turn_requests" | "refusal"),
-                ) => r,
-                _ => "end_turn",
-            };
-            inner
-                .settle(
-                    generation,
-                    Some(&prompt_id),
-                    PromptOutcome::Stopped(reason.to_owned()),
-                )
-                .await;
-            return;
-        }
+    if inner.config.flavor.completion == Completion::XAiPromptComplete
+        && let Some((prompt_id, outcome)) = xai_prompt_complete(method, params)
+    {
+        inner.settle(generation, Some(&prompt_id), outcome).await;
+        return;
     }
     let mut state = inner.state.lock().await;
     let label = format!("notification {method}");
     state.mapper.skip(&label);
+}
+
+/// Grok's prompt completion (`makeXAiPromptCompletionRuntime`): `prompt_complete`, or a
+/// `turn_completed` session notification that names the prompt. The outcome follows
+/// `promptResponseFromXAi` and `xAiPromptFailure`.
+fn xai_prompt_complete(method: &str, params: &Value) -> Option<(String, PromptOutcome)> {
+    let (prompt_id, stop_reason, agent_result) = match method {
+        "x.ai/session/prompt_complete" | "_x.ai/session/prompt_complete" => (
+            params["promptId"].as_str()?.to_owned(),
+            params["stopReason"].as_str().map(str::to_owned),
+            params.get("agentResult").cloned(),
+        ),
+        "x.ai/session_notification" | "_x.ai/session_notification" | "_x.ai/session/update" => {
+            let update = &params["update"];
+            if update["sessionUpdate"] != "turn_completed" {
+                return None;
+            }
+            let id = update["prompt_id"]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .or_else(|| {
+                    update["promptId"]
+                        .as_str()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                })?;
+            if id.starts_with("task-completed-") {
+                return None;
+            }
+            let stop = update["stop_reason"]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .or_else(|| {
+                    update["stopReason"]
+                        .as_str()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                })
+                .map(str::to_owned);
+            (id.to_owned(), stop, update.get("agent_result").cloned())
+        }
+        _ => return None,
+    };
+    let outcome = match stop_reason.as_deref() {
+        Some("rate_limit") => PromptOutcome::Failed {
+            message: "Grok usage limit reached. Try again later.".into(),
+            code: Some(-32003),
+        },
+        Some("error") => PromptOutcome::Failed {
+            message: agent_result
+                .as_ref()
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map_or_else(
+                    || "Grok ended the turn with an error.".to_owned(),
+                    str::to_owned,
+                ),
+            code: Some(-32603),
+        },
+        // `normalizeXAiStopReason`.
+        Some(r @ ("cancelled" | "end_turn" | "max_tokens" | "max_turn_requests" | "refusal")) => {
+            PromptOutcome::Stopped(r.to_owned())
+        }
+        _ => PromptOutcome::Stopped("end_turn".into()),
+    };
+    Some((prompt_id, outcome))
 }
 
 impl Session for AcpSession {
@@ -558,8 +718,23 @@ impl Session for AcpSession {
                 state.initialize = initialize;
                 state.setup = setup;
                 state.restart_required = false;
+                state.active_model = None;
             }
-            let (connection, generation, session_id, prompt_id, params) = {
+            let model = to_json(&input.model_selection)["model"]
+                .as_str()
+                .unwrap_or("")
+                .to_owned();
+            let live = inner
+                .state
+                .lock()
+                .await
+                .runtime
+                .as_ref()
+                .map(|r| r.connection.clone());
+            if let Some(connection) = live {
+                inner.configure(&connection, &model).await?;
+            }
+            {
                 let mut state = inner.state.lock().await;
                 if state.closed {
                     return Err(ProviderError::SessionStopped);
@@ -570,6 +745,7 @@ impl Session for AcpSession {
                         state.mapper.current_provider_turn_id().unwrap_or("")
                     )));
                 }
+                state.policy = to_json(&input.runtime_policy);
                 state.runtime_mode = serde_json::to_value(input.runtime_policy.runtime_mode)
                     .ok()
                     .and_then(|v| v.as_str().map(str::to_owned))
@@ -636,33 +812,12 @@ impl Session for AcpSession {
                 } else {
                     None
                 };
-                state.active_prompt = Some((generation, prompt_id.clone().unwrap_or_default()));
+                state.active_prompt = Some((generation, prompt_id.unwrap_or_default()));
                 let outs = state.mapper.begin_turn(&input, &session_id);
                 inner.deliver(&mut state, outs).await;
-                (connection, generation, session_id, prompt_id, params)
-            };
-            let _ = session_id;
-            let weak = Arc::downgrade(inner);
-            tokio::spawn(async move {
-                let result = connection.call("session/prompt", params).await;
-                let Some(inner) = weak.upgrade() else { return };
-                let outcome = match result {
-                    Ok(reply) => PromptOutcome::Stopped(
-                        reply["stopReason"]
-                            .as_str()
-                            .unwrap_or("end_turn")
-                            .to_owned(),
-                    ),
-                    Err(CallError::Rpc(error)) => PromptOutcome::Failed {
-                        message: error.message,
-                        code: Some(error.code),
-                    },
-                    Err(CallError::Closed) => return,
-                };
-                inner
-                    .settle(generation, prompt_id.as_deref(), outcome)
-                    .await;
-            });
+                // The reply comes back through the driver, in order with the turn's updates.
+                state.prompt_request = connection.send("session/prompt", params).await;
+            }
             Ok(())
         })
     }
@@ -731,19 +886,18 @@ impl Session for AcpSession {
             let decision = input
                 .decision
                 .and_then(|d| serde_json::to_value(d).ok())
-                .and_then(|v| v.as_str().map(str::to_owned))
-                .ok_or_else(|| {
-                    protocol_error(format!(
-                        "ACP approval request {} requires a decision",
-                        input.request_id.as_str()
-                    ))
-                })?;
+                .and_then(|v| v.as_str().map(str::to_owned));
+            let answers = input.answers.as_ref().map(to_json);
             let outs = state
                 .mapper
-                .respond(input.request_id.as_str(), &decision)
+                .respond(
+                    input.request_id.as_str(),
+                    decision.as_deref(),
+                    answers.as_ref(),
+                )
                 .ok_or_else(|| {
                     protocol_error(format!(
-                        "No pending ACP runtime request {}",
+                        "No pending ACP runtime request {} (or it needs a decision)",
                         input.request_id.as_str()
                     ))
                 })?;

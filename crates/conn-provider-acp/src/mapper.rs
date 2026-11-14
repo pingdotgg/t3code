@@ -21,6 +21,10 @@ use crate::tools::{self, ToolState};
 
 /// What the mapper asks its session to do.
 #[derive(Debug)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "each out moves once into the delivery"
+)]
 pub(crate) enum Out {
     Event(ProviderEvent),
     /// A reply to an agent request.
@@ -88,7 +92,9 @@ struct Turn {
     reasoning: TextStream,
     tools: HashMap<String, ToolState>,
     tool_started_at: HashMap<String, String>,
-    tool_skips: HashMap<String, (Option<usize>, u32)>,
+    tool_skips: HashMap<String, u32>,
+    /// Native plan id → (plan id, started at, latest plan).
+    plans: HashMap<String, (String, String, Option<Value>)>,
     interrupted: bool,
     native_metadata: Value,
     context_usage: Value,
@@ -98,16 +104,15 @@ struct Turn {
 #[derive(Debug, Clone)]
 pub(crate) struct PendingRequest {
     pub agent_id: RequestId,
-    pub kind: PendingKind,
-    pub runtime_request: Value,
-    pub node: Value,
-    pub turn_item: Value,
-    pub options: Vec<(String, String)>,
+    pub kind: Pending,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum PendingKind {
-    Approval,
+#[derive(Debug, Clone)]
+pub(crate) enum Pending {
+    /// A permission: the agent's `(optionId, kind)` choices.
+    Approval(Vec<(String, String)>),
+    /// Grok's `ask_user_question`: its params, for the answer's shape.
+    XAiQuestion(Value),
 }
 
 /// How a prompt settled.
@@ -200,6 +205,7 @@ impl<E: Env> Mapper<E> {
             .map(|turn| turn.provider_turn_id.as_str())
     }
 
+    #[cfg(test)]
     pub(crate) fn pending_len(&self) -> usize {
         self.pending.len()
     }
@@ -313,6 +319,7 @@ impl<E: Env> Mapper<E> {
             tools: HashMap::new(),
             tool_started_at: HashMap::new(),
             tool_skips: HashMap::new(),
+            plans: HashMap::new(),
             interrupted: false,
             native_metadata,
             context_usage,
@@ -650,7 +657,7 @@ impl<E: Env> Mapper<E> {
                         Segment {
                             native_item_id,
                             started_at: now,
-                            source_message_id: source.clone(),
+                            source_message_id: source,
                             text: String::new(),
                             emitted: false,
                             dirty: false,
@@ -661,7 +668,7 @@ impl<E: Env> Mapper<E> {
             }
             Some(segment) => {
                 if segment.source_message_id.is_none() && source.is_some() {
-                    segment.source_message_id = source.clone();
+                    segment.source_message_id = source;
                 }
             }
         }
@@ -701,6 +708,72 @@ impl<E: Env> Mapper<E> {
                 let fallback = (kind == "tool_call").then_some("pending");
                 if let Some(state) = tools::parse_tool_call(update, fallback) {
                     self.tool_updated(state, None, &mut out);
+                }
+            }
+            "plan" => {
+                let steps: Vec<(String, String)> = update["entries"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .enumerate()
+                    .map(|(i, e)| {
+                        let text = e["content"].as_str().unwrap_or("").trim().to_owned();
+                        let text = if text.is_empty() {
+                            format!("Step {}", i + 1)
+                        } else {
+                            text
+                        };
+                        (text, plan_step_status(&e["status"]))
+                    })
+                    .collect();
+                self.emit_plan("legacy", PlanUpdate::Items(steps), &mut out);
+            }
+            "plan_update" => {
+                let plan = &update["plan"];
+                let id = plan["planId"].as_str().unwrap_or("").trim().to_owned();
+                if !id.is_empty() {
+                    let content = match plan["type"].as_str() {
+                        Some("items") if plan["entries"].is_array() => PlanUpdate::Items(
+                            plan["entries"]
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                                .enumerate()
+                                .filter_map(|(i, e)| {
+                                    let text = e["content"].as_str()?.trim().to_owned();
+                                    let text = if text.is_empty() {
+                                        format!("Step {}", i + 1)
+                                    } else {
+                                        text
+                                    };
+                                    let status = if e["status"].is_string() {
+                                        e["status"].clone()
+                                    } else {
+                                        json!("pending")
+                                    };
+                                    Some((text, plan_step_status(&status)))
+                                })
+                                .collect(),
+                        ),
+                        Some("markdown") if plan["content"].is_string() => {
+                            PlanUpdate::Markdown(plan["content"].as_str().unwrap_or("").to_owned())
+                        }
+                        Some("file") if plan["uri"].is_string() => PlanUpdate::Markdown(format!(
+                            "Plan file: {}",
+                            plan["uri"].as_str().unwrap_or("")
+                        )),
+                        other => PlanUpdate::Markdown(format!(
+                            "[Unsupported ACP plan content: {}]",
+                            other.unwrap_or("undefined")
+                        )),
+                    };
+                    self.emit_plan(&id, content, &mut out);
+                }
+            }
+            "plan_removed" => {
+                let id = update["planId"].as_str().unwrap_or("").trim().to_owned();
+                if !id.is_empty() {
+                    self.emit_plan(&id, PlanUpdate::Removed, &mut out);
                 }
             }
             "available_commands_update" | "current_mode_update" | "config_option_update" => {}
@@ -804,32 +877,62 @@ impl<E: Env> Mapper<E> {
 
     // ---- tools ---------------------------------------------------------------------------
 
-    /// A tool call's state changed (`ToolCallUpdated` for the root turn).
-    fn tool_updated(&mut self, next: ToolState, projected: Option<&str>, out: &mut Vec<Out>) {
-        if self.turn.is_none() {
+    /// A tool call's state changed (`emitTool` for the root turn): merged with what the
+    /// turn knows, normalized by the flavor, and emitted unless nothing visible changed.
+    fn tool_updated(&mut self, incoming: ToolState, projected: Option<&str>, out: &mut Vec<Out>) {
+        let Some(turn) = self.turn.as_mut() else {
             self.skip("a tool update with no turn running");
             return;
+        };
+        // Named segments stay open across a tool; unnamed ones close.
+        let close_assistant = turn
+            .assistant
+            .current
+            .as_ref()
+            .is_some_and(|s| s.source_message_id.is_none());
+        let close_reasoning = turn
+            .reasoning
+            .current
+            .as_ref()
+            .is_some_and(|s| s.source_message_id.is_none());
+        if close_assistant {
+            self.close_text(TextKind::Assistant, out);
         }
-        self.close_texts(out);
+        if close_reasoning {
+            self.close_text(TextKind::Reasoning, out);
+        }
+        self.close_text(TextKind::User, out);
         let Some(turn) = self.turn.as_mut() else {
             return;
         };
-        let key = next.tool_call_id.clone();
+        let key = incoming.tool_call_id.clone();
         let previous = turn.tools.get(&key).cloned();
-        let merged = tools::merge(previous.as_ref(), next);
-        turn.tools.insert(key.clone(), merged.clone());
+        let merged = tools::merge(previous.as_ref(), incoming);
+        let reported = merged.status.clone();
+        let tool = match self.flavor.normalize_tool {
+            Some(normalize) => normalize(merged),
+            None => merged,
+        };
+        turn.tools.insert(key.clone(), tool.clone());
         if projected.is_none() {
-            let (last_len, skipped) = turn.tool_skips.get(&key).cloned().unwrap_or((None, 0));
-            let (emit, skipped) =
-                tools::decide_emission(previous.as_ref(), &merged, last_len, skipped);
-            if !emit {
-                turn.tool_skips.insert(key, (last_len, skipped));
+            let skipped = turn.tool_skips.get(&key).copied().unwrap_or(0);
+            let persist = matches!(reported.as_deref(), Some("completed" | "failed"))
+                || previous.as_ref().is_none_or(|p| {
+                    p.status != tool.status
+                        || p.title != tool.title
+                        || tools::visible_output_changed(p, &tool)
+                })
+                || skipped + 1 >= 10;
+            turn.tool_skips
+                .insert(key, if persist { 0 } else { skipped + 1 });
+            if !persist {
                 return;
             }
-            turn.tool_skips
-                .insert(key.clone(), (Some(tools::progress_length(&merged)), 0));
         }
-        self.emit_tool(&merged, previous.as_ref(), projected, out);
+        // `stoppedToolStatus`: after Stop a failure shows as the interruption it was.
+        let stopped =
+            (turn.interrupted && tool.status.as_deref() == Some("failed")).then_some("interrupted");
+        self.emit_tool(&tool, previous.as_ref(), projected.or(stopped), out);
     }
 
     /// `emitTool` for the root turn: the tool's node and turn item.
@@ -935,40 +1038,196 @@ impl<E: Env> Mapper<E> {
         }
     }
 
+    // ---- plans ---------------------------------------------------------------------------
+
+    /// `emitPlan`.
+    fn emit_plan(&mut self, native_plan_id: &str, update: PlanUpdate, out: &mut Vec<Out>) {
+        if self.turn.is_none() {
+            self.skip("a plan with no turn running");
+            return;
+        }
+        self.close_texts(out);
+        let removed = matches!(update, PlanUpdate::Removed);
+        let exists = self
+            .turn
+            .as_ref()
+            .is_some_and(|t| t.plans.contains_key(native_plan_id));
+        if removed && !exists {
+            return;
+        }
+        let now = self.env.now();
+        let uuid = self.env.uuid();
+        let Some(mut turn) = self.turn.take() else {
+            return;
+        };
+        let native_item_id = format!(
+            "{}:plan:{}",
+            turn.native_turn_id,
+            encode_component(native_plan_id)
+        );
+        let ordinal = Self::resolve_ordinal(&mut turn, &native_item_id);
+        let node_id = self.node_id(&native_item_id);
+        let turn_item_id = self.turn_item_id(&native_item_id);
+        let (plan_id, started_at, latest) =
+            turn.plans.get(native_plan_id).cloned().unwrap_or_else(|| {
+                (
+                    ids::plan_id(&turn.thread_id, Some(&turn.run_id), self.driver(), &uuid),
+                    now.clone(),
+                    None,
+                )
+            });
+        let base = json!({"id": plan_id, "threadId": turn.thread_id, "runId": turn.run_id, "nodeId": node_id});
+        let plan = match update {
+            PlanUpdate::Removed => {
+                let Some(mut latest) = latest else {
+                    self.turn = Some(turn);
+                    return;
+                };
+                set(&mut latest, "status", json!("superseded"));
+                latest
+            }
+            PlanUpdate::Items(entries) => {
+                let any = !entries.is_empty();
+                let steps: Vec<Value> = entries
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, (_, status))| status != "cancelled")
+                    .map(|(i, (text, status))| {
+                        json!({
+                            "id": format!("acp-step-{}", i + 1),
+                            "text": text,
+                            "status": match status.as_str() {
+                                "inProgress" => "running",
+                                "completed" => "completed",
+                                _ => "pending",
+                            },
+                        })
+                    })
+                    .collect();
+                let completed = any && steps.iter().all(|s| s["status"] == "completed");
+                let mut plan = base;
+                set(
+                    &mut plan,
+                    "status",
+                    json!(if completed { "completed" } else { "active" }),
+                );
+                set(&mut plan, "kind", json!("todo_list"));
+                set(&mut plan, "steps", Value::Array(steps));
+                plan
+            }
+            PlanUpdate::Markdown(markdown) => {
+                let mut plan = base;
+                set(&mut plan, "status", json!("active"));
+                set(&mut plan, "kind", json!("proposed_plan"));
+                set(&mut plan, "markdown", json!(markdown));
+                plan
+            }
+        };
+        turn.plans.insert(
+            native_plan_id.to_owned(),
+            (plan_id.clone(), started_at.clone(), Some(plan.clone())),
+        );
+        let completed = plan["status"] == "completed" || plan["status"] == "superseded";
+        let todo = plan["kind"] == "todo_list";
+        let native_ref =
+            json!({"driver": self.driver(), "nativeId": native_item_id, "strength": "weak"});
+        let completed_at = if completed { json!(now) } else { Value::Null };
+        let status = if completed { "completed" } else { "running" };
+        self.event(
+            json!({"type": "node.updated", "node": {
+                "id": node_id,
+                "threadId": turn.thread_id,
+                "runId": turn.run_id,
+                "parentNodeId": turn.root_node_id,
+                "rootNodeId": turn.root_node_id,
+                "kind": if todo { "todo_list" } else { "plan" },
+                "status": status,
+                "countsForRun": false,
+                "providerThreadId": turn.provider_thread["id"],
+                "providerTurnId": turn.provider_turn_id,
+                "nativeItemRef": native_ref,
+                "runtimeRequestId": null,
+                "checkpointScopeId": null,
+                "startedAt": started_at,
+                "completedAt": completed_at,
+            }}),
+            out,
+        );
+        self.event(json!({"type": "plan.updated", "plan": plan}), out);
+        let mut item = json!({
+            "id": turn_item_id,
+            "threadId": turn.thread_id,
+            "runId": turn.run_id,
+            "nodeId": node_id,
+            "providerThreadId": turn.provider_thread["id"],
+            "providerTurnId": turn.provider_turn_id,
+            "nativeItemRef": native_ref,
+            "parentItemId": null,
+            "ordinal": ordinal,
+            "status": status,
+            "title": null,
+            "startedAt": started_at,
+            "completedAt": completed_at,
+            "updatedAt": now,
+        });
+        if todo {
+            set(&mut item, "type", json!("todo_list"));
+            set(&mut item, "planId", json!(plan_id));
+            set(&mut item, "steps", plan["steps"].clone());
+        } else {
+            set(&mut item, "type", json!("proposed_plan"));
+            set(&mut item, "planId", json!(plan_id));
+            set(&mut item, "markdown", plan["markdown"].clone());
+            set(&mut item, "streaming", json!(!completed));
+        }
+        self.event(json!({"type": "turn_item.updated", "turnItem": item}), out);
+        self.turn = Some(turn);
+    }
+
     // ---- permissions ---------------------------------------------------------------------
 
-    /// `session/request_permission`: a runtime request the user answers, or an automatic
-    /// reply under the runtime mode.
-    pub(crate) fn permission_request(
-        &mut self,
-        id: RequestId,
-        params: &Value,
-        runtime_mode: &str,
-    ) -> Vec<Out> {
-        let mut out = Vec::new();
-        let options: Vec<(String, String)> = params["options"]
-            .as_array()
-            .map(|options| {
-                options
-                    .iter()
-                    .filter_map(|option| {
-                        Some((
-                            option["optionId"].as_str()?.to_owned(),
-                            option["kind"].as_str()?.to_owned(),
-                        ))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        if runtime_mode == "full-access"
-            && let Some(option) = select_option(&options, "accept")
+    /// The tool kind the turn already tracks for a call (Kiro omits it on the permission).
+    pub(crate) fn tracked_tool_kind(&self, tool_call_id: &str) -> Option<String> {
+        self.turn
+            .as_ref()
+            .and_then(|turn| turn.tools.get(tool_call_id))
+            .and_then(|tool| tool.kind.clone())
+    }
+
+    /// `withTrackedPermissionToolCall`: fills title, kind and input from the tracked call.
+    pub(crate) fn with_tracked_tool(&self, params: &Value) -> Value {
+        let mut params = params.clone();
+        let Some(turn) = self.turn.as_ref() else {
+            return params;
+        };
+        let Some(id) = params["toolCall"]["toolCallId"].as_str() else {
+            return params;
+        };
+        let Some(tracked) = turn.tools.get(id) else {
+            return params;
+        };
+        let tool = &mut params["toolCall"];
+        if tool.get("title").is_none()
+            && let Some(title) = tracked.data.get("title").and_then(Value::as_str)
         {
-            out.push(Out::Reply {
-                id,
-                result: selected(&option),
-            });
-            return out;
+            tool["title"] = json!(title);
         }
+        if tool.get("kind").is_none() && tracked.kind.as_deref() == Some("execute") {
+            tool["kind"] = json!("execute");
+        }
+        if tool.get("rawInput").is_none()
+            && let Some(raw) = tracked.data.get("rawInput")
+        {
+            tool["rawInput"] = raw.clone();
+        }
+        params
+    }
+
+    /// `session/request_permission` that T3 asks the user about (`beginApprovalRequest`).
+    /// `params` already carries the tracked tool's fields.
+    pub(crate) fn permission_request(&mut self, id: RequestId, params: &Value) -> Vec<Out> {
+        let mut out = Vec::new();
+        let options = permission_options(params);
         if self.turn.is_none() {
             out.push(Out::Reply {
                 id,
@@ -976,18 +1235,30 @@ impl<E: Env> Mapper<E> {
             });
             return out;
         }
-        if let Some(tool) = tools::parse_tool_call(&params["toolCall"], None) {
-            self.tool_updated(tool, None, &mut out);
-        }
         self.close_texts(&mut out);
         let uuid = self.env.uuid();
         let now = self.env.now();
         let Some(mut turn) = self.turn.take() else {
             return out;
         };
-        let native_request_id = params["toolCall"]["toolCallId"]
+        let tool_call = &params["toolCall"];
+        let native_request_id = tool_call["toolCallId"].as_str().unwrap_or("").to_owned();
+        // `parsePermissionRequest`.
+        let parsed = tools::parse_tool_call(tool_call, Some("pending"));
+        let kind = tool_call["kind"]
             .as_str()
-            .map_or_else(|| id.key(), str::to_owned);
+            .map(str::trim)
+            .filter(|k| !k.is_empty());
+        let detail = parsed
+            .as_ref()
+            .and_then(|t| {
+                t.command
+                    .clone()
+                    .or_else(|| t.title.clone())
+                    .or_else(|| t.detail.clone())
+            })
+            .or_else(|| params["sessionId"].as_str().map(|s| format!("Session {s}")));
+        let request_kind = tools::request_kind(kind);
         let request_id = ids::runtime_request_id(
             self.driver(),
             &turn.provider_turn_id,
@@ -996,16 +1267,21 @@ impl<E: Env> Mapper<E> {
         );
         let node_id = ids::approval_node(&request_id);
         let turn_item_id = ids::approval_turn_item(&request_id);
-        let ordinal = Self::resolve_ordinal(&mut turn, &format!("runtime-request:{request_id}"));
-        let tool = turn.tools.get(&native_request_id).cloned();
-        let kind = tools::request_kind(tool.as_ref().and_then(|t| t.kind.as_deref()));
-        let title = params["toolCall"]["title"]
-            .as_str()
-            .map(str::to_owned)
-            .or_else(|| tool.as_ref().and_then(|t| t.title.clone()));
+        let ordinal_key = format!("{}:approval:{native_request_id}", turn.native_turn_id);
+        let ordinal = Self::resolve_ordinal(&mut turn, &ordinal_key);
         let native_ref =
             json!({"driver": self.driver(), "nativeId": native_request_id, "strength": "weak"});
-        let decisions = (self.flavor.approval_options)(&options);
+        let runtime_request = json!({
+            "id": request_id,
+            "nodeId": node_id,
+            "providerTurnId": turn.provider_turn_id,
+            "nativeRequestRef": native_ref,
+            "kind": request_kind,
+            "status": "pending",
+            "responseCapability": {"type": "live", "providerSessionId": self.provider_session_id},
+            "createdAt": now,
+            "resolvedAt": null,
+        });
         let node = json!({
             "id": node_id,
             "threadId": turn.thread_id,
@@ -1023,28 +1299,7 @@ impl<E: Env> Mapper<E> {
             "startedAt": now,
             "completedAt": null,
         });
-        let runtime_request = json!({
-            "id": request_id,
-            "threadId": turn.thread_id,
-            "runId": turn.run_id,
-            "nodeId": node_id,
-            "providerThreadId": turn.provider_thread["id"],
-            "providerTurnId": turn.provider_turn_id,
-            "nativeRequestRef": native_ref,
-            "kind": kind,
-            "status": "pending",
-            "responseCapability": {"type": "live", "providerSessionId": self.provider_session_id},
-            "payload": {
-                "type": "approval",
-                "requestKind": kind,
-                "title": title,
-                "options": decisions,
-            },
-            "decision": null,
-            "createdAt": now,
-            "resolvedAt": null,
-        });
-        let turn_item = json!({
+        let mut turn_item = json!({
             "id": turn_item_id,
             "threadId": turn.thread_id,
             "runId": turn.run_id,
@@ -1055,13 +1310,18 @@ impl<E: Env> Mapper<E> {
             "parentItemId": null,
             "ordinal": ordinal,
             "status": "waiting",
-            "title": title,
+            "title": null,
             "startedAt": now,
             "completedAt": null,
             "updatedAt": now,
             "type": "approval_request",
-            "runtimeRequestId": request_id,
+            "requestId": request_id,
+            "requestKind": request_kind,
         });
+        if let Some(detail) = detail {
+            turn_item["prompt"] = json!(detail);
+        }
+        turn_item["options"] = (self.flavor.approval_options)(&options);
         self.event(json!({"type": "node.updated", "node": node}), &mut out);
         self.event(
             json!({"type": "runtime_request.updated", "threadId": turn.thread_id, "runtimeRequest": runtime_request}),
@@ -1075,58 +1335,131 @@ impl<E: Env> Mapper<E> {
             request_id,
             PendingRequest {
                 agent_id: id,
-                kind: PendingKind::Approval,
-                runtime_request,
-                node,
-                turn_item,
-                options,
+                kind: Pending::Approval(options),
             },
         );
         self.turn = Some(turn);
         out
     }
 
-    /// Answers a pending runtime request. `None` when no such request is pending.
-    pub(crate) fn respond(&mut self, request_id: &str, decision: &str) -> Option<Vec<Out>> {
+    /// Answers a pending runtime request. `None` when no such request is pending, or when an
+    /// approval comes without a decision. The orchestrator resolves the request rows itself.
+    pub(crate) fn respond(
+        &mut self,
+        request_id: &str,
+        decision: Option<&str>,
+        answers: Option<&Value>,
+    ) -> Option<Vec<Out>> {
+        let pending = self.pending.get(request_id)?;
+        let result = match &pending.kind {
+            Pending::Approval(options) => match select_option(options, decision?) {
+                Some(option) => selected(&option),
+                None => obj().with("outcome", obj().with("outcome", "cancelled")),
+            },
+            Pending::XAiQuestion(params) => match answers {
+                Some(answers) => crate::grok::question_response(params, answers),
+                None => obj().with("outcome", "cancelled"),
+            },
+        };
         let pending = self.pending.remove(request_id)?;
-        let mut out = Vec::new();
-        let now = self.env.now();
-        let result = match select_option(&pending.options, decision) {
-            Some(option) => selected(&option),
-            None => obj().with("outcome", obj().with("outcome", "cancelled")),
-        };
-        out.push(Out::Reply {
-            id: pending.agent_id.clone(),
+        Some(vec![Out::Reply {
+            id: pending.agent_id,
             result,
-        });
-        let resolved_status = match decision {
-            "accept" | "acceptForSession" => "approved",
-            "cancel" => "cancelled",
-            _ => "declined",
+        }])
+    }
+
+    /// `beginUserInputRequest`: a question the user answers.
+    pub(crate) fn user_input_request(
+        &mut self,
+        id: RequestId,
+        native_item_id: &str,
+        native_request_id: &str,
+        questions: Value,
+        kind: Pending,
+    ) -> Vec<Out> {
+        let mut out = Vec::new();
+        if self.turn.is_none() {
+            // `activeContext` fails: the agent gets an error reply.
+            self.skip("a question with no turn running");
+            return out;
+        }
+        self.close_texts(&mut out);
+        let uuid = self.env.uuid();
+        let now = self.env.now();
+        let Some(mut turn) = self.turn.take() else {
+            return out;
         };
-        let mut request = pending.runtime_request;
-        set(&mut request, "status", json!("resolved"));
-        set(&mut request, "decision", json!(decision));
-        set(&mut request, "resolvedAt", json!(now));
-        let thread_id = request["threadId"].clone();
-        let mut node = pending.node;
-        set(&mut node, "status", json!("completed"));
-        set(&mut node, "completedAt", json!(now));
-        let mut item = pending.turn_item;
-        set(&mut item, "status", json!("completed"));
-        set(&mut item, "completedAt", json!(now));
-        set(&mut item, "updatedAt", json!(now));
-        let _ = resolved_status;
+        let request_id = ids::runtime_request_id(
+            self.driver(),
+            &turn.provider_turn_id,
+            native_request_id,
+            &uuid,
+        );
+        let node_id = self.node_id(native_item_id);
+        let turn_item_id = self.turn_item_id(native_item_id);
+        let native_ref =
+            json!({"driver": self.driver(), "nativeId": native_item_id, "strength": "weak"});
+        let ordinal = Self::resolve_ordinal(&mut turn, native_item_id);
+        let runtime_request = json!({
+            "id": request_id,
+            "nodeId": node_id,
+            "providerTurnId": turn.provider_turn_id,
+            "nativeRequestRef": {"driver": self.driver(), "nativeId": native_request_id, "strength": "weak"},
+            "kind": "user_input",
+            "status": "pending",
+            "responseCapability": {"type": "live", "providerSessionId": self.provider_session_id},
+            "createdAt": now,
+            "resolvedAt": null,
+        });
+        let node = json!({
+            "id": node_id,
+            "threadId": turn.thread_id,
+            "runId": turn.run_id,
+            "parentNodeId": turn.root_node_id,
+            "rootNodeId": turn.root_node_id,
+            "kind": "user_input_request",
+            "status": "waiting",
+            "countsForRun": false,
+            "providerThreadId": turn.provider_thread["id"],
+            "providerTurnId": turn.provider_turn_id,
+            "nativeItemRef": native_ref,
+            "runtimeRequestId": request_id,
+            "checkpointScopeId": null,
+            "startedAt": now,
+            "completedAt": null,
+        });
+        let turn_item = json!({
+            "id": turn_item_id,
+            "threadId": turn.thread_id,
+            "runId": turn.run_id,
+            "nodeId": node_id,
+            "providerThreadId": turn.provider_thread["id"],
+            "providerTurnId": turn.provider_turn_id,
+            "nativeItemRef": native_ref,
+            "parentItemId": null,
+            "ordinal": ordinal,
+            "status": "waiting",
+            "title": null,
+            "startedAt": now,
+            "completedAt": null,
+            "updatedAt": now,
+            "type": "user_input_request",
+            "requestId": request_id,
+            "questions": questions,
+        });
         self.event(json!({"type": "node.updated", "node": node}), &mut out);
         self.event(
-            json!({"type": "runtime_request.updated", "threadId": thread_id, "runtimeRequest": request}),
+            json!({"type": "runtime_request.updated", "threadId": turn.thread_id, "runtimeRequest": runtime_request}),
             &mut out,
         );
         self.event(
-            json!({"type": "turn_item.updated", "turnItem": item}),
+            json!({"type": "turn_item.updated", "turnItem": turn_item}),
             &mut out,
         );
-        Some(out)
+        self.pending
+            .insert(request_id, PendingRequest { agent_id: id, kind });
+        self.turn = Some(turn);
+        out
     }
 
     /// `cancelPendingRuntimeRequests`: every open request of the turn is cancelled, and the
@@ -1134,7 +1467,7 @@ impl<E: Env> Mapper<E> {
     fn cancel_pending(&mut self, out: &mut Vec<Out>) {
         let ids: Vec<String> = self.pending.keys().cloned().collect();
         for id in ids {
-            if let Some(more) = self.respond(&id, "cancel") {
+            if let Some(more) = self.respond(&id, Some("cancel"), None) {
                 out.extend(more);
             }
         }
@@ -1264,6 +1597,25 @@ impl<E: Env> Mapper<E> {
     }
 }
 
+/// `AcpPlanUpdate` (explanations are not sent by any recorded agent and are left out).
+#[derive(Debug)]
+enum PlanUpdate {
+    Items(Vec<(String, String)>),
+    Markdown(String),
+    Removed,
+}
+
+/// `normalizePlanStepStatus`.
+fn plan_step_status(raw: &Value) -> String {
+    match raw.as_str() {
+        Some("completed") => "completed",
+        Some("cancelled") => "cancelled",
+        Some("in_progress" | "inProgress") => "inProgress",
+        _ => "pending",
+    }
+    .to_owned()
+}
+
 fn set(value: &mut Value, key: &str, v: Value) {
     if let Value::Object(map) = value {
         map.insert(key.to_owned(), v);
@@ -1354,20 +1706,61 @@ pub(crate) fn content_display_text(content: &Value) -> Option<String> {
     }
 }
 
+/// The `(optionId, kind)` pairs of a permission request.
+pub(crate) fn permission_options(params: &Value) -> Vec<(String, String)> {
+    params["options"]
+        .as_array()
+        .map(|options| {
+            options
+                .iter()
+                .filter_map(|option| {
+                    Some((
+                        option["optionId"].as_str()?.trim().to_owned(),
+                        option["kind"].as_str()?.to_owned(),
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// `selectPermissionOptionId`: the option for a decision.
-fn select_option(options: &[(String, String)], decision: &str) -> Option<String> {
+pub(crate) fn select_option(options: &[(String, String)], decision: &str) -> Option<String> {
     let of_kind = |kind: &str| {
         options
             .iter()
-            .find(|(_, k)| k == kind)
+            .find(|(id, k)| k == kind && !id.is_empty())
             .map(|(id, _)| id.clone())
     };
     match decision {
-        "accept" => of_kind("allow_once").or_else(|| of_kind("allow_always")),
+        "accept" => of_kind("allow_once"),
         "acceptForSession" => of_kind("allow_always").or_else(|| of_kind("allow_once")),
-        "decline" => of_kind("reject_once").or_else(|| of_kind("reject_always")),
+        "decline" => of_kind("reject_once"),
         _ => None,
     }
+}
+
+/// The reply for an immediate allow or deny (`selectAutoApprovedPermissionOption`).
+pub(crate) fn immediate_reply(options: &[(String, String)], allow: Disposition) -> J {
+    let option = match allow {
+        Disposition::Allow => {
+            select_option(options, "accept").or_else(|| select_option(options, "acceptForSession"))
+        }
+        Disposition::Deny => select_option(options, "decline"),
+        Disposition::Ask => None,
+    };
+    match option {
+        Some(option) => selected(&option),
+        None => obj().with("outcome", obj().with("outcome", "cancelled")),
+    }
+}
+
+/// `AcpPermissionDisposition`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Disposition {
+    Allow,
+    Ask,
+    Deny,
 }
 
 fn selected(option_id: &str) -> J {

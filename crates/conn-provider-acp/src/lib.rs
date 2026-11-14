@@ -13,10 +13,12 @@
 mod connection;
 mod diff;
 pub mod flavor;
+mod grok;
 #[rustfmt::skip]
 mod instructions;
 mod mapper;
 mod ordered;
+mod policy;
 mod prompt;
 mod protocol;
 mod session;
@@ -167,13 +169,10 @@ impl Provider for AcpProvider {
                 instance_id: self.instance_id.as_str().to_owned(),
                 provider_session_id: input.provider_session_id.as_str().to_owned(),
                 cwd: cwd.clone(),
+                policy: policy.clone(),
                 runtime_mode: policy["runtimeMode"]
                     .as_str()
                     .unwrap_or("full-access")
-                    .to_owned(),
-                interaction_mode: policy["interactionMode"]
-                    .as_str()
-                    .unwrap_or("default")
                     .to_owned(),
                 model: to_json(&input.model_selection)["model"]
                     .as_str()

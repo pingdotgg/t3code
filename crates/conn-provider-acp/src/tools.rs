@@ -368,63 +368,25 @@ pub(crate) fn merge(previous: Option<&ToolState>, next: ToolState) -> ToolState 
     }
 }
 
-/// `toolCallProgressLength`.
-pub(crate) fn progress_length(state: &ToolState) -> usize {
-    let content_chars: usize = state
+fn content_texts(state: &ToolState) -> String {
+    state
         .data
         .get("content")
         .and_then(Value::as_array)
-        .map(|c| c.iter().filter_map(content_text).map(char_len).sum())
-        .unwrap_or(0);
-    let raw_chars: usize = state
-        .data
-        .get("rawOutput")
-        .and_then(Value::as_object)
-        .map(|r| {
-            RAW_OUTPUT_TEXT_FIELDS
-                .iter()
-                .filter_map(|f| r.get(*f).and_then(Value::as_str))
-                .map(char_len)
-                .sum()
+        .map(|c| {
+            c.iter()
+                .map(|e| content_text(e).unwrap_or(""))
+                .collect::<Vec<_>>()
+                .join("\u{0}")
         })
-        .unwrap_or(0);
-    state
-        .detail
-        .as_deref()
-        .map_or(0, char_len)
-        .max(content_chars)
-        .max(raw_chars)
+        .unwrap_or_default()
 }
 
-/// `decideToolCallUpdateEmission`: whether to emit, and the new skip count.
-pub(crate) fn decide_emission(
-    previous: Option<&ToolState>,
-    next: &ToolState,
-    last_len: Option<usize>,
-    skipped: u32,
-) -> (bool, u32) {
-    if matches!(next.status.as_deref(), Some("completed" | "failed")) {
-        return (true, 0);
-    }
-    let Some(previous) = previous else {
-        return (true, 0);
-    };
-    if previous.title != next.title || previous.status != next.status {
-        return (true, 0);
-    }
-    if previous.detail == next.detail
-        && previous.data.get("content") == next.data.get("content")
-        && previous.data.get("rawOutput") == next.data.get("rawOutput")
-    {
-        return (false, skipped);
-    }
-    let progress = progress_length(next);
-    let grew = last_len.is_none_or(|last| progress.abs_diff(last) >= 256);
-    if grew || skipped + 1 >= 10 {
-        (true, 0)
-    } else {
-        (false, skipped + 1)
-    }
+/// `toolCallVisibleOutputChanged`.
+pub(crate) fn visible_output_changed(previous: &ToolState, next: &ToolState) -> bool {
+    previous.detail != next.detail
+        || content_texts(previous) != content_texts(next)
+        || previous.data.get("rawOutput") != next.data.get("rawOutput")
 }
 
 /// `toolStatus`.
@@ -890,7 +852,7 @@ pub(crate) fn project_turn_item(tool: &ToolState, status: &str, mut base: Value)
         Some("edit" | "delete" | "move") => {
             let mut f = json!({
                 "type": "file_change",
-                "fileName": path.clone().or_else(|| tool.title.clone()).unwrap_or_else(|| "File change".into()),
+                "fileName": path.or_else(|| tool.title.clone()).unwrap_or_else(|| "File change".into()),
             });
             if let Some((old, new)) = diff::snippet_edit(&content) {
                 f["oldStr"] = json!(old);

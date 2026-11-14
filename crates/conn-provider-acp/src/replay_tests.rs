@@ -10,7 +10,7 @@
 //! test clock holds it.
 //!
 //! Normalized before comparing (both sides): timestamps become `<now>` (T3's test clock and
-//! ours differ); the random uuid in runtime request ids becomes `<uuid>`.
+//! ours differ); the random uuid in runtime request and plan ids becomes `<uuid>`.
 //!
 //! `testdata/<flavor>/expected-failures.txt` lists the fixtures that cannot pass yet, with the
 //! reason. The test fails when a listed fixture passes or an unlisted one fails.
@@ -157,13 +157,10 @@ pub(crate) async fn replay(flavor: &'static Flavor, golden: &Value) -> Run {
             .unwrap_or("s")
             .to_owned(),
         cwd: workspace.clone(),
+        policy: policy.clone(),
         runtime_mode: policy["runtimeMode"]
             .as_str()
             .unwrap_or("full-access")
-            .to_owned(),
-        interaction_mode: policy["interactionMode"]
-            .as_str()
-            .unwrap_or("default")
             .to_owned(),
         model: open["input"]["modelSelection"]["model"]
             .as_str()
@@ -265,6 +262,10 @@ pub(crate) async fn replay(flavor: &'static Flavor, golden: &Value) -> Run {
         session.close().await;
         idle(&script, &events).await;
     }
+    // Nothing of a finished turn stays behind.
+    if session.has_turn().await || session.pending_requests().await != 0 {
+        errors.push("state left after the last turn".into());
+    }
     let events = crate::lock(&events).clone();
     Run {
         events,
@@ -290,7 +291,9 @@ fn scrub(value: &mut Value) {
                 if let Value::String(s) = v {
                     if key.ends_with("At") && s.starts_with("1970-") {
                         *s = "<now>".into();
-                    } else if s.starts_with("runtime-request:") && s.len() > 37 {
+                    } else if (s.starts_with("runtime-request:") || s.starts_with("plan:"))
+                        && s.len() > 37
+                    {
                         s.replace_range(s.len() - 36.., "<uuid>");
                     } else if (s.starts_with("node:runtime-request:")
                         || s.starts_with("turn-item:runtime-request:"))
@@ -360,6 +363,18 @@ pub(crate) async fn check_fixture(flavor: &'static Flavor, name: &str) -> Result
         }
     }
     let theirs = golden["events"].as_array().cloned().unwrap_or_default();
+    if let Ok(dir) = std::env::var("ACP_DUMP") {
+        let ours: Vec<Value> = run.events.iter().map(normalize).collect();
+        let theirs: Vec<Value> = theirs.iter().map(normalize).collect();
+        let _ = std::fs::write(
+            format!("{dir}/{name}.ours.json"),
+            serde_json::to_string_pretty(&ours).unwrap(),
+        );
+        let _ = std::fs::write(
+            format!("{dir}/{name}.theirs.json"),
+            serde_json::to_string_pretty(&theirs).unwrap(),
+        );
+    }
     if let Some(difference) = compare(&run.events, &theirs) {
         problems.push(format!("events: {difference}"));
     }
@@ -406,11 +421,88 @@ async fn one_fixture() {
     let Ok(name) = std::env::var("ACP_FIXTURE") else {
         return;
     };
-    let flavor = match std::env::var("ACP_FLAVOR").as_deref() {
-        _ => &crate::flavor::GROK,
-    };
+    let flavor = &crate::flavor::GROK;
     match check_fixture(flavor, &name).await {
         Ok(()) => eprintln!("{name}: pass"),
         Err(why) => panic!("{name}:\n{why}"),
     }
+}
+
+/// 200 turns, each with streamed text, a tool call and an approval, through one session: no
+/// turn, request, pending reply or tool state is left behind.
+#[tokio::test(flavor = "current_thread")]
+async fn state_stays_bounded_over_many_turns() {
+    let golden = read_golden("grok", "tool_call_read_only_on_request");
+    let entries = golden["transcripts"][0].as_array().cloned().unwrap();
+    // The handshake from the recording, then one scripted turn per round.
+    let prompt_at = entries
+        .iter()
+        .position(|e| e["frame"]["method"] == "session/prompt")
+        .unwrap();
+    let mut script: Vec<Value> = entries[..prompt_at].to_vec();
+    let session = "00000000-0000-4000-8000-000000000001";
+    let rounds = 200;
+    for round in 1..=rounds {
+        let update = |u: Value| json!({"type": "emit_inbound", "frame": {"kind": "notification", "method": "session/update", "params": {"sessionId": session, "update": u}}});
+        script.push(json!({"type": "expect_outbound", "frame": {"kind": "request", "method": "session/prompt", "params": "<any>"}}));
+        script.push(update(json!({"sessionUpdate": "agent_thought_chunk", "content": {"type": "text", "text": "thinking"}})));
+        script.push(update(json!({"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": format!("turn {round}")}})));
+        script.push(update(json!({"sessionUpdate": "tool_call", "toolCallId": format!("t{round}"), "title": "Write", "kind": "edit", "rawInput": {"file_path": "/w/a"}})));
+        script.push(json!({"type": "emit_inbound", "frame": {"kind": "request", "method": "session/request_permission", "params": {"sessionId": session, "toolCall": {"toolCallId": format!("t{round}"), "kind": "edit"}, "options": [{"optionId": "allow-once", "kind": "allow_once", "name": "Allow"}]}}}));
+        script.push(json!({"type": "expect_outbound", "frame": {"kind": "response", "method": "session/request_permission", "result": {"outcome": {"outcome": "selected", "optionId": "allow-once"}}}}));
+        script.push(update(json!({"sessionUpdate": "tool_call_update", "toolCallId": format!("t{round}"), "status": "completed"})));
+        script.push(json!({"type": "emit_inbound", "frame": {"kind": "response", "method": "session/prompt", "result": {"stopReason": "end_turn"}}}));
+    }
+    script.push(json!({"type": "expect_outbound", "frame": {"kind": "request", "method": "session/close", "params": {"sessionId": session}}}));
+    script.push(json!({"type": "emit_inbound", "frame": {"kind": "response", "method": "session/close", "result": {}}}));
+    let open = golden["calls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["method"] == "openSession")
+        .unwrap()
+        .clone();
+    let start = golden["calls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["method"] == "startTurn")
+        .unwrap()
+        .clone();
+    let mut calls = vec![
+        open,
+        golden["calls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["method"] == "ensureThread")
+            .unwrap()
+            .clone(),
+    ];
+    for round in 1..=rounds {
+        let mut turn = start.clone();
+        turn["input"]["providerTurnOrdinal"] = json!(round);
+        turn["input"]["runOrdinal"] = json!(round);
+        turn["input"]["runtimePolicy"] =
+            json!({"runtimeMode": "approval-required", "interactionMode": "default", "cwd": "/w"});
+        calls.push(turn);
+        calls.push(json!({"method": "respondToRuntimeRequest", "input": {"decision": "accept"}}));
+    }
+    calls.push(json!({"method": "close"}));
+    let golden = json!({"calls": calls, "transcripts": [script], "events": []});
+    let run = replay(&crate::flavor::GROK, &golden).await;
+    assert!(run.errors.is_empty(), "{:?}", run.errors);
+    let script = crate::lock(&run.script);
+    assert!(
+        script.complete(),
+        "stopped at {}: {:?}",
+        script.cursor,
+        script.failure
+    );
+    let terminals = run
+        .events
+        .iter()
+        .filter(|e| e["type"] == "turn.terminal")
+        .count();
+    assert_eq!(terminals, rounds, "every turn ended");
 }

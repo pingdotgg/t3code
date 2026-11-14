@@ -27,6 +27,12 @@ pub(crate) enum Incoming {
         method: String,
         params: Value,
     },
+    /// The reply to a request sent with [`Connection::send`], in order with the frames
+    /// around it (a prompt's reply must not overtake the updates the agent sent before it).
+    Reply {
+        id: i64,
+        result: Result<Value, CallError>,
+    },
     Closed(Option<ExitInfo>),
 }
 
@@ -53,6 +59,8 @@ type Reply = oneshot::Sender<Result<Value, CallError>>;
 struct Pending {
     next_id: i64,
     waiting: HashMap<i64, Reply>,
+    /// Requests whose reply goes to the incoming channel.
+    ordered: std::collections::HashSet<i64>,
     closed: bool,
 }
 
@@ -113,11 +121,21 @@ impl Connection {
                 };
                 let forward = match frame {
                     Inbound::Response { id, result } => {
-                        let reply = crate::lock(&routed).waiting.remove(&id);
+                        let (reply, ordered) = {
+                            let mut pending = crate::lock(&routed);
+                            (pending.waiting.remove(&id), pending.ordered.remove(&id))
+                        };
                         if let Some(reply) = reply {
                             let _ = reply.send(result.map_err(CallError::Rpc));
+                            continue;
                         }
-                        continue;
+                        if !ordered {
+                            continue;
+                        }
+                        Incoming::Reply {
+                            id,
+                            result: result.map_err(CallError::Rpc),
+                        }
                     }
                     Inbound::Request { id, method, params } => {
                         Incoming::Request { id, method, params }
@@ -133,6 +151,7 @@ impl Connection {
             let waiting = {
                 let mut pending = crate::lock(&routed);
                 pending.closed = true;
+                pending.ordered.clear();
                 std::mem::take(&mut pending.waiting)
             };
             for (_, reply) in waiting {
@@ -168,6 +187,30 @@ impl Connection {
         rx.await.unwrap_or(Err(CallError::Closed))
     }
 
+    /// Sends a request whose reply arrives as [`Incoming::Reply`]. `None` when closed.
+    pub(crate) async fn send(&self, method: &str, params: J) -> Option<i64> {
+        let id = {
+            let mut pending = crate::lock(&self.pending);
+            if pending.closed {
+                return None;
+            }
+            let id = pending.next_id;
+            pending.next_id += 1;
+            pending.ordered.insert(id);
+            id
+        };
+        if self
+            .writer
+            .send(protocol::request(id, method, params))
+            .await
+            .is_err()
+        {
+            crate::lock(&self.pending).ordered.remove(&id);
+            return None;
+        }
+        Some(id)
+    }
+
     pub(crate) async fn notify(&self, method: &str, params: J) -> bool {
         self.writer
             .send(protocol::notification(method, params))
@@ -187,11 +230,5 @@ impl Connection {
             .send(protocol::error_response(id, code, message))
             .await
             .is_ok()
-    }
-
-    /// Requests in flight; for the bounded-state tests.
-    #[cfg(test)]
-    pub(crate) fn in_flight(&self) -> usize {
-        crate::lock(&self.pending).waiting.len()
     }
 }

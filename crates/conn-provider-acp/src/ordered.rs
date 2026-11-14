@@ -40,11 +40,6 @@ impl J {
         // Serializing this type cannot fail: every key is a string.
         serde_json::to_string(self).unwrap_or_default()
     }
-
-    /// The same JSON as a sorted [`Value`], for comparisons in tests and for logs.
-    pub(crate) fn to_value(&self) -> Value {
-        serde_json::to_value(self).unwrap_or(Value::Null)
-    }
 }
 
 /// An empty object, to build on with [`J::with`].

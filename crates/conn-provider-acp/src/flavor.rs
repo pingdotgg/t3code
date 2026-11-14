@@ -17,6 +17,10 @@ pub struct Launch {
 /// How Stop reaches the agent.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum StopStyle {
+    #[expect(
+        dead_code,
+        reason = "the Stop path of agents that survive Stop (Kiro, fx, registry); no built flavor uses it yet"
+    )]
     /// `session/cancel` with this `_meta`, the agent stays (`runtime.cancel`).
     Cancel,
     /// `terminateRuntimeProcessGroupOnInterrupt`: the process group is stopped and the next
@@ -27,6 +31,10 @@ pub(crate) enum StopStyle {
 /// How a prompt can settle besides its reply.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Completion {
+    #[expect(
+        dead_code,
+        reason = "every flavor but Grok settles on the reply alone; none is built yet"
+    )]
     /// Only the `session/prompt` reply.
     Reply,
     /// Grok: also `_x.ai/session/prompt_complete` or a `turn_completed` session notification
@@ -34,13 +42,16 @@ pub(crate) enum Completion {
     XAiPromptComplete,
 }
 
+/// The executable setting, the launch runtime mode and the instance environment → the launch.
+pub(crate) type LaunchFn = fn(&str, Option<&str>, &[(String, String)]) -> Launch;
+
 pub struct Flavor {
     /// `ProviderDriverKind`.
     pub driver: &'static str,
     /// `runtimeHarness`, the name in the runtime notes.
     pub harness: &'static str,
     /// argv and environment for a runtime mode (`None`: the policy has none).
-    pub(crate) launch: fn(&str, Option<&str>, &[(String, String)]) -> Launch,
+    pub(crate) launch: LaunchFn,
     /// `initializeMeta`.
     pub(crate) initialize_meta: Option<fn() -> J>,
     /// `cancelMeta`, sent on `session/cancel`.
@@ -51,8 +62,13 @@ pub struct Flavor {
     pub(crate) approval_options: fn(&[(String, String)]) -> Value,
     /// `promptFailure`: the `ProviderFailure` for a failed prompt (message, code).
     pub(crate) prompt_failure: fn(&str, Option<i64>) -> Value,
-    /// The default model slug that selects the agent's current model.
-    pub(crate) default_model: &'static str,
+    /// `permissionDisposition` ahead of the shared rules, when the flavor decides.
+    pub(crate) permission_override: fn(&Value) -> Option<crate::mapper::Disposition>,
+    /// `applyModelSelection` / the model config option: the model id to send with
+    /// `session/set_model`, or `None` when the session keeps its model.
+    pub(crate) select_model: fn(&Value, &Value, &str) -> Option<String>,
+    /// `normalizeToolCall`, applied to each incoming tool update of the root turn.
+    pub(crate) normalize_tool: Option<fn(crate::tools::ToolState) -> crate::tools::ToolState>,
     /// `capabilities` (`OrchestrationV2ProviderCapabilities`) for the session row.
     pub(crate) capabilities: fn() -> Value,
 }
@@ -67,12 +83,15 @@ impl std::fmt::Debug for Flavor {
 
 /// `makeProviderFailure` with an explicit message, class and code.
 pub(crate) fn provider_failure(message: &str, class: &str, code: Option<i64>) -> Value {
-    let message = conn_provider_support::redact::redact(message);
-    let mut failure = json!({"class": class, "message": message});
-    if let Some(code) = code {
-        failure["code"] = json!(code.to_string());
+    use conn_provider_support::redact::bounded;
+    let mut message = bounded(message, 4_096);
+    if message.is_empty() {
+        message = "Provider turn failed.".into();
     }
-    failure
+    let code = code
+        .map(|c| bounded(&c.to_string(), 128))
+        .filter(|c| !c.is_empty());
+    json!({"class": class, "message": message, "code": code, "retryable": null})
 }
 
 /// `AcpProviderCapabilitiesV2` (`packages/provider-acp/src/server/adapter.ts`).
@@ -262,6 +281,27 @@ pub static GROK: Flavor = Flavor {
     completion: Completion::XAiPromptComplete,
     approval_options: grok_approval_options,
     prompt_failure: grok_prompt_failure,
-    default_model: "grok-build",
+    permission_override: grok_permission_override,
+    normalize_tool: Some(crate::grok::normalize_tool),
+    select_model: |setup, _initialize, model| crate::grok::model_switch(setup, model),
     capabilities: grok_capabilities,
 };
+
+/// `grokLaunchRuntimeMode`.
+pub(crate) fn grok_launch_runtime_mode(policy: &Value) -> String {
+    if policy.get("approvalPolicy").is_none_or(Value::is_null)
+        && policy.get("sandboxPolicy").is_none_or(Value::is_null)
+    {
+        policy["runtimeMode"]
+            .as_str()
+            .unwrap_or("full-access")
+            .to_owned()
+    } else {
+        "approval-required".into()
+    }
+}
+
+/// Grok: auto mode prompts are classifier refusals and must reach the user.
+fn grok_permission_override(policy: &Value) -> Option<crate::mapper::Disposition> {
+    (grok_launch_runtime_mode(policy) == "auto").then_some(crate::mapper::Disposition::Ask)
+}

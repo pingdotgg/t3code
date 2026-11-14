@@ -28,14 +28,6 @@ impl RequestId {
             Self::Text(s) => json!(s),
         }
     }
-
-    /// A stable text form for maps and runtime request ids.
-    pub(crate) fn key(&self) -> String {
-        match self {
-            Self::Number(n) => n.to_string(),
-            Self::Text(s) => s.clone(),
-        }
-    }
 }
 
 /// An error object from a response.
