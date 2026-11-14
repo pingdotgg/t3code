@@ -26,6 +26,7 @@ import {
   resolveReviewGuideModelSelection,
   resolveSourceControlWriterModelSelection,
   resolveSpeechPostProcessingModelSelection,
+  resolveThreadTextGenerationModelSelection,
 } from "./serverSettings.ts";
 
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
@@ -351,6 +352,45 @@ describe("serverSettings helpers", () => {
       instanceId: "opencode",
       model: "openai/gpt-5",
     });
+  });
+
+  it("keeps a confined instance's thread text on that instance and model", () => {
+    const confinedId = ProviderInstanceId.make("claude_restricted");
+    const openId = ProviderInstanceId.make("claude_work");
+    const settings = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      providerInstances: {
+        [confinedId]: {
+          driver: ProviderDriverKind.make("claudeAgent"),
+          confineTextGeneration: true,
+        },
+        [openId]: { driver: ProviderDriverKind.make("claudeAgent") },
+      },
+    });
+    const configured = settings.textGenerationModelSelection;
+    const confinedThread = createModelSelection(confinedId, "us-gov.anthropic.claude-sonnet", [
+      { id: "effort", value: "max" },
+    ]);
+
+    expect(resolveThreadTextGenerationModelSelection(settings, configured, confinedThread)).toEqual(
+      { instanceId: confinedId, model: "us-gov.anthropic.claude-sonnet" },
+    );
+    expect(
+      resolveThreadTextGenerationModelSelection(
+        settings,
+        configured,
+        createModelSelection(openId, "claude-sonnet"),
+      ),
+    ).toBe(configured);
+    expect(resolveThreadTextGenerationModelSelection(settings, configured, undefined)).toBe(
+      configured,
+    );
+
+    const cleared = applyServerSettingsPatch(settings, {
+      providerInstances: { [confinedId]: { driver: ProviderDriverKind.make("claudeAgent") } },
+    });
+    expect(resolveThreadTextGenerationModelSelection(cleared, configured, confinedThread)).toBe(
+      configured,
+    );
   });
 
   it("falls back from a disabled source control writer provider without clearing its selection", () => {

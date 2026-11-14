@@ -40,6 +40,7 @@ import {
   formatGeneratedBranchName,
   isTemporaryWorktreeBranch,
 } from "@t3tools/shared/git";
+import { resolveThreadTextGenerationModelSelection } from "@t3tools/shared/serverSettings";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
@@ -112,7 +113,7 @@ export interface ThreadLaunchInput {
 
 type PreparationInput = Pick<
   ThreadLaunchInput,
-  "commandId" | "projectId" | "workspaceStrategy" | "initialMessage"
+  "commandId" | "projectId" | "modelSelection" | "workspaceStrategy" | "initialMessage"
 > & {
   readonly reusedWorktree?: { readonly baseRef: string };
 };
@@ -497,14 +498,17 @@ const make = Effect.gen(function* () {
             yield* serverSettings.getSettings,
             input.projectId,
           ).settings;
-          const modelSelection =
+          const modelSelection = resolveThreadTextGenerationModelSelection(
+            settings,
             settings.sourceControlWriterModelSelection === null
               ? settings.textGenerationModelSelection
               : ServerSettings.resolveSourceControlWriterModelSelection(
                   settings,
                   yield* providerRegistry.getProviders,
                   input.projectId,
-                );
+                ),
+            input.modelSelection,
+          );
           return yield* textGeneration
             .generateBranchName({
               naming: {
@@ -1400,6 +1404,7 @@ const make = Effect.gen(function* () {
       {
         commandId: input.commandId,
         projectId: thread.projectId,
+        modelSelection: thread.modelSelection,
         workspaceStrategy: reuse?.strategy ?? workspacePreparation,
         ...(reuse === null ? {} : { reusedWorktree: reuse.reusedWorktree }),
         ...(message === undefined

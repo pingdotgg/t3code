@@ -54,6 +54,7 @@ const adapter = {
 function makeHarness(
   options: {
     readonly generateTitle?: TextGeneration.TextGeneration["Service"]["generateThreadTitle"];
+    readonly serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   } = {},
 ) {
   const layerDatabase = SqlitePersistence.layerMemory;
@@ -63,7 +64,7 @@ function makeHarness(
     layerRegistry,
     { databaseLayer: layerDatabase, runEffectWorker: false },
   );
-  const layerServerSettings = ServerSettings.layerTest({});
+  const layerServerSettings = ServerSettings.layerTest(options.serverSettings ?? {});
   const layerThreadManagement = ThreadManagement.layer.pipe(
     Layer.provide(layerOrchestrator),
     Layer.provide(layerServerSettings),
@@ -546,6 +547,57 @@ describe("ThreadTitleRegenerationService", () => {
         }
       }).pipe(Effect.provide(harness.layer));
     }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("generates a confined instance's titles with the thread's own instance and model", () =>
+    Effect.gen(function* () {
+      const configured = {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-haiku-4-5",
+      };
+      const titleSelection = (confineTextGeneration: boolean) =>
+        Effect.gen(function* () {
+          const harness = makeHarness({
+            serverSettings: {
+              textGenerationModelSelection: configured,
+              providerInstances: {
+                [modelSelection.instanceId]: {
+                  driver: ProviderDriverKind.make("codex"),
+                  ...(confineTextGeneration ? { confineTextGeneration } : {}),
+                },
+              },
+            },
+          });
+          return yield* Effect.gen(function* () {
+            const titleRegeneration = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
+            const threadId = yield* createThread({
+              command: "command:title:confined:create",
+              thread: "thread:title:confined",
+            });
+            yield* dispatchUserMessage({
+              command: "command:title:confined:message",
+              threadId,
+              text: "Summarize the controlled report",
+            });
+            const requestId = yield* armRegeneration({
+              command: "command:title:confined:1",
+              threadId,
+            });
+            yield* titleRegeneration.execute({ threadId, requestId, kind: { type: "regenerate" } });
+            return harness.generateThreadTitle.mock.calls[0]?.[0]?.modelSelection;
+          }).pipe(Effect.provide(harness.layer));
+        });
+
+      assert.deepEqual(yield* titleSelection(true), {
+        instanceId: modelSelection.instanceId,
+        model: modelSelection.model,
+      });
+      const unconfined = yield* titleSelection(false);
+      assert.deepEqual(
+        { instanceId: unconfined?.instanceId, model: unconfined?.model },
+        configured,
+      );
+    }),
   );
 
   it.effect.each([

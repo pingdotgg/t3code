@@ -149,6 +149,28 @@ Verify the model used in OpenRouter's activity dashboard. For current compatibil
 requirements, use the
 [OpenRouter Claude Code guide](https://openrouter.ai/docs/cookbook/coding-agents/claude-code-integration).
 
+## Amazon Bedrock
+
+Create a Claude instance with its own config directory, such as `~/.claude_bedrock`,
+and keep **Binary path** set to `claude`. In that instance's **Environment variables**,
+set `CLAUDE_CODE_USE_BEDROCK` to `1`, `AWS_REGION` to your Bedrock region (for example
+`us-gov-west-1`), and `AWS_BEARER_TOKEN_BEDROCK` to your Bedrock API key, marked
+Sensitive. Values are used as typed; references such as `$MY_KEY` are not expanded, and
+the desktop app does not read variables exported in your shell profile.
+
+Add the Bedrock model ID, such as `us-gov.anthropic.claude-sonnet-4-5-20250929-v1:0`,
+with **Add custom model** and select it in the chat model picker. Hide built-in models
+your Bedrock account cannot use. `ANTHROPIC_MODEL` does not replace the model selected
+in T3 Code.
+
+Thread titles, branch names, commit messages, and pull request text normally use the
+**Text generation model**, which can be a different provider. To keep that text on the
+Bedrock instance, turn on **Keep generated text on this provider** in the instance's
+settings. Commit and pull request text stays on the instance when the action runs from
+one of its threads. The setting does not stop you or an agent from switching the thread
+to another provider or delegating a task to one, and both send thread content to that
+provider.
+
 ## Other routers
 
 A local router uses an ordinary Claude provider instance. Give it a separate

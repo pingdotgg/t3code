@@ -1,5 +1,6 @@
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { isAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerContextReferences";
+import { resolveThreadTextGenerationModelSelection } from "@t3tools/shared/serverSettings";
 import {
   CommandId,
   type ChatAttachment,
@@ -226,7 +227,11 @@ const make = Effect.gen(function* () {
         ...(input.kind.type === "regenerate" ? { previousTitle: projection.thread.title } : {}),
         ...(inherited === undefined ? {} : { forkSource: inherited }),
         instructions: settings.threadTitleInstructions,
-        modelSelection: settings.textGenerationModelSelection,
+        modelSelection: resolveThreadTextGenerationModelSelection(
+          settings,
+          settings.textGenerationModelSelection,
+          projection.thread.modelSelection,
+        ),
         projectId: projection.thread.projectId,
       });
       const generatedTitle = result.title.trim();

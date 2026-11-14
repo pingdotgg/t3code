@@ -174,6 +174,34 @@ export function resolveSpeechPostProcessingModelSelection(
     : settings.textGenerationModelSelection;
 }
 
+/** Whether any instance keeps its threads' generated text on itself; lets callers skip lookups. */
+export function hasConfinedTextGenerationInstance(
+  settings: Pick<ServerSettings, "providerInstances">,
+): boolean {
+  return Object.values(settings.providerInstances).some(
+    (instance) => instance.confineTextGeneration === true,
+  );
+}
+
+/**
+ * Model selection for text generated about a thread: titles, branch names, commit messages and
+ * pull request content. A thread on an instance with `confineTextGeneration` uses its own
+ * instance and model (without per-turn options) instead of the `configured` selection.
+ */
+export function resolveThreadTextGenerationModelSelection(
+  settings: Pick<ServerSettings, "providerInstances">,
+  configured: ModelSelection,
+  threadSelection: ModelSelection | undefined,
+): ModelSelection {
+  if (
+    threadSelection === undefined ||
+    settings.providerInstances[threadSelection.instanceId]?.confineTextGeneration !== true
+  ) {
+    return configured;
+  }
+  return createModelSelection(threadSelection.instanceId, threadSelection.model);
+}
+
 export interface PersistedServerObservabilitySettings {
   readonly otlpTracesUrl: string | undefined;
   readonly otlpMetricsUrl: string | undefined;

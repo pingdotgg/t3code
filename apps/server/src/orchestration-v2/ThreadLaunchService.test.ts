@@ -19,6 +19,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   GitCommandError,
   MessageId,
+  type ModelSelection,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -2557,6 +2558,54 @@ it.effect(
           harness.createWorktree.mock.calls[0]?.[0].newRefName,
         );
       }).pipe(Effect.provide(harness.layer));
+    }),
+);
+
+it.effect(
+  "names a confined instance's worktree branches with the thread's own instance and model",
+  () =>
+    Effect.gen(function* () {
+      const branchSelection = (confineTextGeneration: boolean) =>
+        Effect.gen(function* () {
+          const requested = yield* Deferred.make<ModelSelection>();
+          const harness = makeHarness({
+            serverSettings: {
+              textGenerationModelSelection: {
+                instanceId: ProviderInstanceId.make("claudeAgent"),
+                model: "claude-haiku-4-5",
+              },
+              providerInstances: {
+                [modelSelection.instanceId]: {
+                  driver: ProviderDriverKind.make("codex"),
+                  ...(confineTextGeneration ? { confineTextGeneration } : {}),
+                },
+              },
+            },
+            generateBranchName: (input) =>
+              Deferred.succeed(requested, input.modelSelection).pipe(
+                Effect.as({ branch: "generated-branch" }),
+              ),
+          });
+          return yield* Effect.gen(function* () {
+            const launches = yield* ThreadLaunch.ThreadLaunchService;
+            yield* launches.launch(
+              launchInput({
+                command: "command:launch:confined-branch",
+                thread: "thread:launch:confined-branch",
+                message: "Branch for the controlled report",
+                workspace: { type: "worktree", baseRef: "main" },
+              }),
+            );
+            const selection = yield* Deferred.await(requested);
+            return { instanceId: selection.instanceId, model: selection.model };
+          }).pipe(Effect.provide(harness.layer));
+        });
+
+      assert.deepEqual(yield* branchSelection(true), modelSelection);
+      assert.deepEqual(yield* branchSelection(false), {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-haiku-4-5",
+      });
     }),
 );
 

@@ -1592,6 +1592,48 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
   );
 
+  it.effect("keeps confineTextGeneration on a provider instance across unrelated saves", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const cuiId = ProviderInstanceId.make("claude_restricted");
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        '{"providerInstances":{"claude_restricted":{"driver":"claudeAgent","displayName":"Claude (restricted)","enabled":true,"confineTextGeneration":true,"environment":[{"name":"CLAUDE_CODE_USE_BEDROCK","value":"1"},{"name":"AWS_BEARER_TOKEN_BEDROCK","value":"inline-key","sensitive":true}],"config":{"homePath":"~/.claude_restricted","customModels":[{"slug":"restricted.model"}]}}}}',
+      );
+
+      const loaded = yield* serverSettings.getSettings;
+      assert.isTrue(loaded.providerInstances[cuiId]?.confineTextGeneration);
+
+      yield* serverSettings.updateSettings({ addProjectBaseDirectory: "~/projects" });
+
+      const onDisk = yield* decodeServerSettingsJson(
+        yield* fileSystem.readFileString(serverConfig.settingsPath),
+      );
+      assert.isTrue(onDisk.providerInstances[cuiId]?.confineTextGeneration);
+      assert.deepEqual(onDisk.providerInstances[cuiId]?.config, {
+        homePath: "~/.claude_restricted",
+        customModels: [{ slug: "restricted.model" }],
+      });
+      // The save moved the inline key into the secret store.
+      assert.deepInclude(
+        onDisk.providerInstances[cuiId]?.environment?.find(
+          (variable) => variable.name === "AWS_BEARER_TOKEN_BEDROCK",
+        ),
+        { value: "", valueRedacted: true },
+      );
+      const reread = yield* serverSettings.getSettings;
+      assert.isTrue(reread.providerInstances[cuiId]?.confineTextGeneration);
+      assert.equal(
+        reread.providerInstances[cuiId]?.environment?.find(
+          (variable) => variable.name === "AWS_BEARER_TOKEN_BEDROCK",
+        )?.value,
+        "inline-key",
+      );
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
   it.effect("moves saved provider credentials to the secret store when settings load", () =>
     Effect.gen(function* () {
       const service = yield* ServerSettingsModule.ServerSettingsService;

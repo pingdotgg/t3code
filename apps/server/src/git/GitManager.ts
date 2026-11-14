@@ -38,6 +38,7 @@ import {
   ModelSelection,
   type OrchestrationV2TurnItem,
   type ProjectId,
+  type ServerSettings as ServerSettingsValue,
   SourceControlProviderError,
   type SourceControlWritingStyleSettings,
   type ThreadId,
@@ -49,6 +50,10 @@ import {
   hasProjectSettingsOverrides,
   resolveProjectSettings,
 } from "@t3tools/shared/projectSettings";
+import {
+  hasConfinedTextGenerationInstance,
+  resolveThreadTextGenerationModelSelection,
+} from "@t3tools/shared/serverSettings";
 import {
   mergeGitStatusParts,
   resolveAutoFeatureBranchName,
@@ -830,6 +835,21 @@ export const make = Effect.gen(function* () {
     return result;
   });
 
+  /**
+   * `configured`, unless the action runs beside a thread whose instance keeps its generated text
+   * on itself. Actions without a thread (drafts, CLI) keep the configured writer.
+   */
+  const textGenerationSelectionForThread = Effect.fnUntraced(function* (
+    threadId: ThreadId | undefined,
+    settings: Pick<ServerSettingsValue, "providerInstances">,
+    configured: ModelSelection,
+  ) {
+    if (threadId === undefined || !hasConfinedTextGenerationInstance(settings)) {
+      return configured;
+    }
+    const thread = yield* threads.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => null));
+    return resolveThreadTextGenerationModelSelection(settings, configured, thread?.modelSelection);
+  });
   const readRepositoryInstructions = Effect.fn("GitManager.readRepositoryInstructions")(
     function* (cwd: string, fileName: string) {
       const root = yield* fileSystem.realPath(cwd);
@@ -3482,23 +3502,25 @@ export const make = Effect.gen(function* () {
 
         const textGenerationSettings = yield* projectSettingsFor(input).pipe(
           Effect.flatMap(({ settings, projectId }) =>
-            settings.sourceControlWriterModelSelection === null
-              ? Effect.succeed({
-                  modelSelection: settings.textGenerationModelSelection,
-                  projectId,
-                  style: settings.sourceControlWritingStyle,
-                })
-              : providerRegistry.getProviders.pipe(
-                  Effect.map((providers) => ({
-                    modelSelection: ServerSettings.resolveSourceControlWriterModelSelection(
+            Effect.gen(function* () {
+              const configured =
+                settings.sourceControlWriterModelSelection === null
+                  ? settings.textGenerationModelSelection
+                  : ServerSettings.resolveSourceControlWriterModelSelection(
                       settings,
-                      providers,
+                      yield* providerRegistry.getProviders,
                       projectId,
-                    ),
-                    projectId,
-                    style: settings.sourceControlWritingStyle,
-                  })),
+                    );
+              return {
+                projectId,
+                modelSelection: yield* textGenerationSelectionForThread(
+                  input.threadId,
+                  settings,
+                  configured,
                 ),
+                style: settings.sourceControlWritingStyle,
+              };
+            }),
           ),
           Effect.mapError(
             (cause) =>

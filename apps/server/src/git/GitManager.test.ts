@@ -607,6 +607,7 @@ function runStackedAction(
     commitMessage?: string;
     featureBranch?: boolean;
     filePaths?: readonly string[];
+    threadId?: ThreadId;
   },
   options?: Parameters<GitManager.GitManager["Service"]["runStackedAction"]>[1],
 ) {
@@ -3307,6 +3308,97 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       });
 
       expect(generatedModelSelection).toEqual(projectModel);
+    }),
+  );
+
+  it.effect("writes commit messages for a confined thread with its own instance and model", () =>
+    Effect.gen(function* () {
+      const confinedId = ProviderInstanceId.make("claude_restricted");
+      const threadSelection: ModelSelection = {
+        instanceId: confinedId,
+        model: "us-gov.anthropic.claude-sonnet",
+      };
+      const projectId = ProjectId.make("project:git-confined");
+      const threadId = ThreadId.make("thread:git-confined");
+      const createdAt = DateTime.makeUnsafe("2026-10-01T00:00:00.000Z");
+      const commitSelection = (confineTextGeneration: boolean, actionThreadId?: ThreadId) =>
+        Effect.gen(function* () {
+          const repoDir = yield* makeTempDir("t3code-git-manager-");
+          yield* initRepo(repoDir);
+          NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\nworld\n");
+          let generatedModelSelection: ModelSelection | undefined;
+          const { manager } = yield* makeManager({
+            serverSettings: {
+              providerInstances: {
+                [confinedId]: {
+                  driver: ProviderDriverKind.make("claudeAgent"),
+                  ...(confineTextGeneration ? { confineTextGeneration } : {}),
+                },
+              },
+            },
+            textGeneration: {
+              generateCommitMessage: (input) => {
+                generatedModelSelection = input.modelSelection;
+                return Effect.succeed({ subject: "Update readme", body: "" });
+              },
+            },
+            seed: Effect.gen(function* () {
+              yield* (yield* ProjectionStore.ProjectionStoreV2).apply({
+                id: EventId.make("event:git-confined:thread"),
+                type: "thread.created",
+                threadId,
+                providerInstanceId: confinedId,
+                occurredAt: createdAt,
+                payload: {
+                  createdBy: "user",
+                  creationSource: "web",
+                  id: threadId,
+                  projectId,
+                  title: "Confined",
+                  providerInstanceId: confinedId,
+                  modelSelection: {
+                    ...threadSelection,
+                    options: [{ id: "effort", value: "max" }],
+                  },
+                  runtimeMode: "full-access",
+                  interactionMode: "default",
+                  branch: null,
+                  worktreePath: repoDir,
+                  activeProviderThreadId: null,
+                  lineage: {
+                    parentThreadId: null,
+                    relationshipToParent: null,
+                    rootThreadId: threadId,
+                  },
+                  forkedFrom: null,
+                  createdAt,
+                  updatedAt: createdAt,
+                  archivedAt: null,
+                  settledOverride: null,
+                  settledAt: null,
+                  lastVisitedAt: null,
+                  deletedAt: null,
+                },
+              });
+            }),
+          });
+          yield* manager.runStackedAction({
+            actionId: "test-action-id",
+            cwd: repoDir,
+            action: "commit",
+            ...(actionThreadId !== undefined ? { threadId: actionThreadId } : {}),
+          });
+          return generatedModelSelection;
+        });
+
+      expect(yield* commitSelection(true, threadId)).toEqual(threadSelection);
+      expect(yield* commitSelection(false, threadId)).toEqual(
+        DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
+      );
+      // Without a thread there is no instance to keep the text on.
+      expect(yield* commitSelection(true)).toEqual(
+        DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
+      );
     }),
   );
 
