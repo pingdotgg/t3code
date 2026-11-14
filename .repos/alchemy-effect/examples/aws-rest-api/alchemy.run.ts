@@ -1,5 +1,5 @@
+import * as AWS from "@alchemy.run/aws";
 import * as Alchemy from "alchemy";
-import * as AWS from "alchemy/AWS";
 import * as Output from "alchemy/Output";
 import * as Effect from "effect/Effect";
 import JobFunction from "./src/JobFunction.ts";
