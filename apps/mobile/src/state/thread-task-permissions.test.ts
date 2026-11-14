@@ -42,6 +42,7 @@ const state = vi.hoisted(() => ({
   compactDueAt: "",
   setFreshPending: vi.fn(),
   clearDraft: vi.fn(),
+  commitDrafts: vi.fn(async () => undefined),
   approve: vi.fn(),
   answer: vi.fn(),
   feedback: vi.fn(),
@@ -162,6 +163,7 @@ vi.mock("./use-composer-drafts", async () => {
     setFreshSessionPending: state.setFreshPending,
     clearComposerDraftContent: state.clearDraft,
     clearComposerDraft: state.clearDraft,
+    commitComposerDrafts: state.commitDrafts,
     setComposerDraftText: (_key: string, text: string) => {
       state.draft.text = text;
     },
@@ -457,6 +459,39 @@ describe("mobile task permissions", () => {
         text: "Keep my draft",
       }),
     );
+  });
+
+  it("commits the cleared draft only after the outbox write succeeds", async () => {
+    state.grantedEnvironments.add("secondary");
+    const queued = Promise.withResolvers<void>();
+    state.enqueue.mockReturnValueOnce(queued.promise);
+    const composer = useThreadComposerState(NO_SIDE_CHATS);
+
+    expect(await composer.onSendMessage()).toBe("message");
+    expect(state.clearDraft).toHaveBeenCalledWith(
+      "secondary:thread",
+      expect.objectContaining({ deferAttachmentCleanup: true, deferPersist: true }),
+    );
+    expect(state.commitDrafts).not.toHaveBeenCalled();
+
+    queued.resolve();
+    await queued.promise;
+    expect(state.commitDrafts).toHaveBeenCalledOnce();
+  });
+
+  it("leaves the cleared draft uncommitted when the outbox write fails", async () => {
+    state.grantedEnvironments.add("secondary");
+    state.enqueue.mockRejectedValueOnce(new Error("disk full"));
+    const composer = useThreadComposerState(NO_SIDE_CHATS);
+
+    expect(await composer.onSendMessage()).toBe("message");
+    await Promise.resolve();
+
+    expect(state.clearDraft).toHaveBeenCalledWith(
+      "secondary:thread",
+      expect.objectContaining({ deferPersist: true }),
+    );
+    expect(state.commitDrafts).not.toHaveBeenCalled();
   });
 
   it("rechecks the target environment before an approval response", async () => {

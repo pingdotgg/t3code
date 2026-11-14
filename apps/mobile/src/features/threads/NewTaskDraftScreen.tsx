@@ -684,7 +684,7 @@ export function NewTaskDraftScreen(props: {
     const draftSnapshot = getComposerDraftSnapshot(draftKey);
     // The queued message owns the attachments now, so the sweep is deferred
     // until the write confirms it.
-    clearComposerDraftContent(draftKey, {
+    await clearComposerDraftContent(draftKey, {
       clearModelSelection: true,
       clearWorkspaceSelection: true,
       deferAttachmentCleanup: true,

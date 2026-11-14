@@ -181,6 +181,7 @@ import {
   archiveCloudComposerDrafts,
   clearComposerDraftContent,
   clearComposerDraftContentState,
+  commitComposerDrafts,
   subscribeComposerDraftModelReconciliation,
   clearComposerDraftsEnvironment,
   ComposerDraftPersistenceError,
@@ -213,6 +214,7 @@ import {
   setComposerDraftAttachmentUpload,
   waitForComposerDraftsLoaded,
   setStickyComposerModelSelection,
+  settleComposerDraftCommits,
   stickyComposerModelSelectionAtom,
   undoComposerDraftMergeState,
   updateComposerDraftSettings,
@@ -224,7 +226,8 @@ const DRAFT: ComposerDraft = {
   attachments: [],
 };
 
-afterEach(() => {
+afterEach(async () => {
+  await settleComposerDraftCommits();
   vi.useRealTimers();
   resetComposerDraftsLoadState();
   composerDraftFileMocks.setDocument({ schemaVersion: 1, drafts: {} });
@@ -1982,6 +1985,38 @@ describe("mobile composer drafts", () => {
         "openai/gpt-5.4": [{ id: "thinking", value: "medium" }],
       },
     });
+  });
+
+  it("commits a cleared draft without waiting out the debounce a swipe-away kills", async () => {
+    vi.useFakeTimers();
+    const key = "environment-1:thread-1";
+    setComposerDraftText(key, "Ship the fix");
+    await vi.advanceTimersByTimeAsync(200);
+    composerDraftFileMocks.resetWrites();
+
+    await clearComposerDraftContent(key, { deferAttachmentCleanup: true });
+
+    expect(JSON.parse(composerDraftFileMocks.getDocument()).drafts[key]).toBeUndefined();
+  });
+
+  it("holds a send clear on disk until the queued message is durable", async () => {
+    vi.useFakeTimers();
+    const key = "environment-1:thread-1";
+    setComposerDraftText(key, "Ship the fix");
+    await vi.advanceTimersByTimeAsync(200);
+    composerDraftFileMocks.resetWrites();
+
+    await clearComposerDraftContent(key, {
+      deferAttachmentCleanup: true,
+      deferPersist: true,
+    });
+    await vi.advanceTimersByTimeAsync(200);
+
+    expect(composerDraftFileMocks.getWrites()).toHaveLength(0);
+    expect(JSON.parse(composerDraftFileMocks.getDocument()).drafts[key].text).toBe("Ship the fix");
+
+    await commitComposerDrafts();
+    expect(JSON.parse(composerDraftFileMocks.getDocument()).drafts[key]).toBeUndefined();
   });
 
   it("flush waits for pending hydration instead of clobbering disk", async () => {

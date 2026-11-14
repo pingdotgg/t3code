@@ -30,5 +30,5 @@ export async function recoverFailedThreadDraft(message: QueuedThreadMessage): Pr
   );
   // Recovery may exceed caps; preserve every file and leave trimming to the editor.
   await flushComposerDrafts();
-  clearComposerDraftContent(sourceKey);
+  await clearComposerDraftContent(sourceKey);
 }

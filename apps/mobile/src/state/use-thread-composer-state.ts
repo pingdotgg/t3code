@@ -77,6 +77,7 @@ import {
   insertComposerDraftContext,
   clearComposerDraft,
   clearComposerDraftContent,
+  commitComposerDrafts,
   composerContextImportsAtom,
   getComposerDraftSnapshot,
   isFreshSessionPending,
@@ -552,7 +553,7 @@ export function useThreadComposerState(input: {
     }
     // False when the edit was cancelled or begun again meanwhile; its draft is the newer edit's.
     if (finishSave(true)) {
-      clearComposerDraft(queuedEditDraftKey(threadKey, edit.runId), {
+      await clearComposerDraft(queuedEditDraftKey(threadKey, edit.runId), {
         deferAttachmentCleanup: true,
       });
     }
@@ -814,10 +815,14 @@ export function useThreadComposerState(input: {
       ...(freshContext ? { freshContext: true } : {}),
       createdAt: metadata.createdAt,
     });
-    clearComposerDraftContent(threadKey, { deferAttachmentCleanup: true });
+    void clearComposerDraftContent(threadKey, {
+      deferAttachmentCleanup: true,
+      deferPersist: true,
+    });
     if (freshContext) setFreshSessionPending(threadKey, false);
     enqueuePromise.then(
       () => {
+        void commitComposerDrafts();
         setKeepFullHistory(threadKey, false);
         scheduleUnusedComposerAttachmentCleanup(attachments);
       },

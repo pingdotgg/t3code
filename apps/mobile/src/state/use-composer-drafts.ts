@@ -565,6 +565,10 @@ export function resetComposerDraftsLoadState(): void {
   loadPromise = null;
   appAtomRegistry.set(composerDraftsLoadedAtom, false);
   persistRetryNeeded = false;
+  if (persistTimer !== null) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
 }
 
 function attachmentContextRecord(
@@ -1046,6 +1050,23 @@ registerComposerAttachmentUnusedHandler((attachment) => {
   scheduleUnusedComposerAttachmentCleanup([attachment]);
 });
 
+const composerDraftCommits = new Set<Promise<void>>();
+
+function trackComposerDraftCommit(commit: Promise<void>): Promise<void> {
+  composerDraftCommits.add(commit);
+  void commit.finally(() => {
+    composerDraftCommits.delete(commit);
+  });
+  return commit;
+}
+
+/** Drains draft writes already handed to the persistence queue. */
+export async function settleComposerDraftCommits(): Promise<void> {
+  while (composerDraftCommits.size > 0) {
+    await Promise.allSettled(composerDraftCommits);
+  }
+}
+
 export function schedulePersistComposerState(): void {
   if (persistTimer !== null) {
     clearTimeout(persistTimer);
@@ -1053,7 +1074,37 @@ export function schedulePersistComposerState(): void {
   persistTimer = setTimeout(() => {
     persistTimer = null;
     // Enqueue before awaiting hydration so flushComposerDrafts cannot drain ahead of this write.
-    void persistenceQueue.run(async () => {
+    trackComposerDraftCommit(
+      persistenceQueue.run(async () => {
+        try {
+          await waitForComposerDraftsLoaded();
+          await writePersistedComposerState(
+            appAtomRegistry.get(composerDraftsAtom),
+            appAtomRegistry.get(stickyComposerModelSelectionAtom),
+          );
+          persistRetryNeeded = false;
+        } catch (error) {
+          // Failed debounces leave no timer; final flush must retry after reading persisted ownership.
+          persistRetryNeeded = true;
+          console.warn("[composer-drafts] failed to persist drafts", error);
+        }
+      }),
+    );
+  }, PERSIST_DEBOUNCE_MS);
+}
+
+/**
+ * Writes the current drafts immediately. A send clear cannot wait out
+ * `PERSIST_DEBOUNCE_MS`: swiping the app away kills the process first, and the
+ * next launch reloads the sent text.
+ */
+export function commitComposerDrafts(): Promise<void> {
+  if (persistTimer !== null) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
+  return trackComposerDraftCommit(
+    persistenceQueue.run(async () => {
       try {
         await waitForComposerDraftsLoaded();
         await writePersistedComposerState(
@@ -1062,12 +1113,11 @@ export function schedulePersistComposerState(): void {
         );
         persistRetryNeeded = false;
       } catch (error) {
-        // Failed debounces leave no timer; final flush must retry after reading persisted ownership.
         persistRetryNeeded = true;
         console.warn("[composer-drafts] failed to persist drafts", error);
       }
-    });
-  }, PERSIST_DEBOUNCE_MS);
+    }),
+  );
 }
 
 export function ensureComposerDraftsLoaded(): void {
@@ -1318,14 +1368,25 @@ export async function restoreCloudComposerDrafts(accountId: string): Promise<voi
 
 function updateComposerDrafts(
   update: (current: Record<string, ComposerDraft>) => Record<string, ComposerDraft>,
-): void {
+  persist: "debounce" | "now" | "hold" = "debounce",
+): Promise<void> {
   const current = appAtomRegistry.get(composerDraftsAtom);
   const next = update(current);
   if (next === current) {
-    return;
+    return Promise.resolve();
   }
   appAtomRegistry.set(composerDraftsAtom, next);
+  if (persist === "hold") {
+    // A typing debounce would otherwise store the cleared draft before the outbox write finishes.
+    if (persistTimer !== null) {
+      clearTimeout(persistTimer);
+      persistTimer = null;
+    }
+    return Promise.resolve();
+  }
+  if (persist === "now") return commitComposerDrafts();
   schedulePersistComposerState();
+  return Promise.resolve();
 }
 
 export function setStickyComposerModelSelection(modelSelection: ModelSelection): void {
@@ -1902,34 +1963,41 @@ export function clearComposerDraftContent(
     readonly clearWorkspaceSelection?: boolean;
     // Defer sweeping during enqueue; rollback can briefly remove ownership before restoring attachments.
     readonly deferAttachmentCleanup?: boolean;
+    // Hold the disk write until the outbox file is durable. Clearing disk first drops the message if the process dies between the two writes.
+    readonly deferPersist?: boolean;
   },
-): void {
+): Promise<void> {
   const previousAttachments = getComposerDraftSnapshot(draftKey).attachments;
   markComposerDraftReset(draftKey);
-  updateComposerDrafts((current) => clearComposerDraftContentState(current, draftKey, options));
+  const persisted = updateComposerDrafts(
+    (current) => clearComposerDraftContentState(current, draftKey, options),
+    options?.deferPersist ? "hold" : "now",
+  );
   if (!options?.deferAttachmentCleanup) {
     scheduleUnusedComposerAttachmentCleanup(previousAttachments);
   }
+  return persisted;
 }
 
 export function clearComposerDraft(
   draftKey: string,
   options?: { readonly deferAttachmentCleanup?: boolean },
-): void {
+): Promise<void> {
   abortComposerDraftOperations(draftKey);
   markComposerDraftReset(draftKey);
   const previousAttachments = getComposerDraftSnapshot(draftKey).attachments;
-  updateComposerDrafts((current) => {
+  const persisted = updateComposerDrafts((current) => {
     if (!current[draftKey]) {
       return current;
     }
     const next = { ...current };
     delete next[draftKey];
     return next;
-  });
+  }, "now");
   if (!options?.deferAttachmentCleanup) {
     scheduleUnusedComposerAttachmentCleanup(previousAttachments);
   }
+  return persisted;
 }
 
 export function removeComposerDraftsForEnvironment(
