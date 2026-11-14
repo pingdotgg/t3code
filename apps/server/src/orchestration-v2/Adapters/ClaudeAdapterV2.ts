@@ -4088,6 +4088,13 @@ function claudeToolResultBlocksFromAssistantMessage(
   return message.message.content.filter(isClaudeAssistantToolResultContentBlock);
 }
 
+function isClaudeThinkingOnlyContent(content: ReadonlyArray<{ readonly type: string }>): boolean {
+  return (
+    content.length > 0 &&
+    content.every((block) => block.type === "thinking" || block.type === "redacted_thinking")
+  );
+}
+
 function claudeToolResultBlocksFromUserMessage(
   message: SDKMessage,
 ): ReadonlyArray<ClaudeToolResultContentBlock> {
@@ -4819,6 +4826,10 @@ interface ActiveClaudeTurnContext {
   readonly nativeThreadId: string;
   readonly nativeTurnId: string;
   nativeMessageCursor: string | null;
+  // Latest root transcript entry a thinking-only assistant frame can fall back to.
+  nativeTranscriptTail: string | null;
+  // Steers whose root user entry a reply has already shown to be in the transcript.
+  readonly steersInTranscript: Set<string>;
   readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
   readonly providerTurnOrdinal: number;
   readonly startedAt: DateTime.Utc;
@@ -10483,6 +10494,31 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
           }
 
+          if (
+            message.type === "user" &&
+            message.parent_tool_use_id === null &&
+            message.uuid !== undefined &&
+            input.replayed !== true &&
+            claudeToolResultBlocksFromUserMessage(message).length > 0
+          ) {
+            // A stop before the next reply would otherwise resume before this result and lose it.
+            context.nativeMessageCursor = message.uuid;
+            context.nativeTranscriptTail = message.uuid;
+          }
+
+          if (
+            message.type === "assistant" &&
+            message.parent_tool_use_id === null &&
+            input.replayed !== true
+          ) {
+            // The first reply to an accepted steer echoes its uuid, the root entry that reply follows.
+            const echoedSteers = claudeEchoedPromptUuids(message).filter(
+              (uuid) => context.steerUuids.has(uuid) && !context.steersInTranscript.has(uuid),
+            );
+            for (const uuid of echoedSteers) context.steersInTranscript.add(uuid);
+            if (echoedSteers[0] !== undefined) context.nativeTranscriptTail = echoedSteers[0];
+          }
+
           if (message.type === "assistant" && input.replayed !== true) {
             if (message.parent_tool_use_id === null) {
               // CLI notices and API errors arrive as assistant messages from "<synthetic>".
@@ -10494,7 +10530,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 );
               }
               // Subagent uuids exist only in the sidechain transcript, so resume and fork cannot target them.
-              context.nativeMessageCursor = message.uuid;
+              // Claude Code drops a thinking-only entry with no same-id sibling when loading a session,
+              // so resuming at its uuid fails; point at the entry it follows instead.
+              if (isClaudeThinkingOnlyContent(message.message.content)) {
+                context.nativeMessageCursor =
+                  context.nativeTranscriptTail ?? context.nativeMessageCursor;
+              } else {
+                context.nativeMessageCursor = message.uuid;
+                context.nativeTranscriptTail = message.uuid;
+              }
               context.latestAssistantRateLimit =
                 message.error === "rate_limit" ? { type: null, resetAt: null } : null;
               if (message.error === "rate_limit" && isClaudeBlockedAssistantRateLimit(message)) {
@@ -12761,6 +12805,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               nativeThreadId,
               nativeTurnId,
               nativeMessageCursor: null,
+              nativeTranscriptTail: promptUuid,
               providerTurnId,
               providerTurnOrdinal,
               startedAt,
@@ -12813,6 +12858,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               heldRootFrames: [],
               pendingSteers: new Map(),
               steerUuids: new Set(),
+              steersInTranscript: new Set(),
               executedModel: undefined,
             };
             const attachTurn = Effect.gen(function* () {
