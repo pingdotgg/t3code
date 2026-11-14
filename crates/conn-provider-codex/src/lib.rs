@@ -55,6 +55,25 @@ pub struct CodexProvider {
     config: CodexConfig,
     server: Arc<client::AppServer>,
     models: Arc<Mutex<Vec<(String, String)>>>,
+    /// The instance's `enabled`, `displayName` and `accentColor` (`withInstanceIdentity`).
+    identity: Identity,
+}
+
+#[derive(Clone, Debug)]
+struct Identity {
+    enabled: bool,
+    display_name: Option<String>,
+    accent_color: Option<String>,
+}
+
+impl Default for Identity {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            display_name: None,
+            accent_color: None,
+        }
+    }
 }
 
 impl std::fmt::Debug for CodexProvider {
@@ -67,7 +86,7 @@ impl std::fmt::Debug for CodexProvider {
 
 impl CodexProvider {
     pub fn new(instance_id: ProviderInstanceId, config: CodexConfig) -> Self {
-        let launch_args = std::env::var(launch::LAUNCH_ARGS_ENV).ok();
+        let launch_args = config.launch_args_env();
         let host_has_originator = std::env::var_os(launch::ORIGINATOR_ENV).is_some();
         let spec = launch::launch_spec(&config, launch_args.as_deref(), host_has_originator);
         let models = Arc::new(Mutex::new(
@@ -91,7 +110,31 @@ impl CodexProvider {
             config,
             server,
             models,
+            identity: Identity::default(),
         }
+    }
+
+    /// The provider for one `providerInstances` entry (`None`: the default instance with no
+    /// entry), over the server's base configuration. An enabled instance whose binary is not
+    /// installed is not offered, as [`Self::detect`]; a disabled one is listed disabled, as
+    /// T3 lists it, and starts nothing.
+    pub fn for_instance(
+        instance_id: ProviderInstanceId,
+        base: CodexConfig,
+        entry: Option<&Value>,
+    ) -> Option<Self> {
+        let envelope = conn_provider_support::instance::InstanceEnvelope::parse(entry, true);
+        let config = base.with_instance(entry);
+        if envelope.enabled {
+            config.find_binary()?;
+        }
+        let mut provider = Self::new(instance_id, config);
+        provider.identity = Identity {
+            enabled: envelope.enabled,
+            display_name: envelope.display_name,
+            accent_color: envelope.accent_color,
+        };
+        Some(provider)
     }
 
     /// A provider for the configured binary, or `None` when it is not installed.
@@ -183,14 +226,46 @@ impl Provider for CodexProvider {
     }
 
     fn server_provider_entry(&self, checked_at: &str) -> Option<Value> {
-        let models = crate::lock(&self.models).clone();
-        Some(server_provider_entry(
-            self.instance_id.as_str(),
-            checked_at,
-            self.server.version(),
-            &models,
-        ))
+        let mut entry = if self.identity.enabled {
+            let models = crate::lock(&self.models).clone();
+            server_provider_entry(
+                self.instance_id.as_str(),
+                checked_at,
+                self.server.version(),
+                &models,
+            )
+        } else {
+            disabled_entry(self.instance_id.as_str(), checked_at)
+        };
+        if let Some(name) = &self.identity.display_name {
+            entry["displayName"] = json!(name);
+        }
+        if let Some(color) = &self.identity.accent_color {
+            entry["accentColor"] = json!(color);
+        }
+        Some(entry)
     }
+}
+
+/// T3's snapshot of a disabled Codex instance (`checkCodexProviderStatus`): no probe, the
+/// custom models only (none are read here).
+pub fn disabled_entry(instance_id: &str, checked_at: &str) -> Value {
+    json!({
+        "instanceId": instance_id,
+        "driver": DRIVER,
+        "displayName": "Codex",
+        "enabled": false,
+        "installed": false,
+        "version": null,
+        "status": "disabled",
+        "auth": {"status": "unknown"},
+        "setup": {"canAuthenticate": false, "canInstall": false},
+        "checkedAt": checked_at,
+        "message": "Codex is disabled in T3 Code settings.",
+        "models": [],
+        "slashCommands": [],
+        "skills": [],
+    })
 }
 
 /// `CodexProviderCapabilitiesV2` with what this crate does not do switched off: snapshots,

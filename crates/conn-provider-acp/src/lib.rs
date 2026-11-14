@@ -197,7 +197,7 @@ impl AcpProvider {
             } else {
                 config.binary.trim().to_owned()
             },
-            environment: config.environment.clone(),
+            environment: config.environment.clone().into(),
             enabled: true,
             ..GrokSettings::default()
         };

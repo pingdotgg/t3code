@@ -14,7 +14,10 @@ use std::{path::PathBuf, time::Duration};
 
 use serde_json::{Map, Value, json};
 
+use conn_provider_support::instance::{self, InstanceEnv, InstanceEnvelope};
+
 use crate::helper::HelperCommand;
+use crate::launch_args;
 
 /// What `CLAUDE_HOST_SESSION_VARIABLES` in `ClaudeHome.ts` removes: a parent Claude Code
 /// session's ids, messaging socket and token, and effort. Plus `ELECTRON_RUN_AS_NODE` (T3).
@@ -44,8 +47,12 @@ pub struct ClaudeConfig {
     pub binary: PathBuf,
     /// `homePath`: a custom `CLAUDE_CONFIG_DIR`. `None` keeps the inherited one.
     pub home_path: Option<PathBuf>,
-    /// The provider instance's own environment entries, applied after T3's changes.
-    pub instance_env: Vec<(String, String)>,
+    /// The provider instance's own environment entries, applied after T3's changes. Values
+    /// may be secrets; its `Debug` prints names only.
+    pub instance_env: InstanceEnv,
+    /// `launchArgs`, as stored (T3 does not trim them). Parsed per query
+    /// (`makeClaudeQueryOptions`); probes and titles do not use them.
+    pub launch_args: String,
     /// `buildRuntimeInstructions({ harness: "Claude Code" })`: the start of
     /// `systemPrompt.append`.
     pub append_system_prompt: Option<String>,
@@ -105,12 +112,60 @@ pub const READ_ONLY_T3_MCP_TOOLS: &[&str] = &[
     "mcp__t3-code__send_to_user",
 ];
 
+impl ClaudeConfig {
+    /// This configuration with the instance's `providerInstances[id]` entry applied, as the
+    /// T3 server's Claude driver builds its adapter (`ClaudeSettings`, `makeClaudeEnvironment`,
+    /// `ClaudeAdapterV2` 13884-13890): `binaryPath` trimmed with `~` expanded (`claude` when
+    /// empty), `homePath` expanded and made absolute, the instance environment, `launchArgs`.
+    /// `None` is the default instance with no entry: the defaults.
+    #[must_use]
+    pub fn with_instance(mut self, entry: Option<&Value>) -> Self {
+        let envelope = InstanceEnvelope::parse(entry, true);
+        self.binary = envelope.config_str("binaryPath").map_or_else(
+            || PathBuf::from("claude"),
+            |b| PathBuf::from(instance::expand_home(&b)),
+        );
+        self.home_path = envelope
+            .config_str("homePath")
+            .map(|home| absolute(&instance::expand_home(&home)));
+        self.instance_env = envelope.environment;
+        self.launch_args = envelope.config["launchArgs"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        self
+    }
+}
+
+/// `path.resolve` against the server's working folder.
+pub(crate) fn absolute(path: &str) -> PathBuf {
+    let path = PathBuf::from(path);
+    let joined = if path.is_absolute() {
+        path
+    } else {
+        std::env::current_dir().unwrap_or_default().join(path)
+    };
+    // `path.resolve` also folds `.` and `..`.
+    let mut out = PathBuf::new();
+    for part in joined.components() {
+        match part {
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            std::path::Component::CurDir => {}
+            other => out.push(other),
+        }
+    }
+    out
+}
+
 impl Default for ClaudeConfig {
     fn default() -> Self {
         Self {
             binary: PathBuf::from("claude"),
             home_path: None,
-            instance_env: Vec::new(),
+            instance_env: InstanceEnv::default(),
+            launch_args: String::new(),
             append_system_prompt: Some(default_append_system_prompt()),
             attachments_dir: None,
             setting_sources: None,
@@ -324,7 +379,14 @@ pub struct QueryInput {
 
 /// The option object for `query()`, as `makeClaudeQueryOptions` builds it, without the
 /// functions (`canUseTool`, `onUserDialog`, `onElicitation`), which the helper adds.
-pub fn query_options(config: &ClaudeConfig, input: &QueryInput, env: Map<String, Value>) -> Value {
+///
+/// `launch` is the instance's `launchArgs` as [`crate::launch_args::apply`] read them.
+pub fn query_options(
+    config: &ClaudeConfig,
+    input: &QueryInput,
+    env: Map<String, Value>,
+    launch: &launch_args::Applied,
+) -> Value {
     let mut options = Map::new();
     options.insert("model".into(), json!(input.model));
     if let Some(title) = &input.title {
@@ -337,7 +399,15 @@ pub fn query_options(config: &ClaudeConfig, input: &QueryInput, env: Map<String,
             Tools::List(list) => json!(list),
         },
     );
-    options.insert("permissionMode".into(), json!(input.policy.permission_mode));
+    // A launch argument's mode wins, then `--dangerously-skip-permissions`, then the policy.
+    let permission_mode = launch.permission_mode.clone().unwrap_or_else(|| {
+        if launch.skip_permissions {
+            "bypassPermissions".into()
+        } else {
+            input.policy.permission_mode.clone()
+        }
+    });
+    options.insert("permissionMode".into(), json!(permission_mode));
     options.insert("includePartialMessages".into(), json!(true));
     options.insert("promptSuggestions".into(), json!(input.prompt_suggestions));
     if let Some(effort) = &input.effort {
@@ -357,8 +427,18 @@ pub fn query_options(config: &ClaudeConfig, input: &QueryInput, env: Map<String,
     if input.policy.allow_dangerously_skip_permissions {
         options.insert("allowDangerouslySkipPermissions".into(), json!(true));
     }
-    // Thinking summaries unless the selection turns thinking off.
-    let thinking_off = input.selection_settings.get("alwaysThinkingEnabled") == Some(&json!(false));
+    // Thinking summaries unless the selection turns thinking off or a launch argument asks
+    // for `--thinking-display omitted`.
+    let mut extra_args = launch.extra_args.clone();
+    let thinking_display = extra_args
+        .iter()
+        .find(|(k, _)| k == "thinking-display")
+        .map(|(_, v)| v.clone());
+    let thinking_off = input.selection_settings.get("alwaysThinkingEnabled") == Some(&json!(false))
+        || thinking_display == Some(Some("omitted".to_owned()));
+    if !thinking_off && thinking_display.is_none() {
+        extra_args.push(("thinking-display".into(), Some("summarized".into())));
+    }
     // T3 pins an alias-named model to itself (`ANTHROPIC_DEFAULT_<ALIAS>_MODEL` in
     // settings.env) only after its model catalog resolved the alias; without the catalog a
     // bare alias goes to the CLI as is, which expands it the same way.
@@ -370,8 +450,33 @@ pub fn query_options(config: &ClaudeConfig, input: &QueryInput, env: Map<String,
         );
         settings.insert("showThinkingSummaries".into(), json!(true));
     }
-    if !settings.is_empty() {
-        options.insert("settings".into(), Value::Object(settings));
+    match &launch.settings {
+        // `--settings` lies beneath T3's keys, in its own order.
+        Some(base) => {
+            let mut merged = base.clone();
+            let order = [
+                "effortLevel",
+                "alwaysThinkingEnabled",
+                "fastMode",
+                "ultracode",
+                "showThinkingSummaries",
+            ];
+            let mut keys: Vec<&String> = settings.keys().collect();
+            keys.sort_by_key(|k| order.iter().position(|o| o == k).unwrap_or(order.len()));
+            for key in keys {
+                if let Some(value) = settings.get(key) {
+                    launch_args::set(&mut merged, key, launch_args::Json::from_value(value));
+                }
+            }
+            options.insert(
+                "settings".into(),
+                crate::ordered::raw(launch_args::Json::Object(merged).to_text()),
+            );
+        }
+        None if !settings.is_empty() => {
+            options.insert("settings".into(), Value::Object(settings));
+        }
+        None => {}
     }
     options.insert("supportedDialogKinds".into(), json!(["resume_return"]));
     options.insert(
@@ -383,15 +488,33 @@ pub fn query_options(config: &ClaudeConfig, input: &QueryInput, env: Map<String,
     if input.t3_mcp {
         append.push_str(config.mcp_instructions.as_deref().unwrap_or_default());
     }
+    for text in &launch.append {
+        append.push_str("\n\n");
+        append.push_str(text);
+    }
     options.insert(
         "systemPrompt".into(),
         json!({"type": "preset", "preset": "claude_code", "append": append}),
     );
-    if !thinking_off {
+    if launch.extra_args.is_empty() && !extra_args.is_empty() {
         options.insert(
             "extraArgs".into(),
             json!({"thinking-display": "summarized"}),
         );
+    } else if !extra_args.is_empty() {
+        // The user's flags, in their order.
+        let object = launch_args::Json::Object(
+            extra_args
+                .into_iter()
+                .map(|(k, v)| {
+                    (
+                        k,
+                        v.map_or(launch_args::Json::Null, launch_args::Json::String),
+                    )
+                })
+                .collect(),
+        );
+        options.insert("extraArgs".into(), crate::ordered::raw(object.to_text()));
     }
     if let Some(sources) = &config.setting_sources {
         options.insert("settingSources".into(), json!(sources));
@@ -406,6 +529,7 @@ pub fn query_options(config: &ClaudeConfig, input: &QueryInput, env: Map<String,
                 .iter()
                 .map(|p| p.to_string_lossy().into_owned()),
         )
+        .chain(launch.add_dirs.iter().cloned())
         .collect();
     if !dirs.is_empty() {
         options.insert("additionalDirectories".into(), json!(dirs));
@@ -548,6 +672,30 @@ pub fn expand_home(path: &str) -> PathBuf {
 mod tests {
     use super::*;
 
+    #[test]
+    fn an_instance_entry_shapes_the_config() {
+        let home = std::env::var("HOME").unwrap_or_default();
+        let entry = json!({
+            "driver": "claudeAgent",
+            "config": {"binaryPath": " ~/bin/claude ", "homePath": "~/claude-low", "launchArgs": " --verbose "},
+            "environment": [{"name": "SECRET", "value": "s3cret", "sensitive": true}],
+        });
+        let config = ClaudeConfig::default().with_instance(Some(&entry));
+        assert_eq!(config.binary, PathBuf::from(format!("{home}/bin/claude")));
+        assert_eq!(
+            config.home_path,
+            Some(PathBuf::from(format!("{home}/claude-low")))
+        );
+        // T3 does not trim Claude's launch arguments.
+        assert_eq!(config.launch_args, " --verbose ");
+        assert_eq!(config.instance_env.get("SECRET"), Some("s3cret"));
+        assert!(!format!("{config:?}").contains("s3cret"));
+        assert_eq!(
+            ClaudeConfig::default().with_instance(None).binary,
+            PathBuf::from("claude")
+        );
+    }
+
     fn policy(runtime: &str) -> QueryPolicy {
         query_policy(
             &PolicyInput {
@@ -587,7 +735,7 @@ mod tests {
 
     #[test]
     fn options_match_make_claude_query_options() {
-        let options = query_options(&config(), &input(false), Map::new());
+        let options = query_options(&config(), &input(false), Map::new(), &Default::default());
         assert_eq!(
             options,
             json!({
@@ -615,7 +763,7 @@ mod tests {
                 "cwd": "/workspace",
             })
         );
-        let resumed = query_options(&config(), &input(true), Map::new());
+        let resumed = query_options(&config(), &input(true), Map::new(), &Default::default());
         assert_eq!(resumed["resume"], "1979620e-79c0-42d3-94d7-6c559c0f8ed4");
         assert!(resumed.get("sessionId").is_none());
     }
@@ -628,7 +776,7 @@ mod tests {
             mcp_instructions: Some("\n\nMCP".into()),
             ..config()
         };
-        let options = query_options(&config, &with_mcp, Map::new());
+        let options = query_options(&config, &with_mcp, Map::new(), &Default::default());
         assert!(
             options["systemPrompt"]["append"]
                 .as_str()

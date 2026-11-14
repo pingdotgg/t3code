@@ -28,6 +28,8 @@ OUT="${CONFORMANCE_OUT:-$(mktemp -d "${TMPDIR:-/tmp}/conn-claude-conformance.XXX
 mkdir -p "$OUT"
 OUT="$(cd "$OUT" && pwd -P)"
 mkdir -p "$OUT/workspace" "$OUT/attachments" "$OUT/claude-home" "$OUT/home"
+# The instance_launch_args scenario appends this file (one trailing newline is trimmed).
+printf 'From the append file.\n\n' > "$OUT/home/append.txt"
 echo "output: $OUT"
 
 # The image of e15, as the attachment both sides send.

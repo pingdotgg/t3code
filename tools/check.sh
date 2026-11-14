@@ -173,6 +173,14 @@ fi
 # orbit-flow needs no monorepo.
 run "orbit-flow (fake provider)" \
   node crates/conn-server/tools/orbit-flow.mjs "$release/examples/replay_server"
+# Claude and Codex instances from providerInstances, through the server, on recording stubs
+# (no CLI, no model). Needs no monorepo; Claude runs through the SDK host.
+if [ -d helpers/sdk-host/node_modules/@anthropic-ai/claude-agent-sdk ]; then
+  run "instances-flow" node crates/conn-server/tools/instances-flow.mjs "$release/conn-server"
+else
+  printf '\nhelpers/sdk-host has no node_modules: skipping instances-flow (run npm ci in helpers/sdk-host).\n'
+  skipped_tools+=("instances-flow")
+fi
 
 printf '\n== Summary\n'
 printf 'passed  %d\n' "${#passed[@]}"

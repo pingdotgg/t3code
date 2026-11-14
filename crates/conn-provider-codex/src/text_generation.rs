@@ -194,7 +194,7 @@ fn launch_args(config: &CodexConfig) -> String {
 /// The environment the CLI gets on top of the server's: the instance's entries, then
 /// `CODEX_HOME` when a home is set.
 fn env_set(config: &CodexConfig) -> Vec<(String, String)> {
-    let mut env = config.instance_env.clone();
+    let mut env = config.instance_env.0.clone();
     if let Some(home) = &config.home_path {
         env.push((
             "CODEX_HOME".to_owned(),

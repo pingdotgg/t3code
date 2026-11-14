@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use conn_contract::{ChatAttachment, ModelSelection, to_json};
 use conn_provider::{McpServer, RuntimePolicy};
+use conn_provider_support::instance::{self, InstanceEnv, InstanceEnvelope};
 use conn_provider_support::{attachments, process::LaunchSpec};
 
 use crate::context::{ToolAvailability, additional_context};
@@ -38,8 +39,9 @@ pub struct CodexConfig {
     pub home_path: Option<PathBuf>,
     /// `launchArgs`, split like a shell.
     pub launch_args: String,
-    /// The provider instance's own environment entries.
-    pub instance_env: Vec<(String, String)>,
+    /// The provider instance's own environment entries. Values may be secrets; its `Debug`
+    /// prints names only.
+    pub instance_env: InstanceEnv,
     /// T3's attachment store (`<state>/attachments`): attachments are read from
     /// `<dir>/<id><ext>`. `None`: attachments are listed as unavailable.
     pub attachments_dir: Option<PathBuf>,
@@ -54,7 +56,7 @@ impl Default for CodexConfig {
             binary: PathBuf::from("codex"),
             home_path: None,
             launch_args: String::new(),
-            instance_env: Vec::new(),
+            instance_env: InstanceEnv::default(),
             attachments_dir: None,
             stop_confirm_timeout: STOP_CONFIRM_TIMEOUT,
         }
@@ -62,6 +64,44 @@ impl Default for CodexConfig {
 }
 
 impl CodexConfig {
+    /// This configuration with the instance's `providerInstances[id]` entry applied, as the
+    /// T3 server's Codex driver builds its adapter (`CodexDriver.ts` 188-221,
+    /// `resolveCodexHomeLayout`): `binaryPath` trimmed with `~` expanded (`codex` when empty);
+    /// `homePath`, or else a `CODEX_HOME` the instance or the server sets, expanded and made
+    /// absolute; the instance environment; `launchArgs` trimmed. `None`: the defaults.
+    #[must_use]
+    pub fn with_instance(mut self, entry: Option<&Value>) -> Self {
+        let envelope = InstanceEnvelope::parse(entry, true);
+        self.binary = envelope.config_str("binaryPath").map_or_else(
+            || PathBuf::from("codex"),
+            |b| PathBuf::from(instance::expand_home(&b)),
+        );
+        let home = envelope.config_str("homePath").or_else(|| {
+            envelope
+                .environment
+                .get("CODEX_HOME")
+                .map(str::to_owned)
+                .or_else(|| {
+                    conn_support::login_env::var_os("CODEX_HOME")
+                        .map(|h| h.to_string_lossy().into_owned())
+                })
+                .filter(|h| !h.trim().is_empty())
+        });
+        self.home_path = home.map(|h| absolute(&instance::expand_home(&h)));
+        self.launch_args = envelope.config_str("launchArgs").unwrap_or_default();
+        self.instance_env = envelope.environment;
+        self
+    }
+
+    /// `resolveCodexLaunchArgs`: `T3CODE_CODEX_LAUNCH_ARGS` from the instance's environment
+    /// over the server's (`mergeProviderInstanceEnvironment`), else the setting.
+    pub fn launch_args_env(&self) -> Option<String> {
+        self.instance_env
+            .get(LAUNCH_ARGS_ENV)
+            .map(str::to_owned)
+            .or_else(|| std::env::var(LAUNCH_ARGS_ENV).ok())
+    }
+
     /// The configured binary when it exists: a path is checked as is, a bare name on `PATH`.
     pub fn find_binary(&self) -> Option<PathBuf> {
         find_executable(
@@ -83,6 +123,22 @@ impl CodexConfig {
             .or_else(|| std::env::var_os("CODEX_HOME").map(PathBuf::from))
             .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".codex")))
     }
+}
+
+/// `path.resolve` against the server's working folder.
+fn absolute(path: &str) -> PathBuf {
+    let joined = std::env::current_dir().unwrap_or_default().join(path);
+    let mut out = PathBuf::new();
+    for part in joined.components() {
+        match part {
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            std::path::Component::CurDir => {}
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 pub fn find_executable(binary: &Path, path_var: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
@@ -570,6 +626,36 @@ fn is_amount(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_instance_entry_shapes_the_launch() {
+        let home = std::env::var("HOME").unwrap_or_default();
+        let entry = json!({
+            "driver": "codex",
+            "config": {"binaryPath": "  ~/bin/codex ", "homePath": "~/codex-work/./x/..", "launchArgs": " --enable a "},
+            "environment": [
+                {"name": "SECRET", "value": "s3cret", "sensitive": true},
+                {"name": "T3CODE_CODEX_LAUNCH_ARGS", "value": "--enable b"},
+            ],
+        });
+        let config = CodexConfig::default().with_instance(Some(&entry));
+        assert_eq!(config.binary, PathBuf::from(format!("{home}/bin/codex")));
+        assert_eq!(
+            config.home_path,
+            Some(PathBuf::from(format!("{home}/codex-work")))
+        );
+        assert_eq!(config.launch_args, "--enable a");
+        assert_eq!(config.launch_args_env().as_deref(), Some("--enable b"));
+        assert!(!format!("{config:?}").contains("s3cret"));
+        // No homePath: the instance's CODEX_HOME, expanded.
+        let entry = json!({"environment": [{"name": "CODEX_HOME", "value": "~/ch"}]});
+        let config = CodexConfig::default().with_instance(Some(&entry));
+        assert_eq!(config.home_path, Some(PathBuf::from(format!("{home}/ch"))));
+        assert_eq!(
+            CodexConfig::default().with_instance(None).binary,
+            PathBuf::from("codex")
+        );
+    }
     use conn_contract::from_json;
 
     /// A `PATH` search skips a file without an execute bit, as the shell does (review
@@ -649,7 +735,7 @@ mod tests {
     fn argv_and_environment_match_the_ts_launch() {
         let config = CodexConfig {
             launch_args: "--enable foo -c 'model=\"x y\"'".into(),
-            instance_env: vec![("OPENAI_BASE_URL".into(), "http://router".into())],
+            instance_env: vec![("OPENAI_BASE_URL".into(), "http://router".into())].into(),
             ..CodexConfig::default()
         };
         let spec = launch_spec(&config, None, false);

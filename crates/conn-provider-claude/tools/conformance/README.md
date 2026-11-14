@@ -60,5 +60,14 @@ A stdin line that differs only in JSON key order is reported as such and fails t
 | `live_selection_model`     | a new model sent to the running turn: nothing until the next turn |
 | `stop_background_idle`     | Stop with no turn running while a background task holds the CLI (`interruptTurn` with `requestRuntimeRestart` on the settled turn): the CLI is closed, the next turn resumes in a new one; 2 starts. Its first script is constructed (`constructed/README.md`) |
 | `read_only_sandbox`        | `approvalPolicy: never` and a read-only sandbox (`policyOverride`), with `t3-code`: `dontAsk`, the read-only tools and allow rules |
+| `instance_binary_home`     | a second instance (`claudeLow`) with a `~` binary path (spaces around it) and a `~` home path with `.` in it |
+| `instance_environment`     | an instance environment: plain, sensitive, `CLAUDE_CONFIG_DIR` with `~`, a `~` in another variable (not expanded), `CLAUDE_CODE_ENTRYPOINT` |
+| `instance_launch_args`     | `launchArgs`: extra flags (one repeated), `--add-dir` (repeated, variadic), both append flags, `--settings` with a comment and a trailing comma |
+| `instance_launch_mode`     | `launchArgs` `--permission-mode acceptEdits --thinking-display omitted` |
+
+`instance` in a scenario is a `providerInstances` entry; each side applies it as its server
+does (T3: `createClaudeAdapterV2`'s steps; ours: `ClaudeConfig::with_instance`). `{side}` in
+a value is the side's folder name, so a `~/../{side}/…` binary path names each side's stub.
+The sensitive value is a fake one; the records hold it.
 
 Not covered here: steering, subagents, elicitation and dialogs, and a CLI that fails to start.

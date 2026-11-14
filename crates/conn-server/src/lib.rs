@@ -8,6 +8,7 @@ pub mod environment;
 pub mod home;
 pub mod host;
 pub mod http;
+pub mod instances;
 pub mod keybindings;
 pub mod limits;
 pub mod methods;

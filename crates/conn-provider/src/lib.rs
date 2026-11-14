@@ -17,6 +17,8 @@
 //!
 //! To add a provider: make a crate that depends on this one and implements both traits.
 
+mod set;
+
 use std::{future::Future, pin::Pin};
 
 use conn_contract::{
@@ -30,6 +32,7 @@ use conn_contract::{
 
 pub use conn_contract::AppThread as ProviderAppThread;
 use serde::{Deserialize, Serialize};
+pub use set::ProviderSet;
 use tokio::sync::mpsc;
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;

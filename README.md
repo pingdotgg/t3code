@@ -99,6 +99,7 @@ line when the variable is missing. Without it, `tools/check.sh` runs the Rust ch
 | T3 replay (Claude)  | `node crates/conn-provider-claude/tools/t3-replay/check.mjs`                                                                    | The T3 server's Claude transcripts: exactly the scenarios in `expected-failures.txt` fail            |
 | T3 fixture replay   | `node crates/conn-engine/tools/t3-fixture-replay/check.mjs`                                                                     | T3's testkit fixtures through this engine and our Claude, Codex and Grok providers pass T3's own assertions, except the variants in its `expected-failures.txt` (69 of 159 pass) |
 | Orbit flow          | `node crates/conn-server/tools/orbit-flow.mjs target/release/examples/replay_server`                                            | Orbit's container flow: start, project add, session issue, launch over `/mcp`, revoke, clean stop   |
+| Instances flow      | `node crates/conn-server/tools/instances-flow.mjs target/release/conn-server` (skipped without `npm ci` in `helpers/sdk-host`)  | Claude and Codex instances from `providerInstances` written before start: a turn on each starts its stub with its settings; a change and a removal through `server.updateSettings` apply to the next session; disabled instances refused and listed disabled |
 
 `replay_server` is `conn-server` with the engine's scripted fake provider, so these checks call
 no model. Each server they start gets a temp state folder; `parity.mjs` gives the T3 server a
@@ -141,11 +142,11 @@ See [`fixtures/README.md`](fixtures/README.md) for every scenario and which need
 | `conn-wire`             | Effect RPC frame types and JSON codec                                 |
 | `conn-contract`         | Generated contract types (`tools/gen-contract.mjs`), method list, ids |
 | `conn-engine`           | `Engine` trait; SQLite event store, projections, streams, turn runner |
-| `conn-provider`         | `Provider` and `Session` traits, `ProviderEvent`                      |
+| `conn-provider`         | `Provider` and `Session` traits, `ProviderEvent`, `ProviderSet` (the instances, changed as the settings change) |
 | `conn-provider-claude`  | The Claude provider, through the official Agent SDK in the SDK host (see [Claude](#claude)) |
 | `conn-provider-codex`   | The Codex provider over `codex app-server` (JSON-RPC on stdio)        |
 | `conn-provider-acp`     | The ACP provider (Grok so far, offered by the server; off until settings enable it) |
-| `conn-provider-support` | Ids, line framing, the process supervisor, the SDK host client (`sdk_host`) and a rooted file host, shared by providers |
+| `conn-provider-support` | Ids, line framing, the process supervisor, the SDK host client (`sdk_host`), a rooted file host, and a provider instance's settings envelope (`instance`: enabled rule, identity, environment with T3's `~` expansion), shared by providers |
 | `conn-mcp`              | `/mcp`: T3 tools over MCP Streamable HTTP; see its README             |
 | `conn-vcs`              | Git status, refs, review diffs, worktrees and their setup             |
 | `conn-files`            | Project files, search, asset URLs, attachments                        |
@@ -202,6 +203,14 @@ runtime request (permission prompts and questions), plan, `turn.terminal`.
 injection, background tasks, subagent stop, MCP apps.
 
 Adding a provider: one new crate that implements both traits.
+
+**Instances.** As in the T3 server, a driver has a default instance whose id is the driver
+kind (`claudeAgent`, `codex`), and each `providerInstances` entry of that driver is one more
+instance (Orbit's `claudeLow` … `claudeMax`). `conn-server/src/instances.rs` builds them
+from the settings at start and again on every change: an entry that changes gives a new
+provider for that id, a removed one is dropped, and open sessions keep the provider they
+opened with, as T3's open sessions keep their adapter. The engine, titles, `/mcp` and the
+server share one `ProviderSet`. Grok's default instance follows its settings itself.
 
 ### 2. Engine (`crates/conn-engine/src/lib.rs`)
 
@@ -492,7 +501,7 @@ What a real Conn session hits that this server does not do:
 - **`/mcp` serves 28 of 87 T3 tools** (`crates/conn-mcp/README.md`).
 - **Worktree launch:** the worktree is made before the thread exists; `prepared-run.*` stays
   refused and no project setup script runs.
-- **Providers:** Claude, Codex and Grok (Grok with `/compact`, background work and subagents; not subagents carried over to a later turn). Their gaps are in each crate's README.
+- **Providers:** Claude, Codex and Grok (Grok with `/compact`, background work and subagents; not subagents carried over to a later turn). Their gaps are in each crate's README. Claude and Codex instance settings apply (binary, home, launch arguments, environment, enabled, identity); not yet: `customModels`, Claude's `autoCompactWindow`, Codex's `shadowHomePath` and its status probe.
 - **Auth:** bearer and ticket only. No cookie sessions, DPoP or relay (`DROP-IN.md` §4).
 - **Desktop-local backend:** the `--bootstrap-fd` start works; the desktop itself still
   spawns the T3 server (`DROP-IN.md` §2).

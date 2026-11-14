@@ -18,6 +18,7 @@ use std::time::Duration;
 use serde_json::{Map, Value, json};
 
 use crate::probe::{CommandError, CommandOutput, spawn_and_collect};
+use conn_provider_support::instance::{InstanceEnv, InstanceEnvelope, trimmed};
 
 pub(crate) const DRIVER: &str = "grok";
 const DISPLAY_NAME: &str = "Grok";
@@ -42,8 +43,8 @@ pub struct GrokSettings {
     /// The instance's `displayName` and `accentColor` (`withInstanceIdentity`).
     pub display_name: Option<String>,
     pub accent_color: Option<String>,
-    /// The instance's `environment` entries with a plain value, in order.
-    pub environment: Vec<(String, String)>,
+    /// The instance's `environment` entries with a value, in order. `Debug` prints names only.
+    pub environment: InstanceEnv,
 }
 
 impl Default for GrokSettings {
@@ -54,120 +55,30 @@ impl Default for GrokSettings {
             custom_models: Vec::new(),
             display_name: None,
             accent_color: None,
-            environment: Vec::new(),
+            environment: InstanceEnv::default(),
         }
     }
-}
-
-fn trimmed(value: &Value) -> Option<String> {
-    value
-        .as_str()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_owned)
 }
 
 impl GrokSettings {
     /// From the `providerInstances[id]` envelope (`None`: the default instance, unconfigured).
-    /// `resolveProviderInstanceEnabled`: an explicit `false` on the envelope or in the config
-    /// wins; then the envelope, then the config, then Grok's default (off).
+    /// `resolveProviderInstanceEnabled`, with Grok's default (off).
     pub fn from_instance(entry: Option<&Value>) -> Self {
-        let Some(entry) = entry else {
-            return Self::default();
-        };
-        let config = entry.get("config").cloned().unwrap_or(Value::Null);
-        let envelope_enabled = entry.get("enabled").and_then(Value::as_bool);
-        let config_enabled = config.get("enabled").and_then(Value::as_bool);
-        let enabled = if envelope_enabled == Some(false) || config_enabled == Some(false) {
-            false
-        } else {
-            envelope_enabled.or(config_enabled).unwrap_or(false)
-        };
-        let environment = entry
-            .get("environment")
-            .and_then(Value::as_array)
-            .map(|vars| {
-                vars.iter()
-                    .filter_map(|v| {
-                        let name = v.get("name")?.as_str()?.to_owned();
-                        // An unresolved secret reference carries no value.
-                        let value = v.get("value")?.as_str()?.to_owned();
-                        let value = expand_home_variable(&name, &value);
-                        Some((name, value))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+        let envelope = InstanceEnvelope::parse(entry, false);
         Self {
-            enabled,
-            binary_path: trimmed(&config["binaryPath"]).unwrap_or_else(|| DRIVER.into()),
-            custom_models: config["customModels"]
+            enabled: envelope.enabled,
+            binary_path: envelope
+                .config_str("binaryPath")
+                .unwrap_or_else(|| DRIVER.into()),
+            custom_models: envelope.config["customModels"]
                 .as_array()
                 .cloned()
                 .unwrap_or_default(),
-            display_name: trimmed(&entry["displayName"]),
-            accent_color: trimmed(&entry["accentColor"]),
-            environment,
+            display_name: envelope.display_name,
+            accent_color: envelope.accent_color,
+            environment: envelope.environment,
         }
     }
-}
-
-/// `HOME_PATH_VARIABLES` (`provider-core/src/server/pathExpansion.ts`): the only instance
-/// variables whose `~` names the home folder. `tools/probe-conformance.mjs` checks the list
-/// against the monorepo.
-pub(crate) const HOME_PATH_VARIABLES: [&str; 3] = ["CODEX_HOME", "CLAUDE_CONFIG_DIR", "GROK_HOME"];
-
-/// `expandHomeVariable`.
-fn expand_home_variable(name: &str, value: &str) -> String {
-    if !HOME_PATH_VARIABLES.contains(&name) {
-        return value.to_owned();
-    }
-    match std::env::var_os("HOME") {
-        Some(home) => expand_home_path(value, &home.to_string_lossy()),
-        None => value.to_owned(),
-    }
-}
-
-/// `expandHomePath`: `~`, `~/…` and `~\…`, joined as `path.join` joins (normalized).
-fn expand_home_path(value: &str, home: &str) -> String {
-    if value == "~" {
-        return home.to_owned();
-    }
-    let Some(rest) = value
-        .strip_prefix("~/")
-        .or_else(|| value.strip_prefix("~\\"))
-    else {
-        return value.to_owned();
-    };
-    let joined = format!("{home}/{rest}");
-    let absolute = joined.starts_with('/');
-    let mut parts: Vec<&str> = Vec::new();
-    for part in joined.split('/') {
-        match part {
-            "" | "." => {}
-            ".." => {
-                if parts.last().is_some_and(|p| *p != "..") {
-                    parts.pop();
-                } else if !absolute {
-                    parts.push("..");
-                }
-            }
-            other => parts.push(other),
-        }
-    }
-    let body = parts.join("/");
-    let trailing = joined.ends_with('/') && !body.is_empty();
-    let mut out = if absolute {
-        format!("/{body}")
-    } else if body.is_empty() {
-        ".".into()
-    } else {
-        body
-    };
-    if trailing {
-        out.push('/');
-    }
-    out
 }
 
 /// `mergeProviderInstanceEnvironment`: the server's environment with the instance's entries.
@@ -1026,14 +937,6 @@ async fn discover_skills(
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn expands_home_only_in_t3s_variables() {
-        assert_eq!(super::expand_home_path("~/a/../b//c", "/h"), "/h/b/c");
-        assert_eq!(super::expand_home_path("~", "/h"), "/h");
-        assert_eq!(super::expand_home_path("~x", "/h"), "~x");
-        assert_eq!(super::expand_home_variable("PATH", "~/bin"), "~/bin");
-    }
-
     use super::*;
 
     const LOGGED_IN: &str = "You are logged in with grok.com.\n\nDefault model: grok-4.6\n\nAvailable models:\n  * grok-4.6 (default)\n  - grok-4.5\n";

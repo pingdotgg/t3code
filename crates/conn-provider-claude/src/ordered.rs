@@ -63,6 +63,17 @@ fn preferred(keys: &[&String]) -> &'static [&'static str] {
     }
 }
 
+/// The key of [`raw`]'s marker object. No JSON a client or the CLI sends has it.
+const RAW: &str = "\u{0}raw";
+
+/// A value written as the given JSON text, verbatim: for objects whose key order comes from
+/// the user (`--settings`, `extraArgs`), which `serde_json` would sort.
+pub fn raw(text: String) -> Value {
+    let mut map = serde_json::Map::new();
+    map.insert(RAW.to_owned(), Value::String(text));
+    Value::Object(map)
+}
+
 /// Serializes `value` with T3's key order.
 pub fn to_string(value: &Value) -> String {
     let mut out = String::new();
@@ -72,6 +83,11 @@ pub fn to_string(value: &Value) -> String {
 
 fn write(value: &Value, out: &mut String) {
     match value {
+        Value::Object(map) if map.len() == 1 && map.get(RAW).is_some_and(Value::is_string) => {
+            if let Some(Value::String(text)) = map.get(RAW) {
+                out.push_str(text);
+            }
+        }
         Value::Object(map) => {
             let keys: Vec<&String> = map.keys().collect();
             let order = preferred(&keys);

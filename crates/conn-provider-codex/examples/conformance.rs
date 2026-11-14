@@ -209,12 +209,24 @@ async fn run_scenario(
     dir: &std::path::Path,
     calls: &Value,
 ) -> Result<(), String> {
+    // The scenario's `providerInstances` entry over its stub and home, as the server applies
+    // one (`CodexConfig::with_instance`).
+    let mut entry = scenario
+        .get("instance")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+    let rust_codex = scenario["rustCodex"].as_str().ok_or("rustCodex")?;
+    if entry["config"]["binaryPath"].is_null() {
+        entry["config"]["binaryPath"] = serde_json::json!(rust_codex);
+    }
+    if entry["config"]["homePath"].is_null() {
+        entry["config"]["homePath"] = plan["codexHome"].clone();
+    }
     let config = CodexConfig {
-        binary: PathBuf::from(scenario["rustCodex"].as_str().ok_or("rustCodex")?),
-        home_path: plan["codexHome"].as_str().map(PathBuf::from),
         attachments_dir: plan["attachmentsDir"].as_str().map(PathBuf::from),
         ..CodexConfig::default()
-    };
+    }
+    .with_instance(Some(&entry));
     if let Some(title) = scenario.get("title") {
         return run_title(&config, title, dir, calls).await;
     }
