@@ -7443,6 +7443,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly processExited?: true;
           readonly onlyIfRunningInRun?: RunId | null;
         }) {
+          // Claude reports `completed` when a subagent pauses to wait on its own background
+          // work, then resumes it under the same task id once that work ends.
+          if (
+            input.nativeOutcome?.status === "completed" &&
+            [...(yield* Ref.get(pendingBackgroundTasksByNativeThread)).values()].some((roster) =>
+              [...roster.values()].some((task) => task.parentTaskId === input.taskId),
+            )
+          ) {
+            return;
+          }
           const registeredSubagent = (yield* Ref.get(sessionSubagentsByTaskId)).get(input.taskId);
           const existingSubagent =
             input.onlyIfRunningInRun !== undefined

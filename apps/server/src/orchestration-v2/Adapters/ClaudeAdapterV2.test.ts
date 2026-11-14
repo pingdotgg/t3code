@@ -19562,6 +19562,144 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  // Claude reports a background subagent `completed` when it ends its turn to wait on its
+  // own background shell (parent_task_id), then resumes it when that shell finishes.
+  it.effect("keeps a subagent running while its own background command still runs", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const SUBAGENT_TASK_ID = "task-own-background-work";
+        const SUBAGENT_TOOL_USE_ID = "toolu-own-background-work";
+        const SHELL_TASK_ID = "shell-own-background-work";
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const subagentEvents = () =>
+          harness.events.filter(
+            (
+              event,
+            ): event is Extract<
+              ProviderAdapter.ProviderAdapterV2Event,
+              { type: "subagent.updated" }
+            > => event.type === "subagent.updated",
+          );
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-own-work-1"),
+            text: "Start a background subagent and stop.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: SUBAGENT_TASK_ID,
+            tool_use_id: SUBAGENT_TOOL_USE_ID,
+            description: "Run the test suite",
+            subagent_type: "general-purpose",
+            is_backgrounded: true,
+            task_type: "local_agent",
+            prompt: "Run the test suite in the background and report.",
+            uuid: "00000000-0000-4000-8000-000000002701",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* harness.until(() => subagentEvents().length >= 1);
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000002702",
+            result: "Started the subagent in the background.",
+          }),
+        );
+        yield* harness.awaitTerminal(1);
+
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: SHELL_TASK_ID,
+            tool_use_id: "toolu-own-background-work-shell",
+            description: "Run the test suite",
+            is_backgrounded: true,
+            parent_task_id: SUBAGENT_TASK_ID,
+            task_type: "local_bash",
+            uuid: "00000000-0000-4000-8000-000000002703",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "background_tasks_changed",
+            tasks: [
+              { task_id: SUBAGENT_TASK_ID, task_type: "local_agent" },
+              {
+                task_id: SHELL_TASK_ID,
+                task_type: "local_bash",
+                description: "Run the test suite",
+                parent_task_id: SUBAGENT_TASK_ID,
+              },
+            ],
+            uuid: "00000000-0000-4000-8000-000000002704",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_notification",
+            task_id: SUBAGENT_TASK_ID,
+            tool_use_id: SUBAGENT_TOOL_USE_ID,
+            status: "completed",
+            output_file: "/tmp/task-own-background-work.output",
+            summary: "WAITING",
+            uuid: "00000000-0000-4000-8000-000000002705",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* harness.awaitContinuation(1);
+        yield* harness.offerAndWait(
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000002706",
+            result: "The subagent is waiting on its test suite.",
+          }),
+        );
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-own-work-2"),
+            text: "Background task completed.",
+            attachments: [],
+            providerTurnOrdinal: 2,
+            messageCreatedBy: "agent",
+            messageCreationSource: "provider",
+          }),
+        );
+        yield* harness.awaitTerminal(2);
+
+        assert.equal(subagentEvents().at(-1)?.subagent.status, "running");
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
   it.effect("resets Waiting roster and wake eligibility when the CLI process is replaced", () =>
     Effect.gen(function* () {
       const changes = yield* makeChangeSignal;
