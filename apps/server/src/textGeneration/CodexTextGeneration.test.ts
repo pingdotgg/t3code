@@ -619,6 +619,7 @@ const PREFLIGHT_PRIMARY_STATES = [
   "exhausted",
   "not installed",
   "not installed, fallback disabled for project",
+  "not installed, text confined to it",
   "signed out",
   "signed out, fallback failed",
   "cannot generate text",
@@ -724,6 +725,12 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
           }),
           ServerSettings.layerTest({
             providerInstances: {
+              [primary]: {
+                driver: ProviderDriverKind.make("codex"),
+                ...(primaryState === "not installed, text confined to it"
+                  ? { confineTextGeneration: true }
+                  : {}),
+              },
               [fallback]: {
                 driver: ProviderDriverKind.make("claudeAgent"),
                 config: { customModels: [threadDefault.model] },
@@ -759,6 +766,7 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
       primaryState === "ready" ||
       primaryState === "pending" ||
       primaryState === "not installed, fallback disabled for project" ||
+      primaryState === "not installed, text confined to it" ||
       primaryState === "signed out, fallback failed"
         ? selection
         : threadDefault,

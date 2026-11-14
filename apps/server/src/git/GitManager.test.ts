@@ -635,6 +635,7 @@ function makeManager(input?: {
   setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
   gitConfigReads?: string[];
   gitCommands?: string[];
+  failThreadReads?: boolean;
   gitSpawnGate?: {
     readonly matches: (args: ReadonlyArray<string>) => boolean;
     readonly reached: Deferred.Deferred<void>;
@@ -761,9 +762,17 @@ function makeManager(input?: {
     if (input?.seed !== undefined) {
       yield* input.seed.pipe(Effect.provideContext(stores), Effect.orDie);
     }
+    const projectionStore = Context.get(stores, ProjectionStore.ProjectionStoreV2);
+    const managerStores = input?.failThreadReads
+      ? Context.add(stores, ProjectionStore.ProjectionStoreV2, {
+          ...projectionStore,
+          getThreadShell: (threadId: ThreadId) =>
+            Effect.fail(new ProjectionStore.ProjectionStoreReadError({ threadId })),
+        })
+      : stores;
     const manager = yield* GitManager.make.pipe(
       Effect.provide(layerManager),
-      Effect.provideContext(stores),
+      Effect.provideContext(managerStores),
     );
     return { manager, providerCalls };
   });
@@ -3321,13 +3330,19 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const projectId = ProjectId.make("project:git-confined");
       const threadId = ThreadId.make("thread:git-confined");
       const createdAt = DateTime.makeUnsafe("2026-10-01T00:00:00.000Z");
-      const commitSelection = (confineTextGeneration: boolean, actionThreadId?: ThreadId) =>
+      let generations = 0;
+      const commitSelection = (
+        confineTextGeneration: boolean,
+        actionThreadId?: ThreadId,
+        failThreadReads = false,
+      ) =>
         Effect.gen(function* () {
           const repoDir = yield* makeTempDir("t3code-git-manager-");
           yield* initRepo(repoDir);
           NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\nworld\n");
           let generatedModelSelection: ModelSelection | undefined;
           const { manager } = yield* makeManager({
+            failThreadReads,
             serverSettings: {
               providerInstances: {
                 [confinedId]: {
@@ -3338,6 +3353,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
             },
             textGeneration: {
               generateCommitMessage: (input) => {
+                generations += 1;
                 generatedModelSelection = input.modelSelection;
                 return Effect.succeed({ subject: "Update readme", body: "" });
               },
@@ -3399,6 +3415,10 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       expect(yield* commitSelection(true)).toEqual(
         DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
       );
+      // A failed thread read must not fall back to the configured writer.
+      const before = generations;
+      yield* commitSelection(true, threadId, true).pipe(Effect.flip);
+      expect(generations).toBe(before);
     }),
   );
 

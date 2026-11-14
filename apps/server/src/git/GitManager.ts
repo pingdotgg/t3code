@@ -847,7 +847,7 @@ export const make = Effect.gen(function* () {
     if (threadId === undefined || !hasConfinedTextGenerationInstance(settings)) {
       return configured;
     }
-    const thread = yield* threads.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => null));
+    const thread = yield* threads.getThreadShell(threadId);
     return resolveThreadTextGenerationModelSelection(settings, configured, thread?.modelSelection);
   });
   const readRepositoryInstructions = Effect.fn("GitManager.readRepositoryInstructions")(

@@ -163,11 +163,13 @@ with **Add custom model** and select it in the chat model picker. Hide built-in 
 your Bedrock account cannot use. `ANTHROPIC_MODEL` does not replace the model selected
 in T3 Code.
 
-Thread titles, branch names, commit messages, and pull request text normally use the
-**Text generation model**, which can be a different provider. To keep that text on the
+Thread titles and branch names normally use the **Text generation model**, and commit
+messages and pull request text use the **Source control writer model** when one is set,
+otherwise the same model. Either can be a different provider. To keep that text on the
 Bedrock instance, turn on **Keep generated text on this provider** in the instance's
 settings. Commit and pull request text stays on the instance when the action runs from
-one of its threads. The setting does not stop you or an agent from switching the thread
+one of its threads, and T3 Code does not fall back to another provider if the instance
+is unavailable. The setting does not stop you or an agent from switching the thread
 to another provider or delegating a task to one, and both send thread content to that
 provider.
 

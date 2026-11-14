@@ -125,25 +125,27 @@ export const make = Effect.gen(function* () {
         ),
       );
       selection =
-        fallbackTextGenerationModelSelection(
-          settings.providerInstances,
-          (instanceId, driver, model) => {
-            const provider = snapshots.find((candidate) => candidate.instanceId === instanceId);
-            return (
-              instanceId !== selection.instanceId &&
-              provider?.enabled === true &&
-              resolveProjectProviderInstanceEnabled(settings, projectId ?? null, instanceId) &&
-              provider.installed &&
-              provider.auth.status !== "unauthenticated" &&
-              provider.status !== "error" &&
-              isProviderAvailable(provider) &&
-              isProviderTextGenerationCapable(provider) &&
-              (operation !== "generateReviewGuide" || INVESTIGATING_DRIVERS.has(driver)) &&
-              !exhaustedUsageWindow(provider, now, model)
-            );
-          },
-          { defaultModelSelection: settings.defaultModelSelection },
-        ) ?? selection;
+        settings.providerInstances[selection.instanceId]?.confineTextGeneration === true
+          ? selection
+          : (fallbackTextGenerationModelSelection(
+              settings.providerInstances,
+              (instanceId, driver, model) => {
+                const provider = snapshots.find((candidate) => candidate.instanceId === instanceId);
+                return (
+                  instanceId !== selection.instanceId &&
+                  provider?.enabled === true &&
+                  resolveProjectProviderInstanceEnabled(settings, projectId ?? null, instanceId) &&
+                  provider.installed &&
+                  provider.auth.status !== "unauthenticated" &&
+                  provider.status !== "error" &&
+                  isProviderAvailable(provider) &&
+                  isProviderTextGenerationCapable(provider) &&
+                  (operation !== "generateReviewGuide" || INVESTIGATING_DRIVERS.has(driver)) &&
+                  !exhaustedUsageWindow(provider, now, model)
+                );
+              },
+              { defaultModelSelection: settings.defaultModelSelection },
+            ) ?? selection);
     }
     if (textGeneratorCannotRun && selection.instanceId === textGeneratorId) {
       return yield* new TextGenerationError({
