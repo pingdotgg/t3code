@@ -1,6 +1,13 @@
 {
   "customNotices": [
     {
+      "name": "GitHub emoji alias data",
+      "bundles": ["desktop", "web", "mobile"],
+      "license": "MIT",
+      "sourceUrl": "https://github.com/github/gemoji/tree/fadaeaf1f1a9be82b321316a6c5502e43138b2f6",
+      "noticeFile": "packages/shared/src/githubEmojiAliases.LICENSE"
+    },
+    {
       "name": "opencode Office viewers",
       "bundles": ["web"],
       "license": "MIT",

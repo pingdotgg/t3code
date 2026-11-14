@@ -319,7 +319,7 @@ function CollapsedComment({
               className="mt-2 block w-full truncate text-left text-xs text-muted-foreground hover:text-foreground"
               onClick={() => statusTriggerRef.current?.focus({ preventScroll: true })}
             >
-              {pullRequestCommentPreview(body)}
+              {pullRequestCommentPreview(body, detail.provider)}
             </CollapsibleTrigger>
           ) : null}
         </div>

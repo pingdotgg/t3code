@@ -566,6 +566,10 @@
     "./speech": {
       "types": "./src/speech.ts",
       "import": "./src/speech.ts"
+    },
+    "./markdownGithubEmoji": {
+      "types": "./src/markdownGithubEmoji.ts",
+      "import": "./src/markdownGithubEmoji.ts"
     }
   },
   "scripts": {
