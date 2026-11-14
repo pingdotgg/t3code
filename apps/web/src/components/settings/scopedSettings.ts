@@ -480,6 +480,8 @@ export async function persistScopedSettingsPatch(
   );
 }
 
+const OWN_ECHO_LIMIT = 8;
+
 /**
  * Project overrides are whole entries built from this client's copy of the settings, and that
  * copy hears about a save only when the server pushes it back. So saves to one environment run
@@ -492,7 +494,11 @@ export function createScopedSettingsWriter(
   const queues = new Map<EnvironmentId, Promise<unknown>>();
   const responses = new Map<
     EnvironmentId,
-    { readonly settings: ServerSettings; readonly copy: ServerSettings }
+    {
+      readonly settings: ServerSettings;
+      readonly copy: ServerSettings;
+      readonly saved: readonly ServerSettings[];
+    }
   >();
   return (
     environments: readonly ScopedSettingsEnvironment[],
@@ -507,7 +513,12 @@ export function createScopedSettingsWriter(
         const save = (queues.get(environmentId) ?? Promise.resolve()).then(async () => {
           const copy = readSettings(environmentId);
           const response = responses.get(environmentId);
-          const settings = copy !== null && response?.copy === copy ? response.settings : copy;
+          // A copy equal to one of our earlier responses is a delayed echo, older than the latest.
+          const isOwnEcho = (settings: ServerSettings) =>
+            response?.saved.some((saved) => Equal.equals(saved, settings)) === true;
+          const continues =
+            copy !== null && response !== undefined && (response.copy === copy || isOwnEcho(copy));
+          const settings = continues ? response.settings : copy;
           const replanned =
             settings === null ? null : plan(withSettings(environments, environmentId, settings));
           const write =
@@ -519,9 +530,14 @@ export function createScopedSettingsWriter(
             if (
               savedCopy === copy ||
               Equal.equals(savedCopy, settings) ||
-              Equal.equals(savedCopy, result.value)
+              Equal.equals(savedCopy, result.value) ||
+              isOwnEcho(savedCopy)
             ) {
-              responses.set(environmentId, { settings: result.value, copy: savedCopy });
+              responses.set(environmentId, {
+                settings: result.value,
+                copy: savedCopy,
+                saved: [...(continues ? response.saved : []), result.value].slice(-OWN_ECHO_LIMIT),
+              });
             } else {
               responses.delete(environmentId);
             }

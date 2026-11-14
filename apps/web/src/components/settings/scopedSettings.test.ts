@@ -580,7 +580,7 @@ describe("scoped settings writes", () => {
 
     // regression: #18426 rapid project saves rebuilt overrides from a copy that trailed them
     it("keeps every edit and reset while the client's copy trails its saves", async () => {
-      const copy: ServerSettings = {
+      let copy: ServerSettings = {
         ...DEFAULT_SERVER_SETTINGS,
         projectSettingsOverrides: { [projectId]: { enableAgentBrowserAccess: false } },
       };
@@ -599,6 +599,16 @@ describe("scoped settings writes", () => {
       expect(host.stored().projectSettingsOverrides[projectId]).toEqual({
         defaultAutoPull: true,
         removeAgentCreditsOnMerge: true,
+      });
+      // The first save's push arrives late, after the newer saves have finished.
+      copy = (await host.persistServer.mock.results[0]!.value).value;
+      await save((current) =>
+        planScopedSettingsPatch(checkout, current, { defaultThreadEnvMode: "worktree" }),
+      );
+      expect(host.stored().projectSettingsOverrides[projectId]).toEqual({
+        defaultAutoPull: true,
+        removeAgentCreditsOnMerge: true,
+        defaultThreadEnvMode: "worktree",
       });
     });
 
