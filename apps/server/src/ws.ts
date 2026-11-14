@@ -397,7 +397,7 @@ export const withLateConfigDiscovery = <E, R>(
           case "providerStatuses":
             return [{ ...current, providers: event.payload.providers }, [event]];
           case "settingsUpdated":
-            return [{ ...current, settings: event.payload.settings }, [event]];
+            return [{ ...current, ...event.payload }, [event]];
           // Themes and usage-limit sources survive snapshots because snapshots never include them.
           default:
             return [current, [event]];
@@ -1887,7 +1887,9 @@ export const layerWsRpc = (
             onNone: () => ({}),
             onSome: (root) => ({ scratchWorkspaceRoot: root }),
           }),
-          newProjectsRoot: managedFolders.namedProjectsRoot,
+          newProjectsRoot: yield* managedFolders.resolveNamedProjectsRoot(
+            settings.newProjectDirectory,
+          ),
           ...(lastEventLoopStall === undefined ? {} : { lastEventLoopStall }),
           serverTime: DateTime.formatIso(yield* DateTime.now),
         };
@@ -3393,11 +3395,15 @@ export const layerWsRpc = (
                 Stream.map((settings) =>
                   ServerSettings.redactServerSettingsForClient(settings, settingsClient),
                 ),
-                Stream.map((settings) => ({
-                  version: 1 as const,
-                  type: "settingsUpdated" as const,
-                  payload: { settings },
-                })),
+                Stream.mapEffect((settings) =>
+                  managedFolders.resolveNamedProjectsRoot(settings.newProjectDirectory).pipe(
+                    Effect.map((newProjectsRoot) => ({
+                      version: 1 as const,
+                      type: "settingsUpdated" as const,
+                      payload: { settings, newProjectsRoot },
+                    })),
+                  ),
+                ),
               );
 
               const liveUpdates = Stream.merge(

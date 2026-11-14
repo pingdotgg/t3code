@@ -451,6 +451,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
   );
   const isBackgroundActivityDirty = hasChangedBackgroundActivitySettings(settings);
+  const mixedNewProjectDirectory = useScopedSettingsMixed(["newProjectDirectory"]);
 
   const changedSettingLabels = [
     ...(theme !== "system" ? ["Theme"] : []),
@@ -574,6 +575,10 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
       ? ["Add project base directory"]
       : []),
+    ...(mixedNewProjectDirectory ||
+    settings.newProjectDirectory !== DEFAULT_UNIFIED_SETTINGS.newProjectDirectory
+      ? ["New project location"]
+      : []),
     ...(settings.ghqCloneLayout !== DEFAULT_UNIFIED_SETTINGS.ghqCloneLayout
       ? ["Clone into host folders"]
       : []),
@@ -694,6 +699,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
       newWorktreesStartFromOrigin: DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin,
       addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
+      newProjectDirectory: DEFAULT_UNIFIED_SETTINGS.newProjectDirectory,
       ghqCloneLayout: DEFAULT_UNIFIED_SETTINGS.ghqCloneLayout,
       confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
@@ -1775,12 +1781,45 @@ export function ThreadsSettingsPanel() {
     textGenerationModelInstanceEntries,
     true,
   );
+  const mixedNewProjectDirectory = useScopedSettingsMixed(["newProjectDirectory"]);
   const mixedAddProjectBaseDirectory = useScopedSettingsMixed(["addProjectBaseDirectory"]);
   const mixedTextGenerationModel = useScopedSettingsMixed(["textGenerationModelSelection"]);
 
   return (
     <SettingsPageContainer>
       <SettingsSection id="new-projects" title="New projects">
+        <SettingsRow
+          serverScoped
+          settingKeys={["newProjectDirectory"]}
+          {...searchableSetting("new-project-directory")}
+          description="Create new projects in this folder. Leave empty to use the projects folder in T3 home."
+          resetAction={
+            mixedNewProjectDirectory ||
+            settings.newProjectDirectory !== DEFAULT_UNIFIED_SETTINGS.newProjectDirectory ? (
+              <SettingResetButton
+                label="new project location"
+                onClick={() =>
+                  updateSettings({
+                    newProjectDirectory: DEFAULT_UNIFIED_SETTINGS.newProjectDirectory,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <DraftInput
+              size="sm"
+              className="w-full sm:w-72"
+              value={mixedNewProjectDirectory ? "" : settings.newProjectDirectory}
+              onCommit={(next) => updateSettings({ newProjectDirectory: next })}
+              normalizeDraft={resolvePastedPath}
+              placeholder={mixedNewProjectDirectory ? "Mixed" : "Default projects folder"}
+              spellCheck={false}
+              aria-label="New project location"
+            />
+          }
+        />
+
         <SettingsRow
           serverScoped
           settingKeys={["addProjectBaseDirectory"]}
