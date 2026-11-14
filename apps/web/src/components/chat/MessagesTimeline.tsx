@@ -1,3 +1,5 @@
+import type { ComposerThreadTarget } from "~/composerDraftStore";
+import { ActiveDraftCitationMarkers } from "./AssistantCitationMarkers";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
@@ -226,6 +228,10 @@ interface MessagesTimelineProps {
   onRespondToApproval?: TimelineRowSharedState["onRespondToApproval"];
   citationRequest?: AssistantCitationRequest | null;
   citationHistory?: CitedHistory;
+  citationDraftTarget?: ComposerThreadTarget;
+  citationRichTextEnabled?: boolean;
+  showingCitationDraft?: boolean;
+  onOpenDraftCitation?: (key: string, anchor: AssistantCitationSourceAnchor) => void;
   onCiteAssistantText?: (
     citation: AssistantCitation,
     sourceAnchor: AssistantCitationSourceAnchor,
@@ -349,6 +355,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
   citationRequest = null,
   citationHistory = CITED_HISTORY_LOADING,
   onCiteAssistantText,
+  citationDraftTarget,
+  citationRichTextEnabled = false,
+  showingCitationDraft = true,
+  onOpenDraftCitation,
   onReplyToResponse,
   isWorking,
   runlessWorkActive = false,
@@ -1430,6 +1440,15 @@ const ConversationTimeline = memo(function ConversationTimeline({
                 onCite={onCiteAssistantText}
               />
             ) : null}
+            {onOpenDraftCitation && citationDraftTarget && (
+              <ActiveDraftCitationMarkers
+                viewport={timelineViewportElement}
+                draftTarget={citationDraftTarget}
+                richTextEnabled={citationRichTextEnabled}
+                showingDraft={showingCitationDraft}
+                onOpen={onOpenDraftCitation}
+              />
+            )}
             <LegendList<MessagesTimelineRow>
               ref={setTimelineList}
               data={rows}
