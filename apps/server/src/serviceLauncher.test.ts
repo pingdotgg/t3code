@@ -456,34 +456,41 @@ process.exit(0);
     }),
   );
 
-  it.effect("starts the runtime in a T3 home whose name ends in a space", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-space-" });
-      const root = path.join(parent, "T3 data ");
-      const versionDir = path.join(root, "runtime", "versions", "1.0.0");
-      yield* writeFakeRuntime(
-        fs,
-        path,
-        versionDir,
-        `
+  it.effect(
+    "starts the runtime under the launcher lock in a T3 home whose name ends in a space",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-space-" });
+        const root = path.join(parent, "T3 data ");
+        const versionDir = path.join(root, "runtime", "versions", "1.0.0");
+        yield* writeFakeRuntime(
+          fs,
+          path,
+          versionDir,
+          `
 import { writeFileSync } from "node:fs";
-writeFileSync(new URL("./started", import.meta.url), "");
+import { fileURLToPath } from "node:url";
+import { DatabaseSync } from "node:sqlite";
+const lock = new DatabaseSync(fileURLToPath(new URL("../../service-launcher.lock", import.meta.url)));
+let held = false;
+try { lock.exec("PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE;"); } catch { held = true; }
+writeFileSync(new URL("./started", import.meta.url), String(held));
 process.exit(0);
 `,
-      );
-      yield* fs.writeFileString(
-        path.join(root, "runtime", "service-state.json"),
-        JSON.stringify({ protocol: 4, activeVersion: "1.0.0" }),
-      );
+        );
+        yield* fs.writeFileString(
+          path.join(root, "runtime", "service-state.json"),
+          JSON.stringify({ protocol: 4, activeVersion: "1.0.0" }),
+        );
 
-      yield* Effect.promise(() =>
-        expect(runLauncher(root)).rejects.toThrow("Active child exited unexpectedly (0)."),
-      );
+        yield* Effect.promise(() =>
+          expect(runLauncher(root)).rejects.toThrow("Active child exited unexpectedly (0)."),
+        );
 
-      assert.isTrue(yield* fs.exists(path.join(versionDir, "started")));
-    }),
+        assert.equal(yield* fs.readFileString(path.join(versionDir, "started")), "true");
+      }),
   );
 
   it.effect("refuses non-install legacy documents without rewriting or spawning", () =>

@@ -1464,7 +1464,8 @@ export async function main(options: LauncherOptions = {}): Promise<void> {
       environment,
       ...(serviceUnit === undefined ? {} : { serviceUnit }),
       ...(output === undefined ? {} : { output }),
-      ...(windows ? { lockPath: serviceLauncherLockPath(baseDir) } : {}),
+      // Held between children too, so an SSH launch sees the home as owned during a backup.
+      lockPath: serviceLauncherLockPath(baseDir),
     });
     // Ending a scheduled task kills its console host without a signal; the console read fails instead.
     const watchConsole = windows && process.stdin.isTTY === true;
