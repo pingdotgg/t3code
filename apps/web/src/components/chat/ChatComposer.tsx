@@ -392,7 +392,7 @@ export interface ChatComposerProps {
   isLocalDraftThread?: boolean | undefined;
   /** The thread is in No project, so the `/cd` pane does not offer it. */
   folderMoveInNoProject?: boolean | undefined;
-  /** Shows the "Thread not moved" toast for a `/cd` or `/no` row chosen while it is blocked. */
+  /** Shows the "Thread not moved" toast for a `/cd` or `/no` that the composer blocks. */
   onFolderMoveRefused?: ((reason: string) => void) | undefined;
   /** Arms a fresh session for the next message; absent where `/clear` is unavailable. */
   onFreshSession?: (() => void) | undefined;
@@ -1868,20 +1868,25 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // A compact footer gives the dictation capsule the whole row beside the send button.
   const dictationTakesFooter = isComposerFooterCompact && speechInput.state.phase !== "idle";
   const submissionTarget = activePendingProgress ? "pending-user-input" : "provider-turn";
-  const submissionBlocked = isComposerSubmissionBlocked({
+  const submissionBlockers = {
     submissionTarget,
     noProviderAvailable,
     sendDisabledReason,
     attachmentBlockReason,
     environmentUnavailable: environmentUnavailable !== null,
-  });
+  } as const;
+  const submissionBlocked = isComposerSubmissionBlocked(submissionBlockers);
   // The pending Submit button follows the answer's own blockers, matching submitComposer.
   const primaryActionSendDisabledReason =
     (activePendingProgress ? attachmentBlockReason : sendDisabledReason) ??
     (speechInput.preparing ? "Preparing voice input" : null);
+  // A typed `/cd` or `/no` needs no provider, so the send button stays enabled without one.
+  const promptLacksProvider =
+    noProviderAvailable &&
+    !(props.folderMoveAvailable === true && parseFolderMoveCommand(prompt) !== null);
   const primaryActionEnvironmentUnavailable =
     environmentUnavailable !== null ||
-    (!activePendingProgress && (noProviderAvailable || projectSelectionRequired));
+    (!activePendingProgress && (promptLacksProvider || projectSelectionRequired));
   const dictationShortcutLabel = useDictationShortcut({
     keybindings,
     speech: speechInput,
@@ -2201,16 +2206,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       submitAfterDictation(() => submitComposerRef.current(dispatchMode, submissionIntent));
       return false;
     }
-    if (submissionBlocked || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
-      event?.preventDefault();
-      return false;
-    }
-    // `/cd` with no destination opens the pane to choose one, also after Escape closed it.
-    // While a move is blocked, the pane gives the reason.
     const folderMove =
       props.folderMoveAvailable === true && !activePendingProgress
         ? parseFolderMoveCommand(promptRef.current)
         : null;
+    if (
+      isComposerSubmissionBlocked({ ...submissionBlockers, movesFolder: folderMove !== null }) ||
+      !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
+    ) {
+      event?.preventDefault();
+      // A chosen row submits without the send button, so a blocked move says why here.
+      if (folderMove && sendDisabledReason) props.onFolderMoveRefused?.(sendDisabledReason);
+      return false;
+    }
+    // `/cd` with no destination opens the pane to choose one, also after Escape closed it.
+    // While a move is blocked, the pane gives the reason.
     if (folderMove?.command === "cd" && folderMove.path === null) {
       event?.preventDefault();
       const command = "/cd ";

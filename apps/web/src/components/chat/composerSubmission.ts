@@ -32,8 +32,10 @@ export function getComposerSubmissionValidationMessage(
 
 // Answering a question responds to the open request instead of starting a provider turn, so
 // provider and turn-send state must not block it. Its own attachments and connection still do.
+// A folder move (`/cd`, `/no`) needs no provider. Every send-disabled reason still blocks it.
 export function isComposerSubmissionBlocked(input: {
   submissionTarget: ComposerSubmissionInput["submissionTarget"];
+  movesFolder?: boolean;
   noProviderAvailable: boolean;
   sendDisabledReason: string | null;
   attachmentBlockReason: string | null;
@@ -41,7 +43,8 @@ export function isComposerSubmissionBlocked(input: {
 }): boolean {
   return input.submissionTarget === "pending-user-input"
     ? input.attachmentBlockReason !== null || input.environmentUnavailable
-    : input.noProviderAvailable || input.sendDisabledReason !== null;
+    : (input.noProviderAvailable && input.movesFolder !== true) ||
+        input.sendDisabledReason !== null;
 }
 
 export function submitComposerDraft(
