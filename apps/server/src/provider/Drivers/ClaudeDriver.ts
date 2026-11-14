@@ -247,9 +247,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         capacity: 1,
         timeToLive: (exit) =>
           // Only fresh usage earns the TTL; failures, fallbacks and usage-less probes retry.
+          // Claude answers available-but-null while it holds back usage reads; retry that too.
           Exit.isSuccess(exit) &&
           exit.value._tag === "fresh" &&
-          exit.value.capabilities.usage !== undefined
+          exit.value.capabilities.usage !== undefined &&
+          (exit.value.capabilities.usage.rate_limits !== null ||
+            !exit.value.capabilities.usage.rate_limits_available)
             ? CAPABILITIES_PROBE_TTL
             : Duration.zero,
       },
