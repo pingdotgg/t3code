@@ -6954,6 +6954,23 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       expectedMessage: "Usage settings",
     },
     {
+      name: "invalid-encrypted-history",
+      code: "other",
+      message: JSON.stringify({
+        error: {
+          type: "invalid_request_error",
+          code: "invalid_encrypted_content",
+          message: "Encrypted content could not be decrypted or parsed.",
+        },
+        headers: { "x-codex-turn-state": "dummy-sensitive" },
+        status: 400,
+      }),
+      notification: true,
+      expectedClass: "provider_error",
+      expectedCode: "invalid_encrypted_content",
+      expectedMessage: "encrypted conversation history",
+    },
+    {
       name: "sharing-code-mention-retry",
       code: "responseStreamDisconnected",
       errorInfo: { responseStreamDisconnected: { httpStatusCode: null } },
@@ -7224,6 +7241,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       assert.equal(terminal?.status, "failed");
       if (terminal?.status !== "failed") return;
       assert.equal(terminal.failure.class, scenario.expectedClass);
+      assert.notInclude(terminal.failure.message, "dummy-sensitive");
       assert.equal(terminal.threadDisposition, "reusable");
       if (scenario.name === "deferred-reset" || scenario.name === "first-request-reset")
         assert.equal(terminal.failure.resetAt, resetAt);
