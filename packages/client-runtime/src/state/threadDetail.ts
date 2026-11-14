@@ -1,5 +1,6 @@
 import {
   OrchestrationV2AppThread,
+  OrchestrationV2ConversationMessage,
   OrchestrationV2TurnItem,
   type OrchestrationV2ThreadProjection,
   type ScopedThreadRef,
@@ -159,6 +160,7 @@ function toThreadStructure(projection: OrchestrationV2ThreadProjection): ThreadS
 
 const sameTurnItem = Schema.toEquivalence(OrchestrationV2TurnItem);
 const sameAppThread = Schema.toEquivalence(OrchestrationV2AppThread);
+const sameMessage = Schema.toEquivalence(OrchestrationV2ConversationMessage);
 
 // Overlays previous's structure on next, so the fields the strip functions
 // remove are exactly the ones ignored here.
@@ -181,6 +183,17 @@ function sameTurnItemStructure(previous: TurnItem, next: TurnItem): boolean {
     return false;
   }
   return sameApartFromStripped(sameTurnItem, previous, structure, next);
+}
+
+// A streaming reply's text also lands on its message; readers of that text read the live thread.
+function sameMessageStructure(
+  previous: OrchestrationV2ConversationMessage,
+  next: OrchestrationV2ConversationMessage,
+): boolean {
+  if (previous === next) return true;
+  if (!previous.streaming || !next.streaming || previous.id !== next.id) return false;
+  const { text: _text, updatedAt: _updatedAt, ...structure } = previous;
+  return sameApartFromStripped(sameMessage, previous, structure, next);
 }
 
 function sameProjectionArray<T>(
@@ -240,6 +253,7 @@ export function sameThreadStructure(
   for (const key of Object.keys(next) as Array<keyof OrchestrationV2ThreadProjection>) {
     if (
       key === "thread" ||
+      key === "messages" ||
       key === "turnItems" ||
       key === "visibleTurnItems" ||
       key === "updatedAt"
@@ -260,6 +274,7 @@ export function sameThreadStructure(
     return false;
   }
   return (
+    sameProjectionArray(previous.messages, next.messages, sameMessageStructure) &&
     sameProjectionArray(previous.turnItems, next.turnItems, sameTurnItemStructure) &&
     sameProjectionArray(
       previous.visibleTurnItems,
