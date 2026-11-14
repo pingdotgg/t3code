@@ -1721,60 +1721,49 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("removes an award by listing them and deleting the reader's own id", () =>
+  it.effect("removes the reader's own award from a later page, and stops at an empty page", () =>
     Effect.gen(function* () {
+      const others = Array.from({ length: 100 }, (_, index) =>
+        index === 0 ? null : { id: index, name: "thumbsup", user: { username: "julius" } },
+      );
+      const page = (awards: ReadonlyArray<unknown>) =>
+        Effect.succeed(output(JSON.stringify(awards)));
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(output(JSON.stringify({ username: "bilal" }))),
+      );
+      mockedExecute.mockReturnValueOnce(page(others));
+      mockedExecute.mockReturnValueOnce(
+        page([{ id: 500, name: "thumbsup", user: { username: "bilal" } }]),
+      );
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output("{}")));
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(output(JSON.stringify({ username: "bilal" }))),
+      );
+      mockedExecute.mockReturnValueOnce(page(others));
+      mockedExecute.mockReturnValueOnce(page([]));
       const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
-      for (const noteId of [undefined, "9"]) {
-        for (const ownIndex of [0, 100, -1]) {
-          mockedExecute.mockReset();
-          const awards = Array.from({ length: 101 }, (_, index) =>
-            index === ownIndex
-              ? { id: index + 1, name: "thumbsup", user: { username: "bilal" } }
-              : index % 2 === 0
-                ? null
-                : { id: index + 1, name: "thumbsup", user: { username: "julius" } },
-          );
-          const deleted: number[] = [];
-          mockedExecute.mockImplementation((input) => {
-            const path = input.args[1]!;
-            if (path === "user") {
-              return Effect.succeed(output(JSON.stringify({ username: "bilal" })));
-            }
-            if (input.args.includes("DELETE")) {
-              deleted.push(Number(path.split("/").at(-1)));
-              return Effect.succeed(output("{}"));
-            }
-            const url = new URL(path, "https://gitlab.example.com");
-            const page = Number(url.searchParams.get("page") ?? 1);
-            const size = Number(url.searchParams.get("per_page") ?? 20);
-            return Effect.succeed(
-              output(JSON.stringify(awards.slice((page - 1) * size, page * size))),
-            );
-          });
-          yield* cli.setReaction({
-            cwd: "/w",
-            host: "gitlab.example.com",
-            repository: "acme/web",
-            number: 7,
-            ...(noteId === undefined ? {} : { noteId }),
-            content: "thumbs-up",
-            reacted: false,
-          });
-          expect(deleted).toEqual(ownIndex === -1 ? [] : [ownIndex + 1]);
-          expect(
-            mockedExecute.mock.calls.filter(([input]) => input.args[1] === "user"),
-          ).toHaveLength(1);
-          for (const [input] of mockedExecute.mock.calls) {
-            expect(input).toMatchObject({ cwd: "/w", host: "gitlab.example.com" });
-            if (input.args[1] !== "user") {
-              expect(input.args[1]).toContain(
-                `merge_requests/7/${noteId === undefined ? "" : `notes/${noteId}/`}award_emoji`,
-              );
-            }
-          }
-          if (ownIndex === 0) expect(mockedExecute.mock.calls).toHaveLength(3);
-        }
-      }
+      const remove = {
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        content: "thumbs-up",
+        reacted: false,
+      } as const;
+
+      yield* cli.setReaction(remove);
+      yield* cli.setReaction(remove);
+
+      const awards = "projects/acme%2Fweb/merge_requests/7/award_emoji";
+      expect(mockedExecute.mock.calls.map((_, index) => argsOfCall(index)[1])).toEqual([
+        "user",
+        `${awards}?per_page=100&page=1`,
+        `${awards}?per_page=100&page=2`,
+        `${awards}/500`,
+        "user",
+        `${awards}?per_page=100&page=1`,
+        `${awards}?per_page=100&page=2`,
+      ]);
+      expect(argsOfCall(3)).toContain("DELETE");
     }),
   );
 

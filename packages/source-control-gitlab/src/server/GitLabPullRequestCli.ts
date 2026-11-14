@@ -2358,7 +2358,7 @@ export const make = Effect.gen(function* () {
           cwd: input.cwd,
           host: input.host,
           path: `${subject}?${query([
-            ["per_page", "100"],
+            ["per_page", String(MAX_PAGE_SIZE)],
             ["page", String(page)],
           ])}`,
         });
