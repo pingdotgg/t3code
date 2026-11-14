@@ -7701,15 +7701,18 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             ensureInitialized.pipe(
               Effect.andThen(mcpSessions.read(threadInput.threadId)),
               Effect.flatMap((mcpSession) =>
-                client.request(
-                  "thread/start",
-                  codexThreadRuntimeParams({
+                client.request("thread/start", {
+                  ...codexThreadRuntimeParams({
                     threadId: threadInput.threadId,
                     mcpSession,
                     modelSelection: threadInput.modelSelection,
                     runtimePolicy: threadInput.runtimePolicy,
                   }),
-                ),
+                  // Codex tags the child's MCP calls with thread_source "subagent".
+                  ...(IdAllocator.isDelegatedTaskThread(threadInput.threadId)
+                    ? { threadSource: "subagent" }
+                    : {}),
+                }),
               ),
               Effect.map((response): OrchestrationV2ProviderThread =>
                 providerThreadFromCodexThread({
@@ -7841,16 +7844,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 }),
             ),
           ),
+          resumeTurn: (input) => runtime.startTurn(ProviderAdapter.resumeTurnInput(input)),
           startTurn: (turnInput) => {
-            const goalCommand =
-              turnInput.restartContinuationOfRunId === undefined
-                ? parseGoalCommand(turnInput.message)
-                : null;
+            const continuation =
+              turnInput.restartContinuationOfRunId !== undefined || turnInput.resume === true;
+            const goalCommand = !continuation ? parseGoalCommand(turnInput.message) : null;
             if (goalCommand !== null) return runGoalCommand(turnInput, goalCommand);
             const nativeThreadId = turnInput.providerThread.nativeThreadRef?.nativeId;
             return Effect.gen(function* () {
               if (
-                turnInput.restartContinuationOfRunId === undefined &&
+                !continuation &&
                 nativeThreadId != null &&
                 goalsPausedForWake.has(nativeThreadId) &&
                 goalsByNativeThread.get(nativeThreadId)?.status === "paused"
@@ -7859,9 +7862,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               }
               yield* startNativeTurn(
                 turnInput,
-                turnInput.restartContinuationOfRunId === undefined
-                  ? yield* toCodexInput(turnInput)
-                  : [],
+                !continuation ? yield* toCodexInput(turnInput) : [],
               );
             }).pipe(
               Effect.mapError(
