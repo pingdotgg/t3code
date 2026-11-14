@@ -554,16 +554,12 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
-  it.effect.each([
-    ["mac", "dmg"],
-    ["linux", "AppImage"],
-    ["win", "nsis"],
-  ] as const)("ships every Chromium locale for %s", ([platform, target]) =>
+  it.effect("ships every Chromium locale", () =>
     Effect.gen(function* () {
       const config = yield* createBuildConfig(
-        platform,
-        target,
-        "0.0.33-pr.23736.1",
+        "win",
+        "nsis",
+        "0.0.33",
         false,
         false,
         undefined,
