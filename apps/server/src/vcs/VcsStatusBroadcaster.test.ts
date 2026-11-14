@@ -1075,7 +1075,7 @@ describe("VcsStatusBroadcaster", () => {
     },
   );
 
-  it.effect("a remote poll refreshes Changes totals when divergence counts stay the same", () => {
+  it.effect("a remote poll refreshes Changes totals only when its fetch moved refs", () => {
     const state: Parameters<typeof layerTestFor>[0] = {
       currentLocalStatus: {
         ...baseLocalStatus,
@@ -1092,25 +1092,44 @@ describe("VcsStatusBroadcaster", () => {
       const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
       yield* broadcaster.getStatus({ cwd: "/repo" });
       const subscribed = yield* Deferred.make<void>();
-      const polled = yield* Deferred.make<void>();
+      const polled = yield* Queue.unbounded<void>();
       yield* broadcaster.streamStatus({ cwd: "/repo" }).pipe(
         Stream.runForEach((event) => {
           if (event._tag === "snapshot") return Deferred.succeed(subscribed, undefined);
-          if (event._tag === "remoteUpdated") return Deferred.succeed(polled, undefined);
+          if (event._tag === "remoteUpdated") return Queue.offer(polled, undefined);
           return Effect.void;
         }),
         Effect.forkScoped,
       );
       yield* Deferred.await(subscribed);
+      const movedTotals = { baseRef: "origin/main", insertions: 107, deletions: 4 };
+      state.currentLocalStatus = { ...baseLocalStatus, branchChanges: movedTotals };
+      state.currentRemoteStatus = remoteStatusWithPr;
+      state.beforeRemoteStatus = Effect.sync(() => {
+        state.statusFetchCount = (state.statusFetchCount ?? 0) + 1;
+      });
+      yield* TestClock.adjust("30 seconds");
+      yield* Queue.take(polled);
+      assert.deepStrictEqual(
+        (yield* broadcaster.getStatus({ cwd: "/repo" })).branchChanges,
+        movedTotals,
+      );
+
+      // This fetch moved nothing, so the poll publishes its remote read without a working-tree scan.
+      delete state.beforeRemoteStatus;
+      state.currentRemoteStatus = baseRemoteStatus;
+      const localReads = state.localStatusCalls;
       state.currentLocalStatus = {
         ...baseLocalStatus,
-        branchChanges: { baseRef: "origin/main", insertions: 107, deletions: 4 },
+        branchChanges: { baseRef: "origin/main", insertions: 1, deletions: 1 },
       };
-      state.currentRemoteStatus = remoteStatusWithPr;
       yield* TestClock.adjust("30 seconds");
-      yield* Deferred.await(polled);
-      const status = yield* broadcaster.getStatus({ cwd: "/repo" });
-      assert.deepStrictEqual(status.branchChanges, state.currentLocalStatus.branchChanges);
+      yield* Queue.take(polled);
+      assert.deepStrictEqual(
+        (yield* broadcaster.getStatus({ cwd: "/repo" })).branchChanges,
+        movedTotals,
+      );
+      assert.equal(state.localStatusCalls, localReads);
     }).pipe(Effect.provide(layerTestFor(state)));
   });
 

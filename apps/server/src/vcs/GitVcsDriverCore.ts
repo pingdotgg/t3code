@@ -1389,7 +1389,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       "--git-dir",
       gitCommonDir,
       "fetch",
-      "--quiet",
+      // Not `--quiet`: Git prints one line per ref it moved, and nothing when every ref was current.
+      "--no-progress",
       "--no-tags",
       "--no-auto-gc",
       // FETCH_HEAD is written without a lock; overlapping a user's `git pull` makes that pull fail.
@@ -1412,7 +1413,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           fallbackErrorDetail: "Background Git fetch exited with a non-zero status.",
           timeoutMs: Duration.toMillis(STATUS_UPSTREAM_FETCH_TIMEOUT),
         }).pipe(
-          Effect.asVoid,
+          Effect.map((result) => result.stdout.trim().length + result.stderr.trim().length > 0),
           Effect.tap(() =>
             Effect.sync(() => {
               statusRemoteRefreshFailures.delete(key);
@@ -1421,13 +1422,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           Effect.tapError(() => recordStatusRemoteRefreshFailure(key)),
           Effect.tapCause((cause) => Effect.logWarning("Background Git fetch failed", cause)),
           statusFetchProcesses.withPermits(1),
-          Effect.onExit(() =>
+          Effect.onExit((exit) =>
             Effect.sync(() => {
               statusFetches.delete(key);
               // Counted when git exits, not when a waiter times out; a failed fetch can still move refs.
-              statusFetchCount += 1;
+              if (Exit.isFailure(exit) || exit.value) statusFetchCount += 1;
             }),
           ),
+          Effect.asVoid,
           Effect.forkIn(serviceScope, { startImmediately: false, uninterruptible: false }),
         );
         statusFetches.set(key, started);

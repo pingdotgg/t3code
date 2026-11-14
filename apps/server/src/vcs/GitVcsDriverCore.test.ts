@@ -4652,6 +4652,11 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.equal(cachedStatus.behindCount, 0);
         assert.equal(refreshedStatus.behindCount, 1);
         assert.equal(yield* driver.statusFetchCount, fetchesBefore + 1);
+
+        // A later fetch that moves no refs leaves the count alone.
+        yield* TestClock.adjust("16 seconds");
+        yield* driver.statusDetailsRemote(cwd);
+        assert.equal(yield* driver.statusFetchCount, fetchesBefore + 1);
       }),
     );
 
