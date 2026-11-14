@@ -1,4 +1,3 @@
-import { stripInlineContextReferences } from "./lib/composerContextReferences";
 import {
   composerFileAttachmentMimeType,
   composerImageDedupKey,
@@ -277,9 +276,10 @@ export function composerFileNeedsReattach(file: ComposerFileAttachment): boolean
   return file.file === null && file.uploadedAttachmentId === undefined;
 }
 
+/** Strips upload ids another environment owns; local bytes re-upload, byte-less files need reattaching. */
 function clearStaleFileUploadMetadata(
   draft: ComposerThreadDraftState,
-  environmentId: EnvironmentId,
+  environmentId: EnvironmentId | null,
 ): ComposerThreadDraftState {
   let changed = false;
   const files = draft.files.map((file) => {
@@ -758,8 +758,8 @@ interface ComposerDraftStoreState {
   clearComposerContent: (threadRef: ComposerThreadTarget) => void;
   /** Clears text and attachments, preserving terminal/element contexts, preview annotations, and review comments. */
   clearComposerPromptAndImages: (threadRef: ComposerThreadTarget) => void;
-  /** Keeps attachments over destination limits, other environments' uploads, terminal/element contexts, annotations, and review comments in source. */
-  moveComposerPromptAndImages: (from: ComposerThreadTarget, to: ComposerThreadTarget) => void;
+  /** Moves all user content into a destination that has none; otherwise leaves both drafts alone. */
+  moveComposerContent: (from: ComposerThreadTarget, to: ComposerThreadTarget) => void;
   /**
    * Moves images and files the destination can take, chipped into its prompt, and returns
    * the ones left in source: over the destination's limit or unreachable from its environment.
@@ -920,6 +920,18 @@ function createEmptyThreadDraft(): ComposerThreadDraftState {
     runtimeMode: null,
     interactionMode: null,
   };
+}
+
+/** Keep these content fields aligned with composerDraftHasUserContent. */
+function composerDraftContent({
+  modelSelectionByProvider: _modelSelectionByProvider,
+  activeProvider: _activeProvider,
+  modelSelectionExplicit: _modelSelectionExplicit,
+  runtimeMode: _runtimeMode,
+  interactionMode: _interactionMode,
+  ...content
+}: ComposerThreadDraftState) {
+  return content;
 }
 
 export function composerFileDedupKey(
@@ -4417,17 +4429,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             }
             const nextDraft: ComposerThreadDraftState = {
               ...current,
-              prompt: "",
-              images: [],
-              files: [],
-              nonPersistedImageIds: [],
-              persistedAttachments: [],
-              terminalContexts: [],
-              previewAnnotations: [],
-              reviewComments: [],
-              threadContexts: [],
-              environmentContexts: [],
-              replyTo: null,
+              ...composerDraftContent(createEmptyThreadDraft()),
             };
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
             if (shouldRemoveDraft(nextDraft)) {
@@ -4474,7 +4476,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             return { draftsByThreadKey: nextDraftsByThreadKey };
           });
         },
-        moveComposerPromptAndImages: (from, to) => {
+        moveComposerContent: (from, to) => {
           const fromKey = resolveComposerDraftKey(get(), from) ?? "";
           const toKey = resolveComposerDraftKey(get(), to) ?? "";
           if (fromKey.length === 0 || toKey.length === 0 || fromKey === toKey) {
@@ -4482,33 +4484,31 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
           }
           set((state) => {
             const source = state.draftsByThreadKey[fromKey];
-            if (!source) {
+            const destination = state.draftsByThreadKey[toKey] ?? createEmptyThreadDraft();
+            if (!source || composerDraftHasUserContent(destination)) {
               return state;
             }
-            const destination = state.draftsByThreadKey[toKey] ?? createEmptyThreadDraft();
-            const transfer = transferComposerAttachments(
-              source,
-              destination,
+            const nextDestination = clearStaleFileUploadMetadata(
+              { ...destination, ...composerDraftContent(source) },
               composerTargetEnvironmentId(state, to, toKey),
             );
-            return {
-              draftsByThreadKey: withComposerDrafts(state.draftsByThreadKey, {
-                [fromKey]: {
-                  ...transfer.source,
-                  prompt: ensureInlineContextReferences(
-                    "",
-                    source.terminalContexts.map(terminalContextReference),
-                  ),
-                },
-                [toKey]: {
-                  ...transfer.destination,
-                  prompt: ensureInlineContextReferences(
-                    stripInlineContextReferences(source.prompt),
-                    destination.terminalContexts.map(terminalContextReference),
-                  ),
-                },
-              }),
+            // Moved images still use these blob URLs at the destination; do not revoke them.
+            const nextSource: ComposerThreadDraftState = {
+              ...source,
+              ...composerDraftContent(createEmptyThreadDraft()),
             };
+            const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextSource)) {
+              delete nextDraftsByThreadKey[fromKey];
+            } else {
+              nextDraftsByThreadKey[fromKey] = nextSource;
+            }
+            if (shouldRemoveDraft(nextDestination)) {
+              delete nextDraftsByThreadKey[toKey];
+            } else {
+              nextDraftsByThreadKey[toKey] = nextDestination;
+            }
+            return { draftsByThreadKey: nextDraftsByThreadKey };
           });
         },
         moveComposerAttachments: (from, to) => {
