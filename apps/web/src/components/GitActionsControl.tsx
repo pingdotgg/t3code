@@ -383,6 +383,7 @@ export default function GitActionsControl({
   const canChangeThreadBranch = canWriteSourceControl && (isLocalDraftThread || canOperateThread);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
+  const [failedCommitMessage, setFailedCommitMessage] = useState("");
   const [isPublishDialogOpen, setIsPublishDialogOpen] = useState(false);
   const [inlineSuccess, setInlineSuccess] = useState<InlineGitActionSuccess | null>(null);
   const [pendingDefaultBranchAction, setPendingDefaultBranchAction] =
@@ -919,11 +920,17 @@ export default function GitActionsControl({
 
   const runCommitDialog = (submission: GitCommitDialogSubmission) => {
     setIsCommitDialogOpen(false);
+    setFailedCommitMessage("");
+    const commitMessage = submission.commitMessage ?? "";
     void runGitActionWithToast({
       action: "commit",
       ...(submission.commitMessage ? { commitMessage: submission.commitMessage } : {}),
       ...(submission.filePaths ? { filePaths: [...submission.filePaths] } : {}),
       ...(submission.featureBranch ? { featureBranch: true, skipDefaultBranchPrompt: true } : {}),
+    }).then((committed) => {
+      // Keep a typed message for the retry unless the user already started a new one.
+      if (committed || !commitMessage) return;
+      setFailedCommitMessage((current) => current || commitMessage);
     });
   };
 
@@ -1300,6 +1307,7 @@ export default function GitActionsControl({
         canOpenFiles={canOperateThread && workingTreeRoot !== null}
         onOpenFile={openChangedFileInEditor}
         onSubmit={runCommitDialog}
+        retainedMessage={failedCommitMessage}
       />
 
       {showActions ? (

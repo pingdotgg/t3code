@@ -4,7 +4,7 @@ import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../test/render";
-import { PublishRepositoryDialog } from "./GitActionsControl";
+import { PublishRepositoryDialog } from "./PublishRepositoryDialog";
 
 const publish = vi.hoisted(() => ({ run: vi.fn() }));
 
@@ -61,9 +61,10 @@ it("keeps composition Enter in the repository path from publishing", async () =>
       offeredProviders={undefined}
     />,
   );
-  await page.getByRole("button", { name: "Next" }).click();
+  // The redesigned dialog asks for the owner and the name on one page.
+  await page.getByPlaceholder("owner").fill("octo");
   const path = page.getByRole("textbox", { name: "Repository" });
-  await path.fill("octo/repo");
+  await path.fill("repo");
 
   for (const nativeEvent of [{ isComposing: true }, { keyCode: 229 }]) {
     const event = new KeyboardEvent("keydown", {

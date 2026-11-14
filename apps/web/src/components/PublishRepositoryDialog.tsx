@@ -385,6 +385,7 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                     onChange={(event) => setRepositoryName(event.target.value)}
                     onKeyDown={(event) => {
                       if (event.key !== "Enter" || isDialogSubmitShortcut(event)) return;
+                      if (event.nativeEvent.isComposing || event.keyCode === 229) return;
                       event.preventDefault();
                       submit();
                     }}
