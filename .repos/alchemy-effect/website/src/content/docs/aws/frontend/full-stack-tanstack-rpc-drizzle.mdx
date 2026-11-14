@@ -5,9 +5,9 @@ sidebar:
   order: 15
 ---
 
-import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+import PackageManagers from "../../../../components/PackageManagers.astro";
 
-export const deps = `@distilled.cloud/aws @effect/atom-react @effect/sql-pg drizzle-orm effect pg`;
+export const deps = `@distilled.cloud/aws @effect/atom-react @effect/sql-pg drizzle-orm effect`;
 export const devDeps = `@alchemy.run/frontend-frameworks`;
 
 [TanStack Start](/aws/frontend/tanstack-start) · [Effect RPC](/aws/apis/effect-rpc) · [Drizzle + DSQL](/aws/data/drizzle-dsql)
@@ -34,20 +34,7 @@ The browser calls a same-origin `/rpc` route; the frontend Lambda forwards reque
 
 ## Install
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code={`bun add ${deps}\nbun add -d ${devDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code={`npm install ${deps}\nnpm install -D ${devDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code={`pnpm add ${deps}\npnpm add -D ${devDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code={`yarn add ${deps}\nyarn add -D ${devDeps}`} lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers add={deps} dev={devDeps} />
 
 ## 1. The shared RPC contract
 
@@ -97,7 +84,7 @@ Copy `database.ts`, `bootstrap.ts`, and `client.ts` from the [DSQL example](http
 Copy the example's [`schema.ts`](https://github.com/alchemy-run/alchemy/blob/main/examples/aws-dsql-drizzle/src/schema.ts) into `src/backend/`. It targets `app.todos` with application-generated UUIDs, matching the bootstrap and role grants. Check [DSQL compatibility](/aws/data/drizzle-dsql#define-the-table) before extending it.
 
 :::note
-`AWS.DSQL.Cluster` has no `migrations` prop. The Action in step 5 bootstraps the database without an HTTP `/setup` route; it is not a versioned migrator. Whenever the schema changes, explicitly generate migration files using the [DSQL migration workflow](/aws/data/drizzle-dsql#evolve-the-schema), with schema path `./src/backend/schema.ts`. Stage the schema, config, SQL, and snapshots, review with `git diff --cached`, and commit before release. The migration step consumes committed SQL, not SQL generated during deployment.
+The Action in step 5 bootstraps the database without an HTTP `/setup` route; it is not a versioned migrator. To evolve the schema, generate migration files with the [DSQL migration workflow](/aws/data/drizzle-dsql#evolve-the-schema) (schema path `./src/backend/schema.ts`) and pass the directory to the cluster's `migrations` prop, which applies them on deploy.
 :::
 
 ## 4. The backend RPC Lambda
@@ -106,7 +93,7 @@ Copy the example's [`schema.ts`](https://github.com/alchemy-run/alchemy/blob/mai
 
 ```typescript
 // src/backend/api.ts
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 import { eq } from "drizzle-orm";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -120,7 +107,6 @@ export default class Backend extends AWS.Lambda.Function<Backend>()(
   {
     main: import.meta.url,
     functionUrl: true,
-    build: { install: ["pg"] },
   },
   Effect.gen(function* () {
     const db = yield* connectDatabase;
@@ -197,7 +183,7 @@ export default class Backend extends AWS.Lambda.Function<Backend>()(
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 import * as Effect from "effect/Effect";
 import Backend from "./src/backend/api.ts";
 import { BootstrapDatabase } from "./src/backend/bootstrap.ts";

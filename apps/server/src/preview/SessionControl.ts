@@ -1,22 +1,38 @@
-import type { PreviewAutomationControlReason } from "@t3tools/contracts";
+import { PreviewAutomationControlReason } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
-export class BrowserControlInterrupted extends Error {
-  readonly reason: PreviewAutomationControlReason;
-  constructor(
-    message = "Browser control changed. Refresh the snapshot before trying again.",
-    reason: PreviewAutomationControlReason = "interrupted",
-  ) {
-    super(message);
-    this.reason = reason;
-  }
-}
+export class BrowserControlInterrupted extends Schema.TaggedError<BrowserControlInterrupted>()(
+  "BrowserControlInterrupted",
+  {
+    message: Schema.String.pipe(
+      Schema.withConstructorDefault(
+        Effect.succeed("Browser control changed. Refresh the snapshot before trying again."),
+      ),
+    ),
+    reason: PreviewAutomationControlReason.pipe(
+      Schema.withConstructorDefault(Effect.succeed("interrupted" as const)),
+    ),
+  },
+) {}
+
+const settle = (work: Promise<unknown>) =>
+  work.then(
+    () => undefined,
+    () => undefined,
+  );
 
 /** Reserves control immediately, but drains running work before the new owner can act. */
 export class SessionControl {
   readonly agentId: string | null;
   private readonly onGenerationChange: () => void;
   private tail: Promise<unknown> = Promise.resolve();
+  private latestHuman: {
+    entry: { viewerId: string; key: string; input: unknown; run: (input: never) => Promise<void> };
+    result: Promise<void>;
+  } | null = null;
   private pending: Promise<void> = Promise.resolve();
+  private readonly handoff = new Set<Promise<void>>();
   private owner: string | null = null;
   private epoch = 0;
   private closed = false;
@@ -35,6 +51,7 @@ export class SessionControl {
   }
 
   private enqueue<A>(run: () => Promise<A>): Promise<A> {
+    this.latestHuman = null;
     const result = this.tail.then(run);
     this.tail = result.then(
       () => this.pending,
@@ -45,30 +62,46 @@ export class SessionControl {
 
   /** An action can respond before its navigation commits, while later actions still wait. */
   track(work: Promise<unknown>) {
-    const settled = work.then(
-      () => undefined,
-      () => undefined,
-    );
-    this.pending = Promise.all([this.pending, settled]).then(() => undefined);
+    this.pending = Promise.all([this.pending, settle(work)]).then(() => undefined);
+  }
+
+  /** Viewer input stays responsive, but control handoffs still drain its navigations. */
+  trackUntilHandoff(work: Promise<unknown>) {
+    const settled = settle(work).finally(() => {
+      this.handoff.delete(settled);
+    });
+    this.handoff.add(settled);
   }
 
   private assertOpen() {
-    if (this.closed) throw new BrowserControlInterrupted("This browser tab is closed.", "closed");
+    if (this.closed)
+      throw new BrowserControlInterrupted({
+        message: "This browser tab is closed.",
+        reason: "closed",
+      });
   }
 
   private changeOwner(owner: string | null) {
+    this.latestHuman = null;
     this.owner = owner;
     this.epoch++;
     this.onGenerationChange();
   }
 
-  private async action<A>(allowed: () => boolean, run: () => Promise<A>) {
+  private async action<A>(allowed: () => boolean, run: () => Promise<A>, deadlineMs?: number) {
     this.assertOpen();
-    if (!allowed()) throw new BrowserControlInterrupted("You do not control this browser tab.");
+    if (!allowed())
+      throw new BrowserControlInterrupted({ message: "You do not control this browser tab." });
     const epoch = this.epoch;
     return this.enqueue(async () => {
       this.assertOpen();
       if (epoch !== this.epoch || !allowed()) throw new BrowserControlInterrupted();
+      if (deadlineMs !== undefined && performance.now() >= deadlineMs) {
+        throw new DOMException(
+          "This browser request expired before it could start.",
+          "TimeoutError",
+        );
+      }
       return run();
     });
   }
@@ -77,26 +110,29 @@ export class SessionControl {
     return this.agentId === null || this.agentId === agentId;
   }
 
-  agent<A>(agentId: string, run: () => Promise<A>) {
+  agent<A>(agentId: string, run: () => Promise<A>, deadlineMs?: number) {
     if (!this.agentMayAct(agentId))
       return Promise.reject(
-        new BrowserControlInterrupted("This tab belongs to another agent.", "agentMismatch"),
+        new BrowserControlInterrupted({
+          message: "This tab belongs to another agent.",
+          reason: "agentMismatch",
+        }),
       );
     if (this.owner !== null)
       return Promise.reject(
-        new BrowserControlInterrupted("A human controls this tab.", "humanControl"),
+        new BrowserControlInterrupted({
+          message: "A human controls this tab.",
+          reason: "humanControl",
+        }),
       );
-    return this.action(() => this.agentMayAct(agentId) && this.owner === null, run);
+    return this.action(() => this.agentMayAct(agentId) && this.owner === null, run, deadlineMs);
   }
 
   agentCanActNow(agentId: string) {
     return this.agentMayAct(agentId) && this.owner === null;
   }
 
-  /**
-   * A read that needs no control and does not queue, so an agent can look at
-   * a page while a human drives it without holding up the human's input.
-   */
+  /** Read without control or queueing so agents can observe without delaying human input. */
   observe<A>(run: () => Promise<A>) {
     this.assertOpen();
     return run();
@@ -114,10 +150,37 @@ export class SessionControl {
     return this.action(() => this.owner === viewerId, run);
   }
 
+  /**
+   * Merge into only adjacent waiting work with the same key; the running action and
+   * intervening actions keep their order. Work sharing a key must share its input type.
+   */
+  humanLatest<A>(
+    viewerId: string,
+    key: string,
+    input: A,
+    run: (input: A) => Promise<void>,
+    merge: (waiting: A, next: A) => A = (_waiting, next) => next,
+  ): Promise<void> {
+    if (this.closed || this.owner !== viewerId) return this.human(viewerId, () => run(input));
+    const latest = this.latestHuman;
+    if (latest?.entry.viewerId === viewerId && latest.entry.key === key) {
+      latest.entry.input = merge(latest.entry.input as A, input);
+      latest.entry.run = run;
+      return latest.result;
+    }
+    const entry = { viewerId, key, input, run };
+    const result = this.human(viewerId, async () => {
+      if (this.latestHuman?.entry === entry) this.latestHuman = null;
+      await entry.run(entry.input);
+    });
+    this.latestHuman = { entry, result };
+    return result;
+  }
+
   async take(viewerId: string) {
     this.assertOpen();
     if (this.owner !== null && this.owner !== viewerId) {
-      throw new BrowserControlInterrupted("Another viewer controls this browser tab.");
+      throw new BrowserControlInterrupted({ message: "Another viewer controls this browser tab." });
     }
     if (this.owner !== viewerId) this.changeOwner(viewerId);
     return this.human(viewerId, async () => {});
@@ -126,12 +189,15 @@ export class SessionControl {
   async release(viewerId: string, afterDrain: () => Promise<void> = async () => {}) {
     this.assertOpen();
     if (this.owner !== viewerId) {
-      throw new BrowserControlInterrupted(
-        "Only the controlling viewer can release this browser tab.",
-      );
+      throw new BrowserControlInterrupted({
+        message: "Only the controlling viewer can release this browser tab.",
+      });
     }
     this.changeOwner(null);
-    await this.enqueue(afterDrain);
+    await this.enqueue(async () => {
+      await Promise.all(this.handoff);
+      await afterDrain();
+    });
   }
 
   async disconnect(viewerId: string, afterDrain?: () => Promise<void>) {

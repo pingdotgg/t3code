@@ -1,59 +1,82 @@
-// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no generateKeyPairSync.
-import * as NodeCrypto from "node:crypto";
-
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as Jwk from "effect/jose/Jwk";
+import * as Jws from "effect/jose/Jws";
+import * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 
-import { RelayJwtError, signRelayJwt, verifyRelayJwt } from "./relayJwt.ts";
+import { decodeRelayJwt, RelayJwtError, signRelayJwt, verifyRelayJwt } from "./relayJwt.ts";
+
+const Claims = Schema.Struct({ sub: Schema.String });
+
+const keyPair = Effect.gen(function* () {
+  const pair = yield* Jwk.generateKeyPair({ algorithm: "EdDSA" });
+  const publicKey = yield* Jwk.importPublic(pair.publicKey, "EdDSA").pipe(
+    Effect.flatMap((key) => Jwk.exportSpki(key, { format: "pem" })),
+  );
+  const privateKey = yield* Jwk.importPrivate(pair.privateKey, "EdDSA").pipe(
+    Effect.flatMap((key) => Jwk.exportPkcs8(key, { format: "pem" })),
+  );
+  return { publicKey, privateKey: Redacted.value(privateKey) };
+});
 
 describe("relayJwt", () => {
-  it.effect("preserves signing context and the JOSE cause", () =>
+  it.effect("verifies against the ambient clock and reports claim diagnostics", () =>
     Effect.gen(function* () {
-      const error = yield* signRelayJwt({
-        privateKey: "not-a-private-key",
-        typ: "test-sign+jwt",
-        payload: { sub: "subject" },
-      }).pipe(Effect.flip);
-
-      expect(error.operation).toBe("sign");
-      expect(error.typ).toBe("test-sign+jwt");
-      expect(error.cause).toBeInstanceOf(Error);
-      expect(error.message).toBe('Failed to sign relay JWT of type "test-sign+jwt".');
-    }),
-  );
-
-  it.effect("preserves verification request context and the JOSE cause", () =>
-    Effect.gen(function* () {
-      const keyPair = NodeCrypto.generateKeyPairSync("ed25519", {
-        publicKeyEncoding: { format: "pem", type: "spki" },
-        privateKeyEncoding: { format: "pem", type: "pkcs8" },
+      yield* TestClock.setTime(1_000_000);
+      const keys = yield* keyPair;
+      const token = yield* signRelayJwt({
+        privateKey: keys.privateKey,
+        typ: "test+jwt",
+        payload: { sub: "user", iss: "relay", aud: "env", iat: 1_000, exp: 1_100 },
       });
-      const error = yield* verifyRelayJwt({
-        publicKey: keyPair.publicKey,
-        token: "not-a-jwt",
-        typ: "test-verify+jwt",
-        issuer: "https://issuer.example.test",
-        audience: "test-audience",
-        nowEpochSeconds: 100,
-      }).pipe(Effect.flip);
+      const verify = verifyRelayJwt(Claims, {
+        publicKey: keys.publicKey,
+        token,
+        typ: "test+jwt",
+        issuer: "relay",
+        audience: "env",
+      });
 
-      expect(error.operation).toBe("verify");
-      expect(error.typ).toBe("test-verify+jwt");
-      expect(error.issuer).toBe("https://issuer.example.test");
-      expect(error.audience).toBe("test-audience");
-      expect(error.cause).toBeInstanceOf(Error);
-      expect(error.message).toBe('Failed to verify relay JWT of type "test-verify+jwt".');
-    }),
+      expect(yield* verify).toEqual({ sub: "user" });
+      expect((yield* decodeRelayJwt(token)).sub).toBe("user");
+
+      yield* TestClock.adjust("161 seconds");
+      const error = yield* Effect.flip(verify);
+      expect(RelayJwtError.diagnosticCode(error)).toBe("ClaimValidationFailed.exp.expired");
+      expect(error.message).toBe('Failed to verify relay JWT of type "test+jwt".');
+
+      const es256 = yield* Jwk.generateKeyPair({ algorithm: "ES256" });
+      const es256Private = yield* Jwk.importPrivate(es256.privateKey, "ES256");
+      const signWrong = yield* Effect.flip(
+        signRelayJwt({ privateKey: es256Private, typ: "test+jwt", payload: { sub: "user" } }),
+      );
+      expect(RelayJwtError.diagnosticCode(signWrong)).toBe("AlgorithmNotAllowed");
+      const es256Token = yield* Jws.sign(
+        new TextEncoder().encode(
+          JSON.stringify({
+            sub: "user",
+            iss: "relay",
+            aud: "env",
+            iat: Math.floor((yield* Clock.currentTimeMillis) / 1_000),
+          }),
+        ),
+        es256Private,
+        { typ: "test+jwt" },
+      );
+      const verifyWrong = yield* Effect.flip(
+        verifyRelayJwt(Claims, {
+          publicKey: yield* Jwk.importPublic(es256.publicKey, "ES256"),
+          token: Redacted.value(es256Token),
+          typ: "test+jwt",
+          issuer: "relay",
+          audience: "env",
+        }),
+      );
+      expect(RelayJwtError.diagnosticCode(verifyWrong)).toBe("AlgorithmNotAllowed");
+    }).pipe(Effect.provide(NodeCrypto.layerSignature)),
   );
-
-  it("extracts stable diagnostic codes without copying cause text into the error message", () => {
-    const error = new RelayJwtError({
-      operation: "verify",
-      typ: "test+jwt",
-      cause: { code: "ERR_JWT_EXPIRED", message: "sensitive library detail" },
-    });
-
-    expect(RelayJwtError.diagnosticCode(error)).toBe("ERR_JWT_EXPIRED");
-    expect(error.message).not.toContain("sensitive library detail");
-  });
 });

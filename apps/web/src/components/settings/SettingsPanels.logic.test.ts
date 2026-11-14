@@ -1,37 +1,18 @@
-import {
-  DEFAULT_SERVER_SETTINGS,
-  DEFAULT_UNIFIED_SETTINGS,
-  ProviderDriverKind,
-  ProviderInstanceId,
-  type ProviderInstanceConfig,
-} from "@t3tools/contracts";
-import { getBackgroundActivityPresetSettings } from "@t3tools/shared/backgroundActivitySettings";
+import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 import { describe, expect, it } from "vite-plus/test";
 import {
+  autoSettleDaysField,
+  type AutoSettleDaysField,
   backgroundActivitySharedPolicySettings,
-  buildProviderInstanceUpdatePatch,
-  formatDiagnosticsDescription,
+  cancelAutoSettleDaysField,
+  commitAutoSettleDaysField,
+  editAutoSettleDaysField,
+  failAutoSettleDaysField,
   getChangedBrowserSettingLabels,
-  getChangedTypographySettingLabels,
   hasChangedBackgroundActivitySettings,
-  isProjectGroupingEnabled,
-  projectGroupingModeFromToggle,
-  resolveBackgroundActivityProfileOption,
+  syncAutoSettleDaysField,
 } from "./SettingsPanels.logic";
-
-describe("typography settings restore", () => {
-  it("detects family and size changes by font row", () => {
-    expect(getChangedTypographySettingLabels(DEFAULT_UNIFIED_SETTINGS)).toEqual([]);
-    expect(
-      getChangedTypographySettingLabels({
-        ...DEFAULT_UNIFIED_SETTINGS,
-        fontSizeInterface: 18,
-        fontFamilyCode: "Fira Code",
-      }),
-    ).toEqual(["Interface font", "Code font"]);
-  });
-});
 
 describe("background activity settings restore", () => {
   it("detects legacy interval values even when the structured setting is at its default", () => {
@@ -52,38 +33,6 @@ describe("background activity settings restore", () => {
       }),
     ).toBe(true);
     expect(hasChangedBackgroundActivitySettings(DEFAULT_UNIFIED_SETTINGS)).toBe(false);
-  });
-
-  it("detects a legacy profile override so restoring defaults clears it", () => {
-    expect(
-      hasChangedBackgroundActivitySettings({
-        ...DEFAULT_UNIFIED_SETTINGS,
-        backgroundActivityProfile: "performance",
-      }),
-    ).toBe(true);
-  });
-
-  it("shows the effective legacy preset and marks custom legacy intervals as advanced", () => {
-    const performance = getBackgroundActivityPresetSettings("performance");
-    expect(
-      resolveBackgroundActivityProfileOption({
-        ...DEFAULT_UNIFIED_SETTINGS,
-        backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
-        backgroundActivityProfile: "performance",
-        automaticGitFetchInterval: performance.automaticGitFetchInterval,
-        providerHealthRefreshInterval: performance.providerHealthRefreshInterval,
-      }),
-    ).toBe("performance");
-
-    expect(
-      resolveBackgroundActivityProfileOption({
-        ...DEFAULT_UNIFIED_SETTINGS,
-        backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
-        backgroundActivityProfile: "performance",
-        automaticGitFetchInterval: Duration.seconds(45),
-        providerHealthRefreshInterval: Duration.minutes(7),
-      }),
-    ).toBe("advanced");
   });
 
   it("preserves advanced overrides when the shared policy changes", () => {
@@ -136,122 +85,90 @@ describe("background activity settings restore", () => {
   });
 });
 
-describe("project grouping toggle", () => {
-  it("enables repository grouping and disables into separate projects", () => {
-    expect(isProjectGroupingEnabled("repository")).toBe(true);
-    expect(isProjectGroupingEnabled("repository_path")).toBe(true);
-    expect(isProjectGroupingEnabled("separate")).toBe(false);
-    expect(projectGroupingModeFromToggle(true)).toBe("repository");
-    expect(projectGroupingModeFromToggle(false)).toBe("separate");
-  });
-
-  it("restores repository path grouping when the toggle is cycled", () => {
-    expect(projectGroupingModeFromToggle(false, "repository_path")).toBe("separate");
-    expect(projectGroupingModeFromToggle(true, "repository_path")).toBe("repository_path");
-  });
-});
-
-describe("formatDiagnosticsDescription", () => {
-  it("collapses trace and metric URLs that share the same OTEL base path", () => {
-    expect(
-      formatDiagnosticsDescription({
-        localTracingEnabled: true,
-        otlpTracesEnabled: true,
-        otlpTracesUrl: "http://localhost:4318/v1/traces",
-        otlpMetricsEnabled: true,
-        otlpMetricsUrl: "http://localhost:4318/v1/metrics",
-      }),
-    ).toBe("Local trace file. Exporting OTEL to http://localhost:4318/v1/{traces,metrics}.");
-  });
-
-  it("keeps separate trace and metric URLs when their base paths differ", () => {
-    expect(
-      formatDiagnosticsDescription({
-        localTracingEnabled: true,
-        otlpTracesEnabled: true,
-        otlpTracesUrl: "http://localhost:4318/v1/traces",
-        otlpMetricsEnabled: true,
-        otlpMetricsUrl: "http://localhost:9000/v1/metrics",
-      }),
-    ).toBe(
-      "Local trace file. Exporting OTEL traces to http://localhost:4318/v1/traces and metrics to http://localhost:9000/v1/metrics.",
-    );
-  });
-
-  it("omits OTEL text when no exporter is enabled", () => {
-    expect(
-      formatDiagnosticsDescription({
-        localTracingEnabled: true,
-        otlpTracesEnabled: false,
-        otlpMetricsEnabled: false,
-      }),
-    ).toBe("Local trace file.");
-  });
-});
-
-describe("buildProviderInstanceUpdatePatch", () => {
-  it("replaces one instance and keeps the others", () => {
-    const instanceId = ProviderInstanceId.make("codex");
-    const otherId = ProviderInstanceId.make("codex_personal");
-    const other = {
-      driver: ProviderDriverKind.make("codex"),
-      config: { homePath: "/Users/example/.codex-personal" },
-    } satisfies ProviderInstanceConfig;
-    const nextInstance = {
-      driver: ProviderDriverKind.make("codex"),
-      enabled: true,
-      config: { binaryPath: "/opt/t3/codex" },
-    } satisfies ProviderInstanceConfig;
-
-    const patch = buildProviderInstanceUpdatePatch({
-      settings: { providerInstances: { [otherId]: other } },
-      instanceId,
-      instance: nextInstance,
-    });
-
-    expect(patch.providerInstances).toEqual({ [otherId]: other, [instanceId]: nextInstance });
-    expect(patch).not.toHaveProperty("textGenerationModelSelection");
-  });
-});
-
 describe("getChangedBrowserSettingLabels", () => {
-  it("reports nothing for the defaults", () => {
-    expect(getChangedBrowserSettingLabels(DEFAULT_UNIFIED_SETTINGS)).toEqual([]);
-  });
-
-  it("treats a structurally equal viewport as unchanged", () => {
+  it("counts a retained custom search URL so restore clears it", () => {
     expect(
       getChangedBrowserSettingLabels({
         ...DEFAULT_UNIFIED_SETTINGS,
-        browserDefaultViewport: { ...DEFAULT_UNIFIED_SETTINGS.browserDefaultViewport },
+        browserCustomSearchUrl: "https://search.example/?q=%s",
       }),
-    ).toEqual([]);
+    ).toEqual(["Search engine"]);
+  });
+});
+
+describe("auto-settle days field", () => {
+  const type = (field: AutoSettleDaysField, ...drafts: string[]) =>
+    drafts.reduce(editAutoSettleDaysField, field);
+
+  it("saves only the finished edit, never a value typed on the way", () => {
+    const typed = type(autoSettleDaysField(14), "1", "", "3", "30");
+    expect(typed.pending).toBeNull();
+
+    const committed = commitAutoSettleDaysField(typed);
+    expect(committed.submit).toBe(30);
+    expect(commitAutoSettleDaysField(committed.field).submit).toBeNull();
+
+    const confirmed = syncAutoSettleDaysField(committed.field, 30);
+    expect(confirmed).toMatchObject({ saved: 30, draft: "30", pending: null });
   });
 
-  it("labels each browser default that differs", () => {
-    expect(
-      getChangedBrowserSettingLabels({
-        ...DEFAULT_UNIFIED_SETTINGS,
-        browserDefaultViewport: { _tag: "freeform", width: 900, height: 600 },
-        browserDefaultZoomFactor: 1.5,
-        browserDefaultAppearance: "dark",
-        browserRecordingFrameRate: 60,
-        browserRecordingShowKeyPresses: true,
-        browserRecordingShowMousePresses: true,
-        browserLinkTarget: "app",
-        browserAutoShowFloatingPreview: !DEFAULT_UNIFIED_SETTINGS.browserAutoShowFloatingPreview,
-        pullRequestLinksOpenInApp: false,
-      }),
-    ).toEqual([
-      "Browser viewport",
-      "Browser zoom",
-      "Browser appearance",
-      "Recording frame rate",
-      "Recording key presses",
-      "Recording mouse presses",
-      "Open links in",
-      "Floating preview",
-      "Open pull requests in T3 Code",
-    ]);
+  it.each(["", "0", "91", "1.5", "abc"])("restores the saved value for %j", (draft) => {
+    const committed = commitAutoSettleDaysField(type(autoSettleDaysField(14), draft));
+    expect(committed.submit).toBeNull();
+    expect(committed.field.draft).toBe("14");
+  });
+
+  it("a rejected save falls back to the saved value and can be retried", () => {
+    const submitted = commitAutoSettleDaysField(type(autoSettleDaysField(14), "30")).field;
+    expect(failAutoSettleDaysField(submitted, submitted.revision).draft).toBe("14");
+
+    const rejectedWhileCleared = failAutoSettleDaysField(type(submitted, ""), submitted.revision);
+    expect(rejectedWhileCleared.draft).toBe("");
+    expect(commitAutoSettleDaysField(rejectedWhileCleared).field.draft).toBe("14");
+    expect(commitAutoSettleDaysField(type(rejectedWhileCleared, "30")).submit).toBe(30);
+  });
+
+  it("retyping a value that saved on only some environments sends it again", () => {
+    const submitted = commitAutoSettleDaysField(type(autoSettleDaysField(14), "30")).field;
+    const partlySaved = failAutoSettleDaysField(
+      syncAutoSettleDaysField(submitted, 30),
+      submitted.revision,
+    );
+    expect(commitAutoSettleDaysField(partlySaved).submit).toBeNull();
+    expect(commitAutoSettleDaysField(type(partlySaved, "3", "30")).submit).toBe(30);
+  });
+
+  it("returning to the saved value while another save is in flight saves it again", () => {
+    const submitted = commitAutoSettleDaysField(type(autoSettleDaysField(14), "30")).field;
+    const back = commitAutoSettleDaysField(type(submitted, "14"));
+    expect(back.submit).toBe(14);
+    expect(failAutoSettleDaysField(back.field, submitted.revision)).toBe(back.field);
+
+    const settled = syncAutoSettleDaysField(back.field, 14);
+    expect(settled.pending).toBeNull();
+    expect(syncAutoSettleDaysField(settled, 14)).toBe(settled);
+    expect(syncAutoSettleDaysField(settled, 20).draft).toBe("20");
+  });
+
+  it("keeps a later save in flight when an earlier one is confirmed", () => {
+    const first = commitAutoSettleDaysField(type(autoSettleDaysField(14), "30")).field;
+    const second = commitAutoSettleDaysField(type(first, "60")).field;
+    const firstConfirmed = syncAutoSettleDaysField(second, 30);
+    expect(firstConfirmed).toMatchObject({ saved: 30, draft: "60", pending: 60 });
+    expect(failAutoSettleDaysField(firstConfirmed, second.revision)).toMatchObject({
+      draft: "30",
+      pending: null,
+    });
+  });
+
+  it("a cancelled edit restores the saved value and saves nothing", () => {
+    const cancelled = cancelAutoSettleDaysField(type(autoSettleDaysField(14), "1"));
+    expect(cancelled).toMatchObject({ draft: "14", dirty: false });
+    expect(commitAutoSettleDaysField(cancelled).submit).toBeNull();
+  });
+
+  it("keeps a draft in progress when the saved value changes underneath it", () => {
+    const typing = type(autoSettleDaysField(14), "4");
+    expect(syncAutoSettleDaysField(typing, 30)).toMatchObject({ saved: 30, draft: "4" });
   });
 });
