@@ -2,6 +2,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   EnvironmentThemeFile,
   ServerSettingsError,
+  THEME_CSS_MAX_LENGTH,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -190,7 +191,10 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
   );
 
   it.effect("does not replace a theme file it could not put back", () => {
-    const oversized = JSON.stringify({ ...NIGHTFALL_THEME, padding: "x".repeat(40_000) });
+    const oversized = JSON.stringify({
+      ...NIGHTFALL_THEME,
+      padding: "x".repeat(EnvironmentTheme.MAX_THEME_FILE_BYTES),
+    });
     return withEnvironmentThemes(
       { [`${REFUSED_THEME_ID}.json`]: oversized },
       Effect.gen(function* () {
@@ -298,12 +302,12 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
     const large = (name: string): EnvironmentThemeFile => ({
       ...NIGHTFALL_THEME,
       name,
-      css: `/* ${"x".repeat(19_900)} */`,
+      css: `/* ${"界".repeat(THEME_CSS_MAX_LENGTH - 6)} */`,
     });
     return withEnvironmentThemes(
       {
         ...Object.fromEntries(
-          Array.from({ length: 9 }, (_, index) => [
+          Array.from({ length: 6 }, (_, index) => [
             `aa-${index}.json`,
             encodeThemeFile(large(`Large ${index}`)),
           ]),
@@ -341,7 +345,10 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
     withEnvironmentThemes(
       {
         ...Object.fromEntries(
-          Array.from({ length: 7 }, (_, index) => [`junk-${index}.json`, "{".repeat(30_000)]),
+          Array.from({ length: 7 }, (_, index) => [
+            `junk-${index}.json`,
+            "{".repeat(EnvironmentTheme.MAX_THEME_FILE_BYTES),
+          ]),
         ),
         "zz-valid.json": encodeThemeFile(NIGHTFALL_THEME),
       },
