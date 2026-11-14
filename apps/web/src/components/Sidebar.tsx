@@ -176,6 +176,7 @@ import {
 import {
   applySidebarThreadDrop,
   filterSidebarV2VisibleThreads,
+  hasSidebarV2ScopedThreadsUnderDelegatingParent,
   groupSidebarThreadsByProject,
   sidebarFolderExpansionKeys,
   buildBulkTitleRegenerationContextMenuItem,
@@ -1929,6 +1930,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     });
   };
   const hasProjectFolders = projectFolders !== null && projectFolders.length > 0;
+  const scopedProjectLabel =
+    scopedProjectGroups.length > 1 ? "these projects" : scopedProjectGroups[0]?.displayName;
   const sidebarListItemsFresh = ((): readonly SidebarListItem[] => {
     const rowsOf = (
       list: readonly EnvironmentThreadShell[],
@@ -3295,11 +3298,17 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               ) : scopedProjectGroups.length > 0 ? (
                 <>
                   <span>
-                    {`No ${settledCount > 0 ? "active threads" : "threads"} in ${
-                      scopedProjectGroups.length > 1
-                        ? "these projects"
-                        : scopedProjectGroups[0]!.displayName
-                    }${settledCount > 0 ? "" : " yet"}`}
+                    {settledCount === 0 &&
+                    scopedProjectKeys !== null &&
+                    hasSidebarV2ScopedThreadsUnderDelegatingParent(
+                      threads,
+                      scopedProjectKeys,
+                      delegatedUnderParent,
+                    )
+                      ? `Threads in ${scopedProjectLabel} show under the threads that delegated them`
+                      : `No ${settledCount > 0 ? "active threads" : "threads"} in ${scopedProjectLabel}${
+                          settledCount > 0 ? "" : " yet"
+                        }`}
                   </span>
                   <button
                     type="button"

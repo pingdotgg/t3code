@@ -1,6 +1,7 @@
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
+import { threadKey } from "@t3tools/client-runtime/state/entities";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
@@ -629,6 +630,24 @@ export function filterSidebarV2VisibleThreads<
       ) &&
       (scopedProjectKeys === null ||
         scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
+  );
+}
+
+/** Whether the scope holds tasks that show under a delegating parent rather than in the list. */
+export function hasSidebarV2ScopedThreadsUnderDelegatingParent(
+  threads: readonly (Pick<SidebarThreadSummary, "archivedAt" | "environmentId" | "id"> & {
+    projectId: string;
+  })[],
+  scopedProjectKeys: ReadonlySet<string>,
+  delegatedUnderParent: ReadonlySet<string>,
+): boolean {
+  return threads.some(
+    (thread) =>
+      thread.archivedAt === null &&
+      scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`) &&
+      delegatedUnderParent.has(
+        threadKey({ environmentId: thread.environmentId, threadId: thread.id }),
+      ),
   );
 }
 
