@@ -925,7 +925,10 @@ const layerMakeServer = Layer.unwrap(
           Effect.acquireRelease(
             Effect.gen(function* () {
               yield* Deferred.succeed(tailscaleParked, undefined).pipe(Effect.orDie);
-              yield* awaitActivation;
+              const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
+              yield* startup.awaitConnectionReady.pipe(Effect.orDie);
+              // A trial must not change the Serve route before the launcher commits it.
+              if (yield* pendingServiceUpdateExists) yield* awaitActivation;
               const server = yield* HttpServer.HttpServer;
               const address = server.address;
               if (typeof address === "string" || !("port" in address)) {
