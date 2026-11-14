@@ -14,9 +14,9 @@ use std::{path::PathBuf, time::Duration};
 
 use conn_contract::{from_json, to_json};
 use conn_provider::{
-    BoxFuture, EnsureThreadInput, ForkThreadInput, InterruptInput, McpServer, OpenSessionInput,
-    OpenedSession, Provider, ProviderEvent, ProviderResult, ResumeThreadInput,
-    RuntimeRequestResponse, Session, TurnInput, TurnMessage,
+    AbandonTurnStartInput, BoxFuture, EnsureThreadInput, ForkThreadInput, InterruptInput,
+    McpServer, OpenSessionInput, OpenedSession, Provider, ProviderEvent, ProviderResult,
+    ResumeThreadInput, RuntimeRequestResponse, Session, TurnInput, TurnMessage,
 };
 use conn_provider_claude::{ClaudeConfig, ClaudeProvider};
 use serde_json::{Value, json};
@@ -120,6 +120,28 @@ fn image_size(dir: &std::path::Path) -> u64 {
 async fn next(events: &mut mpsc::Receiver<ProviderEvent>) -> Option<Value> {
     let event = tokio::time::timeout(TIMEOUT, events.recv()).await.ok()??;
     Some(serde_json::to_value(&event).unwrap_or_default())
+}
+
+/// Waits until a CLI start of the scenario got the request its `hold` file names.
+async fn wait_for_held(dir: &std::path::Path, name: &str) {
+    let records = dir.join("records");
+    for _ in 0..600 {
+        let held = std::fs::read_dir(&records)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .any(|entry| {
+                std::fs::read_to_string(entry.path())
+                    .ok()
+                    .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+                    .is_some_and(|record| record.get("held").is_some())
+            });
+        if held {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("{name}: the CLI never got the held request");
 }
 
 /// An interrupt in flight; pending forever when there is none.
@@ -262,6 +284,33 @@ async fn scenario(root: &std::path::Path, run: &Run, model: &str, spec: &Value) 
         }
         n += 1;
         let input = run.turn(n, &thread, step, &app_thread);
+        if step["stopDuringStart"] == json!(true) {
+            // A Stop before Claude accepted the turn: the engine ends the run and abandons the
+            // start (`Session::abandon_turn_start`), as T3's worker interrupts the start.
+            let run_id = input.run_id.clone();
+            let (started, ()) = tokio::join!(session.start_turn(input), async {
+                wait_for_held(&dir, name).await;
+                session
+                    .abandon_turn_start(AbandonTurnStartInput {
+                        thread_id: app_thread.as_str().into(),
+                        run_id: run_id.clone(),
+                    })
+                    .await;
+            });
+            assert!(started.is_err(), "{name}: the abandoned start must fail");
+            // The turn shown early ends interrupted.
+            loop {
+                let event = tokio::time::timeout(Duration::from_secs(60), events.recv())
+                    .await
+                    .unwrap_or_else(|_| panic!("{name}: no end of the abandoned turn"))
+                    .unwrap_or_else(|| panic!("{name}: events closed"));
+                if matches!(event, ProviderEvent::TurnTerminal(_)) {
+                    break;
+                }
+            }
+            println!("{name}: turn {n} abandoned");
+            continue;
+        }
         session
             .start_turn(input)
             .await

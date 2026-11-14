@@ -37,6 +37,10 @@ so the reference does not depend on timing. The stub exits when its stdin ends, 
 CLI does: T3's `turn_interrupt_restart` transcript, recorded with the real CLI, shows a clean
 exit (`runtime_exit` success) after the interrupt and then a new `query.open`.
 
+The stub also records how each start ended: `exit` when its stdin closed, `signal` on SIGTERM,
+neither when it was SIGKILLed; and `held`, the control request a scenario's `hold-<n>` file
+told that start never to answer (a CLI still booting). Both are compared.
+
 Normalized in the comparison, and nothing else: uuids and the SDK's control request ids (random
 per run; numbered by first appearance), the stub's path, and the order of environment entries.
 A stdin line that differs only in JSON key order is reported as such and fails the check.
@@ -59,6 +63,8 @@ A stdin line that differs only in JSON key order is reported as such and fails t
 | `live_selection_effort`    | a new effort sent to the running turn: `apply_flag_settings` during the turn |
 | `live_selection_model`     | a new model sent to the running turn: nothing until the next turn |
 | `stop_background_idle`     | Stop with no turn running while a background task holds the CLI (`interruptTurn` with `requestRuntimeRestart` on the settled turn): the CLI is closed, the next turn resumes in a new one; 2 starts. Its first script is constructed (`constructed/README.md`) |
+| `stop_during_boot`         | Stop while the CLI boots (with `t3-code`; the stub never answers `initialize`): T3's worker interrupts `startTurn`, ours abandons the start. Both kill the CLI (no clean exit, no prompt), then the next turn runs in a new CLI; 2 starts. Fails when our side closes instead of aborting |
+| `stop_during_mcp_registration` | The same while the stub holds `mcp_set_servers`                |
 | `read_only_sandbox`        | `approvalPolicy: never` and a read-only sandbox (`policyOverride`), with `t3-code`: `dontAsk`, the read-only tools and allow rules |
 
 Not covered here: steering, subagents, elicitation and dialogs, and a CLI that fails to start.
