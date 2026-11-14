@@ -808,23 +808,13 @@ export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
 }
 
 /** Unopened threads' failures still count as unseen, unlike completions. */
-function hasUnseenFailure(
-  thread: Pick<ThreadStatusInput, "latestRun" | "runtime" | "lastVisitedAt">,
-): boolean {
-  // Only a run's completion dates a failure: runtime.updatedAt also moves on renames and
-  // branch changes. An undated failure, such as a session failing before any run, stays unseen.
-  const failedAt =
-    thread.latestRun?.status === "failed"
-      ? thread.latestRun.completedAt
-      : thread.runtime?.status === "failed"
-        ? null
-        : undefined;
-  if (failedAt === undefined) return false;
-  if (failedAt === null || !thread.lastVisitedAt) return true;
-  const failedAtMs = Date.parse(failedAt);
-  const lastVisitedAtMs = Date.parse(thread.lastVisitedAt);
-  if (Number.isNaN(failedAtMs) || Number.isNaN(lastVisitedAtMs)) return true;
-  return failedAtMs > lastVisitedAtMs;
+function hasUnseenFailure(thread: ThreadStatusInput): boolean {
+  if (thread.latestRun?.status !== "failed") return false;
+  if (!thread.lastVisitedAt) return true;
+  const completedAt = Date.parse(thread.latestRun.completedAt ?? "");
+  const lastVisitedAt = Date.parse(thread.lastVisitedAt);
+  if (Number.isNaN(completedAt) || Number.isNaN(lastVisitedAt)) return true;
+  return completedAt > lastVisitedAt;
 }
 
 // Suppress trailing double-click navigation; keyboard and synthetic clicks use detail 0.
@@ -1003,10 +993,13 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
 
 /** Sidebar row status: a failure the user has already opened settles to ready, like Done. */
 export function resolveSidebarRowStatus(
-  thread: SidebarThreadStatusInput & Pick<ThreadStatusInput, "latestRun" | "lastVisitedAt">,
+  thread: ThreadStatusInput & SidebarThreadStatusInput,
 ): SidebarThreadStatus {
   const status = resolveSidebarThreadStatus(thread);
-  return status === "failed" && !hasUnseenFailure(thread) ? "ready" : status;
+  // Only a failed run's completion dates a failure; runtime.updatedAt also moves on renames.
+  // A runtime failure with no failed run, such as a session failing before any run, stays.
+  if (status !== "failed" || thread.latestRun?.status !== "failed") return status;
+  return hasUnseenFailure(thread) ? status : "ready";
 }
 
 /** What the window title says the open thread is doing, in the words its announcer uses. */

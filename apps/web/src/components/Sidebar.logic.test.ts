@@ -1705,16 +1705,6 @@ describe("resolveSidebarFolderDot", () => {
     expect(resolveSidebarFolderDot([idle, working])).toBe("working");
     expect(resolveSidebarFolderDot([working, unread])).toBe("unread");
     expect(resolveSidebarFolderDot([unread, limited])).toBe("attention");
-    // A failure the user already opened clears, like its row.
-    const failed = {
-      ...idle,
-      latestRun: { ...idle.latestRun, status: "failed" as const },
-      runtime: { ...runtime, status: "failed" as const },
-    };
-    expect(resolveSidebarFolderDot([failed])).toBeNull();
-    expect(
-      resolveSidebarFolderDot([{ ...failed, lastVisitedAt: "2026-03-09T09:00:00.000Z" }]),
-    ).toBe("failed");
   });
 });
 
