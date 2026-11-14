@@ -534,6 +534,15 @@ function activeTaskRunIds(
   taskId: NodeId,
   originalRun: OrchestrationV2Run | undefined,
 ) {
+  const queuedOrdinal = child.runs.reduce(
+    (last, run) =>
+      run.status === "queued" &&
+      (run.delegatedTaskId === taskId ||
+        (run.delegatedTaskId === undefined && run.id === originalRun?.id))
+        ? Math.max(last, run.ordinal)
+        : last,
+    -1,
+  );
   return new Set(
     child.runs
       .filter(
@@ -541,7 +550,8 @@ function activeTaskRunIds(
           !ThreadManagementService.isTerminalRunStatus(run.status) &&
           (run.delegatedTaskId === taskId ||
             // Legacy tasks own only their original run, not later turns in the child thread.
-            (run.delegatedTaskId === undefined && run.id === originalRun?.id)),
+            (run.delegatedTaskId === undefined && run.id === originalRun?.id) ||
+            (run.status !== "queued" && run.ordinal < queuedOrdinal)),
       )
       .map((run) => run.id),
   );

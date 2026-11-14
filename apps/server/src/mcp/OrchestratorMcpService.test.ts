@@ -357,8 +357,9 @@ describe("OrchestratorMcpService", () => {
       const childThreadId = ThreadId.make("thread:mcp-next-child");
       const taskId = NodeId.make("node:mcp-next-task");
       let finished = false;
+      let queued = false;
       let pendingRequest = false;
-      let requestOwner: "task" | "finished" | "unrelated" = "task";
+      let requestOwner: "task" | "finished" | "unrelated" | "blocker" = "task";
       let pendingSecret = false;
       let secretCompleted = false;
       let secretOwner: "task" | "finished" | "unrelated" = "task";
@@ -383,8 +384,12 @@ describe("OrchestratorMcpService", () => {
         }) as unknown as OrchestrationV2ThreadProjection;
       const childRun = () => ({
         id: RunId.make("run:mcp-next-child"),
-        ordinal: 1,
-        status: finished ? ("completed" as const) : ("running" as const),
+        ordinal: 2,
+        status: finished
+          ? ("completed" as const)
+          : queued
+            ? ("queued" as const)
+            : ("running" as const),
         delegatedTaskId: taskId,
       });
       const childProjection = () =>
@@ -393,7 +398,8 @@ describe("OrchestratorMcpService", () => {
           runs: [
             childRun(),
             { id: "run:finished", ordinal: 0, status: "completed" },
-            { id: "run:unrelated", ordinal: 2, status: "running" },
+            { id: "run:unrelated", ordinal: 3, status: "running" },
+            ...(queued ? [{ id: "run:blocker", ordinal: 1, status: "running" }] : []),
           ],
           contextTransfers: [],
           messages: [],
@@ -492,6 +498,14 @@ describe("OrchestratorMcpService", () => {
           assert.isFalse(unrelated.hasPendingQuestion);
           assert.equal(unrelated.next, ORCHESTRATOR_MCP_RUNNING_TASK_NEXT);
         }
+        queued = true;
+        requestOwner = "blocker";
+        const blocked = yield* service.taskStatus(scope, taskId);
+        assert.isTrue(blocked.hasPendingQuestion);
+        assert.notProperty(blocked, "next");
+        requestOwner = "unrelated";
+        assert.isFalse((yield* service.taskStatus(scope, taskId)).hasPendingQuestion);
+        queued = false;
         requestOwner = "task";
         pendingRequest = false;
 
