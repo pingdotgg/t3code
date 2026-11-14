@@ -437,6 +437,26 @@ describe("CLIProxyAPI built-in management API", () => {
     }),
   );
 
+  it.effect("keeps a Claude account whose window reports no utilization", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [{ ...accounts[0]!, provider: "claude" }],
+        upstream: () => ({
+          status: 200,
+          body: {
+            five_hour: { utilization: null, resets_at: null },
+            seven_day: { utilization: 50, resets_at: "2099-01-01T00:00:00Z" },
+          },
+        }),
+      });
+      const result = yield* (yield* test.api).readAccounts(config);
+      expect(result[0]?.usageLimits.unavailable).toBeUndefined();
+      expect(
+        result[0]?.usageLimits.windows.map((window) => [window.id, window.usedPercent]),
+      ).toEqual([["seven_day", 50]]);
+    }),
+  );
+
   const antigravitySummary = {
     buckets: [
       {
