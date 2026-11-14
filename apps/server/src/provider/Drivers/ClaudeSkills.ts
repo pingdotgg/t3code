@@ -129,6 +129,20 @@ function claudeManagedDirectory(
   return "/etc/claude-code";
 }
 
+function claudeManagedSettingsPaths(
+  path: Path.Path,
+  platform: NodeJS.Platform,
+  environment: NodeJS.ProcessEnv,
+): ReadonlyArray<string> {
+  const managedDirectory = claudeManagedDirectory(path, platform, environment);
+  const programData =
+    platform === "win32" ? windowsEnvironmentValue(environment, "ProgramData") : undefined;
+  return [
+    ...(programData ? [path.join(programData, "ClaudeCode", "managed-settings.json")] : []),
+    ...(managedDirectory ? [path.join(managedDirectory, "managed-settings.json")] : []),
+  ];
+}
+
 /** Claude Code settings files, lowest precedence first. */
 function claudeSettingsPaths(
   path: Path.Path,
@@ -138,9 +152,6 @@ function claudeSettingsPaths(
   environment: NodeJS.ProcessEnv,
   repositoryRoot?: string,
 ): ReadonlyArray<string> {
-  const managedDirectory = claudeManagedDirectory(path, platform, environment);
-  const programData =
-    platform === "win32" ? windowsEnvironmentValue(environment, "ProgramData") : undefined;
   const root = repositoryRoot !== undefined && repositoryRoot !== cwd ? repositoryRoot : undefined;
   return [
     path.join(configDirPath, "settings.json"),
@@ -151,8 +162,7 @@ function claudeSettingsPaths(
         ]
       : []),
     ...(root ? [path.join(root, ".claude", "settings.local.json")] : []),
-    ...(programData ? [path.join(programData, "ClaudeCode", "managed-settings.json")] : []),
-    ...(managedDirectory ? [path.join(managedDirectory, "managed-settings.json")] : []),
+    ...claudeManagedSettingsPaths(path, platform, environment),
   ];
 }
 
@@ -262,14 +272,7 @@ const readSkillSettings = Effect.fn("readSkillSettings")(function* (
   const overridesByName = new Map<string, SkillOverride>();
   const enabledPlugins = new Map<string, boolean>();
   const managedPluginNames = new Set<string>();
-  const managedDirectory = claudeManagedDirectory(path, platform, environment);
-  const programData =
-    platform === "win32" ? windowsEnvironmentValue(environment, "ProgramData") : undefined;
-  const managedPaths = new Set(
-    [programData && path.join(programData, "ClaudeCode"), managedDirectory].flatMap((directory) =>
-      directory ? [path.join(directory, "managed-settings.json")] : [],
-    ),
-  );
+  const managedPaths = new Set(claudeManagedSettingsPaths(path, platform, environment));
   let syncedPluginsHidden = false;
   const repositoryRoot = cwd === undefined ? undefined : yield* findRepositoryRoot(cwd);
   const projectSettingsPath =
