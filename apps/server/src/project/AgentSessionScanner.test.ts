@@ -148,13 +148,12 @@ const layerScannerTest = (input: ScannerTestInput) =>
         ...(input.hostHomeDirectory === undefined
           ? []
           : [Layer.succeed(HostProcess.HomeDirectory, input.hostHomeDirectory)]),
-        Layer.succeed(SecretResolver.SecretResolver, {
+        Layer.mock(SecretResolver.SecretResolver)({
           read: (references) => {
             for (const reference of references) input.secretReads?.push(reference.reference);
             const secretValues = input.secretValues ?? {};
             return Effect.succeed(references.map((reference) => secretValues[reference.reference]));
           },
-          invalidate: () => Effect.void,
         }),
         layerRuntimeRepository(input.importedTranscripts),
       ),
