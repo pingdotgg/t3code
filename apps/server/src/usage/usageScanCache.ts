@@ -321,9 +321,10 @@ export function decodeScanCache(
     // A corrupt state disqualifies the entry: resuming with it would attach
     // appended usage to the wrong model or replay fork-copied history.
     if (!legacy && !isValidState.get(entry.p)?.(entry.cs)) continue;
-    // Before v15 the state lacks the latest snapshot time that keeps a re-emitted older snapshot
-    // from billing twice, so a grown file re-parses whole instead of resuming.
-    const resumable = !legacy && !(entry.p === "codex" && version < 15);
+    // Before v16 a Codex baseline can lack the time of its latest move, or carry an older one,
+    // and that time keeps a re-emitted older snapshot from billing twice. A grown file re-parses
+    // whole instead of resuming.
+    const resumable = !legacy && !(entry.p === "codex" && version < 16);
 
     const provider = entry.p;
     const records = decodeRecords(entry.r, provider);
