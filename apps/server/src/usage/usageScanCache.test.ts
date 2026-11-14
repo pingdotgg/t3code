@@ -285,6 +285,46 @@ describe("scan cache round trip", () => {
       ...codex(0),
       position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
     });
+    // The migrated entries persist without a state and load again under the current version.
+    expect(decodeScanCache(parse(makeScanCacheWriter()(restored, {})), TEST_FORMAT_MAP)).toEqual(
+      restored,
+    );
+  });
+
+  it("restarts a grown v15 Codex entry, whose baseline time can be older than its totals", () => {
+    const request = {
+      input_tokens: 100,
+      cached_input_tokens: 0,
+      cache_write_input_tokens: 0,
+      output_tokens: 20,
+      reasoning_output_tokens: 0,
+      total_tokens: 120,
+    };
+    const entry: CachedFile = {
+      size: 10,
+      mtimeMs: 100,
+      provider: "codex",
+      records: [record({ provider: "codex", model: "gpt-6-astra", dedupeKey: null })],
+      tailRecords: [],
+      malformedRecords: 0,
+      position: position({
+        state: {
+          ...initialCodexScanState(),
+          model: "gpt-6-astra",
+          lastCumulativeUsage: request,
+          latestCumulativeAtMs: 1_786_000_000_000,
+        },
+      }),
+    };
+    const current = parse(makeScanCacheWriter()(new Map([["/codex.jsonl", entry]]), {}));
+
+    expect(
+      decodeScanCache({ ...current, version: 15 }, TEST_FORMAT_MAP).get("/codex.jsonl"),
+    ).toEqual({
+      ...entry,
+      position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+    });
+    expect(decodeScanCache(current, TEST_FORMAT_MAP).get("/codex.jsonl")).toEqual(entry);
   });
 
   it("re-parses a Claude transcript cached before 1-hour cache writes were counted", () => {
