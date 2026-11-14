@@ -9,14 +9,16 @@
 //!   `matchesExpected`: `"<any>"` matches anything, `<workspace>` is the replay folder,
 //!   `<any>` inside a string matches any text, object key sets must be equal.
 //! - A `runtime_exit` ends this agent; a respawned one continues after it.
+//! - A gated label (T3's replay gate, `release_replay_gate`) holds its entry until the test
+//!   releases it.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use conn_provider_support::lines::Line;
 use conn_provider_support::process::{ExitInfo, ProcEvent};
 use serde_json::{Map, Value, json};
-use tokio::sync::mpsc;
+use tokio::sync::{Notify, mpsc};
 
 /// The state shared by the agents of one transcript (one per process).
 #[derive(Debug)]
@@ -28,6 +30,10 @@ pub(crate) struct Script {
     /// Every frame we wrote, as parsed JSON, for the stub comparison and for debugging.
     pub written: Vec<Value>,
     pub processes: usize,
+    /// Labels held until released (T3's replay gate).
+    pub gates: HashSet<String>,
+    /// Wakes the agent when a gate opens.
+    pub gate_opened: Arc<Notify>,
 }
 
 impl Script {
@@ -39,7 +45,16 @@ impl Script {
             failure: None,
             written: Vec::new(),
             processes: 0,
+            gates: HashSet::new(),
+            gate_opened: Arc::new(Notify::new()),
         }))
+    }
+
+    /// Opens the gate on `label`.
+    pub(crate) fn release(&mut self, label: &str) {
+        if self.gates.remove(label) {
+            self.gate_opened.notify_waiters();
+        }
     }
 
     pub(crate) fn complete(&self) -> bool {
@@ -53,7 +68,11 @@ pub(crate) fn spawn(
 ) -> (mpsc::Sender<String>, mpsc::Receiver<ProcEvent>) {
     let (stdin, mut lines) = mpsc::channel::<String>(64);
     let (events, events_rx) = mpsc::channel::<ProcEvent>(1024);
-    crate::lock(&script).processes += 1;
+    let gate_opened = {
+        let mut s = crate::lock(&script);
+        s.processes += 1;
+        s.gate_opened.clone()
+    };
     tokio::spawn(async move {
         let mut agent = Agent {
             script,
@@ -63,10 +82,15 @@ pub(crate) fn spawn(
         };
         let mut open = agent.flush(&events).await;
         while open {
-            let Some(line) = lines.recv().await else {
-                break;
-            };
-            open = agent.handle(&line, &events).await;
+            tokio::select! {
+                line = lines.recv() => {
+                    let Some(line) = line else { break };
+                    open = agent.handle(&line, &events).await;
+                }
+                () = gate_opened.notified() => {
+                    open = agent.flush(&events).await;
+                }
+            }
         }
         // Our side closed stdin, or the transcript ended this process.
         let _ = events
@@ -102,6 +126,12 @@ impl Agent {
                 let Some(entry) = script.entries.get(script.cursor).cloned() else {
                     break;
                 };
+                if entry["label"]
+                    .as_str()
+                    .is_some_and(|label| script.gates.contains(label))
+                {
+                    break;
+                }
                 match entry["type"].as_str() {
                     Some("expect_outbound") => break,
                     Some("runtime_exit") => {

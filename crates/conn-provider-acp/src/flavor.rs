@@ -3,7 +3,9 @@
 
 use serde_json::{Value, json};
 
+use crate::grok_background::{Lifecycle, SubagentUpdate, TaskMutation};
 use crate::ordered::{J, obj};
+use crate::tools::ToolState;
 
 /// The launch the T3 driver builds (`buildGrokAcpSpawnInput` and peers).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -74,7 +76,58 @@ pub struct Flavor {
     /// `supportsCompaction`: `/compact` goes to the agent as a prompt, and its success (or
     /// the agent's own `compaction_update`) makes the next prompt resend T3's notes.
     pub(crate) supports_compaction: bool,
+    /// Background work: `deferFinalizeForBackgroundWork` and `enablePostSettleContinuation`
+    /// with the hooks that find background tasks. `None` for an agent without them.
+    pub(crate) background: Option<BackgroundHooks>,
 }
+
+/// `extractBackgroundTaskId`, `isBackgroundCommandTool`, `extractBackgroundTaskCompletion`,
+/// `extractBackgroundToolMutation`, `isPersistentBackgroundTool`, `isProviderWakeNotification`
+/// and the lifecycle notifications of `registerExtensions`.
+#[derive(Clone, Copy)]
+pub(crate) struct BackgroundHooks {
+    pub task_id: fn(&ToolState) -> Option<String>,
+    pub is_command: fn(&ToolState) -> bool,
+    pub completions: fn(&ToolState) -> Vec<TaskMutation>,
+    pub text_mutations: fn(&str) -> Vec<TaskMutation>,
+    pub is_persistent: fn(&ToolState) -> bool,
+    pub is_wake: fn(&Value) -> bool,
+    /// A notification method and its params → a task lifecycle change.
+    pub lifecycle: fn(&str, &Value) -> Option<Lifecycle>,
+    /// `extractSubagentUpdate`.
+    pub subagent: fn(&ToolState) -> Option<SubagentUpdate>,
+}
+
+impl std::fmt::Debug for BackgroundHooks {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("BackgroundHooks")
+    }
+}
+
+/// `registerXAiBackgroundTaskTracking`: `x.ai/task_backgrounded` and `x.ai/task_completed`,
+/// with their legacy `_x.ai/` forms.
+fn grok_lifecycle(method: &str, params: &Value) -> Option<Lifecycle> {
+    match method {
+        "x.ai/task_backgrounded" | "_x.ai/task_backgrounded" => {
+            crate::grok_background::lifecycle(params, false)
+        }
+        "x.ai/task_completed" | "_x.ai/task_completed" => {
+            crate::grok_background::lifecycle(params, true)
+        }
+        _ => None,
+    }
+}
+
+const GROK_BACKGROUND: BackgroundHooks = BackgroundHooks {
+    task_id: crate::grok_background::background_task_id,
+    is_command: |tool| crate::grok_background::background_shell_task_id(tool).is_some(),
+    completions: crate::grok_background::background_task_completions,
+    text_mutations: crate::grok_background::background_tool_mutations,
+    is_persistent: crate::grok_background::is_persistent_monitor,
+    is_wake: crate::grok_background::is_task_completed_wake,
+    lifecycle: grok_lifecycle,
+    subagent: crate::grok_background::subagent_update,
+};
 
 impl std::fmt::Debug for Flavor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -289,6 +342,7 @@ pub static GROK: Flavor = Flavor {
     select_model: |setup, _initialize, model| crate::grok::model_switch(setup, model),
     capabilities: grok_capabilities,
     supports_compaction: true,
+    background: Some(GROK_BACKGROUND),
 };
 
 /// `grokLaunchRuntimeMode`.

@@ -2,6 +2,12 @@
  "note": "ProviderAdapterV2 calls and events from T3's grok adapter replaying fixtures/grok_background_bash/grok_transcript.ndjson through the orchestrator fixture runner at b12470dcad; driver dropped.",
  "capturedOn": "2026-11-14",
  "outcome": "passed",
+ "gates": [
+  {
+   "label": "notification:session/update:agent_thought_chunk:task-completed-00000000-0000-4000-8000-000000000002",
+   "afterRun": 1
+  }
+ ],
  "transcripts": [
   [
    {
@@ -9205,7 +9211,7 @@
     "runtimePolicy": {
      "runtimeMode": "full-access",
      "interactionMode": "default",
-     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-grok_background_bash-tViLe8"
+     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-grok_background_bash-HMXV7B"
     },
     "promptSuggestions": {
      "_id": "Exit",
@@ -9226,7 +9232,7 @@
     "runtimePolicy": {
      "runtimeMode": "full-access",
      "interactionMode": "default",
-     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-grok_background_bash-tViLe8"
+     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-grok_background_bash-HMXV7B"
     },
     "providerSessionId": "provider-session:provider-instance:grok:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ea50ea93-b0ab-4c77-a9e4-4fcde38dabb3",
     "existingProviderThread": {
@@ -9368,7 +9374,7 @@
     "runtimePolicy": {
      "runtimeMode": "full-access",
      "interactionMode": "default",
-     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-grok_background_bash-tViLe8"
+     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-grok_background_bash-HMXV7B"
     }
    },
    "exit": {
@@ -9467,7 +9473,7 @@
     "runtimePolicy": {
      "runtimeMode": "full-access",
      "interactionMode": "default",
-     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-grok_background_bash-tViLe8"
+     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-grok_background_bash-HMXV7B"
     }
    },
    "exit": {

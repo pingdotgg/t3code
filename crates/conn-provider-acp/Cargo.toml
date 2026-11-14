@@ -14,6 +14,9 @@ conn-provider-support.workspace = true
 conn-support.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+# Subagent thread ids hash the native id (`IdAllocator.derive.subagentThread`); already in the
+# tree through conn-support.
+sha2.workspace = true
 # Signals the agent's process group at close and Stop, as T3 does; already in the tree.
 rustix = { workspace = true, features = ["process"] }
 tokio = { workspace = true, features = ["sync", "process", "io-util", "time", "rt", "macros"] }

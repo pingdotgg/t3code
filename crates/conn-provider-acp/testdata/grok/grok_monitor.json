@@ -2,6 +2,12 @@
  "note": "ProviderAdapterV2 calls and events from T3's grok adapter replaying fixtures/grok_monitor/grok_transcript.ndjson through the orchestrator fixture runner at b12470dcad; driver dropped.",
  "capturedOn": "2026-11-14",
  "outcome": "passed",
+ "gates": [
+  {
+   "label": "notification:session/update:agent_message_chunk:notifications-01a0d754-c2a6-7e51-b5d9-710c43051847",
+   "afterRun": 1
+  }
+ ],
  "transcripts": [
   [
    {
@@ -12828,7 +12834,7 @@
     "runtimePolicy": {
      "runtimeMode": "full-access",
      "interactionMode": "default",
-     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-grok_monitor-y8yT9t"
+     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-grok_monitor-D2ER4O"
     },
     "promptSuggestions": {
      "_id": "Exit",
@@ -12849,7 +12855,7 @@
     "runtimePolicy": {
      "runtimeMode": "full-access",
      "interactionMode": "default",
-     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-grok_monitor-y8yT9t"
+     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-grok_monitor-D2ER4O"
     },
     "providerSessionId": "provider-session:provider-instance:grok:thread:thread%3Afixture%3Agrok_monitor%3Aproject%3Aproject%253Afixture%253Agrok_monitor%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ea50ea93-b0ab-4c77-a9e4-4fcde38dabb3",
     "existingProviderThread": {
@@ -12991,7 +12997,7 @@
     "runtimePolicy": {
      "runtimeMode": "full-access",
      "interactionMode": "default",
-     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-grok_monitor-y8yT9t"
+     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-grok_monitor-D2ER4O"
     }
    },
    "exit": {
@@ -13090,7 +13096,7 @@
     "runtimePolicy": {
      "runtimeMode": "full-access",
      "interactionMode": "default",
-     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-grok_monitor-y8yT9t"
+     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-grok_monitor-D2ER4O"
     }
    },
    "exit": {

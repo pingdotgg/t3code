@@ -74,12 +74,34 @@ pub(crate) struct Run {
     pub errors: Vec<String>,
 }
 
+/// T3's `release_replay_gate` after `finish_held_run`: a gate opens once its run ended.
+fn release_gates(
+    gates: &[(String, u64)],
+    script: &Arc<Mutex<Script>>,
+    events: &Arc<Mutex<Vec<Value>>>,
+) {
+    for (label, after_run) in gates {
+        let ended = crate::lock(events).iter().any(|e| {
+            e["type"] == "turn.terminal"
+                && e["runOrdinal"].as_u64().is_some_and(|r| r >= *after_run)
+        });
+        if ended {
+            crate::lock(script).release(label);
+        }
+    }
+}
+
 /// Waits until neither the agent's cursor nor the event count moves for a while.
-async fn idle(script: &Arc<Mutex<Script>>, events: &Arc<Mutex<Vec<Value>>>) {
+async fn idle(
+    gates: &[(String, u64)],
+    script: &Arc<Mutex<Script>>,
+    events: &Arc<Mutex<Vec<Value>>>,
+) {
     let mut last = (usize::MAX, usize::MAX);
     let mut still = 0;
     for _ in 0..2_000 {
         tokio::time::sleep(Duration::from_millis(2)).await;
+        release_gates(gates, script, events);
         let now = (crate::lock(script).cursor, crate::lock(events).len());
         if now == last {
             still += 1;
@@ -107,6 +129,14 @@ pub(crate) async fn replay(flavor: &'static Flavor, golden: &Value) -> Run {
         .cloned()
         .unwrap_or_default();
     let script = Script::new(entries, &workspace);
+    // `gates`: the labels the fixture holds, each until a run ended.
+    let gates: Vec<(String, u64)> = golden["gates"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|g| Some((g["label"].as_str()?.to_owned(), g["afterRun"].as_u64()?)))
+        .collect();
+    crate::lock(&script).gates = gates.iter().map(|(label, _)| label.clone()).collect();
     let spawn_script = script.clone();
     let spawner: session::Spawner = Arc::new(move || {
         let (writer, events) = replay_agent::spawn(spawn_script.clone());
@@ -118,6 +148,7 @@ pub(crate) async fn replay(flavor: &'static Flavor, golden: &Value) -> Run {
     });
     let config = Config {
         flush_interval: None,
+        finalize_debounce: Duration::from_millis(5),
         flavor,
         instance_id: open["input"]["modelSelection"]["instanceId"]
             .as_str()
@@ -161,8 +192,9 @@ pub(crate) async fn replay(flavor: &'static Flavor, golden: &Value) -> Run {
         }
     };
     let mut pending_seen = 0usize;
+    let mut continuations_expected = 0usize;
     for call in &calls {
-        idle(&script, &events).await;
+        idle(&gates, &script, &events).await;
         let input = &call["input"];
         match call["method"].as_str().unwrap_or("") {
             "ensureThread" => {
@@ -180,6 +212,20 @@ pub(crate) async fn replay(flavor: &'static Flavor, golden: &Value) -> Run {
                 }
             }
             "startTurn" => {
+                // The orchestrator starts a turn once the last one ended; a deferred finalize
+                // may still be in its (shortened) debounce.
+                for _ in 0..1_000 {
+                    if !session.has_turn().await {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(2)).await;
+                }
+                idle(&gates, &script, &events).await;
+                if input["message"]["createdBy"] == "agent"
+                    && input["message"]["creationSource"] == "provider"
+                {
+                    continuations_expected += 1;
+                }
                 if let Err(e) = session.start_turn(crate::testing::turn_input(input)).await {
                     errors.push(format!("startTurn: {e}"));
                 }
@@ -236,17 +282,31 @@ pub(crate) async fn replay(flavor: &'static Flavor, golden: &Value) -> Run {
             other => errors.push(format!("call {other} is not replayed")),
         }
     }
-    idle(&script, &events).await;
+    idle(&gates, &script, &events).await;
     // The fixture's scope closes the adapter session at the end (T3 records no call for it).
     if !calls.iter().any(|c| c["method"] == "close") {
         session.close().await;
-        idle(&script, &events).await;
+        idle(&gates, &script, &events).await;
     }
     // Nothing of a finished turn stays behind.
-    if session.has_turn().await || session.pending_requests().await != 0 {
+    if session.has_turn().await
+        || session.pending_requests().await != 0
+        || !session.background_state_empty().await
+    {
         errors.push("state left after the last turn".into());
     }
     let events = crate::lock(&events).clone();
+    // T3 offers a continuation through its own service, not the event stream: each
+    // provider continuation turn of the recording must follow one request of ours.
+    let requested = events
+        .iter()
+        .filter(|e| e["type"] == "continuation.requested")
+        .count();
+    if requested != continuations_expected {
+        errors.push(format!(
+            "{requested} continuation requests, {continuations_expected} continuation turns"
+        ));
+    }
     Run {
         events,
         script,
@@ -292,7 +352,11 @@ fn scrub(value: &mut Value) {
 
 /// The first difference between two event lists, or `None`.
 pub(crate) fn compare(ours: &[Value], theirs: &[Value]) -> Option<String> {
-    let ours: Vec<Value> = ours.iter().map(normalize).collect();
+    let ours: Vec<Value> = ours
+        .iter()
+        .filter(|e| e["type"] != "continuation.requested")
+        .map(normalize)
+        .collect();
     let theirs: Vec<Value> = theirs.iter().map(normalize).collect();
     for (i, (a, b)) in ours.iter().zip(&theirs).enumerate() {
         if a != b {

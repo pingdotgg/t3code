@@ -115,7 +115,7 @@ fn normalize_mcp(mut tool: ToolState) -> ToolState {
 }
 
 /// `xAiToolOutputText`.
-fn output_text(tool: &ToolState) -> Option<String> {
+pub(crate) fn output_text(tool: &ToolState) -> Option<String> {
     let raw_output = tool.data.get("rawOutput").cloned().unwrap_or(Value::Null);
     if raw_output.is_object() {
         let direct = non_empty(&raw_output["text"])
@@ -180,7 +180,7 @@ fn monitor_start_ack(output: Option<&str>) -> bool {
     })
 }
 
-fn is_monitor(tool: &ToolState) -> bool {
+pub(crate) fn is_monitor(tool: &ToolState) -> bool {
     let title = tool.title.as_deref().unwrap_or("").trim().to_lowercase();
     if title == "monitor" || title.starts_with("monitor ") {
         return true;

@@ -14,6 +14,7 @@ mod connection;
 mod diff;
 pub mod flavor;
 mod grok;
+mod grok_background;
 mod grok_status;
 #[rustfmt::skip]
 mod instructions;
@@ -121,6 +122,10 @@ pub struct AcpConfig {
     /// goes out this long later. `None` holds it until its segment closes, as T3's paused test
     /// clock does; only replays of T3's fixtures set that.
     pub text_flush_interval: Option<Duration>,
+    /// `ACP_DEFERRED_FINALIZE_DEBOUNCE` (3 s): a turn whose background work ended finalizes
+    /// this long after the last change. Replays of T3's fixtures shorten it, as T3's test
+    /// clock skips it.
+    pub finalize_debounce: Duration,
 }
 
 impl Default for AcpConfig {
@@ -131,6 +136,7 @@ impl Default for AcpConfig {
             server_cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")),
             workspace_cwd: None,
             text_flush_interval: Some(session::FLUSH_INTERVAL),
+            finalize_debounce: session::FINALIZE_DEBOUNCE,
         }
     }
 }
@@ -357,6 +363,7 @@ impl Provider for AcpProvider {
             let policy = to_json(&input.runtime_policy);
             let config = session::Config {
                 flush_interval: self.config.text_flush_interval,
+                finalize_debounce: self.config.finalize_debounce,
                 flavor: self.flavor,
                 instance_id: self.instance_id.as_str().to_owned(),
                 provider_session_id: input.provider_session_id.as_str().to_owned(),

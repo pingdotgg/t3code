@@ -2,6 +2,7 @@
  "note": "ProviderAdapterV2 calls and events from T3's grok adapter replaying fixtures/grok_subagent_lineage/grok_transcript.ndjson through the orchestrator fixture runner at b12470dcad; driver dropped.",
  "capturedOn": "2026-11-14",
  "outcome": "passed",
+ "gates": [],
  "transcripts": [
   [
    {
@@ -316,7 +317,7 @@
     "runtimePolicy": {
      "runtimeMode": "full-access",
      "interactionMode": "default",
-     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-grok_subagent_lineage-lHlu4e"
+     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-grok_subagent_lineage-FOjx9Y"
     },
     "promptSuggestions": {
      "_id": "Exit",
@@ -337,7 +338,7 @@
     "runtimePolicy": {
      "runtimeMode": "full-access",
      "interactionMode": "default",
-     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-grok_subagent_lineage-lHlu4e"
+     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-grok_subagent_lineage-FOjx9Y"
     },
     "providerSessionId": "provider-session:provider-instance:grok:thread:thread%3Afixture%3Agrok_subagent_lineage%3Aproject%3Aproject%253Afixture%253Agrok_subagent_lineage%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ea50ea93-b0ab-4c77-a9e4-4fcde38dabb3",
     "existingProviderThread": {
@@ -479,7 +480,7 @@
     "runtimePolicy": {
      "runtimeMode": "full-access",
      "interactionMode": "default",
-     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-grok_subagent_lineage-lHlu4e"
+     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-grok_subagent_lineage-FOjx9Y"
     }
    },
    "exit": {

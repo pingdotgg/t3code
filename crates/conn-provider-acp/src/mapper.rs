@@ -19,6 +19,12 @@ use crate::ordered::{J, obj};
 use crate::protocol::RequestId;
 use crate::tools::{self, ToolState};
 
+#[path = "mapper_background.rs"]
+mod background;
+#[path = "mapper_subagents.rs"]
+mod subagents;
+pub(crate) use background::{HYDRATION_WAIT, INJECTED_REPORT_WAIT, Timer};
+
 /// What the mapper asks its session to do.
 #[derive(Debug)]
 #[expect(
@@ -35,6 +41,8 @@ pub(crate) enum Out {
     /// The turn's text changed after its first emission: flush it in 50 ms
     /// (`ACP_TEXT_FLUSH_INTERVAL`).
     ScheduleFlush,
+    /// Run this timer and hand it back to [`Mapper::timer_fired`].
+    Timer(Timer),
 }
 
 /// `ActiveTextStream` kinds.
@@ -75,6 +83,8 @@ struct TextStream {
 /// One running turn (`ActiveAcpTurn`, the parts this crate serves).
 #[derive(Debug)]
 struct Turn {
+    /// Tells this turn's timers from a later turn's.
+    seq: u64,
     thread_id: String,
     run_id: String,
     run_ordinal: u32,
@@ -102,6 +112,11 @@ struct Turn {
     compaction_message: bool,
     /// `isCompactCommand`: `/compact`, optionally with preservation instructions.
     compact_command: bool,
+    bg: background::TurnBackground,
+    subagents: subagents::TurnSubagents,
+    /// The parent app thread and model selection, for subagent child threads.
+    app_thread: Value,
+    model_selection: Value,
 }
 
 /// How many compaction ids a session remembers (`completedCompactionIds`); older ones fall out.
@@ -150,6 +165,10 @@ pub(crate) struct Mapper<E: Env> {
     marker_seq: u64,
     /// `completedCompactionIds`: an agent may patch a completed compaction again.
     completed_compactions: VecDeque<String>,
+    /// The session's ACP session id (`activeSessionId`).
+    root_session: Option<String>,
+    turn_seq: u64,
+    bg: background::SessionBackground,
 }
 
 impl<E: Env> std::fmt::Debug for Mapper<E> {
@@ -181,6 +200,9 @@ impl<E: Env> Mapper<E> {
             compaction_marker: None,
             marker_seq: 0,
             completed_compactions: VecDeque::new(),
+            root_session: None,
+            turn_seq: 0,
+            bg: background::SessionBackground::default(),
         }
     }
 
@@ -330,6 +352,18 @@ impl<E: Env> Mapper<E> {
         user_text: &str,
     ) -> Vec<Out> {
         let mut out = Vec::new();
+        // Continuations consume existing wake traffic without re-prompting the agent.
+        let continuation =
+            self.flavor.background.is_some() && input.message.is_provider_continuation();
+        let app_owned = input.message.created_by == conn_contract::OrchestrationV2Actor::Agent
+            && input.message.creation_source
+                == conn_contract::OrchestrationV2CreationSource::Server;
+        let was_requested = self.background_turn_start(
+            input.thread_id.as_str(),
+            input.provider_thread.id.as_str(),
+            continuation,
+            app_owned,
+        );
         let started_at = self.env.now();
         let native_turn_id = format!("{session_id}:turn:{}", input.provider_turn_ordinal);
         let provider_turn_id = ids::provider_turn_id(self.driver(), &self.scoped(&native_turn_id));
@@ -366,7 +400,9 @@ impl<E: Env> Mapper<E> {
             && trimmed
                 .strip_prefix("/compact")
                 .is_some_and(|rest| rest.is_empty() || rest.starts_with(char::is_whitespace));
+        self.turn_seq += 1;
         let turn = Turn {
+            seq: self.turn_seq,
             thread_id: input.thread_id.as_str().to_owned(),
             run_id: input.run_id.as_str().to_owned(),
             run_ordinal: input.run_ordinal,
@@ -391,6 +427,10 @@ impl<E: Env> Mapper<E> {
             context_usage,
             compaction_message,
             compact_command,
+            bg: background::TurnBackground::new(continuation),
+            subagents: subagents::TurnSubagents::default(),
+            app_thread: to_json(&input.app_thread),
+            model_selection: to_json(&input.model_selection),
         };
         let running = self.provider_turn_payload(&turn, "running", None);
         self.event(
@@ -413,6 +453,9 @@ impl<E: Env> Mapper<E> {
             &mut out,
         );
         self.turn = Some(turn);
+        if continuation {
+            self.drain_continuation(was_requested, &mut out);
+        }
         out
     }
 
@@ -438,7 +481,7 @@ impl<E: Env> Mapper<E> {
             set(
                 &mut payload,
                 "turnTokenUsage",
-                json!({"usageScope": "main_agent", "usageStatus": "unavailable", "hasSubagents": false}),
+                json!({"usageScope": "main_agent", "usageStatus": "unavailable", "hasSubagents": !turn.subagents.list.is_empty()}),
             );
         }
         payload
@@ -761,10 +804,42 @@ impl<E: Env> Mapper<E> {
         {
             self.mark_compacted(Some(&format!("{session_id}\u{0}{id}")));
         }
+        if kind == "usage_update" || kind == "session_info_update" {
+            self.session_state_update(&session_id, kind, update, &mut out);
+            return out;
+        }
+        if self.turn.is_none() {
+            self.idle_update(params, &mut out);
+            return out;
+        }
+        // A child session's updates belong to its subagent.
+        if self.flavor.background.is_some()
+            && !session_id.is_empty()
+            && self
+                .root_session
+                .as_deref()
+                .is_some_and(|root| root != session_id)
+        {
+            self.child_session_update(params, &mut out);
+            return out;
+        }
+        if self.settled_wake(params, &mut out) {
+            return out;
+        }
+        if self.suppressed_chatter(kind) {
+            return out;
+        }
+        self.turn_update(kind, update, &mut out);
+        self.rearm_deferred_finalize(&mut out);
+        out
+    }
+
+    /// The in-turn part of `handleSessionUpdate`.
+    fn turn_update(&mut self, kind: &str, update: &Value, out: &mut Vec<Out>) {
         match kind {
             "compaction_update" => {
                 if let Some(state) = tools::compaction_tool(update) {
-                    self.tool_updated(state, None, &mut out);
+                    self.tool_updated(state, None, out);
                 }
             }
             "compaction_summary_chunk" => {
@@ -779,16 +854,14 @@ impl<E: Env> Mapper<E> {
                         .and_then(|turn| turn.tools.get(&tool_call_id).cloned())
                         .unwrap_or_else(|| tools::compaction_placeholder(&tool_call_id));
                     let appended = tools::append_output_text(previous, &text);
-                    self.tool_updated(appended, None, &mut out);
+                    self.tool_updated(appended, None, out);
                 }
-            }
-            "usage_update" | "session_info_update" => {
-                self.session_state_update(&session_id, kind, update, &mut out);
             }
             "agent_message_chunk" => {
                 if let Some(text) = content_display_text(&update["content"]) {
+                    self.injected_report_on_message();
                     let message_id = update["messageId"].as_str().map(str::to_owned);
-                    self.append_text(TextKind::Assistant, &text, message_id.as_deref(), &mut out);
+                    self.append_text(TextKind::Assistant, &text, message_id.as_deref(), out);
                 }
             }
             "agent_thought_chunk" => {
@@ -796,13 +869,13 @@ impl<E: Env> Mapper<E> {
                     && let Some(text) = update["content"]["text"].as_str()
                 {
                     let text = text.to_owned();
-                    self.append_text(TextKind::Reasoning, &text, None, &mut out);
+                    self.append_text(TextKind::Reasoning, &text, None, out);
                 }
             }
             "tool_call" | "tool_call_update" => {
                 let fallback = (kind == "tool_call").then_some("pending");
                 if let Some(state) = tools::parse_tool_call(update, fallback) {
-                    self.tool_updated(state, None, &mut out);
+                    self.tool_updated(state, None, out);
                 }
             }
             "plan" => {
@@ -821,7 +894,7 @@ impl<E: Env> Mapper<E> {
                         (text, plan_step_status(&e["status"]))
                     })
                     .collect();
-                self.emit_plan("legacy", PlanUpdate::Items(steps), &mut out);
+                self.emit_plan("legacy", PlanUpdate::Items(steps), out);
             }
             "plan_update" => {
                 let plan = &update["plan"];
@@ -862,23 +935,29 @@ impl<E: Env> Mapper<E> {
                             other.unwrap_or("undefined")
                         )),
                     };
-                    self.emit_plan(&id, content, &mut out);
+                    self.emit_plan(&id, content, out);
                 }
             }
             "plan_removed" => {
                 let id = update["planId"].as_str().unwrap_or("").trim().to_owned();
                 if !id.is_empty() {
-                    self.emit_plan(&id, PlanUpdate::Removed, &mut out);
+                    self.emit_plan(&id, PlanUpdate::Removed, out);
                 }
             }
             "available_commands_update" | "current_mode_update" | "config_option_update" => {}
-            "user_message_chunk" => {}
+            "user_message_chunk" => {
+                if update["content"]["type"] == "text"
+                    && let Some(text) = update["content"]["text"].as_str()
+                {
+                    self.user_text_mutations(text, out);
+                    self.subagent_end_notice(text, out);
+                }
+            }
             other => {
                 let label = format!("session/update {other}");
                 self.skip(&label);
             }
         }
-        out
     }
 
     fn session_state_update(
@@ -1008,7 +1087,18 @@ impl<E: Env> Mapper<E> {
             Some(normalize) => normalize(merged),
             None => merged,
         };
+        let (tool, hydrated_monitor) =
+            self.background_tool(tool, previous.as_ref(), projected, out);
+        let Some(turn) = self.turn.as_mut() else {
+            return;
+        };
         turn.tools.insert(key.clone(), tool.clone());
+        if self.subagent_tool(&tool, hydrated_monitor, out) {
+            return;
+        }
+        let Some(turn) = self.turn.as_mut() else {
+            return;
+        };
         if projected.is_none() {
             let skipped = turn.tool_skips.get(&key).copied().unwrap_or(0);
             let persist = matches!(reported.as_deref(), Some("completed" | "failed"))
@@ -1129,6 +1219,7 @@ impl<E: Env> Mapper<E> {
     /// `terminalizeOpenForegroundTools` / `terminalizeOpenRunOwnedItems`: open tools end with
     /// the turn.
     fn terminalize_open_tools(&mut self, status: &str, out: &mut Vec<Out>) {
+        let foreground_only = status != "interrupted";
         let open: Vec<ToolState> = self
             .turn
             .as_ref()
@@ -1157,6 +1248,9 @@ impl<E: Env> Mapper<E> {
             })
             .unwrap_or_default();
         for tool in open {
+            if foreground_only && self.is_background_tool(&tool) {
+                continue;
+            }
             self.emit_tool(&tool, None, Some(status), out);
         }
     }
@@ -1618,7 +1712,12 @@ impl<E: Env> Mapper<E> {
                 } else {
                     "completed"
                 };
-                self.finalize(status, None)
+                let mut out = Vec::new();
+                if self.settle_with_background(status, &mut out) {
+                    return out;
+                }
+                out.extend(self.finalize(status, None));
+                out
             }
             PromptOutcome::Failed { message, code } => {
                 let status = if interrupted { "interrupted" } else { "failed" };
@@ -1710,6 +1809,7 @@ impl<E: Env> Mapper<E> {
         self.event(terminal, &mut out);
         // Requests of this turn cannot be answered any more.
         self.pending.clear();
+        self.background_after_finalize(settled, &mut out);
         out
     }
 
@@ -1755,6 +1855,9 @@ impl<E: Env> Mapper<E> {
     pub(crate) fn interrupt(&mut self) -> Vec<Out> {
         let mut out = Vec::new();
         self.mark_interrupted();
+        if self.flavor.background.is_some() {
+            self.quarantine();
+        }
         self.cancel_pending(&mut out);
         out
     }

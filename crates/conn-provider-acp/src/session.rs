@@ -29,6 +29,8 @@ use crate::protocol::RequestId;
 pub(crate) const EVENT_CAPACITY: usize = 256;
 /// `ACP_TEXT_FLUSH_INTERVAL`.
 pub(crate) const FLUSH_INTERVAL: Duration = Duration::from_millis(50);
+/// `ACP_DEFERRED_FINALIZE_DEBOUNCE`.
+pub(crate) const FINALIZE_DEBOUNCE: Duration = Duration::from_secs(3);
 /// `ACP_STOP_CONFIRM_TIMEOUT_MS`.
 const STOP_CONFIRM_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -55,6 +57,9 @@ pub(crate) type Spawner = Arc<dyn Fn() -> std::io::Result<Spawned> + Send + Sync
 pub(crate) struct Config {
     /// `None` holds streamed text until the segment closes, as T3's paused test clock does.
     pub flush_interval: Option<Duration>,
+    /// `ACP_DEFERRED_FINALIZE_DEBOUNCE` (3 s); the replay shortens it, as T3's test clock
+    /// skips it.
+    pub finalize_debounce: Duration,
     pub flavor: &'static Flavor,
     pub instance_id: String,
     pub provider_session_id: String,
@@ -257,6 +262,7 @@ impl AcpSession {
         {
             let mut state = inner.state.lock().await;
             state.session_id = Some(session_id.clone());
+            state.mapper.set_root_session(&session_id);
             state.initialize = initialize;
             state.setup = setup;
         }
@@ -277,6 +283,16 @@ impl AcpSession {
     #[cfg(test)]
     pub(crate) async fn has_turn(&self) -> bool {
         self.inner.state.lock().await.mapper.has_turn()
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn background_state_empty(&self) -> bool {
+        self.inner
+            .state
+            .lock()
+            .await
+            .mapper
+            .background_state_empty()
     }
 }
 
@@ -404,6 +420,7 @@ impl Inner {
         for out in outs {
             match out {
                 Out::ScheduleFlush => arm = true,
+                Out::Timer(timer) => self.run_timer(timer),
                 other => deliver_one(state, other).await,
             }
         }
@@ -424,6 +441,23 @@ impl Inner {
                 }
             });
         }
+    }
+
+    /// Runs a mapper timer; when it fires, the mapper decides under the state lock.
+    fn run_timer(self: &Arc<Self>, timer: mapper::Timer) {
+        let delay = match &timer {
+            mapper::Timer::Finalize { .. } => self.config.finalize_debounce,
+            mapper::Timer::Hydration { .. } => mapper::HYDRATION_WAIT,
+            mapper::Timer::InjectedReport { .. } => mapper::INJECTED_REPORT_WAIT,
+        };
+        let weak = Arc::downgrade(self);
+        tokio::spawn(async move {
+            tokio::time::sleep(delay).await;
+            let Some(inner) = weak.upgrade() else { return };
+            let mut state = inner.state.lock().await;
+            let outs = state.mapper.timer_fired(timer);
+            Box::pin(inner.deliver(&mut state, outs)).await;
+        });
     }
 
     /// Settles the running prompt once (reply, or Grok's completion notification).
@@ -479,7 +513,7 @@ async fn deliver_one(state: &mut State<DynEnv>, out: Out) {
                 runtime.connection.reply(&id, result).await;
             }
         }
-        Out::ScheduleFlush => {}
+        Out::ScheduleFlush | Out::Timer(_) => {}
     }
 }
 
@@ -634,6 +668,31 @@ async fn handle_notification(inner: &Arc<Inner>, generation: u64, method: &str, 
         inner.deliver(&mut state, outs).await;
         return;
     }
+    if let Some(hooks) = inner.config.flavor.background
+        && let Some(life) = (hooks.lifecycle)(method, params)
+    {
+        let mut state = inner.state.lock().await;
+        if state.generation != generation {
+            return;
+        }
+        let outs = state.mapper.apply_background_task_mutation(life);
+        inner.deliver(&mut state, outs).await;
+        return;
+    }
+    if inner.config.flavor.background.is_some()
+        && let Some((child, status, result)) = xai_subagent_finished(method, params)
+    {
+        let mut state = inner.state.lock().await;
+        if state.generation != generation {
+            return;
+        }
+        let session_id = params["sessionId"].as_str().unwrap_or("");
+        let outs = state
+            .mapper
+            .finish_subagent(session_id, &child, status, result);
+        inner.deliver(&mut state, outs).await;
+        return;
+    }
     if inner.config.flavor.completion == Completion::XAiPromptComplete
         && let Some((prompt_id, outcome)) = xai_prompt_complete(method, params)
     {
@@ -643,6 +702,46 @@ async fn handle_notification(inner: &Arc<Inner>, generation: u64, method: &str, 
     let mut state = inner.state.lock().await;
     let label = format!("notification {method}");
     state.mapper.skip(&label);
+}
+
+/// `xAiSubagentFinishedNotice`: Grok's `subagent_finished` session notification (child
+/// session, status, result text).
+fn xai_subagent_finished(
+    method: &str,
+    params: &Value,
+) -> Option<(String, &'static str, Option<String>)> {
+    if !matches!(
+        method,
+        "x.ai/session_notification" | "_x.ai/session_notification" | "_x.ai/session/update"
+    ) {
+        return None;
+    }
+    let update = &params["update"];
+    if update["sessionUpdate"] != "subagent_finished" {
+        return None;
+    }
+    let child = update["child_session_id"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())?
+        .to_owned();
+    let status = match update["status"].as_str()? {
+        "completed" => "completed",
+        "failed" => "failed",
+        "cancelled" => "cancelled",
+        _ => return None,
+    };
+    let text = if status == "completed" {
+        &update["output"]
+    } else {
+        &update["error"]
+    };
+    let result = text
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned);
+    Some((child, status, result))
 }
 
 /// Grok's prompt completion (`makeXAiPromptCompletionRuntime`): `prompt_complete`, or a
@@ -811,6 +910,14 @@ impl Session for AcpSession {
                 let connection = runtime.connection.clone();
                 let generation = runtime.generation;
                 let session_id = state.session_id.clone().unwrap_or_default();
+                // A provider continuation sends no prompt: it replays the buffered wake turn.
+                if flavor.background.is_some() && input.message.is_provider_continuation() {
+                    let outs = state
+                        .mapper
+                        .begin_turn(&input, &session_id, &input.message.text);
+                    inner.deliver(&mut state, outs).await;
+                    return Ok(());
+                }
                 let attachments: Vec<Value> =
                     input.message.attachments.iter().map(to_json).collect();
                 // `compactThread`: T3's orchestrator sends `/compact` in any case as exactly
@@ -985,6 +1092,7 @@ impl Session for AcpSession {
                     return;
                 }
                 state.closed = true;
+                state.mapper.close_background();
                 let can_close =
                     !state.initialize["agentCapabilities"]["sessionCapabilities"]["close"]
                         .is_null()
