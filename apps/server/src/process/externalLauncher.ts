@@ -34,6 +34,7 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { makeStaleWhileRevalidate } from "../environment/staleWhileRevalidate.ts";
+import { WindowsVerbatimSpawn } from "./windowsVerbatimSpawn.ts";
 export {
   ExternalLauncherError,
   ExternalLauncherBrowserSpawnError,
@@ -184,8 +185,12 @@ function escapePowerShellStringLiteral(input: string): string {
   return `'${input.replaceAll("'", "''")}'`;
 }
 
+function resolveWindowsRoot(env: NodeJS.ProcessEnv): string {
+  return env.SYSTEMROOT || env.windir || String.raw`C:\Windows`;
+}
+
 function resolvePowerShellPath(env: NodeJS.ProcessEnv = {}): string {
-  return `${env.SYSTEMROOT || env.windir || String.raw`C:\Windows`}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
+  return `${resolveWindowsRoot(env)}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
 }
 
 function resolveWslPowerShellPath(): string {
@@ -665,18 +670,67 @@ const tryRevealLinuxItem = Effect.fn("externalLauncher.tryRevealLinuxItem")(
   }),
 );
 
+// Stock Windows answers "none"; any other verb may be a replacement file manager, which only
+// the PowerShell reveal honors. Reading stdout is about 600 ms faster than spawner.string here.
+const hasStockWindowsFolderVerb = Effect.fn("externalLauncher.hasStockWindowsFolderVerb")(
+  function* () {
+    const env = yield* readBrowserLaunchEnv;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const handle = yield* spawner.spawn(
+      ChildProcess.make(
+        `${resolveWindowsRoot(env)}\\System32\\reg.exe`,
+        ["query", "HKCR\\Directory\\shell", "/ve"],
+        { stdin: "ignore", stderr: "ignore" },
+      ),
+    );
+    const [stdout, exitCode] = yield* Effect.all(
+      [handle.stdout.pipe(Stream.decodeText(), Stream.mkString), handle.exitCode],
+      { concurrency: "unbounded" },
+    );
+    return exitCode === 0 && /REG_SZ\s+none\s*$/im.test(stdout);
+  },
+  Effect.scoped,
+  Effect.timeout("2 seconds"),
+  Effect.orElseSucceed(() => false),
+);
+
+// Explorer parses /select itself, so it needs the argument verbatim rather than Node's quoting.
+const revealWindowsItem = Effect.fn("externalLauncher.revealWindowsItem")(function* (
+  target: string,
+) {
+  const command = `${resolveWindowsRoot(yield* readBrowserLaunchEnv)}\\explorer.exe`;
+  const args = [`/select,"${normalizeWindowsFileManagerPath(target)}"`];
+  yield* (yield* WindowsVerbatimSpawn)(command, args).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ExternalLauncherEditorSpawnError({
+          editor: "file-manager",
+          target,
+          command,
+          args,
+          cause,
+        }),
+    ),
+  );
+});
+
 const launchEditor = Effect.fn("externalLauncher.launchEditor")(function* (
   input: LaunchEditorInput,
+  hasStockFolderVerb: Effect.Effect<boolean>,
 ) {
   const launch = yield* resolveEditorLaunch(input);
-  if (
-    input.editor === "file-manager" &&
-    input.reveal === true &&
-    launch.command === "xdg-open" &&
-    (yield* HostProcess.Platform) === "linux" &&
-    (yield* tryRevealLinuxItem(launch.target))
-  ) {
-    return;
+  if (input.editor === "file-manager" && input.reveal === true) {
+    const platform = yield* HostProcess.Platform;
+    if (
+      platform === "linux" &&
+      launch.command === "xdg-open" &&
+      (yield* tryRevealLinuxItem(launch.target))
+    ) {
+      return;
+    }
+    if (platform === "win32" && (yield* hasStockFolderVerb)) {
+      return yield* revealWindowsItem(launch.target);
+    }
   }
   yield* launchEditorProcess(launch);
 });
@@ -837,6 +891,12 @@ export const make = Effect.gen(function* () {
     ),
     EDITOR_DISCOVERY_CACHE_TTL,
   );
+  const cachedStockWindowsFolderVerb = yield* makeStaleWhileRevalidate(
+    hasStockWindowsFolderVerb().pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    ),
+    EDITOR_DISCOVERY_CACHE_TTL,
+  );
 
   // Forwarders retain the underlying launcher and discovery spans.
   return ExternalLauncher.of({
@@ -854,7 +914,9 @@ export const make = Effect.gen(function* () {
     ),
     launchEditor: Effect.fnUntraced(
       function* (input) {
-        return yield* provideCommandResolutionServices(launchEditor(input));
+        return yield* provideCommandResolutionServices(
+          launchEditor(input, cachedStockWindowsFolderVerb),
+        );
       },
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     ),
