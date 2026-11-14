@@ -35,8 +35,8 @@ test captures separately for local playback and sends nothing. The transport
 refuses redirects so credentials and audio cannot follow one to another host.
 
 Transcript cleanup requires its own grant, off by default.
-It sends text, never audio, to the text generation provider of the draft's
-own environment, because that is where the provider credentials live.
+It sends text, never audio, to the text generation model of the draft's
+own environment, because that is where its credentials live.
 
 A cloud destination binds both the forwarding environment and the named provider.
 It uses a separate, batch-only endpoint: changing a server key cannot upgrade
@@ -63,6 +63,9 @@ at a time. Batch uploads carry their options in the body framing defined in
 [shared/speech.ts](../../packages/shared/src/speech.ts); streaming sends them in
 the socket's first command. Model files and the selected model, hardware
 placement, and unload timeout are environment state in server settings.
+A model file from another app is installed as a symlink only after its SHA-256
+matches a catalog entry, so the store never loads a file the catalog does not pin
+and removing a model never deletes a file T3 Code did not download.
 
 The Silero silence detector is optional. If its download fails, recordings use
 raw audio during the retry cooldown so a detector outage cannot block dictation.

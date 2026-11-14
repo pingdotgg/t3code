@@ -7,6 +7,7 @@ import type { HttpClient } from "effect/http";
 import {
   EnvironmentCloudEndpointUnavailableError,
   type EnvironmentCloudLinkStateResult,
+  type EnvironmentConnectReachability,
   EnvironmentHttpBadRequestError,
   EnvironmentHttpConflictError,
   EnvironmentHttpForbiddenError,
@@ -120,8 +121,8 @@ const isEnvironmentCloudApiError = Schema.is(
 function decodedRelayClientError(message: string) {
   return (cause: ManagedRelay.ManagedRelayClientError) => {
     const failed = cause._tag === "ManagedRelayRequestFailedError" ? cause : undefined;
-    const traceId = failed?.traceId;
-    const detail = failed ? relayRequestFailureDetail(failed) : null;
+    const traceId = "traceId" in cause ? cause.traceId : undefined;
+    const detail = (failed && relayRequestFailureDetail(failed)) ?? cause.message;
     return new CloudEnvironmentLinkError({
       message: detail ? `${message}: ${detail}` : message,
       cause,
@@ -256,6 +257,24 @@ export const readCloudLinkState: (input: {
     );
   });
 
+/** Runs the environment's T3 Connect reachability check now; the link state then reports it. */
+export const checkCloudReachability: (input: {
+  readonly target: CloudLinkTarget;
+}) => Effect.Effect<EnvironmentConnectReachability, CloudEnvironmentLinkError, CloudLinkServices> =
+  Effect.fn("linkEnvironment.checkCloudReachability")(function* (input: {
+    readonly target: CloudLinkTarget;
+  }) {
+    return yield* connectRequest(
+      input.target,
+      {
+        method: "POST",
+        url: (urls) => urls.checkReachability(),
+        request: ({ client, headers }) => client.checkReachability({ headers }),
+      },
+      "Could not check T3 Connect.",
+    );
+  });
+
 export const updateCloudPreferences: (input: {
   readonly target: CloudLinkTarget;
   readonly publishAgentActivity: boolean;
@@ -309,10 +328,10 @@ export const unlinkEnvironmentFromCloud: (input: {
         environmentId: input.target.environmentId,
       })
       .pipe(
-        Effect.catch((cause) =>
-          Effect.logWarning("Could not revoke cloud environment link after local unlink.", {
-            cause,
-          }),
+        Effect.mapError(
+          decodedRelayClientError(
+            "Disconnected locally, but T3 Connect did not confirm it removed this environment",
+          ),
         ),
       );
   }

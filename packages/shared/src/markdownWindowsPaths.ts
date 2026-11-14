@@ -26,13 +26,23 @@ interface EscapeCompileContext {
   }>;
 }
 
+const WHITESPACE = /\s/g;
+// Text nodes only grow by appending while parsing, so each one is scanned for whitespace once.
+const wordScans = new WeakMap<object, { scannedTo: number; wordStart: number }>();
+
 function keepWindowsPathEscape(this: EscapeCompileContext) {
   const text = this.stack.at(-1)?.children?.at(-1);
   if (text?.type !== "text" || text.value === undefined) return;
-  const before = text.value.slice(0, -1);
-  if (UNFINISHED_DRIVE_PATH.test(before)) {
-    text.value = `${before}\\${text.value.slice(-1)}`;
+  let scan = wordScans.get(text);
+  if (!scan) wordScans.set(text, (scan = { scannedTo: 0, wordStart: 0 }));
+  WHITESPACE.lastIndex = scan.scannedTo;
+  while (WHITESPACE.exec(text.value)) scan.wordStart = WHITESPACE.lastIndex;
+  // A prose path cannot cross whitespace, so preceding words cannot affect this escape.
+  const end = text.value.length - 1;
+  if (UNFINISHED_DRIVE_PATH.test(text.value.slice(scan.wordStart, end))) {
+    text.value = `${text.value.slice(0, end)}\\${text.value.slice(end)}`;
   }
+  scan.scannedTo = text.value.length;
 }
 
 function keepWindowsProsePathEscape(this: EscapeCompileContext) {
