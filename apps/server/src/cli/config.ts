@@ -353,16 +353,11 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
   // and supervisor handoff are separate; this preflight cannot arbitrate two starts.
   if (options?.rejectRunningServer && mode === "web") {
     const runtime = yield* readPersistedServerRuntimeState(derivedPaths.serverRuntimeStatePath);
-    // A shared T3 home makes another machine's live server look like a local record;
-    // its pid cannot be probed from here, so refuse with the machine named instead.
-    if (Option.isSome(runtime) && isRuntimeStateFromAnotherMachine(runtime.value)) {
-      return yield* new CliError.UserError({
-        cause: `The T3 Code server for this T3 home is recorded on another machine (\`${runtime.value.hostname ?? "unknown"}\`, ${runtime.value.origin}), and this machine shares that T3 home. Connect to that server, stop it on that machine, or use a different --base-dir. If that server is gone, remove ${derivedPaths.serverRuntimeStatePath} and retry.`,
-      });
-    }
-    // A killed container can leave a record with the new server's own PID.
+    // A killed container can leave a record with the new server's own PID. Another
+    // host's PID means nothing here, so its record is left to the ownership lock.
     if (
       Option.isSome(runtime) &&
+      !isRuntimeStateFromAnotherMachine(runtime.value) &&
       runtime.value.pid > 0 &&
       runtime.value.pid !== process.pid &&
       isProcessAlive(runtime.value.pid)
