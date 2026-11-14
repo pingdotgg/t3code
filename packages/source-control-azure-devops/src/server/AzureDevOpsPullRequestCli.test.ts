@@ -172,6 +172,25 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
             output(json({ ...pullRequestRow, lastMergeSourceCommit: { commitId: previousHead } })),
           ),
         )
+        // Azure's own row dates it by creation; the system thread its last push added is newer.
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              json({
+                value: [
+                  {
+                    id: 1,
+                    publishedDate: "2026-07-10T10:00:00Z",
+                    lastUpdatedDate: "2026-07-10T12:30:00.123+02:00",
+                    comments: [
+                      { id: 1, commentType: "system", publishedDate: "2026-07-10T10:00:00Z" },
+                    ],
+                  },
+                ],
+              }),
+            ),
+          ),
+        )
         .mockReturnValueOnce(
           Effect.succeed(
             output(
@@ -199,8 +218,10 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
       });
 
       expect(detail.headSha).toBe(latestHead);
-      expect(argsOfCall(2)).toContain("iterationId=2");
-      expect(mockedExecute).toHaveBeenCalledTimes(4);
+      expect(detail.updatedAt).toBe("2026-07-10T10:30:00.123Z");
+      expect(argsOfCall(1)).toContain("pullRequestThreads");
+      expect(argsOfCall(3)).toContain("iterationId=2");
+      expect(mockedExecute).toHaveBeenCalledTimes(5);
     }),
   );
 
