@@ -7,6 +7,9 @@
 # No check calls a model: the server checks use `examples/replay_server` (the engine's fake
 # provider), and `parity.mjs` calls none by default. Every server gets a temp state folder.
 set -u
+# No check reaches the network for the model manifest: every server a check starts inherits
+# this (crates/conn-server/src/model_manifest.rs, the test seam), whatever the shell has.
+export CONN_MODEL_MANIFEST_URL=off
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo" || exit 1

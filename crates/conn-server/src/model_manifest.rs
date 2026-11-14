@@ -11,8 +11,15 @@
 //! `updatedAt` are generated from the Conn monorepo (`tools/gen-upstream.mjs`).
 //!
 //! The server reads no model from the manifest itself; it only keeps the file as T3 keeps it.
+//!
+//! **Test seam:** `CONN_MODEL_MANIFEST_URL`, read once at start. Unset: T3's URL. `off`, empty,
+//! not Unicode, or anything that is not an `http://` or `https://` URL: the server never
+//! fetches (no refresh task starts). Any other value: fetch from there instead, as from a
+//! loopback stub in `orbit-flow.mjs`. Every check starts servers with `off`
+//! (`tools/sealed-env.mjs`, `tools/check.sh`).
 
 use std::{
+    ffi::OsStr,
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -29,6 +36,29 @@ pub use generated::MODEL_MANIFEST_URL;
 use generated::{BUNDLED_UPDATED_AT, FETCH_TIMEOUT_MS, MANIFEST_RETRY_MS, MANIFEST_TTL_MS};
 
 pub const FILE_NAME: &str = "model-manifest.json";
+/// The test seam's variable (see the module text).
+pub const URL_VARIABLE: &str = "CONN_MODEL_MANIFEST_URL";
+
+/// Where a refresh fetches from, if anywhere.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Source {
+    /// Never fetch.
+    Off,
+    Url(String),
+}
+
+/// The source the seam's value names: T3's URL only when the variable is not set at all.
+pub fn source(value: Option<&OsStr>) -> Source {
+    let Some(value) = value else {
+        return Source::Url(MODEL_MANIFEST_URL.to_owned());
+    };
+    match value.to_str() {
+        Some(url) if url.starts_with("http://") || url.starts_with("https://") => {
+            Source::Url(url.to_owned())
+        }
+        _ => Source::Off,
+    }
+}
 /// How often the refresh is asked; the TTL and the retry wait decide whether it fetches.
 const TICK: Duration = Duration::from_secs(5 * 60);
 /// The manifest is about 30 KB; anything far larger is not one.
@@ -44,8 +74,22 @@ pub struct State {
     last_attempt_ms: Option<i64>,
 }
 
-/// Starts the refresh on the runtime: once now, then on every tick.
+/// Starts the refresh on the runtime (once now, then on every tick), from the source the
+/// process environment names.
 pub fn start(state_dir: PathBuf, environment: Arc<Environment>) {
+    start_from(
+        source(std::env::var_os(URL_VARIABLE).as_deref()),
+        state_dir,
+        environment,
+    );
+}
+
+/// [`start`] with the source given. With [`Source::Off`] nothing starts; returns whether a
+/// refresh task runs.
+pub fn start_from(source: Source, state_dir: PathBuf, environment: Arc<Environment>) -> bool {
+    if source == Source::Off {
+        return false;
+    }
     tokio::spawn(async move {
         let mut state = State::default();
         loop {
@@ -58,7 +102,7 @@ pub fn start(state_dir: PathBuf, environment: Arc<Environment>) {
             refresh(
                 &mut state,
                 &state_dir,
-                MODEL_MANIFEST_URL,
+                &source,
                 enabled,
                 i64::try_from(conn_support::time::now_ms()).unwrap_or(i64::MAX),
             )
@@ -66,16 +110,20 @@ pub fn start(state_dir: PathBuf, environment: Arc<Environment>) {
             tokio::time::sleep(TICK).await;
         }
     });
+    true
 }
 
 /// One refresh (`ModelManifest.refresh`). Returns whether it wrote the file.
 pub async fn refresh(
     state: &mut State,
     state_dir: &Path,
-    url: &str,
+    source: &Source,
     enabled: bool,
     now_ms: i64,
 ) -> bool {
+    let Source::Url(url) = source else {
+        return false;
+    };
     let path = state_dir.join(FILE_NAME);
     if !state.disk_loaded {
         state.disk_loaded = true;
@@ -346,6 +394,44 @@ mod tests {
     }
 
     #[test]
+    fn the_real_url_is_used_only_when_the_seam_is_not_set() {
+        use std::os::unix::ffi::OsStrExt;
+        assert_eq!(source(None), Source::Url(MODEL_MANIFEST_URL.to_owned()));
+        for off in [
+            "off",
+            "",
+            "OFF",
+            "file:///tmp/x",
+            "raw.githubusercontent.com",
+        ] {
+            assert_eq!(source(Some(OsStr::new(off))), Source::Off, "{off}");
+        }
+        assert_eq!(source(Some(OsStr::from_bytes(b"\xff"))), Source::Off);
+        assert_eq!(
+            source(Some(OsStr::new("http://127.0.0.1:9/m.json"))),
+            Source::Url("http://127.0.0.1:9/m.json".into())
+        );
+    }
+
+    /// With the seam off no code path reaches the network: no task starts, and a refresh
+    /// called anyway makes no attempt, whatever the times and the setting say.
+    #[tokio::test(flavor = "current_thread")]
+    async fn off_never_fetches() {
+        let dir = temp_dir("off");
+        let environment =
+            Arc::new(crate::environment::Environment::load(&dir, None, dir.clone()).unwrap());
+        assert!(!start_from(Source::Off, dir.clone(), environment));
+        let mut state = State::default();
+        for now in [0, 1, MANIFEST_TTL_MS * 10] {
+            assert!(!refresh(&mut state, &dir, &Source::Off, true, now).await);
+        }
+        assert_eq!(state.last_attempt_ms, None);
+        assert!(!state.disk_loaded);
+        assert!(!dir.join(FILE_NAME).exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn compact_json_keeps_order_and_strings() {
         assert_eq!(
             compact_json("{ \"b\" : [1, 2],\n \"a\": \"x y \\\" z\" }").unwrap(),
@@ -380,9 +466,18 @@ mod tests {
         let (url, server) = serve_once(manifest("2999-01-01T00:00:00.000Z"), 1);
         let mut state = State::default();
         // Off: no fetch, no file.
-        assert!(!refresh(&mut state, &dir, &url, false, 1_000_000).await);
+        assert!(
+            !refresh(
+                &mut state,
+                &dir,
+                &Source::Url(url.clone()),
+                false,
+                1_000_000
+            )
+            .await
+        );
         assert!(!dir.join(FILE_NAME).exists());
-        assert!(refresh(&mut state, &dir, &url, true, 1_000_000).await);
+        assert!(refresh(&mut state, &dir, &Source::Url(url.clone()), true, 1_000_000).await);
         let written = std::fs::read_to_string(dir.join(FILE_NAME)).unwrap();
         assert!(
             written.starts_with(r#"{"fetchedAtMs":1000000,"manifest":{"version":1,"updatedAt""#)
@@ -393,7 +488,7 @@ mod tests {
             !refresh(
                 &mut state,
                 &dir,
-                &url,
+                &Source::Url(url.clone()),
                 true,
                 1_000_000 + MANIFEST_TTL_MS - 1
             )
@@ -401,7 +496,7 @@ mod tests {
         );
         // A new process reads the cache and its fetch time.
         let mut fresh = State::default();
-        assert!(!refresh(&mut fresh, &dir, &url, true, 1_000_500).await);
+        assert!(!refresh(&mut fresh, &dir, &Source::Url(url.clone()), true, 1_000_500).await);
         assert_eq!(fresh.fetched_at_ms, Some(1_000_000));
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -411,14 +506,14 @@ mod tests {
         let dir = temp_dir("older");
         let (url, server) = serve_once(manifest("2000-01-01T00:00:00.000Z"), 1);
         let mut state = State::default();
-        assert!(!refresh(&mut state, &dir, &url, true, 5).await);
+        assert!(!refresh(&mut state, &dir, &Source::Url(url.clone()), true, 5).await);
         assert_eq!(server.join().unwrap(), 1);
         assert!(!dir.join(FILE_NAME).exists());
         // The failed try holds the next one off for the retry wait.
-        assert!(!refresh(&mut state, &dir, &url, true, 6).await);
+        assert!(!refresh(&mut state, &dir, &Source::Url(url.clone()), true, 6).await);
         let (url, server) = serve_once("{\"version\":1}".into(), 1);
         let mut state = State::default();
-        assert!(!refresh(&mut state, &dir, &url, true, 5).await);
+        assert!(!refresh(&mut state, &dir, &Source::Url(url.clone()), true, 5).await);
         assert_eq!(server.join().unwrap(), 1);
         assert!(!dir.join(FILE_NAME).exists());
         std::fs::remove_dir_all(&dir).unwrap();

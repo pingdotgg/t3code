@@ -178,6 +178,9 @@ function makeSide(name) {
     T3CODE_HOME: base,
     T3CODE_NO_BROWSER: "1",
     LANG: "C.UTF-8",
+    // Our server never fetches model-manifest.json; the T3 server's settings turn its fetch off.
+    CONN_MODEL_MANIFEST_URL: "off",
+    CONN_CLAUDE_STATUS_PROBE: "off",
   };
   const isT3 = name === "t3";
   const command = isT3 ? [NODE, T3_BIN] : [NodePath.resolve(binary)];

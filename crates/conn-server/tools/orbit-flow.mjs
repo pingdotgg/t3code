@@ -7,6 +7,7 @@
 // starts it; ORBIT_FLOW_HOST=127.0.0.1 binds loopback only (on a shared host).
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
+import * as NodeHttp from "node:http";
 import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -41,6 +42,45 @@ const origin = `http://127.0.0.1:${port}`;
 const env = { ...process.env, T3CODE_HOME: home, DISABLE_AUTOUPDATER: "1", CONN_CLAUDE_STATUS_PROBE: "off" };
 delete env.T3CODE_PORT;
 delete env.T3CODE_HOST;
+
+// model-manifest.json comes from a loopback stub, never from GitHub (the test seam
+// CONN_MODEL_MANIFEST_URL). It serves the manifest bundled at the pin when CONN_MONOREPO is
+// set, else a small one that lists the model this flow uses.
+const bundledFile =
+  process.env.CONN_MONOREPO &&
+  NodePath.join(process.env.CONN_MONOREPO, "apps/server/src/provider/model-manifest.json");
+const manifestText =
+  bundledFile && NodeFS.existsSync(bundledFile)
+    ? NodeFS.readFileSync(bundledFile, "utf8")
+    : JSON.stringify(
+        {
+          version: 1,
+          updatedAt: "2099-01-01T00:00:00Z",
+          currentModels: { claudeAgent: ["claude-haiku-5-5"] },
+          providers: {
+            claudeAgent: {
+              profiles: {},
+              models: [{ slug: "claude-haiku-5-5", name: "Claude Haiku 5.5", status: "current" }],
+            },
+          },
+        },
+        null,
+        2,
+      );
+const stub = { mode: "manifest", hits: 0 };
+const stubServer = NodeHttp.createServer((request, response) => {
+  stub.hits++;
+  if (stub.mode === "manifest" && request.url === "/model-manifest.json") {
+    response.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
+    response.end(manifestText);
+  } else {
+    response.writeHead(500);
+    response.end("stub: failing on purpose");
+  }
+});
+await new Promise((resolve) => stubServer.listen(0, "127.0.0.1", resolve));
+const stubUrl = `http://127.0.0.1:${stubServer.address().port}/model-manifest.json`;
+env.CONN_MODEL_MANIFEST_URL = stubUrl;
 
 const step = (text) => console.log(`\n## ${text}`);
 const ok = (text) => console.log(`ok   ${text}`);
@@ -217,6 +257,19 @@ try {
   );
   const driver = settings.providerInstances?.[model.instanceId]?.driver ?? model.instanceId;
   const manifestFile = NodePath.join(home, "userdata", "model-manifest.json");
+  // The server fetched it from the stub at start; give it a moment if it has not yet.
+  for (let i = 0; i < 40 && !NodeFS.existsSync(manifestFile); i++) await sleep(250);
+  if (!NodeFS.existsSync(manifestFile)) fail(`no model-manifest.json after a start (stub hits: ${stub.hits})`);
+  if (stub.hits !== 1) fail(`the stub was asked ${stub.hits} times, not once`);
+  {
+    const written = JSON.parse(NodeFS.readFileSync(manifestFile, "utf8"));
+    if (JSON.stringify(written.manifest) !== JSON.stringify(JSON.parse(manifestText))) {
+      fail("model-manifest.json does not hold the manifest the stub served");
+    }
+    ok(
+      `model-manifest.json written from the loopback stub (${bundledFile && NodeFS.existsSync(bundledFile) ? "the bundled manifest" : "a small manifest"}), one request`,
+    );
+  }
   if (NodeFS.existsSync(manifestFile)) {
     const cached = JSON.parse(NodeFS.readFileSync(manifestFile, "utf8"));
     const listed = (cached.manifest?.providers?.[driver]?.models ?? []).filter(
@@ -369,4 +422,70 @@ try {
       .join("\n"),
   );
   NodeFS.rmSync(root, { recursive: true, force: true });
+}
+
+/**
+ * A short start on a fresh home with the seam at `url`: whether the server got ready, and
+ * whether it wrote model-manifest.json within 3 s.
+ */
+async function briefStart(url) {
+  const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "conn-orbit-manifest-"));
+  const briefHome = NodePath.join(dir, ".t3");
+  NodeFS.mkdirSync(NodePath.join(briefHome, "userdata"), { recursive: true });
+  NodeFS.writeFileSync(
+    NodePath.join(briefHome, "userdata", "settings.json"),
+    JSON.stringify({ linkedEnvironmentsEnabled: true }),
+  );
+  const briefPort = await freePort();
+  const child = NodeChildProcess.spawn(
+    binary,
+    ["serve", "--host=127.0.0.1", `--port=${briefPort}`, "--no-browser"],
+    {
+      env: { ...env, T3CODE_HOME: briefHome, CONN_MODEL_MANIFEST_URL: url },
+      cwd: dir,
+      stdio: "ignore",
+    },
+  );
+  const gone = new Promise((resolve) => child.on("exit", resolve));
+  try {
+    let ready = false;
+    for (let i = 0; i < 30 && !ready; i++) {
+      ready = await fetch(`http://127.0.0.1:${briefPort}/.well-known/t3/environment`, {
+        signal: AbortSignal.timeout(1000),
+      })
+        .then((r) => r.ok)
+        .catch(() => false);
+      if (!ready) await sleep(500);
+    }
+    await sleep(3000);
+    const written = NodeFS.existsSync(NodePath.join(briefHome, "userdata", "model-manifest.json"));
+    return { ready, written };
+  } finally {
+    child.kill("SIGTERM");
+    await Promise.race([gone, sleep(10_000)]);
+    NodeFS.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+try {
+  step("model manifest: the stub answers 500; then nothing listens at the seam's URL");
+  stub.mode = "error";
+  stub.hits = 0;
+  const failed = await briefStart(stubUrl);
+  if (!failed.ready || failed.written || stub.hits !== 1) {
+    fail(`500: ready ${failed.ready}, file ${failed.written}, stub hits ${stub.hits}`);
+  }
+  ok("500: the server is ready, tried once, wrote no file");
+  const closedPort = await freePort();
+  const refused = await briefStart(`http://127.0.0.1:${closedPort}/model-manifest.json`);
+  if (!refused.ready || refused.written) {
+    fail(`no listener: ready ${refused.ready}, file ${refused.written}`);
+  }
+  ok("no listener: the server is ready and wrote no file");
+  ok("without the file Orbit's model check checks nothing, as with a T3 server that has not fetched");
+} catch (error) {
+  console.log(`FAIL ${error.message}`);
+  process.exitCode = 1;
+} finally {
+  stubServer.close();
 }

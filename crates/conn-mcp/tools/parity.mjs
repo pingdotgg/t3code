@@ -93,6 +93,12 @@ async function startTs() {
   const project = scratchProject("ts");
   const base = NodePath.join(root, "ts", "base");
   NodeFS.mkdirSync(base);
+  // The T3 server fetches model-manifest.json from GitHub while this is on (its default).
+  NodeFS.mkdirSync(NodePath.join(base, "userdata"));
+  NodeFS.writeFileSync(
+    NodePath.join(base, "userdata", "settings.json"),
+    JSON.stringify({ enableProviderUpdateChecks: false }),
+  );
   const port = await freePort();
   const node = process.execPath;
   const { origin, code } = await start(

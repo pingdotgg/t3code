@@ -128,7 +128,7 @@ async function startServer(stored) {
     NodePath.resolve(binary),
     ["--listen", "127.0.0.1:0", "--state-dir", stateDir],
     // CONN_CLAUDE_STATUS_PROBE=off: no run of this machine's `claude` for the status.
-    { cwd: tmp, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, CONN_CLAUDE_STATUS_PROBE: "off" } },
+    { cwd: tmp, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, CONN_CLAUDE_STATUS_PROBE: "off", CONN_MODEL_MANIFEST_URL: "off" } },
   );
   const stderr = [];
   server.stderr.on("data", (d) => stderr.push(String(d)));
