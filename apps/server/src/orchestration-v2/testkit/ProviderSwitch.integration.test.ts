@@ -24,7 +24,10 @@ import {
   TurnItemId,
   ProviderDriverKind,
 } from "@t3tools/contracts";
-import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import {
+  derivePendingBackgroundWork,
+  isBackgroundWorkRefusal,
+} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -444,7 +447,10 @@ function makeTestAdapter(input: {
               }
             }),
           steerTurn: () => Effect.void,
-          interruptTurn: () => Effect.void,
+          interruptTurn: (interrupt) =>
+            interrupt.requestRuntimeRestart === true && input.backgroundWork !== undefined
+              ? Ref.set(input.backgroundWork, false)
+              : Effect.void,
           respondToRuntimeRequest: () => Effect.void,
           readThreadSnapshot: () =>
             unimplemented(input.driver, "readThreadSnapshot unused in provider switch test"),
@@ -2802,6 +2808,10 @@ describe("orchestration v2 provider switching", () => {
       { background: true, queued: false, sharedHistory: false },
     ],
     [
+      "lets Stop release an idle session whose projection has no background work",
+      { background: true, queued: false, sharedHistory: false, stopAfterRefusal: true },
+    ],
+    [
       "keeps a busy previous session running when a queued hand-off starts",
       { background: true, queued: true, sharedHistory: false },
     ],
@@ -2809,7 +2819,7 @@ describe("orchestration v2 provider switching", () => {
       "holds a queued account switch while the replaced session still runs background work",
       { background: true, queued: true, sharedHistory: true },
     ],
-  ] as const)("%s", ([, { background, queued, sharedHistory }]) =>
+  ] as const)("%s", ([, { background, queued, sharedHistory, ...options }]) =>
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace("handoff-releases-session");
       const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
@@ -2975,7 +2985,7 @@ describe("orchestration v2 provider switching", () => {
           // pendingBackgroundTasks stays empty while the probe still reports work.
           assert.deepEqual(afterFirst.providerThreads[0]?.pendingBackgroundTasks ?? [], []);
           const refused = yield* send(2, secondSelection, ":refused").pipe(Effect.flip);
-          assert.include(String(refused.cause), "still running background agents or commands");
+          assert.isTrue(isBackgroundWorkRefusal(String(refused.cause)));
           const unchanged = yield* orchestrator.getThreadProjection(handoffThreadId);
           assert.lengthOf(unchanged.runs, 1);
           assert.deepEqual(yield* Ref.get(closedSessions), []);
@@ -2984,7 +2994,16 @@ describe("orchestration v2 provider switching", () => {
             unchanged.providerSessions.map((session) => [session.id, session.status]),
             [[firstSession!.id, "ready"]],
           );
-          yield* Ref.set(backgroundWork, false);
+          if ("stopAfterRefusal" in options) {
+            yield* orchestrator.dispatch({
+              type: "thread.stop",
+              commandId: CommandId.make("command:handoff-releases-session:stop"),
+              threadId: handoffThreadId,
+            });
+            yield* worker.drain();
+          } else {
+            yield* Ref.set(backgroundWork, false);
+          }
         }
 
         yield* send(2, secondSelection);

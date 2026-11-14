@@ -3409,6 +3409,7 @@ export default function ChatView(props: ChatViewProps) {
               threadErrorBannerKey={threadErrorBannerKey}
               setThreadError={setThreadError}
               setThreadErrorBannerDismissTick={setThreadErrorBannerDismissTick}
+              onStop={canOperateThread ? onInterruptStable : undefined}
             />
             <div
               {...conversationArea}

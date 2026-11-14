@@ -4,6 +4,7 @@ import {
   CHATGPT_WORKSPACE_ADMIN_REQUEST,
   CHATGPT_WORKSPACE_USAGE_LIMIT_CODE,
 } from "@t3tools/shared/usageLimits";
+import { isBackgroundWorkRefusal } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { memo } from "react";
 import { writeTextToClipboard } from "../../hooks/useCopyToClipboard";
 import { Alert, AlertAction, AlertDescription } from "../ui/alert";
@@ -74,15 +75,19 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
   onDismiss,
   errorClass,
   errorCode,
+  onStop,
 }: {
   error: string | null;
   errorClass?: OrchestrationV2ProviderFailureClass | null;
   errorCode?: string | null;
   onDismiss?: () => void;
+  onStop?: (() => void) | undefined;
 }) {
   if (!error) return null;
   const workspaceLimit = errorCode === CHATGPT_WORKSPACE_USAGE_LIMIT_CODE;
   const chatGptLimit = workspaceLimit || errorCode === CHATGPT_USAGE_LIMIT_CODE;
+  // The refusal says "press Stop", but work only the adapter sees shows no Stop elsewhere.
+  const offerStop = onStop !== undefined && isBackgroundWorkRefusal(error);
   const variant = errorClass === "usage_limit" || chatGptLimit ? "warning" : "error";
   return (
     <div className="pointer-events-auto mx-auto w-fit max-w-[min(48rem,calc(100%-2rem))] pt-3">
@@ -108,8 +113,13 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
             <ExpandableText text={error} collapsedText={getThreadErrorBannerMessage(error)} />
           )}
         </AlertDescription>
-        {(chatGptLimit || onDismiss) && (
+        {(chatGptLimit || offerStop || onDismiss) && (
           <AlertAction>
+            {offerStop ? (
+              <Button variant="default" size="sm" onClick={onStop}>
+                Stop
+              </Button>
+            ) : null}
             {workspaceLimit ? (
               <Button variant="default" size="sm" onClick={copyAdminRequest}>
                 Copy request for admin
