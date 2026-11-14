@@ -372,7 +372,7 @@ function resolveExpectedHeadIdentity(
     repositoryNameWithOwner,
     ownerLogin:
       normalizeOptionalOwnerLogin(headContext.headRepositoryOwnerLogin) ??
-      parseRepositoryOwnerLogin(repositoryNameWithOwner),
+      normalizeOptionalOwnerLogin(parseRepositoryOwnerLogin(repositoryNameWithOwner)),
   };
 }
 
@@ -388,7 +388,7 @@ function resolvePullRequestHeadIdentity(
     repositoryNameWithOwner,
     ownerLogin:
       normalizeOptionalOwnerLogin(pr.headRepositoryOwnerLogin) ??
-      parseRepositoryOwnerLogin(repositoryNameWithOwner),
+      normalizeOptionalOwnerLogin(parseRepositoryOwnerLogin(repositoryNameWithOwner)),
   };
 }
 

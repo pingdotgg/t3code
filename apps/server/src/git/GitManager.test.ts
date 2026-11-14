@@ -3998,6 +3998,15 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     expect(
       GitManager.matchesBranchHeadContext(pr, {
         ...context,
+        headRepositoryOwnerLogin: "MyRepo",
+      }),
+    ).toBe(true);
+    expect(
+      GitManager.matchesBranchHeadContext({ ...pr, headRepositoryOwnerLogin: "MyRepo" }, context),
+    ).toBe(true);
+    expect(
+      GitManager.matchesBranchHeadContext(pr, {
+        ...context,
         headRepositoryNameWithOwner: "myrepo",
       }),
     ).toBe(false);

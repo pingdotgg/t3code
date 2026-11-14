@@ -182,6 +182,25 @@ it.effect("reads full clone URLs in their region and rejects inconsistent AWS me
     assert.strictEqual(urls.nameWithOwner, "Repo");
     assert.isTrue(calls[0]!.includes("us-east-1"));
     assert.strictEqual(calls.length, 2);
+    const hosted = yield* provider.getRepositoryCloneUrls({
+      cwd: "/repo",
+      context,
+      repository: "Repo",
+      host: "us-east-1.console.aws.amazon.com",
+    });
+    assert.strictEqual(hosted.url, context.remoteUrl);
+    assert.isTrue(
+      Result.isFailure(
+        yield* Effect.result(
+          provider.getRepositoryCloneUrls({
+            cwd: "/repo",
+            context,
+            repository: "Repo",
+            host: "us-west-2.console.aws.amazon.com",
+          }),
+        ),
+      ),
+    );
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
@@ -362,6 +381,12 @@ it.effect("clones a bare name without a git checkout using the configured region
     const result = yield* provider.getRepositoryCloneUrls({ cwd: "/empty", repository: "Repo" });
     assert.strictEqual(result.nameWithOwner, "Repo");
     assert.isTrue(calls[0]!.includes("us-east-1"));
+    const hosted = yield* provider.getRepositoryCloneUrls({
+      cwd: "/empty",
+      repository: "Repo",
+      host: "us-east-1.console.aws.amazon.com",
+    });
+    assert.strictEqual(hosted.url, result.url);
   }).pipe(
     Effect.provide(
       Layer.mergeAll(

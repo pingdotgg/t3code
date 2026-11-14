@@ -171,6 +171,32 @@ export const make = Effect.gen(function* () {
       return yield* new CodeCommitCli.CodeCommitError({ reason: "Cannot diff a root commit" });
     return { before: result.parents[0], after: result.commitId };
   });
+  const page = Effect.fn("CodeCommitDiff.page")(function* (
+    input: Input,
+    before: string,
+    after: string,
+    token?: string,
+  ) {
+    const result = yield* request(
+      input,
+      [
+        "get-differences",
+        "--repository-name",
+        repository(input),
+        "--before-commit-specifier",
+        before,
+        "--after-commit-specifier",
+        after,
+        "--max-items",
+        String(PAGE_SIZE),
+        ...(token ? ["--starting-token", token] : []),
+      ],
+      differences,
+    );
+    if (result.NextToken && result.NextToken === token)
+      return yield* new CodeCommitCli.CodeCommitError({ reason: "Invalid diff pagination token" });
+    return result;
+  });
   const list = Effect.fn("CodeCommitDiff.list")(function* (
     input: Input,
     before: string,
@@ -183,24 +209,9 @@ export const make = Effect.gen(function* () {
     do {
       const previous = token;
       pages++;
-      const page = yield* request(
-        input,
-        [
-          "get-differences",
-          "--repository-name",
-          repository(input),
-          "--before-commit-specifier",
-          before,
-          "--after-commit-specifier",
-          after,
-          "--max-items",
-          String(PAGE_SIZE),
-          ...(token ? ["--starting-token", token] : []),
-        ],
-        differences,
-      );
-      changes.push(...(page.differences ?? []));
-      token = page.NextToken;
+      const result = yield* page(input, before, after, token);
+      changes.push(...(result.differences ?? []));
+      token = result.NextToken;
       if (changes.length >= MAX_FILES || pages >= 20 || (token && token === previous)) {
         truncated = !!token;
         break;
@@ -214,22 +225,32 @@ export const make = Effect.gen(function* () {
   ) {
     if (!id) return { contents: "", binary: false, oversized: false };
     if (/^[0-9a-f]{40}$/iu.test(id)) {
-      const local = yield* host.git
-        .execute({
+      const chunks: Uint8Array[] = [];
+      let byteLength = 0;
+      const local = yield* host.process
+        .run({
           operation: "CodeCommitDiff.readBlob",
+          command: "git",
           cwd: input.cwd,
           args: ["--no-replace-objects", "cat-file", "blob", id],
           maxOutputBytes: MAX_BYTES,
+          outputMode: "truncate",
           appendTruncationMarker: false,
+          onStdoutChunk: (chunk) => {
+            if (byteLength < MAX_BYTES) chunks.push(chunk.subarray(0, MAX_BYTES - byteLength));
+            byteLength += chunk.byteLength;
+          },
         })
         .pipe(Effect.option);
-      if (Option.isSome(local) && local.value.exitCode === 0)
+      if (Option.isSome(local) && local.value.exitCode === 0) {
+        const bytes = Buffer.concat(chunks);
+        const contents = bytes.toString("utf8");
         return {
-          contents: local.value.stdout,
-          binary: local.value.stdout.includes("\0") || local.value.stdout.includes("\ufffd"),
-          oversized:
-            local.value.stdoutTruncated || Buffer.byteLength(local.value.stdout) > MAX_BYTES,
+          contents,
+          binary: bytes.includes(0) || !Buffer.from(contents).equals(bytes),
+          oversized: local.value.stdoutTruncated || byteLength > MAX_BYTES,
         };
+      }
     }
     const result = yield* request(
       input,
@@ -253,8 +274,16 @@ export const make = Effect.gen(function* () {
     };
   });
   const texts = Effect.fn("CodeCommitDiff.texts")(function* (input: Input, change: Change) {
+    const sideText = (side: Change["beforeBlob"]) =>
+      side?.mode === "160000"
+        ? Effect.succeed({
+            contents: `Subproject commit ${side.blobId}\n`,
+            binary: false,
+            oversized: false,
+          })
+        : read(input, side?.blobId);
     const [old, current] = yield* Effect.all(
-      [read(input, change.beforeBlob?.blobId), read(input, change.afterBlob?.blobId)],
+      [sideText(change.beforeBlob), sideText(change.afterBlob)],
       { concurrency: 2 },
     );
     return {
@@ -330,31 +359,61 @@ export const make = Effect.gen(function* () {
       ? { section: `${header.join("\n")}\n`, truncated: true, additions, deletions }
       : { section, truncated: false, additions, deletions };
   };
+  const cursors = new Map<string, { scope: string; token: string | undefined; offset: number }>();
+  let cursorId = 0;
   const indexed = Effect.fn("CodeCommitDiff.indexed")(function* (
     input: Input & { readonly commit?: string | undefined; readonly cursor?: string | undefined },
   ) {
     const selected = yield* range(input);
-    const parts = input.cursor?.split(":");
-    if (
-      parts &&
-      (parts.length !== 3 ||
-        parts[0] !== selected.before ||
-        parts[1] !== selected.after ||
-        !/^\d+$/.test(parts[2] ?? ""))
-    )
+    const config = yield* cli.configuration;
+    const scope = [
+      input.cwd,
+      input.host,
+      input.repository,
+      selected.before,
+      selected.after,
+      config.profile,
+      config.region,
+    ]
+      .map((value) => `${value.length}:${value}`)
+      .join("");
+    const position = input.cursor === undefined ? undefined : cursors.get(input.cursor);
+    if (input.cursor !== undefined && (!position || position.scope !== scope))
       return yield* new CodeCommitCli.CodeCommitError({
         reason: "Diff cursor is invalid or the pull request changed",
       });
-    const offset = parts ? Number(parts[2]) : 0;
-    if (!Number.isSafeInteger(offset) || offset > MAX_FILES)
-      return yield* new CodeCommitCli.CodeCommitError({ reason: "Invalid diff cursor" });
-    const listed = yield* list(input, selected.before, selected.after);
-    return {
-      ...listed,
-      offset,
-      cursor: (index: number) =>
-        index < listed.changes.length ? `${selected.before}:${selected.after}:${index}` : null,
-    };
+    let token = position?.token;
+    let offset = position?.offset ?? 0;
+    const seen = new Set<string>();
+    while (true) {
+      if (token && seen.has(token))
+        return yield* new CodeCommitCli.CodeCommitError({
+          reason: "Invalid diff pagination token",
+        });
+      if (token) seen.add(token);
+      const result = yield* page(input, selected.before, selected.after, token);
+      const changes = result.differences ?? [];
+      if (offset > changes.length)
+        return yield* new CodeCommitCli.CodeCommitError({ reason: "Invalid diff cursor" });
+      if (offset < changes.length || !result.NextToken)
+        return {
+          changes,
+          offset,
+          cursor: (index: number) => {
+            if (index >= changes.length && !result.NextToken) return null;
+            const key = `diff-${++cursorId}`;
+            cursors.set(key, {
+              scope,
+              token: index < changes.length ? token : result.NextToken,
+              offset: index < changes.length ? index : 0,
+            });
+            if (cursors.size > 512) cursors.delete(cursors.keys().next().value ?? "");
+            return key;
+          },
+        };
+      token = result.NextToken;
+      offset = 0;
+    }
   });
   const getDiff = Effect.fn("CodeCommitDiff.getDiff")(function* (
     input: Input & { readonly commit?: string | undefined; readonly cursor?: string | undefined },
@@ -362,7 +421,7 @@ export const make = Effect.gen(function* () {
     const indexedChanges = yield* indexed(input);
     let index = indexedChanges.offset,
       bytes = 0,
-      truncated = indexedChanges.truncated;
+      truncated = false;
     const sections: string[] = [];
     while (index < indexedChanges.changes.length && sections.length < 100 && bytes < SLICE_BYTES) {
       const change = indexedChanges.changes[index]!;
@@ -394,10 +453,21 @@ export const make = Effect.gen(function* () {
     },
   ) {
     const selected = yield* range(input);
-    const result = yield* list(input, selected.before, selected.after);
-    const found = result.changes.find(
-      (c) => sides(c).oldPath === input.oldPath && sides(c).newPath === input.newPath,
-    );
+    let found: Change | undefined;
+    let token: string | undefined;
+    const seen = new Set<string>();
+    do {
+      if (token && seen.has(token))
+        return yield* new CodeCommitCli.CodeCommitError({
+          reason: "Invalid diff pagination token",
+        });
+      if (token) seen.add(token);
+      const result = yield* page(input, selected.before, selected.after, token);
+      found = result.differences?.find(
+        (c) => sides(c).oldPath === input.oldPath && sides(c).newPath === input.newPath,
+      );
+      token = result.NextToken;
+    } while (!found && token);
     if (!found) return yield* new CodeCommitCli.CodeCommitError({ reason: "Diff file not found" });
     const content = yield* texts(input, found);
     if (content.binary || content.oversized)

@@ -453,11 +453,19 @@ export const make = Effect.gen(function* () {
           const repository = explicit?.repository ?? input.repository;
           if (!/^[\w.-]+$/u.test(repository))
             return yield* new CodeCommitError({ reason: "Invalid repository name" });
-          const remote = explicit
-            ? Option.some(explicit)
-            : yield* resolve(input).pipe(Effect.option);
-          if (Option.isSome(remote) && input.host && input.host !== remote.value.host)
-            return yield* new CodeCommitError({ reason: "Repository host mismatch" });
+          let remote = explicit ? Option.some(explicit) : yield* resolve(input).pipe(Effect.option);
+          if (input.host) {
+            const requested =
+              parseCodeCommitRemote(`https://${input.host}/v1/repos/${repository}`) ??
+              parseCodeCommitConsoleUrl(
+                new URL(
+                  `https://${input.host}/codesuite/codecommit/repositories/${repository}/browse${Option.isSome(remote) ? `?region=${remote.value.region}` : ""}`,
+                ),
+              );
+            if (!requested || (Option.isSome(remote) && requested.host !== remote.value.host))
+              return yield* new CodeCommitError({ reason: "Repository host mismatch" });
+            remote = Option.some(requested);
+          }
           if (Option.isNone(remote) && (input.host || input.context))
             return yield* new CodeCommitError({ reason: "Repository host unavailable" });
           const urls = cloneUrls(

@@ -659,51 +659,67 @@ export const make = Effect.gen(function* () {
                 accessHint:
                   "This list position has expired. Refresh the list to load more pull requests.",
               });
-            const page = yield* cli.request(
-              input.cwd,
-              [
-                "codecommit",
-                "list-pull-requests",
-                "--repository-name",
-                remote.repository,
-                "--no-paginate",
-                "--max-results",
-                String(Math.max(1, Math.min(input.limit, PAGE_SIZE))),
-                ...(input.state === "all"
-                  ? []
-                  : ["--pull-request-status", input.state === "open" ? "OPEN" : "CLOSED"]),
-                ...(input.involvement === "authored" ? ["--author-arn", input.viewer] : []),
-                ...(position === undefined ? [] : ["--next-token", position.token]),
-              ],
-              listSchema,
-              remote.region,
-            );
-            if (page.nextToken && page.nextToken === position?.token)
-              return yield* new CodeCommitCli.CodeCommitError({
-                reason: "Invalid CodeCommit pagination token",
-              });
-            const items = yield* Effect.forEach(
-              page.pullRequestIds,
-              (id) => {
-                if (!/^[1-9]\d*$/u.test(id) || !Number.isSafeInteger(Number(id)))
-                  return Effect.fail(
-                    new CodeCommitCli.CodeCommitError({ reason: "Invalid pull request ID" }),
+            let token = position?.token;
+            let cursorAdvance = 0;
+            const seen = new Set<string>();
+            while (true) {
+              if (token && seen.has(token))
+                return yield* new CodeCommitCli.CodeCommitError({
+                  reason: "Invalid CodeCommit pagination token",
+                });
+              if (token) seen.add(token);
+              const page = yield* cli.request(
+                input.cwd,
+                [
+                  "codecommit",
+                  "list-pull-requests",
+                  "--repository-name",
+                  remote.repository,
+                  "--no-paginate",
+                  "--max-results",
+                  String(Math.max(1, Math.min(input.limit, PAGE_SIZE))),
+                  ...(input.state === "all"
+                    ? []
+                    : ["--pull-request-status", input.state === "open" ? "OPEN" : "CLOSED"]),
+                  ...(input.involvement === "authored" ? ["--author-arn", input.viewer] : []),
+                  ...(token === undefined ? [] : ["--next-token", token]),
+                ],
+                listSchema,
+                remote.region,
+              );
+              if (page.nextToken && page.nextToken === token)
+                return yield* new CodeCommitCli.CodeCommitError({
+                  reason: "Invalid CodeCommit pagination token",
+                });
+              const items = yield* Effect.forEach(
+                page.pullRequestIds,
+                (id) => {
+                  if (!/^[1-9]\d*$/u.test(id) || !Number.isSafeInteger(Number(id)))
+                    return Effect.fail(
+                      new CodeCommitCli.CodeCommitError({ reason: "Invalid pull request ID" }),
+                    );
+                  return readPull({ ...input, number: Number(id) }).pipe(
+                    Effect.map(({ summary }) => summary),
                   );
-                return readPull({ ...input, number: Number(id) }).pipe(
-                  Effect.map(({ summary }) => summary),
-                );
-              },
-              { concurrency: 5 },
-            );
-            return {
-              items: items
-                .filter((item) => input.state === "all" || item.state === input.state)
-                .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || b.number - a.number),
-              truncated: Boolean(page.nextToken),
-              continues: Boolean(page.nextToken),
-              cursorAdvance: page.pullRequestIds.length,
-              ...(page.nextToken ? { resumeAfter: pageTokenKey(scope, page.nextToken) } : {}),
-            };
+                },
+                { concurrency: 5 },
+              );
+              cursorAdvance += page.pullRequestIds.length;
+              const matching = items.filter(
+                (item) => input.state === "all" || item.state === input.state,
+              );
+              if (matching.length > 0 || !page.nextToken)
+                return {
+                  items: matching.sort(
+                    (a, b) => b.updatedAt.localeCompare(a.updatedAt) || b.number - a.number,
+                  ),
+                  truncated: Boolean(page.nextToken),
+                  continues: Boolean(page.nextToken),
+                  cursorAdvance,
+                  ...(page.nextToken ? { resumeAfter: pageTokenKey(scope, page.nextToken) } : {}),
+                };
+              token = page.nextToken;
+            }
           }),
         );
       },

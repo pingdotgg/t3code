@@ -520,6 +520,7 @@ it.effect(
   () => {
     const calls: ReadonlyArray<string>[] = [];
     const awsToken = `${"A".repeat(900)}+/==`;
+    const skippedToken = "closed-only-page";
     return Effect.gen(function* () {
       const instance = yield* driver.make;
       assert.isNotNull(instance.pullRequests);
@@ -612,9 +613,11 @@ it.effect(
                 calls.push(args);
                 const result =
                   args[1] === "list-pull-requests"
-                    ? args.includes("--next-token")
+                    ? args.includes(awsToken)
                       ? { pullRequestIds: ["3"] }
-                      : { pullRequestIds: ["1", "2"], nextToken: awsToken }
+                      : args.includes(skippedToken) || !args.includes("--pull-request-status")
+                        ? { pullRequestIds: ["1", "2"], nextToken: awsToken }
+                        : { pullRequestIds: ["1"], nextToken: skippedToken }
                     : fixture(
                         args[args.indexOf("--pull-request-id") + 1]!,
                         "CLOSED",
