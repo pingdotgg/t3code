@@ -1615,17 +1615,22 @@ describe("environment shell cold start", () => {
       ]);
       yield* liveRow(CACHED_SEQUENCE + 1, "completed");
 
-      yield* Queue.failCause(first.events, Cause.die(new Error("shell invariant failed")));
-      yield* SubscriptionRef.changes(h.shellState).pipe(
-        Stream.filter((state) =>
-          Option.exists(
-            state.error,
-            (error) => error === "Could not synchronize environment data.",
+      const failWithDefect = (events: typeof first.events) =>
+        Queue.failCause(events, Cause.die(new Error("shell invariant failed"))).pipe(
+          Effect.andThen(
+            SubscriptionRef.changes(h.shellState).pipe(
+              Stream.filter((state) =>
+                Option.exists(
+                  state.error,
+                  (error) => error === "Could not synchronize environment data.",
+                ),
+              ),
+              Stream.runHead,
+            ),
           ),
-        ),
-        Stream.runHead,
-      );
+        );
 
+      yield* failWithDefect(first.events);
       yield* h.reconnect;
       const resumed = yield* Queue.take(h.subscriptions);
       expect(resumed.input).toMatchObject({ afterSequence: CACHED_SEQUENCE + 1 });
@@ -1634,6 +1639,12 @@ describe("environment shell cold start", () => {
         { kind: "synchronized" },
       ]);
       expect((yield* liveRow(CACHED_SEQUENCE + 2, "running")).error).toEqual(Option.none());
+
+      // Without a reconnect or wakeup, the stream resubscribes once the backoff passes.
+      yield* failWithDefect(resumed.events);
+      yield* TestClock.adjust("250 millis");
+      const retried = yield* Queue.take(h.subscriptions);
+      expect(retried.input).toMatchObject({ afterSequence: CACHED_SEQUENCE + 2 });
     }),
   );
 
