@@ -47,6 +47,38 @@ import { useWorkspaceTabs } from "../layout/workspace/WorkspaceTabsContext";
 import { useSearchScrollRestoration } from "../layout/workspace/useSearchScrollRestoration";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 
+function PullRequestListErrors(props: { readonly count: number; readonly children: ReactNode }) {
+  const [expanded, setExpanded] = useState(false);
+  const label = `${props.count} ${props.count === 1 ? "loading error" : "loading errors"}`;
+  return (
+    <View>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`${label}. ${expanded ? "Hide details" : "Show details"}`}
+        accessibilityState={{ expanded }}
+        onPress={() => setExpanded((value) => !value)}
+        className="min-h-12 flex-row items-center gap-3 px-4 py-3 active:opacity-70"
+      >
+        <SymbolView
+          name="exclamationmark.triangle"
+          size={18}
+          tintColorClassName="accent-icon-muted"
+        />
+        <Text className="min-w-0 flex-1 text-sm font-t3-medium text-foreground">{label}</Text>
+        <Text className="shrink text-xs text-foreground-muted">
+          {expanded ? "Hide details" : "Show details"}
+        </Text>
+        <SymbolView
+          name={expanded ? "chevron.up" : "chevron.down"}
+          size={11}
+          tintColorClassName="accent-icon-muted"
+        />
+      </Pressable>
+      {expanded ? props.children : null}
+    </View>
+  );
+}
+
 function PullRequestListError(props: { readonly message: string }) {
   const [expanded, setExpanded] = useState(false);
   return (
@@ -321,14 +353,17 @@ export function PullRequestsScreen(
           <>
             <PullRequestListFilters sidebar={sidebar} filters={filters} />
             {result.data?.errors.length ? (
-              <View key={JSON.stringify(targets)}>
+              <PullRequestListErrors
+                key={JSON.stringify(targets)}
+                count={result.data.errors.length}
+              >
                 {result.data.errors.map((error) => (
                   <PullRequestListError
                     key={`${error.environmentId} ${error.projectTitle} ${error.message}`}
                     message={`${error.projectTitle || environments.find((environment) => environment.environmentId === error.environmentId)?.environmentLabel || "Environment"}: ${error.message}`}
                   />
                 ))}
-              </View>
+              </PullRequestListErrors>
             ) : null}
           </>
         }
@@ -380,12 +415,13 @@ export function PullRequestsScreen(
                         : "Connect an environment"
                 }
                 detail={
-                  result.error ??
-                  (targets.length && connectedTargets.length === 0
-                    ? "Reconnect to load pull requests that aren't saved on this device."
-                    : targets.length
-                      ? "Pull requests from the selected environments' projects appear here."
-                      : "Add an environment in Settings to browse its pull requests.")
+                  result.error
+                    ? "Expand the loading errors above for details."
+                    : targets.length && connectedTargets.length === 0
+                      ? "Reconnect to load pull requests that aren't saved on this device."
+                      : targets.length
+                        ? "Pull requests from the selected environments' projects appear here."
+                        : "Add an environment in Settings to browse its pull requests."
                 }
                 variant="plain"
               />
