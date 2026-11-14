@@ -1574,11 +1574,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     contextIds: string[],
   ) => {
     refreshWorkspaceSnapshotOnTyping();
+    // The editor reports caret moves here too, with the text it already had.
+    const triggerChange = nextPrompt === promptRef.current ? "caret" : "edit";
     if (activePendingProgress?.activeQuestion && pendingUserInputs.length > 0) {
       if (activePendingProgress.activeQuestion.allowCustomAnswer === false) return;
       setComposerCursor(nextCursor);
       setComposerTrigger(
         cursorAdjacentToMention ? null : detectComposerTrigger(nextPrompt, expandedCursor),
+        triggerChange,
       );
       onChangeActivePendingUserInputCustomAnswer(
         activePendingProgress.activeQuestion.id,
@@ -1702,6 +1705,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setComposerCursor(nextCursor);
     setComposerTrigger(
       cursorAdjacentToMention ? null : detectComposerTrigger(nextPrompt, expandedCursor),
+      triggerChange,
     );
   };
   const onPromptChangeStable = useStableCallback(onPromptChange);
