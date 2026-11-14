@@ -43,7 +43,6 @@ describe("chat canvas layout", () => {
             ...preview,
             width: resized.width,
             position: resized,
-            lastInteraction: "resize",
           },
           height,
         ).frame!;
@@ -58,7 +57,6 @@ describe("chat canvas layout", () => {
             ...preview,
             width: resized.width,
             position: resized,
-            lastInteraction: "resize",
           }).frame!.width,
         ).toBe(resized.width);
       }

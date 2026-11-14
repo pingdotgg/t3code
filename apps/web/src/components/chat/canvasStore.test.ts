@@ -49,7 +49,7 @@ describe("chat canvas model", () => {
         measurements: measurements(1100, 300),
         detailsCardMeasurement: { threadRef, width: 280, fullContentHeight },
         threadRef,
-        preview: { ...preview, position: { x: 760, y: 150 }, lastInteraction: "drag" },
+        preview: { ...preview, position: { x: 760, y: 150 } },
         detailsCardInlineOpen: true,
       });
     const model = resolve(400);
@@ -62,7 +62,7 @@ describe("chat canvas model", () => {
       measurements: measurements(1100, 300),
       detailsCardMeasurement: { threadRef: otherThreadRef, width: 280, fullContentHeight: 400 },
       threadRef,
-      preview: { ...preview, position: { x: 760, y: 150 }, lastInteraction: "drag" },
+      preview: { ...preview, position: { x: 760, y: 150 } },
       detailsCardInlineOpen: true,
     });
     expect(model.layout.overlapsDetailsCard).toBe(false);

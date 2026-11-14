@@ -188,7 +188,6 @@ export function useThreadPreviewCanvasSource(
     key: sourceKey,
     width: miniPlayer.width,
     position: miniPlayer.position,
-    lastInteraction: miniPlayer.lastInteraction,
     source:
       heldSource ??
       (source.kind === "browser"

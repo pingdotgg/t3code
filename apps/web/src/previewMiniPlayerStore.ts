@@ -26,7 +26,6 @@ export interface PreviewMiniPlayerState {
   readonly source: PreviewMiniPlayerSource;
   readonly position: PreviewMiniPlayerPosition | null;
   readonly width: number | null;
-  readonly lastInteraction: "drag" | "resize";
 }
 
 interface PreviewMiniPlayerStoreState {
@@ -78,7 +77,6 @@ export const usePreviewMiniPlayerStore = create<PreviewMiniPlayerStoreState>()((
             source,
             position: current?.position ?? null,
             width: current?.width ?? null,
-            lastInteraction: current?.lastInteraction ?? "drag",
           },
         },
       };
@@ -95,16 +93,11 @@ export const usePreviewMiniPlayerStore = create<PreviewMiniPlayerStoreState>()((
       const threadKey = scopedThreadKey(ref);
       const current = state.byThreadKey[threadKey];
       if (!current || previewMiniPlayerSourceKey(current.source) !== sourceKey) return state;
-      if (
-        current.position?.x === position.x &&
-        current.position.y === position.y &&
-        current.lastInteraction === "drag"
-      )
-        return state;
+      if (current.position?.x === position.x && current.position.y === position.y) return state;
       return {
         byThreadKey: {
           ...state.byThreadKey,
-          [threadKey]: { ...current, position, lastInteraction: "drag" },
+          [threadKey]: { ...current, position },
         },
       };
     }),
@@ -116,7 +109,6 @@ export const usePreviewMiniPlayerStore = create<PreviewMiniPlayerStoreState>()((
         !current ||
         previewMiniPlayerSourceKey(current.source) !== sourceKey ||
         (current.width === width &&
-          current.lastInteraction === "resize" &&
           (!position || (current.position?.x === position.x && current.position.y === position.y)))
       ) {
         return state;
@@ -128,7 +120,6 @@ export const usePreviewMiniPlayerStore = create<PreviewMiniPlayerStoreState>()((
             ...current,
             width,
             position: position ?? current.position,
-            lastInteraction: "resize",
           },
         },
       };

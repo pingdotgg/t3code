@@ -5,18 +5,13 @@ import {
   type PreviewMiniPlayerFrame,
   type PreviewMiniPlayerObstacles,
 } from "../preview/previewMiniPlayerLayout";
-import type {
-  PreviewMiniPlayerPosition,
-  PreviewMiniPlayerSize,
-  PreviewMiniPlayerState,
-} from "~/previewMiniPlayerStore";
+import type { PreviewMiniPlayerPosition, PreviewMiniPlayerSize } from "~/previewMiniPlayerStore";
 
 export interface ChatCanvasPreview {
   readonly key: string;
   readonly width: number | null;
   readonly position: PreviewMiniPlayerPosition | null;
   readonly source: PreviewMiniPlayerSize;
-  readonly lastInteraction?: PreviewMiniPlayerState["lastInteraction"];
 }
 
 const GAP = 12;
