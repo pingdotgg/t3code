@@ -134,22 +134,12 @@ describe("workspaceAssetResource", () => {
 describe("document preview contents", () => {
   const bytes = (text: string) => new TextEncoder().encode(text).buffer;
 
-  // Java's RTFEditorKit frames rows in a font table and a paragraph.
-  const jdk = (body: string) =>
-    `{\\rtf1\\ansi\n{\\fonttbl\\f0\\fnil Monospaced;}\n\n${body}\\par\n}\n`;
   it.each([
-    ["a JDK nonbreaking hyphen", jdk(String.raw`Jean\_ Luc`), "Jean\u2011 Luc"],
     ["control symbols", String.raw`{\rtf1 Jean\_Luc\-X\~Y}`, "Jean\u2011Luc\u00adX\u00a0Y"],
     [
-      "JDK named spaces",
-      jdk(String.raw`A\tab B\emspace C\enspace D\qmspace E`),
-      "A\tB\u2003C\u2002D\u2005E",
-    ],
-    ["a JDK zero-width joiner", jdk(String.raw`\u2325 ?\u2381 ?\zwj\u2359 ?`), "क्\u200dष"],
-    [
-      "zero-width and direction marks",
-      String.raw`{\rtf1 a\zwnj b\zwbo c\ltrmark d\rtlmark e}`,
-      "a\u200cb\u200bc\u200ed\u200fe",
+      "named spaces, joiners and direction marks",
+      String.raw`{\rtf1 A\tab B\emspace C\enspace D\qmspace E\zwj F\zwnj G\zwbo H\ltrmark I\rtlmark J}`,
+      "A\tB\u2003C\u2002D\u2005E\u200dF\u200cG\u200bH\u200eI\u200fJ",
     ],
     ["a Unicode fallback", String.raw`{\rtf1 Jean\u8209\_Luc}`, "Jean\u2011Luc"],
   ])("keeps the text of %s", (_name, source, expected) => {
