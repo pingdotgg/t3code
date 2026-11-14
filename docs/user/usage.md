@@ -8,7 +8,7 @@ On mobile, choose **Usage** in the workspace navigation.
 
 ## Understand your usage
 
-**Usage** combines Codex, Claude Code, Grok Build, OpenCode, Antigravity, Pi, Muse Code, and Cursor history
+**Usage** combines Codex, Claude Code, Grok Build, OpenCode, Antigravity, Pi, Muse Code, Cursor, and Z.ai GLM history
 from your connected environments. It shows token use, cache savings, model breakdowns, and estimated API-equivalent
 cost, split by token type and by speed. These estimates are not your subscription bill.
 **Premium** is what Fast and Ultrafast requests cost above standard rates. Cost that cannot be
@@ -41,6 +41,10 @@ known prices still contribute tokens and appear as unpriced; set custom prices t
 Use absolute paths or `~/` paths in the account's environment settings; relative environment paths
 depend on each project's working directory and cannot be reliably discovered by Usage. Accounts
 sharing a history directory count once.
+
+Z.ai GLM usage comes from the turns T3 itself runs through the ACP Registry's GLM agent, recorded as
+each turn finishes. GLM run as a local ACP command is not counted. Use outside T3, or on environments you have not connected, does not appear, so Z.ai's own
+dashboard can show more. Turns that fail or are interrupted may report partial or no usage.
 
 The server saves its first hostname in `<T3 home>/usage-host-id`, so a recreated container keeps
 its usage identity when T3 home is persisted. Set `T3CODE_HOST_ID` to choose the identity
@@ -99,7 +103,7 @@ To count only some models, or to leave some out, add `usageModelFilter` to the s
 ```
 
 `include` keeps only the listed models and `exclude` leaves the listed models out. `provider` is
-one of `claude`, `codex`, `cursor`, `grok`, `opencode`, `antigravity`, `pi`, or `muse`; omit it
+one of `claude`, `codex`, `cursor`, `grok`, `opencode`, `antigravity`, `pi`, `muse`, or `zai`; omit it
 to match a model ID from any provider. Use the model ID that Usage shows without **Map to**, such
 as a provider-prefixed ID for Pi. Filters apply before **Map to**, so a model you leave out is not
 counted under its mapped name. Usage applies each environment's own filter. Remove the setting to
