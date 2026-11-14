@@ -2218,6 +2218,58 @@ describe("locating a device id across hosts", () => {
     }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
   );
 
+  it.effect("reports a failed device list before matching another host or an AVD name", () =>
+    Effect.gen(function* () {
+      const local = listingHost(thisMachine, [{ id: "emulator-5554", name: "Medium_Phone" }]);
+      let listed = false;
+      const failingOnRelist: DeviceHost.DeviceHost["Service"] = {
+        ...local,
+        ensureReady: (...args) =>
+          local.ensureReady(...args).pipe(
+            Effect.map((ready): DeviceHost.DeviceHostReady => ({
+              ...ready,
+              devices: {
+                ...ready.devices,
+                list: Effect.suspend(() => {
+                  if (!listed) {
+                    listed = true;
+                    return ready.devices.list;
+                  }
+                  return Effect.fail(
+                    new DeviceOperationError({
+                      operation: "list devices",
+                      reason: "request_failed",
+                      cause: null,
+                    }),
+                  );
+                }),
+              },
+            })),
+          ),
+      };
+      const service = yield* DeviceService.makeWithHosts(
+        new Map([
+          [thisMachine.id, failingOnRelist],
+          [
+            macMini.id,
+            listingHost(macMini, ["MAC-UDID", { id: "emulator-5554", name: "Medium_Phone" }]),
+          ],
+        ]),
+      ).pipe(Effect.provide(NodeCrypto.layer));
+      yield* service.list;
+      yield* service.list;
+      for (const input of [
+        { deviceId: DeviceId.make("MAC-UDID"), hostId: LOCAL_DEVICE_HOST_ID },
+        { deviceId: DeviceId.make("Medium_Phone") },
+      ]) {
+        expect(yield* service.locateDevice(input).pipe(Effect.flip)).toMatchObject({
+          _tag: "DeviceListFailedError",
+          hosts: [{ id: LOCAL_DEVICE_HOST_ID }],
+        });
+      }
+    }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
+  );
+
   it.effect("finds nothing for a device id that no host lists", () =>
     withTwoHosts((service) =>
       Effect.gen(function* () {

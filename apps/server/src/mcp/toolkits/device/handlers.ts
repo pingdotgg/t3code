@@ -123,7 +123,9 @@ const hostName = (host: { readonly id: DeviceHostId; readonly label?: string | u
 const mapLocateErrors = <A, R>(
   effect: Effect.Effect<
     A,
-    DeviceService.DeviceHostAmbiguousError | DeviceService.DeviceOnOtherHostError,
+    | DeviceService.DeviceHostAmbiguousError
+    | DeviceService.DeviceOnOtherHostError
+    | DeviceService.DeviceListFailedError,
     R
   >,
 ) =>
@@ -133,6 +135,12 @@ const mapLocateErrors = <A, R>(
         Effect.fail(
           new DeviceToolUnavailableError({
             reason: `Device ${error.deviceId} is on more than one host: ${error.hosts.map(hostName).join(", ")}. Pass hostId.`,
+          }),
+        ),
+      DeviceListFailedError: (error) =>
+        Effect.fail(
+          new DeviceToolUnavailableError({
+            reason: `Device ${error.deviceId} is not in the last device list, and listing devices failed on ${error.hosts.map((host) => `${hostName(host)} (${host.detail})`).join(", ")}. Call device_list to retry.`,
           }),
         ),
       DeviceOnOtherHostError: (error) =>
@@ -168,28 +176,21 @@ const pickDevice = Effect.fn("handlers.pickDevice")(function* (
   if (input.deviceId !== undefined) {
     const { deviceId, hostId } = input;
     const devices = yield* DeviceService.DeviceService;
+    const located = yield* devices.locateDevice({ deviceId, hostId }).pipe(mapLocateErrors);
+    if (Option.isSome(located)) return located.value;
     const target =
       hostId === undefined
         ? undefined
         : (state.hosts.find((host) => host.id === hostId) ?? { id: hostId });
-    // A failed refresh keeps the previous devices, so the device may be there unlisted.
-    const failures = failedHosts(state, target === undefined ? state.hosts : [target]);
-    const located = yield* devices.locateDevice({ deviceId, hostId }).pipe(
-      Effect.catchTags({
-        DeviceOnOtherHostError: (error) =>
-          failures.length > 0 ? Effect.succeedNone : Effect.fail(error),
-      }),
-      mapLocateErrors,
+    const failures = failedHosts(state, target === undefined ? state.hosts : [target]).map(
+      ({ host, detail }) => `${hostName(host)} failed to start: ${detail}`,
     );
-    // An AVD-name match could be on another host than the one whose list failed.
-    if (Option.isSome(located) && (failures.length === 0 || located.value.id === deviceId)) {
-      return located.value;
-    }
     return yield* new DeviceToolUnavailableError({
-      reason:
-        failures.length > 0
-          ? `Device ${deviceId} is not in the last device list, and listing devices failed on ${failures.map(({ host, detail }) => `${hostName(host)} (${detail})`).join(", ")}. Call device_list to retry.`
-          : `No device ${deviceId} on ${target === undefined ? "any host" : hostName(target)}. Call device_list for current ids.`,
+      reason: [
+        `No device ${deviceId} on ${target === undefined ? "any host" : hostName(target)}.`,
+        ...failures,
+        "Call device_list for current ids.",
+      ].join(" "),
     });
   }
   const hostId = input.hostId ?? LOCAL_DEVICE_HOST_ID;
