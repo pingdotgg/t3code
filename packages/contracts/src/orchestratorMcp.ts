@@ -502,6 +502,7 @@ export const OrchestratorMcpThreadRun = Schema.Struct({
   executedModel: Schema.optional(OrchestratorMcpExecutedModel),
   requestedAt: IsoDateTime,
   startedAt: Schema.NullOr(IsoDateTime),
+  workStartedAt: Schema.optional(IsoDateTime),
   completedAt: Schema.NullOr(IsoDateTime),
 });
 export type OrchestratorMcpThreadRun = typeof OrchestratorMcpThreadRun.Type;
