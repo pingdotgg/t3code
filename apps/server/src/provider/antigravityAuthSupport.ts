@@ -121,7 +121,10 @@ export function antigravityAuthLabel(authMethod: AntigravityAuthMethod): string 
   }
 }
 
-export function antigravityAuthConfigIssue(auth: AntigravityAuthConfig): string | null {
+export function antigravityAuthConfigIssue(
+  auth: AntigravityAuthConfig,
+  options?: { readonly isCliRuntime?: boolean },
+): string | null {
   switch (auth.authMethod) {
     case "oauth-personal":
       return null;
@@ -132,6 +135,9 @@ export function antigravityAuthConfigIssue(auth: AntigravityAuthConfig): string 
     case "gemini-api-key":
       return auth.apiKey ? null : "Enter a Gemini API key in the Antigravity provider settings.";
     case "agent-platform":
+      if (options?.isCliRuntime && auth.apiKey) {
+        return "Agent Platform API keys are not supported with the agy CLI; use Application Default Credentials (ADC) or a credentials file.";
+      }
       return auth.apiKey || (auth.gcpProject && auth.gcpLocation)
         ? null
         : "Agent Platform needs an API key, or a GCP project and location, in the Antigravity provider settings.";
@@ -451,6 +457,43 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
   return profile;
 });
 
+/**
+ * Before T3 pointed the agy CLI at the profile, the CLI kept conversations in
+ * `~/.gemini/antigravity-cli`. Copies one into the profile so its thread can still resume. Once the
+ * profile has a copy, that copy is newer and is left alone.
+ */
+export const copyAntigravityCliConversation = Effect.fn("copyAntigravityCliConversation")(
+  function* (input: {
+    readonly userHome: string;
+    readonly acpDirectory: string;
+    readonly sessionId: string;
+  }) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const source = path.join(input.userHome, ".gemini", "antigravity-cli", "conversations");
+    const target = path.join(input.acpDirectory, "conversations");
+    if (
+      path.basename(input.sessionId) !== input.sessionId ||
+      (yield* fs.exists(path.join(target, `${input.sessionId}.db`))) ||
+      !(yield* fs.exists(path.join(source, `${input.sessionId}.db`)))
+    ) {
+      return;
+    }
+    yield* fs.makeDirectory(target, { recursive: true });
+    // The `.db` appears last, so after a failed copy the check above retries on the next start.
+    for (const file of [".db-wal", ".db-shm"].map((suffix) => input.sessionId + suffix)) {
+      if (yield* fs.exists(path.join(source, file))) {
+        yield* fs.copyFile(path.join(source, file), path.join(target, file));
+      } else {
+        yield* fs.remove(path.join(target, file), { force: true });
+      }
+    }
+    const db = `${input.sessionId}.db`;
+    yield* fs.copyFile(path.join(source, db), path.join(target, `${db}.tmp`));
+    yield* fs.rename(path.join(target, `${db}.tmp`), path.join(target, db));
+  },
+);
+
 export function buildAntigravityAcpSpawnInput(input: {
   readonly installation: {
     readonly executablePath: string;
@@ -464,7 +507,9 @@ export function buildAntigravityAcpSpawnInput(input: {
 }): AcpSessionRuntime.AcpSpawnInput {
   return {
     command: input.installation.executablePath,
-    // The agy CLI has no harness sibling and serves ACP through its `acp` subcommand.
+    // The agy CLI has no harness sibling and serves ACP through its `acp` subcommand. It ignores
+    // GEMINI_HOME, so these flags point it at the profile and its settings.json. The app data path
+    // must be relative to --gemini-dir.
     args:
       input.installation.harnessPath === null
         ? [

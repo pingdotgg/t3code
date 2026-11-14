@@ -24,9 +24,11 @@ import {
   ANTIGRAVITY_AUTH_BROWSER_MARKER,
   ANTIGRAVITY_AUTH_STDOUT_PREFIX,
   ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE,
+  antigravityAuthConfigIssue,
   type AntigravityAuthConfig,
   type AntigravityProfile,
   buildAntigravityAcpSpawnInput,
+  copyAntigravityCliConversation,
   isAntigravitySignInRequiredError,
   makeAntigravityStderrHandler,
   makeAntigravityStdoutTransform,
@@ -109,7 +111,7 @@ describe("Antigravity process environment", () => {
     });
   });
 
-  it("runs the agy CLI as `agy acp` without a harness", () => {
+  it("runs the agy CLI as `agy acp` on the instance profile, without a harness", () => {
     const spawn = buildAntigravityAcpSpawnInput({
       installation: { executablePath: "/usr/bin/agy", harnessPath: null },
       profile,
@@ -684,6 +686,73 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
     }),
   );
 
+  it.effect(
+    "copies a CLI conversation from ~/.gemini once and keeps the profile's copy after",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fs.makeTempDirectoryScoped();
+        const userHome = path.join(directory, "home");
+        const acpDirectory = path.join(directory, "profile", "antigravity-acp");
+        const cliConversations = path.join(userHome, ".gemini", "antigravity-cli", "conversations");
+        const conversations = path.join(acpDirectory, "conversations");
+        yield* fs.makeDirectory(cliConversations, { recursive: true });
+        yield* fs.writeFileString(path.join(cliConversations, "session-1.db"), "db");
+        yield* fs.writeFileString(path.join(cliConversations, "session-1.db-wal"), "wal");
+        const copy = copyAntigravityCliConversation({
+          userHome,
+          acpDirectory,
+          sessionId: "session-1",
+        });
+
+        yield* copy;
+        expect(yield* fs.readFileString(path.join(conversations, "session-1.db"))).toBe("db");
+        expect(yield* fs.readFileString(path.join(conversations, "session-1.db-wal"))).toBe("wal");
+        expect(yield* fs.exists(path.join(conversations, "session-1.db-shm"))).toBe(false);
+
+        // Once the CLI has run on the profile, its copy is the newer one.
+        yield* fs.writeFileString(path.join(conversations, "session-1.db"), "newer");
+        yield* copy;
+        expect(yield* fs.readFileString(path.join(conversations, "session-1.db"))).toBe("newer");
+
+        // A session ID that isn't a plain file name is never copied.
+        yield* fs.writeFileString(path.join(cliConversations, "..", "outside.db"), "db");
+        yield* copyAntigravityCliConversation({ userHome, acpDirectory, sessionId: "../outside" });
+        expect(yield* fs.exists(path.join(acpDirectory, "outside.db"))).toBe(false);
+      }),
+  );
+
+  it.effect("retries a CLI conversation copy that failed partway", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped();
+      const userHome = path.join(directory, "home");
+      const acpDirectory = path.join(directory, "profile", "antigravity-acp");
+      const cliConversations = path.join(userHome, ".gemini", "antigravity-cli", "conversations");
+      const conversations = path.join(acpDirectory, "conversations");
+      yield* fs.makeDirectory(cliConversations, { recursive: true });
+      yield* fs.writeFileString(path.join(cliConversations, "session-1.db"), "db");
+      // A directory can't be copied as a file, so the WAL copy fails.
+      yield* fs.makeDirectory(path.join(cliConversations, "session-1.db-wal"));
+      const copy = copyAntigravityCliConversation({
+        userHome,
+        acpDirectory,
+        sessionId: "session-1",
+      });
+
+      expect(Result.isFailure(yield* copy.pipe(Effect.result))).toBe(true);
+      expect(yield* fs.exists(path.join(conversations, "session-1.db"))).toBe(false);
+
+      yield* fs.remove(path.join(cliConversations, "session-1.db-wal"), { recursive: true });
+      yield* fs.writeFileString(path.join(cliConversations, "session-1.db-wal"), "wal");
+      yield* copy;
+      expect(yield* fs.readFileString(path.join(conversations, "session-1.db"))).toBe("db");
+      expect(yield* fs.readFileString(path.join(conversations, "session-1.db-wal"))).toBe("wal");
+    }),
+  );
+
   const preflightHelper = (exitDelay: Effect.Effect<void>) => {
     const spawns = { count: 0 };
     const started = Deferred.makeUnsafe<void>();
@@ -788,4 +857,31 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
       }
     }),
   );
+});
+
+describe("antigravityAuthConfigIssue", () => {
+  it("rejects Agent Platform with an API key when running on the agy CLI", () => {
+    const auth: AntigravityAuthConfig = {
+      authMethod: "agent-platform",
+      apiKey: "secret-key",
+      gcpProject: "proj",
+      gcpLocation: "us-central1",
+    };
+    expect(antigravityAuthConfigIssue(auth, { isCliRuntime: true })).toBe(
+      "Agent Platform API keys are not supported with the agy CLI; use Application Default Credentials (ADC) or a credentials file.",
+    );
+    // Managed runtime continues to accept Agent Platform with an API key
+    expect(antigravityAuthConfigIssue(auth, { isCliRuntime: false })).toBeNull();
+    expect(antigravityAuthConfigIssue(auth)).toBeNull();
+  });
+
+  it("accepts Agent Platform without an API key on the agy CLI", () => {
+    const auth: AntigravityAuthConfig = {
+      authMethod: "agent-platform",
+      apiKey: "",
+      gcpProject: "proj",
+      gcpLocation: "us-central1",
+    };
+    expect(antigravityAuthConfigIssue(auth, { isCliRuntime: true })).toBeNull();
+  });
 });
