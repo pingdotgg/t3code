@@ -52,6 +52,10 @@ function markdownDestination(src: string): string {
   return `<${escaped}>`;
 }
 
+function parseImageDimension(value: string | number | undefined): number {
+  return Number(typeof value === "string" ? value.trim().replace(/px$/i, "") : value);
+}
+
 /**
  * `maxHeightRem` folds a height cap into the width bound: `max-height` alone
  * would not feed back through `aspect-ratio` once `width` is definite, so a
@@ -62,8 +66,8 @@ export function authoredImageSizeStyle(
   height: string | number | undefined,
   maxHeightRem = 30,
 ): CSSProperties | undefined {
-  const parsedWidth = Number(width);
-  const parsedHeight = Number(height);
+  const parsedWidth = parseImageDimension(width);
+  const parsedHeight = parseImageDimension(height);
   const hasWidth = Number.isFinite(parsedWidth) && parsedWidth > 0;
   const hasHeight = Number.isFinite(parsedHeight) && parsedHeight > 0;
   if (hasWidth && hasHeight) {
@@ -293,6 +297,7 @@ export function ChatMarkdownVideo(props: {
   readonly copyMarkdown: string | undefined;
   readonly originalUrl?: string | undefined;
   readonly sourceFailed?: boolean | undefined;
+  readonly unavailableDetail?: string | undefined;
   readonly style?: CSSProperties | undefined;
   readonly mediaIdentity?: string | undefined;
   readonly actionsSource?: MediaActionSource | undefined;
@@ -303,6 +308,7 @@ export function ChatMarkdownVideo(props: {
       key={props.mediaIdentity ?? props.copyMarkdown ?? props.src}
       src={props.src}
       sourceFailed={props.sourceFailed}
+      unavailableDetail={props.unavailableDetail}
       label={props.alt}
       originalUrl={props.originalUrl}
       style={props.style}
@@ -322,19 +328,61 @@ export function ChatMarkdownVideo(props: {
   );
 }
 
+type ChatMarkdownAssetResource = Extract<
+  AssetResource,
+  {
+    readonly _tag:
+      | "attachment"
+      | "workspace-file"
+      | "media-file"
+      | typeof SOURCE_CONTROL_MEDIA_ASSET
+      | "tool-output-image";
+  }
+>;
+
+export function assetMediaActionsSource(input: {
+  readonly environmentId: EnvironmentId;
+  readonly resource: ChatMarkdownAssetResource;
+  readonly kind: "image" | "video";
+  readonly name: string;
+  readonly src: string | null;
+  readonly workspaceRoot?: string | undefined;
+  readonly originalUrl?: string | undefined;
+  readonly downloadable?: boolean | undefined;
+}): MediaActionSource {
+  const { environmentId, resource } = input;
+  const path =
+    resource._tag === "media-file"
+      ? resource.path
+      : resource._tag === "workspace-file" && input.workspaceRoot
+        ? `${input.workspaceRoot.replace(/[\\/]+$/, "")}/${resource.path}`
+        : undefined;
+  const reference = path
+    ? mediaFileReference(path, input.workspaceRoot)
+    : input.originalUrl
+      ? mediaUrlReference(input.originalUrl)
+      : undefined;
+  const relativePath = reference?.kind === "file" ? reference.relativePath : undefined;
+  return {
+    kind: input.kind,
+    name: input.name,
+    src: input.src,
+    ...(input.downloadable === false ? {} : { asset: { environmentId, resource } }),
+    ...(reference ? { reference } : {}),
+    ...(relativePath && (resource._tag === "media-file" || resource._tag === "workspace-file")
+      ? {
+          onOpenFile: () =>
+            useRightPanelStore
+              .getState()
+              .openFile({ environmentId, threadId: resource.threadId }, relativePath),
+        }
+      : {}),
+  };
+}
+
 export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props: {
   readonly environmentId: EnvironmentId;
-  readonly resource: Extract<
-    AssetResource,
-    {
-      readonly _tag:
-        | "attachment"
-        | "workspace-file"
-        | "media-file"
-        | typeof SOURCE_CONTROL_MEDIA_ASSET
-        | "tool-output-image";
-    }
-  >;
+  readonly resource: ChatMarkdownAssetResource;
   readonly kind?: "image" | "video";
   readonly alt: string;
   readonly copyMarkdown?: string;
@@ -366,19 +414,12 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
       : undefined,
   );
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
-  const path =
-    resource._tag === "media-file"
-      ? resource.path
-      : resource._tag === "workspace-file" && props.workspaceRoot
-        ? `${props.workspaceRoot.replace(/[\\/]+$/, "")}/${resource.path}`
-        : undefined;
-  const reference = path
-    ? mediaFileReference(path, props.workspaceRoot)
-    : props.originalUrl
-      ? mediaUrlReference(props.originalUrl)
-      : undefined;
-  const relativePath = reference?.kind === "file" ? reference.relativePath : undefined;
   const fallbackSrc = assetUrl._tag === "Failure" ? props.fallbackSrc : undefined;
+  const missingFileAccess =
+    assetUrl._tag === "Failure" &&
+    assetUrl.reason === "missing-file-access" &&
+    fallbackSrc === undefined;
+  const unavailableDetail = missingFileAccess ? MISSING_FILE_ACCESS_MESSAGE : undefined;
   const src =
     assetUrl._tag === "Success"
       ? assetUrl.url + (props.srcFragment ?? "")
@@ -394,38 +435,30 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
       : maxHeightRem !== 30
         ? { maxHeight: `${maxHeightRem}rem` }
         : undefined);
-  const actionsSource: MediaActionSource = {
+  const actionsSource = assetMediaActionsSource({
+    environmentId: props.environmentId,
+    resource,
     kind: props.kind ?? "image",
     name: props.alt || (props.kind ?? "image"),
     src,
-    ...(fallbackSrc === undefined
-      ? { asset: { environmentId: props.environmentId, resource } }
-      : {}),
-    ...(reference ? { reference } : {}),
-    ...(relativePath && (resource._tag === "media-file" || resource._tag === "workspace-file")
-      ? {
-          onOpenFile: () =>
-            useRightPanelStore
-              .getState()
-              .openFile(
-                { environmentId: props.environmentId, threadId: resource.threadId },
-                relativePath,
-              ),
-        }
-      : {}),
-  };
+    workspaceRoot: props.workspaceRoot,
+    originalUrl: props.originalUrl,
+    downloadable: fallbackSrc === undefined,
+  });
 
   if (props.kind === "video") {
     return (
       <ChatMarkdownVideo
         src={src}
         sourceFailed={assetUrl._tag === "Failure" && fallbackSrc === undefined}
+        unavailableDetail={unavailableDetail}
         alt={props.alt}
         copyMarkdown={props.copyMarkdown}
         originalUrl={props.originalUrl}
         style={props.style}
         mediaIdentity={JSON.stringify([props.environmentId, props.resource, props.srcFragment])}
-        onRetry={refreshAssetUrl}
+        // Re-signing cannot grant the file access this connection lacks.
+        onRetry={missingFileAccess ? undefined : refreshAssetUrl}
         actionsSource={actionsSource}
       />
     );
@@ -436,13 +469,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
       key={JSON.stringify([props.environmentId, props.resource, props.srcFragment])}
       src={src}
       sourceFailed={assetUrl._tag === "Failure" && fallbackSrc === undefined}
-      unavailableDetail={
-        assetUrl._tag === "Failure" &&
-        assetUrl.reason === "missing-file-access" &&
-        fallbackSrc === undefined
-          ? MISSING_FILE_ACCESS_MESSAGE
-          : undefined
-      }
+      unavailableDetail={unavailableDetail}
       alt={props.alt}
       copyMarkdown={props.copyMarkdown}
       standalone={props.standalone ?? true}
