@@ -15,6 +15,7 @@ import { cn } from "~/lib/utils";
 import { PULL_REQUESTS_PANEL_REF } from "~/rightPanelStore";
 
 import ChatMarkdown from "../ChatMarkdown";
+import { MarkdownDetails } from "../chat/MarkdownDetails";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
 import { splitPullRequestBody, type PullRequestBodySegment } from "./pullRequestMarkdown.logic";
 
@@ -111,6 +112,38 @@ function PullRequestBodySegmentView({
           </div>
         ))}
       </div>
+    );
+  }
+  if (segment.kind === "details") {
+    return (
+      <MarkdownDetails open={segment.open}>
+        <summary>
+          {segment.summary ? (
+            <ChatMarkdown
+              inline
+              text={segment.summary}
+              cwd={cwd}
+              threadRef={threadRef}
+              pullRequestPanelRef={threadRef ?? PULL_REQUESTS_PANEL_REF}
+              environmentId={environmentId}
+              {...(context ? { extraRemarkPlugins: context.remarkPlugins } : {})}
+            />
+          ) : null}
+        </summary>
+        <div className="space-y-3">
+          {segment.segments.map((detailsSegment) => (
+            <PullRequestBodySegmentView
+              key={detailsSegment.id}
+              segment={detailsSegment}
+              cwd={cwd}
+              environmentId={environmentId}
+              threadRef={threadRef}
+              lineBreaks={lineBreaks}
+              onTaskListChange={onTaskListChange}
+            />
+          ))}
+        </div>
+      </MarkdownDetails>
     );
   }
   if (segment.kind === "markdown" || segment.media === "image") {
