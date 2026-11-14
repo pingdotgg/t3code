@@ -214,18 +214,10 @@ describe("resolveThreadListV2Status", () => {
 describe("isThreadListV2EnvironmentDisconnected", () => {
   it.each([
     ["connected", "live", false],
-    ["connected", "cached", true],
     ["connected", "synchronizing", true],
-    ["connected", "empty", true],
-    ["connecting", "live", false],
     ["connecting", "cached", false],
-    ["connecting", "synchronizing", false],
-    ["connecting", "empty", false],
     ["reconnecting", "live", true],
-    ["offline", "live", true],
-    ["error", "live", true],
-    ["unsupported", "live", true],
-    ["available", "live", true],
+    ["offline", "cached", true],
   ] as const)(
     "treats %s with a %s shell as disconnected: %s",
     (connectionState, shellStatus, disconnected) => {

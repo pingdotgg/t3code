@@ -19,7 +19,17 @@ import {
 } from "./threadListV2";
 import { computeThreadMoveAvailability } from "./threadOrder";
 
-import { useKeySet } from "./useKeySet";
+/**
+ * Screens' select handlers read the content-only key set; a fresh one per list rebuild gave
+ * every row a new handler whenever any thread shell changed. Keyed by a string, the set keeps
+ * its identity until its keys change.
+ */
+function useKeySet(newlineSeparatedKeys: string): ReadonlySet<string> {
+  return useMemo(
+    () => new Set(newlineSeparatedKeys.length === 0 ? [] : newlineSeparatedKeys.split("\n")),
+    [newlineSeparatedKeys],
+  );
+}
 
 const disconnectedEnvironmentIdsAtom = Atom.make((get) =>
   get(workspaceConnections.environmentsAtom)
@@ -29,7 +39,9 @@ const disconnectedEnvironmentIdsAtom = Atom.make((get) =>
         get(environmentShell.statusAtom(environment.environmentId)),
       ),
     )
-    .map((environment) => environment.environmentId),
+    .map((environment) => environment.environmentId)
+    .sort()
+    .join("\n"),
 );
 
 type LayoutInput = Parameters<typeof buildThreadListV2Items>[0];
@@ -199,7 +211,7 @@ export function useThreadListV2(input: {
     ],
   );
   useOlderSettledShelfGrowth(olderSettledShelf, layout.listedSettledThreads);
-  const contentOnlyThreadKeys = useKeySet([...layout.contentOnlyThreadKeys]);
+  const contentOnlyThreadKeys = useKeySet([...layout.contentOnlyThreadKeys].sort().join("\n"));
   const pendingTasks = useMemo(() => {
     const scopedProjectKeys =
       input.projectRefs == null
