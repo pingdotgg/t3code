@@ -28,6 +28,7 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
+import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as BrowserSession from "./BrowserSession.ts";
 import * as DesktopBrowserHost from "./DesktopBrowserHost.ts";
@@ -232,7 +233,35 @@ const layerFileSystem = FileSystem.layerNoop({
     }),
 });
 
-const managerLayer = (platform: NodeJS.Platform = "darwin") =>
+/** The OS scheme behind a forced app theme; `null` while the app follows the OS. */
+const makeTheme = (initial: "light" | "dark" | null = null) => {
+  let systemColorScheme = initial;
+  const listeners = new Set<() => void>();
+  return {
+    layer: Layer.succeed(
+      ElectronTheme.ElectronTheme,
+      ElectronTheme.ElectronTheme.of({
+        shouldUseDarkColors: Effect.succeed(false),
+        systemColorScheme: Effect.sync(() => systemColorScheme),
+        setSource: () => Effect.void,
+        onUpdated: (listener) =>
+          Effect.acquireRelease(
+            Effect.sync(() => void listeners.add(listener)),
+            () => Effect.sync(() => void listeners.delete(listener)),
+          ),
+      }),
+    ),
+    setSystemColorScheme: (scheme: "light" | "dark" | null) => {
+      systemColorScheme = scheme;
+      for (const listener of listeners) listener();
+    },
+  };
+};
+
+const managerLayer = (
+  platform: NodeJS.Platform = "darwin",
+  theme: Layer.Layer<ElectronTheme.ElectronTheme> = makeTheme().layer,
+) =>
   PreviewManager.layer.pipe(
     Layer.provideMerge(
       Layer.succeed(DesktopRendererHistory.DesktopRendererHistory, {
@@ -243,6 +272,7 @@ const managerLayer = (platform: NodeJS.Platform = "darwin") =>
     ),
     Layer.provideMerge(DesktopBrowserHost.layer),
     Layer.provideMerge(layerBrowserSession),
+    Layer.provideMerge(theme),
     Layer.provideMerge(
       Layer.mock(PreviewPasskeys.PreviewPasskeys)({
         bridgeEnabled: false,
@@ -262,11 +292,12 @@ const withManager = <A>(
     manager: PreviewManager.PreviewManager["Service"],
   ) => Effect.Effect<A, PreviewManager.PreviewManagerError, Scope.Scope>,
   platform: NodeJS.Platform = "darwin",
+  theme?: Layer.Layer<ElectronTheme.ElectronTheme>,
 ) =>
   Effect.gen(function* () {
     const manager = yield* PreviewManager.PreviewManager;
     return yield* use(manager);
-  }).pipe(Effect.provide(managerLayer(platform)), Effect.scoped);
+  }).pipe(Effect.provide(managerLayer(platform, theme)), Effect.scoped);
 
 interface TestCapturedPreviewImage {
   readonly toJPEG: () => Buffer;
@@ -400,6 +431,7 @@ const makeFaviconWebContents = (options?: {
   readonly fetch?: (url: string, init?: RequestInit) => Promise<Response>;
   readonly id?: number;
   readonly rasterize?: (code: string) => Promise<unknown>;
+  readonly sendCommand?: (method: string, params?: unknown) => Promise<unknown>;
   readonly url?: string;
 }) => {
   const sourcePng = makeSourcePng();
@@ -464,7 +496,7 @@ const makeFaviconWebContents = (options?: {
     debugger: {
       isAttached: () => false,
       attach: vi.fn(),
-      sendCommand: vi.fn(async () => undefined),
+      sendCommand: options?.sendCommand ?? vi.fn(async () => undefined),
       on: vi.fn(),
       off: debuggerOff,
     },
@@ -628,6 +660,7 @@ describe("PreviewManager", () => {
                 attachGuest: () => () => {},
               }),
               Layer.mock(DesktopRendererHistory.DesktopRendererHistory)({}),
+              makeTheme().layer,
               Layer.succeed(HostProcess.Platform, "linux"),
             ),
           ),
@@ -1249,6 +1282,81 @@ describe("PreviewManager", () => {
       }),
     ),
   );
+
+  effectIt.effect("renders System in the OS scheme while the app forces its own theme", () => {
+    const theme = makeTheme("dark");
+    return withManager(
+      (manager) =>
+        Effect.gen(function* () {
+          const changes = makeChangeSignal();
+          let held: Promise<void> | undefined;
+          const makeGuest = (id: number) => {
+            const sendCommand = vi.fn(async (_method: string, _params?: unknown) => {
+              changes.notify();
+              const gate = id === 41 ? held : undefined;
+              if (gate) held = undefined;
+              await gate;
+            });
+            const { webContents } = makeFaviconWebContents({ id, sendCommand });
+            const schemes = () =>
+              sendCommand.mock.calls
+                .filter(([method]) => method === "Emulation.setEmulatedMedia")
+                .map(
+                  ([, params]) => (params as { features: [{ value: string }] }).features[0].value,
+                );
+            return { webContents, schemes };
+          };
+          const first = makeGuest(41);
+          const second = makeGuest(42);
+          const last = makeGuest(43);
+          const guests = new Map([
+            [41, first],
+            [42, second],
+            [43, last],
+          ]);
+          fromId.mockImplementation(
+            (id) => (id == null ? null : guests.get(id)?.webContents) ?? null,
+          );
+          for (const id of guests.keys()) {
+            yield* manager.createTab(`tab_${id}`);
+            yield* manager.registerWebview(`tab_${id}`, id);
+          }
+
+          // Registering also restores the scheme, in a fiber of its own; both read the OS scheme.
+          yield* manager.setColorScheme("tab_41", "system");
+          yield* changes.until(() => [...guests.values()].every((g) => g.schemes().length > 0));
+          for (const guest of guests.values()) {
+            expect(new Set(guest.schemes())).toEqual(new Set(["dark"]));
+          }
+
+          // Guests are reapplied in tab order, so the last one marks a finished pass.
+          theme.setSystemColorScheme("light");
+          yield* changes.until(() => last.schemes().at(-1) === "light");
+          expect(first.schemes().at(-1)).toBe("light");
+
+          // Once the app follows the OS again, the page needs no override.
+          theme.setSystemColorScheme(null);
+          yield* changes.until(() => last.schemes().at(-1) === "");
+
+          // A pass held on the first guest must not overwrite a tab set to Dark meanwhile,
+          // nor apply its older OS scheme after a newer pass.
+          const release = Promise.withResolvers<void>();
+          held = release.promise;
+          theme.setSystemColorScheme("light");
+          yield* changes.until(() => first.schemes().at(-1) === "light");
+          yield* manager.setColorScheme("tab_42", "dark");
+          const before = last.schemes().length;
+          theme.setSystemColorScheme("dark");
+          yield* changes.until(() => last.schemes().length === before + 1);
+          release.resolve();
+          yield* changes.until(() => last.schemes().length === before + 2);
+          expect(second.schemes().at(-1)).toBe("dark");
+          expect(last.schemes().slice(before)).toEqual(["dark", "dark"]);
+        }),
+      "darwin",
+      theme.layer,
+    );
+  });
 
   effectIt.effect("detaches through the pinned debugger after the webview is destroyed", () =>
     withManager((manager) =>
@@ -2264,6 +2372,79 @@ describe("PreviewManager", () => {
         expect(yield* Queue.take(capturing)).toBe(false);
       }).pipe(Effect.provide(managerLayer())),
   );
+
+  effectIt.effect("keeps the agent's other media emulation when the OS scheme changes", () => {
+    const theme = makeTheme("dark");
+    return Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.DesktopBrowserHost;
+      const serverTab = { threadId: "thread-1", tabId: "server-tab-1" };
+      const contents = Object.assign(
+        makeTestPreviewWebContents(async () => {
+          throw new Error("unused");
+        }, 42),
+        {
+          isDevToolsOpened: () => false,
+          getUserAgent: () => "Electron",
+          loadURL: vi.fn(async () => undefined),
+        },
+      );
+      const changes = makeChangeSignal();
+      const media: Array<unknown> = [];
+      contents.debugger.sendCommand = vi.fn(async (method: string, params?: unknown) => {
+        if (method === "Emulation.setEmulatedMedia") media.push(params);
+        changes.notify();
+      }) as unknown as typeof contents.debugger.sendCommand;
+      fromId.mockReturnValue(contents);
+      const manager = yield* PreviewManager.PreviewManager;
+      const attached = yield* Deferred.make<void>();
+      yield* host.events.pipe(
+        Stream.runForEach((line) =>
+          new TextDecoder().decode(line).includes('"type":"attached"')
+            ? Deferred.succeed(attached, undefined)
+            : Effect.void,
+        ),
+        Effect.forkScoped,
+      );
+      yield* manager.createTab("tab_1", { serverTab });
+      yield* manager.registerWebview("tab_1", 42);
+      yield* Deferred.await(attached);
+      const emulated = (colorScheme: string) => ({
+        media: "print",
+        features: [
+          { name: "prefers-reduced-motion", value: "reduce" },
+          { name: "prefers-color-scheme", value: colorScheme },
+        ],
+      });
+
+      const relayClear = (id: number) =>
+        host.handleCommandLine(
+          JSON.stringify({
+            type: "cdp",
+            ...serverTab,
+            message: JSON.stringify({
+              id,
+              method: "Emulation.setEmulatedMedia",
+              params: emulated(""),
+              sessionId: "t3-preview-page",
+            }),
+          }),
+        );
+
+      yield* relayClear(1);
+      const relayed = JSON.stringify(emulated("dark"));
+      yield* changes.until(() => media.some((params) => JSON.stringify(params) === relayed));
+      theme.setSystemColorScheme("light");
+      yield* changes.until(() => JSON.stringify(media.at(-1)).includes('"light"'));
+      expect(media.at(-1)).toEqual(emulated("light"));
+
+      // A tab set to Dark keeps Dark through a clear, whatever the OS shows.
+      yield* manager.setColorScheme("tab_1", "dark");
+      const sent = media.length;
+      yield* relayClear(2);
+      yield* changes.until(() => media.length > sent);
+      expect(media.at(-1)).toEqual(emulated("dark"));
+    }).pipe(Effect.provide(managerLayer("darwin", theme.layer)));
+  });
 
   effectIt.effect(
     "opens a new-tab link in the background only when the agent's input led to it",

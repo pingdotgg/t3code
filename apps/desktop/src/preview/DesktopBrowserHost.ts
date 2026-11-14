@@ -44,7 +44,32 @@ export interface DesktopBrowserTabDebugger {
   readonly debugger: Electron.Debugger;
   /** Runs after the server clears the tab's cookies, so state kept beside them goes too. */
   readonly cookiesCleared?: () => Promise<void>;
+  /** The scheme the tab's own setting shows, which Playwright's clear of its override must keep. */
+  readonly selectedColorScheme?: () => string;
+  /** Runs with each media emulation the relay sends, before its color-scheme rewrite. */
+  readonly emulatedMediaSet?: (params: Record<string, unknown>) => void;
 }
+
+const withSelectedColorScheme = (
+  params: Record<string, unknown>,
+  selectedColorScheme: () => string,
+): Record<string, unknown> => {
+  const features = params["features"];
+  if (!Array.isArray(features)) return params;
+  return {
+    ...params,
+    features: features.map((feature: unknown) =>
+      typeof feature === "object" &&
+      feature !== null &&
+      "name" in feature &&
+      feature.name === "prefers-color-scheme" &&
+      "value" in feature &&
+      feature.value === ""
+        ? { ...feature, value: selectedColorScheme() }
+        : feature,
+    ),
+  };
+};
 
 const keyOf = ({ threadId, tabId }: DesktopBrowserTabKey) => `${threadId}\u0000${tabId}`;
 
@@ -329,9 +354,21 @@ export const make = Effect.gen(function* () {
 
   const relayFor = (tab: AttachedTab) => {
     if (tab.relay) return tab.relay;
-    const { webContents, debugger: debuggee, cookiesCleared } = tab.debuggee;
+    const {
+      webContents,
+      debugger: debuggee,
+      cookiesCleared,
+      selectedColorScheme,
+      emulatedMediaSet,
+    } = tab.debuggee;
     const send = async (method: string, params: Record<string, unknown>, sessionId?: string) => {
-      const result = await sendPageCommand(webContents, debuggee, method, params, sessionId);
+      const emulatesMedia = method === "Emulation.setEmulatedMedia";
+      const sent =
+        emulatesMedia && selectedColorScheme
+          ? withSelectedColorScheme(params, selectedColorScheme)
+          : params;
+      if (emulatesMedia) emulatedMediaSet?.(params);
+      const result = await sendPageCommand(webContents, debuggee, method, sent, sessionId);
       if (method === "Network.clearBrowserCookies") await cookiesCleared?.();
       return result;
     };

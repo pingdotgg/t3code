@@ -63,6 +63,7 @@ import * as Scope from "effect/Scope";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import {
   MENU_ACTION_CHANNEL,
@@ -569,9 +570,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const browserHost = yield* DesktopBrowserHost.DesktopBrowserHost;
   const browserSession = yield* BrowserSession.BrowserSession;
   const passkeys = yield* PreviewPasskeys.PreviewPasskeys;
+  const theme = yield* ElectronTheme.ElectronTheme;
   const context = yield* Effect.context<never>();
   const runFork = Effect.runForkWith(context);
   const runPromise = Effect.runPromiseWith(context);
+  const runSync = Effect.runSyncWith(context);
   const resolvedArtifactDirectory = path.resolve(artifactDirectory);
 
   let forwardedShortcuts: ReadonlyArray<PreviewForwardedShortcut> = [];
@@ -2495,6 +2498,43 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     yield* update(tabId, { zoomFactor: next });
   });
 
+  // Guests inherit the app's forced theme, so System names the OS scheme explicitly then.
+  const emulatedColorScheme = Effect.fn("PreviewManager.emulatedColorScheme")(function* (
+    colorScheme: DesktopPreviewColorScheme,
+  ) {
+    return colorScheme === "system" ? ((yield* theme.systemColorScheme) ?? "") : colorScheme;
+  });
+
+  // setEmulatedMedia replaces the whole emulation, so the agent's other overrides are resent.
+  const relayedMedia = new WeakMap<BrowserControlSession, Record<string, unknown>>();
+
+  const sendColorScheme = Effect.fn("PreviewManager.sendColorScheme")(function (
+    tabId: string,
+    wc: Electron.WebContents,
+    control: BrowserControlSession,
+    value: string,
+  ) {
+    const relayed = relayedMedia.get(control);
+    const features = Array.isArray(relayed?.["features"]) ? relayed["features"] : [];
+    return attemptPromise({ operation: "applyColorScheme", tabId, webContentsId: wc.id }, () =>
+      control.debugger.sendCommand("Emulation.setEmulatedMedia", {
+        ...relayed,
+        features: [
+          ...features.filter(
+            (feature: unknown) =>
+              !(
+                typeof feature === "object" &&
+                feature !== null &&
+                "name" in feature &&
+                feature.name === "prefers-color-scheme"
+              ),
+          ),
+          { name: "prefers-color-scheme", value },
+        ],
+      }),
+    );
+  });
+
   // Media emulation belongs to the debugger session and must be restored after every reattach.
   const applyColorScheme = Effect.fn("PreviewManager.applyColorScheme")(function* (
     tabId: string,
@@ -2502,17 +2542,25 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     colorScheme: DesktopPreviewColorScheme,
   ) {
     const control = yield* ensureControlSession(wc);
-    yield* attemptPromise({ operation: "applyColorScheme", tabId, webContentsId: wc.id }, () =>
-      control.debugger.sendCommand("Emulation.setEmulatedMedia", {
-        features: [
-          {
-            name: "prefers-color-scheme",
-            value: colorScheme === "system" ? "" : colorScheme,
-          },
-        ],
-      }),
-    );
+    yield* sendColorScheme(tabId, wc, control, yield* emulatedColorScheme(colorScheme));
   });
+
+  // Only guests with a session: one that attaches later restores the scheme itself. Each tab
+  // is re-read before its send, as earlier sends yield to setColorScheme and newer OS updates.
+  const reapplySystemColorScheme = Effect.fn("PreviewManager.reapplySystemColorScheme")(
+    function* () {
+      for (const tabId of (yield* SynchronizedRef.get(tabsRef)).keys()) {
+        const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+        if (tab?.colorScheme !== "system" || tab.webContentsId == null) continue;
+        const control = (yield* SynchronizedRef.get(controlSessionsRef)).get(tab.webContentsId);
+        const wc = webContents.fromId(tab.webContentsId);
+        if (!control || !wc || wc.isDestroyed()) continue;
+        const value = yield* emulatedColorScheme("system");
+        yield* sendColorScheme(tabId, wc, control, value).pipe(Effect.ignore);
+      }
+    },
+  );
+  yield* theme.onUpdated(() => runFork(reapplySystemColorScheme()));
 
   // The scheme is read after the session attaches so a concurrent setColorScheme is not
   // overwritten with a stale snapshot.
@@ -2532,6 +2580,15 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           webContents: wc,
           debugger: control.debugger,
           cookiesCleared: () => runPromise(browserSession.cookiesCleared(wc.session)),
+          selectedColorScheme: () =>
+            runSync(
+              SynchronizedRef.get(tabsRef).pipe(
+                Effect.flatMap((tabs) =>
+                  emulatedColorScheme(tabs.get(tabId)?.colorScheme ?? "system"),
+                ),
+              ),
+            ),
+          emulatedMediaSet: (params) => void relayedMedia.set(control, params),
         });
         // CDP cannot recover a failure that happened before it attached.
         const { navStatus } = afterAttach;
@@ -2543,18 +2600,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           });
         }
       }
-      if (afterAttach.colorScheme !== "system") {
-        yield* attemptPromise({ operation: "applyColorScheme", tabId, webContentsId: wc.id }, () =>
-          control.debugger.sendCommand("Emulation.setEmulatedMedia", {
-            features: [
-              {
-                name: "prefers-color-scheme",
-                value: afterAttach.colorScheme,
-              },
-            ],
-          }),
-        );
-      }
+      const colorScheme = yield* emulatedColorScheme(afterAttach.colorScheme);
+      if (colorScheme !== "") yield* sendColorScheme(tabId, wc, control, colorScheme);
     },
     (effect, _tabId, _wc) => effect.pipe(Effect.ignore),
   );

@@ -203,6 +203,7 @@ const layerElectronMenu = Layer.succeed(ElectronMenu.ElectronMenu, {
 
 const layerElectronTheme = Layer.succeed(ElectronTheme.ElectronTheme, {
   shouldUseDarkColors: Effect.succeed(false),
+  systemColorScheme: Effect.succeed(null),
   setSource: () => Effect.void,
   onUpdated: () => Effect.void,
 } satisfies ElectronTheme.ElectronTheme["Service"]);

@@ -53,6 +53,7 @@ const makeDebuggee = (
   const focusChanges: Array<() => void> = [];
   const sent: Array<unknown> = [];
   const methods: Array<string> = [];
+  const commandParams: Array<unknown> = [];
   const rejects: Array<() => void> = [];
   const sendWaiters: Array<() => void> = [];
   const focusEmulation: Array<boolean> = [];
@@ -79,6 +80,7 @@ const makeDebuggee = (
         }
         sent.push(params?.id);
         methods.push(method);
+        commandParams.push(params);
         rejects.push(() => reject(new Error("Refused")));
         pending.push(() => resolve({ method }));
         sendWaiters.shift()?.();
@@ -109,6 +111,8 @@ const makeDebuggee = (
     sent,
     /** Methods of the same commands, in order. */
     methods,
+    /** Params of the same commands, in order. */
+    commandParams,
     /** Refuses the pending command the debugger received with this id. */
     refuse: (id: number) => rejects[sent.indexOf(id)]?.(),
     focusEmulation,
@@ -309,6 +313,41 @@ describe("DesktopBrowserHost", () => {
       expect(reply).toMatchObject({ type: "cdp" });
       expect(decodeCdpReply((reply as { message: string }).message).id).toBe(2);
     }),
+  );
+
+  it.effect("turns a relayed clear of the color scheme into what System shows", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const debuggee = makeDebuggee();
+      host.attach(key, { ...debuggee.tab, selectedColorScheme: () => "dark" });
+      yield* watchReplies(host);
+      const media = (colorScheme: string) => ({
+        media: "",
+        features: [
+          { name: "prefers-color-scheme", value: colorScheme },
+          { name: "prefers-reduced-motion", value: "" },
+        ],
+      });
+      const emulate = (id: number, colorScheme: string) =>
+        host.handleCommandLine(
+          encodeJson({
+            type: "cdp",
+            ...key,
+            message: encodeJson({
+              id,
+              method: "Emulation.setEmulatedMedia",
+              params: media(colorScheme),
+              sessionId: "t3-preview-page",
+            }),
+          }),
+        );
+
+      yield* emulate(1, "");
+      yield* emulate(2, "light");
+      yield* settle;
+
+      expect(debuggee.commandParams).toEqual([media("dark"), media("light")]);
+    }).pipe(Effect.scoped),
   );
 
   it.effect("sends a page one screenshot at a time", () =>
