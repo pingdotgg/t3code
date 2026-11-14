@@ -466,7 +466,8 @@ test; every change to what the CLI or the SDK receives was compared with the T3 
   without a home folder, an API key, a failed initialization, disabled), entry, argv,
   environment, stdin and signals. A new check in `tools/check.sh`.
 - **Memory of the probe** (macOS, release, stub CLI): the SDK host starts at server start for
-  the probe, peaks at 89 MiB RSS, and stops after about 3 s. The server's RSS after it: 10.7 MiB,
+  the probe, peaks at 89 MiB RSS, and stops right after it (under 1 s with the stub CLI since the
+  fix below; 3 s before it). The server's RSS after it: 10.7 MiB,
   against 10.0 MiB with the probe off. The periodic probe runs only while a foreground client
   holds a `provider-status` activity lease (T3's `BackgroundPolicy`; `server.reportClientActivity`
   now records leases, also for Grok): an idle container starts no CLI and no host after the
@@ -477,6 +478,21 @@ test; every change to what the CLI or the SDK receives was compared with the T3 
   the provider reports later); `Effect::StopBackgroundWork` from `thread.stop`. Trait additions:
   `Session::stop_background_work` (default: nothing). Server: activity leases gate the periodic
   probe; `main.rs` sets the Claude probe's cwd (the state folder) and the off switch.
+
+**A defect the fixture replay showed under load (fixed).** `Helper::function` still held its
+stdin sender when it called `stop_if_idle`, so an SDK host that served only a `fn` call
+(`resolveSettings` at every cold start, `probeCapabilities`, `forkSession`) never saw the end of
+its input: it waited out the 3 s grace and was SIGKILLed with its process group. Every cold start
+was 3 s slower for it. In the replay, the kill reached the shim first; the orphaned fake host
+then saw EOF and rewrote its state file, and under load the group kill could land between the
+truncate and the write, so the next host started at cursor 0 (`claude_idle_resume` failed once
+in a full run at load 17 with a `resume` where the recording expects a fresh `sessionId`). The
+host now ends on EOF at once (test `a_host_used_only_for_a_function_ends_on_end_of_input`, which
+fails without the fix); the fake host writes its state file through a rename. T3 runs the SDK
+in process, so it has no such step. Under load (a release build beside it, load 8 to 12): 15 of
+15 runs green after the fix; before it, 12 of 12 runs at load 13 to 20 passed too, so the
+proof is the test and the trace (four fake hosts for two turns, each `fn` host killed after
+3 s without its EOF save).
 
 Still failing for Claude (2): `claude_background_subagent_after_root` (timing: T3's wake run
 queues behind run 1 while its checkpoint capture is pending; ours finds run 1 done and starts

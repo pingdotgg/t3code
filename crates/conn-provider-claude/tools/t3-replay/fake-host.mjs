@@ -66,15 +66,20 @@ function heldAtGate(entry) {
 }
 
 const write = (v) => process.stdout.write(`${JSON.stringify(v)}\n`);
-const save = () =>
+// Written whole through a rename: a host that ends mid-write never leaves a cut file for the
+// host that starts after it.
+const save = () => {
+  const temp = `${resultPath}.${process.pid}.tmp`;
   fs.writeFileSync(
-    resultPath,
+    temp,
     JSON.stringify(
       { cursor, total: entries.length, done: cursor >= entries.length, mismatch, promptUuids: [...promptUuids] },
       null,
       1,
     ),
   );
+  fs.renameSync(temp, resultPath);
+};
 
 // T3's sameFrame: deep equality of JSON values.
 const canon = (v) =>

@@ -130,8 +130,8 @@ probe off; every check that starts the server sets it, so no check runs this mac
 file), the version advisory (a registry lookup), skills, custom models, applying effort caps.
 Proof: `tools/probe-conformance/run.mjs`, 10 scenarios against T3's own function.
 
-The SDK host starts for a probe and stops after it (about 3 s with a stub CLI, 89 MiB RSS at
-its peak). The server probes at start, on a settings change, on `server.refreshProviders`,
+The SDK host starts for a probe and stops right after it (under 1 s with a stub CLI, 89 MiB
+RSS at its peak). The server probes at start, on a settings change, on `server.refreshProviders`,
 and every 5 minutes only while a client in the foreground holds a `provider-status`
 activity lease, as T3's `BackgroundPolicy`: an idle server starts no CLI and no host.
 

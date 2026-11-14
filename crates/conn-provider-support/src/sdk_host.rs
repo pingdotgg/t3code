@@ -278,6 +278,9 @@ impl Helper {
             command["configDir"] = json!(dir);
         }
         let result = self.inner.request(&writer, command, timeout).await;
+        // Our stdin sender goes first: while a clone lives, the host never sees the end of its
+        // input, and `stop_if_idle` would wait out the grace period and SIGKILL its group.
+        drop(writer);
         self.inner.lock().holds -= 1;
         self.stop_if_idle().await;
         result.map_err(|detail| ProviderError::Failed {
@@ -821,6 +824,53 @@ mod tests {
             end.helper_error
                 .is_some_and(|d| d.contains("speaks protocol 99"))
         );
+    }
+
+    /// A host that served only a `fn` call is stopped through the end of its input, as soon
+    /// as the call returns: no wait for the grace period and no SIGKILL to its group (which
+    /// cut a fake host's state file in half under load, and delayed every cold start by 3 s).
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_host_used_only_for_a_function_ends_on_end_of_input() {
+        let dir = std::env::temp_dir().join(format!("conn-host-fn-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let marker = dir.join("eof");
+        let fake = dir.join("host.mjs");
+        std::fs::write(
+            &fake,
+            format!(
+                r#"import {{ createInterface }} from "node:readline";
+import * as fs from "node:fs";
+process.stdout.write(JSON.stringify({{ ch: "host", t: "ready", protocol: 1 }}) + "\n");
+createInterface({{ input: process.stdin }}).on("line", (line) => {{
+  const cmd = JSON.parse(line);
+  if (cmd.t === "fn") process.stdout.write(JSON.stringify({{ ch: "reply", id: cmd.id, ok: true, value: 7 }}) + "\n");
+}});
+process.stdin.on("end", () => {{ fs.writeFileSync({marker:?}, "eof"); process.exit(0); }});
+"#
+            ),
+        )
+        .unwrap();
+        let helper = Helper::new(
+            HelperCommand::from_path(&fake),
+            "claudeAgent",
+            plain_driver("claude"),
+        );
+        let started = std::time::Instant::now();
+        let value = helper
+            .function("resolveSettings", json!([]), None, Duration::from_secs(10))
+            .await
+            .unwrap();
+        let took = started.elapsed();
+        let ended = marker.exists();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(value, json!(7));
+        assert!(ended, "the host saw the end of its input");
+        assert!(
+            took < crate::process::CLOSE_GRACE,
+            "the call waited out the grace period: {took:?}"
+        );
+        assert_eq!(helper.pid(), None);
     }
 
     #[tokio::test(flavor = "current_thread")]
