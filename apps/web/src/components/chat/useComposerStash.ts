@@ -145,6 +145,9 @@ export function useComposerStash(input: {
     (store) => store.clearComposerPromptAndImages,
   );
   const setComposerDraftThreadContexts = useComposerDraftStore((store) => store.setThreadContexts);
+  const setComposerDraftEnvironmentContexts = useComposerDraftStore(
+    (store) => store.setEnvironmentContexts,
+  );
   const [isStashMenuOpen, setIsStashMenuOpen] = useState(false);
   // Each stash bumps the key; the badge replays its one-shot pulse animation per key.
   const [stashPulseKey, setStashPulseKey] = useState(0);
@@ -159,6 +162,23 @@ export function useComposerStash(input: {
     setStashPulseKey((key) => key + 1);
   };
 
+  // Stable, so the check after the verify await sees a question that opened during it.
+  const refuseMachinesInAnswer = useStableCallback((menuEntry: PromptStashEntry) => {
+    // An answer to an agent's question carries no machines, so restoring here would drop them.
+    if (
+      pendingUserInputs.length > 0 &&
+      menuEntry.records?.some((record) => record.kind === "environment")
+    ) {
+      toastManager.add({
+        type: "error",
+        title: "Stashed machines can't go in an answer",
+        description: "Restore this prompt after the agent's question is answered.",
+      });
+      return true;
+    }
+    return false;
+  });
+
   const restoreStashEntry = async (menuEntry: PromptStashEntry) => {
     const filesToVerify = menuEntry.files ?? [];
     if (filesToVerify.some((file) => file.environmentId !== environmentId)) {
@@ -169,6 +189,7 @@ export function useComposerStash(input: {
       });
       return;
     }
+    if (refuseMachinesInAnswer(menuEntry)) return;
     setIsStashMenuOpen(false);
 
     // An expired upload restores as a needs-reattach row instead of a reference
@@ -191,7 +212,8 @@ export function useComposerStash(input: {
     // so abort and leave the entry restorable where the user now is.
     if (
       isRevertingCheckpoint() ||
-      !isComposerDraftTargetOpen(composerTargetKey(composerDraftTarget))
+      !isComposerDraftTargetOpen(composerTargetKey(composerDraftTarget)) ||
+      refuseMachinesInAnswer(menuEntry)
     ) {
       return;
     }
@@ -483,6 +505,7 @@ export function useComposerStash(input: {
     const stashedRecords: ComposerContextRecord[] = [
       ...(replyTo ? [replyTo] : []),
       ...composerThreadContexts,
+      ...(getComposerDraft(composerDraftTarget)?.environmentContexts ?? []),
       ...readTerminalContexts().map(terminalContextRecord),
       ...composerReviewComments.map(reviewCommentContextRecord),
       ...composerPreviewAnnotations.map((annotation) =>
@@ -596,6 +619,7 @@ export function useComposerStash(input: {
       clearComposerDraftPromptAndImages(stashTarget);
       clearComposerDraftTerminalContexts(stashTarget);
       setComposerDraftThreadContexts(stashTarget, []);
+      setComposerDraftEnvironmentContexts(stashTarget, []);
       setComposerDraftReplyTo(stashTarget, null);
       for (const comment of composerReviewComments) {
         removeComposerDraftReviewComment(stashTarget, comment.id);
