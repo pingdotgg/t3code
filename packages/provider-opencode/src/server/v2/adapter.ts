@@ -374,6 +374,7 @@ interface ThreadState {
     | { readonly name: string; readonly directory: string; readonly credential: string }
     | undefined;
   instructions: string | undefined;
+  environmentSent: boolean;
 }
 
 type TurnTerminal =
@@ -409,6 +410,16 @@ interface PendingRequest {
 const rule = (action: string, effect: Rule["effect"]): Rule => ({ action, resource: "*", effect });
 
 /** OpenCode hides tools for names over 64 chars and rejects names over 100; hash long thread IDs. */
+// Mirrors OpenCode2Server.serverEnvironment, without the server's own password.
+const shellEnvironment = (environment: NodeJS.ProcessEnv, threadId: string) => {
+  const variables: Record<string, string> = {};
+  for (const [name, value] of Object.entries(environment)) {
+    if (value !== undefined && name !== "OPENCODE_SERVER_PASSWORD") variables[name] = value;
+  }
+  variables.T3CODE_THREAD_ID = threadId;
+  return variables;
+};
+
 export const t3McpServerName = Effect.fn("t3McpServerName")(function* (threadId: string) {
   const name = `t3-code-${threadId.replaceAll(/[^a-zA-Z0-9_-]/g, "_")}`;
   if (name.length <= 64) return name;
@@ -782,7 +793,10 @@ const turnTokenUsage = (turn: ActiveTurn, status: OrchestrationV2ProviderTurn["s
       };
 };
 
-export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: ProviderInstanceId) {
+export const make = Effect.fn("OpenCode2Adapter.make")(function* (
+  instanceId: ProviderInstanceId,
+  environment: NodeJS.ProcessEnv,
+) {
   const server = yield* OpenCode2Server.OpenCode2Server;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const host = yield* ProviderHost.ProviderHost;
@@ -913,6 +927,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       externalPrompts: new Map(),
       mcp: undefined,
       instructions: undefined,
+      environmentSent: false,
     });
 
     const rootOf = (state: ThreadState): ThreadState => {
@@ -3688,6 +3703,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       // The gap may have started a pending prompt unseen, so none may set a later wake's boundary.
       for (const state of threads.values()) {
         state.mcp = undefined;
+        state.environmentSent = false;
         state.goalFresh = false;
         state.goalRefreshing = false;
         state.goalRevision += 1;
@@ -4233,6 +4249,22 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         if (mcpAvailable && fresh && compareSemverVersions(connection.version, "2.2.6") < 0) {
           yield* Effect.sleep(MCP_TOOL_RELOAD_SETTLE);
         }
+      }
+      // Sessions share one server, so each carries its thread's id (PortScanner.AGENT_THREAD_ENV).
+      // OpenCode replaces, not extends, the shell environment with these variables.
+      if (!state.environmentSent && !connection.external) {
+        state.environmentSent = true;
+        yield* client.session
+          .environment({
+            sessionID: Session.ID.make(sessionId),
+            variables: shellEnvironment(environment, turnInput.threadId),
+          })
+          .pipe(
+            Effect.timeout(INVENTORY_TIMEOUT),
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Could not set the OpenCode session environment.", cause),
+            ),
+          );
       }
       const instructions = [
         buildRuntimeInstructions({ harness: "OpenCode", model: turnInput.modelSelection.model }),

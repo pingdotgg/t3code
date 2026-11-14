@@ -488,7 +488,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       }
       const launch = buildPiRpcLaunch({
         launchArgs: resolvedLaunchArgs.args,
-        environment: options.environment,
+        // Pi's shells inherit this thread's id (PortScanner.AGENT_THREAD_ENV in apps/server).
+        environment: { ...options.environment, T3CODE_THREAD_ID: input.threadId },
         mcpSession,
         extensionPath,
         runtimeMode: input.runtimePolicy.runtimeMode,

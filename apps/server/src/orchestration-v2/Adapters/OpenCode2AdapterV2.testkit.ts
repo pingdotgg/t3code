@@ -108,6 +108,7 @@ const operationOf = (
     if (method === "GET" && rest === "") return { type: "session.get", input };
     if (method === "DELETE" && rest === "") return { type: "session.remove", input };
     if (method === "PATCH" && rest === "") return { type: "session.update", input };
+    if (method === "PUT" && rest === "/environment") return { type: "session.environment", input };
     if (method === "POST" && rest === "/prompt") return { type: "session.prompt", input };
     if (method === "POST" && rest === "/command") return { type: "session.command", input };
     if (method === "POST" && rest === "/compact") return { type: "session.compact", input };
@@ -153,6 +154,7 @@ const replayHttpClient = (
   replayGate: ProviderReplayGate | undefined,
   onPrompt: ((input: unknown) => void) | undefined,
   beforeResponse: ((path: string) => Effect.Effect<void>) | undefined,
+  onEnvironment: ((input: unknown) => void) | undefined,
 ) =>
   HttpClient.make((request, url) =>
     Effect.tryPromise({
@@ -171,6 +173,11 @@ const replayHttpClient = (
           query,
           raw === undefined ? undefined : decodeJson(raw),
         );
+        // Recordings predate session.environment, so it is answered here instead of replayed.
+        if (operation.type === "session.environment") {
+          onEnvironment?.(operation.input);
+          return new Response(null, { status: 204 });
+        }
         // HTTP streams and requests use separate connections; deliver prior recorded inbound data before matching requests.
         if (operation.type !== "event.subscribe") await controller.untilInboundDelivered();
         if (operation.type === "session.prompt") onPrompt?.(operation.input);
@@ -224,6 +231,7 @@ export const replayServer = (
     readonly processExit?: Effect.Effect<void>;
     readonly beforeResponse?: (path: string) => Effect.Effect<void>;
     readonly onPrompt?: (input: unknown) => void;
+    readonly onEnvironment?: (input: unknown) => void;
     readonly replayGate?: ProviderReplayGate;
     readonly borrowers?: { current: number };
   },
@@ -244,6 +252,7 @@ export const replayServer = (
           options?.replayGate,
           options?.onPrompt,
           options?.beforeResponse,
+          options?.onEnvironment,
         ),
       ),
     );
@@ -280,13 +289,14 @@ const makeReplayAdapter = (
     readonly processExit?: Effect.Effect<void>;
     readonly beforeResponse?: (path: string) => Effect.Effect<void>;
     readonly onPrompt?: (input: unknown) => void;
+    readonly onEnvironment?: (input: unknown) => void;
     readonly replayGate?: ProviderReplayGate;
     readonly borrowers?: { current: number };
   },
 ) =>
   Effect.gen(function* () {
     const server = yield* replayServer(transcript, options);
-    return yield* OpenCode2Adapter.make(ProviderInstanceId.make("opencode")).pipe(
+    return yield* OpenCode2Adapter.make(ProviderInstanceId.make("opencode"), {}).pipe(
       Effect.provideService(OpenCode2Server.OpenCode2Server, server),
     );
   });
@@ -336,6 +346,7 @@ export const openCode2ReplayRuntime = (
     readonly beforeResponse?: (path: string) => Effect.Effect<void>;
     readonly version?: string;
     readonly onPrompt?: (input: unknown) => void;
+    readonly onEnvironment?: (input: unknown) => void;
     readonly borrowers?: { current: number };
     readonly replayGate?: ProviderReplayGate;
     readonly attachmentsDir?: string;

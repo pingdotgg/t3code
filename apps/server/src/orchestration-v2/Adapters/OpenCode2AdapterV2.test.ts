@@ -339,6 +339,7 @@ const resumed = (
     readonly resolveExtractedTextPath?: (path: string) => Effect.Effect<string | undefined>;
     readonly fileSystem?: FileSystem.FileSystem;
     readonly onPrompt?: (input: unknown) => void;
+    readonly onEnvironment?: (input: unknown) => void;
   },
 ) =>
   Effect.gen(function* () {
@@ -376,6 +377,7 @@ const resumed = (
         ...(options?.borrowers === undefined ? {} : { borrowers: options.borrowers }),
         ...(options?.fileSystem === undefined ? {} : { fileSystem: options.fileSystem }),
         ...(options?.onPrompt === undefined ? {} : { onPrompt: options.onPrompt }),
+        ...(options?.onEnvironment === undefined ? {} : { onEnvironment: options.onEnvironment }),
         ...(options?.external === undefined ? {} : { external: options.external }),
         ...(options?.processExit === undefined ? {} : { processExit: options.processExit }),
         ...(options?.beforeResponse === undefined
@@ -520,6 +522,33 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         turnInput(thread, { ...bigPickle, options: [{ id: "variant", value: "medium" }] }),
       );
       assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+    }),
+  );
+
+  it.effect("gives the shared server's session its thread's T3CODE_THREAD_ID once", () =>
+    Effect.gen(function* () {
+      const environments: Array<unknown> = [];
+      const { runtime, thread } = yield* resumed(
+        [
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ],
+        { onEnvironment: (input) => environments.push(input) },
+      );
+      for (let turn = 0; turn < 2; turn++) {
+        const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+        yield* runtime.startTurn(turnInput(thread));
+        assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+      }
+      assert.lengthOf(environments, 1);
+      assert.deepInclude(environments[0], {
+        sessionID: SESSION,
+        variables: { T3CODE_THREAD_ID: threadId },
+      });
     }),
   );
 
