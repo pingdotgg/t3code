@@ -245,10 +245,12 @@ export function ProviderModelsSection({
     setError(null);
   };
 
-  const handleSaveEdit = (next: CustomModelDefinition) => {
+  const handleSaveEdit = async (next: CustomModelDefinition) => {
     if (!canManageCustomModels) return;
-    void onChange(customModels.map((entry) => (entry.slug === next.slug ? next : entry)));
-    setEditingSlug(null);
+    const saved = await onChange(
+      customModels.map((entry) => (entry.slug === next.slug ? next : entry)),
+    );
+    if (saved) setEditingSlug((current) => (current === next.slug ? null : current));
   };
 
   const setHidden = (slug: string, hidden: boolean) => {
@@ -409,7 +411,7 @@ export function ProviderModelsSection({
                   driverKind={driverKind}
                   entry={editingEntry}
                   builtInModels={builtInModels}
-                  onSave={handleSaveEdit}
+                  onSave={(next) => void handleSaveEdit(next)}
                   onCancel={() => setEditingSlug(null)}
                 />
               ) : null}

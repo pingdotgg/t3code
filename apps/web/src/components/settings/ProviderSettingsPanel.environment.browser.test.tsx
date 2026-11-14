@@ -290,15 +290,13 @@ describe("EnvironmentProviderSettings routing", () => {
       await setup();
       const first = { slug: "model-a", name: "Original A" };
       const second = { slug: "model-b", name: "Original B" };
-      state.settings = {
+      const stored = (customModels: ReadonlyArray<{ slug: string; name: string }>) => ({
         ...DEFAULT_UNIFIED_SETTINGS,
         providerInstances: {
-          [customId]: {
-            driver: ProviderDriverKind.make("codex"),
-            config: { customModels: [first, second] },
-          },
+          [customId]: { driver: ProviderDriverKind.make("codex"), config: { customModels } },
         },
-      };
+      });
+      state.settings = stored([first, second]);
       const replies: Array<() => void> = [];
       state.mutateProviderInstance.mockImplementation(
         () => new Promise((resolve) => replies.push(() => resolve(AsyncResult.success({})))),
@@ -330,6 +328,16 @@ describe("EnvironmentProviderSettings routing", () => {
           },
         },
       });
+
+      // The first save's echo lands after both replied, ahead of the second's.
+      await act(() => replies.forEach((reply) => reply()));
+      state.settings = stored([{ ...first, name: "Entered A" }, second]);
+      await screen.rerender(panel({ targetInstanceId: customId }));
+      await rename("model-a", "Again A");
+      expect(state.mutateProviderInstance.mock.calls[2]?.[0].instance.config.customModels).toEqual([
+        { ...first, name: "Again A" },
+        { ...second, name: "Entered B" },
+      ]);
     },
   );
 

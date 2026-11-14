@@ -713,8 +713,30 @@ const NO_CUSTOM_MODELS: ReadonlyArray<CustomModelDefinition> = [];
 
 interface CustomModelSave {
   readonly models: ReadonlyArray<CustomModelDefinition>;
-  /** The stored list when the save replied without yet reflecting it; unset while in flight. */
+  /** The models as the config stream will read them back once this save lands. */
+  readonly key: string;
+  /** The stored list when the save replied; unset while in flight. */
   readonly storedAtReply?: string;
+}
+
+const customModelsKey = (models: ReadonlyArray<CustomModelDefinition>) =>
+  JSON.stringify(readCustomModelEntries(models.map(toCustomModelSetting)));
+
+/**
+ * Saves the stored list does not reflect yet. Saves land in order, so the echo of one settles it
+ * and every save before it; any other change to the stored list drops the replied ones.
+ */
+function pendingCustomModelSaves(saves: ReadonlyArray<CustomModelSave>, storedKey: string) {
+  const echoed = saves.findLastIndex((entry) => entry.key === storedKey);
+  return saves
+    .slice(echoed + 1)
+    .flatMap((entry) =>
+      entry.storedAtReply === undefined
+        ? [entry]
+        : echoed >= 0 || entry.storedAtReply === storedKey
+          ? [{ ...entry, storedAtReply: storedKey }]
+          : [],
+    );
 }
 
 /**
@@ -727,20 +749,17 @@ function useCustomModelSaves(
 ) {
   const [saves, setSaves] = useState<ReadonlyArray<CustomModelSave>>([]);
   const storedKey = JSON.stringify(stored);
-  const isLive = (entry: CustomModelSave) =>
-    entry.storedAtReply === undefined || entry.storedAtReply === storedKey;
-  const current = saves.findLast(isLive)?.models ?? stored;
-  const settle = useStableCallback((sent: CustomModelSave, saved: boolean) => {
-    const echoed = JSON.stringify(sent.models) === storedKey;
+  const current = pendingCustomModelSaves(saves, storedKey).at(-1)?.models ?? stored;
+  const settle = useStableCallback((sent: CustomModelSave, saved: boolean) =>
     setSaves((list) =>
       list.flatMap((entry) =>
-        entry !== sent ? [entry] : saved && !echoed ? [{ ...entry, storedAtReply: storedKey }] : [],
+        entry !== sent ? [entry] : saved ? [{ ...entry, storedAtReply: storedKey }] : [],
       ),
-    );
-  });
+    ),
+  );
   const update = useStableCallback(async (next: ReadonlyArray<CustomModelDefinition>) => {
-    const sent: CustomModelSave = { models: next };
-    setSaves((list) => [...list.filter(isLive), sent]);
+    const sent: CustomModelSave = { models: next, key: customModelsKey(next) };
+    setSaves((list) => [...pendingCustomModelSaves(list, storedKey), sent]);
     const saved = await save(next);
     settle(sent, saved);
     return saved;
