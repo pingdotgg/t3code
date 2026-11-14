@@ -29,6 +29,7 @@ import { useId, useImperativeHandle, useRef, useState, type ReactNode, type Ref 
 import { useAssetUrls } from "../../assets/assetUrls";
 import { threadEnvironment } from "../../state/threads";
 import { useQuietThreadShell, useThreadProjection } from "../../state/entities";
+import { useEnvironment } from "../../state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { isImageAttachment, type ChatMessage } from "../../types";
 import { cn } from "~/lib/utils";
@@ -91,7 +92,7 @@ export function QueuedRunsControl({
   readonly onEditQueuedRun: (request: EditQueuedRunRequest) => void;
   readonly onCancelEdit: () => void;
   readonly timestampFormat: TimestampFormat;
-  readonly onOpenThread: (threadId: ThreadId) => void;
+  readonly onOpenThread: (threadId: ThreadId, environmentId?: EnvironmentId) => void;
 }) {
   const projection = useThreadProjection(
     scopeThreadRef(props.environmentId, props.threadId),
@@ -113,7 +114,11 @@ export function QueuedRunsControl({
   const workflow = projection ? deriveThreadQueueWorkflowState(projection) : null;
   const queued = workflow?.queuedRuns ?? [];
   const activeRun = workflow?.activeRun ?? null;
-  const canSend = workflow?.canSendNow === true || workflow?.canPromoteToSteer === true;
+  // A fresh message starts its own turn: it may skip compaction, but not steer into a turn.
+  const canSendRun = (freshContext: boolean) =>
+    workflow?.canSendNow === true ||
+    (workflow?.canPromoteToSteer === true &&
+      (!freshContext || workflow.promoteSkipsCompaction === true));
   const queuedImageUrlById = new Map(
     queuedImageAttachmentUrls.flatMap((url, index) => {
       const resource = queuedImageAttachmentResources[index];
@@ -129,6 +134,7 @@ export function QueuedRunsControl({
       message,
       runId: run.id,
       messageId: run.userMessageId,
+      freshContext: run.freshContext === true,
       serverIndex,
       text,
       // A guest's message keeps the guest's words; the owner can cancel it, not rewrite it.
@@ -148,6 +154,7 @@ export function QueuedRunsControl({
       message: undefined,
       runId: null,
       messageId: null,
+      freshContext: false,
       serverIndex: null,
       text: message.text,
       editable: true,
@@ -164,7 +171,10 @@ export function QueuedRunsControl({
   ];
 
   const sendQueuedMessage = async (queuedRunId: RunId) => {
-    if (!canSend || steerInFlightRef.current) return;
+    const freshContext = queued.some(
+      ({ run }) => run.id === queuedRunId && run.freshContext === true,
+    );
+    if (!canSendRun(freshContext) || steerInFlightRef.current) return;
     steerInFlightRef.current = true;
     setBusyRunId(queuedRunId);
     if (workflow?.canSendNow) {
@@ -185,7 +195,7 @@ export function QueuedRunsControl({
   useImperativeHandle(ref, () => ({
     steerNext(repeat) {
       const next = queued[0];
-      if (!next || !canSend) return false;
+      if (!next || !canSendRun(next.run.freshContext === true)) return false;
       if (!repeat && busyRunId === null) void sendQueuedMessage(next.run.id);
       return true;
     },
@@ -243,9 +253,7 @@ export function QueuedRunsControl({
           const previewText = isAttachmentOnlyBootstrapPrompt(item.text)
             ? ""
             : assistantCitationsToPlainText(
-                replaceComposerContextReferences(item.text, (reference) =>
-                  reference.kind === "image" && item.thumbnails.length > 0 ? "" : reference.label,
-                ),
+                replaceComposerContextReferences(item.text, (reference) => reference.label),
               ).trim();
           const isEditing = item.runId !== null && item.runId === props.editingRunId;
           return (
@@ -255,7 +263,7 @@ export function QueuedRunsControl({
               aria-posinset={position + 1}
               aria-setsize={items.length}
               aria-current={isEditing ? "true" : undefined}
-              className="group/queued flex w-full flex-col items-end gap-1 transition-opacity duration-150 ease-out starting:opacity-0 motion-reduce:transition-none"
+              className="group/queued flex w-full flex-col items-end gap-1"
             >
               <QueuedMessage
                 environmentId={props.environmentId}
@@ -266,7 +274,7 @@ export function QueuedRunsControl({
                 timestampFormat={props.timestampFormat}
                 onOpenThread={props.onOpenThread}
               >
-                {canSend && !isEditing ? (
+                {canSendRun(item.freshContext) && !isEditing ? (
                   <>
                     <Tooltip>
                       <TooltipTrigger render={<span className="flex shrink-0" />}>
@@ -402,19 +410,22 @@ function QueuedMessage(props: {
   readonly thumbnails: ReadonlyArray<QueuedRowThumbnail>;
   readonly isEditing: boolean;
   readonly timestampFormat: TimestampFormat;
-  readonly onOpenThread: (threadId: ThreadId) => void;
+  readonly onOpenThread: (threadId: ThreadId, environmentId?: EnvironmentId) => void;
   readonly children: ReactNode;
 }) {
   const presentation = props.message ? resolveUserMessagePresentation(props.message) : null;
   const attribution = presentation?.attribution ?? null;
   const scheduledTaskId = presentation?.scheduledTaskId;
   const senderThreadId = props.message?.senderThreadId;
+  // A linked environment's agent sent it from a thread there.
+  const senderRef =
+    props.message?.linkedSender ??
+    (senderThreadId === undefined ? null : scopeThreadRef(props.environmentId, senderThreadId));
   const [expanded, setExpanded] = useState(false);
   const taskTitle = useScheduledTaskTitle(props.environmentId, scheduledTaskId);
-  const senderShell = useQuietThreadShell(
-    attribution === "agent" && senderThreadId
-      ? { environmentId: props.environmentId, threadId: senderThreadId }
-      : null,
+  const senderShell = useQuietThreadShell(attribution === "agent" ? senderRef : null);
+  const linkedSenderEnvironment = useEnvironment(
+    props.message?.linkedSender?.environmentId ?? null,
   );
   const fold =
     attribution === "automation"
@@ -426,7 +437,8 @@ function QueuedMessage(props: {
       : attribution === "agent"
         ? {
             icon: MessagesSquareIcon,
-            label: senderShell?.title.trim() || "Agent",
+            label:
+              senderShell?.title.trim() || props.message?.linkedSender?.title.trim() || "Agent",
             summary: props.previewText.split(/\r?\n/).find((line) => line.trim()) ?? "",
           }
         : null;
@@ -499,8 +511,14 @@ function QueuedMessage(props: {
       <div className="flex items-center gap-0.5 pe-1 text-xs text-muted-foreground">
         {props.message ? (
           <span className="me-1 flex items-center gap-2 px-1 opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover/queued:opacity-100">
-            {attribution === "agent" && senderThreadId ? (
-              <InlineButton tone="muted" onClick={() => props.onOpenThread(senderThreadId)}>
+            {attribution === "agent" &&
+            senderRef &&
+            // Only an environment this client is connected to can open the sender's thread there.
+            (props.message?.linkedSender === undefined || linkedSenderEnvironment !== null) ? (
+              <InlineButton
+                tone="muted"
+                onClick={() => props.onOpenThread(senderRef.threadId, senderRef.environmentId)}
+              >
                 Open thread
               </InlineButton>
             ) : null}

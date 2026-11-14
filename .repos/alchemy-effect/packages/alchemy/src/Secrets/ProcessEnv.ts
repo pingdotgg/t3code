@@ -2,11 +2,7 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import { envKeys } from "./Log.ts";
-import {
-  resolveSecretsOption,
-  type SecretsLayer,
-  type SecretsOption,
-} from "./Provider.ts";
+import { resolveSecretsOption, type SecretsLayer, type SecretsOption } from "./Provider.ts";
 
 export interface ProcessEnvOptions {
   /**
@@ -18,9 +14,9 @@ export interface ProcessEnvOptions {
 }
 
 /** A `secrets` entry that loads the process environment. */
-export class ProcessEnvProvider extends Data.TaggedClass(
-  "alchemy/SecretProvider::ProcessEnv",
-)<{ readonly layer: SecretsLayer }> {}
+export class ProcessEnvProvider extends Data.TaggedClass("alchemy/SecretProvider::ProcessEnv")<{
+  readonly layer: SecretsLayer;
+}> {}
 
 /**
  * The process environment as a secrets provider.
@@ -46,9 +42,7 @@ export const ProcessEnv = (options: SecretsOption<ProcessEnvOptions> = {}) =>
         });
         // A shell has far too many variables to list; the count is enough.
         const keys = yield* envKeys(environment);
-        yield* Effect.logDebug(
-          `Loaded ${keys.length} secrets from the process environment`,
-        );
+        yield* Effect.logDebug(`Loaded ${keys.length} secrets from the process environment`);
         return environment;
       }),
       { asPrimary: true },

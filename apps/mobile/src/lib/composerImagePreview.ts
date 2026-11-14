@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Hash from "effect/Hash";
+import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
 
 import type { DraftComposerImageAttachment } from "./composerImages";
@@ -31,6 +32,27 @@ async function materializeDataUrlPreview(id: string, dataUrl: string): Promise<s
   return file.uri;
 }
 
+const inFlightPreviews = new Map<string, Promise<string | null>>();
+
+// A render reads the atom before its effect subscribes, so the registry can drop and rebuild it
+// mid-write; a second writer would delete the first one's partial file and fail its own move.
+function materializePreviewOnce(id: string, dataUrl: string): Promise<string | null> {
+  const pending = inFlightPreviews.get(id);
+  if (pending) return pending;
+  const next = materializeDataUrlPreview(id, dataUrl).finally(() => inFlightPreviews.delete(id));
+  inFlightPreviews.set(id, next);
+  return next;
+}
+
+class ImagePreviewCacheError extends Schema.TaggedError<ImagePreviewCacheError>()(
+  "ImagePreviewCacheError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Could not cache an image preview.";
+  }
+}
+
 /**
  * Keyed by attachment id only: the cached file is named by id, and an upload
  * reference landing on the same draft must not restart materialization and
@@ -48,12 +70,14 @@ export class MaterializedPreviewKey implements Equal.Equal {
 
 export const materializedPreviewAtom = Atom.family(({ attachment }: MaterializedPreviewKey) =>
   Atom.make(
-    Effect.tryPromise(() => materializeDataUrlPreview(attachment.id, attachment.previewUri)).pipe(
+    Effect.tryPromise({
+      try: () => materializePreviewOnce(attachment.id, attachment.previewUri),
+      catch: (cause) => new ImagePreviewCacheError({ cause }),
+    }).pipe(
       Effect.catch((error) =>
-        Effect.sync(() => {
-          console.warn("[composer-attachments] could not cache an image preview", error);
-          return null;
-        }),
+        Effect.logWarning("[composer-attachments] could not cache an image preview", error).pipe(
+          Effect.as(null),
+        ),
       ),
     ),
   ).pipe(Atom.withLabel(`composer-image-preview:${attachment.id}`)),
