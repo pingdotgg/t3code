@@ -17047,11 +17047,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       yield* startTurn(1, false);
       for (const frame of [
         roster([agentEntry("run-1")]),
-        makeSubagentTaskStartedFrame({
-          taskId: TASK_ID,
-          toolUseId: LAUNCH,
-          uuid: "00000000-0000-4000-8000-000000016101",
-        }),
+        {
+          ...makeSubagentTaskStartedFrame({
+            taskId: TASK_ID,
+            toolUseId: LAUNCH,
+            uuid: "00000000-0000-4000-8000-000000016101",
+          }),
+          run_id: "run-1",
+        },
         makeResultFrame({ uuid: "00000000-0000-4000-8000-000000016102", result: "LAUNCHED" }),
       ]) {
         yield* harness.offerAndWait(frame);
@@ -17103,11 +17106,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         }),
         roster([]),
         roster([agentEntry("run-2")]),
-        makeSubagentTaskStartedFrame({
-          taskId: TASK_ID,
-          toolUseId: LAUNCH,
-          uuid: "00000000-0000-4000-8000-000000016107",
-        }),
+        {
+          ...makeSubagentTaskStartedFrame({
+            taskId: TASK_ID,
+            toolUseId: LAUNCH,
+            uuid: "00000000-0000-4000-8000-000000016107",
+          }),
+          run_id: "run-2",
+        },
       ]) {
         yield* harness.offerAndWait(frame);
       }
@@ -17165,6 +17171,21 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       );
       yield* harness.until(() => subagentUpdates().at(-1)?.result === "DONE");
       assert.equal(subagentUpdates().at(-1)?.status, "completed");
+      yield* harness.until(() =>
+        harness.events.some(
+          (event) => event.type === "message.updated" && event.message.text === "DONE",
+        ),
+      );
+      const childMessageTexts = new Map<string, string>();
+      for (const event of harness.events) {
+        if (event.type === "message.updated" && event.message.threadId === routing.childThreadId) {
+          childMessageTexts.set(event.message.id, event.message.text);
+        }
+      }
+      assert.deepEqual(
+        [...childMessageTexts.values()].filter((text) => text === "WAITING" || text === "DONE"),
+        ["WAITING", "DONE"],
+      );
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
