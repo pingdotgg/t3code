@@ -1806,6 +1806,87 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
+  it.effect.each(["thread/start", "thread/fork"] as const)(
+    "classifies delegated children as subagents in %s",
+    (method) =>
+      Effect.gen(function* () {
+        const nativeThreadId = "thread-source-parent";
+        const preamble = codexReplayPreamble({
+          nativeThreadId,
+          nativeTurnId: "unused",
+          prompt: "unused",
+        });
+        const requests: Array<unknown> = [];
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: "thread-source",
+            entries: [
+              ...preamble.slice(0, 5),
+              {
+                type: "expect_outbound",
+                frame: {
+                  id: 3,
+                  method,
+                  params: {
+                    ...(method === "thread/start"
+                      ? { cwd: "/workspace", model: "gpt-5.4" }
+                      : { threadId: nativeThreadId, excludeTurns: true }),
+                    threadSource: "subagent",
+                    config: CodexAdapterV2.CODEX_THREAD_CONFIG,
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                frame: {
+                  id: 3,
+                  result: codexReplayThreadResult({
+                    nativeThreadId: "thread-source-child",
+                    forkedFromId: method === "thread/fork" ? nativeThreadId : null,
+                  }),
+                },
+              },
+            ],
+          }),
+          () => Effect.void,
+          (requestMethod, params) =>
+            Effect.sync(() => {
+              if (requestMethod === "thread/start" || requestMethod === "thread/fork") {
+                requests.push(params);
+              }
+            }),
+        );
+        const childThreadId = ThreadId.make("thread-source-child");
+        if (method === "thread/start") {
+          yield* harness.runtime.ensureThread({
+            threadId: childThreadId,
+            isSubagent: true,
+            modelSelection: CODEX_TEST_MODEL_SELECTION,
+            runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+          });
+        } else {
+          yield* harness.runtime.forkThread({
+            sourceProviderThread: harness.providerThread,
+            targetThreadId: childThreadId,
+            isSubagent: true,
+          });
+        }
+        assert.lengthOf(requests, 2);
+        assert.notProperty(requests[0], "threadSource");
+        assert.propertyVal(requests[1], "threadSource", "subagent");
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
   it.effect("adds the session MCP server without replacing launch-argument servers", () =>
     Effect.gen(function* () {
       const scenario = "launch-mcp-servers";

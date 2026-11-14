@@ -11,6 +11,7 @@ import {
   type OrchestrationV2RunAttempt,
   type OrchestrationV2TurnItem,
   isCompactionCommandMessage,
+  isDelegatedAppThread,
   parseGoalCommand,
   RunId,
   ThreadId,
@@ -281,6 +282,7 @@ export const layer: Layer.Layer<
     }) {
       const { runId } = input;
       const projection = yield* projectionStore.getTurnStartContext(input.threadId, runId);
+      const isSubagent = isDelegatedAppThread(projection.thread);
       const run = projection.runs.find((candidate) => candidate.id === runId);
       if (run === undefined) {
         return yield* new ProviderTurnStartError({ runId, cause: `Run ${runId} was not found.` });
@@ -1084,6 +1086,7 @@ export const layer: Layer.Layer<
                     turn.runAttemptId === null || !rolledBackAttemptIds.has(turn.runAttemptId),
                 ),
                 targetThreadId: projection.thread.id,
+                isSubagent,
                 modelSelection: run.modelSelection,
                 runtimePolicy: resolvedRuntimePolicy,
                 ...(sourceProviderTurn === undefined
@@ -1135,6 +1138,7 @@ export const layer: Layer.Layer<
           const loaded = yield* loadFromProvider(
             session.ensureThread({
               threadId: projection.thread.id,
+              isSubagent,
               title: projection.thread.title,
               modelSelection: run.modelSelection,
               runtimePolicy: resolvedRuntimePolicy,
@@ -1224,6 +1228,7 @@ export const layer: Layer.Layer<
           return yield* loadFromProvider(
             session.ensureThread({
               threadId: projection.thread.id,
+              isSubagent,
               title: projection.thread.title,
               modelSelection: run.modelSelection,
               runtimePolicy: resolvedRuntimePolicy,
@@ -1334,6 +1339,7 @@ export const layer: Layer.Layer<
         const replacement = yield* loadFromProvider(
           session.ensureThread({
             threadId: projection.thread.id,
+            isSubagent,
             title: projection.thread.title,
             modelSelection: run.modelSelection,
             runtimePolicy: resolvedRuntimePolicy,
