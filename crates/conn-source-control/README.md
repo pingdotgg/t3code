@@ -13,11 +13,14 @@ monorepo at `conn.pin`.
 | --- | --- |
 | `server.discoverSourceControl` | Served: `git`, `jj` (from `conn-vcs`) and all 7 hosts (see "Discovery") |
 | `sourceControl.*` (9) | All 9 served: `signInStart`, `signInWait`, `signInCancel`, `appAccess` (as a T3 server without `T3CODE_GITHUB_APP_CLIENT_ID`), `starred`, `star` (GitHub REST, any other host `false`); `lookupRepository`, `cloneRepository`, `publishRepository` for all 7 hosts (see "Repositories") |
+| The host definition registry | Built (part 4): remotes, change request URLs, canonical keys, the project predicates, thread link keys (see "Registry") |
+| Provider detection | Built (part 4), not yet called by a method (see "Provider detection") |
+| GitHub's GraphQL operations | Generated from the monorepo (part 4); no request sends one yet (see "GitHub GraphQL") |
 | `git.*` (3) | Not served |
 | `pr` in VCS status | Not served (always `null`) |
 | `pullRequests.*` (35) | Not served |
-| Engine commands for linked pull requests (7) | Not served (the engine refuses them) |
-| `/mcp` pull request tools (9) | Not served |
+| Engine commands for linked pull requests (7) | `thread.pull-request.link` and `unlink` as T3's decider (part 4); the other 5 refused |
+| `/mcp` pull request tools (9) | 5 served (part 4): `link_pull_request(s)`, `unlink_pull_request(s)`, `list_thread_pull_requests`; `watch`/`unwatch` and the 2 guide tools not served |
 
 ## Modules
 
@@ -34,6 +37,10 @@ monorepo at `conn.pin`.
 | `hosts/forgejo_cli.rs` | `ForgejoCli.resolveTarget` and `api`: the fj or tea login that serves a repository, fj's API with its token, `tea api` |
 | `hosts/gitcafe_api.rs` | GitCafe's hosts and remotes, `GitCafeCredentials.get`, `GitCafeApi.request`, `resolveTarget` |
 | `hosts/repositories.rs` | Each host's `getRepositoryCloneUrls` and `createRepository` (`Hosts`) |
+| `hosts/github_graphql/` | GitHub's GraphQL operations: `generated.rs` (by `tools/gen-graphql.mjs`) and the batch renderer |
+| `registry/` | The host definition registry (`mod.rs`), its URL routes (`paths.rs`), thread link keys (`thread_keys.rs`) |
+| `detect.rs` | Provider detection: the checkout's remotes, the recognised context, unknown hosts refined |
+| `cache.rs` | `TtlCache`: bounded, one shared lookup per key, a time to live per answer (Effect's `Cache`) |
 
 ## Sign-in and stars
 
@@ -90,9 +97,10 @@ Deviations from the T3 server:
   server's `SettingsSecretUnresolvedError` (its message names the provider).
 - **No GitHub App sign-in.** The server acts as a T3 server without
   `T3CODE_GITHUB_APP_CLIENT_ID`: no `appSignIn` offer, and a saved sign-in is not used.
-- **No caches.** The T3 server keeps a host's token (Origin 5 min, `gh auth token` 5 min) and
-  GitHub's quota and pause state between calls. Discovery here reads them on every call; a
-  GitHub rate-limit answer reads as "unknown" with T3's message.
+- **No token caches.** The T3 server keeps a host's token (Origin 5 min, `gh auth token` 5 min)
+  and GitHub's quota and pause state between calls. Discovery here reads them on every call; a
+  GitHub rate-limit answer reads as "unknown" with T3's message. `cache.rs` now has the bounded
+  cache these need; provider detection uses it.
 - **The macOS wrong-CPU hint** (errno -86 in `failedProbeHint`) is not detected; such a CLI
   gets the generic "failed" hint.
 - **No concurrency keys.** T3 runs at most 4 `gh` children and 4 non-`git` children at once;
@@ -165,37 +173,109 @@ Deviations:
   trace2 variable only to a `git` call that reports hook progress, and a clone does not.
 - The error's `cause` is not sent; clients read `detail`.
 
+## Registry
+
+`registry/` is the server half of T3's definition registry
+(`packages/source-control-core/src/shared/definition.ts`, the order in
+`packages/source-control-definitions/src/registry.ts`, each host's `src/shared/definition.ts`):
+`recognize_remote` in recognition order (GitCafe, Cursor Origin, Forgejo, GitHub, GitLab, Azure
+DevOps, Bitbucket), `parse_change_request_url` in claim order (GitCafe, Cursor Origin, Azure
+DevOps first), each host's `change_request_url`, `canonical_repository_key`,
+`repository_key_from_remote`, `repository_selector`, `change_request_host`,
+`find_by_public_host`, the project predicates (`is_change_request_in_repository`,
+`can_read_change_request_on_host`, `checkout_change_request_host`), `change_request_head_ref`,
+`is_same_change_request`, GitCafe's URL spelling, and the thread link keys
+(`normalizeThreadPullRequestKey`, `legacyThreadPullRequestKey`). URLs go through the WHATWG
+parser (`url`), as `new URL` reads them; the regular expressions are written out by hand
+(`paths.rs`). What only clients use (icons, autolinks, media, checkout commands, settings forms)
+is not ported.
+
+Proof: `tools/registry-diff.mjs` runs T3's registry (loaded from the monorepo) and ours
+(`examples/registry_cases.rs`) on every string literal of T3's seven `definition.test.ts`
+files and a fixed grid of hosts, paths, schemes, remotes and identities: 24,085 cases, 0
+differences. It runs in `tools/check.sh`, so an upstream change to a definition or a test
+shows at once.
+
+## Provider detection
+
+`detect.rs` follows `SourceControlProviderRegistry.ts`: `git rev-parse --is-inside-work-tree
+--show-toplevel --git-common-dir`, then `git remote -v` (5 s, 64 KiB); `selectProviderContext`
+(origin, then a known host, then the first remote); a remote on an unknown host is refined one
+integration after another, as `refineUnknownRemoteProvider` runs them: GitHub (a credential for
+the host, `gh auth token --hostname <h>` when nothing is saved; a host turned off in Settings
+claims it too), GitLab (`glab auth status --hostname <h>`, in the remote's own spelling) and
+Forgejo (fj's logins, then `tea login list --output json`). A check that could not answer is not
+kept. Caches as T3's: a checkout's answer 5 s (2,048 checkouts, failures not kept), an unknown
+server's verdict 5 minutes (512 servers), cleared by `Detector::settings_changed`. Callers of
+one key share one lookup.
+
+Proof: T3's `SourceControlProviderRegistry.test.ts` cases on scratch repositories with stub
+`gh`, `glab`, `fj` and `tea`; the children's `PATH` holds only the stub folder and
+`/usr/bin:/bin`, so no real host CLI runs.
+
+Deviations: T3's VCS detection cache (5 minutes, stat-checked) and jj checkouts are not ported;
+each detection here runs `git rev-parse` before `git remote -v`. The server does not create a
+`Detector` yet: no served method needs one.
+
+## GitHub GraphQL
+
+`tools/gen-graphql.mjs` imports T3's generated `*.graphql.ts` modules
+(`packages/source-control-github/src/server`) and prints each operation with
+`effect/graphql`'s own joiner into `hosts/github_graphql/generated.rs`: 55 operations, with
+their template parts. `--check` runs in `tools/check.sh`. `github_graphql` renders an operation
+once or batched under `_<i>_` aliases, as `GraphQLResolver.aliased` does; tests hold every
+joined template to T3's text and every two-slice batch to Effect's `renderSlices` output. The
+request body is `{query, operationName, variables}` as JSON (Effect's `requestBody`); no request
+sends one yet.
+
+## Engine links and `/mcp` tools
+
+`conn-engine/src/pull_requests.rs` decides `thread.pull-request.link` and `unlink` as T3's
+`Orchestrator.ts` does, with the registry's keys (see that file). Both emit
+`thread.pull-request-synced` with the thread, also when nothing changed. Proof: unit tests and
+`client-check.mjs` (a GitCafe link, a stack member, its unlink and a relink through the client's
+own reducers).
+
+`conn-mcp/src/tools/pull_requests.rs` serves the five link tools (`pullRequestTarget.ts`
+`resolveTarget`, `resolveThreadPullRequestChains`, T3's paging). Proof: 26 `parity.mjs` steps
+against the T3 server, values compared, no differences.
+
 ## What the next steps need
 
-Every step after repositories (change-request reads and checkout, `git.*`, `pr` in VCS status,
-`pullRequests.*`, the linked pull request commands, the `/mcp` tools) rests on two T3 parts that
-are not ported:
+The registry, detection and the GraphQL texts are built. What every remaining step still needs:
 
-1. **The definition registry** (`packages/source-control-definitions/src/registry.ts` and each
-   host's `src/shared/definition.ts`): `recognizeRemote` in its own order (GitCafe and others
-   first, because host labels overlap), `parseChangeRequestUrl` with GitCafe, Cursor Origin and
-   Azure DevOps claiming URLs first, `changeRequestUrl`, `canonicalRepositoryKey` and
-   `repositorySelector`. T3's thread pull request keys (`normalizeThreadPullRequestKey` in
-   `source-control-core/src/shared/threadPullRequests.ts`), the `/mcp` link tools
-   (`pullRequestTarget.ts` `resolveTarget`) and the engine's link commands all use it. The
-   engine's `thread.pull-request.link` and `unlink` here are simpler than T3's: they keep the
-   host and repository as sent (T3 lowercases and canonicalises them), do not canonicalise a
-   GitCafe URL, and do not undismiss a stack link as T3 does.
-2. **Provider detection** (`SourceControlProviderRegistry.ts`): the checkout's remotes, the
-   recognised context (origin first), `refineUnknownRemote` through GitHub, GitLab, Cursor
-   Origin and Forgejo CLI probes, both cached by T3.
-3. **GitHub's GraphQL documents.** T3 reads pull requests on GitHub through generated GraphQL
-   operations (`packages/source-control-github/src/server/*.graphql`, printed by
-   `effect/graphql`). Their query text must come from a generator that reads the monorepo
-   (rule 7), not a copy.
+1. **The project's `repositoryIdentity`** (T3's `project/RepositoryIdentityResolver.ts`, 358
+   lines, cached). This engine's project rows carry none. T3's link tools fall back to it, and
+   every `pullRequests.*` read, `pr` in VCS status and the link sweep start from it.
+2. **GitHub's request policy** (`GitHubRequestPolicy.ts`, `GitHubQuota.ts`,
+   `SourceControlRateLimit.ts`): 8 requests at once, a 10 % quota reserve for background reads,
+   the pause after a rate limit, the credential source header. Then GitHub's GraphQL client
+   (`gitHubGraphQlClient.ts`: the byte cap, `isNotFoundOnly`, the batch windows of 50 ms and
+   500 ms) on the generated operations.
+3. **Each host's change request reads** (`getChangeRequest`, `listChangeRequests` by head,
+   `checkoutChangeRequest`): GitHub through GraphQL and REST (`GitHubSourceControlProvider.ts`,
+   1,186 lines), GitLab (`glab mr view/list/checkout`), Cursor Origin, GitCafe, Forgejo (fj/tea),
+   Bitbucket, Azure DevOps (`az repos pr`). `git.resolvePullRequest` needs all seven, since a
+   method is registered only when it serves every host.
 
-`git.runStackedAction` and the review guides also call a text generator (another area), and
+`git.runStackedAction` and the review guides also call a text generator, and
 `git.preparePullRequestThread` runs the project's setup script, which this server does not run
 the T3 way yet.
 
+## Dependencies
+
+- **hyper, hyper-util, http-body-util, rustls, tokio-rustls, webpki-roots**: HTTPS to a host's
+  API (parts 1 to 3). hyper is already linked through axum; the client side adds about 100 KB.
+- **url 2.5** (part 4, servo's WHATWG URL parser, maintained, 2.5.8 on crates.io): the registry
+  reads URLs as `new URL` does, IDNA through ICU as Node does. Measured on the macOS arm64
+  release binary: 16,800,544 to 17,001,824 bytes (+201,280). No run-time heap of its own; the
+  IDNA tables are static. `idna_adapter` 1.0 (ASCII only) would save most of that, but a host
+  name in another script would then read differently from T3's (the diff has `bücher.example`).
+
 ## Costs
 
-- Nothing runs while idle: no poll, no watch, no cache.
+- Nothing runs while idle: no poll, no watch. The only caches are provider detection's
+  (at most 2,048 checkouts for 5 s and 512 servers for 5 minutes), and nothing creates one yet.
 - One discovery: at most 14 short CLI children and 3 HTTPS requests (GitHub, Bitbucket,
   Origin; Forgejo adds one per signed-in fj login it checks), each bounded: 8,000 bytes per
   CLI stream, 8 MiB per answer, 5 s per CLI (20 s for `az`), 30 s per request (3 s for the

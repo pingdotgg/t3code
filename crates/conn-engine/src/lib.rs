@@ -40,6 +40,7 @@ mod fork;
 mod fresh;
 mod output;
 mod projects;
+mod pull_requests;
 mod reads;
 mod restart;
 mod rollback;

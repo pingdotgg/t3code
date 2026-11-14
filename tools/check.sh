@@ -77,6 +77,7 @@ monorepo_checks=(
   "gen-tools --check"
   "gen-keybindings --check"
   "gen-upstream --check"
+  "gen-graphql --check"
   "check-copies"
   "effect-client (conn-server)"
   "effect-client (ack window)"
@@ -85,6 +86,7 @@ monorepo_checks=(
   "decode coverage"
   "settings-diff"
   "textgen-diff"
+  "registry-diff"
   "limits-diff"
   "parity"
   "codex instructions --check"
@@ -106,6 +108,8 @@ else
   run "gen-tools --check" node crates/conn-mcp/tools/gen-tools.mjs --check
   run "gen-keybindings --check" node crates/conn-server/tools/gen-keybindings.mjs --check
   run "gen-upstream --check" node tools/gen-upstream.mjs --check
+  # GitHub's GraphQL operation texts, printed from T3's generated modules by effect/graphql.
+  run "gen-graphql --check" node crates/conn-source-control/tools/gen-graphql.mjs --check
   run "check-copies" node tools/check-copies.mjs
   decoded="$scratch/decoded-tags"
   : >"$decoded"
@@ -128,6 +132,9 @@ else
   run "settings-diff" node crates/conn-server/tools/settings-diff.mjs "$release/conn-server"
   # Text generators and thread titles against T3's own code, on a loopback stub (no model).
   run "textgen-diff" node crates/conn-server/tools/textgen-diff.mjs "$release/examples/text_generation"
+  # The host definition registry against T3's own, on T3's test literals and a fixed grid.
+  run "registry-diff" \
+    node crates/conn-source-control/tools/registry-diff.mjs "$release/examples/registry_cases"
   run "limits-diff" node crates/conn-server/tools/limits-diff.mjs
   run "parity" \
     node crates/conn-mcp/tools/parity.mjs "$release/examples/replay_server"

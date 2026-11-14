@@ -79,12 +79,14 @@ line when the variable is missing. Without it, `tools/check.sh` runs the Rust ch
 | Recordings decode   | `cargo test --manifest-path fixtures/decode-check/Cargo.toml`                                                                   | Every recorded frame decodes with `conn_wire`                                                        |
 | Contract current    | `node crates/conn-contract/tools/gen-contract.mjs --check`                                                                      | Generated types match `packages/contracts`                                                           |
 | MCP tools current   | `node crates/conn-mcp/tools/gen-tools.mjs --check`                                                                              | Served tool definitions match `apps/server`                                                          |
+| GitHub GraphQL current | `node crates/conn-source-control/tools/gen-graphql.mjs --check` | GitHub's GraphQL operation texts match T3's generated modules, printed by `effect/graphql` |
 | Keybinding defaults | `node crates/conn-server/tools/gen-keybindings.mjs --check`                                                                     | The compiled-in defaults match `packages/shared`                                                     |
 | Effect client       | `node crates/conn-server/tools/effect-client.mjs target/release/conn-server`                                                    | Pairing, ticket, connect streams decode in Effect's `RpcClient`                                      |
 | Ack window          | same, with `target/release/examples/effect_fixture --fixture`                                                                   | Ack window and `Interrupt`                                                                           |
 | Client reducers     | `cargo run -p conn-engine --features fake-provider --example export_turn -- x.json`, then `crates/conn-engine/tools/client-check.mjs x.json` | Shell and thread streams rebuild the right state in the client's reducers                            |
 | Replay              | `node crates/conn-server/tools/replay.mjs target/release/examples/replay_server`                                                | Every call in the `remote` and `turn` recordings gets a decodable answer or the not-supported defect |
 | Text generation     | `node crates/conn-server/tools/textgen-diff.mjs target/release/examples/text_generation` | Text generator requests and answers, title prompts, contexts and titles equal T3's own code, on a loopback stub |
+| Registry            | `node crates/conn-source-control/tools/registry-diff.mjs target/release/examples/registry_cases` | The host definition registry answers as T3's own on every literal of T3's definition tests and a fixed grid (24,085 cases) |
 | MCP parity          | `node crates/conn-mcp/tools/parity.mjs target/release/examples/replay_server`                                                   | `/mcp` answers as the T3 server's does, on the same calls                                            |
 | Codex instructions  | `node crates/conn-provider-codex/tools/gen-instructions.mjs --check`                                                             | T3's Codex `additionalContext` text is current, byte for byte                                         |
 | Codex conformance   | `node crates/conn-provider-codex/tools/conformance.mjs`                                                                         | Codex argv, environment, every stdin frame and shutdown equal the T3 server's, on a stub `codex`      |
@@ -147,7 +149,7 @@ See [`fixtures/README.md`](fixtures/README.md) for every scenario and which need
 | `conn-vcs`              | Git status, refs, review diffs, worktrees and their setup             |
 | `conn-files`            | Project files, search, asset URLs, attachments                        |
 | `conn-terminal`         | Shells on PTYs: sessions, scrollback, viewers (`terminal.*`)          |
-| `conn-source-control`   | Source control hosts (GitHub, GitLab, ...): discovery, sign-in, stars, repositories; later pull requests |
+| `conn-source-control`   | Source control hosts (GitHub, GitLab, ...): discovery, sign-in, stars, repositories, the host definition registry, provider detection, GitHub's GraphQL operations; later pull requests |
 | `conn-server`           | Binary: HTTP, `/ws` session, pairing, method table, handlers          |
 | `conn-support`          | Helpers several crates share: time, hex, base64, HMAC, atomic writes, v4 ids |
 | `conn-features`         | Scheduled tasks and the Conn-only areas beside the engine; see its README |

@@ -83,10 +83,16 @@ hidden while linked environments are off; `watch_pull_request`/`unwatch_pull_req
 from delegated children. Preview, device and panel tools are listed to everyone and fail without
 the capability.
 
-**Served: 20 of 87.** Definitions come byte for byte from `apps/server`. Each served tool has
+**Served: 33 of 87.** Definitions come byte for byte from `apps/server`. Each served tool has
 a unit test and `parity.mjs` steps.
 
 Where they differ, because the engine does not do it yet:
+
+- The pull request link tools (`tools/pull_requests.rs`) read a project's `repositoryIdentity`,
+  which this engine does not resolve yet (T3's `RepositoryIdentityResolver`). A target named by
+  `repository` and `number` without `host` therefore fails with "This thread's project has no
+  recognised remote", where T3 uses the project's remote. URL targets and targets with a host
+  answer as T3's.
 
 - `t3_thread_send` maps its modes as `ThreadManagementService` does (`auto` steers a running
   turn, else starts; `queue`, `steer`, `restart`). `freshContext` starts a new provider session and never steers.
@@ -167,11 +173,11 @@ Codex). `preview_*` in **O** names all 13 preview tools.
 | `t3_worktree_handoff` | not served | actsAsCaller | engine: bind a new worktree to a live thread and end its session; server: setup scripts the T3 way | |
 | `t3_workflow_stop` | not served | writesThreads | engine and provider: `stopWorkflow` (a provider's workflow stop) | |
 | `t3_background_wait` | not served | actsAsCaller | provider: background tasks (see below) | C |
-| `link_pull_request` | not served | writesWithCapability | server: pull requests | P |
-| `link_pull_requests` | not served | writesWithCapability | server: pull requests | P |
-| `unlink_pull_request` | not served | writesWithCapability | server: pull requests | |
-| `unlink_pull_requests` | not served | writesWithCapability | server: pull requests | |
-| `list_thread_pull_requests` | not served | reads | server: pull requests | |
+| `link_pull_request` | served (part 4) | writesWithCapability | | P |
+| `link_pull_requests` | served (part 4) | writesWithCapability | | P |
+| `unlink_pull_request` | served (part 4) | writesWithCapability | | |
+| `unlink_pull_requests` | served (part 4) | writesWithCapability | | |
+| `list_thread_pull_requests` | served (part 4) | reads | | |
 | `watch_pull_request` | not served | writesThreads | server: pull request watches; hidden from delegated children | P |
 | `unwatch_pull_request` | not served | writesThreads | server: pull request watches; hidden from delegated children | P |
 | `write_pull_request_guides` | not served | writesWithCapability | server: pull request review guides | |
@@ -211,15 +217,15 @@ Codex). `preview_*` in **O** names all 13 preview tools.
 | `t3_theme_set` | not served | writesEnvironment | server: themes | |
 | `t3_project_clone` | not served | writesEnvironment | server: project clone tracking (`ProjectCloneTracker`, source control repositories) | |
 
-Totals: served 20; needs nothing new 11; needs an engine or provider feature 4; needs a part of
+Totals: served 33 (the five pull request link tools since source control part 4); needs nothing new 11; needs an engine or provider feature 4; needs a part of
 the server or a client we do not have 52.
 
-**Named but not served (17):** `create_threads`, `device_list`, `device_open`,
-`device_screenshot`, `html_preview`, `html_render`, `link_pull_request`, `link_pull_requests`,
+**Named but not served (15):** `create_threads`, `device_list`, `device_open`,
+`device_screenshot`, `html_preview`, `html_render`,
 `preview_open`, `preview_status` (and the other 11 through `preview_*`), `request_secret`,
 `schedule_task`, `t3_background_wait`, `t3_environment_link`, `t3_environment_links`,
-`unwatch_pull_request`, `watch_pull_request`. Before this batch the list also held
-`send_to_user` and `t3_thread_organize`. The test `agent_texts_name_only_known_unserved_tools`
+`unwatch_pull_request`, `watch_pull_request`. Earlier batches took `send_to_user`, `t3_thread_organize`, `schedule_task`,
+`link_pull_request` and `link_pull_requests` off it. The test `agent_texts_name_only_known_unserved_tools`
 holds this list: it fails when a text names a new unserved tool, and when a listed tool becomes
 served.
 

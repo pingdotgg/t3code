@@ -371,4 +371,25 @@ check("fork: lineage, a native fork, and the relationship graph", () => {
   );
 });
 
+// Pull request links: T3's keys, GitCafe's spelling, a stack tombstone lifted by hand.
+check("pull requests: link, unlink and relink as T3 writes them", () => {
+  const followed = followThread(exported.pullRequestLinkItems);
+  assert.equal(followed.status, "live");
+  const kinds = exported.pullRequestLinkItems
+    .filter((item) => item.event)
+    .map((item) => item.event.type);
+  assert.deepEqual(kinds.slice(-4), Array(4).fill("thread.pull-request-synced"));
+  const links = followed.projection.thread.pullRequests.map((link) => ({
+    host: link.host,
+    repository: link.repository,
+    number: link.number,
+    url: link.url,
+    source: link.source,
+  }));
+  assert.deepEqual(links, [
+    { host: "git.cafe", repository: "o/r", number: 4, url: "https://git.cafe/o/r/pulls/4", source: "manual" },
+    { host: "github.com", repository: "o/r", number: 9, url: "https://github.com/o/r/pull/9", source: "manual" },
+  ]);
+});
+
 console.log(`\n${checks} checks passed against the client's own decoders and reducers.`);
