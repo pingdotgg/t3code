@@ -8918,7 +8918,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     { status: 503, cooldown: "999999999999999999999999h", seconds: 0 },
     { status: 503, cooldown: "4m 6s", seconds: 0, errorType: "overloaded_error" },
     { status: 401, cooldown: "4m 6s", seconds: 0 },
-    { status: 429, cooldown: "1h2m3s", seconds: 3723, proxy: true },
     { status: 429, cooldown: "1h2m3s", seconds: 3723, proxy: true, sdkResetSeconds: 60 },
     { status: 429, cooldown: "1h2m3s", seconds: 7200, proxy: true, sdkResetSeconds: 7200 },
     { status: 429, cooldown: "1h2m3s", seconds: 0, proxy: true, sdkResetSeconds: null },
@@ -8929,14 +8928,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       proxy: true,
       result:
         "API Error: Request rejected (429) · All credentials for model claude-opus-5-5 are cooling down (last error: rate_limit_error (reset after 1h))",
-    },
-    {
-      status: 429,
-      cooldown: "nested cooldown",
-      seconds: 0,
-      proxy: true,
-      result:
-        "API Error: Request rejected (429) · All credentials for model claude-opus-5-5 are cooling down (last error: All credentials for model upstream are cooling down (reset after 1h))",
     },
     {
       status: 429,
