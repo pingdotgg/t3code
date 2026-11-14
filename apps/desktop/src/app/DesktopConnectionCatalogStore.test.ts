@@ -242,7 +242,7 @@ describe("DesktopConnectionCatalogStore", () => {
     ),
   );
 
-  it.effect("surfaces malformed catalog documents without deleting them", () =>
+  it.effect("sets malformed catalog documents aside and starts empty", () =>
     withStore(
       Effect.gen(function* () {
         const path = yield* Path.Path;
@@ -253,16 +253,50 @@ describe("DesktopConnectionCatalogStore", () => {
         yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
         yield* fileSystem.writeFileString(catalogPath, "{not-json");
 
-        const error = yield* store.get.pipe(Effect.flip);
-        assert.instanceOf(
-          error,
-          DesktopConnectionCatalogStore.DesktopConnectionCatalogStoreDocumentDecodeError,
+        assert.deepStrictEqual(yield* store.get, Option.none());
+        const [setAside] = (yield* fileSystem.readDirectory(environment.stateDir)).filter((name) =>
+          name.startsWith("connection-catalog.json.corrupt-"),
         );
-        assert.equal(error.catalogPath, catalogPath);
-        assert.exists(error.cause);
-        assert.equal(yield* fileSystem.readFileString(catalogPath), "{not-json");
+        assert.exists(setAside);
+        assert.equal(
+          yield* fileSystem.readFileString(path.join(environment.stateDir, setAside!)),
+          "{not-json",
+        );
+        assert.isFalse(yield* fileSystem.exists(catalogPath));
       }),
     ),
+  );
+
+  it.effect(
+    "reads a catalog zero-filled by an interrupted write without failing or losing it",
+    () =>
+      withStore(
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const environment = yield* DesktopEnvironment.DesktopEnvironment;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
+          const catalogPath = path.join(environment.stateDir, "connection-catalog.json");
+          assert.isTrue(yield* store.set('{"schemaVersion":1,"targets":[]}'));
+          const size = (yield* fileSystem.stat(catalogPath)).size;
+          const zeroed = new Uint8Array(Number(size));
+          yield* fileSystem.writeFile(catalogPath, zeroed);
+
+          yield* store.get;
+
+          const preserved = yield* Effect.forEach(
+            (yield* fileSystem.readDirectory(environment.stateDir)).filter((name) =>
+              name.startsWith("connection-catalog"),
+            ),
+            (name) => fileSystem.readFile(path.join(environment.stateDir, name)),
+          ).pipe(
+            Effect.map((files) =>
+              files.some((bytes) => bytes.length === zeroed.length && bytes.every((b) => b === 0)),
+            ),
+          );
+          assert.isTrue(preserved);
+        }),
+      ),
   );
 
   it.effect("surfaces a catalog that can no longer be decrypted without deleting it", () =>

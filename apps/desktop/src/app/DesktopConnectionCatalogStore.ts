@@ -12,6 +12,7 @@ import {
 } from "@t3tools/client-runtime/platform";
 import type { PersistedSavedEnvironmentRecord } from "@t3tools/contracts";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
@@ -152,7 +153,6 @@ export class DesktopConnectionCatalogStore extends Context.Service<
     readonly get: Effect.Effect<
       Option.Option<string>,
       | DesktopConnectionCatalogStoreReadError
-      | DesktopConnectionCatalogStoreDocumentDecodeError
       | DesktopConnectionCatalogStoreDecodeError
       | DesktopConnectionCatalogStoreMigrationError
       | DesktopConnectionCatalogStoreProtectionError
@@ -246,7 +246,14 @@ const writeDocument = Effect.fn("desktop.connectionCatalogStore.writeDocument")(
     ),
   );
   yield* Effect.gen(function* () {
-    yield* input.fileSystem.writeFileString(tempPath, `${encoded}\n`).pipe(
+    // Flush before the rename so a power loss cannot leave a zero-filled catalog behind.
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const file = yield* input.fileSystem.open(tempPath, { flag: "w" });
+        yield* file.writeAll(new TextEncoder().encode(`${encoded}\n`));
+        yield* file.sync;
+      }),
+    ).pipe(
       Effect.mapError(
         (cause) =>
           new DesktopConnectionCatalogStoreWriteError({
@@ -461,9 +468,34 @@ export const make = Effect.gen(function* () {
     return Option.some(encoded);
   });
 
+  const setAsideUnreadableCatalog = Effect.fn(
+    "desktop.connectionCatalogStore.setAsideUnreadableCatalog",
+  )(function* (error: DesktopConnectionCatalogStoreDocumentDecodeError) {
+    const setAsidePath = `${catalogPath}.corrupt-${yield* Clock.currentTimeMillis}`;
+    yield* fileSystem
+      .rename(catalogPath, setAsidePath)
+      .pipe(
+        Effect.mapError(
+          (cause) => new DesktopConnectionCatalogStoreReadError({ catalogPath, cause }),
+        ),
+      );
+    yield* Effect.logWarning(
+      "Set aside an unreadable desktop connection catalog; remote environments need re-pairing.",
+      { setAsidePath, error: error.message },
+    );
+    return null;
+  });
+
   return DesktopConnectionCatalogStore.of({
     get: Effect.gen(function* () {
-      const document = yield* readDocument(fileSystem, catalogPath);
+      const document = yield* readDocument(fileSystem, catalogPath).pipe(
+        Effect.catchTags({
+          DesktopConnectionCatalogStoreDocumentDecodeError: setAsideUnreadableCatalog,
+        }),
+      );
+      if (document === null) {
+        return Option.none<string>();
+      }
       if (Option.isNone(document)) {
         return yield* migrateLegacyCatalog;
       }
