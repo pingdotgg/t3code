@@ -394,7 +394,7 @@ lists what it serves.
 | --------------- | ----------------------------------------------------------------------------------------------- |
 | Connect, config | `methods/server.rs`: config and lifecycle streams, settings, keybindings, access, diagnostics   |
 | Threads         | `conn-engine`: dispatch (41 of 56 commands), launch, streams, reads, search, families, projects |
-| Agents          | `conn-provider-claude`, `conn-provider-codex`; `/mcp` (`conn-mcp`, 16 tools)                    |
+| Agents          | `conn-provider-claude`, `conn-provider-codex`; `/mcp` (`conn-mcp`, 20 tools)                    |
 | Workspace       | `conn-vcs` (status, refs, review, worktrees), `conn-files` (files, search, assets, uploads)     |
 | Terminals       | `conn-terminal`                                                                                 |
 
@@ -467,7 +467,7 @@ What a real Conn session hits that this server does not do:
 - **No checkpoints:** turns are not captured as git refs, so no turn diff or restore.
 - **No title model wired:** `generateTitle` keeps the client's seed title. A generator must call
   the provider the way the T3 server does.
-- **`/mcp` serves 16 of 87 T3 tools** (`crates/conn-mcp/README.md`).
+- **`/mcp` serves 20 of 87 T3 tools** (`crates/conn-mcp/README.md`).
 - **Worktree launch:** the worktree is made before the thread exists; `prepared-run.*` stays
   refused and no project setup script runs.
 - **Providers:** Claude and Codex. Their gaps are in each crate's README.

@@ -1493,3 +1493,82 @@ async fn search_puts_titles_first_and_keeps_slots_for_messages() {
         .await;
     assert_eq!(found["matches"], json!([]));
 }
+
+/// Tools that a text we send to an agent names and that this server does not serve. An agent
+/// told to call one finds no such tool. Serve one, and this test makes you strike it here.
+/// `preview_*` in the orchestration text also names all 13 preview tools.
+const NAMED_NOT_SERVED: [&str; 17] = [
+    "create_threads",
+    "device_list",
+    "device_open",
+    "device_screenshot",
+    "html_preview",
+    "html_render",
+    "link_pull_request",
+    "link_pull_requests",
+    "preview_open",
+    "preview_status",
+    "request_secret",
+    "schedule_task",
+    "t3_background_wait",
+    "t3_environment_link",
+    "t3_environment_links",
+    "unwatch_pull_request",
+    "watch_pull_request",
+];
+
+/// Every text we send to an agent that can name a tool: the orchestration text and Claude's
+/// texts (`conn-mcp`), the `next` text of a running task, the Codex additional context
+/// (`conn-provider-codex`), the pull request text (`conn-provider-claude`), and the served
+/// tools' own descriptions.
+fn agent_texts() -> Vec<&'static str> {
+    vec![
+        crate::AGENT_INSTRUCTIONS,
+        crate::CLAUDE_INSTRUCTIONS,
+        include_str!("running-task-next.txt"),
+        include_str!("../../conn-provider-codex/src/instructions.rs"),
+        include_str!("../../conn-provider-claude/src/launch.rs"),
+        include_str!("catalog.jsonl"),
+    ]
+}
+
+fn names_word(text: &str, name: &str) -> bool {
+    let word = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    text.match_indices(name).any(|(at, _)| {
+        let before = text.get(..at).and_then(|s| s.chars().last());
+        let after = text.get(at + name.len()..).and_then(|s| s.chars().next());
+        !before.is_some_and(word) && !after.is_some_and(word)
+    })
+}
+
+#[test]
+fn agent_texts_name_only_known_unserved_tools() {
+    let dump: Value = serde_json::from_str(include_str!("../fixtures/ts-tools-list.json")).unwrap();
+    // The live dump is an outside caller's list: the link tools and `tool_search` are hidden.
+    let mut all: Vec<String> = dump["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap().to_owned())
+        .collect();
+    for hidden in [
+        "t3_environment_link",
+        "t3_environment_links",
+        "t3_environment_unlink",
+        "tool_search",
+    ] {
+        all.push(hidden.to_owned());
+    }
+    let served: Vec<&str> = catalog::names().collect();
+    let texts = agent_texts();
+    let mut named: Vec<&str> = all
+        .iter()
+        .map(String::as_str)
+        .filter(|name| !served.contains(name))
+        .filter(|name| texts.iter().any(|text| names_word(text, name)))
+        .collect();
+    named.sort_unstable();
+    let mut expected: Vec<&str> = NAMED_NOT_SERVED.to_vec();
+    expected.sort_unstable();
+    assert_eq!(named, expected);
+}

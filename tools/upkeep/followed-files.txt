@@ -42,6 +42,10 @@ packages/contracts/src/orchestrationV2.ts
 
 [crates/conn-mcp]
 apps/server/src/mcp
+apps/server/src/orchestration-v2/ThreadSearch.ts
+apps/server/src/orchestration-v2/QueuedRunOrder.ts
+apps/server/src/orchestration-v2/ThreadManagementService.ts
+packages/shared/src/toolOutput.ts
 
 [crates/conn-server/src/auth.rs]
 apps/server/src/auth
