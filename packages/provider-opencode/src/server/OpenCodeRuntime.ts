@@ -267,7 +267,43 @@ export interface ParsedOpenCodeModelSlug {
   readonly modelID: string;
 }
 
-export type OpenCodeVariantCache = Map<string, ReadonlySet<string> | undefined>;
+export interface OpenCodeCatalogModel {
+  readonly variants: ReadonlySet<string>;
+  readonly contextWindow: number | undefined;
+}
+
+export type OpenCodeVariantCache = Map<string, OpenCodeCatalogModel | undefined>;
+
+/** The model's catalog entry; a failed read returns undefined and is not cached. */
+export const readOpenCodeCatalogModel = Effect.fnUntraced(function* (
+  client: OpencodeClient,
+  model: ParsedOpenCodeModelSlug,
+  abortSignal?: AbortSignal,
+  cache?: OpenCodeVariantCache,
+) {
+  const key = `${model.providerID}/${model.modelID}`;
+  if (cache?.has(key)) return cache.get(key);
+
+  const response = yield* runOpenCodeSdk("provider.list", (signal) =>
+    client.provider.list(undefined, {
+      signal: abortSignal ? AbortSignal.any([signal, abortSignal]) : signal,
+    }),
+  ).pipe(
+    Effect.timeout("10 seconds"),
+    Effect.orElseSucceed(() => undefined),
+  );
+  if (response?.data === undefined) return undefined;
+
+  const catalogModel = response.data.all.find((provider) => provider.id === model.providerID)
+    ?.models[model.modelID];
+  const entry: OpenCodeCatalogModel | undefined = catalogModel && {
+    variants: new Set(Object.keys(catalogModel.variants ?? {})),
+    contextWindow: catalogModel.limit?.input ?? catalogModel.limit?.context,
+  };
+  // Keep only what this model needs; provider.list can return several megabytes.
+  cache?.set(key, entry);
+  return entry;
+});
 
 export const resolveOpenCodeVariant = Effect.fnUntraced(function* (
   client: OpencodeClient,
@@ -277,32 +313,9 @@ export const resolveOpenCodeVariant = Effect.fnUntraced(function* (
   cache?: OpenCodeVariantCache,
 ) {
   if (!variant || !model) return variant;
-
-  const key = `${model.providerID}/${model.modelID}`;
-  const cached = cache?.get(key);
-  if (cache?.has(key)) {
-    return cached !== undefined && !cached.has(variant) ? undefined : variant;
-  }
-
   // Only a confirmed catalog mismatch can invalidate a persisted selection.
-  const response = yield* runOpenCodeSdk("provider.list", (signal) =>
-    client.provider.list(undefined, {
-      signal: abortSignal ? AbortSignal.any([signal, abortSignal]) : signal,
-    }),
-  ).pipe(
-    Effect.timeout("10 seconds"),
-    Effect.orElseSucceed(() => undefined),
-  );
-  if (response?.data === undefined) return variant;
-
-  const catalogModel = response.data.all.find((provider) => provider.id === model.providerID)
-    ?.models[model.modelID];
-  const variants = catalogModel ? new Set(Object.keys(catalogModel.variants ?? {})) : undefined;
-  if (cache !== undefined) {
-    // Keep only this model's names; provider.list can return several megabytes.
-    cache.set(key, variants);
-  }
-  return variants !== undefined && !variants.has(variant) ? undefined : variant;
+  const entry = yield* readOpenCodeCatalogModel(client, model, abortSignal, cache);
+  return entry !== undefined && !entry.variants.has(variant) ? undefined : variant;
 });
 
 export interface OpenCodeSkill {
@@ -355,8 +368,9 @@ export class OpenCodeRuntime extends Context.Service<
   }
 >()("@t3tools/provider-opencode/server/OpenCodeRuntime") {}
 
-function parseServerUrlFromOutput(output: string): string | null {
-  for (const line of output.split("\n")) {
+export function parseServerUrlFromOutput(output: string): string | null {
+  // The last element is an unfinished line; a chunk can end mid-URL.
+  for (const line of output.split("\n").slice(0, -1)) {
     const match = line.match(/server listening on\s+(https?:\/\/[^\s]+)/i);
     if (match?.[1]) return match[1];
   }
