@@ -590,21 +590,14 @@ export const make = Effect.gen(function* () {
     return yield* withRemoteWriteLock(
       cwd,
       Effect.gen(function* () {
-        const fetchesBeforeRemoteRead = yield* workflow.statusFetchCount;
         const remoteRead = yield* readRemoteStatus(cwd, options);
         const pulled =
           options?.refreshUpstream === false
             ? null
             : yield* maybeAutoPull(cwd, remoteRead, options?.policyCwds ?? [cwd]);
         if (pulled !== null) return pulled.remote;
-        // Base refs and merge bases can move without changing divergence counts; a poll whose
-        // fetch moved no refs leaves them where they were.
-        if (
-          options?.refreshUpstream === false ||
-          (yield* workflow.statusFetchCount) !== fetchesBeforeRemoteRead
-        ) {
-          yield* refreshLocalStatusCore(cwd);
-        }
+        // Base refs and merge bases can move without changing divergence counts.
+        yield* refreshLocalStatusCore(cwd);
         return yield* updateCachedRemoteStatus(cwd, remoteRead, { publish: true });
       }),
     );
