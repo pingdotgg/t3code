@@ -3737,6 +3737,34 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           newContents: "$Id$\nedited\nsecond\n",
         });
         assert.strictEqual(plain.newContents, "$Id: literal $\n");
+        yield* git(cwd, ["config", "filter.unrelated.clean", "touch filter-ran; cat"]);
+        yield* writeTextFile(cwd, ".gitattributes", "README.md ident text eol=lf\n");
+        yield* writeTextFile(
+          cwd,
+          "README.md",
+          smudged.replace("first", "edited").replaceAll("\n", "\r\n"),
+        );
+        const crlf = yield* driver.getReviewDiffFileContents(makeReviewDiffFileContentsInput(cwd));
+        assert.strictEqual(crlf.newContents, "$Id$\r\nedited\r\nsecond\r\n");
+        yield* fileSystem.writeFile(filePath, disk);
+        yield* writeTextFile(cwd, ".gitattributes", "README.md ident=set\n");
+        const literal = yield* driver.getReviewDiffFileContents(
+          makeReviewDiffFileContentsInput(cwd),
+        );
+        assert.strictEqual(literal.newContents, smudged.replace("first", "edited"));
+        yield* writeTextFile(cwd, ".gitattributes", "README.md ident filter=probe\n");
+        yield* git(cwd, ["config", "filter.probe.clean", "touch filter-ran; cat"]);
+        const filtered = yield* driver.getReviewDiffFileContents(
+          makeReviewDiffFileContentsInput(cwd),
+        );
+        assert.strictEqual(filtered.newContents, literal.newContents);
+        yield* writeTextFile(cwd, ".gitattributes", "README.md ident filter=unspecified\n");
+        yield* git(cwd, ["config", "filter.unspecified.clean", "touch filter-ran; cat"]);
+        const reservedFilter = yield* driver.getReviewDiffFileContents(
+          makeReviewDiffFileContentsInput(cwd),
+        );
+        assert.strictEqual(reservedFilter.newContents, literal.newContents);
+        assert.isFalse(yield* fileSystem.exists((yield* Path.Path).join(cwd, "filter-ran")));
         assert.deepStrictEqual(yield* fileSystem.readFile(filePath), disk);
       }),
     );
