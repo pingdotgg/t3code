@@ -88,6 +88,7 @@ import {
   markdownToFlat,
   pmToFlat,
   serializeEditorDoc,
+  serializedMarkdownOffset,
   serializeSelection,
   skillChipReplacements,
   splitOrLiftListItem,
@@ -1623,7 +1624,7 @@ function ComposerPromptEditorTiptapInner(
         },
       );
     }
-    selectMarkdownOffset(editor, normalizedExpandedCursor);
+    selectMarkdownOffset(editor, value, normalizedExpandedCursor);
     const map = serializeEditorDoc(editor.state.doc);
     if (isFocused) scrollTiptapCaretIntoView(editor);
     if (pendingCitation) {
@@ -1696,7 +1697,7 @@ function ComposerPromptEditorTiptapInner(
     const boundedCursor = clampEditorCursor(snapshotRef.current.value, nextCursor);
     const expandedCursor =
       exactExpandedCursor ?? expandEditorCursor(snapshotRef.current.value, boundedCursor);
-    selectMarkdownOffset(editor, expandedCursor);
+    selectMarkdownOffset(editor, snapshotRef.current.value, expandedCursor);
     scrollTiptapCaretIntoView(editor);
     if (boundedCursor === snapshotRef.current.cursor) return;
     snapshotRef.current = {
@@ -1922,10 +1923,13 @@ function insertMarkdownParagraphs(
 }
 
 /** Placing the caret can show Markdown markers, so place it again in the shown source. */
-function selectMarkdownOffset(editor: TiptapEditor, offset: number): void {
+function selectMarkdownOffset(editor: TiptapEditor, source: string, offset: number): void {
   for (let pass = 0; pass < 2; pass += 1) {
     const map = serializeEditorDoc(editor.state.doc);
-    const pos = flatToPm(map, markdownToFlat(map, offset));
+    const pos = flatToPm(
+      map,
+      markdownToFlat(map, serializedMarkdownOffset(source, map.value, offset)),
+    );
     const { selection } = editor.state;
     if (pass > 0 && selection.empty && selection.from === pos) return;
     editor.commands.setTextSelection(pos);

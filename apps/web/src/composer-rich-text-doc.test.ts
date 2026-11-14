@@ -30,6 +30,7 @@ import {
   markdownToFlat,
   pmToFlat,
   serializeEditorDoc,
+  serializedMarkdownOffset,
   serializeSelection,
   skillChipReplacements,
   stepCaretAcrossStyledEdge,
@@ -598,6 +599,53 @@ describe("composer rich text document model", () => {
     });
   });
 
+  describe("a dash rule after a paragraph", () => {
+    const paragraph = (text: string) => ({ type: "paragraph", content: [{ type: "text", text }] });
+    const rule = (source: string) => ({ type: "horizontalRule", attrs: { source } });
+    const serialize = (...content: object[]) => {
+      const doc = ProseMirrorNode.fromJSON(schema, { type: "doc", content });
+      doc.check();
+      return { doc, map: serializeEditorDoc(doc) };
+    };
+
+    it("is written after a blank line, or Markdown reads the paragraph as a heading", () => {
+      const settled = "text\n\n---\nmore";
+      expect(roundTrip("text\n---\nmore").value).toBe(settled);
+      expect(roundTrip(settled).value).toBe(settled);
+    });
+
+    it("keeps every offset mapped through the blank line", () => {
+      const { doc, map } = serialize(paragraph("text"), rule("---"), paragraph("more"));
+      expect(map.value).toBe("text\n\n---\nmore");
+      for (let flat = 0; flat <= map.docLength; flat += 1) {
+        expect(markdownToFlat(map, flatToMarkdown(map, flat))).toBe(flat);
+      }
+      // The blank line is not a place to type: it clamps to the rule.
+      expect(flatToMarkdown(map, "text".length)).toBe("text".length);
+      expect(markdownToFlat(map, "text\n".length)).toBe("text".length + 1);
+      expect(flatToMarkdown(map, "text".length + 1)).toBe("text\n\n---".length);
+      expect(flatToPm(map, "text".length + 1)).toBe(doc.child(0).nodeSize + doc.child(1).nodeSize);
+    });
+  });
+
+  it.each([
+    ["text\n---\nmore", "text\n---\nm".length, "text\n\n---\nm".length],
+    ["before\n> quoted\nafter", "before\n> quoted\na".length, "before\n> quoted\n\na".length],
+    ["__x__\n---\nmore", "__x__\n---\nm".length, "**x**\n\n---\nm".length],
+    [
+      "*a*_b_\n> q\nx\n> q\nabcde",
+      "*a*_b_\n> q\nx\n> q\na".length,
+      "*a*_b_\n> q\nx\n> q\na".length,
+    ],
+    ["a\n---\n", "a".length, "a".length],
+  ])("restores a caret in the glued draft %j on the same character", (value, caret, settled) => {
+    const map = roundTrip(value);
+    const restore = (offset: number) =>
+      markdownToFlat(map, serializedMarkdownOffset(value, map.value, offset));
+    expect(restore(value.length)).toBe(map.docLength);
+    expect(restore(caret)).toBe(markdownToFlat(map, settled));
+  });
+
   it.each([
     "---",
     "***",
@@ -606,7 +654,8 @@ describe("composer rich text document model", () => {
     "* * *",
     "-----",
     "---   ",
-    "text\n---\nmore",
+    "text\n***\nmore",
+    "text\n- - -\nmore",
     "- item\n---\n- item two",
     "```\n---\n```",
     "--",
@@ -652,7 +701,7 @@ describe("composer rich text document model", () => {
 
   it.each([
     ["---", "---"],
-    ["a\n---", "a\n---"],
+    ["a\n---", "a\n\n---"],
     ["---\n", "---"],
   ])("gives the caret a line after the final rule of %j, written %j", (value, expected) => {
     const map = roundTrip(value);
