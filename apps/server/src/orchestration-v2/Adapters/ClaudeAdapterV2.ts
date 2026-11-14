@@ -4490,6 +4490,34 @@ function claudeRewrittenVersion(
     : undefined;
 }
 
+// Auto mode's classifier and deny rules refuse tool calls inside the CLI, so
+// T3 never sees a request; the result's permission_denials is the only record.
+function cliPermissionDenialFailure(
+  message: SDKResultMessage,
+  hostDecidedToolUseIds: ReadonlySet<string>,
+): OrchestrationV2ProviderFailure | null {
+  const denied = message.permission_denials.filter(
+    (denial) => !hostDecidedToolUseIds.has(denial.tool_use_id),
+  );
+  if (denied.length === 0) {
+    return null;
+  }
+  return makeProviderFailure({
+    class: "permission_error",
+    code: "permission_denied",
+    retryable: false,
+    message: [
+      "Claude's permission settings blocked:",
+      ...denied.map((denial) =>
+        summarizeClaudeToolRequest(
+          denial.tool_name,
+          claudeNativeToolInputFromRecord(denial.tool_input),
+        ),
+      ),
+    ].join("\n"),
+  });
+}
+
 function providerFailureFromResult(
   message: SDKResultMessage,
   receivedAt: DateTime.Utc,
@@ -4825,6 +4853,8 @@ interface ActiveClaudeTurnContext {
   >;
   // Claude may settle a turn with a result that echoes only a steer's uuid.
   readonly steerUuids: Set<string>;
+  // Tool calls T3's canUseTool decided; the result's permission_denials also lists those.
+  readonly hostDecidedToolUseIds: Set<string>;
   // Claude can run another model than requested, such as when an organization disallows it.
   executedModel: string | undefined;
 }
@@ -8721,9 +8751,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           >;
           readonly completedAt: DateTime.Utc;
           readonly failure?: OrchestrationV2ProviderFailure;
+          // Reports the turn as failed without the cleanup a stopped turn gets: the process and its background work live on.
+          readonly reportedFailure?: OrchestrationV2ProviderFailure;
           readonly threadDisposition?: "reusable" | "broken";
           readonly result?: SDKResultMessage;
         }) {
+          const reportedStatus = input.reportedFailure === undefined ? input.status : "failed";
           input.context.steersClosed = true;
           yield* reasoningDeltas.flushTurn(input.context.nativeTurnId);
           if (input.status === "completed") {
@@ -8923,7 +8956,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
           const threadDisposition = input.threadDisposition ?? "reusable";
           const terminalEvent: ProviderAdapter.ProviderAdapterV2Event =
-            input.status === "failed"
+            reportedStatus === "failed"
               ? {
                   type: "turn.terminal",
                   driver: CLAUDE_PROVIDER,
@@ -8934,14 +8967,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     input.context,
                     `terminal-failure:${input.context.providerTurnId}`,
                   ),
-                  status: input.status,
-                  failure: input.failure ?? makeProviderFailure({ class: "provider_error" }),
+                  status: reportedStatus,
+                  failure:
+                    input.reportedFailure ??
+                    input.failure ??
+                    makeProviderFailure({ class: "provider_error" }),
                   ...(providerRetry === undefined
                     ? {}
                     : {
                         retry: providerRetry.retry,
                         retryStartedAt: providerRetry.startedAt,
                       }),
+                  ...(input.reportedFailure === undefined ? {} : { childTurnsContinue: true }),
                   threadDisposition,
                 }
               : {
@@ -8950,7 +8987,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   providerThreadId: input.context.input.providerThread.id,
                   providerTurnId: input.context.providerTurnId,
                   runOrdinal: input.context.input.runOrdinal,
-                  status: input.status,
+                  status: reportedStatus,
                   failure: null,
                   threadDisposition,
                 };
@@ -8962,7 +8999,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 providerTurn: {
                   ...providerTurnPayload({
                     context: input.context,
-                    status: input.status,
+                    status: reportedStatus,
                     completedAt: input.completedAt,
                   }),
                   turnTokenUsage: normalizeClaudeTurnTokenUsage(
@@ -11335,20 +11372,28 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     failureHint,
                     usageLimited,
                   );
+            const resultStatus = interrupted
+              ? "interrupted"
+              : limitedCompaction !== null
+                ? "failed"
+                : terminalStatusFromResult(message, failureHint);
+            const permissionDenialFailure =
+              resultStatus === "completed"
+                ? cliPermissionDenialFailure(message, context.hostDecidedToolUseIds)
+                : null;
             const terminalFailure =
               resultFailure?.class === "usage_limit"
                 ? { ...resultFailure, resetAt: resetAt ?? resultFailure.resetAt ?? null }
                 : resultFailure;
             yield* finalizeActiveTurn({
               context,
-              status: interrupted
-                ? "interrupted"
-                : limitedCompaction !== null
-                  ? "failed"
-                  : terminalStatusFromResult(message, failureHint),
+              status: resultStatus,
               completedAt,
               result: message,
               ...(terminalFailure === null ? {} : { failure: terminalFailure }),
+              ...(permissionDenialFailure === null
+                ? {}
+                : { reportedFailure: permissionDenialFailure }),
             });
           }
         });
@@ -11584,6 +11629,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           const nativeRequestId = callbackOptions.toolUseID;
+          context.hostDecidedToolUseIds.add(nativeRequestId);
           const nativeToolInput = claudeNativeToolInputFromRecord(toolInput);
           const heldForEcho = context.heldRootFrames.length > 0;
           const startToolCall = toolName !== "Agent" && options?.startToolCall !== false;
@@ -12631,6 +12677,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               heldRootFrames: [],
               pendingSteers: new Map(),
               steerUuids: new Set(),
+              hostDecidedToolUseIds: new Set(),
               executedModel: undefined,
             };
             const attachTurn = Effect.gen(function* () {
