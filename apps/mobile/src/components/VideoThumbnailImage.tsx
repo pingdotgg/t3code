@@ -41,7 +41,7 @@ export function VideoThumbnailImage(props: {
   readonly contentFit?: "cover" | "contain";
 }) {
   const { cacheKey, source } = props;
-  // Extraction runs only while the screen is focused; leaving it interrupts the load.
+  // Extraction starts only while the screen is focused; leaving it skips queued loads.
   const isFocused = useIsFocused();
   const loaded = useAtomValue(
     source && isFocused ? videoThumbnailAtom({ cacheKey, source }) : noVideoThumbnail,
