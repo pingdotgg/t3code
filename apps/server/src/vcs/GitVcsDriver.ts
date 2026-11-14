@@ -458,6 +458,8 @@ export class GitVcsDriver extends Context.Service<
       input: VcsSwitchRefInput,
     ) => Effect.Effect<VcsSwitchRefResult, GitCommandError>;
     readonly initRepo: (input: VcsInitInput) => Effect.Effect<void, GitCommandError>;
+    /** Drops cached refs after something outside this driver changed them, such as a clone into `cwd`. */
+    readonly invalidateRefs: (cwd: string) => Effect.Effect<void>;
     readonly listLocalBranchNames: (cwd: string) => Effect.Effect<string[], GitCommandError>;
   }
 >()("t3/vcs/GitVcsDriver") {}

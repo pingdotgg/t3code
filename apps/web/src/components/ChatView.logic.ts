@@ -1,3 +1,4 @@
+import { toServerClock } from "@t3tools/client-runtime/clock";
 import {
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2Run,
@@ -1015,15 +1016,19 @@ export interface LocalDispatchSnapshot {
 export function createLocalDispatchSnapshot(
   activeThread: Thread | undefined,
   options?: {
+    environmentId?: EnvironmentId;
     preparingWorktree?: boolean;
     latestUserMessageId?: ChatMessage["id"] | null;
     submissionIntent?: ComposerSubmissionIntent;
   },
 ): LocalDispatchSnapshot {
+  const environmentId = options?.environmentId ?? activeThread?.environmentId;
   const latestRun = activeThread?.latestRun ?? null;
   const runtime = activeThread?.runtime ?? null;
   return {
-    startedAt: new Date().toISOString(),
+    startedAt: new Date(
+      environmentId === undefined ? Date.now() : toServerClock(environmentId, Date.now()),
+    ).toISOString(),
     preparingWorktree: Boolean(options?.preparingWorktree),
     submissionIntent: options?.submissionIntent ?? "foreground",
     latestUserMessageId: options?.latestUserMessageId ?? null,
