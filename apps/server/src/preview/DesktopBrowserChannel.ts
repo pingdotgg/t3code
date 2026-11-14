@@ -6,6 +6,7 @@ import {
   DesktopBrowserCommand,
   DesktopBrowserEvent,
   type DesktopBrowserCommand as DesktopBrowserCommandType,
+  type PreviewAutomationLoadError,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -44,11 +45,17 @@ export class DesktopBrowserChannel extends Context.Service<
     readonly detached: Stream.Stream<DesktopTabKey>;
     readonly attached: Stream.Stream<DesktopTabKey>;
     readonly isAttached: (key: DesktopTabKey) => Effect.Effect<boolean>;
+    /** Whether a desktop window draws the tab on screen, which no streamed viewer counts. */
+    readonly isShown: (key: DesktopTabKey) => boolean;
+    /** A load failure the desktop saw, possibly before the server connected to the tab. */
+    readonly loadFailure: (key: DesktopTabKey) => PreviewAutomationLoadError | undefined;
     readonly endpoint: (key: DesktopTabKey) => Effect.Effect<string, never, Scope.Scope>;
     readonly pointer: (
       key: DesktopTabKey,
       pointer: { readonly phase: "move" | "click"; readonly x: number; readonly y: number },
     ) => Effect.Effect<void>;
+    /** Never fails. A failed write means a broken channel; the next backend starts with no turns. */
+    readonly turn: (threadId: string, active: boolean) => Effect.Effect<void>;
   }
 >()("t3/preview/DesktopBrowserChannel") {}
 
@@ -58,18 +65,34 @@ const make = Effect.gen(function* () {
   const controlFd = config.desktopBrowserControlFd;
   const changes = yield* PubSub.unbounded<{ key: DesktopTabKey; attached: boolean }>();
   const attachedTabs = new Set<string>();
+  // Missing reports protect desktop tabs until the renderer explicitly marks them hidden.
+  const shownTabs = new Map<string, boolean>();
+  const loadFailures = new Map<string, PreviewAutomationLoadError>();
   const inbound = new Map<string, Queue.Queue<string>>();
   const writeLock = yield* Semaphore.make(1);
 
   if (inputFd === undefined || controlFd === undefined) {
     return DesktopBrowserChannel.of({
       available: false,
-      awaitAttached: () => Effect.succeed(false),
+      awaitAttached: Effect.fn("DesktopBrowserChannel.awaitAttached")(function () {
+        return Effect.succeed(false);
+      }),
       detached: Stream.empty,
       attached: Stream.empty,
-      isAttached: () => Effect.succeed(false),
-      endpoint: () => Effect.die("No desktop app is attached to this server."),
-      pointer: () => Effect.void,
+      isAttached: Effect.fn("DesktopBrowserChannel.isAttached")(function () {
+        return Effect.succeed(false);
+      }),
+      endpoint: Effect.fn("DesktopBrowserChannel.endpoint")(function () {
+        return Effect.die("No desktop app is attached to this server.");
+      }),
+      turn: Effect.fn("DesktopBrowserChannel.turn")(function () {
+        return Effect.void;
+      }),
+      pointer: Effect.fn("DesktopBrowserChannel.pointer")(function () {
+        return Effect.void;
+      }),
+      isShown: () => false,
+      loadFailure: () => undefined,
     });
   }
 
@@ -108,16 +131,34 @@ const make = Effect.gen(function* () {
         case "attached":
           attachedTabs.add(id);
           return PubSub.publish(changes, { key, attached: true });
+        case "loadFailed":
+          loadFailures.set(id, {
+            url: event.url.slice(0, 2048),
+            code: event.code,
+            description: event.description,
+          });
+          return Effect.void;
         case "detached": {
           attachedTabs.delete(id);
+          shownTabs.delete(id);
+          loadFailures.delete(id);
           const queue = inbound.get(id);
           return (queue ? Queue.shutdown(queue) : Effect.void).pipe(
             Effect.andThen(PubSub.publish(changes, { key, attached: false })),
           );
         }
+        case "shown":
+          shownTabs.set(id, event.shown);
+          return Effect.void;
       }
     }),
     Effect.catchCause((cause) => Effect.logWarning("desktop browser channel stopped", { cause })),
+    Effect.ensuring(
+      Effect.sync(() => {
+        shownTabs.clear();
+        loadFailures.clear();
+      }),
+    ),
     Effect.forkScoped,
   );
 
@@ -152,12 +193,14 @@ const make = Effect.gen(function* () {
           connected = true;
           const writer = yield* socket.writer;
           const reader = yield* socket.reader;
-          yield* Stream.fromQueue(queue).pipe(
+          // A detach shuts the queue down. Ending here closes the socket, so Playwright's
+          // pending commands fail instead of waiting forever for the tab to answer.
+          const toPlaywright = Stream.fromQueue(queue).pipe(
             Stream.runForEach((message) => writer.write(message)),
-            Effect.forkScoped,
+            Effect.exit,
           );
           const decoder = new TextDecoder();
-          return yield* reader.pull.pipe(
+          const toDesktop = reader.pull.pipe(
             Effect.flatMap((frames) =>
               Effect.forEach(
                 frames,
@@ -172,6 +215,7 @@ const make = Effect.gen(function* () {
             ),
             Effect.forever,
           );
+          return yield* Effect.raceFirst(toPlaywright, toDesktop);
         }).pipe(Effect.scoped, Effect.ignore),
       )
       .pipe(Effect.forkScoped);
@@ -182,8 +226,8 @@ const make = Effect.gen(function* () {
 
   return DesktopBrowserChannel.of({
     available: true,
-    awaitAttached: (key, timeout) =>
-      Effect.scoped(
+    awaitAttached: Effect.fn("DesktopBrowserChannel.awaitAttached")(function (key, timeout) {
+      return Effect.scoped(
         Effect.gen(function* () {
           const subscription = yield* PubSub.subscribe(changes);
           if (attachedTabs.has(keyOf(key))) return true;
@@ -195,7 +239,8 @@ const make = Effect.gen(function* () {
             Effect.map((result) => Option.getOrElse(result, () => false)),
           );
         }),
-      ),
+      );
+    }),
     detached: Stream.fromPubSub(changes).pipe(
       Stream.filter((change) => !change.attached),
       Stream.map((change) => change.key),
@@ -204,9 +249,18 @@ const make = Effect.gen(function* () {
       Stream.filter((change) => change.attached),
       Stream.map((change) => change.key),
     ),
-    isAttached: (key) => Effect.sync(() => attachedTabs.has(keyOf(key))),
+    isAttached: Effect.fn("DesktopBrowserChannel.isAttached")(function (key) {
+      return Effect.sync(() => attachedTabs.has(keyOf(key)));
+    }),
+    isShown: (key) => shownTabs.get(keyOf(key)) ?? true,
+    loadFailure: (key) => loadFailures.get(keyOf(key)),
     endpoint,
-    pointer: (key, pointer) => command({ type: "pointer", ...key, ...pointer }),
+    turn: Effect.fn("DesktopBrowserChannel.turn")(function (threadId, active) {
+      return command({ type: "turn", threadId, active });
+    }),
+    pointer: Effect.fn("DesktopBrowserChannel.pointer")(function (key, pointer) {
+      return command({ type: "pointer", ...key, ...pointer });
+    }),
   });
 });
 

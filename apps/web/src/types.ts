@@ -13,13 +13,13 @@ import type {
   ProviderInteractionMode,
   RunId,
   RuntimeMode,
+  OrchestrationV2LinkedSender,
   ScheduledTaskId,
   ThreadId,
 } from "@t3tools/contracts";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
-  ThreadRunSummary,
   ThreadRuntimeSummary,
 } from "@t3tools/client-runtime/state/shell";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
@@ -84,6 +84,7 @@ export interface ChatMessage {
   readonly creationSource?: OrchestrationV2CreationSource;
   readonly scheduledTaskId?: ScheduledTaskId;
   readonly senderThreadId?: ThreadId;
+  readonly linkedSender?: OrchestrationV2LinkedSender;
   readonly idleCompaction?: import("@t3tools/contracts").OrchestrationV2IdleCompaction;
   readonly createdAt: string;
   readonly updatedAt: string;

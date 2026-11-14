@@ -14,10 +14,12 @@ import {
 
 describe("authorization grants", () => {
   it("decodes legacy review credentials without offering them in new grants", () => {
-    expect(Schema.decodeUnknownSync(AuthEnvironmentScopes)(["review:write"])).toEqual([
-      "review:write",
-    ]);
-    expect(() => Schema.decodeUnknownSync(AuthGrantScopes)(["review:write"])).toThrow();
+    const decodeAuthEnvironmentScopes = Schema.decodeSync(AuthEnvironmentScopes);
+
+    expect(decodeAuthEnvironmentScopes(["review:write"])).toEqual(["review:write"]);
+    const decodeAuthGrantScopes = Schema.decodeUnknownSync(AuthGrantScopes);
+
+    expect(() => decodeAuthGrantScopes(["review:write"])).toThrow();
     expect(AuthStandardClientScopes).not.toContain("review:write");
   });
 
@@ -54,7 +56,9 @@ describe("authorization grants", () => {
   });
 
   it("ignores unknown response permissions without falling back to broader scopes", () => {
-    const session = Schema.decodeUnknownSync(AuthSessionState)({
+    const decodeAuthSessionState = Schema.decodeUnknownSync(AuthSessionState);
+
+    const session = decodeAuthSessionState({
       authenticated: true,
       auth: {
         policy: "loopback-browser",

@@ -19,6 +19,7 @@ import * as Schema from "effect/Schema";
 import {
   contextUsageForHandoff,
   handoffBudget,
+  handoffCoverage,
   historyCost,
   historyResponseItems,
   selectHistory,
@@ -137,6 +138,19 @@ describe("handoff budget", () => {
     assert.equal(command?.kind, "command_execution");
     assert.include(command!.text, "Exit code: 1");
     assert.include(command!.text, "界".repeat(300));
+    assert.equal(
+      historicalMessage({
+        ...base,
+        type: "file_change",
+        fileName: "src/a.ts",
+        changes: [
+          { operation: "update", path: "src/a.ts" },
+          { operation: "add", path: "src/b.ts" },
+          { operation: "update", path: "src/new.ts", oldPath: "src/old.ts" },
+        ],
+      })?.text,
+      "File change: src/a.ts, src/b.ts, src/new.ts",
+    );
     assert.isNull(
       historicalMessage({
         ...base,
@@ -163,6 +177,21 @@ describe("handoff budget", () => {
     assert.deepEqual(selected.messages, messages);
     assert.equal(selected.omittedItems, 2);
     assert.isAtMost(historyCost(selected.messages, selected.context), 3_000);
+  });
+
+  it("points history recovery at the omitted items instead of a read from the thread's start", () => {
+    const omitted = message("item:omitted", "assistant", "o".repeat(4_000));
+    const selected = selectHistory({
+      messages: [
+        messages[0]!,
+        omitted,
+        ...Array.from({ length: 3 }, (_, i) => message(`item:recent-${i}`, "assistant", "recent")),
+      ],
+      coverage: handoffCoverage({ threadId, coveredRunOrdinals: { from: 1, to: 46 }, items: [] }),
+      budget: 3_000,
+    });
+    assert.deepEqual(selected.omittedItemIds, [omitted.itemId]);
+    assert.include(selected.context, omitted.itemId);
   });
 
   it("counts JSON escaping and UTF-8 bytes across many messages", () => {

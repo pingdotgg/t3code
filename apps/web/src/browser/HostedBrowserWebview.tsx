@@ -7,6 +7,10 @@ import { useShallow } from "zustand/react/shallow";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { previewBridge } from "~/components/preview/previewBridge";
+import {
+  preventThumbButtonFocus,
+  takeThumbButtonNavigation,
+} from "~/components/preview/thumbButtons";
 import { usePreviewBridge } from "~/components/preview/usePreviewBridge";
 import { useClientSettingsHydrated } from "~/hooks/useSettings";
 import { cn, isMacPlatform } from "~/lib/utils";
@@ -105,6 +109,7 @@ export function HostedBrowserWebview(props: {
   const serverColorScheme = serverRendering?.colorScheme;
   const serverZoomFactor = serverRendering?.zoomFactor;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- leases the desktop preview tab for this webview and releases it on cleanup
   useEffect(() => {
     if (!clientSettingsHydrated) return;
     crashRecoveryRef.current = INITIAL_WEBVIEW_CRASH_RECOVERY_STATE;
@@ -119,11 +124,13 @@ export function HostedBrowserWebview(props: {
     };
   }, [clientSettingsHydrated, runtimeTabId, serverDriven, tabId, threadRef.threadId]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- applies the server color scheme to the desktop preview tab through the desktop bridge
   useEffect(() => {
     const bridge = window.desktopBridge?.preview;
     if (!bridge || serverColorScheme === undefined) return;
     withDesktopTab(runtimeTabId, () => bridge.setColorScheme(runtimeTabId, serverColorScheme));
   }, [runtimeTabId, serverColorScheme]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- applies the server zoom factor to the desktop preview tab through the desktop bridge
   useEffect(() => {
     const bridge = window.desktopBridge?.preview;
     if (!bridge || serverZoomFactor === undefined) return;
@@ -132,6 +139,9 @@ export function HostedBrowserWebview(props: {
 
   const [webviewGeneration, setWebviewGeneration] = useState(0);
   const [recoverySrc, setRecoverySrc] = useState(initialSrc);
+  const active = presentation.visible && presentation.rect !== null;
+  const shown = active || pictureInPicture;
+  const reportedShown = useEffectEvent(() => serverDriven && shown);
   const remountCrashedWebview = useEffectEvent(() => {
     setRecoverySrc(initialUrl ?? initialSrc);
     setWebviewGeneration((generation) => generation + 1);
@@ -141,6 +151,7 @@ export function HostedBrowserWebview(props: {
     webviewRef.current = node as ElectronWebview | null;
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the webview's webContents with the desktop bridge and listens for crashes and focus
   useEffect(() => {
     const webview = webviewRef.current;
     const bridge = previewBridge;
@@ -158,6 +169,7 @@ export function HostedBrowserWebview(props: {
           const webContentsId = webview.getWebContentsId();
           if (Number.isInteger(webContentsId) && webContentsId > 0) {
             await bridge.registerWebview(runtimeTabId, webContentsId);
+            withDesktopTab(runtimeTabId, () => bridge.setShown(runtimeTabId, reportedShown()));
           }
         } catch {}
       })();
@@ -172,16 +184,24 @@ export function HostedBrowserWebview(props: {
         if (!disposed) remountCrashedWebview();
       }, recovery.delayMs);
     };
-    // Guest clicks only emit focus here; replay pointerdown to dismiss host popups.
+    // Guest clicks never reach this document, so replay a pointerdown to dismiss host popups.
+    // The guest preload reports each press, since the guest does not always take focus.
     const dismissHostPopups = () => {
       webview.dispatchEvent(
         new PointerEvent("pointerdown", { bubbles: true, pointerType: "mouse" }),
       );
     };
+    const guestPointerDown = (event: Event) => {
+      // Mirrors POINTER_DOWN_HOST_CHANNEL in apps/desktop/src/preview/GuestProtocol.ts.
+      if ((event as Event & { channel?: string }).channel === "preview:pointer-down") {
+        dismissHostPopups();
+      }
+    };
     webview.addEventListener("did-attach", register);
     webview.addEventListener("dom-ready", register);
     webview.addEventListener("render-process-gone", recoverGuest);
     webview.addEventListener("focus", dismissHostPopups);
+    webview.addEventListener("ipc-message", guestPointerDown);
     register();
     return () => {
       disposed = true;
@@ -190,6 +210,7 @@ export function HostedBrowserWebview(props: {
       webview.removeEventListener("dom-ready", register);
       webview.removeEventListener("render-process-gone", recoverGuest);
       webview.removeEventListener("focus", dismissHostPopups);
+      webview.removeEventListener("ipc-message", guestPointerDown);
     };
   }, [
     clientSettingsHydrated,
@@ -199,7 +220,6 @@ export function HostedBrowserWebview(props: {
     webviewGeneration,
   ]);
 
-  const active = presentation.visible && presentation.rect !== null;
   const lastRect = presentation.rect;
   const layoutZoomFactor = useBrowserLayoutZoomFactor(zoomFactor);
   const viewportWidth = viewport._tag === "fill" ? null : viewport.width;
@@ -236,7 +256,7 @@ export function HostedBrowserWebview(props: {
     handleResizePointerDown,
     layout: viewportLayout,
   } = useBrowserViewportResize({
-    tabId: runtimeTabId,
+    target: { threadRef, tabId, runtimeTabId },
     viewport,
     zoomFactor: layoutZoomFactor,
     containerSize,
@@ -266,11 +286,13 @@ export function HostedBrowserWebview(props: {
     });
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- schedules a frame that publishes the webview layout and scroll to the browser surface store
   useEffect(() => {
     const frameId = window.requestAnimationFrame(syncContentPresentation);
     return () => window.cancelAnimationFrame(frameId);
   }, [syncContentPresentation]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the webview wrapper element to its origin for a new tab or viewport size
   useEffect(() => {
     const wrapper = wrapperRef.current;
     if (!wrapper) return;
@@ -283,7 +305,21 @@ export function HostedBrowserWebview(props: {
     viewportWidth,
   ]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Report the mounted webview's visibility to the desktop host.
+  useEffect(() => {
+    const bridge = window.desktopBridge?.preview;
+    if (!clientSettingsHydrated || !bridge || !serverDriven) return;
+    withDesktopTab(runtimeTabId, () => bridge.setShown(runtimeTabId, shown));
+    return () => withDesktopTab(runtimeTabId, () => bridge.setShown(runtimeTabId, false));
+  }, [clientSettingsHydrated, runtimeTabId, serverDriven, shown]);
+
   if (!clientSettingsHydrated || !config) return null;
+
+  // This fixed wrapper sits outside the right panel shell, so it takes thumb presses itself.
+  const navigateThumb = (direction: "back" | "forward") => {
+    if (direction === "back") void previewBridge?.goBack(runtimeTabId);
+    else void previewBridge?.goForward(runtimeTabId);
+  };
 
   const renderingActive = active || backgroundActivity || pictureInPicture || recordingActive;
   const wrapperStyle = resolveHostedBrowserWebviewWrapperStyle({
@@ -303,6 +339,8 @@ export function HostedBrowserWebview(props: {
       className="fixed overflow-hidden bg-muted/35"
       style={{ ...wrapperStyle, overscrollBehavior: "contain" }}
       onScroll={syncContentPresentation}
+      onMouseDown={preventThumbButtonFocus}
+      onMouseUp={(event) => takeThumbButtonNavigation(event, navigateThumb)}
       data-preview-rendering={renderingActive ? "active" : "suspended"}
       data-preview-viewport={runtimeTabId}
     >

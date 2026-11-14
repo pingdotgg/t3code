@@ -2,12 +2,16 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import { FetchHttpClient } from "effect/http";
 
-import { NativeClientError, prebuildAndroid, resolveArtifact } from "./mobile-native-client.ts";
+import {
+  androidSdk,
+  buildRunTitle,
+  NativeClientError,
+  prebuildAndroid,
+  remoteBuildState,
+} from "./mobile-native-client.ts";
 
 const caches = [".gradle/history", "app/.cxx/object"];
 
@@ -65,22 +69,85 @@ it.layer(NodeServices.layer)("prebuildAndroid", (it) => {
   );
 });
 
-it.layer(Layer.merge(NodeServices.layer, FetchHttpClient.layer))("resolveArtifact", (it) => {
-  it.effect(
-    "fails with a next step when no iOS client is cached on a machine that cannot build one",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const home = yield* fs.makeTempDirectoryScoped({ prefix: "native-client-home-" });
+it.layer(NodeServices.layer)("androidSdk", (it) => {
+  it.effect("skips a configured SDK path that holds no SDK", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "android-sdk-home-" });
+      const sdk = path.join(home, "sdk");
+      yield* fs.makeDirectory(path.join(sdk, "platform-tools"), { recursive: true });
 
-        const error = yield* resolveArtifact(home, "ios", null, "a".repeat(40)).pipe(
-          Effect.provideService(HostProcess.Environment, { T3_NATIVE_CLIENT_CACHE: "off" }),
-          Effect.provideService(HostProcess.Platform, "linux"),
-          Effect.flip,
-        );
+      const resolved = yield* androidSdk.pipe(
+        Effect.provideService(HostProcess.Environment, {
+          HOME: home,
+          ANDROID_HOME: path.join(home, "stale"),
+          ANDROID_SDK_ROOT: sdk,
+        }),
+      );
 
-        assert.instanceOf(error, NativeClientError);
-        assert.include(error.message, "cannot build it");
-      }),
+      assert.strictEqual(resolved, sdk);
+    }),
+  );
+});
+
+it("finds a Blacksmith build by its run title and reads its state", () => {
+  const fingerprint = "a".repeat(40);
+  const title = buildRunTitle("android", "x86_64", fingerprint);
+  assert.strictEqual(title, `Dev client android x86_64 ${fingerprint}`);
+  assert.strictEqual(buildRunTitle("ios", null, fingerprint), `Dev client ios ${fingerprint}`);
+  const run = (
+    createdAt: string,
+    status: string,
+    conclusion: string | null,
+    displayTitle = title,
+  ) => ({
+    displayTitle,
+    status,
+    conclusion,
+    createdAt,
+  });
+  const since = Date.parse("2026-11-09T12:00:00Z");
+  assert.strictEqual(remoteBuildState([], title, since), "none");
+  // Another client's run, and a run from before this wait, say nothing about this build.
+  assert.strictEqual(
+    remoteBuildState(
+      [
+        run(
+          "2026-11-09T12:05:00Z",
+          "in_progress",
+          null,
+          buildRunTitle("android", "arm64-v8a", fingerprint),
+        ),
+        run("2026-11-09T11:00:00Z", "completed", "failure"),
+      ],
+      title,
+      since,
+    ),
+    "none",
+  );
+  assert.strictEqual(
+    remoteBuildState([run("2026-11-09T12:01:00Z", "queued", null)], title, since),
+    "running",
+  );
+  assert.strictEqual(
+    remoteBuildState([run("2026-11-09T12:01:00Z", "completed", "success")], title, since),
+    "succeeded",
+  );
+  // The newest run decides: a retry that is running outranks the failure before it.
+  assert.strictEqual(
+    remoteBuildState(
+      [
+        run("2026-11-09T12:01:00Z", "completed", "failure"),
+        run("2026-11-09T12:09:00Z", "in_progress", null),
+      ],
+      title,
+      since,
+    ),
+    "running",
+  );
+  assert.strictEqual(
+    remoteBuildState([run("2026-11-09T12:01:00Z", "completed", "cancelled")], title, since),
+    "failed",
   );
 });

@@ -4,16 +4,15 @@ import { Atom, type AtomRegistry } from "effect/reactivity";
 
 import { type AtomCommand, type AtomCommandResult, runAtomCommand } from "./runtime.ts";
 
-interface VcsStatusRevalidationTarget {
+export interface VcsStatusRevalidationTarget {
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
 }
 
 /**
- * One atom per environment and cwd that refreshes VCS status while mounted and
- * shared by every subscriber. Refreshes only when `connected` is given and true
- * (on mount and on each reconnect), and on `subscribeWake` (debounced); the wake
- * subscription and timer end with the last subscriber.
+ * One atom per checkout, so controls showing it share one cadence. Refreshes on
+ * `subscribeWake` (debounced) and whenever `connected`, if given, is true on
+ * mount or turns true. Listening ends with the last subscriber.
  */
 export function createVcsStatusRevalidationAtomFamily<R>(input: {
   readonly refreshStatus: AtomCommand<

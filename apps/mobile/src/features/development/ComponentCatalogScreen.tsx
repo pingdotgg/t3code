@@ -59,7 +59,7 @@ export function ComponentCatalogScreen() {
   };
   return (
     <View className="flex-1 bg-screen">
-      <AppBar title="UI components" onBack={() => navigation.goBack()} sidebar={false} />
+      <AppBar title="UI components" onBack={() => navigation.goBack()} />
       <ScreenScrollView
         contentInsetAdjustmentBehavior="automatic"
         contentContainerStyle={{ padding: 16, gap: 20, paddingBottom: 40 }}
@@ -104,6 +104,16 @@ export function ComponentCatalogScreen() {
             <View className="gap-3">
               <AppText className="text-lg font-t3-semibold">Lists and selection</AppText>
               <ListSection>
+                <View className="p-4">
+                  <SegmentedControl
+                    variant="card"
+                    options={CHOICES}
+                    selected={tab}
+                    onSelect={setTab}
+                    size="compact"
+                    role="tab"
+                  />
+                </View>
                 <ListRow icon="folder" label="Projects" detail="4" onPress={() => setSheet(true)} />
                 <ListToggleRow
                   icon="bell.badge"

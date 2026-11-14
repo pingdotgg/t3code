@@ -11,6 +11,7 @@ import "vite-plus/test/config";
 import { defineConfig, type Connect, type Plugin } from "vite-plus";
 import * as Hash from "effect/Hash";
 import pkg from "./package.json" with { type: "json" };
+import pdfjsPkg from "pdfjs-dist/package.json" with { type: "json" };
 
 import {
   DEV_PROXIED_ORIGIN_PRESERVING_PREFIXES,
@@ -18,9 +19,11 @@ import {
 } from "@t3tools/shared/devProxy";
 
 import { loadRepoEnv } from "../../scripts/lib/public-config";
+import { resolveTaggedSourceVersion } from "../../scripts/lib/tagged-source-version";
 import { thirdPartyLicensesPlugin } from "../../scripts/lib/third-party-licenses";
 import { tailwindPlugins } from "./vite/tailwind";
 import { warmBundledDevPlugin } from "./vite/warmBundledDev";
+import { formatAppDisplayName, resolveWebAppStageLabel } from "./src/branding.logic";
 
 const repoEnv = loadRepoEnv();
 Object.assign(process.env, repoEnv);
@@ -43,11 +46,11 @@ const configuredRelayTracingToken = repoEnv.VITE_RELAY_OTLP_TRACES_TOKEN?.trim()
 const configuredHostedAppChannel = process.env.VITE_HOSTED_APP_CHANNEL?.trim() || "";
 const configuredReleaseChannel =
   process.env.T3CODE_BUILT_DEV === "1" ? "dev" : process.env.VITE_RELEASE_CHANNEL?.trim() || "";
-const configuredAppVersion = process.env.APP_VERSION?.trim() || pkg.version;
 const configuredDesktopUpdateRepository =
   process.env.T3CODE_DESKTOP_UPDATE_REPOSITORY?.trim() ||
   process.env.GITHUB_REPOSITORY?.trim() ||
   "";
+const configuredFeatureSecrets = process.env.T3CODE_FEATURE_SECRETS?.trim() || "";
 const configuredHostedAppUrl = (() => {
   const explicitHostedAppUrl = process.env.VITE_HOSTED_APP_URL?.trim();
   if (explicitHostedAppUrl) {
@@ -69,6 +72,11 @@ const builtDev = process.env.T3CODE_BUILT_DEV === "1";
 
 const bundledDevEnv = process.env.T3CODE_BUNDLED_DEV?.trim().toLowerCase();
 const bundledDev = bundledDevEnv === "1" || bundledDevEnv === "true";
+
+// Bundled dev and `build --watch` pass Rolldown `exclude` but not Vite's default `ignored`, so
+// they watch node_modules. Those files are pnpm-store hardlinks shared by every worktree, so each
+// `vp i` or worktree removal elsewhere rebuilds every long-running server and leaks native memory.
+const rolldownWatchExclude = [/[\\/]node_modules[\\/]/];
 
 const buildSourcemap: boolean | "hidden" =
   sourcemapEnv === "0" || sourcemapEnv === "false"
@@ -97,9 +105,30 @@ const browserTestApiPort = 61_000 + ((Hash.string(import.meta.dirname) >>> 0) % 
 
 const browserTestProject = {
   extends: true,
-  // Pre-bundled so a late first import does not trigger a mid-run reload. The
-  // dependency scan misses autocomplete because tests reach it only through lazy imports.
-  optimizeDeps: { include: ["vite-plus/test/browser", "@base-ui/react/autocomplete"] },
+  // Pre-bundle lazy browser and worker dependencies to avoid mid-run reloads.
+  optimizeDeps: {
+    include: [
+      "vite-plus/test/browser",
+      "@base-ui/react/autocomplete",
+      "saxes",
+      "@betteroffice/docx/editor",
+      "@betteroffice/docx/layout",
+      "@betteroffice/docx/layout/render",
+      "@betteroffice/docx/yrs",
+      "@betteroffice/fonts",
+      "@betteroffice/pptx",
+      "@betteroffice/xlsx",
+      "@betteroffice/xlsx/headless",
+      "fast-xml-parser",
+      "entities",
+      "dompurify",
+      "heic-to/next",
+      "jszip",
+      "pdfjs-dist",
+      "sql.js",
+      "tiff",
+    ],
+  },
   test: {
     name: "browser",
     include: ["src/**/*.browser.test.{ts,tsx}"],
@@ -199,6 +228,66 @@ function devCompressionPlugin(): Plugin {
   };
 }
 
+// A static import cycle between chunks can run a chunk before the values it imports exist,
+// which blanks the app at boot. Fail the build instead of shipping it.
+function chunkCycleGuardPlugin(): Plugin {
+  return {
+    name: "t3code:chunk-cycle-guard",
+    apply: "build",
+    generateBundle(_options, bundle) {
+      const done = new Set<string>();
+      const visit = (fileName: string, path: string[]) => {
+        if (done.has(fileName)) return;
+        const start = path.indexOf(fileName);
+        if (start !== -1) {
+          this.error(`Chunk import cycle: ${[...path.slice(start), fileName].join(" -> ")}`);
+        }
+        const chunk = bundle[fileName];
+        if (chunk?.type !== "chunk") return;
+        for (const imported of chunk.imports) visit(imported, [...path, fileName]);
+        done.add(fileName);
+      };
+      for (const fileName of Object.keys(bundle)) visit(fileName, []);
+    },
+  };
+}
+
+// Bundled dev never evicts emitted files from memory (vitejs/vite#23781), so hashed names keep
+// a copy of every changed chunk from every rebuild. Fixed names overwrite the previous copy.
+function bundledDevStableNamesPlugin(): Plugin {
+  return {
+    name: "t3code:bundled-dev-stable-names",
+    apply: "serve",
+    outputOptions: (options) => ({
+      ...options,
+      chunkFileNames: "assets/[name].js",
+      assetFileNames: "assets/[name][extname]",
+    }),
+  };
+}
+
+// Stamps index.html's title with the name branding.ts resolves once the app
+// loads, so a tab opens on the right channel instead of flashing another's.
+// Desktop swaps in its injected branding from an inline script in index.html.
+function bootstrapTitlePlugin(): Plugin {
+  let development = false;
+  return {
+    name: "t3code:bootstrap-title",
+    configResolved(config) {
+      // The same flag Vite exposes to the app as import.meta.env.DEV.
+      development = !config.isProduction;
+    },
+    transformIndexHtml(html) {
+      const stageLabel = resolveWebAppStageLabel({
+        hostedAppChannel: configuredHostedAppChannel,
+        development,
+      });
+      const title = formatAppDisplayName({ baseName: "T3 Code", stageLabel });
+      return html.replace(/<title>[^<]*<\/title>/, `<title>${title}</title>`);
+    },
+  };
+}
+
 // Allow Tailnet hosts for sharing; Tailscale-controlled DNS prevents attacker rebinding.
 const configuredAllowedHosts = (process.env.T3CODE_DEV_ALLOWED_HOSTS ?? "")
   .split(",")
@@ -206,20 +295,29 @@ const configuredAllowedHosts = (process.env.T3CODE_DEV_ALLOWED_HOSTS ?? "")
   .filter((entry) => entry.length > 0);
 const allowedHosts = [".ts.net", ...configuredAllowedHosts];
 
-export default defineConfig(() => {
+export default defineConfig(({ command }) => {
+  // `vp dev` and `--built` dev pair this client with a server run from source, which reports the
+  // manifest version. Only a production build is paired with a packed server.
+  const configuredAppVersion =
+    process.env.APP_VERSION?.trim() ||
+    (command === "build" && !builtDev
+      ? resolveTaggedSourceVersion(`${import.meta.dirname}/../..`, pkg.version)
+      : pkg.version);
   return {
     run: {
       tasks: {
-        // tsc (tsc-rs) rewrites the tsbuildinfo it reads, which keeps a task out of the cache.
+        // A local tsbuildinfo is leftover build state, not a typecheck input.
         typecheck: {
-          command: "tsc --noEmit",
+          command: "effect-tsgo tsrs --noEmit",
           cache: { input: [{ auto: true }, "!*.tsbuildinfo"] },
         },
       },
     },
     assetsInclude: ["**/*.wasm"],
     plugins: [
+      bootstrapTitlePlugin(),
       devCompressionPlugin(),
+      chunkCycleGuardPlugin(),
       builtDev
         ? undefined
         : thirdPartyLicensesPlugin({
@@ -235,6 +333,7 @@ export default defineConfig(() => {
       react({ compiler: true }),
       tailwindPlugins(bundledDev),
       warmBundledDevPlugin(),
+      bundledDev ? bundledDevStableNamesPlugin() : undefined,
     ],
     optimizeDeps: {
       include: [
@@ -269,6 +368,7 @@ export default defineConfig(() => {
       "import.meta.env.T3CODE_DESKTOP_UPDATE_REPOSITORY": JSON.stringify(
         configuredDesktopUpdateRepository,
       ),
+      "import.meta.env.T3CODE_FEATURE_SECRETS": JSON.stringify(configuredFeatureSecrets),
       "import.meta.env.VITE_RELEASE_CHANNEL": JSON.stringify(configuredReleaseChannel),
       "import.meta.env.APP_VERSION": JSON.stringify(configuredAppVersion),
     },
@@ -289,6 +389,7 @@ export default defineConfig(() => {
       warmup: {
         clientFiles: ["./src/main.tsx"],
       },
+      watch: { exclude: rolldownWatchExclude },
       ...(devProxyTarget
         ? {
             // Share prefixes with the backend catch-all so the proxy and 404 lists cannot drift.
@@ -324,7 +425,18 @@ export default defineConfig(() => {
       emptyOutDir: true,
       manifest: true,
       sourcemap: buildSourcemap,
+      ...(builtDev ? { watch: { exclude: rolldownWatchExclude } } : {}),
+      rolldownOptions: {
+        output: {
+          // PDF.js resolves decoder modules and ICC data relative to wasmUrl.
+          assetFileNames: (asset) =>
+            asset.originalFileNames.some((path) => /[/\\]pdfjs-dist[/\\]wasm[/\\]/.test(path))
+              ? `assets/pdfjs-${pdfjsPkg.version}/[name][extname]`
+              : "assets/[name]-[hash][extname]",
+        },
+      },
     },
+    worker: { format: "es" },
     test: {
       projects: [
         defineProject(unitTestProject),

@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 import {
   type ComposerFileAttachment,
+  type ComposerThreadDraftState,
   type PersistedComposerFileAttachment,
   type PersistedComposerImageAttachment,
   composerFileDedupKey,
@@ -17,7 +18,7 @@ import {
   hydrateImagesFromPersisted,
   useComposerDraftStore,
 } from "../../composerDraftStore";
-import { type ComposerPromptEditorHandle } from "../ComposerPromptEditor";
+import { type ComposerPromptEditorHandle } from "../ComposerPromptEditorTiptap";
 import {
   MAX_STASH_ENTRIES,
   type PromptStashEntry,
@@ -27,12 +28,13 @@ import {
 import { type PendingUserInput } from "../../session-logic";
 import { type ReviewCommentContext } from "../../reviewCommentContext";
 import { collapseExpandedComposerCursor } from "../../composer-logic";
+import { collectComposerPromptInlineTokens } from "../../composer-editor-mentions";
 import { compressImageForStash } from "../../lib/imageCompression";
 import { formatInlineContextReference } from "~/lib/composerContextReferences";
-import { getTerminalFocusOwner } from "../../lib/terminalFocus";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { pendingDraftWork } from "./pendingDraftWork";
 import {
+  isResponseContextRecord,
   previewAnnotationContextRecord,
   reviewCommentContextRecord,
   terminalContextRecord,
@@ -47,7 +49,8 @@ import {
 import { remainingComposerAttachmentSlots } from "./composerThreadImport";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import { resizeSnapShotSource } from "../../lib/snapShotSource";
-import { resolveShortcutCommand } from "../../keybindings";
+import { registerCommands } from "../../shortcuts/dispatcher";
+import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../../terminalUiStateStore";
 import { toastManager } from "../ui/toast";
 import type { useComposerTriggerState } from "./useComposerTriggerState";
 import {
@@ -60,6 +63,7 @@ import {
   useState,
 } from "react";
 import { BackgroundThreadContext } from "./backgroundThread";
+import { isInSideChatPane } from "../../lib/sideChatPane";
 import { useStableCallback } from "../../hooks/useStableCallback";
 
 /**
@@ -70,26 +74,22 @@ export function useComposerStash(input: {
   readonly environmentId: EnvironmentId;
   readonly composerDraftTarget: ChatComposerProps["composerDraftTarget"];
   readonly promptRef: ChatComposerProps["promptRef"];
-  readonly composerImagesRef: ChatComposerProps["composerImagesRef"];
-  readonly composerFilesRef: ChatComposerProps["composerFilesRef"];
-  readonly composerTerminalContextsRef: ChatComposerProps["composerTerminalContextsRef"];
-  readonly keybindings: ChatComposerProps["keybindings"];
-  readonly terminalOpen: boolean;
+  readonly readAttachmentDraft: () => Pick<ComposerThreadDraftState, "images" | "files">;
+  readonly readTerminalContexts: () => ComposerThreadDraftState["terminalContexts"];
+  readonly routeThreadRef: ChatComposerProps["routeThreadRef"];
   readonly projectSelectionRequired: boolean;
-  readonly isRevertingCheckpoint: boolean;
   readonly pendingUserInputs: ReadonlyArray<PendingUserInput>;
   readonly activePendingProgress: ChatComposerProps["activePendingProgress"];
   readonly prompt: string;
   readonly composerMenuOpen: boolean;
-  readonly isComposerModelPickerOpen: boolean;
   readonly isComposerCollapsedMobile: boolean;
   readonly composerPreviewAnnotations: ReadonlyArray<PreviewAnnotationPayload>;
   readonly composerReviewComments: ReadonlyArray<ReviewCommentContext>;
   readonly composerThreadContexts: ReadonlyArray<ThreadContextRecord>;
-  readonly attachmentTargetKeyRef: RefObject<string>;
-  readonly composerDraftTargetKeyRef: RefObject<string>;
+  readonly attachmentTargetKey: string;
+  readonly isComposerDraftTargetOpen: (targetKey: string) => boolean;
   readonly composerEditorRef: RefObject<ComposerPromptEditorHandle | null>;
-  readonly isRevertingCheckpointRef: RefObject<boolean>;
+  readonly isRevertingCheckpoint: () => boolean;
   readonly pendingThreadImportsRef: RefObject<Map<string, number>>;
   readonly setComposerCursor: Dispatch<SetStateAction<number>>;
   readonly setComposerTrigger: ReturnType<typeof useComposerTriggerState>["setTrigger"];
@@ -104,26 +104,22 @@ export function useComposerStash(input: {
     environmentId,
     composerDraftTarget,
     promptRef,
-    composerImagesRef,
-    composerFilesRef,
-    composerTerminalContextsRef,
-    keybindings,
-    terminalOpen,
+    readAttachmentDraft,
+    readTerminalContexts,
+    routeThreadRef,
     projectSelectionRequired,
-    isRevertingCheckpoint,
     pendingUserInputs,
     activePendingProgress,
     prompt,
     composerMenuOpen,
-    isComposerModelPickerOpen,
     isComposerCollapsedMobile,
     composerPreviewAnnotations,
     composerReviewComments,
     composerThreadContexts,
-    attachmentTargetKeyRef,
-    composerDraftTargetKeyRef,
+    attachmentTargetKey,
+    isComposerDraftTargetOpen,
     composerEditorRef,
-    isRevertingCheckpointRef,
+    isRevertingCheckpoint,
     pendingThreadImportsRef,
     setComposerCursor,
     setComposerTrigger,
@@ -132,6 +128,7 @@ export function useComposerStash(input: {
   } = input;
   const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
+  const setComposerDraftReplyTo = useComposerDraftStore((store) => store.setReplyTo);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
   const addComposerDraftFiles = useComposerDraftStore((store) => store.addFiles);
   const removeComposerDraftPreviewAnnotation = useComposerDraftStore(
@@ -148,12 +145,8 @@ export function useComposerStash(input: {
   );
   const setComposerDraftThreadContexts = useComposerDraftStore((store) => store.setThreadContexts);
   const [isStashMenuOpen, setIsStashMenuOpen] = useState(false);
-  const [stashPulse, setStashPulse] = useState<{ key: number; active: boolean }>({
-    key: 0,
-    active: false,
-  });
-  const stashPulseKeyRef = useRef(0);
-  const stashPulseTimeoutRef = useRef<number | null>(null);
+  // Each stash bumps the key; the badge replays its one-shot pulse animation per key.
+  const [stashPulseKey, setStashPulseKey] = useState(0);
   const stashInFlightRef = useRef<Set<string>>(new Set());
 
   const stashQueue = usePromptStashStore((state) => state.entries);
@@ -161,24 +154,8 @@ export function useComposerStash(input: {
   const takeStashEntry = usePromptStashStore((state) => state.takeEntry);
   const finalizeStashEntryImages = usePromptStashStore((state) => state.finalizeEntryImages);
 
-  useEffect(() => {
-    return () => {
-      if (stashPulseTimeoutRef.current !== null) {
-        window.clearTimeout(stashPulseTimeoutRef.current);
-      }
-    };
-  }, []);
-
   const pulseStashBadge = () => {
-    stashPulseKeyRef.current += 1;
-    setStashPulse({ key: stashPulseKeyRef.current, active: true });
-    if (stashPulseTimeoutRef.current !== null) {
-      window.clearTimeout(stashPulseTimeoutRef.current);
-    }
-    stashPulseTimeoutRef.current = window.setTimeout(() => {
-      stashPulseTimeoutRef.current = null;
-      setStashPulse((current) => ({ ...current, active: false }));
-    }, 1200);
+    setStashPulseKey((key) => key + 1);
   };
 
   const restoreStashEntry = async (menuEntry: PromptStashEntry) => {
@@ -212,8 +189,8 @@ export function useComposerStash(input: {
     // prompt with this invocation's captured target. Nothing was taken yet,
     // so abort and leave the entry restorable where the user now is.
     if (
-      isRevertingCheckpointRef.current ||
-      composerTargetKey(composerDraftTarget) !== composerDraftTargetKeyRef.current
+      isRevertingCheckpoint() ||
+      !isComposerDraftTargetOpen(composerTargetKey(composerDraftTarget))
     ) {
       return;
     }
@@ -233,6 +210,17 @@ export function useComposerStash(input: {
     const rewrittenContextIds = entry.records
       ? importContextRecords(entry.records, null, composerDraftTarget)
       : new Map<string, string>();
+    // A reply only makes sense in the thread that holds the response, and one already pending wins.
+    const stashedReply = entry.records?.find(isResponseContextRecord);
+    if (
+      stashedReply &&
+      !getComposerDraft(composerDraftTarget)?.replyTo &&
+      typeof composerDraftTarget !== "string" &&
+      stashedReply.citation.threadId === composerDraftTarget.threadId &&
+      stashedReply.citation.environmentId === composerDraftTarget.environmentId
+    ) {
+      setComposerDraftReplyTo(composerDraftTarget, stashedReply);
+    }
     const restoredPrompt = replaceComposerContextReferences(entry.prompt, (reference) => {
       const contextId = rewrittenContextIds.get(reference.contextId);
       return contextId
@@ -263,7 +251,7 @@ export function useComposerStash(input: {
     let restoredFileCount = 0;
     const stashedFiles = entry.files ?? [];
     if (stashedFiles.length > 0) {
-      const composerFilesNow = composerFilesRef.current;
+      const composerFilesNow = readAttachmentDraft().files;
       const existingFileIds = new Set(composerFilesNow.map((file) => file.id));
       const retainedUploadIds = new Set(
         composerFilesNow.flatMap((file) =>
@@ -329,7 +317,7 @@ export function useComposerStash(input: {
         appendedFiles.push(restored);
       }
       const capacity = remainingComposerAttachmentSlots(
-        composerImagesRef.current.length + composerFilesNow.length,
+        readAttachmentDraft().images.length + composerFilesNow.length,
         pendingThreadImportsRef.current.get(composerTargetKey(composerDraftTarget)) ?? 0,
       );
       const filesToAppend = appendedFiles.slice(0, capacity);
@@ -373,18 +361,19 @@ export function useComposerStash(input: {
 
     let unrestoredImageNames: string[] = [];
     if (entry.attachments.length > 0) {
-      const existingIds = new Set(composerImagesRef.current.map((image) => image.id));
+      const attachmentDraft = readAttachmentDraft();
+      const existingIds = new Set(attachmentDraft.images.map((image) => image.id));
       // The draft store also dedupes by mimeType+sizeBytes+name, so filter
       // on the same key here. Counting a duplicate against capacity would
       // burn a slot the store then refuses to fill, pushing a genuinely
       // unique image into the overflow list for nothing.
       const existingDedupKeys = new Set(
-        composerImagesRef.current.map(
+        attachmentDraft.images.map(
           (image) => `${image.mimeType}\0${image.sizeBytes}\0${image.name}`,
         ),
       );
       const capacity = remainingComposerAttachmentSlots(
-        composerImagesRef.current.length + composerFilesRef.current.length + restoredFileCount,
+        attachmentDraft.images.length + attachmentDraft.files.length + restoredFileCount,
         pendingThreadImportsRef.current.get(composerTargetKey(composerDraftTarget)) ?? 0,
       );
       const pending = entry.attachments.filter(
@@ -472,7 +461,7 @@ export function useComposerStash(input: {
   const stashCurrentPrompt = async () => {
     // Stashing clears the draft. A pasted attachment still downloading would then land in the
     // emptied composer instead of travelling with the entry it belongs to.
-    if (pendingDraftWork.has(attachmentTargetKeyRef.current)) {
+    if (pendingDraftWork.has(attachmentTargetKey)) {
       toastManager.add({
         type: "info",
         title: "Still bringing attached context into this message.",
@@ -480,12 +469,20 @@ export function useComposerStash(input: {
       });
       return;
     }
-    const prompt = promptRef.current.trim();
-    const images = [...composerImagesRef.current];
-    const files = [...composerFilesRef.current];
+    const replyTo = getComposerDraft(composerDraftTarget)?.replyTo;
+    const trimmedPrompt = promptRef.current.trim();
+    // A trailing chip only parses with whitespace after it, so keep one space to restore it.
+    const endsWithChip =
+      collectComposerPromptInlineTokens(promptRef.current).at(-1)?.end ===
+      promptRef.current.trimEnd().length;
+    const prompt = endsWithChip ? `${trimmedPrompt} ` : trimmedPrompt;
+    const attachmentDraft = readAttachmentDraft();
+    const images = [...attachmentDraft.images];
+    const files = [...attachmentDraft.files];
     const stashedRecords: ComposerContextRecord[] = [
+      ...(replyTo ? [replyTo] : []),
       ...composerThreadContexts,
-      ...composerTerminalContextsRef.current.map(terminalContextRecord),
+      ...readTerminalContexts().map(terminalContextRecord),
       ...composerReviewComments.map(reviewCommentContextRecord),
       ...composerPreviewAnnotations.map((annotation) =>
         previewAnnotationContextRecord(annotation, {
@@ -588,6 +585,7 @@ export function useComposerStash(input: {
       clearComposerDraftPromptAndImages(stashTarget);
       clearComposerDraftTerminalContexts(stashTarget);
       setComposerDraftThreadContexts(stashTarget, []);
+      setComposerDraftReplyTo(stashTarget, null);
       for (const comment of composerReviewComments) {
         removeComposerDraftReviewComment(stashTarget, comment.id);
       }
@@ -693,53 +691,50 @@ export function useComposerStash(input: {
     if (stashMenuClosesOn.prompt !== prompt || composerMenuOpen) setIsStashMenuOpen(false);
   }
 
+  // Read at event time, so the scope registers once per mounted composer instead of
+  // re-registering (and reshuffling capture-scope priority) whenever a guard flips.
+  const handleStashShortcut = useStableCallback((event: KeyboardEvent) => {
+    // Always claim the shortcut so the browser save dialog never opens,
+    // even when the composer is in a state that can't stash.
+    event.preventDefault();
+    event.stopPropagation();
+    if (isCommandPaletteOpen() || isRevertingCheckpoint()) return;
+    if (pendingUserInputs.length > 0) {
+      setIsStashMenuOpen((open) => !open);
+      return;
+    }
+    if (projectSelectionRequired || activePendingProgress !== null) return;
+    void stashCurrentPromptStable();
+  });
+  // Capture phase while the composer is mounted, so Mod+S never reaches the browser's save
+  // dialog even when a focused widget (the model picker search) stops the key.
   const backgroundThread = use(BackgroundThreadContext);
+  const readShortcutContext = useStableCallback(() => ({
+    terminalOpen: Boolean(
+      selectThreadTerminalUiState(
+        useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+        routeThreadRef,
+      ).terminalOpen,
+    ),
+  }));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the capture-phase stash shortcut with the command registry while the composer is mounted
   useEffect(() => {
     if (backgroundThread) return;
-    const handler = (event: globalThis.KeyboardEvent) => {
-      const command = resolveShortcutCommand(event, keybindings, {
-        context: {
-          terminalFocus: getTerminalFocusOwner() !== null,
-          terminalOpen,
-          modelPickerOpen: isComposerModelPickerOpen,
-        },
-      });
-      if (command !== "composer.stash") return;
-      // Always claim the shortcut so the browser save dialog never opens,
-      // even when the composer is in a state that can't stash.
-      event.preventDefault();
-      event.stopPropagation();
-      if (isCommandPaletteOpen() || isRevertingCheckpoint) {
-        return;
-      }
-      if (pendingUserInputs.length > 0) {
-        setIsStashMenuOpen((open) => !open);
-        return;
-      }
-      if (projectSelectionRequired || activePendingProgress !== null) {
-        return;
-      }
-      void stashCurrentPromptStable();
-    };
-    window.addEventListener("keydown", handler, true);
-    return () => window.removeEventListener("keydown", handler, true);
-  }, [
-    activePendingProgress,
-    backgroundThread,
-    isComposerModelPickerOpen,
-    keybindings,
-    pendingUserInputs.length,
-    projectSelectionRequired,
-    stashCurrentPromptStable,
-    isRevertingCheckpoint,
-    terminalOpen,
-  ]);
+    return registerCommands(
+      { "composer.stash": handleStashShortcut },
+      {
+        capture: true,
+        context: readShortcutContext,
+        when: (event) => !isInSideChatPane(event.target),
+      },
+    );
+  }, [backgroundThread, handleStashShortcut, readShortcutContext]);
 
   return {
     stashQueue,
     isStashMenuOpen,
     setIsStashMenuOpen,
-    stashPulse,
+    stashPulseKey,
     restoreStashEntryStable,
     deleteStashEntryStable,
     toggleStashMenuStable,
