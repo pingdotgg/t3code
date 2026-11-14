@@ -78,6 +78,7 @@ import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { buildFileReviewComment } from "~/reviewCommentContext";
 import { assetEnvironment } from "~/state/assets";
+import { useSaveFileAs } from "./useSaveFileAs";
 import { usePreviewAvailable } from "~/browser/previewRuntime";
 import { useEnvironmentHttpBaseUrl, usePrimaryEnvironmentId } from "~/state/environments";
 import { hostEnvironmentIdAtom } from "~/state/primaryEnvironment";
@@ -1325,6 +1326,18 @@ export default function FilePreviewPanel({
       : relativePath && attachment === undefined
         ? resolvePathLinkTarget(relativePath, cwd)
         : null;
+  const saveFileAs = useSaveFileAs();
+  // Large text and binary or document files render their own Save button.
+  const rendersOwnSave =
+    !isMedia &&
+    !renderBrowserFile &&
+    (isDocument ||
+      file.readError?.failure === "binary_file" ||
+      (file.data?.truncated === true && !isMarkdown && !isMermaid && !isHtml));
+  const handleSave =
+    !draft && previewPath !== null && absolutePath !== null && !rendersOwnSave
+      ? () => void saveFileAs({ environmentId, threadId: threadRef.threadId, path: absolutePath })
+      : null;
   const onFilePostRender = useFileLineReveal(relativePath, revealLine, revealRequestId);
   // Mounting the file read under the workspace mutation id refetches it after each mutation.
   useAtomMount(
@@ -1480,6 +1493,11 @@ export default function FilePreviewPanel({
           {canOpenInBrowser ? (
             <FileSurfaceAction label="Open file in preview browser" onPress={handleOpenInBrowser}>
               <Globe2 className="size-3.5" />
+            </FileSurfaceAction>
+          ) : null}
+          {handleSave ? (
+            <FileSurfaceAction label="Save file" onPress={handleSave}>
+              <DownloadIcon className="size-3.5" />
             </FileSurfaceAction>
           ) : null}
           {!isHostFile && previewPath !== null ? (
