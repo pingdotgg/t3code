@@ -21,7 +21,7 @@ export interface T3State {
   ) => Promise<string>;
   /**
    * Starts a thread in a project and plays one replayed turn per message before returning.
-   * `model` is a dev replay recording: showcase, todo-list, approval, question, multi-turn.
+   * `model` is a dev replay recording: showcase, todo-list, approval, question, multi-turn, grok-todo.
    */
   readonly thread: (input: {
     readonly project: string;

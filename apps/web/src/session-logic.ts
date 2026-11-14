@@ -42,6 +42,7 @@ import type {
 import type { ThreadRunSummary, ThreadRuntimeSummary } from "@t3tools/client-runtime/state/shell";
 import { threadRuntimeHasInterruptibleRun } from "@t3tools/client-runtime/state/thread-execution";
 import { turnItemIsWorkspacePreparation } from "@t3tools/client-runtime/state/turn-item-presentation";
+import { isGrokTodoWriteTool } from "./grokTodoPlan";
 
 import {
   isImageAttachment,
@@ -512,6 +513,26 @@ export interface TimelineEntriesProjection {
   readonly entries: TimelineEntry[];
 }
 
+function runKey(row: OrchestrationV2ProjectedTurnItem): string | null {
+  return row.item.runId === null ? null : `${row.sourceThreadId}:${row.item.runId}`;
+}
+
+function omitSupersededGrokTodoTools(
+  entries: TimelineEntry[],
+  visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
+): TimelineEntry[] {
+  const runsWithTodoList = new Set(
+    visibleTurnItems.flatMap((row) => (row.item.type === "todo_list" ? [runKey(row)] : [])),
+  );
+  runsWithTodoList.delete(null);
+  if (runsWithTodoList.size === 0) return entries;
+  return entries.filter((entry) => {
+    const row = entry.kind === "work" ? entry.entry.projectedItem : undefined;
+    if (row?.item.type !== "dynamic_tool" || !isGrokTodoWriteTool(row.item)) return true;
+    return !runsWithTodoList.has(runKey(row));
+  });
+}
+
 export function deriveTimelineEntriesFromVisibleTurnItems(
   input: TimelineEntriesInput,
 ): TimelineEntry[] {
@@ -751,7 +772,7 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
     }
   }
 
-  return entries;
+  return omitSupersededGrokTodoTools(entries, input.visibleTurnItems);
 }
 
 type AttachmentResource = Extract<AssetResource, { readonly _tag: "attachment" }>;
@@ -1026,7 +1047,7 @@ function reuseTimelineEntries(
       }),
     );
   }
-  return entries;
+  return omitSupersededGrokTodoTools(entries, input.visibleTurnItems);
 }
 
 export function deriveTimelineEntriesFromVisibleTurnItemsWithState(

@@ -48,6 +48,8 @@ import {
 import { cn } from "~/lib/utils";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { FetchedToolOutput, V2ItemInspector } from "./V2ItemInspector";
+import { TodoChecklist } from "./TodoChecklist";
+import { grokTodoStepsFromTool, isGrokTodoWriteTool } from "../../grokTodoPlan";
 import { SubagentNotificationLink } from "./V2LifecycleRow";
 import {
   TimelineRowCtx,
@@ -325,6 +327,13 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       ? undefined
       : (workEntry.toolIcon ?? workEntry.toolSource?.icon);
   const isReasoning = workEntry.itemType === "reasoning";
+  const projectedTurnItem = workEntry.projectedItem?.item;
+  const todoSteps =
+    projectedTurnItem?.type === "todo_list"
+      ? projectedTurnItem.steps
+      : projectedTurnItem?.type === "dynamic_tool" && isGrokTodoWriteTool(projectedTurnItem)
+        ? grokTodoStepsFromTool(projectedTurnItem)
+        : [];
   const questionHeading = workEntry.questionAnswer
     ? getQuestionTextPreview(workEntry.questionAnswer)
     : "";
@@ -385,12 +394,12 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
             viewedImage ? viewedImagePath : null,
           )
       : null;
-  const plainOutputFetches =
-    plainOutput !== undefined &&
-    workEntry.projectedItem !== undefined &&
-    turnItemNeedsDetailFetch(workEntry.projectedItem.item);
+  const needsDetailFetch =
+    workEntry.projectedItem !== undefined && turnItemNeedsDetailFetch(workEntry.projectedItem.item);
+  const plainOutputFetches = plainOutput !== undefined && needsDetailFetch;
   const canExpandProjectedItem =
-    plainOutput !== undefined
+    (todoSteps.length === 0 || needsDetailFetch) &&
+    (plainOutput !== undefined
       ? Boolean(plainOutput || viewedImage || workEntry.questionAnswer || plainOutputFetches)
       : workEntry.projectedItem === undefined
         ? canExpand
@@ -400,7 +409,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
               viewedImage ||
               workEntry.questionAnswer ||
               turnItemHasDetail(workEntry.projectedItem.item),
-            );
+            ));
   const iconWrapperClass = cn(
     "flex size-4 items-center justify-center",
     showWarningIndicator
@@ -443,7 +452,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       }
     : {};
 
-  return (
+  const row = (
     <WorkLogRow
       data-work-entry-id={workEntry.id}
       data-v2-item-type={workEntry.projectedItem?.item.type}
@@ -613,6 +622,13 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         </WorkLogDetails>
       ) : null}
     </WorkLogRow>
+  );
+  if (todoSteps.length === 0) return row;
+  return (
+    <>
+      {row}
+      <TodoChecklist className="ms-8 mt-1" steps={todoSteps} />
+    </>
   );
 }
 
