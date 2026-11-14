@@ -813,9 +813,7 @@ function UsageOverview({
       </section>
 
       {merged.totalTokens > 0 ? (
-        <section
-          className={cn("grid gap-x-12 gap-y-8 lg:grid-cols-2", figureClass(loadingPartial))}
-        >
+        <section className={cn("grid gap-y-8", figureClass(loadingPartial))}>
           {metric === "tokens" ? (
             <UsageShareBar
               label="Tokens by type"
