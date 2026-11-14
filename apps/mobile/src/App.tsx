@@ -284,7 +284,7 @@ function AppContent() {
       <SubscriptionUsageCoordinator />
       <ConnectDeviceApprovalCoordinator />
       <GestureHandlerRootView className="flex-1">
-        <KeyboardProvider statusBarTranslucent>
+        <KeyboardProvider statusBarTranslucent preload={false}>
           <SafeAreaProvider>
             <StatusBar barStyle={themeAppearance === "dark" ? "light-content" : "dark-content"} />
             {/* native-stack needs the theme's dark flag to select dark native headers. */}
