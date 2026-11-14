@@ -202,11 +202,17 @@ describe("CDP relay extra sessions", () => {
     frame(3);
     expect(delivered()).toEqual([]);
     expect(send.mock.calls.some(([method]) => method === "Page.screencastFrameAck")).toBe(false);
-    // A restart drops the old stream's unacknowledged frame.
-    relay.receive(JSON.stringify({ id: 7, method: "Page.startScreencast", sessionId: extra }));
+    // A restart keeps the unacknowledged frame's slot until its own acknowledgement.
+    relay.receive(JSON.stringify({ id: 7, method: "Page.stopScreencast", sessionId: extra }));
+    relay.receive(JSON.stringify({ id: 8, method: "Page.startScreencast", sessionId: extra }));
     await settle();
     delivered();
     frame(4);
+    expect(delivered()).toEqual([]);
+    ack(extra, 2);
+    await settle();
+    delivered();
+    frame(5);
     expect(delivered()).toEqual([extra]);
     // Other events still reach a session while its frame is unacknowledged.
     relay.event("Page.loadEventFired", { timestamp: 1 }, undefined);

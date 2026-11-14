@@ -205,17 +205,12 @@ export function createCdpRelayConnection(
     }
     // Playwright asks for this on every page; the host emulates focus only while it is in use.
     if (command.method === "Emulation.setFocusEmulationEnabled") return Promise.resolve({});
-    if (child === undefined) {
-      const sessionId = command.sessionId!;
-      if (command.method === "Page.screencastFrameAck") {
-        if (unackedFrames.get(sessionId) === command.params?.["sessionId"]) {
-          unackedFrames.delete(sessionId);
-        }
-        return Promise.resolve({});
+    if (command.method === "Page.screencastFrameAck" && child === undefined) {
+      // A restart keeps the slot too, or restarting would let frames past an unacknowledged one.
+      if (unackedFrames.get(command.sessionId!) === command.params?.["sessionId"]) {
+        unackedFrames.delete(command.sessionId!);
       }
-      if (command.method === "Page.startScreencast" || command.method === "Page.stopScreencast") {
-        unackedFrames.delete(sessionId);
-      }
+      return Promise.resolve({});
     }
     // The shared debugger keeps Runtime enabled after an earlier connection, and a repeated
     // enable reports no existing contexts; Playwright waits for them, so reset once per connection.
