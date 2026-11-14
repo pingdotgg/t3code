@@ -23,6 +23,12 @@ export interface AgentScopeShape {
    */
   readonly stop: (unit: string) => Effect.Effect<void>;
   /**
+   * SIGKILLs every process in the thread's own scope, which works even while
+   * the kernel throttles them. Shared scopes serve other threads and are never
+   * killed here. Succeeds with whether a scope was killed.
+   */
+  readonly kill: (threadId: string) => Effect.Effect<boolean>;
+  /**
    * Forgets the thread's scope. The session manager calls it before it opens
    * a provider session, so a scope only answers for the session that launched
    * it, even when the next session runs without one (Cursor, OpenCode).
@@ -42,6 +48,7 @@ export const AgentScope = Context.Reference<AgentScopeShape>("@t3tools/shared/Ag
     wrap: ({ command, args }) => Effect.succeed({ command, args }),
     oomKilled: () => Effect.succeed(false),
     stop: () => Effect.void,
+    kill: () => Effect.succeed(false),
     clear: () => Effect.void,
   }),
 });

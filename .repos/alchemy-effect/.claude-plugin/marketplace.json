@@ -1,0 +1,20 @@
+{
+  "name": "alchemy",
+  "description": "Agent skills for building with Alchemy",
+  "owner": {
+    "name": "Alchemy",
+    "url": "https://alchemy.run"
+  },
+  "plugins": [
+    {
+      "name": "alchemy",
+      "source": "./packages/domain/skills",
+      "skills": ["./"],
+      "description": "Skills for building with Alchemy: alchemy-domain models backends with alchemy/Domain, lays them out in a monorepo, hosts them on Cloudflare, and drives them from foldkit.",
+      "homepage": "https://alchemy.run/domain",
+      "repository": "https://github.com/alchemy-run/alchemy",
+      "license": "Apache-2.0",
+      "keywords": ["alchemy", "domain-driven-design", "effect", "cloudflare", "foldkit"]
+    }
+  ]
+}
