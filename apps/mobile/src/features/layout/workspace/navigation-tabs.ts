@@ -21,7 +21,7 @@ export const WORKSPACE_TAB_LABELS = {
 export const NAVIGATION_TAB_ICONS = {
   threads: "text.bubble",
   pullRequests: PullRequestGlyph.pullRequest,
-  workflows: "flowchart",
+  workflows: "point.3.connected.trianglepath.dotted",
   usage: "chart.bar.xaxis",
 } as const satisfies Readonly<Record<NavigationTab, AppSymbolName>>;
 
