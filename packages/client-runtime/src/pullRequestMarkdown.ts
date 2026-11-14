@@ -180,7 +180,7 @@ function referenceDefinitions(body: string): string[] {
   const definitions = new Map<string, string>();
   const visit = (node: Root | RootContent, quotes: number) => {
     if (node.type === "definition" && !definitions.has(node.identifier)) {
-      const wrap = new RegExp(`\\r?\\n(?:[ \\t]*>){0,${quotes}}[ \\t]*`, "gu");
+      const wrap = new RegExp(`(?:\\r\\n|\\r|\\n)(?:[ \\t]*>){0,${quotes}}[ \\t]*`, "gu");
       const source = body.slice(node.position?.start.offset, node.position?.end.offset);
       definitions.set(node.identifier, source.replace(wrap, " "));
     }

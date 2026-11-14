@@ -202,10 +202,10 @@ describe("reference links around lifted media", () => {
       "definition, then media, then use",
       `[guide]: https://example.com/docs\n\n${recording}\n\nSee [the docs][guide].`,
     ],
-    [
-      "a definition wrapped over quoted lines",
-      `> [guide]:\n> https://example.com/docs\n> "The guide"\n\n${recording}\n\nSee [the docs][guide].`,
-    ],
+    ...["\n", "\r\n", "\r"].map((lineEnding) => [
+      `a definition wrapped over quoted lines with ${JSON.stringify(lineEnding)}`,
+      `> [guide]:${lineEnding}> https://example.com/docs${lineEnding}> "The guide"\n\n${recording}\n\nSee [the docs][guide].`,
+    ]),
     [
       "a use inside a media table cell",
       `<table><tr><td>\n\nSee [the docs][guide].\n\n</td><td>\n\n${recording}\n\n</td></tr></table>\n\n[guide]: https://example.com/docs`,
