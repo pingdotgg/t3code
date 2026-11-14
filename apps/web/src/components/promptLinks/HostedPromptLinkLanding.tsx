@@ -125,6 +125,8 @@ function HostedPromptLinkLanding({
   const deepLink = promptLinkDeepLink(appPath);
   const onPhone = /android|iphone|ipad/i.test(navigator.userAgent);
   const autoOpenedRef = useRef(false);
+  const [handedOff, setHandedOff] = useState(openInAppRemembered);
+  const appName = onPhone ? "the app" : "T3 Code";
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- redirects window.location to the app deep link once when the user chose to always open in the app
   useEffect(() => {
@@ -162,9 +164,26 @@ function HostedPromptLinkLanding({
       {details.length > 0 ? (
         <p className="mt-3 text-xs text-muted-foreground">{details.join(" · ")}</p>
       ) : null}
+      {handedOff ? (
+        <Alert className="mt-5" variant="info">
+          <AlertTitle>Sent to {appName}</AlertTitle>
+          <AlertDescription>
+            If {appName} opened the link, you can close this tab. If nothing happened, try again or
+            get T3 Code.
+          </AlertDescription>
+        </Alert>
+      ) : null}
       <div className="mt-6 flex flex-wrap gap-2">
-        <Button render={<a href={deepLink} />} onClick={() => onChoose("app", remember)}>
-          {onPhone ? "Open in app" : "Open in desktop app"}
+        <Button
+          render={<a href={deepLink} />}
+          onClick={() => {
+            // The click already navigates to the deep link; remembering must not trigger the effect too.
+            autoOpenedRef.current = true;
+            setHandedOff(true);
+            onChoose("app", remember);
+          }}
+        >
+          {handedOff ? "Try again" : onPhone ? "Open in app" : "Open in desktop app"}
         </Button>
         {canContinue ? (
           <Button variant="outline" onClick={() => onChoose("browser", remember)}>
