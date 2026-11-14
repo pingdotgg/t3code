@@ -35,6 +35,22 @@ test(
     await expect(citation).toBeVisible();
     await citation.tap();
     await expect.poll(editorText).toContain("Quarterly draft body");
+    // The file opens at its workspace path, so the tree selects it and no `.` crumb appears.
+    await expect
+      .poll(() =>
+        browser.evaluate((path) => {
+          for (const host of document.querySelectorAll("*")) {
+            const row = host.shadowRoot?.querySelector(`[data-item-path="${path}"]`);
+            if (row) return row.getAttribute("aria-selected");
+          }
+          return null;
+        }, FILE),
+      )
+      .toBe("true");
+    const crumbs = await browser.evaluate(() =>
+      [...document.querySelectorAll("[data-file-crumb]")].map((crumb) => crumb.textContent?.trim()),
+    );
+    expect(crumbs).not.toContain(".");
     await app.screenshot("citation-opened");
   },
 );
