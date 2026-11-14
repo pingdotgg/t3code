@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { Fragment, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
@@ -719,16 +719,16 @@ function PlatformIcon(props: {
             ) : null}
           </>
         ) : several ? (
-          <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
+          <dl className="mt-2 space-y-2 text-xs">
             {props.known.map((environment) => {
               const entry = availability(environment);
               return (
-                <Fragment key={environment.environmentId}>
-                  <dt className="text-muted-foreground">{environment.label}</dt>
-                  <dd className={entry?.available ? "" : "text-muted-foreground"}>
+                <div key={environment.environmentId}>
+                  <dt className="font-medium break-words">{environment.label}</dt>
+                  <dd className={cn("break-words", !entry?.available && "text-muted-foreground")}>
                     {entry?.available ? "Available" : (entry?.reason ?? "Not available")}
                   </dd>
-                </Fragment>
+                </div>
               );
             })}
           </dl>
