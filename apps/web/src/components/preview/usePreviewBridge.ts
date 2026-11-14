@@ -99,16 +99,11 @@ export function usePreviewBridge(input: {
     const unsubscribe = previewBridge.onStateChange(handleStateChange);
     return () => {
       unsubscribe();
+      applyPreviewDesktopState({ environmentId, threadId }, tabId, null);
       activity.release();
       if (captureActivity.current === activity) captureActivity.current = null;
     };
-  }, [
-    runtimeTabId,
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A different tab or thread starts its status reports and pointer tracking from scratch.
-    environmentId,
-    threadId,
-    tabId,
-  ]);
+  }, [runtimeTabId, environmentId, threadId, tabId]);
 }
 
 function shouldClearBrowserPointer(
