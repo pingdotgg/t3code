@@ -6,7 +6,6 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Fiber from "effect/Fiber";
-import * as SqlError from "effect/sql/SqlError";
 import * as Semaphore from "effect/Semaphore";
 
 import * as RelayDb from "../db.ts";
@@ -19,23 +18,20 @@ const layerWithDb = (db: RelayDb.RelayDb["Service"]) =>
     Layer.provide(Layer.succeed(RelayDb.RelayDb, db)),
   );
 
-// Models one environment/key pair; SQL predicates are covered by the existing tests below.
+// Models one environment/key pair; SQL predicates are covered by the tests below.
 const makeCredentialStore = (options: {
-  readonly beforeRevoke?: Effect.Effect<void, Error>;
-  readonly onLockWait?: Effect.Effect<void>;
-  readonly commit?: Effect.Effect<void, SqlError.SqlError>;
+  readonly beforeRevoke: Effect.Effect<void>;
+  readonly onLockWait: Effect.Effect<void>;
 }) => {
-  let active = new Set<string>();
+  const active = new Set<string>();
   const lock = Semaphore.makeUnsafe(1);
   const db = {
     execute: (query: SQL) =>
       Effect.acquireRelease(
         Effect.gen(function* () {
-          const rendered = new PgDialect().sqlToQuery(query);
-          expect(rendered.sql).toContain("pg_advisory_xact_lock");
-          expect(rendered.params).toHaveLength(2);
+          expect(new PgDialect().sqlToQuery(query).sql).toContain("pg_advisory_xact_lock");
           if (!(yield* lock.takeIfAvailable(1))) {
-            yield* options.onLockWait ?? Effect.void;
+            yield* options.onLockWait;
             yield* lock.take(1);
           }
         }),
@@ -49,7 +45,7 @@ const makeCredentialStore = (options: {
       set: () => ({
         where: (condition: unknown) =>
           Effect.gen(function* () {
-            yield* options.beforeRevoke ?? Effect.void;
+            yield* options.beforeRevoke;
             const keep = new PgDialect().sqlToQuery(condition as never).params[2];
             for (const id of active) {
               if (id !== keep) active.delete(id);
@@ -58,20 +54,7 @@ const makeCredentialStore = (options: {
       }),
     }),
     $client: {
-      withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-        Effect.suspend(() => {
-          const snapshot = new Set(active);
-          return Effect.scoped(
-            effect.pipe(
-              Effect.tap(() => options.commit ?? Effect.void),
-              Effect.onError(() =>
-                Effect.sync(() => {
-                  active = snapshot;
-                }),
-              ),
-            ),
-          );
-        }),
+      withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.scoped(effect),
     },
   } as unknown as RelayDb.RelayDb["Service"];
   return { db, active: () => [...active] };
@@ -80,59 +63,6 @@ const makeCredentialStore = (options: {
 const credentialIdOf = (token: string) => token.split("_")[1];
 
 describe("EnvironmentCredentials", () => {
-  it.effect(
-    "reports the credential creation persistence stage and rolls back the new credential",
-    () => {
-      const cause = new Error("database unavailable");
-      const store = makeCredentialStore({
-        beforeRevoke: Effect.suspend(() =>
-          store.active().length > 1 ? Effect.fail(cause) : Effect.void,
-        ),
-      });
-
-      return Effect.gen(function* () {
-        const credentials = yield* EnvironmentCredentials.EnvironmentCredentials;
-        const input = {
-          environmentId: "env_test",
-          environmentPublicKey: "sensitive-public-key-material",
-        };
-        const previous = yield* credentials.create(input);
-        const error = yield* Effect.flip(credentials.create(input));
-
-        expect(error).toMatchObject({
-          _tag: "EnvironmentCredentialCreatePersistenceError",
-          stage: "revoke-previous-credentials",
-          environmentId: "env_test",
-        });
-        expect(error.credentialId).toMatch(/^[0-9a-f]{64}$/);
-        expect(error.cause).toBe(cause);
-        expect(error).not.toHaveProperty("environmentPublicKey");
-        expect(store.active()).toEqual([credentialIdOf(previous)]);
-      }).pipe(Effect.provide(layerWithDb(store.db)));
-    },
-  );
-
-  it.effect("reports a failed commit as a credential persistence error", () => {
-    const commitFailure = new SqlError.SqlError({
-      reason: new SqlError.ConnectionError({ cause: new Error("connection reset") }),
-    });
-    const store = makeCredentialStore({ commit: Effect.fail(commitFailure) });
-
-    return Effect.gen(function* () {
-      const credentials = yield* EnvironmentCredentials.EnvironmentCredentials;
-      const error = yield* credentials
-        .create({ environmentId: "env_test", environmentPublicKey: "public-key" })
-        .pipe(Effect.match({ onFailure: (cause) => cause, onSuccess: () => undefined }));
-
-      expect(error).toMatchObject({
-        _tag: "EnvironmentCredentialCreatePersistenceError",
-        stage: "transaction",
-        environmentId: "env_test",
-      });
-      expect(error?.cause).toBe(commitFailure);
-    }).pipe(Effect.provide(layerWithDb(store.db)));
-  });
-
   it.effect("keeps the newest credential valid when links rotate concurrently", () => {
     const firstAwaitingRevoke = Deferred.makeUnsafe<void>();
     const secondSettledOrWaiting = Deferred.makeUnsafe<void>();

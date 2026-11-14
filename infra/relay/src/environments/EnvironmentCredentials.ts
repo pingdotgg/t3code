@@ -1,4 +1,3 @@
-import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -140,13 +139,13 @@ const make = Effect.gen(function* () {
             cause,
           });
       const now = DateTime.formatIso(yield* DateTime.now);
-      // Serialize rotations across workers so the last commit keeps a valid credential.
+      // Held until commit, so concurrent links for one key cannot each revoke the other's credential.
       yield* db.$client
         .withTransaction(
           Effect.gen(function* () {
             yield* db
               .execute(
-                sql`select pg_advisory_xact_lock(hashtext(${input.environmentId}::text), hashtext(${input.environmentPublicKey}::text))`,
+                sql`select pg_advisory_xact_lock(hashtextextended(${`environment-credential:${input.environmentId}:${input.environmentPublicKey}`}, 0))`,
               )
               .pipe(Effect.mapError(persistenceError("lock-credentials")));
             yield* db
@@ -179,13 +178,9 @@ const make = Effect.gen(function* () {
           }),
         )
         .pipe(
-          // Preserve rollback defects and interruptions alongside typed failures.
-          Effect.catchCause((cause) =>
-            Effect.failCause(
-              Cause.map(cause, (error) =>
-                SqlError.isSqlError(error) ? persistenceError("transaction")(error) : error,
-              ),
-            ),
+          // Statements inside map their own SqlErrors, so any left here come from opening or committing the transaction.
+          Effect.mapError((cause) =>
+            SqlError.isSqlError(cause) ? persistenceError("transaction")(cause) : cause,
           ),
         );
       return credential.token;
