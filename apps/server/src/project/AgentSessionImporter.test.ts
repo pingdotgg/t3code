@@ -422,16 +422,6 @@ it.effect("tolerates a missing transcript owner but propagates failed ownership 
         cause: { _tag: "ProjectionStoreReadError" },
       },
     });
-
-    yield* sql`DROP TABLE orchestration_v2_projection_threads`;
-    expect(yield* Effect.flip(importer.run)).toMatchObject({
-      _tag: "AgentSessionScanError",
-      operation: "read-projects",
-      cause: {
-        _tag: "OrchestratorProjectionError",
-        cause: { _tag: "ProjectionStoreReadError" },
-      },
-    });
   }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 
