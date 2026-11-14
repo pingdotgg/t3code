@@ -22,7 +22,7 @@ import { type MouseEvent, useState } from "react";
 import { resolveDiscoveredServerUrl } from "../../browser/browserTargetResolver";
 import { readLocalApi } from "../../localApi";
 import { cn, isMacPlatform } from "../../lib/utils";
-import { useThreadDiscoveredPorts } from "../../portDiscoveryState";
+import { useDiscoveredPortsState, useThreadDiscoveredPorts } from "../../portDiscoveryState";
 import { useEnvironment } from "../../state/environments";
 import { previewEnvironment } from "../../state/preview";
 import { useEnvironmentScope } from "../../state/session";
@@ -41,6 +41,12 @@ const serverKey = (server: DiscoveredLocalServer) => `${server.pid}:${server.por
 interface ThreadServersPanelProps {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
+}
+
+/** Keeps discovery live so the thread's details open with its current servers. */
+export function ThreadServersDiscovery(props: { readonly environmentId: EnvironmentId }) {
+  useDiscoveredPortsState(props.environmentId);
+  return null;
 }
 
 /** Local servers the thread's terminals and agent started. Hidden while none run. */
