@@ -10,15 +10,29 @@ vi.mock(import("~/state/device"), async (original) => ({
   ...(await original()),
   useDeviceHubAccess: () => access,
 }));
+vi.mock(import("~/state/use-atom-command"), () => ({
+  useAtomCommand: () => (value: unknown) => runAction(value),
+}));
+vi.mock(import("./deviceHubApi"), async (original) => ({
+  ...(await original()),
+  subscribeDeviceForeground: (_target, onChange) => {
+    onChange({ id: "com.example.app" });
+    return () => {};
+  },
+}));
 vi.mock(import("./DevicePhoneViewport"), () => ({
   DevicePhoneViewport: () => <></>,
 }));
 import { DeviceStreamView } from "./DeviceStreamView";
 
+const runAction = vi.fn((_value: unknown) => Promise.resolve({ _tag: "Success" }) as never);
 const access = { httpBase: "http://test", wsBase: "ws://test", query: {}, credentials: true };
 function setup() {
+  runAction.mockClear();
   const registry = AtomRegistry.make();
   const touches: unknown[] = [];
+  const pastes: unknown[] = [];
+  const inputs: string[] = [];
   const image = vi.spyOn(HTMLImageElement.prototype, "src", "set").mockImplementation(() => {});
   // Select MJPEG without starting a WebCodecs decoder. Input uses the real stream client.
   const decoder = stubGlobal("VideoDecoder", undefined);
@@ -45,6 +59,11 @@ function setup() {
         if (typeof message !== "string" && message[0] === 0x03) {
           touches.push(JSON.parse(new TextDecoder().decode(message.subarray(1))));
         }
+        if (typeof message !== "string" && message[0] === 0x12) {
+          pastes.push(JSON.parse(new TextDecoder().decode(message.subarray(1))));
+          inputs.push("paste");
+        }
+        if (typeof message !== "string" && message[0] === 0x06) inputs.push("key");
       }
       close() {}
     },
@@ -63,6 +82,8 @@ function setup() {
       decoder[Symbol.dispose]();
     },
     touches,
+    pastes,
+    inputs,
     async configure(inputUnavailable = false) {
       const json = new TextEncoder().encode(
         JSON.stringify({ width: 400, height: 800, orientation: "portrait", inputUnavailable }),
@@ -205,4 +226,59 @@ it("releases flat pointer ownership when input disconnects", async () => {
     { type: "begin", x: 0.5, y: 0.5 },
     { type: "end", x: 0.75, y: 0.75 },
   ]);
+});
+
+it("pastes into the foreground iOS app when a menu paste targets text outside the screen", async () => {
+  using input = setup();
+  await using screen = await render(input.view(), options);
+  await act(async () => input.configure());
+  await expect.element(screen.getByText("Input connected", { exact: true })).toBeVisible();
+  screen.container.querySelector<HTMLElement>('[role="application"]')!.focus();
+  const clipboardData = new DataTransfer();
+  clipboardData.setData("text/plain", "code 42");
+  const event = new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData });
+  screen.getByText("Input connected", { exact: true }).element().dispatchEvent(event);
+  expect(event.defaultPrevented).toBe(true);
+  await vi.waitFor(() => expect(input.pastes).toEqual([{ requestId: 1, text: "code 42" }]));
+  expect(runAction).toHaveBeenCalledWith(
+    expect.objectContaining({
+      input: {
+        hostId: "local",
+        deviceId: "test",
+        type: "setPermission",
+        appId: "com.example.app",
+        permission: "pasteboard",
+        decision: "grant",
+      },
+    }),
+  );
+  screen
+    .getByText("Input connected", { exact: true })
+    .element()
+    .dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData }));
+  await vi.waitFor(() => expect(input.pastes).toHaveLength(2));
+  expect(runAction).toHaveBeenCalledTimes(2);
+});
+
+it("sends keys typed during a paste after the pasted text", async () => {
+  using input = setup();
+  let grant!: () => void;
+  runAction.mockImplementationOnce(
+    () => new Promise((resolve) => (grant = () => resolve({ _tag: "Success" }))) as never,
+  );
+  await using screen = await render(input.view(), options);
+  await act(async () => input.configure());
+  await expect.element(screen.getByText("Input connected", { exact: true })).toBeVisible();
+  const host = screen.container.querySelector<HTMLElement>('[role="application"]')!;
+  host.focus();
+  const clipboardData = new DataTransfer();
+  clipboardData.setData("text/plain", "code 42");
+  host.dispatchEvent(
+    new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData }),
+  );
+  host.dispatchEvent(new KeyboardEvent("keydown", { code: "Enter", key: "Enter", bubbles: true }));
+  host.dispatchEvent(new KeyboardEvent("keyup", { code: "Enter", key: "Enter", bubbles: true }));
+  await vi.waitFor(() => expect(runAction).toHaveBeenCalledOnce());
+  grant();
+  await vi.waitFor(() => expect(input.inputs).toEqual(["paste", "key", "key"]));
 });

@@ -5,7 +5,8 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
-import { renewDeviceHubAccess, useDeviceHubAccess } from "~/state/device";
+import { deviceEnvironment, renewDeviceHubAccess, useDeviceHubAccess } from "~/state/device";
+import { useAtomCommand } from "~/state/use-atom-command";
 import { resolveDeviceShape } from "@t3tools/client-runtime/device/shape-profile";
 import { deviceKeyboard, deviceModel } from "./deviceModels";
 import { fitDeviceFrame } from "./deviceFrameLayout";
@@ -15,7 +16,12 @@ import { DeviceAndroidFoldControls } from "./DeviceAndroidFoldControls";
 import { DevicePhoneViewport } from "./DevicePhoneViewport";
 import { DeviceLoadingView } from "./DeviceLoadingView";
 import type { DeviceAxElement } from "./deviceHubApi";
-import { androidFoldViewAtom, deviceAxElementsAtom } from "./deviceHubAtoms";
+import {
+  androidFoldViewAtom,
+  deviceAxElementsAtom,
+  deviceForegroundAtom,
+  NO_FOREGROUND_ATOM,
+} from "./deviceHubAtoms";
 import {
   deviceScreenKey,
   deviceStreamSessionAtom,
@@ -45,6 +51,19 @@ function screenAspect(platform: DevicePlatform, screen: DeviceScreenSize | null)
     ? Math.min(screen.width, screen.height)
     : Math.max(screen.width, screen.height);
   return w / h;
+}
+
+// A menu Paste targets the element that holds the selection, which a right-click can put
+// anywhere around the screen. The focus stays on the screen.
+function listenForMenuPaste(element: HTMLElement, onPaste: (text: string) => void) {
+  const document = element.ownerDocument;
+  const listener = (event: ClipboardEvent) => {
+    if (document.activeElement !== element || !event.clipboardData) return;
+    event.preventDefault();
+    onPaste(event.clipboardData.getData("text/plain"));
+  };
+  document.addEventListener("paste", listener);
+  return () => document.removeEventListener("paste", listener);
 }
 
 // serve-sim sends raw portrait framebuffers even when iOS reports landscape; rotate the display.
@@ -126,6 +145,38 @@ export function DeviceStreamView(props: {
       : NO_SESSION_ATOM,
   );
   const client = session?.stream ?? null;
+  const runAction = useAtomCommand(deviceEnvironment.action, { reportFailure: false });
+  const foregroundApp = useAtomValue(
+    access && props.visible && props.platform === "ios"
+      ? deviceForegroundAtom({ access, platform: props.platform, deviceId: props.deviceId })
+      : NO_FOREGROUND_ATOM,
+  );
+  // iOS hands an empty pasteboard to the Cmd+V that serve-sim sends, unless the app has this grant.
+  // A reinstall resets the grant, so ask again on each paste.
+  const allowPaste = (appId: string) =>
+    runAction({
+      environmentId: props.environmentId,
+      input: {
+        hostId: props.hostId,
+        deviceId: props.deviceId,
+        type: "setPermission",
+        appId,
+        permission: "pasteboard",
+        decision: "grant",
+      },
+    });
+  const inputQueue = useRef(Promise.resolve());
+  const sendInOrder = (send: () => unknown) => {
+    inputQueue.current = inputQueue.current.then(send).then(() => undefined, reportError);
+  };
+  const paste = (text: string) => {
+    if (!client || text === "") return;
+    const appId = foregroundApp?.id;
+    sendInOrder(async () => {
+      if (appId) await allowPaste(appId);
+      client.sendText(text);
+    });
+  };
   const canvas = session?.canvas ?? null;
   const { status, detail, hasFrame, screen, mjpegUrl, mjpegGeneration, duoControl } =
     session?.state ?? IDLE_DEVICE_STREAM_STATE;
@@ -173,7 +224,12 @@ export function DeviceStreamView(props: {
       );
     };
     update();
-    return observeResize(element, update);
+    const stopResize = observeResize(element, update);
+    const stopPaste = listenForMenuPaste(element, paste);
+    return () => {
+      stopResize();
+      stopPaste();
+    };
   };
   const frame = fitDeviceFrame(aspect, host.width, host.height, controlsInset);
 
@@ -334,16 +390,11 @@ export function DeviceStreamView(props: {
             return;
           }
           event.preventDefault();
-          client?.sendKey(event.nativeEvent, "down");
-        }}
-        onPaste={(event) => {
-          if (event.target !== event.currentTarget) return;
-          event.preventDefault();
-          client?.sendText(event.clipboardData.getData("text/plain"));
+          sendInOrder(() => client?.sendKey(event.nativeEvent, "down"));
         }}
         onKeyUp={(event) => {
           if (event.target !== event.currentTarget) return;
-          client?.sendKey(event.nativeEvent, "up");
+          sendInOrder(() => client?.sendKey(event.nativeEvent, "up"));
         }}
       >
         <div

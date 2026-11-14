@@ -436,6 +436,7 @@ export const DevicePermission = Schema.Literals([
   "motion",
   "media-library",
   "faceid",
+  "pasteboard",
 ]);
 export type DevicePermission = typeof DevicePermission.Type;
 
