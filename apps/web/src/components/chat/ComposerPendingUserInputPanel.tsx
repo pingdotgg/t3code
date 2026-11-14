@@ -354,9 +354,6 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                       aria-pressed={isSelected}
                       data-pending-user-input-option
                       disabled={disabled || isResponding}
-                      // A click leaves focus where it was, so Enter confirms the
-                      // question instead of pressing the option just clicked again.
-                      onPointerDown={(event) => event.preventDefault()}
                       onClick={() => {
                         handleOptionSelection(activeQuestion.id, optionValue);
                       }}

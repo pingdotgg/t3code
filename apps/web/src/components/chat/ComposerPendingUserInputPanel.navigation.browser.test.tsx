@@ -499,13 +499,15 @@ it("confirms on Enter after a click instead of unselecting the clicked option", 
   expect(onConfirm).toHaveBeenCalledTimes(1);
 });
 
-it("takes number keys and Enter from an option inside a side chat", async () => {
+it("takes number keys and Enter after an option click inside a side chat", async () => {
   const { screen, option, onConfirm } = await renderKeyboardChat("side-chat", [steps], {
     sideChat: true,
   });
   await using _ = screen;
 
-  (option("Push").element() as HTMLElement).focus();
+  // Focus starts outside the side chat, as when the parent chat's composer had it.
+  await option("Push").click();
+  await userEvent.keyboard("1");
   await userEvent.keyboard("2");
   await expect.element(option("Merge")).toHaveAttribute("aria-pressed", "true");
 
