@@ -2893,7 +2893,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           const resumeId = existing?.nativeThreadRef?.nativeId;
           const needsNewSession = resumeId == null && registrationAttempted;
           registrationAttempted = true;
-          let stateData = resumeId != null ? yield* request({ type: "get_state" }) : undefined;
+          // This probe replaces switch_session as a resume's first request, so it keeps the lifecycle deadline.
+          let stateData =
+            resumeId != null
+              ? yield* request({ type: "get_state" }, PI_SESSION_TIMEOUT_MS)
+              : undefined;
           const liveSessionFile = recordString(stateData, "sessionFile");
           // Switching replaces the session and reloads extensions, so keep an already attached file.
           const alreadyOnResumeFile =

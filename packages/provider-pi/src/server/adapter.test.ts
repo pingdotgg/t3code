@@ -22,6 +22,7 @@ import {
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -33,6 +34,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -2143,15 +2145,23 @@ describe("PiAdapterV2", () => {
         assert.notInclude(args, "--no-extensions");
         assert.include(args, "--extension");
 
-        fake.queueState({
-          sessionFile: FAKE_SESSION_FILE.replace("/--workspace--/", "/--workspace--/./"),
+        // Startup extensions can hold Pi's first reply past the ordinary request deadline.
+        const reading = yield* Deferred.make<void>();
+        fake.deferNextState(reading);
+        const registering = yield* runtime
+          .ensureThread({
+            threadId: THREAD_ID,
+            modelSelection: modelSelection("default"),
+            runtimePolicy,
+            existingProviderThread: persisted,
+          })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(reading);
+        yield* TestClock.adjust(Duration.millis(16_820));
+        yield* fake.resolveDeferredState({
+          ...recordedIdleState(FAKE_SESSION_FILE.replace("/--workspace--/", "/--workspace--/./")),
         });
-        const providerThread = yield* runtime.ensureThread({
-          threadId: THREAD_ID,
-          modelSelection: modelSelection("default"),
-          runtimePolicy,
-          existingProviderThread: persisted,
-        });
+        const providerThread = yield* Fiber.join(registering);
         assert.equal(providerThread.id, persisted.id);
         assert.isFalse(fake.allRequests().some((request) => request.type === "switch_session"));
         yield* startTurn(runtime, providerThread, "anthropic/claude-sonnet");
