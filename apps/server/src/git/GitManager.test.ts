@@ -4759,6 +4759,57 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect(
+    "create_pr publishes to the push remote when the tracked upstream already has HEAD",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const originDir = yield* createBareRemote();
+        const forkDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+        yield* runGit(repoDir, ["remote", "add", "fork", forkDir]);
+        yield* runGit(repoDir, ["checkout", "-b", "topic"]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "changes.txt"), "change\n");
+        yield* runGit(repoDir, ["add", "changes.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "Topic change"]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "topic"]);
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "origin",
+          "git@github.com:pingdotgg/codething-mvp.git",
+          originDir,
+        );
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "fork",
+          "git@github.com:octocat/codething-mvp.git",
+          forkDir,
+        );
+        yield* runGit(repoDir, ["config", "remote.pushDefault", "fork"]);
+
+        const { manager, providerCalls } = yield* makeManager();
+        const result = yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action: "create_pr",
+        });
+
+        expect(result.push).toMatchObject({ status: "pushed", upstreamBranch: "fork/topic" });
+        expect(result.pr.status).toBe("created");
+        expect(
+          yield* runGit(forkDir, ["--git-dir=.", "log", "-1", "--pretty=%s", "topic"]),
+        ).toMatchObject({
+          stdout: "Topic change\n",
+        });
+        expect(created(providerCalls)).toEqual([
+          { baseRefName: "main", headSelector: "octocat:topic" },
+        ]);
+        expect(yield* runGit(repoDir, ["rev-parse", "--abbrev-ref", "@{upstream}"])).toMatchObject({
+          stdout: "origin/topic\n",
+        });
+      }),
+  );
+
   it.effect("rejects push/pr actions from detached HEAD", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
