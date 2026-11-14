@@ -385,6 +385,14 @@ const steps = [
   ["delete_scheduled_task", () => ({})],
   ["run_scheduled_task_now", () => ({ taskId: "scheduled-task:none" })],
   ["run_scheduled_task_now", () => ({})],
+  // Annotations act as the calling thread: an outside client is refused after the arguments.
+  ["annotations_list", () => ({})],
+  ["annotations_claim", () => ({})],
+  ["annotations_claim", () => ({ id: "../x" })],
+  ["annotations_complete", () => ({ id: "a", summary: "Done" })],
+  ["annotations_complete", () => ({ id: "a" })],
+  ["annotations_release", () => ({ id: "a", question: true })],
+  ["annotations_release", () => ({ id: "" })],
   [
     "t3_thread_launch",
     (c) => ({

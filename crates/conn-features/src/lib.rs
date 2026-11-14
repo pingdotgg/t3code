@@ -2,5 +2,6 @@
 //! and serves the RPC methods and `/mcp` tools `conn-server` and `conn-mcp` register for it.
 //! `README.md` maps every method and tool of these areas and what each needs.
 
+pub mod annotations;
 pub mod clock;
 pub mod scheduled;

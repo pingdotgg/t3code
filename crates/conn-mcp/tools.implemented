@@ -24,3 +24,7 @@ schedule_task
 list_scheduled_tasks
 delete_scheduled_task
 run_scheduled_task_now
+annotations_list
+annotations_claim
+annotations_complete
+annotations_release

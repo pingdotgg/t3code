@@ -384,7 +384,7 @@ to the socket.
 
 ## Status
 
-**Coverage:** 85 of 236 methods (20 of 33 streams), from the method table at startup. Every
+**Coverage:** 88 of 236 methods (20 of 33 streams), from the method table at startup. Every
 registered method checks the scope the T3 server requires (`src/scopes.rs`, its table
 generated). Every registered method but two has a run that decodes its answer with the real
 client (`tools/decode-coverage.mjs`; the rest are in `decode-coverage.pending`). The engine's

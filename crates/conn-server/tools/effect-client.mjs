@@ -242,6 +242,13 @@ const decodeEach = (client) =>
     yield* call("scheduledTasks.setEnabled", { id: taskId, enabled: false });
     yield* call("scheduledTasks.runNow", { id: none });
     yield* call("scheduledTasks.delete", { id: taskId });
+    // Annotations, in the project made above.
+    yield* call("annotations.subscribe", { projectId: "effect-client-p1" });
+    yield* call("annotations.create", {
+      projectId: "effect-client-p1",
+      annotation: { id: "effect-client-a1", comment: "Make the button bigger", source: "browser" },
+    });
+    yield* call("annotations.remove", { projectId: "effect-client-p1", ids: ["effect-client-a1"] });
     yield* call("projects.writeFile", { cwd: repo, relativePath: "b.txt", contents: "b\n" });
     yield* call("projects.listIgnoredFiles", { cwd: repo });
     yield* call("review.getDiffFileContents", {

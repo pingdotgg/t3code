@@ -9,6 +9,7 @@ use conn_provider::Provider;
 
 use crate::table::MethodTable;
 
+mod annotations;
 mod files;
 mod orchestration;
 mod projects;
@@ -34,6 +35,8 @@ pub struct Deps {
     pub files: Option<Arc<conn_files::Files>>,
     /// Scheduled tasks (`conn_features::scheduled`); without it `scheduledTasks.*` is not served.
     pub scheduled_tasks: Option<conn_features::scheduled::ScheduledTasks>,
+    /// Annotations (`conn_features::annotations`); without it `annotations.*` is not served.
+    pub annotations: Option<conn_features::annotations::Annotations>,
 }
 
 impl std::fmt::Debug for Deps {
@@ -54,4 +57,5 @@ pub fn register_all(table: &mut MethodTable, deps: &Deps) {
     files::register(table, deps);
     terminal::register(table, deps);
     scheduled::register(table, deps);
+    annotations::register(table, deps);
 }

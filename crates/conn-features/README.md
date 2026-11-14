@@ -1,6 +1,6 @@
 # conn-features
 
-Conn's server areas beside the engine: scheduled tasks now, the Conn-only stores next.
+Conn's server areas beside the engine: scheduled tasks and annotations.
 `docs/conn-only-areas.md` maps every method and `/mcp` tool of these areas in the T3 server,
 with its state and what it needs from outside the server.
 
@@ -9,6 +9,30 @@ with its state and what it needs from outside the server.
 | Area | RPC methods | `/mcp` tools | Not served, and why |
 | --- | --- | --- | --- |
 | Scheduled tasks | `scheduledTasks.subscribe`, `upsert`, `setEnabled`, `delete`, `runNow` | `schedule_task`, `list_scheduled_tasks`, `delete_scheduled_task`, `run_scheduled_task_now` | Webhook tasks (`rotateWebhookToken`, `listWebhookDeliveries`, `getWebhookDelivery` stay unregistered; a webhook save is refused); `fresh_session` tasks (refused: the engine cannot start a fresh provider session on a send) |
+| Annotations | `annotations.subscribe`, `create`, `remove` | `annotations_list`, `annotations_claim`, `annotations_complete`, `annotations_release` | |
+
+## Annotations (`src/annotations`)
+
+- **Store:** the T3 server's own files, so either server reads the other's:
+  `<state-dir>/annotations/<project>/<id>.json`, `<id>.<png|jpg|webp>`, `_sequence.json`,
+  `_deleted.json`. Each call reads the project's folder under the project's lock on a
+  blocking thread and writes what changed (atomic writes). Nothing stays in memory between
+  calls but one lock and one change counter per project used. At most 1,000 annotations per
+  project (the T3 server has no limit); a 1,001st is refused as invalid.
+- **Rules from `AnnotationStore.ts`:** numbers per project are never reused; an edit keeps the
+  number, status and times; a removed id can never come back; claim by id only from `todo`,
+  otherwise the oldest todo that is not a question; complete and release are idempotent from
+  their end state; removal records the ids first, so a stopped removal finishes on the next
+  read. Ids name files, so an id outside `^[a-zA-Z0-9][a-zA-Z0-9_-]{0,199}$` never reaches a
+  path (a defect over RPC, `-32602` over `/mcp`, as the schema refuses it).
+- **`/mcp`:** the caller thread's project. Failures reach the agent as their plain message:
+  Effect's `McpServer` renders a declared `Error` with a message that way
+  (`declaredFailureResult`), and `parity.mjs` shows the T3 server does so for this toolkit.
+- **Proofs:** 11 unit tests (the 8 cases of `AnnotationStore.test.ts`, the id rule, and files
+  the T3 server wrote); the 2 cases of `McpAnnotationsToolkit.test.ts` plus the refusals;
+  the 3 methods decode with the real client's decoders; 7 `parity.mjs` steps, no differences.
+- **Not done:** no client reducer check: the web client keeps the stream's latest list as it
+  is, so the decode check is what it needs.
 
 ## Scheduled tasks (`src/scheduled`)
 

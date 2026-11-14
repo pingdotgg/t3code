@@ -58,6 +58,7 @@ fn fixture_with_host(name: &str, host: Option<Arc<dyn conn_engine::EngineHost>>)
         }),
         hosted_app_url: crate::DEFAULT_HOSTED_APP_URL.into(),
         scheduled_tasks: None,
+        annotations: None,
     });
     service.set_listen_address("0.0.0.0:4711".parse().unwrap());
     Fixture { service, dir }
@@ -1595,6 +1596,13 @@ async fn fixture_with_tasks(name: &str) -> Fixture {
         providers: config.providers.clone(),
         hosted_app_url: config.hosted_app_url.clone(),
         scheduled_tasks: Some(tasks),
+        annotations: Some(conn_features::annotations::Annotations::new(
+            &base.dir,
+            Arc::new(conn_features::clock::SystemClock),
+            Arc::new(conn_features::annotations::EngineProjects(
+                config.engine.clone(),
+            )),
+        )),
     });
     service.set_listen_address("0.0.0.0:4711".parse().unwrap());
     let dir = base.dir.clone();
@@ -1870,4 +1878,165 @@ async fn an_agent_schedules_edits_and_a_client_runs_and_deletes_a_task() {
             .len(),
         1
     );
+}
+
+fn annotation(id: &str, comment: &str) -> conn_contract::AnnotationCapture {
+    conn_contract::from_json(json!({"id": id, "comment": comment})).unwrap()
+}
+
+/// A failure the annotation toolkit renders as plain text.
+async fn plain_failure(c: &mut Client<'_>, tool: &str, args: Value) -> String {
+    let reply = c
+        .request("tools/call", json!({"name": tool, "arguments": args}))
+        .await;
+    assert_eq!(reply["result"]["isError"], true, "{tool}: {reply}");
+    reply["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+/// `claims, completes and releases the calling thread's annotations`
+/// (`McpAnnotationsToolkit.test.ts`).
+#[tokio::test(flavor = "current_thread")]
+async fn annotation_tools_claim_complete_and_release_the_callers_annotations() {
+    let f = fixture_with_tasks("annotations-flow").await;
+    let store = f.service.config.annotations.clone().unwrap();
+    let mut first = annotation("first", "Make the button bigger");
+    first.screenshot = Some(format!(
+        "data:image/jpeg;base64,{}",
+        conn_support::base64::encode(b"jpeg")
+    ));
+    store.create(&project_id(), first).await.unwrap();
+    store
+        .create(&project_id(), annotation("second", "Which font?"))
+        .await
+        .unwrap();
+    let mut swamp = Client::open(&f.service, client(true)).await;
+    let thread = launch_as_swamp(&mut swamp, "Agent", "hang", "full-access", "default").await;
+    let mut agent = Client::open(&f.service, agent_of(&f, &thread)).await;
+
+    let claimed = agent.ok("annotations_claim", json!({})).await;
+    let record = &claimed["annotation"];
+    assert_eq!(
+        (
+            record["id"].clone(),
+            record["number"].clone(),
+            record["status"].clone()
+        ),
+        (json!("first"), json!(1), json!("in_progress"))
+    );
+    assert!(
+        record["screenshotPath"]
+            .as_str()
+            .unwrap()
+            .ends_with("first.jpg"),
+        "{record}"
+    );
+    let done = agent
+        .ok(
+            "annotations_complete",
+            json!({"id": "first", "summary": "Bigger button; lint passes."}),
+        )
+        .await;
+    assert_eq!(done["annotation"]["status"], "done");
+    assert_eq!(done["annotation"]["summary"], "Bigger button; lint passes.");
+    agent.ok("annotations_claim", json!({"id": "second"})).await;
+    let asked = agent
+        .ok(
+            "annotations_release",
+            json!({"id": "second", "question": true, "summary": "Serif or sans?"}),
+        )
+        .await;
+    assert_eq!(
+        (
+            asked["annotation"]["status"].clone(),
+            asked["annotation"]["question"].clone()
+        ),
+        (json!("todo"), json!(true))
+    );
+    assert_eq!(
+        agent.ok("annotations_claim", json!({})).await,
+        json!({"annotation": null})
+    );
+    let open = agent.ok("annotations_list", json!({})).await;
+    let ids: Vec<&str> = open["annotations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["second"]);
+    let all = agent.ok("annotations_list", json!({"all": true})).await;
+    assert_eq!(all["annotations"].as_array().unwrap().len(), 2);
+}
+
+/// `reports a conflict and refuses callers outside a thread`.
+#[tokio::test(flavor = "current_thread")]
+async fn annotation_tools_report_a_conflict_and_refuse_callers_outside_a_thread() {
+    let f = fixture_with_tasks("annotations-refuse").await;
+    let store = f.service.config.annotations.clone().unwrap();
+    store
+        .create(&project_id(), annotation("only", "Fix the header"))
+        .await
+        .unwrap();
+    let mut swamp = Client::open(&f.service, client(true)).await;
+    let thread = launch_as_swamp(&mut swamp, "Agent", "hang", "full-access", "default").await;
+    let mut agent = Client::open(&f.service, agent_of(&f, &thread)).await;
+    let reply = agent
+        .request(
+            "tools/call",
+            json!({"name": "annotations_complete", "arguments": {"id": "only", "summary": "Done"}}),
+        )
+        .await;
+    assert_eq!(reply["result"]["isError"], true);
+    assert_eq!(
+        reply["result"]["content"][0]["text"],
+        "Annotation only is todo; it must be in_progress. Read the list again."
+    );
+    let outside = "This tool acts as the calling T3 thread, so it needs an agent running inside T3 Code. This MCP client signed in from outside a thread.";
+    for tool in ["annotations_claim", "annotations_list"] {
+        assert_eq!(
+            plain_failure(&mut swamp, tool, json!({})).await,
+            outside,
+            "{tool}"
+        );
+    }
+    assert_eq!(
+        rpc_error(&mut agent, "annotations_claim", json!({"id": "../x"}))
+            .await
+            .0,
+        -32602
+    );
+    // Still todo: the refused callers claimed nothing.
+    assert!(
+        store
+            .claim(&project_id(), Some("only".into()))
+            .await
+            .unwrap()
+            .is_some()
+    );
+    // An agent whose run ended cannot claim.
+    let idle = launch_as_swamp(&mut swamp, "Idle", "done", "full-access", "default").await;
+    let mut idle_agent = Client::open(&f.service, agent_of(&f, &idle)).await;
+    for _ in 0..200 {
+        let projection = f
+            .service
+            .config
+            .engine
+            .get_thread_projection(idle.as_str().into())
+            .await
+            .unwrap();
+        if !projection["runs"].as_array().unwrap().is_empty() && !tools::has_active_run(&projection)
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(
+        plain_failure(&mut idle_agent, "annotations_claim", json!({})).await,
+        "The calling provider no longer owns an active thread run."
+    );
+    // Reading needs no live run.
+    idle_agent.ok("annotations_list", json!({})).await;
 }

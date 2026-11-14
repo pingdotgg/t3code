@@ -179,6 +179,11 @@ pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
     let mut deps = Deps {
         engine: Some(engine.clone()),
         scheduled_tasks: Some(scheduled_tasks),
+        annotations: Some(conn_features::annotations::Annotations::new(
+            &state_dir,
+            Arc::new(conn_features::clock::SystemClock),
+            Arc::new(conn_features::annotations::EngineProjects(engine.clone())),
+        )),
         providers,
         environment: Some(environment.clone()),
         files,

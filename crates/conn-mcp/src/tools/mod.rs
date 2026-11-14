@@ -11,6 +11,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{Caller, McpConfig, McpService};
 
+mod annotations;
 mod manage;
 mod message;
 mod projects;
@@ -28,6 +29,10 @@ pub(crate) enum ToolError {
     /// Arguments the schema allows but the call cannot use: JSON-RPC -32602, as TS decoding.
     #[error("invalid params: {0}")]
     InvalidParams(String),
+    /// A failure Effect's `McpServer` renders as its plain message (`declaredFailureResult`:
+    /// a declared `Error` with a message), as the annotation toolkit's failures are.
+    #[error("{0}")]
+    Message(String),
 }
 
 pub(crate) type ToolResult = Result<Value, ToolError>;
@@ -41,7 +46,11 @@ pub(crate) fn fail(code: &'static str, message: impl Into<String>) -> ToolError 
 
 /// Every name in `tools.implemented` has an arm here; a test checks both ways.
 #[cfg(test)]
-pub(crate) const HANDLED: [&str; 24] = [
+pub(crate) const HANDLED: [&str; 28] = [
+    "annotations_list",
+    "annotations_claim",
+    "annotations_complete",
+    "annotations_release",
     "schedule_task",
     "list_scheduled_tasks",
     "delete_scheduled_task",
@@ -106,6 +115,10 @@ pub(crate) async fn call(
         "task_status" => tasks::status(&cx, &args).await,
         "task_cancel" => tasks::cancel(&cx, &args).await,
         "schedule_task" => scheduled::schedule(&cx, &args).await,
+        "annotations_list" => annotations::list(&cx, &args).await,
+        "annotations_claim" => annotations::claim(&cx, &args).await,
+        "annotations_complete" => annotations::complete(&cx, &args).await,
+        "annotations_release" => annotations::release(&cx, &args).await,
         "list_scheduled_tasks" => scheduled::list(&cx, &args).await,
         "delete_scheduled_task" => scheduled::delete(&cx, &args).await,
         "run_scheduled_task_now" => scheduled::run_now(&cx, &args).await,
