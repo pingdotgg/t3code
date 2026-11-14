@@ -139,7 +139,7 @@ export function parseGitRemoteRepository(
 ): { readonly host: string; readonly path: string } | null {
   const normalized = lowerCaseRemote(value);
 
-  if (/^(?:ssh|https?|git):\/\//i.test(normalized)) {
+  if (/^(?:ssh|git\+ssh|ssh\+git|https?|git):\/\//i.test(normalized)) {
     try {
       // Parse the raw remote: `.git` may sit before a query or fragment, so strip it from the path once.
       const url = new URL(value.trim().toLowerCase());

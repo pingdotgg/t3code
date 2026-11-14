@@ -10,7 +10,7 @@ import {
   TrimmedString,
 } from "@t3tools/contracts";
 import { normalizeGitRemoteUrl, parseGitRemoteRepository } from "@t3tools/shared/git";
-import { userlessScpRemoteHost } from "@t3tools/shared/sourceControl";
+import { isSshRemoteUrl, userlessScpRemoteHost } from "@t3tools/shared/sourceControl";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
@@ -532,7 +532,7 @@ export function parseGitRemoteHost(remoteUrl: string): GitRemoteHost | null {
   } else {
     try {
       const url = new URL(trimmed);
-      host = (url.protocol === "ssh:" ? url.hostname : url.host).toLowerCase();
+      host = (isSshRemoteUrl(trimmed) ? url.hostname : url.host).toLowerCase();
     } catch {
       return null;
     }
