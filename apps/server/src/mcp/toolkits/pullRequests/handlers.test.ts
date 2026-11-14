@@ -724,6 +724,36 @@ describe("pull request guide tools", () => {
     }),
   );
 
+  it.effect(
+    "reads a guide on a host readable without a checkout through the caller's project",
+    () =>
+      Effect.gen(function* () {
+        const api = makeProject({
+          canonicalKey: "bitbucket.org/acme/api",
+          locator: {
+            source: "git-remote",
+            remoteName: "origin",
+            remoteUrl: "git@bitbucket.org:acme/api.git",
+          },
+          provider: SourceControlProviderKind.make("bitbucket"),
+          displayName: "acme/api",
+          owner: "acme",
+          name: "api",
+        });
+        const harness = yield* makeHarness({ project: api });
+        const result = yield* harness.call("read_pull_request_guide", {
+          url: "https://bitbucket.org/acme/web/pull-requests/123",
+        });
+        expect(result).toMatchObject({
+          host: "bitbucket.org",
+          repository: "acme/web",
+          number: 123,
+          guide: null,
+          currentHeadSha: "head-1",
+        });
+      }),
+  );
+
   it.effect("finds an Azure DevOps checkout for a pull request named by its full path", () =>
     Effect.gen(function* () {
       const azure = {
