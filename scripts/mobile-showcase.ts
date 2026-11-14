@@ -206,6 +206,11 @@ export function validateStoreAsset(
       throw new Error(`${label} must use Google Play's recommended portrait 9:16 aspect ratio.`);
     }
   }
+  try {
+    PNG.sync.read(Buffer.from(bytes));
+  } catch (cause) {
+    throw new Error(`${label} is not a valid PNG.`, { cause });
+  }
   return metadata;
 }
 

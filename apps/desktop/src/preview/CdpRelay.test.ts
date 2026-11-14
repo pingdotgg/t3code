@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { createCdpRelayConnection, type CdpRelayTarget } from "./CdpRelay.ts";
+import {
+  createCdpRelayConnection,
+  type CdpRelayConnection,
+  type CdpRelayTarget,
+} from "./CdpRelay.ts";
 
 const makeTarget = (
   send: CdpRelayTarget["send"],
@@ -12,6 +16,7 @@ const makeTarget = (
   title: () => "Fixture",
   userAgent: () => "Electron",
   setDownloadDirectory,
+  receivesScreencast: () => true,
 });
 
 const makeRelay = (target: CdpRelayTarget, write: (raw: string) => void) =>
@@ -171,7 +176,7 @@ describe("CDP relay extra sessions", () => {
 });
 
 describe("CDP relay downloads", () => {
-  it("applies the server's download directory and reports downloads on the root session", async () => {
+  it("captures preview downloads without changing the default browser context", async () => {
     const send = vi.fn(async () => ({}));
     const directories: Array<string | null> = [];
     const written: Array<Record<string, unknown>> = [];
@@ -194,17 +199,110 @@ describe("CDP relay downloads", () => {
     );
     await settle();
     expect(directories).toEqual(["/srv/artifacts"]);
-    expect(send).toHaveBeenCalledWith(
-      "Browser.setDownloadBehavior",
-      { behavior: "allowAndName", downloadPath: "/srv/artifacts", eventsEnabled: true },
-      undefined,
-    );
+    expect(send.mock.calls).toEqual([
+      ["Page.setDownloadBehavior", { behavior: "default" }, undefined],
+    ]);
     written.length = 0;
-    relay.event("Browser.downloadWillBegin", { guid: "g1", suggestedFilename: "r.csv" }, "");
+    relay.event("Page.downloadWillBegin", { guid: "g1", suggestedFilename: "r.csv" }, "");
+    relay.event("Page.downloadProgress", { guid: "g1", state: "completed" }, "");
     expect(written).toEqual([
       { method: "Browser.downloadWillBegin", params: { guid: "g1", suggestedFilename: "r.csv" } },
+      { method: "Browser.downloadProgress", params: { guid: "g1", state: "completed" } },
     ]);
   });
+
+  it("keeps denial scoped to the preview and restores Electron's save handling when allowed", async () => {
+    const send = vi.fn(async () => ({}));
+    const directories: Array<string | null> = [];
+    const relay = makeRelay(
+      makeTarget(send, (directory) => directories.push(directory)),
+      () => {},
+    );
+    for (const [id, behavior] of ["deny", "allowAndName"].entries()) {
+      relay.receive(
+        JSON.stringify({
+          id,
+          method: "Browser.setDownloadBehavior",
+          params: { behavior, downloadPath: "/srv/artifacts" },
+        }),
+      );
+      await settle();
+    }
+    expect(directories).toEqual([null, "/srv/artifacts"]);
+    expect(send.mock.calls).toEqual([
+      ["Page.setDownloadBehavior", { behavior: "deny" }, undefined],
+      ["Page.setDownloadBehavior", { behavior: "default" }, undefined],
+    ]);
+  });
+
+  it("does not publish download events when the connection has disabled them", async () => {
+    const written: Array<Record<string, unknown>> = [];
+    const relay = makeRelay(makeTarget(vi.fn(async () => ({}))), (raw) =>
+      written.push(JSON.parse(raw)),
+    );
+    relay.receive(JSON.stringify({ id: 1, method: "Target.setAutoAttach", params: {} }));
+    relay.receive(
+      JSON.stringify({
+        id: 2,
+        method: "Browser.setDownloadBehavior",
+        params: { behavior: "allowAndName", downloadPath: "/srv/artifacts", eventsEnabled: false },
+      }),
+    );
+    await settle();
+    written.length = 0;
+    relay.event("Page.downloadWillBegin", { guid: "g1" }, "");
+    relay.event("Page.downloadProgress", { guid: "g1", state: "completed" }, "");
+    expect(written).toEqual([]);
+  });
+
+  it.each([false, true])(
+    "keeps the previous download configuration (events enabled: %s) when configuration fails",
+    async (enabled) => {
+      const send = vi
+        .fn(async () => ({}))
+        .mockResolvedValueOnce({})
+        .mockRejectedValueOnce(new Error("Page command rejected"));
+      const written: Array<Record<string, unknown>> = [];
+      let directory: string | null = null;
+      const relay = makeRelay(
+        makeTarget(send, (value) => {
+          directory = value;
+        }),
+        (raw) => written.push(JSON.parse(raw)),
+      );
+      relay.receive(JSON.stringify({ id: 1, method: "Target.setAutoAttach", params: {} }));
+      for (const [id, eventsEnabled] of [enabled, !enabled].entries()) {
+        relay.receive(
+          JSON.stringify({
+            id: id + 2,
+            method: "Browser.setDownloadBehavior",
+            params: {
+              behavior: id === 1 && enabled ? "deny" : "allowAndName",
+              downloadPath: id === 0 ? "/srv/artifacts" : "/srv/new-artifacts",
+              eventsEnabled,
+            },
+          }),
+        );
+        await settle();
+      }
+      expect(written).toContainEqual({
+        id: 3,
+        error: { code: -32000, message: "Page command rejected" },
+      });
+      expect(directory).toBe("/srv/artifacts");
+      written.length = 0;
+      relay.event("Page.downloadWillBegin", { guid: "g1" }, "");
+      relay.event("Page.downloadProgress", { guid: "g1", state: "completed" }, "");
+      expect(written).toEqual(
+        enabled
+          ? [
+              { method: "Browser.downloadWillBegin", params: { guid: "g1" } },
+              { method: "Browser.downloadProgress", params: { guid: "g1", state: "completed" } },
+            ]
+          : [],
+      );
+    },
+  );
 });
 
 describe("CDP relay payload budget", () => {
@@ -259,5 +357,45 @@ describe("CDP relay payload budget", () => {
     relay.receive(JSON.stringify({ id: 2, method: "Target.setAutoAttach" }));
     expect(close).toHaveBeenCalledOnce();
     expect(written.map((message) => message["method"])).toEqual([]);
+  });
+});
+
+describe("CDP relay reconnects", () => {
+  it("reports the page's default execution context to every connection", async () => {
+    // Electron keeps one debugger attached, so Runtime stays enabled after a client drops,
+    // and the native Runtime.enable announces contexts again only after Runtime.disable.
+    let runtimeEnabled = false;
+    let current: CdpRelayConnection | undefined;
+    const context = {
+      context: { id: 1, origin: "null", name: "", auxData: { isDefault: true, frameId: "F" } },
+    };
+    const send = vi.fn(async (method: string) => {
+      if (method === "Runtime.disable") runtimeEnabled = false;
+      if (method === "Runtime.enable" && !runtimeEnabled) {
+        runtimeEnabled = true;
+        current!.event("Runtime.executionContextCreated", context, "");
+      }
+      return {};
+    });
+    const connect = async () => {
+      const written: Array<Record<string, unknown>> = [];
+      current = makeRelay(makeTarget(send), (raw) => written.push(JSON.parse(raw)));
+      current.receive(JSON.stringify({ id: 1, method: "Target.setAutoAttach", params: {} }));
+      await settle();
+      current.receive(
+        JSON.stringify({ id: 2, method: "Runtime.enable", sessionId: "t3-preview-page" }),
+      );
+      await settle();
+      return written.filter((m) => m["method"] === "Runtime.executionContextCreated");
+    };
+    const expected = [
+      {
+        method: "Runtime.executionContextCreated",
+        params: context,
+        sessionId: "t3-preview-page",
+      },
+    ];
+    expect(await connect()).toEqual(expected);
+    expect(await connect()).toEqual(expected);
   });
 });

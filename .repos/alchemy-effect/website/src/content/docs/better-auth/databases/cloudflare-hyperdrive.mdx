@@ -17,8 +17,8 @@ Configure Cloudflare and Neon through [Alchemy profiles](/environments/profiles)
 
 ```typescript title="src/auth-database.ts"
 import { CloudflareHyperdrive } from "@alchemy.run/better-auth/CloudflareHyperdrive";
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Neon from "alchemy/Neon";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Neon from "@alchemy.run/neon";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
@@ -44,7 +44,7 @@ Keep Hyperdrive caching disabled so session and verification reads cannot return
 
 ```typescript title="src/worker.ts"
 import { BetterAuth } from "@alchemy.run/better-auth";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import { AuthDatabase } from "./auth-database.ts";
 
@@ -70,8 +70,8 @@ The layer registers Hyperdrive's native binding and opens a driver pool inside e
 
 ```typescript title="alchemy.run.ts"
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Neon from "alchemy/Neon";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Neon from "@alchemy.run/neon";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import AuthApi from "./src/worker.ts";
