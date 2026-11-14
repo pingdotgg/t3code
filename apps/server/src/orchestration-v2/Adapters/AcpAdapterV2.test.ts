@@ -466,6 +466,133 @@ describe("acpToolCallDiffPatch", () => {
   });
 });
 
+/** Opens a mock ACP session with context usage hooks, for tests that switch sessions and models. */
+const openContextUsageRuntime = Effect.fnUntraced(function* (input: {
+  readonly name: string;
+  readonly initialNativeThreadId?: string;
+  readonly contextUsageFromSession: NonNullable<AcpAdapterV2Flavor["contextUsageFromSession"]>;
+  readonly contextUsageFromSessionUpdate?: AcpAdapterV2Flavor["contextUsageFromSessionUpdate"];
+  /** Sent while a session activates, as an agent replays history before answering the load. */
+  readonly replayOnActivation?: EffectAcpSchema.SessionNotification["update"];
+}) {
+  const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const path = yield* Path.Path;
+  const selfInvocation = yield* resolveSelfInvocation();
+  const mockAgentPath = yield* path.fromFileUrl(
+    new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+  );
+  const instanceId = ProviderInstanceId.make(`acp-test-${input.name}`);
+  type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+  let handler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+  const replay = (sessionId: string) =>
+    Effect.suspend(() =>
+      input.replayOnActivation === undefined || handler === undefined
+        ? Effect.void
+        : handler({ sessionId, update: input.replayOnActivation }),
+    );
+  const adapter = yield* makeAcpAdapterV2({
+    instanceId,
+    flavor: {
+      driver: ACP_TEST_DRIVER,
+      capabilities: AcpProviderCapabilitiesV2,
+      contextUsageFromSession: input.contextUsageFromSession,
+      ...(input.contextUsageFromSessionUpdate === undefined
+        ? {}
+        : { contextUsageFromSessionUpdate: input.contextUsageFromSessionUpdate }),
+      applyModelSelection: ({ modelSelection }) => Effect.succeed(modelSelection.model),
+      makeRuntime: makeMockRuntime({
+        childProcessSpawner,
+        mockAgentPath,
+        wrapRuntime: (runtime) => ({
+          ...runtime,
+          handleSessionUpdate: (next) =>
+            Effect.sync(() => {
+              handler = next;
+            }).pipe(Effect.andThen(runtime.handleSessionUpdate(next))),
+          loadSession: (sessionId, options) =>
+            replay(sessionId).pipe(Effect.andThen(runtime.loadSession(sessionId, options))),
+          resumeSession: (sessionId, options) =>
+            replay(sessionId).pipe(Effect.andThen(runtime.resumeSession(sessionId, options))),
+        }),
+      }),
+    },
+    selfInvocation,
+  });
+  const threadId = ThreadId.make(`thread-acp-${input.name}`);
+  const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    cwd: process.cwd(),
+  });
+  const selection = (model: string): ModelSelection => ({ instanceId, model });
+  const runtime = yield* adapter.openSession({
+    threadId,
+    providerSessionId: ProviderSessionId.make(`provider-session-acp-${input.name}`),
+    modelSelection: selection("small"),
+    runtimePolicy,
+    ...(input.initialNativeThreadId === undefined
+      ? {}
+      : { initialNativeThreadId: input.initialNativeThreadId }),
+  });
+  const providerThread = yield* runtime.ensureThread({
+    threadId,
+    modelSelection: selection("small"),
+    runtimePolicy,
+  });
+  const update = (notification: EffectAcpSchema.SessionNotification) =>
+    Effect.suspend(() => handler?.(notification) ?? Effect.void);
+  return { runtime, threadId, instanceId, runtimePolicy, selection, providerThread, update };
+});
+
+const withNativeSession = (
+  providerThread: OrchestrationV2ProviderThread,
+  nativeId: string,
+): OrchestrationV2ProviderThread => ({
+  ...providerThread,
+  nativeThreadRef: { driver: ACP_TEST_DRIVER, nativeId, strength: "strong" },
+});
+
+const collectUntilTerminal = (runtime: {
+  readonly events: ProviderAdapter.ProviderAdapterV2SessionRuntime["events"];
+}) =>
+  runtime.events.pipe(
+    Stream.takeUntil((event) => event.type === "turn.terminal"),
+    Stream.runCollect,
+    Effect.map((events) => Array.from(events)),
+  );
+
+const contextUsageAfterRename = <E>(
+  runtime: { readonly events: ProviderAdapter.ProviderAdapterV2SessionRuntime["events"] },
+  update: (notification: EffectAcpSchema.SessionNotification) => Effect.Effect<void, E>,
+  sessionId: string,
+) =>
+  update({ sessionId, update: { sessionUpdate: "session_info_update", title: "Renamed" } }).pipe(
+    Effect.andThen(
+      runtime.events.pipe(
+        Stream.filter(
+          (event) =>
+            event.type === "provider_thread.updated" &&
+            event.providerThread.nativeMetadata?.title === "Renamed",
+        ),
+        Stream.take(1),
+        Stream.runCollect,
+      ),
+    ),
+    Effect.map((events) => {
+      const renamed = Array.from(events)[0];
+      return renamed?.type === "provider_thread.updated"
+        ? renamed.providerThread.contextUsage
+        : "none";
+    }),
+  );
+
+const activeContextUsage = (events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) => {
+  const active = events.find(
+    (event) => event.type === "provider_thread.updated" && event.providerThread.status === "active",
+  );
+  return active?.type === "provider_thread.updated" ? active.providerThread.contextUsage : "none";
+};
+
 function makeMockRuntime(input: {
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly mockAgentPath: string;
@@ -4374,15 +4501,29 @@ describe("AcpAdapterV2", () => {
         const mockAgentPath = yield* bundledMockAgentPath;
         const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
         const instanceId = ProviderInstanceId.make("acp-test-eager-resume");
+        let contextUsageLoads = 0;
+        type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+        let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
         const adapter = yield* makeAcpAdapterV2({
           instanceId,
           flavor: {
             driver: ACP_TEST_DRIVER,
             capabilities: AcpProviderCapabilitiesV2,
+            contextUsageFromSession: () => {
+              contextUsageLoads += 1;
+              return { usedTokens: 100, maxTokens: 1_000 };
+            },
             makeRuntime: makeMockRuntime({
               childProcessSpawner,
               mockAgentPath,
               protocolEvents,
+              wrapRuntime: (runtime) => ({
+                ...runtime,
+                handleSessionUpdate: (handler) =>
+                  Effect.sync(() => {
+                    sessionUpdateHandler = handler;
+                  }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+              }),
             }),
           },
           selfInvocation,
@@ -4413,25 +4554,64 @@ describe("AcpAdapterV2", () => {
         assert.include(startupMethods, "session/resume");
         assert.notInclude(startupMethods, "session/new");
 
-        yield* runtime.resumeThread({ providerThread, modelSelection, runtimePolicy });
+        const resumed = yield* runtime.resumeThread({
+          providerThread,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.equal(contextUsageLoads, 1, "startup's load telemetry applies on the first resume");
+        assert.deepEqual(resumed.contextUsage, { usedTokens: 100, maxTokens: 1_000 });
         assert.notInclude(yield* pollProtocolMethods(protocolEvents), "session/resume");
+        assert.isDefined(sessionUpdateHandler);
+        yield* sessionUpdateHandler!({
+          sessionId: "persisted-session",
+          update: { sessionUpdate: "usage_update", used: 900, size: 1_000 },
+        });
+        yield* runtime.resumeThread({
+          providerThread: {
+            ...providerThread,
+            nativeThreadRef: {
+              driver: ACP_TEST_DRIVER,
+              nativeId: "other-session",
+              strength: "strong",
+            },
+          },
+          modelSelection,
+          runtimePolicy,
+        });
+        const reloaded = yield* runtime.resumeThread({
+          providerThread,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.equal(contextUsageLoads, 3);
+        assert.deepEqual(reloaded.contextUsage, { usedTokens: 100, maxTokens: 1_000 });
         const now = yield* DateTime.now;
         yield* runtime.startTurn(
           makeTurnInput({
             threadId,
-            providerThread,
+            providerThread: reloaded,
             instanceId,
             runtimePolicy,
             now,
             ordinal: 1,
           }),
         );
-        const terminal = Array.from(
+        const events = Array.from(
           yield* runtime.events.pipe(
             Stream.takeUntil((event) => event.type === "turn.terminal"),
             Stream.runCollect,
           ),
-        ).find((event) => event.type === "turn.terminal");
+        );
+        const active = events.find(
+          (event) =>
+            event.type === "provider_thread.updated" && event.providerThread.status === "active",
+        );
+        assert.deepEqual(
+          active?.type === "provider_thread.updated" ? active.providerThread.contextUsage : null,
+          { usedTokens: 100, maxTokens: 1_000 },
+        );
+        const terminal = events.find((event) => event.type === "turn.terminal");
         assert.equal(
           terminal?.providerTurnId,
           idAllocator.derive.providerTurn({
@@ -4440,6 +4620,527 @@ describe("AcpAdapterV2", () => {
           }),
         );
       }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.live("applies each load's context usage once, whichever call activated the session", () =>
+    Effect.gen(function* () {
+      const loads: Array<string> = [];
+      const { runtime, threadId, instanceId, runtimePolicy, selection, providerThread } =
+        yield* openContextUsageRuntime({
+          name: "load-once",
+          initialNativeThreadId: "persisted-session",
+          contextUsageFromSession: ({ session }) => {
+            loads.push(session.sessionId);
+            return {
+              usedTokens: session.sessionId === "persisted-session" ? 100 : 200,
+              maxTokens: 1_000,
+            };
+          },
+        });
+      const otherThread = withNativeSession(providerThread, "other-session");
+
+      const resumed = yield* runtime.resumeThread({
+        providerThread,
+        modelSelection: selection("small"),
+        runtimePolicy,
+      });
+      assert.deepEqual(resumed.contextUsage, { usedTokens: 100, maxTokens: 1_000 });
+      const resumedAgain = yield* runtime.resumeThread({
+        providerThread,
+        modelSelection: selection("small"),
+        runtimePolicy,
+      });
+      assert.deepEqual(resumedAgain.contextUsage, { usedTokens: 100, maxTokens: 1_000 });
+      assert.deepEqual(loads, ["persisted-session"]);
+
+      yield* runtime.resumeThread({
+        providerThread: otherThread,
+        modelSelection: selection("small"),
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread: {
+            ...providerThread,
+            contextUsage: { usedTokens: 999, maxTokens: 1_000 },
+          },
+          instanceId,
+          runtimePolicy,
+          now,
+          ordinal: 1,
+          modelSelection: selection("small"),
+        }),
+      );
+      const events = yield* collectUntilTerminal(runtime);
+      assert.deepEqual(activeContextUsage(events), { usedTokens: 100, maxTokens: 1_000 });
+      assert.deepEqual(loads, ["persisted-session", "other-session", "persisted-session"]);
+
+      yield* runtime.readThreadSnapshot({ providerThread: otherThread });
+      assert.lengthOf(loads, 3, "a snapshot has no model to read its load against");
+      const resumedAfterSnapshot = yield* runtime.resumeThread({
+        providerThread: otherThread,
+        modelSelection: selection("small"),
+        runtimePolicy,
+      });
+      assert.deepEqual(resumedAfterSnapshot.contextUsage, { usedTokens: 200, maxTokens: 1_000 });
+      assert.lengthOf(loads, 4);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("does not read another session's replayed usage against the active model", () =>
+    Effect.gen(function* () {
+      const contextWindow = (selection: ModelSelection) =>
+        selection.model === "small" ? 1_000 : 2_000;
+      const { runtime, threadId, instanceId, runtimePolicy, selection, providerThread, update } =
+        yield* openContextUsageRuntime({
+          name: "replay",
+          contextUsageFromSession: ({ selection }) => ({
+            usedTokens: 100,
+            maxTokens: contextWindow(selection),
+          }),
+          contextUsageFromSessionUpdate: ({ selection, notification }) =>
+            notification.update.sessionUpdate === "session_info_update" &&
+            notification.update._meta?.usage === true
+              ? { usedTokens: 500, maxTokens: contextWindow(selection) }
+              : undefined,
+          replayOnActivation: { sessionUpdate: "session_info_update", _meta: { usage: true } },
+        });
+      const sessionId = providerThread.nativeThreadRef?.nativeId ?? "";
+
+      yield* runtime.resumeThread({
+        providerThread: withNativeSession(providerThread, "large-session"),
+        modelSelection: selection("large"),
+        runtimePolicy,
+      });
+      const resumed = yield* runtime.resumeThread({
+        providerThread,
+        modelSelection: selection("small"),
+        runtimePolicy,
+      });
+      assert.deepEqual(resumed.contextUsage, { usedTokens: 100, maxTokens: 1_000 });
+
+      // Once this session is active, its own reading uses its own model.
+      yield* update({
+        sessionId,
+        update: { sessionUpdate: "session_info_update", _meta: { usage: true } },
+      });
+      const now = yield* DateTime.now;
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread: resumed,
+          instanceId,
+          runtimePolicy,
+          now,
+          ordinal: 1,
+          modelSelection: selection("small"),
+        }),
+      );
+      const usages = (yield* collectUntilTerminal(runtime)).flatMap((event) =>
+        event.type === "provider_thread.updated" &&
+        event.providerThread.nativeThreadRef?.nativeId === sessionId &&
+        event.providerThread.contextUsage != null
+          ? [event.providerThread.contextUsage]
+          : [],
+      );
+      assert.deepEqual(usages[0], { usedTokens: 500, maxTokens: 1_000 });
+      assert.isEmpty(usages.filter((usage) => usage.maxTokens !== 1_000));
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("keeps a load's unknown usage from coming back through later updates", () =>
+    Effect.gen(function* () {
+      const { runtime, threadId, instanceId, runtimePolicy, selection, providerThread, update } =
+        yield* openContextUsageRuntime({
+          name: "null-load",
+          contextUsageFromSession: () => null,
+        });
+      const sessionId = providerThread.nativeThreadRef?.nativeId ?? "";
+      const reading = { usedTokens: 900, maxTokens: 1_000 };
+      const now = yield* DateTime.now;
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread: { ...providerThread, contextUsage: reading },
+          instanceId,
+          runtimePolicy,
+          now,
+          ordinal: 1,
+          modelSelection: selection("small"),
+        }),
+      );
+      assert.deepEqual(activeContextUsage(yield* collectUntilTerminal(runtime)), reading);
+
+      yield* runtime.resumeThread({
+        providerThread: withNativeSession(providerThread, "other-session"),
+        modelSelection: selection("small"),
+        runtimePolicy,
+      });
+      const resumed = yield* runtime.resumeThread({
+        providerThread: { ...providerThread, contextUsage: reading },
+        modelSelection: selection("small"),
+        runtimePolicy,
+      });
+      assert.isNull(resumed.contextUsage);
+
+      assert.isNull(yield* contextUsageAfterRename(runtime, update, sessionId));
+
+      yield* runtime.resumeThread({
+        providerThread: withNativeSession(providerThread, "other-session"),
+        modelSelection: selection("small"),
+        runtimePolicy,
+      });
+      const later = yield* DateTime.now;
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread: { ...providerThread, contextUsage: reading },
+          instanceId,
+          runtimePolicy,
+          now: later,
+          ordinal: 2,
+          modelSelection: selection("small"),
+        }),
+      );
+      assert.isNull(activeContextUsage(yield* collectUntilTerminal(runtime)));
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("keeps the saved reading when a load reports nothing", () =>
+    Effect.gen(function* () {
+      const { runtime, threadId, instanceId, runtimePolicy, selection, providerThread, update } =
+        yield* openContextUsageRuntime({
+          name: "silent-load",
+          contextUsageFromSession: () => undefined,
+        });
+      const sessionId = "saved-session";
+      const savedThread = withNativeSession(providerThread, sessionId);
+      const saved = { usedTokens: 900, maxTokens: 1_000 };
+      const resume = (thread: OrchestrationV2ProviderThread) =>
+        runtime.resumeThread({
+          providerThread: thread,
+          modelSelection: selection("small"),
+          runtimePolicy,
+        });
+
+      yield* resume(savedThread);
+      yield* update({
+        sessionId,
+        update: { sessionUpdate: "usage_update", used: 900, size: 1_000 },
+      });
+      yield* resume(providerThread);
+      const resumed = yield* resume({ ...savedThread, contextUsage: saved });
+      assert.deepEqual(resumed.contextUsage, saved);
+
+      yield* resume(providerThread);
+      const now = yield* DateTime.now;
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread: savedThread,
+          instanceId,
+          runtimePolicy,
+          now,
+          ordinal: 1,
+          modelSelection: selection("small"),
+        }),
+      );
+      assert.deepEqual(activeContextUsage(yield* collectUntilTerminal(runtime)), saved);
+
+      yield* resume(providerThread);
+      yield* resume({ ...savedThread, contextUsage: saved });
+      assert.deepEqual(yield* contextUsageAfterRename(runtime, update, sessionId), saved);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("drops a reading measured under another model when the selection changes", () =>
+    Effect.gen(function* () {
+      const contextWindow = (model: string) => (model === "small" ? 1_000 : 2_000);
+      const { runtime, threadId, instanceId, runtimePolicy, selection, providerThread, update } =
+        yield* openContextUsageRuntime({
+          name: "model-change",
+          contextUsageFromSession: () => undefined,
+          contextUsageFromSessionUpdate: ({ selection, notification }) =>
+            notification.update.sessionUpdate !== "session_info_update" ||
+            typeof notification.update._meta?.usage !== "boolean"
+              ? undefined
+              : notification.update._meta.usage
+                ? {
+                    usedTokens: 500,
+                    maxTokens: contextWindow(selection.model),
+                    compactsAutomatically: true,
+                    autoCompactThreshold: contextWindow(selection.model) * 0.8,
+                  }
+                : null,
+        });
+      const sessionId = providerThread.nativeThreadRef?.nativeId ?? "";
+      const otherThread = withNativeSession(providerThread, "other-session");
+      const drainReading = (usedTokens: number) =>
+        runtime.events.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "provider_thread.updated" &&
+              event.providerThread.contextUsage?.usedTokens === usedTokens,
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+        );
+      const liveUsage = (id: string, usage: boolean) =>
+        update({
+          sessionId: id,
+          update: { sessionUpdate: "session_info_update", _meta: { usage } },
+        });
+      const reading = liveUsage(sessionId, true).pipe(Effect.andThen(drainReading(500)));
+      const usageUpdate = (id: string, used: number, size: number) =>
+        update({ sessionId: id, update: { sessionUpdate: "usage_update", used, size } });
+      const resume = (thread: OrchestrationV2ProviderThread, model: string) =>
+        runtime.resumeThread({
+          providerThread: thread,
+          modelSelection: selection(model),
+          runtimePolicy,
+        });
+      const turnOn = (
+        model: string,
+        ordinal: number,
+        thread: OrchestrationV2ProviderThread = providerThread,
+      ) =>
+        DateTime.now.pipe(
+          Effect.flatMap((now) =>
+            runtime.startTurn(
+              makeTurnInput({
+                threadId,
+                providerThread: thread,
+                instanceId,
+                runtimePolicy,
+                now,
+                ordinal,
+                modelSelection: selection(model),
+              }),
+            ),
+          ),
+          Effect.andThen(collectUntilTerminal(runtime)),
+        );
+      const threadUsages = (events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) =>
+        events.flatMap((event) =>
+          event.type === "provider_thread.updated" ? [event.providerThread.contextUsage] : [],
+        );
+
+      // Under "small", then a load that names no model, then a turn on "large".
+      yield* reading;
+      yield* resume(otherThread, "small");
+      const afterLoad = threadUsages(yield* turnOn("large", 1));
+      assert.isNotEmpty(afterLoad);
+      assert.isEmpty(afterLoad.filter((usage) => usage != null));
+
+      // The same model change through resume, which also clears the remembered thread.
+      yield* reading;
+      yield* resume(otherThread, "large");
+      const resumed = yield* resume(providerThread, "small");
+      assert.isNull(resumed.contextUsage);
+      assert.isNull(yield* contextUsageAfterRename(runtime, update, sessionId));
+
+      // No load at all: the model changes on the active session.
+      yield* reading;
+      const switched = threadUsages(yield* turnOn("large", 2));
+      assert.isNotEmpty(switched);
+      assert.isEmpty(switched.filter((usage) => usage != null));
+
+      // A first usage_update reading has no earlier record, but still belongs to its model.
+      const usageThread = withNativeSession(providerThread, "usage-session");
+      yield* resume(usageThread, "small");
+      yield* usageUpdate("usage-session", 700, 1_000);
+      const afterFirstReading = threadUsages(yield* turnOn("large", 3, usageThread));
+      assert.isNotEmpty(afterFirstReading);
+      assert.isEmpty(afterFirstReading.filter((usage) => usage != null));
+
+      // Clearing leaves the record on "large", but the next reading is measured under "small".
+      yield* liveUsage("usage-session", true);
+      yield* drainReading(500);
+      yield* liveUsage("usage-session", false);
+      yield* resume(otherThread, "small");
+      yield* resume(usageThread, "small");
+      yield* usageUpdate("usage-session", 300, 1_000);
+      yield* drainReading(300);
+      const afterNewerReading = threadUsages(yield* turnOn("small", 4, usageThread));
+      assert.deepEqual(afterNewerReading[0], { usedTokens: 300, maxTokens: 1_000 });
+
+      // Another session is active, so the old "small" record can't vouch for this reading.
+      yield* resume(otherThread, "small");
+      yield* usageUpdate("usage-session", 400, 1_000);
+      yield* drainReading(400);
+      const afterUnattributed = threadUsages(yield* turnOn("small", 5, usageThread));
+      assert.isNotEmpty(afterUnattributed);
+      assert.isEmpty(afterUnattributed.filter((usage) => usage != null));
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("publishes a live reading that arrives while a turn is starting", () =>
+    Effect.gen(function* () {
+      let settled = false;
+      let liveReading: Fiber.Fiber<void> | undefined;
+      const { runtime, threadId, instanceId, runtimePolicy, selection, providerThread, update } =
+        yield* openContextUsageRuntime({
+          name: "turn-start-reading",
+          initialNativeThreadId: "persisted-session",
+          contextUsageFromSession: () => {
+            settled = true;
+            return { usedTokens: 100, maxTokens: 1_000 };
+          },
+          contextUsageFromSessionUpdate: ({ notification }) =>
+            notification.update.sessionUpdate === "session_info_update" &&
+            notification.update._meta?.usage === true
+              ? { usedTokens: 500, maxTokens: 1_000 }
+              : undefined,
+        });
+      const services = yield* Effect.context<never>();
+      const startingThread: OrchestrationV2ProviderThread = {
+        ...providerThread,
+        get nativeMetadata() {
+          if (settled && liveReading === undefined) {
+            // oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- Turn start reads this between settling usage and publishing, where nothing yields; only a synchronous fork lands there.
+            liveReading = Effect.runForkWith(services)(
+              update({
+                sessionId: "persisted-session",
+                update: { sessionUpdate: "session_info_update", _meta: { usage: true } },
+              }).pipe(Effect.orDie),
+            );
+          }
+          return null;
+        },
+      };
+      const now = yield* DateTime.now;
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread: startingThread,
+          instanceId,
+          runtimePolicy,
+          now,
+          ordinal: 1,
+          modelSelection: selection("small"),
+        }),
+      );
+      const events = yield* collectUntilTerminal(runtime);
+      assert.isDefined(liveReading);
+      yield* Fiber.join(liveReading!);
+      const usages = events.flatMap((event) =>
+        event.type === "provider_thread.updated" ? [event.providerThread.contextUsage] : [],
+      );
+      assert.deepEqual(usages.at(-1), { usedTokens: 500, maxTokens: 1_000 });
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live(
+    "keeps a live clear that arrives before the load settles, across later resumes and turns",
+    () =>
+      Effect.gen(function* () {
+        const { runtime, threadId, instanceId, runtimePolicy, selection, providerThread, update } =
+          yield* openContextUsageRuntime({
+            name: "live-clear-before-settle",
+            initialNativeThreadId: "persisted-session",
+            contextUsageFromSession: () => ({ usedTokens: 100, maxTokens: 1_000 }),
+            contextUsageFromSessionUpdate: ({ notification }) =>
+              notification.update.sessionUpdate === "session_info_update" &&
+              notification.update._meta?.clear === true
+                ? null
+                : undefined,
+          });
+        yield* update({
+          sessionId: "persisted-session",
+          update: { sessionUpdate: "session_info_update", _meta: { clear: true } },
+        });
+        const staleThread = {
+          ...providerThread,
+          contextUsage: { usedTokens: 50, maxTokens: 1_000 },
+        };
+        const resume = () =>
+          runtime.resumeThread({
+            providerThread: staleThread,
+            modelSelection: selection("small"),
+            runtimePolicy,
+          });
+        assert.isNull((yield* resume()).contextUsage);
+        assert.isNull((yield* resume()).contextUsage);
+        yield* runtime.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread: staleThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+            ordinal: 1,
+            modelSelection: selection("small"),
+          }),
+        );
+        assert.isNull(activeContextUsage(yield* collectUntilTerminal(runtime)));
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("keeps a cleared reading when a later load of the session reports nothing", () =>
+    Effect.gen(function* () {
+      const { runtime, runtimePolicy, selection, providerThread, update } =
+        yield* openContextUsageRuntime({
+          name: "clear-then-silent-load",
+          contextUsageFromSession: () => undefined,
+          contextUsageFromSessionUpdate: ({ notification }) =>
+            notification.update.sessionUpdate === "session_info_update" &&
+            notification.update._meta?.clear === true
+              ? null
+              : undefined,
+        });
+      const sessionId = "cleared-session";
+      const clearedThread = withNativeSession(providerThread, sessionId);
+      const resume = (thread: OrchestrationV2ProviderThread) =>
+        runtime.resumeThread({
+          providerThread: thread,
+          modelSelection: selection("small"),
+          runtimePolicy,
+        });
+
+      yield* resume(clearedThread);
+      yield* update({
+        sessionId,
+        update: { sessionUpdate: "session_info_update", _meta: { clear: true } },
+      });
+      yield* resume(withNativeSession(providerThread, "other-session"));
+      const resumed = yield* resume({
+        ...clearedThread,
+        contextUsage: { usedTokens: 900, maxTokens: 1_000 },
+      });
+      assert.isNull(resumed.contextUsage);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("lets a newer usage update outrank an earlier live reading before the load settles", () =>
+    Effect.gen(function* () {
+      const { runtime, runtimePolicy, selection, providerThread, update } =
+        yield* openContextUsageRuntime({
+          name: "usage-after-live-before-settle",
+          initialNativeThreadId: "persisted-session",
+          contextUsageFromSession: () => ({ usedTokens: 100, maxTokens: 1_000 }),
+          contextUsageFromSessionUpdate: ({ notification }) =>
+            notification.update.sessionUpdate === "session_info_update" &&
+            notification.update._meta?.clear === true
+              ? null
+              : undefined,
+        });
+      yield* update({
+        sessionId: "persisted-session",
+        update: { sessionUpdate: "session_info_update", _meta: { clear: true } },
+      });
+      yield* update({
+        sessionId: "persisted-session",
+        update: { sessionUpdate: "usage_update", used: 700, size: 1_000 },
+      });
+      const resumed = yield* runtime.resumeThread({
+        providerThread,
+        modelSelection: selection("small"),
+        runtimePolicy,
+      });
+      assert.deepEqual(resumed.contextUsage, { usedTokens: 700, maxTokens: 1_000 });
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.live("creates a fresh ACP identity when recovering an exhausted target", () =>
