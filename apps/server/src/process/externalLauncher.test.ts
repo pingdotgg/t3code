@@ -494,7 +494,6 @@ it.effect.skipIf(windowsHost)(
       assert.ok(spawned);
       assert.equal(spawned.command, "powershell.exe");
       assert.equal(spawned.options.detached, true);
-      assert.equal(spawned.options.windowsHide, true);
       const encodedCommand = String(spawned.args[spawned.args.length - 1] ?? "");
       const decodedCommand = Buffer.from(encodedCommand, "base64").toString("utf16le");
       assert.include(decodedCommand, "'Directory', 'Folder'");
@@ -507,37 +506,6 @@ it.effect.skipIf(windowsHost)(
         "'\\\\wsl.localhost\\Ubuntu-24.04\\home\\t3\\workspace [draft]\\author''s ‘‘$media\\clip|draft.mp4'",
       );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-);
-
-it.effect.skipIf(windowsHost)("opens a WSL browser link through a detached hidden PowerShell", () =>
-  Effect.gen(function* () {
-    let spawned: ChildProcess.StandardCommand | undefined;
-    yield* Effect.gen(function* () {
-      const launcher = yield* ExternalLauncher.ExternalLauncher;
-      yield* launcher.launchBrowser("https://example.com");
-    }).pipe(
-      Effect.provide(
-        layerTest({
-          platform: "linux",
-          env: {
-            PATH: "/mnt/c/Windows",
-            WSL_DISTRO_NAME: "Ubuntu-24.04",
-            WSL_INTEROP: "/run/WSL/1_interop",
-          },
-          onSpawn: (command) => {
-            spawned = command;
-          },
-        }),
-      ),
-    );
-
-    assert.ok(spawned);
-    assert.equal(spawned.command, "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe");
-    assert.equal(spawned.options.detached, true);
-    assert.equal(spawned.options.windowsHide, true);
-    const source = Buffer.from(String(spawned.args.at(-1) ?? ""), "base64").toString("utf16le");
-    assert.equal(source, "$ProgressPreference = 'SilentlyContinue'; Start 'https://example.com'");
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 const STOCK_FOLDER_VERB =

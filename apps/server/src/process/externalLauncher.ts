@@ -229,8 +229,6 @@ function resolveWindowsBrowserLaunch(
     options: {
       detached,
       shell: false,
-      // Detached children stay unhidden in Effect's spawner; the Windows host would show a PowerShell console.
-      windowsHide: true,
       stdin: "ignore",
       stdout: "ignore",
       stderr: "ignore",
