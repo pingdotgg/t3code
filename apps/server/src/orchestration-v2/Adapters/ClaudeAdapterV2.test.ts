@@ -18306,7 +18306,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           assert.equal(nestedRows()[0]?.runId, RunId.make("run-attempt-claude-stopped-run-wake"));
         }).pipe(
           Effect.provide(
-            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
           ),
         ),
       ),
@@ -22461,7 +22466,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       });
       assert.equal(recovered.appThread.createdBy, "agent");
       assert.equal(recovered.appThread.creationSource, "provider");
-      assert.isBelow(
+      assert.isAbove(
         harness.events.indexOf(recovered),
         harness.events.findIndex(
           (event) =>
