@@ -10,6 +10,7 @@ import * as Schema from "effect/Schema";
 
 import type { OtlpEndpointSource } from "@t3tools/contracts";
 import { sweepStalePendingAttachments } from "./attachmentStore.ts";
+import { markNoCopyOnWrite } from "./noCopyOnWrite.ts";
 import {
   DEFAULT_SIGNAL_EXPORT,
   nodeProcessRuntimeAttributes,
@@ -179,9 +180,11 @@ export const ensureServerDirectories = Effect.fn(function* (derivedPaths: Server
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
+  yield* fs.makeDirectory(derivedPaths.stateDir, { recursive: true });
+  // Before the database exists, so it is created No_COW.
+  yield* Effect.promise(() => markNoCopyOnWrite(derivedPaths.stateDir));
   yield* Effect.all(
     [
-      fs.makeDirectory(derivedPaths.stateDir, { recursive: true }),
       fs.makeDirectory(derivedPaths.logsDir, { recursive: true }),
       fs.makeDirectory(derivedPaths.providerLogsDir, { recursive: true }),
       fs.makeDirectory(derivedPaths.terminalLogsDir, { recursive: true }),
