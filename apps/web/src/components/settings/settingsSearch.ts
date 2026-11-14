@@ -74,6 +74,7 @@ export interface SettingsSearchItem {
   readonly textGeneratorsOnly?: boolean;
   readonly secondary?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
+  readonly telemetrySettingOnly?: boolean;
 }
 
 export interface SettingsSearchAvailability {
@@ -90,6 +91,7 @@ export interface SettingsSearchAvailability {
   /** An environment without a provider allow-list, which hides text generators. */
   readonly hasTextGeneratorsEnvironment?: boolean;
   readonly hasPrimaryEnvironment?: boolean;
+  readonly hasTelemetrySetting?: boolean;
 }
 
 export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
@@ -907,6 +909,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["telemetry analytics usage data tracking legal opt out"],
   },
   {
+    id: "product-usage-data",
+    title: "Product usage data",
+    to: "/settings/about",
+    scope: "environment",
+    telemetrySettingOnly: true,
+    searchTerms: ["telemetry analytics usage data tracking opt out disable posthog traces"],
+  },
+  {
     id: "telemetry-export",
     title: "OpenTelemetry export",
     to: "/settings/diagnostics",
@@ -1525,7 +1535,8 @@ export function filterAvailableSettingsSearchItems(
       (!item.peerLinksOnly || availability.hasPeerLinkHost === true) &&
       (!item.fastWorktreeCheckoutOnly ||
         availability.hasFastWorktreeCheckoutEnvironment === true) &&
-      (!item.textGeneratorsOnly || availability.hasTextGeneratorsEnvironment === true),
+      (!item.textGeneratorsOnly || availability.hasTextGeneratorsEnvironment === true) &&
+      (!item.telemetrySettingOnly || availability.hasTelemetrySetting === true),
   );
 }
 

@@ -1477,6 +1477,11 @@ export const ServerSettings = Schema.Struct({
   linkedEnvironmentsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Beta: Claude and Codex predict the next prompt after completed turns. Codex follows a change at once; open Claude threads after they restart. */
   promptSuggestionsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /**
+   * Product usage events and relay connection traces. `T3CODE_TELEMETRY_ENABLED` overrides it.
+   * Usage events follow changes at once; relay traces follow them after a restart.
+   */
+  telemetryEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   sidebarAutoSettleKeepPullRequests: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
@@ -1907,6 +1912,7 @@ export const ServerSettingsPatch = Schema.Struct({
   guestSharingEnabled: Schema.optionalKey(Schema.Boolean),
   linkedEnvironmentsEnabled: Schema.optionalKey(Schema.Boolean),
   promptSuggestionsEnabled: Schema.optionalKey(Schema.Boolean),
+  telemetryEnabled: Schema.optionalKey(Schema.Boolean),
   backgroundActivity: Schema.optionalKey(
     Schema.Struct({
       schemaVersion: Schema.optionalKey(Schema.Literal(1)),
