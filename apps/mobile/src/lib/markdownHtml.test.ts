@@ -28,6 +28,115 @@ describe("HTML in native Markdown", () => {
     ).toBe("[![Review](<https://example.com/banner.svg>)](<https://example.com>)");
   });
 
+  it("keeps only the text of icon-sized HTML images so bot headings stay compact", () => {
+    expect(
+      markdownWithHtml(
+        '<details>\n<summary><strong><picture><img src="https://example.com/cog.png" width="16" height="16" alt=""></picture> Run configuration</strong></summary>\n\nBody\n\n</details>',
+      ),
+    ).toContain("**Run configuration**");
+    expect(
+      markdownHtmlContent(
+        'Checks: <img src="https://example.com/ok.png" width="14" alt="Passed"> 3 and <img width="900" src="https://example.com/shot.png" alt="Shot">',
+      ),
+    ).toBe("Checks: Passed 3 and ![Shot](<https://example.com/shot.png>)");
+  });
+
+  it("keeps the alt text of SVG images the native renderer would draw as empty boxes", () => {
+    const markdown = [
+      "[![Review →](https://example.com/banner.svg?v=3)](https://example.com)",
+      "",
+      "| Check | Status |",
+      "| --- | --- |",
+      "| Title | ![Passed](https://example.com/passed.svg) |",
+      "",
+      "- ![In list](https://example.com/list.svg)",
+      "",
+      "![Diagram](https://example.com/diagram.svg)",
+    ].join("\n");
+    expect(markdownForNativeRendering(markdown, ENRICHED_INLINE_FILE_LINK_REGEX)).toBe(
+      [
+        "[Review →](https://example.com)",
+        "",
+        "| Check | Status |",
+        "| --- | --- |",
+        "| Title | Passed |",
+        "",
+        "- In list",
+        "",
+        "![Diagram](https://example.com/diagram.svg)",
+      ].join("\n"),
+    );
+  });
+
+  it("keeps a heading bold when its icon is its own inline HTML node", () => {
+    const markdown =
+      'Intro <summary><img src="https://example.com/c.png" width="16" height="16" alt=""> Title</summary> tail';
+    expect(markdownWithHtml(markdown)).toContain("**Title**");
+    expect(markdownWithHtml('a<img src="https://example.com/c.png" width="16" alt=""> b')).toBe(
+      "a b",
+    );
+  });
+
+  it("keeps alt text that looks like block Markdown literal", () => {
+    const icon = (alt: string) =>
+      markdownHtmlContent(`<img src="https://example.com/a.png" width="16" alt="${alt}">`);
+    expect(icon("---")).toBe("\\---");
+    expect(icon("# Title")).toBe("\\# Title");
+    expect(icon("1. Step")).toBe("1\\. Step");
+    expect(icon("first&#10;---")).toBe("first ---");
+  });
+
+  it("turns reference-style SVG images in tables into their alt text", () => {
+    const markdown = [
+      "| Check |",
+      "| --- |",
+      "| ![Passed][badge] |",
+      "",
+      "[badge]: https://example.com/status.svg",
+    ].join("\n");
+    const result = markdownForNativeRendering(markdown, ENRICHED_INLINE_FILE_LINK_REGEX);
+    expect(result).toContain("| Passed |");
+    expect(result).not.toContain("![Passed]");
+  });
+
+  it("keeps the spaces that separate a replaced image from its neighbors", () => {
+    const svg = "[badge]: https://example.com/status.svg";
+    expect(
+      markdownForNativeRendering(`a![ b ][badge]c\n\n${svg}`, ENRICHED_INLINE_FILE_LINK_REGEX),
+    ).toContain("a b c");
+    expect(
+      markdownWithHtml('foo\\_<img src="https://example.com/i.png" width="16" alt=""> bar'),
+    ).toBe("foo\\_ bar");
+  });
+
+  it("keeps a space after a closing delimiter and a link after a replaced image", () => {
+    expect(
+      markdownForNativeRendering(
+        "**Done**![](https://example.com/icon.svg) next",
+        ENRICHED_INLINE_FILE_LINK_REGEX,
+      ),
+    ).toBe("**Done** next");
+    expect(
+      markdownForNativeRendering(
+        "![!](https://example.com/icon.svg)[Details](https://example.com)",
+        ENRICHED_INLINE_FILE_LINK_REGEX,
+      ),
+    ).toBe("\\![Details](https://example.com)");
+  });
+
+  it("keeps emphasis around an SVG image that is removed", () => {
+    const svg = "[icon]: https://example.com/icon.svg";
+    expect(
+      markdownForNativeRendering(`**![][icon] Title**\n\n${svg}`, ENRICHED_INLINE_FILE_LINK_REGEX),
+    ).toContain("**Title**");
+    expect(
+      markdownForNativeRendering(
+        "**![](https://example.com/icon.svg) Title**",
+        ENRICHED_INLINE_FILE_LINK_REGEX,
+      ),
+    ).toBe("**Title**");
+  });
+
   it("decodes HTML attributes once and preserves entity-shaped query values through Markdown", () => {
     const markdown =
       '<img alt="&amp;lt;" src="https://example.com/shot.png?label=&amp;lt;&amp;sig=a%26b">';
