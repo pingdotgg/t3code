@@ -126,34 +126,88 @@ describe("new thread model fallback", () => {
     ).toBeDefined();
   });
   it.each([
-    ["cursor", ["autoPercentUsed"], "claude-opus-5-5", false],
-    ["cursor", ["autoPercentUsed"], "composer-2.5", false],
-    ["cursor", ["autoPercentUsed", "apiPercentUsed"], "composer-2.5", true],
-    ["antigravity", ["gemini-weekly"], "claude-opus-5-5", false],
-    ["antigravity", ["3p-weekly"], "claude-opus-5-5", true],
-    ["antigravity", ["gemini-weekly"], "antigravity-default", true],
-    ["codex", ["individual"], "gpt-5.5", true],
-    ["opencode", ["go_weekly"], "opencode/big-pickle", false],
-    ["opencode", ["go_weekly"], "opencode-go/big-pickle", true],
-  ] as const)("matches %s pools %s to %s", (driver, ids, model, usesFallback) => {
-    const defaultSelection = { ...selection, model };
-    expect(
-      resolveNewThreadModelSelection({
-        ...defaults,
-        defaultSelection,
-        providers: [
-          provider({
-            driver: ProviderDriverKind.make(driver),
-            usageLimits: {
-              checkedAt: limited.checkedAt,
-              windows: ids.map((id) => ({ ...window, id, usedPercent: 100 })),
-            },
-          }),
-          available,
-        ],
-      }).selection,
-    ).toEqual(usesFallback ? fallback : defaultSelection);
-  });
+    ["cursor", ["autoPercentUsed"], "claude-opus-5-5", false, undefined, undefined],
+    ["cursor", ["autoPercentUsed"], "composer-2.5", false, undefined, undefined],
+    ["cursor", ["autoPercentUsed", "apiPercentUsed"], "composer-2.5", true, undefined, undefined],
+    ["antigravity", ["gemini-weekly"], "claude-opus-5-5", false, undefined, undefined],
+    ["antigravity", ["3p-weekly"], "claude-opus-5-5", true, undefined, undefined],
+    ["antigravity", ["gemini-weekly"], "antigravity-default", true, undefined, undefined],
+    ["codex", ["individual"], "gpt-5.5", true, undefined, undefined],
+    ["opencode", ["go_weekly"], "opencode/big-pickle", false, undefined, undefined],
+    ["opencode", ["go_weekly"], "opencode-go/big-pickle", true, undefined, undefined],
+    ["opencode", ["budget_model"], "opencode/other", false, ["opencode/limited"], undefined],
+    ["opencode", ["budget_model"], "opencode/limited", true, ["opencode/limited"], undefined],
+    [
+      "opencode",
+      ["budget_set"],
+      "other/model",
+      false,
+      ["opencode/limited", "opencode/second"],
+      undefined,
+    ],
+    [
+      "opencode",
+      ["budget_set"],
+      "opencode/second",
+      true,
+      ["opencode/limited", "opencode/second"],
+      undefined,
+    ],
+    ["opencode", ["budget_empty"], "opencode/other", false, [], undefined],
+    [
+      "opencode",
+      ["budget_all"],
+      "anthropic/claude",
+      false,
+      undefined,
+      ["opencode", "console-custom"],
+    ],
+    [
+      "opencode",
+      ["budget_all"],
+      "opencode-go/model",
+      false,
+      undefined,
+      ["opencode", "console-custom"],
+    ],
+    ["opencode", ["budget_all"], "opencode/model", true, undefined, ["opencode", "console-custom"]],
+    [
+      "opencode",
+      ["budget_all"],
+      "console-custom/model",
+      true,
+      undefined,
+      ["opencode", "console-custom"],
+    ],
+    ["opencode", ["budget_all"], "opencode/model", false, undefined, []],
+  ] as const)(
+    "matches %s pools %s to %s",
+    (driver, ids, model, usesFallback, modelIds, providerIds) => {
+      const defaultSelection = { ...selection, model };
+      expect(
+        resolveNewThreadModelSelection({
+          ...defaults,
+          defaultSelection,
+          providers: [
+            provider({
+              driver: ProviderDriverKind.make(driver),
+              usageLimits: {
+                checkedAt: limited.checkedAt,
+                windows: ids.map((id) => ({
+                  ...window,
+                  id,
+                  usedPercent: 100,
+                  ...(modelIds === undefined ? {} : { modelIds }),
+                  ...(providerIds === undefined ? {} : { providerIds }),
+                })),
+              },
+            }),
+            available,
+          ],
+        }).selection,
+      ).toEqual(usesFallback ? fallback : defaultSelection);
+    },
+  );
 });
 
 describe("pace", () => {
@@ -609,7 +663,7 @@ describe("pools", () => {
     expect(accounts.map((account) => account.key)).toEqual([
       "env-a:business",
       "env-a:personal",
-      "hub:x.json",
+      "env-a:hub:x.json",
     ]);
     expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(8);
     const withoutEmail = (id: string, workspaceId: string) => {
@@ -639,8 +693,8 @@ describe("pools", () => {
       ],
     ]);
     expect(collectLimitAccounts(sameFile).map((account) => account.key)).toEqual([
-      "hub:a.json:ws-1",
-      "hub:a.json:ws-2",
+      "env-a:hub:a.json:ws-1",
+      "env-b:hub:a.json:ws-2",
     ]);
     expect(accounts[1]?.environments.map((environment) => environment.label)).toEqual([
       "Laptop",
@@ -685,33 +739,147 @@ describe("pools", () => {
     });
     expect(collectLimitAccounts(withOther(unreadable)).map((account) => account.key)).toEqual([
       "env-a:codex",
-      "hub:claude.json",
+      "env-a:hub:claude.json",
     ]);
   });
 
-  it("keys a hub account without an email by hub, so two environments on one hub share it", () => {
-    const seat = {
-      id: "claude-team-seat.json",
-      driver: claude,
-      usageLimits: { checkedAt, windows: [window] },
-    };
-    const hub = { ...source, accounts: [seat] };
+  it.each([
+    [
+      "one remote hub under environment-local ids",
+      "http://hub:8317",
+      "laptop-hub",
+      "http://hub:8317",
+      1,
+    ],
+    ["two remote hubs under one id", "http://hub:8317", "hub", "http://hub-8317", 2],
+    [
+      "two remote hubs under paths of one origin",
+      "https://proxy.example/team-a",
+      "hub-b",
+      "https://proxy.example/team-b",
+      2,
+    ],
+    [
+      "a shared IPv6 tailnet hub",
+      "http://[fd7a:115c:a1e0::1]:8317",
+      "hub",
+      "http://[fd7a:115c:a1e0::1]:8317",
+      1,
+    ],
+    [
+      "each machine's own localhost hub",
+      "http://localhost:8317",
+      "hub",
+      "http://localhost:8317",
+      2,
+    ],
+    ["each machine's own IPv6 loopback hub", "http://[::1]:8317", "hub", "http://[::1]:8317", 2],
+    [
+      "each machine's own localhost subdomain hub",
+      "http://hub.localhost:8317",
+      "hub",
+      "http://hub.localhost:8317",
+      2,
+    ],
+    [
+      "each machine's own trailing-dot localhost subdomain hub",
+      "http://hub.localhost.:8317",
+      "hub",
+      "http://hub.localhost.:8317",
+      2,
+    ],
+    [
+      "each machine's own mapped IPv4 loopback hub",
+      "http://[::ffff:7f00:1]:8317",
+      "hub",
+      "http://[::ffff:7f00:1]:8317",
+      2,
+    ],
+    ["each machine's own wildcard hub", "http://0.0.0.0:8317", "hub", "http://0.0.0.0:8317", 2],
+    ["hubs that report no endpoint", undefined, "hub", undefined, 2],
+  ] as const)(
+    "keeps email-less hub identity across environments: %s",
+    (_, firstEndpoint, secondId, secondEndpoint, count) => {
+      const seat = {
+        id: "claude-team-seat.json",
+        driver: claude,
+        usageLimits: { checkedAt, windows: [window] },
+      };
+      const hubAt = (id: string, endpoint: string | undefined) => ({
+        ...source,
+        id: UsageLimitSourceId.make(id),
+        ...(endpoint ? { origin: new URL(endpoint).origin, endpoint } : {}),
+        accounts: [seat],
+      });
+      const input = new Map([
+        [
+          EnvironmentId.make("env-a"),
+          {
+            ...laptop,
+            serverConfig: { providers: [], usageLimitSources: [hubAt("hub", firstEndpoint)] },
+          },
+        ],
+        [
+          EnvironmentId.make("env-b"),
+          {
+            entry: { target: { label: "Desktop" } },
+            serverConfig: { providers: [], usageLimitSources: [hubAt(secondId, secondEndpoint)] },
+          },
+        ],
+      ]);
+      const accounts = collectLimitAccounts(input);
+      expect(accounts).toHaveLength(count);
+      expect(accounts[0]?.displayName).toBe("claude-team-seat");
+    },
+  );
+
+  it("keeps public keys apart for different logins in one hub file", () => {
+    const hubAt = (id: string, email: string, usedPercent: number) => ({
+      ...source,
+      id: UsageLimitSourceId.make(id),
+      origin: "https://hub.test",
+      endpoint: "https://hub.test",
+      accounts: [
+        {
+          id: "seat.json",
+          driver: claude,
+          email,
+          usageLimits: { checkedAt, windows: [{ ...window, usedPercent }] },
+        },
+      ],
+    });
     const input = new Map([
       [
         EnvironmentId.make("env-a"),
-        { ...laptop, serverConfig: { providers: [], usageLimitSources: [hub] } },
+        {
+          ...laptop,
+          serverConfig: {
+            providers: [],
+            usageLimitSources: [hubAt("first", "old@example.com", 10)],
+          },
+        },
       ],
       [
         EnvironmentId.make("env-b"),
         {
           entry: { target: { label: "Desktop" } },
-          serverConfig: { providers: [], usageLimitSources: [hub] },
+          serverConfig: {
+            providers: [],
+            usageLimitSources: [hubAt("second", "new@example.com", 80)],
+          },
         },
       ],
     ]);
     const accounts = collectLimitAccounts(input);
-    expect(accounts.map((account) => account.key)).toEqual(["hub:claude-team-seat.json"]);
-    expect(accounts[0]?.displayName).toBe("claude-team-seat");
+    expect(accounts.map((account) => account.key)).toEqual([
+      "env-a:first:seat.json",
+      "env-b:second:seat.json",
+    ]);
+    const columns = collectLimitPools(accounts, Date.parse(checkedAt))[0]?.windows[0]?.columns;
+    expect(columns?.map((column) => [column.account.email, column.window?.usedPercent])).toEqual([
+      ["new@example.com", 80],
+      ["old@example.com", 10],
+    ]);
   });
 
   it("labels a default-named instance merged with a hub account by e-mail, keeping a chosen name", () => {
@@ -804,6 +972,52 @@ describe("pools", () => {
     ).toEqual(["weekly", "weekly:secondary"]);
   });
 
+  it("weights pooled Codex quota and resets by each account's plan capacity", () => {
+    const [pool] = collectLimitPools(
+      collectLimitAccounts(
+        new Map([
+          [
+            EnvironmentId.make("env-a"),
+            {
+              ...laptop,
+              serverConfig: {
+                providers: [],
+                usageLimitSources: [
+                  {
+                    ...source,
+                    accounts: [
+                      ["pro", "ChatGPT Pro 200 Subscription", 100],
+                      ["plus", "ChatGPT Plus Subscription", 0],
+                    ].map(([id, plan, usedPercent]) => ({
+                      id: String(id),
+                      email: `${id}@example.com`,
+                      driver: ProviderDriverKind.make("codex"),
+                      plan: String(plan),
+                      usageLimits: {
+                        checkedAt,
+                        windows: [{ ...weekly, id: "secondary", usedPercent: Number(usedPercent) }],
+                      },
+                    })),
+                  },
+                ],
+              },
+            },
+          ],
+        ]),
+      ),
+      now,
+    );
+    const [pooledWeekly] = pool?.windows ?? [];
+    // Pro 20x holds 20 of the pool's 21 capacity parts.
+    expect(pooledWeekly?.remainingPercent).toBe(5);
+    expect(
+      pooledWeekly?.resets.map(({ member, restoresPercent }) => [
+        member.account.email,
+        restoresPercent,
+      ]),
+    ).toContainEqual(["pro@example.com", 95]);
+  });
+
   it("pools windows by id across accounts and orders resets by when they land", () => {
     const input = new Map([
       [
@@ -864,7 +1078,7 @@ describe("pools", () => {
     const [session, week] = pools[0]!.windows;
     const untimed = collectLimitPools(
       collectLimitAccounts(input).map((account) =>
-        account.key === "hub:b"
+        account.key === "env-a:hub:b"
           ? {
               ...account,
               limits: {
@@ -886,8 +1100,8 @@ describe("pools", () => {
     expect(
       session?.resets.map((reset) => [reset.member.account.key, reset.restoresPercent]),
     ).toEqual([
-      ["hub:a", 40],
-      ["hub:b", 20],
+      ["env-a:hub:a", 40],
+      ["env-a:hub:b", 20],
     ]);
     expect(week).toMatchObject({ id: "seven_day", remainingPercent: 80, members: [{}] });
     // Codex reports `primary` for both its five-hour and (on Go) monthly window.
@@ -926,8 +1140,14 @@ describe("pools", () => {
       ["weekly", 1],
       ["monthly", 1],
     ]);
-    expect(session?.members.map((member) => member.account.key)).toEqual(["hub:a", "hub:b"]);
-    expect(pools[0]?.accounts.map((account) => account.key)).toEqual(["hub:a", "hub:b"]);
+    expect(session?.members.map((member) => member.account.key)).toEqual([
+      "env-a:hub:a",
+      "env-a:hub:b",
+    ]);
+    expect(pools[0]?.accounts.map((account) => account.key)).toEqual([
+      "env-a:hub:a",
+      "env-a:hub:b",
+    ]);
   });
 });
 
