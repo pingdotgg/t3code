@@ -411,6 +411,7 @@ const layerRepositoryIdentityResolver = Layer.effect(
   Effect.gen(function* () {
     const registry = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
     return yield* RepositoryIdentityResolver.make({
+      refinementCacheKey: registry.repositoryIdentityCacheKey ?? Effect.succeed(""),
       refine: Effect.fn(function* (identity: RepositoryIdentity) {
         for (const { kind } of BUILT_IN_SOURCE_CONTROL_DRIVER_LIST) {
           const provider = yield* registry.get(kind);

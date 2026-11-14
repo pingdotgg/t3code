@@ -141,14 +141,18 @@ export function usePullRequestListActions(
       supported,
       sourceControlClients.get(entry.provider).changeRequest,
     );
-    Dialog.alert(`${label}?`, `#${entry.number} · ${entry.title}`, [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: label,
-        style: supported === "close" ? "destructive" : "default",
-        onPress: () => void perform(entry, supported),
-      },
-    ]);
+    Dialog.alert(
+      `${label}?`,
+      `#${entry.number} · ${entry.title}${supported === "close" && sourceControlClients.get(entry.provider).closeIsFinal ? "\nThis pull request cannot be reopened." : ""}`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: label,
+          style: supported === "close" ? "destructive" : "default",
+          onPress: () => void perform(entry, supported),
+        },
+      ],
+    );
   };
   const actions = (entry: EnvironmentPullRequestListEntry): MenuProps["actions"] => {
     const terminology = sourceControlClients.get(entry.provider).changeRequest;
@@ -177,7 +181,9 @@ export function usePullRequestListActions(
               attributes: { destructive: true },
             },
           ]
-        : writableEnvironments.has(entry.environmentId) && entry.state === "closed"
+        : writableEnvironments.has(entry.environmentId) &&
+            entry.state === "closed" &&
+            !sourceControlClients.get(entry.provider).closeIsFinal
           ? [
               {
                 id: "reopen",

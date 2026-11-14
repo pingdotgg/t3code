@@ -48,6 +48,7 @@ export class SourceControlProviderRegistry extends Context.Service<
   SourceControlProviderRegistry,
   {
     readonly resolveLink: SourceControlProvider.ResolveSourceControlLink;
+    readonly repositoryIdentityCacheKey?: Effect.Effect<string>;
     readonly get: (
       kind: SourceControlProviderKind,
     ) => Effect.Effect<
@@ -336,6 +337,17 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
       );
 
     return SourceControlProviderRegistry.of({
+      repositoryIdentityCacheKey: Effect.all(
+        registrations.flatMap(({ kind, provider }) =>
+          provider.repositoryIdentityCacheKey === undefined
+            ? []
+            : [
+                provider.repositoryIdentityCacheKey.pipe(
+                  Effect.map((key) => `${kind.length}:${kind}${key.length}:${key}`),
+                ),
+              ],
+        ),
+      ).pipe(Effect.map((keys) => keys.join(""))),
       resolveLink: (input) => {
         if (input.url.protocol !== "https:" || input.url.username || input.url.password) {
           return undefined;

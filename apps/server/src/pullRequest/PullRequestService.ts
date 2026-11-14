@@ -311,6 +311,7 @@ const VERDICT_LABELS: Record<PullRequestReviewVerdict, string> = {
   comment: "review",
   approve: "approve",
   "request-changes": "request changes on",
+  "revoke-approval": "revoke approval for",
 };
 
 const ACTION_ACCESS_REFUSALS: Record<PullRequestAction, string> = {
@@ -392,8 +393,17 @@ function parseListCursor(raw: string): ListCursor | null {
   };
 }
 
+function repositoryPathKey(host: string | undefined, repository: string): string {
+  return (
+    sourceControlDefinitions.findByRepositoryKey(`${host ?? ""}/${repository}`) ??
+    sourceControlDefinitions.findByRepositoryKey(repository)
+  )?.caseSensitiveRepositoryPaths
+    ? repository
+    : repository.toLowerCase();
+}
+
 function listCursorKey(host: string, repository: string): string {
-  return `${host} ${repository.toLowerCase()}`;
+  return `${host} ${repositoryPathKey(host, repository)}`;
 }
 
 // Preserve exclusions across slices sharing a timestamp to avoid redelivery.
@@ -1006,7 +1016,7 @@ export const make = Effect.gen(function* () {
             repositoryKey:
               repositoryKey === null
                 ? null
-                : sourceControlDefinitions.canonicalRepositoryKey(repositoryKey.toLowerCase()),
+                : sourceControlDefinitions.canonicalRepositoryKey(repositoryKey),
           });
         }
         return { supported, unimplemented, viewerRoots, refinedProjectIdsByHost };
@@ -1020,7 +1030,10 @@ export const make = Effect.gen(function* () {
         const own = supported[0];
         const repository = ref.repository.trim();
         const host = ref.host?.trim().toLowerCase();
-        if (own !== undefined && own.repository.toLowerCase() === repository.toLowerCase()) {
+        if (
+          own !== undefined &&
+          repositoryPathKey(own.host, own.repository) === repositoryPathKey(own.host, repository)
+        ) {
           if (host === undefined || host === own.host) return Effect.succeed(own);
         }
         if (host === undefined) {
@@ -1034,7 +1047,7 @@ export const make = Effect.gen(function* () {
             }),
           );
         }
-        const referenceKey = `${host}/${repository}`.toLowerCase();
+        const referenceKey = `${host}/${repository}`;
         const repositoryKey = sourceControlDefinitions.canonicalRepositoryKey(referenceKey);
         // A host that spells one repository several ways (Azure's SSH and legacy clone hosts)
         // can differ from the browser URL's host. Compare the complete repository identity
@@ -1052,7 +1065,8 @@ export const make = Effect.gen(function* () {
               onHost.find(
                 (candidate) =>
                   candidate.repositoryKey === null &&
-                  candidate.repository.toLowerCase() === repository.toLowerCase(),
+                  repositoryPathKey(candidate.host, candidate.repository) ===
+                    repositoryPathKey(candidate.host, repository),
               ) ??
               onHost.find((candidate) => candidate.repositoryKey === null);
             if (route === undefined) {
@@ -1089,7 +1103,8 @@ export const make = Effect.gen(function* () {
             }
             return Effect.succeed(
               route.repositoryKey !== null ||
-                route.repository.toLowerCase() === repository.toLowerCase()
+                repositoryPathKey(route.host, route.repository) ===
+                  repositoryPathKey(route.host, repository)
                 ? route
                 : {
                     ...route,
@@ -1982,6 +1997,9 @@ export const make = Effect.gen(function* () {
                 ? {}
                 : { overviewThreads: activity.overviewThreads }),
               commits: activity.commits,
+              ...(activity.commitsTruncated === undefined
+                ? {}
+                : { commitsTruncated: activity.commitsTruncated }),
               ...(activity.reactions === undefined ? {} : { reactions: activity.reactions }),
             })),
           ),
@@ -2408,6 +2426,7 @@ export const make = Effect.gen(function* () {
         }
         if (
           input.verdict !== "approve" &&
+          input.verdict !== "revoke-approval" &&
           input.body.trim().length === 0 &&
           input.comments.length === 0
         ) {
@@ -2777,7 +2796,8 @@ export const make = Effect.gen(function* () {
       if (
         project === undefined ||
         project.api.listChangeRequestStats === undefined ||
-        project.repository.toLowerCase() !== ref.repository.trim().toLowerCase()
+        repositoryPathKey(project.host, project.repository) !==
+          repositoryPathKey(project.host, ref.repository.trim())
       ) {
         continue;
       }
@@ -2797,7 +2817,7 @@ export const make = Effect.gen(function* () {
         if (readStats === undefined) return Effect.succeed<ReadonlyArray<PullRequestDiffStat>>([]);
         const projectsByRepository = new Map(
           entries.map((entry) => [
-            `${entry.project.repository.toLowerCase()} ${entry.number}`,
+            `${repositoryPathKey(entry.project.host, entry.project.repository)} ${entry.number}`,
             entry.project,
           ]),
         );
@@ -2812,7 +2832,7 @@ export const make = Effect.gen(function* () {
           Effect.map((read) =>
             read.flatMap((stat): ReadonlyArray<PullRequestDiffStat> => {
               const project = projectsByRepository.get(
-                `${stat.repository.toLowerCase()} ${stat.number}`,
+                `${repositoryPathKey(first.project.host, stat.repository)} ${stat.number}`,
               );
               return project === undefined
                 ? []
@@ -2939,7 +2959,7 @@ export const make = Effect.gen(function* () {
     JSON.stringify([
       ref.projectId,
       ref.host?.toLowerCase() ?? "",
-      ref.repository.toLowerCase(),
+      repositoryPathKey(ref.host, ref.repository),
       ref.number,
     ]);
   const mergedEpochs = new Map<string, number>();
@@ -2964,7 +2984,7 @@ export const make = Effect.gen(function* () {
       refEpoch(ref),
       ref.projectId,
       ref.host?.toLowerCase() ?? null,
-      ref.repository.toLowerCase(),
+      repositoryPathKey(ref.host, ref.repository),
       ref.number,
       ref.expectedAccountId ?? null,
       ref[credentialNamespace] ?? null,
@@ -3048,7 +3068,7 @@ export const make = Effect.gen(function* () {
       operation,
       project.api.kind,
       project.host.toLowerCase(),
-      project.repository.toLowerCase(),
+      repositoryPathKey(project.host, project.repository),
       project.project.id,
       project.project.workspaceRoot,
       String(input.number),
@@ -3630,7 +3650,8 @@ export const make = Effect.gen(function* () {
       const stat = result.stats.find(
         (stat) =>
           stat.projectId === ref.projectId &&
-          stat.repository.toLowerCase() === ref.repository.toLowerCase() &&
+          repositoryPathKey(ref.host, stat.repository) ===
+            repositoryPathKey(ref.host, ref.repository) &&
           stat.number === ref.number,
       );
       if (stat !== undefined) recordStats(key, stat, at);

@@ -24,9 +24,10 @@ const DEFAULT_NEGATIVE_CACHE_TTL = Duration.minutes(1);
 
 export interface RepositoryIdentityResolverOptions {
   readonly cacheCapacity?: number;
+  readonly refinementCacheKey?: Effect.Effect<string>;
   readonly refine?: (
     identity: RepositoryIdentity,
-  ) => Effect.Effect<RepositoryIdentity, SourceControlProviderError>;
+  ) => Effect.Effect<RepositoryIdentity | null, SourceControlProviderError>;
 }
 
 export class RepositoryIdentityResolver extends Context.Service<
@@ -124,10 +125,14 @@ function repositoryPathOf(canonicalKey: string, remoteUrl: string): string {
   const canonicalPath = canonicalKey.split("/").slice(1).join("/");
   const displayPath = repositoryPathFromRemoteUrl(remoteUrl);
   if (displayPath === null) return canonicalPath;
+  const host = canonicalKey.split("/")[0];
   // A host that names repositories literally keeps the `.git` the display path drops.
   return (
-    [displayPath, `${displayPath}.git`].find((path) => path.toLowerCase() === canonicalPath) ??
-    canonicalPath
+    [displayPath, `${displayPath}.git`].find(
+      (path) =>
+        sourceControlDefinitions.canonicalRepositoryKey(`${host}/${path}`) ===
+        sourceControlDefinitions.canonicalRepositoryKey(canonicalKey),
+    ) ?? canonicalPath
   );
 }
 
@@ -175,6 +180,7 @@ function buildRepositoryIdentity(input: {
 class RepositoryIdentityCacheKey extends Data.Class<{
   readonly rootPath: string;
   readonly isBare: boolean;
+  readonly refinementKey?: string;
 }> {}
 
 const gitEnv = (platform: NodeJS.Platform): NodeJS.ProcessEnv => ({
@@ -313,6 +319,7 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
   const path = yield* Path.Path;
   const cacheCapacity = options.cacheCapacity ?? DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY;
   const refine = options.refine ?? Effect.succeed;
+  const refinementCacheKey = options.refinementCacheKey;
   const timeToLive = (exit: Exit.Exit<unknown>) =>
     Exit.match(exit, {
       onSuccess: (value) =>
@@ -332,26 +339,56 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
 
   const repositoryIdentityCache = yield* Cache.makeWith<
     RepositoryIdentityCacheKey,
-    RepositoryIdentity | null
+    { readonly identity: RepositoryIdentity | null; readonly refinementKey: string | undefined }
   >(
     (cacheKey) =>
-      resolveRepositoryIdentityFromCacheKey(cacheKey).pipe(
-        Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
-        Effect.filterOrElse(
-          (identity): identity is null => identity === null,
-          (identity) => refine(identity).pipe(Effect.orElseSucceed(() => identity)),
-        ),
-      ),
-    { capacity: cacheCapacity, timeToLive },
+      Effect.gen(function* () {
+        const identity = yield* resolveRepositoryIdentityFromCacheKey(cacheKey);
+        const refined =
+          identity === null
+            ? null
+            : yield* refine(identity).pipe(Effect.orElseSucceed(() => identity));
+        return {
+          identity: refined,
+          refinementKey: refinementCacheKey ? yield* refinementCacheKey : undefined,
+        };
+      }).pipe(Effect.provideService(ProcessRunner.ProcessRunner, processRunner)),
+    {
+      capacity: cacheCapacity,
+      timeToLive: (exit) =>
+        Exit.match(exit, {
+          onSuccess: (entry) =>
+            entry.identity === null ? DEFAULT_NEGATIVE_CACHE_TTL : DEFAULT_POSITIVE_CACHE_TTL,
+          onFailure: () => Duration.zero,
+        }),
+    },
   );
 
   const resolve: RepositoryIdentityResolver["Service"]["resolve"] = Effect.fnUntraced(
     function* (cwd, options) {
       if (options?.refresh) yield* Cache.invalidate(repositoryRootCache, cwd);
-      const cacheKey = yield* Cache.get(repositoryRootCache, cwd);
-      if (cacheKey === null) return null;
-      if (options?.refresh) yield* Cache.invalidate(repositoryIdentityCache, cacheKey);
-      return yield* Cache.get(repositoryIdentityCache, cacheKey);
+      const rootKey = yield* Cache.get(repositoryRootCache, cwd);
+      if (rootKey === null) return null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const cacheKey = refinementCacheKey
+          ? new RepositoryIdentityCacheKey({
+              ...rootKey,
+              refinementKey: yield* refinementCacheKey,
+            })
+          : rootKey;
+        if (options?.refresh) yield* Cache.invalidate(repositoryIdentityCache, cacheKey);
+        const entry = yield* Cache.get(repositoryIdentityCache, cacheKey);
+        if (
+          refinementCacheKey &&
+          (entry.refinementKey !== cacheKey.refinementKey ||
+            (yield* refinementCacheKey) !== cacheKey.refinementKey)
+        ) {
+          yield* Cache.invalidate(repositoryIdentityCache, cacheKey);
+          continue;
+        }
+        return entry.identity;
+      }
+      return null;
     },
   );
 

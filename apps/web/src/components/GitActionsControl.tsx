@@ -483,7 +483,10 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
   const [publishVisibility, setPublishVisibility] =
     useState<SourceControlRepositoryVisibility>("private");
   const [publishRemoteName, setPublishRemoteName] = useState("origin");
-  const [publishProtocol, setPublishProtocol] = useState<SourceControlCloneProtocol>("ssh");
+  const [publishProtocolChoice, setPublishProtocolChoice] = useState<{
+    provider: SourceControlProviderKind;
+    protocol: SourceControlCloneProtocol;
+  } | null>(null);
   const [publishWizardStep, setPublishWizardStep] = useState(0);
   const [publishAdvancedOpen, setPublishAdvancedOpen] = useState(false);
   const [publishError, setPublishError] = useState<string | null>(null);
@@ -540,9 +543,22 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
       : (firstReadyPublishProvider ?? offeredSelection ?? sourceControlClients.get(undefined).kind);
   const selectedPublishProviderReadiness = publishProviderReadiness(publishProvider);
   const publishAccount = publishAccountByProvider.get(publishProvider) ?? null;
-  const publishRepositoryPrefill = publishAccount ? `${publishAccount}/` : "";
-  const publishRepository = publishRepositoryOverride ?? publishRepositoryPrefill;
   const currentPublishProvider = publishProviderOption(publishProvider);
+  const publishProtocol =
+    publishProtocolChoice?.provider === publishProvider
+      ? publishProtocolChoice.protocol
+      : (currentPublishProvider.definition.defaultCloneTransport ?? "ssh");
+  const repositoryNameOnly = currentPublishProvider.definition.repositoryNameOnly === true;
+  const publishRepositoryPrefill =
+    !repositoryNameOnly && publishAccount ? `${publishAccount}/` : "";
+  const publishRepository = publishRepositoryOverride ?? publishRepositoryPrefill;
+  const allowedVisibilities = currentPublishProvider.definition.repositoryVisibilities ?? [
+    "private",
+    "public",
+  ];
+  const effectivePublishVisibility = allowedVisibilities.includes(publishVisibility)
+    ? publishVisibility
+    : (allowedVisibilities[0] ?? "private");
   const publishHost = currentPublishProvider.definition.publishHost(
     Option.getOrNull(
       sourceControlDiscovery.data?.sourceControlProviders.find(
@@ -567,8 +583,9 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
     hasReadyPublishProvider &&
     selectedPublishProviderReadiness.ready &&
     !publishRepositoryAction.isPending &&
-    publishRepositoryOwner.length > 0 &&
-    publishRepositoryName.length > 0;
+    (repositoryNameOnly
+      ? /^[A-Za-z0-9._-]+$/.test(publishRepository.trim())
+      : publishRepositoryOwner.length > 0 && publishRepositoryName.length > 0);
 
   const submitPublishRepository = () => {
     if (!canSubmitPublishRepository) {
@@ -581,7 +598,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
       const result = await publishRepositoryAction.run({
         provider: publishProvider,
         repository: publishRepository.trim(),
-        visibility: publishVisibility,
+        visibility: effectivePublishVisibility,
         remoteName: publishRemoteName.trim() || "origin",
         protocol: publishProtocol,
       });
@@ -652,6 +669,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
               value={publishProvider}
               onValueChange={(value) => {
                 setSelectedPublishProvider(value as SourceControlProviderKind);
+                setPublishProtocolChoice(null);
                 setPublishRepositoryOverride(null);
               }}
               aria-labelledby="publish-provider-cards-label"
@@ -726,10 +744,12 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                 Repository
               </label>
               <div className="flex items-stretch overflow-hidden rounded-md border border-input bg-background focus-within:outline-2 focus-within:-outline-offset-2 focus-within:outline-ring">
-                <span className="flex shrink-0 items-center gap-1.5 border-r border-input bg-muted/50 px-2.5 font-mono text-xs text-muted-foreground">
-                  <currentPublishProvider.Icon className="size-3.5" />
-                  {publishHost}/
-                </span>
+                {!repositoryNameOnly && (
+                  <span className="flex shrink-0 items-center gap-1.5 border-r border-input bg-muted/50 px-2.5 font-mono text-xs text-muted-foreground">
+                    <currentPublishProvider.Icon className="size-3.5" />
+                    {publishHost}/
+                  </span>
+                )}
                 <input
                   id="publish-repository-path"
                   name="publish-repository-path"
@@ -758,7 +778,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                 Visibility
               </span>
               <RadioGroup
-                value={publishVisibility}
+                value={effectivePublishVisibility}
                 onValueChange={(value) =>
                   setPublishVisibility(value as SourceControlRepositoryVisibility)
                 }
@@ -770,7 +790,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                   {
                     value: "private" as const,
                     label: "Private",
-                    description: "Only invited people",
+                    description: "Restricted access",
                     Icon: LockIcon,
                   },
                   {
@@ -779,32 +799,37 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                     description: "Anyone on the web",
                     Icon: GlobeIcon,
                   },
-                ].map((option) => {
-                  const isSelected = publishVisibility === option.value;
-                  return (
-                    <RadioPrimitive.Root
-                      key={option.value}
-                      value={option.value}
-                      className={cn(
-                        "relative flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 text-left outline-none transition-[background-color,border-color,box-shadow]",
-                        "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
-                        isSelected
-                          ? "border-primary bg-background shadow-sm ring-2 ring-inset ring-primary/35 dark:border-transparent dark:bg-primary/10 dark:shadow-none dark:ring-1 dark:ring-primary/30"
-                          : "border-border bg-background hover:border-foreground/20 hover:bg-muted/50 dark:border-transparent dark:bg-white/[0.035] dark:hover:bg-accent",
-                      )}
-                    >
-                      <option.Icon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-                      <span className="min-w-0 flex-1">
-                        <span className="block text-sm font-medium text-foreground">
-                          {option.label}
+                ]
+                  .filter((option) => allowedVisibilities.includes(option.value))
+                  .map((option) => {
+                    const isSelected = effectivePublishVisibility === option.value;
+                    return (
+                      <RadioPrimitive.Root
+                        key={option.value}
+                        value={option.value}
+                        className={cn(
+                          "relative flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 text-left outline-none transition-[background-color,border-color,box-shadow]",
+                          "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
+                          isSelected
+                            ? "border-primary bg-background shadow-sm ring-2 ring-inset ring-primary/35 dark:border-transparent dark:bg-primary/10 dark:shadow-none dark:ring-1 dark:ring-primary/30"
+                            : "border-border bg-background hover:border-foreground/20 hover:bg-muted/50 dark:border-transparent dark:bg-white/[0.035] dark:hover:bg-accent",
+                        )}
+                      >
+                        <option.Icon
+                          className="size-4 shrink-0 text-muted-foreground"
+                          aria-hidden
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-sm font-medium text-foreground">
+                            {option.label}
+                          </span>
+                          <span className="block text-xs text-muted-foreground">
+                            {option.description}
+                          </span>
                         </span>
-                        <span className="block text-xs text-muted-foreground">
-                          {option.description}
-                        </span>
-                      </span>
-                    </RadioPrimitive.Root>
-                  );
-                })}
+                      </RadioPrimitive.Root>
+                    );
+                  })}
               </RadioGroup>
             </div>
 
@@ -847,7 +872,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                       onValueChange={(next) => {
                         const protocol = next[0];
                         if (protocol === "ssh" || protocol === "https") {
-                          setPublishProtocol(protocol);
+                          setPublishProtocolChoice({ provider: publishProvider, protocol });
                         }
                       }}
                       aria-labelledby="publish-protocol-label"

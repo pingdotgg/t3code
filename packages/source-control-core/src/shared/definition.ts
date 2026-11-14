@@ -6,6 +6,7 @@ import {
   SettingsSecretValue,
   SourceControlProviderKind,
   type SourceControlProviderInfo,
+  type SourceControlRepositoryVisibility,
   TrimmedNonEmptyString,
   TrimmedString,
 } from "@t3tools/contracts";
@@ -247,6 +248,9 @@ export interface SourceControlDefinition {
   readonly credentials?: SourceControlHostCredentials;
   readonly changeRequest: ChangeRequestTerminology;
   readonly repositoryPathHint: string;
+  readonly repositoryNameOnly?: boolean;
+  readonly repositoryVisibilities?: ReadonlyArray<SourceControlRepositoryVisibility>;
+  readonly caseSensitiveRepositoryPaths?: boolean;
   readonly publicHost: string | null;
   readonly publishDescription: string;
   readonly publishHost: (signedInHost: string | null) => string;
@@ -311,6 +315,7 @@ export interface SourceControlDefinition {
    * repository.
    */
   readonly changeRequestListScope?: "host" | "repository";
+  readonly closeIsFinal?: boolean;
   readonly reviewSummaryRequired: (verdict: PullRequestReviewVerdict) => boolean;
   readonly checkoutCommandArgument: (input: string) => string | null;
   readonly isChangeRequestReference: (url: string) => boolean;
@@ -342,7 +347,7 @@ export interface SourceControlDefinition {
    * apart from `normalizeGitRemoteUrl`: over SSH and the web, or with `.git` as part of the name.
    * Null when the key is not this host's. Persisted keys are built with it: output must not change.
    */
-  readonly repositoryKeyFromRemote?: (key: string) => string | null;
+  readonly repositoryKeyFromRemote?: (key: string, remoteUrl: string) => string | null;
   /**
    * For a host with more than one spelling of a repository key: the one every spelling compares
    * equal under. Null when the key is not this host's.
@@ -524,6 +529,9 @@ const SCP_REMOTE = /^[a-zA-Z0-9._-]+@([^:/]+):/;
 export function parseGitRemoteHost(remoteUrl: string): GitRemoteHost | null {
   const trimmed = remoteUrl.trim();
   if (trimmed.length === 0) return null;
+  // Git remote helpers can put a region before the URL scheme separator.
+  if (/^codecommit::[a-z0-9-]+:\/\//u.test(trimmed))
+    return { remoteUrl: trimmed, host: "codecommit", hostname: "codecommit" };
   let host: string;
   const scpHost = SCP_REMOTE.exec(trimmed)?.[1] ?? userlessScpRemoteHost(trimmed);
   if (scpHost) {
@@ -706,7 +714,9 @@ export function makeSourceControlDefinitionRegistry(
   const recognitionOrder = inOrder(definitions, options?.recognizeRemotesIn);
   const repositoryKeyOwner = (key: string) => {
     for (const definition of definitions) {
-      const canonical = definition.canonicalRepositoryKey?.(key);
+      const canonical = definition.canonicalRepositoryKey?.(
+        definition.caseSensitiveRepositoryPaths ? key : key.toLowerCase(),
+      );
       if (canonical != null) return { definition, canonical };
     }
     return undefined;
@@ -806,12 +816,15 @@ export function makeSourceControlDefinitionRegistry(
       const written = parseGitRemoteRepository(remoteUrl, { keepGitSuffix: true });
       if (written === null) return key;
       for (const definition of definitions) {
-        const spelled = definition.repositoryKeyFromRemote?.(`${written.host}/${written.path}`);
+        const spelled = definition.repositoryKeyFromRemote?.(
+          `${written.host}/${written.path}`,
+          remoteUrl,
+        );
         if (spelled != null) return spelled;
       }
       return key;
     },
-    canonicalRepositoryKey: (key) => repositoryKeyOwner(key)?.canonical ?? key,
+    canonicalRepositoryKey: (key) => repositoryKeyOwner(key)?.canonical ?? key.toLowerCase(),
     findByRepositoryKey: (key) => repositoryKeyOwner(key)?.definition,
     repositorySelector: (identity) =>
       identity?.provider === undefined

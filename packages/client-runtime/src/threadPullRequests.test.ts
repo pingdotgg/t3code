@@ -101,6 +101,27 @@ describe("threadPullRequestKeysEqual", () => {
       }),
     ).toBe(true);
   });
+
+  it("keeps CodeCommit repository case in stored pull request keys", () => {
+    const codeCommit = {
+      host: "git-codecommit.us-east-1.amazonaws.com",
+      repository: "v1/repos/MyRepo",
+      number: 7,
+      url: "https://us-east-1.console.aws.amazon.com/codesuite/codecommit/repositories/MyRepo/pull-requests/7/details?region=us-east-1",
+    };
+    expect(legacyThreadPullRequestKey(codeCommit)).toEqual({
+      host: codeCommit.host,
+      repository: codeCommit.repository,
+      number: 7,
+    });
+    expect(
+      threadPullRequestKeysEqual(codeCommit, {
+        ...codeCommit,
+        repository: "v1/repos/myrepo",
+        url: codeCommit.url.replace("MyRepo", "myrepo"),
+      }),
+    ).toBe(false);
+  });
 });
 
 describe("resolveThreadCurrentPullRequest", () => {

@@ -1,6 +1,7 @@
 import type { ImageSourcePropType } from "react-native";
 
 export const SOURCE_CONTROL_LINK_ICON_SOURCES: Readonly<Record<string, ImageSourcePropType>> = {
+  "aws-codecommit": require("../../assets/link-icons/aws-codecommit.png"),
   "azure-devops": require("../../assets/link-icons/azure-devops.png"),
   bitbucket: require("../../assets/link-icons/bitbucket.png"),
   "cursor-origin": require("../../assets/link-icons/cursor-origin.png"),

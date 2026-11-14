@@ -131,13 +131,15 @@ export class SourceControlProvider extends Context.Service<
     }) => Effect.Effect<Option.Option<string>>;
     /** Strip installation mounts from remote paths; absent means use the whole path. */
     readonly repositoryNameFromRemoteUrl?: (url: string) => string | null;
+    /** Credential selection changes must not reuse another account's refined identity. */
+    readonly repositoryIdentityCacheKey?: Effect.Effect<string>;
     readonly refineRepositoryIdentity?: (input: {
       readonly identity: RepositoryIdentity;
       readonly resolveContext: (input: {
         readonly cwd: string;
         readonly context: SourceControlProviderContext;
       }) => Effect.Effect<SourceControlProviderContext | null, SourceControlProviderError>;
-    }) => Effect.Effect<RepositoryIdentity, SourceControlProviderError>;
+    }) => Effect.Effect<RepositoryIdentity | null, SourceControlProviderError>;
     /**
      * The web host serving a remote, for a host whose remote URL may not name it (an SSH alias
      * for one of several servers). It answers for the context's `requestedHost` when the caller

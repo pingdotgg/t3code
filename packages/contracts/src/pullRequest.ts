@@ -170,7 +170,12 @@ export type PullRequestComment = typeof PullRequestComment.Type;
 export const PullRequestDiffSide = Schema.Literals(["left", "right"]);
 export type PullRequestDiffSide = typeof PullRequestDiffSide.Type;
 
-export const PullRequestReviewVerdict = Schema.Literals(["comment", "approve", "request-changes"]);
+export const PullRequestReviewVerdict = Schema.Literals([
+  "comment",
+  "approve",
+  "request-changes",
+  "revoke-approval",
+]);
 export type PullRequestReviewVerdict = typeof PullRequestReviewVerdict.Type;
 
 export const PullRequestThreadComment = Schema.Struct({
@@ -698,6 +703,7 @@ export const PullRequestActivity = Schema.Struct({
   // Apart from reviewThreads so clients that require a thread path still decode the activity.
   overviewThreads: Schema.optional(Schema.Array(PullRequestOverviewThread)),
   commits: Schema.Array(PullRequestCommit),
+  commitsTruncated: Schema.optional(Schema.Boolean),
   reactions: Schema.optional(Schema.Array(PullRequestReaction)),
 });
 export type PullRequestActivity = typeof PullRequestActivity.Type;

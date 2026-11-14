@@ -317,6 +317,14 @@ describe("sourceControlClients repository keys", () => {
     ["git@ssh.dev.azure.com:v3/o/p", "ssh.dev.azure.com/v3/o/p"],
     ["ssh.dev.azure.com/v3/o/p/r", "ssh.dev.azure.com/v3/o/p/r"],
     ["C:/repos/project", "c:/repos/project"],
+    [
+      "https://git-codecommit.us-east-1.amazonaws.com/v1/repos/MyRepo",
+      "git-codecommit.us-east-1.amazonaws.com/v1/repos/MyRepo",
+    ],
+    [
+      "ssh://KEY@git-codecommit.us-east-1.amazonaws.com/v1/repos/MyRepo",
+      "git-codecommit.us-east-1.amazonaws.com/v1/repos/MyRepo",
+    ],
   ])("keys %s as %s", (remote, key) => {
     expect(sourceControlClients.repositoryKeyFromRemote(remote)).toBe(key);
   });
@@ -334,6 +342,14 @@ describe("sourceControlClients repository keys", () => {
       "tfs.corp.example/c/p/_git/r",
     );
     expect(sourceControlClients.findByRepositoryKey("github.com/o/r")).toBeUndefined();
+  });
+
+  it("keeps CodeCommit accounts and repository case in canonical keys", () => {
+    const upper = "git-codecommit.us-east-1.amazonaws.com/123456789012/v1/repos/MyRepo";
+    const lower = upper.replace("MyRepo", "myrepo");
+    expect(sourceControlClients.canonicalRepositoryKey(upper)).toBe(upper);
+    expect(sourceControlClients.canonicalRepositoryKey(lower)).not.toBe(upper);
+    expect(sourceControlClients.findByRepositoryKey(upper)?.kind).toBe("aws-codecommit");
   });
 });
 

@@ -167,7 +167,8 @@ it.effect.each([
         }) ?? Effect.succeed(identity)
       );
       if (expectedProvider === "gitlab") {
-        const [host, ...repository] = refined.canonicalKey.split("/");
+        assert.isNotNull(refined);
+        const [host, ...repository] = refined!.canonicalKey.split("/");
         assert.strictEqual(
           definition.changeRequestUrl({
             host: host!,

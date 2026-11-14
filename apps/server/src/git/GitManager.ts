@@ -219,6 +219,7 @@ interface OpenPrInfo {
 }
 
 interface PullRequestInfo extends OpenPrInfo, PullRequestHeadRemoteInfo {
+  repositoryKey?: string | undefined;
   state: "open" | "closed" | "merged";
   isDraft?: boolean;
   closedAt?: string | null;
@@ -264,7 +265,9 @@ export function pullRequestRepositoryKey(value: string): string | null {
   const repositoryUrl = sourceControlDefinitions.parseChangeRequestUrl(value)?.link.repositoryUrl;
   return repositoryUrl === undefined
     ? null
-    : sourceControlDefinitions.repositoryKeyFromRemote(repositoryUrl);
+    : sourceControlDefinitions.repositoryKeyFromRemote(
+        sourceControlDefinitions.repositoryUrlFromPage(repositoryUrl) ?? repositoryUrl,
+      );
 }
 
 /** Null when the host did not name the repository the head lives in. */
@@ -339,9 +342,12 @@ function normalizeOptionalString(value: string | null | undefined): string | nul
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function normalizeOptionalRepositoryNameWithOwner(value: string | null | undefined): string | null {
+function normalizeOptionalRepositoryNameWithOwner(
+  value: string | null | undefined,
+  caseSensitive: boolean,
+): string | null {
   const normalized = normalizeOptionalString(value);
-  return normalized ? normalized.toLowerCase() : null;
+  return normalized && !caseSensitive ? normalized.toLowerCase() : normalized;
 }
 
 function normalizeOptionalOwnerLogin(value: string | null | undefined): string | null {
@@ -356,27 +362,33 @@ interface PullRequestHeadIdentity {
 
 function resolveExpectedHeadIdentity(
   headContext: Pick<BranchHeadContext, "headRepositoryNameWithOwner" | "headRepositoryOwnerLogin">,
+  caseSensitive: boolean,
 ): PullRequestHeadIdentity {
   const repositoryNameWithOwner = normalizeOptionalRepositoryNameWithOwner(
     headContext.headRepositoryNameWithOwner,
+    caseSensitive,
   );
   return {
     repositoryNameWithOwner,
     ownerLogin:
       normalizeOptionalOwnerLogin(headContext.headRepositoryOwnerLogin) ??
-      parseRepositoryOwnerLogin(repositoryNameWithOwner),
+      normalizeOptionalOwnerLogin(parseRepositoryOwnerLogin(repositoryNameWithOwner)),
   };
 }
 
-function resolvePullRequestHeadIdentity(pr: PullRequestInfo): PullRequestHeadIdentity {
+function resolvePullRequestHeadIdentity(
+  pr: PullRequestInfo,
+  caseSensitive: boolean,
+): PullRequestHeadIdentity {
   const repositoryNameWithOwner = normalizeOptionalRepositoryNameWithOwner(
     resolveHeadRepositoryNameWithOwner(pr),
+    caseSensitive,
   );
   return {
     repositoryNameWithOwner,
     ownerLogin:
       normalizeOptionalOwnerLogin(pr.headRepositoryOwnerLogin) ??
-      parseRepositoryOwnerLogin(repositoryNameWithOwner),
+      normalizeOptionalOwnerLogin(parseRepositoryOwnerLogin(repositoryNameWithOwner)),
   };
 }
 
@@ -391,8 +403,10 @@ export function matchesBranchHeadContext(
     return false;
   }
 
-  const expectedHead = resolveExpectedHeadIdentity(headContext);
-  const pullRequestHead = resolvePullRequestHeadIdentity(pr);
+  const caseSensitive =
+    sourceControlDefinitions.findByChangeRequestUrl(pr.url)?.caseSensitiveRepositoryPaths ?? false;
+  const expectedHead = resolveExpectedHeadIdentity(headContext, caseSensitive);
+  const pullRequestHead = resolvePullRequestHeadIdentity(pr, caseSensitive);
 
   if (expectedHead.repositoryNameWithOwner) {
     if (pullRequestHead.repositoryNameWithOwner) {
@@ -444,6 +458,7 @@ function toPullRequestInfo(summary: ChangeRequest): PullRequestInfo {
     number: summary.number,
     title: summary.title,
     url: summary.url,
+    ...(summary.repositoryKey !== undefined ? { repositoryKey: summary.repositoryKey } : {}),
     baseRefName: summary.baseRefName,
     headRefName: summary.headRefName,
     ...(summary.headSha !== undefined ? { headSha: summary.headSha } : {}),
@@ -705,6 +720,8 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
 
   const sourceControlProvider = (cwd: string) => sourceControlProviders.resolve({ cwd });
+  const repositoryIdentityCacheKey =
+    sourceControlProviders.repositoryIdentityCacheKey ?? Effect.succeed("");
   const changeRequestTermsFor = Effect.fn("GitManager.changeRequestTermsFor")(function* (
     cwd: string,
   ) {
@@ -1221,6 +1238,7 @@ export const make = Effect.gen(function* () {
       localBranchExists?: boolean;
       remoteName?: string | null;
     },
+    identityKey: string,
   ) =>
     [
       cwd,
@@ -1230,6 +1248,7 @@ export const make = Effect.gen(function* () {
       details.localBranchExists === false ? "0" : "1",
       details.remoteName ?? "",
       String(prLookupEpoch(cwd)),
+      identityKey,
     ].join("\u0000");
   const prLookupFailureStreakByKey = new Map<string, number>();
   const nextPrLookupFailureTtl = (key: string) => {
@@ -1374,8 +1393,9 @@ export const make = Effect.gen(function* () {
     refreshMissingPullRequest = false,
   ) {
     // Upstream changes must not orphan the same branch's fallback value.
-    const branchKey = `${cwd}\u0000${details.branch}`;
-    const cacheKey = prLookupCacheKey(cwd, details);
+    const identityKey = yield* repositoryIdentityCacheKey;
+    const branchKey = `${cwd}\u0000${details.branch}\u0000${identityKey}`;
+    const cacheKey = prLookupCacheKey(cwd, details, identityKey);
     if (refreshMissingPullRequest) {
       const cached = yield* Cache.getOption(prLookupCache, cacheKey).pipe(
         Effect.orElseSucceed(() => Option.none()),
@@ -2750,13 +2770,17 @@ export const make = Effect.gen(function* () {
       `defaultBranch\u0000${defaultRemoteName}`,
       gitCore.resolveDefaultBranchName(cacheCwd, defaultRemoteName),
     ).pipe(Effect.orElseSucceed(() => null));
-    const cacheKey = prLookupCacheKey(cacheCwd, {
-      branch,
-      upstreamRef,
-      defaultBranch,
-      localBranchExists,
-      ...(localBranchExists ? {} : { remoteName }),
-    });
+    const cacheKey = prLookupCacheKey(
+      cacheCwd,
+      {
+        branch,
+        upstreamRef,
+        defaultBranch,
+        localBranchExists,
+        ...(localBranchExists ? {} : { remoteName }),
+      },
+      yield* repositoryIdentityCacheKey,
+    );
     if (options.refresh) {
       const cached = yield* Cache.getOption(prLookupCache, cacheKey).pipe(
         Effect.orElseSucceed(() => Option.none()),
@@ -2823,7 +2847,7 @@ export const make = Effect.gen(function* () {
       mergedAt: latest.mergedAt ?? null,
       headSha: latest.headSha ?? null,
       // Hosting CLIs may target upstream; the PR URL identifies its actual repository.
-      repositoryKey: pullRequestRepositoryKey(latest.url),
+      repositoryKey: latest.repositoryKey ?? pullRequestRepositoryKey(latest.url),
     };
   });
 

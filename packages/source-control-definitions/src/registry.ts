@@ -1,3 +1,4 @@
+import * as AwsCodeCommit from "@t3tools/source-control-codecommit/shared/definition";
 import * as AzureDevOps from "@t3tools/source-control-azure-devops/shared/definition";
 import * as Bitbucket from "@t3tools/source-control-bitbucket/shared/definition";
 import { makeSourceControlDefinitionRegistry } from "@t3tools/source-control-core/shared/definition";
@@ -24,14 +25,17 @@ export const builtInSourceControlDefinitions = makeSourceControlDefinitionRegist
     Forgejo.definition,
     Bitbucket.definition,
     AzureDevOps.definition,
+    AwsCodeCommit.definition,
   ],
   {
     claimChangeRequestUrlsFirst: [
+      AwsCodeCommit.definition.kind,
       GitCafe.definition.kind,
       CursorOrigin.definition.kind,
       AzureDevOps.definition.kind,
     ],
     recognizeRemotesIn: [
+      AwsCodeCommit.definition.kind,
       GitCafe.definition.kind,
       CursorOrigin.definition.kind,
       Forgejo.definition.kind,

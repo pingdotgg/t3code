@@ -176,6 +176,52 @@ it.effect("refuses maintainer edits on a host without the capability", () =>
   }),
 );
 
+it.effect(
+  "keeps CodeCommit repositories with different casing separate when listing and routing details",
+  () =>
+    Effect.gen(function* () {
+      const host = "git-codecommit.us-east-1.amazonaws.com";
+      const service = yield* makeService({
+        projects: ["Repo", "repo"].map((name) =>
+          project({
+            id: name,
+            title: name,
+            workspaceRoot: `/${name}`,
+            repository: `v1/repos/${name}`,
+            provider: "aws-codecommit",
+            host,
+            remoteUrl: `https://${host}/v1/repos/${name}`,
+          }),
+        ),
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make("aws-codecommit"), {
+            repositoryKey: ({ canonicalKey }) => canonicalKey,
+            listChangeRequests: ({ repository }) =>
+              Effect.succeed({
+                items: [{ ...changeRequest(1, "2026-07-02T00:00:00Z"), title: repository }],
+                truncated: false,
+                continues: false,
+              }),
+            getChangeRequest: ({ repository }) =>
+              Effect.succeed({ ...hostedChangeRequest(repository), title: repository }),
+          }),
+        ],
+      });
+      assert.deepStrictEqual(
+        (yield* service.list({ state: "open" })).entries.map((entry) => entry.repository).sort(),
+        ["v1/repos/Repo", "v1/repos/repo"],
+      );
+      const routed = yield* service.detail({
+        projectId: "Repo" as ProjectId,
+        host,
+        repository: "v1/repos/repo",
+        number: 1,
+      });
+      assert.strictEqual(routed.projectId, "repo" as ProjectId);
+      assert.strictEqual(routed.title, "v1/repos/repo");
+    }),
+);
+
 it.effect("does not wait for an in-flight detail read to display a preview", () =>
   Effect.gen(function* () {
     const detailStarted = yield* Deferred.make<void>();
@@ -2461,6 +2507,49 @@ it.effect("requires an explicit host for a non-repository project's linked PR", 
       .pipe(Effect.flip);
     assert.strictEqual(error._tag, "PullRequestUnavailableError");
   }),
+);
+
+it.effect(
+  "allows approval revocation without a review body only when the host and viewer offer it",
+  () =>
+    Effect.gen(function* () {
+      const base = fakePullRequestProvider(SourceControlProviderKind.make("github"));
+      const sent: string[] = [];
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        ],
+        providers: [
+          {
+            ...base,
+            capabilities: {
+              ...base.capabilities,
+              review: { ...base.capabilities.review, verdicts: ["revoke-approval"] },
+            },
+            getViewerPermissions: (input) =>
+              base.getViewerPermissions(input).pipe(
+                Effect.map((permissions) => ({
+                  ...permissions,
+                  verdicts: ["revoke-approval" as const],
+                })),
+              ),
+            submitReview: (input) =>
+              Effect.sync(() => {
+                sent.push(input.verdict);
+              }),
+          },
+        ],
+      });
+      yield* service.submitReview({
+        projectId: "p1" as ProjectId,
+        repository: "acme/web",
+        number: 1,
+        verdict: "revoke-approval",
+        body: "",
+        comments: [],
+      });
+      assert.deepStrictEqual(sent, ["revoke-approval"]);
+    }),
 );
 
 it.effect("refuses a review request this viewer may not make, and says what access it takes", () =>

@@ -47,6 +47,12 @@ const VERDICTS: ReadonlyArray<{
     sent: () => "Changes requested",
     icon: <XCircleIcon className="size-3" />,
   },
+  {
+    value: "revoke-approval",
+    label: "Revoke approval",
+    sent: () => "Approval revoked",
+    icon: <XCircleIcon className="size-3" />,
+  },
 ];
 
 export function PullRequestReviewForm({
@@ -145,7 +151,10 @@ export function PullRequestReviewForm({
   const canSubmit = (verdict: PullRequestReviewVerdict, summary: string, commentCount: number) =>
     verdict === "request-changes" && requestChangesSummaryRequired
       ? summary.trim().length > 0
-      : verdict === "approve" || summary.trim().length > 0 || commentCount > 0;
+      : verdict === "approve" ||
+        verdict === "revoke-approval" ||
+        summary.trim().length > 0 ||
+        commentCount > 0;
   const placeholder =
     selectedVerdict === undefined || canSubmit(selectedVerdict.value, "", comments.length)
       ? "Summarize your review (optional)"

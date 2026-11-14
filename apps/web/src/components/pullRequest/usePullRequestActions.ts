@@ -1,4 +1,5 @@
 import { useAtomCommand } from "~/state/use-atom-command";
+import { readLocalApi } from "~/localApi";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
   isAtomCommandInterrupted,
@@ -193,6 +194,12 @@ export function usePullRequestCloseBatch(
   const pending = useRef(new Set<string>());
   const [closingKeys, setClosingKeys] = useState<ReadonlySet<string>>(() => new Set());
   const close = async (entries: readonly EnvironmentPullRequestEntry[]) => {
+    if (entries.some((entry) => sourceControlClients.get(entry.provider).closeIsFinal)) {
+      const confirmed = await readLocalApi()?.dialogs.confirm(
+        "Close these pull requests permanently? Closed pull requests on this host cannot be reopened.",
+      );
+      if (!confirmed) return;
+    }
     const batch = entries.filter((entry) => {
       const key = pullRequestEntryKey(entry);
       if (entry.state !== "open" || pending.current.has(key)) return false;

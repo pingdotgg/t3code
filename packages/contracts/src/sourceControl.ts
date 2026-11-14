@@ -21,6 +21,8 @@ export type ChangeRequestState = typeof ChangeRequestState.Type;
 
 export const ChangeRequest = Schema.Struct({
   provider: SourceControlProviderKind,
+  /** Verified repository identity when the remote and browser URLs omit its account. */
+  repositoryKey: Schema.optional(TrimmedNonEmptyString),
   number: PositiveInt,
   title: TrimmedNonEmptyString,
   url: Schema.String,
