@@ -28,6 +28,7 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
 import { monorepo, repoRoot } from "../../../../tools/monorepo.mjs";
+import { sealedNodeEnv } from "../../../../tools/sealed-env.mjs";
 
 const MONOREPO = monorepo();
 const HERE = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
@@ -198,11 +199,9 @@ try {
     {
       cwd: server,
       stdio: ["ignore", "ignore", "inherit"],
-      // T3 finds Claude's home with os.homedir(): the run gets the throwaway HOME, so it never
-      // reads the real ~/.claude.
-      env: Object.fromEntries(
-        Object.entries({ ...process.env, HOME: home }).filter(([k]) => k !== "CLAUDE_CONFIG_DIR"),
-      ),
+      // Sealed: T3 finds Claude's home with os.homedir(), so the run gets the throwaway HOME
+      // and no variable of the shell beyond what node needs (no ANTHROPIC_*, no CLAUDE_*).
+      env: { ...sealedNodeEnv(work), HOME: home },
     },
   );
 } catch {

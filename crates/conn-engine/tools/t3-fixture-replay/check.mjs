@@ -28,6 +28,7 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
 import { monorepo, repoRoot } from "../../../../tools/monorepo.mjs";
+import { sealedNodeEnv } from "../../../../tools/sealed-env.mjs";
 
 const MONOREPO = monorepo();
 const HERE = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
@@ -381,7 +382,10 @@ try {
       "--sequence.concurrent",
       "--maxConcurrency=4",
     ],
-    { cwd: server, stdio: ["ignore", "ignore", "inherit"] },
+    // Sealed: T3's code and every stand-in and driver it starts get a throwaway HOME and only
+    // what node needs from the shell, so none finds the real ~/.claude or ~/.codex or an
+    // ANTHROPIC_* or token variable of the shell.
+    { cwd: server, stdio: ["ignore", "ignore", "inherit"], env: sealedNodeEnv(work) },
   );
 } finally {
   cleanup();
