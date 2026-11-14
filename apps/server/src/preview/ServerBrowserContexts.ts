@@ -5,7 +5,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeModule from "node:module";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import type { Browser, BrowserContext, CDPSession } from "playwright-core";
+import type { Browser, BrowserContext, CDPSession, Cookie } from "playwright-core";
 
 import { sandboxDisabled } from "./PreviewBrowserHost.ts";
 
@@ -63,7 +63,7 @@ interface Options {
   ) => Promise<{ readonly path: string; readonly release: () => Promise<void> } | undefined>;
   readonly diagnose?: (executable: string, cause: unknown) => Promise<unknown>;
   readonly env?: NodeJS.ProcessEnv;
-  /** Closes the shared browser once it has held no context for this long. */
+  /** Closes the shared browser once it holds no context, and a profile once it has no page, for this long. */
   readonly idleBrowserMs?: number;
   readonly onContextClose?: (context: BrowserContext) => void;
 }
@@ -117,7 +117,14 @@ export class ServerBrowserContexts {
   private readonly options: Options;
   private readonly contexts = new Map<string, Promise<BrowserContext>>();
   private readonly clearing = new Map<string, Promise<void>>();
+  /** Profile clears among `clearing`, which a concurrent clear joins instead of repeating. */
+  private readonly wipes = new WeakSet<Promise<void>>();
+  /** Restarts an open profile's idle wait. */
+  private readonly profileIdle = new Map<string, () => void>();
+  /** Session cookies of idle-closed profiles, re-added on relaunch; a server restart drops them. */
+  private readonly sessionCookies = new Map<string, Cookie[]>();
   private browser: Promise<Browser> | undefined;
+  private sharedClosing: Promise<void> | undefined;
   private closing: Promise<void> | undefined;
   private idleTimer: ReturnType<typeof setTimeout> | undefined;
   private pendingSharedContexts = 0;
@@ -196,37 +203,46 @@ export class ServerBrowserContexts {
     const delay = this.options.idleBrowserMs;
     if (delay === undefined || this.closing || this.pendingSharedContexts > 0) return;
     clearTimeout(this.idleTimer);
-    this.idleTimer = setTimeout(() => void this.retire(launched), delay);
+    this.idleTimer = setTimeout(() => void this.retireShared(launched), delay);
     this.idleTimer.unref();
   }
 
-  private async retire(launched: Promise<Browser>) {
+  private async retireShared(launched: Promise<Browser>) {
     const browser = await launched.catch(() => undefined);
     if (!browser || this.browser !== launched || this.pendingSharedContexts > 0) return;
     if (browser.contexts().length > 0) return;
     // Cleared first, so a request during the close launches a fresh browser.
     this.browser = undefined;
-    await browser.close().catch(constVoid);
+    this.sharedClosing = browser.close().catch(constVoid);
+    await this.sharedClosing;
   }
 
   contextFor(profileId: string, isolationKey?: string): Promise<BrowserContext> {
     if (this.closing) return Promise.reject(new Error("The preview browser is closed."));
     const key = JSON.stringify([profileId, isolationKey ?? null]);
     const cached = this.contexts.get(key);
-    if (cached) return cached;
+    if (cached) {
+      this.profileIdle.get(key)?.();
+      return cached;
+    }
+    const persistent = isolationKey === undefined && profileId !== INCOGNITO_BROWSER_PROFILE_ID;
     const cleared = this.clearing.get(key)?.catch(constVoid) ?? Promise.resolve();
     const pending = cleared
-      .then(() => this.createContext(profileId, isolationKey))
+      .then(() => this.createContext(profileId, persistent))
       .then(async (context) => {
         context.on("close", () => {
           if (this.contexts.get(key) === pending) this.contexts.delete(key);
           this.options.onContextClose?.(context);
         });
         for (const page of context.pages()) await page.close().catch(constVoid);
+        const cookies = this.sessionCookies.get(key);
+        this.sessionCookies.delete(key);
+        if (cookies) await context.addCookies(cookies).catch(constVoid);
         if (this.closing) {
           await context.close().catch(constVoid);
           throw new Error("The preview browser is closed.");
         }
+        if (persistent) this.closeProfileWhenIdle(key, pending, context);
         return context;
       });
     this.contexts.set(key, pending);
@@ -236,11 +252,40 @@ export class ServerBrowserContexts {
     return pending;
   }
 
-  private async createContext(profileId: string, isolationKey?: string) {
+  private closeProfileWhenIdle(
+    key: string,
+    pending: Promise<BrowserContext>,
+    context: BrowserContext,
+  ) {
+    const delay = this.options.idleBrowserMs;
+    if (delay === undefined) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const retireIfIdle = () => {
+      if (context.pages().length > 0 || this.contexts.get(key) !== pending) return;
+      void this.retireProfile(key, async () => {
+        const cookies = await context.cookies().catch(() => []);
+        const session = cookies.filter((cookie) => cookie.expires === -1);
+        if (session.length > 0) this.sessionCookies.set(key, session);
+      }).catch(constVoid);
+    };
+    const touch = () => {
+      clearTimeout(timer);
+      if (this.closing) return;
+      timer = setTimeout(retireIfIdle, delay);
+      timer.unref();
+    };
+    this.profileIdle.set(key, touch);
+    context.on("page", (page) => page.on("close", touch));
+    context.on("close", () => {
+      clearTimeout(timer);
+      if (this.profileIdle.get(key) === touch) this.profileIdle.delete(key);
+    });
+    touch();
+  }
+
+  private async createContext(profileId: string, persistent: boolean) {
     const contextOptions = { viewport: { width: 1280, height: 800 }, deviceScaleFactor: 2 };
-    if (isolationKey !== undefined || profileId === INCOGNITO_BROWSER_PROFILE_ID) {
-      return this.sharedContext(contextOptions);
-    }
+    if (!persistent) return this.sharedContext(contextOptions);
     const directory = this.profileDirectory(profileId);
     await NodeFSP.mkdir(directory, { recursive: true });
     const { executable, ...options } = await this.launchOptions();
@@ -292,22 +337,32 @@ export class ServerBrowserContexts {
     if (profileId === INCOGNITO_BROWSER_PROFILE_ID) return;
     const key = JSON.stringify([profileId, null]);
     const existing = this.clearing.get(key);
-    if (existing) return existing;
-    const clearing = (async () => {
-      const pending = this.contexts.get(key);
-      if (pending) {
-        this.contexts.delete(key);
-        const context = await pending.catch(() => undefined);
-        await context?.close();
-      }
+    if (existing && this.wipes.has(existing)) return existing;
+    const clearing = this.retireProfile(key, undefined, async () => {
+      this.sessionCookies.delete(key);
       await NodeFSP.rm(this.profileDirectory(profileId), { recursive: true, force: true });
+    });
+    this.wipes.add(clearing);
+    return clearing;
+  }
+
+  /** Runs `before`, closes the profile's context, then runs `after`; a reopen waits for all of it. */
+  private retireProfile(key: string, before?: () => Promise<void>, after?: () => Promise<void>) {
+    const previous = this.clearing.get(key)?.catch(constVoid);
+    const pending = this.contexts.get(key);
+    this.contexts.delete(key);
+    const retiring = (async () => {
+      await previous;
+      const context = await pending?.catch(() => undefined);
+      await before?.();
+      await context?.close();
+      await after?.();
     })();
-    this.clearing.set(key, clearing);
-    try {
-      await clearing;
-    } finally {
-      if (this.clearing.get(key) === clearing) this.clearing.delete(key);
-    }
+    this.clearing.set(key, retiring);
+    void retiring.catch(constVoid).finally(() => {
+      if (this.clearing.get(key) === retiring) this.clearing.delete(key);
+    });
+    return retiring;
   }
 
   close() {
@@ -317,9 +372,11 @@ export class ServerBrowserContexts {
 
   private async dispose() {
     clearTimeout(this.idleTimer);
-    await Promise.allSettled(
-      [...this.contexts.values()].map(async (pending) => (await pending).close()),
-    );
+    await Promise.allSettled([
+      ...[...this.contexts.values()].map(async (pending) => (await pending).close()),
+      ...this.clearing.values(),
+      this.sharedClosing,
+    ]);
     const browser = await this.browser?.catch(() => undefined);
     await browser?.close().catch(constVoid);
     this.contexts.clear();
