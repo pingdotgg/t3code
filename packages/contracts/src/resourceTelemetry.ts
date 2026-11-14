@@ -297,6 +297,8 @@ export type DesktopUpdateStatusReport = typeof DesktopUpdateStatusReport.Type;
 
 export const ShellEnvironmentPatch = Schema.Struct({
   PATH: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  ANDROID_HOME: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  ANDROID_SDK_ROOT: Schema.optionalKey(Schema.NullOr(Schema.String)),
   DBUS_SESSION_BUS_ADDRESS: Schema.optionalKey(Schema.NullOr(Schema.String)),
   DISPLAY: Schema.optionalKey(Schema.NullOr(Schema.String)),
   LANG: Schema.optionalKey(Schema.NullOr(Schema.String)),
@@ -383,7 +385,15 @@ export const DesktopTelemetryCancelDesktopUpdate = Schema.Struct({
 });
 export type DesktopTelemetryCancelDesktopUpdate = typeof DesktopTelemetryCancelDesktopUpdate.Type;
 
+/** The server accepts requests; the desktop treats this as backend readiness. */
+export const DesktopTelemetryServerReady = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("serverReady"),
+});
+export type DesktopTelemetryServerReady = typeof DesktopTelemetryServerReady.Type;
+
 export const DesktopTelemetryControlMessage = Schema.Union([
+  DesktopTelemetryServerReady,
   DesktopTelemetrySetDiagnosticsDemand,
   DesktopTelemetrySetHostPowerIntervals,
   DesktopTelemetryRequestDesktopUpdate,
