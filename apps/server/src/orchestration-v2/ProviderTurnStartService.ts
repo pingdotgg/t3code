@@ -78,6 +78,14 @@ export class ProviderTurnStartError extends Schema.TaggedError<ProviderTurnStart
   },
 ) {}
 
+/** Runs that ended without completing: their provider turn may still project as running. */
+const NON_COMPLETING_TERMINAL_RUN_STATUSES: ReadonlySet<OrchestrationV2Run["status"]> = new Set([
+  "failed",
+  "interrupted",
+  "cancelled",
+  "rolled_back",
+]);
+
 const isProviderTurnStartError = Schema.is(ProviderTurnStartError);
 const isProviderAdapterProtocolError = Schema.is(ProviderAdapter.ProviderAdapterProtocolError);
 const isProviderAdapterOpenSessionError = Schema.is(
@@ -652,22 +660,31 @@ export const layer: Layer.Layer<
       const existingSessionProjection = projection.providerSessions.find(
         (candidate) => candidate.id === providerSessionId,
       );
-      const failedRuns = new Map(
-        projection.runs
-          .filter(
-            (previous) =>
-              previous.ordinal < run.ordinal &&
-              previous.providerThreadId === providerThread.id &&
-              previous.status === "failed",
-          )
-          .map((previous) => [previous.activeAttemptId, previous] as const),
-      );
+      // A run that ended without completing can leave its provider turn projected as
+      // running when the agent ignored Stop or an interrupt timed out. Every attempt
+      // of such a run owns a possible abandoned turn, including attempts a steering
+      // restart superseded, and the session cannot be reused until those turns stop.
+      const abandonedRuns = new Map<string | null, OrchestrationV2Run>();
+      for (const previous of projection.runs) {
+        if (
+          previous.ordinal >= run.ordinal ||
+          previous.providerThreadId !== providerThread.id ||
+          !NON_COMPLETING_TERMINAL_RUN_STATUSES.has(previous.status)
+        ) {
+          continue;
+        }
+        if (previous.activeAttemptId !== null) {
+          abandonedRuns.set(previous.activeAttemptId, previous);
+        }
+        for (const attempt of projection.attempts) {
+          if (attempt.runId === previous.id) abandonedRuns.set(attempt.id, previous);
+        }
+      }
       const abandonedTurns = projection.providerTurns.flatMap((turn) => {
-        const previous = failedRuns.get(turn.runAttemptId);
+        const previous = abandonedRuns.get(turn.runAttemptId);
         return turn.providerThreadId === providerThread.id &&
           turn.status === "running" &&
-          previous !== undefined &&
-          turn.nodeId === previous.rootNodeId
+          previous !== undefined
           ? [{ turn, run: previous }]
           : [];
       });
@@ -675,8 +692,9 @@ export const layer: Layer.Layer<
       if (abandonedTurn !== undefined) {
         const liveSession = yield* providerSessions.get(providerSessionId);
         if (Option.isSome(liveSession)) {
-          // Older versions could fail the run without stopping its provider.
-          // Recover that exact turn before reusing its native conversation.
+          // The run already ended without stopping its provider — a failed start, an
+          // ignored Stop, or an interrupt that never confirmed. Recover that exact
+          // turn before reusing its native conversation.
           const recovered = yield* Effect.result(
             liveSession.value.interruptTurn({
               providerThread,
@@ -700,15 +718,15 @@ export const layer: Layer.Layer<
           runId: run.id,
           activeAttemptId: attempt.id,
           expectedStatus: "starting",
-          events: yield* Effect.forEach(abandonedTurns, ({ turn, run: failedRun }) =>
+          events: yield* Effect.forEach(abandonedTurns, ({ turn, run: abandonedRun }) =>
             Effect.gen(function* () {
               return {
                 id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
                 type: "provider-turn.updated" as const,
                 threadId: projection.thread.id,
-                runId: failedRun.id,
+                runId: abandonedRun.id,
                 nodeId: turn.nodeId,
-                providerInstanceId: failedRun.providerInstanceId,
+                providerInstanceId: abandonedRun.providerInstanceId,
                 occurredAt: completedAt,
                 payload: { ...turn, status: "interrupted" as const, completedAt },
               };
