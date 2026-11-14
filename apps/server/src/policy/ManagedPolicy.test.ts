@@ -66,6 +66,15 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
       assert.deepEqual(policy.summary?.limits, { webhookTasks: false, telemetry: true });
       assert.equal(ManagedPolicy.deniedBy(policy, "webhookTasks"), "Example Corp");
       assert.isUndefined(ManagedPolicy.deniedBy(policy, "telemetry"));
+
+      const noTasks = yield* loadFrom(
+        JSON.stringify({
+          schemaVersion: 1,
+          organization: "Example Corp",
+          limits: { scheduledTasks: false },
+        }),
+      );
+      assert.deepEqual(noTasks.summary?.limits, { scheduledTasks: false, webhookTasks: false });
     }),
   );
 

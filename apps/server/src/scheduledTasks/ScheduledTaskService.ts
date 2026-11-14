@@ -473,16 +473,24 @@ export const layer = Layer.effect(
     const scheduler = yield* Scheduler.Scheduler;
     const readWebhookOrigin = yield* ScheduledTaskWebhookOrigin;
     const managedPolicy = yield* ManagedPolicy.ManagedPolicy;
-    const webhookPolicyOrganization = ManagedPolicy.deniedBy(managedPolicy, "webhookTasks");
-    // Existing webhook tasks stay stored but report why they do not run.
-    const webhookPolicyBlock =
-      webhookPolicyOrganization === undefined
+    const tasksPolicyOrganization = ManagedPolicy.deniedBy(managedPolicy, "scheduledTasks");
+    const tasksPolicyBlock =
+      tasksPolicyOrganization === undefined
         ? undefined
-        : managedPolicyDeniedMessage(webhookPolicyOrganization, "webhook tasks");
-    const withPolicy = (task: ScheduledTask): ScheduledTask =>
-      webhookPolicyBlock !== undefined && task.schedule.type === "webhook"
-        ? { ...task, blockedByPolicy: webhookPolicyBlock }
-        : task;
+        : managedPolicyDeniedMessage(tasksPolicyOrganization, "scheduled tasks");
+    const webhookPolicyOrganization = ManagedPolicy.deniedBy(managedPolicy, "webhookTasks");
+    const webhookPolicyBlock =
+      tasksPolicyBlock ??
+      (webhookPolicyOrganization === undefined
+        ? undefined
+        : managedPolicyDeniedMessage(webhookPolicyOrganization, "webhook tasks"));
+    const policyBlock = ({ type }: Pick<ScheduledTask["schedule"], "type">) =>
+      type === "webhook" ? webhookPolicyBlock : tasksPolicyBlock;
+    // Blocked tasks stay stored but report why they do not run.
+    const withPolicy = (task: ScheduledTask): ScheduledTask => {
+      const blockedByPolicy = policyBlock(task.schedule);
+      return blockedByPolicy === undefined ? task : { ...task, blockedByPolicy };
+    };
     const webhookPermits = yield* Ref.make<ReadonlyMap<ScheduledTaskId, Semaphore.Semaphore>>(
       new Map(),
     );
@@ -1240,6 +1248,7 @@ export const layer = Layer.effect(
     });
 
     const runDueTasks = Effect.fn("ScheduledTaskService.runDueTasks")(function* () {
+      if (tasksPolicyBlock !== undefined) return;
       const now = yield* localNow;
       const nowMs = DateTime.toEpochMillis(now);
       if (yield* dueTasks.isIdle(nowMs)) return;
@@ -1393,12 +1402,10 @@ export const layer = Layer.effect(
     const upsert: ScheduledTaskService["Service"]["upsert"] = Effect.fn(
       "ScheduledTaskService.upsert",
     )(function* (input) {
-      // A webhook task the policy blocks can still be edited while it is off.
-      if (input.enabled && input.schedule.type === "webhook" && webhookPolicyBlock !== undefined) {
-        return yield* taskError(
-          webhookPolicyBlock,
-          input.id === undefined ? {} : { taskId: input.id },
-        );
+      // A task the policy blocks can still be edited while it is off.
+      const policyDenial = input.enabled ? policyBlock(input.schedule) : undefined;
+      if (policyDenial !== undefined) {
+        return yield* taskError(policyDenial, input.id === undefined ? {} : { taskId: input.id });
       }
       const now = yield* localNow;
       const uuid =
@@ -1562,12 +1569,9 @@ export const layer = Layer.effect(
     )(function* (input) {
       const existing = yield* loadTask(input.id);
       if (existing.enabled === input.enabled) return { task: existing };
-      if (
-        input.enabled &&
-        existing.schedule.type === "webhook" &&
-        webhookPolicyBlock !== undefined
-      ) {
-        return yield* taskError(webhookPolicyBlock, { taskId: input.id });
+      const policyDenial = input.enabled ? policyBlock(existing.schedule) : undefined;
+      if (policyDenial !== undefined) {
+        return yield* taskError(policyDenial, { taskId: input.id });
       }
       const modeDenial =
         input.enabled && existing.threadId === null
@@ -1697,6 +1701,9 @@ export const layer = Layer.effect(
         return yield* taskError("Webhook tasks run when their URL receives a request.", {
           taskId: input.id,
         });
+      }
+      if (tasksPolicyBlock !== undefined) {
+        return yield* taskError(tasksPolicyBlock, { taskId: input.id });
       }
       return yield* runTask(task, "manual").pipe(
         Effect.mapError((cause) =>
