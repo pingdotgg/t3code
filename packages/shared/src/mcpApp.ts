@@ -177,7 +177,10 @@ export function mcpAppContentSecurityPolicy(csp: McpAppCsp | undefined): string 
     `font-src data: ${resources}`.trim(),
     `media-src data: blob: ${resources}`.trim(),
     `connect-src ${list(csp?.connectDomains, "'none'")}`,
-    `frame-src ${list(csp?.frameDomains, "'none'")}`,
+    // A blob: frame holds HTML the app already has and inherits its opaque
+    // origin, sandbox and policy. Apps whose own embed can't load from an
+    // opaque origin fall back to one.
+    `frame-src blob: ${csp?.frameDomains?.join(" ") ?? ""}`.trim(),
     "object-src 'none'",
     `base-uri ${list(csp?.baseUriDomains, "'none'")}`,
     "form-action 'none'",

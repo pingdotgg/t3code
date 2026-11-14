@@ -18,8 +18,13 @@ describe("mcpAppContentSecurityPolicy", () => {
     const policy = mcpAppContentSecurityPolicy(undefined);
     expect(policy).toContain("default-src 'none'");
     expect(policy).toContain("connect-src 'none'");
-    expect(policy).toContain("frame-src 'none'");
+    expect(policy).toContain("frame-src blob:;");
     expect(policy).not.toContain("'self'");
+  });
+
+  it("lets apps frame their own blob: documents alongside declared frame origins", () => {
+    const policy = mcpAppContentSecurityPolicy({ frameDomains: ["https://embed.test"] });
+    expect(policy).toContain("frame-src blob: https://embed.test;");
   });
 
   it("allows exactly the declared origins", () => {
