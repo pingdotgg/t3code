@@ -23,6 +23,7 @@ import { HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as NodeUtil from "node:util";
 
+import { readMacosSystemProxyEnv } from "./macosSystemProxy.ts";
 import * as ModelManifest from "./ModelManifest.ts";
 import { resolveProviderCompatibility } from "./providerCompatibility.ts";
 import * as ProviderInstallationGate from "./ProviderInstallationGate.ts";
@@ -325,17 +326,22 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
   const installationGate = yield* ProviderInstallationGate.ProviderInstallationGate;
-  const runMaintenanceCommand = (
-    update: ProviderMaintenanceCommandAction,
-    onProgress: (line: string) => Effect.Effect<void>,
-  ) =>
-    runProviderMaintenanceCommandWithSpawner({
-      spawner,
-      command: update.executable,
-      args: update.args,
-      onProgress,
-      ...(update.env ? { env: update.env } : {}),
-    });
+  const runMaintenanceCommand = Effect.fn("ProviderMaintenanceRunner.runMaintenanceCommand")(
+    function* (
+      update: ProviderMaintenanceCommandAction,
+      onProgress: (line: string) => Effect.Effect<void>,
+    ) {
+      // Read per update: the system proxy can change while the server runs.
+      const proxyEnv = yield* readMacosSystemProxyEnv(spawner, update.env);
+      return yield* runProviderMaintenanceCommandWithSpawner({
+        spawner,
+        command: update.executable,
+        args: update.args,
+        onProgress,
+        env: { ...update.env, ...proxyEnv },
+      });
+    },
+  );
   // Instances with other homes or accounts can still run the binary this update replaces. The
   // lock key names the package manager location, so other drivers there keep their own package.
   const instancesSharingInstallation = Effect.fn(
