@@ -89,6 +89,9 @@ impl ServeOptions {
     }
 }
 
+/// The caller reads the login environment first (`conn_support::login_env::hydrate`), before
+/// it detects `providers`.
+///
 /// Runs until SIGTERM or SIGINT, then stops cleanly: no new connections, open sockets close,
 /// and the runtime drops every task, which kills provider children (`kill_on_drop`).
 pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
@@ -116,13 +119,16 @@ pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
             std::process::exit(1);
         }
     };
-    // `fixPath`: the login shell's PATH for every child, read before any provider starts.
-    let _ = tokio::task::spawn_blocking(conn_support::login_env::hydrate).await;
     for (root, title) in home::read_projects(&state_dir) {
         if !projects.iter().any(|(r, _)| *r == root) {
             projects.push((root, Some(title)));
         }
     }
+    let provider_names = providers
+        .iter()
+        .map(|p| p.instance_id().as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
     let projects: Vec<ProjectConfig> = projects
         .iter()
         .map(|(root, title)| ProjectConfig {
@@ -235,6 +241,7 @@ pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
         state_dir.display()
     );
     println!("methods: {}", state.table.coverage());
+    println!("providers: {provider_names}");
     // Probes spawn provider CLIs; T3 starts them once the server is ready, too.
     crate::methods::provider::start_status_refresh(&state.deps);
     if !is_desktop {
