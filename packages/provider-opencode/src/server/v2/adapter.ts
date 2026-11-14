@@ -638,6 +638,9 @@ const LOST_BACKGROUND =
   "T3 Code lost its connection to OpenCode while this subagent ran, so its result is not shown.";
 const INVENTORY_TIMEOUT = "5 seconds";
 const MCP_TOOL_RELOAD_SETTLE = "250 millis";
+const MCP_CONNECT_POLL = "100 millis";
+const mcpStatus = (servers: ReadonlyArray<Mcp.Server>, name: string) =>
+  servers.find((server) => server.name === name)?.status.status;
 const ACTIVE_CHECK_TIMEOUT = "5 seconds";
 // Other failures may still have admitted the prompt.
 const CLEAR_PROMPT_REJECTIONS: ReadonlySet<string> = new Set([
@@ -4203,11 +4206,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       // Re-adding an unchanged config keeps its existing connection.
       let mcpAvailable = false;
       if (wanted !== undefined) {
-        const fresh = state.mcp === undefined;
+        const location = { directory };
         mcpAvailable = yield* client.mcp
           .add({
             server: name,
-            location: { directory },
+            location,
             config: new Mcp.RemoteConfig({
               type: "remote",
               url: mcpSession!.endpoint,
@@ -4216,18 +4219,34 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             }),
           })
           .pipe(
+            // A recreated Location answers the add while the server is still connecting.
+            Effect.andThen(
+              client.mcp.list({ location }).pipe(
+                Effect.repeat({
+                  until: (list) => mcpStatus(list.data, name) !== "pending",
+                  schedule: Schedule.spaced(MCP_CONNECT_POLL),
+                }),
+              ),
+            ),
+            Effect.map((list) => mcpStatus(list.data, name) === "connected"),
             Effect.timeout(INVENTORY_TIMEOUT),
-            Effect.as(true),
             Effect.catchCause((cause) =>
               Effect.logWarning("Could not add T3 Code's MCP server to OpenCode.", cause).pipe(
                 Effect.as(false),
               ),
             ),
           );
-        if (mcpAvailable) state.mcp = wanted;
-        // Before 2.2.6, OpenCode loads a new server's tools 100 ms after it connects, and a prompt sent sooner lacks them.
-        if (mcpAvailable && fresh && compareSemverVersions(connection.version, "2.2.6") < 0) {
-          yield* Effect.sleep(MCP_TOOL_RELOAD_SETTLE);
+        if (mcpAvailable) {
+          state.mcp = wanted;
+          // Before 2.2.6, OpenCode loads a server's tools 100 ms after it connects, and a reconnect
+          // can finish inside the add, so every turn waits rather than have them join mid-turn.
+          if (compareSemverVersions(connection.version, "2.2.6") < 0) {
+            yield* Effect.sleep(MCP_TOOL_RELOAD_SETTLE);
+          }
+        } else {
+          // A server left registered could still connect and change the tool catalog mid-turn.
+          yield* removeMcp(wanted);
+          state.mcp = undefined;
         }
       }
       const instructions = [
