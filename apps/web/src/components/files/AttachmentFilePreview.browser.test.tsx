@@ -931,10 +931,13 @@ describe("standalone Mermaid previews", () => {
       .spyOn(HTMLImageElement.prototype, "src", "set")
       .mockImplementation(() => {});
     await using screen = await render(<MermaidFilePreview text={`flowchart LR\n${node}`} />);
-    await vi.waitFor(() =>
-      expect(screen.container.querySelector('[role="alert"]')?.textContent).toContain(
-        "Show Mermaid source",
-      ),
+    // The first case loads the Mermaid viewer chunk, which can take over a second on a slow runner.
+    await vi.waitFor(
+      () =>
+        expect(screen.container.querySelector('[role="alert"]')?.textContent).toContain(
+          "Show Mermaid source",
+        ),
+      { timeout: 10_000 },
     );
     expect(imageSource).not.toHaveBeenCalled();
     expect(screen.container.querySelector("svg")).toBeNull();
@@ -1265,24 +1268,17 @@ it.each([
       target.startsWith("/") ? target.slice(1) : `xl/${target}`,
       `<worksheet><sheetData><row r="${row}"><c r="A${row}" t="inlineStr"><is><t>worksheet value</t></is></c></row></sheetData></worksheet>`,
     );
-    const file = await zip.generateAsync({ type: "blob", compression: "DEFLATE" });
-    const src = URL.createObjectURL(file);
-    try {
-      await using screen = await render(
-        <div style={{ display: "flex", height: 400, width: 600 }}>
-          <OfficeFilePreview name="custom.xlsx" src={src} kind="xlsx" sizeBytes={file.size} />
-        </div>,
+    const bytes = await zip.generateAsync({ type: "arraybuffer", compression: "DEFLATE" });
+    const { prepareOffice } = await import("./officeArchive");
+    if (row > 250000) {
+      await expect(prepareOffice(bytes, "xlsx")).rejects.toThrow(
+        "This workbook exceeds the preview limit",
       );
-      await vi.waitFor(
-        () =>
-          expect(screen.container.textContent).toContain(
-            row > 250000 ? "This workbook exceeds the preview limit" : "worksheet value",
-          ),
-        { timeout: 10_000 },
-      );
-    } finally {
-      URL.revokeObjectURL(src);
+      return;
     }
+    const prepared = await prepareOffice(bytes, "xlsx");
+    const bounded = await JSZip.loadAsync(prepared.bytes);
+    expect(await bounded.file(`xl/${target}`)!.async("string")).toContain("worksheet value");
   },
 );
 
@@ -1302,6 +1298,23 @@ it("copies every indexed line rather than the mounted preview rows", async () =>
   expect(await first).toBe(text);
   expect(await copyContents.current!()).toBe(text);
   expect(screen.container.querySelector('[role="alert"]')).toBeNull();
+});
+
+it.each([
+  ["one.csv", "text/csv", "name\nAda\n", "1 row · 1 column ·"],
+  ["two.csv", "text/csv", "name,count\nAda,1\nGrace,2\n", "2 rows · 2 columns ·"],
+  ["one.tsv", "text/tab-separated-values", "name\nAda\n", "1 row · 1 column ·"],
+  ["one.txt", "text/plain", "a".repeat(1024 * 1024) + "\n", "1 line ·"],
+  ["two.txt", "text/plain", ("a".repeat(512 * 1024) + "\n").repeat(2), "2 lines ·"],
+] as const)("labels the counts of %s in the status line", async (name, mimeType, text, label) => {
+  const file = new Blob([text], { type: mimeType });
+  await using screen = await render(
+    <AttachmentFilePreview name={name} mimeType={mimeType} sizeBytes={file.size} file={file} />,
+  );
+  const status = () => screen.container.querySelector('[role="status"]')?.textContent ?? "";
+  // A cold large-text worker can take longer than waitFor's default to boot on CI.
+  await vi.waitFor(() => expect(status()).toMatch(/ [KM]?B$/), { timeout: 10_000 });
+  expect(status()).toContain(label);
 });
 
 it.each(["archive", "sqlite"] as const)(
@@ -1481,6 +1494,42 @@ it("keeps a workspace PDF open across URL renewals and reloads it when the file 
     URL.revokeObjectURL(edited);
   }
 });
+
+it("loads an edited HTML file outside the workspace from a renewed URL", async () => {
+  const { WorkspaceBrowserPreview } = await import("./FilePreviewPanel");
+  const preview = (mutation: string) => (
+    <WorkspaceBrowserPreview
+      environmentId={EnvironmentId.make("test")}
+      threadRef={{ environmentId: EnvironmentId.make("test"), threadId: ThreadId.make("test") }}
+      draft={false}
+      workspaceRoot="/repo"
+      absolutePath="/tmp/report.html"
+      title="Report"
+      workspaceMutationId={mutation}
+    />
+  );
+  assetUrlState.mockReturnValue({ _tag: "Success", url: "data:text/html,original", expiresAt: 0 });
+  await using screen = await render(preview("first"));
+  const opened = screen.container.querySelector("iframe");
+  expect(opened?.getAttribute("src")).toMatch(/^data:text\/html,original/);
+
+  assetUrlState.mockReturnValue({
+    _tag: "Success",
+    url: "data:text/html,original",
+    expiresAt: 0,
+    waiting: true,
+  });
+  await screen.rerender(preview("second"));
+  expect(assetUrlState).toHaveBeenLastCalledWith(expect.anything(), expect.anything(), "second");
+  expect(screen.container.querySelector("iframe")).toBe(opened);
+
+  assetUrlState.mockReturnValue({ _tag: "Success", url: "data:text/html,edited", expiresAt: 0 });
+  await screen.rerender(preview("second"));
+  expect(screen.container.querySelector("iframe")?.getAttribute("src")).toMatch(
+    /^data:text\/html,edited/,
+  );
+});
+
 function planningPdf(
   titles = ["Quarterly outlook", "Delivery milestones", "Budget and risks"],
   firstHeight = 140,

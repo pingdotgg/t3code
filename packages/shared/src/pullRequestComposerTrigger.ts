@@ -17,8 +17,9 @@ export type PullRequestComposerTrigger = {
   | { readonly kind: "reference"; readonly sigil: PullRequestReferenceSigil }
 );
 
-// Mentions cover GitHub logins (letters, digits, hyphens) and GitLab usernames (also `_` and `.`).
-const TOKEN = /^(?:@([A-Za-z0-9_][A-Za-z0-9_.-]*)?|([#!])([\p{L}\p{N}_-]*))$/u;
+// Logins are ASCII, but the query also matches display names, which can be in any script.
+// Combining marks (\p{M}) attach to the letter before them, so they cannot start a name.
+const TOKEN = /^(?:@([\p{L}\p{N}_][\p{L}\p{M}\p{N}_.-]*)?|([#!])([\p{L}\p{N}_-]*))$/u;
 
 /** What a pull request's host can complete; absent fields complete nothing. */
 export type PullRequestCompletionSupport = Pick<

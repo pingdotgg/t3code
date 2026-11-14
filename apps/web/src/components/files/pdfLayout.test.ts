@@ -67,6 +67,8 @@ describe("mixed-height page layout", () => {
     expect(indexes(0, 100)).toEqual([0, 1]);
     expect(indexes(1100, 100)).toEqual([2]);
     expect(indexes(1100, 900)).toEqual([1, 2]);
+    // Page 2 starts 180px (1.8 viewports) below the visible bottom of 800.
+    expect(indexes(700, 100)).toEqual([1, 2]);
     expect(visiblePdfPages(ratios, offsets, 0, 100)[0]).toEqual({ index: 0, ratio: ratios[0] });
   });
 
@@ -143,6 +145,19 @@ describe("pdfFindMatchRuns", () => {
     expect(pdfFindIncludes(page, "quarterly report")).toBe(true);
     expect(pdfFindIncludes(page, "bud-get")).toBe(false);
     expect(pdfFindIncludes(page, " ")).toBe(false);
+  });
+
+  it("matches straight quotes typed for typeset curly ones", () => {
+    expect(pdfFindMatchRuns(["We don\u2019t ", "ship \u201cbeta\u201d"], "don't")).toEqual([
+      true,
+      false,
+    ]);
+    expect(pdfFindMatchRuns(["We don\u2019t ", "ship \u201cbeta\u201d"], '"beta"')).toEqual([
+      false,
+      true,
+    ]);
+    expect(pdfFindIncludes("We don\u2019t ship \u201cbeta\u201d", 'don\'t ship "beta"')).toBe(true);
+    expect(pdfFindIncludes("We don't ship", "don\u2019t")).toBe(true);
   });
 
   it("highlights nothing for a blank or missing query", () => {
