@@ -82,6 +82,19 @@ layer("GitLabCli.layer", (it) => {
           args: ["mr", "view", "--output", "json", "--", "42"],
         }),
       );
+      const classifyFailure = mockedRun.mock.calls.at(-1)?.[0].classifyFailure;
+      assert.strictEqual(
+        classifyFailure?.(
+          "x gitlab.example.test has not been authenticated with glab. Run `glab auth login`",
+        ),
+        "authentication",
+      );
+      assert.strictEqual(
+        classifyFailure?.(
+          'Failed to get merge request 42: oauth2: "invalid_grant" "The provided authorization grant is invalid, expired, revoked, does not match the redirection URI used in the authorization request, or was issued to another client."',
+        ),
+        "authentication",
+      );
     }),
   );
 
@@ -147,6 +160,38 @@ layer("GitLabCli.layer", (it) => {
             "20",
             "--output",
             "json",
+          ],
+        }),
+      );
+    }),
+  );
+
+  it.effect("creates same-project MRs without a repository lookup", () =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(Effect.succeed(processOutput("{}")));
+      const glab = yield* GitLabCli.GitLabCli;
+      yield* glab.createMergeRequest({
+        cwd: "/repo",
+        baseBranch: "main",
+        headSelector: "feature/fix",
+        title: "Fix remote flow",
+        bodyFile: "/tmp/body.md",
+      });
+      expect(mockedRun).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          args: [
+            "api",
+            "--method",
+            "POST",
+            "projects/:fullpath/merge_requests",
+            "--raw-field",
+            "source_branch=feature/fix",
+            "--raw-field",
+            "target_branch=main",
+            "--raw-field",
+            "title=Fix remote flow",
+            "--field",
+            "description=@/tmp/body.md",
           ],
         }),
       );

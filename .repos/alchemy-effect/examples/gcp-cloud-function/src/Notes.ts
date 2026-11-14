@@ -1,4 +1,4 @@
-import * as GCP from "alchemy/GCP";
+import * as GCP from "@alchemy.run/gcp";
 import * as Effect from "effect/Effect";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
@@ -11,10 +11,7 @@ interface Note {
   createdAt: string;
 }
 
-const toNote = (snapshot: {
-  name: string;
-  fields: Record<string, unknown>;
-}): Note => ({
+const toNote = (snapshot: { name: string; fields: Record<string, unknown> }): Note => ({
   id: snapshot.name.split("/").pop()!,
   title: String(snapshot.fields.title ?? ""),
   body: String(snapshot.fields.body ?? ""),
@@ -24,8 +21,7 @@ const toNote = (snapshot: {
       : String(snapshot.fields.createdAt ?? ""),
 });
 
-const notFound = () =>
-  HttpServerResponse.json({ error: "not found" }, { status: 404 });
+const notFound = () => HttpServerResponse.json({ error: "not found" }, { status: 404 });
 
 /**
  * A notes API on a 2nd-gen Cloud Function.
@@ -61,10 +57,7 @@ export default class Notes extends GCP.CloudFunctions.Function<Notes>()(
             body?: unknown;
           };
           if (typeof input.title !== "string" || input.title === "") {
-            return yield* HttpServerResponse.json(
-              { error: "title is required" },
-              { status: 400 },
-            );
+            return yield* HttpServerResponse.json({ error: "title is required" }, { status: 400 });
           }
           const snapshot = yield* db.create(`notes/${crypto.randomUUID()}`, {
             title: input.title,
@@ -94,17 +87,12 @@ export default class Notes extends GCP.CloudFunctions.Function<Notes>()(
           return HttpServerResponse.empty({ status: 204 });
         }
 
-        return yield* HttpServerResponse.json(
-          { error: "method not allowed" },
-          { status: 405 },
-        );
+        return yield* HttpServerResponse.json({ error: "method not allowed" }, { status: 405 });
       }).pipe(
         // Surface Firestore failures (e.g. IAM still propagating right after
         // a deploy) as a 500 with the error tag instead of an opaque crash.
         Effect.catch((error) =>
-          HttpServerResponse.json({ error: error._tag }, { status: 500 }).pipe(
-            Effect.orDie,
-          ),
+          HttpServerResponse.json({ error: error._tag }, { status: 500 }).pipe(Effect.orDie),
         ),
       ),
     };

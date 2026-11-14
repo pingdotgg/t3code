@@ -1,5 +1,5 @@
-import * as Drizzle from "alchemy/Drizzle";
-import * as Fly from "alchemy/Fly";
+import * as Drizzle from "@alchemy.run/drizzle";
+import * as Fly from "@alchemy.run/fly";
 
 export const API_PORT = 3000;
 
@@ -25,4 +25,3 @@ export const Schema = Drizzle.Schema("app-schema", {
 });
 
 export const Db = Fly.Postgres("Db", { region: "iad" });
-

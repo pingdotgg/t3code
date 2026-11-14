@@ -7,12 +7,14 @@ import {
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import { resolveSymlinkTarget } from "@t3tools/shared/symlink";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
@@ -47,9 +49,12 @@ export interface DesktopSettingsChange {
 }
 
 const DEFAULT_TAILSCALE_SERVE_PORT = 443;
-const MIN_MAIN_WINDOW_SIZE = {
-  width: 840,
-  height: 620,
+// Fits half and third tiles of common scaled displays (down to 480x432 DIP) on
+// Wayland, where Electron's client-side frame adds 32x42 DIP to the enforced
+// minimum. The web layout already handles phone widths.
+export const MIN_MAIN_WINDOW_SIZE = {
+  width: 400,
+  height: 360,
 } as const;
 export const DesktopWindowBoundsSchema = Schema.Struct({
   x: Schema.Int,
@@ -85,20 +90,25 @@ const DesktopWindowBoundsDocument = Schema.Struct({
   height: Schema.Number,
 });
 
+// A value this build cannot read drops only its own key, so the rest of the file
+// still loads and is written back instead of every setting resetting to defaults.
+const optionalReadableKey = <S extends Schema.Top>(schema: S) =>
+  Schema.optionalKey(schema.pipe(Schema.catchDecoding(() => Effect.succeedNone)));
+
 const DesktopSettingsDocument = Schema.Struct({
-  localEnvironmentEnabled: Schema.optionalKey(Schema.Boolean),
-  linuxPasswordStore: Schema.optionalKey(Schema.Unknown),
-  mainWindowBounds: Schema.optionalKey(Schema.NullOr(DesktopWindowBoundsDocument)),
-  mainWindowMaximized: Schema.optionalKey(Schema.Boolean),
-  serverExposureMode: Schema.optionalKey(DesktopServerExposureModeSchema),
-  tailscaleServeEnabled: Schema.optionalKey(Schema.Boolean),
-  tailscaleServePort: Schema.optionalKey(Schema.Number),
-  updateChannel: Schema.optionalKey(DesktopUpdateChannelSchema),
-  updateChannelConfiguredByUser: Schema.optionalKey(Schema.Boolean),
-  wslBackendEnabled: Schema.optionalKey(Schema.Boolean),
-  wslMode: Schema.optionalKey(Schema.Literals(["local", "wsl"])),
-  wslDistro: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  wslOnly: Schema.optionalKey(Schema.Boolean),
+  localEnvironmentEnabled: optionalReadableKey(Schema.Boolean),
+  linuxPasswordStore: optionalReadableKey(Schema.Unknown),
+  mainWindowBounds: optionalReadableKey(Schema.NullOr(DesktopWindowBoundsDocument)),
+  mainWindowMaximized: optionalReadableKey(Schema.Boolean),
+  serverExposureMode: optionalReadableKey(DesktopServerExposureModeSchema),
+  tailscaleServeEnabled: optionalReadableKey(Schema.Boolean),
+  tailscaleServePort: optionalReadableKey(Schema.Number),
+  updateChannel: optionalReadableKey(DesktopUpdateChannelSchema),
+  updateChannelConfiguredByUser: optionalReadableKey(Schema.Boolean),
+  wslBackendEnabled: optionalReadableKey(Schema.Boolean),
+  wslMode: optionalReadableKey(Schema.Literals(["local", "wsl"])),
+  wslDistro: optionalReadableKey(Schema.NullOr(Schema.String)),
+  wslOnly: optionalReadableKey(Schema.Boolean),
 });
 
 type DesktopSettingsDocument = typeof DesktopSettingsDocument.Type;
@@ -376,15 +386,20 @@ function applyWslWindowsFallback(settings: DesktopSettings): DesktopSettings {
   return setWslOnly(setWslBackendEnabled(settings, false), false);
 }
 
+// Fails only when the file may exist but could not be read; a missing file means defaults.
 function readSettings(
   fileSystem: FileSystem.FileSystem,
   settingsPath: string,
   appVersion: string,
-): Effect.Effect<DesktopSettings> {
+): Effect.Effect<DesktopSettings, PlatformError.PlatformError> {
   const defaultSettings = resolveDefaultDesktopSettings(appVersion);
 
   return fileSystem.readFileString(settingsPath).pipe(
-    Effect.option,
+    Effect.asSome,
+    Effect.catchIf(
+      (cause) => cause.reason._tag === "NotFound",
+      () => Effect.succeed(Option.none<string>()),
+    ),
     Effect.flatMap(
       Option.match({
         onNone: () => Effect.succeed(defaultSettings),
@@ -442,26 +457,28 @@ const writeSettings = Effect.fn("desktop.settings.writeSettings")(function* (inp
         }),
     ),
   );
-  yield* input.fileSystem.writeFileString(tempPath, `${encoded}\n`).pipe(
-    Effect.mapError(
-      (cause) =>
-        new DesktopSettingsWriteError({
-          operation: "write-temporary-file",
-          path: tempPath,
-          cause,
-        }),
-    ),
-  );
-  yield* input.fileSystem.rename(tempPath, targetPath).pipe(
-    Effect.mapError(
-      (cause) =>
-        new DesktopSettingsWriteError({
-          operation: "replace-settings-file",
-          path: input.settingsPath,
-          cause,
-        }),
-    ),
-  );
+  yield* Effect.gen(function* () {
+    yield* input.fileSystem.writeFileString(tempPath, `${encoded}\n`).pipe(
+      Effect.mapError(
+        (cause) =>
+          new DesktopSettingsWriteError({
+            operation: "write-temporary-file",
+            path: tempPath,
+            cause,
+          }),
+      ),
+    );
+    yield* input.fileSystem.rename(tempPath, targetPath).pipe(
+      Effect.mapError(
+        (cause) =>
+          new DesktopSettingsWriteError({
+            operation: "replace-settings-file",
+            path: input.settingsPath,
+            cause,
+          }),
+      ),
+    );
+  }).pipe(Effect.ensuring(input.fileSystem.remove(tempPath, { force: true }).pipe(Effect.ignore)));
 });
 
 /** @public */
@@ -469,8 +486,10 @@ export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const settingsRef = yield* SynchronizedRef.make(environment.defaultDesktopSettings);
+  // Writing over a settings file we could not read would erase the preferences it holds.
+  const persistenceEnabled = yield* Ref.make(true);
 
   const updateInMemory = (update: (settings: DesktopSettings) => DesktopSettings) =>
     SynchronizedRef.modify(settingsRef, (settings) => {
@@ -487,25 +506,23 @@ export const make = Effect.gen(function* () {
         return Effect.succeed([settingsChange(settings, false), settings] as const);
       }
 
-      return crypto.randomUUIDv4().pipe(
-        Effect.map((uuid) => uuid.replace(/-/g, "")),
-        Effect.mapError(
-          (cause) =>
-            new DesktopSettingsWriteError({
-              operation: "create-temporary-file-name",
-              path: environment.desktopSettingsPath,
-              cause,
-            }),
-        ),
-        Effect.flatMap((suffix) =>
-          writeSettings({
-            fileSystem,
-            path,
-            settingsPath: environment.desktopSettingsPath,
-            settings: nextSettings,
-            defaultSettings: environment.defaultDesktopSettings,
-            suffix,
-          }),
+      return Ref.get(persistenceEnabled).pipe(
+        Effect.flatMap((enabled) =>
+          enabled
+            ? random.uuidV4().pipe(
+                Effect.map((uuid) => uuid.replace(/-/g, "")),
+                Effect.flatMap((suffix) =>
+                  writeSettings({
+                    fileSystem,
+                    path,
+                    settingsPath: environment.desktopSettingsPath,
+                    settings: nextSettings,
+                    defaultSettings: environment.defaultDesktopSettings,
+                    suffix,
+                  }),
+                ),
+              )
+            : Effect.void,
         ),
         Effect.as([settingsChange(nextSettings, true), nextSettings] as const),
       );
@@ -518,6 +535,17 @@ export const make = Effect.gen(function* () {
         fileSystem,
         environment.desktopSettingsPath,
         environment.appVersion,
+      ).pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning(
+            "Could not read desktop settings; using defaults without saving changes.",
+            cause,
+          ).pipe(
+            Effect.annotateLogs({ settingsPath: environment.desktopSettingsPath }),
+            Effect.andThen(Ref.set(persistenceEnabled, false)),
+            Effect.as(resolveDefaultDesktopSettings(environment.appVersion)),
+          ),
+        ),
       );
       return yield* SynchronizedRef.setAndGet(settingsRef, settings);
     }).pipe(Effect.withSpan("desktop.settings.load")),

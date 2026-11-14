@@ -8,10 +8,12 @@ import * as Cause from "effect/Cause";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/process";
 
 import { VcsProcessExitError, VcsProcessSpawnError } from "@t3tools/contracts";
@@ -90,7 +92,7 @@ describe("VcsProcess.run", () => {
       yield* fs.remove(lock);
       yield* git(restore);
       expect(yield* fs.readFileString(file)).toBe("before\n");
-    }).pipe(provideLive, Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(provideLive, Effect.provide(NodeServices.layer)),
   );
 
   it.effect.each([
@@ -145,6 +147,55 @@ describe("VcsProcess.run", () => {
         const encoded = yield* encodeExitError(error);
         expect(encoded).not.toContain("private");
       }),
+  );
+
+  // Without LANG, macOS Git follows the system language, as in an app launched from Finder.
+  it.effect("reads Git failures in English when Git would follow the system language", () =>
+    Effect.gen(function* () {
+      let attempts = 0;
+      const service = yield* VcsProcess.make.pipe(
+        Effect.provideService(
+          ProcessRunner.ProcessRunner,
+          ProcessRunner.ProcessRunner.of({
+            run: (input) =>
+              Effect.sync(() => {
+                attempts += 1;
+                return {
+                  stdout: "",
+                  stderr:
+                    attempts % 2 === 0
+                      ? ""
+                      : input.env?.LANGUAGE === "C"
+                        ? "fatal: Unable to create '/private/repo/.git/index.lock': File exists.\n"
+                        : "致命錯誤: 無法建立「/private/repo/.git/index.lock」：File exists。\n",
+                  code: ChildProcessSpawner.ExitCode(attempts % 2 === 0 ? 0 : 128),
+                  timedOut: false,
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                  stdoutInvalidUtf8: false,
+                  stderrInvalidUtf8: false,
+                };
+              }),
+          }),
+        ),
+      );
+
+      const capture = yield* service
+        .run({
+          ...baseInput,
+          operation: VcsProcess.CHECKPOINT_CAPTURE_OPERATION,
+          args: ["add", "--all"],
+        })
+        .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
+      yield* TestClock.adjust("1 second");
+      expect(Exit.isSuccess(yield* Fiber.join(capture))).toBe(true);
+      expect(attempts).toBe(2);
+
+      attempts = 0;
+      const error = yield* Effect.flip(service.run(baseInput));
+      assert.instanceOf(error, VcsProcessExitError);
+      expect(error.detail).toBe(VcsProcess.GIT_INDEX_LOCKED_DETAIL);
+    }),
   );
 
   it.effect.each([
@@ -313,6 +364,60 @@ describe("VcsProcess.run", () => {
       yield* Fiber.join(burst);
       expect(yield* Ref.get(total)).toBe(32);
       expect(yield* Ref.get(peak)).toBe(4);
+    }),
+  );
+
+  it.effect("leaves git a slot while slow forge CLI processes are running", () =>
+    Effect.gen(function* () {
+      const gate = yield* Deferred.make<void>();
+      const service = yield* VcsProcess.make.pipe(
+        Effect.provideService(
+          ProcessRunner.ProcessRunner,
+          ProcessRunner.ProcessRunner.of({
+            run: (input) =>
+              Effect.gen(function* () {
+                if (input.command !== "git") yield* Deferred.await(gate);
+                return {
+                  stdout: "",
+                  stderr: "",
+                  code: ChildProcessSpawner.ExitCode(0),
+                  timedOut: false,
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                  stdoutInvalidUtf8: false,
+                  stderrInvalidUtf8: false,
+                };
+              }),
+          }),
+        ),
+      );
+
+      const forgeRuns = yield* Effect.forEach(Array.from({ length: 12 }), () =>
+        service
+          .run({
+            operation: "synthetic.forge.listChangeRequests",
+            command: "tea",
+            args: ["pulls", "list"],
+            cwd: "/workspace",
+          })
+          .pipe(Effect.forkChild({ startImmediately: true })),
+      );
+      const checkpoint = yield* service
+        .run({
+          ...baseInput,
+          operation: VcsProcess.CHECKPOINT_CAPTURE_OPERATION,
+          args: ["rev-parse", "HEAD"],
+        })
+        .pipe(Effect.timeoutOption("1 second"), Effect.forkChild({ startImmediately: true }));
+      yield* TestClock.adjust("1 second");
+
+      const gitResult = yield* Fiber.join(checkpoint);
+      yield* Deferred.succeed(gate, undefined);
+      yield* Fiber.joinAll(forgeRuns);
+      expect(
+        Option.isSome(gitResult),
+        "git waited behind forge CLI runs that held every VCS process slot",
+      ).toBe(true);
     }),
   );
 

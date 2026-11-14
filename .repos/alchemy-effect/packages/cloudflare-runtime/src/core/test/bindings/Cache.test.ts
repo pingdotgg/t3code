@@ -24,9 +24,9 @@ import { describe, expect, it, layer } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Cache from "../../bindings/cache/index.ts";
 import * as Docker from "../../Docker.ts";
 import * as Globals from "../../globals/Globals.ts";
@@ -38,11 +38,7 @@ import * as Runtime from "../../Runtime.ts";
 import * as RuntimeServices from "../../RuntimeServices.ts";
 import * as Workerd from "../../workerd/Workerd.ts";
 import type { TestWorker } from "../helpers/runtime.ts";
-import {
-  localRuntimeLayer,
-  makeTempDirectory,
-  startTestWorker,
-} from "../helpers/runtime.ts";
+import { localRuntimeLayer, makeTempDirectory, startTestWorker } from "../helpers/runtime.ts";
 
 // Time in milliseconds the fake `Date.now()` always returns
 const TIME_NOW = 1_000_000;
@@ -157,10 +153,7 @@ interface MatchedResponse {
   arrayBuffer: () => ArrayBuffer;
 }
 
-function textResponse(
-  body: string,
-  headers?: Record<string, string>,
-): ResponseToCache {
+function textResponse(body: string, headers?: Record<string, string>): ResponseToCache {
   return { body: { kind: "text", data: body }, headers };
 }
 
@@ -207,10 +200,7 @@ class TestCache {
       headers: new Headers(result.headers),
       text: () => buffer.toString(),
       arrayBuffer: () =>
-        buffer.buffer.slice(
-          buffer.byteOffset,
-          buffer.byteOffset + buffer.byteLength,
-        ),
+        buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength),
     };
   }
 
@@ -235,10 +225,7 @@ class ControlStub {
       method: "POST",
       body: JSON.stringify({ name, args }),
     });
-    assert(
-      res.status === 200 || res.status === 404,
-      `Control op ${name} failed: ${res.status}`,
-    );
+    assert(res.status === 200 || res.status === 404, `Control op ${name} failed: ${res.status}`);
     return res;
   }
 
@@ -254,10 +241,7 @@ class ControlStub {
     await this.#op("waitForFakeTasks");
   }
 
-  async sqlQuery<Row>(
-    query: string,
-    ...params: Array<unknown>
-  ): Promise<Array<Row>> {
+  async sqlQuery<Row>(query: string, ...params: Array<unknown>): Promise<Array<Row>> {
     const res = await this.#op("sqlQuery", query, ...params);
     return (await res.json()) as Array<Row>;
   }
@@ -321,21 +305,20 @@ interface CacheTestContext {
   defaultObject: ControlStub;
 }
 
-const setup: Effect.Effect<CacheTestContext, never, CacheTestWorker> =
-  Effect.gen(function* () {
-    const worker = yield* CacheTestWorker;
-    const ns = `${Date.now()}_${Math.floor(Math.random() * Number.MAX_SAFE_INTEGER)}`;
-    const defaultObject = new ControlStub(worker.baseUrl);
-    yield* Effect.promise(() => defaultObject.enableFakeTimers(TIME_NOW));
-    return {
-      key: (name: string) => `http://localhost/${ns}/${name}`,
-      caches: {
-        default: new TestCache(worker.baseUrl),
-        open: (name: string) => new TestCache(worker.baseUrl, name),
-      },
-      defaultObject,
-    };
-  });
+const setup: Effect.Effect<CacheTestContext, never, CacheTestWorker> = Effect.gen(function* () {
+  const worker = yield* CacheTestWorker;
+  const ns = `${Date.now()}_${Math.floor(Math.random() * Number.MAX_SAFE_INTEGER)}`;
+  const defaultObject = new ControlStub(worker.baseUrl);
+  yield* Effect.promise(() => defaultObject.enableFakeTimers(TIME_NOW));
+  return {
+    key: (name: string) => `http://localhost/${ns}/${name}`,
+    caches: {
+      default: new TestCache(worker.baseUrl),
+      open: (name: string) => new TestCache(worker.baseUrl, name),
+    },
+    defaultObject,
+  };
+});
 
 // -----------------------------------------------------------------------------
 // Tests
@@ -349,13 +332,8 @@ const CacheTestLayer = CacheTestWorkerLive.pipe(
 );
 
 layer(CacheTestLayer)("Cache binding", (it) => {
-  const cacheTest = (
-    name: string,
-    fn: (ctx: CacheTestContext) => Promise<void>,
-  ) =>
-    it.effect(name, () =>
-      setup.pipe(Effect.flatMap((ctx) => Effect.promise(() => fn(ctx)))),
-    );
+  const cacheTest = (name: string, fn: (ctx: CacheTestContext) => Promise<void>) =>
+    it.effect(name, () => setup.pipe(Effect.flatMap((ctx) => Effect.promise(() => fn(ctx)))));
 
   cacheTest("match returns cached responses", async (ctx) => {
     const cache = ctx.caches.default;
@@ -443,9 +421,7 @@ layer(CacheTestLayer)("Cache binding", (it) => {
     expect(res?.status).toBe(304);
     res = await ifNoneMatch('"not the thing"');
     expect(res?.status).toBe(200);
-    res = await ifNoneMatch(
-      '"not the thing",    "thing"    , W/"still not the thing"',
-    );
+    res = await ifNoneMatch('"not the thing",    "thing"    , W/"still not the thing"');
     expect(res?.status).toBe(304);
     res = await ifNoneMatch("*");
     expect(res?.status).toBe(304);
@@ -540,16 +516,10 @@ layer(CacheTestLayer)("Cache binding", (it) => {
     const stmts = sqlStmts(defaultObject);
 
     const key = ctx.key("cache-override");
-    await cache.put(
-      key,
-      textResponse("body1", { "Cache-Control": "max-age=3600" }),
-    );
+    await cache.put(key, textResponse("body1", { "Cache-Control": "max-age=3600" }));
     const blobId = await stmts.getBlobIdByKey(key);
     assert(blobId !== undefined);
-    await cache.put(
-      key,
-      textResponse("body2", { "Cache-Control": "max-age=3600" }),
-    );
+    await cache.put(key, textResponse("body2", { "Cache-Control": "max-age=3600" }));
     const res = await cache.match(key);
     expect(res?.text()).toBe("body2");
 
@@ -620,10 +590,7 @@ layer(CacheTestLayer)("Cache binding", (it) => {
     const key = ctx.key(`cache-is-cached-${headersHash}`);
 
     const expires = new Date(TIME_NOW + 2000).toUTCString();
-    await cache.put(
-      key,
-      textResponse("body", { ...opts.headers, Expires: expires }),
-    );
+    await cache.put(key, textResponse("body", { ...opts.headers, Expires: expires }));
     const res = await cache.match(key);
     expect(res?.status).toBe(opts.cached ? 200 : undefined);
   }
@@ -656,26 +623,20 @@ layer(CacheTestLayer)("Cache binding", (it) => {
     });
   });
 
-  cacheTest(
-    "put caches with Set-Cookie if Cache-Control private=set-cookie",
-    async (ctx) => {
-      await testIsCached(ctx, {
-        headers: {
-          "Cache-Control": "private=set-cookie",
-          "Set-Cookie": "key=value",
-        },
-        cached: true,
-      });
-    },
-  );
+  cacheTest("put caches with Set-Cookie if Cache-Control private=set-cookie", async (ctx) => {
+    await testIsCached(ctx, {
+      headers: {
+        "Cache-Control": "private=set-cookie",
+        "Set-Cookie": "key=value",
+      },
+      cached: true,
+    });
+  });
 
   cacheTest("delete returns if deleted", async (ctx) => {
     const cache = ctx.caches.default;
     const key = ctx.key("cache-delete");
-    await cache.put(
-      key,
-      textResponse("body", { "Cache-Control": "max-age=3600" }),
-    );
+    await cache.put(key, textResponse("body", { "Cache-Control": "max-age=3600" }));
 
     // Check first delete deletes
     let deleted = await cache.delete(key);
@@ -693,14 +654,8 @@ layer(CacheTestLayer)("Cache binding", (it) => {
     // Check put respects `cf.cacheKey`
     const key1: CacheKey = { url: key, cf: { cacheKey: `${key}/1` } };
     const key2: CacheKey = { url: key, cf: { cacheKey: `${key}/2` } };
-    await cache.put(
-      key1,
-      textResponse("body1", { "Cache-Control": "max-age=3600" }),
-    );
-    await cache.put(
-      key2,
-      textResponse("body2", { "Cache-Control": "max-age=3600" }),
-    );
+    await cache.put(key1, textResponse("body1", { "Cache-Control": "max-age=3600" }));
+    await cache.put(key2, textResponse("body2", { "Cache-Control": "max-age=3600" }));
 
     // Check match respects `cf.cacheKey`
     const res1 = await cache.match(key1);
@@ -760,18 +715,12 @@ layer(CacheTestLayer)("Cache binding", (it) => {
         const key = "http://localhost/cache-disabled";
 
         // Check match never matches
-        await cache.put(
-          key,
-          textResponse("body", { "Cache-Control": "max-age=3600" }),
-        );
+        await cache.put(key, textResponse("body", { "Cache-Control": "max-age=3600" }));
         const res = await cache.match(key);
         expect(res).toBeUndefined();
 
         // Check delete never deletes
-        await cache.put(
-          key,
-          textResponse("body", { "Cache-Control": "max-age=3600" }),
-        );
+        await cache.put(key, textResponse("body", { "Cache-Control": "max-age=3600" }));
         const deleted = await cache.delete(key);
         expect(deleted).toBe(false);
       });
@@ -803,9 +752,7 @@ describe("Cache binding persistence", () => {
           Layer.provide(Paths.PathsLive),
           Layer.provide(Docker.DockerLive),
           Layer.provide(Workerd.WorkerdLive),
-          Layer.provideMerge(
-            Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer),
-          ),
+          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)),
         );
 
         const runAgainstStorage = Effect.fn(
@@ -814,30 +761,24 @@ describe("Cache binding persistence", () => {
               name: "cache-persist-test",
               compatibilityDate: "2026-03-10",
               compatibilityFlags: [],
-              modules: [
-                { name: "main.js", type: "ESModule", content: TEST_SCRIPT },
-              ],
+              modules: [{ name: "main.js", type: "ESModule", content: TEST_SCRIPT }],
               bindings: [],
             });
             yield* Effect.promise(() => run(new TestCache(worker.baseUrl)));
           },
-          (self) =>
-            self.pipe(Effect.provide(runtimeLayerTempDir), Effect.scoped),
+          (self) => self.pipe(Effect.provide(runtimeLayerTempDir), Effect.scoped),
         );
 
         const key = "http://localhost/cache-persist";
 
         // Check put respects persist
         yield* runAgainstStorage(async (cache) => {
-          await cache.put(
-            key,
-            textResponse("body", { "Cache-Control": "max-age=3600" }),
-          );
+          await cache.put(key, textResponse("body", { "Cache-Control": "max-age=3600" }));
         });
 
         // Check directories created for the Durable Object SQLite databases
         // and the default cache's blobs
-        const names = yield* fs.readDirectory(path.join(tmp, "cache"));
+        const names = yield* fs.readDirectory(path.join(tmp, "cache", "cache-persist-test"));
         expect(names).toContain("cloudflare-runtime-CacheObject");
         expect(names).toContain("default");
 
@@ -854,5 +795,64 @@ describe("Cache binding persistence", () => {
         });
       }).pipe(Effect.provide(NodeServices.layer)),
     { timeout: 30_000 },
+  );
+
+  // alchemy-run/alchemy#2230: Workers sharing a storage root each run in their
+  // own workerd process; one shared Cache SQLite store made concurrent cold
+  // starts fail with `SQLITE_BUSY`.
+  it.effect(
+    "Workers sharing a storage root start together, each with its own cache",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+
+        const tmp = yield* makeTempDirectory("cache-concurrent-");
+
+        const runtimeLayerTempDir = Runtime.RuntimeLive.pipe(
+          Layer.provideMerge(RuntimeServices.layerLocalBindings()),
+          Layer.provide(Globals.GlobalsLive),
+          Layer.provideMerge(RuntimeServices.layerLoopback()),
+          Layer.provide(Storage.layerDisk(tmp)),
+          Layer.provide(Internet.InternetLive),
+          Layer.provideMerge(RuntimeServices.layerRegistry()),
+          Layer.provide(Paths.PathsLive),
+          Layer.provide(Docker.DockerLive),
+          Layer.provide(Workerd.WorkerdLive),
+          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)),
+        );
+
+        const start = (name: string) =>
+          startTestWorker({
+            name,
+            compatibilityDate: "2026-03-10",
+            compatibilityFlags: [],
+            modules: [{ name: "main.js", type: "ESModule", content: TEST_SCRIPT }],
+            bindings: [],
+          });
+
+        const key = "http://localhost/cache-concurrent";
+        for (let round = 0; round < 3; round++) {
+          yield* Effect.gen(function* () {
+            const [a, b] = yield* Effect.all([start("worker-a"), start("worker-b")], {
+              concurrency: "unbounded",
+            });
+            yield* Effect.promise(async () => {
+              const cacheA = new TestCache(a.baseUrl);
+              const cacheB = new TestCache(b.baseUrl);
+              await cacheA.put(key, textResponse(`a${round}`, { "Cache-Control": "max-age=3600" }));
+              await cacheB.put(key, textResponse(`b${round}`, { "Cache-Control": "max-age=3600" }));
+              expect((await cacheA.match(key))?.text()).toBe(`a${round}`);
+              expect((await cacheB.match(key))?.text()).toBe(`b${round}`);
+            });
+          }).pipe(Effect.provide(runtimeLayerTempDir), Effect.scoped);
+        }
+
+        expect((yield* fs.readDirectory(path.join(tmp, "cache"))).sort()).toEqual([
+          "worker-a",
+          "worker-b",
+        ]);
+      }).pipe(Effect.provide(NodeServices.layer)),
+    { timeout: 60_000 },
   );
 });

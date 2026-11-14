@@ -26,12 +26,62 @@ const PATCH = `diff --git a/src/tray.ts b/src/tray.ts
 `;
 
 function parse(patch: string) {
-  const file = parsePatchFiles(patch, `test:${patch.length}`)[0]?.files[0];
+  const file = parsePatchFiles(patch, { cacheKeyPrefix: `test:${patch.length}` })[0]?.files[0];
   if (file === undefined) throw new Error("patch did not parse");
   return file;
 }
 
 const rows = fileDiffRows(parse(PATCH));
+
+const LINE_ENDING_CASES = [
+  {
+    name: "adding the final newline",
+    body: "@@ -1 +1 @@\n-same\n\\ No newline at end of file\n+same\n",
+    oldContents: "same",
+    newContents: "same\n",
+  },
+  {
+    name: "removing the final newline",
+    body: "@@ -1 +1 @@\n-same\n+same\n\\ No newline at end of file\n",
+    oldContents: "same\n",
+    newContents: "same",
+  },
+  {
+    name: "neither side having a final newline",
+    body: "@@ -1 +1 @@\n-old\n\\ No newline at end of file\n+new\n\\ No newline at end of file\n",
+    oldContents: "old",
+    newContents: "new",
+  },
+  {
+    name: "CRLF lines",
+    body: "@@ -1 +1 @@\n-old\r\n+new\r\n",
+    oldContents: "old\r\n",
+    newContents: "new\r\n",
+  },
+  {
+    name: "changing CRLF to LF",
+    body: "@@ -1 +1 @@\n-same\r\n+same\n",
+    oldContents: "same\r\n",
+    newContents: "same\n",
+  },
+  {
+    name: "context without a final newline",
+    body: "@@ -1,2 +1,2 @@\n-old\n+new\n tail\n\\ No newline at end of file\n",
+    oldContents: "old\ntail",
+    newContents: "new\ntail",
+  },
+  {
+    name: "CRLF context",
+    body: "@@ -1,2 +1,2 @@\n-old\r\n+new\r\n tail\r\n",
+    oldContents: "old\r\ntail\r\n",
+    newContents: "new\r\ntail\r\n",
+  },
+].map(({ body, ...testCase }) => ({
+  ...testCase,
+  patch: `diff --git a/src/tray.ts b/src/tray.ts\n--- a/src/tray.ts\n+++ b/src/tray.ts\n${body}`,
+  start: 1,
+  end: 2,
+}));
 
 describe("fileDiffRows", () => {
   it("numbers both sides through context, deletions and additions", () => {
@@ -63,13 +113,20 @@ describe("excerptRows", () => {
 });
 
 describe("rowsToPatch", () => {
-  it("cuts a slice that parses back to the same lines and numbers", () => {
-    const shown = excerptRows(rows, { side: "new", start: 10, end: 13 });
-    const slice = parse(rowsToPatch("src/tray.ts", "src/tray.ts", shown));
-    expect(fileDiffRows(slice).map((row) => [row.kind, row.oldLine, row.newLine])).toEqual(
-      shown.map((row) => [row.kind, row.oldLine, row.newLine]),
-    );
-  });
+  it.each([{ name: "LF slice", patch: PATCH, start: 10, end: 13 }, ...LINE_ENDING_CASES])(
+    "cuts a slice that parses back to the same lines and numbers: $name",
+    ({ patch, start, end }) => {
+      const original = parse(patch);
+      const shown = excerptRows(fileDiffRows(original), { side: "new", start, end });
+      const slice = parse(rowsToPatch("src/tray.ts", "src/tray.ts", shown));
+      expect(fileDiffRows(slice)).toEqual(shown);
+      expect(slice.hunks.map((hunk) => [hunk.noEOFCRDeletions, hunk.noEOFCRAdditions])).toEqual(
+        original.hunks
+          .filter((_, index) => shown.some((row) => row.hunk === index))
+          .map((hunk) => [hunk.noEOFCRDeletions, hunk.noEOFCRAdditions]),
+      );
+    },
+  );
 
   it("starts a hunk per source hunk so separate hunks stay separate", () => {
     const shown = excerptRows(rows, { side: "old", start: 14, end: 42 });
@@ -95,16 +152,34 @@ describe("excerptExpansionOldContents", () => {
   newFile.splice(40, 2, "keep();\n", "tail();\n");
   const newContents = newFile.join("");
 
-  it("puts back only the excerpt's lines and keeps both sides numbered as in the file", () => {
-    const shown = excerptRows(rows, { side: "new", start: 11, end: 12 });
-    const old = excerptExpansionOldContents(newContents, shown);
-    if (old === null) throw new Error("expected contents");
-    const oldLines = old.split("\n");
-    expect(oldLines[10]).toBe("const size = pick();");
-    expect(oldLines[9]).toBe("const a = 1;");
-    expect(oldLines[11]).toBe("const b = 2;");
-    expect(oldLines.length).toBe(newContents.split("\n").length - 1);
-  });
+  it.each([
+    {
+      name: "LF slice",
+      patch: PATCH,
+      start: 11,
+      end: 12,
+      newContents,
+      oldContents: [...newFile.slice(0, 10), "const size = pick();\n", ...newFile.slice(12)].join(
+        "",
+      ),
+    },
+    ...LINE_ENDING_CASES,
+    {
+      name: "partial replacement of an unterminated old EOF",
+      patch:
+        "diff --git a/src/tray.ts b/src/tray.ts\n--- a/src/tray.ts\n+++ b/src/tray.ts\n@@ -1 +1,3 @@\n-a\n\\ No newline at end of file\n+a\n+b\n+c\n",
+      start: 1,
+      end: 1,
+      newContents: "a\nb\nc\n",
+      oldContents: "a\nb\nc\n",
+    },
+  ])(
+    "puts back only the excerpt's lines and keeps both sides numbered as in the file: $name",
+    ({ patch, start, end, newContents, oldContents }) => {
+      const shown = excerptRows(fileDiffRows(parse(patch)), { side: "new", start, end });
+      expect(excerptExpansionOldContents(newContents, shown)).toBe(oldContents);
+    },
+  );
 
   it("does not try to expand an excerpt that spans hunks", () => {
     const shown = excerptRows(rows, { side: "old", start: 14, end: 42 });
