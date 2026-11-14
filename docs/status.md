@@ -50,7 +50,7 @@ settings; about 140 MiB for the `claude` program alone).
 
 ## What exists
 
-`main` is in a working state. `tools/check.sh` passes 36 checks with `CONN_MONOREPO` set (Conn `b12470dcad`, 2026-11-14; 36 with the Claude probe conformance). The branch with provider instance settings passes 37 (`instances-flow` added).
+`main` is in a working state. `tools/check.sh` passes 39 checks with `CONN_MONOREPO` set (Conn `b12470dcad`, 2026-11-14). The branch with provider instance settings passes 37 (`instances-flow` added).
 
 | Part | State |
 | --- | --- |
@@ -1154,7 +1154,7 @@ The check is the one to trust; several review findings did not hold.
   `conn-terminal`'s `clears_and_reports_the_foreground_command` (no idle upsert after
   Ctrl-C, while another agent's checks loaded the machine), which then passed alone twice
   and in the crate's full run. macOS only.
-- `main`: verified. All 36 checks pass on macOS (2026-11-14, with the ACP provider, scheduled
+- `main`: verified. All 39 checks pass on macOS (2026-11-14, with the ACP provider, scheduled
   tasks and annotations). The last Linux pass (all tests, 20 runs on the gnu target and 5 on
   musl, 2026-11-14) is older than those merges.
 - Fixed on 2026-11-14: the T3 adapter closes the Claude query after an interrupt, and the next
