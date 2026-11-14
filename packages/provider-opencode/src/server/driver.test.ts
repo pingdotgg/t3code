@@ -92,7 +92,11 @@ const create = (config: Partial<OpenCodeSettings>, http: HttpClient.HttpClient, 
   OpenCodeDriver.create({
     instanceId: ProviderInstanceId.make("opencode-test"),
     displayName: undefined,
-    environment: [],
+    // Usage checks may read local credentials; keep them away from the host's own store.
+    environment: [
+      { name: "OPENCODE_AUTH_CONTENT", sensitive: true, value: "{}" },
+      { name: "OPENCODE_API_KEY", sensitive: true, value: "" },
+    ],
     enabled,
     config: { ...OpenCodeDriver.defaultConfig(), ...config },
   }).pipe(Effect.provideService(HttpClient.HttpClient, http));
@@ -219,7 +223,10 @@ it.live("discovers models through a home-relative OpenCode wrapper", () =>
     const instance = yield* OpenCodeDriver.create({
       instanceId: ProviderInstanceId.make("opencode-home"),
       displayName: undefined,
-      environment: [],
+      environment: [
+        { name: "OPENCODE_AUTH_CONTENT", sensitive: true, value: "{}" },
+        { name: "OPENCODE_API_KEY", sensitive: true, value: "" },
+      ],
       enabled: true,
       config: {
         ...OpenCodeDriver.defaultConfig(),
@@ -1053,6 +1060,117 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
       assert.strictEqual(serverStarts, starts);
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
+
+  it.effect.each([
+    { name: "with a stored Go key", key: "test-go-key" },
+    { name: "with a rejected Go key", key: "test-go-key", status: 401 },
+    { name: "without a Go key", key: undefined },
+  ])("reads Go usage when the connected server has no Console workspace ($name)", (scenario) =>
+    Effect.gen(function* () {
+      let usageReads = 0;
+      const usageStarted = yield* Deferred.make<void>();
+      const server = HttpClient.make((request) => {
+        if (request.url === "https://opencode.ai/zen/go/v1/usage") {
+          usageReads += 1;
+          assert.strictEqual(request.headers.authorization, `Bearer ${scenario.key}`);
+          if (scenario.status !== undefined)
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(request, new Response(null, { status: scenario.status })),
+            );
+          const window = { percent: 10, resetsAt: "2026-11-01T00:00:00.000Z" };
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json({ usage: { rolling: window, weekly: window, monthly: window } }),
+            ),
+          );
+        }
+        const path = new URL(request.url).pathname;
+        if (path === "/api/experimental/usage/limits") {
+          const response = HttpClientResponse.fromWeb(
+            request,
+            Response.json({ location: { directory: "/work" }, data: null }),
+          );
+          return Deferred.succeed(usageStarted, undefined).pipe(Effect.as(response));
+        }
+        const body =
+          path === "/api/info"
+            ? JSON.parse(OPENCODE_2_RESPONSES["/api/info"].body)
+            : { location: { directory: "/work" }, data: [] };
+        return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(body)));
+      });
+      const runtime = {
+        ...openCode2Runtime,
+        startOpenCodeServerProcess: ({
+          verify,
+        }: Parameters<
+          OpenCodeRuntime.OpenCodeRuntime["Service"]["startOpenCodeServerProcess"]
+        >[0]) =>
+          Effect.gen(function* () {
+            const url = "http://127.0.0.1:4096";
+            const version = verify ? yield* verify(url) : "2.0.18";
+            return { url, version, isRunning: Effect.succeed(true), exitCode: Effect.never };
+          }),
+      };
+      const instance = yield* OpenCodeDriver.create({
+        instanceId: ProviderInstanceId.make("opencode-go-usage-fallback"),
+        displayName: undefined,
+        environment: [
+          {
+            name: "OPENCODE_AUTH_CONTENT",
+            sensitive: true,
+            value: JSON.stringify(
+              scenario.key === undefined
+                ? {}
+                : { "opencode-go": { type: "api", key: scenario.key } },
+            ),
+          },
+          { name: "OPENCODE_API_KEY", sensitive: true, value: "" },
+        ],
+        enabled: true,
+        config: OpenCodeDriver.defaultConfig(),
+      }).pipe(
+        Effect.provide(TestProviderHost.layer()),
+        Effect.provideService(HttpClient.HttpClient, server),
+        Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, runtime),
+      );
+      const initial = yield* instance.snapshot.streamChanges.pipe(
+        Stream.filter((entry) => entry.usageLimits !== undefined),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* Deferred.await(usageStarted);
+      yield* TestClock.adjust("5 seconds");
+      const [snapshot] = Array.from(yield* Fiber.join(initial));
+      if (scenario.key === undefined) {
+        assert.strictEqual(snapshot?.usageLimits?.unavailable?.reason, "unsupported");
+        assert.strictEqual(
+          snapshot?.usageLimits?.unavailable?.message,
+          "No OpenCode Console workspace is signed in.",
+        );
+        assert.deepStrictEqual(snapshot?.usageLimits?.windows, []);
+        assert.strictEqual(usageReads, 0);
+        return;
+      }
+      if (scenario.status !== undefined) {
+        assert.strictEqual(snapshot?.usageLimits?.unavailable?.reason, "probeFailed");
+        assert.strictEqual(
+          snapshot?.usageLimits?.unavailable?.message,
+          "OpenCode Go could not read usage.",
+        );
+        assert.deepStrictEqual(snapshot?.usageLimits?.windows, []);
+        assert.strictEqual(usageReads, 1);
+        return;
+      }
+      assert.strictEqual(snapshot?.usageLimits?.unavailable, undefined);
+      assert.deepStrictEqual(
+        snapshot?.usageLimits?.windows.map((window) => window.kind),
+        ["session", "weekly", "monthly"],
+      );
+      assert.strictEqual(usageReads, 1);
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
 });
 
 // npm links into opencode-ai for 1.x and @opencode/cli for 2.x.
@@ -1244,7 +1362,10 @@ it.layer(layerUpdate)("OpenCodeDriver updates", (it) => {
         const instance = yield* OpenCodeDriver.create({
           instanceId: ProviderInstanceId.make("opencode-update"),
           displayName: undefined,
-          environment: [],
+          environment: [
+            { name: "OPENCODE_AUTH_CONTENT", sensitive: true, value: "{}" },
+            { name: "OPENCODE_API_KEY", sensitive: true, value: "" },
+          ],
           enabled: true,
           config: { ...OpenCodeDriver.defaultConfig(), binaryPath },
         }).pipe(Effect.provideService(HttpClient.HttpClient, noHttp));

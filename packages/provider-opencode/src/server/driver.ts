@@ -483,6 +483,12 @@ export const OpenCodeDriver: ProviderDriver<
         connection.usageLimits(host.paths.cwd),
       );
       if (limits === undefined) unsupportedUsageVersion = runtime.version;
+      // Without a Console sign-in the server reports no workspace, but a local Go API key still
+      // reads usage. Prefer its result, which also reports a failed read as such.
+      if (limits?.unavailable?.reason === "unsupported") {
+        const legacy = yield* legacyUsageLimits;
+        if (legacy.unavailable?.reason !== "unsupported") return legacy;
+      }
       return limits ?? (yield* legacyUsageLimits);
     }).pipe(
       Effect.timeout("10 seconds"),
