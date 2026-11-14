@@ -602,6 +602,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
   const settingsReadCount = yield* Ref.make(0);
   const settingsChanges = yield* PubSub.unbounded<ContractServerSettings>();
   const mergedPullRequests = yield* PubSub.unbounded<PullRequestService.PullRequestMergeEvent>();
+  const pullRequestRefreshes = yield* PubSub.unbounded<number>();
   const commands = yield* Ref.make<ReadonlyArray<AutoSettleCommand>>([]);
   const branchCalls = yield* Ref.make<
     ReadonlyArray<{ readonly cwd: string; readonly branch: string }>
@@ -737,6 +738,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
       subscribeMerges: PubSub.subscribe(mergedPullRequests).pipe(
         Effect.map((subscription) => Stream.fromSubscription(subscription)),
       ),
+      subscribeRefreshes: Stream.fromPubSub(pullRequestRefreshes),
     }),
     Layer.succeed(ServerSettings.ServerSettingsService, serverSettings),
     Layer.succeed(ServerActivation.ServerActivation, Deferred.await(activation)),
@@ -775,6 +777,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     observedEvents,
     publishEvent: (event: OrchestrationV2DomainEvent) => PubSub.publish(domainEvents, event),
     updateSettings,
+    publishRefresh: PubSub.publish(pullRequestRefreshes, 1),
     publishMerge: PubSub.publish(mergedPullRequests, {
       projectId: PROJECT_ID,
       repository: "owner/repository",
@@ -1791,6 +1794,13 @@ describe("ThreadSettlementServiceV2 worker", () => {
         yield* Queue.take(fixture.snapshotReads);
         yield* reactor.drain;
         assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 2);
+
+        // An app merge the host completes later sends only a refresh, which ends the quiet wait.
+        yield* fixture.publishRefresh;
+        yield* TestClock.adjust("1 minute");
+        yield* Queue.take(fixture.snapshotReads);
+        yield* reactor.drain;
+        assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 3);
       }).pipe(Effect.provide(fixture.layer));
     }),
   );
