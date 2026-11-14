@@ -1,0 +1,24 @@
+name: Fork upstream sync
+on:
+  schedule:
+    - cron: "23 */6 * * *"
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: write
+concurrency:
+  group: fork-upstream-sync
+  cancel-in-progress: false
+jobs:
+  sync:
+    if: github.repository == 'LaMarCab76/t3code'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const upstream = await github.rest.repos.getBranch({ owner: 'pingdotgg', repo: 't3code', branch: 'main' });
+            const result = await github.rest.repos.merge({ owner, repo, base: 'main', head: upstream.data.commit.sha, commit_message: 'chore(fork): sync upstream main' });
+            if (result.status === 204) return;
+            await github.rest.actions.createWorkflowDispatch({ owner, repo, workflow_id: 'fork-build.yml', ref: 'main' });

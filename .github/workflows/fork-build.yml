@@ -1,0 +1,129 @@
+name: Fork desktop builds
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: fork-desktop-builds
+  cancel-in-progress: false
+jobs:
+  linux:
+    if: github.repository == 'LaMarCab76/t3code'
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+    env:
+      T3CODE_DESKTOP_UPDATE_REPOSITORY: LaMarCab76/t3code
+      T3CODE_TELEMETRY_CHANNEL: dev
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb
+        with:
+          node-version-file: package.json
+          run-install: false
+      - run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config libfuse2 imagemagick
+      - run: vp install --frozen-lockfile --filter=t3... --filter=@t3tools/web... --filter=@t3tools/desktop... --filter=@t3tools/scripts...
+      - id: meta
+        run: echo "version=$(node -p 'require("./apps/desktop/package.json").version')-fork.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+      - run: node scripts/update-release-package-versions.ts "${{ steps.meta.outputs.version }}"
+      - run: node scripts/build-desktop-artifact.ts --platform linux --target AppImage --arch x64 --build-version "${{ steps.meta.outputs.version }}" --output-dir release
+      - run: |
+          node apps/server/scripts/cli.ts build-exe
+          mkdir -p cli-monitor/linux-x64
+          cp native/resource-monitor/target/x86_64-unknown-linux-gnu/release/t3-resource-monitor cli-monitor/linux-x64/
+          node scripts/build-cli-archive.ts --platform linux --arch x64 --version "${{ steps.meta.outputs.version }}" --resource-monitor-dir "$PWD/cli-monitor" --output-dir release-cli
+          node scripts/smoke-cli-archive.ts --archive release-cli/*.tar.gz --expect-version "${{ steps.meta.outputs.version }}"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: wsl-runtime
+          path: release-cli/*.tar.gz
+          if-no-files-found: error
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: desktop-linux
+          path: |
+            release/*.AppImage
+            release/*.deb
+            release/*.yml
+          if-no-files-found: error
+  desktop:
+    needs: linux
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            platform: mac
+            target: dmg
+            arch: arm64
+          - runner: windows-2025
+            platform: win
+            target: nsis
+            arch: x64
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      T3CODE_DESKTOP_UPDATE_REPOSITORY: LaMarCab76/t3code
+      T3CODE_TELEMETRY_CHANNEL: dev
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb
+        with:
+          node-version-file: package.json
+          run-install: false
+      - run: vp install --frozen-lockfile --filter=t3... --filter=@t3tools/web... --filter=@t3tools/desktop... --filter=@t3tools/scripts...
+      - run: node scripts/update-release-package-versions.ts "${{ needs.linux.outputs.version }}"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        if: matrix.platform == 'win'
+        with:
+          name: wsl-runtime
+          path: wsl-runtime
+      - run: |
+          args=()
+          if [[ "${{ matrix.platform }}" == win ]]; then args+=(--wsl-runtime "$PWD"/wsl-runtime/*.tar.gz); fi
+          node scripts/build-desktop-artifact.ts --platform "${{ matrix.platform }}" --target "${{ matrix.target }}" --arch "${{ matrix.arch }}" --build-version "${{ needs.linux.outputs.version }}" --output-dir release "${args[@]}"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: desktop-${{ matrix.platform }}
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/*.exe
+            release/*.yml
+            release/*.blockmap
+          if-no-files-found: error
+  publish:
+    needs: [linux, desktop]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          path: artifacts
+          merge-multiple: true
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.linux.outputs.version }}
+        run: |
+          cd artifacts
+          sha256sum * > SHA256SUMS
+          gh release create "fork-v$VERSION" * --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "T3 Code fork $VERSION" --notes "macOS arm64, Windows x64 and Linux x64. Personal unsigned builds; source $GITHUB_SHA."
