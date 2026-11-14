@@ -94,9 +94,20 @@ const make = Effect.gen(function* () {
             ),
           );
       }
-      yield* scheduledTasks
-        .moveThreadTasks({ threadIds: [input.threadId], projectId: input.projectId })
-        .pipe(Effect.mapError(fail("Moved the thread, but not its scheduled tasks. Try again.")));
+      // Another move can commit before these writes, so follow the thread until a read matches.
+      const currentProject = threads.getThreadShell(input.threadId).pipe(
+        Effect.map((shell) => shell?.projectId ?? input.projectId),
+        Effect.mapError(fail("Could not read the thread.")),
+      );
+      let projectId = yield* currentProject;
+      while (true) {
+        yield* scheduledTasks
+          .moveThreadTasks({ threadIds: [input.threadId], projectId })
+          .pipe(Effect.mapError(fail("Moved the thread, but not its scheduled tasks. Try again.")));
+        const now = yield* currentProject;
+        if (now === projectId) break;
+        projectId = now;
+      }
       return {
         notice: threadMoveNotice({
           projectTitle: target.value.title,

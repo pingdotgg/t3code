@@ -4,6 +4,6 @@ export function threadMoveNotice(input: {
   readonly fromWorktree: boolean;
 }): string {
   return input.fromWorktree
-    ? `The agent will work in ${input.projectTitle}'s root folder, not this thread's worktree. The worktree and its branch stay on disk, but the agent won't see changes left there; earlier diffs open while it exists, and earlier turns can't be restored.`
-    : `The conversation moves with it, and the agent works in ${input.projectTitle}'s folder from the next message. Earlier diffs open while their original folder exists.`;
+    ? `The agent will work in ${input.projectTitle}'s root folder. The worktree and its branch stay on disk, but the agent won't see changes left there. Earlier diffs open while the worktree exists, and files from earlier turns can't be restored.`
+    : `The conversation moves with it, and the agent works in ${input.projectTitle}'s folder from the next message. Earlier diffs open while their original folder exists, and files from earlier turns can't be restored.`;
 }

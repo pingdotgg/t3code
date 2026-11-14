@@ -53,10 +53,10 @@ Started in the wrong place? Pick **Move to project** from the thread's menu, or
 machine. The thread keeps its history and continues in that project's root folder
 from your next message. Stop a running thread before moving it.
 
-Earlier turns keep their diffs for as long as the folder they ran in exists. A
-thread that had its own worktree leaves it behind: the worktree and branch stay on
-disk, but the agent no longer sees changes left there, and earlier turns can't be
-restored. The old worktree shows as unused in
+Earlier turns keep their diffs for as long as the folder they ran in exists, but
+their files can't be restored. A thread that had its own worktree leaves it behind:
+the worktree and branch stay on disk, but the agent no longer sees changes left
+there. The old worktree shows as unused in
 [Storage cleanup](./project-settings.md#storage-cleanup). To keep working in a fresh
 worktree, hand the moved thread off to one.
 

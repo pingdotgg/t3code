@@ -26,6 +26,7 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -610,11 +611,15 @@ it.live("moving a thread to another project resumes its conversation in the new 
       failedReplacementOpen: true,
     });
     const database = SqlitePersistence.layerMemory;
+    const backgroundWork = yield* Ref.make(false);
+    const adapter = makeRestartAdapter(state, exclusiveCapabilities);
+    const rollbackCommandId = CommandId.make(`${name}:rollback`);
 
     const result = yield* Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
       const eventSink = yield* EventSink.EventSinkV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
       const projects = yield* ProjectStore.ProjectStoreV2;
       for (const [index, [projectId, workspaceRoot]] of (
         [
@@ -686,14 +691,18 @@ it.live("moving a thread to another project resumes its conversation in the new 
         worktreePath: null,
       });
       const first = yield* send("first");
-      const move = (projectId: ProjectId, branch: string | null) =>
+      const move = (projectId: ProjectId, branch: string | null, attempt = "") =>
         orchestrator.dispatch({
           type: "thread.project.move",
-          commandId: CommandId.make(`${name}:move:${projectId}`),
+          commandId: CommandId.make(`${name}:move:${projectId}${attempt}`),
           threadId,
           projectId,
           branch,
         });
+      // Detaching would end the session's background agents, as with a worktree handoff.
+      yield* Ref.set(backgroundWork, true);
+      const refusedBusy = yield* move(targetId, "target-branch", ":busy").pipe(Effect.flip);
+      yield* Ref.set(backgroundWork, false);
       const moved = yield* move(targetId, "target-branch");
       yield* worker.drain();
       const second = yield* send("second");
@@ -703,13 +712,58 @@ it.live("moving a thread to another project resumes its conversation in the new 
       const detached = yield* eventSink
         .readByCommandId({ commandId: CommandId.make(`${name}:move:${targetId}`) })
         .pipe(Stream.runCollect);
-      return { first, moved, second, third, detached: [...detached] };
+      // A rollback whose effect has not run yet would restore the old folder after the move.
+      const occurredAt = yield* DateTime.now;
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`event:${name}:rollback`),
+            type: "thread.metadata-updated",
+            threadId,
+            providerInstanceId: third.thread.providerInstanceId,
+            occurredAt,
+            payload: { ...third.thread, rollbackRequestId: rollbackCommandId },
+          },
+        ],
+      });
+      yield* outbox.enqueue([
+        {
+          id: `effect:${rollbackCommandId}`,
+          commandId: rollbackCommandId,
+          threadId,
+          request: {
+            type: "provider-thread.rollback",
+            providerThreadId: third.providerThreads[0]!.id,
+            checkpointId: third.checkpoints[0]!.id,
+            scopeId: third.checkpoints[0]!.scopeId,
+          },
+        },
+      ]);
+      const refusedRollback = yield* move(targetId, null, ":rollback").pipe(Effect.flip);
+      return {
+        first,
+        moved,
+        second,
+        third,
+        detached: [...detached],
+        refusedBusy,
+        refusedRollback,
+      };
     }).pipe(
       Effect.provide(
         Layer.merge(
           ProviderReplayHarness.layerWithRegistry(
             { name },
-            ProviderAdapterRegistry.layerSingle(makeRestartAdapter(state, exclusiveCapabilities)),
+            ProviderAdapterRegistry.layerSingle({
+              ...adapter,
+              openSession: (input) =>
+                adapter.openSession(input).pipe(
+                  Effect.map((session) => ({
+                    ...session,
+                    hasPendingBackgroundWork: Ref.get(backgroundWork),
+                  })),
+                ),
+            }),
             { databaseLayer: database },
           ),
           ProjectStore.layer.pipe(Layer.provide(database)),
@@ -717,6 +771,8 @@ it.live("moving a thread to another project resumes its conversation in the new 
       ),
     );
 
+    assert.include(String(result.refusedBusy.cause), "still running background agents or commands");
+    assert.include(String(result.refusedRollback.cause), "still rolling back");
     const firstSession = result.first.providerSessions.find(
       (session) => session.status !== "stopped" && session.status !== "error",
     );

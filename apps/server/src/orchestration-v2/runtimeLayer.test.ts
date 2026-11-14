@@ -10193,18 +10193,18 @@ it.layer(layerScratchPromotionTest)("turning a No project thread into a project"
 });
 
 const layerThreadProjectMoveTest = ThreadProjectMove.layer.pipe(
-  Layer.provide(
-    Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
-      isScratchProject: (projectId) => Effect.succeed(projectId === SCRATCH_PROJECT_ID),
-      namedProjectsRoot: "/projects",
-    }),
+  Layer.provideMerge(
+    Layer.mergeAll(
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+        isScratchProject: (projectId) => Effect.succeed(projectId === SCRATCH_PROJECT_ID),
+        namedProjectsRoot: "/projects",
+      }),
+      Layer.mock(GitWorkflow.GitWorkflowService)({
+        currentBranch: (cwd) => Effect.succeed(`branch-of:${cwd}`),
+      }),
+      NodeCrypto.layer,
+    ),
   ),
-  Layer.provide(
-    Layer.mock(GitWorkflow.GitWorkflowService)({
-      currentBranch: (cwd) => Effect.succeed(`branch-of:${cwd}`),
-    }),
-  ),
-  Layer.provide(NodeCrypto.layer),
   Layer.provideMerge(layerProjectDeletionTest),
 );
 
@@ -10219,9 +10219,11 @@ it.layer(layerThreadProjectMoveTest)("moving a thread to another project", (it) 
         const tasks = yield* ScheduledTaskService.ScheduledTaskService;
         const sourceId = ProjectId.make("thread-move-source");
         const targetId = ProjectId.make("thread-move-target");
+        const otherId = ProjectId.make("thread-move-other");
         for (const [projectId, workspaceRoot] of [
           [sourceId, "/tmp/thread-move-source"],
           [targetId, "/tmp/thread-move-target"],
+          [otherId, "/tmp/thread-move-other"],
           [SCRATCH_PROJECT_ID, SCRATCH_ROOT],
         ] as const) {
           if (Option.isNone(yield* projects.getById(projectId))) {
@@ -10291,7 +10293,7 @@ it.layer(layerThreadProjectMoveTest)("moving a thread to another project", (it) 
         assert.equal((yield* shellOf(busyId))?.projectId, sourceId);
 
         const fromWorktree = yield* move({ threadId, projectId: targetId });
-        assert.include(fromWorktree.notice, "not this thread's worktree");
+        assert.include(fromWorktree.notice, "The worktree and its branch stay on disk");
         const moved = yield* shellOf(threadId);
         assert.equal(moved?.projectId, targetId);
         // It lands in the project root; the old worktree stays where it was.
@@ -10303,7 +10305,37 @@ it.layer(layerThreadProjectMoveTest)("moving a thread to another project", (it) 
         yield* move({ threadId, projectId: targetId });
         const fromRoot = yield* move({ threadId, projectId: sourceId });
         assert.notInclude(fromRoot.notice, "worktree");
+        assert.include(fromRoot.notice, "files from earlier turns can't be restored");
         assert.equal((yield* shellOf(threadId))?.projectId, sourceId);
+
+        // Another move commits between this move's commit and its task update.
+        const threads = yield* ThreadManagementService.ThreadManagementService;
+        const racing = Layer.fresh(ThreadProjectMove.layer).pipe(
+          Layer.provide(
+            Layer.succeed(ThreadManagementService.ThreadManagementService, {
+              ...threads,
+              dispatch: (command) =>
+                threads.dispatch(command).pipe(
+                  Effect.tap(() =>
+                    command.type === "thread.project.move" && command.projectId === targetId
+                      ? threads.dispatch({
+                          ...command,
+                          commandId: CommandId.make("thread-move-racing"),
+                          projectId: otherId,
+                        })
+                      : Effect.void,
+                  ),
+                ),
+            }),
+          ),
+        );
+        yield* ThreadProjectMove.ThreadProjectMove.pipe(
+          Effect.flatMap((service) => service.move({ threadId, projectId: targetId })),
+          Effect.provide(racing),
+        );
+        assert.equal((yield* shellOf(threadId))?.projectId, otherId);
+        const raced = (yield* tasks.list()).tasks.find((candidate) => candidate.id === task.id);
+        assert.equal(raced?.projectId, otherId);
       }),
   );
 });

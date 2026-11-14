@@ -4410,6 +4410,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (threadHasUnfinishedWork(records)) {
         return yield* reject("still has work in progress. Finish or stop it first.");
       }
+      // Its effect would restore files and the provider thread for the old folder.
+      const rollbackEffects =
+        thread.rollbackRequestId === undefined
+          ? []
+          : yield* effectOutbox
+              .listByCommandId(thread.rollbackRequestId)
+              .pipe(mapDispatchError(command));
+      if (
+        rollbackEffects.some((effect) => effect.status === "pending" || effect.status === "running")
+      ) {
+        return yield* reject("is still rolling back. Wait for it to finish, then move it.");
+      }
       const current = yield* projects.get(thread.projectId).pipe(mapDispatchError(command));
       const target = yield* projects.get(command.projectId).pipe(mapDispatchError(command));
       if (Option.isNone(target) || target.value.deletedAt !== null) {
