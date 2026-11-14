@@ -212,12 +212,45 @@ function accountKey(
   driver: ServerProvider["driver"],
   email: string | undefined,
   limits?: ServerProviderUsageLimits,
+  subscriptions?: ReadonlyMap<string, string>,
 ): string | null {
   const normalizedEmail = email?.trim().toLowerCase();
   if (normalizedEmail) return `${driver}:${normalizedEmail}`;
-  return limits?.credentialFingerprint
-    ? `${driver}:credential:${limits.credentialFingerprint}`
-    : null;
+  if (!limits?.credentialFingerprint) return null;
+  const subscription = subscriptions?.get(limits.credentialFingerprint);
+  return subscription
+    ? `${driver}:subscription:${subscription}`
+    : `${driver}:credential:${limits.credentialFingerprint}`;
+}
+
+// OpenCode derives resets from now plus a remaining duration rounded to seconds, so anchors drift by 1s.
+const SUBSCRIPTION_ANCHOR_TOLERANCE_MS = 1_000;
+
+// Go keys of one subscription share its monthly reset, anchored to the subscription start.
+// Each key takes its freshest anchor so its own readings still merge across a monthly rollover.
+function goSubscriptions(reports: readonly AccountReport[]): ReadonlyMap<string, string> {
+  const anchors = new Map<string, { readonly anchor: number; readonly checkedAt: number }>();
+  for (const { usageLimits: limits } of reports) {
+    const resetsAt = limits?.windows.find((window) => window.id === "go_monthly")?.resetsAt;
+    if (!limits?.credentialFingerprint || !resetsAt) continue;
+    const anchor = Date.parse(resetsAt);
+    if (Number.isNaN(anchor)) continue;
+    const checkedAt = Date.parse(limits.checkedAt);
+    if (checkedAt > (anchors.get(limits.credentialFingerprint)?.checkedAt ?? -Infinity)) {
+      anchors.set(limits.credentialFingerprint, { anchor, checkedAt });
+    }
+  }
+  const subscriptions = new Map<string, string>();
+  let group: { readonly owner: string; readonly anchor: number } | undefined;
+  for (const [fingerprint, { anchor }] of [...anchors].sort(
+    ([, a], [, b]) => a.anchor - b.anchor,
+  )) {
+    if (!group || anchor - group.anchor > SUBSCRIPTION_ANCHOR_TOLERANCE_MS) {
+      group = { owner: fingerprint, anchor };
+    }
+    subscriptions.set(fingerprint, group.owner);
+  }
+  return subscriptions;
 }
 
 interface AccountReport {
@@ -235,16 +268,17 @@ const nativeReport = (provider: ServerProvider): AccountReport => ({
 });
 
 // Include every enabled login, even unreadable workspaces.
-function accountKeyResolver(reports: Iterable<AccountReport>) {
+function accountKeyResolver(reports: readonly AccountReport[]) {
+  const subscriptions = goSubscriptions(reports);
   const workspaces = new Map<string, Set<string>>();
   for (const report of reports) {
-    const key = accountKey(report.driver, report.email, report.usageLimits);
+    const key = accountKey(report.driver, report.email, report.usageLimits, subscriptions);
     if (key && report.workspaceId) {
       workspaces.set(key, (workspaces.get(key) ?? new Set()).add(report.workspaceId));
     }
   }
   return (report: AccountReport): string | null => {
-    const key = accountKey(report.driver, report.email, report.usageLimits);
+    const key = accountKey(report.driver, report.email, report.usageLimits, subscriptions);
     if (!key) return null;
     if (report.workspaceId) return `${key}:${report.workspaceId}`;
     const known = workspaces.get(key);
