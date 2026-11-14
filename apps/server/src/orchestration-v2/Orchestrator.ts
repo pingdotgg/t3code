@@ -6325,18 +6325,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           toProviderInstanceId: input.modelSelection.instanceId,
           coveredRunOrdinals: { from: Math.max(1, contextBoundary), to: targetRun.ordinal },
           strategy: "full_thread_summary",
-          items:
+          items: yield* readHandoffItems(
+            input.command.threadId,
             contextBoundary === 0
-              ? [
-                  ...(yield* readInheritedItems(input.projection.thread)),
-                  ...(yield* readHandoffItems(input.command.threadId)),
-                ]
-              : yield* readHandoffItems(
-                  input.command.threadId,
-                  input.projection.runs
-                    .filter((run) => run.ordinal >= contextBoundary)
-                    .map((run) => run.id),
-                ),
+              ? undefined
+              : input.projection.runs
+                  .filter((run) => run.ordinal >= contextBoundary)
+                  .map((run) => run.id),
+          ),
           runs: input.projection.runs,
           createdAt: now,
         })
