@@ -1,5 +1,5 @@
 import { pipe } from "effect/Function";
-import type { EnvironmentTheme } from "@t3tools/contracts";
+import { THEME_CSS_MAX_LENGTH, type EnvironmentTheme } from "@t3tools/contracts";
 import * as Equal from "effect/Equal";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -30,6 +30,7 @@ import {
 } from "./lib/contextChipAccents";
 
 import { appAtomRegistry, subscribeAtomChanges } from "./rpc/atomRegistry";
+import { applyThemeCss } from "./themeCss";
 import { themeServerEnvironmentThemesAtom } from "./state/server";
 
 export { EMBER_THEME, GROVE_THEME, IRIS_THEME, OCEAN_THEME, T3_CHAT_THEME, THEME_COLOR_ROLES };
@@ -45,6 +46,7 @@ export const CUSTOM_THEMES_STORAGE_KEY = "t3code:themes:v1";
 export const THEME_FOLLOW_SYSTEM_STORAGE_KEY = "t3code:theme-follow-system";
 export const THEME_APPEARANCE_MODE_STORAGE_KEY = "t3code:theme-appearance-mode";
 export const THEME_HALVES_STORAGE_KEY = "t3code:theme-halves:v1";
+export const ENVIRONMENT_THEMES_STORAGE_KEY = "t3code:environment-themes:v1";
 
 const LEGACY_T3_CHAT_DARK_THEME_ID = "t3-chat-dark";
 
@@ -65,6 +67,7 @@ export type ThemeFile = Readonly<{
   variants?: ThemeVariantOverrides;
   collection?: ThemeCollection;
   managed?: boolean;
+  css?: string;
 }>;
 
 const customThemeListeners = new Set<() => void>();
@@ -118,6 +121,10 @@ function isThemeId(value: unknown): value is string {
 
 function isThemeLabel(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0 && value.trim().length <= 48;
+}
+
+function isThemeCss(value: unknown): value is string {
+  return typeof value === "string" && value.length <= THEME_CSS_MAX_LENGTH;
 }
 
 function parseThemeCollection(value: unknown): ThemeCollection | undefined {
@@ -184,6 +191,7 @@ function parseStoredTheme(value: unknown): ThemeDefinition | null {
     ...(variants ? { variants } : {}),
     ...(collection ? { collection } : {}),
     ...(value.managed === true ? { managed: true } : {}),
+    ...(isThemeCss(value.css) && value.css.length > 0 ? { css: value.css } : {}),
   };
 }
 
@@ -287,6 +295,7 @@ function environmentThemeDefinition(theme: EnvironmentTheme): ThemeDefinition {
     theme.variants === undefined
       ? { managed: true }
       : {}),
+    ...(theme.css ? { css: theme.css } : {}),
   };
 }
 
@@ -314,20 +323,44 @@ export function publishedThemeDefinitions(
 
 // Every reconnect snapshot delivers a fresh but usually identical array; keeping the
 // previous one skips regenerating palettes and repainting the document for it.
-const publishedThemesAtom = Atom.make((get): ReadonlyArray<EnvironmentTheme> => {
+const publishedThemesAtom = Atom.make((get): ReadonlyArray<EnvironmentTheme> | null => {
   const next = get(themeServerEnvironmentThemesAtom);
-  const previous = Option.getOrNull(get.self<ReadonlyArray<EnvironmentTheme>>());
+  const previous = Option.getOrNull(get.self<ReadonlyArray<EnvironmentTheme> | null>());
   return previous !== null && Equal.equals(previous, next) ? previous : next;
 }).pipe(Atom.withLabel("web-published-environment-themes"));
 
+function readStoredEnvironmentThemes(): ReadonlyArray<ThemeDefinition> {
+  try {
+    const parsed: unknown = JSON.parse(
+      window.localStorage.getItem(ENVIRONMENT_THEMES_STORAGE_KEY) ?? "null",
+    );
+    return Array.isArray(parsed) ? parseStoredThemes(parsed) : [];
+  } catch {
+    return [];
+  }
+}
+
 /**
- * The environment's palettes are not saved: they are republished by the server
- * on every change and would go stale the moment the machine's theme moved on.
- * Kept alive because theme lookups read it outside React on every repaint.
+ * Falls back to the last published set while the server connects, so boot and the
+ * first render paint the selected palette. Kept alive because theme lookups read it
+ * outside React on every repaint.
  */
-export const environmentThemeDefinitionsAtom = Atom.make((get) =>
-  publishedThemeDefinitions(get(publishedThemesAtom)),
-).pipe(Atom.keepAlive, Atom.withLabel("web-environment-theme-definitions"));
+export const environmentThemeDefinitionsAtom = Atom.make((get) => {
+  const published = get(publishedThemesAtom);
+  const definitions =
+    published === null ? readStoredEnvironmentThemes() : publishedThemeDefinitions(published);
+  const previous = Option.getOrNull(get.self<ReadonlyArray<ThemeDefinition>>());
+  return previous !== null && Equal.equals(previous, definitions) ? previous : definitions;
+}).pipe(Atom.keepAlive, Atom.withLabel("web-environment-theme-definitions"));
+
+export function storePublishedEnvironmentThemes(definitions: ReadonlyArray<ThemeDefinition>) {
+  if (appAtomRegistry.get(publishedThemesAtom) === null) return;
+  try {
+    window.localStorage.setItem(ENVIRONMENT_THEMES_STORAGE_KEY, JSON.stringify(definitions));
+  } catch {
+    // Without the stored copy the next launch paints stock colors until connect.
+  }
+}
 
 function getEnvironmentThemes(): ReadonlyArray<ThemeDefinition> {
   return appAtomRegistry.get(environmentThemeDefinitionsAtom);
@@ -1496,6 +1529,10 @@ export function parseThemeFile(value: unknown): ThemeDefinition {
     throw new Error("Theme collections need a valid id and label.");
   }
 
+  if (value.css !== undefined && !isThemeCss(value.css)) {
+    throw new Error(`Theme CSS must be text of ${THEME_CSS_MAX_LENGTH} characters or fewer.`);
+  }
+
   const fallback = getDefaultThemeColors(appearance);
   const variants: Partial<Record<ThemeAppearance, ThemeColors>> = {};
   if (value.variants !== undefined) {
@@ -1523,6 +1560,7 @@ export function parseThemeFile(value: unknown): ThemeDefinition {
     ...(Object.keys(variants).length > 0 ? { variants } : {}),
     ...(collection ? { collection } : {}),
     ...(value.managed === true ? { managed: true } : {}),
+    ...(value.css ? { css: value.css } : {}),
   };
 }
 
@@ -1537,6 +1575,7 @@ export function serializeThemeFile(theme: ThemeDefinition): string {
     ...(canonicalTheme.variants ? { variants: canonicalTheme.variants } : {}),
     ...(canonicalTheme.collection ? { collection: canonicalTheme.collection } : {}),
     ...(canonicalTheme.managed ? { managed: true } : {}),
+    ...(canonicalTheme.css ? { css: canonicalTheme.css } : {}),
   };
   return `${JSON.stringify(file, null, 2)}\n`;
 }
@@ -1612,7 +1651,11 @@ export function getThemeColorVariable(role: ThemeColorRole): string {
 export const THEME_PREVIEW_ID = "__preview";
 
 /** Callers must restore the stored theme with refreshTheme when the draft closes. */
-export function applyThemeColorPreview(colors: ThemeColors, appearance: ThemeAppearance): void {
+export function applyThemeColorPreview(
+  colors: ThemeColors,
+  appearance: ThemeAppearance,
+  css?: string,
+): void {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
   if (!root?.style) return;
@@ -1623,6 +1666,7 @@ export function applyThemeColorPreview(colors: ThemeColors, appearance: ThemeApp
     if (isThemeColor(value)) root.style.setProperty(APP_THEME_VARIABLES[role], value);
   }
   applyContextChipVariables(root, colors);
+  applyThemeCss(css);
   setThemePreviewAppearance(appearance);
 }
 
@@ -1634,6 +1678,7 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
 
   setThemePreviewAppearance(null);
   const palette = getThemeDefinition(theme);
+  applyThemeCss(palette?.css);
 
   if (palette) {
     root.dataset.themeId = palette.id;
