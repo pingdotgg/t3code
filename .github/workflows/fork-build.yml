@@ -32,6 +32,7 @@ jobs:
           run-install: false
       - run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config libfuse2 imagemagick
       - run: vp install --frozen-lockfile --filter=t3... --filter=@t3tools/web... --filter=@t3tools/desktop... --filter=@t3tools/scripts...
+      - run: node .github/fork/brand-l.mjs
       - id: meta
         run: echo "version=$(node -p 'require("./apps/desktop/package.json").version')-fork.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
       - run: node scripts/update-release-package-versions.ts "${{ steps.meta.outputs.version }}"
@@ -90,6 +91,7 @@ jobs:
           node-version-file: package.json
           run-install: false
       - run: vp install --frozen-lockfile --filter=t3... --filter=@t3tools/web... --filter=@t3tools/desktop... --filter=@t3tools/scripts...
+      - run: node .github/fork/brand-l.mjs
       - run: node scripts/update-release-package-versions.ts "${{ needs.linux.outputs.version }}"
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         if: matrix.platform == 'win'
@@ -126,4 +128,4 @@ jobs:
         run: |
           cd artifacts
           sha256sum * > SHA256SUMS
-          gh release create "fork-v$VERSION" * --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "T3 Code fork $VERSION" --notes "macOS arm64, Windows x64 and Linux x64. Personal unsigned builds; source $GITHUB_SHA."
+          gh release create "fork-v$VERSION" * --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "T3 Code L $VERSION" --notes "macOS arm64, Windows x64 and Linux x64. Personal unsigned builds; source $GITHUB_SHA."
