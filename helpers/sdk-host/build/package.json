@@ -1,0 +1,9 @@
+{
+  "name": "conn-sdk-host-build",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Build tools for the SDK host's single executable. Not shipped.",
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}
