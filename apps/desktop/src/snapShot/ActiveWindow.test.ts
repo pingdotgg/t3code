@@ -128,6 +128,27 @@ it.each([
       { id: 80, title: "Other document", bounds: { x: 0, y: 39, width: 1_800, height: 1_130 } },
     ],
   },
+  {
+    name: "the screen-sharing indicator inside its title bar",
+    helpers: [
+      { id: 90, title: "Window", bounds: { x: 723, y: 39, width: 66, height: 20 } },
+      { id: 91, title: "", bounds: { x: 0, y: 0, width: 1_512, height: 32 }, alpha: 0 },
+    ],
+    content: {
+      id: 92,
+      title: "T3 Code (Nightly)",
+      bounds: { x: 0, y: 33, width: 1_512, height: 949 },
+    },
+  },
+  {
+    name: "the compact screen-sharing indicator away from its edges",
+    helpers: [{ id: 93, title: "Window", bounds: { x: 1_400, y: 500, width: 31, height: 20 } }],
+    content: {
+      id: 94,
+      title: "T3 Code (Nightly)",
+      bounds: { x: 0, y: 33, width: 1_512, height: 949 },
+    },
+  },
 ])("selects the content window behind $name", async ({ helpers, content, background = [] }) => {
   stubMacLookup(macLookup([...helpers, content, ...background]));
 
@@ -140,6 +161,16 @@ it.each([
 it.each([
   { name: "untitled dialog", title: "", bounds: { x: 300, y: 200, width: 400, height: 240 } },
   { name: "titled palette", title: "Palette", bounds: { x: 0, y: 0, width: 800, height: 50 } },
+  {
+    name: "indicator-sized titled palette",
+    title: "Mini timer",
+    bounds: { x: 200, y: 200, width: 80, height: 24 },
+  },
+  {
+    name: "larger window with the indicator's title",
+    title: "Window",
+    bounds: { x: 200, y: 200, width: 400, height: 300 },
+  },
   { name: "offset untitled strip", title: "", bounds: { x: 100, y: 100, width: 800, height: 50 } },
   { name: "tall untitled window", title: "", bounds: { x: 0, y: 0, width: 800, height: 900 } },
   {
@@ -184,6 +215,16 @@ it.each([
 
   assert.strictEqual(window?.id, 1);
   assert.deepEqual(window?.bounds, bounds);
+});
+
+it("selects an indicator-sized window when the app shows nothing else", async () => {
+  stubMacLookup(
+    macLookup([{ id: 1, title: "Window", bounds: { x: 10, y: 10, width: 66, height: 20 } }]),
+  );
+
+  const window = await activeWindow("darwin");
+
+  assert.strictEqual(window?.id, 1);
 });
 
 it("keeps an untitled content window ahead of a much taller background window", async () => {
