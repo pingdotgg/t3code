@@ -199,6 +199,46 @@ export function resolveBranchToolbarValue(input: {
   return currentGitBranch ?? activeThreadBranch;
 }
 
+export interface BranchHold {
+  readonly branch: string | null;
+  readonly environmentId: EnvironmentId;
+  /**
+   * Each checkout the thread can show before it catches up, with the branch its status reported
+   * before the switch. A move from a worktree to the project root lists both.
+   */
+  readonly checkouts: ReadonlyArray<{ readonly cwd: string; readonly replaces: string | null }>;
+}
+
+/**
+ * A finished checkout's branch stays on screen until status reports any change, because the status
+ * stream and the RPC reply are not ordered and showing status first would flip back to the old branch.
+ */
+export function isBranchHoldCurrent(
+  hold: BranchHold,
+  current: {
+    readonly canonicalBranch: string | null;
+    readonly environmentId: EnvironmentId;
+    readonly cwd: string | null;
+  },
+): boolean {
+  return (
+    hold.environmentId === current.environmentId &&
+    hold.checkouts.some(
+      (checkout) => checkout.cwd === current.cwd && checkout.replaces === current.canonicalBranch,
+    )
+  );
+}
+
+/**
+ * The base a New worktree thread gets without the user picking one. Only a listed ref qualifies:
+ * during a clone the status names an unborn HEAD that no ref backs.
+ */
+export function resolveDefaultWorktreeBaseBranch(
+  refs: ReadonlyArray<Pick<VcsRef, "name" | "isDefault" | "current">>,
+): string | null {
+  return (refs.find((ref) => ref.isDefault) ?? refs.find((ref) => ref.current))?.name ?? null;
+}
+
 export function resolveBranchTriggerLabel(input: {
   activeWorktreePath: string | null;
   effectiveEnvMode: EnvMode;
@@ -257,6 +297,7 @@ export function resolveBranchSelectionTarget(input: {
   checkoutCwd: string;
   nextWorktreePath: string | null;
   reuseExistingWorktree: boolean;
+  staysInActiveCheckout: boolean;
 } {
   const { activeProjectCwd, activeWorktreePath, refName } = input;
 
@@ -266,10 +307,13 @@ export function resolveBranchSelectionTarget(input: {
       input.activeProjectCheckoutRoot === undefined
         ? workspaceRelativeFilePath(activeProjectCwd, refName.worktreePath) !== null
         : workspaceRelativeFilePath(input.activeProjectCheckoutRoot, refName.worktreePath) === ".";
+    const nextWorktreePath = isProjectCheckout ? null : refName.worktreePath;
     return {
       checkoutCwd: refName.worktreePath,
-      nextWorktreePath: isProjectCheckout ? null : refName.worktreePath,
+      nextWorktreePath,
       reuseExistingWorktree: true,
+      // Listed refs can predate a checkout made outside the picker, so only Git can confirm this one.
+      staysInActiveCheckout: nextWorktreePath === activeWorktreePath,
     };
   }
 
@@ -280,6 +324,7 @@ export function resolveBranchSelectionTarget(input: {
     checkoutCwd: nextWorktreePath ?? activeProjectCwd,
     nextWorktreePath,
     reuseExistingWorktree: false,
+    staysInActiveCheckout: nextWorktreePath === activeWorktreePath,
   };
 }
 
