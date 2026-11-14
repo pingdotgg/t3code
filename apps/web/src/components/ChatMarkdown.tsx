@@ -1025,6 +1025,7 @@ function ReadOnlyTaskCheckbox({ checked }: { checked: boolean }) {
     <Tooltip open={open} onOpenChange={setOpen}>
       <TooltipTrigger
         render={<span className="inline-flex" data-read-only-task />}
+        closeOnClick={false}
         tabIndex={0}
         aria-label="Read only task"
         onClick={() => setOpen(true)}
