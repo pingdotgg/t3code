@@ -3,10 +3,13 @@ import {
   type GitCommandError,
   MessageId,
   type ProjectId,
+  type ProviderSessionId,
   WorktreeMcpFailure,
   type WorktreeMcpContinuationStatus,
   type WorktreeMcpHandoffInput,
   type WorktreeMcpHandoffResult,
+  type WorktreeMcpReleaseInput,
+  type WorktreeMcpReleaseResult,
   type WorktreeMcpSetupScriptStatus,
   type WorktreeMcpStatusResult,
   type VcsListRefsInput,
@@ -21,12 +24,15 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import type * as PlatformError from "effect/PlatformError";
+import * as Schedule from "effect/Schedule";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
+import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import type { McpInvocationScope, McpThreadInvocationScope } from "./McpInvocationContext.ts";
 
@@ -37,6 +43,10 @@ export class WorktreeMcpService extends Context.Service<
       scope: McpInvocationScope,
       input: WorktreeMcpHandoffInput,
     ) => Effect.Effect<WorktreeMcpHandoffResult, WorktreeMcpFailure>;
+    readonly release: (
+      scope: McpInvocationScope,
+      input: WorktreeMcpReleaseInput,
+    ) => Effect.Effect<WorktreeMcpReleaseResult, WorktreeMcpFailure>;
     readonly status: (
       scope: McpInvocationScope,
     ) => Effect.Effect<WorktreeMcpStatusResult, WorktreeMcpFailure>;
@@ -66,6 +76,9 @@ const asOperationFailed = (prefix: string) =>
     failure("operation_failed", `${prefix}: ${errorMessage(error)}`),
   );
 
+// Covers a provider session that takes a while to exit, and Windows processes that briefly hold the folder.
+const RELEASE_RETRY = { times: 60, schedule: Schedule.spaced("2 seconds") } as const;
+
 const make = Effect.gen(function* () {
   const random = yield* SecureRandom.SecureRandom;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -73,18 +86,20 @@ const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
+  const gitDriver = yield* GitVcsDriver.GitVcsDriver;
+  const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
   const setupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
 
-  // Serialize handoffs per thread to avoid creating two worktrees and orphaning one.
-  const handoffThreadsInFlight = new Set<string>();
+  // Serialize handoffs and releases per thread to avoid creating two worktrees and orphaning one.
+  const threadsInFlight = new Set<string>();
 
   const requireThreadScope = (scope: McpInvocationScope) =>
     scope.thread === undefined
       ? Effect.fail(
           failure(
             "thread_credential_required",
-            "Worktree handoff and status act as the calling T3 thread, so they need an agent running inside T3 Code.",
+            "Worktree handoff, release, and status act as the calling T3 thread, so they need an agent running inside T3 Code.",
           ),
         )
       : Effect.succeed(scope as McpThreadInvocationScope);
@@ -96,8 +111,11 @@ const make = Effect.gen(function* () {
           failure("capability_denied", "This MCP credential does not grant worktree capabilities."),
         );
 
-  const loadThread = (scope: McpThreadInvocationScope) =>
-    threadManagement.getThreadRecords(scope.thread.threadId, []).pipe(
+  const loadThread = (
+    scope: McpThreadInvocationScope,
+    fields: ReadonlyArray<"providerSessions"> = [],
+  ) =>
+    threadManagement.getThreadRecords(scope.thread.threadId, fields).pipe(
       Effect.mapError((error) =>
         error._tag === "OrchestratorProjectionError"
           ? failure("thread_not_found", `Thread '${scope.thread.threadId}' was not found.`)
@@ -397,25 +415,253 @@ const make = Effect.gen(function* () {
     function* (callerScope, input) {
       yield* requireCapability(callerScope);
       const scope = yield* requireThreadScope(callerScope);
-      // Acquire and register cleanup atomically so cancellation cannot strand the guard until restart.
-      return yield* Effect.uninterruptibleMask((restore) =>
-        Effect.suspend(() => {
-          if (handoffThreadsInFlight.has(scope.thread.threadId)) {
-            return Effect.fail(
-              failure(
-                "handoff_in_progress",
-                `A worktree handoff is already in progress for thread '${scope.thread.threadId}'.`,
-              ),
-            );
-          }
-          handoffThreadsInFlight.add(scope.thread.threadId);
-          return restore(performHandoff(scope, input)).pipe(
-            Effect.ensuring(
-              Effect.sync(() => handoffThreadsInFlight.delete(scope.thread.threadId)),
+      return yield* exclusive(scope, performHandoff(scope, input));
+    },
+  );
+
+  // Acquire and register cleanup atomically so cancellation cannot strand the guard until restart.
+  const exclusive = <A>(
+    scope: McpThreadInvocationScope,
+    effect: Effect.Effect<A, WorktreeMcpFailure>,
+  ): Effect.Effect<A, WorktreeMcpFailure> =>
+    Effect.uninterruptibleMask((restore) =>
+      Effect.suspend(() => {
+        if (threadsInFlight.has(scope.thread.threadId)) {
+          return Effect.fail(
+            failure(
+              "handoff_in_progress",
+              `A worktree handoff or release is already in progress for thread '${scope.thread.threadId}'.`,
             ),
           );
-        }),
+        }
+        threadsInFlight.add(scope.thread.threadId);
+        return restore(effect).pipe(
+          Effect.ensuring(Effect.sync(() => threadsInFlight.delete(scope.thread.threadId))),
+        );
+      }),
+    );
+
+  // Runs detached: the binding change ends the caller's session, and on Windows its process holds the folder until it exits.
+  const removeReleasedWorktree = Effect.fn("WorktreeMcpService.removeReleasedWorktree")(
+    function* (input: {
+      readonly projectCwd: string;
+      readonly worktreePath: string;
+      readonly branch: string | null;
+      readonly providerSessionIds: ReadonlyArray<ProviderSessionId>;
+      readonly force: boolean;
+      readonly deleteBranch: boolean;
+    }) {
+      // Removal still runs if a session outlasts the wait; its own retries cover a brief hold.
+      yield* Effect.forEach(input.providerSessionIds, providerSessions.isLive).pipe(
+        Effect.filterOrFail(
+          (live) => !live.includes(true),
+          () => "provider session is still open",
+        ),
+        Effect.retry(RELEASE_RETRY),
+        Effect.ignore,
       );
+      // A thread can bind to the worktree while removal waits or retries; this one's binding is already cleared.
+      const removed = yield* Effect.suspend(() =>
+        threadManagement.getShellSnapshot({ worktreePath: input.worktreePath }),
+      ).pipe(
+        Effect.flatMap((sharing) =>
+          sharing.threads.length + sharing.archivedThreads.length > 0
+            ? Effect.succeed(false)
+            : gitWorkflow
+                .removeWorktree({
+                  cwd: input.projectCwd,
+                  path: input.worktreePath,
+                  force: input.force,
+                })
+                .pipe(Effect.as(true)),
+        ),
+        Effect.retry(RELEASE_RETRY),
+      );
+      if (removed && input.deleteBranch && input.branch !== null) {
+        yield* gitWorkflow.deleteLocalBranch({
+          cwd: input.projectCwd,
+          refName: input.branch,
+          force: true,
+        });
+      }
+      yield* vcsStatusBroadcaster
+        .refreshStatus(input.projectCwd)
+        .pipe(Effect.ignoreCause({ log: true }));
+    },
+    (effect, input) =>
+      effect.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("worktree release could not remove the worktree", {
+            worktreePath: input.worktreePath,
+            detail: errorMessage(Cause.squash(cause)),
+          }),
+        ),
+      ),
+  );
+
+  const performRelease = Effect.fn("WorktreeMcpService.performRelease")(function* (
+    scope: McpThreadInvocationScope,
+    input: WorktreeMcpReleaseInput,
+  ) {
+    const projection = yield* loadThread(scope, ["providerSessions"]);
+    const worktreePath = projection.thread.worktreePath;
+    if (worktreePath === null) {
+      return yield* failure(
+        "not_in_worktree",
+        `Thread '${scope.thread.threadId}' is not attached to a worktree.`,
+      );
+    }
+    const project = yield* loadProject(scope, projection.thread.projectId);
+    const projectCwd = project.workspaceRoot;
+    if (worktreePath === projectCwd) {
+      return yield* failure(
+        "invalid_request",
+        `Thread '${scope.thread.threadId}' runs in the project root, not a separate worktree.`,
+      );
+    }
+    const force = input.force === true;
+    const exists = yield* fileSystem
+      .exists(worktreePath)
+      .pipe(asOperationFailed("Unable to check the worktree folder"));
+    // Subagents, side chats, and archived threads can share the checkout.
+    const sharing = yield* threadManagement
+      .getShellSnapshot({ worktreePath })
+      .pipe(asOperationFailed("Unable to list threads using the worktree"));
+    const sharedWith = [...sharing.threads, ...sharing.archivedThreads].filter(
+      (thread) => thread.id !== scope.thread.threadId,
+    ).length;
+
+    // Commits `revision` reaches that no remote and no other local branch does; null when it does not resolve.
+    const countUnpushed = (cwd: string, revision: string, ownBranch: string | null) =>
+      gitDriver
+        .execute({
+          operation: "WorktreeMcpService.countUnpushedCommits",
+          cwd,
+          args: [
+            "rev-list",
+            "--count",
+            revision,
+            "--not",
+            ...(ownBranch === null ? [] : [`--exclude=${ownBranch}`]),
+            "--branches",
+            "--remotes",
+          ],
+          allowNonZeroExit: true,
+        })
+        .pipe(
+          asOperationFailed("Unable to count unpushed commits"),
+          Effect.flatMap((result) => {
+            if (result.exitCode !== 0) return Effect.succeed(null);
+            const output = result.stdout.trim();
+            return /^\d+$/.test(output)
+              ? Effect.succeed(Number(output))
+              : Effect.fail(
+                  failure(
+                    "operation_failed",
+                    "Unable to count unpushed commits: unexpected output.",
+                  ),
+                );
+          }),
+        );
+    const refuseUnpushed = (count: number | null, where: string) =>
+      count !== null && count > 0
+        ? Effect.fail(
+            failure(
+              "unsaved_work",
+              `${where} has ${count} commit${count === 1 ? "" : "s"} on no remote or other branch. Push them, or pass force: true to discard them.`,
+            ),
+          )
+        : Effect.void;
+
+    let branch = projection.thread.branch;
+    if (exists && sharedWith === 0) {
+      const status = yield* gitWorkflow
+        .localStatus({ cwd: worktreePath })
+        .pipe(asOperationFailed("Unable to read the worktree's git status"));
+      branch = status.refName ?? branch;
+      if (!force && status.hasWorkingTreeChanges) {
+        return yield* failure(
+          "unsaved_work",
+          `Worktree '${worktreePath}' has uncommitted changes. Commit and push them, or pass force: true to discard them.`,
+        );
+      }
+      if (!force) {
+        yield* refuseUnpushed(
+          yield* countUnpushed(worktreePath, "HEAD", status.refName),
+          `Worktree '${worktreePath}'`,
+        );
+      }
+    }
+
+    // The branch can hold commits HEAD does not: a detached HEAD, or a folder already gone.
+    let deleteBranch = input.deleteBranch === true && branch !== null && sharedWith === 0;
+    if (deleteBranch && branch !== null && !force) {
+      const unpushed = yield* countUnpushed(projectCwd, `refs/heads/${branch}`, branch);
+      if (unpushed === null) deleteBranch = false;
+      yield* refuseUnpushed(unpushed, `Branch '${branch}'`);
+    }
+
+    const commandId = yield* random.uuidV4().pipe(
+      Effect.map((uuid) =>
+        CommandId.make(
+          [
+            "command",
+            "mcp",
+            encodeURIComponent(scope.thread.providerSessionId),
+            "worktree-release",
+            uuid,
+          ].join(":"),
+        ),
+      ),
+      Effect.orDie,
+    );
+    const removal: WorktreeMcpReleaseResult["removal"] =
+      sharedWith > 0 ? "kept-shared" : exists ? "scheduled" : "already-gone";
+
+    // The binding change detaches the caller, so schedule removal in the same uninterruptible step.
+    return yield* Effect.uninterruptible(
+      Effect.gen(function* () {
+        // Clearing the binding also stops the next turn from recreating the checkout.
+        yield* threadManagement
+          .dispatch({
+            type: "thread.metadata.update",
+            commandId,
+            threadId: scope.thread.threadId,
+            branch: null,
+            worktreePath: null,
+            expectedWorktreePath: worktreePath,
+          })
+          .pipe(asOperationFailed("Unable to re-point the thread at the project root"));
+        if (removal !== "kept-shared") {
+          // A folder already gone can still leave Git metadata to prune and a branch to delete.
+          yield* removeReleasedWorktree({
+            projectCwd,
+            worktreePath,
+            branch,
+            providerSessionIds: projection.providerSessions.map((session) => session.id),
+            force,
+            deleteBranch,
+          }).pipe(Effect.forkDetach);
+        }
+        const result: WorktreeMcpReleaseResult = {
+          worktreePath,
+          branch,
+          removal,
+          note:
+            removal === "kept-shared"
+              ? `Released. The thread now runs in the project root and this session ends shortly after this call. The worktree stays because ${sharedWith} other thread${sharedWith === 1 ? " uses" : "s use"} it.`
+              : "Released. The thread now runs in the project root and this session ends shortly after this call. T3 removes the worktree once the session has left it. A folder it cannot remove shows up in the storage cleanup report.",
+        };
+        return result;
+      }),
+    );
+  });
+
+  const release: WorktreeMcpService["Service"]["release"] = Effect.fn("WorktreeMcpService.release")(
+    function* (callerScope, input) {
+      yield* requireCapability(callerScope);
+      const scope = yield* requireThreadScope(callerScope);
+      return yield* exclusive(scope, performRelease(scope, input));
     },
   );
 
@@ -428,9 +674,16 @@ const make = Effect.gen(function* () {
 
       const defaultStartFromOrigin = yield* readDefaultStartFromOrigin(project.id);
 
+      // Storage cleanup and manual removal leave the binding behind.
+      const worktreePath = projection.thread.worktreePath;
+      const missing =
+        worktreePath !== null &&
+        !(yield* fileSystem.exists(worktreePath).pipe(Effect.orElseSucceed(() => true)));
+
       const result: WorktreeMcpStatusResult = {
-        attached: projection.thread.worktreePath !== null,
-        worktreePath: projection.thread.worktreePath,
+        attached: worktreePath !== null,
+        worktreePath,
+        missing,
         branch: projection.thread.branch,
         projectWorkspaceRoot: project.workspaceRoot,
         defaultStartFromOrigin,
@@ -450,7 +703,7 @@ const make = Effect.gen(function* () {
     return yield* gitWorkflow.listRefs({ ...refs, cwd });
   });
 
-  return WorktreeMcpService.of({ handoff, status, listRefs });
+  return WorktreeMcpService.of({ handoff, release, status, listRefs });
 });
 
 export const layer: Layer.Layer<
@@ -462,6 +715,8 @@ export const layer: Layer.Layer<
   | ProjectService.ProjectService
   | ServerSettings.ServerSettingsService
   | GitWorkflowService.GitWorkflowService
+  | GitVcsDriver.GitVcsDriver
+  | ProviderSessionManager.ProviderSessionManagerV2
   | ProjectSetupScriptRunner.ProjectSetupScriptRunner
   | VcsStatusBroadcaster.VcsStatusBroadcaster
 > = Layer.effect(WorktreeMcpService, make);

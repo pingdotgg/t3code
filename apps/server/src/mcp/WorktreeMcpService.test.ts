@@ -5,9 +5,11 @@ import {
   CommandId,
   EnvironmentId,
   type OrchestrationV2ThreadProjection,
+  type OrchestrationV2ThreadShell,
   type Project,
   ProjectId,
   ProviderInstanceId,
+  ProviderSessionId,
   ThreadId,
   WorktreeMcpHandoffInput,
 } from "@t3tools/contracts";
@@ -21,8 +23,10 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
+import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ServerConfig from "../config.ts";
 import {
@@ -76,7 +80,12 @@ const makeProjection = (overrides: ThreadFixture = {}): OrchestrationV2ThreadPro
       deletedAt: null,
       ...overrides,
     },
-  }) as OrchestrationV2ThreadProjection;
+    providerSessions: [
+      {
+        id: ProviderSessionId.make("provider-session-worktree-test"),
+      },
+    ],
+  }) as unknown as OrchestrationV2ThreadProjection;
 
 const project: Project = {
   id: projectId,
@@ -91,6 +100,10 @@ const project: Project = {
 
 interface HarnessOptions {
   readonly git?: Partial<GitWorkflowService.GitWorkflowService["Service"]>;
+  readonly gitDriver?: Partial<GitVcsDriver.GitVcsDriver["Service"]>;
+  readonly isLive?: ProviderSessionManager.ProviderSessionManagerV2["Service"]["isLive"];
+  readonly otherThreadWorktreePaths?: ReadonlyArray<string>;
+  readonly onRefreshStatus?: Effect.Effect<void>;
   readonly thread?: ThreadFixture | null;
   readonly threadReadError?: "projection" | "dispatch";
   readonly capabilities?: ReadonlySet<McpInvocationContext.McpCapability>;
@@ -116,6 +129,8 @@ interface HarnessOptions {
   readonly deleteLocalBranchFails?: boolean;
   readonly createWorktreeGate?: Effect.Effect<void>;
   readonly existsFails?: boolean;
+  readonly dirty?: boolean;
+  readonly project?: Partial<Project>;
 }
 
 const makeHarness = (options: HarnessOptions = {}) => {
@@ -183,7 +198,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
       ? (Effect.fail("simulated project read failure") as never)
       : Effect.succeed(
           id === projectId && options.projectMissing !== true
-            ? Option.some(project)
+            ? Option.some({ ...project, ...options.project })
             : Option.none(),
         ),
   );
@@ -244,11 +259,13 @@ const makeHarness = (options: HarnessOptions = {}) => {
       hasPrimaryRemote: true,
       isDefaultRef: false,
       refName: options.currentBranch === undefined ? "dev" : options.currentBranch,
-      hasWorkingTreeChanges: false,
+      hasWorkingTreeChanges: options.dirty === true,
       workingTree: { files: [], insertions: 0, deletions: 0 },
     }),
   );
-  const refreshStatus = vi.fn((_: string) => Effect.die("refreshStatus stub"));
+  const refreshStatus = vi.fn((_: string) =>
+    (options.onRefreshStatus ?? Effect.void).pipe(Effect.andThen(Effect.die("refreshStatus stub"))),
+  );
   const runForThread = vi.fn((input: { readonly worktreePath: string }) => {
     switch (options.setupScript ?? "started") {
       case "no-script":
@@ -281,6 +298,22 @@ const makeHarness = (options: HarnessOptions = {}) => {
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           dispatch,
           getThreadRecords,
+          getShellSnapshot: (input) =>
+            Effect.succeed({
+              schemaVersion: 1,
+              snapshotSequence: 1,
+              threads: (options.otherThreadWorktreePaths ?? []).flatMap((worktreePath, index) =>
+                worktreePath === input?.worktreePath
+                  ? [
+                      {
+                        id: ThreadId.make(`thread-sharing-${index}`),
+                        worktreePath,
+                      } as OrchestrationV2ThreadShell,
+                    ]
+                  : [],
+              ),
+              archivedThreads: [],
+            }),
         } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
         Layer.mock(ProjectService.ProjectService)({
           getById,
@@ -307,6 +340,20 @@ const makeHarness = (options: HarnessOptions = {}) => {
           deleteLocalBranch,
           ...options.git,
         } satisfies Partial<GitWorkflowService.GitWorkflowService["Service"]>),
+        Layer.mock(GitVcsDriver.GitVcsDriver)({
+          execute: () =>
+            Effect.succeed({
+              exitCode: 0 as GitVcsDriver.ExecuteGitResult["exitCode"],
+              stdout: "0\n",
+              stderr: "",
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            }),
+          ...options.gitDriver,
+        } satisfies Partial<GitVcsDriver.GitVcsDriver["Service"]>),
+        Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+          isLive: options.isLive ?? (() => Effect.succeed(false)),
+        } satisfies Partial<ProviderSessionManager.ProviderSessionManagerV2["Service"]>),
         Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
           runForThread,
         } satisfies Partial<ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]>),
@@ -374,6 +421,15 @@ const runStatus = (harness: ReturnType<typeof makeHarness>) =>
   Effect.gen(function* () {
     const service = yield* WorktreeMcpService.WorktreeMcpService;
     return yield* service.status(harness.scope);
+  }).pipe(Effect.provide(harness.layer));
+
+const runRelease = (
+  harness: ReturnType<typeof makeHarness>,
+  input: Parameters<WorktreeMcpService.WorktreeMcpService["Service"]["release"]>[1] = {},
+) =>
+  Effect.gen(function* () {
+    const service = yield* WorktreeMcpService.WorktreeMcpService;
+    return yield* service.release(harness.scope, input);
   }).pipe(Effect.provide(harness.layer));
 
 const decodeHandoffInput = Schema.decodeUnknownEffect(WorktreeMcpHandoffInput);
@@ -680,23 +736,316 @@ describe("t3_worktree_handoff", () => {
   });
 });
 
-describe("t3_worktree_status", () => {
-  it.effect("reports an attached thread's worktree and branch", () => {
+describe("t3_worktree_release", () => {
+  const releaseGitLayer = GitVcsDriver.layer.pipe(
+    Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "release-git-" })),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  );
+
+  // A repository with a pushed main and a worktree on `feature/done` holding one unpushed commit.
+  const makeReleaseRepo = Effect.fn("makeReleaseRepo")(function* (prefix: string) {
+    const fs = yield* FileSystem.FileSystem;
+    const git = yield* GitVcsDriver.GitVcsDriver;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix });
+    const cwd = `${directory}/repo`;
+    const remote = `${directory}/remote.git`;
+    const worktreePath = `${directory}/worktree`;
+    yield* fs.makeDirectory(cwd);
+    const command = (at: string, args: string[]) =>
+      git.execute({ operation: "release-test", cwd: at, args });
+    yield* command(cwd, ["init", "-b", "main"]);
+    yield* command(cwd, ["config", "user.name", "Test"]);
+    yield* command(cwd, ["config", "user.email", "test@example.test"]);
+    yield* command(cwd, ["commit", "--allow-empty", "-m", "base"]);
+    yield* command(cwd, ["init", "--bare", remote]);
+    yield* command(cwd, ["remote", "add", "origin", remote]);
+    yield* command(cwd, ["push", "-u", "origin", "main"]);
+    yield* command(cwd, ["worktree", "add", "-b", "feature/done", worktreePath]);
+    yield* command(worktreePath, ["commit", "--allow-empty", "-m", "work"]);
+
+    const branchDeleted = yield* Deferred.make<void>();
+    const removed = yield* Deferred.make<void>();
     const harness = makeHarness({
-      thread: {
-        worktreePath: "/worktrees/project/existing",
-        branch: "feature/existing",
+      thread: { worktreePath, branch: "feature/done" },
+      project: { workspaceRoot: cwd },
+      gitDriver: { execute: git.execute },
+      git: {
+        localStatus: () =>
+          Effect.succeed({
+            isRepo: true,
+            hasPrimaryRemote: true,
+            isDefaultRef: false,
+            refName: "feature/done",
+            hasWorkingTreeChanges: false,
+            workingTree: { files: [], insertions: 0, deletions: 0 },
+          }),
+        removeWorktree: (input) =>
+          git.removeWorktree(input).pipe(Effect.ensuring(Deferred.succeed(removed, undefined))),
+        deleteLocalBranch: (input) =>
+          git
+            .deleteLocalBranch(input)
+            .pipe(Effect.ensuring(Deferred.succeed(branchDeleted, undefined))),
       },
-      projectNewWorktreesStartFromOrigin: true,
     });
+    return { fs, cwd, worktreePath, command, harness, branchDeleted, removed };
+  });
+
+  it.effect("refuses unpushed commits, then removes the worktree and branch once pushed", () =>
+    Effect.gen(function* () {
+      const { fs, cwd, worktreePath, command, harness, branchDeleted } =
+        yield* makeReleaseRepo("release-unpushed-");
+
+      const refused = yield* Effect.exit(runRelease(harness, { deleteBranch: true }));
+      expectTypedFailure(refused, { _tag: "WorktreeMcpFailure", code: "unsaved_work" });
+      expect(harness.dispatch).not.toHaveBeenCalled();
+
+      yield* command(worktreePath, ["push", "-u", "origin", "feature/done"]);
+      const result = yield* runRelease(harness, { deleteBranch: true });
+      expect(result).toMatchObject({ worktreePath, branch: "feature/done", removal: "scheduled" });
+      expect(harness.dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "thread.metadata.update",
+          worktreePath: null,
+          branch: null,
+          expectedWorktreePath: worktreePath,
+        }),
+      );
+
+      yield* Deferred.await(branchDeleted);
+      expect(yield* fs.exists(worktreePath)).toBe(false);
+      expect((yield* command(cwd, ["branch", "--list", "feature/done"])).stdout).toBe("");
+    }).pipe(Effect.scoped, Effect.provide(releaseGitLayer)),
+  );
+
+  it.effect("keeps an unpushed branch whose worktree folder is already gone", () =>
+    Effect.gen(function* () {
+      const { cwd, worktreePath, command, harness, removed } =
+        yield* makeReleaseRepo("release-gone-");
+      yield* command(cwd, ["worktree", "remove", "--force", worktreePath]);
+
+      const refused = yield* Effect.exit(runRelease(harness, { deleteBranch: true }));
+      expectTypedFailure(refused, { _tag: "WorktreeMcpFailure", code: "unsaved_work" });
+      expect(harness.dispatch).not.toHaveBeenCalled();
+
+      const released = yield* runRelease(harness);
+      expect(released.removal).toBe("already-gone");
+      yield* Deferred.await(removed);
+      expect((yield* command(cwd, ["branch", "--list", "feature/done"])).stdout).not.toBe("");
+    }).pipe(Effect.scoped, Effect.provide(releaseGitLayer)),
+  );
+
+  it.effect("fails closed when git's commit count is unreadable", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const worktreePath = yield* fs.makeTempDirectoryScoped({ prefix: "release-count-" });
+      const harness = makeHarness({
+        thread: { worktreePath, branch: "feature/done" },
+        gitDriver: {
+          execute: () =>
+            Effect.succeed({
+              exitCode: 0 as GitVcsDriver.ExecuteGitResult["exitCode"],
+              stdout: "",
+              stderr: "",
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            }),
+        },
+      });
+
+      const exit = yield* Effect.exit(runRelease(harness));
+      expectTypedFailure(exit, { _tag: "WorktreeMcpFailure", code: "operation_failed" });
+      expect(harness.dispatch).not.toHaveBeenCalled();
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("waits for the caller's provider session to exit before removing", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const worktreePath = yield* fs.makeTempDirectoryScoped({ prefix: "release-session-" });
+      const firstCheck = yield* Deferred.make<void>();
+      const removed = yield* Deferred.make<void>();
+      let liveChecks = 0;
+      const harness = makeHarness({
+        thread: { worktreePath, branch: "feature/done" },
+        isLive: () => Deferred.succeed(firstCheck, undefined).pipe(Effect.as(++liveChecks === 1)),
+        git: {
+          removeWorktree: () => Deferred.succeed(removed, undefined).pipe(Effect.asVoid),
+        },
+      });
+
+      yield* runRelease(harness);
+      yield* Deferred.await(firstCheck);
+      expect(yield* Deferred.isDone(removed)).toBe(false);
+
+      yield* TestClock.adjust("2 seconds");
+      yield* Deferred.await(removed);
+      expect(liveChecks).toBe(2);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("retries a removal that the folder's last process briefly blocks", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const worktreePath = yield* fs.makeTempDirectoryScoped({ prefix: "release-busy-" });
+      const firstAttempt = yield* Deferred.make<void>();
+      const removed = yield* Deferred.make<void>();
+      let attempts = 0;
+      const harness = makeHarness({
+        thread: { worktreePath, branch: "feature/done" },
+        git: {
+          removeWorktree: () =>
+            Effect.suspend(() =>
+              ++attempts === 1
+                ? Deferred.succeed(firstAttempt, undefined).pipe(
+                    Effect.andThen(Effect.fail("EBUSY" as never)),
+                  )
+                : Deferred.succeed(removed, undefined).pipe(Effect.asVoid),
+            ),
+        },
+      });
+
+      yield* runRelease(harness);
+      yield* Deferred.await(firstAttempt);
+      yield* TestClock.adjust("2 seconds");
+      yield* Deferred.await(removed);
+      expect(attempts).toBe(2);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("refuses uncommitted changes unless forced", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const worktreePath = yield* fs.makeTempDirectoryScoped({ prefix: "release-dirty-" });
+      const removed = yield* Deferred.make<unknown>();
+      const harness = makeHarness({
+        thread: { worktreePath, branch: "feature/dirty" },
+        dirty: true,
+        git: {
+          removeWorktree: (input) => Deferred.succeed(removed, input).pipe(Effect.asVoid),
+        },
+      });
+
+      const refused = yield* Effect.exit(runRelease(harness));
+      expectTypedFailure(refused, { _tag: "WorktreeMcpFailure", code: "unsaved_work" });
+      expect(harness.dispatch).not.toHaveBeenCalled();
+
+      yield* runRelease(harness, { force: true });
+      expect(yield* Deferred.await(removed)).toMatchObject({ path: worktreePath, force: true });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps a worktree that another thread still uses", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const worktreePath = yield* fs.makeTempDirectoryScoped({ prefix: "release-shared-" });
+      const harness = makeHarness({
+        thread: { worktreePath, branch: "feature/shared" },
+        otherThreadWorktreePaths: [worktreePath],
+        dirty: true,
+      });
+
+      const result = yield* runRelease(harness);
+      expect(result.removal).toBe("kept-shared");
+      expect(harness.dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({ worktreePath: null }),
+      );
+      expect(harness.localStatus).not.toHaveBeenCalled();
+      expect(harness.removeWorktree).not.toHaveBeenCalled();
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps a worktree another thread binds to between removal attempts", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const worktreePath = yield* fs.makeTempDirectoryScoped({ prefix: "release-rebound-" });
+      const sharingPaths: Array<string> = [];
+      let attempts = 0;
+      const firstAttempt = yield* Deferred.make<void>();
+      const refreshed = yield* Deferred.make<void>();
+      const harness = makeHarness({
+        thread: { worktreePath, branch: "feature/rebound" },
+        otherThreadWorktreePaths: sharingPaths,
+        git: {
+          removeWorktree: () =>
+            Effect.suspend(() => {
+              attempts++;
+              sharingPaths.push(worktreePath);
+              return Deferred.succeed(firstAttempt, undefined).pipe(
+                Effect.andThen(Effect.fail("EBUSY" as never)),
+              );
+            }),
+        },
+        onRefreshStatus: Deferred.succeed(refreshed, undefined).pipe(Effect.asVoid),
+      });
+
+      const result = yield* runRelease(harness, { deleteBranch: true });
+      expect(result.removal).toBe("scheduled");
+      yield* Deferred.await(firstAttempt);
+      yield* TestClock.adjust("2 seconds");
+      yield* Deferred.await(refreshed);
+      expect(attempts).toBe(1);
+      expect(harness.deleteLocalBranch).not.toHaveBeenCalled();
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("clears the binding of a worktree whose folder is already gone", () =>
+    Effect.gen(function* () {
+      const removed = yield* Deferred.make<void>();
+      const harness = makeHarness({
+        thread: { worktreePath: "/worktrees/project/removed-by-hand", branch: "feature/gone" },
+        git: {
+          removeWorktree: () => Deferred.succeed(removed, undefined).pipe(Effect.asVoid),
+        },
+      });
+
+      const result = yield* runRelease(harness);
+      expect(result.removal).toBe("already-gone");
+      expect(harness.localStatus).not.toHaveBeenCalled();
+      expect(harness.dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({ worktreePath: null, branch: null }),
+      );
+      // Git still holds the worktree's metadata; removal prunes it.
+      yield* Deferred.await(removed);
+    }),
+  );
+
+  it.effect("fails when the thread has no worktree", () => {
+    const harness = makeHarness();
     return Effect.gen(function* () {
+      const exit = yield* Effect.exit(runRelease(harness));
+      expectTypedFailure(exit, { _tag: "WorktreeMcpFailure", code: "not_in_worktree" });
+      expect(harness.dispatch).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe("t3_worktree_status", () => {
+  it.effect("reports an attached thread's worktree and branch", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const worktreePath = yield* fs.makeTempDirectoryScoped({ prefix: "worktree-status-" });
+      const harness = makeHarness({
+        thread: { worktreePath, branch: "feature/existing" },
+        projectNewWorktreesStartFromOrigin: true,
+      });
       const result = yield* runStatus(harness);
       expect(result).toMatchObject({
         attached: true,
-        worktreePath: "/worktrees/project/existing",
+        worktreePath,
+        missing: false,
         branch: "feature/existing",
         defaultStartFromOrigin: true,
       });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("reports a bound worktree whose folder is gone as missing", () => {
+    const harness = makeHarness({
+      thread: { worktreePath: "/worktrees/project/removed-by-hand", branch: "feature/gone" },
+    });
+    return Effect.gen(function* () {
+      const result = yield* runStatus(harness);
+      expect(result).toMatchObject({ attached: true, missing: true });
     });
   });
 });
