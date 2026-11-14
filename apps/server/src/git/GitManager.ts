@@ -18,6 +18,7 @@ import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import {
   GitActionProgressEvent,
@@ -189,6 +190,9 @@ const PR_LOOKUP_FAILURE_MAX_TTL = Duration.minutes(15);
 const PR_LOOKUP_CACHE_CAPACITY = 2_048;
 const PR_LOOKUP_GIT_STATE_TTL = Duration.minutes(5);
 const SETTLED_PR_LOOKUP_RECHECK_INTERVAL = Duration.minutes(15);
+// Shared by every background caller (backfill, settlement, cleanup), so startup discovery
+// cannot fill the git and forge process slots that foreground work also needs.
+const BRANCH_PR_LOOKUP_CONCURRENCY = 4;
 const PR_THREAD_CONTEXT_BYTES = 16_000;
 const PR_THREAD_COMMAND_OUTPUT_CHARS = 2_000;
 const isSourceControlProviderError = Schema.is(SourceControlProviderError);
@@ -2579,6 +2583,7 @@ export const make = Effect.gen(function* () {
     prLookupGitStateByKey.set(entryKey, { readAtMs, value });
     return value;
   });
+  const branchPrLookups = yield* Semaphore.make(BRANCH_PR_LOOKUP_CONCURRENCY);
   const settledPrLookupByBranchKey = new Map<
     string,
     { readonly url: string; readonly fingerprint: string; readonly confirmedAtMs: number }
@@ -2879,7 +2884,7 @@ export const make = Effect.gen(function* () {
       });
     }
     return confirmed;
-  });
+  }, branchPrLookups.withPermits(1));
 
   const checkedOutPullRequest: GitManager["Service"]["checkedOutPullRequest"] = Effect.fn(
     "checkedOutPullRequest",
