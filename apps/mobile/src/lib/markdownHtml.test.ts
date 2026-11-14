@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
+import { unified } from "unified";
 import {
   markdownForNativeRendering,
   markdownHtmlContent,
@@ -363,10 +364,16 @@ describe("file embeds in native thread and file Markdown", () => {
         `> > see \n> >\n> > ${video}\n> >\n> >  here`,
         ["blockquote:C:/path/x.mp4"],
       ],
+      [
+        "a PDF later in the paragraph",
+        `see ${video} and ![d](C:/path/x.pdf)`,
+        `see \n\n${video}\n\n and [x.pdf](<C:/path/x.pdf>)`,
+        ["root:C:/path/x.mp4"],
+      ],
     ])("gives a video or audio embed its own paragraph: %s", async (_, source, expected, slot) => {
       const converted = convert(source);
       expect(converted.markdown).toBe(expected);
-      expect(converted.fileHrefs.size).toBe(0);
+      expect([...converted.fileHrefs].filter((href) => !href.endsWith(".pdf"))).toEqual([]);
       expect(await slots(converted.markdown)).toEqual(slot);
     });
 
@@ -401,10 +408,27 @@ describe("file embeds in native thread and file Markdown", () => {
       ["a table cell", `| a |\n| --- |\n| ${video} |`, `| a |\n| --- |\n| ${link} |`],
       ["a link", `text [${video}](https://example.com)`, "text [x.mp4](https://example.com)"],
       ["a PDF", `text\n![d](C:/path/x.pdf)`, "text\n[x.pdf](<C:/path/x.pdf>)"],
+      [
+        "text between videos that would become a rule",
+        `${video} --- ![u](C:/path/y.mp4)`,
+        `${link} --- [y.mp4](<C:/path/y.mp4>)`,
+      ],
     ])("keeps a filename link for an embed in %s", async (_, source, expected) => {
       const converted = convert(source);
       expect(converted.markdown).toBe(expected);
       expect(await slots(converted.markdown)).toEqual([]);
+    });
+
+    it("parses each paragraph's text once however many embeds it holds", () => {
+      const source = Array.from(
+        { length: 300 },
+        (_, index) => `w ![v](C:/path/v${index}.mp4)`,
+      ).join("\n");
+      using parse = vi.spyOn(Object.getPrototypeOf(unified()), "parse");
+      const converted = convert(source);
+      const parsed = parse.mock.calls.reduce((total, [text]) => total + String(text).length, 0);
+      expect(converted.fileHrefs.size).toBe(0);
+      expect(parsed).toBeLessThan(3 * source.length);
     });
   });
 

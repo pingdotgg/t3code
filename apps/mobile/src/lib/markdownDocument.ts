@@ -522,59 +522,75 @@ export function markdownWithFileEmbeds(
   };
   collect(root);
   const edits: MarkdownEdit[] = [];
-  let lastSplit: { paragraph: Paragraph; end: number } | undefined;
+  const hrefOf = (node: MarkdownNode) =>
+    node.type === "image"
+      ? node.url
+      : node.type === "imageReference"
+        ? definitions.get(node.identifier.toUpperCase())
+        : undefined;
   // Text split off a paragraph must stay paragraphs: a marker could become a heading or list.
-  const staysParagraphs = (text: string) =>
-    parser
+  const staysParagraph = (text: string) =>
+    /^\s*$/.test(text) ||
+    (parser
       .parse(text.replace(/(\r?\n)[ \t>]*/g, "$1"))
-      .children.every((child) => child.type === "paragraph");
+      .children.every((child) => child.type === "paragraph") &&
+      // A paragraph break would leave a backslash hard break as a literal backslash.
+      !/\\\r?\n[ \t>]*$/.test(text) &&
+      !/^\\\r?\n/.test(text));
   const quoteDepth = (prefix: string) => prefix.split(">").length - 1;
-  // Paragraph breaks around an embed, keeping the `>` markers of the quotes around it.
-  const breaksAround = (
-    paragraph: Paragraph,
-    start: number,
-    end: number,
-  ): MarkdownEdit[] | null => {
+  const splitEmbeds = new Set<MarkdownNode>();
+  const restOfLine = /[ \t]*(?:\r?\n|$)/y;
+  // Paragraph breaks around each video or audio embed, keeping the `>` markers of the quotes
+  // around it. Each stretch of text between embeds is checked once, keeping this linear.
+  const splitParagraph = (paragraph: Paragraph) => {
+    if (paragraph.children.length < 2) return;
+    const embeds = paragraph.children.filter((child) => {
+      const href = hrefOf(child);
+      return href !== undefined && label(href, false) !== null && label(href, true) === null;
+    });
     const first = paragraph.position?.start.offset;
     const last = paragraph.position?.end.offset;
-    if (first === undefined || last === undefined) return null;
+    if (embeds.length === 0 || first === undefined || last === undefined) return;
     const prefix = markdown.slice(markdown.lastIndexOf("\n", first - 1) + 1, first);
-    if (!/^[ \t>]*$/.test(prefix) || markdown.slice(first, last).includes("||")) return null;
+    if (!/^[ \t>]*$/.test(prefix) || markdown.slice(first, last).includes("||")) return;
     // A lazy continuation line sits outside the quote, so the embed would fall out of it.
     const lines = markdown.slice(first, last).split("\n").slice(1);
     const linePrefixes = lines.map((line) => /^[ \t>]*/.exec(line)![0]);
-    if (linePrefixes.some((linePrefix) => quoteDepth(linePrefix) !== quoteDepth(prefix)))
-      return null;
+    if (linePrefixes.some((linePrefix) => quoteDepth(linePrefix) !== quoteDepth(prefix))) return;
     // After a paragraph break, a line indented this far would become a code block.
-    if (linePrefixes.some((linePrefix) => /(?:^|>) ?(?: {4}| {0,3}\t)/.test(linePrefix)))
-      return null;
-    const before = markdown.slice(first, start);
-    const after = markdown.slice(end, last);
-    if (!staysParagraphs(before) || !staysParagraphs(after)) return null;
-    // A paragraph break would leave a backslash hard break as a literal backslash.
-    if (/\\\r?\n[ \t>]*$/.test(before) || /^\\\r?\n/.test(after)) return null;
+    if (linePrefixes.some((linePrefix) => /(?:^|>) ?(?: {4}| {0,3}\t)/.test(linePrefix))) return;
     const blank = prefix.trimEnd();
     const breaks: MarkdownEdit[] = [];
-    const afterPrevious =
-      lastSplit?.paragraph === paragraph && /^\s*$/.test(markdown.slice(lastSplit.end, start));
-    if (start > first && !afterPrevious) {
-      const lineStart = markdown.lastIndexOf("\n", start - 1) + 1;
-      breaks.push(
-        /^[ \t>]*$/.test(markdown.slice(lineStart, start))
-          ? { start: lineStart, end: lineStart, content: `${blank}\n` }
-          : { start, end: start, content: `\n${blank}\n${prefix}` },
-      );
+    let cursor = first;
+    for (const embed of embeds) {
+      const start = embed.position?.start.offset;
+      const end = embed.position?.end.offset;
+      if (start === undefined || end === undefined) return;
+      const between = markdown.slice(cursor, start);
+      if (!staysParagraph(between)) return;
+      if (!/^\s*$/.test(between)) {
+        // `between` holds text, so a line starting before it is not blank before the embed.
+        const lineStart = cursor + between.lastIndexOf("\n") + 1;
+        breaks.push(
+          lineStart > cursor && /^[ \t>]*$/.test(markdown.slice(lineStart, start))
+            ? { start: lineStart, end: lineStart, content: `${blank}\n` }
+            : { start, end: start, content: `\n${blank}\n${prefix}` },
+        );
+      }
+      if (end < last) {
+        restOfLine.lastIndex = end;
+        const restOfLineBlank = restOfLine.test(markdown);
+        breaks.push({
+          start: end,
+          end,
+          content: restOfLineBlank ? `\n${blank}` : `\n${blank}\n${prefix}`,
+        });
+      }
+      cursor = end;
     }
-    if (end < last) {
-      const restOfLineBlank = /^[ \t]*(?:\r?\n|$)/.test(markdown.slice(end));
-      breaks.push({
-        start: end,
-        end,
-        content: restOfLineBlank ? `\n${blank}` : `\n${blank}\n${prefix}`,
-      });
-    }
-    lastSplit = { paragraph, end };
-    return breaks;
+    if (!staysParagraph(markdown.slice(cursor, last))) return;
+    edits.push(...breaks);
+    for (const embed of embeds) splitEmbeds.add(embed);
   };
   // `slotParent` is the root, quote or paragraph above `node` when only quotes lie between.
   const visit = (
@@ -584,25 +600,24 @@ export function markdownWithFileEmbeds(
     slotParent: MarkdownNode | null = null,
   ) => {
     if (node.type === "image" || node.type === "imageReference") {
-      const href =
-        node.type === "image" ? node.url : definitions.get(node.identifier.toUpperCase());
+      const href = hrefOf(node);
       const name = href === undefined ? null : label(href, standalone);
       const start = node.position?.start.offset;
       const end = node.position?.end.offset;
-      if (href !== undefined && name !== null && start !== undefined && end !== undefined) {
-        const breaks =
-          slotParent?.type === "paragraph" && !standalone && label(href, true) === null
-            ? breaksAround(slotParent, start, end)
-            : null;
-        if (breaks) edits.push(...breaks);
-        else {
-          const text = name.replace(/[\\[\]`*_~|&<>]/g, "\\$&");
-          const url = href.replace(/[\\&]/g, "\\$&").replace(/</g, "%3C").replace(/>/g, "%3E");
-          edits.push({ start, end, content: insideLink ? text : `[${text}](<${url}>)` });
-          fileHrefs.add(href);
-        }
+      if (
+        href !== undefined &&
+        name !== null &&
+        start !== undefined &&
+        end !== undefined &&
+        !splitEmbeds.has(node)
+      ) {
+        const text = name.replace(/[\\[\]`*_~|&<>]/g, "\\$&");
+        const url = href.replace(/[\\&]/g, "\\$&").replace(/</g, "%3C").replace(/>/g, "%3E");
+        edits.push({ start, end, content: insideLink ? text : `[${text}](<${url}>)` });
+        fileHrefs.add(href);
       }
     }
+    if (node.type === "paragraph" && slotParent !== null) splitParagraph(node);
     if ("children" in node) {
       const slotChild =
         node.type === "root" ||
@@ -622,7 +637,8 @@ export function markdownWithFileEmbeds(
   visit(root);
   const parts: string[] = [];
   let offset = 0;
-  for (const edit of edits) {
+  // Paragraph breaks are queued before the links inside that paragraph.
+  for (const edit of edits.sort((a, b) => a.start - b.start)) {
     parts.push(markdown.slice(offset, edit.start), edit.content);
     offset = edit.end;
   }
