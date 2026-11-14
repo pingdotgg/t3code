@@ -302,6 +302,8 @@ describe("sourceControlClients repository keys", () => {
   it.each([
     ["git@github.com:T3Tools/T3Code.git", "github.com/t3tools/t3code"],
     ["ssh://git@gitlab.company.com:2222/team/project.git", "gitlab.company.com/team/project"],
+    ["ssh://git@ssh.github.com:443/T3Tools/T3Code.git", "github.com/t3tools/t3code"],
+    ["git@ssh.bitbucket.org:Workspace/Repo.git", "bitbucket.org/workspace/repo"],
     [
       "git@ssh.dev.azure.com:v3/T3Tools/Platform/T3Code",
       "dev.azure.com/t3tools/platform/_git/t3code",
