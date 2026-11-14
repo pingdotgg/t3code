@@ -15938,6 +15938,73 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     return { childThreadId, toolThreadIds, assistantTexts };
   };
 
+  // regression: #20339 a background subagent outliving its parent turn must still get approvals
+  it.effect("asks for a background subagent's approval after the parent turn settles", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: DateTime.makeUnsafe(0),
+          attemptId: RunAttemptId.make("settled-subagent-permission"),
+          text: "Run the auditor in the background.",
+          attachments: [],
+          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+            cwd: "/workspace",
+          }),
+        }),
+      );
+      yield* harness.offerAndWait(
+        makeSubagentTaskStartedFrame({
+          taskId: "auditor",
+          toolUseId: "toolu-auditor",
+          uuid: "00000000-0000-4000-8000-000000020339",
+        }),
+      );
+      yield* harness.offerAndWait(
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000020340", result: "Launched." }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+
+      const decision = yield* Effect.promise(() =>
+        harness.getOpenedOptions()!.canUseTool!(
+          "Read",
+          { file_path: "/etc/hosts" },
+          {
+            signal: new AbortController().signal,
+            toolUseID: "toolu-auditor-read",
+            requestId: "request-auditor-read",
+            agentID: "auditor",
+          },
+        ),
+      ).pipe(Effect.forkScoped);
+      const first = yield* Effect.raceFirst(
+        Queue.take(harness.runtimeRequestReceipts).pipe(
+          Effect.map((event) => ({ type: "request", event }) as const),
+        ),
+        Fiber.join(decision).pipe(Effect.map((result) => ({ type: "decision", result }) as const)),
+      );
+      assert.equal(
+        first.type,
+        "request",
+        `Expected an approval request, got ${first.type === "decision" ? JSON.stringify(first.result) : ""}`,
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect.each([
     { label: "an empty one", quotaFailureFirst: false },
     { label: "a quota failure and an empty one", quotaFailureFirst: true },

@@ -11586,13 +11586,26 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           yield* handleRoutedSdkMessage(input);
         });
 
+        // A background subagent keeps running after its root turn settles; its requests belong to that turn.
+        const settledTurnForSubagentPermission = Effect.fnUntraced(function* (
+          agentId: string | undefined,
+        ) {
+          const liveQuery = yield* Ref.get(queryContext);
+          if (agentId === undefined || liveQuery === null) return null;
+          const subagent = (yield* Ref.get(sessionSubagentsByTaskId)).get(agentId);
+          if (subagent?.task.status !== "running") return null;
+          return settledTurnByNativeThread.get(liveQuery.nativeThreadId) ?? null;
+        });
+
         const canUseToolEffect = Effect.fn("ClaudeAdapterV2.canUseTool")(function* (
           toolName: Parameters<CanUseTool>[0],
           toolInput: Parameters<CanUseTool>[1],
           callbackOptions: Parameters<CanUseTool>[2],
           options?: { readonly startToolCall?: boolean },
         ) {
-          const context = yield* Ref.get(activeTurn);
+          const context =
+            (yield* Ref.get(activeTurn)) ??
+            (yield* settledTurnForSubagentPermission(callbackOptions.agentID));
           if (context === null) {
             return {
               behavior: "deny",
