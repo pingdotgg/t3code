@@ -114,6 +114,30 @@ describe("ReadOnlySourcePreview", () => {
     expect(copiedText(rows()[0]!) ?? document.getSelection()!.toString()).toBe(selected);
   });
 
+  it("drops a selection scrolled out of the mounted window when a click lands on its edge", async () => {
+    await getSyntaxHighlighterPromise("text");
+    await using screen = await render(
+      <div className="flex h-[400px] flex-col">
+        <ReadOnlySourcePreview name="notes.txt" text={text} wordWrap={false} />
+      </div>,
+    );
+    const root = screen.container.querySelector("diffs-container")!.shadowRoot!;
+    const rows = () => root.querySelectorAll("[data-line]");
+    await vi.waitFor(() => expect(rows()[0]?.textContent).toBe("line 1"));
+
+    const rowText = (index: number) => rows()[index]!.querySelector("span")!.firstChild!;
+    document.getSelection()!.setBaseAndExtent(rowText(4), 0, rowText(19), 4);
+    const scroller = screen.container.querySelector(".file-preview-virtualizer")!;
+    scroller.scrollTop = scroller.scrollHeight;
+    await vi.waitFor(() => expect(rows()[0]?.textContent).not.toBe("line 1"));
+    expect(copiedText(rows()[0]!)).toContain("line 5\n");
+
+    // The first mounted row is where the scrolled-out selection is parked, far above the viewport.
+    rows()[0]!.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, composed: true }));
+    document.getSelection()!.collapse(rowText(0), 0);
+    expect(copiedText(rows()[0]!)).toBeNull();
+  });
+
   it("copies a drag that autoscrolls past the edge of the preview", async () => {
     await getSyntaxHighlighterPromise("text");
     await using screen = await render(

@@ -62,7 +62,7 @@ export default function ReadOnlySourcePreview(props: {
         ref={wrapper}
         className="contents"
         onCopy={copySelection}
-        onPointerDown={() => selection.press()}
+        onPointerDown={(event) => selection.press(event.button !== 0 || event.shiftKey)}
         // Scrolling unmounts rows, and a selection made in the same task has not been reported yet.
         onScrollCapture={(event) => {
           const root = event.currentTarget.querySelector("diffs-container")?.shadowRoot;

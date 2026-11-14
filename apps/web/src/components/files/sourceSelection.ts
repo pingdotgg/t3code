@@ -49,6 +49,8 @@ export class SourceSelection {
   #lineStarts: number[] | undefined;
   #ends: Ends | undefined;
   #pressed = false;
+  /** A press that places a caret, where a collapsed selection is the click's and never a kept one. */
+  #clicking = false;
   /** The browser's selection as a render left it during a press, when nothing was drawn over it. */
   #parked: { readonly range: StaticRange | undefined } | undefined;
 
@@ -196,7 +198,7 @@ export class SourceSelection {
     const keepsFocus = keeps(focus, previous?.focus);
     // A click collapses the selection, and it is a new one unless both ends were already there.
     const collapsed = start.offset === end.offset && start.inRow && end.inRow;
-    if (collapsed && !(keepsAnchor && keepsFocus)) {
+    if (collapsed && (this.#clicking || !(keepsAnchor && keepsFocus))) {
       this.#ends = { anchor: start.offset, focus: start.offset };
       return mounted;
     }
@@ -244,15 +246,18 @@ export class SourceSelection {
     if (this.#ends) this.#draw(root, this.#read(root, true));
   }
 
-  press() {
+  press(extending: boolean) {
     this.#pressed = true;
+    this.#clicking = !extending;
   }
 
   release(root: ShadowRoot, text: string) {
     if (!this.#pressed) return;
-    this.#pressed = false;
     this.#use(text);
-    this.#draw(root, this.#read(root, false));
+    const mounted = this.#read(root, false);
+    this.#pressed = false;
+    this.#clicking = false;
+    this.#draw(root, mounted);
   }
 
   /** The text to copy when the browser's own copy would miss part of it, else `undefined`. */
