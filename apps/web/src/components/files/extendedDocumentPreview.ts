@@ -74,8 +74,9 @@ function parseXml(source: string): XmlNode {
       }
       const attrs = Object.fromEntries(
         Object.entries((item[":@"] ?? {}) as Record<string, string>).map(([key, value]) => {
-          // fast-xml-parser accepts raw '<' in attributes, which can mask declarations above.
-          if (value.includes("<"))
+          // fast-xml-parser accepts raw '<' in element attributes, which can mask declarations
+          // above. Processing instructions end at their first '?>', so their data may hold '<'.
+          if (!name.startsWith("?") && value.includes("<"))
             throw new Error("This document contains invalid or unsupported XML.");
           return [key, decodeEntities(value)];
         }),
