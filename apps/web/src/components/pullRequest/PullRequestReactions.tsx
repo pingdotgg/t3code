@@ -28,22 +28,16 @@ const PILL_CLASS =
 
 const EMPTY_PENDING: ReadonlyMap<PullRequestReactionContent, boolean> = new Map();
 
-export function PullRequestReactionBar({
+/** Reaction pills with a picker. `onReact` resolves to whether the host saved the change. */
+export function ReactionBar({
   reactions,
   canReact,
-  subjectId,
-  environmentId,
-  reference,
-  onRefresh,
+  onReact,
   className,
 }: {
   readonly reactions: ReadonlyArray<PullRequestReaction>;
   readonly canReact: boolean;
-  /** Omit to react to the pull request description. */
-  readonly subjectId?: string | undefined;
-  readonly environmentId: EnvironmentId;
-  readonly reference: PullRequestRef;
-  readonly onRefresh: () => void;
+  readonly onReact: (content: PullRequestReactionContent, reacted: boolean) => Promise<boolean>;
   readonly className?: string | undefined;
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -51,9 +45,6 @@ export function PullRequestReactionBar({
     readonly signature: string;
     readonly values: ReadonlyMap<PullRequestReactionContent, boolean>;
   }>({ signature: "", values: EMPTY_PENDING });
-  const setReaction = useAtomCommand(pullRequestEnvironment.setReaction, {
-    reportFailure: false,
-  });
 
   const signature = pullRequestReactionsSignature(reactions);
   const values = pending.signature === signature ? pending.values : EMPTY_PENDING;
@@ -61,25 +52,13 @@ export function PullRequestReactionBar({
 
   const toggle = async (content: PullRequestReactionContent, reacted: boolean) => {
     setPending({ signature, values: new Map([...values, [content, reacted]]) });
-    const result = await setReaction({
-      environmentId,
-      input: {
-        ...reference,
-        ...(subjectId === undefined ? {} : { subjectId }),
-        content,
-        reacted,
-      },
+    if (await onReact(content, reacted)) return;
+    setPending((current) => {
+      const next = new Map(current.values);
+      next.delete(content);
+      return { signature: current.signature, values: next };
     });
-    if (result._tag === "Failure") {
-      setPending((current) => {
-        const next = new Map(current.values);
-        next.delete(content);
-        return { signature: current.signature, values: next };
-      });
-      toastManager.add({ type: "error", title: "The reaction could not be saved" });
-      return;
-    }
-    onRefresh();
+    toastManager.add({ type: "error", title: "The reaction could not be saved" });
   };
 
   if (shown.length === 0 && !canReact) return null;
@@ -158,5 +137,49 @@ export function PullRequestReactionBar({
         </Popover>
       ) : null}
     </div>
+  );
+}
+
+export function PullRequestReactionBar({
+  reactions,
+  canReact,
+  subjectId,
+  environmentId,
+  reference,
+  onRefresh,
+  className,
+}: {
+  readonly reactions: ReadonlyArray<PullRequestReaction>;
+  readonly canReact: boolean;
+  /** Omit to react to the pull request description. */
+  readonly subjectId?: string | undefined;
+  readonly environmentId: EnvironmentId;
+  readonly reference: PullRequestRef;
+  readonly onRefresh: () => void;
+  readonly className?: string | undefined;
+}) {
+  const setReaction = useAtomCommand(pullRequestEnvironment.setReaction, {
+    reportFailure: false,
+  });
+  return (
+    <ReactionBar
+      reactions={reactions}
+      canReact={canReact}
+      className={className}
+      onReact={async (content, reacted) => {
+        const result = await setReaction({
+          environmentId,
+          input: {
+            ...reference,
+            ...(subjectId === undefined ? {} : { subjectId }),
+            content,
+            reacted,
+          },
+        });
+        if (result._tag === "Failure") return false;
+        onRefresh();
+        return true;
+      }}
+    />
   );
 }
