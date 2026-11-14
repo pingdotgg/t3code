@@ -286,6 +286,9 @@ vi.mock("../features/threads/LinkRequestCard", () => ({ LinkRequestCard: () => n
 vi.mock("../features/threads/worktree-setup-card", () => ({}));
 vi.mock("../features/threads/CopyTextButton", () => ({ CopyTextButton: () => null }));
 vi.mock("../features/threads/thread-work-log", () => ({ THREAD_DISCLOSURE_TRANSITION_MS: 100 }));
+vi.mock("../features/threads/CollapsibleUserMessageBody", () => ({
+  CollapsibleUserMessageBody: (props: { children: ReactNode }) => props.children,
+}));
 vi.mock("../features/threads/HtmlRenderWebView", () => ({}));
 vi.mock("../features/threads/McpAppWebView", () => ({}));
 vi.mock("../features/layout/AdaptiveWorkspaceLayout", () => ({
