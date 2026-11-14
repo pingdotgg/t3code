@@ -140,7 +140,10 @@ const UTF8_BOM = "\uFEFF";
 async function startsWithUtf8Bom(filePath: string): Promise<boolean> {
   const handle = await NodeFSP.open(
     filePath,
-    NodeFS.constants.O_RDONLY | (NodeFS.constants.O_NOFOLLOW ?? 0),
+    // O_NONBLOCK keeps a FIFO with no writer from hanging the save.
+    NodeFS.constants.O_RDONLY |
+      (NodeFS.constants.O_NOFOLLOW ?? 0) |
+      (NodeFS.constants.O_NONBLOCK ?? 0),
   ).catch(() => null);
   if (!handle) return false;
   try {
