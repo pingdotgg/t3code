@@ -76,7 +76,10 @@ export interface AntigravityAdapterV2Options {
   readonly makeRuntime: (
     input: Omit<AntigravityAcpRuntimeInput, "spawn" | "childProcessSpawner">,
   ) => Effect.Effect<
-    AcpSessionRuntime.AcpSessionRuntime["Service"],
+    AcpSessionRuntime.AcpSessionRuntime["Service"] & {
+      /** Session-local roots outside the workspace, such as prepared plugin skills. */
+      readonly clientFileRoots?: ReadonlyArray<string>;
+    },
     EffectAcpErrors.AcpError | ProviderSetupError,
     Scope.Scope
   >;
@@ -161,6 +164,16 @@ export function makeAntigravityAcpAdapterFlavor(
         handleReadTextFile: (handler) =>
           runtime.handleReadTextFile((request, context) =>
             handler(request, context).pipe(
+              Effect.catch((cause) =>
+                runtime.clientFileRoots?.length
+                  ? readAntigravityClientTextFile({
+                      fileSystem: options.fileSystem,
+                      path: options.path,
+                      allowedRoots: runtime.clientFileRoots,
+                      request,
+                    }).pipe(Effect.mapError(() => cause))
+                  : Effect.fail(cause),
+              ),
               Effect.onExit((exit) => {
                 const served = reads.attempted(request.path, Exit.isSuccess(exit));
                 if (served === undefined || projectUpdate === undefined) return Effect.void;
