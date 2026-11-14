@@ -179,15 +179,40 @@ function agentAwarenessPublishIdentity(
   );
 }
 
-const CLEARED_PUBLISH_IDENTITY = agentAwarenessPublishIdentity(null);
+interface PublishedAwareness {
+  readonly identity: string;
+  readonly state: RelayAgentActivityState | null;
+  readonly childDriven: boolean;
+  /** The run and own request behind the state; queued updates can coalesce a whole new run. */
+  readonly occurrence: string | null;
+}
+
+function awarenessOccurrence(thread: Option.Option<AgentAwarenessThread>): string | null {
+  return Option.isSome(thread)
+    ? JSON.stringify([thread.value.latestRunId, thread.value.pendingRuntimeRequest?.id ?? null])
+    : null;
+}
+
+// The relay treats a new time as a new alert, so same-phase changes like renames keep the old one.
+// A child's wait keeps its own per-request time instead, so each new child request still alerts.
+function withPublishedPhaseTime(
+  state: RelayAgentActivityState,
+  published: PublishedAwareness | undefined,
+  occurrence: string | null,
+): RelayAgentActivityState {
+  return published?.state?.phase === state.phase &&
+    !published.childDriven &&
+    published.occurrence === occurrence
+    ? { ...state, updatedAt: published.state.updatedAt }
+    : state;
+}
 
 // A published tombstone stays recorded so repeats are skipped, but it is not live state.
 function hasLivePublishedState(
-  publishedStateByThread: ReadonlyMap<ThreadId, string>,
+  publishedStateByThread: ReadonlyMap<ThreadId, PublishedAwareness>,
   threadId: ThreadId,
 ): boolean {
-  const identity = publishedStateByThread.get(threadId);
-  return identity !== undefined && identity !== CLEARED_PUBLISH_IDENTITY;
+  return (publishedStateByThread.get(threadId)?.state ?? null) !== null;
 }
 
 function resolveAgentActivityPublishingStartupState(input: {
@@ -414,7 +439,7 @@ export const make = Effect.gen(function* () {
   const scope = yield* Effect.scope;
   const startedAt = (yield* DateTime.now).epochMilliseconds;
   const catchUpRequests = yield* Queue.dropping<void>(1);
-  const publishedStateByThreadRef = yield* Ref.make(new Map<ThreadId, string>());
+  const publishedStateByThreadRef = yield* Ref.make(new Map<ThreadId, PublishedAwareness>());
   // Android keys alerts by phase and time, so a child's unchanged request keeps
   // its first alert time through parent renames, relinks and the parent's own requests.
   const childAlertByThread = new Map<ThreadId, SubagentAlert>();
@@ -585,6 +610,8 @@ export const make = Effect.gen(function* () {
     });
     const publishIdentity = agentAwarenessPublishIdentity(snapshot.state, snapshot.subagentWait);
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
+    const published = publishedStateByThread.get(threadId);
+    const occurrence = awarenessOccurrence(thread);
     if (
       (snapshot.state?.phase === "completed" || snapshot.state?.phase === "failed") &&
       !hasLivePublishedState(publishedStateByThread, threadId)
@@ -592,7 +619,7 @@ export const make = Effect.gen(function* () {
       if (Option.isNone(thread) || !terminalWorkSinceStart(thread.value, startedAt)) return;
     }
     if (
-      publishedStateByThread.get(threadId) === publishIdentity &&
+      published?.identity === publishIdentity &&
       // A held completion settled after an earlier clear still has to alert.
       !(snapshot.state === null && heldCompletions.has(threadId))
     ) {
@@ -652,7 +679,7 @@ export const make = Effect.gen(function* () {
             })
           : null;
       if (unsettled?.state?.phase === "completed") {
-        const completion = unsettled.state;
+        const completion = withPublishedPhaseTime(unsettled.state, published, occurrence);
         yield* publishState({
           projectId: unsettled.projectId,
           state: completion,
@@ -661,7 +688,12 @@ export const make = Effect.gen(function* () {
         heldCompletions.delete(threadId);
         publishConfirmDeadlines.set(threadId, nowMs + 5_000);
         yield* Ref.update(publishedStateByThreadRef, (publishedStates) =>
-          new Map(publishedStates).set(threadId, agentAwarenessPublishIdentity(completion)),
+          new Map(publishedStates).set(threadId, {
+            identity: agentAwarenessPublishIdentity(completion),
+            state: completion,
+            childDriven: false,
+            occurrence,
+          }),
         );
         yield* schedulePublishConfirm(threadId);
         return;
@@ -687,11 +719,13 @@ export const make = Effect.gen(function* () {
     const childRequestId = snapshot.subagentWait?.requestId;
     const childAlert = childAlertByThread.get(threadId);
     const state =
-      snapshot.state !== null &&
-      childRequestId !== undefined &&
-      childAlert?.requestId === childRequestId
-        ? { ...snapshot.state, updatedAt: childAlert.updatedAt }
-        : snapshot.state;
+      snapshot.state === null
+        ? null
+        : childRequestId === undefined
+          ? withPublishedPhaseTime(snapshot.state, published, occurrence)
+          : childAlert?.requestId === childRequestId
+            ? { ...snapshot.state, updatedAt: childAlert.updatedAt }
+            : snapshot.state;
     yield* publishState({
       projectId: snapshot.projectId,
       state,
@@ -703,7 +737,12 @@ export const make = Effect.gen(function* () {
     publishConfirmDeadlines.delete(threadId);
     heldCompletions.delete(threadId);
     yield* Ref.update(publishedStateByThreadRef, (publishedStates) =>
-      new Map(publishedStates).set(threadId, publishIdentity),
+      new Map(publishedStates).set(threadId, {
+        identity: publishIdentity,
+        state,
+        childDriven: childRequestId !== undefined,
+        occurrence,
+      }),
     );
   });
 

@@ -369,12 +369,27 @@ describe("AgentAwarenessRelay", () => {
       assert.equal(publications[2]?.state?.threadTitle, "Renamed thread");
       assert.equal(publications[2]?.state?.updatedAt, publications[1]?.state?.updatedAt);
 
+      // The child's next request is a new wait in the same phase, so it gets a new alert time.
+      yield* setShell(
+        waitingChild({
+          pendingRuntimeRequest: {
+            id: RuntimeRequestId.make("child-request-2"),
+            kind: "command",
+            createdAt: DateTime.makeUnsafe("2026-09-04T12:02:00.000Z"),
+          },
+        }),
+      );
+      yield* relay.publishThread(CHILD_THREAD_ID);
+      assert.equal(publications.length, 4);
+      assert.equal(publications[3]?.state?.phase, "waiting_for_approval");
+      assert.notEqual(publications[3]?.state?.updatedAt, publications[2]?.state?.updatedAt);
+
       yield* setShell(waitingChild({ pendingRuntimeRequest: null }));
       yield* relay.publishThread(CHILD_THREAD_ID);
       yield* TestClock.adjust("5 seconds");
       yield* relay.drain;
-      assert.equal(publications.length, 4);
-      assert.equal(publications[3]?.state?.phase, "completed");
+      assert.equal(publications.length, 5);
+      assert.equal(publications[4]?.state?.phase, "completed");
     }),
   );
 
@@ -655,6 +670,52 @@ describe("AgentAwarenessRelay", () => {
       yield* relay.publishThread(THREAD_ID);
       assert.equal(publications.length, 2);
       assert.equal(publications[1]?.state?.threadTitle, "Renamed thread");
+    }),
+  );
+
+  it.effect("keeps the phase's published time when a finished thread is renamed", () =>
+    Effect.gen(function* () {
+      const { relay, currentShell, publications } = yield* makeTestRelay();
+      yield* relay.publishThread(THREAD_ID);
+      const completedAt = DateTime.makeUnsafe("2026-09-04T12:01:00.000Z");
+      yield* Ref.set(currentShell, shell({ status: "completed", updatedAt: completedAt }));
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      yield* Ref.set(
+        currentShell,
+        shell({
+          status: "completed",
+          title: "Renamed thread",
+          updatedAt: DateTime.makeUnsafe("2026-09-04T13:00:00.000Z"),
+        }),
+      );
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.deepEqual(
+        publications.map(({ state }) => [state?.phase, state?.threadTitle, state?.updatedAt]),
+        [
+          ["running", "Thread", NOW],
+          ["completed", "Thread", "2026-09-04T12:01:00.000Z"],
+          ["completed", "Renamed thread", "2026-09-04T12:01:00.000Z"],
+        ],
+      );
+
+      // A new run that completed before the worker caught up is a new completion, not a rename.
+      yield* Ref.set(
+        currentShell,
+        shell({
+          status: "completed",
+          title: "Renamed again",
+          latestRunId: RunId.make("run:next"),
+          updatedAt: DateTime.makeUnsafe("2026-09-04T13:05:00.000Z"),
+        }),
+      );
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.equal(publications[3]?.state?.updatedAt, "2026-09-04T13:05:00.000Z");
     }),
   );
 
