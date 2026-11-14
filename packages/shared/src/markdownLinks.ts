@@ -433,8 +433,9 @@ function driveDestinationEnd(text: string, start: number): number {
   if (close === -1) return -1;
   let end = close;
   while (isBlank(text[end - 1])) end -= 1;
-  if (text[end - 1] === '"') {
-    const titleStart = text.lastIndexOf('"', end - 2);
+  const quote = text[end - 1];
+  if (quote === '"' || quote === "'") {
+    const titleStart = text.lastIndexOf(quote, end - 2);
     if (titleStart > start && isBlank(text[titleStart - 1])) {
       end = titleStart;
       while (isBlank(text[end - 1])) end -= 1;

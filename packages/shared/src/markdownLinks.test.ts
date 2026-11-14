@@ -159,8 +159,12 @@ describe("extractMarkdownLinkHrefs", () => {
     ["[a](<foo)bar> invalid [b](ok)", ["<foo", "ok"]],
     ["[[[nested](src/main.ts) [unfinished", ["src/main.ts"]],
     [
-      String.raw`[a](C:\Users\Jo Doe\.t3\a.png) [b](C:\Jo Doe\b.html "B")`,
-      [String.raw`C:\Users\Jo Doe\.t3\a.png`, String.raw`C:\Jo Doe\b.html`],
+      String.raw`[a](C:\Users\Jo Doe\.t3\a.png) [b](C:\Jo Doe\b.html "B") [c](C:\Jo Doe\c.html 'C')`,
+      [
+        String.raw`C:\Users\Jo Doe\.t3\a.png`,
+        String.raw`C:\Jo Doe\b.html`,
+        String.raw`C:\Jo Doe\c.html`,
+      ],
     ],
     [`See ${serializeComposerFileLink("pages/posts/[id].tsx")} now`, ["pages/posts/%5Bid%5D.tsx"]],
   ])("extracts links from incomplete and nested text", (markdown, hrefs) => {
