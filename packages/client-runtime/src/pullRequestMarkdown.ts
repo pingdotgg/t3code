@@ -4,14 +4,10 @@ import { Atom } from "effect/reactivity";
 import { GITHUB_EMOJI_ALIASES } from "./githubEmojiAliases.ts";
 import { SOURCE_CONTROL_MEDIA_ASSET, type AssetResource } from "@t3tools/contracts";
 import { sourceControlClients } from "./sourceControlClients.ts";
-import { azureDevOpsMediaLocation } from "@t3tools/shared/azureDevOpsMedia";
 
+/** The asset to request for media a host keeps behind a credential; null for any other URL. */
 export function pullRequestMediaResource(url: string, cwd: string, repository?: string) {
-  if (url.startsWith("//")) url = `https:${url}`;
-  const azure = azureDevOpsMediaLocation(url);
-  if (azure)
-    return { _tag: "azure-devops-media", cwd, url: azure.fetchUrl } satisfies AssetResource;
-  const media = sourceControlClients.mediaUrl(url);
+  const media = sourceControlClients.mediaUrl(url.startsWith("//") ? `https:${url}` : url);
   return media
     ? ({
         _tag: SOURCE_CONTROL_MEDIA_ASSET,
