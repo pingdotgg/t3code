@@ -444,6 +444,7 @@ function unimplemented(detail: string) {
 const makeProviderAdapter = Effect.fnUntraced(function* (
   state: Ref.Ref<TestProviderRuntimeState>,
   options: {
+    readonly instanceId?: ProviderInstanceId;
     readonly failEventStream?: boolean;
     readonly normalizeThreadLoadModelSelection?: (selection: ModelSelection) => ModelSelection;
     readonly capabilities?: OrchestrationV2ProviderCapabilities;
@@ -468,6 +469,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly scopeCloseReached?: Deferred.Deferred<void>;
   } = {},
 ) {
+  const instanceId = options.instanceId ?? modelSelection.instanceId;
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const countClose = Effect.addFinalizer(() =>
     Ref.update(state, (current) => ({
@@ -487,7 +489,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     ).pipe(Effect.andThen(Effect.never)),
   );
   return ProviderAdapter.ProviderAdapterV2.of({
-    instanceId: ProviderInstanceId.make("codex"),
+    instanceId,
     driver: CODEX_DRIVER,
     getCapabilities: () => Effect.succeed(options.capabilities ?? CodexCapabilities),
     planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
@@ -535,7 +537,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
         }
 
         return {
-          instanceId: ProviderInstanceId.make("codex"),
+          instanceId,
           driver: CODEX_DRIVER,
           providerSessionId: input.providerSessionId,
           ...(options.normalizeThreadLoadModelSelection === undefined
@@ -651,6 +653,7 @@ function layerTest(input: {
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
   readonly installationGateLayer?: Layer.Layer<ProviderInstallationGate.ProviderInstallationGate>;
+  readonly secondInstanceId?: ProviderInstanceId;
 }) {
   const layerConfiguredEventSink =
     input.flakyReleaseWrites !== undefined
@@ -665,40 +668,51 @@ function layerTest(input: {
           : input.failReleaseEventWrites
             ? layerFailingReleaseEventSink
             : layerTestEventSink;
+  const adapterOptions = {
+    failEventStream: input.failEventStream ?? false,
+    ...(input.normalizeThreadLoadModelSelection === undefined
+      ? {}
+      : { normalizeThreadLoadModelSelection: input.normalizeThreadLoadModelSelection }),
+    ...(input.capabilities === undefined ? {} : { capabilities: input.capabilities }),
+    ...(input.extensionStatuses === undefined
+      ? {}
+      : { extensionStatuses: input.extensionStatuses }),
+    ...(input.mcpConfigs === undefined ? {} : { mcpConfigs: input.mcpConfigs }),
+    ...(input.beforeOpen === undefined ? {} : { beforeOpen: input.beforeOpen }),
+    ...(input.hasPendingBackgroundWork === undefined
+      ? {}
+      : { hasPendingBackgroundWork: input.hasPendingBackgroundWork }),
+    ...(input.hasPendingBackgroundWorkForThread === undefined
+      ? {}
+      : { hasPendingBackgroundWorkForThread: input.hasPendingBackgroundWorkForThread }),
+    ...(input.backgroundTasksEndWithProcess === undefined
+      ? {}
+      : { backgroundTasksEndWithProcess: input.backgroundTasksEndWithProcess }),
+    ...(input.hangSessionScopeClose === undefined
+      ? {}
+      : { hangSessionScopeClose: input.hangSessionScopeClose }),
+    ...(input.startTurn === undefined ? {} : { startTurn: input.startTurn }),
+    ...(input.interruptTurn === undefined ? {} : { interruptTurn: input.interruptTurn }),
+    ...(input.beforeUnload === undefined ? {} : { beforeUnload: input.beforeUnload }),
+    ...(input.unloads === undefined ? {} : { unloads: input.unloads }),
+    ...(input.archive === undefined ? {} : { archive: input.archive }),
+    ...(input.spawnBeforeOpen === undefined ? {} : { spawnBeforeOpen: input.spawnBeforeOpen }),
+    ...(input.scopeCloseReached === undefined
+      ? {}
+      : { scopeCloseReached: input.scopeCloseReached }),
+  };
   const layerRegistry = Layer.unwrap(
-    makeProviderAdapter(input.state, {
-      failEventStream: input.failEventStream ?? false,
-      ...(input.normalizeThreadLoadModelSelection === undefined
-        ? {}
-        : { normalizeThreadLoadModelSelection: input.normalizeThreadLoadModelSelection }),
-      ...(input.capabilities === undefined ? {} : { capabilities: input.capabilities }),
-      ...(input.extensionStatuses === undefined
-        ? {}
-        : { extensionStatuses: input.extensionStatuses }),
-      ...(input.mcpConfigs === undefined ? {} : { mcpConfigs: input.mcpConfigs }),
-      ...(input.beforeOpen === undefined ? {} : { beforeOpen: input.beforeOpen }),
-      ...(input.hasPendingBackgroundWork === undefined
-        ? {}
-        : { hasPendingBackgroundWork: input.hasPendingBackgroundWork }),
-      ...(input.hasPendingBackgroundWorkForThread === undefined
-        ? {}
-        : { hasPendingBackgroundWorkForThread: input.hasPendingBackgroundWorkForThread }),
-      ...(input.backgroundTasksEndWithProcess === undefined
-        ? {}
-        : { backgroundTasksEndWithProcess: input.backgroundTasksEndWithProcess }),
-      ...(input.hangSessionScopeClose === undefined
-        ? {}
-        : { hangSessionScopeClose: input.hangSessionScopeClose }),
-      ...(input.startTurn === undefined ? {} : { startTurn: input.startTurn }),
-      ...(input.interruptTurn === undefined ? {} : { interruptTurn: input.interruptTurn }),
-      ...(input.beforeUnload === undefined ? {} : { beforeUnload: input.beforeUnload }),
-      ...(input.unloads === undefined ? {} : { unloads: input.unloads }),
-      ...(input.archive === undefined ? {} : { archive: input.archive }),
-      ...(input.spawnBeforeOpen === undefined ? {} : { spawnBeforeOpen: input.spawnBeforeOpen }),
-      ...(input.scopeCloseReached === undefined
-        ? {}
-        : { scopeCloseReached: input.scopeCloseReached }),
-    }).pipe(Effect.map(ProviderAdapterRegistry.layerSingle)),
+    Effect.all([
+      makeProviderAdapter(input.state, adapterOptions),
+      ...(input.secondInstanceId === undefined
+        ? []
+        : [
+            makeProviderAdapter(input.state, {
+              ...adapterOptions,
+              instanceId: input.secondInstanceId,
+            }),
+          ]),
+    ]).pipe(Effect.map(ProviderAdapterRegistry.layerFromAdapters)),
   );
   const layerConfiguredMcpRegistry =
     input.pauseResolve === undefined
@@ -2956,6 +2970,75 @@ it.effect("ProviderSessionManagerV2 duplicate detach preserves replacement MCP c
       ),
     );
   }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 keeps the first instance's MCP credential when the thread opens another instance",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const mcpConfigs = yield* Ref.make<
+        ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+      >([]);
+      const otherSelection = {
+        ...modelSelection,
+        instanceId: ProviderInstanceId.make("codex-other"),
+      };
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const registry = yield* McpSessionRegistry.McpSessionRegistry;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-provider-session-manager-switch-back");
+        const firstSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        const otherSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: otherSelection.instanceId,
+          threadId,
+        });
+        const detail = "Provider or model selection changed.";
+
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        yield* manager.open({
+          threadId,
+          providerSessionId: firstSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* manager.detach({ providerSessionId: firstSessionId, threadId, detail });
+        yield* manager.open({
+          threadId,
+          providerSessionId: otherSessionId,
+          modelSelection: otherSelection,
+          runtimePolicy,
+        });
+
+        const [firstConfig] = yield* Ref.get(mcpConfigs);
+        assert.equal(firstConfig?.providerInstanceId, modelSelection.instanceId);
+        const firstToken = firstConfig!.authorizationHeader.replace(/^Bearer\s+/, "");
+        assert.equal(
+          (yield* registry.resolve(firstToken))?.thread.threadId,
+          threadId,
+          "the first instance's process still holds this token and is reused when the thread switches back",
+        );
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 1_000,
+            mcpConfigs,
+            secondInstanceId: otherSelection.instanceId,
+          }),
+        ),
+      );
+    }),
 );
 
 it.effect(
