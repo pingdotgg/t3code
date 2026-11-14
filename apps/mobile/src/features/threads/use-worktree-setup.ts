@@ -9,6 +9,8 @@ export function useWorktreeSetup(input: {
   environmentId: EnvironmentId | null;
   threadId: ThreadId | null;
   preparing: boolean;
+  /** Reads a worktree thread's snapshot until one is held. */
+  hasWorktree: boolean;
   turnStarted: boolean;
   followUpSent: boolean;
 }) {
@@ -18,7 +20,8 @@ export function useWorktreeSetup(input: {
   const query = useEnvironmentQuery(
     input.environmentId &&
       input.threadId &&
-      (live?.phase === "running" || (!live && input.preparing))
+      // A retry can follow any unfinished attempt, and its `preparing` can clear before a render sees it.
+      (input.preparing || (live ? live.phase !== "done" : input.hasWorktree))
       ? vcsEnvironment.worktreeSetup({
           environmentId: input.environmentId,
           input: { threadId: input.threadId },
