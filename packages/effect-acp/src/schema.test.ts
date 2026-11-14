@@ -13,6 +13,27 @@ describe("pinned ACP wire schemas", () => {
     expect(accepts({ type: "future_content", payload: { value: 1 } })).toBe(true);
   });
 
+  it("decodes titled multi-select form fields in v1 and v2", () => {
+    const titled = (anyOf: ReadonlyArray<unknown>) => ({
+      sessionId: "session-1",
+      mode: "form",
+      message: "Pick areas",
+      requestedSchema: {
+        type: "object",
+        properties: { areas: { type: "array", minItems: 1, items: { anyOf } } },
+        required: ["areas"],
+      },
+    });
+    const form = titled([
+      { const: "api", title: "API", description: "Server routes" },
+      { const: "ui", title: "Interface" },
+    ]);
+    for (const request of [V1.CreateElicitationRequest, V2.CreateElicitationRequest]) {
+      expect(Schema.decodeUnknownSync(request)(form)).toEqual(form);
+      expect(Schema.is(request)(titled([{ const: "api" }]))).toBe(false);
+    }
+  });
+
   it("keeps v1 command inputs compatible with native agents", () => {
     const command = { name: "plan", description: "Make a plan", input: { hint: "Task" } };
     const isAvailableCommand = Schema.is(V1.AvailableCommand);

@@ -69,3 +69,25 @@ it.effect("reads SSE line endings across byte-chunk boundaries without splitting
     }
   }),
 );
+
+it.effect("picks the SSE reader from the media type alone, whatever its case", () =>
+  Effect.gen(function* () {
+    const response = new Response('data: {"id":1}\n\n', {
+      headers: { "content-type": "Text/Event-Stream; charset=utf-8" },
+    });
+    const payloads = yield* Stream.runCollect(
+      responsePayloads(response, (cause) => ({ _tag: "ResponsePayloadError" as const, cause })),
+    );
+    expect(Array.from(payloads)).toEqual([{ id: 1 }]);
+
+    const json = new Response('{"jsonrpc":"2.0","id":1,"result":{}}', {
+      headers: {
+        "content-type": 'application/json; profile="https://example.com/Text/Event-Stream"',
+      },
+    });
+    const jsonPayloads = yield* Stream.runCollect(
+      responsePayloads(json, (cause) => ({ _tag: "ResponsePayloadError" as const, cause })),
+    );
+    expect(Array.from(jsonPayloads)).toEqual([{ jsonrpc: "2.0", id: 1, result: {} }]);
+  }),
+);
