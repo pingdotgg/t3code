@@ -13,10 +13,12 @@ export const SecretProviderSlug = TrimmedNonEmptyString.check(
 export const SecretProviderId = SecretProviderSlug.pipe(Schema.brand("SecretProviderId"));
 export type SecretProviderId = typeof SecretProviderId.Type;
 
-// Provider-specific syntax is the secret provider driver's to check.
-export const SecretReferencePath = TrimmedNonEmptyString.check(
+// Provider-specific syntax is the secret provider driver's to check. Not trimmed: an edge space
+// can be part of the name a reference selects.
+export const SecretReferencePath = Schema.String.check(
   Schema.isMaxLength(1024),
   Schema.isPattern(/^[^\r\n]+$/),
+  Schema.isPattern(/\S/),
 );
 
 /** Points at a secret held by a configured secret provider; the secret itself is never stored. */
