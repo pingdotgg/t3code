@@ -694,7 +694,7 @@ const decodeManagerEnvironment = Schema.decodeUnknownEffect(
 );
 
 // Boot services miss the desktop environment imported later into the systemd user manager.
-const readGraphicalSessionEnv = Effect.fn("externalLauncher.readGraphicalSessionEnv")(
+export const readGraphicalSessionEnv = Effect.fn("externalLauncher.readGraphicalSessionEnv")(
   function* () {
     const hostEnv = yield* HostProcess.Environment;
     if ((yield* HostProcess.Platform) !== "linux" || hasGraphicalLinuxSession(hostEnv)) {

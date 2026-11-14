@@ -164,6 +164,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { snapshotMcpApp } from "../../mcpApps/McpAppSnapshot.ts";
 import { resolveClaudeSdkExecutablePath } from "../../provider/Drivers/ClaudeExecutable.ts";
+import { readGraphicalSessionEnv } from "../../process/externalLauncher.ts";
 import * as ProviderInstallationGate from "../../provider/ProviderInstallationGate.ts";
 import {
   planClaudeSkillDispatch,
@@ -1356,11 +1357,19 @@ export const layerQueryRunner: Layer.Layer<
           );
           // Send MCP credentials over stdin to keep them out of SDK argv and inherited command environments.
           const { mcpServers, ...sdkOptions } = input.options;
+          const environment = sdkOptions.env ?? hostEnvironment;
+          // Read per spawn: the desktop session can start after a boot-started server.
+          const sessionDisplayEnv = yield* readGraphicalSessionEnv().pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.provideService(HostProcess.Environment, environment),
+            Effect.provideService(HostProcess.Platform, platform),
+          );
           // Jobs the agent starts inherit the thread, so port discovery can attribute their servers.
           const queryOptions = {
             ...sdkOptions,
             env: {
-              ...(sdkOptions.env ?? hostEnvironment),
+              ...sessionDisplayEnv,
+              ...environment,
               [PortScanner.AGENT_THREAD_ENV]: input.threadId,
             },
           };

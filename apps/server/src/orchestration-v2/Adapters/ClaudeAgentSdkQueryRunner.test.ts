@@ -17,6 +17,8 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
@@ -294,6 +296,67 @@ it.effect("reopens a stalled MCP registration before delivering the resumed prom
     assert.deepEqual(delivered.value, message);
     assert.isFalse(delivered.done);
   }).pipe(Effect.provide(realQueryRunner)),
+);
+
+const managerEnvironment = JSON.stringify({
+  type: "as",
+  data: ["DISPLAY=:0", "HOME=/home/user", "WAYLAND_DISPLAY=wayland-1"],
+});
+
+it.effect("gives Claude the desktop session display a boot-started Linux server missed", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const env = { PATH: "/usr/bin:/bin", WAYLAND_DISPLAY: "" };
+      const querySpy = vi
+        .spyOn(ClaudeSdk, "query")
+        .mockImplementation(() => ({ close: vi.fn() }) as unknown as ClaudeSdk.Query);
+      yield* Effect.addFinalizer(() => Effect.sync(() => querySpy.mockRestore()));
+      const runner = yield* ClaudeAgentSdkQueryRunner;
+      const { mcpServers: _mcpServers, ...options } = resumedMcpQueryInput.options;
+      const session = yield* runner.open({ ...resumedMcpQueryInput, options: { ...options, env } });
+      yield* Effect.addFinalizer(() => session.close.pipe(Effect.orDie));
+
+      const spawnEnv = querySpy.mock.calls[0]?.[0].options?.env;
+      assert.equal(spawnEnv?.DISPLAY, ":0");
+      // An explicit provider value still wins over the session's.
+      assert.equal(spawnEnv?.WAYLAND_DISPLAY, "");
+    }).pipe(
+      Effect.provide(
+        layerQueryRunner.pipe(
+          Layer.provide(PortScanner.layerTest),
+          Layer.provide(
+            Layer.succeed(ProviderEventLoggers, { native: undefined, canonical: undefined }),
+          ),
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.succeed(HostProcess.Platform, "linux"),
+              Layer.succeed(
+                ChildProcessSpawner.ChildProcessSpawner,
+                ChildProcessSpawner.make(() =>
+                  Effect.succeed(
+                    ChildProcessSpawner.makeHandle({
+                      pid: ChildProcessSpawner.ProcessId(1),
+                      exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+                      isRunning: Effect.succeed(false),
+                      kill: () => Effect.void,
+                      unref: Effect.succeed(Effect.void),
+                      stdin: Sink.drain,
+                      stdout: Stream.make(new TextEncoder().encode(managerEnvironment)),
+                      stderr: Stream.empty,
+                      all: Stream.empty,
+                      getInputFd: () => Sink.drain,
+                      getOutputFd: () => Stream.empty,
+                    }),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        ),
+      ),
+    ),
+  ),
 );
 
 it.effect.each([

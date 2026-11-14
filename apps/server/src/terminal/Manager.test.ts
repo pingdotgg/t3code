@@ -34,6 +34,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Ref from "effect/Ref";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import * as Sink from "effect/Sink";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
@@ -271,7 +272,11 @@ const createManager = (
 ): Effect.Effect<
   ManagerFixture,
   PlatformError.PlatformError,
-  FileSystem.FileSystem | Path.Path | Scope.Scope | ProcessRunner.ProcessRunner
+  | FileSystem.FileSystem
+  | Path.Path
+  | Scope.Scope
+  | ProcessRunner.ProcessRunner
+  | ChildProcessSpawner.ChildProcessSpawner
 > =>
   Effect.flatMap(Effect.service(FileSystem.FileSystem), (fs) =>
     Effect.gen(function* () {
@@ -2275,6 +2280,49 @@ it.layer(
       expect(spawnInput.env.ZELLIJ_SESSION_NAME).toBeUndefined();
       expect(spawnInput.env.ZELLIJ_CONFIG_DIR).toBe("/home/user/.config/zellij");
       expect(ptyAdapter.spawnInputs[1]?.env.TMUX_PANE).toBe("%9");
+    }),
+  );
+
+  it.effect("gives terminals the desktop session display a boot-started Linux server missed", () =>
+    Effect.gen(function* () {
+      const env = { PATH: "/usr/bin:/bin", XDG_RUNTIME_DIR: "/run/user/1000" };
+      const managerEnvironment = JSON.stringify({
+        type: "as",
+        data: ["DISPLAY=:0", "HOME=/home/user", "WAYLAND_DISPLAY=wayland-1"],
+      });
+      const { manager, ptyAdapter } = yield* createManager(5, { env }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layerWithHostPlatform("linux"),
+            Layer.succeed(HostProcess.Environment, env),
+            Layer.succeed(
+              ChildProcessSpawner.ChildProcessSpawner,
+              ChildProcessSpawner.make(() =>
+                Effect.succeed(
+                  ChildProcessSpawner.makeHandle({
+                    pid: ChildProcessSpawner.ProcessId(1),
+                    exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+                    isRunning: Effect.succeed(false),
+                    kill: () => Effect.void,
+                    unref: Effect.succeed(Effect.void),
+                    stdin: Sink.drain,
+                    stdout: Stream.make(new TextEncoder().encode(managerEnvironment)),
+                    stderr: Stream.empty,
+                    all: Stream.empty,
+                    getInputFd: () => Sink.drain,
+                    getOutputFd: () => Stream.empty,
+                  }),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      yield* manager.open(openInput());
+
+      const spawnEnv = ptyAdapter.spawnInputs[0]?.env;
+      expect(spawnEnv?.DISPLAY).toBe(":0");
+      expect(spawnEnv?.WAYLAND_DISPLAY).toBe("wayland-1");
     }),
   );
 

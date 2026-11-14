@@ -64,6 +64,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import packageJson from "../../package.json" with { type: "json" };
@@ -76,6 +77,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import { increment, terminalSessionsTotal } from "../observability/Metrics.ts";
 import { expandHomeVariable } from "@t3tools/provider-core/server/pathExpansion";
 import * as ProcessRunner from "../processRunner.ts";
+import { readGraphicalSessionEnv } from "../process/externalLauncher.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
 import * as NativeTelemetryClient from "../resourceTelemetry/NativeTelemetryClient.ts";
 import { terminalOutputStream } from "./OutputProtocol.ts";
@@ -1721,6 +1723,15 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   // Inherit the full environment minus createTerminalSpawnEnv's blocklist; allowlists silently drop user tooling variables.
   const baseEnv = options.env ?? process.env;
   const shellResolver = options.shellResolver ?? (() => defaultShellResolver(platform, baseEnv));
+  // Read per spawn: the desktop session can start after a boot-started server.
+  const readSessionDisplayEnv = readGraphicalSessionEnv().pipe(
+    Effect.provideService(
+      ChildProcessSpawner.ChildProcessSpawner,
+      yield* ChildProcessSpawner.ChildProcessSpawner,
+    ),
+    Effect.provideService(HostProcess.Environment, baseEnv),
+    Effect.provideService(HostProcess.Platform, platform),
+  );
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const resolveLaunchInputEnvironment = Effect.fn("terminal.resolveLaunchInputEnvironment")(
     function* <Input extends TerminalOpenInput | TerminalAttachInput>(
@@ -2686,7 +2697,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           Effect.gen(function* () {
             const shellCandidates = resolveShellCandidates(shellResolver, platform, baseEnv);
             const terminalEnv = createTerminalSpawnEnv(
-              baseEnv,
+              { ...baseEnv, ...(yield* readSessionDisplayEnv) },
               session.runtimeEnv,
               platform,
               yield* HostProcess.HomeDirectory,
