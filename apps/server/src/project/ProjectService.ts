@@ -477,6 +477,7 @@ export const make = Effect.gen(function* () {
       "runtimeRequests",
       "subagents",
       "providerSessions",
+      "checkpointScopes",
     ]);
     if (projection.thread.deletedAt !== null || projection.thread.projectId !== input.projectId) {
       return;
@@ -490,6 +491,11 @@ export const make = Effect.gen(function* () {
     const plan = yield* planThreadDeletion({
       command,
       projection,
+      workspaceRoot: Option.getOrNull(
+        yield* readRow(input.projectId, { includeDeleted: true }).pipe(
+          Effect.map(Option.map((project) => project.workspaceRoot)),
+        ),
+      ),
       attachmentIds: yield* threadProjections.getThreadAttachmentIds(threadId),
       now,
       idAllocator,

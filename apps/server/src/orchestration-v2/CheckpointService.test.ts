@@ -233,3 +233,43 @@ it.effect("records a repository probe failure as an error checkpoint, not a miss
     assert.deepEqual(statuses, { baseline: "error", turn: "error" });
   }),
 );
+
+it.effect("deletes a removed worktree's thread refs through the project repository", () =>
+  Effect.gen(function* () {
+    const deleted: Array<{ readonly cwd: string; readonly prefixes: ReadonlyArray<string> }> = [];
+    const layerTest = CheckpointService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          Layer.mock(CheckpointStore.CheckpointStore)({
+            isGitRepository: (cwd) => Effect.succeed(cwd === "/repo"),
+            deleteCheckpointRefsUnder: (input) => Effect.sync(() => void deleted.push(input)),
+          }),
+        ),
+      ),
+      Layer.provideMerge(NodeCrypto.layer),
+    );
+    const scopeId = CheckpointScopeId.make("checkpoint-scope:removed-worktree");
+    const scopePrefix = (yield* CheckpointService.checkpointRefForScopeOrdinal({
+      scopeId,
+      ordinalWithinScope: 0,
+    })).replace(/\/ordinal\/0$/, "");
+
+    yield* Effect.gen(function* () {
+      const checkpoints = yield* CheckpointService.CheckpointServiceV2;
+      yield* checkpoints.deleteThreadRefs({
+        threadId: ThreadId.make("thread:removed-worktree"),
+        scopes: [{ id: scopeId, cwd: "/repo/.worktrees/feature" }],
+        legacyCwd: "/repo/.worktrees/feature",
+        workspaceRoot: "/repo",
+      });
+    }).pipe(Effect.provide(layerTest));
+
+    assert.deepEqual(deleted, [
+      {
+        cwd: "/repo",
+        prefixes: [scopePrefix, "refs/t3/checkpoints/dGhyZWFkOnJlbW92ZWQtd29ya3RyZWU"],
+      },
+    ]);
+  }).pipe(Effect.provide(NodeCrypto.layer)),
+);

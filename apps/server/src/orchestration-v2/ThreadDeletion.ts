@@ -18,8 +18,17 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
   readonly command: Extract<OrchestrationV2Command, { readonly type: "thread.delete" }>;
   readonly projection: Pick<
     OrchestrationV2ThreadProjection,
-    "thread" | "runs" | "attempts" | "nodes" | "runtimeRequests" | "subagents" | "providerSessions"
+    | "thread"
+    | "runs"
+    | "attempts"
+    | "nodes"
+    | "runtimeRequests"
+    | "subagents"
+    | "providerSessions"
+    | "checkpointScopes"
   >;
+  /** The project's root; its ref store also holds the refs of the project's linked worktrees. */
+  readonly workspaceRoot: string | null;
   readonly attachmentIds: ReadonlyArray<string>;
   readonly now: DateTime.Utc;
   readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
@@ -226,6 +235,17 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
     commandId: command.commandId,
     threadId: command.threadId,
     request: { type: "preview.cleanup" },
+  });
+  effects.push({
+    id: `effect:${command.commandId}:checkpoint-refs.cleanup`,
+    commandId: command.commandId,
+    threadId: command.threadId,
+    request: {
+      type: "checkpoint-refs.cleanup",
+      scopes: projection.checkpointScopes.map((scope) => ({ id: scope.id, cwd: scope.cwd })),
+      legacyCwd: projection.thread.worktreePath ?? input.workspaceRoot,
+      workspaceRoot: input.workspaceRoot,
+    },
   });
   const attachmentIds = Array.from(new Set(input.attachmentIds));
   if (attachmentIds.length > 0) {

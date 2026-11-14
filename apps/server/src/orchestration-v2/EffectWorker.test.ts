@@ -144,6 +144,7 @@ function layerExecutorFor(input: {
       RunFinalizationService.RunFinalizationService,
       RunFinalizationService.RunFinalizationService.of({ finalize: () => Effect.void }),
     ),
+    Layer.mock(CheckpointService.CheckpointServiceV2)({}),
     Layer.succeed(
       CheckpointRollbackService.CheckpointRollbackServiceV2,
       CheckpointRollbackService.CheckpointRollbackServiceV2.of({

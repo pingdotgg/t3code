@@ -44,6 +44,11 @@ export interface DeleteCheckpointRefsInput {
   readonly checkpointRefs: ReadonlyArray<CheckpointRef>;
 }
 
+export interface DeleteCheckpointRefsUnderInput {
+  readonly cwd: string;
+  readonly prefixes: ReadonlyArray<string>;
+}
+
 export class CheckpointStore extends Context.Service<
   CheckpointStore,
   {
@@ -72,6 +77,10 @@ export class CheckpointStore extends Context.Service<
 
     readonly deleteCheckpointRefs: (
       input: DeleteCheckpointRefsInput,
+    ) => Effect.Effect<void, CheckpointStoreError>;
+
+    readonly deleteCheckpointRefsUnder: (
+      input: DeleteCheckpointRefsUnderInput,
     ) => Effect.Effect<void, CheckpointStoreError>;
   }
 >()("t3/checkpointing/CheckpointStore") {}
@@ -138,6 +147,12 @@ export const make = Effect.gen(function* () {
     return yield* checkpoints.deleteCheckpointRefs(input);
   });
 
+  const deleteCheckpointRefsUnder: CheckpointStore["Service"]["deleteCheckpointRefsUnder"] =
+    Effect.fn("deleteCheckpointRefsUnder")(function* (input) {
+      const checkpoints = yield* resolveCheckpoints(input.cwd);
+      return yield* checkpoints.deleteCheckpointRefsUnder(input);
+    });
+
   return CheckpointStore.of({
     isGitRepository,
     captureCheckpoint,
@@ -146,6 +161,7 @@ export const make = Effect.gen(function* () {
     diffCheckpoints,
     listAuthoredPaths,
     deleteCheckpointRefs,
+    deleteCheckpointRefsUnder,
   });
 });
 

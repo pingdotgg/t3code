@@ -1899,6 +1899,45 @@ it.effect("GitVcsDriver fails repository probes when git cannot read the reposit
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
+it.effect(
+  "deletes every checkpoint ref under a prefix and keeps refs that only share its text",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-delete-refs-" });
+      yield* runGit(cwd, ["init"]);
+      yield* runGit(cwd, ["config", "user.email", "test@test.com"]);
+      yield* runGit(cwd, ["config", "user.name", "Test"]);
+      yield* runGit(cwd, ["commit", "--allow-empty", "-m", "initial"]);
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      const refs = [
+        "refs/t3/checkpoints/thread/turn/1",
+        "refs/t3/checkpoints/thread/turn/2",
+        "refs/t3/orchestration-v2/checkpoints/scope/ordinal/0",
+        "refs/t3/checkpoints/thread2/turn/1",
+        "refs/t3/orchestration-v2/checkpoints/scope2/ordinal/0",
+      ].map((ref) => CheckpointRef.make(ref));
+      for (const checkpointRef of refs) {
+        yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+      }
+
+      yield* driver.checkpoints.deleteCheckpointRefsUnder({
+        cwd,
+        prefixes: ["refs/t3/checkpoints/thread", "refs/t3/orchestration-v2/checkpoints/scope"],
+      });
+
+      const remaining = yield* driver.execute({
+        operation: "GitVcsDriver.contract.git",
+        cwd,
+        args: ["for-each-ref", "--format=%(refname)", "refs/t3"],
+      });
+      assert.deepEqual(remaining.stdout.trim().split("\n"), [
+        "refs/t3/checkpoints/thread2/turn/1",
+        "refs/t3/orchestration-v2/checkpoints/scope2/ordinal/0",
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
 it.effect("GitVcsDriver reports no repository for a deleted cwd or a bare repository", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;

@@ -204,6 +204,7 @@ it.effect("retries a partial project deletion without repeating child events or 
       assert.deepEqual(
         partialCleanup.map((effect) => [effect.thread_id, effect.effect_type]),
         [
+          [firstThreadId, "checkpoint-refs.cleanup"],
           [firstThreadId, "preview.cleanup"],
           [firstThreadId, "scheduled-tasks.cleanup"],
           [firstThreadId, "terminal.cleanup"],
@@ -229,7 +230,7 @@ it.effect("retries a partial project deletion without repeating child events or 
       assert.deepEqual(finalEvents[0], partialEvents[0]);
       assert.equal(finalEvents[2]?.command_id, commandId);
       const finalCleanup = yield* readCleanup;
-      assert.lengthOf(finalCleanup, 6);
+      assert.lengthOf(finalCleanup, 8);
       assert.deepEqual(
         finalCleanup.filter((effect) => effect.thread_id === firstThreadId),
         partialCleanup,
@@ -239,6 +240,12 @@ it.effect("retries a partial project deletion without repeating child events or 
         assert.deepEqual(
           finalCleanup.filter((effect) => effect.thread_id === threadId),
           [
+            {
+              effect_id: `effect:${expectedCommandId}:checkpoint-refs.cleanup`,
+              thread_id: threadId,
+              command_id: expectedCommandId,
+              effect_type: "checkpoint-refs.cleanup",
+            },
             {
               effect_id: `effect:${expectedCommandId}:preview.cleanup`,
               thread_id: threadId,
@@ -474,7 +481,9 @@ it.effect("deletes a project without force once its imported threads were delete
           "runtimeRequests",
           "subagents",
           "providerSessions",
+          "checkpointScopes",
         ]),
+        workspaceRoot: null,
         attachmentIds: [],
         now,
         idAllocator,
