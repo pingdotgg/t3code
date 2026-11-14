@@ -29,6 +29,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { AgentScope } from "@t3tools/shared/AgentScope";
 
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
@@ -37,6 +38,11 @@ import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
+import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
+import {
+  ThreadWorktreeRestore,
+  WorktreeRecreateError,
+} from "../workspace/restoreMissingWorktree.ts";
 
 it("stamps authoritative provenance on commands that create threads or messages", () => {
   const command: OrchestrationV2Command = {
@@ -62,6 +68,12 @@ it("stamps authoritative provenance on commands that create threads or messages"
       threadId: ThreadId.make("thread:elsewhere"),
       title: "Somewhere else",
     },
+    // A client's message goes through intake; only the server folds one into the creation.
+    initialMessage: {
+      messageId: MessageId.make("message:thread-management:forged"),
+      text: "Forged",
+      attachments: [],
+    },
   };
 
   const stamped = ThreadManagementService.withCreationProvenance(command, {
@@ -74,6 +86,7 @@ it("stamps authoritative provenance on commands that create threads or messages"
   });
   expect(stamped).not.toHaveProperty("linkOrigin");
   expect(stamped).not.toHaveProperty("delegatedFrom");
+  expect(stamped).not.toHaveProperty("initialMessage");
 });
 
 const layerReceiptsTest = CommandReceiptStore.layer.pipe(
@@ -197,6 +210,101 @@ it.effect(
     }).pipe(Effect.provide(layerTest));
   },
 );
+
+it.effect.each([
+  { label: "fails a send that starts a turn", running: false },
+  { label: "still steers a running turn", running: true },
+])("sendToThread with a missing worktree that cannot be recreated $label", ({ running }) => {
+  const projectId = ProjectId.make("project:thread-management:worktree-gone");
+  const threadId = ThreadId.make("thread:thread-management:worktree-gone");
+  const dispatched: Array<string> = [];
+  const layerTest = ThreadManagementService.layerWithLegacyImporter.pipe(
+    Layer.provide(
+      Layer.succeed(ThreadWorktreeRestore, {
+        restore: () =>
+          Effect.fail(
+            new WorktreeRecreateError({
+              worktreePath: "/worktrees/gone",
+              branch: "t3/gone",
+              cause: new Error("branch_checked_out_in_worktree"),
+            }),
+          ),
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(LegacyV1ThreadImporter.LegacyV1ThreadImporter)({
+        ensureTranscript: () => Effect.succeed({ importedThreadCount: 0, importedMessageCount: 0 }),
+      }),
+    ),
+    Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+    Layer.provide(
+      Layer.mock(Orchestrator.OrchestratorV2)({
+        getThreadRecords: () =>
+          Effect.succeed({
+            thread: {
+              id: threadId,
+              projectId,
+              deletedAt: null,
+              archivedAt: null,
+              worktreePath: "/worktrees/gone",
+              branch: "t3/gone",
+              modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test" },
+            },
+            runs: running
+              ? [
+                  {
+                    id: RunId.make("run:thread-management:worktree-gone"),
+                    status: "running",
+                    activeAttemptId: "attempt:thread-management:worktree-gone",
+                  },
+                ]
+              : [],
+            providerTurns: running
+              ? [
+                  {
+                    runAttemptId: "attempt:thread-management:worktree-gone",
+                    status: "running",
+                  },
+                ]
+              : [],
+            messages: [],
+            turnItems: [],
+          } as unknown as OrchestrationV2ThreadProjection),
+        dispatch: (command) =>
+          Effect.sync(() => {
+            dispatched.push(command.type);
+            return { sequence: 1, storedEvents: [] } as never;
+          }),
+      }),
+    ),
+    Layer.provide(ServerSettings.layerTest()),
+    Layer.provideMerge(layerReceiptsTest),
+  );
+
+  return Effect.gen(function* () {
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    const error = yield* Effect.flip(
+      threads.sendToThread({
+        projectId,
+        threadId,
+        commandId: CommandId.make("command:thread-management:worktree-gone"),
+        messageId: MessageId.make("message:thread-management:worktree-gone"),
+        text: "Reply with ok.",
+        attachments: [],
+        mode: "auto",
+        createdBy: "agent",
+        creationSource: "mcp",
+      }),
+    );
+    // The mock records no message, so a dispatched send ends in the projection read.
+    expect(error._tag).toBe(
+      running
+        ? "ThreadManagementDurableRunProjectionError"
+        : "ThreadManagementWorktreeRestoreError",
+    );
+    expect(dispatched).toEqual(running ? ["message.dispatch"] : []);
+  }).pipe(Effect.provide(layerTest));
+});
 
 it.effect("waitForThread follows a restart continuation instead of the cut run", () =>
   Effect.gen(function* () {
@@ -461,7 +569,13 @@ it.effect("waitForThread returns the cut run once its continuation is declined",
   }),
 );
 
-it.effect.each(["live", "no-session", "unsupported-runtime"] as const)(
+it.effect.each([
+  "live",
+  "no-match",
+  "no-match-clear",
+  "no-session",
+  "unsupported-runtime",
+] as const)(
   "marks background work awaited on the thread's active provider thread with state %s",
   (state) =>
     Effect.gen(function* () {
@@ -537,7 +651,11 @@ it.effect.each(["live", "no-session", "unsupported-runtime"] as const)(
       const result = yield* Effect.gen(function* () {
         const service = yield* ThreadManagementService.ThreadManagementService;
         return yield* service
-          .awaitBackgroundTasks({ threadId, taskIds: ["tests", "finished"], awaited: true })
+          .awaitBackgroundTasks({
+            threadId,
+            taskIds: state.startsWith("no-match") ? ["finished"] : ["tests", "finished"],
+            awaited: state !== "no-match-clear",
+          })
           .pipe(Effect.result);
       }).pipe(Effect.provide(Layer.merge(layerTest, ThreadCommandExecutor.layer)));
 
@@ -546,6 +664,14 @@ it.effect.each(["live", "no-session", "unsupported-runtime"] as const)(
           success: { matched: ["tests"], unmatched: ["finished"] },
         });
         expect(calls).toEqual([{ providerThreadId, awaited: true }]);
+      } else if (state === "no-match") {
+        expect(result).toMatchObject({
+          failure: { _tag: "ThreadManagementBackgroundWaitError", reason: "unmatched" },
+        });
+        expect(calls).toEqual([{ providerThreadId, awaited: true }]);
+      } else if (state === "no-match-clear") {
+        expect(result).toMatchObject({ success: { matched: [], unmatched: ["finished"] } });
+        expect(calls).toEqual([{ providerThreadId, awaited: false }]);
       } else {
         expect(result).toMatchObject({
           failure: {
@@ -872,4 +998,78 @@ it.effect("Force stop refuses once a newer run has started, before killing anyth
     expect(error.reason).toBe("superseded");
     expect(killed).toBe(false);
   }),
+);
+
+it.effect(
+  "admits two transcript exports at a time and frees a slot on failure or interruption",
+  () =>
+    Effect.gen(function* () {
+      const started = yield* Queue.unbounded<string>();
+      const gates = new Map(
+        ["a", "b", "c", "d", "e", "f"].map((id) => [
+          id,
+          Deferred.makeUnsafe<void, Orchestrator.OrchestratorV2Error>(),
+        ]),
+      );
+      const layerTest = ThreadManagementService.layer.pipe(
+        Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+        Layer.provide(
+          Layer.mock(Orchestrator.OrchestratorV2)({
+            getTranscriptByteFloor: () => Effect.succeed(0),
+            getThreadSnapshot: (threadId) =>
+              Queue.offer(started, threadId).pipe(
+                Effect.andThen(Deferred.await(gates.get(threadId)!)),
+                Effect.as({
+                  schemaVersion: 1,
+                  snapshotSequence: 1,
+                  projection: {
+                    thread: { id: threadId, title: threadId },
+                    updatedAt: DateTime.makeUnsafe(0),
+                    visibleTurnItems: [],
+                  } as unknown as OrchestrationV2ThreadProjection,
+                }),
+              ),
+          }),
+        ),
+        Layer.provide(ServerSettings.layerTest()),
+        Layer.provide(layerReceiptsTest),
+      );
+
+      yield* Effect.gen(function* () {
+        const threads = yield* ThreadManagementService.ThreadManagementService;
+        const exportThread = (id: string) =>
+          threads.getThreadTranscript(ThreadId.make(id)).pipe(
+            Effect.provideService(ServerEnvironment.ServerEnvironmentIdentity, {
+              getEnvironmentId: Effect.succeed(EnvironmentId.make("environment:export")),
+            }),
+            Effect.forkChild({ startImmediately: true }),
+          );
+        const a = yield* exportThread("a");
+        const b = yield* exportThread("b");
+        const c = yield* exportThread("c");
+        const d = yield* exportThread("d");
+        const e = yield* exportThread("e");
+        const f = yield* exportThread("f");
+        expect(yield* Queue.takeAll(started)).toEqual(["a", "b"]);
+
+        yield* Fiber.interrupt(c);
+        yield* Deferred.fail(
+          gates.get("a")!,
+          new Orchestrator.OrchestratorProjectionError({ threadId: ThreadId.make("a"), cause: "" }),
+        );
+        expect(yield* Queue.take(started)).toBe("d");
+        yield* Fiber.interrupt(b);
+        expect(yield* Queue.take(started)).toBe("e");
+        yield* Deferred.succeed(gates.get("d")!, undefined);
+        expect(yield* Queue.take(started)).toBe("f");
+        yield* Deferred.succeed(gates.get("e")!, undefined);
+        yield* Deferred.succeed(gates.get("f")!, undefined);
+
+        expect((yield* Fiber.await(a))._tag).toBe("Failure");
+        expect((yield* Fiber.join(d)).threadId).toBe("d");
+        expect((yield* Fiber.join(e)).threadId).toBe("e");
+        expect((yield* Fiber.join(f)).threadId).toBe("f");
+        expect(yield* Queue.size(started)).toBe(0);
+      }).pipe(Effect.provide(layerTest));
+    }),
 );

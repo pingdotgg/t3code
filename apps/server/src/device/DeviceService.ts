@@ -32,11 +32,16 @@ import {
   LOCAL_DEVICE_HOST_LABEL,
   type ThreadId,
 } from "@t3tools/contracts";
+import { extractPng } from "@t3tools/shared/png";
 import { SshCommandError } from "@t3tools/ssh/errors";
 import * as FileSystem from "effect/FileSystem";
 import { resolveNodeExecutable, nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
 import * as Path from "effect/Path";
-import { ensureAgentDevice, ensureDeviceHub } from "./DeviceToolchain.ts";
+import {
+  DeviceToolchainInstallError,
+  ensureAgentDevice,
+  ensureDeviceHub,
+} from "./DeviceToolchain.ts";
 import {
   agentDeviceCloseOutcome,
   bindAgentDeviceLauncher,
@@ -106,6 +111,15 @@ const sshProbeFailureMessage = (error: DeviceHost.DeviceHostError): string => {
   if (windows) return windows.message;
 
   return `Connected over SSH, but the device host check failed (exit code ${cause.exitCode}).`;
+};
+
+const isToolchainInstallError = Schema.is(DeviceToolchainInstallError);
+
+const actionableHostFailure = (error: DeviceHost.DeviceHostError): string | undefined => {
+  if (error.step === "probe") return sshProbeFailureMessage(error);
+  if (isToolchainInstallError(error.cause) && error.cause.reason === "npm_not_found")
+    return error.cause.message;
+  return undefined;
 };
 
 export interface DeviceScreenshot {
@@ -450,9 +464,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
             setHostStatus(host.id, {
               status: "failed",
               detail:
-                error._tag === "DeviceHostError" && error.step === "probe"
-                  ? sshProbeFailureMessage(error)
-                  : error.message,
+                (error._tag === "DeviceHostError" && actionableHostFailure(error)) || error.message,
             }),
           ),
           Effect.mapError(
@@ -463,9 +475,8 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
                 reason:
                   error._tag === "NodeRuntimeUnavailableError"
                     ? nodeRuntimeUnavailableMessage("Local device support")
-                    : error.step === "probe"
-                      ? sshProbeFailureMessage(error)
-                      : `Device support failed during ${error.step}.`,
+                    : (actionableHostFailure(error) ??
+                      `Device support failed during ${error.step}.`),
                 cause: error,
               }),
           ),
@@ -513,9 +524,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
             setHostStatus(host.id, {
               status: "failed",
               detail:
-                error._tag === "DeviceHostError" && error.step === "probe"
-                  ? sshProbeFailureMessage(error)
-                  : error.message,
+                (error._tag === "DeviceHostError" && actionableHostFailure(error)) || error.message,
             }),
           ),
           Effect.mapError(
@@ -530,9 +539,8 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
                       ? `Agent tools did not start within ${error.timeoutMs} ms.`
                       : error._tag === "AgentDeviceStartError"
                         ? error.message
-                        : error.step === "probe"
-                          ? sshProbeFailureMessage(error)
-                          : `Device support failed during ${error.step}.`,
+                        : (actionableHostFailure(error) ??
+                          `Device support failed during ${error.step}.`),
                 cause: error,
               }),
           ),
@@ -986,7 +994,16 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   const screenshot: DeviceService["Service"]["screenshot"] = Effect.fn("DeviceService.screenshot")(
     function* (input) {
       const { ready, device } = yield* resolveDevice(input.hostId, input.deviceId);
-      return { device, png: yield* ready.devices.screenshot(device) };
+      const bytes = yield* ready.devices.screenshot(device);
+      const png = extractPng(bytes);
+      if (png === undefined) {
+        return yield* new DeviceOperationError({
+          operation: "screenshot",
+          reason: "hub_rejected",
+          cause: `The hub returned ${bytes.length} bytes without a complete PNG.`,
+        });
+      }
+      return { device, png };
     },
   );
 
@@ -1413,8 +1430,9 @@ export const make = Effect.gen(function* () {
           (cause) =>
             new DeviceOperationError({
               operation: "update device tool",
-              reason: "command_failed",
-              // Only the exit code goes into the shown message; npm's stderr can carry registry credentials.
+              reason:
+                cause.reason === "npm_not_found" ? "package_manager_missing" : "command_failed",
+              // npm's stderr can carry registry credentials; expose only the reason and exit code.
               ...(cause.exitCode !== undefined ? { exitCode: cause.exitCode } : {}),
               cause,
             }),
