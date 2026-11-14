@@ -61,3 +61,33 @@ diff --git a/templates/nsis/include/allowOnlyOneInstallerInstance.nsh b/template
            Quit
          ${else}
            Goto loop
+diff --git a/templates/nsis/include/installer.nsh b/templates/nsis/include/installer.nsh
+--- a/templates/nsis/include/installer.nsh
++++ b/templates/nsis/include/installer.nsh
+@@ -85,7 +85,11 @@
+           SetShellVarContext all
+         ${endif}
+     !else
+-      !insertmacro extractEmbeddedAppPackage
++      !ifmacrodef customInstallStagedAppPackage
++        !insertmacro customInstallStagedAppPackage
++      !else
++        !insertmacro extractEmbeddedAppPackage
++      !endif
+       # electron always uses per user app data
+       ${if} $installMode == "all"
+         SetShellVarContext current
+diff --git a/templates/nsis/installSection.nsh b/templates/nsis/installSection.nsh
+--- a/templates/nsis/installSection.nsh
++++ b/templates/nsis/installSection.nsh
+@@ -49,6 +49,10 @@
+   ${endIf}
+ ${endif}
+ 
++!ifmacrodef customStageAppPackage
++  !insertmacro customStageAppPackage
++!endif
++
+ !insertmacro uninstallOldVersion SHELL_CONTEXT
+ !insertmacro handleUninstallResult SHELL_CONTEXT
+ 

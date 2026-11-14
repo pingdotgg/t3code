@@ -30,99 +30,87 @@
   Pop $0
 !macroend
 
-; The install section removes the old app before extracting, and electron-builder ignores 7z
-; extraction errors, so running out of space leaves an app that cannot start. Refuse up front.
-!macro customInit
-  !ifdef APP_64_UNPACKED_SIZE | APP_ARM64_UNPACKED_SIZE
-    Push $R0
-    Push $R1
-    Push $R2
-    Push $R3
-    Push $R4
-    Push $R5
-    Push $R6
-
-    !ifdef APP_ARM64_UNPACKED_SIZE
-      StrCpy $R0 ${APP_ARM64_UNPACKED_SIZE}
-    !endif
-    !ifdef APP_64_UNPACKED_SIZE
-      !ifdef APP_ARM64_UNPACKED_SIZE
-        ${IfNot} ${IsNativeARM64}
-          StrCpy $R0 ${APP_64_UNPACKED_SIZE}
-        ${EndIf}
-      !else
-        StrCpy $R0 ${APP_64_UNPACKED_SIZE}
-      !endif
-    !endif
-    System::Int64Op $R0 * 1024
-    Pop $R0
-
-    ; The embedded app package is written to $PLUGINSDIR in full before extraction.
-    StrCpy $R1 0
-    ClearErrors
-    FileOpen $R2 "$EXEPATH" r
-    ${IfNot} ${Errors}
-      FileSeek $R2 0 END $R1
-      FileClose $R2
-    ${EndIf}
-
-    ; The old install is deleted before extraction, so its space counts as free.
-    StrCpy $R2 0
-    ${If} ${FileExists} "$INSTDIR\*.*"
-      ClearErrors
-      ${GetSize} "$INSTDIR" "/S=0K" $R2 $R3 $R4
-      ${If} ${Errors}
-        StrCpy $R2 0
-      ${EndIf}
-      System::Int64Op $R2 * 1024
-      Pop $R2
-    ${EndIf}
-
-    ; $PLUGINSDIR (under $TEMP) holds the package plus a full extraction; $INSTDIR holds the app.
-    ${GetRoot} "$TEMP" $R3
-    ${GetRoot} "$INSTDIR" $R4
-    System::Int64Op $R1 + $R0
-    Pop $R5
-    ${If} $R3 == $R4
-      System::Int64Op $R5 - $R2
-      Pop $R5
-    ${Else}
-      System::Int64Op $R0 - $R2
-      Pop $R6
-      !insertmacro t3RequireFreeSpace $R4 $R6
-    ${EndIf}
-    !insertmacro t3RequireFreeSpace $R3 $R5
-
-    Pop $R6
-    Pop $R5
-    Pop $R4
-    Pop $R3
-    Pop $R2
-    Pop $R1
-    Pop $R0
-  !endif
-!macroend
-
-; Shows a dialog even with /S (no /SD) so a silent in-app update cannot fail unnoticed.
-!macro t3RequireFreeSpace ROOT REQUIRED_BYTES
+; electron-builder deletes the installed app before extracting and ignores extraction errors, so a
+; full disk left an app that cannot start. Extract and verify beside $INSTDIR while the old version
+; is still installed, then move the files in after it is removed (same volume, no new space).
+!macro customStageAppPackage
+  Var /GLOBAL packageArch
+  Var /GLOBAL t3StagingDir
   Push $0
   Push $1
-  StrCpy $0 "${ROOT}\"
-  System::Call 'kernel32::GetDiskFreeSpaceEx(t r0, *l .r1, *l, *l) i .r0'
-  ${If} $0 != 0
-    System::Int64Op $1 < ${REQUIRED_BYTES}
-    Pop $0
-    ${If} $0 == 1
-      System::Int64Op ${REQUIRED_BYTES} - $1
-      Pop $0
-      System::Int64Op $0 / 1048576
-      Pop $0
-      IntOp $0 $0 + 1
-      MessageBox MB_OK|MB_ICONSTOP "There is not enough free disk space to install ${PRODUCT_NAME}.$\r$\n$\r$\nFree up at least $0 MB on ${ROOT}\ and try again. The installed version has not been changed."
+  Push $2
+  Push $3
+
+  StrCpy $t3StagingDir "$INSTDIR.update"
+  SetOutPath "$PLUGINSDIR"
+  RMDir /r "$t3StagingDir"
+  CreateDirectory "$t3StagingDir"
+
+  !ifdef COMPRESS
+    SetCompress off
+  !endif
+  !insertmacro identify_package
+  !insertmacro compute_files_for_current_arch
+  !ifdef COMPRESS
+    SetCompress "${COMPRESS}"
+  !endif
+  SetOutPath "$t3StagingDir"
+  Nsis7z::Extract "$PLUGINSDIR\app-$packageArch.${COMPRESSION_METHOD}"
+  SetOutPath "$PLUGINSDIR"
+  Delete "$PLUGINSDIR\app-$packageArch.${COMPRESSION_METHOD}"
+
+  StrCpy $0 0
+  ${If} $packageArch == "ARM64"
+    !ifdef APP_ARM64_UNPACKED_SIZE
+      StrCpy $0 ${APP_ARM64_UNPACKED_SIZE}
+    !endif
+  ${Else}
+    !ifdef APP_64_UNPACKED_SIZE
+      StrCpy $0 ${APP_64_UNPACKED_SIZE}
+    !endif
+  ${EndIf}
+  ; The build rounds the unpacked size up to KiB; GetSize rounds the extracted size down.
+  ClearErrors
+  ${GetSize} "$t3StagingDir" "/S=0K" $1 $2 $3
+  IntOp $1 $1 + 1
+  ${If} ${Errors}
+  ${OrIf} $1 < $0
+    RMDir /r "$t3StagingDir"
+    MessageBox MB_OK|MB_ICONSTOP "${PRODUCT_NAME} could not be installed because its files could not be extracted. Make sure there is enough free disk space and try again.$\r$\n$\r$\nThe installed version has not been changed."
+    SetErrorLevel 2
+    Quit
+  ${EndIf}
+
+  Pop $3
+  Pop $2
+  Pop $1
+  Pop $0
+!macroend
+
+!macro customInstallStagedAppPackage
+  Push $0
+  Push $1
+  CreateDirectory "$INSTDIR"
+  t3NextStagedEntry:
+    FindFirst $0 $1 "$t3StagingDir\*"
+  t3SkipDotEntries:
+    StrCmp $1 "." +2
+    StrCmp $1 ".." 0 +3
+      FindNext $0 $1
+      Goto t3SkipDotEntries
+    FindClose $0
+    StrCmp $1 "" t3StagedEntriesMoved
+    RMDir /r "$INSTDIR\$1"
+    Delete "$INSTDIR\$1"
+    ClearErrors
+    Rename "$t3StagingDir\$1" "$INSTDIR\$1"
+    IfErrors 0 t3NextStagedEntry
+      MessageBox MB_OK|MB_ICONSTOP "${PRODUCT_NAME} could not finish installing because $1 could not be moved into $INSTDIR. Close any program using it and run the installer again."
       SetErrorLevel 2
       Quit
-    ${EndIf}
-  ${EndIf}
+  t3StagedEntriesMoved:
+  RMDir /r "$t3StagingDir"
+  SetOutPath "$INSTDIR"
   Pop $1
   Pop $0
 !macroend
