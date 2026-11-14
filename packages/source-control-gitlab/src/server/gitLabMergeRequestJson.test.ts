@@ -131,7 +131,7 @@ describe("decodeMergeRequestDetailJson", () => {
       const detail = expectSuccess(
         decodeMergeRequestDetailJson(
           detailJson({
-            merge_status: "cannot_be_merged",
+            merge_status: "can_be_merged",
             detailed_merge_status: "need_rebase",
             has_conflicts: false,
             head_pipeline: { status },
@@ -139,7 +139,7 @@ describe("decodeMergeRequestDetailJson", () => {
         ),
       );
       expect(detail.rebaseRequired).toBe(true);
-      expect(detail.mergeability).toBe("unknown");
+      expect(detail.mergeability).toBe("mergeable");
     }
   });
 

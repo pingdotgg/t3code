@@ -269,21 +269,9 @@ function toState(
 }
 
 function toMergeability(
-  raw: Pick<
-    Schema.Schema.Type<typeof RawMergeRequestSchema>,
-    "has_conflicts" | "merge_status" | "detailed_merge_status"
-  >,
+  raw: Pick<Schema.Schema.Type<typeof RawMergeRequestSchema>, "has_conflicts" | "merge_status">,
 ): PullRequestMergeability {
   if (raw.has_conflicts === true) return "conflicting";
-  switch (raw.detailed_merge_status?.trim().toLowerCase()) {
-    case "need_rebase":
-      // The branch needs updating; GitLab reports actual content conflicts separately.
-      return "unknown";
-    case "conflict":
-      return "conflicting";
-    case "mergeable":
-      return "mergeable";
-  }
   switch (raw.merge_status?.trim().toLowerCase()) {
     case "can_be_merged":
       return "mergeable";
