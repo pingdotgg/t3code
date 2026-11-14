@@ -8915,7 +8915,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return [true, new Map(current).set(input.taskId, subagent)] as const;
           });
           if (!accepted) return;
-          if (input.nativeOutcome !== undefined) appliedSubagentOutcomes.add(input.nativeOutcome);
+          if (input.nativeOutcome !== undefined) {
+            appliedSubagentOutcomes.add(input.nativeOutcome);
+            // Before the settle event, so the run keeps ingesting until the lookup ends.
+            yield* recoverForkModel({
+              context: input.context,
+              nativeThreadId: input.context.nativeThreadId,
+              taskId: input.taskId,
+            });
+          }
           if (existingSubagent !== undefined && input.status !== "running") {
             const openCalls = [...subagentToolCalls.values()].filter(
               (toolCall) => toolCall.threadId === existingSubagent.childThreadId,
@@ -9118,13 +9126,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               text: input.result,
               ordinal: resultItemOrdinal,
               now,
-            });
-          }
-          if (input.nativeOutcome !== undefined) {
-            yield* recoverForkModel({
-              context: input.context,
-              nativeThreadId: input.context.nativeThreadId,
-              taskId: input.taskId,
             });
           }
         });
@@ -11534,6 +11535,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           return subagent?.task.status === "running" ? settled : null;
         });
 
+        // Counted per turn: the run consumer keeps one pending flag per provider turn.
+        const forkModelLookupsByProviderTurn = new Map<
+          ActiveClaudeTurnContext["providerTurnId"],
+          number
+        >();
+
         // These per-task helpers share the SDK frame handler’s tracing boundary.
         const readForkModel = Effect.fnUntraced(function* (input: {
           readonly context: ActiveClaudeTurnContext;
@@ -11586,6 +11593,32 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             Effect.orElseSucceed(() => undefined),
           );
 
+          const { providerTurnId } = input.context;
+          const pending = forkModelLookupsByProviderTurn.get(providerTurnId) ?? 0;
+          forkModelLookupsByProviderTurn.set(providerTurnId, pending + 1);
+          if (pending === 0) {
+            yield* emitProviderEvent({
+              type: "background_work.updated",
+              driver: CLAUDE_PROVIDER,
+              providerTurnId,
+              pending: true,
+            });
+          }
+          const settleLookup = Effect.suspend(() => {
+            const remaining = (forkModelLookupsByProviderTurn.get(providerTurnId) ?? 1) - 1;
+            if (remaining > 0) {
+              forkModelLookupsByProviderTurn.set(providerTurnId, remaining);
+              return Effect.void;
+            }
+            forkModelLookupsByProviderTurn.delete(providerTurnId);
+            return emitProviderEvent({
+              type: "background_work.updated",
+              driver: CLAUDE_PROVIDER,
+              providerTurnId,
+              pending: false,
+            });
+          });
+
           yield* lookup.pipe(
             Effect.flatMap((model) =>
               model === undefined
@@ -11600,6 +11633,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     }),
                   ),
             ),
+            Effect.ensuring(settleLookup),
             Effect.forkIn(sessionScope),
           );
         });
