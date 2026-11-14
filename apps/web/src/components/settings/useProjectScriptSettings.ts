@@ -140,6 +140,9 @@ export function useProjectScriptSettings(
             .filter((script) => !effectiveScripts.some((next) => next.id === script.id))
             .map((script) => script.id);
       for (const id of changedIds) {
+        if (keybinding === undefined && effectiveScripts.some((script) => script.id === id)) {
+          continue;
+        }
         const command = commandForProjectScript(id);
         const previousValue = keybindingValueForCommand(keybindings, command);
         const previous = previousValue

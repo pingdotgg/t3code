@@ -35,32 +35,28 @@ export default {
 `;
 
 layer(localRuntimeLayer)("DurableObjectNamespace binding", (it) => {
-  it.effect(
-    "persists state across invocations of the same durable object",
-    () =>
-      Effect.gen(function* () {
-        const worker = yield* startTestWorker({
-          name: "durable-object-binding",
-          compatibilityDate: "2026-03-10",
-          compatibilityFlags: [],
-          bindings: [
-            DurableObjectNamespace.local({
-              binding: "COUNTER",
-              className: "Counter",
-              uniqueKey: "test-counter",
-            }),
-          ],
-          modules: [{ name: "main.js", type: "ESModule", content: SCRIPT }],
-          durableObjectNamespaces: [
-            { className: "Counter", sql: false, uniqueKey: "test-counter" },
-          ],
-        });
+  it.effect("persists state across invocations of the same durable object", () =>
+    Effect.gen(function* () {
+      const worker = yield* startTestWorker({
+        name: "durable-object-binding",
+        compatibilityDate: "2026-03-10",
+        compatibilityFlags: [],
+        bindings: [
+          DurableObjectNamespace.local({
+            binding: "COUNTER",
+            className: "Counter",
+            uniqueKey: "test-counter",
+          }),
+        ],
+        modules: [{ name: "main.js", type: "ESModule", content: SCRIPT }],
+        durableObjectNamespaces: [{ className: "Counter", sql: false, uniqueKey: "test-counter" }],
+      });
 
-        const first = yield* worker.fetchText("/");
-        expect(first).toBe("0");
-        const second = yield* worker.fetchText("/", { method: "POST" });
-        expect(second).toBe("1");
-      }),
+      const first = yield* worker.fetchText("/");
+      expect(first).toBe("0");
+      const second = yield* worker.fetchText("/", { method: "POST" });
+      expect(second).toBe("1");
+    }),
   );
 
   it.effect(
@@ -69,8 +65,7 @@ layer(localRuntimeLayer)("DurableObjectNamespace binding", (it) => {
       Effect.gen(function* () {
         // This owner name produced a negative hash, resulting in an unsafe variable name.
         // This is a regression test for that.
-        const ownerName =
-          "localcrossscriptdostack-hostworker-tes72imccp3xv3o4ibo";
+        const ownerName = "localcrossscriptdostack-hostworker-tes72imccp3xv3o4ibo";
         const owner = yield* startTestWorker({
           name: ownerName,
           compatibilityDate: "2026-03-10",
