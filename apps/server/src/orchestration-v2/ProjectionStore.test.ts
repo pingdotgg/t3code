@@ -290,7 +290,7 @@ it.effect("turnItemIds returns only the requested turn item", () =>
       type: "turn-item.updated",
       threadId,
       runId: run.id,
-      nodeId: run.rootNodeId,
+      ...(run.rootNodeId === null ? {} : { nodeId: run.rootNodeId }),
       driver,
       occurredAt: now,
       payload: {
