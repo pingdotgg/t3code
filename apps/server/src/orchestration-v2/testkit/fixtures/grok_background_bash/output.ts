@@ -58,14 +58,15 @@ export function assertGrokBackgroundBashOutput(
       event.payload.id === command?.id &&
       event.payload.status === "completed",
   );
-  const rootCompletedAt = result.domainEvents.findIndex(
+  // The root turn ends with the prompt; a background shell may be a dev server that never exits.
+  const rootTurnEndedAt = result.domainEvents.findIndex(
     (event) =>
       event.type === "run.updated" &&
       event.payload.id === rootRun?.id &&
-      event.payload.status === "completed",
+      (event.payload.status === "waiting" || event.payload.status === "completed"),
   );
-  assert.isAtLeast(commandCompletedAt, 0);
-  assert.isAbove(rootCompletedAt, commandCompletedAt, "run 1 completed before the command ended");
+  assert.isAtLeast(rootTurnEndedAt, 0);
+  assert.isBelow(rootTurnEndedAt, commandCompletedAt, "run 1 waited for the command to end");
 
   const rootTexts = projection.turnItems.flatMap((item) =>
     item.runId === rootRun?.id && item.type === "assistant_message" ? [item.text.trim()] : [],
