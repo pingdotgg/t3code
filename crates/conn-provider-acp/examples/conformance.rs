@@ -59,6 +59,7 @@ async fn main() {
             AcpConfig {
                 binary: scenario["binary"].as_str().expect("binary").to_owned(),
                 environment: Vec::new(),
+                self_command: Some("/conn-server".into()),
                 ..AcpConfig::default()
             },
         );
@@ -71,10 +72,27 @@ async fn main() {
                 .filter_map(|g| Some((g["label"].as_str()?.to_owned(), g["afterRun"].as_u64()?)))
                 .collect(),
         };
+        // The `/mcp` scenario: the server's `t3-code` entry, as the engine passes it.
+        let mcp: Vec<conn_provider::McpServer> = scenario["mcp"]["endpoint"]
+            .as_str()
+            .map(|endpoint| conn_provider::McpServer {
+                name: "t3-code".into(),
+                url: endpoint.to_owned(),
+                headers: vec![(
+                    "Authorization".into(),
+                    scenario["mcp"]["authorization"]
+                        .as_str()
+                        .unwrap_or("")
+                        .to_owned(),
+                )],
+            })
+            .into_iter()
+            .collect();
         if let Err(error) = run(
             &provider,
             calls.as_array().cloned().unwrap_or_default(),
             &gates,
+            mcp,
         )
         .await
         {
@@ -118,7 +136,12 @@ impl Gates {
     }
 }
 
-async fn run(provider: &AcpProvider, calls: Vec<Value>, gates: &Gates) -> Result<(), String> {
+async fn run(
+    provider: &AcpProvider,
+    calls: Vec<Value>,
+    gates: &Gates,
+    mcp: Vec<conn_provider::McpServer>,
+) -> Result<(), String> {
     let open = calls
         .iter()
         .find(|c| c["method"] == "openSession")
@@ -131,7 +154,7 @@ async fn run(provider: &AcpProvider, calls: Vec<Value>, gates: &Gates) -> Result
             model_selection: field(&input["modelSelection"]),
             runtime_policy: field(&input["runtimePolicy"]),
             resume_from_session: None,
-            mcp_servers: Vec::new(),
+            mcp_servers: mcp,
             host: None,
         })
         .await

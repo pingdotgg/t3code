@@ -45,6 +45,10 @@ pub(crate) enum Completion {
 }
 
 /// The executable setting, the launch runtime mode and the instance environment → the launch.
+/// Setup, initialize result, model, effort → the `session/set_model` model id and effort.
+pub(crate) type SelectModelFn =
+    fn(&Value, &Value, &str, Option<&str>) -> Option<(String, Option<String>)>;
+
 pub(crate) type LaunchFn = fn(&str, Option<&str>, &[(String, String)]) -> Launch;
 
 pub struct Flavor {
@@ -68,7 +72,8 @@ pub struct Flavor {
     pub(crate) permission_override: fn(&Value) -> Option<crate::mapper::Disposition>,
     /// `applyModelSelection` / the model config option: the model id to send with
     /// `session/set_model`, or `None` when the session keeps its model.
-    pub(crate) select_model: fn(&Value, &Value, &str) -> Option<String>,
+    /// The selection's `reasoningEffort` goes along when the flavor sends it.
+    pub(crate) select_model: SelectModelFn,
     /// `normalizeToolCall`, applied to each incoming tool update of the root turn.
     pub(crate) normalize_tool: Option<fn(crate::tools::ToolState) -> crate::tools::ToolState>,
     /// `capabilities` (`OrchestrationV2ProviderCapabilities`) for the session row.
@@ -79,6 +84,13 @@ pub struct Flavor {
     /// Background work: `deferFinalizeForBackgroundWork` and `enablePostSettleContinuation`
     /// with the hooks that find background tasks. `None` for an agent without them.
     pub(crate) background: Option<BackgroundHooks>,
+    /// `mcpOverHttp`: the `/mcp` entry goes as HTTP when the agent offers HTTP; otherwise
+    /// it is the stdio bridge. In T3: Grok, Kiro and fx no; Antigravity yes; the registry
+    /// only for Copilot.
+    pub(crate) mcp_over_http: bool,
+    /// `supportsImagePrompts`: image blocks go even when `promptCapabilities.image` is
+    /// false (Grok accepts them).
+    pub(crate) supports_image_prompts: bool,
 }
 
 /// `extractBackgroundTaskId`, `isBackgroundCommandTool`, `extractBackgroundTaskCompletion`,
@@ -339,10 +351,17 @@ pub static GROK: Flavor = Flavor {
     prompt_failure: grok_prompt_failure,
     permission_override: grok_permission_override,
     normalize_tool: Some(crate::grok::normalize_tool),
-    select_model: |setup, _initialize, model| crate::grok::model_switch(setup, model),
+    // Protocol 1 sends the effort as `session/set_model` metadata; newer protocols are not
+    // built (Grok answers protocol 1), so there no effort goes.
+    select_model: |setup, initialize, model, effort| {
+        let effort = effort.filter(|_| initialize["protocolVersion"] == 1);
+        crate::grok::model_switch(setup, model, effort)
+    },
     capabilities: grok_capabilities,
     supports_compaction: true,
     background: Some(GROK_BACKGROUND),
+    mcp_over_http: false,
+    supports_image_prompts: true,
 };
 
 /// `grokLaunchRuntimeMode`.

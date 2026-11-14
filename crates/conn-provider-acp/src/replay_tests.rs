@@ -164,12 +164,15 @@ pub(crate) async fn replay(flavor: &'static Flavor, golden: &Value) -> Run {
             .as_str()
             .unwrap_or("full-access")
             .to_owned(),
+        effort: crate::grok::selection_effort(&open["input"]["modelSelection"]),
         model: open["input"]["modelSelection"]["model"]
             .as_str()
             .unwrap_or("")
             .to_owned(),
         mcp_servers: Vec::new(),
         client_version: "0.0.0".into(),
+        self_command: "/conn-server".into(),
+        attachments_dir: None,
     };
     let (tx, mut rx) = mpsc::channel::<ProviderEvent>(session::EVENT_CAPACITY);
     let events = Arc::new(Mutex::new(Vec::new()));

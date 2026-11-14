@@ -57,6 +57,11 @@ const fixtures = NodeFS.readdirSync(goldenDir)
 const skipped = fixtures.filter((f) => expected.has(f));
 const scenarios = fixtures.filter((f) => !expected.has(f));
 
+// The `/mcp` scenario: `simple` with a T3 MCP session for its thread, so `session/new` carries
+// the `t3-code` server (the stdio bridge for Grok) and the prompt the T3 tool notes.
+const MCP_SCENARIO = "simple";
+const MCP = { endpoint: "http://127.0.0.1:9/mcp", authorization: "Bearer conformance-token" };
+
 const work = NodeFS.realpathSync(NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "conn-acp-conformance-")));
 
 const wrapper = (dir, transcript, gates) => {
@@ -101,6 +106,7 @@ const plan = scenarios.map((name) => {
     tsGateDir: NodePath.join(dir, "ts", "gates"),
     gateDir: NodePath.join(dir, "rust", "gates"),
     gates: golden.gates ?? [],
+    mcp: name === MCP_SCENARIO ? { ...MCP } : null,
     workspace: rustWorkspace,
   };
 });
@@ -123,6 +129,7 @@ import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { GROK_DEFAULT_INSTANCE_ID, makeGrokAdapterV2 } from "@t3tools/provider-grok/testing";
 import { GrokOrchestratorReplayHarness } from "../Adapters/GrokAdapterV2.testkit.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
@@ -155,7 +162,26 @@ const stubHarness = (scenario: any) => ({
       Effect.gen(function* () {
         const gate = options?.replayGate;
         bridgeGates(scenario, gate);
-        const adapter = yield* makeGrokAdapterV2({
+        // The /mcp scenario: every thread of this run has a T3 MCP session (thread ids
+        // differ per run).
+        const sessions = yield* McpProviderSessions.McpProviderSessions;
+        const mcpSessions =
+          scenario.mcp === null
+            ? sessions
+            : {
+                ...sessions,
+                read: (threadId: any) =>
+                  Effect.succeed({
+                    environmentId: "conformance",
+                    threadId,
+                    providerSessionId: "conformance",
+                    providerInstanceId: GROK_DEFAULT_INSTANCE_ID,
+                    endpoint: scenario.mcp.endpoint,
+                    authorizationHeader: scenario.mcp.authorization,
+                    browserToolsAvailable: false,
+                  } as any),
+              };
+        const adapter = yield* Effect.provideService(McpProviderSessions.McpProviderSessions, mcpSessions as any)(makeGrokAdapterV2({
           instanceId: GROK_DEFAULT_INSTANCE_ID,
           settings: Schema.decodeSync(GrokSettings)({ binaryPath: scenario.tsBinary }),
           environment: {},
@@ -165,7 +191,7 @@ const stubHarness = (scenario: any) => ({
           ...(gate === undefined
             ? {}
             : { testHooks: { onDeferredFinalizeScheduled: (debounce: any) => Effect.sync(() => gate.recordFinishArmed(debounce)) } }),
-        });
+        }));
         return [adapter];
       }),
     ).pipe(
@@ -259,7 +285,21 @@ const tsParent = JSON.parse(NodeFS.readFileSync(tsParentEnv, "utf8"));
 const rustParent = JSON.parse(NodeFS.readFileSync(rustParentEnv, "utf8"));
 // T3 attaches a fresh trace context to each request; the values differ by design.
 const scrubTrace = (line) =>
-  line.replace(/"traceId":"[0-9a-f]{32}"/g, '"traceId":"<trace>"').replace(/"spanId":"[0-9a-f]{16}"/g, '"spanId":"<span>"');
+  scrubSelf(line).replace(/"traceId":"[0-9a-f]{32}"/g, '"traceId":"<trace>"').replace(/"spanId":"[0-9a-f]{16}"/g, '"spanId":"<span>"');
+// The one accepted difference: the stdio MCP bridge runs each server's own executable (T3:
+// its Node binary and script, `selfInvocationArgs`; ours: the conn-server binary).
+function scrubSelf(line) {
+  if (!line.includes("acp-mcp-bridge")) return line;
+  const frame = JSON.parse(line);
+  for (const server of frame.params?.mcpServers ?? []) {
+    if (!Array.isArray(server.args)) continue;
+    const at = server.args.indexOf("acp-mcp-bridge");
+    if (at < 0) continue;
+    server.command = "<self>";
+    server.args = server.args.slice(at);
+  }
+  return JSON.stringify(frame);
+}
 
 let differences = 0;
 const report = [];
@@ -293,8 +333,12 @@ for (const scenario of plan) {
       e.kind === "stdin" ? `stdin ${scrubTrace(e.line.replaceAll(workspace, "<workspace>"))}` : e.kind,
     );
   const tsWorkspace = tsStarts[0]?.cwd ?? "\u0000";
-  const tsLines = lines(ts, tsWorkspace);
-  const rustLines = lines(rust, scenario.workspace);
+  // T3 sometimes ends the agent's stdin just before its SIGKILL to the group, and the stub
+  // logs that only when it runs first: a last "stdin-closed" is not compared (as the probe
+  // check does).
+  const dropLastClose = (l) => (l.at(-1) === "stdin-closed" ? l.slice(0, -1) : l);
+  const tsLines = dropLastClose(lines(ts, tsWorkspace));
+  const rustLines = dropLastClose(lines(rust, scenario.workspace));
   for (let i = 0; i < Math.max(tsLines.length, rustLines.length); i += 1) {
     if (tsLines[i] !== rustLines[i]) {
       problems.push(`stdin entry ${i}:\n    T3   ${(tsLines[i] ?? "(none)").slice(0, 600)}\n    Rust ${(rustLines[i] ?? "(none)").slice(0, 600)}`);

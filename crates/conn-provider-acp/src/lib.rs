@@ -81,23 +81,24 @@ async fn stop_process(process: Process, kind: session::StopKind) {
     process.shutdown().await;
 }
 
-/// The ACP `initialize` probe (`discoverGrokMetadataViaAcpInitialize`): starts
+/// The ACP `initialize` probe of a flavor (Grok's `discoverGrokMetadataViaAcpInitialize`): starts
 /// `<binary> agent stdio` in `cwd` with the probe environment, sends `initialize` as client
 /// `t3-code-provider-probe`, and ends the agent as the runtime's scope does (SIGKILL to its
 /// process group). `None` when the agent cannot start, fails or misses the timeout.
 pub(crate) async fn initialize_probe(
+    flavor: &Flavor,
     binary: &str,
     environment: &[(String, String)],
     cwd: &std::path::Path,
     timeout: Duration,
 ) -> Option<serde_json::Value> {
-    let launch = (GROK.launch)(binary, None, environment);
+    let launch = (flavor.launch)(binary, None, environment);
     let spawned = process_spawner(launch, cwd.display().to_string())().ok()?;
     let (connection, mut incoming) =
         connection::Connection::start(spawned.writer, spawned.events, session::EVENT_CAPACITY);
     // Nothing is served during the probe; agent frames are read and dropped.
     let drain = tokio::spawn(async move { while incoming.recv().await.is_some() {} });
-    let params = session::initialize_params(&GROK, "t3-code-provider-probe", "0.0.0", false);
+    let params = session::initialize_params(flavor, "t3-code-provider-probe", "0.0.0", false);
     let result = tokio::time::timeout(timeout, connection.call("initialize", params)).await;
     (spawned.stop)(session::StopKind::Kill).await;
     drain.abort();
@@ -126,6 +127,11 @@ pub struct AcpConfig {
     /// this long after the last change. Replays of T3's fixtures shorten it, as T3's test
     /// clock skips it.
     pub finalize_debounce: Duration,
+    /// The executable an agent starts for the stdio MCP bridge (`<it> acp-mcp-bridge`);
+    /// `None`: this process's own executable (T3's `resolveSelfInvocation`).
+    pub self_command: Option<String>,
+    /// Where `conn-files` saves attachments: paths in the prompt and image blocks.
+    pub attachments_dir: Option<PathBuf>,
 }
 
 impl Default for AcpConfig {
@@ -137,6 +143,8 @@ impl Default for AcpConfig {
             workspace_cwd: None,
             text_flush_interval: Some(session::FLUSH_INTERVAL),
             finalize_debounce: session::FINALIZE_DEBOUNCE,
+            self_command: None,
+            attachments_dir: None,
         }
     }
 }
@@ -402,12 +410,19 @@ impl Provider for AcpProvider {
                     .as_str()
                     .unwrap_or("full-access")
                     .to_owned(),
+                effort: crate::grok::selection_effort(&to_json(&input.model_selection)),
                 model: to_json(&input.model_selection)["model"]
                     .as_str()
                     .unwrap_or("")
                     .to_owned(),
                 mcp_servers: input.mcp_servers.clone(),
                 client_version: "0.0.0".into(),
+                attachments_dir: self.config.attachments_dir.clone(),
+                self_command: self.config.self_command.clone().unwrap_or_else(|| {
+                    std::env::current_exe()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_default()
+                }),
             };
             let (tx, events) = mpsc::channel(session::EVENT_CAPACITY);
             let (session, _) = AcpSession::open(
