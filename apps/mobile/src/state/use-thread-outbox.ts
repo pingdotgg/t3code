@@ -1,18 +1,27 @@
 import { useAtomValue } from "@effect/atom-react";
+import { enabledEnvironmentIds } from "@t3tools/client-runtime/state/connections";
 import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId, MessageId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
+import { environmentCatalog } from "../connection/catalog";
 import { appAtomRegistry } from "./atom-registry";
 import { environmentShell } from "./shell";
 import { threadOutboxManager } from "./thread-outbox";
 
 export const threadOutboxShellStatusesAtom = Atom.make(
   (get): ReadonlyMap<EnvironmentId, EnvironmentShellStatus> => {
+    // A switched-off or Focus-paused environment's threads are hidden while its shell can still
+    // read live, so leave it out; its queued messages wait instead of being removed as orphans.
+    const connecting = new Set(enabledEnvironmentIds(get(environmentCatalog.catalogValueAtom)));
     const statuses = new Map<EnvironmentId, EnvironmentShellStatus>();
     for (const queue of Object.values(get(threadOutboxManager.queuedMessagesByThreadKeyAtom))) {
       const environmentId = queue[0]?.environmentId;
-      if (environmentId !== undefined && !statuses.has(environmentId)) {
+      if (
+        environmentId !== undefined &&
+        connecting.has(environmentId) &&
+        !statuses.has(environmentId)
+      ) {
         statuses.set(environmentId, get(environmentShell.stateValueAtom(environmentId)).status);
       }
     }

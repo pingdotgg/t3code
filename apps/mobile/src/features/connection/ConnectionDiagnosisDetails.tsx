@@ -31,7 +31,8 @@ export function useConnectionDiagnosis(
     useAtomValue(environmentCatalog.stateAtom(environmentId)),
     () => AVAILABLE_CONNECTION_STATE,
   );
-  if (presentation === null || !presentation.entry.enabled) return { diagnosis: null, state };
+  if (presentation === null || !presentation.entry.enabled || presentation.pausedByFocus)
+    return { diagnosis: null, state };
   const phase = presentation.connection.phase;
   if (phase === "connected" || phase === "unsupported") return { diagnosis: null, state };
   const relayOnly =

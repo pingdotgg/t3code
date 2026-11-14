@@ -93,7 +93,7 @@ describe("environment summary subscriptions", () => {
 });
 
 describe("presentations with providers", () => {
-  it("leaves out disabled connections until they are re-enabled", () => {
+  it("leaves out disabled and Focus-paused connections until they return", () => {
     const h = harness();
     const atom = h.full.presentationsWithProvidersAtom;
     const withSecond = (enabled: boolean): EnvironmentCatalogState => ({
@@ -112,6 +112,13 @@ describe("presentations with providers", () => {
       h.registry.set(h.catalog, withSecond(true));
       expect([...h.registry.get(atom).keys()]).toEqual([FIRST, SECOND]);
       expect(h.registry.get(atom).get(SECOND)?.serverConfig?.cwd).toBe("/second");
+      h.registry.set(h.catalog, { ...withSecond(true), focusAllowlist: new Set([FIRST]) });
+      expect([...h.registry.get(atom).keys()]).toEqual([FIRST]);
+      expect(h.registry.get(h.full.presentationsAtom).get(SECOND)).toMatchObject({
+        entry: { enabled: true },
+        pausedByFocus: true,
+        connection: { phase: "available" },
+      });
     } finally {
       stop();
       h.registry.dispose();

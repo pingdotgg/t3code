@@ -135,6 +135,7 @@ const presentation = (
       error: null,
       traceId: null,
     },
+    pausedByFocus: false,
     serverConfig:
       options.reported === undefined
         ? null

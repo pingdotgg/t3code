@@ -112,37 +112,40 @@ describe("ApnsClient", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect("puts remote routing metadata only in Expo's body field", () =>
-    Effect.gen(function* () {
-      const apns = yield* ApnsClient.ApnsClient;
-      const request = apns.makePushNotificationRequest({
-        token: "push-token",
-        notification: {
-          title: "Thread",
-          body: "Input: Project",
-          environmentId: "env",
-          threadId: "thread",
-          deepLink: "/threads/env/thread",
-        },
-      });
-
-      expect(request.priority).toBe("10");
-      expect(request.payload).toEqual({
-        aps: {
-          alert: {
+  it.effect(
+    "puts routing metadata in Expo's body field and the environment in filter-criteria",
+    () =>
+      Effect.gen(function* () {
+        const apns = yield* ApnsClient.ApnsClient;
+        const request = apns.makePushNotificationRequest({
+          token: "push-token",
+          notification: {
             title: "Thread",
             body: "Input: Project",
+            environmentId: "env",
+            threadId: "thread",
+            deepLink: "/threads/env/thread",
           },
-          sound: "default",
-          "thread-id": "env/thread",
-        },
-        body: {
-          environmentId: "env",
-          threadId: "thread",
-          deepLink: "/threads/env/thread",
-        },
-      });
-    }).pipe(Effect.provide(layerTest)),
+        });
+
+        expect(request.priority).toBe("10");
+        expect(request.payload).toEqual({
+          aps: {
+            alert: {
+              title: "Thread",
+              body: "Input: Project",
+            },
+            sound: "default",
+            "thread-id": "env/thread",
+            "filter-criteria": "env",
+          },
+          body: {
+            environmentId: "env",
+            threadId: "thread",
+            deepLink: "/threads/env/thread",
+          },
+        });
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("fits long routing metadata and multibyte alerts within the APNs 4096-byte limit", () =>
@@ -163,6 +166,7 @@ describe("ApnsClient", () => {
         new TextEncoder().encode(JSON.stringify(request.payload)).byteLength,
       ).toBeLessThanOrEqual(4096);
       expect(request.payload).toMatchObject({
+        aps: { "filter-criteria": environmentId },
         body: {
           environmentId,
           threadId,

@@ -5,7 +5,11 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import * as EnvironmentRegistry from "../connection/registry.ts";
-import type { ConnectionCatalogEntry } from "../connection/catalog.ts";
+import {
+  shouldConnect,
+  type ConnectionCatalogEntry,
+  type FocusAllowlist,
+} from "../connection/catalog.ts";
 import { AVAILABLE_CONNECTION_STATE } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import {
@@ -23,13 +27,15 @@ import {
 export interface EnvironmentCatalogState {
   readonly isReady: boolean;
   readonly entries: ReadonlyMap<EnvironmentIdType, ConnectionCatalogEntry>;
+  /** Absent, like `null`, when no Focus filter restricts connections. */
+  readonly focusAllowlist?: FocusAllowlist;
 }
 
 export function* enabledEnvironmentIds(
   catalog: EnvironmentCatalogState,
 ): Generator<EnvironmentIdType> {
   for (const [environmentId, entry] of catalog.entries) {
-    if (entry.enabled && entry.unsupportedReason === undefined) {
+    if (shouldConnect(entry, catalog.focusAllowlist ?? null)) {
       yield environmentId;
     }
   }
@@ -38,6 +44,7 @@ export function* enabledEnvironmentIds(
 const EMPTY_ENVIRONMENT_CATALOG_STATE: EnvironmentCatalogState = Object.freeze({
   isReady: false,
   entries: new Map(),
+  focusAllowlist: null,
 });
 
 export function createEnvironmentCatalogAtoms<R, E>(
@@ -50,9 +57,11 @@ export function createEnvironmentCatalogAtoms<R, E>(
       EnvironmentRegistry.EnvironmentRegistry.pipe(
         Effect.map((registry) =>
           SubscriptionRef.changes(registry.entries).pipe(
-            Stream.map((entries) => ({
+            Stream.zipLatest(SubscriptionRef.changes(registry.focusAllowlist)),
+            Stream.map(([entries, focusAllowlist]): EnvironmentCatalogState => ({
               isReady: true,
               entries,
+              focusAllowlist,
             })),
           ),
         ),

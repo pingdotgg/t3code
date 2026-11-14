@@ -29,7 +29,11 @@ import { availableCloudEnvironmentPresentation } from "../cloud/cloudEnvironment
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
 import { useConnectionDiagnosis } from "./ConnectionDiagnosisDetails";
-import { environmentStatusText } from "./environmentStatusText";
+import {
+  PAUSED_SWITCH_OPACITY,
+  environmentStatusText,
+  offStatusText,
+} from "./environmentStatusText";
 import { type RelayEnvironmentView, useConnectionController } from "./useConnectionController";
 
 interface CloudEnvironmentRowsProps {
@@ -216,8 +220,9 @@ function ConnectedCloudEnvironmentRow(props: {
         ? diagnosis
           ? { statusText: diagnosis.headline }
           : {}
-        : { statusText: "Off" })}
-      value={enabled}
+        : { statusText: offStatusText(props.environment) })}
+      dimmed={props.environment.isPausedByFocus}
+      value={(enabled || props.environment.isPausedByFocus) && !unsupported}
     />
   );
 }
@@ -273,6 +278,7 @@ function CloudEnvironmentRowShell(props: {
   /** Waiting on the host to approve this device: say so plainly, not as a failure. */
   readonly awaitingApproval?: boolean;
   readonly disabled?: boolean;
+  readonly dimmed?: boolean;
   readonly errorExpanded: boolean;
   readonly label: string;
   readonly machine: EnvironmentMachineKind;
@@ -399,7 +405,7 @@ function CloudEnvironmentRowShell(props: {
       </ContentContainer>
       <ThemedSwitch
         accessibilityLabel={`Enable ${props.label}`}
-        style={{ alignSelf: "center" }}
+        style={{ alignSelf: "center", opacity: props.dimmed ? PAUSED_SWITCH_OPACITY : 1 }}
         disabled={props.disabled}
         onValueChange={props.onValueChange}
         value={props.value}
