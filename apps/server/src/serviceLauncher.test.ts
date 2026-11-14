@@ -20,6 +20,7 @@ import {
   renderBootServiceTask,
   renderBootServiceUnit,
 } from "./cloud/bootService.ts";
+import { stableLauncherPaths } from "./cloud/stableLauncher.ts";
 import {
   databaseBackupBlocker,
   Launcher,
@@ -276,46 +277,57 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
     }),
   );
 
-  it.effect("finds its unit through the manager's environment, not service.env", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-unit-" });
-      const home = path.join(root, "home");
-      const unitPath = path.join(home, "Library", "LaunchAgents", "t3code.plist");
-      const render = (version: string) =>
-        renderBootServicePlist(unitPlan(root, version), { homeDir: home, environmentPath: "" });
-      yield* fs.makeDirectory(path.dirname(unitPath), { recursive: true });
-      yield* fs.writeFileString(unitPath, render("1.0.0"));
-      // The server may run with another HOME; the launch agent still lives in the manager's.
-      yield* fs.writeFileString(path.join(root, SERVICE_ENV_FILE), "HOME=/elsewhere\n");
-      yield* writeFakeRuntime(
-        fs,
-        path,
-        path.join(root, "runtime", "versions", "1.1.0"),
-        "process.exit(0);\n",
-      );
-      yield* Effect.promise(() =>
-        writeServiceState(path.join(root, "runtime", "service-state.json"), {
-          protocol: SERVICE_LAUNCHER_PROTOCOL,
-          activeVersion: "1.1.0",
-          update: {
-            id: "update-1",
-            fromVersion: "1.0.0",
-            targetVersion: "1.1.0",
-            status: "committed",
-          },
-        }),
-      );
-      vi.stubEnv("HOME", home);
-      vi.stubEnv("T3_BOOT_SERVICE_UNIT", "t3code.plist");
+  // regression: #17225 a launcher from before the stable launcher committed the remote update
+  it.effect(
+    "moves the launch agent it finds through the manager's environment to the stable launcher",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-unit-" });
+        const home = path.join(root, "home");
+        const unitPath = path.join(home, "Library", "LaunchAgents", "t3code.plist");
+        const render = (program: string) =>
+          renderBootServicePlist(
+            { ...unitPlan(root, "1.0.0"), program: [program, "__service-launcher"] },
+            { homeDir: home, environmentPath: "" },
+          );
+        yield* fs.makeDirectory(path.dirname(unitPath), { recursive: true });
+        // A launcher from before the stable launcher pointed it at the committed runtime.
+        yield* fs.writeFileString(unitPath, render(`${root}/runtime/versions/1.1.0/t3`));
+        // The server may run with another HOME; the launch agent still lives in the manager's.
+        yield* fs.writeFileString(path.join(root, SERVICE_ENV_FILE), "HOME=/elsewhere\n");
+        yield* writeFakeRuntime(
+          fs,
+          path,
+          path.join(root, "runtime", "versions", "1.1.0"),
+          "process.exit(0);\n",
+        );
+        yield* Effect.promise(() =>
+          writeServiceState(path.join(root, "runtime", "service-state.json"), {
+            protocol: SERVICE_LAUNCHER_PROTOCOL,
+            activeVersion: "1.1.0",
+            update: {
+              id: "update-1",
+              fromVersion: "1.0.0",
+              targetVersion: "1.1.0",
+              status: "committed",
+            },
+          }),
+        );
+        vi.stubEnv("HOME", home);
+        vi.stubEnv("T3_BOOT_SERVICE_UNIT", "t3code.plist");
 
-      yield* Effect.promise(() =>
-        expect(runLauncher(root)).rejects.toThrow("Active child exited unexpectedly (0)."),
-      );
+        yield* Effect.promise(() =>
+          expect(runLauncher(root)).rejects.toThrow("Active child exited unexpectedly (0)."),
+        );
 
-      assert.equal(yield* fs.readFileString(unitPath), render("1.1.0"));
-    }),
+        assert.equal(
+          yield* fs.readFileString(unitPath),
+          render(stableLauncherPaths(root).entryPath),
+        );
+        assert.equal(yield* fs.readFileString(stableLauncherPaths(root).sentinelPath), "1.1.0\n");
+      }),
   );
 
   it.effect(
@@ -1047,15 +1059,6 @@ if (context.update?.status === "pending") {
       legacyInstall: true,
     },
     {
-      name: "launchd",
-      legacyInstall: false,
-      render: (plan: Parameters<typeof renderBootServicePlist>[0]) =>
-        renderBootServicePlist(plan, {
-          homeDir: "/Users/test & <user>",
-          environmentPath: "/usr/bin:/custom/runtime/versions/1.0.0",
-        }),
-    },
-    {
       name: "Task Scheduler",
       legacyInstall: false,
       render: (plan: Parameters<typeof renderBootServiceTask>[0]) =>
@@ -1074,6 +1077,57 @@ if (context.update?.status === "pending") {
         assert.equal(unit.loadedContents, expected);
         assert.equal(unit.reloads, 1);
       }),
+  );
+
+  const launchAgent =
+    (program: "stable launcher" | "versioned runtime" | "newer runtime") =>
+    (plan: Parameters<typeof renderBootServicePlist>[0]) =>
+      renderBootServicePlist(
+        program === "versioned runtime"
+          ? plan
+          : {
+              ...plan,
+              program: [
+                program === "stable launcher"
+                  ? stableLauncherPaths(plan.baseDir).entryPath
+                  : `${plan.baseDir}/runtime/versions/2.0.0/t3`,
+                "__service-launcher",
+              ],
+            },
+        {
+          homeDir: "/Users/test & <user>",
+          environmentPath: "/usr/bin:/custom/runtime/versions/1.0.0",
+        },
+      );
+
+  // regression: #17225 macOS privacy grants are keyed to the launch agent's program path
+  it.effect.each(["stable launcher", "versioned runtime"] as const)(
+    "publishes the committed runtime to a launch agent naming its %s",
+    (program) =>
+      Effect.gen(function* () {
+        const { fs, root, unit } = yield* commitUpdate(launchAgent(program));
+        const launcher = stableLauncherPaths(root);
+        assert.equal(
+          yield* fs.readFileString(unit.path),
+          launchAgent("stable launcher")(unitPlan(root, "1.1.0")),
+        );
+        assert.equal(yield* fs.readFileString(launcher.sentinelPath), "1.1.0\n");
+        assert.equal(
+          yield* fs.readFileString(launcher.entryPath),
+          yield* fs.readFileString(`${root}/runtime/versions/1.1.0/t3`),
+        );
+      }),
+  );
+
+  it.effect("leaves a launch agent naming a newer runtime than the committed one", () =>
+    Effect.gen(function* () {
+      const { fs, root, unit } = yield* commitUpdate(launchAgent("newer runtime"));
+      assert.equal(
+        yield* fs.readFileString(unit.path),
+        launchAgent("newer runtime")(unitPlan(root, "1.1.0")),
+      );
+      assert.isFalse(yield* fs.exists(stableLauncherPaths(root).entryPath));
+    }),
   );
 
   it.effect(

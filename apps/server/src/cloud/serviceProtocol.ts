@@ -30,6 +30,9 @@ const unquoteSystemdValue = (raw: string) =>
     : raw
   ).replaceAll("%%", "%");
 
+export const escapeXmlText = (value: string) =>
+  value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+
 const unescapeXmlText = (value: string) =>
   value.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
 

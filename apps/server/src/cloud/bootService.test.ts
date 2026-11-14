@@ -200,7 +200,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
   const statePath = path.join(baseDir, "runtime", "service-state.json");
   const runtime = pinnedRuntimePaths(path, baseDir, "1.2.3", platform);
   yield* fs.makeDirectory(path.dirname(runtime.entryPath), { recursive: true });
-  yield* fs.writeFileString(runtime.entryPath, "#!/bin/sh\n");
+  yield* fs.writeFileString(runtime.entryPath, "#!/bin/sh\n", { mode: 0o755 });
   yield* fs.writeFileString(runtime.sentinelPath, "1.2.3\n");
 
   const commands: string[] = [];
@@ -344,7 +344,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     Effect.gen(function* () {
       const paths = pinnedRuntimePaths(path, serviceBaseDir, cliVersion, platform);
       yield* fs.makeDirectory(path.dirname(paths.entryPath), { recursive: true });
-      yield* fs.writeFileString(paths.entryPath, "#!/bin/sh\n");
+      yield* fs.writeFileString(paths.entryPath, "#!/bin/sh\n", { mode: 0o755 });
       yield* fs.writeFileString(paths.sentinelPath, `${cliVersion}\n`);
       return yield* BootService.make({
         baseDir: serviceBaseDir,
@@ -910,6 +910,8 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
           yield* makeHarness(platform);
         const path = yield* Path.Path;
         const envPath = path.join(baseDir, SERVICE_ENV_FILE);
+        const program = (version: string) =>
+          platform === "darwin" ? "runtime/service/t3" : `versions/${version}/t3`;
         const envBytes = new TextEncoder().encode(
           '# user configuration\r\nT3CODE_TOKEN="literal $HOME # token"',
         );
@@ -928,7 +930,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
           protocol: SERVICE_LAUNCHER_PROTOCOL,
           activeVersion: "1.2.4",
         });
-        expect(yield* fs.readFileString(plan.unitPath)).toContain("versions/1.2.4/t3");
+        expect(yield* fs.readFileString(plan.unitPath)).toContain(program("1.2.4"));
         expect(
           commands.filter(
             (command) =>
@@ -950,7 +952,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
           protocol: SERVICE_LAUNCHER_PROTOCOL,
           activeVersion: "1.2.5",
         });
-        expect(yield* fs.readFileString(plan.unitPath)).toContain("versions/1.2.5/t3");
+        expect(yield* fs.readFileString(plan.unitPath)).toContain(program("1.2.5"));
         expect((yield* latest.status).current).toBe(true);
         expect(
           yield* fs.exists(path.join(path.dirname(statePath), SERVICE_RESTART_PENDING_FILE)),
@@ -1405,8 +1407,10 @@ process.disconnect();
 
   it.effect("installs, reports current state, and uninstalls on macOS", () =>
     Effect.gen(function* () {
-      const { service, fs, statePath, commands, timeouts, runtime } = yield* makeHarness("darwin");
+      const { service, makeService, fs, baseDir, statePath, commands, timeouts } =
+        yield* makeHarness("darwin");
       const path = yield* Path.Path;
+      const launcherDir = path.join(baseDir, "runtime", "service");
       const plan = yield* service.install();
 
       expect(
@@ -1422,13 +1426,19 @@ process.disconnect();
         activeVersion: "1.2.3",
       });
       expect(yield* fs.readFileString(plan.unitPath)).toContain(
-        `    <string>${runtime.entryPath}</string>\n    <string>__service-launcher</string>`,
+        `    <string>${path.join(launcherDir, "t3")}</string>\n    <string>__service-launcher</string>`,
       );
       expect(yield* service.status).toMatchObject({
         current: true,
         installedVersion: "1.2.3",
       });
-      expect(yield* service.uninstall).toBe(true);
+      yield* fs.writeFileString(path.join(launcherDir, ".install-complete"), "1.2.2\n");
+      expect((yield* service.status).current).toBe(false);
+      yield* service.install();
+      expect((yield* service.status).current).toBe(true);
+      const otherHome = yield* makeService(undefined, "1.2.3", path.join(baseDir, "other-home"));
+      expect(yield* otherHome.uninstall).toBe(true);
+      expect(yield* fs.exists(launcherDir)).toBe(false);
       expect((yield* service.status).installed).toBe(false);
       expect(commands.some((command) => command.startsWith("systemctl "))).toBe(false);
       // launchd can take 90s to bootout; the runner's 60s default could let bootstrap race it.
@@ -1549,6 +1559,30 @@ process.disconnect();
       commands.length = 0;
       expect(yield* inside.restart).toBe("queued");
       expect(commands).toEqual(handoff);
+    }),
+  );
+
+  it.effect("swaps in a new launch agent runtime without writing into the running one", () =>
+    Effect.gen(function* () {
+      const { service, makeService, fs, baseDir } = yield* makeHarness("darwin");
+      const path = yield* Path.Path;
+      const launcherDir = path.join(baseDir, "runtime", "service");
+      const versionEntry = (version: string) =>
+        path.join(baseDir, "runtime", "versions", version, "t3");
+      yield* service.install();
+      const running = yield* fs.open(path.join(launcherDir, "t3"), { flag: "r" });
+
+      const newer = yield* makeService(undefined, "1.2.4");
+      yield* fs.writeFileString(versionEntry("1.2.4"), "#!/bin/sh\n# 1.2.4\n");
+      yield* newer.install({ start: false });
+
+      const buffer = new Uint8Array(64);
+      const read = yield* running.read(buffer);
+      expect(new TextDecoder().decode(buffer.subarray(0, Number(read)))).toBe("#!/bin/sh\n");
+      expect(yield* fs.readFileString(path.join(launcherDir, "t3"))).toBe("#!/bin/sh\n# 1.2.4\n");
+      expect((yield* fs.stat(path.join(launcherDir, "t3"))).mode & 0o111).toBe(
+        (yield* fs.stat(versionEntry("1.2.4"))).mode & 0o111,
+      );
     }),
   );
 
