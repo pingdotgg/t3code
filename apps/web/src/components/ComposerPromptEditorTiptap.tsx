@@ -6,6 +6,7 @@ import {
   Extension,
   findChildren,
   InputRule,
+  isiOS,
   Node,
   wrappingInputRule,
   type JSONContent,
@@ -705,6 +706,21 @@ const headingInputRule = new InputRule({
   },
 });
 
+function isHardwareShiftEnterOnIOS(view: EditorView, event: KeyboardEvent): boolean {
+  return (
+    isiOS() &&
+    view.editable &&
+    event.key === "Enter" &&
+    event.shiftKey &&
+    !event.altKey &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    !view.composing &&
+    !event.isComposing &&
+    event.keyCode !== 229
+  );
+}
+
 function isInCodeBlock(view: EditorView): boolean {
   return view.state.selection.$from.parent.type.spec.code === true;
 }
@@ -1115,16 +1131,24 @@ function ComposerPromptEditorTiptapInner(
       editorProps: {
         attributes: editorAttributes,
         handleDOMEvents: {
-          // Composer commands keep precedence; otherwise true skips the editor's keymaps without
-          // preventDefault, so a bound app command still runs.
-          keydown: (_view, event) => {
-            if (!isRichTextFormattingShortcut(event)) return false;
-            if (readCallbacks().onCommandKeyDown?.(event.key, event)) {
-              event.preventDefault();
-              event.stopPropagation();
-              return true;
+          keydown: (view, event) => {
+            if (isRichTextFormattingShortcut(event)) {
+              // Composer commands keep precedence; otherwise true skips the editor's keymaps
+              // without preventDefault, so a bound app command still runs.
+              if (readCallbacks().onCommandKeyDown?.(event.key, event)) {
+                event.preventDefault();
+                event.stopPropagation();
+                return true;
+              }
+              return hasCommandForKeyDown(event);
             }
-            return hasCommandForKeyDown(event);
+            if (!isHardwareShiftEnterOnIOS(view, event)) return false;
+            // ProseMirror's iOS Enter fallback replays Enter without Shift, so run handleKeyDown
+            // now, flushing pending DOM edits first as ProseMirror's own keydown path does.
+            (
+              view as typeof view & { domObserver: { forceFlush(): void } }
+            ).domObserver.forceFlush();
+            return view.someProp("handleKeyDown", (handler) => handler(view, event)) ?? false;
           },
         },
         handleKeyDown: (view, event) => {
