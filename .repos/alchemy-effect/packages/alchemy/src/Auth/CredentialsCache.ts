@@ -17,10 +17,7 @@ export const credentialTimeToLive = (
 ): Duration.Duration => {
   if (expiresAt === undefined) return Duration.infinity;
   return Duration.millis(
-    Math.max(
-      0,
-      expiresAt - resolvedAt - Duration.toMillis(CREDENTIAL_REFRESH_WINDOW),
-    ),
+    Math.max(0, expiresAt - resolvedAt - Duration.toMillis(CREDENTIAL_REFRESH_WINDOW)),
   );
 };
 
@@ -34,7 +31,7 @@ export const cacheUntilExpiry = <A, E>(
 ) =>
   Effect.gen(function* () {
     const cache = yield* Cache.makeWith(
-      (_: void) =>
+      () =>
         Effect.gen(function* () {
           const resolvedAt = yield* Clock.currentTimeMillis;
           const credentials = yield* resolve;
@@ -44,14 +41,9 @@ export const cacheUntilExpiry = <A, E>(
         capacity: 1,
         timeToLive: (exit) =>
           Exit.isSuccess(exit)
-            ? credentialTimeToLive(
-                expiresAt(exit.value.credentials),
-                exit.value.resolvedAt,
-              )
+            ? credentialTimeToLive(expiresAt(exit.value.credentials), exit.value.resolvedAt)
             : Duration.zero,
       },
     );
-    return Cache.get(cache, undefined).pipe(
-      Effect.map(({ credentials }) => credentials),
-    );
+    return Cache.get(cache, undefined).pipe(Effect.map(({ credentials }) => credentials));
   });

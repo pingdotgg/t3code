@@ -1,10 +1,10 @@
 /** The compatibility endpoint delegates to the same application write operation. */
-import * as Git from "alchemy/Git";
+import * as Git from "@alchemy.run/git";
 import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
-import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as Schema from "effect/Schema";
 import { AppApi } from "./api.ts";
 import { mergePull } from "./ref-writes.ts";
 
@@ -54,11 +54,9 @@ export const GitHubLive = HttpApiBuilder.group(AppApi, "github", (h) =>
                     ? 403
                     : error._tag === "Unauthorized"
                       ? 401
-                      : error._tag === "RepoNotFound" ||
-                          error._tag === "PullNotFound"
+                      : error._tag === "RepoNotFound" || error._tag === "PullNotFound"
                         ? 404
-                        : error._tag === "SchemaError" ||
-                            error._tag === "HttpServerError"
+                        : error._tag === "SchemaError" || error._tag === "HttpServerError"
                           ? 400
                           : 409,
               },

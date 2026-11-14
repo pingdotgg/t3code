@@ -1,8 +1,8 @@
+import { expect } from "bun:test";
+import * as AWS from "@alchemy.run/aws";
+import * as Test from "@alchemy.run/test/Bun";
 import * as S3 from "@distilled.cloud/aws/s3";
 import * as Alchemy from "alchemy";
-import * as AWS from "alchemy/AWS";
-import * as Test from "alchemy/Test/Bun";
-import { expect } from "bun:test";
 import * as Console from "effect/Console";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
@@ -27,10 +27,7 @@ const getBodyWhenReady = (url: string, expected: string) =>
   }).pipe(
     Effect.retry({
       while: (error) => error instanceof AssetNotReady,
-      schedule: Schedule.min([
-        Schedule.exponential("500 millis"),
-        Schedule.spaced("3 seconds"),
-      ]),
+      schedule: Schedule.min([Schedule.exponential("500 millis"), Schedule.spaced("3 seconds")]),
       times: 10,
     }),
   );
@@ -110,9 +107,7 @@ test.provider(
           until: (result) => (result.Contents?.length ?? 0) > 0,
         }),
       );
-      expect(
-        objects.Contents?.some((object) => object.Key?.includes("isr")),
-      ).toBe(true);
+      expect(objects.Contents?.some((object) => object.Key?.includes("isr"))).toBe(true);
     }),
   { timeout: 60_000 },
 );

@@ -1,5 +1,5 @@
-import * as Effect from "effect/Effect";
 import * as NodePath from "node:path";
+import * as Effect from "effect/Effect";
 import { describe, expect, it } from "vitest";
 import {
   applyDeployTargetFinish,
@@ -30,9 +30,7 @@ describe("isDeployTarget", () => {
   });
 
   it("accepts extra framework-specific properties", () => {
-    expect(
-      isDeployTarget({ ...stubTarget, adapterPath: "/x/adapter.js" }),
-    ).toBe(true);
+    expect(isDeployTarget({ ...stubTarget, adapterPath: "/x/adapter.js" })).toBe(true);
   });
 
   it("rejects values missing platform or config", () => {
@@ -56,12 +54,8 @@ describe("makeDeployTarget", () => {
 
 describe("resolveDeployTargetEntry", () => {
   it("returns undefined when there is no target or no entry", () => {
-    expect(
-      resolveDeployTargetEntry(undefined, { root: "/project" }),
-    ).toBeUndefined();
-    expect(
-      resolveDeployTargetEntry(stubTarget, { root: "/project" }),
-    ).toBeUndefined();
+    expect(resolveDeployTargetEntry(undefined, { root: "/project" })).toBeUndefined();
+    expect(resolveDeployTargetEntry(stubTarget, { root: "/project" })).toBeUndefined();
   });
 
   it("resolves a root-relative user entry against the project root", () => {
@@ -88,16 +82,12 @@ describe("resolveDeployTargetEntry", () => {
 
 describe("applyDeployTargetFinish", () => {
   it("passes the build through when the target has no finishing pass", async () => {
-    const output = await run(
-      applyDeployTargetFinish(stubTarget, emptyBuild, { root: "/tmp" }),
-    );
+    const output = await run(applyDeployTargetFinish(stubTarget, emptyBuild, { root: "/tmp" }));
     expect(output).toBe(emptyBuild);
   });
 
   it("passes the build through when there is no target", async () => {
-    const output = await run(
-      applyDeployTargetFinish(undefined, emptyBuild, { root: "/tmp" }),
-    );
+    const output = await run(applyDeployTargetFinish(undefined, emptyBuild, { root: "/tmp" }));
     expect(output).toBe(emptyBuild);
   });
 
@@ -128,18 +118,14 @@ describe("applyDeployTargetFinish", () => {
 
 describe("resolveDeployTarget", () => {
   it("returns a target value as-is", async () => {
-    const target = await run(
-      resolveDeployTarget("/tmp", stubTarget, undefined),
-    );
+    const target = await run(resolveDeployTarget("/tmp", stubTarget, undefined));
     expect(target).toBe(stubTarget);
   });
 
   it("applies a factory to the config", async () => {
     const factory = (config: { name: string }) =>
       makeDeployTarget({ platform: "cloudflare", config });
-    const target = await run(
-      resolveDeployTarget("/tmp", factory, { name: "from-config" }),
-    );
+    const target = await run(resolveDeployTarget("/tmp", factory, { name: "from-config" }));
     expect(target.config).toEqual({ name: "from-config" });
   });
 
@@ -154,11 +140,7 @@ describe("resolveDeployTarget", () => {
         "export default (config) => ({ platform: 'cloudflare', config });",
     });
     const target = await run(
-      resolveDeployTarget<DeployTarget, { flag: boolean }>(
-        root,
-        "test-target",
-        { flag: true },
-      ),
+      resolveDeployTarget<DeployTarget, { flag: boolean }>(root, "test-target", { flag: true }),
     );
     expect(target.platform).toBe("cloudflare");
     expect(target.config).toEqual({ flag: true });
@@ -174,9 +156,7 @@ describe("resolveDeployTarget", () => {
       "node_modules/test-target-value/index.js":
         "export const target = { platform: 'aws', config: {} };",
     });
-    const target = await run(
-      resolveDeployTarget(root, "test-target-value", undefined),
-    );
+    const target = await run(resolveDeployTarget(root, "test-target-value", undefined));
     expect(target.platform).toBe("aws");
   });
 
@@ -187,12 +167,9 @@ describe("resolveDeployTarget", () => {
         type: "module",
         exports: { ".": "./index.js" },
       }),
-      "node_modules/bad-target/index.js":
-        "export default { notATarget: true };",
+      "node_modules/bad-target/index.js": "export default { notATarget: true };",
     });
-    const result = await run(
-      Effect.result(resolveDeployTarget(root, "bad-target", undefined)),
-    );
+    const result = await run(Effect.result(resolveDeployTarget(root, "bad-target", undefined)));
     expect(result._tag).toBe("Failure");
     if (result._tag === "Failure") {
       expect(result.failure._tag).toBe("DeployTargetError");
@@ -201,13 +178,7 @@ describe("resolveDeployTarget", () => {
 
   it("fails with DeployTargetError for an unresolvable specifier", async () => {
     const result = await run(
-      Effect.result(
-        resolveDeployTarget(
-          "/tmp",
-          "definitely-not-a-real-target-xyz",
-          undefined,
-        ),
-      ),
+      Effect.result(resolveDeployTarget("/tmp", "definitely-not-a-real-target-xyz", undefined)),
     );
     expect(result._tag).toBe("Failure");
     if (result._tag === "Failure") {

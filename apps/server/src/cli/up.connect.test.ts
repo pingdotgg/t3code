@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -56,71 +57,124 @@ vi.mock("./connect.ts", async (importOriginal) => {
   };
 });
 
-it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up with T3 Connect", (it) => {
-  it.effect.each([
-    { label: "no link", prior: null, events: ["link", "restart", "unlink", "restart"] },
-    // The publish-only link comes back, with its activity publishing.
-    {
-      label: "a publish-only link",
-      prior: "publish_only" as const,
-      events: ["link", "restart", "restart"],
-    },
-  ])("a failed restart after --connect undoes it, then restarts: $label before", (input) =>
-    Effect.gen(function* () {
-      events.length = 0;
-      link.desired = input.prior !== null;
-      link.mode = input.prior ?? "managed";
-      const fs = yield* FileSystem.FileSystem;
-      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-up-connect-test-" });
-      yield* fs.writeFileString(`${baseDir}/service.env`, "T3CODE_LAN=false\n");
-      const status = {
-        supported: true,
-        installed: true,
-        current: true,
-        unitPath: "/home/me/.config/systemd/user/t3code.service",
-        logPath: "/home/me/.t3/userdata/logs/boot-service.log",
-      };
-      vi.spyOn(BootService, "layer").mockReturnValue(
-        Layer.succeed(
-          BootService.BootService,
-          BootService.BootService.of({
-            status: Effect.succeed(status),
-            withStopped: (operation) => operation,
-            restart: Effect.sync(() => events.push("restart")).pipe(
-              Effect.andThen(
-                Effect.fail(new BootService.BootServiceCommandError({ step: "restart" })),
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))(
+  "t3 up with T3 Connect",
+  (it) => {
+    it.effect.each([
+      { label: "no link", prior: null, events: ["link", "restart", "unlink", "restart"] },
+      // The publish-only link comes back, with its activity publishing.
+      {
+        label: "a publish-only link",
+        prior: "publish_only" as const,
+        events: ["link", "restart", "restart"],
+      },
+    ])("a failed restart after --connect undoes it, then restarts: $label before", (input) =>
+      Effect.gen(function* () {
+        events.length = 0;
+        link.desired = input.prior !== null;
+        link.mode = input.prior ?? "managed";
+        const fs = yield* FileSystem.FileSystem;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-up-connect-test-" });
+        yield* fs.writeFileString(`${baseDir}/service.env`, "T3CODE_LAN=false\n");
+        const status = {
+          supported: true,
+          installed: true,
+          current: true,
+          unitPath: "/home/me/.config/systemd/user/t3code.service",
+          logPath: "/home/me/.t3/userdata/logs/boot-service.log",
+        };
+        vi.spyOn(BootService, "layer").mockReturnValue(
+          Layer.succeed(
+            BootService.BootService,
+            BootService.BootService.of({
+              status: Effect.succeed(status),
+              withStopped: (operation) => operation,
+              restart: Effect.sync(() => events.push("restart")).pipe(
+                Effect.andThen(
+                  Effect.fail(new BootService.BootServiceCommandError({ step: "restart" })),
+                ),
               ),
-            ),
-            install: () => Effect.die("an installed, current service is not reinstalled"),
-            uninstall: Effect.succeed(false),
-          }),
-        ),
-      );
-
-      const exit = yield* Command.runWith(upCommand, { version: packageJson.version })([
-        "--base-dir",
-        baseDir,
-        "--connect",
-      ]).pipe(
-        Effect.provideService(HostProcess.Environment, {}),
-        Effect.provide(
-          Layer.mergeAll(
-            ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
-            Layer.fresh(TestConsole.layer),
+              install: () => Effect.die("an installed, current service is not reinstalled"),
+              uninstall: Effect.succeed(false),
+            }),
           ),
-        ),
-        Effect.exit,
-      );
+        );
 
-      expect(exit._tag).toBe("Failure");
-      // Any unlink comes before the restart on the old settings.
-      expect(events).toEqual(input.events);
-      expect(link).toEqual(
-        input.prior === null
-          ? { desired: false, mode: "managed" }
-          : { desired: true, mode: input.prior },
-      );
-      expect(yield* fs.readFileString(`${baseDir}/service.env`)).toBe("T3CODE_LAN=false\n");
-    }),
-  );
-});
+        const exit = yield* Command.runWith(upCommand, { version: packageJson.version })([
+          "--base-dir",
+          baseDir,
+          "--connect",
+        ]).pipe(
+          Effect.provideService(HostProcess.Environment, {}),
+          Effect.provide(
+            Layer.mergeAll(
+              ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+              Layer.fresh(TestConsole.layer),
+            ),
+          ),
+          Effect.exit,
+        );
+
+        expect(exit._tag).toBe("Failure");
+        // Any unlink comes before the restart on the old settings.
+        expect(events).toEqual(input.events);
+        expect(link).toEqual(
+          input.prior === null
+            ? { desired: false, mode: "managed" }
+            : { desired: true, mode: input.prior },
+        );
+        expect(yield* fs.readFileString(`${baseDir}/service.env`)).toBe("T3CODE_LAN=false\n");
+      }),
+    );
+
+    it.effect("--connect signs in to nothing for another home's service", () =>
+      Effect.gen(function* () {
+        events.length = 0;
+        link.desired = false;
+        link.mode = "managed";
+        const fs = yield* FileSystem.FileSystem;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-up-connect-test-" });
+        vi.spyOn(BootService, "layer").mockReturnValue(
+          Layer.succeed(
+            BootService.BootService,
+            BootService.BootService.of({
+              status: Effect.succeed({
+                supported: true,
+                installed: true,
+                current: false,
+                otherBaseDir: "/srv/t3",
+                unitPath: "/home/me/.config/systemd/user/t3code.service",
+                logPath: "/home/me/.t3/userdata/logs/boot-service.log",
+              }),
+              withStopped: (operation) => operation,
+              restart: Effect.sync(() => events.push("restart")).pipe(
+                Effect.as("skipped" as const),
+              ),
+              install: () => Effect.die("another home's service is not reinstalled"),
+              uninstall: Effect.succeed(false),
+            }),
+          ),
+        );
+
+        const error = yield* Command.runWith(upCommand, { version: packageJson.version })([
+          "--base-dir",
+          baseDir,
+          "--connect",
+        ]).pipe(
+          Effect.provideService(HostProcess.Environment, {}),
+          Effect.provide(
+            Layer.mergeAll(
+              ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+              Layer.fresh(TestConsole.layer),
+            ),
+          ),
+          Effect.flip,
+        );
+
+        expect(error).toMatchObject({ _tag: "BootServiceOtherBaseDirError" });
+        expect(events).toEqual([]);
+        expect(link).toEqual({ desired: false, mode: "managed" });
+      }),
+    );
+  },
+);

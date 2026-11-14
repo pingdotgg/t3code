@@ -108,7 +108,14 @@ const CacheEntry = Schema.fromJsonString(
 const decodeCacheEntry = Schema.decodeEffect(CacheEntry);
 const encodeCacheEntry = Schema.encodeEffect(CacheEntry);
 const decodeRootPackageJson = Schema.decodeEffect(
-  Schema.fromJsonString(Schema.Struct({ scripts: Schema.Struct({ "knip:check": Schema.String }) })),
+  Schema.fromJsonString(
+    Schema.Struct({
+      scripts: Schema.Struct({
+        "knip:check:files": Schema.String,
+        "knip:check:exports": Schema.String,
+      }),
+    }),
+  ),
 );
 
 const collectBytes = (stream: Stream.Stream<Uint8Array, PlatformError.PlatformError>) =>
@@ -172,7 +179,8 @@ export const comparisonBase = Effect.fn("checkChanged.comparisonBase")(function*
   return closest;
 });
 
-const CODE = /\.[cm]?[jt]sx?$/;
+// CI's lint and knip also read Astro components' frontmatter.
+const CODE = /\.(?:[cm]?[jt]sx?|astro)$/;
 const TEST = /\.test\.[cm]?[jt]sx?$/;
 // CI runs the .github/scripts tests with `node --test`; vitest passes a failing node:test file.
 const NODE_TEST = /^\.github[/\\]scripts[/\\]/;
@@ -369,14 +377,16 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
   const runKnip = files.some(
     (file) => CODE.test(file) || path.basename(file) === "package.json" || file === "knip.jsonc",
   );
-  // CI runs knip:check as one script of `knip ... && knip ...` passes. The passes
+  // CI runs knip:check as a task that depends on one script per pass. The passes
   // do not depend on each other, so they run side by side here.
   const rootPackage = yield* fs
     .readFileString(inRoot("package.json"))
     .pipe(Effect.flatMap(decodeRootPackageJson), Effect.orDie);
-  const knipCheck = rootPackage.scripts["knip:check"];
   const knipPasses: Array<Array<string>> = [];
-  for (const command of knipCheck.split(" && ")) {
+  for (const command of [
+    rootPackage.scripts["knip:check:files"],
+    rootPackage.scripts["knip:check:exports"],
+  ]) {
     const [bin, ...args] = command.trim().split(/\s+/);
     if (bin !== "knip" || /["'$\\|;&<>]/.test(command)) {
       return yield* Effect.fail(`check:changed cannot split knip:check: ${command}`);
@@ -469,7 +479,9 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
     ...(present.length > 0
       ? [command("format", ["fmt", "--check", "--no-error-on-unmatched-pattern", ...present])]
       : []),
-    ...(code.length > 0 ? [command("lint", ["lint", ...code])] : []),
+    ...(code.length > 0
+      ? [command("lint", ["lint", "--no-error-on-unmatched-pattern", ...code])]
+      : []),
     ...(runKnip
       ? knipPasses.map((args, index) => command(`knip ${index + 1}/${knipPasses.length}`, args))
       : []),
@@ -479,7 +491,7 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
     ...(affected.length > 0
       ? [
           {
-            // `tsc --noEmit` writes nothing another package reads, so dependency order
+            // `effect-tsgo tsrs --noEmit` writes nothing another package reads, so dependency order
             // only made dependents wait: --parallel cut a contracts change from 13 s to 9 s.
             ...command(`typecheck (${affected.length} packages)`, [
               "run",

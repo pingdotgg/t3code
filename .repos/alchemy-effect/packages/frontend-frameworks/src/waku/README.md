@@ -258,7 +258,7 @@ Everything this package touches in waku is `unstable_`-prefixed
 (`unstable_combinedPlugins`, `unstable_resolveConfig`,
 `unstable_createServerEntryAdapter`, `unstable_startPreviewServer`, the
 adapter system itself) and waku is in beta — `waku` is pinned exactly
-(`1.0.0-beta.7`). Treat version bumps as deliberate migrations: re-verify
+(`1.0.0-rc.4`). Treat version bumps as deliberate migrations: re-verify
 the adapter fork against upstream's `packages/waku/src/adapters/cloudflare.ts`,
 the two-input rsc environment merge, and the preview-server global.
 

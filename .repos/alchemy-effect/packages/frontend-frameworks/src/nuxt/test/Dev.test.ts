@@ -1,7 +1,7 @@
-import * as Effect from "effect/Effect";
 import * as NodeFs from "node:fs";
 import * as NodeHttp from "node:http";
 import type * as NodeNet from "node:net";
+import * as Effect from "effect/Effect";
 import { describe, expect, it, vi } from "vitest";
 import {
   makeCloudflareDevPlatform,
@@ -82,10 +82,7 @@ const makeFakeProxy = async (token: string) => {
         const [segment] = call.chain;
         let result: unknown = null;
         if (segment?.method === "put") {
-          store.set(
-            String(segment.args[0]?.value),
-            String(segment.args[1]?.value),
-          );
+          store.set(String(segment.args[0]?.value), String(segment.args[1]?.value));
           result = undefined;
         } else if (segment?.method === "get") {
           result = store.get(String(segment.args[0]?.value)) ?? null;
@@ -184,9 +181,7 @@ describe("makeCloudflareDevPlatform", () => {
     expect(openedWith?.compatibilityDate).toBe("2026-03-10");
     expect(openedWith?.bindings).toBe(bindings);
     expect(platform.nitroPlugins).toEqual([resolveDevPluginPath()]);
-    const info = (platform.runtimeConfig as Record<string, DevConnectInfo>)[
-      RUNTIME_CONFIG_KEY
-    ];
+    const info = (platform.runtimeConfig as Record<string, DevConnectInfo>)[RUNTIME_CONFIG_KEY];
     expect(info).toBeDefined();
     expect(info?.url).toBe("http://127.0.0.1:4321/");
     expect(info?.token).toBe("test-token");
@@ -201,18 +196,14 @@ describe("makeCloudflareDevPlatform", () => {
     };
     const result = await Effect.runPromise(
       Effect.result(
-        Effect.scoped(
-          makeCloudflareDevPlatform({ openProxy })({ root: "/tmp/project" }),
-        ),
+        Effect.scoped(makeCloudflareDevPlatform({ openProxy })({ root: "/tmp/project" })),
       ),
     );
     expect(result._tag).toBe("Failure");
     if (result._tag === "Failure") {
       const failure = result.failure as { _tag: string; message: string };
       expect(failure._tag).toBe("DeployTargetError");
-      expect(failure.message).toContain(
-        "Failed to open the dev platform proxy",
-      );
+      expect(failure.message).toContain("Failed to open the dev platform proxy");
     }
   });
 });
@@ -238,9 +229,7 @@ describe("dev plugin (worker half)", () => {
       const cf = event.context.cf as Record<string, unknown>;
       expect(cf.country).toBe("US");
       // waitUntil is detachable (h3 consumers call it bare).
-      const waitUntil = event.context.waitUntil as (
-        promise: Promise<unknown>,
-      ) => void;
+      const waitUntil = event.context.waitUntil as (promise: Promise<unknown>) => void;
       waitUntil(Promise.resolve());
 
       const cloudflare = event.context.cloudflare as {
@@ -248,9 +237,7 @@ describe("dev plugin (worker half)", () => {
         env: Record<string, unknown>;
         context: { waitUntil: (promise: Promise<unknown>) => void };
       };
-      expect(cloudflare.request?.url).toBe(
-        "http://localhost:3000/api/test?x=1",
-      );
+      expect(cloudflare.request?.url).toBe("http://localhost:3000/api/test?x=1");
       expect((cloudflare.request as { cf?: unknown } | undefined)?.cf).toBe(cf);
       expect(cloudflare.env.TEXT).toBe("hello");
       // Literal env overlay: a same-named literal wins over the proxied value.
@@ -282,13 +269,9 @@ describe("dev plugin (worker half)", () => {
       };
       const hooks = await setupPlugin({ [RUNTIME_CONFIG_KEY]: info });
       const onRequest = hooks.get("request");
-      await expect(onRequest!(makeEvent())).rejects.toThrow(
-        /\/env request failed with status 401/,
-      );
+      await expect(onRequest!(makeEvent())).rejects.toThrow(/\/env request failed with status 401/);
       // The failed connection was not cached: the next request retries.
-      await expect(onRequest!(makeEvent())).rejects.toThrow(
-        /\/env request failed with status 401/,
-      );
+      await expect(onRequest!(makeEvent())).rejects.toThrow(/\/env request failed with status 401/);
     } finally {
       await proxy.close();
     }

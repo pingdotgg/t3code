@@ -1,11 +1,11 @@
-import { AuthError } from "@/Auth/AuthProvider.ts";
-import { StackEntrypointError } from "@/Alchemist/Session.ts";
-import { handleCliErrors } from "@/Cli/commands/errors.ts";
+import { format } from "node:util";
+import { expect, it } from "@alchemy.run/test";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
-import { expect, it } from "alchemy-test";
-import { format } from "node:util";
+import * as Alchemist from "@/Alchemist/index.ts";
+import { AuthError } from "@/Auth/AuthProvider.ts";
+import { handleCliErrors } from "@/Cli/commands/errors.ts";
 
 it.effect(
   "renders auth failures as user-facing CLI errors",
@@ -14,8 +14,7 @@ it.effect(
       const errors: string[] = [];
       const capturedConsole = {
         ...globalThis.console,
-        error: (...args: ReadonlyArray<unknown>) =>
-          errors.push(format(...args)),
+        error: (...args: ReadonlyArray<unknown>) => errors.push(format(...args)),
       } as Console.Console;
 
       const result = yield* handleCliErrors(
@@ -25,10 +24,7 @@ it.effect(
               "Cloudflare credentials need refreshing. Run: alchemy profile refresh --profile admin --provider Cloudflare",
           }),
         ),
-      ).pipe(
-        Effect.result,
-        Effect.provideService(Console.Console, capturedConsole),
-      );
+      ).pipe(Effect.result, Effect.provideService(Console.Console, capturedConsole));
 
       expect(Result.isFailure(result)).toBe(true);
       expect(errors).toHaveLength(1);
@@ -46,21 +42,17 @@ it.effect(
       const errors: string[] = [];
       const capturedConsole = {
         ...globalThis.console,
-        error: (...args: ReadonlyArray<unknown>) =>
-          errors.push(format(...args)),
+        error: (...args: ReadonlyArray<unknown>) => errors.push(format(...args)),
       } as Console.Console;
 
       const result = yield* handleCliErrors(
         Effect.fail(
-          new StackEntrypointError({
+          new Alchemist.StackEntrypointError({
             message:
               "Stack entrypoint 'alchemy.run.ts' does not exist. Run this command from an Alchemy project or pass --config <path>.",
           }),
         ),
-      ).pipe(
-        Effect.result,
-        Effect.provideService(Console.Console, capturedConsole),
-      );
+      ).pipe(Effect.result, Effect.provideService(Console.Console, capturedConsole));
 
       expect(Result.isFailure(result)).toBe(true);
       expect(errors).toHaveLength(1);

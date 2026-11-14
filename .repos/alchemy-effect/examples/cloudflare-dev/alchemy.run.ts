@@ -1,5 +1,5 @@
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
@@ -8,9 +8,7 @@ import EffectWorker from "./src/EffectWorker.ts";
 import HyperdriveWorker from "./src/HyperdriveWorker.ts";
 import { SandboxLive } from "./src/SandboxContainer.ts";
 
-export type AsyncWorkerEnv = Cloudflare.InferEnv<
-  ReturnType<typeof AsyncWorker>
->;
+export type AsyncWorkerEnv = Cloudflare.InferEnv<ReturnType<typeof AsyncWorker>>;
 
 /**
  * Value the Secrets Store secret is seeded with. The integ test asserts the
@@ -42,10 +40,7 @@ const TailWorker = Effect.gen(function* () {
   });
 });
 
-const AsyncWorker = (deps: {
-  tailWorker: Cloudflare.Worker;
-  liveKv: Cloudflare.KV.Namespace;
-}) =>
+const AsyncWorker = (deps: { tailWorker: Cloudflare.Worker; liveKv: Cloudflare.KV.Namespace }) =>
   Effect.gen(function* () {
     const queue = yield* Cloudflare.Queues.Queue("AsyncWorkerQueue");
     const bucket = yield* Cloudflare.R2.Bucket("AsyncWorkerBucket", {
@@ -125,9 +120,7 @@ const MediaWorker = Effect.gen(function* () {
     env: {
       BROWSER: Cloudflare.Browser("BROWSER"),
       IMAGES: Cloudflare.Images.Images("IMAGES"),
-      IMAGES_REMOTE: Cloudflare.Images.Images("IMAGES_REMOTE").pipe(
-        Alchemy.remote(),
-      ),
+      IMAGES_REMOTE: Cloudflare.Images.Images("IMAGES_REMOTE").pipe(Alchemy.remote()),
       STREAM: Cloudflare.Stream.Stream("STREAM"),
       EMAIL: email,
       API_KEY: apiKey,
@@ -160,9 +153,7 @@ export default Alchemy.Stack(
   },
   Effect.gen(function* () {
     const tailWorker = yield* TailWorker;
-    const liveKv = yield* Cloudflare.KV.Namespace("LiveKV").pipe(
-      Alchemy.remote(),
-    );
+    const liveKv = yield* Cloudflare.KV.Namespace("LiveKV").pipe(Alchemy.remote());
     const asyncWorker = yield* AsyncWorker({ tailWorker, liveKv });
     const effectWorker = yield* EffectWorker;
     const media = yield* MediaWorker;

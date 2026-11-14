@@ -1,5 +1,6 @@
 import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { PreviewViewportSetting, ScopedThreadRef } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 
 import { toastManager } from "~/components/ui/toast";
 import { updatePreviewServerSnapshot } from "~/previewStateStore";
@@ -15,11 +16,12 @@ export interface BrowserViewportTarget {
 
 const BROWSER_VIEWPORT_COMMIT_TIMEOUT_MS = 15_000;
 
-class BrowserViewportCommitTimeoutError extends Error {
-  override readonly name = "BrowserViewportCommitTimeoutError";
-
-  constructor(readonly tabId: string) {
-    super(`Timed out committing the browser viewport for tab ${tabId}`);
+class BrowserViewportCommitTimeoutError extends Schema.TaggedError<BrowserViewportCommitTimeoutError>()(
+  "BrowserViewportCommitTimeoutError",
+  { tabId: Schema.String },
+) {
+  override get message(): string {
+    return `Timed out committing the browser viewport for tab ${this.tabId}`;
   }
 }
 
@@ -53,7 +55,7 @@ const runHandlerWithTimeout = (tabId: string, operation: Promise<void>): Promise
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
     timeoutId = setTimeout(
-      () => reject(new BrowserViewportCommitTimeoutError(tabId)),
+      () => reject(new BrowserViewportCommitTimeoutError({ tabId })),
       BROWSER_VIEWPORT_COMMIT_TIMEOUT_MS,
     );
   });

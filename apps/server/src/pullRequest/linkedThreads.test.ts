@@ -1,15 +1,23 @@
+import {
+  ProjectId,
+  ThreadId,
+  type OrchestrationV2AppThread,
+  type OrchestrationV2DomainEvent,
+  type ThreadPullRequestLink,
+} from "@t3tools/contracts";
 import { assert, expect, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
-import { listLinkedPullRequestThreads } from "./linkedThreads.ts";
+import { listLinkedPullRequestThreads, makeLinkedThreadsChangeDetector } from "./linkedThreads.ts";
 
 const encodePayload = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 it.effect(
-  "finds active and archived threads for exactly one pull request, excluding deleted, dismissed, and side chat links",
+  "finds active, settled, and archived threads for exactly one pull request, excluding deleted, dismissed, and side chat links",
   () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -43,6 +51,14 @@ it.effect(
           id: "other-org",
           host: "dev.azure.com",
           repository: "other/project/_git/web",
+          number: 7,
+          source: "manual",
+        },
+        { id: "settled", host: "github.com", repository: "acme/web", number: 7, source: "manual" },
+        {
+          id: "auto-settled",
+          host: "github.com",
+          repository: "acme/web",
           number: 7,
           source: "manual",
         },
@@ -94,6 +110,8 @@ it.effect(
       for (const fixture of fixtures) {
         const payload = yield* encodePayload({
           linkedPullRequest: null,
+          settledOverride: ["settled", "archived"].includes(fixture.id) ? "settled" : null,
+          settledAt: fixture.id === "auto-settled" ? archivedAt : null,
           ...(fixture.id === "side-chat" ? { lineage: { sideChat: true } } : {}),
           pullRequests: [{ ...fixture, linkedAt: createdAt, snapshot: null, stack: null }],
         });
@@ -165,8 +183,28 @@ it.effect(
       });
       expect(result).toEqual({
         threads: [
-          { id: "archived", projectId: "project-1", title: "archived", archivedAt },
-          { id: "active", projectId: "project-1", title: "active", archivedAt: null },
+          { id: "archived", projectId: "project-1", title: "archived", archivedAt, settled: true },
+          {
+            id: "active",
+            projectId: "project-1",
+            title: "active",
+            archivedAt: null,
+            settled: false,
+          },
+          {
+            id: "auto-settled",
+            projectId: "project-1",
+            title: "auto-settled",
+            archivedAt: null,
+            settled: true,
+          },
+          {
+            id: "settled",
+            projectId: "project-1",
+            title: "settled",
+            archivedAt: null,
+            settled: true,
+          },
         ],
       });
       assert.deepStrictEqual(
@@ -179,3 +217,132 @@ it.effect(
       );
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
+
+it("signals linked-thread changes only when a linked answer could change", () => {
+  const now = DateTime.makeUnsafe("2026-11-12T00:00:00.000Z");
+  const threadId = ThreadId.make("thread-a");
+  const link: ThreadPullRequestLink = {
+    host: "github.com",
+    repository: "acme/web",
+    number: 7,
+    url: "https://github.com/acme/web/pull/7",
+    source: "agent",
+    linkedAt: "2026-11-12T00:00:00.000Z",
+    snapshot: null,
+    stack: null,
+  };
+  const base = {
+    id: threadId,
+    projectId: ProjectId.make("project-a"),
+    title: "Thread A",
+    lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+    archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
+    deletedAt: null,
+    updatedAt: now,
+  } as unknown as OrchestrationV2AppThread;
+  const event = (
+    type: OrchestrationV2DomainEvent["type"],
+    payload: Partial<OrchestrationV2AppThread>,
+  ) => ({ type, threadId, payload: { ...base, ...payload } }) as OrchestrationV2DomainEvent;
+  const changed = makeLinkedThreadsChangeDetector();
+
+  expect(
+    [
+      event("thread.metadata-updated", { title: "Unlinked rename" }),
+      event("thread.pull-request-synced", { pullRequests: [link] }),
+      event("thread.pull-request-synced", {
+        pullRequests: [{ ...link, watch: { since: "2026-11-12T00:00:00.000Z" } as never }],
+      }),
+      event("thread.visited", { pullRequests: [link] }),
+      event("thread.pinned", { pullRequests: [link], settledAt: now }),
+      { type: "thread.pull-request-link-updated", threadId, payload: link } as never,
+      event("thread.metadata-updated", { pullRequests: [link], title: "Renamed" }),
+      event("thread.archived", { pullRequests: [link], title: "Renamed", archivedAt: now }),
+      event("thread.pull-request-synced", {
+        pullRequests: [{ ...link, source: "stack-dismissed" }],
+        title: "Renamed",
+        archivedAt: now,
+      }),
+      event("thread.deleted", { pullRequests: [], deletedAt: now }),
+    ].map(changed),
+  ).toEqual([
+    "changed",
+    "changed",
+    null,
+    null,
+    "changed",
+    null,
+    "changed",
+    "changed",
+    "changed",
+    null,
+  ]);
+
+  const afterRestart = makeLinkedThreadsChangeDetector();
+  expect(afterRestart(event("thread.created", { title: "New" }))).toBe(null);
+  expect(
+    makeLinkedThreadsChangeDetector()(
+      event("thread.deleted", { pullRequests: [], deletedAt: now }),
+    ),
+  ).toBe("changed");
+});
+
+it("signals when activity reorders the threads linked to a pull request", () => {
+  const at = (second: number) => DateTime.makeUnsafe(`2026-11-12T00:00:0${second}.000Z`);
+  const link = {
+    host: "github.com",
+    repository: "acme/web",
+    number: 7,
+    url: "https://github.com/acme/web/pull/7",
+    source: "agent",
+  };
+  const thread = (id: string, second: number, pullRequests: ReadonlyArray<unknown> = [link]) =>
+    ({
+      type: "thread.pull-request-synced",
+      threadId: ThreadId.make(id),
+      payload: {
+        id: ThreadId.make(id),
+        projectId: ProjectId.make("project-a"),
+        title: id,
+        lineage: { rootThreadId: ThreadId.make(id) },
+        pullRequests,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        deletedAt: null,
+        updatedAt: at(second),
+      },
+    }) as unknown as OrchestrationV2DomainEvent;
+  const activity = (id: string, second: number) =>
+    ({
+      type: "message.updated",
+      threadId: ThreadId.make(id),
+      occurredAt: at(second),
+    }) as unknown as OrchestrationV2DomainEvent;
+  const changed = makeLinkedThreadsChangeDetector();
+  changed(thread("a", 1));
+  changed(thread("b", 2));
+
+  expect(
+    [
+      { ...thread("a", 3), type: "thread.pinned" } as OrchestrationV2DomainEvent,
+      activity("a", 4),
+      activity("b", 5),
+      activity("b", 5),
+      // Seen since startup without links, so its activity can't reorder an answer.
+      thread("unlinked", 5, []),
+      activity("unlinked", 6),
+      // Not seen since startup, so it may be linked from before the restart.
+      activity("persisted", 6),
+    ].map(changed),
+  ).toEqual(["reordered", "reordered", "reordered", null, "changed", null, "reordered"]);
+
+  // Other threads linked to the pull request may have had no event since the restart.
+  const afterRestart = makeLinkedThreadsChangeDetector();
+  afterRestart(thread("a", 2));
+  expect(
+    afterRestart({ ...thread("a", 6), type: "thread.pinned" } as OrchestrationV2DomainEvent),
+  ).toBe("reordered");
+});

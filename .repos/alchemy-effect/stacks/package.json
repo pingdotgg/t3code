@@ -1,0 +1,26 @@
+{
+  "name": "@alchemy.run/stacks",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@alchemy.run/aws": "workspace:*",
+    "@alchemy.run/axiom": "workspace:*",
+    "@alchemy.run/cloudflare": "workspace:*",
+    "@alchemy.run/fly": "workspace:*",
+    "@alchemy.run/gcp": "workspace:*",
+    "@alchemy.run/github": "workspace:*",
+    "@alchemy.run/hetzner": "workspace:*",
+    "@alchemy.run/neon": "workspace:*",
+    "@alchemy.run/pkg": "workspace:*",
+    "@alchemy.run/planetscale": "workspace:*",
+    "@alchemy.run/prisma": "workspace:*",
+    "@alchemy.run/railway": "workspace:*",
+    "@alchemy.run/stripe": "workspace:*",
+    "@alchemy.run/turso": "workspace:*",
+    "@types/bun": "catalog:",
+    "@types/node": "catalog:",
+    "alchemy": "workspace:*",
+    "effect": "catalog:"
+  }
+}

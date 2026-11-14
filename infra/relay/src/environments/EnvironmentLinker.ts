@@ -10,6 +10,7 @@ import {
   verifyRelayJwt,
 } from "@t3tools/shared/relayJwt";
 import * as Context from "effect/Context";
+import * as Signature from "effect/crypto/Signature";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -142,22 +143,24 @@ const make = Effect.gen(function* () {
   const proofReplay = yield* DpopProofs.DpopProofReplay;
   const relayTokens = yield* RelayTokens.RelayTokens;
   const config = yield* RelayConfiguration.RelayConfiguration;
+  const signature = yield* Signature.Signature;
 
   return EnvironmentLinker.of({
     link: Effect.fn("relay.environment_linker.link")(function* (input) {
       const now = yield* DateTime.now;
       const nowSeconds = Math.floor(now.epochMilliseconds / 1_000);
-      const unverified = yield* Effect.try({
-        try: () => decodeRelayJwt(input.request.proof),
-        catch: (cause) =>
-          new EnvironmentLinkProofInvalid({
-            userId: input.userId,
-            environmentId: "unknown",
-            reason: "invalid_signature_or_scope",
-            stage: "decode_token",
-            cause,
-          }),
-      });
+      const unverified = yield* decodeRelayJwt(input.request.proof).pipe(
+        Effect.mapError(
+          (cause) =>
+            new EnvironmentLinkProofInvalid({
+              userId: input.userId,
+              environmentId: "unknown",
+              reason: "invalid_signature_or_scope",
+              stage: "decode_token",
+              cause,
+            }),
+        ),
+      );
       const candidate = yield* decodeProof(unverified).pipe(
         Effect.mapError(
           (cause) =>
@@ -185,15 +188,14 @@ const make = Effect.gen(function* () {
       }
       const issuer = `t3-env:${candidate.environmentId}`;
       const relayIssuer = normalizeRelayIssuer(config.relayIssuer);
-      const verified = yield* verifyRelayJwt({
+      const verified = yield* verifyRelayJwt(RelayEnvironmentLinkProofPayload, {
         publicKey: candidate.environmentPublicKey,
         token: input.request.proof,
         typ: RELAY_LINK_PROOF_TYP,
         issuer,
         audience: relayIssuer,
-        nowEpochSeconds: nowSeconds,
       }).pipe(
-        Effect.flatMap(decodeProof),
+        Effect.provideService(Signature.Signature, signature),
         Effect.mapError(
           (cause) =>
             new EnvironmentLinkProofInvalid({
@@ -232,7 +234,6 @@ const make = Effect.gen(function* () {
           liveActivitiesEnabled: input.request.liveActivitiesEnabled,
           managedTunnelsEnabled: input.request.managedTunnelsEnabled,
         },
-        nowEpochSeconds: nowSeconds,
       });
       if (challenge === null) {
         return yield* new EnvironmentLinkProofInvalid({

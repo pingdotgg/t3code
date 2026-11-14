@@ -23,6 +23,7 @@ import {
   BINDING_IMAGES_LOOPBACK,
   BINDING_IMAGES_STORE,
   PATH_IMAGE_DELIVERY,
+  PATH_IMAGE_DELIVERY_LEGACY,
   PATH_IMAGES_PUBLIC_URL,
 } from "./ImagesOptions.shared.ts";
 
@@ -35,9 +36,7 @@ interface Env {
 // resolve the runtime entry URL through the loopback so the binding always
 // sees the latest value.
 async function getPublicUrl(loopback: Fetcher): Promise<URL> {
-  const resp = await loopback.fetch(
-    `http://localhost${PATH_IMAGES_PUBLIC_URL}`,
-  );
+  const resp = await loopback.fetch(`http://localhost${PATH_IMAGES_PUBLIC_URL}`);
   const url = (await resp.json()) as string | null;
   if (!url) {
     throw new Error(
@@ -47,28 +46,16 @@ async function getPublicUrl(loopback: Fetcher): Promise<URL> {
   return new URL(url);
 }
 
-function buildVariantUrl(
-  publicUrl: URL,
-  imageId: string,
-  variant: string,
-): string {
-  return new URL(
-    `${PATH_IMAGE_DELIVERY}/${imageId}/${variant}`,
-    publicUrl,
-  ).toString();
+function buildVariantUrl(publicUrl: URL, imageId: string, variant: string): string {
+  return new URL(`${PATH_IMAGE_DELIVERY}/${imageId}/${variant}`, publicUrl).toString();
 }
 
 // Rewrites stored variant names (e.g. `["public"]`) to absolute URLs.
-async function withResolvedVariants(
-  metadata: ImageMetadata,
-  env: Env,
-): Promise<ImageMetadata> {
+async function withResolvedVariants(metadata: ImageMetadata, env: Env): Promise<ImageMetadata> {
   const publicUrl = await getPublicUrl(env[BINDING_IMAGES_LOOPBACK]);
   return {
     ...metadata,
-    variants: metadata.variants.map((variant) =>
-      buildVariantUrl(publicUrl, metadata.id, variant),
-    ),
+    variants: metadata.variants.map((variant) => buildVariantUrl(publicUrl, metadata.id, variant)),
   };
 }
 
@@ -83,9 +70,7 @@ function base64DecodeArrayBuffer(buffer: ArrayBuffer): ArrayBuffer {
   return bytes.buffer;
 }
 
-async function base64DecodeStream(
-  stream: ReadableStream<Uint8Array>,
-): Promise<ArrayBuffer> {
+async function base64DecodeStream(stream: ReadableStream<Uint8Array>): Promise<ArrayBuffer> {
   const response = new Response(stream);
   const buffer = await response.arrayBuffer();
   return base64DecodeArrayBuffer(buffer);
@@ -102,9 +87,10 @@ class ImageHandleImpl extends RpcTarget {
   }
 
   async details(): Promise<ImageMetadata | null> {
-    const result = await this.#env[
-      BINDING_IMAGES_STORE
-    ].getWithMetadata<ImageMetadata>(this.#imageId, "arrayBuffer");
+    const result = await this.#env[BINDING_IMAGES_STORE].getWithMetadata<ImageMetadata>(
+      this.#imageId,
+      "arrayBuffer",
+    );
     if (result.metadata === null) {
       return null;
     }
@@ -112,10 +98,7 @@ class ImageHandleImpl extends RpcTarget {
   }
 
   async bytes(): Promise<ReadableStream<Uint8Array> | null> {
-    const data = await this.#env[BINDING_IMAGES_STORE].get(
-      this.#imageId,
-      "arrayBuffer",
-    );
+    const data = await this.#env[BINDING_IMAGES_STORE].get(this.#imageId, "arrayBuffer");
     if (data === null) {
       return null;
     }
@@ -123,17 +106,17 @@ class ImageHandleImpl extends RpcTarget {
   }
 
   async update(options: ImageUpdateOptions): Promise<ImageMetadata> {
-    const existing = await this.#env[
-      BINDING_IMAGES_STORE
-    ].getWithMetadata<ImageMetadata>(this.#imageId, "arrayBuffer");
+    const existing = await this.#env[BINDING_IMAGES_STORE].getWithMetadata<ImageMetadata>(
+      this.#imageId,
+      "arrayBuffer",
+    );
     if (existing.value === null || existing.metadata === null) {
       throw new Error(`Image not found: ${this.#imageId}`);
     }
 
     const updatedMetadata: ImageMetadata = {
       ...existing.metadata,
-      requireSignedURLs:
-        options.requireSignedURLs ?? existing.metadata.requireSignedURLs,
+      requireSignedURLs: options.requireSignedURLs ?? existing.metadata.requireSignedURLs,
       meta: options.metadata ?? existing.metadata.meta,
       creator: options.creator ?? existing.metadata.creator,
     };
@@ -145,10 +128,7 @@ class ImageHandleImpl extends RpcTarget {
   }
 
   async delete(): Promise<boolean> {
-    const existing = await this.#env[BINDING_IMAGES_STORE].get(
-      this.#imageId,
-      "arrayBuffer",
-    );
+    const existing = await this.#env[BINDING_IMAGES_STORE].get(this.#imageId, "arrayBuffer");
     if (existing === null) {
       return false;
     }
@@ -175,9 +155,7 @@ export default class ImagesService extends WorkerEntrypoint<Env> {
     }
 
     const buffer =
-      imageData instanceof ArrayBuffer
-        ? imageData
-        : await new Response(imageData).arrayBuffer();
+      imageData instanceof ArrayBuffer ? imageData : await new Response(imageData).arrayBuffer();
 
     const id = options?.id ?? crypto.randomUUID();
 
@@ -203,11 +181,9 @@ export default class ImagesService extends WorkerEntrypoint<Env> {
     const allImages: Array<ImageMetadata> = [];
     let kvCursor: string | undefined;
     do {
-      const kvResult = await this.env[BINDING_IMAGES_STORE].list<ImageMetadata>(
-        {
-          cursor: kvCursor,
-        },
-      );
+      const kvResult = await this.env[BINDING_IMAGES_STORE].list<ImageMetadata>({
+        cursor: kvCursor,
+      });
       for (const key of kvResult.keys) {
         if (key.metadata) {
           allImages.push(key.metadata);
@@ -263,13 +239,10 @@ export default class ImagesService extends WorkerEntrypoint<Env> {
     const formData = new FormData();
     formData.append("image", new Blob([data]));
 
-    const response = await this.env[BINDING_IMAGES_LOOPBACK].fetch(
-      "http://placeholder/info",
-      {
-        method: "POST",
-        body: formData,
-      },
-    );
+    const response = await this.env[BINDING_IMAGES_LOOPBACK].fetch("http://placeholder/info", {
+      method: "POST",
+      body: formData,
+    });
     if (response.ok) {
       const info = (await response.json()) as { format?: string };
       if (info.format) {
@@ -286,20 +259,19 @@ export default class ImagesService extends WorkerEntrypoint<Env> {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
 
-    // Serve image bytes at /cdn-cgi/mf/imagedelivery/<id>/<variant>
-    if (url.pathname.startsWith(`${PATH_IMAGE_DELIVERY}/`)) {
-      const parts = url.pathname
-        .slice(PATH_IMAGE_DELIVERY.length + 1)
-        .split("/");
+    // Serve image bytes at /__cf_local/imagedelivery/<id>/<variant> (and
+    // Miniflare's former /cdn-cgi/mf/imagedelivery prefix).
+    const deliveryPrefix = [PATH_IMAGE_DELIVERY, PATH_IMAGE_DELIVERY_LEGACY].find((prefix) =>
+      url.pathname.startsWith(`${prefix}/`),
+    );
+    if (deliveryPrefix !== undefined) {
+      const parts = url.pathname.slice(deliveryPrefix.length + 1).split("/");
       const imageId = parts[0];
       if (!imageId) {
         return new Response("Missing image ID", { status: 400 });
       }
 
-      const data = await this.env[BINDING_IMAGES_STORE].get(
-        imageId,
-        "arrayBuffer",
-      );
+      const data = await this.env[BINDING_IMAGES_STORE].get(imageId, "arrayBuffer");
       if (data === null) {
         return new Response("Image not found", { status: 404 });
       }

@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -26,57 +27,60 @@ const layerEnvironmentAuthPolicy = (overrides?: Partial<ServerConfig.ServerConfi
     ),
   );
 
-it.layer(NodeServices.layer)("EnvironmentAuthPolicy.layer", (it) => {
-  it.effect("keeps desktop cookies port-scoped on the port a second instance lands on", () =>
-    Effect.gen(function* () {
-      const policy = yield* EnvironmentAuthPolicy.EnvironmentAuthPolicy;
-      const descriptor = yield* policy.getDescriptor();
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
+  "EnvironmentAuthPolicy.layer",
+  (it) => {
+    it.effect("keeps desktop cookies port-scoped on the port a second instance lands on", () =>
+      Effect.gen(function* () {
+        const policy = yield* EnvironmentAuthPolicy.EnvironmentAuthPolicy;
+        const descriptor = yield* policy.getDescriptor();
 
-      expect(descriptor.sessionCookieName).toBe("t3_session_3774");
-    }).pipe(
-      Effect.provide(
-        layerEnvironmentAuthPolicy({
-          mode: "desktop",
-          port: 3774,
-        }),
+        expect(descriptor.sessionCookieName).toBe("t3_session_3774");
+      }).pipe(
+        Effect.provide(
+          layerEnvironmentAuthPolicy({
+            mode: "desktop",
+            port: 3774,
+          }),
+        ),
       ),
-    ),
-  );
+    );
 
-  it.effect("uses remote-reachable policy for desktop mode when bound beyond loopback", () =>
-    Effect.gen(function* () {
-      const policy = yield* EnvironmentAuthPolicy.EnvironmentAuthPolicy;
-      const descriptor = yield* policy.getDescriptor();
+    it.effect("uses remote-reachable policy for desktop mode when bound beyond loopback", () =>
+      Effect.gen(function* () {
+        const policy = yield* EnvironmentAuthPolicy.EnvironmentAuthPolicy;
+        const descriptor = yield* policy.getDescriptor();
 
-      expect(descriptor.policy).toBe("remote-reachable");
-      expect(descriptor.bootstrapMethods).toEqual(["desktop-bootstrap", "one-time-token"]);
-    }).pipe(
-      Effect.provide(
-        layerEnvironmentAuthPolicy({
-          mode: "desktop",
-          host: "0.0.0.0",
-        }),
+        expect(descriptor.policy).toBe("remote-reachable");
+        expect(descriptor.bootstrapMethods).toEqual(["desktop-bootstrap", "one-time-token"]);
+      }).pipe(
+        Effect.provide(
+          layerEnvironmentAuthPolicy({
+            mode: "desktop",
+            host: "0.0.0.0",
+          }),
+        ),
       ),
-    ),
-  );
+    );
 
-  it.effect("uses loopback-browser policy for loopback web hosts", () =>
-    Effect.gen(function* () {
-      const policy = yield* EnvironmentAuthPolicy.EnvironmentAuthPolicy;
-      const descriptor = yield* policy.getDescriptor();
+    it.effect("uses loopback-browser policy for loopback web hosts", () =>
+      Effect.gen(function* () {
+        const policy = yield* EnvironmentAuthPolicy.EnvironmentAuthPolicy;
+        const descriptor = yield* policy.getDescriptor();
 
-      expect(descriptor.policy).toBe("loopback-browser");
-      expect(descriptor.bootstrapMethods).toEqual(["one-time-token"]);
-      expect(descriptor.serverUpdateScope).toBe("environment:maintain");
-      expect(descriptor.sessionCookieName).toMatch(/^t3_session_3773_[a-f0-9]{12}$/);
-    }).pipe(
-      Effect.provide(
-        layerEnvironmentAuthPolicy({
-          mode: "web",
-          host: "127.0.0.1",
-          port: 3773,
-        }),
+        expect(descriptor.policy).toBe("loopback-browser");
+        expect(descriptor.bootstrapMethods).toEqual(["one-time-token"]);
+        expect(descriptor.serverUpdateScope).toBe("environment:maintain");
+        expect(descriptor.sessionCookieName).toMatch(/^t3_session_3773_[a-f0-9]{12}$/);
+      }).pipe(
+        Effect.provide(
+          layerEnvironmentAuthPolicy({
+            mode: "web",
+            host: "127.0.0.1",
+            port: 3773,
+          }),
+        ),
       ),
-    ),
-  );
-});
+    );
+  },
+);

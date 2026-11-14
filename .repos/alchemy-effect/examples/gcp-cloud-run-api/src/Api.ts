@@ -1,12 +1,11 @@
-import * as GCP from "alchemy/GCP";
+import * as GCP from "@alchemy.run/gcp";
 import * as Effect from "effect/Effect";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { ApiKey, Links } from "./resources.ts";
 
 /** Base62 so codes stay short and URL-safe. */
-const ALPHABET =
-  "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+const ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
 const newCode = () =>
   Array.from(
@@ -132,10 +131,7 @@ export default class Api extends GCP.Function<Api>()(
 
           const body = (yield* request.json) as { url?: string };
           if (!body.url) {
-            return yield* HttpServerResponse.json(
-              { error: "url is required" },
-              { status: 400 },
-            );
+            return yield* HttpServerResponse.json({ error: "url is required" }, { status: 400 });
           }
 
           // `create` fails with DocumentAlreadyExists instead of
@@ -151,8 +147,7 @@ export default class Api extends GCP.Function<Api>()(
               .pipe(Effect.as(code));
           }).pipe(
             Effect.retry({
-              while: (error) =>
-                error._tag === "GCP.Firestore.DocumentAlreadyExists",
+              while: (error) => error._tag === "GCP.Firestore.DocumentAlreadyExists",
               times: 3,
             }),
             Effect.orDie,
@@ -170,16 +165,11 @@ export default class Api extends GCP.Function<Api>()(
         if (request.method === "GET" && segments[0] === "l" && segments[1]) {
           const link = yield* readLink(segments[1]);
           if (link === undefined) {
-            return yield* HttpServerResponse.json(
-              { error: "unknown code" },
-              { status: 404 },
-            );
+            return yield* HttpServerResponse.json({ error: "unknown code" }, { status: 404 });
           }
 
           // `update` writes only the keys it is given.
-          yield* db
-            .update(`links/${segments[1]}`, { clicks: link.clicks + 1 })
-            .pipe(Effect.orDie);
+          yield* db.update(`links/${segments[1]}`, { clicks: link.clicks + 1 }).pipe(Effect.orDie);
 
           return HttpServerResponse.empty({
             status: 302,
@@ -187,48 +177,26 @@ export default class Api extends GCP.Function<Api>()(
           });
         }
 
-        if (
-          request.method === "GET" &&
-          segments[0] === "links" &&
-          segments[1]
-        ) {
+        if (request.method === "GET" && segments[0] === "links" && segments[1]) {
           const link = yield* readLink(segments[1]);
           if (link === undefined) {
-            return yield* HttpServerResponse.json(
-              { error: "unknown code" },
-              { status: 404 },
-            );
+            return yield* HttpServerResponse.json({ error: "unknown code" }, { status: 404 });
           }
           return yield* HttpServerResponse.json({ code: segments[1], ...link });
         }
 
-        if (
-          request.method === "DELETE" &&
-          segments[0] === "links" &&
-          segments[1]
-        ) {
+        if (request.method === "DELETE" && segments[0] === "links" && segments[1]) {
           const auth = yield* authorize(request);
           if (auth !== "ok") {
-            return yield* HttpServerResponse.json(
-              { error: "invalid api key" },
-              { status: 401 },
-            );
+            return yield* HttpServerResponse.json({ error: "invalid api key" }, { status: 401 });
           }
           // Deleting a missing document succeeds.
           yield* db.delete(`links/${segments[1]}`).pipe(Effect.orDie);
           return HttpServerResponse.empty({ status: 204 });
         }
 
-        return yield* HttpServerResponse.json(
-          { error: "not found" },
-          { status: 404 },
-        );
+        return yield* HttpServerResponse.json({ error: "not found" }, { status: 404 });
       }),
     };
-  }).pipe(
-    Effect.provide([
-      GCP.Firestore.ReadWriteDatabaseHttp,
-      GCP.SecretManager.ReadSecretHttp,
-    ]),
-  ),
+  }).pipe(Effect.provide([GCP.Firestore.ReadWriteDatabaseHttp, GCP.SecretManager.ReadSecretHttp])),
 ) {}

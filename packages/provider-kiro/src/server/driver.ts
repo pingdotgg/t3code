@@ -1,7 +1,7 @@
 import { ProviderDriverKind, TextGenerationError } from "@t3tools/contracts";
 import { KiroSettings } from "../settings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -14,6 +14,7 @@ import {
 } from "@t3tools/provider-core/server/driver";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
@@ -53,13 +54,14 @@ const unsupportedTextGeneration: ProviderTextGeneration = (() => {
     generateBranchName: () => unsupported("generateBranchName"),
     generateThreadTitle: () => unsupported("generateThreadTitle"),
     generateReviewGuide: () => unsupported("generateReviewGuide"),
+    generateTranscriptionPostProcessing: () => unsupported("generateTranscriptionPostProcessing"),
   };
 })();
 
 export type KiroDriverEnv =
   | KiroAdapterV2DriverEnv
   | ChildProcessSpawner.ChildProcessSpawner
-  | Crypto.Crypto
+  | SecureRandom.SecureRandom
   | ProviderHost.ProviderHost;
 
 export const KiroDriver: ProviderDriver<KiroSettings, KiroDriverEnv> = {
@@ -79,7 +81,7 @@ export const KiroDriver: ProviderDriver<KiroSettings, KiroDriverEnv> = {
     config,
   }) {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const processEnv = yield* mergeProviderInstanceEnvironment(
       environment,
       yield* HostProcess.Environment,
@@ -95,7 +97,11 @@ export const KiroDriver: ProviderDriver<KiroSettings, KiroDriverEnv> = {
       accentColor,
       continuationGroupKey: continuationIdentity.continuationKey,
     });
-    const effectiveConfig = { ...config, enabled } satisfies KiroSettings;
+    const effectiveConfig = {
+      ...config,
+      enabled,
+      binaryPath: expandHomePath(config.binaryPath, yield* HostProcess.HomeDirectory),
+    } satisfies KiroSettings;
     const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
     const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<KiroSettings>>({
       resolveMaintenance: () => Effect.succeed(MAINTENANCE),
@@ -107,7 +113,7 @@ export const KiroDriver: ProviderDriver<KiroSettings, KiroDriverEnv> = {
       checkProvider: checkKiroProviderStatus(effectiveConfig, processEnv).pipe(
         Effect.map(stampIdentity),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        Effect.provideService(Crypto.Crypto, crypto),
+        Effect.provideService(SecureRandom.SecureRandom, crypto),
       ),
     }).pipe(
       Effect.mapError(
@@ -126,7 +132,14 @@ export const KiroDriver: ProviderDriver<KiroSettings, KiroDriverEnv> = {
     const orchestrationAdapter = yield* makeKiroAdapterV2Driver(
       snapshot.getSnapshot.pipe(Effect.map((current) => kiroDefaultModelId(current.models))),
     )
-      .create({ instanceId, displayName, accentColor, environment, enabled, config })
+      .create({
+        instanceId,
+        displayName,
+        accentColor,
+        environment,
+        enabled,
+        config: effectiveConfig,
+      })
       .pipe(
         Effect.mapError(
           (cause) =>
