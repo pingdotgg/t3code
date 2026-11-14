@@ -59,23 +59,25 @@ vi.mock("~/terminal/ghostty/surface", () => ({
 }));
 vi.mock("../state/terminalSessions", async () => {
   const Atom = await import("effect/reactivity/Atom");
-  // Families cache their atoms, so each test needs fresh ones for its own statuses.
-  const makeSessions = () =>
-    Atom.family((_environmentId: EnvironmentId) =>
-      Atom.family((threadId: ThreadId) =>
-        Atom.make({
-          ...EMPTY_TERMINAL_SESSION_STATE,
-          status: fixture.statusByThreadId.get(threadId) ?? "closed",
-          version: 1,
-        }),
-      ),
-    );
-  let sessions = makeSessions();
+  // A strong map, not Atom.family: a family holds weakly, so a GC could hand setSession a new atom.
+  const makeSession = (threadId: ThreadId) =>
+    Atom.make<typeof EMPTY_TERMINAL_SESSION_STATE>({
+      ...EMPTY_TERMINAL_SESSION_STATE,
+      status: fixture.statusByThreadId.get(threadId) ?? "closed",
+      version: 1,
+    });
+  let sessions = new Map<string, ReturnType<typeof makeSession>>();
+  const session = (environmentId: EnvironmentId, threadId: ThreadId) => {
+    const key = JSON.stringify([environmentId, threadId]);
+    const atom = sessions.get(key) ?? makeSession(threadId);
+    sessions.set(key, atom);
+    return atom;
+  };
   fixture.resetSessions = () => {
-    sessions = makeSessions();
+    sessions = new Map();
   };
   fixture.setSession = (thread, status, version) => {
-    appAtomRegistry.set(sessions(thread.environmentId)(thread.threadId), {
+    appAtomRegistry.set(session(thread.environmentId, thread.threadId), {
       ...EMPTY_TERMINAL_SESSION_STATE,
       status,
       version,
@@ -83,7 +85,7 @@ vi.mock("../state/terminalSessions", async () => {
   };
   return {
     attachedTerminalSessionAtom: (environmentId: EnvironmentId, terminal: { threadId: ThreadId }) =>
-      sessions(environmentId)(terminal.threadId),
+      session(environmentId, terminal.threadId),
   };
 });
 vi.mock("../state/session", () => ({

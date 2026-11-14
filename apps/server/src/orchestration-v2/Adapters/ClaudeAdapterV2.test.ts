@@ -213,13 +213,14 @@ function makeClaudeTestAppThread(input: {
   readonly threadId: ThreadId;
   readonly providerThread: OrchestrationV2ProviderThread;
   readonly now: DateTime.Utc;
+  readonly title?: string;
 }): OrchestrationV2AppThread {
   return {
     createdBy: "user",
     creationSource: "web",
     id: input.threadId,
     projectId: ProjectId.make(`project-${input.threadId}`),
-    title: "Claude attachment test",
+    title: input.title ?? "Claude attachment test",
     providerInstanceId: ProviderInstanceId.make(ClaudeAdapterV2.CLAUDE_PROVIDER),
     modelSelection: CLAUDE_TEST_MODEL_SELECTION,
     runtimeMode: "full-access",
@@ -252,6 +253,7 @@ function makeClaudeTestTurnInput(input: {
   readonly attachments: ProviderAdapter.ProviderAdapterV2TurnInput["message"]["attachments"];
   readonly providerTurnOrdinal?: number;
   readonly nativeThreadHasTurns?: boolean;
+  readonly title?: string;
   readonly messageCreatedBy?: ProviderAdapter.ProviderAdapterV2TurnInput["message"]["createdBy"];
   readonly messageCreationSource?: ProviderAdapter.ProviderAdapterV2TurnInput["message"]["creationSource"];
   readonly modelSelection?: ModelSelection;
@@ -1078,6 +1080,7 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
                 setModel: () => Effect.void,
                 applyFlagSettings: () => Effect.void,
                 setPermissionMode: () => Effect.void,
+                renameSession: () => Effect.void,
                 backgroundTasks: () => Effect.succeed(false),
                 mcpServerStatus: Effect.succeed([]),
                 readMcpResource: () => Effect.die("unexpected MCP resource read"),
@@ -1200,6 +1203,7 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
               setModel: () => Effect.void,
               applyFlagSettings: () => Effect.void,
               setPermissionMode: () => Effect.void,
+              renameSession: () => Effect.void,
               backgroundTasks: () => Effect.succeed(false),
               mcpServerStatus: Effect.succeed([]),
               readMcpResource: () => Effect.die("unexpected MCP resource read"),
@@ -1458,6 +1462,7 @@ describe("ClaudeAdapterV2 provider installation gate", () => {
                 setModel: () => Effect.void,
                 applyFlagSettings: () => Effect.void,
                 setPermissionMode: () => Effect.void,
+                renameSession: () => Effect.void,
                 backgroundTasks: () => Effect.succeed(false),
                 mcpServerStatus: Effect.succeed([]),
                 readMcpResource: () => Effect.die("unexpected MCP resource read"),
@@ -1645,6 +1650,7 @@ const captureSdkExecutablePaths = Effect.fn("captureSdkExecutablePaths")(functio
             setModel: () => Effect.void,
             applyFlagSettings: () => Effect.void,
             setPermissionMode: () => Effect.void,
+            renameSession: () => Effect.void,
             backgroundTasks: () => Effect.succeed(false),
             mcpServerStatus: Effect.succeed([]),
             readMcpResource: () => Effect.die("unexpected MCP resource read"),
@@ -1838,6 +1844,7 @@ describe("ClaudeAdapterV2 resume compaction", () => {
                 setModel: () => Effect.void,
                 applyFlagSettings: () => Effect.void,
                 setPermissionMode: () => Effect.void,
+                renameSession: () => Effect.void,
                 backgroundTasks: () => Effect.succeed(false),
                 mcpServerStatus: Effect.succeed([]),
                 readMcpResource: () => Effect.die("unexpected MCP resource read"),
@@ -2222,6 +2229,7 @@ describe("ClaudeAdapterV2 attachments", () => {
                   setModel: () => Effect.void,
                   applyFlagSettings: () => Effect.void,
                   setPermissionMode: () => Effect.void,
+                  renameSession: () => Effect.void,
                   backgroundTasks: () => Effect.succeed(false),
                   mcpServerStatus: Effect.succeed([]),
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
@@ -2763,6 +2771,7 @@ describe("ClaudeAdapterV2 native fork", () => {
                 setModel: () => Effect.void,
                 applyFlagSettings: () => Effect.void,
                 setPermissionMode: () => Effect.void,
+                renameSession: () => Effect.void,
                 backgroundTasks: () => Effect.succeed(false),
                 mcpServerStatus: Effect.succeed([]),
                 readMcpResource: () => Effect.die("unexpected MCP resource read"),
@@ -3111,6 +3120,7 @@ describe("ClaudeAdapterV2 native session identity", () => {
                   setModel: () => Effect.void,
                   applyFlagSettings: () => Effect.void,
                   setPermissionMode: () => Effect.void,
+                  renameSession: () => Effect.void,
                   backgroundTasks: () => Effect.succeed(false),
                   mcpServerStatus: Effect.succeed([]),
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
@@ -3443,6 +3453,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly close?: (sdkMessages: Queue.Queue<SDKMessage>) => Effect.Effect<void>;
     readonly interrupt?: Effect.Effect<void, ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError>;
     readonly setPermissionMode?: ClaudeAdapterV2.ClaudeAgentSdkQuerySession["setPermissionMode"];
+    readonly setModel?: (
+      model: string,
+      offerAndWait: (message: SDKMessage) => Effect.Effect<void>,
+    ) => Effect.Effect<void>;
+    readonly renameSession?: ClaudeAdapterV2.ClaudeAgentSdkQuerySession["renameSession"];
     readonly applyFlagSettings?: ClaudeAdapterV2.ClaudeAgentSdkQuerySession["applyFlagSettings"];
     readonly stopTask?: (
       taskId: string,
@@ -3490,6 +3505,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const changes = yield* makeChangeSignal;
       const offeredMessages: Array<SDKUserMessage> = [];
       const permissionModeChanges: Array<string> = [];
+      const renameCalls: Array<string> = [];
       const liveSelectionChanges: Array<unknown> = [];
       const continuationRequests: Array<ProviderContinuationRequests.ProviderContinuationRequest> =
         [];
@@ -3583,6 +3599,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                     }).pipe(
                       Effect.andThen(() => options?.setPermissionMode?.(mode) ?? Effect.void),
                     ),
+                  renameSession: (title) =>
+                    Effect.sync(() => {
+                      renameCalls.push(title);
+                    }).pipe(Effect.andThen(() => options?.renameSession?.(title) ?? Effect.void)),
                   backgroundTasks: options?.backgroundTasks ?? (() => Effect.succeed(false)),
                   mcpServerStatus: Effect.succeed([]),
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
@@ -3606,7 +3626,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 setModel: (model) =>
                   Effect.sync(() => {
                     liveSelectionChanges.push({ model });
-                  }),
+                  }).pipe(
+                    Effect.andThen(() => options?.setModel?.(model, offerAndWait) ?? Effect.void),
+                  ),
                 applyFlagSettings: (settings) =>
                   Effect.sync(() => {
                     liveSelectionChanges.push(settings);
@@ -3617,6 +3639,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   Effect.sync(() => {
                     permissionModeChanges.push(mode);
                   }).pipe(Effect.andThen(() => options?.setPermissionMode?.(mode) ?? Effect.void)),
+                renameSession: (title) =>
+                  Effect.sync(() => {
+                    renameCalls.push(title);
+                  }).pipe(Effect.andThen(() => options?.renameSession?.(title) ?? Effect.void)),
                 backgroundTasks: options?.backgroundTasks ?? (() => Effect.succeed(false)),
                 mcpServerStatus: options?.mcp?.mcpServerStatus ?? Effect.succeed([]),
                 readMcpResource:
@@ -3689,6 +3715,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             event.type === "turn.terminal",
         );
       return {
+        adapter,
         attachmentsDir,
         runtime,
         providerThread,
@@ -3703,6 +3730,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           return uuid;
         },
         permissionModeChanges,
+        renameCalls,
         liveSelectionChanges,
         continuationRequests,
         continuationReceipts,
@@ -3723,6 +3751,276 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       };
     });
   const makeWakeHarness = makeWakeHarnessWithOptions();
+
+  describe("ClaudeAdapterV2 session title sync", () => {
+    type TitleSyncHarness = Effect.Success<ReturnType<typeof makeWakeHarnessWithOptions>>;
+    const startTurn = Effect.fnUntraced(function* (
+      harness: TitleSyncHarness,
+      title: string,
+      ordinal: number,
+      nativeThreadHasTurns?: boolean,
+      runtimeOverride?: TitleSyncHarness["runtime"],
+      providerThreadOverride?: OrchestrationV2ProviderThread,
+    ) {
+      const runtime = runtimeOverride ?? harness.runtime;
+      const providerThread = providerThreadOverride ?? harness.providerThread;
+      yield* runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make(`attempt-title-sync-${ordinal}`),
+          providerTurnOrdinal: ordinal,
+          title,
+          text: "What is the sentinel?",
+          attachments: [],
+          ...(nativeThreadHasTurns === undefined ? {} : { nativeThreadHasTurns }),
+        }),
+      );
+    });
+    const finishTurn = Effect.fnUntraced(function* (harness: TitleSyncHarness, ordinal: number) {
+      yield* harness.offerAndWait(
+        makeResultFrame({ uuid: `title-result-${ordinal}`, result: "Done." }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+    });
+
+    it.effect("renames the native session only when the thread title changed", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions();
+        yield* startTurn(harness, "First title", 1);
+        assert.deepEqual(harness.renameCalls, []);
+        yield* finishTurn(harness, 1);
+
+        yield* startTurn(harness, "First title", 2);
+        assert.deepEqual(harness.renameCalls, []);
+        yield* finishTurn(harness, 2);
+
+        yield* startTurn(harness, "Renamed title", 3);
+        assert.deepEqual(harness.renameCalls, ["Renamed title"]);
+        yield* finishTurn(harness, 3);
+
+        yield* startTurn(harness, "Renamed title", 4);
+        assert.deepEqual(harness.renameCalls, ["Renamed title"]);
+        yield* finishTurn(harness, 4);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    );
+
+    it.effect("a native /rename retitles the thread without renaming it back", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions();
+        yield* startTurn(harness, "First title", 1);
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "session_title_changed",
+            title: "Native title",
+            uuid: "title-changed-1",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* harness.offerAndWait({
+          ...makeResultFrame({
+            uuid: "title-result-1",
+            result: "Session renamed to: Native title",
+            numTurns: 0,
+          }),
+          local_command: "rename",
+        } as SDKMessage);
+        yield* Queue.take(harness.terminalReceipts);
+        assert.deepEqual(
+          harness.events.flatMap((event) =>
+            event.type === "app_thread.created" ? [event.appThread.title] : [],
+          ),
+          ["Native title"],
+        );
+
+        yield* startTurn(harness, "Native title", 2);
+        assert.deepEqual(harness.renameCalls, []);
+        yield* finishTurn(harness, 2);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    );
+
+    it.effect("renames a resumed session whose stored title is stale", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions();
+        yield* startTurn(harness, "First title", 1, true);
+        assert.deepEqual(harness.renameCalls, ["First title"]);
+        yield* finishTurn(harness, 1);
+
+        yield* startTurn(harness, "First title", 2, true);
+        assert.deepEqual(harness.renameCalls, ["First title"]);
+        yield* finishTurn(harness, 2);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    );
+
+    it.effect(
+      "a rename blocked past the deadline still offers the prompt and retries next turn",
+      () =>
+        Effect.gen(function* () {
+          const entered = yield* Deferred.make<void>();
+          let attempts = 0;
+          const harness = yield* makeWakeHarnessWithOptions({
+            renameSession: () =>
+              ++attempts === 1
+                ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never))
+                : Effect.void,
+          });
+          const firstTurn = yield* Effect.forkScoped(startTurn(harness, "First title", 1, true));
+          yield* Deferred.await(entered);
+          yield* TestClock.adjust("10 seconds");
+          yield* Fiber.join(firstTurn);
+          assert.deepEqual(harness.renameCalls, ["First title"]);
+          assert.equal(harness.offeredMessages.length, 1);
+          assert.equal(attempts, 1);
+
+          yield* finishTurn(harness, 1);
+          assert.deepEqual(harness.renameCalls, ["First title"]);
+
+          yield* startTurn(harness, "First title", 2, true);
+          assert.deepEqual(harness.renameCalls, ["First title", "First title"]);
+          assert.equal(attempts, 2);
+          yield* finishTurn(harness, 2);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
+          ),
+        ),
+    );
+
+    it.effect("renames when reverting to an earlier title after a failed or timed out update", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({
+          renameSession: (title) =>
+            title === "Title B"
+              ? Effect.fail(
+                  new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+                    method: "renameSession",
+                    cause: new Error("timed out or refused"),
+                  }),
+                )
+              : Effect.void,
+        });
+        yield* startTurn(harness, "Title A", 1, true);
+        yield* finishTurn(harness, 1);
+        assert.deepEqual(harness.renameCalls, ["Title A"]);
+
+        yield* startTurn(harness, "Title B", 2, true);
+        yield* finishTurn(harness, 2);
+        assert.deepEqual(harness.renameCalls, ["Title A", "Title B"]);
+
+        yield* startTurn(harness, "Title A", 3, true);
+        yield* finishTurn(harness, 3);
+        assert.deepEqual(harness.renameCalls, ["Title A", "Title B", "Title A"]);
+
+        yield* startTurn(harness, "Title A", 4, true);
+        yield* finishTurn(harness, 4);
+        assert.deepEqual(harness.renameCalls, ["Title A", "Title B", "Title A"]);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    );
+
+    it.effect(
+      "preserves the last-applied title across provider-session recreation so a native /rename survives",
+      () =>
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarnessWithOptions({ freshQueueOnReopen: true });
+          yield* startTurn(harness, "First title", 1);
+          assert.deepEqual(harness.renameCalls, []);
+          yield* finishTurn(harness, 1);
+
+          const lastEvent = harness.events.findLast(
+            (
+              e,
+            ): e is Extract<
+              ProviderAdapter.ProviderAdapterV2Event,
+              { type: "provider_thread.updated" }
+            > => e.type === "provider_thread.updated",
+          );
+          assert.equal(lastEvent?.providerThread.nativeMetadata?.title, "First title");
+          const threadAfterTurn1 = lastEvent!.providerThread;
+
+          const runtime2 = yield* harness.adapter.openSession({
+            threadId: harness.threadId,
+            providerSessionId: ProviderSessionId.make("provider-session-claude-wake-2"),
+            modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+            runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+          });
+          yield* runtime2.events.pipe(
+            Stream.runForEach((event) =>
+              Effect.gen(function* () {
+                harness.events.push(event);
+                if (event.type === "turn.terminal") {
+                  yield* Queue.offer(harness.terminalReceipts, event);
+                }
+              }),
+            ),
+            Effect.forkScoped,
+          );
+          const resumedThread = yield* runtime2.resumeThread({
+            providerThread: threadAfterTurn1,
+          });
+          assert.equal(resumedThread.nativeMetadata?.title, "First title");
+
+          yield* startTurn(harness, "First title", 2, true, runtime2, resumedThread);
+          assert.deepEqual(harness.renameCalls, []);
+          yield* finishTurn(harness, 2);
+
+          yield* startTurn(harness, "Second title", 3, true, runtime2, resumedThread);
+          assert.deepEqual(harness.renameCalls, ["Second title"]);
+          yield* finishTurn(harness, 3);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
+          ),
+        ),
+    );
+  });
 
   it.effect.each([false, true])(
     "resumes a stopped query with empty SDK content and a fresh native process, buffered: %s",
@@ -13313,6 +13611,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 setModel: () => Effect.void,
                 applyFlagSettings: () => Effect.void,
                 setPermissionMode: () => Effect.void,
+                renameSession: () => Effect.void,
                 backgroundTasks: () => Effect.succeed(false),
                 mcpServerStatus: Effect.succeed([]),
                 readMcpResource: () => Effect.die("unexpected MCP resource read"),
@@ -13464,6 +13763,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
   const openAdapterWhoseFirstQueryEndsBeforeItsFirstFrame = Effect.fnUntraced(function* (
     name: string,
+    firstQueryExit: Stream.Stream<
+      SDKMessage,
+      ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError
+    > = Stream.empty,
   ) {
     const fileSystem = yield* FileSystem.FileSystem;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -13502,12 +13805,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               // The first CLI exits without writing a frame.
               messages:
                 opened === 1
-                  ? Stream.empty.pipe(Stream.ensuring(Deferred.succeed(deadStreamEnded, undefined)))
+                  ? firstQueryExit.pipe(
+                      Stream.ensuring(Deferred.succeed(deadStreamEnded, undefined)),
+                    )
                   : Stream.fromQueue(sdkMessages),
               offer: () => Effect.void,
               setModel: () => Effect.void,
               applyFlagSettings: () => Effect.void,
               setPermissionMode: () => Effect.void,
+              renameSession: () => Effect.void,
               backgroundTasks: () => Effect.succeed(false),
               mcpServerStatus: Effect.succeed([]),
               readMcpResource: () => Effect.die("unexpected MCP resource read"),
@@ -13549,6 +13855,43 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       });
     return { runtime, turnInput };
   });
+
+  it.effect("shows Claude's root refusal when its query exits before the turn starts", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* openAdapterWhoseFirstQueryEndsBeforeItsFirstFrame(
+          "claude-query-refuses-root-before-frame",
+          Stream.fail(
+            new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+              method: "fromAsyncIterable",
+              cause: new ClaudeAdapterV2.ClaudeCodeRootRefusalError({
+                cause: new Error("Claude Code process exited with code 1"),
+              }),
+            }),
+          ),
+        );
+        const started = yield* harness.runtime
+          .startTurn(harness.turnInput("a", 1))
+          .pipe(Effect.exit);
+        assert.isTrue(Exit.isFailure(started));
+        if (Exit.isFailure(started)) {
+          assert.strictEqual(
+            makeProviderFailure({ cause: started.cause, class: "transport_error" }).message,
+            "Claude Code exited before it started: --dangerously-skip-permissions cannot be used with root/sudo privileges for security reasons",
+          );
+        }
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
 
   it.effect("fails a turn whose Claude query ends before its first frame", () =>
     Effect.gen(function* () {
@@ -13638,6 +13981,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   setModel: () => Effect.void,
                   applyFlagSettings: () => Effect.void,
                   setPermissionMode: () => Effect.void,
+                  renameSession: () => Effect.void,
                   backgroundTasks: () => Effect.succeed(false),
                   mcpServerStatus: Effect.succeed([]),
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
@@ -16464,6 +16808,70 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("does not count the echo of a live model switch as background work", () =>
+    Effect.gen(function* () {
+      const idleUserFrame = (uuid: string, content: string, isReplay: boolean) =>
+        claudeSdkFrame({
+          type: "user",
+          message: { role: "user", content },
+          parent_tool_use_id: null,
+          ...(isReplay ? { isReplay } : {}),
+          uuid,
+          session_id: WAKE_NATIVE_SESSION,
+        });
+      // As the CLI does, answer setModel with its echo before the next turn attaches.
+      const harness = yield* makeWakeHarnessWithOptions({
+        setModel: (model, offerAndWait) =>
+          offerAndWait(
+            idleUserFrame(
+              "00000000-0000-4000-8000-000000000b01",
+              `<local-command-stdout>Set model to \`${model}\`</local-command-stdout>`,
+              true,
+            ),
+          ),
+      });
+      const now = yield* DateTime.now;
+      const turn = (ordinal: number, model: string) =>
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make(`attempt-claude-model-switch-echo:${ordinal}`),
+          text: `Request ${ordinal}`,
+          attachments: [],
+          providerTurnOrdinal: ordinal,
+          modelSelection: { instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID, model },
+        });
+      const settle = Effect.gen(function* () {
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+      });
+      yield* harness.runtime.startTurn(turn(1, "claude-opus-5-5"));
+      yield* settle;
+      yield* harness.runtime.startTurn(turn(2, "claude-sonnet-4-6"));
+      yield* settle;
+
+      assert.deepInclude(harness.liveSelectionChanges, { model: "claude-sonnet-4-6" });
+      assert.lengthOf(harness.continuationRequests, 0);
+      assert.isFalse(yield* harness.hasPendingBackgroundWork);
+
+      // A root user frame the CLI produced on its own still marks a wake.
+      yield* harness.offerAndWait(
+        idleUserFrame("00000000-0000-4000-8000-000000000b02", "A background task finished.", false),
+      );
+      assert.isTrue(yield* harness.hasPendingBackgroundWork);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect(
     "emits one interrupted terminal for a positive task-notification result racing interrupt",
     () =>
@@ -16838,6 +17246,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 setModel: () => Effect.void,
                 applyFlagSettings: () => Effect.void,
                 setPermissionMode: () => Effect.void,
+                renameSession: () => Effect.void,
                 backgroundTasks: () => Effect.succeed(false),
                 stopTask: () => Effect.void,
                 mcpServerStatus: Effect.die("unexpected MCP server status"),
@@ -20096,6 +20505,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 setModel: () => Effect.void,
                 applyFlagSettings: () => Effect.void,
                 setPermissionMode: () => Effect.void,
+                renameSession: () => Effect.void,
                 backgroundTasks: () => Effect.succeed(false),
                 mcpServerStatus: Effect.succeed([]),
                 readMcpResource: () => Effect.die("unexpected MCP resource read"),
@@ -20273,6 +20683,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   setModel: () => Effect.void,
                   applyFlagSettings: () => Effect.void,
                   setPermissionMode: () => Effect.void,
+                  renameSession: () => Effect.void,
                   backgroundTasks: () => Effect.succeed(false),
                   mcpServerStatus: Effect.succeed([]),
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
@@ -20450,6 +20861,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 setModel: () => Effect.void,
                 applyFlagSettings: () => Effect.void,
                 setPermissionMode: () => Effect.void,
+                renameSession: () => Effect.void,
                 backgroundTasks: () => Effect.succeed(false),
                 mcpServerStatus: Effect.succeed([]),
                 readMcpResource: () => Effect.die("unexpected MCP resource read"),
@@ -20648,6 +21060,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 setModel: () => Effect.void,
                 applyFlagSettings: () => Effect.void,
                 setPermissionMode: () => Effect.void,
+                renameSession: () => Effect.void,
                 backgroundTasks: () => Effect.succeed(false),
                 mcpServerStatus: Effect.succeed([]),
                 readMcpResource: () => Effect.die("unexpected MCP resource read"),
@@ -20794,6 +21207,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   setModel: () => Effect.void,
                   applyFlagSettings: () => Effect.void,
                   setPermissionMode: () => Effect.void,
+                  renameSession: () => Effect.void,
                   backgroundTasks: () => Effect.succeed(false),
                   mcpServerStatus: Effect.succeed([]),
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
@@ -20915,6 +21329,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               setModel: () => Effect.void,
               applyFlagSettings: () => Effect.void,
               setPermissionMode: () => Effect.void,
+              renameSession: () => Effect.void,
               backgroundTasks: () => Effect.succeed(false),
               mcpServerStatus: Effect.succeed([]),
               readMcpResource: () => Effect.die("unexpected MCP resource read"),
