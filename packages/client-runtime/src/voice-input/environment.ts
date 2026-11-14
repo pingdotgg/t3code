@@ -1,3 +1,4 @@
+import type { SpeechSynthesisProvider, SpeechSynthesisRequest } from "@t3tools/contracts";
 import { encodeSpeechPcmRequest } from "@t3tools/shared/speech";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
@@ -310,4 +311,30 @@ export const removeEnvironmentSpeechModel = (prepared: PreparedConnection, model
     method: "POST",
     path: (urls) => urls.removeModel(),
     run: ({ client, headers }) => client.removeModel({ headers, payload: { modelId } }),
+  });
+
+export const getSpeechSynthesisModels = (
+  prepared: PreparedConnection,
+  provider: SpeechSynthesisProvider,
+) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "GET",
+    path: (urls) => urls.synthesisModels({ params: { provider } }),
+    run: ({ client, headers }) => client.synthesisModels({ headers, params: { provider } }),
+  });
+
+export const synthesizeSpeech = (
+  prepared: PreparedConnection,
+  provider: SpeechSynthesisProvider,
+  payload: SpeechSynthesisRequest,
+) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    timeoutMs: 130_000,
+    path: (urls) => urls.synthesize({ params: { provider } }),
+    run: ({ client, headers }) => client.synthesize({ headers, params: { provider }, payload }),
   });

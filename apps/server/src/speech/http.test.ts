@@ -10,6 +10,8 @@ import {
   AuthSettingsWriteScope,
   type AuthEnvironmentScope,
   CloudSpeechError,
+  SpeechSynthesisError,
+  EMPTY_SPEECH_SYNTHESIS_CATALOG,
   DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
   SPEECH_MAX_OPTIONS_BYTES,
   DEFAULT_SERVER_SETTINGS,
@@ -64,6 +66,83 @@ const dependencies = Layer.mergeAll(
       generateTranscriptionPostProcessing: () => Effect.die("not used"),
     }),
   ),
+);
+
+effectIt.effect.each([false, true])(
+  "guards speech generation and model discovery with operate scope (%s)",
+  (allowed) =>
+    Effect.gen(function* () {
+      const synthesize = vi.fn<CloudSpeech.CloudSpeech["Service"]["synthesize"]>(() =>
+        Effect.succeed(Uint8Array.of(73, 68, 51, 1)),
+      );
+      const synthesisModels = vi.fn(() => Effect.succeed(EMPTY_SPEECH_SYNTHESIS_CATALOG));
+      const { handler, dispose } = HttpRouter.toWebHandler(
+        HttpApiBuilder.layer(HttpApi.make("environment").add(EnvironmentVoiceHttpApi)).pipe(
+          Layer.provide(speechHttpApiLayer),
+          Layer.provide(
+            principal(allowed ? AuthOrchestrationOperateScope : AuthSettingsWriteScope),
+          ),
+          Layer.provide(Layer.mock(CloudSpeech.CloudSpeech)({ synthesize, synthesisModels })),
+          Layer.provide(Layer.mock(SpeechService.SpeechService)({})),
+          Layer.provide(dependencies),
+          Layer.provide(HttpServer.layerServices),
+          Layer.provide(NodeServices.layer),
+        ),
+        { disableLogger: true },
+      );
+      yield* Effect.addFinalizer(() => Effect.promise(dispose));
+      const context = yield* Layer.build(NodeServices.layer);
+      const payload = {
+        text: "Hello.",
+        model: "speech",
+        voice: "reader",
+        speed: 1,
+        language: "auto",
+      };
+      const call = (text: string) =>
+        Effect.promise(() =>
+          handler(
+            new Request("http://localhost/api/voice/synthesis/xai", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ ...payload, text }),
+            }),
+            context,
+          ),
+        );
+      const response = yield* call(payload.text);
+      const catalog = yield* Effect.promise(() =>
+        handler(new Request("http://localhost/api/voice/synthesis/xai/models"), context),
+      );
+      expect(response.status).toBe(allowed ? 200 : 403);
+      expect(catalog.status).toBe(allowed ? 200 : 403);
+      if (allowed) {
+        expect(new Uint8Array(yield* Effect.promise(() => response.arrayBuffer()))).toEqual(
+          Uint8Array.of(73, 68, 51, 1),
+        );
+        expect(synthesize).toHaveBeenCalledWith("xai", payload);
+        expect((yield* call("a".repeat(4097))).status).toBe(400);
+        expect(synthesize).toHaveBeenCalledTimes(1);
+        synthesize.mockReturnValueOnce(
+          Effect.fail(
+            new SpeechSynthesisError({
+              provider: "xai",
+              reason: "unavailable",
+              cause: new Error("private provider diagnostic"),
+            }),
+          ),
+        );
+        const failure = yield* call(payload.text);
+        expect(failure.status).toBe(422);
+        const body = yield* Effect.promise(() => failure.json());
+        expect(body).toMatchObject({ provider: "xai", reason: "unavailable" });
+        expect(body).not.toHaveProperty("cause");
+        expect(JSON.stringify(body)).not.toContain("private provider diagnostic");
+      } else {
+        expect(synthesize).not.toHaveBeenCalled();
+        expect(synthesisModels).not.toHaveBeenCalled();
+      }
+    }).pipe(Effect.scoped),
 );
 
 effectIt.live("rejects oversized chunked audio without invoking transcription", () =>

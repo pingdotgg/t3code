@@ -196,6 +196,18 @@ Stashes containing uploaded files must be restored in their original environment
 Those files are retained for 24 hours. After an upload expires, restore the prompt
 and use **Attach again** or remove the missing file before sending.
 
+## Read replies aloud
+
+Choose a speech provider in **Settings → Voice → Read aloud**, then use **Read aloud**
+beside a completed assistant reply. Select it again to stop playback. Leaving the
+thread stops it. Code blocks are skipped by default.
+
+System voices run on your device. OpenAI, Grok TTS, and OpenRouter send the reply text
+through your selected environment and use API billing. They share the API keys saved for dictation. Choose a model and
+voice, then use the preview to try it.
+
+On mobile, **Background playback** allows speech to continue while the app is in the background.
+
 ## Voice input on web and desktop
 
 Use the composer's microphone or `mod+shift+d` to dictate into your draft. Audio

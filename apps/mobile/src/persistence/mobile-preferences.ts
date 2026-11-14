@@ -1,3 +1,4 @@
+import { ReadAloudSettings } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -89,6 +90,7 @@ const ThreadProject = Schema.Struct({
 const isThreadProject = Schema.is(ThreadProject);
 
 export interface Preferences {
+  readonly readAloud?: ReadAloudSettings;
   readonly navigationTabOrder?: readonly string[];
   readonly hiddenNavigationTabs?: readonly string[];
   readonly pullRequestHideTestFiles?: boolean;
@@ -173,11 +175,13 @@ export class MobilePreferencesStore extends Context.Service<
   }
 >()("@t3tools/mobile/persistence/mobile-preferences/MobilePreferencesStore") {}
 
+const isReadAloudSettings = Schema.is(ReadAloudSettings);
 const isToolCallVisibility = Schema.is(ToolCallVisibility);
 const isPullRequestMergeMethod = Schema.is(PullRequestMergeMethod);
 
 function sanitizePreferences(parsed: Preferences): Preferences {
   const preferences: {
+    readAloud?: ReadAloudSettings;
     navigationTabOrder?: readonly string[];
     hiddenNavigationTabs?: readonly string[];
     pullRequestHideTestFiles?: boolean;
@@ -216,6 +220,8 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     pullRequestListFilters?: PullRequestListPreferences;
     workspaceSelections?: WorkspaceSelections;
   } = {};
+
+  if (isReadAloudSettings(parsed.readAloud)) preferences.readAloud = parsed.readAloud;
 
   if (Array.isArray(parsed.hiddenNavigationTabs)) {
     preferences.hiddenNavigationTabs = parsed.hiddenNavigationTabs.filter(

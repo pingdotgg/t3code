@@ -1,3 +1,4 @@
+import { SpeechSynthesisError } from "@t3tools/contracts";
 import { decodeSpeechPcmRequest } from "@t3tools/shared/speech";
 import {
   AuthFilesystemReadScope,
@@ -79,6 +80,36 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
       yield* requireEnvironmentScope(scope);
     });
     return handlers
+      .handle(
+        "synthesisModels",
+        Effect.fn("environment.voice.synthesisModels")(function* (args) {
+          yield* guard(args.endpoint.name);
+          return yield* cloud.synthesisModels(args.params.provider).pipe(
+            Effect.catchTags({
+              SpeechSynthesisError: (error) =>
+                Effect.fail(
+                  new SpeechSynthesisError({ provider: error.provider, reason: error.reason }),
+                ),
+              ServerSettingsError: (error) => failEnvironmentInternal("internal_error", error),
+            }),
+          );
+        }),
+      )
+      .handle(
+        "synthesize",
+        Effect.fn("environment.voice.synthesize")(function* (args) {
+          yield* guard(args.endpoint.name);
+          return yield* cloud.synthesize(args.params.provider, args.payload).pipe(
+            Effect.catchTags({
+              SpeechSynthesisError: (error) =>
+                Effect.fail(
+                  new SpeechSynthesisError({ provider: error.provider, reason: error.reason }),
+                ),
+              ServerSettingsError: (error) => failEnvironmentInternal("internal_error", error),
+            }),
+          );
+        }),
+      )
       .handle(
         "cloudKeys",
         Effect.fn("environment.voice.cloudKeys")(function* (args) {

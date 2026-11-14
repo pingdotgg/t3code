@@ -1,3 +1,4 @@
+import { ReadAloudSettingsSection } from "./ReadAloudSettingsSection";
 import {
   cancelEnvironmentSpeechModelDownload,
   downloadEnvironmentSpeechModel,
@@ -10,7 +11,6 @@ import {
   updateEnvironmentSpeechModelUnloadTimeout,
 } from "@t3tools/client-runtime/voice-input";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
-import { openRouterIcon } from "@t3tools/client-runtime/provider-clients";
 import {
   AuthFilesystemReadScope,
   AuthSettingsWriteScope,
@@ -21,7 +21,6 @@ import {
   type EnvironmentSpeechModel,
   type EnvironmentSpeechStatus,
   type ProjectId,
-  ProviderDriverKind,
   type SpeechAcceleration,
   type SpeechBenchmarkTier,
   type SpeechCustomWords,
@@ -85,8 +84,7 @@ import {
 } from "../../speech/useEnvironmentSpeechInput";
 import { ComposerSpeechRecordingPill } from "../chat/ComposerSpeechButton";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
-import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
-import { ProviderPackageIcon } from "../chat/ProviderPackageIcon";
+import { SpeechProviderIcon as CloudSpeechLogo } from "./SpeechProviderIcon";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { VoiceInputSetup } from "../chat/VoiceInputSetup";
 import { Badge } from "../ui/badge";
@@ -139,17 +137,6 @@ import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 
 const OFF = "off";
-function CloudSpeechLogo({ provider }: { provider: CloudSpeechProvider }) {
-  if (provider === "openrouter")
-    return <ProviderPackageIcon icon={openRouterIcon} aria-hidden className="size-4 shrink-0" />;
-  return (
-    <ProviderInstanceIcon
-      driverKind={ProviderDriverKind.make(provider === "openai" ? "codex" : "grok")}
-      displayName={CLOUD_SPEECH_LABELS[provider]}
-      iconClassName="size-4"
-    />
-  );
-}
 const formatSize = (bytes: number) => `${Math.round(bytes / 1024 / 1024)} MB`;
 const SHORTCUT_MODES: Record<VoiceShortcutMode, { label: string; hint: string }> = {
   auto: { label: "Auto", hint: "Tap to toggle, hold to talk" },
@@ -1692,6 +1679,7 @@ export function VoiceSettingsPanel() {
           />
         ) : null}
       </SettingsSection>
+      <ReadAloudSettingsSection />
     </SettingsPageContainer>
   );
 }

@@ -713,6 +713,9 @@ importers:
       expo-sharing:
         specifier: 58.0.22
         version: 58.0.22(patch_hash=321a86e1471e34c53f1f2937fbb4304ea3f7b7a78ad9e4d35febc2b9e73e9688)(expo@58.0.23)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)(supports-color@8.1.1)(typescript@6.0.3)
+      expo-speech:
+        specifier: ~58.0.3
+        version: 58.0.3(expo@58.0.23)
       expo-splash-screen:
         specifier: ~58.0.13
         version: 58.0.13(expo@58.0.23)(supports-color@8.1.1)(typescript@6.0.3)
@@ -9392,6 +9395,11 @@ packages:
       expo: '*'
       react: '*'
       react-native: '*'
+
+  expo-speech@58.0.3:
+    resolution: {integrity: sha512-jdMTqWL6ciDM8aVJe2/l2g6GTVaK7i/zBOVUhTq+l0Y+DOCz3Nh4HqNrMwmIKzXrlsxRv3ejmjSQPlX1lfOTOA==}
+    peerDependencies:
+      expo: '*'
 
   expo-splash-screen@58.0.13:
     resolution: {integrity: sha512-RsvDF13tU1wQIy2blzmdbZoWpPWNTYks2A0CUq2AENR7i7u8elSSEfQOdh5TeC0lrrFVbiWfPj2JiM7y/m08Ig==}
@@ -19501,6 +19509,10 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
       - typescript
+
+  expo-speech@58.0.3(expo@58.0.23):
+    dependencies:
+      expo: 58.0.23(d226faf1ca90e630d8c56a2108dee32d)
 
   expo-splash-screen@58.0.13(expo@58.0.23)(supports-color@8.1.1)(typescript@6.0.3):
     dependencies:
