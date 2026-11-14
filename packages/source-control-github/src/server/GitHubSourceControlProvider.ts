@@ -18,7 +18,7 @@ import {
   TrimmedNonEmptyString,
   type ChangeRequest,
   type SourceControlProviderDiscoveryItem,
-  type SourceControlRepositoryCloneUrls,
+  SourceControlRepositoryCloneUrls,
 } from "@t3tools/contracts";
 import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -28,6 +28,7 @@ import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 import { GH_PROCESS_CONCURRENCY } from "./GitHubCredentials.ts";
 import * as GitHubAppSignIn from "./GitHubAppSignIn.ts";
 import * as GitHubRest from "./GitHubRest.ts";
+import { makeGitHubViewerReader } from "./gitHubViewer.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as GitHubChangeRequestTemplate from "./gitHubChangeRequestTemplate.ts";
 import * as GitHubGraphQlClient from "./gitHubGraphQlClient.ts";
@@ -65,6 +66,8 @@ import { readSourceControlHostSettings } from "@t3tools/source-control-core/shar
 
 import * as GitHubClient from "../shared/definition.ts";
 import {
+  CreateInstallationRepository,
+  InstallationRepositoryOwner,
   PullRequestByNumber,
   PullRequestNode,
   PullRequestsByHead,
@@ -198,16 +201,13 @@ export const discovery = {
     "Install the GitHub command-line tool (`gh`) via https://cli.github.com/ or your package manager (for example `brew install gh`).",
 } satisfies SourceControlCliDiscoverySpec;
 
-const decodeViewer = Schema.decodeUnknownOption(
-  Schema.fromJsonString(Schema.Struct({ login: Schema.String })),
-);
-
 function environmentTokenVariable(environment: NodeJS.ProcessEnv): string | null {
   return ["GH_TOKEN", "GITHUB_TOKEN"].find((name) => environment[name]?.trim()) ?? null;
 }
 
 // `gh auth status` may not know environment tokens; check the API.
 export const makeDiscovery = Effect.gen(function* () {
+  const readGitHubViewer = yield* makeGitHubViewerReader;
   const api = yield* GitHubRest.GitHubRest;
   const sourceControlHost = yield* SourceControlHost.SourceControlHost;
   const process = sourceControlHost.process;
@@ -263,12 +263,10 @@ export const makeDiscovery = Effect.gen(function* () {
       if (tokenSource === null || settings.hosts["github.com"]?.enabled === false) {
         return offerAppSignIn(cli);
       }
-      const viewer = yield* api
-        .rest({ host: "github.com", operation: "discovery", path: "user" })
-        .pipe(Effect.result);
-      const login = Result.isSuccess(viewer)
-        ? Option.getOrUndefined(decodeViewer(viewer.success.body))?.login
-        : undefined;
+      const viewer = yield* readGitHubViewer({ host: "github.com", operation: "discovery" }).pipe(
+        Effect.result,
+      );
+      const login = Result.isSuccess(viewer) ? viewer.success.login : undefined;
       const accounts = cli.auth.accounts === undefined ? {} : { accounts: cli.auth.accounts };
       return offerAppSignIn({
         ...cli,
@@ -385,14 +383,18 @@ const RawRepositorySchema = Schema.Struct({
   default_branch: Schema.optional(Schema.NullOr(Schema.String)),
 });
 const decodeRawRepository = decodeJsonResult(RawRepositorySchema);
+const decodeCreatedRepository = Schema.decodeEffect(SourceControlRepositoryCloneUrls);
+const decodeInstallationRepositories = decodeJsonResult(
+  Schema.Struct({
+    repositories: Schema.Array(Schema.Struct({ full_name: TrimmedNonEmptyString })),
+  }),
+);
 
 function repositoryCloneUrls(
   raw: Schema.Schema.Type<typeof RawRepositorySchema>,
 ): SourceControlRepositoryCloneUrls {
   return { nameWithOwner: raw.full_name, url: raw.html_url, sshUrl: raw.ssh_url };
 }
-
-const decodeViewerLogin = decodeJsonResult(Schema.Struct({ login: TrimmedNonEmptyString }));
 
 const decodeRestPullRequests = decodeJsonResult(Schema.Array(Schema.Unknown));
 const decodeRestPullRequest = Schema.decodeUnknownOption(
@@ -511,6 +513,7 @@ const contextHost = (context: SourceControlProvider.SourceControlProviderContext
   context === undefined ? undefined : new URL(context.provider.baseUrl).host;
 
 export const make = Effect.gen(function* () {
+  const readGitHubViewer = yield* makeGitHubViewerReader;
   const api = yield* GitHubRest.GitHubRest;
   const sourceControlHost = yield* SourceControlHost.SourceControlHost;
   const process = sourceControlHost.process;
@@ -574,9 +577,12 @@ export const make = Effect.gen(function* () {
   );
 
   const client = yield* GraphQLClient.make(
-    GraphQLGroup.make(LenientPullRequestsByHead, PullRequestByNumber).middleware(
-      GitHubGraphQlClient.GitHubGraphQlAuth,
-    ),
+    GraphQLGroup.make(
+      LenientPullRequestsByHead,
+      PullRequestByNumber,
+      InstallationRepositoryOwner,
+      CreateInstallationRepository,
+    ).middleware(GitHubGraphQlClient.GitHubGraphQlAuth),
   ).pipe(Effect.provide(GitHubGraphQlClient.layer));
 
   const graphqlRead = <A, E, R>(
@@ -744,17 +750,60 @@ export const make = Effect.gen(function* () {
   const readViewerLogin = Effect.fn("GitHubSourceControlProvider.readViewerLogin")(function* (
     host: string,
   ) {
-    const response = yield* rest({
+    const viewer = yield* readGitHubViewer({
       host,
       operation: "getViewer",
-      path: "user",
       allowReserve: true,
-    });
-    const decoded = decodeViewerLogin(response.body);
-    if (Result.isFailure(decoded)) {
-      return yield* failure("GitHub request failed.", decoded.failure);
-    }
-    return decoded.success.login;
+    }).pipe(
+      Effect.mapError((error) =>
+        error._tag === "GitHubViewerResponseError"
+          ? failure(error.message, error)
+          : fromGitHubApiError(error),
+      ),
+    );
+    return viewer.login;
+  });
+
+  const readInstallationOwner = Effect.fn("GitHubSourceControlProvider.readInstallationOwner")(
+    function* (host: string) {
+      const owners = new Map<string, string>();
+      for (let page = 1; ; page++) {
+        const response = yield* rest({
+          host,
+          operation: "getInstallationOwner",
+          path: `installation/repositories?per_page=100&page=${page}`,
+          allowReserve: true,
+        });
+        const decoded = decodeInstallationRepositories(response.body);
+        if (Result.isFailure(decoded))
+          return yield* failure(
+            "GitHub returned invalid installation repositories.",
+            decoded.failure,
+          );
+        for (const repository of decoded.success.repositories) {
+          const locator = parseGitHubRepositorySelector(repository.full_name, host);
+          if (locator === null)
+            return yield* failure("GitHub returned an invalid installation repository owner.");
+          owners.set(locator.owner.toLowerCase(), locator.owner);
+        }
+        if (owners.size > 1) return null;
+        if (decoded.success.repositories.length < 100) break;
+      }
+      return owners.values().next().value ?? null;
+    },
+  );
+
+  const readDefaultOwner = Effect.fn("GitHubSourceControlProvider.readDefaultOwner")(function* (
+    host: string,
+    viewer: string,
+  ) {
+    if (!viewer.endsWith("[bot]")) return viewer;
+    const owner = yield* readInstallationOwner(host);
+    if (owner === null)
+      return yield* failure(
+        "Specify owner/repo: the GitHub App installation owner could not be determined.",
+      );
+    return owner;
   });
 
   // Keep paths, argv and stderr in cause; expose only a fixed checkout error to clients.
@@ -1070,6 +1119,14 @@ export const make = Effect.gen(function* () {
               failure("The pull request description could not be read.", cause),
             ),
           );
+        const headOwner = input.headSelector.includes(":")
+          ? input.headSelector.split(":")[0]
+          : undefined;
+        const isFork =
+          headOwner !== undefined && headOwner.toLowerCase() !== locator.owner.toLowerCase();
+        // Installation tokens cannot grant maintainers access to another account's fork.
+        const maintainerCanModify =
+          !isFork || !(yield* readViewerLogin(locator.host)).endsWith("[bot]");
         yield* rest({
           host: locator.host,
           operation: "createPullRequest",
@@ -1082,7 +1139,7 @@ export const make = Effect.gen(function* () {
             head: input.headSelector,
             title: input.title,
             body,
-            maintainer_can_modify: true,
+            maintainer_can_modify: maintainerCanModify,
           },
         });
       },
@@ -1108,7 +1165,7 @@ export const make = Effect.gen(function* () {
           (/^[^/\s]+$/.test(bareName)
             ? {
                 host: fallbackHost,
-                owner: yield* readViewerLogin(fallbackHost),
+                owner: yield* readDefaultOwner(fallbackHost, yield* readViewerLogin(fallbackHost)),
                 name: bareName,
               }
             : null);
@@ -1126,26 +1183,67 @@ export const make = Effect.gen(function* () {
     ),
     createRepository: Effect.fn("GitHubSourceControlProvider.createRepository")(
       function* (input) {
-        const locator = parseGitHubRepositorySelector(
-          input.repository,
-          (environment.GH_HOST ?? "github.com").toLowerCase(),
-        );
-        const viewer = locator === null ? null : yield* readViewerLogin(locator.host);
-        const owner = locator?.owner ?? viewer;
+        const defaultHost = environment.GH_HOST?.trim().toLowerCase() || "github.com";
+        const locator = parseGitHubRepositorySelector(input.repository, defaultHost);
+        const host = locator?.host ?? defaultHost;
+        const viewer = yield* readViewerLogin(host);
+        const owner = locator?.owner ?? (yield* readDefaultOwner(host, viewer));
         const name = locator?.name ?? input.repository.trim();
-        const host = locator?.host ?? (environment.GH_HOST?.trim().toLowerCase() || "github.com");
-        const isViewer = viewer !== null && owner?.toLowerCase() === viewer.toLowerCase();
+        if (viewer.endsWith("[bot]")) {
+          const target = { host, operation: "createRepository", allowReserve: true };
+          const destination = yield* graphqlRead(
+            target,
+            "GitHub returned an invalid repository owner.",
+            client.InstallationRepositoryOwner({ login: owner }),
+          );
+          const account = destination.repositoryOwner;
+          if (
+            account === null ||
+            account.id.trim() === "" ||
+            account.login.toLowerCase() !== owner.toLowerCase()
+          )
+            return yield* failure("Repository owner not found. Check owner/repo and try again.");
+          const incomplete = `GitHub did not return repository details; ${owner}/${name} may already have been created. Check the repository and token access before retrying.`;
+          // The mutation can commit even when its result is hidden by repository access.
+          const created = yield* client
+            .CreateInstallationRepository({
+              ownerId: account.id,
+              name,
+              visibility: input.visibility === "private" ? "PRIVATE" : "PUBLIC",
+            })
+            .pipe(
+              GitHubGraphQlClient.call(target),
+              Effect.mapError((error) => {
+                if (
+                  error._tag === "GitHubApiResponseError" &&
+                  (error.status === 200 || error.status >= 500)
+                ) {
+                  return failure(`${incomplete} ${error.message}`, error);
+                }
+                return GraphQLClientError.isGraphQLClientError(error) ||
+                  error._tag === "GitHubApiRequestError" ||
+                  error._tag === "GitHubApiNotFoundError"
+                  ? failure(incomplete, error)
+                  : fromGitHubApiError(error);
+              }),
+            );
+          const repository = created.createRepository?.repository;
+          if (repository == null) return yield* failure(incomplete);
+          return yield* decodeCreatedRepository(repository).pipe(
+            Effect.mapError((cause) => failure(incomplete, cause)),
+          );
+        }
+        const isViewer = owner.toLowerCase() === viewer.toLowerCase();
         const response = yield* rest(
           {
             host,
             operation: "createRepository",
             method: "POST",
             allowReserve: true,
-            path:
-              isViewer || owner === null ? "user/repos" : `orgs/${encodeURIComponent(owner)}/repos`,
+            path: isViewer ? "user/repos" : `orgs/${encodeURIComponent(owner)}/repos`,
             body: { name, private: input.visibility === "private" },
           },
-          `No organization named ${owner ?? "that"} that this account can create repositories in.`,
+          `No organization named ${owner} that this account can create repositories in.`,
         );
         const decoded = decodeRawRepository(response.body);
         if (Result.isFailure(decoded)) {

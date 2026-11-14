@@ -540,9 +540,11 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
       : (firstReadyPublishProvider ?? offeredSelection ?? sourceControlClients.get(undefined).kind);
   const selectedPublishProviderReadiness = publishProviderReadiness(publishProvider);
   const publishAccount = publishAccountByProvider.get(publishProvider) ?? null;
-  const publishRepositoryPrefill = publishAccount ? `${publishAccount}/` : "";
-  const publishRepository = publishRepositoryOverride ?? publishRepositoryPrefill;
   const currentPublishProvider = publishProviderOption(publishProvider);
+  // A GitHub App bot cannot own a repository, so its login is not offered as the owner.
+  const publishRepositoryPrefill =
+    publishAccount && !publishAccount.endsWith("[bot]") ? `${publishAccount}/` : "";
+  const publishRepository = publishRepositoryOverride ?? publishRepositoryPrefill;
   const publishHost = currentPublishProvider.definition.publishHost(
     Option.getOrNull(
       sourceControlDiscovery.data?.sourceControlProviders.find(
