@@ -911,6 +911,12 @@ export function decodeRevertTargetJson(
   });
 }
 
+// GitLab records approvals only as system notes; other system notes are activity noise.
+const SYSTEM_NOTE_REVIEW_STATES = new Map([
+  ["approved this merge request", "APPROVED"],
+  ["unapproved this merge request", "DISMISSED"],
+]);
+
 export function decodeNotesJson(
   raw: string,
 ): Result.Result<
@@ -930,13 +936,7 @@ export function decodeNotesJson(
     const trimmedBody = body.trim();
     if (trimmedBody.length === 0) continue;
     const reviewState =
-      value.system === true
-        ? trimmedBody === "approved this merge request"
-          ? "APPROVED"
-          : trimmedBody === "unapproved this merge request"
-            ? "DISMISSED"
-            : null
-        : null;
+      value.system === true ? (SYSTEM_NOTE_REVIEW_STATES.get(trimmedBody) ?? null) : null;
     if (value.system === true && reviewState === null) continue;
     const isDiffNote = value.type?.trim() === "DiffNote";
     comments.push({
