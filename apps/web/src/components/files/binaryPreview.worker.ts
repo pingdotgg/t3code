@@ -122,16 +122,19 @@ function tarEntries(bytes: Uint8Array<ArrayBuffer>) {
         }
         cursor = end;
       }
-    } else if (type === "" || type === "0" || type === "1" || type === "5") {
+    } else if (
+      type === "" ||
+      type === "0" ||
+      type === "5" ||
+      // A hard link shares an earlier member's bytes; one without that member is skipped.
+      (type === "1" && linkpath && files.has(linkpath))
+    ) {
       if (attributes.mtime && !/^[+-]?\d+(?:\.\d+)?$/.test(attributes.mtime))
         throw new Error("The TAR metadata is damaged.");
       const modified =
         (attributes.mtime ? Number(attributes.mtime) : number(offset + 136, 12)) * 1000;
       const date = new Date(modified);
-      // TAR hard links name an earlier member; sharing its bytes also resolves chains in one pass.
-      const linked = type === "1" && linkpath ? files.get(linkpath) : undefined;
-      if (type === "1" && !linked)
-        throw new Error("A TAR hard link does not refer to an earlier file in this archive.");
+      const linked = type === "1" ? files.get(linkpath) : undefined;
       entries.push({
         path,
         size: linked?.length ?? size,

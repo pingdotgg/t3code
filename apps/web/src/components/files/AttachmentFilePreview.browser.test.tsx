@@ -193,42 +193,37 @@ describe("bounded binary previews", () => {
         if (linked.type !== "entry") throw new Error("Expected hard link entry");
         expect(new TextDecoder().decode(linked.bytes)).toBe("hello world");
       }
-      for (const chunks of [
-        [block("alias.txt", encode(""), "1", 0, "missing.txt")],
-        [block("self.txt", encode(""), "1", 0, "self.txt")],
-        [block("alias.txt", encode(""), "1", 0, "later.txt"), block("later.txt", encode("hello"))],
-        [block("a.txt", encode(""), "1", 0, "b.txt"), block("b.txt", encode(""), "1", 0, "a.txt")],
-        [block("folder/", encode(""), "5"), block("alias.txt", encode(""), "1", 0, "folder/")],
-        [
-          block("original.txt", encode("hello")),
-          block("Local", attributes({ linkpath: "" }), "x"),
-          block("alias.txt", encode(""), "1", 0, "original.txt"),
-        ],
-        [
-          block("original.txt", encode("hello")),
-          block("LongLink", encode("original.txt\0"), "K"),
-          block("Global", attributes({ linkpath: "" }), "g"),
-          block("alias.txt", encode(""), "1", 0, "original.txt"),
-        ],
-        [
+      const unresolved = new Uint8Array(
+        await new Blob([
+          block("missing.txt", encode(""), "1", 0, "nowhere.txt"),
+          block("early.txt", encode(""), "1", 0, "later.txt"),
+          block("later.txt", encode("hello")),
+          block("folder/", encode(""), "5"),
+          block("to-folder.txt", encode(""), "1", 0, "folder/"),
           block("replaced.txt", encode("stale")),
           block("replaced.txt", encode(""), "2", 0, "elsewhere.txt"),
-          block("alias.txt", encode(""), "1", 0, "replaced.txt"),
-        ],
-        [
-          block("folder", encode("stale")),
-          block("folder/", encode(""), "5"),
-          block("alias.txt", encode(""), "1", 0, "folder"),
-        ],
-      ]) {
-        const archive = new Uint8Array(await new Blob(chunks).arrayBuffer());
-        expect(
-          await request({ type: "open", kind: "archive", name: "link.tar", bytes: archive.buffer }),
-        ).toEqual({
-          type: "error",
-          message: "A TAR hard link does not refer to an earlier file in this archive.",
-        });
-      }
+          block("to-replaced.txt", encode(""), "1", 0, "replaced.txt"),
+          block("Local", attributes({ linkpath: "" }), "x"),
+          block("emptied.txt", encode(""), "1", 0, "later.txt"),
+          new Uint8Array(1024),
+        ]).arrayBuffer(),
+      );
+      const skipped = await request({
+        type: "open",
+        kind: "archive",
+        name: "links.tar",
+        bytes: unresolved.buffer,
+      });
+      if (skipped.type !== "archive") throw new Error("Expected archive");
+      expect(skipped.entries.map((entry) => entry.path)).toEqual([
+        "later.txt",
+        "folder/",
+        "replaced.txt",
+      ]);
+      expect(await request({ type: "entry", path: "replaced.txt" })).toEqual({
+        type: "error",
+        message: "This archive entry is unavailable.",
+      });
     } finally {
       worker.terminate();
     }
