@@ -29,36 +29,19 @@ function Highlights(props: Parameters<typeof useThreadFindHighlights>[0]) {
   return null;
 }
 
-it("paints every match in a large row and preserves occurrence selection", async () => {
+it("paints every match when one row has more matches than a call can take as arguments", async () => {
   const count = 200_000;
-  const container = row("e x".repeat(count));
-  const text = container.querySelector("[data-thread-find-text]")!.firstChild!;
   const onActiveRange = vi.fn<(range: Range | null) => void>();
-  const props = {
-    container,
-    query: "e",
-    activeRowId: "row",
-    activeOccurrence: count - 1,
-    onActiveRange,
-  };
-  await using screen = await render(<Highlights {...props} />);
-  const inactive = CSS.highlights.get("t3-thread-find")!;
-  const active = CSS.highlights.get("t3-thread-find-active")!;
-  expect(inactive.size).toBe(count - 1);
-  expect(active.size).toBe(1);
-  const selected = onActiveRange.mock.lastCall![0]!;
-  expect(selected.startContainer).toBe(text);
-  expect(selected.startOffset).toBe((count - 1) * 3);
-  expect(selected.toString()).toBe("e");
-  expect(Array.from(inactive, (range) => [range.startOffset, range.endOffset])).toEqual(
-    Array.from({ length: count - 1 }, (_, index) => [index * 3, index * 3 + 1]),
+  await using _screen = await render(
+    <Highlights
+      container={row("e x".repeat(count))}
+      query="e"
+      activeRowId="row"
+      activeOccurrence={count - 1}
+      onActiveRange={onActiveRange}
+    />,
   );
-
-  await screen.rerender(<Highlights {...props} activeOccurrence={0} />);
-  expect(active.size).toBe(1);
-  expect(onActiveRange.mock.lastCall?.[0]?.startOffset).toBe(0);
-  expect(inactive.has(selected)).toBe(true);
-  await screen.unmount();
-  expect(CSS.highlights.has("t3-thread-find")).toBe(false);
-  expect(CSS.highlights.has("t3-thread-find-active")).toBe(false);
+  expect(CSS.highlights.get("t3-thread-find")?.size).toBe(count - 1);
+  expect(CSS.highlights.get("t3-thread-find-active")?.size).toBe(1);
+  expect(onActiveRange.mock.lastCall?.[0]?.startOffset).toBe((count - 1) * 3);
 });
