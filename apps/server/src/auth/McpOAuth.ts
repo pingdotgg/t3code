@@ -507,6 +507,9 @@ const make = Effect.gen(function* () {
     function* ({ request, urls, token }) {
       const fail = (error: AuthMcpTokenError["error"], description: string) =>
         new AuthMcpTokenError({ error, error_description: description });
+      if (typeof token.grant_type !== "string" || token.grant_type === "") {
+        return yield* fail("invalid_request", "grant_type is required exactly once.");
+      }
       if (token.grant_type !== "authorization_code") {
         return yield* fail("unsupported_grant_type", "Only authorization_code is supported.");
       }
