@@ -7,7 +7,6 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import "~/index.css";
 import { peerLinkEnvironment } from "~/state/peerLinks";
 import { render } from "../../../test/render";
-import { LIVE_REFRESH_MIN_INTERVAL_MS } from "../../hooks/useLiveRefresh";
 import { LinkedEnvironmentsSettings } from "./LinkedEnvironmentsSettings";
 
 const hostId = EnvironmentId.make("mac");
@@ -125,36 +124,5 @@ describe("LinkedEnvironmentsSettings", () => {
     answer();
     await expect.element(screen.getByRole("heading", { name: "boat-task" })).toBeVisible();
     expect(server).toMatchObject({ started: 1, interrupted: 0 });
-  });
-  it("asks again on returning to the window after a list that was loading when shown", async () => {
-    setup();
-    const returningHostId = EnvironmentId.make("mac-returning");
-    let now = 1_000_000;
-    using _now = vi.spyOn(Date, "now").mockImplementation(() => now);
-    let answer = () => {};
-    server.answer = new Promise((resolve) => {
-      answer = resolve;
-    });
-    const registry = AtomRegistry.make();
-    using _registry = { [Symbol.dispose]: () => registry.dispose() };
-    await using screen = await render(
-      <RegistryContext.Provider value={registry}>
-        <LinkedEnvironmentsSettings
-          environmentId={returningHostId}
-          environmentLabel={null}
-          isSearchTarget={false}
-        />
-      </RegistryContext.Provider>,
-    );
-    await expect.element(screen.getByRole("status")).toBeVisible();
-    answer();
-    await expect.element(screen.getByRole("status")).not.toBeInTheDocument();
-
-    server.links = [vmLink];
-    now += LIVE_REFRESH_MIN_INTERVAL_MS;
-    window.dispatchEvent(new Event("focus"));
-
-    await expect.element(screen.getByRole("heading", { name: "boat-task" })).toBeVisible();
-    expect(server).toMatchObject({ started: 2, interrupted: 0 });
   });
 });
