@@ -13,9 +13,7 @@ test("parseHeaders should handle a single rule", ({ expect }) => {
   });
 });
 
-test("parseHeaders should handle headers with exclamation marks", ({
-  expect,
-}) => {
+test("parseHeaders should handle headers with exclamation marks", ({ expect }) => {
   const input = `/a
   !Name: Value`;
   const result = parseHeaders(input);
@@ -135,9 +133,7 @@ test("parseHeaders should add unset headers", ({ expect }) => {
   ! Place`;
   const result = parseHeaders(input);
   expect(result).toEqual({
-    rules: [
-      { path: "/a", headers: { name: "Value" }, unsetHeaders: ["Place"] },
-    ],
+    rules: [{ path: "/a", headers: { name: "Value" }, unsetHeaders: ["Place"] }],
     invalid: [],
   });
 });

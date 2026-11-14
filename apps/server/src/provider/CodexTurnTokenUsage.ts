@@ -66,10 +66,7 @@ export function getCodexTurnAccumulator(
   return created;
 }
 
-/**
- * Codex reports a running `total` for the thread and `last`, the usage of the
- * newest model response.
- */
+/** total is thread-wide; last covers the newest model response. */
 function codexTurnTokenUsageDelta(
   previous: CodexCumulativeTokenUsage | undefined,
   current: CodexCumulativeTokenUsage,
@@ -104,8 +101,7 @@ export function accumulateCodexTurnTokenUsage(
 ): void {
   const current = codexTokenUsageBreakdown(usage.total);
   if (state.activeTurnId !== turnId) {
-    // The total is thread-wide, so every update moves the baseline. A late
-    // update for a finished turn is not counted toward the live turn.
+    // Every thread-wide total updates the baseline; late finished-turn updates do not count toward the live turn.
     state.baseline = current;
     return;
   }
@@ -137,27 +133,23 @@ export function accumulateCodexTurnTokenUsage(
   }
 }
 
+/** `model` is the thread model Codex last reported, which a reroute replaces. */
 export function completeCodexTurnTokenUsage(
   state: CodexTurnTokenUsageState,
   turnId: string,
   completed: boolean,
+  model?: string,
 ): TurnTokenUsage {
   const usage = state.byTurnId.get(turnId);
   state.byTurnId.delete(turnId);
   if (state.activeTurnId === turnId) state.activeTurnId = undefined;
-  if (!usage) {
+  const models = model === undefined ? {} : { models: [model] };
+  if (!usage?.observed) {
     return {
       usageStatus: "unavailable",
       usageScope: "main_agent",
-      hasSubagents: false,
-    };
-  }
-
-  if (!usage.observed) {
-    return {
-      usageStatus: "unavailable",
-      usageScope: "main_agent",
-      hasSubagents: usage.hasSubagents,
+      hasSubagents: usage?.hasSubagents ?? false,
+      ...models,
     };
   }
 
@@ -173,5 +165,6 @@ export function completeCodexTurnTokenUsage(
     outputTokens: usage.outputTokens,
     reasoningTokens: Math.min(usage.outputTokens, usage.reasoningTokens),
     hasSubagents: usage.hasSubagents,
+    ...models,
   };
 }

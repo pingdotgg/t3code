@@ -1,4 +1,8 @@
-import { type EnvironmentShellSummary } from "@t3tools/client-runtime/state/shell";
+import {
+  EMPTY_SHELL_STATE,
+  type EnvironmentShellState,
+  type EnvironmentShellSummary,
+} from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId, ServerConfig } from "@t3tools/contracts";
 
 import {
@@ -8,7 +12,6 @@ import {
 
 import type { EnvironmentConnectionSummary as WorkspaceEnvironment } from "@t3tools/client-runtime/state/presentation";
 
-export { projectEnvironmentConnectionSummary as projectWorkspaceEnvironment } from "@t3tools/client-runtime/state/presentation";
 export type { EnvironmentConnectionSummary as WorkspaceEnvironment } from "@t3tools/client-runtime/state/presentation";
 
 export interface WorkspaceConnectionState {
@@ -25,6 +28,7 @@ export interface WorkspaceConnectionState {
 export interface WorkspaceState extends WorkspaceConnectionState {
   readonly hasLoadedShellSnapshot: boolean;
   readonly hasPendingShellSnapshot: boolean;
+  readonly hasSyncingConnectedEnvironment: boolean;
   readonly shellSnapshotError: string | null;
 }
 
@@ -92,13 +96,28 @@ export function projectWorkspaceState(input: {
   readonly networkStatus: NetworkStatus;
   readonly environments: ReadonlyArray<WorkspaceEnvironment>;
   readonly shellSummary: EnvironmentShellSummary;
+  readonly hasSyncingConnectedEnvironment: boolean;
 }): WorkspaceState {
   return {
     ...projectWorkspaceConnectionState(input),
     hasLoadedShellSnapshot: input.shellSummary.hasSnapshot,
     hasPendingShellSnapshot: input.shellSummary.hasSynchronizingShell,
+    hasSyncingConnectedEnvironment: input.hasSyncingConnectedEnvironment,
     shellSnapshotError: input.shellSummary.firstError,
   };
+}
+
+// The atom starts at EMPTY_SHELL_STATE itself; any state after the cache read is a new object.
+export function isEnvironmentShellPending(state: EnvironmentShellState): boolean {
+  return state === EMPTY_SHELL_STATE || state.status === "synchronizing";
+}
+
+// Reconnecting environments keep their last failure, so an error alone does not end the wait.
+export function isWorkspaceCatalogPending(state: WorkspaceState): boolean {
+  return (
+    state.networkStatus !== "offline" &&
+    (state.hasConnectingEnvironment || state.hasSyncingConnectedEnvironment)
+  );
 }
 
 export type ServerConfigByEnvironmentId = ReadonlyMap<EnvironmentId, ServerConfig>;

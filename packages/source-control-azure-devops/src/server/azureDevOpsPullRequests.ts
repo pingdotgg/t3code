@@ -1,3 +1,7 @@
+import {
+  trimOptionalString,
+  normalizeRefName,
+} from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Exit from "effect/Exit";
@@ -13,6 +17,7 @@ export interface NormalizedAzureDevOpsPullRequestRecord {
   readonly url: string;
   readonly baseRefName: string;
   readonly headRefName: string;
+  readonly headSha?: string;
   readonly state: "open" | "closed" | "merged";
   readonly isDraft?: boolean;
   readonly isCrossRepository: boolean;
@@ -38,6 +43,10 @@ const AzureDevOpsPullRequestSchema = Schema.Struct({
   ),
   sourceRefName: TrimmedNonEmptyString,
   targetRefName: TrimmedNonEmptyString,
+  /** The source branch's tip as of Azure's last merge evaluation: the pull request's head. */
+  lastMergeSourceCommit: Schema.optional(
+    Schema.NullOr(Schema.Struct({ commitId: Schema.optional(Schema.NullOr(Schema.String)) })),
+  ),
   status: Schema.String,
   isDraft: Schema.optional(Schema.Boolean),
   /** `az` prints `null` for a pull request from the same repo. */
@@ -54,15 +63,6 @@ const AzureDevOpsPullRequestSchema = Schema.Struct({
     }),
   ),
 });
-
-function trimOptionalString(value: string | null | undefined): string | null {
-  const trimmed = value?.trim() ?? "";
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-function normalizeRefName(refName: string): string {
-  return refName.trim().replace(/^refs\/heads\//, "");
-}
 
 function normalizeAzureDevOpsPullRequestState(status: string): "open" | "closed" | "merged" {
   switch (status.trim().toLowerCase()) {
@@ -158,6 +158,7 @@ function normalizeAzureDevOpsPullRequestRecord(
   raw: Schema.Schema.Type<typeof AzureDevOpsPullRequestSchema>,
 ): NormalizedAzureDevOpsPullRequestRecord {
   const state = normalizeAzureDevOpsPullRequestState(raw.status);
+  const headSha = trimOptionalString(raw.lastMergeSourceCommit?.commitId);
   const terminalAt = Option.match(raw.closedDate ?? Option.none(), {
     onNone: () => null,
     onSome: DateTime.formatIso,
@@ -168,6 +169,7 @@ function normalizeAzureDevOpsPullRequestRecord(
     url: normalizeAzureDevOpsPullRequestUrl(raw),
     baseRefName: normalizeRefName(raw.targetRefName),
     headRefName: normalizeRefName(raw.sourceRefName),
+    ...(headSha ? { headSha } : {}),
     state,
     ...(raw.isDraft === true ? { isDraft: true } : {}),
     isCrossRepository: raw.forkSource != null,
