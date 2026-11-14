@@ -8,12 +8,16 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import {
   makeUnavailableUsageLimits,
   makeUsageLimits,
 } from "@t3tools/provider-core/server/usageLimits";
+
+import * as ProcessRunner from "../processRunner.ts";
+import { readWindowsGenericCredential } from "./windowsCredential.ts";
 
 export function antigravityUserAgent(platform: NodeJS.Platform, architecture: NodeJS.Architecture) {
   return `antigravity/hub/2.24.0 (aidev_client; os_type=${platform}; arch=${architecture}; cl=963137146)`;
@@ -37,6 +41,18 @@ const TokenFile = Schema.Struct({
   client_secret: Schema.NonEmptyString,
   refresh_token: Schema.NonEmptyString,
   project_id: Schema.optional(Schema.String),
+});
+// The 1.5.x CLI keeps its sign-in in the OS keyring (go-keyring), or in a file when no keyring
+// is usable. It stores no OAuth client, so its access token is used until the CLI refreshes it.
+const KEYRING_SERVICE = "gemini";
+const KEYRING_ACCOUNT = "antigravity";
+const STORED_TOKEN_FILE = "antigravity-oauth-token";
+const StoredToken = Schema.Struct({
+  token: Schema.Struct({
+    access_token: Schema.NonEmptyString,
+    refresh_token: Schema.optional(Schema.String),
+    expiry: Schema.String,
+  }),
 });
 const TokenResponse = Schema.Struct({
   access_token: Schema.NonEmptyString,
@@ -78,6 +94,7 @@ const Models = Schema.Struct({
 });
 
 const decodeTokenFile = Schema.decodeEffect(Schema.fromJsonString(TokenFile));
+const decodeStoredToken = Schema.decodeEffect(Schema.fromJsonString(StoredToken));
 const decodeTokenResponse = Schema.decodeUnknownEffect(TokenResponse);
 const decodeUserInfo = Schema.decodeUnknownEffect(UserInfo);
 const decodeSummary = Schema.decodeUnknownEffect(Summary);
@@ -123,6 +140,98 @@ function summaryResetTime(
       60_000;
   return untouched ? undefined : bucket.resetTime;
 }
+
+/** go-keyring writes UTF-8, prefixed and encoded on macOS. */
+export function decodeGoKeyringSecret(secret: ArrayLike<number>): string {
+  const text = new TextDecoder().decode(Uint8Array.from(secret));
+  if (text.startsWith("go-keyring-base64:")) {
+    return new TextDecoder().decode(
+      Uint8Array.from(atob(text.slice("go-keyring-base64:".length)), (char) => char.charCodeAt(0)),
+    );
+  }
+  if (text.startsWith("go-keyring-encoded:")) {
+    const hex = text.slice("go-keyring-encoded:".length);
+    return new TextDecoder().decode(
+      Uint8Array.from({ length: hex.length / 2 }, (_, index) =>
+        Number.parseInt(hex.slice(index * 2, index * 2 + 2), 16),
+      ),
+    );
+  }
+  return text;
+}
+
+export class AntigravityKeyringError extends Schema.TaggedError<AntigravityKeyringError>()(
+  "AntigravityKeyringError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Could not read the Antigravity sign-in from the system keyring.";
+  }
+}
+
+/** Reads the CLI's keyring entry; `undefined` when there is none. */
+const readAntigravityKeyringSecret = Effect.fn("readAntigravityKeyringSecret")(function* (
+  platform: NodeJS.Platform,
+  architecture: string,
+) {
+  let secret: ArrayLike<number> | undefined;
+  if (platform === "win32") {
+    // go-keyring writes the Windows target `service:account`, which @napi-rs/keyring cannot read.
+    secret = yield* Effect.try({
+      try: () =>
+        readWindowsGenericCredential(`${KEYRING_SERVICE}:${KEYRING_ACCOUNT}`, architecture),
+      catch: (cause) => new AntigravityKeyringError({ cause }),
+    });
+  } else if (platform === "darwin") {
+    // The binding's Keychain reads drop errors, so a denied prompt would look like a sign-out.
+    // This is go-keyring's own read; exit 44 is errSecItemNotFound.
+    const runner = yield* ProcessRunner.make();
+    const result = yield* runner
+      .run({
+        command: "/usr/bin/security",
+        args: ["find-generic-password", "-s", KEYRING_SERVICE, "-wa", KEYRING_ACCOUNT],
+      })
+      .pipe(Effect.mapError((cause) => new AntigravityKeyringError({ cause })));
+    if (result.code === 44) return undefined;
+    if (result.code !== 0) {
+      return yield* new AntigravityKeyringError({ cause: `security exited with ${result.code}` });
+    }
+    secret = new TextEncoder().encode(result.stdout.trim());
+  } else {
+    // Loading the native binding lazily keeps a broken binding from blocking server startup.
+    const Keyring = yield* Effect.tryPromise({
+      try: () => import("@napi-rs/keyring"),
+      catch: (cause) => new AntigravityKeyringError({ cause }),
+    });
+    const entry = yield* Effect.try({
+      try: () => new Keyring.AsyncEntry(KEYRING_SERVICE, KEYRING_ACCOUNT),
+      catch: (cause) => new AntigravityKeyringError({ cause }),
+    });
+    // Typed `Uint8Array | undefined`, but the binding returns a plain byte array or `null`.
+    secret =
+      (yield* Effect.tryPromise({
+        try: () => entry.getSecret(),
+        catch: (cause) => new AntigravityKeyringError({ cause }),
+      })) ?? undefined;
+    if (!secret) {
+      // `getSecret` also resolves empty when the Secret Service is locked or unreachable, so
+      // confirm the absence with a search, which rejects on those failures.
+      const credentials = yield* Effect.tryPromise({
+        try: () => Keyring.findCredentialsAsync(KEYRING_SERVICE),
+        catch: (cause) => new AntigravityKeyringError({ cause }),
+      });
+      const password = credentials.find(
+        (credential) => credential.account === KEYRING_ACCOUNT,
+      )?.password;
+      secret = password === undefined ? undefined : new TextEncoder().encode(password);
+    }
+  }
+  if (!secret) return undefined;
+  return yield* Effect.try({
+    try: () => decodeGoKeyringSecret(secret),
+    catch: (cause) => new AntigravityKeyringError({ cause }),
+  });
+});
 
 const sha256 = Effect.fnUntraced(function* (text: string) {
   const digest = yield* (yield* Digest.Digest).digest(
@@ -210,6 +319,8 @@ function modelWindows(models: typeof Models.Type) {
 export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(function* (input: {
   readonly profileDirectory: string;
   readonly authMethod: AntigravitySettings["authMethod"];
+  /** Overrides the OS keyring read; tests must not touch the real keyring. */
+  readonly readKeyringSecret?: Effect.Effect<string | undefined, AntigravityKeyringError>;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -217,7 +328,20 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
   const crypto = yield* Digest.Digest;
   const platform = yield* HostProcess.Platform;
   const architecture = yield* HostProcess.Architecture;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const tokenPath = path.join(input.profileDirectory, "antigravity-acp", "acp_token.json");
+  const storedTokenPath = path.join(input.profileDirectory, "antigravity-acp", STORED_TOKEN_FILE);
+  const readKeyringSecret =
+    input.readKeyringSecret ??
+    readAntigravityKeyringSecret(platform, architecture).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    );
+  const readStoredToken = Effect.gen(function* () {
+    const secret = (yield* fs.exists(storedTokenPath))
+      ? yield* fs.readFileString(storedTokenPath)
+      : yield* readKeyringSecret;
+    return secret === undefined ? undefined : yield* decodeStoredToken(secret);
+  });
   let cached:
     | { fingerprint: string; account: string; accessToken: string; expiresAt: number }
     | undefined;
@@ -236,7 +360,12 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
     if (input.authMethod !== "oauth-personal" && input.authMethod !== "oauth-business") {
       return makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
     }
-    if (!(yield* fs.exists(tokenPath))) {
+    // The 1.4.5 runtime's token file can be refreshed here; the 1.5.x CLI's stored token cannot.
+    const token = (yield* fs.exists(tokenPath))
+      ? yield* fs.readFileString(tokenPath).pipe(Effect.flatMap(decodeTokenFile))
+      : undefined;
+    const stored = token ? undefined : yield* readStoredToken;
+    if (!token && !stored) {
       cached = undefined;
       return makeUnavailableUsageLimits({
         checkedAt,
@@ -244,26 +373,43 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
         message: "Sign in with Google to see Antigravity limits.",
       });
     }
-    const token = yield* fs.readFileString(tokenPath).pipe(Effect.flatMap(decodeTokenFile));
     const fingerprint = yield* sha256(
-      `${token.client_id}\0${token.refresh_token}\0${token.project_id ?? ""}`,
+      token
+        ? `${token.client_id}\0${token.refresh_token}\0${token.project_id ?? ""}`
+        : `cli\0${stored?.token.refresh_token || stored?.token.access_token}`,
     );
     const now = yield* Clock.currentTimeMillis;
+    const storedExpiresAt = stored ? Date.parse(stored.token.expiry) : Number.NaN;
+    if (stored && !(storedExpiresAt > now + 60_000)) {
+      return makeUnavailableUsageLimits({
+        checkedAt,
+        reason: "probeFailed",
+        message: "Antigravity limits update when an Antigravity session starts.",
+      });
+    }
     let accessToken: string;
     let account: string;
     if (cached?.fingerprint !== fingerprint || cached.expiresAt <= now + 60_000) {
       cached = undefined;
-      const refreshed = yield* request(
-        HttpClientRequest.post("https://oauth2.googleapis.com/token").pipe(
-          HttpClientRequest.bodyUrlParams({
-            client_id: token.client_id,
-            client_secret: token.client_secret,
-            refresh_token: token.refresh_token,
-            grant_type: "refresh_token",
-          }),
-        ),
-      ).pipe(Effect.flatMap(decodeTokenResponse));
-      accessToken = refreshed.access_token;
+      const refreshed = token
+        ? yield* request(
+            HttpClientRequest.post("https://oauth2.googleapis.com/token").pipe(
+              HttpClientRequest.bodyUrlParams({
+                client_id: token.client_id,
+                client_secret: token.client_secret,
+                refresh_token: token.refresh_token,
+                grant_type: "refresh_token",
+              }),
+            ),
+          ).pipe(
+            Effect.flatMap(decodeTokenResponse),
+            Effect.map((response) => ({
+              accessToken: response.access_token,
+              expiresAt: now + response.expires_in * 1000,
+            })),
+          )
+        : { accessToken: stored?.token.access_token ?? "", expiresAt: storedExpiresAt };
+      accessToken = refreshed.accessToken;
       // Use Google account IDs to merge accounts across environments; refresh tokens differ per machine.
       account = yield* request(
         HttpClientRequest.get("https://www.googleapis.com/oauth2/v2/userinfo").pipe(
@@ -278,7 +424,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
           fingerprint,
           account,
           accessToken,
-          expiresAt: now + refreshed.expires_in * 1000,
+          expiresAt: refreshed.expiresAt,
         };
       }
     } else {
@@ -307,7 +453,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
                   "User-Agent": antigravityUserAgent(platform, architecture),
                 }),
                 HttpClientRequest.bodyJsonUnsafe(
-                  token.project_id ? { project: token.project_id } : {},
+                  token?.project_id ? { project: token.project_id } : {},
                 ),
               ),
             ).pipe(

@@ -432,6 +432,7 @@ export const AntigravityDriver: ProviderDriver<
       Effect.provideService(Path.Path, path),
       Effect.provideService(Digest.Digest, digest),
       Effect.provideService(HttpClient.HttpClient, httpClient),
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     );
     const provider = yield* makeAntigravityProvider(settings, {
       environment: processEnvironment,
