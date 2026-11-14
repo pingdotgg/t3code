@@ -547,6 +547,10 @@ export const make = Effect.gen(function* () {
     input: Parameters<RemoteEnvironmentAuthorization["Service"]["authorizeDpop"]>[0],
   ) {
     const endpoint = input.directEndpoint;
+    // A direct address needs the same sign-in, so don't let its reachability mask the failure.
+    if (Option.isNone(yield* cloudSession.identity) && (yield* cloudSession.signInFailed)) {
+      return yield* signInFailed();
+    }
     const directDescriptor =
       endpoint === undefined
         ? undefined

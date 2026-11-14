@@ -1053,18 +1053,34 @@ describe("RemoteEnvironmentAuthorization", () => {
       const harness = yield* makeHarness({ responses: [] });
       yield* Ref.set(harness.session, Option.none());
       yield* Ref.set(harness.signInFailed, true);
-      const failure = yield* Effect.gen(function* () {
+      const failures = yield* Effect.gen(function* () {
         const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
-        return yield* remote
-          .authorizeDpopHttp({ expectedEnvironmentId: ENVIRONMENT_ID })
-          .pipe(Effect.flip);
+        return [
+          yield* remote
+            .authorizeDpopHttp({ expectedEnvironmentId: ENVIRONMENT_ID })
+            .pipe(Effect.flip),
+          // A saved direct address needs the same sign-in, so its reachability must not
+          // turn this into a network failure that retries.
+          yield* remote
+            .authorizeDpop({
+              expectedEnvironmentId: ENVIRONMENT_ID,
+              directEndpoint: {
+                httpBaseUrl: "http://192.168.1.10:3773/",
+                wsBaseUrl: "ws://192.168.1.10:3773/",
+              },
+            })
+            .pipe(Effect.flip),
+        ];
       }).pipe(Effect.provide(harness.layer));
-      expect(failure).toMatchObject({
-        _tag: "ConnectionBlockedError",
-        hop: "device",
-        failureCause: "sign_in_failed",
-      });
+      for (const failure of failures) {
+        expect(failure).toMatchObject({
+          _tag: "ConnectionBlockedError",
+          hop: "device",
+          failureCause: "sign_in_failed",
+        });
+      }
       expect(yield* Ref.get(harness.bootstrapCalls)).toBe(0);
+      expect(harness.fetch.calls).toEqual([]);
     }),
   );
 
