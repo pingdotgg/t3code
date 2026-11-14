@@ -400,11 +400,15 @@ export function selectThreadRelationshipShells(
   threads: ReadonlyArray<OrchestrationV2ThreadShell>,
 ): ReadonlyArray<OrchestrationV2ThreadShell> {
   const named = new Set<string>([threadId]);
+  const childIds = new Set<string>();
   if (projection !== null) {
     const parentThreadId = shellParentThreadId(projection.thread);
     if (parentThreadId !== null) named.add(parentThreadId);
     for (const subagent of projection.subagents) {
-      if (subagent.childThreadId !== null) named.add(subagent.childThreadId);
+      if (subagent.childThreadId !== null) {
+        named.add(subagent.childThreadId);
+        childIds.add(subagent.childThreadId);
+      }
       for (const agent of subagent.workflow?.agents ?? []) {
         if (agent.childThreadId !== undefined) named.add(agent.childThreadId);
       }
@@ -417,8 +421,13 @@ export function selectThreadRelationshipShells(
   const current = threads.find((thread) => thread.id === threadId);
   const currentParentId = current === undefined ? null : shellParentThreadId(current);
   if (currentParentId !== null) named.add(currentParentId);
+  const isChild = (thread: OrchestrationV2ThreadShell) => shellParentThreadId(thread) === threadId;
+  for (const thread of threads) if (isChild(thread)) childIds.add(thread.id);
+  const isSubagentGrandchild = (thread: OrchestrationV2ThreadShell) =>
+    thread.lineage.relationshipToParent === "subagent" &&
+    childIds.has(shellParentThreadId(thread) ?? "");
   return threads.filter(
-    (thread) => named.has(thread.id) || shellParentThreadId(thread) === threadId,
+    (thread) => named.has(thread.id) || isChild(thread) || isSubagentGrandchild(thread),
   );
 }
 

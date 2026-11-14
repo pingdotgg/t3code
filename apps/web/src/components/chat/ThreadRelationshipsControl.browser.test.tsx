@@ -409,6 +409,40 @@ it("hides a deleted fork and keeps unloaded and archived forks with their curren
   await expect.element(screen.getByText("deleted-fork", { exact: true })).not.toBeInTheDocument();
 });
 
+it("nests a subagent's own subagents under it", async () => {
+  setup();
+  const projection = makeThreadProjectionFixture();
+  const environmentId = EnvironmentId.make("local");
+  const shell = (id: string, title: string, parentThreadId: ThreadId) => ({
+    id: ThreadId.make(id),
+    title,
+    activityRunStatus: "running",
+    status: "running",
+    lineage: { parentThreadId, relationshipToParent: "subagent" },
+    forkedFrom: null,
+  });
+  state.projection = projection;
+  state.relatedShells = [
+    shell("child", "Camera", projection.thread.id),
+    shell("grandchild", "Research lighting", ThreadId.make("child")),
+  ];
+  await using screen = await render(
+    <ThreadRelationshipsPanel
+      environmentId={environmentId}
+      threadId={projection.thread.id}
+      showLineage
+      showSideChats
+    />,
+  );
+
+  await expect.element(screen.getByRole("button", { name: /Camera/ })).toBeVisible();
+  await expect.element(screen.getByRole("button", { name: /Research lighting/ })).toBeVisible();
+  await expect.element(screen.getByText("Lineage · 2 running")).toBeVisible();
+  await expect
+    .element(screen.getByRole("listitem").filter({ hasText: "Research lighting" }))
+    .toHaveClass("ms-4");
+});
+
 it.each([1, 18])("continues scrolling the panel past a list of %i subagents", async (count) => {
   setup();
   const projection = makeThreadProjectionFixture();

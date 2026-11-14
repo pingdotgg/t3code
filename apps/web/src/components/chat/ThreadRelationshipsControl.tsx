@@ -17,6 +17,7 @@ import { deriveProviderSubagentStatus } from "@t3tools/client-runtime/state/thre
 import {
   deriveThreadRelationshipGraph,
   immediateThreadRelationships,
+  indexImmediateThreadRelationships,
   isParentThreadRelationship,
   threadRelationshipRowStatus,
   orderWebThreadLineageRows,
@@ -56,7 +57,7 @@ import {
   SquareIcon,
   UnplugIcon,
 } from "lucide-react";
-import { useRef, useState, type ReactNode } from "react";
+import { Fragment, useRef, useState, type ReactNode } from "react";
 
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { buildThreadRouteParams } from "../../threadRoutes";
@@ -118,7 +119,7 @@ function ThreadLineageRowList(props: {
       {/* ScrollArea's max-height viewport measures badly inside this scrolling panel. */}
       <ul
         aria-label="Related threads"
-        className="m-0 max-h-[13.5rem] list-none overflow-y-auto p-0 has-data-workflow-expanded:max-h-[min(28rem,55dvh)]"
+        className="m-0 max-h-[22.5rem] list-none overflow-y-auto p-0 has-data-workflow-expanded:max-h-[min(28rem,55dvh)]"
       >
         {props.children}
       </ul>
@@ -602,10 +603,30 @@ export function ThreadRelationshipsPanel(props: {
       expanded: false,
     },
   ];
+  // A subagent's own subagents nest one level under it.
+  const immediateRelationships = indexImmediateThreadRelationships(graph);
+  const nestedSubagentRows = (row: ThreadRelationshipWalkRow) =>
+    row.edge.kind === "subagent" && !isParentThreadRelationship(row.edge, props.threadId)
+      ? orderWebThreadLineageRows({
+          graph,
+          rows: (immediateRelationships.get(row.threadId) ?? []).filter(
+            (child) =>
+              child.edge.kind === "subagent" &&
+              child.edge.sourceThreadId === row.threadId &&
+              !isHiddenRelation(child.threadId),
+          ),
+          currentThreadId: row.threadId,
+          mergeTargetThreadId: null,
+        })
+      : [];
   const runningCount =
     (projection?.subagents.filter(
       (agent) => agent.childThreadId === null && agent.status === "running",
-    ).length ?? 0) + active.filter(({ edge }) => edge.status === "running").length;
+    ).length ?? 0) +
+    active.filter(({ edge }) => edge.status === "running").length +
+    [...active, ...previous]
+      .flatMap(nestedSubagentRows)
+      .filter((row) => threadRelationshipRowStatus(graph, row) === "running").length;
 
   // A linked environment's agent may have delegated this thread from there.
   const delegatedFrom = currentThread?.delegatedFrom;
@@ -719,11 +740,12 @@ export function ThreadRelationshipsPanel(props: {
         ? null
         : (graph.nodes.get(mergeTargetThreadId)?.thread?.title ?? null);
 
-  const renderRelationshipRow = ({ threadId, edge }: ThreadRelationshipWalkRow) => {
+  const renderRelationshipRow = ({ threadId, fromThreadId, edge }: ThreadRelationshipWalkRow) => {
+    const nested = fromThreadId !== props.threadId;
     const node = graph.nodes.get(threadId);
     const isSubagent = edge.kind === "subagent";
     const isMergeTarget = threadId === mergeTargetThreadId;
-    const isParent = isParentThreadRelationship(edge, props.threadId);
+    const isParent = isParentThreadRelationship(edge, fromThreadId);
     const rowStatus =
       (isParent && threadId === parentRef?.threadId
         ? (node?.thread?.activityRunStatus ?? parentNativeStatus)
@@ -738,7 +760,7 @@ export function ThreadRelationshipsPanel(props: {
     const relationship =
       node?.thread?.lineage.sideChat === true && !isParent
         ? "Side chat"
-        : relationshipLabel(edge, props.threadId);
+        : relationshipLabel(edge, fromThreadId);
     const projectedAgent = isSubagent && !isParent ? subagentsByThreadId.get(threadId) : undefined;
     const workflowGroup =
       projectedAgent === undefined ? undefined : workflowGroupsById.get(projectedAgent.id);
@@ -878,7 +900,10 @@ export function ThreadRelationshipsPanel(props: {
       );
     }
     return (
-      <li key={threadId} className="group relative flex h-8 items-center rounded-lg">
+      <li
+        key={threadId}
+        className={cn("group relative flex h-8 items-center rounded-lg", nested && "ms-4")}
+      >
         {isMergeTarget ? (
           <div className={THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS}>
             <Tooltip>
@@ -967,6 +992,13 @@ export function ThreadRelationshipsPanel(props: {
     );
   };
 
+  const renderRelationshipTree = (row: ThreadRelationshipWalkRow) => (
+    <Fragment key={row.threadId}>
+      {renderRelationshipRow(row)}
+      {nestedSubagentRows(row).map(renderRelationshipRow)}
+    </Fragment>
+  );
+
   return (
     <>
       {lineageVisible ? (
@@ -1031,7 +1063,7 @@ export function ThreadRelationshipsPanel(props: {
                         ?.find((entry) => entry.instanceId === row.remote.providerInstanceId)}
                     />
                   ) : (
-                    renderRelationshipRow(row)
+                    renderRelationshipTree(row)
                   ),
                 )
               }
