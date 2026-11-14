@@ -105,14 +105,14 @@ function collapseSegments(split: { head: string; tail: string }) {
 const DEFAULT_TAIL = 10;
 const MAX_SEGMENT_TAIL = 16;
 const MIN_WORD_TAIL = 4;
-const WORD_BREAK = /[-_./]/;
+const WORD_BREAK = /[-_./\s]/;
 
 export function splitForMiddleTruncate(
   value: string,
   tail?: number,
 ): { head: string; tail: string } | null {
   // Split by code point to avoid cutting surrogate pairs into broken glyphs.
-  const chars = Array.from(value);
+  const chars = Array.from(value.replace(/[\r\n]+/g, " "));
   let keep = tail ?? DEFAULT_TAIL;
   if (tail === undefined) {
     const slash = chars.lastIndexOf("/");
