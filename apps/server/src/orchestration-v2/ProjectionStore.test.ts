@@ -1,5 +1,6 @@
 import * as NodeSqlite from "node:sqlite";
 
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it, vi } from "@effect/vitest";
 import {
   EnvironmentId,
@@ -12,7 +13,10 @@ import {
   ContextHandoffId,
   MessageId,
   type ModelSelection,
+  type OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2ProviderTurn,
+  type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
   type OrchestrationV2ThreadHistoryPage,
   type OrchestrationV2ThreadShellSnapshot,
@@ -37,8 +41,10 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -48,6 +54,7 @@ import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ProjectionUpsert from "./projectionUpsert.ts";
 import {
   buildBoundedThreadProjection,
   decodeThreadHistoryCursor,
@@ -3382,6 +3389,305 @@ it.effect("lists every thread in the shell snapshot past SQLite's bound variable
   }).pipe(Effect.provide(layerTest)),
 );
 
+const streamedProjectionCases = Effect.fn("streamedProjectionCases")(function* (suffix: string) {
+  const threadId = yield* addRolledBackRecoveryCandidate(suffix);
+  const now = yield* DateTime.now;
+  const later = DateTime.add(now, { seconds: 1 });
+  const latest = DateTime.add(now, { seconds: 2 });
+  const runId = RunId.make(`run:${suffix}:rolled-back`);
+  const rootNodeId = NodeId.make(`node:${suffix}:rolled-back`);
+  const nodeId = NodeId.make(`node:${suffix}:assistant`);
+  const providerThreadId = ProviderThreadId.make(`provider-thread:${suffix}`);
+  const providerTurnId = ProviderTurnId.make(`provider-turn:${suffix}`);
+  type EventOf<Payload> = (
+    payload: Payload,
+  ) => Pick<OrchestrationV2DomainEvent, "type" | "payload">;
+  const event = <Payload>(
+    toEvent: EventOf<Payload>,
+    step: string,
+    occurredAt: DateTime.Utc,
+    payload: Payload,
+  ) => {
+    const { type } = toEvent(payload);
+    return {
+      ...toEvent(payload),
+      id: EventId.make(`event:${suffix}:${type}:${step}`),
+      threadId,
+      runId,
+      nodeId,
+      driver,
+      occurredAt,
+    } as OrchestrationV2DomainEvent;
+  };
+  // Each projection is created, updated in columns no index reads, then updated in indexed ones.
+  const steps = <Payload>(
+    toEvent: EventOf<Payload>,
+    create: Payload,
+    stable: Payload,
+    moving: Payload,
+  ) => ({
+    create: event(toEvent, "create", now, create),
+    stable: event(toEvent, "stable", later, stable),
+    moving: event(toEvent, "moving", latest, moving),
+  });
+
+  const item = {
+    id: TurnItemId.make(`item:${suffix}`),
+    threadId,
+    runId,
+    nodeId,
+    providerThreadId: null,
+    providerTurnId,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: 7,
+    status: "running",
+    title: "Run tests",
+    startedAt: now,
+    completedAt: null,
+    updatedAt: now,
+    type: "command_execution",
+    input: "vp test",
+  } satisfies OrchestrationV2TurnItem;
+  const providerTurn = {
+    id: providerTurnId,
+    providerThreadId,
+    nodeId,
+    runAttemptId: null,
+    nativeTurnRef: null,
+    ordinal: 1,
+    status: "running",
+    startedAt: now,
+    completedAt: null,
+  } satisfies OrchestrationV2ProviderTurn;
+  const subagent = {
+    id: NodeId.make(`node:${suffix}:subagent`),
+    threadId,
+    runId,
+    parentNodeId: rootNodeId,
+    origin: "provider_native",
+    createdBy: "agent",
+    driver,
+    providerInstanceId,
+    providerThreadId: null,
+    childThreadId: null,
+    nativeTaskRef: null,
+    prompt: "Do the work",
+    title: "Worker",
+    model: null,
+    status: "running",
+    result: null,
+    startedAt: now,
+    completedAt: null,
+    updatedAt: now,
+  } satisfies OrchestrationV2Subagent;
+  const providerThread = {
+    id: providerThreadId,
+    appThreadId: threadId,
+    driver,
+    providerInstanceId,
+    providerSessionId: null,
+    ownerNodeId: null,
+    nativeThreadRef: null,
+    nativeConversationHeadRef: null,
+    lastRunOrdinal: null,
+    handoffIds: [],
+    forkedFrom: null,
+    status: "active",
+    firstRunOrdinal: 1,
+    createdAt: now,
+    updatedAt: now,
+  } satisfies OrchestrationV2ProviderThread;
+
+  const itemStable = {
+    ...item,
+    providerThreadId,
+    parentItemId: TurnItemId.make(`item:${suffix}:parent`),
+    output: "1 passed",
+    updatedAt: later,
+  } satisfies OrchestrationV2TurnItem;
+  const providerTurnStable = {
+    ...providerTurn,
+    runAttemptId: RunAttemptId.make(`attempt:${suffix}`),
+    status: "completed",
+    completedAt: later,
+  } satisfies OrchestrationV2ProviderTurn;
+  const subagentStable = {
+    ...subagent,
+    progress: "Reading files",
+    completedAt: later,
+    updatedAt: later,
+  } satisfies OrchestrationV2Subagent;
+  const providerThreadStable = { ...providerThread, lastRunOrdinal: 2, updatedAt: later };
+
+  return [
+    {
+      table: ProjectionUpsert.projectionTables.turnItems,
+      id: item.id,
+      ...steps(
+        (payload: OrchestrationV2TurnItem) => ({ type: "turn-item.updated", payload }),
+        item,
+        itemStable,
+        {
+          ...itemStable,
+          providerTurnId: null,
+          ordinal: 8,
+          status: "completed",
+          completedAt: latest,
+          updatedAt: latest,
+        },
+      ),
+    },
+    {
+      table: ProjectionUpsert.projectionTables.subagents,
+      id: subagent.id,
+      ...steps(
+        (payload: OrchestrationV2Subagent) => ({ type: "subagent.updated", payload }),
+        subagent,
+        subagentStable,
+        {
+          ...subagentStable,
+          childThreadId: ThreadId.make(`thread:${suffix}:child`),
+          status: "completed",
+          completionDelivery: { state: "pending", observedByRunId: null },
+          updatedAt: latest,
+        },
+      ),
+    },
+    {
+      table: ProjectionUpsert.projectionTables.providerThreads,
+      id: providerThread.id,
+      ...steps(
+        (payload: OrchestrationV2ProviderThread) => ({ type: "provider-thread.updated", payload }),
+        providerThread,
+        providerThreadStable,
+        {
+          ...providerThreadStable,
+          providerSessionId: ProviderSessionId.make(`session:${suffix}`),
+          status: "idle",
+        },
+      ),
+    },
+    {
+      table: ProjectionUpsert.projectionTables.providerTurns,
+      id: providerTurn.id,
+      ...steps(
+        (payload: OrchestrationV2ProviderTurn) => ({ type: "provider-turn.updated", payload }),
+        providerTurn,
+        providerTurnStable,
+        { ...providerTurnStable, ordinal: 2 },
+      ),
+    },
+  ];
+});
+
+it.effect("a guarded projection upsert leaves the rows the full upsert leaves", () =>
+  Effect.gen(function* () {
+    let seed = 1;
+    const random = (count: number) => {
+      seed = (seed * 48271) % 2147483647;
+      return seed % count;
+    };
+    const texts = ["running", "completed", "failed", "waiting", "user", "error", "subagent"];
+    const payloads = [
+      "{}",
+      '{"completionDelivery":{"state":"pending"}}',
+      '{"nativeTurnRef":{"driver":"codex","nativeId":"native"}}',
+    ];
+    const tables = Object.values(ProjectionUpsert.projectionTables);
+    // Each step edits a few columns of a key's last row, so updates both keep and move the guarded columns.
+    const sequences = tables.map((table) => {
+      const last = new Map<number, Record<string, string | number | null>>();
+      return Array.from({ length: 300 }, () => {
+        const key = random(3);
+        const row = { ...last.get(key), [table.key]: `key-${key}` };
+        for (const column of table.columns) {
+          if (column !== table.key && (!(column in row) || random(table.columns.length) < 2)) {
+            row[column] =
+              column === "payload_json"
+                ? payloads[random(payloads.length)]!
+                : random(4) === 0
+                  ? random(3)
+                  : random(5) === 0
+                    ? null
+                    : texts[random(texts.length)]!;
+          }
+        }
+        last.set(key, row);
+        return row;
+      });
+    });
+    type Table = (typeof tables)[number];
+    const replay = (fullUpsertOnly: boolean) =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const write = (table: Table, row: Record<string, string | number | null>) =>
+          fullUpsertOnly
+            ? sql.unsafe(
+                table.fullUpsert,
+                table.columns.map((column) => row[column] ?? null),
+              )
+            : ProjectionUpsert.upsertProjectionRow<string>(sql, table, row);
+        const states: Array<unknown> = [];
+        for (const [index, table] of tables.entries()) {
+          for (const row of sequences[index]!) {
+            const written = yield* Effect.exit(write(table, row));
+            states.push(
+              written._tag,
+              yield* sql.unsafe(`SELECT rowid, * FROM ${table.name} ORDER BY ${table.key}`),
+            );
+          }
+        }
+        return states;
+      }).pipe(Effect.provide(SqlitePersistence.layerMemory));
+
+    const { statements, tracer } = traceSqlStatements();
+    const guarded = yield* replay(false).pipe(Effect.withTracer(tracer));
+    const full = yield* replay(true);
+    assert.deepStrictEqual(guarded, full);
+    for (const table of tables) {
+      const guardedCount = statements.filter(
+        (statement) => statement === table.guardedUpsert,
+      ).length;
+      const fallbackCount = statements.filter((statement) => statement === table.fullUpsert).length;
+      assert.isAbove(guardedCount - fallbackCount, 0, table.name);
+      assert.isAbove(fallbackCount, 0, table.name);
+    }
+  }),
+);
+
+it.effect("streamed projection updates write only the pages whose contents change", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-projection-pages-" });
+    const persistence = SqlitePersistence.layerFromPath(path.join(directory, "state.sqlite"));
+    const pages = yield* Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const walPages = Effect.fn("walPages")(function* (event: OrchestrationV2DomainEvent) {
+        yield* sql`PRAGMA wal_checkpoint(TRUNCATE)`;
+        yield* sql.withTransaction(store.apply(event));
+        const [wal] = yield* sql<{ readonly log: number }>`PRAGMA wal_checkpoint(NOOP)`;
+        return wal?.log;
+      });
+      const pages: Record<string, unknown> = {};
+      for (const projection of yield* streamedProjectionCases("wal-pages")) {
+        yield* store.apply(projection.create);
+        pages[projection.stable.type] = yield* walPages(projection.stable);
+      }
+      return pages;
+    }).pipe(Effect.provide(ProjectionStore.layer.pipe(Layer.provideMerge(persistence))));
+    // One page for the projection row, and two for the thread's activity time: its row and index entry.
+    assert.deepStrictEqual(pages, {
+      "turn-item.updated": 3,
+      "subagent.updated": 3,
+      "provider-thread.updated": 3,
+      "provider-turn.updated": 3,
+    });
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.layer(layerTest)("ProjectionStoreV2", (it) => {
   // regression: #21969 keep corrupt plan JSON in the typed read error
   it.effect("returns a typed read error for malformed stored plan JSON", () =>
@@ -3494,6 +3800,68 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         `,
         [{ updated_at: DateTime.formatIso(updatedAt) }],
       );
+    }),
+  );
+
+  it.effect("projection upserts guard every column an index reads", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      // Assigned although indexed: almost every write changes them, so their entries move anyway.
+      const changingOnEveryWrite = new Set(["updated_at", "payload_json"]);
+      for (const table of Object.values(ProjectionUpsert.projectionTables)) {
+        const schema = yield* sql<{ readonly type: string; readonly sql: string | null }>`
+          SELECT type, sql FROM sqlite_master
+          WHERE tbl_name = ${table.name} AND type IN ('index', 'trigger')
+        `;
+        const read = new Set(
+          schema
+            .filter((entry) => entry.type === "index")
+            .flatMap((index) => (index.sql ?? "").replaceAll(/'[^']*'/g, "").match(/\w+/g) ?? [])
+            .filter((word) => (table.columns as ReadonlyArray<string>).includes(word)),
+        );
+        const expected = table.columns.filter(
+          (column) => read.has(column) && column !== table.key && !changingOnEveryWrite.has(column),
+        );
+        assert.deepStrictEqual([...table.guarded].toSorted(), expected.toSorted(), table.name);
+        // A trigger on `UPDATE OF <column>` would stop firing when the guarded upsert leaves the column out.
+        assert.isFalse(
+          schema.some((entry) => entry.type === "trigger" && /UPDATE\s+OF/i.test(entry.sql ?? "")),
+          table.name,
+        );
+      }
+    }),
+  );
+
+  it.effect("streamed projection updates leave the same row as a fresh write", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      for (const projection of yield* streamedProjectionCases("fresh-write")) {
+        const { table } = projection;
+        const readRow = sql.unsafe(`SELECT * FROM ${table.name} WHERE ${table.key} = ?`, [
+          projection.id,
+        ]);
+        const fellBack = Effect.fn("fellBack")(function* (event: OrchestrationV2DomainEvent) {
+          const { statements, tracer } = traceSqlStatements();
+          yield* store.apply(event).pipe(Effect.withTracer(tracer));
+          return statements.includes(table.fullUpsert);
+        });
+        const assertMatchesFreshWrite = Effect.fn("assertMatchesFreshWrite")(function* (
+          event: OrchestrationV2DomainEvent,
+        ) {
+          const row = yield* readRow;
+          yield* sql.unsafe(`DELETE FROM ${table.name} WHERE ${table.key} = ?`, [projection.id]);
+          yield* store.apply(event);
+          assert.lengthOf(row, 1, table.name);
+          assert.deepStrictEqual(row, yield* readRow, table.name);
+        });
+
+        assert.isFalse(yield* fellBack(projection.create), table.name);
+        assert.isFalse(yield* fellBack(projection.stable), table.name);
+        yield* assertMatchesFreshWrite(projection.stable);
+        assert.isTrue(yield* fellBack(projection.moving), table.name);
+        yield* assertMatchesFreshWrite(projection.moving);
+      }
     }),
   );
 

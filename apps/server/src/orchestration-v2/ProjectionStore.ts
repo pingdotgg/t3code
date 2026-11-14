@@ -96,6 +96,7 @@ import type * as Statement from "effect/sql/Statement";
 import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
 import { threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
 import { readableSearchText } from "./messageSearchIndex.ts";
+import { projectionTables, upsertProjectionRow } from "./projectionUpsert.ts";
 import {
   isFoldableWorkItem,
   isThreadHistoryUserTurn,
@@ -2524,76 +2525,24 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             case "subagent.updated": {
               const payloadJson = yield* encodeSubagentPayload(event.payload);
               const payload = parseEncodedPayload(payloadJson);
-              yield* sql`
-              INSERT INTO orchestration_v2_projection_subagents (
-                subagent_id,
-                thread_id,
-                run_id,
-                parent_node_id,
-                provider,
-                driver,
-                provider_instance_id,
-                provider_thread_id,
-                child_thread_id,
-                origin,
-                status,
-                started_at,
-                completed_at,
-                updated_at,
-                completion_delivery_state,
-                payload_json
-              )
-              VALUES (
-                ${event.payload.id},
-                ${event.payload.threadId},
-                ${event.payload.runId},
-                ${event.payload.parentNodeId},
-                ${event.payload.providerInstanceId},
-                ${event.payload.driver},
-                ${event.payload.providerInstanceId},
-                ${event.payload.providerThreadId},
-                ${event.payload.childThreadId},
-                ${event.payload.origin},
-                ${event.payload.status},
-                ${nullableStringField(payload, "startedAt")},
-                ${nullableStringField(payload, "completedAt")},
-                ${stringField(payload, "updatedAt")},
-                ${event.payload.completionDelivery?.state ?? null},
-                ${payloadJson}
-              )
-              ON CONFLICT(subagent_id)
-              DO UPDATE SET
-                thread_id = excluded.thread_id,
-                run_id = excluded.run_id,
-                parent_node_id = excluded.parent_node_id,
-                provider = excluded.provider,
-                driver = excluded.driver,
-                provider_instance_id = excluded.provider_instance_id,
-                provider_thread_id = excluded.provider_thread_id,
-                child_thread_id = excluded.child_thread_id,
-                origin = excluded.origin,
-                status = excluded.status,
-                started_at = excluded.started_at,
-                completed_at = excluded.completed_at,
-                updated_at = excluded.updated_at,
-                completion_delivery_state = COALESCE(
-                  excluded.completion_delivery_state,
-                  orchestration_v2_projection_subagents.completion_delivery_state
-                ),
-                payload_json = CASE
-                  WHEN json_type(excluded.payload_json, '$.completionDelivery') IS NULL
-                    AND json_type(orchestration_v2_projection_subagents.payload_json, '$.completionDelivery') IS NOT NULL
-                  THEN json_set(
-                    excluded.payload_json,
-                    '$.completionDelivery',
-                    json_extract(
-                      orchestration_v2_projection_subagents.payload_json,
-                      '$.completionDelivery'
-                    )
-                  )
-                  ELSE excluded.payload_json
-                END
-            `;
+              yield* upsertProjectionRow(sql, projectionTables.subagents, {
+                subagent_id: event.payload.id,
+                thread_id: event.payload.threadId,
+                run_id: event.payload.runId,
+                parent_node_id: event.payload.parentNodeId,
+                provider: event.payload.providerInstanceId,
+                driver: event.payload.driver,
+                provider_instance_id: event.payload.providerInstanceId,
+                provider_thread_id: event.payload.providerThreadId,
+                child_thread_id: event.payload.childThreadId,
+                origin: event.payload.origin,
+                status: event.payload.status,
+                started_at: nullableStringField(payload, "startedAt"),
+                completed_at: nullableStringField(payload, "completedAt"),
+                updated_at: stringField(payload, "updatedAt"),
+                completion_delivery_state: event.payload.completionDelivery?.state ?? null,
+                payload_json: payloadJson,
+              });
               break;
             }
             case "provider-session.attached":
@@ -2653,49 +2602,20 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             case "provider-thread.updated": {
               const payloadJson = yield* encodeProviderThreadPayload(event.payload);
               const payload = parseEncodedPayload(payloadJson);
-              yield* sql`
-              INSERT INTO orchestration_v2_projection_provider_threads (
-                provider_thread_id,
-                thread_id,
-                owner_node_id,
-                provider,
-                driver,
-                provider_instance_id,
-                provider_session_id,
-                status,
-                first_run_ordinal,
-                last_run_ordinal,
-                updated_at,
-                payload_json
-              )
-              VALUES (
-                ${event.payload.id},
-                ${event.payload.appThreadId},
-                ${event.payload.ownerNodeId},
-                ${event.payload.providerInstanceId},
-                ${event.payload.driver},
-                ${event.payload.providerInstanceId},
-                ${event.payload.providerSessionId},
-                ${event.payload.status},
-                ${event.payload.firstRunOrdinal},
-                ${event.payload.lastRunOrdinal},
-                ${stringField(payload, "updatedAt")},
-                ${payloadJson}
-              )
-              ON CONFLICT(provider_thread_id)
-              DO UPDATE SET
-                thread_id = excluded.thread_id,
-                owner_node_id = excluded.owner_node_id,
-                provider = excluded.provider,
-                driver = excluded.driver,
-                provider_instance_id = excluded.provider_instance_id,
-                provider_session_id = excluded.provider_session_id,
-                status = excluded.status,
-                first_run_ordinal = excluded.first_run_ordinal,
-                last_run_ordinal = excluded.last_run_ordinal,
-                updated_at = excluded.updated_at,
-                payload_json = excluded.payload_json
-            `;
+              yield* upsertProjectionRow(sql, projectionTables.providerThreads, {
+                provider_thread_id: event.payload.id,
+                thread_id: event.payload.appThreadId,
+                owner_node_id: event.payload.ownerNodeId,
+                provider: event.payload.providerInstanceId,
+                driver: event.payload.driver,
+                provider_instance_id: event.payload.providerInstanceId,
+                provider_session_id: event.payload.providerSessionId,
+                status: event.payload.status,
+                first_run_ordinal: event.payload.firstRunOrdinal,
+                last_run_ordinal: event.payload.lastRunOrdinal,
+                updated_at: stringField(payload, "updatedAt"),
+                payload_json: payloadJson,
+              });
               if (
                 event.payload.appThreadId !== null &&
                 !isQueuedProviderThreadPlaceholder(event.payload)
@@ -2747,43 +2667,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     )[0]!;
               const payloadJson = yield* encodeProviderTurnPayload(providerTurn);
               const payload = parseEncodedPayload(payloadJson);
-              yield* sql`
-              INSERT INTO orchestration_v2_projection_provider_turns (
-                provider_turn_id,
-                thread_id,
-                provider_thread_id,
-                node_id,
-                run_attempt_id,
-                ordinal,
-                status,
-                started_at,
-                completed_at,
-                payload_json
-              )
-              VALUES (
-                ${event.payload.id},
-                ${event.threadId},
-                ${providerTurn.providerThreadId},
-                ${providerTurn.nodeId},
-                ${providerTurn.runAttemptId},
-                ${providerTurn.ordinal},
-                ${providerTurn.status},
-                ${nullableStringField(payload, "startedAt")},
-                ${nullableStringField(payload, "completedAt")},
-                ${payloadJson}
-              )
-              ON CONFLICT(provider_turn_id)
-              DO UPDATE SET
-                thread_id = excluded.thread_id,
-                provider_thread_id = excluded.provider_thread_id,
-                node_id = excluded.node_id,
-                run_attempt_id = excluded.run_attempt_id,
-                ordinal = excluded.ordinal,
-                status = excluded.status,
-                started_at = excluded.started_at,
-                completed_at = excluded.completed_at,
-                payload_json = excluded.payload_json
-            `;
+              yield* upsertProjectionRow(sql, projectionTables.providerTurns, {
+                provider_turn_id: event.payload.id,
+                thread_id: event.threadId,
+                provider_thread_id: providerTurn.providerThreadId,
+                node_id: providerTurn.nodeId,
+                run_attempt_id: providerTurn.runAttemptId,
+                ordinal: providerTurn.ordinal,
+                status: providerTurn.status,
+                started_at: nullableStringField(payload, "startedAt"),
+                completed_at: nullableStringField(payload, "completedAt"),
+                payload_json: payloadJson,
+              });
               break;
             }
             case "runtime-request.updated": {
@@ -2903,49 +2798,20 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             case "turn-item.updated": {
               const payloadJson = yield* encodeTurnItemPayload(event.payload);
               const updatedAt = yield* encodePayloadTimestamp(event.payload.updatedAt);
-              yield* sql`
-              INSERT INTO orchestration_v2_projection_turn_items (
-                turn_item_id,
-                thread_id,
-                run_id,
-                node_id,
-                provider_thread_id,
-                provider_turn_id,
-                parent_item_id,
-                ordinal,
-                type,
-                status,
-                updated_at,
-                payload_json
-              )
-              VALUES (
-                ${event.payload.id},
-                ${event.payload.threadId},
-                ${event.payload.runId},
-                ${event.payload.nodeId},
-                ${event.payload.providerThreadId},
-                ${event.payload.providerTurnId},
-                ${event.payload.parentItemId},
-                ${event.payload.ordinal},
-                ${event.payload.type},
-                ${event.payload.status},
-                ${updatedAt},
-                ${payloadJson}
-              )
-              ON CONFLICT(turn_item_id)
-              DO UPDATE SET
-                thread_id = excluded.thread_id,
-                run_id = excluded.run_id,
-                node_id = excluded.node_id,
-                provider_thread_id = excluded.provider_thread_id,
-                provider_turn_id = excluded.provider_turn_id,
-                parent_item_id = excluded.parent_item_id,
-                ordinal = excluded.ordinal,
-                type = excluded.type,
-                status = excluded.status,
-                updated_at = excluded.updated_at,
-                payload_json = excluded.payload_json
-            `;
+              yield* upsertProjectionRow(sql, projectionTables.turnItems, {
+                turn_item_id: event.payload.id,
+                thread_id: event.payload.threadId,
+                run_id: event.payload.runId,
+                node_id: event.payload.nodeId,
+                provider_thread_id: event.payload.providerThreadId,
+                provider_turn_id: event.payload.providerTurnId,
+                parent_item_id: event.payload.parentItemId,
+                ordinal: event.payload.ordinal,
+                type: event.payload.type,
+                status: event.payload.status,
+                updated_at: updatedAt,
+                payload_json: payloadJson,
+              });
               break;
             }
             case "checkpoint-scope.created": {
