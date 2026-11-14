@@ -5,13 +5,17 @@
 //!
 //! The model is the `textGenerationModelSelection` setting, or the thread's project override.
 //! When it names a text generator, the prompt goes to that generator's API. When it names an
-//! agent provider (Codex by default, or Claude), the T3 server asks that provider's CLI or SDK;
-//! this server does not, and the request fails without a call: an initial title keeps its seed
-//! and a regenerate reports [`AGENT_TITLES_NOT_SERVED`].
+//! agent provider instance (Codex by default), the prompt goes to that provider's own CLI or
+//! SDK through [`Provider::generate_text`], as T3's `TextGeneration` hands it to the instance's
+//! `textGeneration` (Codex: `codex exec`). A provider without text generation fails the
+//! request without a call: an initial title keeps its seed and a regenerate reports
+//! [`AGENT_TITLES_NOT_SERVED`]. T3's fallback to another provider when the chosen one is
+//! unusable (`fallbackTextGenerationModelSelection`) is not built.
 
-use std::{sync::Arc, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use conn_engine::{BoxFuture, TitleGenerator, TitleKind, TitleMessage, TitleRequest};
+use conn_provider::{Provider, ProviderError, TextGenerationRequest};
 use serde_json::{Map, Value};
 
 use super::{
@@ -28,10 +32,22 @@ const DEFAULT_INSTANCE: &str = "codex";
 const INITIAL_RETRY_DELAYS: [Duration; 2] = [Duration::from_secs(2), Duration::from_secs(4)];
 
 /// Generates thread titles for the engine.
-#[derive(Debug)]
 pub struct Titles {
     generators: Arc<TextGenerators>,
     retry_delays: Vec<Duration>,
+    /// The agent provider instances a title model can name.
+    providers: Vec<Arc<dyn Provider>>,
+    /// T3's attachment store, where a title's image attachments are read from.
+    attachments_dir: Option<PathBuf>,
+}
+
+impl std::fmt::Debug for Titles {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Titles")
+            .field("generators", &self.generators)
+            .field("providers", &self.providers.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl Titles {
@@ -39,7 +55,20 @@ impl Titles {
         Self {
             generators,
             retry_delays: INITIAL_RETRY_DELAYS.to_vec(),
+            providers: Vec::new(),
+            attachments_dir: None,
         }
+    }
+
+    /// Lets a title model name an agent provider instance.
+    pub fn with_providers(
+        mut self,
+        providers: Vec<Arc<dyn Provider>>,
+        attachments_dir: Option<PathBuf>,
+    ) -> Self {
+        self.providers = providers;
+        self.attachments_dir = attachments_dir;
+        self
     }
 
     /// Other waits between the tries of a first title, for tests.
@@ -83,22 +112,73 @@ pub fn title_selection(
     settings: &Map<String, Value>,
     project_id: Option<&str>,
 ) -> (String, String) {
+    let (instance, model, _) = title_model_selection(settings, project_id);
+    (instance, model)
+}
+
+/// The same selection, with the whole stored value (its options: effort, service tier).
+pub fn title_model_selection(
+    settings: &Map<String, Value>,
+    project_id: Option<&str>,
+) -> (String, String, Value) {
     let read = |selection: &Value| {
         Some((
             selection.get("instanceId")?.as_str()?.to_owned(),
             selection.get("model")?.as_str()?.to_owned(),
+            selection.clone(),
         ))
     };
     if let Some(selection) = project_override(settings, project_id, "textGenerationModelSelection")
         .and_then(read)
-        .filter(|(instance, _)| selection_enabled(settings, instance))
+        .filter(|(instance, _, _)| selection_enabled(settings, instance))
     {
         return selection;
     }
     settings
         .get("textGenerationModelSelection")
         .and_then(read)
-        .unwrap_or_else(|| (DEFAULT_INSTANCE.to_owned(), String::new()))
+        .unwrap_or_else(|| {
+            (
+                DEFAULT_INSTANCE.to_owned(),
+                String::new(),
+                serde_json::json!({"instanceId": DEFAULT_INSTANCE, "model": ""}),
+            )
+        })
+}
+
+/// How a provider's driver is named in "… returned invalid structured output.".
+fn driver_label(driver: &str) -> String {
+    match driver {
+        "codex" => "Codex".to_owned(),
+        "claudeAgent" => "Claude".to_owned(),
+        other => other.to_owned(),
+    }
+}
+
+/// The image attachments of the request's messages that the prompt names, as saved files
+/// (`materializeImageAttachments`: absolute paths to existing files, in prompt order).
+fn image_paths(
+    request: &TitleRequest,
+    input: &TitlePromptInput,
+    dir: Option<&std::path::Path>,
+) -> Vec<PathBuf> {
+    let messages: Vec<&TitleMessage> = match &request.kind {
+        TitleKind::Initial { message } => vec![message],
+        TitleKind::Regenerate { messages, .. } => messages.iter().collect(),
+    };
+    input
+        .attachments
+        .iter()
+        .filter_map(|wanted| {
+            messages
+                .iter()
+                .flat_map(|m| m.attachments.iter())
+                .find(|a| a.get("id").and_then(Value::as_str) == Some(wanted.id.as_str()))
+        })
+        .filter(|a| a.get("type").and_then(Value::as_str) == Some("image"))
+        .filter_map(|a| conn_provider_support::attachments::saved_path(dir, a))
+        .filter(|path| path.is_absolute())
+        .collect()
 }
 
 /// `threadTitleInstructions`, with the project's override.
@@ -181,19 +261,49 @@ enum Attempt {
 }
 
 impl Titles {
-    async fn attempt(&self, instance: &str, model: &str, prompt: &str) -> Attempt {
-        let Some(result) = self.generators.run(instance, model, prompt).await else {
-            return Attempt::NotServed;
+    /// One try through an agent provider instance (`instance.textGeneration`).
+    async fn attempt_provider(
+        &self,
+        instance: &str,
+        selection: &Value,
+        cwd: &str,
+        prompt: &str,
+        images: &[PathBuf],
+    ) -> Attempt {
+        let Some(provider) = self
+            .providers
+            .iter()
+            .find(|p| p.instance_id().as_str() == instance)
+        else {
+            return Attempt::Failed(format!(
+                "No provider instance registered for id '{instance}'."
+            ));
         };
-        let text = match result {
-            Ok(text) => text,
-            Err(detail) => return Attempt::Failed(detail),
+        let Ok(model_selection) = conn_contract::from_json(selection.clone()) else {
+            return Attempt::Failed("The title model selection is not valid.".to_owned());
         };
-        let label = self
-            .generators
-            .config(instance)
-            .map_or_else(|| "The model API".to_owned(), |c| generator_label(&c));
-        let Some(reply) = prompts::decode_title_reply(&text) else {
+        let request = TextGenerationRequest {
+            operation: "generateThreadTitle".to_owned(),
+            cwd: cwd.to_owned(),
+            prompt: prompt.to_owned(),
+            output_schema: prompts::TITLE_OUTPUT_SCHEMA.to_owned(),
+            model_selection,
+            image_paths: images.to_vec(),
+            timeout: None,
+        };
+        let label = driver_label(provider.driver());
+        let value = match provider.generate_text(request).await {
+            Ok(value) => value,
+            Err(ProviderError::Unsupported { .. }) => return Attempt::NotServed,
+            Err(ProviderError::Failed { detail, .. }) => return Attempt::Failed(detail),
+            Err(other) => return Attempt::Failed(other.to_string()),
+        };
+        Self::accept(&value.to_string(), &label)
+    }
+
+    /// The reply's title, sanitized, or why it cannot be one.
+    fn accept(text: &str, label: &str) -> Attempt {
+        let Some(reply) = prompts::decode_title_reply(text) else {
             return Attempt::Failed(format!("{label} returned invalid structured output."));
         };
         let title = prompts::sanitize_thread_title(&reply.title);
@@ -206,18 +316,58 @@ impl Titles {
         Attempt::Done(title)
     }
 
+    async fn attempt(&self, instance: &str, model: &str, prompt: &str) -> Attempt {
+        let Some(result) = self.generators.run(instance, model, prompt).await else {
+            return Attempt::NotServed;
+        };
+        let text = match result {
+            Ok(text) => text,
+            Err(detail) => return Attempt::Failed(detail),
+        };
+        let label = self
+            .generators
+            .config(instance)
+            .map_or_else(|| "The model API".to_owned(), |c| generator_label(&c));
+        Self::accept(&text, &label)
+    }
+
     /// One title: the prompt, and up to three tries for a first title.
     pub async fn title(&self, request: TitleRequest) -> Result<String, String> {
         let settings = self.generators.settings();
         let project_id = request.project_id.as_deref();
-        let (instance, model) = title_selection(&settings, project_id);
+        let (instance, model, selection) = title_model_selection(&settings, project_id);
         let input = prompt_input(&request, title_instructions(&settings, project_id))?;
         let prompt = prompts::thread_title_prompt(&input);
         let initial = matches!(request.kind, TitleKind::Initial { .. });
         let delays: &[Duration] = if initial { &self.retry_delays } else { &[] };
         let mut delays = delays.iter();
+        // A text generator answers when the selection names one; else the agent provider.
+        let agent = self.generators.config(&instance).is_none();
+        let images = if agent {
+            let dir = self.attachments_dir.clone();
+            let request = request.clone();
+            let input = input.clone();
+            tokio::task::spawn_blocking(move || image_paths(&request, &input, dir.as_deref()))
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let cwd = request.cwd.clone().unwrap_or_else(|| {
+            std::env::current_dir()
+                .map(|d| d.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| "/".to_owned())
+        });
         loop {
-            match self.attempt(&instance, &model, &prompt).await {
+            let attempt = if agent {
+                self.attempt_provider(&instance, &selection, &cwd, &prompt, &images)
+                    .await
+            } else {
+                self.attempt(&instance, &model, &prompt).await
+            };
+            match attempt {
                 Attempt::Done(title) => return Ok(title),
                 Attempt::NotServed => return Err(AGENT_TITLES_NOT_SERVED.to_owned()),
                 Attempt::Failed(detail) => match delays.next() {

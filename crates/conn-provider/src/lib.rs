@@ -67,12 +67,44 @@ pub trait Provider: Send + Sync {
         None
     }
 
+    /// `ProviderTextGeneration` through this provider's own CLI or SDK, outside any session:
+    /// one prompt with a JSON output schema, answered with one JSON object (T3's text
+    /// generation runner, `TextGenerationOperations.Request`; the caller builds the prompt
+    /// and checks the object's fields). Thread titles use it when the title model is this
+    /// provider's instance. `Unsupported` when the provider has no text generation.
+    fn generate_text(
+        &self,
+        _request: TextGenerationRequest,
+    ) -> BoxFuture<'_, ProviderResult<serde_json::Value>> {
+        unsupported("generate_text")
+    }
+
     /// Probes the provider again (`ManagedServerProvider.refresh`) with the instance's
     /// `providerInstances[id]` settings entry (`None`: no entry), so the next
     /// [`Provider::server_provider_entry`] reports it. Providers with a fixed entry do nothing.
     fn refresh_status(&self, _instance: Option<serde_json::Value>) -> BoxFuture<'_, ()> {
         Box::pin(async {})
     }
+}
+
+/// One text generation request (`TextGenerationOperations.Request`).
+#[derive(Clone, Debug)]
+pub struct TextGenerationRequest {
+    /// T3's operation name, such as `generateThreadTitle`; it names the request in errors.
+    pub operation: String,
+    /// The folder the CLI runs in.
+    pub cwd: String,
+    pub prompt: String,
+    /// The JSON Schema of the answer as the text T3 writes for it
+    /// (`JSON.stringify(toJsonSchemaObject(schema))`, key order kept).
+    pub output_schema: String,
+    /// The text generation model selection, on this provider's instance.
+    pub model_selection: ModelSelection,
+    /// Image attachments, as absolute paths to readable files.
+    pub image_paths: Vec<std::path::PathBuf>,
+    /// The request's deadline when the caller sets one (`investigate.timeoutMs`); else the
+    /// provider's own.
+    pub timeout: Option<std::time::Duration>,
 }
 
 /// `ProviderSelectionTransitionInput`.

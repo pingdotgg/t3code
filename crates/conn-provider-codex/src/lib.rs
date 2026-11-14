@@ -20,6 +20,7 @@ pub mod mapper;
 pub mod network_gate;
 pub mod protocol;
 pub mod session;
+pub mod text_generation;
 
 /// Locks a std mutex. A poisoned lock means a thread panicked while it held the lock: a bug.
 /// With `panic = "abort"` a release build stops at the panic itself.
@@ -168,6 +169,16 @@ impl Provider for CodexProvider {
                 // CodexAdapterV2 does not set it.
                 background_tasks_end_with_process: false,
             })
+        })
+    }
+
+    fn generate_text(
+        &self,
+        request: conn_provider::TextGenerationRequest,
+    ) -> BoxFuture<'_, ProviderResult<Value>> {
+        Box::pin(async move {
+            let models = crate::lock(&self.models).clone();
+            text_generation::generate(&self.config, &models, request).await
         })
     }
 

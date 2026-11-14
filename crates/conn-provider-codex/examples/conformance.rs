@@ -215,6 +215,9 @@ async fn run_scenario(
         attachments_dir: plan["attachmentsDir"].as_str().map(PathBuf::from),
         ..CodexConfig::default()
     };
+    if let Some(title) = scenario.get("title") {
+        return run_title(&config, title, dir, calls).await;
+    }
     let mut provider = Arc::new(CodexProvider::new("codex".into(), config.clone()));
     let mut session: Option<Box<dyn Session>> = None;
     let mut thread: Option<ProviderThread> = None;
@@ -566,6 +569,47 @@ fn main() {
         }
     }
     std::process::exit(i32::from(failed));
+}
+
+/// A title scenario: T3's prompt and schema (from the TS side's request) through
+/// [`Provider::generate_text`], as the title code calls it.
+async fn run_title(
+    config: &CodexConfig,
+    title: &Value,
+    dir: &std::path::Path,
+    calls: &Value,
+) -> Result<(), String> {
+    let config = CodexConfig {
+        launch_args: title["launchArgs"].as_str().unwrap_or_default().to_owned(),
+        ..config.clone()
+    };
+    let provider = CodexProvider::new("codex".into(), config);
+    let request = conn_provider::TextGenerationRequest {
+        operation: "generateThreadTitle".into(),
+        cwd: dir.to_string_lossy().into_owned(),
+        prompt: calls["request"]["prompt"]
+            .as_str()
+            .ok_or("no prompt from TS")?
+            .to_owned(),
+        output_schema: calls["request"]["outputSchema"]
+            .as_str()
+            .ok_or("no schema from TS")?
+            .to_owned(),
+        model_selection: json(&title["modelSelection"])?,
+        image_paths: Vec::new(),
+        timeout: None,
+    };
+    let output = provider
+        .generate_text(request)
+        .await
+        .map_err(|e| e.to_string());
+    let results = serde_json::json!([{
+        "method": "generateThreadTitle",
+        "output": output.as_ref().ok(),
+    }]);
+    std::fs::write(dir.join("rust/results.json"), results.to_string())
+        .map_err(|e| e.to_string())?;
+    output.map(|_| ())
 }
 
 /// Returns once the stub's log has not grown for 100 ms (at most 4 s).

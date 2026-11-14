@@ -55,6 +55,42 @@ const SCENARIOS = {
     covers: "an MCP form elicitation shown as an approval, and its answer",
   },
   interrupt: { fixture: "turn_interrupt", covers: "an interrupt" },
+  // Thread titles through Codex (`CodexTextGeneration.ts`): `codex mcp list --json`, then
+  // `codex exec` with the prompt on stdin. TS runs T3's `generateThreadTitle`; Rust gets the
+  // same prompt and schema and runs `CodexProvider::generate_text`.
+  titleListed: {
+    title: {
+      message: "Fix the login redirect after a password reset",
+      modelSelection: {
+        instanceId: "codex",
+        model: "gpt-6-astra",
+        options: [
+          { id: "reasoningEffort", value: "high" },
+          { id: "fastMode", value: true },
+        ],
+      },
+      launchArgs: "--profile work -c sandbox_mode=workspace-write --search --oss",
+      mcpServers: [
+        { name: "t3-code", enabled: true },
+        { name: "dotted.name", enabled: true },
+        { name: "off", enabled: false },
+      ],
+    },
+    covers: "a title on a listed model: mcp list, exec argv, effort, service tier, MCP servers off, schema file",
+  },
+  titleFallback: {
+    title: {
+      message: "Why does the build fail on CI only?",
+      modelSelection: {
+        instanceId: "codex",
+        model: "gpt-9-unknown",
+        options: [{ id: "reasoningEffort", value: "high" }, { id: "serviceTier", value: "flex" }],
+      },
+      launchArgs: "",
+      mcpServers: [],
+    },
+    covers: "a title on an unlisted model: the catalog's first model, the selection's options dropped",
+  },
   subagentStop: {
     fixture: "subagent_v2",
     derive: "subagentStop",
@@ -173,7 +209,20 @@ NodeFS.writeFileSync(
 );
 NodeFS.writeFileSync(NodePath.join(attachmentsDir, "conf-file-1.txt"), "conformance notes\n");
 
-const wrapper = (dir) => {
+// The Codex catalog both sides see: T3's snapshot models, and Codex's models_cache.json that
+// the Rust provider reads from CODEX_HOME.
+const TITLE_MODELS = [
+  { slug: "gpt-6-luna", name: "GPT-6-Luna", isCustom: false, capabilities: null },
+  { slug: "gpt-6-astra", name: "GPT-6-Astra", isCustom: false, capabilities: null },
+];
+NodeFS.writeFileSync(
+  NodePath.join(codexHome, "models_cache.json"),
+  JSON.stringify({
+    models: TITLE_MODELS.map((m, priority) => ({ slug: m.slug, display_name: m.name, visibility: "list", priority })),
+  }),
+);
+
+const wrapper = (dir, extra = {}) => {
   NodeFS.mkdirSync(dir, { recursive: true });
   const config = NodePath.join(dir, "stub-config.json");
   NodeFS.writeFileSync(
@@ -181,6 +230,7 @@ const wrapper = (dir) => {
     JSON.stringify({
       transcript: NodePath.join(NodePath.dirname(dir), "transcript.json"),
       log: NodePath.join(dir, "stub.ndjson"),
+      ...extra,
     }),
   );
   const script = NodePath.join(dir, "codex");
@@ -337,8 +387,9 @@ function loginShell(sideDir) {
 const plan = selected.map((name) => {
   const dir = NodePath.join(work, name);
   const scenario = SCENARIOS[name];
-  const tsCodex = wrapper(NodePath.join(dir, "ts"));
-  const rustCodex = wrapper(NodePath.join(dir, "rust"));
+  const extra = scenario.title ? { mcpServers: scenario.title.mcpServers } : {};
+  const tsCodex = wrapper(NodePath.join(dir, "ts"), extra);
+  const rustCodex = wrapper(NodePath.join(dir, "rust"), extra);
   const login = scenario.loginShell
     ? { ts: loginShell(NodePath.join(dir, "ts")), rust: loginShell(NodePath.join(dir, "rust")) }
     : undefined;
@@ -366,7 +417,7 @@ const plan = selected.map((name) => {
 });
 NodeFS.writeFileSync(
   NodePath.join(work, "plan.json"),
-  JSON.stringify({ codexHome, attachmentsDir, scenarios: plan }, null, 2),
+  JSON.stringify({ codexHome, attachmentsDir, titleModels: TITLE_MODELS, scenarios: plan }, null, 2),
 );
 
 // ---------------------------------------------------------------------------------------
@@ -397,6 +448,9 @@ import { CodexOrchestratorReplayHarness } from "../Adapters/CodexAdapterV2.testk
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import { makeReplayServerConfig } from "./ProviderReplayHarness.ts";
 import { findReplayFixture, runReplayFixture } from "./ProviderReplayFixtures.ts";
+import { makeCodexTextGeneration } from "../../textGeneration/CodexTextGeneration.ts";
+import { buildThreadTitlePrompt } from "@t3tools/provider-core/server/textGenerationPrompts";
+import { toJsonSchemaObject } from "@t3tools/provider-core/server/textGenerationUtils";
 
 const PLAN = JSON.parse(fs.readFileSync(__PLAN__, "utf8"));
 const DEFAULT_CODEX_SETTINGS = Schema.decodeSync(CodexSettings)({});
@@ -528,8 +582,53 @@ const harnessFor = (scenario: any, log: Array<unknown>) => {
   };
 };
 
-describe("conn codex conformance", () => {
-  for (const scenario of PLAN.scenarios) {
+// A describe block with no test fails, so each is made only when it has scenarios.
+const titleScenarios = PLAN.scenarios.filter((s: any) => s.title);
+const replayScenarios = PLAN.scenarios.filter((s: any) => !s.title);
+if (titleScenarios.length > 0) describe("conn codex title conformance", () => {
+  for (const scenario of titleScenarios) {
+    it.effect(scenario.name, () => {
+      const title = scenario.title;
+      // What the Rust side gets: T3's own prompt and output schema for this message.
+      const built = buildThreadTitlePrompt({ message: title.message });
+      const request = { prompt: built.prompt, outputSchema: JSON.stringify(toJsonSchemaObject(built.outputSchema)) };
+      fs.writeFileSync(scenario.dir + "/ts/env.json", JSON.stringify(process.env));
+      return Effect.gen(function* () {
+        const generation = yield* makeCodexTextGeneration(
+          { ...DEFAULT_CODEX_SETTINGS, binaryPath: scenario.tsCodex, homePath: PLAN.codexHome, launchArgs: title.launchArgs },
+          process.env,
+          Effect.succeed(PLAN.titleModels),
+        );
+        return yield* generation.generateThreadTitle({
+          cwd: scenario.dir,
+          message: title.message,
+          modelSelection: title.modelSelection,
+        });
+      }).pipe(
+        Effect.provide(
+          ServerConfig.ServerConfig.layerTest(scenario.dir, { prefix: "conn-codex-title-" }).pipe(
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ),
+        Effect.exit,
+        Effect.map((exit) => {
+          fs.writeFileSync(
+            scenario.dir + "/ts/calls.json",
+            safeJson({
+              ok: Exit.isSuccess(exit),
+              failure: Exit.isSuccess(exit) ? null : String(exit.cause),
+              request,
+              log: [{ kind: "result", method: "generateThreadTitle", output: Exit.isSuccess(exit) ? exit.value : null }],
+            }),
+          );
+        }),
+      );
+    }, 30_000);
+  }
+});
+
+if (replayScenarios.length > 0) describe("conn codex conformance", () => {
+  for (const scenario of replayScenarios) {
     it.effect(scenario.name, () => {
       const log: Array<unknown> = [];
       const fixture = findReplayFixture(scenario.fixture)!;
@@ -797,9 +896,75 @@ const short = (v) => {
   return s === undefined ? "<absent>" : s.length > 160 ? `${s.slice(0, 157)}...` : s;
 };
 
+/**
+ * A title scenario's CLI runs, comparable across sides: each command's argv (the schema and
+ * output files as their T3 shape, `<tmp>/t3code-codex-<kind>-<pid>-XXXXXX/<12 hex>`),
+ * environment change, folder, and for `exec` the stdin bytes and the schema file.
+ */
+const titleRuns = (log, sideEnv) => {
+  const runs = [];
+  const tmp = NodeOS.tmpdir().replace(/\/+$/, "");
+  const shape = (value) => {
+    const m = /^(.*)\/t3code-codex-(schema|output)-(\d+)-([A-Za-z0-9]{6})\/([0-9a-f]{12})$/.exec(value);
+    if (m === null) return value;
+    const base = NodeFS.realpathSync(m[1]) === NodeFS.realpathSync(tmp) ? "<tmp>" : m[1];
+    // The digits are the server's process id, which differs by side.
+    return `${base}/t3code-codex-${m[2]}-<pid>-XXXXXX/<12 hex>`;
+  };
+  for (const entry of log) {
+    if (entry.kind === "start") {
+      runs.push({
+        argv: entry.argv.map(shape),
+        env: envDelta(entry.env, sideEnv),
+        cwd: entry.cwd,
+      });
+    } else if (entry.kind === "exec" && runs.length > 0) {
+      Object.assign(runs.at(-1), { stdin: entry.stdin, schema: entry.schema, schemaName: entry.schemaName });
+    } else if (entry.kind === "mcp-list" && runs.length > 0) {
+      runs.at(-1).mcpList = true;
+    }
+  }
+  return runs;
+};
+
 let unexplained = 0;
 const report = [];
 for (const scenario of plan) {
+  if (scenario.title) {
+    const tsCalls = JSON.parse(NodeFS.readFileSync(NodePath.join(scenario.dir, "ts/calls.json"), "utf8"));
+    const tsEnv = JSON.parse(NodeFS.readFileSync(NodePath.join(scenario.dir, "ts/env.json"), "utf8"));
+    const rustEnvPath = NodePath.join(scenario.dir, "rust/env.json");
+    const rustEnv = NodeFS.existsSync(rustEnvPath) ? JSON.parse(NodeFS.readFileSync(rustEnvPath, "utf8")) : {};
+    const rustResultsPath = NodePath.join(scenario.dir, "rust/results.json");
+    const rustResults = NodeFS.existsSync(rustResultsPath) ? JSON.parse(NodeFS.readFileSync(rustResultsPath, "utf8")) : [];
+    const ts = titleRuns(readLog(NodePath.join(scenario.dir, "ts/stub.ndjson")), tsEnv);
+    const rs = titleRuns(readLog(NodePath.join(scenario.dir, "rust/stub.ndjson")), rustEnv);
+    const diffs = [];
+    if (ts.length !== rs.length) diffs.push({ kind: "process-count", ts: ts.length, rust: rs.length });
+    for (let p = 0; p < Math.min(ts.length, rs.length); p += 1) {
+      const a = ts[p];
+      const b = rs[p];
+      for (const key of ["argv", "cwd", "stdin", "schema", "schemaName", "mcpList"]) {
+        if (JSON.stringify(a[key]) !== JSON.stringify(b[key])) diffs.push({ kind: "frame", method: `run ${p}`, path: key, ts: a[key], rust: b[key] });
+      }
+      for (const key of [...new Set([...Object.keys(a.env), ...Object.keys(b.env)])].sort()) {
+        if (HOST_NOISE.test(key)) continue;
+        if (a.env[key] !== b.env[key]) diffs.push({ kind: "env", process: p, key, ts: a.env[key], rust: b.env[key] });
+      }
+    }
+    const tsOut = tsCalls.log.find((e) => e.kind === "result")?.output ?? null;
+    const rsOut = rustResults[0]?.output ?? null;
+    if (JSON.stringify(stable(tsOut)) !== JSON.stringify(stable(rsOut))) {
+      diffs.push({ kind: "result", method: "generateThreadTitle", path: "<root>", ts: tsOut, rust: rsOut });
+    }
+    for (const d of diffs) {
+      const known = KNOWN.find((k) => (k.scenario == null || k.scenario === scenario.name) && k.match(d));
+      d.known = known?.reason;
+      if (!known) unexplained += 1;
+    }
+    report.push({ scenario: scenario.name, covers: scenario.covers, tsOk: tsCalls.ok, tsFailure: tsCalls.failure, processes: [ts.length, rs.length], frames: [0, 0], diffs });
+    continue;
+  }
   const tsCalls = JSON.parse(NodeFS.readFileSync(NodePath.join(scenario.dir, "ts/calls.json"), "utf8"));
   const tsEnv = JSON.parse(NodeFS.readFileSync(NodePath.join(scenario.dir, "ts/env.json"), "utf8"));
   const rustEnvPath = NodePath.join(scenario.dir, "rust/env.json");

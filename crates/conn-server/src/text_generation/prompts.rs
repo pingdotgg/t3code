@@ -15,6 +15,7 @@ use super::js::{self, char_code_at, is_high_surrogate, is_low_surrogate, len16, 
 #[path = "generated.rs"]
 mod generated;
 use generated::Part;
+pub(crate) use generated::TITLE_OUTPUT_SCHEMA;
 
 /// `EARLIER_CONTENT_TRUNCATION_MARKER` and `OMITTED`.
 const OMITTED: &str = "[Earlier content truncated]\n\n";

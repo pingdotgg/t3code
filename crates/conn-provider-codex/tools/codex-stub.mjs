@@ -41,6 +41,33 @@ const log = (entry) =>
 
 log({ kind: "start", argv, env: { ...process.env }, cwd: process.cwd(), pid: process.pid });
 
+// Text generation (`CodexTextGeneration.ts`) runs short CLI commands, not the app-server:
+// - `mcp list --json` prints `config.mcpServers` (default: none);
+// - `exec … -` reads the prompt on stdin, records it and the `--output-schema` file, and
+//   writes `config.execOutput` (default `{"title":"Stub title"}`) to `--output-last-message`.
+if (argv.includes("mcp") && argv.includes("list")) {
+  log({ kind: "mcp-list" });
+  process.stdout.write(JSON.stringify(config.mcpServers ?? []));
+  process.exit(0);
+}
+if (argv[0] === "exec") {
+  const after = (flag) => argv[argv.indexOf(flag) + 1];
+  const chunks = [];
+  process.stdin.on("data", (chunk) => chunks.push(chunk));
+  process.stdin.on("end", () => {
+    const schemaPath = after("--output-schema");
+    log({
+      kind: "exec",
+      stdin: Buffer.concat(chunks).toString("utf8"),
+      schema: NodeFS.readFileSync(schemaPath, "utf8"),
+      schemaName: schemaPath.split("/").at(-1).length,
+      schemaDir: schemaPath.split("/").at(-2).replace(/[A-Za-z0-9]{6}$/, "XXXXXX"),
+    });
+    NodeFS.writeFileSync(after("--output-last-message"), config.execOutput ?? '{"title":"Stub title"}');
+    process.exit(config.execExit ?? 0);
+  });
+} else {
+
 const readTranscript = (path) => {
   const text = NodeFS.readFileSync(path, "utf8");
   if (text.trimStart().startsWith("{\"type\":\"transcript_start\"") || path.endsWith(".ndjson")) {
@@ -273,3 +300,4 @@ lines.on("line", (line) => {
   onFrame(frame);
 });
 lines.on("close", () => beginShutdown("stdin-end"));
+}
