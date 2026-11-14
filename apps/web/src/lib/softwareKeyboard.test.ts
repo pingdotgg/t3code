@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { createSoftwareKeyboardStore } from "./softwareKeyboard";
+import { createSoftwareKeyboardStore, pinShellToKeyboardViewport } from "./softwareKeyboard";
 
 function fixture(options: { native?: boolean; overlay?: boolean; desktop?: boolean } = {}) {
   const viewport = Object.assign(new EventTarget(), { width: 390, height: 844, scale: 1 });
@@ -132,5 +132,90 @@ describe("software keyboard detection", () => {
     expect(store.getSnapshot()).toBe(false);
     expect(listener).not.toHaveBeenCalled();
     unsubscribe();
+  });
+});
+
+describe("pinning the shell to the keyboard viewport", () => {
+  function pinFixture(desktop = false) {
+    const viewport = Object.assign(new EventTarget(), { height: 1290, offsetTop: 0, scale: 1 });
+    const properties = new Map<string, string>();
+    const root = {
+      clientHeight: 1290,
+      dataset: {} as DOMStringMap,
+      style: {
+        setProperty: (key: string, value: string) => properties.set(key, value),
+        removeProperty: (key: string) => properties.delete(key),
+      },
+    };
+    const scrollTo = vi.fn(() => Object.assign(viewport, { offsetTop: 0 }));
+    const document = {
+      documentElement: root,
+      activeElement: { closest: (): object | null => ({}) },
+    };
+    const stop = pinShellToKeyboardViewport(
+      {
+        visualViewport: viewport,
+        document,
+        scrollTo,
+      } as unknown as Window,
+      desktop,
+    );
+    const move = (event: "resize" | "scroll", height: number, offsetTop: number, scale = 1) => {
+      Object.assign(viewport, { height, offsetTop, scale });
+      viewport.dispatchEvent(new Event(event));
+    };
+    const focusOutsideShell = () => {
+      document.activeElement = { closest: () => null };
+    };
+    return { root, properties, stop, move, scrollTo, focusOutsideShell };
+  }
+
+  // iPad Pro 13-inch Safari: the layout viewport keeps its height under the keyboard.
+  it("sizes the shell to the keyboard and undoes Safari's scroll, then restores the layout", () => {
+    const { root, properties, stop, move, scrollTo } = pinFixture();
+    // While the keyboard animates in, Safari pans before the viewport loses height.
+    move("scroll", 1290, 403);
+    expect(scrollTo).toHaveBeenCalledWith(0, 0);
+    expect(root.dataset.keyboardViewport).toBeUndefined();
+
+    move("resize", 887, 0);
+    expect(root.dataset.keyboardViewport).toBe("");
+    expect(Object.fromEntries(properties)).toEqual({ "--keyboard-viewport-height": "887px" });
+    move("scroll", 887, 403);
+    expect(scrollTo).toHaveBeenCalledTimes(2);
+
+    // A hardware keyboard's shortcut bar.
+    move("resize", 1222, 0);
+    expect(Object.fromEntries(properties)).toEqual({ "--keyboard-viewport-height": "1222px" });
+
+    move("resize", 1290, 0);
+    expect(root.dataset.keyboardViewport).toBeUndefined();
+    expect(properties.size).toBe(0);
+
+    move("resize", 400, 300, 2);
+    expect(root.dataset.keyboardViewport).toBeUndefined();
+    expect(scrollTo).toHaveBeenCalledTimes(2);
+
+    move("resize", 887, 0);
+    stop();
+    expect(root.dataset.keyboardViewport).toBeUndefined();
+    expect(properties.size).toBe(0);
+  });
+
+  it("leaves Safari's scroll to fields outside the shell, such as dialogs", () => {
+    const { root, move, scrollTo, focusOutsideShell } = pinFixture();
+    move("resize", 887, 0);
+    expect(root.dataset.keyboardViewport).toBe("");
+
+    focusOutsideShell();
+    move("scroll", 887, 403);
+    expect(root.dataset.keyboardViewport).toBeUndefined();
+    expect(scrollTo).not.toHaveBeenCalled();
+  });
+
+  it("never pins on desktop", () => {
+    const { root, move } = pinFixture(true);
+    move("resize", 887, 0);
+    expect(root.dataset.keyboardViewport).toBeUndefined();
   });
 });
