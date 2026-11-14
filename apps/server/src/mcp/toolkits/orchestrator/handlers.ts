@@ -182,6 +182,7 @@ const handlers = {
           const service = yield* OrchestratorMcpService.OrchestratorMcpService;
           return yield* service.sendToThread(scope, input);
         }),
+      { ownChildren: "at-their-runtime-mode" },
     ),
     // There the thread's parent is here, so only this side can make a follow-up a task.
     (input, environmentId, sent) =>

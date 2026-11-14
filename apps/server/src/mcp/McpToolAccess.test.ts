@@ -15,6 +15,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 
+import { DispatchModeLimit } from "../orchestration-v2/DispatchModeLimit.ts";
 import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
@@ -31,6 +32,22 @@ const backgroundThreadId = ThreadId.make("thread:background");
 const oldProviderThreadId = ThreadId.make("thread:old-provider-background");
 const archivedThreadId = ThreadId.make("thread:archived-background");
 const unknownOwnerThreadId = ThreadId.make("thread:unknown-background-owner");
+const ownChildThreadId = ThreadId.make("thread:own-child");
+const forgedChildThreadId = ThreadId.make("thread:forged-child");
+const planChildThreadId = ThreadId.make("thread:plan-child");
+
+const childShell = (threadId: ThreadId, parentThreadId: ThreadId) => ({
+  ...liveThreadShell(threadId),
+  lineage: {
+    rootThreadId: parentThreadId,
+    parentThreadId,
+    relationshipToParent: "subagent" as const,
+  },
+});
+const appOwnedChildren = new Map([
+  [supervisedThreadId, [ownChildThreadId]],
+  [planThreadId, [planChildThreadId]],
+]);
 
 const backgroundShell = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) => ({
   ...liveThreadShell(threadId, { activeRunId: null }),
@@ -63,6 +80,10 @@ const shells = new Map([
       pendingBackgroundTasks: [{ taskId: "task:unknown", kind: "subagent" as const }],
     },
   ],
+  [ownChildThreadId, childShell(ownChildThreadId, supervisedThreadId)],
+  // Says it is the supervised thread's child, but that thread never delegated it.
+  [forgedChildThreadId, childShell(forgedChildThreadId, supervisedThreadId)],
+  [planChildThreadId, childShell(planChildThreadId, planThreadId)],
 ]);
 
 const threadCaller = (threadId: ThreadId): McpInvocationContext.McpInvocationScope => ({
@@ -121,6 +142,10 @@ const ProbeToolkit = Toolkit.make(
     ...probe,
     parameters: Schema.Struct({ threadId: Schema.optional(ThreadId) }),
   }),
+  Tool.make("writes_own_children", {
+    ...probe,
+    parameters: Schema.Struct({ threadId: Schema.optional(ThreadId) }),
+  }),
   Tool.make("starts_threads", {
     ...probe,
     parameters: Schema.Struct({
@@ -140,6 +165,16 @@ const probeHandlers: McpToolAccess.Handlers<typeof ProbeToolkit.tools> = {
   writes_threads: McpToolAccess.writesThreads(
     (input) => [input.threadId],
     () => ran,
+  ),
+  // Answers with the modes the orchestrator rechecks under its lock.
+  writes_own_children: McpToolAccess.writesThreads(
+    (input) => [input.threadId],
+    () =>
+      Effect.gen(function* () {
+        const limit = yield* DispatchModeLimit;
+        return { ran: `${limit?.runtimeMode}/${limit?.interactionMode}` };
+      }),
+    { ownChildren: "at-their-runtime-mode" },
   ),
   starts_threads: McpToolAccess.startsThreads(
     (input) => input,
@@ -184,6 +219,7 @@ export const refusedAtCompileTime = () => {
       writes: unchecked,
       writes_with_capability: unchecked,
       writes_threads: unchecked,
+      writes_own_children: unchecked,
       starts_threads: unchecked,
       writes_environment: unchecked,
     }),
@@ -300,6 +336,27 @@ it.effect.each([
   ],
   ["writes_threads", supervised, { threadId: "thread:missing" }, "ran"],
 
+  // A thread moves and resumes its own delegated children at the runtime mode they already have.
+  ["writes_own_children", supervised, { threadId: ownChildThreadId }, "full-access/default"],
+  [
+    "writes_own_children",
+    plan,
+    { threadId: planChildThreadId },
+    "interaction_mode_escalation_denied",
+  ],
+  [
+    "writes_own_children",
+    supervised,
+    { threadId: forgedChildThreadId },
+    "runtime_mode_escalation_denied",
+  ],
+  [
+    "writes_own_children",
+    supervisedClient,
+    { threadId: ownChildThreadId },
+    "runtime_mode_escalation_denied",
+  ],
+
   ["starts_threads", supervised, {}, "approval-required/default"],
   ["starts_threads", supervised, { runtimeMode: "full-access" }, "runtime_mode_escalation_denied"],
   ["starts_threads", plan, {}, "approval-required/plan"],
@@ -322,6 +379,8 @@ it.effect.each([
       probeServer(
         Layer.mock(ThreadManagement.ThreadManagementService)({
           getThreadShell: (threadId) => Effect.succeed(shells.get(threadId) ?? null),
+          listAppOwnedChildThreadIds: (threadId) =>
+            Effect.succeed(appOwnedChildren.get(threadId) ?? []),
         }),
       ),
     ),

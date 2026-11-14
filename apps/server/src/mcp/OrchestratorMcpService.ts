@@ -3305,8 +3305,18 @@ const make = Effect.gen(function* () {
       } satisfies OrchestratorMcpThreadReadResult;
     }),
     sendToThread: Effect.fn("OrchestratorMcpService.sendToThread")(function* (scope, input) {
-      const { parent, limits, target } = yield* loadScopedThread(scope, input.threadId, ["runs"]);
+      const {
+        parent,
+        limits: callerLimits,
+        target,
+      } = yield* loadScopedThread(scope, input.threadId, ["runs"]);
       yield* assertLiveCallerForOtherThread(scope, parent, target);
+      // The declaration lifts only the runtime limit, and only to its own child's preflight mode.
+      const ownChildRuntimeMode = (yield* DispatchModeLimit)?.ownChildRuntimeMode;
+      const limits =
+        ownChildRuntimeMode === undefined
+          ? callerLimits
+          : { ...callerLimits, runtimeMode: ownChildRuntimeMode };
       yield* resolveRuntimeMode(limits.runtimeMode, target.thread.runtimeMode);
       yield* resolveInteractionMode(limits.interactionMode, target.thread.interactionMode);
 
