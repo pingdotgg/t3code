@@ -1,5 +1,5 @@
-import { decodeString } from "micromark-util-decode-string";
 import type { Processor } from "unified";
+import { decodeWindowsPathDestination } from "./markdownLinks.ts";
 import { isWindowsAbsolutePath } from "./path.ts";
 
 interface DestinationCompileContext {
@@ -8,20 +8,12 @@ interface DestinationCompileContext {
   sliceSerialize(token: unknown): string;
 }
 
-/** Escapes every Windows path separator for a Markdown destination. */
-export function escapeWindowsPathBackslashes(path: string): string {
-  return path.replace(/\\/g, "\\\\");
-}
-
 function keepWindowsPathDestination(this: DestinationCompileContext, token: unknown) {
   const decoded = this.resume();
   const authored = this.sliceSerialize(token);
   const node = this.stack.at(-1);
-  // Escaping each separator keeps it while character references still decode.
   if (node)
-    node.url = isWindowsAbsolutePath(authored)
-      ? decodeString(escapeWindowsPathBackslashes(authored))
-      : decoded;
+    node.url = isWindowsAbsolutePath(authored) ? decodeWindowsPathDestination(authored) : decoded;
 }
 
 // A drive path that has not reached whitespace yet: `C:`, `C:\Users\me`, `C:/work`.

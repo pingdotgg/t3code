@@ -1,3 +1,4 @@
+import { decodeString } from "micromark-util-decode-string";
 import {
   isNetworkPath,
   isWindowsAbsolutePath,
@@ -419,6 +420,16 @@ function unescapedLabelEnd(markdown: string, start: number): number {
   return -1;
 }
 
+/** Escapes every Windows path separator for a Markdown destination. */
+export function escapeWindowsPathBackslashes(path: string): string {
+  return path.replace(/\\/g, "\\\\");
+}
+
+/** The URL an authored Windows path destination names: separators kept, references decoded. */
+export function decodeWindowsPathDestination(authored: string): string {
+  return decodeString(escapeWindowsPathBackslashes(authored));
+}
+
 export function extractMarkdownLinkHrefs(markdown: string): string[] {
   const hrefs: string[] = [];
   const scanDestination = markdownLinkDestinationScanner(markdown);
@@ -435,7 +446,8 @@ export function extractMarkdownLinkHrefs(markdown: string): string[] {
     if (!destination) continue;
     cursor = destination.end;
     const href = markdown.slice(destination.hrefStart, destination.hrefEnd).trim();
-    if (href) hrefs.push(href);
+    // Match the URL `remarkKeepWindowsPaths` renders, so `&amp;` and `&` name one file.
+    if (href) hrefs.push(isWindowsAbsolutePath(href) ? decodeWindowsPathDestination(href) : href);
   }
   return hrefs;
 }
