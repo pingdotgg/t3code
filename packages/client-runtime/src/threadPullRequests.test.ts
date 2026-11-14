@@ -396,6 +396,12 @@ describe("chain selection and badge state", () => {
       state: "open",
     });
     expect(resolveThreadPullRequestBadge([link(3, { source: "stack-dismissed" })])).toBeNull();
+    const unreadable = (number: number) => link(number, { unavailable: "No checkout." });
+    expect(resolveThreadPullRequestBadge([unreadable(4), unreadable(5)])).toEqual({
+      kind: "pull-request",
+      others: 1,
+      state: "closed",
+    });
   });
 
   it("keeps branch matching case-sensitive while ignoring repository case", () => {
