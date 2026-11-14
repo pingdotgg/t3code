@@ -24,8 +24,8 @@ const lineClassName = cn(
   "transition-opacity duration-150 ease-out starting:opacity-0 motion-reduce:transition-none",
 );
 
-/** One line of thread state at the end of the timeline: icon, title, detail, then actions. */
-function ThreadNowLine({
+/** One line of thread state: icon, title, detail, then actions. */
+export function ThreadNowLine({
   item,
   announce = false,
 }: {
@@ -78,26 +78,23 @@ function ThreadSyncLine({ phase }: { readonly phase: ThreadSyncPhase }) {
 
 /**
  * What the thread is doing now, at the end of the timeline: what needs you, background work,
- * the sync status while messages load, then the goal.
+ * and the sync status while messages load.
  */
 export function ThreadNow({
   attention,
   work,
   syncPhase,
-  goal,
 }: {
   /** Something that needs you elsewhere, such as a subagent's question. */
   readonly attention: ThreadNowItem | null;
   readonly work: ThreadNowItem | null;
   readonly syncPhase: ThreadSyncPhase | null;
-  readonly goal: ThreadNowItem | null;
 }): ReactNode {
   return (
     <>
       {attention ? <ThreadNowLine item={attention} announce /> : null}
       {work ? <ThreadNowLine item={work} /> : null}
       {syncPhase ? <ThreadSyncLine phase={syncPhase} /> : null}
-      {goal ? <ThreadNowLine item={goal} /> : null}
     </>
   );
 }
