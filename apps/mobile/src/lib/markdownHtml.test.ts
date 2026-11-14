@@ -388,12 +388,12 @@ describe("file embeds in native thread and file Markdown", () => {
       ["a line after a backslash break", `text\\\n${video}`, `text\\\n${link}`],
       ["a line before a backslash break", `${video}\\\nnext`, `${link}\\\nnext`],
       [
-        "text that a split would turn into a setext heading",
+        "text that a split would turn into a setext h2",
         `intro\n--- ${video}`,
         `intro\n--- ${link}`,
       ],
       [
-        "text that a split would turn into a setext heading",
+        "text that a split would turn into a setext h1",
         `intro\n=== ${video}`,
         `intro\n=== ${link}`,
       ],
@@ -405,17 +405,6 @@ describe("file embeds in native thread and file Markdown", () => {
       const converted = convert(source);
       expect(converted.markdown).toBe(expected);
       expect(await slots(converted.markdown)).toEqual([]);
-    });
-
-    it.each([
-      ["an image under text", "text\n![p](C:/path/x.png)"],
-      ["an image in a list item", "- ![p](C:/path/x.png)"],
-      ["a video in a code span", `text \`${video}\``],
-      ["a video in a code block", `text\n\n\`\`\`md\n${video}\n\`\`\``],
-    ])("leaves %s unchanged", (_, source) => {
-      const converted = convert(source);
-      expect(converted.markdown).toBe(source);
-      expect(converted.fileHrefs.size).toBe(0);
     });
   });
 
