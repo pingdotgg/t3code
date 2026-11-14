@@ -1470,6 +1470,16 @@ export const layerQueryRunner: Layer.Layer<
               Effect.tap((queryRuntime) =>
                 restore(
                   Effect.gen(function* () {
+                    // Initialize bypass before the first prompt so its first tool cannot race init.
+                    if (
+                      options.permissionMode === "bypassPermissions" &&
+                      options.allowDangerouslySkipPermissions === true
+                    ) {
+                      yield* Effect.tryPromise({
+                        try: () => queryRuntime.setPermissionMode("bypassPermissions"),
+                        catch: (cause) => queryRunnerError(cause, "setPermissionMode"),
+                      }).pipe(Effect.timeout("10 seconds"), Effect.ignore);
+                    }
                     if (mcpServers !== undefined) {
                       const timedOut = (phase: ClaudeMcpRegistrationTimeoutError["phase"]) => () =>
                         Effect.logWarning("orchestration-v2.claude-mcp-registration-timeout", {
