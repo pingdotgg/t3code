@@ -431,12 +431,14 @@ function notebookText(value: unknown, limit = 256_000): string {
   if (result.length > limit) throw new Error("A notebook cell is too large to preview.");
   return result;
 }
-// IPython traceback frames may omit a final newline or follow it with ANSI SGR sequences.
+// IPython traceback frames carry ANSI SGR colors, which a plain <pre> cannot render, and may omit a final newline.
 function tracebackLines(value: unknown): unknown {
   if (!Array.isArray(value)) return value;
-  const frames = value.filter((frame): frame is string => typeof frame === "string");
+  const frames = value
+    .filter((frame): frame is string => typeof frame === "string")
+    .map((frame) => frame.replaceAll(/\u001b\[[\d;:]*m/g, ""));
   return frames.map((frame, index) =>
-    index && !/\n(?:\u001b\[[\d;:]*m)*$/.test(frames[index - 1]!) ? `\n${frame}` : frame,
+    index && !frames[index - 1]!.endsWith("\n") ? `\n${frame}` : frame,
   );
 }
 export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
