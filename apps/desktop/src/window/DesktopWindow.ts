@@ -30,10 +30,7 @@ import {
   TRACKPAD_SCROLL_END_CHANNEL,
   WINDOW_FULLSCREEN_STATE_CHANNEL,
 } from "../ipc/channels.ts";
-import {
-  PASSKEY_BRIDGE_ARGUMENT,
-  PRIMARY_PASTE_DISABLED_ARGUMENT,
-} from "../preview/GuestProtocol.ts";
+import { hardenPreviewWebviewPreferences } from "../preview/WebviewPreferences.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 import * as PreviewPasskeys from "../preview/Passkeys.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
@@ -41,6 +38,8 @@ import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import { makeQuitShortcutHandler } from "./QuitHold.ts";
+import { isSameOriginRendererNavigation } from "./RendererNavigation.ts";
+
 import { copyContextMenuImage } from "./ContextMenuImage.ts";
 
 const TITLEBAR_HEIGHT = 40;
@@ -267,24 +266,6 @@ function buildConnectingSplashDataUrl(shouldUseDarkColors: boolean): string {
   const track = shouldUseDarkColors ? "rgba(248,250,252,0.18)" : "rgba(31,41,55,0.18)";
   const html = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>html,body{margin:0;height:100%}body{background:${background};color:${label};font-family:system-ui,-apple-system,'Segoe UI',sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;-webkit-user-select:none;user-select:none;-webkit-app-region:drag}.spinner{width:26px;height:26px;border:3px solid ${track};border-top-color:${accent};border-radius:50%;animation:spin .8s linear infinite}.label{font-size:13px}@keyframes spin{to{transform:rotate(360deg)}}</style></head><body><div class="spinner"></div><div class="label">Connecting to WSL…</div></body></html>`;
   return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
-}
-
-export function isSameOriginRendererNavigation(input: {
-  readonly applicationUrl: string;
-  readonly navigationUrl: string;
-}): boolean {
-  try {
-    const applicationUrl = new URL(input.applicationUrl);
-    const navigationUrl = new URL(input.navigationUrl);
-    // Node serializes custom-scheme origins as "null", even for different hosts and schemes.
-    return (
-      applicationUrl.host !== "" &&
-      navigationUrl.protocol === applicationUrl.protocol &&
-      navigationUrl.host === applicationUrl.host
-    );
-  } catch {
-    return false;
-  }
 }
 
 function isRetryableDevelopmentRendererLoadFailure(input: {
@@ -625,23 +606,11 @@ export const make = Effect.gen(function* () {
         event.preventDefault();
         return;
       }
-      webPreferences.sandbox = true;
-      webPreferences.nodeIntegration = false;
-      webPreferences.nodeIntegrationInSubFrames = false;
-      webPreferences.contextIsolation = false;
-      webPreferences.disableHtmlFullscreenWindowResize = true;
-      if (previewPasskeys.bridgeEnabled) {
-        webPreferences.additionalArguments = [
-          ...(webPreferences.additionalArguments ?? []),
-          PASSKEY_BRIDGE_ARGUMENT,
-        ];
-      }
-      if (!primaryPaste.enabled) {
-        webPreferences.additionalArguments = [
-          ...(webPreferences.additionalArguments ?? []),
-          PRIMARY_PASTE_DISABLED_ARGUMENT,
-        ];
-      }
+      hardenPreviewWebviewPreferences(
+        webPreferences,
+        previewPasskeys.bridgeEnabled,
+        primaryPaste.enabled,
+      );
     });
 
     const contextMenuContents = new WeakSet<Electron.WebContents>();
@@ -738,6 +707,14 @@ export const make = Effect.gen(function* () {
       installContextMenu(window, contents);
       void runPromise(previewManager.prepareWebview(contents));
     });
+    // Pop-out browser windows host their own guest, which needs the same menu.
+    const onWindowCreated = (_event: Electron.Event, created: Electron.BrowserWindow) => {
+      created.webContents.on("did-attach-webview", (_attachEvent, contents) => {
+        installContextMenu(created, contents);
+      });
+    };
+    Electron.app.on("browser-window-created", onWindowCreated);
+    window.once("closed", () => Electron.app.off("browser-window-created", onWindowCreated));
 
     window.webContents.setWindowOpenHandler(({ url }) => {
       if (Option.isSome(ElectronShell.parseSafeExternalUrl(url))) {

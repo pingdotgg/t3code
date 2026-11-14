@@ -7,6 +7,9 @@ import { useShallow } from "zustand/react/shallow";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { previewBridge } from "~/components/preview/previewBridge";
+import { Button } from "~/components/ui/button";
+import { toastManager } from "~/components/ui/toast";
+import { takeTabWindowRequest } from "./pendingTabWindows";
 import {
   preventThumbButtonFocus,
   takeThumbButtonNavigation,
@@ -57,6 +60,7 @@ export function HostedBrowserWebview(props: {
   readonly initialUrl: string | null;
   readonly viewport: PreviewViewportSetting;
   readonly pictureInPicture: boolean;
+  readonly detached: boolean;
   /** Fixed for the tab lifetime; Electron reads partition before guest attachment. */
   readonly profileId: string | undefined;
   readonly zoomFactor: number;
@@ -73,6 +77,7 @@ export function HostedBrowserWebview(props: {
     initialUrl,
     viewport,
     pictureInPicture,
+    detached,
     zoomFactor,
     profileId,
     serverDriven = false,
@@ -140,8 +145,17 @@ export function HostedBrowserWebview(props: {
   const [webviewGeneration, setWebviewGeneration] = useState(0);
   const [recoverySrc, setRecoverySrc] = useState(initialSrc);
   const active = presentation.visible && presentation.rect !== null;
-  const shown = active || pictureInPicture;
+  const shown = active || pictureInPicture || detached;
   const reportedShown = useEffectEvent(() => serverDriven && shown);
+  // The pop-out window's guest replaced ours; coming back needs a fresh guest at the current URL.
+  const [renderedDetached, setRenderedDetached] = useState(detached);
+  if (renderedDetached !== detached) {
+    setRenderedDetached(detached);
+    if (!detached) {
+      setRecoverySrc(initialUrl ?? initialSrc);
+      setWebviewGeneration((generation) => generation + 1);
+    }
+  }
   const remountCrashedWebview = useEffectEvent(() => {
     setRecoverySrc(initialUrl ?? initialSrc);
     setWebviewGeneration((generation) => generation + 1);
@@ -170,6 +184,15 @@ export function HostedBrowserWebview(props: {
           if (Number.isInteger(webContentsId) && webContentsId > 0) {
             await bridge.registerWebview(runtimeTabId, webContentsId);
             withDesktopTab(runtimeTabId, () => bridge.setShown(runtimeTabId, reportedShown()));
+            if (takeTabWindowRequest(runtimeTabId)) {
+              await bridge.tabWindow.open(runtimeTabId, config.partition).catch((error) => {
+                toastManager.add({
+                  type: "error",
+                  title: "Unable to open browser window",
+                  description: error instanceof Error ? error.message : "An error occurred.",
+                });
+              });
+            }
           }
         } catch {}
       })();
@@ -215,8 +238,9 @@ export function HostedBrowserWebview(props: {
   }, [
     clientSettingsHydrated,
     config,
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Detaching unmounts the webview and a crash recovery remounts it under a new key, so the listeners attach to the new element.
+    detached,
     runtimeTabId,
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A crash recovery remounts the webview under a new key, so the listeners attach to the new element.
     webviewGeneration,
   ]);
 
@@ -354,47 +378,68 @@ export function HostedBrowserWebview(props: {
             onChange={commitViewportChange}
           />
         ) : null}
-        <webview
-          key={webviewGeneration}
-          ref={setWebviewRef}
-          // Electron needs allowpopups at attachment. React drops boolean values for unknown attributes.
-          {...({ allowpopups: "true" } as unknown as { readonly allowpopups?: boolean })}
-          src={webviewGeneration === 0 ? initialSrc : recoverySrc}
-          partition={config.partition}
-          webpreferences={config.webPreferences}
-          {...(config.preloadUrl ? { preload: config.preloadUrl } : {})}
-          data-preview-tab={runtimeTabId}
-          data-preview-server-tab={tabId}
-          data-preview-viewport-mode={effectiveViewport._tag}
-          data-preview-viewport-key={browserViewportSettingKey(effectiveViewport)}
-          data-preview-css-width={
-            fittedSourceViewport
-              ? fittedSourceViewport.width
-              : effectiveViewport._tag === "fill"
-                ? Math.max(1, Math.round(layout.viewportWidth / layoutZoomFactor))
-                : effectiveViewport.width
-          }
-          data-preview-css-height={
-            fittedSourceViewport
-              ? fittedSourceViewport.height
-              : effectiveViewport._tag === "fill"
-                ? Math.max(1, Math.round(layout.viewportHeight / layoutZoomFactor))
-                : effectiveViewport.height
-          }
-          aria-hidden={active ? undefined : true}
-          className={cn(
-            "absolute flex overflow-hidden bg-white",
-            active && !layout.fillsPanel && "ring-1 ring-border/70 shadow-sm",
-          )}
-          style={{
-            left: layout.viewportX,
-            top: layout.viewportY,
-            width: layout.viewportWidth / layout.viewportScale,
-            height: layout.viewportHeight / layout.viewportScale,
-            transform: layout.viewportScale < 1 ? `scale(${layout.viewportScale})` : undefined,
-            transformOrigin: "top left",
-          }}
-        />
+        {detached ? (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-background text-sm text-muted-foreground">
+            <span>This tab is open in its own window.</span>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() =>
+                void previewBridge?.tabWindow.close(runtimeTabId).catch((error) => {
+                  toastManager.add({
+                    type: "error",
+                    title: "Unable to update browser window",
+                    description: error instanceof Error ? error.message : "An error occurred.",
+                  });
+                })
+              }
+            >
+              Bring back
+            </Button>
+          </div>
+        ) : (
+          <webview
+            key={webviewGeneration}
+            ref={setWebviewRef}
+            // Electron needs allowpopups at attachment. React drops boolean values for unknown attributes.
+            {...({ allowpopups: "true" } as unknown as { readonly allowpopups?: boolean })}
+            src={webviewGeneration === 0 ? initialSrc : recoverySrc}
+            partition={config.partition}
+            webpreferences={config.webPreferences}
+            {...(config.preloadUrl ? { preload: config.preloadUrl } : {})}
+            data-preview-tab={runtimeTabId}
+            data-preview-server-tab={tabId}
+            data-preview-viewport-mode={effectiveViewport._tag}
+            data-preview-viewport-key={browserViewportSettingKey(effectiveViewport)}
+            data-preview-css-width={
+              fittedSourceViewport
+                ? fittedSourceViewport.width
+                : effectiveViewport._tag === "fill"
+                  ? Math.max(1, Math.round(layout.viewportWidth / layoutZoomFactor))
+                  : effectiveViewport.width
+            }
+            data-preview-css-height={
+              fittedSourceViewport
+                ? fittedSourceViewport.height
+                : effectiveViewport._tag === "fill"
+                  ? Math.max(1, Math.round(layout.viewportHeight / layoutZoomFactor))
+                  : effectiveViewport.height
+            }
+            aria-hidden={active ? undefined : true}
+            className={cn(
+              "absolute flex overflow-hidden bg-white",
+              active && !layout.fillsPanel && "ring-1 ring-border/70 shadow-sm",
+            )}
+            style={{
+              left: layout.viewportX,
+              top: layout.viewportY,
+              width: layout.viewportWidth / layout.viewportScale,
+              height: layout.viewportHeight / layout.viewportScale,
+              transform: layout.viewportScale < 1 ? `scale(${layout.viewportScale})` : undefined,
+              transformOrigin: "top left",
+            }}
+          />
+        )}
         {active && effectiveViewport._tag !== "fill" && !fittedSourceViewport ? (
           <>
             <BrowserViewportResizeHandles

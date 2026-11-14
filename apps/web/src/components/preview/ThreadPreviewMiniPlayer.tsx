@@ -40,6 +40,7 @@ import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
 import { useThreadPreviewState } from "~/previewStateStore";
+import { usePreviewWebviewConfig } from "~/browser/previewWebviewConfigState";
 import {
   type PreviewMiniPlayerSize,
   type PreviewMiniPlayerSource,
@@ -183,7 +184,9 @@ export function useThreadPreviewCanvasSource(
       : null,
   );
   if (!miniPlayer || !source || sourceKey === null) return null;
-  if (source.kind === "browser" && !browser.snapshot) return null;
+  if (source.kind === "browser" && (!browser.snapshot || browser.desktopOverlay?.detached)) {
+    return null;
+  }
   return {
     key: sourceKey,
     width: miniPlayer.width,
@@ -226,6 +229,10 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
     recordingTabIds.has(runtimeTabId) ||
     findActiveBrowserRecordingRuntimeTabId(threadRef, tabId) !== null;
   const serverSurfaceRef = useRef<ServerBrowserHandle | null>(null);
+  const webviewPartition = usePreviewWebviewConfig(
+    threadRef.environmentId,
+    snapshot?.profileId,
+  )?.partition;
   const serverPictureInPicture =
     useServerPictureInPictureKey() === serverPictureInPictureKey(threadRef.threadId, tabId);
   const viewportKey = streamedSourceKey(
@@ -248,11 +255,8 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
             tabId,
             seed: serverSurfaceRef.current?.canvas() ?? null,
           });
-      } else if (previewBridge) {
-        const operation = desktopOverlay?.pictureInPicture
-          ? previewBridge.pictureInPicture.close
-          : previewBridge.pictureInPicture.open;
-        await operation(runtimeTabId);
+      } else if (previewBridge && webviewPartition) {
+        await previewBridge.tabWindow.open(runtimeTabId, webviewPartition);
       }
     } catch (error) {
       toastManager.add({
@@ -269,7 +273,7 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
       ? previewPdfAssetUrl(snapshot.navStatus.url, httpBaseUrl)
       : null;
   const loadFailed = snapshot.navStatus._tag === "LoadFailed" ? snapshot.navStatus : null;
-  const poppedOut = serverTab ? serverPictureInPicture : Boolean(desktopOverlay?.pictureInPicture);
+  const poppedOut = serverTab && serverPictureInPicture;
   const canPopOut = serverTab
     ? poppedOut || (pdfUrl === null && supportsServerPictureInPicture())
     : true;

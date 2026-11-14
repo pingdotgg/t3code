@@ -7,6 +7,7 @@ import {
   DesktopPreviewConfigInputSchema,
   DesktopPreviewFindInPageInputSchema,
   DesktopPreviewNavigateInputSchema,
+  DesktopPreviewOpenTabWindowInputSchema,
   DesktopPreviewRecordingArtifactSchema,
   DesktopPreviewRecordingSaveInputSchema,
   DesktopPreviewRegisterWebviewInputSchema,
@@ -57,8 +58,16 @@ export const installPreviewEventForwarding = Effect.fn(
   yield* manager.subscribePointerEvents((event) =>
     electronWindow.sendAll(IpcChannels.PREVIEW_POINTER_EVENT_CHANNEL, event),
   );
+  // Only the main window opens tabs; pop-out windows would open a duplicate.
+  // With the main window closed (macOS keeps pop-outs alive), open the link in place.
   yield* manager.subscribeOpenLinks((event) =>
-    electronWindow.sendAll(IpcChannels.PREVIEW_OPEN_LINK_CHANNEL, event),
+    Effect.flatMap(electronWindow.main, (main) =>
+      Option.isSome(main) && !main.value.isDestroyed()
+        ? Effect.sync(() =>
+            main.value.webContents.send(IpcChannels.PREVIEW_OPEN_LINK_CHANNEL, event),
+          )
+        : manager.navigate(event.tabId, event.url).pipe(Effect.ignore),
+    ),
   );
   yield* manager.subscribeFindResults((event) =>
     electronWindow.sendAll(IpcChannels.PREVIEW_FIND_RESULT_CHANNEL, event),
@@ -273,6 +282,20 @@ const openPictureInPicture = tabMethod(
   IpcChannels.PREVIEW_PICTURE_IN_PICTURE_OPEN_CHANNEL,
   "desktop.ipc.preview.openPictureInPicture",
   (manager, tabId) => manager.openPictureInPicture(tabId),
+);
+const openTabWindow = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_TAB_WINDOW_OPEN_CHANNEL,
+  payload: DesktopPreviewOpenTabWindowInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.openTabWindow")(function* ({ tabId, partition }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.openTabWindow(tabId, partition);
+  }),
+});
+const closeTabWindow = tabMethod(
+  IpcChannels.PREVIEW_TAB_WINDOW_CLOSE_CHANNEL,
+  "desktop.ipc.preview.closeTabWindow",
+  (manager, tabId) => manager.closeTabWindow(tabId),
 );
 const closePictureInPicture = tabMethod(
   IpcChannels.PREVIEW_PICTURE_IN_PICTURE_CLOSE_CHANNEL,
@@ -501,6 +524,8 @@ export const methods = [
   copyArtifactToClipboard,
   openPictureInPicture,
   closePictureInPicture,
+  openTabWindow,
+  closeTabWindow,
   startRecording,
   stopRecording,
   saveRecording,

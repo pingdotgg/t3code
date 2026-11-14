@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as PreviewManager from "../../preview/Manager.ts";
 import * as PreviewIpc from "./preview.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
@@ -108,6 +109,52 @@ describe("preview IPC methods", () => {
         const failure = yield* decodeCaptureFailure(result);
         for (const phrase of guidance) expect(failure.message).toContain(phrase);
       }),
+  );
+
+  effectIt.effect.each([
+    { name: "sends opened links only to the main window, never a pop-out", mainAlive: true },
+    { name: "opens the link in the same tab when the main window is gone", mainAlive: false },
+  ])("$name", ({ mainAlive }) =>
+    Effect.gen(function* () {
+      let openLink: ((event: unknown) => Effect.Effect<void>) | undefined;
+      const mainSend = vi.fn();
+      const navigate = vi.fn(() => Effect.void);
+      const sendAll = vi.fn(() => Effect.void);
+      const listen = () => Effect.void;
+      yield* PreviewIpc.installPreviewEventForwarding().pipe(
+        Effect.provideService(ElectronWindow.ElectronWindow, {
+          main: mainAlive
+            ? Effect.succeedSome({
+                isDestroyed: () => false,
+                webContents: { send: mainSend },
+              } as unknown as Electron.BrowserWindow)
+            : Effect.succeedNone,
+          sendAll,
+        } as unknown as ElectronWindow.ElectronWindow["Service"]),
+        Effect.provideService(PreviewManager.PreviewManager, {
+          subscribeStateChanges: listen,
+          subscribeRecordingInputs: listen,
+          subscribePointerEvents: listen,
+          subscribeFindResults: listen,
+          subscribeOpenLinks: (listener: (event: unknown) => Effect.Effect<void>) => {
+            openLink = listener;
+            return Effect.void;
+          },
+          navigate,
+        } as unknown as PreviewManager.PreviewManager["Service"]),
+      );
+      yield* openLink!({ tabId: "tab-1", url: "https://example.com" });
+      if (mainAlive) {
+        expect(mainSend).toHaveBeenCalledOnce();
+        expect(navigate).not.toHaveBeenCalled();
+      } else {
+        expect(navigate).toHaveBeenCalledWith("tab-1", "https://example.com");
+      }
+      expect(sendAll).not.toHaveBeenCalledWith(
+        expect.stringContaining("open-link"),
+        expect.anything(),
+      );
+    }),
   );
 
   beforeEach(() => {

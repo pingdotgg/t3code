@@ -63,6 +63,7 @@ import * as Scope from "effect/Scope";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopPrimaryPaste from "../app/DesktopPrimaryPaste.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import {
   MENU_ACTION_CHANNEL,
@@ -72,6 +73,8 @@ import {
 import * as DesktopBrowserHost from "./DesktopBrowserHost.ts";
 import * as PreviewPasskeys from "./Passkeys.ts";
 import * as BrowserSession from "./BrowserSession.ts";
+import { hardenPreviewWebviewPreferences } from "./WebviewPreferences.ts";
+import { isSameOriginRendererNavigation } from "../window/RendererNavigation.ts";
 import {
   ANNOTATION_CAPTURED_CHANNEL,
   ANNOTATION_SEND_ENABLED_CHANNEL,
@@ -113,6 +116,7 @@ export interface PreviewTabState {
   canGoForward: boolean;
   zoomFactor: number;
   pictureInPicture: boolean;
+  detached: boolean;
   colorScheme: DesktopPreviewColorScheme;
   audioMuted: boolean;
   audible: boolean;
@@ -567,8 +571,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const random = yield* SecureRandom.SecureRandom;
   const parentScope = yield* Scope.Scope;
   const browserHost = yield* DesktopBrowserHost.DesktopBrowserHost;
+  const primaryPaste = yield* DesktopPrimaryPaste.DesktopPrimaryPaste;
   const browserSession = yield* BrowserSession.BrowserSession;
   const passkeys = yield* PreviewPasskeys.PreviewPasskeys;
+  const { isPartition: isBrowserPartition } = yield* BrowserSession.BrowserSession;
   const context = yield* Effect.context<never>();
   const runFork = Effect.runForkWith(context);
   const runPromise = Effect.runPromiseWith(context);
@@ -1708,7 +1714,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           currentMainWindow = undefined;
           frameCaptureWindowOpen = false;
           mainWindowCleanupFiber = runFork(
-            Effect.all([closeAllPictureInPicture(), stopAllRecordings()], {
+            Effect.all([closeAllPictureInPicture(), stopAllRecordings(), closeAllTabWindows()], {
               concurrency: "unbounded",
               discard: true,
             }).pipe(Effect.ignore),
@@ -1742,6 +1748,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           canGoForward: false,
           zoomFactor: normalizeZoomFactor(defaults?.zoomFactor),
           pictureInPicture: false,
+          detached: false,
           colorScheme: defaults?.colorScheme ?? "system",
           ...(defaults?.serverTab === undefined ? {} : { serverTab: defaults.serverTab }),
           audioMuted: false,
@@ -1780,10 +1787,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       [
         cancelPickElement(tabId),
         closePictureInPicture(tabId),
+        closeTabWindow(tabId),
         stopFrameCapture(tabId, "recording"),
       ],
       {
-        concurrency: 3,
+        concurrency: 4,
         discard: true,
       },
     );
@@ -1818,6 +1826,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       canGoForward: false,
       zoomFactor: DEFAULT_ZOOM_FACTOR,
       pictureInPicture: false,
+      detached: false,
       colorScheme: "system",
       audioMuted: false,
       audible: false,
@@ -1865,7 +1874,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       !wc ||
       wc.isDestroyed() ||
       wc.getType() !== "webview" ||
-      (Option.isSome(mainWindow) && wc.hostWebContents !== mainWindow.value.webContents)
+      (Option.isSome(mainWindow) &&
+        wc.hostWebContents !== mainWindow.value.webContents &&
+        !tabWindowHostIds.has(wc.hostWebContents?.id ?? -1))
     ) {
       return yield* new PreviewWebContentsNotFoundError({ tabId, webContentsId });
     }
@@ -2080,6 +2091,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         canGoForward: current?.canGoForward ?? false,
         zoomFactor: current?.zoomFactor ?? DEFAULT_ZOOM_FACTOR,
         pictureInPicture: current?.pictureInPicture ?? false,
+        detached: current?.detached ?? false,
         colorScheme: current?.colorScheme ?? "system",
         // Keep audibility until Chromium replaces the document; clearing it here can lose the final transition.
         audioMuted: current?.audioMuted ?? false,
@@ -2990,6 +3002,160 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     },
   );
 
+  const tabWindows = new Map<string, BrowserWindow>();
+  const tabWindowHostIds = new Set<number>();
+
+  const closeTabWindow = Effect.fn("PreviewManager.closeTabWindow")(function* (tabId: string) {
+    const window = tabWindows.get(tabId);
+    if (!window || window.isDestroyed()) return yield* update(tabId, { detached: false });
+    yield* attempt({ operation: "tabWindow.close", tabId }, () => window.close());
+  });
+
+  const closeAllTabWindows = Effect.fn("PreviewManager.closeAllTabWindows")(function* () {
+    yield* Effect.forEach(
+      [...tabWindows.keys()],
+      (tabId) => closeTabWindow(tabId).pipe(Effect.ignore),
+      {
+        discard: true,
+      },
+    );
+  });
+
+  // The guest cannot move between hosts, so the pop-out loads the current URL in a fresh webview.
+  const openTabWindow = Effect.fn("PreviewManager.openTabWindow")(function* (
+    tabId: string,
+    partition: string,
+  ) {
+    // Fail fast instead of queueing behind an in-flight close.
+    if ((yield* Ref.get(closingTabIdsRef)).has(tabId)) {
+      return yield* new PreviewTabNotFoundError({ tabId });
+    }
+    const created = yield* withTabLifecycleLock(tabId, createTabWindowUnlocked(tabId, partition));
+    if (!created) return;
+    const { window, appUrl } = created;
+    yield* attemptPromise({ operation: "tabWindow.load", tabId }, () =>
+      window.loadURL(appUrl.href),
+    ).pipe(
+      Effect.onError(() =>
+        attempt({ operation: "tabWindow.close", tabId }, () => window.close()).pipe(Effect.ignore),
+      ),
+    );
+  });
+
+  const createTabWindowUnlocked = Effect.fn("PreviewManager.createTabWindowUnlocked")(function* (
+    tabId: string,
+    partition: string,
+  ) {
+    const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+    if (!tab || (yield* Ref.get(closingTabIdsRef)).has(tabId)) {
+      return yield* new PreviewTabNotFoundError({ tabId });
+    }
+    const generation = tabLifecycleGenerations.get(tabId);
+    const existing = tabWindows.get(tabId);
+    if (existing && !existing.isDestroyed()) {
+      yield* attempt({ operation: "tabWindow.focus", tabId }, () => existing.focus());
+      return null;
+    }
+    if (!isBrowserPartition(partition)) {
+      return yield* new PreviewOperationError({
+        operation: "tabWindow.partition",
+        tabId,
+        cause: new Error("Not a browser partition."),
+      });
+    }
+    const mainWindow = yield* Ref.get(mainWindowRef);
+    if (Option.isNone(mainWindow) || mainWindow.value.isDestroyed()) {
+      return yield* new PreviewOperationError({
+        operation: "tabWindow.appUrl",
+        tabId,
+        cause: new Error("Main window is not available."),
+      });
+    }
+    const appUrl = new URL(mainWindow.value.webContents.getURL());
+    appUrl.hash = `#/browser-window/${encodeURIComponent(tabId)}`;
+    const window = yield* attempt(
+      { operation: "tabWindow.create", tabId },
+      () =>
+        new BrowserWindow({
+          width: 1200,
+          height: 800,
+          title: "Browser",
+          autoHideMenuBar: true,
+          // The toolbar row (40px) doubles as the title bar; the lights sit centered in it.
+          ...(hostPlatform === "darwin" && {
+            titleBarStyle: "hidden" as const,
+            trafficLightPosition: { x: 14, y: 13 },
+          }),
+          webPreferences: {
+            preload: path.join(path.dirname(pictureInPicturePreloadPath), "preload.cjs"),
+            contextIsolation: true,
+            nodeIntegration: false,
+            sandbox: true,
+            webviewTag: true,
+          },
+        }),
+    );
+    const host = window.webContents;
+    const hostId = host.id;
+    tabWindows.set(tabId, window);
+    tabWindowHostIds.add(hostId);
+    // A tab with no page never attaches a webview here, so nothing else would hand it to this window.
+    if (tab.webContentsId === null) yield* update(tabId, { detached: true });
+    host.on("will-attach-webview", (event, webPreferences, params) => {
+      if (typeof params.partition !== "string" || !isBrowserPartition(params.partition)) {
+        event.preventDefault();
+        return;
+      }
+      hardenPreviewWebviewPreferences(webPreferences, passkeys.bridgeEnabled, primaryPaste.enabled);
+    });
+    host.on("did-attach-webview", (_event, contents) => {
+      // The tab was closed or recreated since this window opened; never bind to the replacement.
+      if (tabLifecycleGenerations.get(tabId) !== generation) {
+        window.close();
+        return;
+      }
+      contents.on("page-title-updated", (_titleEvent, nextTitle) => {
+        if (!window.isDestroyed()) window.setTitle(nextTitle);
+      });
+      runFork(
+        prepareWebview(contents).pipe(
+          Effect.andThen(
+            withTabLifecycleLock(
+              tabId,
+              registerWebviewUnlocked(tabId, contents.id, generation).pipe(
+                // Under the lock, so a close or recreate can't land between registering and this write.
+                Effect.andThen(
+                  Effect.suspend(() =>
+                    window.isDestroyed() || tabWindows.get(tabId) !== window
+                      ? Effect.void
+                      : update(tabId, { detached: true }),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Preview tab window failed to register.", { tabId, cause }),
+          ),
+        ),
+      );
+    });
+    host.setWindowOpenHandler(() => ({ action: "deny" }));
+    // The preload exposes desktopBridge, so the window must never leave the app origin.
+    host.on("will-navigate", (event, url) => {
+      if (!isSameOriginRendererNavigation({ applicationUrl: appUrl.href, navigationUrl: url })) {
+        event.preventDefault();
+      }
+    });
+    window.once("closed", () => {
+      tabWindowHostIds.delete(hostId);
+      if (tabWindows.get(tabId) === window) tabWindows.delete(tabId);
+      if (tabLifecycleGenerations.get(tabId) !== generation) return;
+      runFork(update(tabId, { detached: false }).pipe(Effect.ignore));
+    });
+    return { window, appUrl };
+  });
+
   const openPictureInPicture = Effect.fn("PreviewManager.openPictureInPicture")(function* (
     tabId: string,
   ) {
@@ -3576,6 +3742,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     hardReload,
     navigate,
     openPictureInPicture,
+    openTabWindow,
+    closeTabWindow,
     openDevTools,
     pickElement,
     updateAnnotationVoice,
@@ -3842,6 +4010,11 @@ export class PreviewManager extends Context.Service<
     readonly revealArtifact: (path: string) => Effect.Effect<void, PreviewManagerError>;
     readonly copyArtifactToClipboard: (path: string) => Effect.Effect<void, PreviewManagerError>;
     readonly openPictureInPicture: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
+    readonly openTabWindow: (
+      tabId: string,
+      partition: string,
+    ) => Effect.Effect<void, PreviewManagerError>;
+    readonly closeTabWindow: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly closePictureInPicture: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly startRecording: (
       tabId: string,
@@ -4008,6 +4181,8 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     revealArtifact: operations.revealArtifact,
     copyArtifactToClipboard: operations.copyArtifactToClipboard,
     openPictureInPicture: operations.openPictureInPicture,
+    openTabWindow: operations.openTabWindow,
+    closeTabWindow: operations.closeTabWindow,
     closePictureInPicture: operations.closePictureInPicture,
     startRecording: operations.startRecording,
     stopRecording: operations.stopRecording,

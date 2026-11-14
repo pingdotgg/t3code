@@ -184,6 +184,11 @@ import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
 import { dispatchPreviewAction } from "./previewActionBus";
 import { PreviewView } from "./PreviewView";
+import {
+  PoppedOutAnnotationReceiver,
+  sendPreviewAnnotationToChatWindow,
+} from "./previewAnnotationDelivery";
+import { applyPreviewDesktopState } from "~/previewStateStore";
 import { ToastProvider } from "~/components/ui/toast";
 
 const TEST_THREAD_REF = {
@@ -318,6 +323,51 @@ describe("PreviewView", () => {
     await userEvent.click(page.getByRole("button", { name: "Annotate preview" }));
     await vi.waitFor(() => expect(onSendAnnotation).toHaveBeenCalledWith(picked, null));
     expect(mocks.setAnnotationSendEnabled).toHaveBeenLastCalledWith(TEST_RUNTIME_TAB_ID, true);
+  });
+
+  it("accepts pop-out annotations only for an authorized current detached tab", async () => {
+    setup();
+    applyPreviewDesktopState(TEST_THREAD_REF, "tab-1", {
+      hasWebContents: true,
+      canGoBack: false,
+      canGoForward: false,
+      loading: false,
+      zoomFactor: 1,
+      pictureInPicture: false,
+      detached: true,
+      colorScheme: "system",
+      audioMuted: false,
+      audible: false,
+      controller: "none",
+      favicon: null,
+    });
+    using cleanup = new DisposableStack();
+    cleanup.defer(() => applyPreviewDesktopState(TEST_THREAD_REF, "tab-1", null));
+    await using _screen = await render(<PoppedOutAnnotationReceiver />);
+    const message = {
+      threadRef: TEST_THREAD_REF,
+      tabId: "tab-1",
+      runtimeTabId: TEST_RUNTIME_TAB_ID,
+      picked: { ...annotation("popout-annotation"), screenshot: null },
+      screenshotFailed: false,
+    };
+    mocks.readEnvironmentScope.mockReturnValueOnce(false).mockReturnValue(true);
+    const channel = new BroadcastChannel("t3code:preview-annotations");
+    cleanup.defer(() => channel.close());
+    for (const data of [
+      message,
+      { ...message, picked: null },
+      { ...message, runtimeTabId: "stale-runtime" },
+      { ...message, tabId: "closed-tab" },
+      { ...message, threadRef: { ...TEST_THREAD_REF, environmentId: "other-environment" } },
+    ]) {
+      // oxlint-disable-next-line unicorn/require-post-message-target-origin -- BroadcastChannel has no target origin
+      channel.postMessage(data);
+    }
+    sendPreviewAnnotationToChatWindow(message);
+    await vi.waitFor(() => expect(mocks.addPreviewAnnotation).toHaveBeenCalledOnce());
+    expect(mocks.addPreviewAnnotation).toHaveBeenCalledWith(TEST_THREAD_REF, message.picked);
+    expect(mocks.addImage).not.toHaveBeenCalled();
   });
 
   it("still sends annotation text when the picked element's crop is malformed", async () => {

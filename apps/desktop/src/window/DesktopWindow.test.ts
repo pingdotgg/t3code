@@ -17,6 +17,7 @@ import { vi } from "vite-plus/test";
 
 vi.mock("electron", async (importOriginal) => ({
   ...(await importOriginal<typeof import("electron")>()),
+  app: { on: vi.fn(), off: vi.fn() },
   session: {
     fromPartition: vi.fn(() => ({
       getUserAgent: vi.fn(() => "Mozilla/5.0 Electron/41.5.0 t3code/1.2.3"),
@@ -511,45 +512,6 @@ describe("DesktopWindow", () => {
         DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE,
       );
     }
-  });
-
-  it("rejects renderer navigations whose origin only serializes as null", () => {
-    for (const applicationUrl of ["t3code://app/", "t3code-dev://app/"]) {
-      assert.isTrue(
-        DesktopWindow.isSameOriginRendererNavigation({
-          applicationUrl,
-          navigationUrl: `${applicationUrl}threads?id=1#latest`,
-        }),
-        applicationUrl,
-      );
-    }
-    for (const navigationUrl of [
-      "t3code://other/",
-      "t3code://app.example/",
-      "t3code://app:8080/",
-      "t3code://user@other/",
-      "t3code:app",
-      "t3code-dev://app/",
-      "file:///etc/passwd",
-      "data:text/html,<p>hi</p>",
-      "javascript:alert(1)",
-      "about:blank",
-      "blob:t3code://app/0b5e2c4a",
-    ]) {
-      assert.isFalse(
-        DesktopWindow.isSameOriginRendererNavigation({
-          applicationUrl: "t3code://app/",
-          navigationUrl,
-        }),
-        navigationUrl,
-      );
-    }
-    assert.isFalse(
-      DesktopWindow.isSameOriginRendererNavigation({
-        applicationUrl: "data:text/html,app",
-        navigationUrl: "data:text/html,other",
-      }),
-    );
   });
 
   it.effect(

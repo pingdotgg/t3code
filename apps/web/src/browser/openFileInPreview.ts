@@ -31,6 +31,8 @@ import {
 } from "~/rightPanelStore";
 
 import { resolveBrowserDefaults } from "./browserDefaults";
+import { requestTabWindow } from "./pendingTabWindows";
+import { previewRuntimeTabId } from "./previewRuntimeTabId";
 
 export const isBrowserPreviewFile = (path: string): boolean =>
   /\.(?:html?|pdf)$/i.test(path.split(/[?#]/, 1)[0] ?? "");
@@ -62,6 +64,8 @@ export async function openUrlInPreview<E>(input: {
   readonly openPreview: OpenPreviewMutation<E>;
   readonly profileId?: PreviewOpenInput["profileId"];
   readonly background?: boolean;
+  /** Opens in the background and pops the tab out into its own desktop window. */
+  readonly tabWindow?: boolean;
 }): Promise<AtomCommandResult<void, E | BrowserSettingsReadError>> {
   // Read before any await: a side chat pane that unmounts meanwhile drops its host mapping.
   const threadRef = rightPanelHostRef(input.threadRef);
@@ -92,8 +96,12 @@ export async function openUrlInPreview<E>(input: {
   });
   return mapAtomCommandResult(result, (snapshot) => {
     rememberPreviewUrl(threadRef, input.url);
-    if (input.background) {
+    if (input.background || input.tabWindow) {
       updatePreviewServerSnapshot(threadRef, snapshot);
+      if (input.tabWindow) {
+        const { serverEpoch } = readThreadPreviewState(threadRef);
+        requestTabWindow(previewRuntimeTabId(threadRef, serverEpoch, snapshot.tabId));
+      }
       // Restore focus unless the user picked a tab while opening this one.
       if (
         previousActiveTabId &&

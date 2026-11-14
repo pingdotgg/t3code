@@ -33,6 +33,8 @@ import * as BrowserSession from "./BrowserSession.ts";
 import * as DesktopBrowserHost from "./DesktopBrowserHost.ts";
 import * as PreviewManager from "./Manager.ts";
 import * as PreviewPasskeys from "./Passkeys.ts";
+import * as DesktopPrimaryPaste from "../app/DesktopPrimaryPaste.ts";
+import { PRIMARY_PASTE_DISABLED_ARGUMENT } from "./GuestProtocol.ts";
 
 describe("fitPictureInPictureContentSize", () => {
   it("does not collapse toward the minimum size when orientation changes repeatedly", () => {
@@ -250,6 +252,7 @@ const managerLayer = (platform: NodeJS.Platform = "darwin") =>
         attachGuest: () => () => {},
       }),
     ),
+    Layer.provideMerge(Layer.succeed(DesktopPrimaryPaste.DesktopPrimaryPaste, { enabled: false })),
     Layer.provideMerge(layerEnvironment),
     Layer.provideMerge(layerFileSystem),
     Layer.provideMerge(Path.layer),
@@ -612,6 +615,7 @@ describe("PreviewManager", () => {
           Effect.provide(
             Layer.mergeAll(
               layerEnvironment,
+              Layer.succeed(DesktopPrimaryPaste.DesktopPrimaryPaste, { enabled: true }),
               layerBrowserSession,
               Layer.mock(DesktopBrowserHost.DesktopBrowserHost)({
                 attach: () => {},
@@ -1800,12 +1804,15 @@ describe("PreviewManager", () => {
         expect(replacementListenerSpies.on).not.toHaveBeenCalled();
         yield* manager.closeTab("tab_close_register_race");
         const recordingExit = yield* Effect.exit(manager.startRecording("tab_close_register_race"));
+        const tabWindowExit = yield* Effect.exit(
+          manager.openTabWindow("tab_close_register_race", "persist:test"),
+        );
         yield* Deferred.succeed(continueCloseCleanup, undefined);
         yield* Fiber.join(closeFiber);
         const recreated = yield* Fiber.join(recreateFiber);
         const registrationExit = yield* Fiber.await(registrationFiber);
 
-        for (const exit of [registrationExit, recordingExit] as ReadonlyArray<
+        for (const exit of [registrationExit, recordingExit, tabWindowExit] as ReadonlyArray<
           Exit.Exit<unknown, PreviewManager.PreviewManagerError>
         >) {
           expect(Exit.isFailure(exit)).toBe(true);
@@ -1820,6 +1827,86 @@ describe("PreviewManager", () => {
         expect(replacementListenerSpies.ipc.off).not.toHaveBeenCalled();
         expect(capturePage).toHaveBeenCalledOnce();
         expect(recreated.webContentsId).toBeNull();
+      }),
+    ),
+  );
+
+  effectIt.effect("keeps a stale tab window from attaching to a recreated tab", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const hostHandlers = new Map<string, (...args: ReadonlyArray<unknown>) => void>();
+        const tabWindow = {
+          webContents: {
+            id: 900,
+            on: (event: string, handler: (...args: ReadonlyArray<unknown>) => void) =>
+              hostHandlers.set(event, handler),
+            setWindowOpenHandler: vi.fn(),
+          },
+          isDestroyed: () => false,
+          once: vi.fn(),
+          close: vi.fn(),
+          loadURL: vi.fn(async () => undefined),
+        };
+        browserWindowConstructor.mockImplementation(function () {
+          return tabWindow;
+        });
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          once: vi.fn(),
+          webContents: { getURL: () => "t3code://app/" },
+        } as never);
+
+        yield* manager.createTab("tab_stale_window");
+        yield* manager.openTabWindow("tab_stale_window", "persist:t3code-preview-test");
+        yield* manager.closeTab("tab_stale_window");
+        yield* manager.createTab("tab_stale_window");
+        const guest = { id: 77, on: vi.fn() };
+        tabWindow.close.mockClear();
+        hostHandlers.get("did-attach-webview")!({}, guest);
+
+        expect(tabWindow.close).toHaveBeenCalledOnce();
+        expect(guest.on).not.toHaveBeenCalled();
+      }),
+    ),
+  );
+
+  effectIt.effect("detaches a tab with no page as soon as its window opens", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const hostHandlers = new Map<string, (...args: ReadonlyArray<unknown>) => void>();
+        browserWindowConstructor.mockImplementation(function () {
+          return {
+            webContents: {
+              id: 901,
+              on: (event: string, handler: (...args: ReadonlyArray<unknown>) => void) =>
+                hostHandlers.set(event, handler),
+              setWindowOpenHandler: vi.fn(),
+            },
+            isDestroyed: () => false,
+            once: vi.fn(),
+            close: vi.fn(),
+            loadURL: vi.fn(async () => undefined),
+          };
+        });
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          once: vi.fn(),
+          webContents: { getURL: () => "t3code://app/" },
+        } as never);
+        const detached: Array<boolean> = [];
+        yield* manager.subscribeStateChanges((_tabId, state) =>
+          Effect.sync(() => detached.push(state.detached)),
+        );
+
+        yield* manager.createTab("tab_empty_window");
+        yield* manager.openTabWindow("tab_empty_window", "persist:t3code-preview-test");
+
+        expect(detached.at(-1)).toBe(true);
+        const preferences: Electron.WebPreferences = {};
+        hostHandlers.get("will-attach-webview")!({}, preferences, {
+          partition: "persist:t3code-preview-test",
+        });
+        expect(preferences.additionalArguments).toContain(PRIMARY_PASTE_DISABLED_ARGUMENT);
       }),
     ),
   );

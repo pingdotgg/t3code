@@ -299,8 +299,10 @@ export function startAppServices(): AppRouter {
   startHostFreezeToasts();
   startLegacyThreadMigrationToast();
   startPermissionUpdateNotices(router);
-  startThreadNotifications(appAtomRegistry, router);
-  startGuideRunNotifications(appAtomRegistry, router);
+  if (!window.location.hash.startsWith("#/browser-window/")) {
+    startThreadNotifications(appAtomRegistry, router);
+    startGuideRunNotifications(appAtomRegistry, router);
+  }
   if (isElectron) startDesktopUpdateLaunchNotice();
 
   return router;
