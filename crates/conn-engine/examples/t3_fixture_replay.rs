@@ -10,8 +10,11 @@
 //! model is called. The result file holds every stored event (the log is never pruned), each
 //! thread's projection, the shell snapshot and the snapshots the steps captured.
 //!
-//! A step this driver cannot run (the replay gate, a held run) ends the run with an error
-//! that names it; the check then reports the fixture as failed for that reason.
+//! The replay gate (`release_replay_gate`) meets the stand-in through files in the plan's
+//! `gateDir`: the stand-in writes `gate-<label>.reached` when it holds before the labelled
+//! frame, the step waits for it and writes `gate-<label>.release` (T3's `releaseReplayGate`).
+//! A step this driver cannot run (a held run) ends the run with an error that names it; the
+//! check then reports the fixture as failed for that reason.
 
 #![expect(
     clippy::print_stderr,
@@ -111,6 +114,8 @@ struct Run {
     background: HashMap<String, JoinHandle<Result<(), Failure>>>,
     anonymous: usize,
     captured: Map<String, Value>,
+    /// Where the replay gate's files are (`gateDir`).
+    gate_dir: Option<PathBuf>,
 }
 
 const ACTIVE: [&str; 5] = ["preparing", "queued", "starting", "running", "waiting"];
@@ -347,9 +352,53 @@ impl Run {
                 }
                 Self::dispatch(&self.engine, &command).await
             }
+            "release_replay_gate" => {
+                let label = text(step, "label")?;
+                let reached = self.gate_file(label, "reached")?;
+                let deadline = tokio::time::Instant::now() + WAIT;
+                while !blocking(|path| path.exists(), reached.clone()).await {
+                    if tokio::time::Instant::now() >= deadline {
+                        return Err(format!("release_replay_gate:{label}:not_configured"));
+                    }
+                    tokio::time::sleep(POLL).await;
+                }
+                let release = self.gate_file(label, "release")?;
+                if blocking(|path| std::fs::write(path, b"").is_ok(), release).await {
+                    Ok(())
+                } else {
+                    Err(format!("release_replay_gate:{label}: cannot write the release file"))
+                }
+            }
             other => Err(format!("{other}: not run by this replay driver")),
         }
     }
+
+    /// `gate-<label>.<state>` in the gate folder; the label as `encodeURIComponent` writes it.
+    fn gate_file(&self, label: &str, state: &str) -> Result<PathBuf, Failure> {
+        let dir = self.gate_dir.as_ref().ok_or("plan: no gateDir")?;
+        Ok(dir.join(format!(
+            "gate-{}.{state}",
+            conn_support::ids::encode_component(label)
+        )))
+    }
+
+    async fn release_all_gates(&self, steps: &Value) {
+        for step in steps.as_array().into_iter().flatten() {
+            if let (Some("release_replay_gate"), Some(label)) =
+                (step["type"].as_str(), step["label"].as_str())
+                && let Ok(path) = self.gate_file(label, "release")
+            {
+                blocking(|path| std::fs::write(path, b"").is_ok(), path).await;
+            }
+        }
+    }
+}
+
+/// A file check or write off the runtime thread.
+async fn blocking(f: impl FnOnce(PathBuf) -> bool + Send + 'static, path: PathBuf) -> bool {
+    tokio::task::spawn_blocking(move || f(path))
+        .await
+        .unwrap_or(false)
 }
 
 /// An Effect `Duration.Input` as the fixtures write it: `"1 millis"`, `"31 minutes"`, or a
@@ -413,6 +462,7 @@ async fn replay(plan: &Value) -> Result<Value, Value> {
         background: HashMap::new(),
         anonymous: 0,
         captured: Map::new(),
+        gate_dir: plan["gateDir"].as_str().map(PathBuf::from),
     };
     let steps = field(plan, "steps").map_err(Value::String)?.clone();
     let mut failure = None;
@@ -432,6 +482,8 @@ async fn replay(plan: &Value) -> Result<Value, Value> {
             }
         }
     }
+    // T3 releases every gate when the scenario ends (`releaseAll`).
+    run.release_all_gates(&steps).await;
     let mut result = collect(&run, plan).await;
     if let Ok(result) = &mut result {
         result["commandOutput"] = output

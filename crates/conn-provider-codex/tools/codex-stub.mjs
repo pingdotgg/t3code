@@ -26,6 +26,10 @@
 //   recorded. A later start of the stub (a new process) continues after that point; the
 //   cursor is kept in `<log>.cursor`.
 // - SIGTERM, SIGINT, SIGHUP and the end of stdin are logged (see LINGER_MS below).
+// - The replay gate (T3's `makeProviderReplayGate`, used by `release_replay_gate` steps):
+//   for each label in `config.gates`, the stub stops before it emits the first recorded
+//   frame with that label, writes `<gateDir>/gate-<label>.reached` and waits for
+//   `<gateDir>/gate-<label>.release`. Frames the client sends meanwhile wait too.
 import * as NodeFS from "node:fs";
 import * as NodeReadline from "node:readline";
 
@@ -73,6 +77,13 @@ const isChildMetadataRead = (frame) => {
 const cursorFile = `${config.log}.cursor`;
 let cursor = NodeFS.existsSync(cursorFile) ? Number(NodeFS.readFileSync(cursorFile, "utf8")) : 0;
 let ended = false;
+// The replay gate: labels not yet released, the label the stub is held at, and the frames
+// that came in while it was held.
+const gates = new Set(config.gates ?? []);
+let held = null;
+const heldFrames = [];
+const gateFile = (label, state) =>
+  `${config.gateDir}/gate-${encodeURIComponent(label)}.${state}`;
 const saveCursor = () => NodeFS.writeFileSync(cursorFile, String(cursor));
 // recorded request id -> id the client used
 const responseIds = new Map();
@@ -102,9 +113,29 @@ const send = (frame) => {
   process.stdout.write(`${JSON.stringify(upgrade(frame))}\n`);
 };
 
+const hold = (label) => {
+  held = label;
+  NodeFS.writeFileSync(gateFile(label, "reached"), "");
+  log({ kind: "gate-reached", label });
+  const poll = setInterval(() => {
+    if (!NodeFS.existsSync(gateFile(label, "release"))) return;
+    clearInterval(poll);
+    gates.delete(label);
+    held = null;
+    log({ kind: "gate-released", label });
+    emitUntilExpectation();
+    saveCursor();
+    while (held === null && heldFrames.length > 0) onFrame(heldFrames.shift());
+  }, 5);
+};
+
 const emitUntilExpectation = () => {
   while (cursor < entries.length && entries[cursor].type !== "expect_outbound") {
     const entry = entries[cursor];
+    if (entry.type === "emit_inbound" && gates.has(entry.label)) {
+      hold(entry.label);
+      return;
+    }
     cursor += 1;
     if (entry.type === "runtime_exit") {
       log({ kind: "runtime_exit", status: entry.status ?? null });
@@ -157,6 +188,10 @@ const onFrame = (frame) => {
   if (frame.id !== undefined && isChildMetadataRead(frame)) {
     log({ kind: "child-metadata", frame });
     send({ id: frame.id, result: { thread: { id: frame.params.threadId }, model: null } });
+    return;
+  }
+  if (held !== null) {
+    heldFrames.push(frame);
     return;
   }
   if (ended) {

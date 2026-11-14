@@ -41,10 +41,9 @@ claude_background_wake_before_queued_prompt/claudeAgent  provider: Claude backgr
 claude_compact_after_resume_wake/claudeAgent         provider: Claude background wakes are not built (the resumed wake's compaction differs)
 claude_compact_after_peer_turn/claudeAgent           provider: Claude background wakes are not built (the peer turn's run never reaches its status)
 
-# --- The replay driver: steps it cannot run yet ---
-queued_cancelled_while_active/codex           driver: release_replay_gate / finish_held_run (the stub sends frames at once; no replay gate)
-claude_background_task_after_root/claudeAgent driver: release_replay_gate (no replay gate in the fake SDK host)
-claude_background_task_wake/claudeAgent       driver: release_replay_gate (no replay gate in the fake SDK host)
+# --- Claude provider, past the replay gate ---
+claude_background_task_after_root/claudeAgent provider: Claude background wakes are not built (the task's pending row ends before its wake run)
+claude_background_task_wake/claudeAgent       provider: Claude background wakes are not built (the wake's message text differs)
 
 # --- Test clock: T3's expected order comes from ties on its TestClock ---
 queued_turn/codex         clock: T3 orders messages by createdAt then id; on its TestClock the queued message and the first answer tie and the id decides. Our providers stamp with the system clock (no clock seam in the providers)

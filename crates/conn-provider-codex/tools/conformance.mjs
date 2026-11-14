@@ -143,7 +143,7 @@ const NOT_RUN = {
   delegated_task_status: "used by a delegated-task test with its own steps, not a fixture",
   thread_merge_back_siblings: "used by ThreadMergeBack.integration.test.ts with its own steps",
   queued_cancelled_while_active:
-    "its steps hold recorded frames back with the replay gate (finish_held_run); the stub sends them at once",
+    "its steps hold recorded frames back with the replay gate; the stub has one, but neither conformance driver runs release_replay_gate steps (the engine fixture replay does)",
 };
 delete SCENARIOS["rec-queued_cancelled_while_active"];
 
