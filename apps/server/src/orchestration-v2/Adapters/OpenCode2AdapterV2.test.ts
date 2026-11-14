@@ -327,6 +327,7 @@ const resumed = (
     readonly version?: "2.2.1" | "2.2.5" | "2.2.6";
     readonly shellRecovery?: ReadonlyArray<ProviderReplayEntry>;
     readonly lastRunOrdinal?: number;
+    readonly pendingBackgroundTasks?: OrchestrationV2ProviderThread["pendingBackgroundTasks"];
     readonly goal?: OrchestrationV2ProviderThread["goal"];
     readonly external?: boolean;
     readonly supervised?: boolean;
@@ -396,6 +397,9 @@ const resumed = (
           ? {}
           : { lastRunOrdinal: options.lastRunOrdinal }),
         ...(options?.goal === undefined ? {} : { goal: options.goal }),
+        ...(options?.pendingBackgroundTasks === undefined
+          ? {}
+          : { pendingBackgroundTasks: options.pendingBackgroundTasks }),
       },
       threadId,
       modelSelection: bigPickle,
@@ -517,6 +521,20 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       );
       assert.equal((yield* Fiber.join(terminal))?.status, "completed");
     }),
+  );
+
+  it.effect("resumes through OpenCode with an empty native prompt", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "" }),
+        promptAccepted,
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      const { message, ...input } = turnInput(thread);
+      yield* runtime.resumeTurn!({ ...input, messageId: message.messageId });
+      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+    }).pipe(Effect.scoped),
   );
 
   it.effect("renames the session before the first turn after the thread was renamed", () =>
@@ -1017,6 +1035,10 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         const terminal = yield* runtime.events.pipe(
           Stream.tap((e) =>
             Effect.gen(function* () {
+              if (e.type === "provider_thread.updated") {
+                for (const task of e.providerThread.pendingBackgroundTasks ?? [])
+                  assert.isUndefined(task.awaited);
+              }
               if (e.type !== "turn_item.updated") return;
               items.push(e.turnItem);
               if (e.turnItem.type === "command_execution" && e.turnItem.output === "retained\n")
@@ -1034,6 +1056,43 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         }
         yield* Fiber.join(terminal);
         assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+        for (const awaited of [true, false, true]) {
+          const roster = yield* runtime.events.pipe(
+            Stream.filter(
+              (e) =>
+                e.type === "provider_thread.updated" &&
+                e.providerThread.pendingBackgroundTasks?.some(
+                  (task) => task.taskId === shellID && (task.awaited === true) === awaited,
+                ) === true,
+            ),
+            Stream.runHead,
+            Effect.forkScoped,
+          );
+          assert.deepEqual(
+            yield* runtime.awaitBackgroundTasks!({
+              providerThread: thread,
+              taskIds: [shellID, shellID, "sh_unknown"],
+              awaited,
+            }),
+            { matched: [shellID] },
+          );
+          yield* Fiber.join(roster);
+        }
+        assert.deepEqual(
+          yield* runtime.awaitBackgroundTasks!({
+            providerThread: {
+              ...thread,
+              nativeThreadRef: {
+                driver: OPENCODE_PROVIDER,
+                nativeId: "ses_foreign",
+                strength: "strong",
+              },
+            },
+            taskIds: [shellID],
+            awaited: false,
+          }),
+          { matched: [] },
+        );
         const settled = yield* runtime.events.pipe(
           Stream.tap((e) =>
             Effect.sync(() => {
@@ -1058,6 +1117,14 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         else gate.release("shell-exit");
         yield* Fiber.join(settled);
         assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+        assert.deepEqual(
+          yield* runtime.awaitBackgroundTasks!({
+            providerThread: thread,
+            taskIds: [shellID],
+            awaited: true,
+          }),
+          { matched: [] },
+        );
         assert.deepInclude(items.filter((i) => i.type === "command_execution").at(-1), {
           type: "command_execution",
           status: stopped ? "interrupted" : stop === "failed" ? "failed" : "completed",
@@ -1076,8 +1143,10 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     "settled",
     "exited",
     "anchored",
+    "awaited",
   ] as const)("recovers only owned native shells using %s inventory", (discovery) =>
     Effect.gen(function* () {
+      const awaited = discovery === "awaited";
       const idAllocator = yield* IdAllocator.IdAllocatorV2.pipe(Effect.provide(IdAllocator.layer));
       const id = "sh_recovered";
       const info = {
@@ -1158,6 +1227,18 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           shellRecovery: inventory,
           external: true,
           ...(discovery === "anchored" ? { lastRunOrdinal: 7 } : {}),
+          ...(awaited
+            ? {
+                pendingBackgroundTasks: [
+                  {
+                    taskId: id,
+                    kind: "command" as const,
+                    description: info.command,
+                    awaited: true,
+                  },
+                ],
+              }
+            : {}),
           replayGate: gate,
         },
       );
@@ -1183,13 +1264,30 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       );
       assert.deepEqual(
         thread.pendingBackgroundTasks ?? [],
-        discovery === "settled" ? [] : [{ taskId: id, kind: "command", description: info.command }],
+        discovery === "settled"
+          ? []
+          : [
+              {
+                taskId: id,
+                kind: "command",
+                description: info.command,
+                ...(awaited ? { awaited: true } : {}),
+              },
+            ],
       );
       assert.equal(
         yield* runtime.hasPendingBackgroundWorkForThread!(thread),
         discovery !== "settled",
       );
       yield* runtime.stopTask!({ providerThread: thread, taskId: "sh_other" });
+      assert.deepEqual(
+        yield* runtime.awaitBackgroundTasks!({
+          providerThread: thread,
+          taskIds: [id, "sh_other"],
+          awaited: true,
+        }),
+        { matched: discovery === "settled" ? [] : [id] },
+      );
       assert.equal(
         yield* runtime.hasPendingBackgroundWorkForThread!(thread),
         discovery !== "settled",
@@ -1561,8 +1659,11 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       },
     },
   });
-  const callAgain = (input: Record<string, unknown>): ReadonlyArray<ProviderReplayEntry> => {
-    const tool = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: "call-again" };
+  const callAgain = (
+    input: Record<string, unknown>,
+    { id = "call-again", writesRules = true } = {},
+  ): ReadonlyArray<ProviderReplayEntry> => {
+    const tool = { sessionID: SESSION, assistantMessageID: "msg_assistant", id };
     return [
       event("session.tool.input.started", { ...tool, name: "subagent" }),
       event("session.tool.called", {
@@ -1575,20 +1676,25 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         ...tool,
         metadata: { sessionID: CHILD, status: "running" },
       }),
-      out("session.update", { sessionID: CHILD, permissions: "<any>" }),
-      reply("session.update", null),
+      // The adapter writes a child's rules only when they changed.
+      ...(writesRules
+        ? [
+            out("session.update", { sessionID: CHILD, permissions: "<any>" }),
+            reply("session.update", null),
+          ]
+        : []),
       returnedRunning(tool.id),
     ];
   };
-  const childReport = (inboxID: string, text: string) =>
+  const childReport = (inboxID: string, text: string, description = "Sleep") =>
     event("session.inbox.enqueued", {
       inboxID,
       sessionID: SESSION,
       item: {
         type: "synthetic",
         payload: {
-          text: `<subagent sessionID="${CHILD}" state="completed" description="Sleep">\n${text}\n</subagent>`,
-          description: "Sleep",
+          text: `<subagent sessionID="${CHILD}" state="completed" description="${description}">\n${text}\n</subagent>`,
+          description,
           metadata: { source: "subagent", childID: CHILD, agent: "General", state: "completed" },
         },
         delivery: "steer",
@@ -1600,6 +1706,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
   ) =>
     Effect.gen(function* () {
       const calls = new Map<string, { status: string; result: string | null }>();
+      const callsById = new Map<string, { status: string; result: string | null }>();
       const childTurns = new Map<string, string>();
       const callsAtChildTurnStart = new Map<
         string,
@@ -1610,6 +1717,12 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       yield* runtime.events.pipe(
         Stream.tap((event) =>
           Effect.gen(function* () {
+            if (event.type === "subagent.updated") {
+              callsById.set(event.subagent.nativeTaskRef?.nativeId ?? "", {
+                status: event.subagent.status,
+                result: event.subagent.result,
+              });
+            }
             if (event.type === "subagent.updated" && event.subagent.title !== null) {
               calls.set(event.subagent.title, {
                 status: event.subagent.status,
@@ -1648,7 +1761,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             yield* until(check);
           });
         });
-      return { calls, callsAtChildTurnStart, childTurns, state, until };
+      return { calls, callsById, callsAtChildTurnStart, childTurns, state, until };
     });
   const launchedAndRunning = [
     ...backgroundLaunch(CHILD),
@@ -1858,6 +1971,119 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       });
       yield* watch.until(() => watch.calls.get("Again")?.status === "completed");
       assert.deepEqual(watch.calls.get("Again"), { status: "completed", result: "SECOND_OK" });
+    }),
+  );
+
+  const childSaid = (text: string, run = 1) =>
+    event("session.text.ended", {
+      sessionID: CHILD,
+      assistantMessageID: `msg_child_${run}`,
+      ordinal: 0,
+      text,
+    });
+  it.effect.each([
+    {
+      // regression: #26319 the report settled the older run and left the resumed call running
+      name: "an earlier run's report never arrived",
+      replay: [
+        ...launchedAndRunning,
+        ...callAgain({ background: true }),
+        childSaid("FIRST_OK"),
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        ...callAgain({ background: true }, { id: "call-later", writesRules: false }),
+        event("session.execution.started", { sessionID: CHILD }),
+        childSaid("SECOND_OK", 2),
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        childReport("msg_report_2", "SECOND_OK", "Again"),
+      ],
+      expected: {
+        "call-background": { status: "completed", result: "FIRST_OK" },
+        "call-again": { status: "completed", result: "FIRST_OK" },
+        "call-later": { status: "completed", result: "SECOND_OK" },
+      },
+    },
+    {
+      name: "both runs' reports arrive after the runs ended",
+      replay: [
+        ...launchedAndRunning,
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        ...callAgain({ background: true, description: "Sleep" }),
+        event("session.execution.started", { sessionID: CHILD }),
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        childReport("msg_report_1", "FIRST_OK"),
+        childReport("msg_report_2", "SECOND_OK"),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ],
+      expected: {
+        "call-background": { status: "completed", result: "FIRST_OK" },
+        "call-again": { status: "completed", result: "SECOND_OK" },
+      },
+    },
+    {
+      name: "two runs with the same answer report late",
+      replay: [
+        ...launchedAndRunning,
+        childSaid("DONE"),
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        ...callAgain({ background: true }),
+        event("session.execution.started", { sessionID: CHILD }),
+        childSaid("DONE", 2),
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        childReport("msg_report_1", "DONE"),
+        ...callAgain({ background: true }, { id: "call-later", writesRules: false }),
+        event("session.execution.started", { sessionID: CHILD }),
+        childReport("msg_report_2", "DONE", "Again"),
+        childSaid("THIRD_OK", 3),
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        childReport("msg_report_3", "THIRD_OK", "Again"),
+      ],
+      expected: {
+        "call-background": { status: "completed", result: "DONE" },
+        "call-again": { status: "completed", result: "DONE" },
+        "call-later": { status: "completed", result: "THIRD_OK" },
+      },
+    },
+    {
+      name: "the call it joined already returned",
+      replay: [
+        ...backgroundLaunch(CHILD),
+        event("session.execution.started", { sessionID: CHILD }),
+        ...callAgain({ background: true }),
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        event(
+          "session.tool.success",
+          {
+            sessionID: SESSION,
+            assistantMessageID: "msg_assistant",
+            id: "call-background",
+            content: [{ type: "text", text: "FIRST_OK" }],
+            metadata: { sessionID: CHILD, status: "completed" },
+            executed: true,
+          },
+          undefined,
+          2,
+        ),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        childReport("msg_report", "CHILD_OK", "Again"),
+      ],
+      expected: {
+        "call-background": { status: "completed", result: "FIRST_OK" },
+        "call-again": { status: "completed", result: "CHILD_OK" },
+      },
+    },
+  ])("settles a resumed subagent's calls when $name", ({ replay, expected }) =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed(replay);
+      const watch = yield* watchCalls(runtime, thread);
+      yield* runtime.startTurn(withLineage(thread));
+      yield* watch.until(
+        () =>
+          watch.state.roster?.length === 0 &&
+          Object.keys(expected).every((id) => watch.callsById.get(id)?.status === "completed"),
+      );
+      assert.deepEqual(Object.fromEntries(watch.callsById), expected);
     }),
   );
 

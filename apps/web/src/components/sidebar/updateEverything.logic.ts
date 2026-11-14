@@ -348,11 +348,15 @@ function trackSwitchMove(
 export interface UpdateEverythingSteps<Providers, Servers> {
   readonly downloadLocal?: () => Promise<boolean>;
   readonly updateProviders: () => Promise<Providers>;
-  readonly updateServers: () => Promise<Servers>;
+  readonly stageServers?: () => ReadonlyMap<EnvironmentId, Promise<unknown>>;
+  readonly updateServers: (
+    staged: ReadonlyMap<EnvironmentId, Promise<unknown>>,
+  ) => Promise<Servers>;
 }
 
-/** Finish provider installs before server restarts. Install this app last when localReady; failed
- * downloads skip only that install. */
+/** Finish provider installs before server restarts; servers stage meanwhile and each server's
+ * update waits only on its own stage. Install this app last when localReady; failed downloads skip
+ * only that install. */
 export async function runUpdateEverything<Providers, Servers>(
   steps: UpdateEverythingSteps<Providers, Servers>,
 ): Promise<{
@@ -360,11 +364,14 @@ export async function runUpdateEverything<Providers, Servers>(
   readonly providers: Providers;
   readonly servers: Servers;
 }> {
+  const staged = new Map(
+    Array.from(steps.stageServers?.() ?? [], ([id, stage]) => [id, stage.catch(() => undefined)]),
+  );
   const [localReady, remote] = await Promise.all([
     steps.downloadLocal?.() ?? Promise.resolve(true),
     steps
       .updateProviders()
-      .then(async (providers) => ({ providers, servers: await steps.updateServers() })),
+      .then(async (providers) => ({ providers, servers: await steps.updateServers(staged) })),
   ]);
   return { localReady, ...remote };
 }

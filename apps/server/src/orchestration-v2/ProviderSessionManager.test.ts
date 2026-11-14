@@ -3309,7 +3309,53 @@ const openSessionWithBackgroundCommand = (fixtureName: string) =>
         });
       });
     yield* Effect.forEach(Object.values(seededToolCalls), writeToolCall);
+    // A background native subagent that outlived its completed run; Claude records no provider thread on it.
+    const nativeSubagentRunId = idAllocator.derive.run({ threadId, ordinal: 1 });
+    const nativeSubagentId = idAllocator.derive.nodeFromProviderItem({
+      driver: CODEX_DRIVER,
+      nativeItemId: "background-agent",
+    });
+    yield* eventSink.write({
+      events: [
+        {
+          id: yield* idAllocator.allocate.event({ threadId }),
+          type: "subagent.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: nativeSubagentId,
+            threadId,
+            runId: nativeSubagentRunId,
+            parentNodeId: idAllocator.derive.rootNode({ runId: nativeSubagentRunId }),
+            origin: "provider_native",
+            createdBy: "agent",
+            driver: CODEX_DRIVER,
+            providerInstanceId: modelSelection.instanceId,
+            providerThreadId: null,
+            childThreadId: null,
+            nativeTaskRef: {
+              driver: CODEX_DRIVER,
+              nativeId: "background-agent",
+              strength: "strong",
+            },
+            prompt: "sleep 150; echo done",
+            title: "Background agent",
+            model: null,
+            status: "running",
+            result: null,
+            startedAt: now,
+            completedAt: null,
+            updatedAt: now,
+          },
+        },
+      ],
+    });
     yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+    const nativeSubagentStatus = Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const projection = yield* projectionStore.getThreadProjection(threadId);
+      return projection.subagents.find((subagent) => subagent.id === nativeSubagentId)?.status;
+    });
     const toolCallStatus = (id: OrchestrationV2TurnItem["id"]) =>
       Effect.gen(function* () {
         const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
@@ -3345,6 +3391,7 @@ const openSessionWithBackgroundCommand = (fixtureName: string) =>
       writeToolCall,
       toolCalls,
       toolCallStatus,
+      nativeSubagentStatus,
     };
   });
 
@@ -3356,8 +3403,15 @@ it.effect.each(["detach", "stream failure", "provider stop", "early close"] as c
       const state = yield* Ref.make(emptyState);
       const effect = Effect.gen(function* () {
         const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
-        const { threadId, providerSessionId, rosters, toolCalls, seededToolCalls, writeToolCall } =
-          yield* openSessionWithBackgroundCommand("provider-session-manager-detach-roster");
+        const {
+          threadId,
+          providerSessionId,
+          rosters,
+          toolCalls,
+          seededToolCalls,
+          writeToolCall,
+          nativeSubagentStatus,
+        } = yield* openSessionWithBackgroundCommand("provider-session-manager-detach-roster");
         const runtime = Option.getOrThrow(yield* manager.get(providerSessionId));
         const subscription = yield* runtime.subscribeEvents!;
         const consuming = yield* Deferred.make<void>();
@@ -3410,9 +3464,18 @@ it.effect.each(["detach", "stream failure", "provider stop", "early close"] as c
           );
         yield* interrupts(1);
         yield* Deferred.succeed(resume, undefined);
+        const consumed = yield* Fiber.join(consumer);
         assert.equal(
-          Exit.isFailure(yield* Fiber.join(consumer)),
+          Exit.isFailure(consumed),
           release !== "provider stop" && release !== "early close",
+        );
+        // regression: #22971 only a detach names its thread, so a handoff run can settle on it.
+        assert.equal(
+          Exit.isFailure(consumed)
+            ? (Cause.squash(consumed.cause) as ProviderAdapter.ProviderAdapterEventStreamError)
+                .detachedThreadId
+            : undefined,
+          release === "detach" ? threadId : undefined,
         );
         yield* interrupts(2);
 
@@ -3424,6 +3487,8 @@ it.effect.each(["detach", "stream failure", "provider stop", "early close"] as c
           otherSession: "running",
           replacement: "running",
         });
+        // regression: #36548 a native subagent the dead process ran stayed running after its run completed
+        assert.notInclude(["pending", "running", "waiting"], yield* nativeSubagentStatus);
       });
 
       yield* effect.pipe(
