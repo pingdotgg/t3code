@@ -7762,13 +7762,14 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           { type: "queue.resume" },
           { type: "queued-run.start", runId: queued.id },
         ] as const) {
-          yield* orchestrator
+          const error = yield* orchestrator
             .dispatch({
               ...start,
               commandId: CommandId.make(`${threadId}:${start.type}`),
               threadId,
             })
             .pipe(Effect.flip);
+          assert.include(String(error.cause), "Retry worktree setup");
           const held = yield* queuedRun;
           assert.equal(held?.status, "queued");
           assert.isTrue(held?.queueHeld);
