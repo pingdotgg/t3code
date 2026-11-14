@@ -5,12 +5,14 @@ import { Button } from "../ui/button";
 import {
   resolveTimelineMinimapHeightStyle,
   resolveTimelineMinimapIndexFromPointer,
+  resolveTimelineMinimapMarkIndices,
   resolveTimelineMinimapNavigationInteractive,
   resolveTimelineMinimapTopPercent,
   TIMELINE_MINIMAP_MIN_ITEMS,
 } from "./MessagesTimeline.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
+import { observeResize } from "~/lib/observeResize";
 
 // A release outside the window can skip `mouseup`, so the next button-free
 // `mousemove` also counts.
@@ -49,6 +51,14 @@ export function TimelineMinimap({
   onSelect: (item: TimelineMinimapItem) => void;
 }) {
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  const [railHeight, setRailHeight] = useState(0);
+  const railRef = (node: HTMLDivElement | null) => {
+    if (!node) return;
+    setRailHeight(node.getBoundingClientRect().height);
+    return observeResize(node, ([entry]) => {
+      if (entry) setRailHeight(entry.contentRect.height);
+    });
+  };
   const wheelTargetRef = (node: HTMLDivElement | null) => {
     if (!node) return;
     node.addEventListener("wheel", onWheel, { passive: false });
@@ -98,6 +108,13 @@ export function TimelineMinimap({
     });
   };
 
+  const paintedMarks = resolveTimelineMinimapMarkIndices({
+    itemCount: items.length,
+    railHeightPx: railHeight,
+    pinnedIndices: [resolvedActiveIndex, resolvedCurrentIndex],
+  });
+  const paintedMarkSet = paintedMarks.length === items.length ? null : new Set(paintedMarks);
+
   if (items.length < TIMELINE_MINIMAP_MIN_ITEMS) {
     return null;
   }
@@ -120,6 +137,7 @@ export function TimelineMinimap({
             "absolute top-1/2 left-3 -translate-y-1/2",
             hitStripWidth > 0 && !passThrough ? "pointer-events-auto" : "pointer-events-none",
           )}
+          ref={railRef}
           onMouseDown={() => {
             if (pressedOnStripRef.current) return;
             pressedOnStripRef.current = true;
@@ -191,6 +209,8 @@ export function TimelineMinimap({
               const top = `${resolveTimelineMinimapTopPercent(index, items.length)}%`;
               const activeDistance =
                 resolvedActiveIndex === null ? null : Math.abs(index - resolvedActiveIndex);
+              // Thinned strips stay mounted so hover and in-view highlights keep their exact row.
+              const painted = paintedMarkSet === null || paintedMarkSet.has(index);
               return (
                 // Compositor-friendly on purpose: in-view state and the hover
                 // fisheye animate constantly (every scroll tick and streaming
@@ -200,7 +220,8 @@ export function TimelineMinimap({
                   aria-hidden="true"
                   className={cn(
                     "pointer-events-none absolute left-0 h-0.5 w-6 origin-left -translate-y-1/2 rounded-full transition-transform duration-150 after:absolute after:inset-0 after:rounded-full after:bg-foreground/55 after:opacity-0 after:transition-opacity after:duration-150 data-[in-view=true]:after:opacity-100",
-                    activeDistance === 0 ? "bg-muted-foreground/60" : "bg-muted-foreground/25",
+                    painted &&
+                      (activeDistance === 0 ? "bg-muted-foreground/60" : "bg-muted-foreground/25"),
                     activeDistance === 0
                       ? "scale-x-100"
                       : activeDistance === 1
