@@ -86,6 +86,7 @@ describe("images inside running text", () => {
     for (const markdown of [
       "1. **Imports.** Done. ![a](a.png)",
       "> - One ![a](a.png)",
+      "[^1]: See ![a](a.png) here",
       "Text\n\n![a](a.png)",
       "- ![a](a.png)",
       "See [![badge](b.svg)](https://example.com) here",

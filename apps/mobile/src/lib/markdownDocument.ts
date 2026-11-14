@@ -448,15 +448,15 @@ const BLOCK_MARKER =
 
 /**
  * md4c draws an image that follows text on its line as a 20pt glyph; give each its own paragraph.
- * List items are skipped: the renderer places no block slot there, so a split image would render
- * natively instead of through `renderers.image`.
+ * Only root and blockquote paragraphs: the renderer places block slots nowhere else, so a split
+ * image elsewhere would render natively instead of through `renderers.image`.
  */
 export function markdownWithBlockImages(markdown: string): string {
   if (!markdown.includes("![")) return markdown;
   const edits: MarkdownEdit[] = [];
   const visit = (node: MarkdownNode) => {
-    if (!("children" in node) || node.type === "listItem") return;
-    if (node.type !== "paragraph") return node.children.forEach(visit);
+    if (node.type === "root" || node.type === "blockquote") return node.children.forEach(visit);
+    if (node.type !== "paragraph") return;
     const start = node.position?.start.offset;
     const end = node.position?.end.offset;
     if (start === undefined || end === undefined) return;
