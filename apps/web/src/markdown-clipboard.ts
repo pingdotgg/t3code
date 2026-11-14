@@ -48,8 +48,7 @@ function wrapInlineCode(code: string): string {
     0,
   );
   const fence = "`".repeat(Math.max(1, longestRun + (longestRun > 0 ? 1 : 0)));
-  // CommonMark strips one space from each side when content starts and ends
-  // with a space and is not all spaces, so pad to keep those edges.
+  // CommonMark strips one edge space from content that has both and isn't all spaces.
   const spaceEdges = code.startsWith(" ") && code.endsWith(" ") && /[^ ]/.test(code);
   const pad = spaceEdges || code.startsWith("`") || code.endsWith("`") ? " " : "";
   return `${fence}${pad}${code}${pad}${fence}`;
