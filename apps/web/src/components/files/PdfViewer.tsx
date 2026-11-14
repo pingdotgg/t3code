@@ -12,7 +12,7 @@ import { Input } from "~/components/ui/input";
 import { observeResize } from "~/lib/observeResize";
 import { FileSurfaceAction, FileSurfaceFailure, FileSurfaceLoading } from "./fileSurfaceChrome";
 import { readBoundedDocument } from "./readBoundedDocument";
-import { openPdf } from "./pdfDocument";
+import { openPdf, openPdfRanges } from "./pdfDocument";
 import {
   currentPdfPage,
   pdfFindIncludes,
@@ -139,12 +139,13 @@ export default function PdfViewer(props: {
   const [savedPosition] = useState(() =>
     props.positionKey === undefined ? undefined : positions.get(props.positionKey),
   );
-  const [initialView] = useState<PdfViewState>(
+  const [initialView, setInitialView] = useState<PdfViewState & { readonly width?: number }>(
     () => savedPosition ?? props.initialView ?? { page: 0, offset: 0, zoom: null, left: 0 },
   );
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
+  const [fullRead, setFullRead] = useState(false);
   const [ratios, setRatios] = useState<readonly number[]>([]);
   const [zoom, setZoom] = useState(initialView.zoom);
   const [pageWidth, setPageWidth] = useState(612);
@@ -158,6 +159,22 @@ export default function PdfViewer(props: {
   const scroll = useRef<HTMLDivElement>(null);
   const find = useRef<HTMLInputElement>(null);
   const zoomAnchor = useRef<{ page: number; offset: number; width: number } | null>(null);
+  const { scale, width } = pdfPageWidth(viewport.width, pageWidth, zoom);
+  const offsets = pdfPageOffsets(ratios, width);
+  const readView = (node: HTMLDivElement) => {
+    const page = currentPdfPage(offsets, ratios.length, node.scrollTop);
+    return {
+      page,
+      offset: Math.max(0, node.scrollTop - (offsets[page]! - 16)),
+      zoom,
+      left: node.scrollLeft,
+    };
+  };
+  // A range fallback reloads the document; the reader stays where they were.
+  const keepView = useEffectEvent(() => {
+    const node = scroll.current;
+    if (pdf && node) setInitialView({ ...readView(node), width });
+  });
   const initialPage = initialView.page;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the PDF fetch, load timeout, and pdf.js document task across source changes, retries, and unmounts.
   useEffect(() => {
@@ -169,15 +186,28 @@ export default function PdfViewer(props: {
       controller.abort();
       void task?.destroy();
     }, 30_000);
-    void readBoundedDocument(
-      props.src,
-      controller.signal,
-      50 * 1024 * 1024,
-      revision > 0 ? "reload" : "default",
-    )
-      .then(async (bytes) => {
+    const limit = 50 * 1024 * 1024;
+    void (async () => {
+      const ranges = fullRead
+        ? null
+        : await openPdfRanges(props.src, controller.signal, limit, () => {
+            keepView();
+            setPdf(null);
+            setFullRead(true);
+          });
+      return (
+        ranges ??
+        (await readBoundedDocument(
+          props.src,
+          controller.signal,
+          limit,
+          revision > 0 || fullRead ? "reload" : "default",
+        ))
+      );
+    })()
+      .then(async (source) => {
         controller.signal.throwIfAborted();
-        task = openPdf(bytes);
+        task = openPdf(source);
         const document = await task.promise;
         if (document.numPages > MAX_PAGES)
           throw new Error("Preview limited to 2,000 pages. Save this PDF to read it in full.");
@@ -211,7 +241,7 @@ export default function PdfViewer(props: {
       clearTimeout(timeout);
       void task?.destroy();
     };
-  }, [props.src, revision, initialPage, savedPosition]);
+  }, [props.src, revision, fullRead, initialPage, savedPosition]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Measure the PDF viewport before paint and observe resizes for fit-width sizing and visible-page selection.
   useLayoutEffect(() => {
     const node = scroll.current;
@@ -220,8 +250,6 @@ export default function PdfViewer(props: {
     update();
     return observeResize(node, update);
   }, []);
-  const { scale, width } = pdfPageWidth(viewport.width, pageWidth, zoom);
-  const offsets = pdfPageOffsets(ratios, width);
   const current = currentPdfPage(offsets, ratios.length, scrollTop);
   const visible = visiblePdfPages(ratios, offsets, scrollTop, viewport.height);
   // Stable callbacks let page canvases survive scroll and find updates.
@@ -235,14 +263,8 @@ export default function PdfViewer(props: {
     scroll.current?.scrollTo({ top: pdfPageScrollTop(offsets, index) });
   });
   const saveView = (node: HTMLDivElement, notify = true) => {
-    const page = currentPdfPage(offsets, ratios.length, node.scrollTop);
     if (!pdf) return;
-    const view = {
-      page,
-      offset: Math.max(0, node.scrollTop - (offsets[page]! - 16)),
-      zoom,
-      left: node.scrollLeft,
-    };
+    const view = readView(node);
     if (notify) props.onViewChange?.(view);
     if (props.positionKey !== undefined) {
       positions.delete(props.positionKey);
@@ -255,7 +277,12 @@ export default function PdfViewer(props: {
     const node = scroll.current;
     if (!pdf || !node) return;
     node.scrollTo({
-      top: pdfRestoredScrollTop(ratios, width, initialView, savedPosition?.width),
+      top: pdfRestoredScrollTop(
+        ratios,
+        width,
+        initialView,
+        initialView.width ?? savedPosition?.width,
+      ),
       left: initialView.left,
     });
     setScrollTop(node.scrollTop);

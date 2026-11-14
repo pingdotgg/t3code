@@ -136,6 +136,14 @@ describe("browser API CORS", () => {
       expect(allowedHeaders.has(ORCHESTRATION_PROTOCOL_HEADER)).toBe(true);
       expect(allowedHeaders.has("authorization")).toBe(true);
       expect(allowedHeaders.has("dpop")).toBe(true);
+
+      // Range readers validate offsets and revision from these response headers.
+      const asset = await handler(
+        new Request("https://backend.example/api/environment", {
+          headers: { origin: "https://app.t3.codes" },
+        }),
+      );
+      expect(asset.headers.get("access-control-expose-headers")).toBe("content-range,etag");
     } finally {
       await dispose();
     }
