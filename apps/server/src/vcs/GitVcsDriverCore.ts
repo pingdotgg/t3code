@@ -69,6 +69,13 @@ const branchBaseConfigKey = (branch: string) => `branch.${branch}.t3-merge-base`
  * CLI's key, which branches cut before then still carry instead.
  */
 const legacyBranchBaseConfigKey = (branch: string) => `branch.${branch}.gh-merge-base`;
+const supportedTextDecoder = (label: string) => {
+  try {
+    return new TextDecoder(label);
+  } catch {
+    return undefined;
+  }
+};
 const gitProcesses = Semaphore.makeUnsafe(8);
 const backgroundGitProcesses = Semaphore.makeUnsafe(2);
 // The fetch before `git worktree add` downloads everything the remote gained since
@@ -4166,6 +4173,21 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           fileError("fs.readFile", `Could not read diff file '${input.newPath}'.`, cause),
         ),
       );
+    // Git diffs a working-tree-encoding file as UTF-8, so decode its disk bytes the same way.
+    const [, , encoding = "unspecified"] = (yield* runGitStdout(
+      "GitVcsDriver.getReviewDiffFileContents.workingTree.checkAttr",
+      repositoryRoot,
+      ["check-attr", "-z", "working-tree-encoding", "--", input.newPath],
+    )).split("\0");
+    // Git also accepts e.g. UTF-16LE-BOM, and its plain UTF-16 can carry a big-endian BOM.
+    const normalized = encoding.toLowerCase().replace(/-bom$/, "");
+    const label =
+      normalized === "utf-16" && bytes[0] === 0xfe && bytes[1] === 0xff ? "utf-16be" : normalized;
+    // Unset, UTF-8 (whose BOM Git keeps) and encodings Node cannot decode take the default path.
+    const decoder = supportedTextDecoder(label);
+    if (decoder && decoder.encoding !== "utf-8") {
+      return decoder.decode(bytes);
+    }
     if (bytes.includes(0)) {
       return yield* fileError("fs.readFile", `Cannot expand binary file '${input.newPath}'.`);
     }

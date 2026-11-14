@@ -3574,6 +3574,57 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("expands working-tree-encoding files as the text their diff shows", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const fileSystem = yield* FileSystem.FileSystem;
+        const encodedPath = (yield* Path.Path).join(cwd, "encoded.txt");
+        yield* writeTextFile(
+          cwd,
+          ".gitattributes",
+          [
+            "encoded.txt working-tree-encoding=UTF-16LE",
+            "bom.txt working-tree-encoding=UTF-8",
+            "cp.txt working-tree-encoding=CP437",
+            "",
+          ].join("\n"),
+        );
+        yield* fileSystem.writeFile(encodedPath, Buffer.from("old\ncontext\n", "utf16le"));
+        yield* writeTextFile(cwd, "bom.txt", "\uFEFFold\ncontext\n");
+        yield* writeTextFile(cwd, "cp.txt", "old\ncontext\n");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "add encoded file"]);
+        yield* fileSystem.writeFile(encodedPath, Buffer.from("new\ncontext\n", "utf16le"));
+        yield* writeTextFile(cwd, "bom.txt", "\uFEFFnew\ncontext\n");
+        yield* writeTextFile(cwd, "cp.txt", "new\ncontext\n");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd, sourceKind: "working-tree" });
+        assert.include(preview.sources[0]?.diff ?? "", "+new\n");
+        const contents = yield* driver.getReviewDiffFileContents(
+          makeReviewDiffFileContentsInput(cwd, { oldPath: "encoded.txt", newPath: "encoded.txt" }),
+        );
+
+        assert.deepStrictEqual(contents, {
+          oldContents: "old\ncontext\n",
+          newContents: "new\ncontext\n",
+        });
+        assert.deepStrictEqual(
+          yield* driver.getReviewDiffFileContents(
+            makeReviewDiffFileContentsInput(cwd, { oldPath: "bom.txt", newPath: "bom.txt" }),
+          ),
+          { oldContents: "\uFEFFold\ncontext\n", newContents: "\uFEFFnew\ncontext\n" },
+        );
+        assert.deepStrictEqual(
+          yield* driver.getReviewDiffFileContents(
+            makeReviewDiffFileContentsInput(cwd, { oldPath: "cp.txt", newPath: "cp.txt" }),
+          ),
+          { oldContents: "old\ncontext\n", newContents: "new\ncontext\n" },
+        );
+      }),
+    );
+
     it.effect("reads a base ref that looks like an option as a revision", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
