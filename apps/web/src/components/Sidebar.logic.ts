@@ -1,7 +1,6 @@
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
-import { threadKey } from "@t3tools/client-runtime/state/entities";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
@@ -1344,12 +1343,13 @@ export function getFallbackThreadIdAfterDelete<
           thread.projectId === deletedThread.projectId &&
           thread.id !== deletedThreadId &&
           !deletedThreadIds?.has(thread.id) &&
-          !delegatedUnderParent.has(
-            threadKey({ environmentId: thread.environmentId, threadId: thread.id }),
-          ) &&
           thread.settledOverride !== "settled" &&
           !effectiveSnoozed(thread, { now }) &&
-          !isSidebarHiddenThread(thread),
+          !isShownUnderParent(
+            { environmentId: thread.environmentId, threadId: thread.id },
+            thread.lineage,
+            delegatedUnderParent,
+          ),
       ),
       sortOrder,
     )[0]?.id ?? null
