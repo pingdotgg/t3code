@@ -302,9 +302,9 @@ export function useComposerContextImport(input: {
           : 0,
     );
     for (const candidate of orderedRecords) {
-      // Producer ids fold into context ids, so two different excerpts can collide. For non-thread records, only skip
+      // Producer ids fold into context ids, so two different excerpts can collide. Only skip
       // when the draft already holds the same payload; a colliding but different record is
-      // re-minted under a fresh id so both survive the paste.
+      // re-minted under a fresh id so both survive the paste. Threads resolve below.
       const record = asKnownContextRecord(candidate);
       if (!record) continue;
       // A reminted annotation needs its screenshot under the new annotation id.

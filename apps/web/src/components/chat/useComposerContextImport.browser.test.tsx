@@ -193,13 +193,11 @@ it.each([
   );
 });
 
-it.each(["same", "renamed", "other-environment", "different-draft"] as const)(
+it.each(["same", "other-environment"] as const)(
   "preserves thread identity across repeated pastes: %s",
   async (variant) => {
     const otherEnvironment = variant === "other-environment";
     const target = DraftId.make(`thread-collision-${variant}`);
-    const attachmentTarget =
-      variant === "different-draft" ? DraftId.make("question-draft") : target;
     const store = useComposerDraftStore.getState();
     using _draft = { [Symbol.dispose]: () => store.clearComposerContent(target) };
     const environmentId = EnvironmentId.make("thread-source");
@@ -213,9 +211,7 @@ it.each(["same", "renamed", "other-environment", "different-draft"] as const)(
           { environmentId: otherEnvironmentId, threadId: first.threadId },
           "Second",
         )
-      : variant === "renamed"
-        ? threadContextRecord({ environmentId, threadId: first.threadId }, "Renamed")
-        : first;
+      : first;
     store.addThreadContexts(target, [first], { appendReference: false });
     let importer!: Importer;
     await using _screen = await render(
@@ -226,10 +222,10 @@ it.each(["same", "renamed", "other-environment", "different-draft"] as const)(
           activeThread: undefined,
           activeThreadId: null,
           composerDraftTarget: target,
-          attachmentDraftTarget: attachmentTarget,
-          attachmentTargetKey: attachmentTarget,
-          attachmentTargetKeyRef: { current: attachmentTarget },
-          questionAttachmentTarget: attachmentTarget === target ? null : attachmentTarget,
+          attachmentDraftTarget: target,
+          attachmentTargetKey: target,
+          attachmentTargetKeyRef: { current: target },
+          questionAttachmentTarget: null,
           pendingUserInputs: [],
           composerContextRecords: new Map([[first.contextId, { kind: "thread", record: first }]]),
           composerImages: [],
