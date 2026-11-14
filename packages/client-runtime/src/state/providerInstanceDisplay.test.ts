@@ -38,8 +38,11 @@ describe("providerAccentForegroundColor", () => {
   it.each([
     ["#b5f23d", "#000000"],
     ["#2563eb", "#ffffff"],
-    ["#777777", "#000000"],
-  ])("chooses the higher WCAG contrast foreground for %s", (accent, foreground) => {
+    ["#777777", "#ffffff"],
+    ["#d63ad6", "#ffffff"],
+    ["#f97316", "#ffffff"],
+    ["#ffcc00", "#000000"],
+  ])("chooses the higher APCA contrast foreground for %s", (accent, foreground) => {
     expect(providerAccentForegroundColor(accent)).toBe(foreground);
   });
 });

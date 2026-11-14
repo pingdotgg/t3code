@@ -49,16 +49,16 @@ export function normalizeProviderAccentColor(value: string | undefined): string 
   return /^#[0-9a-fA-F]{6}$/u.test(trimmed) ? trimmed : undefined;
 }
 
+// APCA (WCAG 3 draft) rather than the WCAG 2 ratio: on saturated mid-tones such as
+// magenta or orange, the WCAG 2 ratio picks black, which reads poorly on a tiny badge.
 export function providerAccentForegroundColor(accentColor: string) {
-  const linearChannel = (offset: number) => {
-    const value = Number.parseInt(accentColor.slice(offset, offset + 2), 16) / 255;
-    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
-  };
-  const luminance =
-    0.2126 * linearChannel(1) + 0.7152 * linearChannel(3) + 0.0722 * linearChannel(5);
-  const blackContrast = (luminance + 0.05) / 0.05;
-  const whiteContrast = 1.05 / (luminance + 0.05);
-  return blackContrast >= whiteContrast ? "#000000" : "#ffffff";
+  const channel = (offset: number) =>
+    (Number.parseInt(accentColor.slice(offset, offset + 2), 16) / 255) ** 2.4;
+  const luminance = 0.2126729 * channel(1) + 0.7151522 * channel(3) + 0.072175 * channel(5);
+  const blackLuminance = 0.022 ** 1.414;
+  const blackContrast = luminance ** 0.56 - blackLuminance ** 0.57;
+  const whiteContrast = 1 - luminance ** 0.65;
+  return blackContrast > whiteContrast ? "#000000" : "#ffffff";
 }
 
 export function shouldShowInstanceBadge(
