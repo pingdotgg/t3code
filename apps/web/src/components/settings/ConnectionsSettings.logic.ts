@@ -63,10 +63,16 @@ export function isQrShareableEndpoint(endpoint: AdvertisedEndpoint): boolean {
 
 /** Desktop skips Tailscale probing until network/Serve is enabled to avoid macOS prompts; absence then
  * means unchecked. */
+export function isTailscaleDetectionSkipped(
+  state: Pick<DesktopServerExposureState, "mode" | "tailscaleServeEnabled"> | null,
+): boolean {
+  return state !== null && state.mode !== "network-accessible" && !state.tailscaleServeEnabled;
+}
+
 export function missingTailscaleEndpointDescription(
   state: Pick<DesktopServerExposureState, "mode" | "tailscaleServeEnabled"> | null,
 ): string {
-  return state && state.mode !== "network-accessible" && !state.tailscaleServeEnabled
+  return isTailscaleDetectionSkipped(state)
     ? "Turn on Network access to detect Tailscale."
     : "Start Tailscale to set up HTTPS access through MagicDNS.";
 }
