@@ -243,7 +243,37 @@ interface SharedBootstrapInput {
   readonly bootstrapToken: string;
   readonly bootstrapSecret: string;
   readonly observabilitySettings: BackendObservabilitySettings;
+  readonly hostScope: string;
 }
+
+// Matches the server's DESKTOP_HOST_SCOPE_ENV.
+const DESKTOP_HOST_SCOPE_ENV = "T3CODE_DESKTOP_HOST_SCOPE";
+const HOST_SCOPE_FILE_NAME = "desktop-host-scope";
+const HOST_SCOPE_PATTERN = /^[0-9a-f]{32}$/;
+
+/**
+ * Not a credential: it only tells this install's Windows and WSL servers that
+ * they run on one machine, so usage both read from one Windows directory counts
+ * once. Persisted so summaries from earlier launches still match.
+ */
+const readOrCreateHostScope = Effect.gen(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const random = yield* SecureRandom.SecureRandom;
+  const scopePath = environment.path.join(environment.stateDir, HOST_SCOPE_FILE_NAME);
+  const existing = (yield* fileSystem
+    .readFileString(scopePath)
+    .pipe(Effect.orElseSucceed(() => ""))).trim();
+  if (HOST_SCOPE_PATTERN.test(existing)) return existing;
+  const scope = Hex.encode(yield* random.randomBytes(16).pipe(Effect.orDie));
+  yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true }).pipe(
+    Effect.andThen(fileSystem.writeFileString(scopePath, scope)),
+    Effect.catch((cause) =>
+      Effect.logWarning("Could not persist the desktop host scope.", { cause }),
+    ),
+  );
+  return scope;
+});
 
 type WslPreflightRuntime =
   | {
@@ -540,6 +570,7 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
         ELECTRON_RUN_AS_NODE: "1",
         T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING: "1",
         T3CODE_CLI_PATH: Option.getOrUndefined(input.cliPath),
+        [DESKTOP_HOST_SCOPE_ENV]: input.hostScope,
       },
       extendEnv: true,
       bootstrap,
@@ -636,8 +667,8 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   const httpBaseUrl = new URL(`http://${rendererHost}:${input.port}`);
 
   const distroArgs = distroForConfig ? ["-d", distroForConfig] : [];
-  const forwardedEnv: Record<string, string> = {};
-  const forwardedEnvNames: string[] = [];
+  const forwardedEnv: Record<string, string> = { [DESKTOP_HOST_SCOPE_ENV]: input.hostScope };
+  const forwardedEnvNames: string[] = [DESKTOP_HOST_SCOPE_ENV];
   for (const name of WSL_FORWARDED_ENV_NAMES) {
     const value = env[name];
     if (value !== undefined && value.length > 0) {
@@ -708,6 +739,9 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     ...baseConfig,
     args: [
       ...distroArgs,
+      // WSL otherwise inherits the Windows-mounted desktop working directory.
+      "--cd",
+      "~",
       "--exec",
       "env",
       `PATH=${launchPath}`,
@@ -735,6 +769,13 @@ export const make = Effect.gen(function* () {
   const random = yield* SecureRandom.SecureRandom;
   // Random generation yields; serialize it so concurrent backends cannot capture distinct bootstrap secrets.
   const secretRef = yield* SynchronizedRef.make(Option.none<string>());
+  const hostScope = yield* Effect.cached(
+    readOrCreateHostScope.pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
+      Effect.provideService(SecureRandom.SecureRandom, random),
+    ),
+  );
   const getOrCreateBootstrapSecret = SynchronizedRef.modifyEffect(secretRef, (current) =>
     Option.match(current, {
       onSome: (secret) => Effect.succeed([secret, current] as const),
@@ -762,6 +803,7 @@ export const make = Effect.gen(function* () {
       bootstrapToken,
       bootstrapSecret,
       observabilitySettings,
+      hostScope: yield* hostScope,
     } satisfies SharedBootstrapInput;
   });
 

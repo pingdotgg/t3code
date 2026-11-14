@@ -84,6 +84,33 @@ async function withVoicePanel(
   );
 }
 
+it("cancelling a provider's setup keeps the current destination and writes nothing", async () => {
+  chooseAudioDestination({ kind: "environment", environmentId: id });
+  const writes: unknown[] = [];
+  await withVoicePanel(
+    (url, request, init) => {
+      if (url.pathname === "/api/voice/cloud/keys")
+        return Promise.resolve(Response.json({ openai: false, xai: true }));
+      if (url.pathname !== "/api/voice/cloud/openai/key") return null;
+      return new Request(request, init).json().then((body) => {
+        writes.push(body);
+        return new Response(null, { status: 204 });
+      });
+    },
+    async (screen) => {
+      const destination = screen.getByRole("combobox", { name: "Transcribe with" });
+      await expect.element(destination).toHaveTextContent("Laptop");
+      await destination.click();
+      await page.getByRole("option", { name: "OpenAI via Laptop" }).click();
+      const dialog = page.getByRole("dialog");
+      await dialog.getByRole("button", { name: "Cancel" }).click();
+      await expect.element(dialog).not.toBeInTheDocument();
+      await expect.element(destination).toHaveTextContent("Laptop");
+      expect(writes).toEqual([]);
+    },
+  );
+});
+
 it("enables the chosen provider only after a successful setup", async () => {
   chooseAudioDestination({ kind: "environment", environmentId: id });
   const writes: unknown[] = [];
@@ -104,15 +131,9 @@ it("enables the chosen provider only after a successful setup", async () => {
     },
     async (screen) => {
       const destination = screen.getByRole("combobox", { name: "Transcribe with" });
-      await expect.element(destination).toHaveTextContent("Laptop");
       await destination.click();
       await page.getByRole("option", { name: "OpenAI via Laptop" }).click();
       const dialog = page.getByRole("dialog");
-      await dialog.getByRole("button", { name: "Cancel" }).click();
-      await expect.element(destination).toHaveTextContent("Laptop");
-      expect(writes).toEqual([]);
-      await destination.click();
-      await page.getByRole("option", { name: "OpenAI via Laptop" }).click();
       await dialog.getByRole("combobox", { name: "OpenAI API key source" }).click();
       await page.getByRole("option", { name: "Work vault" }).click();
       await dialog.getByLabelText("OpenAI API key reference").fill("op://Work/Voice/key");
