@@ -122,12 +122,13 @@ function shortTokenSpellings(token: string): ReadonlyArray<string> {
   return [...new Set(spellings)];
 }
 
-// Latin-1 Supplement and Extended-A letters that fold to each ASCII letter, which
-// SQLite's lower() leaves alone. Later blocks such as Vietnamese are left out.
+// Latin-1 Supplement and Extended-A/B/Additional letters that fold to ASCII,
+// including Romanian and Vietnamese letters SQLite's lower() leaves alone.
 const accentedForms = Map.groupBy(
-  Array.from({ length: 0x180 - 0xc0 }, (_, offset) => String.fromCharCode(0xc0 + offset)).filter(
-    (char) => /^[a-z]$/.test(foldSearchQuery(char)),
-  ),
+  [
+    ...Array.from({ length: 0x250 - 0xc0 }, (_, offset) => String.fromCharCode(0xc0 + offset)),
+    ...Array.from({ length: 0x1f00 - 0x1e00 }, (_, offset) => String.fromCharCode(0x1e00 + offset)),
+  ].filter((char) => /^[a-z]$/.test(foldSearchQuery(char))),
   (char) => foldSearchQuery(char),
 );
 // Only text holding one of those letters (by UTF-8 lead byte) needs the GLOB:
@@ -211,10 +212,10 @@ export function buildSearchSnippet(text: string, matchStart: number): string {
   return `${start > 0 ? "…" : ""}${shown.slice(0, end)}${cut ? "…" : ""}`;
 }
 
-// Filter hidden subagents and side chats before the hit limit so visible matches aren't lost.
-// Word starts and ranking follow the title rules in JS.
-// Without FTS5 trigrams, or for two-character CJK words, scan the same eligible messages,
-// folding only Latin case and accents: "fermée" can miss "fermee", and "ОШИБКА" "ошибка".
+// Filter hidden subagents and side chats before the hit limit; JS checks word starts and ranking.
+// Both paths narrow ASCII tokens with Latin-1 and Extended-A/B/Additional accent variants.
+// Without FTS5 trigrams, or for two-character CJK words, scan the same eligible messages;
+// accented queries and non-Latin case can still miss: "fermée"/"fermee", "ОШИБКА"/"ошибка".
 export const messageHitsQuery = (
   sql: SqlClient.SqlClient,
   { match, substrings, shortSpellings, projectId, excludedThreadIds }: typeof SearchRequest.Encoded,

@@ -840,7 +840,7 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
 });
 
 it.effect.each([true, false])(
-  "ThreadSearch narrows short words in any script or accent before the hit limit (indexed: %s)",
+  "ThreadSearch narrows Cyrillic and accent-folded Latin short words before the hit limit (indexed: %s)",
   (indexed) =>
     Effect.gen(function* () {
       const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -900,6 +900,9 @@ it.layer(layerTest)("ThreadSearch short words outside ASCII", (it) => {
           message(russian, "russian", "user", "В логах ошибка"),
           thread(french, project),
           message(french, "french", "user", "École fermée à Lyon"),
+          message(french, "french-shout", "user", "Météo école"),
+          message(french, "romanian", "user", "Școala închisă"),
+          message(french, "vietnamese", "user", "Hồ Chí Minh"),
         ],
         projections.apply,
         { discard: true },
@@ -911,6 +914,9 @@ it.layer(layerTest)("ThreadSearch short words outside ASCII", (it) => {
         assert.deepEqual(yield* threadIds("ошибка в"), [russian]);
         assert.deepEqual(yield* threadIds("fermée éc"), [french]);
         assert.deepEqual(yield* threadIds("ecole fermée"), [french]);
+        assert.deepEqual(yield* threadIds("école me"), [french]);
+        assert.deepEqual(yield* threadIds("închisă sc"), [french]);
+        assert.deepEqual(yield* threadIds("chí ho"), [french]);
         // They still narrow: a word the message lacks rules it out.
         assert.deepEqual(yield* threadIds("ошибка я"), []);
         assert.deepEqual(yield* threadIds("fermée ce"), []);
