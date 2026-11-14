@@ -842,8 +842,10 @@ export const make = Effect.gen(function* () {
       );
       // A window no complete scan has read would show partial totals, so every directory must cover it.
       // Saved files are keyed by path, so two providers reading one directory keep only one parse.
+      // Windows reaching past retention need the in-memory historical files, which a saved snapshot lacks.
       const fromMemory =
         provisional &&
+        windowStartMs >= retentionCutoffMs &&
         resolved.dirs.length > 0 &&
         new Set(resolved.dirs.map((source) => source.dir)).size === resolved.dirs.length &&
         resolved.dirs.every(

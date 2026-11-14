@@ -3531,7 +3531,6 @@ describe("UsageService", () => {
           open.mockClear();
           assert.strictEqual(totalOutputTokens(yield* service.readSummary(allTime)), 5);
           assert.isTrue(open.mock.calls.some(([path]) => path === transcript));
-
           open.mockClear();
           for (const sinceDay of ["2026-11-02", "2026-09-03"]) {
             const recent = { ...allTime, sinceDay: UsageDay.make(sinceDay) };
@@ -3563,6 +3562,40 @@ describe("UsageService", () => {
           Effect.provide(layerService({ prefix: "usage-service-all-time-test", home, settings })),
         );
       }).pipe(Effect.scoped),
+  );
+
+  it.effect("answers a provisional all-time read with old and recent transcripts", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse("2026-12-01T00:00:00Z"));
+      const { transcript, settings, home } = yield* setup;
+      const recent = NodePath.join(NodePath.dirname(transcript), "recent.jsonl");
+      yield* Effect.promise(async () => {
+        const oldWrite = Date.parse("2026-08-01T10:00:00Z") / 1000;
+        const recentWrite = Date.parse("2026-11-30T10:00:00Z") / 1000;
+        await NodeFSP.writeFile(transcript, claudeLine(1, 5));
+        await NodeFSP.utimes(transcript, oldWrite, oldWrite);
+        await NodeFSP.writeFile(recent, claudeLine(2, 3));
+        await NodeFSP.utimes(recent, recentWrite, recentWrite);
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        const allTime = {
+          ...WINDOW,
+          sinceDay: UsageDay.make("1970-01-01"),
+          untilDay: UsageDay.make("2026-12-01"),
+        };
+        assert.strictEqual(totalOutputTokens(yield* service.readSummary(allTime)), 8);
+        // The recent file keeps the source refreshing, so this read cannot fall back to an exact scan.
+        assert.strictEqual(
+          totalOutputTokens(yield* service.readSummary({ ...allTime, provisional: true })),
+          8,
+        );
+      }).pipe(
+        Effect.provide(
+          layerService({ prefix: "usage-service-all-time-provisional", home, settings }),
+        ),
+      );
+    }).pipe(Effect.scoped),
   );
 
   it.effect("reports saved usage of a removed directory only for windows it reaches", () =>
