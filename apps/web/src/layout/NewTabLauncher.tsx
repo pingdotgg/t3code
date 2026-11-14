@@ -19,6 +19,7 @@ import {
   SurfaceLauncherGrid,
   useLauncherElement,
   useSurfaceLauncherKeys,
+  type LauncherPullRequestRow,
   type SurfaceLauncherAction,
 } from "../components/SurfaceLauncher";
 import { isElectron } from "../env";
@@ -131,6 +132,8 @@ const NO_OPENERS: SurfaceOpeners = {
     "side-chat": false,
   },
   browserUnavailableReason: "No environment is connected yet.",
+  pullRequestNumber: null,
+  linkedPullRequestCount: 0,
   open: () => undefined,
   runShellCommand: () => undefined,
 };
@@ -249,18 +252,44 @@ function NewTabLauncherBody({
     );
     openers.open(kind, browserProfileId);
   };
-  // A thread's linked pull requests need the thread.
-  const threadless = contextThreadRef === null;
-  const actions: SurfaceLauncherAction[] = SURFACE_LAUNCHER_ENTRIES.map(({ kind, shortcut }) => ({
-    kind,
-    shortcut,
-    available: openers.available[kind],
-    ...(kind === "browser" && openers.browserUnavailableReason !== null
-      ? { disabledReason: openers.browserUnavailableReason }
-      : {}),
-    ...(threadless && kind === "pull-requests" ? { disabledReason: "Open a thread first." } : {}),
-    onClick: () => openSurface(kind),
-  }));
+  const pullRequestKind: LauncherSurfaceKind | null =
+    contextThreadRef !== null &&
+    openers.available["pull-requests"] &&
+    openers.linkedPullRequestCount > 1
+      ? "pull-requests"
+      : openers.available["pull-request"] && openers.pullRequestNumber !== null
+        ? "pull-request"
+        : null;
+  const pullRequest: LauncherPullRequestRow | null =
+    pullRequestKind === "pull-requests"
+      ? {
+          kind: "several",
+          count: openers.linkedPullRequestCount,
+          onClick: () => openSurface("pull-requests"),
+        }
+      : pullRequestKind === "pull-request" && openers.pullRequestNumber !== null
+        ? {
+            kind: "one",
+            number: openers.pullRequestNumber,
+            onClick: () => openSurface("pull-request"),
+          }
+        : null;
+  const actions = SURFACE_LAUNCHER_ENTRIES.flatMap<SurfaceLauncherAction>(({ kind, shortcut }) =>
+    kind === "pull-requests"
+      ? []
+      : kind === "pull-request"
+        ? pullRequest
+          ? [{ kind, shortcut, available: true, onClick: pullRequest.onClick }]
+          : []
+        : [
+            {
+              kind,
+              shortcut,
+              available: openers.available[kind],
+              onClick: () => openSurface(kind),
+            },
+          ],
+  );
 
   const activeRef = useRef(active);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Publish committed focus ownership to the callback ref and native key listeners.
@@ -348,6 +377,7 @@ function NewTabLauncherBody({
             )}
             <SurfaceLauncherGrid
               actions={actions}
+              pullRequest={pullRequest}
               browserProfiles={browserProfiles}
               onAddBrowserInProfile={(profileId) => openSurface("browser", profileId)}
             />

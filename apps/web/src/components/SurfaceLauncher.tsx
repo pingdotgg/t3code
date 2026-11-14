@@ -14,6 +14,7 @@ import {
   type RefObject,
   useEffect,
   useEffectEvent,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -31,6 +32,7 @@ import {
   MenuTrigger,
 } from "~/components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { observeResize } from "~/lib/observeResize";
 import { openLayerMatches } from "~/lib/openLayers";
 import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
 import { registerCommands } from "~/shortcuts/dispatcher";
@@ -499,15 +501,69 @@ function SurfaceLauncherCell(props: {
   );
 }
 
+export type LauncherPullRequestRow = (
+  | { readonly kind: "one"; readonly number: number }
+  | { readonly kind: "several"; readonly count: number }
+) & { readonly onClick: () => void };
+
+function overflows(element: Element | null): boolean {
+  return element !== null && element.scrollWidth > element.clientWidth + 0.5;
+}
+
+function PullRequestCell(props: { readonly row: LauncherPullRequestRow }) {
+  const one = props.row.kind === "one";
+  const detail = props.row.kind === "one" ? `#${props.row.number}` : String(props.row.count);
+  const labelRef = useRef<HTMLSpanElement>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- fits the label to the grid's measured width and refits it through a ResizeObserver
+  useLayoutEffect(() => {
+    const label = labelRef.current;
+    const grid = label?.closest("[data-surface-grid]");
+    if (!label || !grid) return;
+    const fit = () => {
+      label.removeAttribute("data-short");
+      label.toggleAttribute("data-short", overflows(grid) || overflows(label.parentElement));
+    };
+    fit();
+    const cell = label.closest('[role="listitem"]');
+    return observeResize(cell ? [grid, cell] : grid, fit);
+  }, []);
+  return (
+    <SurfaceLauncherCell
+      icon={<PullRequestGlyph.pullRequest className="size-4 shrink-0 text-muted-foreground" />}
+      label={
+        <span ref={labelRef} className="group/pr-label">
+          <span className="group-data-short/pr-label:hidden">
+            {one ? "Pull request" : "Pull requests"}
+          </span>
+          <span className="hidden group-data-short/pr-label:inline">{one ? "PR" : "PRs"}</span>
+        </span>
+      }
+      detail={detail}
+      shortcut="P"
+      onSelect={props.row.onClick}
+    />
+  );
+}
+
 export function SurfaceLauncherGrid(props: {
   readonly actions: readonly SurfaceLauncherAction[];
+  readonly pullRequest: LauncherPullRequestRow | null;
   readonly browserProfiles: ReadonlyArray<{ readonly id: string; readonly name: string }>;
   readonly onAddBrowserInProfile: (profileId: string) => void;
 }) {
   return (
     <div className="@container">
-      <div className="grid grid-cols-[repeat(2,minmax(max-content,1fr))] gap-x-7 gap-y-0.5 @max-[26.75rem]:grid-cols-[minmax(0,1fr)]">
+      <div
+        data-surface-grid=""
+        className="grid grid-cols-[repeat(2,minmax(max-content,1fr))] gap-x-7 gap-y-0.5 @max-[26.75rem]:grid-cols-[minmax(0,1fr)]"
+      >
         {SURFACE_LAUNCHER_ENTRIES.map((entry) => {
+          if (entry.kind === "pull-request") {
+            return props.pullRequest ? (
+              <PullRequestCell key={entry.kind} row={props.pullRequest} />
+            ) : null;
+          }
+          if (entry.kind === "pull-requests") return null;
           const action = props.actions.find((candidate) => candidate.kind === entry.kind);
           if (!action?.available) return null;
           const Icon = entry.icon;
