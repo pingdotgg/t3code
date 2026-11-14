@@ -461,6 +461,15 @@ describe("attachment max edge", () => {
     expect(result.ok && result.imageSize).toEqual({ width: 1500, height: 2000 });
   });
 
+  it("keeps the width of a long screenshot under the byte cap so its text stays readable", async () => {
+    stubDecoder({ width: 1080, height: 24000 });
+    const original = image(pngHeader(1080, 24000), "long.png", "image/png");
+
+    const result = await prepareImageForAttachment(original, 10 * 1024 * 1024);
+
+    expect(result.ok && (result.imageSize?.width ?? 1080)).toBe(1080);
+  });
+
   it.each([
     { label: "a 2000px PNG", header: pngHeader(2000, 1200), type: "image/png" },
     {
