@@ -3421,6 +3421,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             if (pendingPrompts.get(String(requestInput.requestId)) !== pending) return;
             pendingPrompts.delete(String(requestInput.requestId));
             if (pending.expirationFiber !== null) yield* Fiber.interrupt(pending.expirationFiber);
+            // A pending lifecycle request may land in another native session; grant nothing during it.
             if (
               pending.method === "confirm" &&
               requestInput.decision === "acceptForSession" &&
