@@ -17,6 +17,7 @@ import { peerLinkEnvironment, useLinkableMachines } from "~/state/peerLinks";
 import { useEnvironmentQuery } from "~/state/query";
 import { useEnvironmentScope, usePreparedConnection } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { usePeerLinkMutation } from "~/state/use-peer-link-mutation";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { accessConfig } from "../auth/ConnectAgentSurface";
 import { Button } from "../ui/button";
@@ -94,6 +95,7 @@ function SourceLinks({
   const matches = (label: string) =>
     label.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase());
   const { visible, showFilters } = linkedEnvironmentList(all, search, attentionOnly, now);
+  const visibleLinks = new Set(visible);
   const available = machines.filter(
     (machine) =>
       !all.some((link) => link.environmentId === machine.environmentId) && matches(machine.label),
@@ -181,7 +183,9 @@ function SourceLinks({
         />
       ) : null}
       {!links.data ? (
-        <SettingsRow title={links.error ? "Links unavailable" : "Loading links…"} role="status" />
+        links.error ? null : (
+          <SettingsRow title="Loading links…" role="status" />
+        )
       ) : all.length === 0 ? (
         <SettingsRow
           title="No destinations linked"
@@ -198,12 +202,10 @@ function SourceLinks({
             <span>Link status</span>
             <span />
           </div>
-          {visible.length === 0 ? (
-            <SettingsRow title="No matching destinations" />
-          ) : (
-            visible.map((link) => (
+          {visible.length === 0 ? <SettingsRow title="No matching destinations" /> : null}
+          {all.map((link) => (
+            <div key={link.environmentId} hidden={!visibleLinks.has(link)}>
               <LinkedEnvironmentRow
-                key={link.environmentId}
                 environmentId={environmentId}
                 sourceLabel={source.label}
                 link={link}
@@ -213,8 +215,8 @@ function SourceLinks({
                   setExpandedId(open ? link.environmentId : null);
                 }}
               />
-            ))
-          )}
+            </div>
+          ))}
         </>
       )}
       {canLink && !attentionOnly ? (
@@ -281,6 +283,8 @@ function LinkedEnvironmentRow({
     links: ReadonlyArray<PeerLinkSummary>;
     at: number;
   } | null>(null);
+  const [editorMounted, setEditorMounted] = useState(open);
+  if (open && !editorMounted) setEditorMounted(true);
   if ((!canCheck || (open && reverse.error)) && evidence !== null) setEvidence(null);
   if (
     open &&
@@ -290,43 +294,50 @@ function LinkedEnvironmentRow({
     reverse.dataUpdatedAt !== evidence?.at
   )
     setEvidence({ links: reverse.data.links, at: reverse.dataUpdatedAt });
-  const direction = returnLinkStatus(
-    environmentId,
-    open
-      ? reverse.isSuccess && !reverse.isPending && !reverse.error
-        ? (reverse.data?.links ?? null)
-        : null
-      : (evidence?.links ?? null),
-    now,
-  );
+  const reverseLinks =
+    !canCheck || (open && reverse.error) ? null : (reverse.data?.links ?? evidence?.links ?? null);
+  const direction = returnLinkStatus(environmentId, reverseLinks, now);
   const returnLabel =
     open && !canCheck
       ? "Return unavailable"
       : open && reverse.error
         ? "Return unavailable"
-        : open && reverse.isPending
+        : open && reverse.isPending && reverseLinks === null
           ? "Checking return…"
           : direction.label;
+  const returnDetail =
+    returnLabel === "Return unavailable"
+      ? "Connect to the destination with access to read its links to check the return direction."
+      : returnLabel === "Checking return…"
+        ? "Checking the destination for a return link."
+        : direction.detail;
   const unlink = useAtomCommand(peerLinkEnvironment.unlink, { label: "unlink environment" });
   const canUnlink = useAtomValue(peerLinkEnvironment.unlink.permissionAtom(environmentId));
   const [forgetting, setForgetting] = useState(false);
+  const mutation = usePeerLinkMutation(environmentId);
   const forget = async () => {
-    const confirmed = await (requestConfirmDialog(
-      `Forget ${link.label}? Agents on ${sourceLabel} stop working there. Revoke its “T3 Code · …” client in ${link.label}’s Sharing & access to end that session too.`,
-      { variant: "destructive" },
-    ) ?? Promise.resolve(false));
-    if (!confirmed) return;
-    setForgetting(true);
-    const result = await unlink({ environmentId, input: { environmentId: link.environmentId } });
-    setForgetting(false);
-    if (result._tag === "Failure" && !isAtomCommandInterrupted(result))
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Could not forget the link",
-          description: String(squashAtomCommandFailure(result)),
-        }),
-      );
+    if (!mutation.start()) return;
+    const perform = async () => {
+      const confirmed = await (requestConfirmDialog(
+        `Forget ${link.label}? Agents on ${sourceLabel} stop working there. Revoke its “T3 Code · …” client in ${link.label}’s Sharing & access to end that session too.`,
+        { variant: "destructive" },
+      ) ?? Promise.resolve(false));
+      if (!confirmed) return;
+      setForgetting(true);
+      const result = await unlink({ environmentId, input: { environmentId: link.environmentId } });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result))
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not forget the link",
+            description: String(squashAtomCommandFailure(result)),
+          }),
+        );
+    };
+    await perform().finally(() => {
+      setForgetting(false);
+      mutation.finish();
+    });
   };
   return (
     <Collapsible open={open} onOpenChange={onOpenChange}>
@@ -340,7 +351,7 @@ function LinkedEnvironmentRow({
             <Tooltip>
               <TooltipTrigger
                 render={<span />}
-                aria-label={direction.detail}
+                aria-label={returnDetail}
                 className={cn(
                   "inline-flex items-center gap-1 text-3xs font-normal",
                   direction.warning
@@ -357,11 +368,7 @@ function LinkedEnvironmentRow({
                 )}
                 {returnLabel}
               </TooltipTrigger>
-              <TooltipPopup>
-                {returnLabel === "Return unavailable"
-                  ? "Connect to the destination with access to read its links to check the return direction."
-                  : direction.detail}
-              </TooltipPopup>
+              <TooltipPopup>{returnDetail}</TooltipPopup>
             </Tooltip>
           </span>
           <span className="block text-xs text-muted-foreground sm:hidden">
@@ -383,8 +390,8 @@ function LinkedEnvironmentRow({
           className={cn("size-3 text-muted-foreground", !open && "-rotate-90")}
         />
       </CollapsibleTrigger>
-      <CollapsiblePanel animate={false}>
-        {open ? (
+      <CollapsiblePanel animate={false} keepMounted={editorMounted}>
+        {editorMounted ? (
           <div className="bg-muted/15 px-3 py-3 sm:px-4">
             {status.detail ? <p className="mb-3 text-xs text-warning">{status.detail}</p> : null}
             {reverse.error ? (

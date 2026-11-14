@@ -11,12 +11,13 @@ import {
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import { PlusIcon } from "lucide-react";
-import { useId, useRef, useState } from "react";
+import { useId, useState } from "react";
 
 import { mintPairingCodeOn } from "~/state/peerPairingCode";
 import { peerLinkEnvironment, useLinkableMachines } from "~/state/peerLinks";
 import { useEnvironmentScope, usePreparedConnection } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { usePeerLinkMutation } from "~/state/use-peer-link-mutation";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -58,8 +59,8 @@ export function LinkEnvironmentAction({
   const [busy, setBusy] = useState(false);
   // Machines whose minting already failed, so the dialog asks for a code instead.
   const [mintFailed, setMintFailed] = useState<ReadonlySet<EnvironmentId>>(new Set());
-  // Enter then a click can both run before a re-render; this guard is synchronous.
-  const inFlight = useRef(false);
+  const mutation = usePeerLinkMutation(environmentId);
+  const blocked = busy || mutation.pending;
   const formId = useId();
   const link = useAtomCommand(peerLinkEnvironment.link, { label: "link environment" });
   const selected = choice ?? (machines.length === 0 ? ANOTHER_ADDRESS : null);
@@ -105,35 +106,38 @@ export function LinkEnvironmentAction({
   const submit = async () => {
     const [url, ...alternateUrls] =
       machine === null || needsAddress ? [address.trim()] : machine.urls;
-    if (inFlight.current || !ready || url === undefined) return;
-    inFlight.current = true;
+    if (!ready || url === undefined || !mutation.start()) return;
     setBusy(true);
-    const code = await resolvePairingCode();
-    const result =
-      code === null
-        ? null
-        : await link({
-            environmentId,
-            input: {
-              url,
-              ...(alternateUrls.length > 0 ? { alternateUrls } : {}),
-              // A typed address links alone: only this app's own addresses name a machine.
-              ...(machine === null || needsAddress
-                ? {}
-                : { expectedEnvironmentId: machine.environmentId, expectedLabel: machine.label }),
-              pairingCode: code,
-              access,
-            },
-          });
-    inFlight.current = false;
-    setBusy(false);
-    if (result === null) return;
-    if (result._tag === "Success") {
-      toastManager.add({ type: "success", title: `Linked ${result.value.label}` });
-      handleOpenChange(false);
-    } else if (!isAtomCommandInterrupted(result)) {
-      failureToast("Could not link the environment", String(squashAtomCommandFailure(result)));
-    }
+    const perform = async () => {
+      const code = await resolvePairingCode();
+      const result =
+        code === null
+          ? null
+          : await link({
+              environmentId,
+              input: {
+                url,
+                ...(alternateUrls.length > 0 ? { alternateUrls } : {}),
+                // A typed address links alone: only this app's own addresses name a machine.
+                ...(machine === null || needsAddress
+                  ? {}
+                  : { expectedEnvironmentId: machine.environmentId, expectedLabel: machine.label }),
+                pairingCode: code,
+                access,
+              },
+            });
+      if (result === null) return;
+      if (result._tag === "Success") {
+        toastManager.add({ type: "success", title: `Linked ${result.value.label}` });
+        handleOpenChange(false);
+      } else if (!isAtomCommandInterrupted(result)) {
+        failureToast("Could not link the environment", String(squashAtomCommandFailure(result)));
+      }
+    };
+    await perform().finally(() => {
+      setBusy(false);
+      mutation.finish();
+    });
   };
   return (
     <Dialog
@@ -145,7 +149,7 @@ export function LinkEnvironmentAction({
     >
       <DialogTrigger
         render={
-          <Button size="xs" variant="default">
+          <Button size="xs" variant="default" disabled={blocked}>
             <PlusIcon className="size-3" />
             Link
           </Button>
@@ -173,7 +177,7 @@ export function LinkEnvironmentAction({
               <LinkMachineSelect
                 machines={machines}
                 value={selected}
-                disabled={busy}
+                disabled={blocked}
                 onChange={setChoice}
               />
             ) : null}
@@ -198,7 +202,7 @@ export function LinkEnvironmentAction({
                     if (choice === null) setChoice(ANOTHER_ADDRESS);
                   }}
                   placeholder="https://box.example.ts.net"
-                  disabled={busy}
+                  disabled={blocked}
                   autoFocus={machines.length === 0}
                   nativeInput
                   spellCheck={false}
@@ -221,7 +225,7 @@ export function LinkEnvironmentAction({
                   placeholder={
                     machine === null ? "From Sharing & access there, or t3 pair" : "Paste the code"
                   }
-                  disabled={busy}
+                  disabled={blocked}
                   autoComplete="one-time-code"
                   nativeInput
                   spellCheck={false}
@@ -234,14 +238,14 @@ export function LinkEnvironmentAction({
                 ) : null}
               </label>
             )}
-            <LinkAccessPicker value={access} onChange={setAccess} disabled={busy} />
+            <LinkAccessPicker value={access} onChange={setAccess} disabled={blocked} />
           </form>
         </DialogPanel>
         <DialogFooter variant="bare">
           <DialogClose disabled={busy} render={<Button variant="outline" type="button" />}>
             Cancel
           </DialogClose>
-          <Button form={formId} type="submit" disabled={busy || !ready}>
+          <Button form={formId} type="submit" disabled={blocked || !ready}>
             {busy ? "Linking…" : "Link"}
           </Button>
         </DialogFooter>

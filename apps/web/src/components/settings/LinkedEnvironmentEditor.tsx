@@ -13,12 +13,13 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
-import { useRef, useState } from "react";
+import { useState } from "react";
 
 import { mintPairingCodeOn } from "~/state/peerPairingCode";
 import { peerLinkEnvironment, useLinkableMachines } from "~/state/peerLinks";
 import { useEnvironmentScope, usePreparedConnection } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { usePeerLinkMutation } from "~/state/use-peer-link-mutation";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -44,58 +45,64 @@ export function LinkedEnvironmentEditor({
   const prepared = usePreparedConnection(link.environmentId);
   const mayMint = useEnvironmentScope(link.environmentId, AuthAccessWriteScope);
   const renew = useAtomCommand(peerLinkEnvironment.link, { label: "renew environment link" });
-  const [access, setAccess] = useState<AuthMcpClientAccess>(link.access);
+  const [draftAccess, setDraftAccess] = useState<AuthMcpClientAccess | null>(null);
+  const access = draftAccess ?? link.access;
   const [pairingCode, setPairingCode] = useState("");
   const [mintFailed, setMintFailed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
-  const inFlight = useRef(false);
+  const mutation = usePeerLinkMutation(environmentId);
+  const blocked = disabled || mutation.pending;
   const canMint =
     Option.isSome(prepared) && mayMint && (machine?.urls.length ?? 0) > 0 && !mintFailed;
   const urls = linkRenewalUrls(machine?.urls ?? [], link.urls);
   const dirty = access !== link.access;
   const submit = async () => {
     if (
-      inFlight.current ||
       disabled ||
       !canLink ||
       (!canMint && !pairingCode.trim()) ||
-      urls.length === 0
+      urls.length === 0 ||
+      !mutation.start()
     )
       return;
-    inFlight.current = true;
     setBusy(true);
     setError(null);
     setSaved(false);
-    let code = pairingCode.trim();
-    if (canMint) {
-      const minted = await mintPairingCodeOn(link.environmentId, access);
-      if (Result.isFailure(minted)) {
-        setMintFailed(true);
-        setError(linkRequestFailureMessage(minted.failure));
-        setBusy(false);
-        inFlight.current = false;
-        return;
+    const perform = async () => {
+      let code = pairingCode.trim();
+      if (canMint) {
+        const minted = await mintPairingCodeOn(link.environmentId, access);
+        if (Result.isFailure(minted)) {
+          setMintFailed(true);
+          setError(linkRequestFailureMessage(minted.failure));
+          return;
+        }
+        code = minted.success;
       }
-      code = minted.success;
-    }
-    const result = await renew({
-      environmentId,
-      input: {
-        url: urls[0]!,
-        alternateUrls: urls.slice(1),
-        expectedEnvironmentId: link.environmentId,
-        expectedLabel: link.label,
-        access,
-        pairingCode: code,
-      },
+      const result = await renew({
+        environmentId,
+        input: {
+          url: urls[0]!,
+          alternateUrls: urls.slice(1),
+          expectedEnvironmentId: link.environmentId,
+          expectedLabel: link.label,
+          access,
+          pairingCode: code,
+        },
+      });
+      if (result._tag === "Success") {
+        setDraftAccess(null);
+        setPairingCode("");
+        setSaved(true);
+      } else if (!isAtomCommandInterrupted(result))
+        setError(String(squashAtomCommandFailure(result)));
+    };
+    await perform().finally(() => {
+      setBusy(false);
+      mutation.finish();
     });
-    setBusy(false);
-    inFlight.current = false;
-    setPairingCode("");
-    if (result._tag === "Success") setSaved(true);
-    else if (!isAtomCommandInterrupted(result)) setError(String(squashAtomCommandFailure(result)));
   };
   return (
     <form
@@ -109,10 +116,10 @@ export function LinkedEnvironmentEditor({
         <LinkAccessPicker
           value={access}
           onChange={(next) => {
-            setAccess(next);
+            setDraftAccess(next === link.access ? null : next);
             setSaved(false);
           }}
-          disabled={busy || disabled || !canLink}
+          disabled={blocked || !canLink}
           compact
         />
         {canLink && !canMint ? (
@@ -121,7 +128,7 @@ export function LinkedEnvironmentEditor({
             <Input
               value={pairingCode}
               onChange={(event) => setPairingCode(event.target.value)}
-              disabled={busy || disabled}
+              disabled={blocked}
               autoComplete="one-time-code"
               nativeInput
               spellCheck={false}
@@ -149,7 +156,7 @@ export function LinkedEnvironmentEditor({
             <Button
               type="submit"
               size="xs"
-              disabled={busy || disabled || (!canMint && !pairingCode.trim()) || urls.length === 0}
+              disabled={blocked || (!canMint && !pairingCode.trim()) || urls.length === 0}
             >
               {busy ? "Renewing…" : dirty ? "Save & renew" : "Renew"}
             </Button>
@@ -158,9 +165,9 @@ export function LinkedEnvironmentEditor({
             <Button
               size="xs"
               variant="outline"
-              disabled={busy || disabled}
+              disabled={blocked}
               onClick={() => {
-                setAccess(link.access);
+                setDraftAccess(null);
                 setPairingCode("");
                 setSaved(false);
               }}
@@ -169,12 +176,7 @@ export function LinkedEnvironmentEditor({
             </Button>
           ) : null}
           {canForget ? (
-            <Button
-              size="xs"
-              variant="destructive-outline"
-              disabled={busy || disabled}
-              onClick={onForget}
-            >
+            <Button size="xs" variant="destructive-outline" disabled={blocked} onClick={onForget}>
               Forget
             </Button>
           ) : null}
