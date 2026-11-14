@@ -1,10 +1,13 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import type * as Stream from "effect/Stream";
 import type {
   PullRequestStackMembership,
   PullRequestAction,
   PullRequestStackHead,
   PullRequestActor,
+  PullRequestReferenceCandidate,
+  PullRequestReferenceSigil,
   PullRequestBaseComparison,
   PullRequestCapabilities,
   PullRequestChecksState,
@@ -19,12 +22,14 @@ import type {
   PullRequestListState,
   PullRequestMergeCapabilities,
   PullRequestMergeMethod,
+  PullRequestMergeQueueRemoval,
   PullRequestMergeability,
   PullRequestOmittedFileStat,
   PullRequestReaction,
   PullRequestReactionContent,
   PullRequestReviewCommentDraft,
   PullRequestReviewDecision,
+  PullRequestOverviewThread,
   PullRequestReviewThread,
   PullRequestThreadCommentsResult,
   PullRequestReviewVerdict,
@@ -122,6 +127,10 @@ export interface ProviderChangeRequestSummary {
   readonly mergeability?: PullRequestMergeability | undefined;
   /** Null means no stack; absent means not requested. */
   readonly stack?: PullRequestStackMembership | null | undefined;
+  readonly headSha?: string | undefined;
+  /** Absent means the read did not report auto-merge state, not that it is off. */
+  readonly autoMergeEnabled?: boolean | undefined;
+  readonly autoMergeMethod?: PullRequestMergeMethod | undefined;
 }
 
 export interface ProviderChangeRequestStackLayer {
@@ -204,6 +213,7 @@ export interface ProviderChangeRequestDetail extends ProviderChangeRequest {
   readonly autoMergeEnabled?: boolean;
   readonly autoMergeMethod?: PullRequestMergeMethod;
   readonly workflowApprovalsRequired?: number;
+  readonly mergeQueueRemoval?: PullRequestMergeQueueRemoval;
 }
 
 export interface ProviderChangeRequestActivity {
@@ -214,6 +224,7 @@ export interface ProviderChangeRequestActivity {
   readonly commentsTruncated: boolean;
   readonly reviewThreadsTruncated?: boolean;
   readonly reviewThreads: ReadonlyArray<PullRequestReviewThread>;
+  readonly overviewThreads?: ReadonlyArray<PullRequestOverviewThread>;
   readonly commits: ReadonlyArray<PullRequestCommit>;
   readonly reactions?: ReadonlyArray<PullRequestReaction>;
 }
@@ -309,6 +320,8 @@ export interface PullRequestProviderApi {
    * definition's `publicHost` can be read from a project with no checkout of its repository.
    */
   readonly readsPublicHostWithoutCheckout?: boolean;
+  /** Concurrent summary reads share requests, so callers may keep many in flight. */
+  readonly batchesReads?: boolean;
   /**
    * Absent means every host detected as this kind is read. A host it refuses is listed as one that
    * cannot be browsed here, and nothing is sent for it.
@@ -391,6 +404,14 @@ export interface PullRequestProviderApi {
     input: ProviderRepositoryRef & { readonly number: number },
   ) => Effect.Effect<ProviderChangeRequestWatchFingerprint | null, PullRequestProviderError>;
 
+  /**
+   * Emits whenever the host says the change request may have changed, and once on connecting.
+   * Ends where the host or account offers no such feed; readers then rely on polling alone.
+   */
+  readonly changeRequestEvents?: (
+    input: ProviderRepositoryRef & { readonly number: number },
+  ) => Stream.Stream<void>;
+
   readonly getChangeRequestStack?: (
     input: ProviderRepositoryRef & { readonly includeDetails?: boolean; readonly number: number },
   ) => Effect.Effect<ProviderChangeRequestStack | null, PullRequestProviderError>;
@@ -470,6 +491,7 @@ export interface PullRequestProviderApi {
     },
   ) => Effect.Effect<ProviderFileRevisions, PullRequestProviderError>;
 
+  /** Returns the change request as the host's reply left it, or void when the reply lacks it. */
   readonly runAction: (
     input: ProviderRepositoryRef & {
       readonly number: number;
@@ -480,7 +502,7 @@ export interface PullRequestProviderApi {
       readonly mergeMethod?: PullRequestMergeMethod;
       readonly updateMethod?: PullRequestUpdateMethod;
     },
-  ) => Effect.Effect<void, PullRequestProviderError>;
+  ) => Effect.Effect<ProviderChangeRequestSummary | void, PullRequestProviderError>;
 
   /** Requires edit capability and at least one field. */
   readonly updateChangeRequest?: (
@@ -516,7 +538,11 @@ export interface PullRequestProviderApi {
 
   /** Exclude the author using host-specific account identities. */
   readonly listReviewerCandidates: (
-    input: ProviderRepositoryRef & { readonly number: number },
+    input: ProviderRepositoryRef & {
+      readonly number: number;
+      /** Asks the host to search past its first page of candidates. */
+      readonly query?: string | undefined;
+    },
   ) => Effect.Effect<PullRequestReviewerCandidateList, PullRequestProviderError>;
 
   readonly setReviewerRequest: (
@@ -549,6 +575,20 @@ export interface PullRequestProviderApi {
   readonly searchRepositoryAuthors?: (
     input: ProviderRepositoryRef & { readonly query?: string | undefined },
   ) => Effect.Effect<ProviderFilterOptionPage<PullRequestActor>, PullRequestProviderError>;
+
+  /**
+   * Issues and change requests a composer can reference, recently updated first. A numeric
+   * `query` also finds that number exactly; other text matches titles as far as the host can.
+   */
+  readonly searchRepositoryReferences?: (
+    input: ProviderRepositoryRef & {
+      readonly query?: string | undefined;
+      readonly sigil?: PullRequestReferenceSigil | undefined;
+    },
+  ) => Effect.Effect<
+    ProviderFilterOptionPage<PullRequestReferenceCandidate>,
+    PullRequestProviderError
+  >;
 
   readonly setLabels?: (
     input: ProviderRepositoryRef & {
