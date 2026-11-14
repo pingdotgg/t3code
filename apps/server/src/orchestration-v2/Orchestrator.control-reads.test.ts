@@ -1618,6 +1618,106 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
   }).pipe(Effect.provide(DelegatedTaskQuestionReactor.layer.pipe(Layer.provideMerge(layerTest)))),
 );
 
+it.effect("wakes an idle parent when its async delegated task waits for an approval", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const reactor = yield* DelegatedTaskQuestionReactor.DelegatedTaskQuestionReactor;
+    const eventSink = yield* EventSink.EventSinkV2;
+    const parentThreadId = ThreadId.make("thread:approval-parent");
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-approval-parent"),
+      threadId: parentThreadId,
+      projectId: ProjectId.make("project:approval"),
+      title: "Parent",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("start-approval-parent"),
+      threadId: parentThreadId,
+      messageId: MessageId.make("message:approval-parent"),
+      text: "Delegate the edit",
+      attachments: [],
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const parentRun = (yield* projections.getThreadProjection(parentThreadId)).runs[0]!;
+    yield* orchestrator.dispatch({
+      type: "delegated_task.request",
+      commandId: CommandId.make("delegate-approval-task"),
+      parentThreadId,
+      parentRunId: parentRun.id,
+      parentNodeId: parentRun.rootNodeId!,
+      task: "Edit the file",
+      completionWake: "always",
+      modelSelection,
+      runtimeMode: "approval-required",
+      interactionMode: "default",
+      createdBy: "agent",
+      creationSource: "mcp",
+    });
+    const task = (yield* projections.getThreadProjection(parentThreadId)).subagents[0]!;
+    const childRun = (yield* projections.getThreadRecords(task.childThreadId!, ["runs"])).runs[0]!;
+    const now = yield* DateTime.now;
+    yield* eventSink.write({
+      events: [
+        {
+          id: EventId.make("event:approval-parent-completed"),
+          type: "run.updated",
+          threadId: parentThreadId,
+          runId: parentRun.id,
+          occurredAt: now,
+          payload: { ...parentRun, status: "completed", completedAt: now },
+        },
+      ],
+    });
+    const approval = {
+      id: EventId.make("event:child-approval"),
+      type: "runtime-request.updated",
+      threadId: task.childThreadId!,
+      runId: childRun.id,
+      occurredAt: now,
+      payload: {
+        id: RuntimeRequestId.make("request:child-approval"),
+        nodeId: childRun.rootNodeId!,
+        providerTurnId: null,
+        nativeRequestRef: null,
+        kind: "command",
+        status: "pending",
+        responseCapability: {
+          type: "live",
+          providerSessionId: ProviderSessionId.make("session:approval"),
+        },
+        createdAt: now,
+        resolvedAt: null,
+      },
+    } satisfies OrchestrationV2DomainEvent;
+    yield* eventSink.write({ events: [approval] });
+    yield* reactor.handle(approval);
+
+    const wakes = (yield* projections.getThreadProjection(parentThreadId)).messages.filter(
+      (message) =>
+        message.notification?.source.kind === "delegated_task" &&
+        message.text.includes(approval.payload.id),
+    );
+    assert.equal(wakes.length, 1);
+    assert.deepEqual(wakes[0]?.notification?.source, {
+      kind: "delegated_task",
+      taskIds: [task.id],
+      childThreadId: task.childThreadId!,
+    });
+  }).pipe(Effect.provide(DelegatedTaskQuestionReactor.layer.pipe(Layer.provideMerge(layerTest)))),
+);
+
 it.effect.each([false, true])(
   "drops a stale question wake (missed terminal event: %s)",
   (missedEvent) =>
