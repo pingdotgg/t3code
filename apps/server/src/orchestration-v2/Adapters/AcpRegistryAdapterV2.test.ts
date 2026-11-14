@@ -234,6 +234,7 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
       }).pipe(Effect.andThen(Queue.offer(offered, undefined)), Effect.asVoid),
   };
   const instanceId = ProviderInstanceId.make("claude-lifecycle");
+  const outgoing = yield* Queue.unbounded<unknown>();
   let onTermination: NonNullable<
     AcpSessionRuntime.AcpSessionRuntimeOptions["onTermination"]
   > = () => Effect.die("Runtime has not started");
@@ -255,7 +256,17 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
     ...(continuationEnabled ? { continuationRequests } : {}),
     makeRuntime: (runtimeInput: Parameters<typeof replayRuntime>[0]) => {
       onTermination = runtimeInput.onTermination;
-      return replayRuntime(runtimeInput);
+      return replayRuntime({
+        ...runtimeInput,
+        protocolLogging: {
+          logIncoming: false,
+          logOutgoing: true,
+          logger: (event) =>
+            event.stage === "raw" && typeof event.payload === "string"
+              ? Queue.offer(outgoing, JSON.parse(event.payload)).pipe(Effect.asVoid)
+              : Effect.void,
+        },
+      });
     },
   };
   const adapter = yield* makeAcpRegistryAdapterV2(adapterOptions).pipe(
@@ -365,6 +376,7 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
     terminal,
     offers,
     offered,
+    outgoing,
     terminate: () =>
       onTermination(
         new EffectAcpErrors.AcpTransportError({
@@ -2240,6 +2252,103 @@ describe("AcpRegistryAdapterV2", () => {
         { type: "Text", text: "replacement-morePATCH" },
       ]);
     }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("approves Devin's plan without choosing a bypass option it lists first", () =>
+    Effect.gen(function* () {
+      const session = yield* openClaudeReplaySession(
+        [
+          ...claudeFrames.open.map((entry) =>
+            entry.frame.method === "initialize" && entry.type === "emit_inbound"
+              ? {
+                  ...entry,
+                  frame: {
+                    ...entry.frame,
+                    result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [] },
+                  },
+                }
+              : entry,
+          ),
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "session/prompt", params: "<any>" },
+          },
+          claudeFrames.update(CLAUDE_ROOT_SESSION, {
+            sessionUpdate: "tool_call",
+            toolCallId: "exit-plan",
+            title: "Exit plan mode",
+            kind: "switch_mode",
+            status: "pending",
+          }),
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "request",
+              method: "session/request_permission",
+              params: {
+                sessionId: CLAUDE_ROOT_SESSION,
+                toolCall: { toolCallId: "exit-plan" },
+                // Devin gives both plan approvals allow_once and does not promise their order.
+                options: [
+                  {
+                    optionId: "plan_bypass",
+                    name: "Yes, implement plan and bypass permissions",
+                    kind: "allow_once",
+                  },
+                  {
+                    optionId: "plan_accept_edits",
+                    name: "Yes, implement plan and accept edits",
+                    kind: "allow_once",
+                  },
+                  { optionId: "reject_once", name: "No, plan needs changes", kind: "reject_once" },
+                ],
+              },
+            },
+          },
+          {
+            type: "expect_outbound",
+            frame: {
+              kind: "response",
+              method: "session/request_permission",
+              result: { outcome: { outcome: "selected", optionId: "<any>" } },
+            },
+          },
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "response",
+              method: "session/prompt",
+              result: { stopReason: "end_turn" },
+            },
+          },
+          claudeFrames.closeRequest,
+          claudeFrames.closed,
+        ],
+        undefined,
+        false,
+        "devin",
+      );
+      yield* session.runtime.startTurn(session.turnInput(1)).pipe(Effect.forkScoped);
+      const seen = yield* session.until(
+        (event) =>
+          event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
+      );
+      const request = seen.at(-1)!;
+      if (request.type !== "runtime_request.updated") throw new Error("Missing request");
+      yield* session.runtime.respondToRuntimeRequest({
+        requestId: request.runtimeRequest.id,
+        decision: "accept",
+      });
+      let answer: unknown;
+      while (answer === undefined) {
+        const frame = (yield* Queue.take(session.outgoing)) as {
+          readonly result?: { readonly outcome?: { readonly optionId?: string } };
+        };
+        answer = frame.result?.outcome;
+      }
+      assert.deepEqual(answer, { outcome: "selected", optionId: "plan_accept_edits" });
+      assert.equal((yield* session.terminal).status, "completed");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.effect("keeps stopped child tools interrupted when a late output chunk arrives", () =>
