@@ -126,7 +126,7 @@ it("keeps a subagent child awake when its parent thread is snoozed", () => {
 });
 
 it.effect.each(["provider", "mcp"] as const)(
-  "a %s child does not inherit parent settlement protections and settles once idle",
+  "a %s child does not inherit parent settlement protections and settles once its parent settles",
   (creationSource) =>
     Effect.gen(function* () {
       const store = yield* ProjectionStore.ProjectionStoreV2;
@@ -168,6 +168,21 @@ it.effect.each(["provider", "mcp"] as const)(
       assert.deepEqual(savedParent.pinnedAt, parentCreatedAt);
       assert.equal(savedParent.pinOrderKey, "a0");
       assert.deepEqual(savedParent.autoSettleDisabledAt, parentCreatedAt);
+      // A subagent child waits for its parent, so settle the pinned parent first.
+      assert.deepEqual(yield* store.getSettlementCandidates(), []);
+      yield* store.apply({
+        id: EventId.make(`event:${parentThreadId}:settled`),
+        type: "thread.settled",
+        threadId: parentThreadId,
+        occurredAt: childCreatedAt,
+        payload: {
+          ...savedParent,
+          settledOverride: "settled",
+          settledAt: childCreatedAt,
+          pinnedAt: null,
+          pinOrderKey: null,
+        },
+      });
       const candidates = yield* store.getSettlementCandidates();
       assert.deepEqual(
         candidates.map((candidate) => candidate.id),
@@ -376,6 +391,51 @@ it("exposes the provider failure rather than a progress message from the failed 
   assert.equal(result.text, failure.message);
   assert.equal(result.turnItemId, artifacts.turnItem.id);
   assert.isNull(result.messageId);
+});
+
+it("keeps the final report of a run that failed after its turn ended", () => {
+  const { projection, run } = taskFixture();
+  const failedRun = { ...run, status: "failed" as const };
+  const artifacts = makeSubagentConversationArtifacts({
+    messageId: MessageId.make("report"),
+    turnItemId: TurnItemId.make("report"),
+    threadId: parentThreadId,
+    rootNodeId: NodeId.make("root"),
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    role: "assistant",
+    text: "Review complete: no blocking issues.",
+    ordinal: 1,
+    now: childCreatedAt,
+  });
+  if (artifacts.turnItem.type !== "assistant_message") throw new Error("Expected assistant item");
+  const failure = {
+    class: "unknown" as const,
+    message: "Connection failed repeatedly",
+    code: null,
+    retryable: false,
+  };
+  const result = subagentResultForRun(
+    {
+      ...projection,
+      messages: [{ ...artifacts.message, runId: run.id }],
+      turnItems: [
+        { ...artifacts.turnItem, runId: run.id },
+        {
+          ...artifacts.turnItem,
+          id: TurnItemId.make("error"),
+          ordinal: 2,
+          type: "error",
+          runId: run.id,
+          failure,
+        },
+      ],
+    },
+    failedRun,
+  );
+  assert.include(result.text, failure.message);
+  assert.include(result.text, "Review complete: no blocking issues.");
 });
 
 it("orders a task's assistant messages by turn item, not by timestamps", () => {

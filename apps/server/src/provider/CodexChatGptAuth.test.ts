@@ -401,8 +401,8 @@ const makeHarnessFor = Effect.fnUntraced(function* (
     setIdentityFailure: (value: "issuer" | "audience" | "signature") => {
       identityFailure = value;
     },
-    mismatchCallbackState: () => {
-      mismatchedState = true;
+    mismatchCallbackState: (value = true) => {
+      mismatchedState = value;
     },
     setCallbackClientId: (value: string) => {
       callbackClientId = value;
@@ -871,16 +871,24 @@ it.effect(
     ),
 );
 
-it.effect("rejects mismatched callback state before any token exchange or credential write", () =>
+it.effect("rejects mismatched callback state and keeps waiting for the real redirect", () =>
   provision(
     Effect.gen(function* () {
       const h = yield* makeHarness;
       h.mismatchCallbackState();
       yield* h.signIn;
-      assert.include((yield* h.phase("failed")).message!, "could not be verified");
+      assert.include(h.callbackResponses[0]!.body, "does not belong to the active sign-in");
       assert.strictEqual(h.exchanges.length, 0);
       assert.deepEqual(h.storedRecords(), []);
       assert.isTrue(Option.isNone(yield* h.auth.read));
+      h.mismatchCallbackState(false);
+      const waiting = yield* h.phase("waiting");
+      const redirectUri = new URL(waiting.authorizationUrl!).searchParams.get("redirect_uri")!;
+      const unparsable = yield* Effect.promise(() => fetch(`${new URL(redirectUri).origin}//`));
+      assert.strictEqual(unparsable.status, 404);
+      yield* h.finishCallback(waiting);
+      yield* h.phase("succeeded");
+      assert.strictEqual(h.exchanges.length, 1);
     }),
   ),
 );
