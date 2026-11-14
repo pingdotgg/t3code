@@ -9,6 +9,7 @@ import {
   type McpAppHost,
   type McpAppHostContext,
 } from "@t3tools/client-runtime/mcp-apps";
+import { assetUrlStateFromResult } from "@t3tools/client-runtime/state/assets";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   clampMcpAppHeight,
@@ -31,10 +32,13 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import { Button } from "~/components/ui/button";
 import { isElectron } from "~/env";
 import { cn } from "~/lib/utils";
+import { assetEnvironment } from "~/state/assets";
 import { useEnvironmentQuery } from "~/state/query";
 import { useTurnItemDetail } from "~/state/queries";
 import { mcpAppEnvironment } from "~/state/mcpApps";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
+import { usePreparedConnection } from "~/state/session";
 import { observeResize } from "~/lib/observeResize";
 
 const commandFailure = (result: {
@@ -163,6 +167,12 @@ export function McpAppFrame(props: {
   const updateModelContext = useAtomCommand(mcpAppEnvironment.updateModelContext, {
     reportFailure: false,
   });
+  const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
+    reportFailure: false,
+    refresh: true,
+  });
+  const connection = usePreparedConnection(props.environmentId);
+  const httpBaseUrl = connection._tag === "Some" ? connection.value.httpBaseUrl : null;
 
   // Read live values without rebuilding the host and losing the app session.
   const readLive = useStableCallback(() => ({
@@ -173,6 +183,8 @@ export function McpAppFrame(props: {
     toolInfo,
     readResource,
     updateModelContext,
+    createAssetUrl,
+    httpBaseUrl,
     displayMode,
     toolDefinition,
   }));
@@ -381,6 +393,18 @@ export function McpAppFrame(props: {
           return;
         }
         void host.teardown().then(() => setClosed(true));
+      },
+      loadToolOutputImage: async (index) => {
+        const current = readLive();
+        const { environmentId, threadId, itemId } = current.props;
+        const resource = { _tag: "tool-output-image" as const, threadId, itemId, index };
+        const asset = assetUrlStateFromResult(
+          await current.createAssetUrl({ environmentId, input: { resource } }),
+          readLive().httpBaseUrl,
+        );
+        if (asset._tag !== "Success") return undefined;
+        const response = await fetch(asset.url);
+        return response.ok ? new Uint8Array(await response.arrayBuffer()) : undefined;
       },
       onSizeChanged: (size) => {
         // Ignore fullscreen height when restoring inline sizing.

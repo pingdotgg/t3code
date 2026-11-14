@@ -1,6 +1,13 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
-import { makeMcpAppHost, McpAppHostRefusal, type McpAppHostContext } from "./host.ts";
+import { MAX_TOOL_OUTPUT_IMAGES } from "@t3tools/shared/toolOutput";
+
+import {
+  hydrateMcpAppToolResultImages,
+  makeMcpAppHost,
+  McpAppHostRefusal,
+  type McpAppHostContext,
+} from "./host.ts";
 
 const app = {
   attachmentId: "thread-1-app",
@@ -58,6 +65,7 @@ function setup(overrides: Partial<Parameters<typeof makeMcpAppHost>[0]> = {}) {
     downloadFile: async () => undefined,
     onRequestTeardown: () => undefined,
     onSizeChanged: () => undefined,
+    loadToolOutputImage: async () => undefined,
     ...overrides,
   });
   return {
@@ -155,6 +163,108 @@ describe("makeMcpAppHost", () => {
         params: { content: [{ type: "text", text: "Sunny" }] },
       },
     ]);
+  });
+
+  it("sends a stored screenshot with the bytes its detail omitted, once", async () => {
+    const delivered = Promise.withResolvers<unknown>();
+    const sent: Array<Record<string, unknown>> = [];
+    const { host } = setup({
+      post: (message) => {
+        const record = message as Record<string, unknown>;
+        sent.push(record);
+        if (record.method === "ui/notifications/tool-result") delivered.resolve(record.params);
+      },
+      loadToolOutputImage: async (index) => (index === 0 ? new Uint8Array([1, 2, 3]) : undefined),
+    });
+    const call = {
+      arguments: {},
+      result: {
+        content: [{ type: "image", mimeType: "image/png", annotations: { priority: 1 } }],
+        structuredContent: { device: "phone" },
+      },
+    };
+    host.setToolCall(call);
+    initialize(host);
+    host.setToolCall(call);
+    expect(await delivered.promise).toEqual({
+      content: [
+        { type: "image", data: "AQID", mimeType: "image/png", annotations: { priority: 1 } },
+      ],
+      structuredContent: { device: "phone" },
+    });
+    expect(
+      sent
+        .filter(
+          (m) => typeof m.method === "string" && m.method.startsWith("ui/notifications/tool-"),
+        )
+        .map((m) => m.method),
+    ).toEqual(["ui/notifications/tool-input", "ui/notifications/tool-result"]);
+  });
+
+  it("answers the app's tool call, not its other requests, after the stored screenshot", async () => {
+    const image = Promise.withResolvers<Uint8Array>();
+    const called = Promise.withResolvers<void>();
+    const answered = Promise.withResolvers<void>();
+    const read = Promise.withResolvers<void>();
+    const sent: Array<Record<string, unknown>> = [];
+    const { host } = setup({
+      post: (message) => {
+        const record = message as Record<string, unknown>;
+        sent.push(record);
+        if (record.id === 9) answered.resolve();
+        if (record.id === 10) read.resolve();
+      },
+      callTool: async () => {
+        called.resolve();
+        return { content: [{ type: "text", text: "newer" }] };
+      },
+      loadToolOutputImage: () => image.promise,
+    });
+    host.setToolCall({
+      arguments: {},
+      result: { content: [{ type: "image", mimeType: "image/png" }] },
+    });
+    initialize(host);
+    host.receive({ jsonrpc: "2.0", id: 9, method: "tools/call", params: { name: "refresh" } });
+    host.receive({ jsonrpc: "2.0", id: 10, method: "resources/read", params: { uri: "ui://x" } });
+    await called.promise;
+    await read.promise;
+    expect(sent.some((m) => m.id === 9)).toBe(false);
+    image.resolve(new Uint8Array([1, 2, 3]));
+    await answered.promise;
+    const order = sent
+      .filter((m) => m.id === 9 || m.method === "ui/notifications/tool-result")
+      .map((m) => m.id ?? m.method);
+    expect(order).toEqual(["ui/notifications/tool-result", 9]);
+  });
+
+  it("sends the screenshot marker and answers the app when an image load stalls", async () => {
+    const answered = Promise.withResolvers<void>();
+    const sent: Array<Record<string, unknown>> = [];
+    const { host } = setup({
+      post: (message) => {
+        const record = message as Record<string, unknown>;
+        sent.push(record);
+        if (record.id === 9) answered.resolve();
+      },
+      loadToolOutputImage: () => new Promise(() => undefined),
+    });
+    vi.useFakeTimers();
+    try {
+      host.setToolCall({
+        arguments: {},
+        result: { content: [{ type: "image", mimeType: "image/png" }] },
+      });
+      initialize(host);
+      host.receive({ jsonrpc: "2.0", id: 9, method: "tools/call", params: { name: "refresh" } });
+      await vi.advanceTimersByTimeAsync(15_000);
+      await answered.promise;
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(sent.find((m) => m.method === "ui/notifications/tool-result")?.params).toEqual({
+      content: [{ type: "image", mimeType: "image/png" }],
+    });
   });
 
   it("accepts ui/message as one text block or the SDK's block array", async () => {
@@ -387,5 +497,42 @@ describe("makeMcpAppHost", () => {
     expect(sent.find((m) => m.id === 2)?.result).toEqual({});
     expect(sent.find((m) => m.id === 3)?.result).toEqual({ isError: true });
     expect(sent.find((m) => m.id === 4)?.error).toMatchObject({ code: -32602 });
+  });
+});
+
+describe("hydrateMcpAppToolResultImages", () => {
+  it("loads only data-less raster markers, by tool-output-image index and within the cap", async () => {
+    const requested: Array<number> = [];
+    const png = { type: "image", mimeType: "image/png" };
+    const hydrated = await hydrateMcpAppToolResultImages(
+      {
+        content: [
+          { type: "text", text: "shot" },
+          { type: "image", mimeType: "image/svg+xml" },
+          { ...png, data: "AAAA" },
+          png,
+          { type: "image", mimeType: "image/jpeg" },
+          ...Array.from({ length: MAX_TOOL_OUTPUT_IMAGES }, () => png),
+        ],
+      },
+      async (index) => {
+        requested.push(index);
+        if (index === 2) throw new Error("gone");
+        return index === 1 ? new Uint8Array([1, 2, 3]) : undefined;
+      },
+    );
+    expect(requested).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(hydrated?.content.slice(0, 5)).toEqual([
+      { type: "text", text: "shot" },
+      { type: "image", mimeType: "image/svg+xml" },
+      { ...png, data: "AAAA" },
+      { type: "image", data: "AQID", mimeType: "image/png" },
+      { type: "image", mimeType: "image/jpeg" },
+    ]);
+    expect(
+      hydrateMcpAppToolResultImages({ content: [{ ...png, data: "AAAA" }] }, async () => {
+        throw new Error("not called");
+      }),
+    ).toBeUndefined();
   });
 });

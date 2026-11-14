@@ -296,7 +296,13 @@ export function readToolOutputImage(block: unknown): ToolOutputImage | null {
   return typeof data === "string" ? { ...image, data } : image;
 }
 
-function outputBlocks(value: unknown): ReadonlyArray<unknown> {
+/** An MCP app item stores `{ t3McpApp, result }`; its images are the result's. */
+function isMcpAppOutput(value: unknown): value is Record<string, unknown> & { result: unknown } {
+  return Predicate.isObject(value) && MCP_APP_OUTPUT_KEY in value && "result" in value;
+}
+
+function outputBlocks(output: unknown): ReadonlyArray<unknown> {
+  const value = isMcpAppOutput(output) ? output.result : output;
   if (Array.isArray(value)) return value;
   if (Predicate.isObject(value) && Array.isArray(value.content)) return value.content;
   return [value];
@@ -338,9 +344,17 @@ export function mcpToolResultOutput(result: {
 }
 
 export function omitToolOutputImageData(value: unknown): unknown {
+  return isMcpAppOutput(value)
+    ? { ...value, result: omitImageData(value.result) }
+    : omitImageData(value);
+}
+
+function omitImageData(value: unknown): unknown {
   const omit = (block: unknown) => {
     const image = readToolOutputImage(block);
-    return image?.data === undefined ? block : { type: "image", mimeType: image.mimeType };
+    if (image?.data === undefined || !Predicate.isObject(block)) return block;
+    const { data: _data, source: _source, ...rest } = block;
+    return { ...rest, type: "image", mimeType: image.mimeType };
   };
   if (Array.isArray(value)) return value.map(omit);
   if (Predicate.isObject(value) && Array.isArray(value.content)) {
