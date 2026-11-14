@@ -17,6 +17,7 @@ import {
   type ChatAttachment,
   CommandId,
   DEFAULT_SERVER_SETTINGS,
+  EnvironmentId,
   GitCommandError,
   MessageId,
   ProjectId,
@@ -463,6 +464,38 @@ it.effect(
     }).pipe(Effect.provide(Layer.mergeAll(harness.layer, layerScheduledTasks)));
   },
 );
+
+it.effect("leaves a task delegated from a linked environment out of the top-level list", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    yield* launches.launch(
+      launchInput({ command: "command:top-level", thread: "thread:top-level" }),
+    );
+    const delegated = yield* launches.launch({
+      ...launchInput({ command: "command:delegated", thread: "thread:delegated" }),
+      createdBy: "agent",
+      creationSource: "mcp",
+      linkOrigin: { sessionId: "mcp-session:linked", label: "Linked laptop" },
+      delegatedFrom: {
+        environmentId: EnvironmentId.make("environment:linked"),
+        threadId: ThreadId.make("thread:remote-parent"),
+        title: "Remote parent",
+      },
+    });
+    const listed = yield* threads.listProjectThreads({ projectId, includeSubagents: false });
+    assert.deepEqual(
+      listed.map((thread) => thread.id),
+      [ThreadId.make("thread:top-level")],
+    );
+    const all = yield* threads.listProjectThreads({ projectId, includeSubagents: true });
+    assert.include(
+      all.map((thread) => thread.id),
+      delegated.threadId,
+    );
+  }).pipe(Effect.provide(harness.layer));
+});
 
 it.effect("runs a thread-bound automation on the provider the thread uses now", () => {
   const harness = makeHarness({ adapters: [adapter, claudeAdapter] });
