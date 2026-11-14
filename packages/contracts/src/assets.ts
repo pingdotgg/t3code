@@ -48,6 +48,8 @@ export const AssetResource = Schema.Union([
     /** Defaults to download; viewers may request inline after checking the type is safe. */
     disposition: Schema.optionalKey(Schema.Literals(["inline", "attachment"])),
     renderIntent: Schema.optionalKey(Schema.Literal("mcp-app")),
+    /** Sent by clients that reload on retry without a new URL, so committed ids can share one. */
+    reuseUrl: Schema.optionalKey(Schema.Literal(true)),
   }),
   Schema.TaggedStruct("tool-output-image", {
     threadId: ThreadId,

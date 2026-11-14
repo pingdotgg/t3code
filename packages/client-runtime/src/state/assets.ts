@@ -255,7 +255,12 @@ export function createAssetEnvironmentAtoms<R, E>(
       limit = Semaphore.makeUnsafe(ASSET_URL_MAX_IN_FLIGHT);
       mintLimits.set(environmentId, limit);
     }
-    return request(WS_METHODS.assetsCreateUrl, input).pipe(limit.withPermit);
+    // Every viewer here remounts or bypasses the cache on retry, so it can take a shared URL.
+    const resource =
+      input.resource._tag === "attachment"
+        ? { ...input.resource, reuseUrl: true as const }
+        : input.resource;
+    return request(WS_METHODS.assetsCreateUrl, { ...input, resource }).pipe(limit.withPermit);
   };
   const execute = Effect.fn("assets.createUrl")(function* (input: AssetCreateUrlInput) {
     const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
