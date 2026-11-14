@@ -5547,8 +5547,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         remoteName: "origin",
         branchName: input.refName,
       };
-      // `<remote>/HEAD` is the remote's default-branch pointer, not a branch it can serve.
-      return remoteNames.includes(remoteName) && branchName !== "HEAD"
+      // `<remote>/HEAD` is the remote's default-branch pointer, not a branch it can serve, and
+      // a revision expression such as `HEAD~1`, `@{-1}` or `:/text` is no branch name at all.
+      return remoteNames.includes(remoteName) &&
+        branchName !== "HEAD" &&
+        !branchName.startsWith("-") &&
+        !/[\x00-\x20\x7f~^:?*[\\]|\.\.|@\{/.test(branchName)
         ? { remoteName, branchName }
         : null;
     });
