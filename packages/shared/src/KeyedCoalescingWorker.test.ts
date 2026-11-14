@@ -179,4 +179,29 @@ describe("makeKeyedCoalescingWorker", () => {
       expect(processed).toEqual(["terminal-1:first", "terminal-2:quiet", "terminal-1:second"]);
     }),
   );
+  it.effect(
+    "keeps processing and releases the key when a processor throws before returning an effect",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const processed: string[] = [];
+          const worker = yield* makeKeyedCoalescingWorker<string, string, never, never>({
+            merge: (_current, next) => next,
+            process: (key, value) => {
+              if (value === "broken") throw new Error("processor construction failed");
+              return Effect.sync(() => {
+                processed.push(`${key}:${value}`);
+              });
+            },
+          });
+          yield* worker.enqueue("first", "broken");
+          yield* worker.enqueue("second", "healthy");
+          yield* worker.drainKey("first");
+          yield* worker.drainKey("second");
+          yield* worker.enqueue("first", "recovered");
+          yield* worker.drainKey("first");
+          expect(processed).toEqual(["second:healthy", "first:recovered"]);
+        }),
+      ),
+  );
 });
