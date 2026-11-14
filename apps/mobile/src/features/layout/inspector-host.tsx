@@ -23,7 +23,14 @@ const PANE_HEADER_OPTIONS = { ...GLASS_HEADER_OPTIONS, headerShown: false };
 
 function PaneHeader(props: { readonly store: InspectorBarStore }) {
   const options = useSyncExternalStore(props.store.subscribe, props.store.getSnapshot);
-  return <V5StackHeader options={{ ...PANE_HEADER_OPTIONS, ...options }} canGoBack={false} />;
+  // Its own search identity, so opening the inspector doesn't morph the sidebar's search into it.
+  return (
+    <V5StackHeader
+      options={{ ...PANE_HEADER_OPTIONS, ...options }}
+      canGoBack={false}
+      searchIdentifier="inspector-search"
+    />
+  );
 }
 
 function PaneScreenContent(props: {
@@ -47,14 +54,8 @@ function PaneScreenContent(props: {
   return (
     <InspectorCloseContext value={props.onClose}>
       <PaneContext value="inspector">
-        {props.pane.nativeStack ? (
-          content
-        ) : (
-          <>
-            <PaneHeader store={store} />
-            <NativeColumnContent>{content}</NativeColumnContent>
-          </>
-        )}
+        <PaneHeader store={store} />
+        <NativeColumnContent>{content}</NativeColumnContent>
       </PaneContext>
     </InspectorCloseContext>
   );

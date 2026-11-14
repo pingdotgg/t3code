@@ -150,7 +150,7 @@ const withSavedEnvironments = <A, E, R>(
       prefix: "t3-desktop-saved-environments-test-",
     });
     return yield* effect.pipe(Effect.provide(layer(baseDir, options)));
-  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
+  }).pipe(Effect.provide(NodeServices.layer));
 
 describe("DesktopSavedEnvironments", () => {
   it.effect("loads lenient saved environment registry documents", () =>

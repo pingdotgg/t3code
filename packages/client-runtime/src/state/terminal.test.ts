@@ -1,4 +1,12 @@
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ThreadId,
+  type TerminalOpenInput,
+  type TerminalResizeInput,
+  type TerminalWriteInput,
+  type TerminalCloseInput,
+} from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { expect, it } from "vite-plus/test";
 
@@ -9,6 +17,7 @@ import {
   type TerminalLifecycleEvent,
   type TerminalSessionMode,
 } from "./terminal.ts";
+import { runAtomCommand } from "./runtime.ts";
 import { EMPTY_TERMINAL_BUFFER_STATE, type TerminalBufferState } from "./terminalSession.ts";
 
 function run(events: ReadonlyArray<TerminalLifecycleEvent>) {
@@ -59,7 +68,19 @@ it("leaves the history a viewer was reading when operate is granted", () => {
 const environmentId = EnvironmentId.make("environment");
 const threadId = ThreadId.make("thread");
 
-function setup(options: { readonly initialInput?: string } = {}) {
+type CommandInput =
+  | TerminalOpenInput
+  | TerminalResizeInput
+  | TerminalWriteInput
+  | TerminalCloseInput;
+
+function setup(
+  options: {
+    readonly initialInput?: string;
+    readonly beforeCommand?: (name: string, input: CommandInput) => Promise<void>;
+    readonly resizeFailure?: () => boolean;
+  } = {},
+) {
   // Tests flush the registry's scheduled work to control when driver finalizers run.
   const scheduled: Array<() => void> = [];
   const registry = AtomRegistry.make({
@@ -78,14 +99,30 @@ function setup(options: { readonly initialInput?: string } = {}) {
     AsyncResult.initial(true),
   );
   const access = { canOperate: true };
-  const calls: Array<{ readonly command: string; readonly input: unknown }> = [];
+  const calls: Array<{ readonly command: string; readonly input: CommandInput }> = [];
+  const pending: Promise<unknown>[] = [];
   const command = (name: string) => ({
     label: name,
-    run: async (_registry: AtomRegistry.AtomRegistry, value: { readonly input: unknown }) => {
-      calls.push({ command: name, input: value.input });
-      return AsyncResult.success(undefined);
+    run: (_registry: AtomRegistry.AtomRegistry, value: { readonly input: CommandInput }) => {
+      const result = (async () => {
+        calls.push({ command: name, input: value.input });
+        if (options.beforeCommand) await options.beforeCommand(name, value.input);
+        return name === "resize" && options.resizeFailure?.()
+          ? AsyncResult.failure(Cause.fail("resize rejected"))
+          : AsyncResult.success(undefined);
+      })();
+      pending.push(result);
+      return result;
     },
   });
+  const write = command("write");
+  // Await command completion, then a normal input receipt through the same command runner.
+  const completeCommands = async (count = pending.length) => {
+    await Promise.all(pending.slice(0, count));
+    await runAtomCommand(registry, write, {
+      input: { threadId, terminalId: "term-1", data: "typed" },
+    });
+  };
   const exits: Array<true> = [];
   const live: Array<boolean> = [];
   const session = createTerminalSession(
@@ -94,7 +131,7 @@ function setup(options: { readonly initialInput?: string } = {}) {
       observe: () => observation,
       open: command("open"),
       resize: command("resize"),
-      write: command("write"),
+      write,
       close: command("close"),
     },
     {
@@ -126,7 +163,21 @@ function setup(options: { readonly initialInput?: string } = {}) {
     registry.set(observation, snapshot(state));
   const mount = (mode: TerminalSessionMode) => registry.mount(session.driver(mode));
   const of = (name: string) => calls.filter((call) => call.command === name).map((c) => c.input);
-  return { session, attached, access, flush, detach, emit, observe, mount, calls, of, exits, live };
+  return {
+    session,
+    attached,
+    access,
+    flush,
+    detach,
+    emit,
+    observe,
+    mount,
+    calls,
+    of,
+    exits,
+    live,
+    completeCommands,
+  };
 }
 
 it("replays the measured grid on every new attachment generation", () => {
@@ -154,16 +205,78 @@ it("replays the measured grid on every new attachment generation", () => {
   ]);
 });
 
-it("writes the launch's initial input once the first snapshot lands", () => {
-  const { attached, emit, mount, calls, of } = setup({ initialInput: "pnpm dev\r" });
+it("writes the launch's initial input once, after the measured resize lands", async () => {
+  const resize = Promise.withResolvers<void>();
+  const latestResize = Promise.withResolvers<void>();
+  const written = Promise.withResolvers<void>();
+  let shellCols = 80;
+  let resizes = 0;
+  const commandWidths: number[] = [];
+  const { session, attached, emit, mount, calls, of, completeCommands } = setup({
+    initialInput: "stty size\r",
+    beforeCommand: async (name, input) => {
+      if (name === "resize") {
+        await (++resizes === 1 ? resize : latestResize).promise;
+        if ("cols" in input && input.cols !== undefined) shellCols = input.cols;
+      }
+      if (name === "write" && "data" in input && input.data === "stty size\r") {
+        commandWidths.push(shellCols);
+        written.resolve();
+      }
+    },
+  });
   mount(attached);
-  expect(of("write")).toEqual([]);
   emit({ status: "running", version: 1 });
   emit({ status: "running", version: 2 });
-  expect(of("write")).toEqual([{ threadId, terminalId: "term-1", data: "pnpm dev\r" }]);
-  // The shell gets the measured grid before the launched command runs.
-  expect(calls.map((call) => call.command)).toEqual(["resize", "write"]);
+  session.reportGridSize({ cols: 100, rows: 30 });
+  resize.resolve();
+  await completeCommands(1);
+  expect(of("write")).toEqual([{ threadId, terminalId: "term-1", data: "typed" }]);
+  latestResize.resolve();
+  await written.promise;
+  expect(commandWidths).toEqual([100]);
+  expect(of("write")).toEqual([
+    { threadId, terminalId: "term-1", data: "typed" },
+    { threadId, terminalId: "term-1", data: "stty size\r" },
+  ]);
+  expect(calls.map((call) => call.command)).toEqual(["resize", "resize", "write", "write"]);
 });
+
+it.each(["failed resize", "starting snapshot", "unmeasured grid"] as const)(
+  "keeps launch input pending after a %s until a running shell is successfully resized",
+  async (scenario) => {
+    let failResize = scenario === "failed resize";
+    const written = Promise.withResolvers<void>();
+    const { session, attached, emit, mount, of, completeCommands } = setup({
+      initialInput: "pnpm dev\r",
+      resizeFailure: () => failResize,
+      beforeCommand: async (name, input) => {
+        if (name === "write" && "data" in input && input.data === "pnpm dev\r") written.resolve();
+      },
+    });
+    // The seeded grid is 120x40; only "unmeasured grid" never hears from the surface.
+    if (scenario !== "unmeasured grid") session.reportGridSize({ cols: 120, rows: 40 });
+    mount(attached);
+    emit({ status: scenario === "starting snapshot" ? "starting" : "running", version: 1 });
+    await completeCommands();
+    expect(of("write")).toEqual([{ threadId, terminalId: "term-1", data: "typed" }]);
+    expect(of("resize")).toHaveLength(scenario === "starting snapshot" ? 0 : 1);
+
+    failResize = false;
+    session.reportGridSize(
+      scenario === "unmeasured grid" ? { cols: 120, rows: 40 } : { cols: 100, rows: 30 },
+    );
+    emit({ status: "running", version: 2 });
+    await written.promise;
+    emit({ status: "running", version: 3 });
+    await completeCommands();
+    expect(of("write")).toEqual([
+      { threadId, terminalId: "term-1", data: "typed" },
+      { threadId, terminalId: "term-1", data: "pnpm dev\r" },
+      { threadId, terminalId: "term-1", data: "typed" },
+    ]);
+  },
+);
 
 it("closes and reports a shell that exits while attached", () => {
   const { attached, emit, mount, of, exits, live } = setup();
