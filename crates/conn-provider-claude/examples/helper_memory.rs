@@ -6,7 +6,7 @@
 //! ```
 //!
 //! Prints RSS (`ps`) and private memory of the helper and of this process (`footprint` on
-//! macOS; `Pss_Anon` and `Private_Dirty` from `/proc/<pid>/smaps_rollup` on Linux): once the
+//! macOS; `Rss`, `Pss`, `Pss_Anon` and `Private_Dirty` from `/proc/<pid>/smaps_rollup` on Linux): once the
 //! query is open, after the first turn, after the last turn, and after the session closed
 //! (when the helper must be gone).
 
@@ -28,7 +28,7 @@ fn rss_mib(pid: u32) -> f64 {
     out.parse::<f64>().unwrap_or(0.0) / 1024.0
 }
 
-/// `Pss_Anon` and `Private_Dirty` in MiB, from `smaps_rollup`.
+/// `Rss`, `Pss`, `Pss_Anon` and `Private_Dirty` in MiB, from `smaps_rollup`.
 #[cfg(target_os = "linux")]
 fn footprint(pid: u32) -> String {
     let text = std::fs::read_to_string(format!("/proc/{pid}/smaps_rollup")).unwrap_or_default();
@@ -39,7 +39,9 @@ fn footprint(pid: u32) -> String {
             .map_or_else(|| "-".into(), |kb| format!("{:.1} MiB", kb / 1024.0))
     };
     format!(
-        "Pss_Anon {}, Private_Dirty {}",
+        "Rss {}, Pss {}, Pss_Anon {}, Private_Dirty {}",
+        mib("Rss:"),
+        mib("Pss:"),
         mib("Pss_Anon:"),
         mib("Private_Dirty:")
     )

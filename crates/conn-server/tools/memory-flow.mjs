@@ -34,7 +34,8 @@ const port = await new Promise((resolve) => {
     probe.close(() => resolve(port));
   });
 });
-const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "conn-memory-"));
+// `conn-linux-` is the temp prefix the Linux host allows for this work.
+const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "conn-linux-memory-"));
 const home = NodePath.join(root, ".t3");
 const state = NodePath.join(home, "userdata");
 const workspace = NodePath.join(root, "workspace");
