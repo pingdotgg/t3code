@@ -56,6 +56,7 @@ vi.mock("../state/session", () => ({
 import {
   awaitAttachmentUploads,
   getUploadedAttachments,
+  markAttachmentClaimFailure,
   readAttachmentUpload,
   releaseAttachmentUpload,
   releaseDraftAttachment,
@@ -208,6 +209,29 @@ describe("attachmentUploadQueue", () => {
       releaseAttachmentUpload(imageId);
     }
     vi.unstubAllGlobals();
+  });
+
+  it("marks only the matching upload when same-named images fail server validation", () => {
+    const images = [makeImage("first"), makeImage("second")].map((image) => ({
+      ...image,
+      name: "image.png",
+    }));
+    useAttachmentUploadStore.setState({
+      uploadsByImageId: {
+        first: { status: "ready", environmentId: firstEnvironment, attachmentId: "pending-1" },
+        second: { status: "ready", environmentId: firstEnvironment, attachmentId: "pending-2" },
+      },
+    });
+    markAttachmentClaimFailure({
+      environmentId: firstEnvironment,
+      attachments: images,
+      error: { attachmentId: "pending-2" },
+    });
+    expect(readAttachmentUpload("first")?.status).toBe("ready");
+    expect(readAttachmentUpload("second")).toMatchObject({
+      status: "failed",
+      attachmentId: "pending-2",
+    });
   });
 
   it("keeps an attachment local until its own environment grants write access", async () => {

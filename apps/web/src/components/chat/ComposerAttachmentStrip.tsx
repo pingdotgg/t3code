@@ -181,7 +181,7 @@ export function ComposerAttachmentMediaRow({
         "mb-3 flex max-w-full gap-2",
         pendingSnapShotIds.length > 0 ||
           expandedImages.some((image) => image.source?.kind === "snap-shot")
-          ? "snap-x snap-proximity overflow-x-auto overscroll-x-contain pb-1 scrollbar-thumb-foreground/18 scrollbar-track-transparent [scrollbar-width:thin] [&::-webkit-scrollbar]:h-2.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:border-3 [&::-webkit-scrollbar-thumb]:border-transparent [&::-webkit-scrollbar-thumb]:bg-foreground/18 [&::-webkit-scrollbar-thumb]:bg-clip-content [&::-webkit-scrollbar-thumb:hover]:bg-foreground/28 [&::-webkit-scrollbar-track]:mx-1 [&::-webkit-scrollbar-track]:bg-transparent"
+          ? "-mx-3 snap-x snap-proximity overflow-x-auto overscroll-x-contain p-3 scrollbar-thumb-foreground/18 scrollbar-track-transparent [scrollbar-width:thin] [&::-webkit-scrollbar]:h-2.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:border-3 [&::-webkit-scrollbar-thumb]:border-transparent [&::-webkit-scrollbar-thumb]:bg-foreground/18 [&::-webkit-scrollbar-thumb]:bg-clip-content [&::-webkit-scrollbar-thumb:hover]:bg-foreground/28 [&::-webkit-scrollbar-track]:mx-1 [&::-webkit-scrollbar-track]:bg-transparent"
           : "flex-wrap",
       )}
     >
@@ -202,6 +202,7 @@ export function ComposerAttachmentMediaRow({
           return (
             <SnapShotAttachmentFrame
               key={image.id}
+              data-failed-attachment-id={upload?.status === "failed" ? image.id : undefined}
               data-chat-composer-expanded-image="true"
               aria-hidden={snapShotAnimationPending || undefined}
               inert={snapShotAnimationPending || undefined}
@@ -250,6 +251,12 @@ export function ComposerAttachmentMediaRow({
                 </button>
               ) : (
                 <ComposerImageFallback />
+              )}
+              {upload?.status === "failed" && (
+                <span
+                  aria-hidden="true"
+                  className="composer-attachment-failure-highlight pointer-events-none absolute inset-0 rounded-[inherit] border border-destructive/60"
+                />
               )}
               {source?.kind === "snap-shot" ? (
                 <SnapShotAttachmentDetails
@@ -356,7 +363,8 @@ export function ComposerAttachmentMediaRow({
         return (
           <div
             key={file.id}
-            className="relative h-16 w-16 shrink-0 snap-start overflow-hidden rounded-lg border border-border/80 bg-black"
+            className="composer-attachment-failure-frame relative h-16 w-16 shrink-0 snap-start overflow-hidden rounded-lg border border-border/80 bg-black"
+            data-failed-attachment-id={upload?.status === "failed" ? file.id : undefined}
           >
             <button
               type="button"
@@ -464,7 +472,8 @@ export function ComposerAttachmentFileList({
         return (
           <div
             key={file.id}
-            className="flex min-w-0 items-center gap-2 py-1 text-sm text-foreground"
+            className="composer-attachment-failure-frame flex min-w-0 items-center gap-2 rounded-md py-1 text-sm text-foreground"
+            data-failed-attachment-id={upload?.status === "failed" ? file.id : undefined}
           >
             <PierreEntryIcon pathValue={file.name} kind="file" theme={resolvedTheme} />
             <button

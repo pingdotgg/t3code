@@ -1991,6 +1991,9 @@ export const layerWsRpc = (
                       commandType: command.type,
                       message: detail ?? "Failed to dispatch orchestration V2 command",
                       ...(detail === undefined ? {} : { detail }),
+                      ...(cause._tag === "AttachmentClaimError" && cause.attachmentId !== undefined
+                        ? { attachmentId: cause.attachmentId }
+                        : {}),
                       cause,
                     });
                   }),
@@ -2214,6 +2217,9 @@ export const layerWsRpc = (
                         commandId: input.commandId,
                         projectId: input.projectId,
                         message: cause.message,
+                        ...(cause.attachmentId !== undefined
+                          ? { attachmentId: cause.attachmentId }
+                          : {}),
                         cause,
                       }),
                     ThreadLaunchError: (cause) =>

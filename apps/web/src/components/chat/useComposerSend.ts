@@ -109,6 +109,7 @@ import { type ComposerDispatchMode } from "@t3tools/client-runtime/state/compose
 import {
   awaitAttachmentUploads,
   getUploadedAttachments,
+  markAttachmentClaimFailure,
   readAttachmentUpload,
   releaseDraftAttachments,
   retryAttachmentUpload,
@@ -1454,6 +1455,11 @@ export function useComposerSend(input: ComposerSendInput) {
       }
       if (!isAtomCommandInterrupted(failure)) {
         const error = squashAtomCommandFailure(failure);
+        markAttachmentClaimFailure({
+          environmentId,
+          attachments: composerAttachmentsSnapshot,
+          error,
+        });
         setThreadError(
           threadIdForSend,
           error instanceof Error ? error.message : "Failed to send message.",
