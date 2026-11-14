@@ -226,7 +226,7 @@ function pooledWindow(pooled: LimitPoolWindow, now: number): ServerProviderUsage
     id: pooled.id,
     kind: pooled.kind,
     label: pooled.label,
-    usedPercent: pooled.usedPercent,
+    usedPercent: 100 - pooled.remainingPercent,
     resetsAt: pooled.resets.find((reset) => reset.at > now)?.member.window.resetsAt,
   };
 }

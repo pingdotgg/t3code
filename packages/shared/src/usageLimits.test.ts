@@ -132,10 +132,16 @@ describe("selected provider usage limits", () => {
         unavailable: { reason: "unsupported" },
       },
     });
-    const account = (id: string, usedPercent: number, driver = endpoint.driver) => ({
+    const account = (
+      id: string,
+      usedPercent: number,
+      driver = endpoint.driver,
+      workspaceId?: string,
+    ) => ({
       id,
       driver,
-      email: `${id}@example.com`,
+      email: `${id.split("-")[0]}@example.com`,
+      ...(workspaceId ? { workspaceId } : {}),
       usageLimits: { ...limits, windows: [{ ...window, usedPercent }] },
     });
     const pool = resolveProviderLimitPool(
@@ -145,15 +151,17 @@ describe("selected provider usage limits", () => {
         {
           ...source,
           accounts: [
-            account("one", 40),
+            account("one", 40, endpoint.driver, "work"),
+            account("one-personal", 60, endpoint.driver, "personal"),
             account("two", 80),
-            account("other-driver", 0, ProviderDriverKind.make("claudeAgent")),
+            account("other", 0, ProviderDriverKind.make("claudeAgent")),
           ],
         },
       ],
       now,
     );
     expect(pool?.accounts.map((member) => member.email)).toEqual([
+      "one@example.com",
       "one@example.com",
       "two@example.com",
     ]);

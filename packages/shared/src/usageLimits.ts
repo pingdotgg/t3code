@@ -262,6 +262,7 @@ export function resolveProviderLimitPool(
   if (!selected || accountKey(selected.driver, selected.auth.email, selected.usageLimits)) {
     return undefined;
   }
+  const resolveKey = accountKeyResolver(sources.flatMap((source) => source.accounts));
   const accounts = new Map<string, LimitAccount>();
   for (const source of sources) {
     for (const account of source.accounts) {
@@ -269,8 +270,8 @@ export function resolveProviderLimitPool(
         continue;
       }
       const key =
-        accountKey(account.driver, account.email, account.usageLimits) ??
-        `${source.id}:${account.id}`;
+        resolveKey(account) ??
+        `${source.id}:${account.id}${account.workspaceId ? `:${account.workspaceId}` : ""}`;
       const seen = accounts.get(key);
       if (seen && Date.parse(seen.limits.checkedAt) >= Date.parse(account.usageLimits.checkedAt)) {
         continue;
