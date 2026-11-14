@@ -43,6 +43,10 @@
       "types": "./src/server/handoffBudget.ts",
       "import": "./src/server/handoffBudget.ts"
     },
+    "./server/imageInputPolicy": {
+      "types": "./src/server/imageInputPolicy.ts",
+      "import": "./src/server/imageInputPolicy.ts"
+    },
     "./server/IdAllocator": {
       "types": "./src/server/IdAllocator.ts",
       "import": "./src/server/IdAllocator.ts"
