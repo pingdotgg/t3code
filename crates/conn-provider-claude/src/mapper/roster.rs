@@ -74,6 +74,13 @@ impl Roster {
         true
     }
 
+    /// `isKnownOpaqueBackgroundTaskOnNativeThread`.
+    pub(crate) fn is_known(&self, task_id: &str) -> bool {
+        self.tasks.iter().any(|t| t["taskId"] == task_id)
+            || self.wake_eligible.iter().any(|t| t == task_id)
+            || self.tombstones.iter().any(|t| t == task_id)
+    }
+
     pub(crate) fn clear_tombstones(&mut self) {
         self.tombstones.clear();
     }

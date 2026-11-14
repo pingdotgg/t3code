@@ -892,6 +892,11 @@ impl Inner {
                     self.commit_after(&mut held, &mut deadline, vec![]).await;
                     self.create_provider_thread(thread).await;
                 }
+                Translated::Subagent(draft, subagent) => {
+                    self.commit_after(&mut held, &mut deadline, vec![draft])
+                        .await;
+                    self.sync_subagent_thread_model(subagent).await;
+                }
                 Translated::Steer { message_id, status } => {
                     self.commit_after(&mut held, &mut deadline, vec![]).await;
                     self.steer_updated(&thread_id, message_id, status).await;
@@ -953,6 +958,50 @@ impl Inner {
             .await;
         if let Err(e) = result {
             eprintln!("conn-engine: could not create a provider thread: {e}");
+        }
+    }
+
+    /// `syncSubagentThreadModel` (`ProviderEventIngestor`): a provider reveals a native
+    /// subagent's model late, and its child thread takes it.
+    async fn sync_subagent_thread_model(&self, subagent: Value) {
+        if subagent["origin"] != "provider_native" {
+            return;
+        }
+        let Some(child) = subagent["childThreadId"].as_str().map(str::to_owned) else {
+            return;
+        };
+        let model = subagent["model"].as_str().map(str::to_owned);
+        let selection = subagent
+            .get("modelSelection")
+            .filter(|s| s.is_object())
+            .cloned();
+        if model.is_none() && selection.is_none() {
+            return;
+        }
+        let result = self
+            .write(move |tx| {
+                let Some(mut thread) = tx.thread(&child)? else {
+                    return Ok(());
+                };
+                let current = thread["modelSelection"].clone();
+                let reported = match (selection, model) {
+                    (Some(selection), _) => selection,
+                    (None, Some(model)) if current["model"] != model.as_str() => {
+                        json!({"instanceId": current["instanceId"], "model": model})
+                    }
+                    _ => current.clone(),
+                };
+                if reported == current {
+                    return Ok(());
+                }
+                thread["modelSelection"] = reported;
+                thread["updatedAt"] = json!(tx.now());
+                tx.append(Draft::new(&child, "thread.model-selection-updated", thread))?;
+                Ok(())
+            })
+            .await;
+        if let Err(e) = result {
+            eprintln!("conn-engine: could not update a subagent thread's model: {e}");
         }
     }
 
@@ -1538,6 +1587,8 @@ enum Translated {
     },
     /// The provider has output with no turn running and asks for one.
     Continuation(Option<String>, Option<Value>),
+    /// `subagent.updated`, then the child thread follows the subagent's model.
+    Subagent(Draft, Value),
 }
 
 /// `providerThreadLoadKey`: the native thread, the provider's load part of the selection,
@@ -1623,7 +1674,8 @@ fn translate(thread_id: &str, active: Option<&ActiveRun>, event: ProviderEvent) 
             Translated::Event(scoped("node.updated", to_json(&node)))
         }
         ProviderEvent::SubagentUpdated { subagent } => {
-            Translated::Event(scoped("subagent.updated", to_json(&subagent)))
+            let payload = to_json(&subagent);
+            Translated::Subagent(scoped("subagent.updated", payload.clone()), payload)
         }
         ProviderEvent::MessageUpdated { message } => {
             Translated::Event(scoped("message.updated", to_json(&message)))

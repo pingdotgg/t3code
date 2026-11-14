@@ -22,6 +22,8 @@ const PENDING_LAUNCH_CAP: usize = 64;
 const PENDING_FRAME_IDS_CAP: usize = 64;
 const PENDING_FRAMES_PER_ID: usize = 256;
 const TITLE_MAX_CHARS: usize = 72;
+/// Subagents kept after they settled, for a later resume.
+const SETTLED_CAP: usize = 64;
 
 /// What a subagent row needs from the turn that launched it. Kept with the subagent, since a
 /// background subagent keeps reporting after its turn ended.
@@ -116,7 +118,13 @@ impl Subagents {
 
     /// A running subagent's title and child thread, for the wake that its end reports.
     pub(super) fn running_report(&self, task_id: &str) -> Option<(Option<String>, String)> {
-        let sub = self.by_task.get(task_id).filter(|s| s.running())?;
+        self.by_task.get(task_id).filter(|s| s.running())?;
+        self.report(task_id)
+    }
+
+    /// A subagent's title and child thread.
+    pub(super) fn report(&self, task_id: &str) -> Option<(Option<String>, String)> {
+        let sub = self.by_task.get(task_id)?;
         let title = sub.task["title"].as_str().map(str::to_string);
         Some((title, sub.child_thread_id.clone()))
     }
@@ -125,8 +133,13 @@ impl Subagents {
         self.by_tool.contains_key(tool_use_id)
     }
 
-    /// Forgets settled subagents and stale launches; called when a new user turn starts.
+    /// Forgets settled subagents once more than [`SETTLED_CAP`] are known; called when a new
+    /// user turn starts. Settled ones stay until then, since Claude can resume a subagent
+    /// (`SendMessage`) in a later turn (`sessionSubagentsByTaskId` keeps them).
     pub(super) fn prune_settled(&mut self) {
+        if self.by_task.len() <= SETTLED_CAP {
+            return;
+        }
         let settled: Vec<String> = self
             .by_task
             .iter()
@@ -135,7 +148,8 @@ impl Subagents {
             .collect();
         for task_id in settled {
             if let Some(sub) = self.by_task.remove(&task_id) {
-                self.by_tool.remove(&sub.tool_use_id);
+                self.by_tool.retain(|_, t| t != &task_id);
+                let _ = sub;
             }
         }
     }
@@ -652,13 +666,18 @@ impl<E: Env> Mapper<E> {
         }
         let mut is_reopen = false;
         let mut prior_status = String::new();
-        if let Some(sub) = self.subagents.by_task.get(input.task_id) {
+        let current_parent = self.parent_ctx();
+        if let Some(sub) = self.subagents.by_task.get_mut(input.task_id) {
             prior_status = sub.task["status"].as_str().unwrap_or("").to_string();
             let terminal = prior_status != "running";
             if terminal && input.status == "running" && !input.reopen {
                 return;
             }
             is_reopen = terminal && input.reopen && input.status == "running";
+            // A resumed subagent (SendMessage) runs in the turn that resumed it.
+            if is_reopen && let Some(parent) = current_parent {
+                sub.parent = parent;
+            }
         } else {
             let Some(parent) = self.parent_ctx() else {
                 return;
@@ -821,7 +840,30 @@ impl<E: Env> Mapper<E> {
                 }),
             );
         }
-        // 5. The prompt, as the child thread's first message.
+        // 5. The prompt, as the child thread's first message. A resume (`SendMessage`) names
+        // its own call and brings the sent message as the prompt: another user message.
+        let resume_tool = (existing
+            && is_reopen
+            && input.tool_use_id != sub.tool_use_id
+            && input.prompt.is_some())
+        .then(|| input.tool_use_id.to_string());
+        if let Some(resume_tool) = resume_tool {
+            let prompt = task["prompt"].as_str().unwrap_or("").to_string();
+            let native = format!("task:{}:prompt:{resume_tool}", input.task_id);
+            let sender = sub.parent.thread_id.clone();
+            let ordinal = sub.next_ordinal();
+            child_message(
+                &sub.child_thread_id,
+                &sub.child_root,
+                &native,
+                "user",
+                &prompt,
+                ordinal,
+                Some(&sender),
+                &now,
+                out,
+            );
+        }
         if !existing {
             let prompt = task["prompt"].as_str().unwrap_or("").to_string();
             let native = format!("task:{}:prompt", input.task_id);

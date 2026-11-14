@@ -258,6 +258,8 @@ struct Turn {
     /// Ledger growth of the segments a steer cut short (`steeredLedgerUsage`).
     steered_ledger: Option<Ledger>,
     had_subagents: bool,
+    /// A continuation turn the provider asked for (`isClaudeProviderContinuationTurn`).
+    continuation: bool,
 }
 
 impl Turn {
@@ -487,6 +489,7 @@ impl<E: Env> Mapper<E> {
             steered_usage: None,
             steered_ledger: Some(Ledger::default()),
             had_subagents: false,
+            continuation: false,
         };
         let mut out = Vec::new();
         emit(
@@ -519,6 +522,9 @@ impl<E: Env> Mapper<E> {
         // The continuation takes in the notifications it was asked for.
         self.roster.clear_tombstones();
         let mut out = self.open_turn(input, permission_mode);
+        if let Some(turn) = &mut self.turn {
+            turn.continuation = true;
+        }
         for frame in held {
             out.extend(self.handle(frame));
         }
@@ -864,10 +870,13 @@ impl<E: Env> Mapper<E> {
         match msg.subtype.as_str() {
             "task_started" => {
                 if msg.task_type.as_deref() != Some("local_bash")
-                    && msg.spawn_depth.is_some_and(|d| d > 1.0)
                     && let Some(task_id) = &msg.task_id
                 {
-                    self.wakes.mark_nested(task_id);
+                    if msg.spawn_depth.is_some_and(|d| d > 1.0) {
+                        self.wakes.mark_nested(task_id);
+                    } else if msg.is_backgrounded == Some(true) {
+                        self.wakes.mark_backgrounded(task_id);
+                    }
                 }
                 self.on_task_started(&msg, out);
                 self.apply_roster(&msg, out);
@@ -876,7 +885,18 @@ impl<E: Env> Mapper<E> {
             "task_progress" => return self.on_task_progress(&msg, out),
             "task_notification" => {
                 // Read the roster and the subagent before the notification settles them.
-                let wakes_root = self.turn.is_none() && self.record_wake_notification(&msg);
+                let wakes_root = match &self.turn {
+                    None => self.record_wake_notification(&msg),
+                    Some(turn) => {
+                        if !turn.continuation {
+                            self.record_turn_notification(&msg);
+                        }
+                        false
+                    }
+                };
+                if let Some(task_id) = &msg.task_id {
+                    self.wakes.unmark_backgrounded(task_id);
+                }
                 self.on_task_notification(&msg, out);
                 self.apply_roster(&msg, out);
                 if wakes_root {
@@ -2775,6 +2795,40 @@ impl<E: Env> Mapper<E> {
                 notification: wakes::notification(&reports),
             },
         )));
+    }
+
+    /// A `task_notification` during a user turn: Claude reports it in a wake after the turn,
+    /// so the wake names it (the active branch of `handleRoutedSdkMessage`).
+    fn record_turn_notification(&mut self, msg: &SystemMsg) {
+        let Some(task_id) = msg.task_id.as_deref() else {
+            return;
+        };
+        let outcome = wakes::task_outcome(msg.status.as_ref().and_then(Value::as_str));
+        if self.roster.is_known(task_id) {
+            if let Some(task) = self.roster.wake_task(task_id) {
+                self.wakes.record(
+                    task_id,
+                    wakes::Report {
+                        kind: wakes::Kind::from_task_kind(task["kind"].as_str()),
+                        label: task["description"].as_str().map(str::to_string),
+                        outcome,
+                        child_thread_id: task["childThreadId"].as_str().map(str::to_string),
+                    },
+                );
+            }
+        } else if self.wakes.is_backgrounded(task_id)
+            && let Some((title, child)) = self.subagents.report(task_id)
+        {
+            self.wakes.record(
+                task_id,
+                wakes::Report {
+                    kind: wakes::Kind::Subagent,
+                    label: title,
+                    outcome,
+                    child_thread_id: Some(child),
+                },
+            );
+        }
     }
 
     /// `bufferWakeMessage` for a `task_notification` with no turn running: records what the

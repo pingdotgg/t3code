@@ -82,12 +82,24 @@ pub(crate) struct Wakes {
     pub detail: Option<String>,
     /// Nested subagents (`spawn_depth` > 1): their end notifies their owner, not the root.
     nested: VecDeque<String>,
+    /// Root subagents that run in the background (`backgroundedSubagentTaskIds`).
+    backgrounded: VecDeque<String>,
+}
+
+fn add_id(set: &mut VecDeque<String>, id: &str) {
+    if set.iter().any(|t| t == id) {
+        return;
+    }
+    if set.len() >= REPORT_CAP {
+        set.pop_front();
+    }
+    set.push_back(id.to_string());
 }
 
 impl Wakes {
     #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
-        self.reports.len() + self.nested.len()
+        self.reports.len() + self.nested.len() + self.backgrounded.len()
     }
 
     pub(crate) fn record(&mut self, task_id: &str, report: Report) {
@@ -100,13 +112,19 @@ impl Wakes {
     }
 
     pub(crate) fn mark_nested(&mut self, task_id: &str) {
-        if self.nested.iter().any(|t| t == task_id) {
-            return;
-        }
-        if self.nested.len() >= REPORT_CAP {
-            self.nested.pop_front();
-        }
-        self.nested.push_back(task_id.to_string());
+        add_id(&mut self.nested, task_id);
+    }
+
+    pub(crate) fn mark_backgrounded(&mut self, task_id: &str) {
+        add_id(&mut self.backgrounded, task_id);
+    }
+
+    pub(crate) fn unmark_backgrounded(&mut self, task_id: &str) {
+        self.backgrounded.retain(|t| t != task_id);
+    }
+
+    pub(crate) fn is_backgrounded(&self, task_id: &str) -> bool {
+        self.backgrounded.iter().any(|t| t == task_id)
     }
 
     pub(crate) fn is_nested(&self, task_id: &str) -> bool {
