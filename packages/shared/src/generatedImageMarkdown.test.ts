@@ -60,6 +60,24 @@ it.each([
     expected: "<pre>\nlog\n</pre>\n\n![](</tmp/a.png>)",
   },
   {
+    name: "an unclosed trailing CDATA block is closed first",
+    text: "<![CDATA[\nimage draft",
+    saved: ["/tmp/a.png"],
+    expected: "<![CDATA[\nimage draft\n]]>\n\n![](</tmp/a.png>)",
+  },
+  {
+    name: "an unclosed trailing processing instruction is closed first",
+    text: '<?xml version="1.0"\nimage draft',
+    saved: ["/tmp/a.png"],
+    expected: '<?xml version="1.0"\nimage draft\n?>\n\n![](</tmp/a.png>)',
+  },
+  {
+    name: "an unclosed trailing declaration is closed first",
+    text: "<!DOCTYPE html\nimage draft",
+    saved: ["/tmp/a.png"],
+    expected: "<!DOCTYPE html\nimage draft\n>\n\n![](</tmp/a.png>)",
+  },
+  {
     name: "Windows, UNC and reserved characters keep their path",
     text: "",
     saved: [
