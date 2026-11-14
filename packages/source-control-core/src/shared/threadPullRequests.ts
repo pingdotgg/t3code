@@ -135,6 +135,25 @@ export function makeThreadPullRequests(
     return normalized;
   }
 
+  /**
+   * The key `links` hold `key` under. A link saved before its URL's web port was part of its
+   * identity keeps a hostname-only host, which clients send back as is.
+   */
+  function storedThreadPullRequestKey(
+    links: ReadonlyArray<ThreadPullRequestLink>,
+    key: ThreadPullRequestKeySource,
+  ): ThreadPullRequestKey {
+    const normalized = normalizeThreadPullRequestKey(key);
+    if (links.some((link) => threadPullRequestKeysEqual(link, normalized))) return normalized;
+    const stored = links.find((link) =>
+      threadPullRequestKeysEqual(
+        { host: link.host, repository: link.repository, number: link.number },
+        normalized,
+      ),
+    );
+    return stored === undefined ? normalized : normalizedKeyOf(stored);
+  }
+
   function threadPullRequestKeyOf(key: ThreadPullRequestKeySource): string {
     const normalized = normalizedKeyOf(key);
     return `${normalized.host}/${normalized.repository}#${normalized.number}`;
@@ -358,6 +377,7 @@ export function makeThreadPullRequests(
     legacyThreadPullRequestKey,
     threadPullRequestKeysEqual,
     threadPullRequestKeyOf,
+    storedThreadPullRequestKey,
     resolveThreadCurrentPullRequest,
     resolveThreadCurrentPullRequestLink,
     resolveThreadPullRequestChains,

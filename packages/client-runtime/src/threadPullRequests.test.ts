@@ -3,6 +3,7 @@ import {
   type ThreadPullRequestLink,
   type ThreadPullRequestSnapshot,
 } from "@t3tools/contracts";
+import { makeThreadPullRequests } from "@t3tools/source-control-core/shared/threadPullRequests";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
@@ -14,6 +15,7 @@ import {
   resolveThreadPullRequestBadge,
   threadPullRequestKeysEqual,
 } from "./threadPullRequests.ts";
+import { sourceControlClients } from "./sourceControlClients.ts";
 
 // Remove ES2023 array methods to match Hermes on mobile.
 beforeEach(() => {
@@ -102,6 +104,42 @@ describe("threadPullRequestKeysEqual", () => {
       }),
     ).toBe(true);
   });
+
+  it.each(["pull", "-/merge_requests", "pulls"])(
+    "finds a %s link saved with a hostname-only host by that host or its web authority",
+    (route) => {
+      const { storedThreadPullRequestKey } = makeThreadPullRequests(sourceControlClients);
+      const saved = link(1, {
+        host: "code.example",
+        repository: "team/repo",
+        url: `https://code.example:8443/team/repo/${route}/1`,
+      });
+      const key = { repository: "team/repo", number: 1 };
+      for (const host of ["code.example", "code.example:8443"]) {
+        expect(
+          threadPullRequestKeysEqual(saved, storedThreadPullRequestKey([saved], { ...key, host })),
+        ).toBe(true);
+      }
+      for (const other of [
+        { ...key, host: "code.example:9443" },
+        { ...key, host: "other.example" },
+        { ...key, host: "code.example", number: 2 },
+      ]) {
+        expect(threadPullRequestKeysEqual(saved, storedThreadPullRequestKey([saved], other))).toBe(
+          false,
+        );
+      }
+      // A link saved on the default port is not taken for the same path on another port.
+      const defaultPort = link(1, {
+        host: "code.example",
+        repository: "team/repo",
+        url: `https://code.example/team/repo/${route}/1`,
+      });
+      expect(
+        storedThreadPullRequestKey([defaultPort], { ...key, host: "code.example:8443" }).host,
+      ).toBe("code.example:8443");
+    },
+  );
 });
 
 describe("resolveThreadCurrentPullRequestLink", () => {

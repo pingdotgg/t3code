@@ -16,7 +16,7 @@ import {
 import { canonicalizeGitCafePullRequestUrl } from "@t3tools/source-control-definitions/registry";
 import { threadPullRequestsOf } from "../sourceControl/threadPullRequests.ts";
 import {
-  normalizeThreadPullRequestKey,
+  storedThreadPullRequestKey,
   visibleThreadPullRequests,
   threadPullRequestKeysEqual,
   legacyThreadPullRequestKey,
@@ -3843,7 +3843,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...other,
         })),
       ].map((entry) => {
-        const key = normalizeThreadPullRequestKey(entry);
+        const key = storedThreadPullRequestKey(threadPullRequestsOf(thread), entry);
         const link = threadPullRequestsOf(thread).find(
           (candidate) =>
             candidate.source !== "stack-dismissed" && threadPullRequestKeysEqual(candidate, key),
@@ -4772,8 +4772,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         case "thread.pull-request.link":
         case "thread.pull-request.unlink":
         case "thread.pull-request-link.sync": {
-          const key = normalizeThreadPullRequestKey(command);
           const links = threadPullRequestsOf(thread);
+          const key = storedThreadPullRequestKey(links, command);
           const existing = links.find((link) => threadPullRequestKeysEqual(link, key));
           let pullRequests = links;
           if (command.type === "thread.pull-request.link") {
@@ -4886,9 +4886,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
         case "thread.pull-request.watch":
         case "thread.pull-request-watch.sync": {
-          const key = normalizeThreadPullRequestKey(command);
-          const startedAt = DateTime.formatIso(now);
           const linked = threadPullRequestsOf(thread);
+          const key = storedThreadPullRequestKey(linked, command);
+          const startedAt = DateTime.formatIso(now);
           const visible = (link: ThreadPullRequestLink) =>
             link.source !== "stack-dismissed" && threadPullRequestKeysEqual(link, key);
           const dismissed = linked.find((link) => threadPullRequestKeysEqual(link, key));
@@ -5059,9 +5059,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command.type === "thread.pull-request-watch.sync"
     ) {
       if (updatedThread === thread) return;
-      const link = threadPullRequestsOf(updatedThread).find((candidate) =>
-        threadPullRequestKeysEqual(candidate, normalizeThreadPullRequestKey(command)),
-      );
+      const links = threadPullRequestsOf(updatedThread);
+      const key = storedThreadPullRequestKey(links, command);
+      const link = links.find((candidate) => threadPullRequestKeysEqual(candidate, key));
       if (link === undefined) return;
       yield* emit(
         events,
