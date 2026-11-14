@@ -10357,16 +10357,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ),
         );
       const run = projection.runs.find((candidate) => candidate.id === command.runId);
+      if (run === undefined) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Run ${command.runId} was not found.`,
+        });
+      }
       const existing = projection.turnItems.find((item) => item.id === command.turnItemId);
-      // A steering restart replaces the run's root node, so a card recorded under an
-      // earlier root keeps closing through that card's own node; only a new card must
-      // still be rooted at the run's current root.
-      const referencesKnownNode =
-        run !== undefined &&
-        (run.rootNodeId === command.nodeId ||
-          (existing !== undefined &&
-            (existing.nodeId === command.nodeId || existing.nodeId === null)));
-      if (!referencesKnownNode) {
+      // Only a new card needs its run's current root. A steer restarts the run
+      // under a new root, and the card asked before it must still close.
+      if (existing === undefined && run.rootNodeId !== command.nodeId) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
