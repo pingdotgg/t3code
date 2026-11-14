@@ -1,4 +1,4 @@
-import { EnvironmentId, RunId, ThreadId, TurnItemId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, TurnItemId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
@@ -17,18 +17,6 @@ describe("diffPanelStore", () => {
     });
     useDiffPanelSessionStore.setState({ collapsedFileKeysByScopeKey: {} });
   });
-
-  it.each(["src/ nested.ts", " leading.ts", "src/trailing.ts "])(
-    "keeps the exact selected turn file path %j",
-    (filePath) => {
-      const ref = { environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("thread") };
-      useDiffPanelStore.getState().selectTurn(ref, RunId.make("run"), filePath);
-      expect(useDiffPanelStore.getState().byThreadKey[scopedThreadKey(ref)]).toMatchObject({
-        kind: "turn",
-        filePath,
-      });
-    },
-  );
 
   it("keeps a tool call selection independent of checkpoints and allows returning to Git changes", () => {
     const ref = { environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("thread") };

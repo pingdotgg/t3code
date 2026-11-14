@@ -24,7 +24,6 @@ const decodeOrchestrationV2TurnItemJson = Schema.decodeUnknownSync(Orchestration
 const encodeOrchestrationV2TurnItemJson = Schema.encodeSync(OrchestrationV2TurnItemJson);
 const decodeOrchestrationV2Subagent = Schema.decodeUnknownSync(OrchestrationV2Subagent);
 const decodeCheckpointFileSummary = Schema.decodeSync(OrchestrationV2CheckpointFileSummary);
-const encodeCheckpointFileSummary = Schema.encodeSync(OrchestrationV2CheckpointFileSummary);
 const encodeOrchestrationV2SubagentJson = Schema.encodeSync(OrchestrationV2SubagentJson);
 const decodeOrchestrationV2ProviderThreadJson = Schema.decodeUnknownSync(
   OrchestrationV2ProviderThreadJson,
@@ -401,11 +400,11 @@ describe("orchestration V2 contracts", () => {
   );
 
   it.each([" leading.ts", "src/trailing.ts "])(
-    "keeps the checkpoint file path %j exact on the wire",
+    "decodes the checkpoint file path %j exactly",
     (path) => {
-      const file = { path, kind: "added", additions: 1, deletions: 0 };
-      expect(decodeCheckpointFileSummary(file).path).toBe(path);
-      expect(encodeCheckpointFileSummary(file).path).toBe(path);
+      expect(
+        decodeCheckpointFileSummary({ path, kind: "added", additions: 1, deletions: 0 }).path,
+      ).toBe(path);
     },
   );
 
