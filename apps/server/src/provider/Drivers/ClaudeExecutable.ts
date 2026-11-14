@@ -19,6 +19,12 @@ const NPM_PACKAGE_ENTRY_CANDIDATES = [
   ["node_modules", "@anthropic-ai", "claude-code", "cli.js"],
 ] as const;
 
+// pnpm keeps global packages under a content-hashed directory that changes on every install,
+// so its `.cmd` shim is the only record of where `claude.exe` lives.
+const PNPM_EXECUTABLE_SHIM = /^@SETLOCAL\r?\n@"%~dp0\\([^"%]+\.exe)" +%\*\r?\n?$/;
+const CLAUDE_PACKAGE_EXECUTABLE_SUFFIX =
+  "\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe";
+
 export type ExecutableFileCheck = (filePath: string) => boolean;
 
 function isExistingFile(filePath: string): boolean {
@@ -35,6 +41,36 @@ export const ClaudeExecutableFileCheck = Context.Reference<ExecutableFileCheck>(
     defaultValue: () => isExistingFile,
   },
 );
+
+type ExecutableFileRead = (filePath: string) => string | undefined;
+
+function readFileOrUndefined(filePath: string): string | undefined {
+  try {
+    return NodeFS.readFileSync(filePath, "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
+export const ClaudeExecutableFileRead = Context.Reference<ExecutableFileRead>(
+  "server/provider/Drivers/ClaudeExecutableFileRead",
+  {
+    defaultValue: () => readFileOrUndefined,
+  },
+);
+
+function pnpmShimClaudeExecutable(
+  shimPath: string,
+  readFile: ExecutableFileRead,
+): string | undefined {
+  if (NodePath.win32.extname(shimPath).toLowerCase() !== ".cmd") return undefined;
+  const target = PNPM_EXECUTABLE_SHIM.exec(readFile(shimPath) ?? "")?.[1];
+  if (target === undefined) return undefined;
+  const executable = NodePath.win32.join(NodePath.win32.dirname(shimPath), target);
+  return executable.toLowerCase().endsWith(CLAUDE_PACKAGE_EXECUTABLE_SUFFIX)
+    ? executable
+    : undefined;
+}
 
 /** On Windows the SDK skips shell and PATH/PATHEXT lookup: bare names and .cmd shims fail. */
 export const resolveClaudeSdkExecutablePath = Effect.fn("resolveClaudeSdkExecutablePath")(
@@ -58,6 +94,10 @@ export const resolveClaudeSdkExecutablePath = Effect.fn("resolveClaudeSdkExecuta
       if (isFile(candidate)) {
         return candidate;
       }
+    }
+    const pnpmExecutable = pnpmShimClaudeExecutable(resolved, yield* ClaudeExecutableFileRead);
+    if (pnpmExecutable !== undefined && isFile(pnpmExecutable)) {
+      return pnpmExecutable;
     }
 
     yield* Effect.logWarning(
