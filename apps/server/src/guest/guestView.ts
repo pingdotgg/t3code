@@ -117,6 +117,7 @@ export function projectDomainEventForGuest(
     case "provider-session.attached":
     case "provider-session.updated":
       return { ...event, payload: guestProviderSession(event.payload) };
+    case "thread.visit-recorded":
     case "run.background-work-cancelled":
     case "run-attempt.created":
     case "run-attempt.updated":
