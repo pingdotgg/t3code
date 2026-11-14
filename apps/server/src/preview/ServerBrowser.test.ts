@@ -1545,6 +1545,30 @@ it.effect("a first still that never returns does not stall the tab's later captu
   ).pipe(Effect.provide(layer)),
 );
 
+it.effect("keeps a tab's zoom when its viewer resizes", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const manager = yield* Manager.PreviewManager;
+      const { tabId } = yield* manager.open({
+        threadId: scope.thread.threadId,
+        runtime: "server",
+        zoomFactor: 1.5,
+      });
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* viewer.input({ type: "takeControl" });
+      const cdp = contexts[0]!.sessions[0]!;
+      cdp.send.mockClear();
+      // Resizing the page resets Chromium's device metrics, so zoom must be applied again.
+      yield* viewer.input({ type: "resize", width: 390, height: 844 });
+      expect(cdp.send).toHaveBeenCalledWith(
+        "Emulation.setDeviceMetricsOverride",
+        expect.objectContaining({ deviceScaleFactor: 3 }),
+      );
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.effect(
   "streams to a read-only viewer without allowing takeover, input, or viewport changes",
   () =>
@@ -3917,6 +3941,27 @@ it.effect("reports a desktop tab's load failure from before the server connected
       });
       expect(yield* status()).not.toHaveProperty("loadError");
       expect(yield* snapshot()).not.toHaveProperty("loadError");
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("a popup opens in its opener's appearance", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const manager = yield* Manager.PreviewManager;
+      yield* Effect.yieldNow;
+      const opened = yield* manager.open({
+        threadId: scope.thread.threadId,
+        runtime: "server",
+        colorScheme: "dark",
+      });
+      yield* browser.attachViewer(viewerInput(opened.tabId, true));
+      const events = yield* manager.subscribeEvents;
+      contexts[0]!.page.emit("popup", makeContext().page);
+      let event = yield* PubSub.take(events);
+      while (event.type !== "opened") event = yield* PubSub.take(events);
+      expect(event.snapshot.colorScheme).toBe("dark");
     }),
   ).pipe(Effect.provide(layer)),
 );

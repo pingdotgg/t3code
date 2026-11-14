@@ -2108,6 +2108,51 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("forks a resumed session recorded in another cwd into the runtime cwd", () =>
+    Effect.gen(function* () {
+      const host = yield* ProviderHost.ProviderHost;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const fake = yield* makeFakePi;
+      const forkFake = yield* makeFakePi;
+      const forkFile = "/fake/forked-into-worktree.jsonl";
+      const { runtime } = yield* openRuntime(fake, "default", THREAD_ID, SESSION_ID, forkFake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const dir = yield* fileSystem.makeTempDirectoryScoped();
+      const sessionAt = (sessionCwd: string) =>
+        Effect.gen(function* () {
+          const file = `${dir}/${sessionCwd.length}.jsonl`;
+          yield* fileSystem.writeFileString(
+            file,
+            `${JSON.stringify({ type: "session", version: 3, id: "s", cwd: sessionCwd })}\n{}\n`,
+          );
+          return {
+            ...providerThread,
+            nativeThreadRef: { driver: PI_PROVIDER, nativeId: file, strength: "strong" as const },
+          };
+        });
+      const lastSwitch = () =>
+        fake.allRequests().findLast((request) => request.type === "switch_session")?.sessionPath;
+
+      const sameCwd = yield* sessionAt(host.paths.cwd);
+      yield* runtime.resumeThread({ providerThread: sameCwd });
+      assert.equal(lastSwitch(), sameCwd.nativeThreadRef?.nativeId);
+      assert.isFalse(forkFake.allRequests().some((request) => request.type === "get_state"));
+
+      const otherCwd = yield* sessionAt(`${host.paths.cwd}-original-checkout`);
+      forkFake.queueState({ sessionFile: forkFile });
+      fake.queueState({ sessionFile: forkFile });
+      const resumed = yield* runtime.resumeThread({ providerThread: otherCwd });
+      const args = forkFake.lastSpawn().args;
+      assert.equal(args[args.indexOf("--fork") + 1], otherCwd.nativeThreadRef?.nativeId);
+      assert.equal(lastSwitch(), forkFile);
+      assert.equal(resumed.nativeThreadRef?.nativeId, forkFile);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("creates a distinct native session after a failed resume", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
@@ -3187,6 +3232,118 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("shows the members of an async pi-subagents workflow as running subagents", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      // Frames as pi-subagents 0.88.1 sends them for an async `runs.all([alpha, beta])` workflow.
+      const step = (key: string, state: string) => ({
+        id: key,
+        kind: "step",
+        label: key,
+        state,
+        startedAt: 1_000,
+        updatedAt: 2_000,
+        activity: { currentTool: "bash", turnCount: 1, toolCount: 1 },
+        agent: "scout",
+        model: "anthropic/claude-haiku-5-5",
+      });
+      const emitSnapshot = (state: string, alpha: string, beta: string) =>
+        fake.emit({
+          type: "extension_ui_request",
+          id: `widget-${state}`,
+          method: "setWidget",
+          widgetKey: "subagent-async",
+          widgetLines: [
+            `PI_SUBAGENT_ASYNC_JSON:${JSON.stringify({
+              kind: "pi-subagents.async-status-snapshot",
+              version: 1,
+              generatedAt: 2_000,
+              runs: [
+                {
+                  id: "wf-1",
+                  kind: "workflow",
+                  label: "scout, scout",
+                  state,
+                  startedAt: 1_000,
+                  updatedAt: 2_000,
+                  children: [step("alpha", alpha), step("beta", beta)],
+                },
+              ],
+            })}`,
+          ],
+        });
+      const collect = (marker: string) =>
+        Effect.gen(function* () {
+          yield* fake.emit({
+            type: "tool_execution_end",
+            toolCallId: marker,
+            toolName: marker,
+            result: { content: [{ type: "text", text: "after" }] },
+          });
+          const statuses = new Map<string, string>();
+          const pending: Array<boolean> = [];
+          while (true) {
+            const event = yield* takeEvent(
+              (event) =>
+                event.type === "subagent.updated" ||
+                event.type === "background_work.updated" ||
+                (event.type === "turn_item.updated" &&
+                  event.turnItem.type === "dynamic_tool" &&
+                  event.turnItem.toolName === marker),
+            );
+            if (event.type === "background_work.updated") pending.push(event.pending);
+            else if (event.type === "subagent.updated")
+              statuses.set(event.subagent.id, event.subagent.status);
+            else break;
+          }
+          return { statuses: [...statuses.values()].toSorted(), pending };
+        });
+      // The launch snapshot precedes the tool result that names the run.
+      yield* emitSnapshot("running", "running", "running");
+      yield* fake.emit({
+        type: "tool_execution_end",
+        toolCallId: "call_wf",
+        toolName: "subagent",
+        isError: false,
+        result: {
+          content: [{ type: "text", text: "Async workflow started: wf-1" }],
+          details: {
+            mode: "workflow",
+            runId: "wf-1",
+            asyncId: "wf-1",
+            results: [],
+            workflowChildren: {
+              version: 1,
+              parentToolCallId: "call_wf",
+              workflowRunId: "wf-1",
+              inventoryComplete: false,
+              workflowState: "running",
+              children: [],
+            },
+          },
+        },
+      });
+      assert.deepEqual(yield* collect("marker-1"), {
+        statuses: ["running", "running"],
+        pending: [true],
+      });
+      yield* emitSnapshot("failed", "complete", "failed");
+      assert.deepEqual(yield* collect("marker-2"), {
+        statuses: ["completed", "failed"],
+        pending: [false],
+      });
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("persists edit patches and write content on file change items", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
@@ -3887,24 +4044,28 @@ describe("PiAdapterV2", () => {
         );
         yield* fake.takeRequest("get_state");
       }
-      yield* fake.emit({
-        type: "extension_ui_request",
-        id: "ui-cmd",
-        method: "notify",
-        message: "Command finished\nwith details",
-        notifyType: "info",
-      });
-      const notice = yield* takeEvent(
-        (event) =>
-          (event.type === "turn_item.updated" && event.turnItem.type === "system_notice") ||
-          event.type === "turn.terminal",
-      );
-      assert.isTrue(
-        notice.type === "turn_item.updated" &&
-          notice.turnItem.type === "system_notice" &&
-          notice.turnItem.status === "completed" &&
-          notice.turnItem.message === "Command finished\nwith details",
-      );
+      for (const notifyType of ["info", "warning", "error", undefined, "unknown"] as const) {
+        yield* fake.emit({
+          type: "extension_ui_request",
+          id: "ui-cmd",
+          method: "notify",
+          message: "Command finished\nwith details",
+          ...(notifyType === undefined ? {} : { notifyType }),
+        });
+        const notice = yield* takeEvent(
+          (event) =>
+            (event.type === "turn_item.updated" && event.turnItem.type === "system_notice") ||
+            event.type === "turn.terminal",
+        );
+        assert.isTrue(
+          notice.type === "turn_item.updated" &&
+            notice.turnItem.type === "system_notice" &&
+            notice.turnItem.status === "completed" &&
+            notice.turnItem.level ===
+              (notifyType === "warning" || notifyType === "error" ? notifyType : "info") &&
+            notice.turnItem.message === "Command finished\nwith details",
+        );
+      }
       assert.equal(runtime.providerSession.status, "running");
       yield* fake.emit({ type: "response", command: "prompt", success: true, data });
       const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
