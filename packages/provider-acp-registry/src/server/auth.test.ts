@@ -16,6 +16,7 @@ import { AcpRequestError } from "effect-acp/errors";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 import { formatFailureDetail, makeAcpRegistryAuth } from "./auth.ts";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
+import { withMinimaxCodeRegions } from "./minimaxCodeAcp.ts";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 
 const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
@@ -354,6 +355,33 @@ it.effect("does not report authentication when post-login verification fails", (
       failed.message,
       "The provider could not create a session after terminal sign-in. Authentication required",
     );
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
+it.effect("offers MiniMax Code's Global region alongside its Mainland China default login", () =>
+  Effect.gen(function* () {
+    // mcode advertises one terminal method whose `login` defaults to mainland
+    // China; its CLI selects a Global account with `--region global`.
+    const login: AcpSchema.AuthMethod = {
+      id: "minimax-code-login",
+      name: "Sign in to MiniMax Code",
+      type: "terminal",
+      args: ["login"],
+    };
+    // Only the MiniMax Code registry agent is rewritten, whatever its method IDs.
+    assert.deepEqual(withMinimaxCodeRegions("other-agent", [login]), [login]);
+    const h = yield* makeHarness(login, false, decodeSettings({ agentId: "minimax-code" }));
+    const { methods = [] } = yield* h.state((value) => (value.methods?.length ?? 0) > 0);
+    const global = methods.find((method) => /global/i.test(method.name));
+    assert.isDefined(global, `no Global sign-in among ${JSON.stringify(methods)}`);
+    // The advertised ID stays the Mainland China login so saved authMethodId values keep working.
+    assert.deepEqual(
+      methods.map((method) => method.id),
+      [global!.id, "minimax-code-login"],
+    );
+    yield* h.controller.start("owner", Effect.void, global!.id);
+    yield* h.phase("waiting");
+    assert.deepEqual(h.terminalSpawn()?.args, ["--acp", "login", "--region", "global"]);
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 

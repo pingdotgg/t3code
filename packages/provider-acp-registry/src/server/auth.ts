@@ -22,6 +22,7 @@ import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 import * as ProviderAuthFlow from "@t3tools/provider-core/server/providerAuthFlow";
 import { normalizeAcpRegistryAuthMethods, normalizeAcpRegistryWebUrl } from "./probe.ts";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
+import { withMinimaxCodeRegions } from "./minimaxCodeAcp.ts";
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 
@@ -143,7 +144,9 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
             failure("methods", "Could not discover this agent's sign-in methods.", cause),
           ),
         );
-      const advertised = normalizeAcpRegistryAuthMethods(initialized.authMethods)
+      const advertised = normalizeAcpRegistryAuthMethods(
+        withMinimaxCodeRegions(agentKey, initialized.authMethods),
+      )
         .filter(
           (method) => method.id.length <= 128 && (method.type !== "terminal" || Option.isSome(pty)),
         )
@@ -299,7 +302,9 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
               failure("start", "Could not initialize the selected ACP agent.", cause),
             ),
           );
-        const method = initialized.authMethods?.find((method) => method.id === methodId);
+        const method = withMinimaxCodeRegions(agentKey, initialized.authMethods)?.find(
+          (method) => method.id === methodId,
+        );
         if (!method)
           return yield* failure("start", "The agent no longer advertises this sign-in method.");
         if (method.type === "terminal") {
