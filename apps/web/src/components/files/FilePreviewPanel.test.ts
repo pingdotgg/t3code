@@ -134,22 +134,23 @@ describe("workspaceAssetResource", () => {
 describe("document preview contents", () => {
   const bytes = (text: string) => new TextEncoder().encode(text).buffer;
 
-  // Rows written by Java's RTFEditorKit keep its font table and paragraph framing.
+  // Java's RTFEditorKit frames rows in a font table and a paragraph.
   const jdk = (body: string) =>
     `{\\rtf1\\ansi\n{\\fonttbl\\f0\\fnil Monospaced;}\n\n${body}\\par\n}\n`;
   it.each([
     ["a JDK nonbreaking hyphen", jdk(String.raw`Jean\_ Luc`), "Jean\u2011 Luc"],
-    ["a nonbreaking hyphen without a space", String.raw`{\rtf1 Jean\_Luc}`, "Jean\u2011Luc"],
-    ["an optional hyphen", String.raw`{\rtf1 Jean\-Luc}`, "Jean\u00adLuc"],
-    ["a JDK nonbreaking space", jdk(String.raw`Account\~Name`), "Account\u00a0Name"],
-    ["a JDK tab", jdk(String.raw`Account\tab Name`), "Account\tName"],
-    ["a JDK em space", jdk(String.raw`Account\emspace Name`), "Account\u2003Name"],
-    ["a JDK en space", jdk(String.raw`Account\enspace Name`), "Account\u2002Name"],
-    ["a quarter em space", String.raw`{\rtf1 Account\qmspace Name}`, "Account\u2005Name"],
+    ["control symbols", String.raw`{\rtf1 Jean\_Luc\-X\~Y}`, "Jean\u2011Luc\u00adX\u00a0Y"],
+    [
+      "JDK named spaces",
+      jdk(String.raw`A\tab B\emspace C\enspace D\qmspace E`),
+      "A\tB\u2003C\u2002D\u2005E",
+    ],
     ["a JDK zero-width joiner", jdk(String.raw`\u2325 ?\u2381 ?\zwj\u2359 ?`), "क्\u200dष"],
-    ["a zero-width non-joiner", String.raw`{\rtf1 a\zwnj b}`, "a\u200cb"],
-    ["a zero-width break opportunity", String.raw`{\rtf1 a\zwbo b}`, "a\u200bb"],
-    ["direction marks", String.raw`{\rtf1 a\ltrmark b\rtlmark c}`, "a\u200eb\u200fc"],
+    [
+      "zero-width and direction marks",
+      String.raw`{\rtf1 a\zwnj b\zwbo c\ltrmark d\rtlmark e}`,
+      "a\u200cb\u200bc\u200ed\u200fe",
+    ],
     ["a Unicode fallback", String.raw`{\rtf1 Jean\u8209\_Luc}`, "Jean\u2011Luc"],
   ])("keeps the text of %s", (_name, source, expected) => {
     const result = openRtf(bytes(source));

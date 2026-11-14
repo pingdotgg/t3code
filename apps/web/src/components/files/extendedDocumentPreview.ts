@@ -493,12 +493,10 @@ export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
 }
 
 // Characters RTF writes as control symbols (`\~`) and control words (`\emspace`).
-const RTF_SYMBOL_CHARACTERS = new Map([
+const RTF_CHARACTERS = new Map([
   ["~", "\u00a0"],
   ["_", "\u2011"],
   ["-", "\u00ad"],
-]);
-const RTF_WORD_CHARACTERS = new Map([
   ["tab", "\t"],
   ["cell", "\t"],
   ["endash", "–"],
@@ -620,7 +618,7 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
       }
       const match = /^([a-z]+)(-?\d+)? ?/i.exec(source.slice(i));
       if (!match) {
-        const character = RTF_SYMBOL_CHARACTERS.get(next!);
+        const character = RTF_CHARACTERS.get(next!);
         if (character) emit(character);
         // A backslash before a line break is \par; TextEdit ends paragraphs this way.
         else if ((next === "\n" || next === "\r") && !state.skip) html += "<br>";
@@ -715,7 +713,7 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
       } else if (!state.skip && word === "page") finishPage();
       else if (!state.skip && (word === "par" || word === "line" || word === "row")) html += "<br>";
       else {
-        const character = RTF_WORD_CHARACTERS.get(word!);
+        const character = RTF_CHARACTERS.get(word!);
         if (character) emit(character);
       }
     } else if (char !== "\r" && char !== "\n" && char) emitByte(char.charCodeAt(0));
