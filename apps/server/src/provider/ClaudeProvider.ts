@@ -621,12 +621,15 @@ export const probeClaudeWorkspaceSnapshot = Effect.fn("probeClaudeWorkspaceSnaps
   machineSnapshot: ServerProvider,
   cwd: string,
   environment?: NodeJS.ProcessEnv,
+  publishPartial?: (snapshot: ProviderWorkspaceSnapshot) => Effect.Effect<void>,
 ): Effect.fn.Return<ProviderWorkspaceSnapshot, never, FileSystem.FileSystem | Path.Path> {
   if (!claudeSettings.enabled) return machineSnapshot;
   const skills = yield* discoverClaudeSkills(claudeSettings, cwd, environment);
   const fileSystem = yield* FileSystem.FileSystem;
   // A deleted worktree can never answer the probe. Pending would make clients rescan it forever.
   const cwdExists = yield* fileSystem.exists(cwd).pipe(Effect.orElseSucceed(() => true));
+  // The capability probe starts the CLI and can take seconds.
+  if (cwdExists && publishPartial) yield* publishPartial({ ...machineSnapshot, skills });
   const probeResult = cwdExists
     ? yield* probeClaudeCapabilities(claudeSettings, environment, cwd, false).pipe(Effect.result)
     : undefined;

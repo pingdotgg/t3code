@@ -674,6 +674,11 @@ export const WsServerRefreshProvidersRpc = Rpc.make(WS_METHODS.serverRefreshProv
      * refresh, at most one TTL later.
      */
     workspaceSnapshotsOnDemand: Schema.optional(Schema.Boolean),
+    /**
+     * Reply once the cwd scan publishes partial results, such as skills before commands. Sent by
+     * clients that ask again at once to join the scan; older clients wait for the full scan.
+     */
+    acceptPartialWorkspaceSnapshot: Schema.optional(Schema.Boolean),
     /** As on `subscribeServerConfig`: add /usage-limits to the replied snapshot. */
     usageLimitsCommand: Schema.optional(Schema.Boolean),
     /** As on `subscribeServerConfig`: a failed cwd scan replies with the machine catalog as a pending snapshot. */

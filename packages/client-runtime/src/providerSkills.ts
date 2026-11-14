@@ -170,6 +170,8 @@ export interface ProviderWorkspaceSnapshotRefreshState {
   readonly hadSnapshot: boolean;
   /** The server published a partial snapshot and is still discovering. */
   readonly snapshotPending: boolean;
+  /** The last reply was an early partial, so the next request joins its scan. */
+  readonly joining: boolean;
 }
 
 const initialProviderWorkspaceSnapshotRefreshState: ProviderWorkspaceSnapshotRefreshState = {
@@ -178,6 +180,7 @@ const initialProviderWorkspaceSnapshotRefreshState: ProviderWorkspaceSnapshotRef
   failedAttempts: 0,
   hadSnapshot: false,
   snapshotPending: false,
+  joining: false,
 };
 
 /**
@@ -215,6 +218,7 @@ function planProviderWorkspaceSnapshotRefresh(
         : previous.failedAttempts,
     hadSnapshot: hasSnapshot,
     snapshotPending: pending,
+    joining: hasSnapshot ? false : previous.joining,
   };
   const refresh =
     (requestedAt === null || now - requestedAt >= PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS) &&
@@ -239,12 +243,15 @@ function failProviderWorkspaceSnapshotRefresh(
   // A newer request, or a snapshot loss, already superseded this one.
   if (state.requestedAt !== requestedAt) return state;
   const failedAttempts = state.failedAttempts + 1;
-  if (failedAttempts >= WORKSPACE_SNAPSHOT_MAX_ATTEMPTS) return { ...state, failedAttempts };
+  if (failedAttempts >= WORKSPACE_SNAPSHOT_MAX_ATTEMPTS) {
+    return { ...state, failedAttempts, joining: false };
+  }
   return {
     ...state,
     requestedAt: null,
     retryNotBefore: now + WORKSPACE_SNAPSHOT_RETRY_COOLDOWN_MS,
     failedAttempts,
+    joining: false,
   };
 }
 
@@ -295,7 +302,11 @@ export function createProviderWorkspaceSnapshotRefreshAtomFamily(input: {
   readonly refreshProviders: AtomCommand<
     {
       readonly environmentId: EnvironmentId;
-      readonly input: { readonly instanceId: ProviderInstanceId; readonly cwd: string };
+      readonly input: {
+        readonly instanceId: ProviderInstanceId;
+        readonly cwd: string;
+        readonly acceptPartialWorkspaceSnapshot: boolean;
+      };
     },
     { readonly providers: ReadonlyArray<ServerProvider> },
     unknown
@@ -332,37 +343,44 @@ export function createProviderWorkspaceSnapshotRefreshAtomFamily(input: {
         }
         if (!plan.refresh) return plan.state;
         const registry = get.registry;
-        // Outlives this build on purpose: a rebuild must not drop the retry.
-        // Once nothing subscribes, the retry state dies with the node; writing
-        // would recreate and rebuild it, which scans again with no subscriber.
-        const retryLater = () => {
+        const joining = plan.state.joining;
+        // Outlives this build on purpose: a rebuild must not drop the retry. Once nothing
+        // subscribes, writing would recreate the node and scan with no subscriber. A partial
+        // reply arrives before the command probe ends: ask again at once to join that scan,
+        // and count only the joined reply as an attempt.
+        const retryLater = (pending: boolean) => {
           const node = registry.getNodes().get(refreshAtom);
           if (node === undefined || node.canBeRemoved) return;
           registry.set(refreshAtom, (state) =>
-            // @effect-diagnostics-next-line globalDate:off
-            failProviderWorkspaceSnapshotRefresh(state, now, Date.now()),
+            pending && !joining && state.requestedAt === now
+              ? { ...state, requestedAt: null, joining: true }
+              : // @effect-diagnostics-next-line globalDate:off
+                failProviderWorkspaceSnapshotRefresh(state, now, Date.now()),
           );
         };
         void runAtomCommand(
           registry,
           input.refreshProviders,
-          { environmentId, input: { instanceId, cwd } },
+          { environmentId, input: { instanceId, cwd, acceptPartialWorkspaceSnapshot: true } },
           { reportFailure: false },
-        ).then((result) => {
-          const refreshedProvider =
-            result._tag === "Success" ? findProvider(result.value.providers) : undefined;
-          const snapshot =
-            refreshedProvider && resolveProviderWorkspaceSnapshot(refreshedProvider, cwd);
-          // A new server timestamp proves progress even when the client clock is ahead.
-          // @effect-diagnostics-next-line globalDate:off
-          const completedAt = Date.now();
-          const refreshed =
-            hasCompleteProviderWorkspaceSnapshot(refreshedProvider, cwd) &&
-            (hasCurrentProviderWorkspaceSnapshot(refreshedProvider, cwd, completedAt) ||
-              snapshot?.checkedAt !==
-                (provider && resolveProviderWorkspaceSnapshot(provider, cwd))?.checkedAt);
-          if (!refreshed) retryLater();
-        }, retryLater);
+        ).then(
+          (result) => {
+            const refreshedProvider =
+              result._tag === "Success" ? findProvider(result.value.providers) : undefined;
+            const snapshot =
+              refreshedProvider && resolveProviderWorkspaceSnapshot(refreshedProvider, cwd);
+            // A new server timestamp proves progress even when the client clock is ahead.
+            // @effect-diagnostics-next-line globalDate:off
+            const completedAt = Date.now();
+            const refreshed =
+              hasCompleteProviderWorkspaceSnapshot(refreshedProvider, cwd) &&
+              (hasCurrentProviderWorkspaceSnapshot(refreshedProvider, cwd, completedAt) ||
+                snapshot?.checkedAt !==
+                  (provider && resolveProviderWorkspaceSnapshot(provider, cwd))?.checkedAt);
+            if (!refreshed) retryLater(snapshot?.slashCommandsPending === true);
+          },
+          () => retryLater(false),
+        );
         return plan.state;
       },
       (ctx, update: Update) => {

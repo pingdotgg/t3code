@@ -205,12 +205,38 @@ describe("provider workspace snapshot refresh atom", () => {
     expect(run).toHaveBeenCalledTimes(1);
     expect(run).toHaveBeenCalledWith(expect.anything(), {
       environmentId,
-      input: { instanceId: provider.instanceId, cwd },
+      input: { instanceId: provider.instanceId, cwd, acceptPartialWorkspaceSnapshot: true },
     });
     responses.push(() => withSnapshot("2026-01-01T00:00:00.000Z"));
     await vi.advanceTimersByTimeAsync(0);
     registry.refresh(atom);
     expect(run).toHaveBeenCalledTimes(1);
+    unmount();
+  });
+
+  it("joins a scan after its partial reply without spending the retry budget", async () => {
+    vi.useFakeTimers({ now: Date.parse("2026-01-01T00:00:00.000Z") });
+    const partial = withSnapshot("2026-01-01T00:00:00.000Z", true);
+    const complete = withSnapshot("2026-01-01T00:00:00.000Z");
+    // The first probe fails, so the joined request also comes back pending.
+    const { registry, atom, providersAtom, run, unmount } = setup(noSnapshot, [
+      () => partial,
+      () => partial,
+      () => partial,
+      () => complete,
+      () => partial,
+    ]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(run).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(10_000);
+    registry.refresh(atom);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(run).toHaveBeenCalledTimes(4);
+    expect(isProviderWorkspaceSnapshotScanning(registry.get(atom))).toBe(true);
+    registry.set(providersAtom, complete);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(run).toHaveBeenCalledTimes(4);
+    expect(isProviderWorkspaceSnapshotScanning(registry.get(atom))).toBe(false);
     unmount();
   });
 

@@ -89,6 +89,8 @@ export class ProviderRegistry extends Context.Service<
       /** Directory the driver scans; the snapshot stays keyed by `cwd`. Defaults to `cwd`. */
       readonly scanCwd?: string;
       readonly fresh?: boolean;
+      /** Return once the scan publishes partial results; the scan keeps running to completion. */
+      readonly untilPartial?: boolean;
     }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
     /**
@@ -1041,6 +1043,7 @@ export const layer = Layer.effect(
       readonly cwd: string;
       readonly scanCwd?: string;
       readonly fresh?: boolean;
+      readonly untilPartial?: boolean;
     }) {
       if (input.fresh) {
         yield* updateProviders((providers) =>
@@ -1073,6 +1076,7 @@ export const layer = Layer.effect(
       const snapshotForCwd = instance?.snapshotForCwd;
       if (!instance || !snapshotForCwd) return providers;
       const token = yield* Deferred.make<void>();
+      const partialPublished = yield* Deferred.make<ReadonlyArray<ServerProvider>>();
       // A machine refresh can change this cwd's snapshot, so the scan publishes against the result.
       const refreshMachineSnapshot = input.fresh
         ? (instance.invalidateCaches ?? Effect.void).pipe(
@@ -1085,39 +1089,55 @@ export const layer = Layer.effect(
             ),
           )
         : Effect.succeed(scannedFrom);
-      const runScan = refreshMachineSnapshot.pipe(
-        Effect.flatMap((scanBase) =>
-          Effect.map(snapshotForCwd(input.scanCwd ?? input.cwd), (scopedSnapshot) => ({
-            scanBase,
-            scopedSnapshot,
-          })),
-        ),
-        // Scans fail on error; returned inventory remains valid even when provider health reports an error.
-        Effect.flatMap(({ scanBase, scopedSnapshot }) =>
-          instanceRegistry.getInstance(input.instanceId).pipe(
-            Effect.flatMap((currentInstance) => {
-              if (currentInstance !== instance) return Ref.get(providersRef);
-              return updateProviders((currentProviders) => {
-                // Read ownership inside the update so a newer claim cannot race publication.
-                if (Ref.getUnsafe(workspaceRefreshesRef).get(instance)?.get(input.cwd) !== token) {
-                  return currentProviders;
+      // Results replace what the scan started from or last published, so neither a partial
+      // publication nor its capacity eviction makes the final one look stale.
+      let scanBase = scannedFrom;
+      let publishedFrom = scannedFrom;
+      const publish = (scopedSnapshot: ProviderWorkspaceSnapshot) =>
+        instanceRegistry.getInstance(input.instanceId).pipe(
+          Effect.flatMap((currentInstance) => {
+            if (currentInstance !== instance) return Ref.get(providersRef);
+            return updateProviders((currentProviders) => {
+              // Read ownership inside the update so a newer claim cannot race publication.
+              if (Ref.getUnsafe(workspaceRefreshesRef).get(instance)?.get(input.cwd) !== token) {
+                return currentProviders;
+              }
+              return currentProviders.map((candidate) => {
+                if (candidate.instanceId !== input.instanceId) return candidate;
+                const current = workspaceSnapshotOf(candidate);
+                if (!Equal.equals(current, publishedFrom) && !Equal.equals(current, scanBase)) {
+                  return candidate;
                 }
-                return currentProviders.map((candidate) =>
-                  candidate.instanceId === input.instanceId &&
-                  Equal.equals(workspaceSnapshotOf(candidate), scanBase)
-                    ? upsertProviderWorkspaceSnapshot(candidate, input.cwd, {
-                        ...scopedSnapshot,
-                        checkedAt: scannedAt,
-                        // Without driver command discovery, retain previous commands after failed health checks and retry.
-                        slashCommandsPending:
-                          scopedSnapshot.slashCommandsPending ?? scopedSnapshot.status === "error",
-                      })
-                    : candidate,
-                );
+                const next = upsertProviderWorkspaceSnapshot(candidate, input.cwd, {
+                  ...scopedSnapshot,
+                  checkedAt: scannedAt,
+                  // Without driver command discovery, retain previous commands after failed health checks and retry.
+                  slashCommandsPending:
+                    scopedSnapshot.slashCommandsPending ?? scopedSnapshot.status === "error",
+                });
+                publishedFrom = workspaceSnapshotOf(next);
+                return next;
               });
-            }),
+            });
+          }),
+        );
+      const runScan = refreshMachineSnapshot.pipe(
+        Effect.tap((base) =>
+          Effect.sync(() => {
+            scanBase = base;
+            publishedFrom = base;
+          }),
+        ),
+        Effect.andThen(
+          snapshotForCwd(input.scanCwd ?? input.cwd, (partial) =>
+            publish({ ...partial, slashCommandsPending: true }).pipe(
+              Effect.flatMap((providers) => Deferred.succeed(partialPublished, providers)),
+              Effect.asVoid,
+            ),
           ),
         ),
+        // Scans fail on error; returned inventory remains valid even when provider health reports an error.
+        Effect.flatMap(publish),
         Effect.ensuring(
           Ref.update(workspaceRefreshesRef, (refreshes) => {
             const current = refreshes.get(instance);
@@ -1154,7 +1174,10 @@ export const layer = Layer.effect(
       if ("inFlight" in claim) {
         return yield* Deferred.await(claim.inFlight).pipe(Effect.andThen(Ref.get(providersRef)));
       }
-      return yield* Fiber.join(claim.scan);
+      // Joining only stops waiting; the detached scan still publishes its final result.
+      return yield* input.untilPartial
+        ? Effect.raceFirst(Fiber.join(claim.scan), Deferred.await(partialPublished))
+        : Fiber.join(claim.scan);
     });
 
     const invalidateModelCaches = Effect.fn("ProviderRegistry.invalidateModelCaches")(function* (
