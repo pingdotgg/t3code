@@ -395,6 +395,10 @@ describe("chain selection and badge state", () => {
       others: 2,
       state: "open",
     });
+    // A link the server cannot read adds no state to the ones it did read.
+    expect(
+      resolveThreadPullRequestBadge([bottom, link(3, { unavailable: "Add this repository." })]),
+    ).toMatchObject({ others: 1, state: "merged" });
     expect(resolveThreadPullRequestBadge([link(3, { source: "stack-dismissed" })])).toBeNull();
   });
 

@@ -145,7 +145,7 @@ function LinkRowImpl({
       {depth > 0 ? <span aria-hidden className="-ml-2 h-6 w-px shrink-0 bg-border/70" /> : null}
       {snapshot === null ? (
         <PullRequestGlyph.pullRequest
-          aria-label="Waiting for host state"
+          aria-label={link.unavailable ?? "Waiting for host state"}
           className="size-4 shrink-0 text-muted-foreground"
         />
       ) : (
@@ -190,7 +190,7 @@ function LinkRowImpl({
               </TooltipPopup>
             </Tooltip>
           }
-          title={snapshot?.title ?? link.repository}
+          title={snapshot?.title ?? link.unavailable ?? link.repository}
           signals={
             open ? (
               <>

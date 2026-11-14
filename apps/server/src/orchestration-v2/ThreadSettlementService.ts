@@ -220,7 +220,13 @@ export function resolveAutoSettlementAt(input: {
 }): DateTime.Utc | null {
   const { thread } = input;
   let pullRequest = input.pullRequest;
-  const links = settlementPullRequestLinks(thread.pullRequests ?? []);
+  const linked = settlementPullRequestLinks(thread.pullRequests ?? []);
+  // A link the host has not answered for yet holds the thread; one this server cannot read has
+  // no outcome to wait for, and still counts as a pull request below.
+  const unreadable = linked.some(
+    (link) => link.snapshot === null && link.unavailable !== undefined,
+  );
+  const links = linked.filter((link) => link.snapshot !== null || link.unavailable === undefined);
   if (links.some((link) => link.snapshot === null)) return null;
   // An open link means the pull request has not finished, so only inactivity
   // can settle the thread, never a merged or closed lookup.
@@ -247,6 +253,7 @@ export function resolveAutoSettlementAt(input: {
   }
   const hasPullRequest =
     hasOpenLink ||
+    unreadable ||
     pullRequest !== null ||
     thread.linkedPullRequest != null ||
     thread.branchPullRequest != null;

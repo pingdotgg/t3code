@@ -451,8 +451,7 @@ function providerDetail(
   return unavailableRequirement(requirementOf, error) ?? error.detail;
 }
 
-const CHECKOUT_REQUIREMENT =
-  "This change request's repository is not a project here. Add the repository as a project to read it.";
+const CHECKOUT_REQUIREMENT = "Add this repository as a project to read its change requests.";
 
 function toPullRequestErrorWith(
   requirementOf: UnavailableRequirementOf,

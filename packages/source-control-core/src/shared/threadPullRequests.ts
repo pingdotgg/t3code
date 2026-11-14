@@ -292,8 +292,11 @@ export function makeThreadPullRequests(
   ): ThreadPullRequestBadge | null {
     const visible = visibleThreadPullRequests(pullRequests ?? []);
     if (visible.length === 0) return null;
-    const states = visible.map((link) => link.snapshot?.state ?? "open");
-    const state = visible.every((link) => link.snapshot?.state === "open" && link.snapshot.isDraft)
+    // A link this server cannot read has no state to add to the ones that were read.
+    const read = visible.filter((link) => link.snapshot !== null || link.unavailable === undefined);
+    const counted = read.length === 0 ? visible : read;
+    const states = counted.map((link) => link.snapshot?.state ?? "open");
+    const state = counted.every((link) => link.snapshot?.state === "open" && link.snapshot.isDraft)
       ? "draft"
       : states.includes("open")
         ? "open"

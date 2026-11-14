@@ -3282,6 +3282,14 @@ export const OrchestrationV2Command = Schema.Union([
     stack: Schema.NullOr(ThreadPullRequestStack),
   }),
   Schema.Struct({
+    type: Schema.Literal("thread.pull-request-link.unavailable"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    ...ThreadPullRequestKey.fields,
+    /** The host could not be read; recorded only while the link has no snapshot. */
+    unavailable: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({
     type: Schema.Literal("thread.pull-request.watch"),
     commandId: CommandId,
     threadId: ThreadId,

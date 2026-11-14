@@ -6,6 +6,7 @@ import {
   type ThreadId,
   type ThreadPullRequestKey,
   type ThreadPullRequestLink,
+  TrimmedNonEmptyString,
   type ThreadPullRequestSnapshot,
   type ThreadPullRequestStack,
 } from "@t3tools/contracts";
@@ -510,17 +511,42 @@ export const make = Effect.gen(function* () {
       const invalidated = refreshRequested || missingMergedAt || retryStacks.has(key);
       if (invalidated) yield* pullRequests.invalidate({ reference: ref });
       const summary = yield* pullRequests.summary(ref, { recoverTransientFailure: false }).pipe(
-        Effect.tapError((error) =>
-          error.reason === "not-found" || error._tag === "PullRequestUnavailableError"
-            ? Effect.sync(() => {
-                // Not-found, or a host this server cannot read, won't change by asking again
-                // next sweep: it consumes the refresh and starts the backoff.
-                missing.add(key);
-                lastSyncedAt.set(key, nowMs);
-                requested.delete(key);
-              })
-            : Effect.void,
-        ),
+        Effect.tapError((error) => {
+          if (error.reason !== "not-found" && error._tag !== "PullRequestUnavailableError") {
+            return Effect.void;
+          }
+          // Not-found, or a host this server cannot read, won't change by asking again
+          // next sweep: it consumes the refresh and starts the backoff.
+          missing.add(key);
+          lastSyncedAt.set(key, nowMs);
+          requested.delete(key);
+          if (error._tag !== "PullRequestUnavailableError") return Effect.void;
+          // Without this a link nothing can read looks like one still waiting for its first read.
+          return Effect.forEach(
+            entries.filter(
+              ({ link }) => link.snapshot === null && link.unavailable !== error.message,
+            ),
+            ({ thread, link }) =>
+              random.uuidV4().pipe(
+                Effect.flatMap((uuid) =>
+                  engine.dispatch({
+                    type: "thread.pull-request-link.unavailable",
+                    commandId: CommandId.make(`server:pr-sync:${thread.id}:${uuid}`),
+                    threadId: thread.id,
+                    host: normalizeThreadPullRequestKey(link).host,
+                    repository: link.repository,
+                    number: link.number,
+                    unavailable: TrimmedNonEmptyString.make(error.message),
+                  }),
+                ),
+                persistence.withPermits(1),
+                Effect.catchCause(
+                  logSkipped("pull request sync skipped", { threadId: thread.id, key }),
+                ),
+              ),
+            { discard: true },
+          );
+        }),
       );
       missing.delete(key);
       const fields = snapshotFieldsOf(summary);

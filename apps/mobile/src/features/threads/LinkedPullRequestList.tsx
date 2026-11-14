@@ -161,7 +161,7 @@ export const LinkedPullRequestRow = memo(function LinkedPullRequestRow(props: {
           numberOfLines={2}
           ellipsizeMode="tail"
         >
-          {snapshot?.title ?? "Waiting for host state"}
+          {snapshot?.title ?? link.unavailable ?? "Waiting for host state"}
         </Text>
       </View>
     </Pressable>

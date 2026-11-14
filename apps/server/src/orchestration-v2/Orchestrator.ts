@@ -644,6 +644,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.pull-request.link":
     case "thread.pull-request.unlink":
     case "thread.pull-request-link.sync":
+    case "thread.pull-request-link.unavailable":
     case "thread.pull-request.watch":
     case "thread.pull-request-watch.sync":
     case "thread.pull-request-watch.checks-reopen":
@@ -4078,6 +4079,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           | "thread.pull-request.link"
           | "thread.pull-request.unlink"
           | "thread.pull-request-link.sync"
+          | "thread.pull-request-link.unavailable"
           | "thread.pull-request.watch"
           | "thread.pull-request-watch.sync"
           | "thread.pull-request-watch.checks-reopen"
@@ -4855,7 +4857,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
         case "thread.pull-request.link":
         case "thread.pull-request.unlink":
-        case "thread.pull-request-link.sync": {
+        case "thread.pull-request-link.sync":
+        case "thread.pull-request-link.unavailable": {
           const key = normalizeThreadPullRequestKey(command);
           const links = threadPullRequestsOf(thread);
           const existing = links.find((link) => threadPullRequestKeysEqual(link, key));
@@ -4930,11 +4933,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     : link,
                 )
               : links.filter((link) => link !== existing);
+          } else if (command.type === "thread.pull-request-link.unavailable") {
+            if (
+              !existing ||
+              existing.snapshot !== null ||
+              existing.unavailable === command.unavailable
+            ) {
+              return thread;
+            }
+            pullRequests = links.map((link) =>
+              link === existing ? { ...link, unavailable: command.unavailable } : link,
+            );
           } else {
             if (!existing) return thread;
+            const { unavailable: _unavailable, ...read } = existing;
             pullRequests = links.map((link) =>
               link === existing
-                ? { ...link, snapshot: command.snapshot, stack: command.stack }
+                ? { ...read, snapshot: command.snapshot, stack: command.stack }
                 : link,
             );
           }
@@ -4953,7 +4968,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               )
                 ? thread.linkedPullRequest
                 : null,
-            updatedAt: command.type === "thread.pull-request-link.sync" ? thread.updatedAt : now,
+            updatedAt:
+              command.type === "thread.pull-request-link.sync" ||
+              command.type === "thread.pull-request-link.unavailable"
+                ? thread.updatedAt
+                : now,
           };
         }
         case "thread.pull-request-watch.checks-reopen": {
@@ -5140,6 +5159,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
     if (
       command.type === "thread.pull-request-link.sync" ||
+      command.type === "thread.pull-request-link.unavailable" ||
       command.type === "thread.pull-request-watch.sync"
     ) {
       if (updatedThread === thread) return;
@@ -14998,6 +15018,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.pull-request.link":
       case "thread.pull-request.unlink":
       case "thread.pull-request-link.sync":
+      case "thread.pull-request-link.unavailable":
       case "thread.pull-request.watch":
       case "thread.pull-request.sync":
       case "thread.title.regeneration.complete":

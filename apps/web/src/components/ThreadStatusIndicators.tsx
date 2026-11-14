@@ -381,7 +381,7 @@ export function ThreadPullRequestsMiniList({
             key={`${line.link.host}/${line.link.repository}#${line.link.number}`}
             number={line.link.number}
             url={line.link.url}
-            title={snapshot?.title ?? line.link.repository}
+            title={snapshot?.title ?? line.link.unavailable ?? line.link.repository}
             presentation={presentation}
             depth={line.depth}
             onOpenPullRequest={onOpenPullRequest}

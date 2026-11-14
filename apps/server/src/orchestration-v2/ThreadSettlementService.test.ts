@@ -292,6 +292,29 @@ describe("resolveAutoSettlementAt", () => {
     ).toBeNull();
   });
 
+  it("stops waiting for a link this server cannot read but still counts it as a PR", () => {
+    const input = {
+      thread: shell({
+        latestUserMessageAt: at(-4 * DAY_MS),
+        pullRequests: [
+          { ...persistedLink(null, at(-5 * DAY_MS)), unavailable: "Add this repository." },
+        ],
+      }),
+      pullRequest: null,
+      nowMs: NOW_MS,
+      autoSettleAfterDays: 3,
+      autoSettleOnMerge: true,
+      autoSettleKeepPullRequests: false,
+    };
+    expect(ThreadSettlementService.resolveAutoSettlementAt(input)).toEqual(at(-4 * DAY_MS));
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({
+        ...input,
+        autoSettleKeepPullRequests: true,
+      }),
+    ).toBeNull();
+  });
+
   it("uses the latest activity time when the inactivity window elapses", () => {
     const idle = shell({
       latestUserMessageAt: at(-4 * DAY_MS),

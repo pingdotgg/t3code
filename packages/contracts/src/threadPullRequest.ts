@@ -127,6 +127,8 @@ export const ThreadPullRequestLink = Schema.Struct({
   source: ThreadPullRequestLinkSource,
   linkedAt: IsoDateTime,
   snapshot: Schema.NullOr(ThreadPullRequestSnapshot),
+  /** Why this server could not read a link that has no snapshot, in words for the reader. */
+  unavailable: Schema.optional(TrimmedNonEmptyString),
   stack: Schema.NullOr(ThreadPullRequestStack),
   watch: Schema.optional(ThreadPullRequestWatch),
   /** Resume from the ended watch to avoid duplicate notifications. */

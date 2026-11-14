@@ -195,6 +195,11 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
   const shellSnapshotReads = yield* Ref.make(0);
   const syncCommands = yield* Ref.make<ReadonlyArray<SyncCommand>>([]);
   const linkCommands = yield* Ref.make<ReadonlyArray<LinkCommand>>([]);
+  const unavailableCommands = yield* Ref.make<
+    ReadonlyArray<
+      Extract<OrchestrationCommand, { readonly type: "thread.pull-request-link.unavailable" }>
+    >
+  >([]);
   const reopenCommands = yield* Queue.unbounded<ChecksReopenCommand>();
   const summaryCalls = yield* Ref.make<ReadonlyArray<PullRequestRef>>([]);
   const stackCalls = yield* Ref.make<ReadonlyArray<PullRequestRef>>([]);
@@ -222,6 +227,11 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
     if (command.type === "thread.pull-request-link.sync") {
       return Ref.update(syncCommands, (recorded) => [...recorded, command]).pipe(
         Effect.andThen(options.onSync?.(command) ?? Effect.void),
+        Effect.as({ sequence: 1, storedEvents: [] }),
+      );
+    }
+    if (command.type === "thread.pull-request-link.unavailable") {
+      return Ref.update(unavailableCommands, (recorded) => [...recorded, command]).pipe(
         Effect.as({ sequence: 1, storedEvents: [] }),
       );
     }
@@ -296,6 +306,7 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
     shellSnapshotReads,
     syncCommands,
     linkCommands,
+    unavailableCommands,
     reopenCommands,
     summaryCalls,
     stackCalls,
@@ -1710,6 +1721,42 @@ describe("PullRequestSyncReactor", () => {
           { afterSweeps, afterItsRefresh, afterOtherRefreshes: yield* unsupportedReads },
           { afterSweeps: 1, afterItsRefresh: 2, afterOtherRefreshes: 2 },
         );
+      }).pipe(Effect.provide(fixture.layer));
+    }),
+  );
+
+  it.effect("records why an unread link cannot be read, once", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(NOW));
+      const requirement = "Add this repository as a project.";
+      const unread = makeThread("unread", { pullRequests: [makeLink(9)] });
+      const fixture = yield* makeHarness({
+        snapshot: makeSnapshot([
+          unread,
+          makeThread("read", { pullRequests: [makeLink(9, { state: "open" })] }),
+        ]),
+        summary: () =>
+          Effect.fail(new PullRequestUnavailableError({ reason: "cli-missing", requirement })),
+      });
+      yield* Effect.gen(function* () {
+        const reactor = yield* startAndSweep(fixture);
+        const recorded = yield* Ref.get(fixture.unavailableCommands);
+        assert.deepStrictEqual(
+          recorded.map((command) => [command.threadId, command.number, command.unavailable]),
+          [[unread.id, 9, requirement]],
+        );
+        yield* Ref.update(fixture.snapshots, (snapshot) => ({
+          ...snapshot,
+          threads: snapshot.threads.map((thread) =>
+            thread.id === unread.id
+              ? { ...thread, pullRequests: [makeLink(9, null, { unavailable: requirement })] }
+              : thread,
+          ),
+        }));
+        yield* reactor.requestSync(makeLink(9));
+        yield* Queue.take(fixture.snapshotReads);
+        yield* reactor.drain;
+        assert.lengthOf(yield* Ref.get(fixture.unavailableCommands), 1);
       }).pipe(Effect.provide(fixture.layer));
     }),
   );
