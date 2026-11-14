@@ -5793,6 +5793,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           string,
           Deferred.Deferred<ProviderAdapter.ProviderAdapterV2SubagentOutcome>
         >();
+        // Claude reports a stopped workflow's members as failed; this is the only evidence it was Stop.
+        const workflowStopRequestedAt = new Map<string, number>();
         // Buffered idle outcomes must not settle a resumed child again.
         const appliedSubagentOutcomes = new WeakSet<SDKMessage>();
         // Subagent frames can precede the task_started that registers their owner.
@@ -7140,13 +7142,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               return;
             const memberKey = `${input.coordinator.childThreadId}:agent:${member.index}`;
             const previous = seen.get(memberKey);
+            const stopRequestedAt = workflowStopRequestedAt.get(taskId);
             const status =
               (member.state === "queued" || member.state === "running") &&
               input.coordinator.task.status !== "running"
                 ? input.coordinator.task.status
                 : member.state === "queued"
                   ? "pending"
-                  : member.state;
+                  : member.state === "failed" &&
+                      stopRequestedAt !== undefined &&
+                      (member.completedAt ?? stopRequestedAt) >= stopRequestedAt
+                    ? "cancelled"
+                    : member.state;
             const settled = status !== "pending" && status !== "running";
             const prompt = member.prompt ?? member.label;
             const model = member.model ?? parentThread.modelSelection.model;
@@ -7304,7 +7311,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               childRootNodeId,
               nextOrdinal: () => ++nextItemOrdinal,
               toolCalls,
-              stopped: status === "cancelled",
+              stopped: status === "cancelled" || stopRequestedAt !== undefined,
             };
             const endOpenToolCalls = Effect.fnUntraced(function* () {
               if (toolCalls.size === 0) return;
@@ -13731,6 +13738,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 detail: "No running workflow task belongs to this provider thread",
               });
             }
+            workflowStopRequestedAt.set(taskId, DateTime.toEpochMillis(yield* DateTime.now));
             yield* liveQuery.query.stopTask(taskId).pipe(
               Effect.mapError(
                 (cause) =>

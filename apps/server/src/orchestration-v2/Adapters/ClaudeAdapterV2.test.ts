@@ -20911,8 +20911,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     });
   const workflowSnapshot = (input: {
     readonly uuid: string;
-    readonly state: "queued" | "start" | "done";
-    readonly secondState?: "queued" | "start" | "done";
+    readonly state: "queued" | "start" | "done" | "error";
+    readonly secondState?: "queued" | "start" | "done" | "error";
     readonly startedAt?: number;
     readonly lastProgressAt?: number;
     readonly durationMs?: number;
@@ -22730,11 +22730,28 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           errorLine("line-ping-failed", "toolu_a1_ping", "Exit code 1") +
             memberAssistantLine("line-sleep", "msg_a1_sleep", [
               { type: "tool_use", id: "toolu_a1_sleep", name: "Bash", input: { command: "sleep" } },
-            ]) +
-            errorLine("line-sleep-stopped", "toolu_a1_sleep", "Rejected", {
-              toolUseResult: "User rejected tool use",
-              toolDenialKind: "user-rejected",
-            }),
+            ]),
+        );
+        yield* harness.offerAndWait(
+          workflowSnapshot({ uuid: "00000000-0000-4000-8000-000000001378", state: "start" }),
+        );
+        yield* harness.runtime.stopTask!({
+          providerThread: harness.providerThread,
+          taskId: WORKFLOW_TASK_ID,
+        });
+        // Claude writes the Stop rejection while the member still reads as running, then reports it as an error.
+        NodeFS.appendFileSync(
+          transcriptPath,
+          errorLine("line-sleep-stopped", "toolu_a1_sleep", "Rejected", {
+            toolUseResult: "User rejected tool use",
+            toolDenialKind: "user-rejected",
+          }),
+        );
+        yield* harness.offerAndWait(
+          workflowSnapshot({ uuid: "00000000-0000-4000-8000-000000001379", state: "start" }),
+        );
+        yield* harness.offerAndWait(
+          workflowSnapshot({ uuid: "00000000-0000-4000-8000-000000001380", state: "error" }),
         );
         yield* harness.offerAndWait(
           workflowNotification({ uuid: "00000000-0000-4000-8000-000000001376", status: "stopped" }),
