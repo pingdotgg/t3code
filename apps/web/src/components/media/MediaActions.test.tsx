@@ -76,6 +76,7 @@ vi.mock("../ui/toast", () => ({
 }));
 
 import { MediaActions, useMediaActions, type MediaActionSource } from "./MediaActions";
+import { readImagePreviewBackground, setImagePreviewBackground } from "./imagePreviewBackground";
 
 const environmentId = EnvironmentId.make("media-environment");
 const threadId = ThreadId.make("media-thread");
@@ -141,6 +142,34 @@ beforeEach(() => {
 });
 
 afterEach(() => vi.unstubAllGlobals());
+
+it("changes only the image background even when host file access is denied", async () => {
+  const previous = readImagePreviewBackground();
+  using _background = { [Symbol.dispose]: () => setImagePreviewBackground(previous) };
+  setImagePreviewBackground("theme");
+  state.showMenu.mockResolvedValue("image-background-checker");
+  openMenu(hostSource());
+  expect(state.showMenu).toHaveBeenCalledWith(
+    expect.arrayContaining([
+      expect.objectContaining({
+        id: "image-background",
+        children: expect.arrayContaining([
+          { id: "image-background-theme", label: "Theme", checked: true },
+          { id: "image-background-checker", label: "Checkerboard", checked: false },
+        ]),
+      }),
+    ]),
+    { x: 1, y: 1 },
+  );
+  await vi.waitFor(() => expect(readImagePreviewBackground()).toBe("checker"));
+  expect(state.mint).not.toHaveBeenCalled();
+  expect(state.download).not.toHaveBeenCalled();
+  expect(state.clipboard).not.toHaveBeenCalled();
+  openMenu({ kind: "video", name: "clip.mp4", src: "blob:video" });
+  expect(state.showMenu.mock.lastCall?.[0]).not.toEqual(
+    expect.arrayContaining([expect.objectContaining({ id: "image-background" })]),
+  );
+});
 
 it.each(["workspace-file", "media-file"] as const)(
   "disables denied %s byte actions and prevents imperative requests",

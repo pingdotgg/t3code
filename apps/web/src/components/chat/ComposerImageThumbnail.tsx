@@ -1,6 +1,7 @@
 import { memo, useLayoutEffect, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
+import { AttachmentImage } from "../media/AttachmentImage";
 
 import {
   createComposerImageThumbnail,
@@ -64,7 +65,8 @@ export const ComposerImageThumbnail = memo(function ComposerImageThumbnail({
   return src && failedSrc !== src ? (
     <span className="relative block size-full">
       {loadedSrc !== src && fallback}
-      <img
+      <AttachmentImage
+        name={file.name}
         ref={(image) => {
           if (image?.complete && image.naturalWidth > 0) setLoadedSrc(src);
         }}

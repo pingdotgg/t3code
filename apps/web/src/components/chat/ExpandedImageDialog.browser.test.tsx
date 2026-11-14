@@ -6,6 +6,8 @@ import { page, userEvent } from "vite-plus/test/browser";
 import "~/index.css";
 import { render } from "../../../test/render";
 import { ExpandedImageDialog } from "./ExpandedImageDialog";
+import { AttachmentImage } from "../media/AttachmentImage";
+import PreviewImageContent from "../files/PreviewImageContent";
 
 const PIXEL =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
@@ -19,6 +21,62 @@ const snapShotSource: SnapShotSource = {
 
 const D2_SVG =
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1174 920"><rect width="1174" height="920"/></svg>';
+
+it("shares the image background across thumbnails and viewers and restores it on remount", async () => {
+  const storageKey = "t3code:image-preview-background";
+  const previous = localStorage.getItem(storageKey);
+  using _storage = {
+    [Symbol.dispose]() {
+      if (previous === null) localStorage.removeItem(storageKey);
+      else localStorage.setItem(storageKey, previous);
+    },
+  };
+  localStorage.removeItem(storageKey);
+  const content = () => (
+    <>
+      <AttachmentImage src={PIXEL} name="chat.png" alt="Chat thumbnail" />
+      <PreviewImageContent src={PIXEL} name="transparent.png" />
+    </>
+  );
+  await using screen = await render(content());
+  const thumbnail = screen.getByRole("img", { name: "Chat thumbnail" });
+  await userEvent.click(screen.getByRole("combobox", { name: "Image background" }));
+  await userEvent.click(page.getByRole("option", { name: "Light", exact: true }));
+  await expect.element(thumbnail).toHaveStyle({ backgroundColor: "rgb(255, 255, 255)" });
+  await userEvent.click(screen.getByRole("button", { name: "Zoom transparent.png" }));
+  const dialog = page.getByRole("dialog");
+  await expect.element(dialog.getByRole("img", { name: "transparent.png" })).toHaveStyle({
+    backgroundColor: "rgb(255, 255, 255)",
+  });
+  await userEvent.click(dialog.getByRole("combobox", { name: "Image background" }));
+  await userEvent.keyboard("{ArrowDown}{Escape}");
+  await expect.element(dialog).toBeVisible();
+  await userEvent.click(dialog.getByRole("combobox", { name: "Image background" }));
+  await userEvent.click(page.getByRole("option", { name: "Dark", exact: true }));
+  await userEvent.click(page.getByRole("button", { name: "Close image preview" }));
+  await expect.element(thumbnail).toHaveStyle({ backgroundColor: "rgb(24, 24, 27)" });
+  await screen.rerender(<div key="remounted">{content()}</div>);
+  await expect
+    .element(screen.getByRole("combobox", { name: "Image background" }))
+    .toHaveTextContent("Dark");
+  await userEvent.click(screen.getByRole("combobox", { name: "Image background" }));
+  await userEvent.click(page.getByRole("option", { name: "Checkerboard", exact: true }));
+  await expect
+    .poll(
+      () =>
+        getComputedStyle(screen.getByRole("img", { name: "Chat thumbnail" }).element())
+          .backgroundImage,
+    )
+    .toContain("conic-gradient");
+  await userEvent.click(screen.getByRole("combobox", { name: "Image background" }));
+  await userEvent.click(page.getByRole("option", { name: "Theme", exact: true }));
+  await expect
+    .element(screen.getByRole("img", { name: "Chat thumbnail" }))
+    .toHaveStyle({ backgroundColor: "rgba(0, 0, 0, 0)" });
+  expect(screen.getByRole("img", { name: "Chat thumbnail" }).element().getAttribute("src")).toBe(
+    PIXEL,
+  );
+});
 
 function ImagePreviewOpener() {
   const [open, setOpen] = useState(false);
