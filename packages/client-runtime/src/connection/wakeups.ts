@@ -7,6 +7,8 @@ export type ConnectionWakeup =
   | "application-active-probe"
   | "application-active-long"
   | "application-focused"
+  // A mobile return from inactive only (Control Center); its socket was never suspended.
+  | "application-refocused"
   | "credentials-changed"
   | "network-changed";
 
@@ -19,7 +21,11 @@ function isApplicationActiveWakeup(reason: ConnectionWakeup): boolean {
 }
 
 export function resetsRetryBackoff(reason: ConnectionWakeup): boolean {
-  return isApplicationActiveWakeup(reason) || reason === "network-changed";
+  return (
+    isApplicationActiveWakeup(reason) ||
+    reason === "application-refocused" ||
+    reason === "network-changed"
+  );
 }
 
 export function shouldResubscribeAfterWakeup(reason: ConnectionWakeup): boolean {

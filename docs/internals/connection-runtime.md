@@ -25,14 +25,19 @@ answers. If the host answers while the socket delivers no frame, the socket is
 dead and is replaced, even while the network reports offline: at once on
 loopback and LAN, and 2.5 seconds after the check starts elsewhere, where one
 lost packet can stall a live socket. Without that evidence the probe deadline
-decides: 3 seconds on loopback and LAN routes and after a long mobile
+decides: 6 seconds on loopback and LAN routes and after a long mobile
 suspension, when the data on screen is stale; 15 seconds elsewhere, because a
-tailnet over DERP or a VPN can be slower than that on a live socket. A long
+tailnet over DERP or a VPN can be slower than that on a live socket. The probe
+reply shares the RPC read loop with subscriptions, so a full stream buffer can
+delay it while frames still arrive; outside a long suspension, frames counted
+before that read loop extend a short deadline, never past 15 seconds. A long
 suspension's probe that times out also replaces the socket regardless of the
 network report. The web and desktop foreground probe skips the fresh request,
 because a busy host can answer it before a queued probe. Foregrounding also
 wakes a pending retry immediately. A long suspension restarts an in-flight
-attempt; a short one leaves it alone.
+attempt; a short one leaves it alone. A mobile return from an inactive-only
+state, such as Control Center, never suspended the socket, so it wakes retries
+and route checks without probing or resubscribing.
 
 The [registry](../../packages/client-runtime/src/connection/registry.ts) scopes
 connections by environment. An involuntary disconnect retains the registration
