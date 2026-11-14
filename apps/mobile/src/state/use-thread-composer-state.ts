@@ -832,7 +832,7 @@ export function useThreadComposerState(input: {
           context: draft.context,
           attachments: [],
         });
-        appendComposerDraftAttachments(threadKey, attachments, { allowOverflow: true });
+        appendComposerDraftAttachments(threadKey, attachments, { restore: true });
         if (freshContext) setFreshSessionPending(threadKey, true);
         setThreadComposerError(
           threadKey,

@@ -8,16 +8,26 @@ export function unsentManualContinuationSource(
   if (sourceId === undefined) return undefined;
   const runs = new Map(projection.runs.map((source) => [source.id, source]));
   const acceptedAttempts = new Set(projection.providerTurns.map((turn) => turn.runAttemptId));
-  const acceptedRuns = new Set(
-    projection.attempts
-      .filter((attempt) => acceptedAttempts.has(attempt.id))
-      .map((attempt) => attempt.runId),
-  );
+  const latestAttempt = (
+    runId: OrchestrationV2Run["id"],
+    matches: (attempt: (typeof projection.attempts)[number]) => boolean,
+  ) =>
+    Math.max(
+      0,
+      ...projection.attempts
+        .filter((attempt) => attempt.runId === runId && matches(attempt))
+        .map((attempt) => attempt.attemptOrdinal),
+    );
   const visited = new Set<OrchestrationV2Run["id"]>();
   while (sourceId !== undefined && !visited.has(sourceId)) {
     visited.add(sourceId);
     const source = runs.get(sourceId);
-    if (source === undefined || acceptedRuns.has(sourceId)) return undefined;
+    if (source === undefined) return undefined;
+    const accepted = latestAttempt(sourceId, (attempt) => acceptedAttempts.has(attempt.id));
+    // An accepted attempt delivered everything before it; only a later steering restart's message is unsent.
+    const restarted = latestAttempt(sourceId, (attempt) => attempt.reason === "steering_restart");
+    if (restarted > accepted) return source;
+    if (accepted > 0) return undefined;
     if (source.manualContinuationOfRunId === undefined) return source;
     sourceId = source.manualContinuationOfRunId;
   }
