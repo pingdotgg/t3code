@@ -86,6 +86,7 @@ pub mod lit {
     literal!(CommandOutputDelta = "command_output.delta");
     literal!(Compaction = "compaction");
     literal!(Complete = "complete");
+    literal!(ConnectApprovalPending = "connect_approval_pending");
     literal!(Connected = "connected");
     literal!(Context = "context");
     literal!(ContextHandoffUpdated = "context-handoff.updated");
@@ -129,6 +130,7 @@ pub mod lit {
     literal!(EnvironmentAuthInvalidError = "EnvironmentAuthInvalidError");
     literal!(EnvironmentAuthorizationError = "EnvironmentAuthorizationError");
     literal!(EnvironmentCloudEndpointUnavailableError = "EnvironmentCloudEndpointUnavailableError");
+    literal!(EnvironmentConnectApprovalPendingError = "EnvironmentConnectApprovalPendingError");
     literal!(EnvironmentHttpBadRequestError = "EnvironmentHttpBadRequestError");
     literal!(EnvironmentHttpConflictError = "EnvironmentHttpConflictError");
     literal!(EnvironmentHttpForbiddenError = "EnvironmentHttpForbiddenError");
@@ -492,6 +494,7 @@ pub mod lit {
     literal!(ThreadUpdated = "thread.updated");
     literal!(ThreadUserInputDismiss = "thread.user-input.dismiss");
     literal!(ThreadVisit = "thread.visit");
+    literal!(ThreadVisitRecorded = "thread.visit-recorded");
     literal!(TodoList = "todo_list");
     literal!(ToolOutputImage = "tool-output-image");
     literal!(TranscriptStart = "transcript_start");
@@ -579,30 +582,6 @@ pub enum AuthEnvironmentScope {
 
 pub type AuthEnvironmentScopes = Vec<AuthEnvironmentScope>;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AuthPairingLink {
-    pub id: String,
-    pub scopes: AuthEnvironmentScopes,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub permissions: Option<Vec<Option<AuthEnvironmentScope>>>,
-    pub subject: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub label: Option<String>,
-    pub created_at: String,
-    pub expires_at: String,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum ServerAuthSessionMethod {
-    #[serde(rename = "browser-session-cookie")]
-    BrowserSessionCookie,
-    #[serde(rename = "bearer-access-token")]
-    BearerAccessToken,
-    #[serde(rename = "dpop-access-token")]
-    DpopAccessToken,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AuthClientMetadataDeviceType {
     #[serde(rename = "desktop")]
@@ -635,6 +614,40 @@ pub struct AuthClientMetadata {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AuthConnectDeviceRequest {
+    pub verification_code: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client: Option<AuthClientMetadata>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthPairingLink {
+    pub id: String,
+    pub scopes: AuthEnvironmentScopes,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permissions: Option<Vec<Option<AuthEnvironmentScope>>>,
+    pub subject: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    pub created_at: String,
+    pub expires_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connect_device_request: Option<AuthConnectDeviceRequest>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ServerAuthSessionMethod {
+    #[serde(rename = "browser-session-cookie")]
+    BrowserSessionCookie,
+    #[serde(rename = "bearer-access-token")]
+    BearerAccessToken,
+    #[serde(rename = "dpop-access-token")]
+    DpopAccessToken,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AuthClientSession {
     pub session_id: String,
     pub subject: String,
@@ -652,9 +665,21 @@ pub struct AuthClientSession {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AuthConnectDevice {
+    pub proof_key_thumbprint: String,
+    pub verification_code: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client: Option<AuthClientMetadata>,
+    pub approved_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AuthAccessSnapshot {
     pub pairing_links: Vec<AuthPairingLink>,
     pub client_sessions: Vec<AuthClientSession>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connect_devices: Option<Vec<AuthConnectDevice>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -743,6 +768,18 @@ pub struct AuthAccessTokenResult {
     #[serde(rename = "expires_in")]
     pub expires_in: JsNumber,
     pub scope: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthApproveConnectDeviceInput {
+    pub pairing_link_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthApproveConnectDeviceResult {
+    pub approved: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1174,6 +1211,14 @@ pub struct AuthRevokeClientSessionInput {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AuthRevokeConnectDeviceInput {
+    pub proof_key_thumbprint: String,
+}
+
+pub type AuthRevokeConnectDeviceResult = AuthPairingLinkRevokeResult;
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AuthRevokePairingLinkInput {
     pub id: String,
 }
@@ -1561,6 +1606,15 @@ pub struct EnvironmentCloudRelayConfigResult {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct EnvironmentConnectApprovalPendingError {
+    #[serde(rename = "_tag")]
+    pub tag: lit::EnvironmentConnectApprovalPendingError,
+    pub code: lit::ConnectApprovalPending,
+    pub trace_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct EnvironmentConnectReachabilityReachable {
     pub status: lit::Reachable,
     pub checked_at: String,
@@ -1681,6 +1735,10 @@ pub enum EnvironmentInternalErrorReason {
     ClientSessionsLoadFailed,
     #[serde(rename = "client_session_revoke_failed")]
     ClientSessionRevokeFailed,
+    #[serde(rename = "connect_device_approve_failed")]
+    ConnectDeviceApproveFailed,
+    #[serde(rename = "connect_device_revoke_failed")]
+    ConnectDeviceRevokeFailed,
     #[serde(rename = "project_snapshot_failed")]
     ProjectSnapshotFailed,
     #[serde(rename = "project_mutation_failed")]
@@ -1709,7 +1767,7 @@ pub struct EnvironmentInternalError {
 
 tagged_union! {
     EnvironmentHttpCommonError, "_tag",
-    variants { EnvironmentRequestInvalidError(EnvironmentRequestInvalidError), EnvironmentAuthInvalidError(EnvironmentAuthInvalidError), EnvironmentScopeRequiredError(EnvironmentScopeRequiredError), EnvironmentOperationForbiddenError(EnvironmentOperationForbiddenError), EnvironmentResourceNotFoundError(EnvironmentResourceNotFoundError), EnvironmentInternalError(EnvironmentInternalError) },
+    variants { EnvironmentRequestInvalidError(EnvironmentRequestInvalidError), EnvironmentAuthInvalidError(EnvironmentAuthInvalidError), EnvironmentScopeRequiredError(EnvironmentScopeRequiredError), EnvironmentOperationForbiddenError(EnvironmentOperationForbiddenError), EnvironmentResourceNotFoundError(EnvironmentResourceNotFoundError), EnvironmentInternalError(EnvironmentInternalError), EnvironmentConnectApprovalPendingError(EnvironmentConnectApprovalPendingError) },
     dispatch {
         "EnvironmentRequestInvalidError" => [EnvironmentRequestInvalidError(EnvironmentRequestInvalidError)],
         "EnvironmentAuthInvalidError" => [EnvironmentAuthInvalidError(EnvironmentAuthInvalidError)],
@@ -1717,6 +1775,7 @@ tagged_union! {
         "EnvironmentOperationForbiddenError" => [EnvironmentOperationForbiddenError(EnvironmentOperationForbiddenError)],
         "EnvironmentResourceNotFoundError" => [EnvironmentResourceNotFoundError(EnvironmentResourceNotFoundError)],
         "EnvironmentInternalError" => [EnvironmentInternalError(EnvironmentInternalError)],
+        "EnvironmentConnectApprovalPendingError" => [EnvironmentConnectApprovalPendingError(EnvironmentConnectApprovalPendingError)],
     },
     fallback []
 }
@@ -3262,6 +3321,13 @@ pub struct OrchestrationV2CommandThreadMarkUnread {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct OrchestrationV2CommandThreadMetadataUpdateContinuation {
+    pub message_id: String,
+    pub text: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OrchestrationV2LimitRecoveryUpdate {
     pub run_id: String,
     pub reset_at: String,
@@ -3305,6 +3371,8 @@ pub struct OrchestrationV2CommandThreadMetadataUpdate {
         with = "crate::support::double_option"
     )]
     pub expected_branch: Option<Option<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continuation: Option<OrchestrationV2CommandThreadMetadataUpdateContinuation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_empty: Option<bool>,
     #[serde(
@@ -4493,6 +4561,8 @@ pub struct OrchestrationV2ConversationMessage {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scheduled_task_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub follows_thread_selection: Option<lit::True>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sender_thread_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub linked_sender: Option<OrchestrationV2LinkedSender>,
@@ -4695,6 +4765,43 @@ pub struct OrchestrationV2DomainEventThreadPullRequestLinkUpdated {
     pub occurred_at: String,
     pub r#type: lit::ThreadPullRequestLinkUpdated,
     pub payload: ThreadPullRequestLink,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrchestrationV2ThreadVisit {
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "crate::support::double_option"
+    )]
+    pub last_visited_at: Option<Option<String>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "crate::support::double_option"
+    )]
+    pub opens: Option<Option<OrchestrationV2ThreadOpens>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrchestrationV2DomainEventThreadVisitRecorded {
+    pub id: String,
+    pub thread_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub driver: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_instance_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw_event_id: Option<String>,
+    pub occurred_at: String,
+    pub r#type: lit::ThreadVisitRecorded,
+    pub payload: OrchestrationV2ThreadVisit,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -7370,11 +7477,12 @@ pub struct OrchestrationV2DomainEventContextTransferUpdated {
 
 tagged_union! {
     OrchestrationV2DomainEvent, "type",
-    variants { ThreadCreated(OrchestrationV2DomainEventThreadCreated), ThreadArchived(OrchestrationV2DomainEventThreadArchived), ThreadPullRequestLinkUpdated(OrchestrationV2DomainEventThreadPullRequestLinkUpdated), RunCreated(OrchestrationV2DomainEventRunCreated), RunUpdated(OrchestrationV2DomainEventRunUpdated), RunBackgroundWorkCancelled(OrchestrationV2DomainEventRunBackgroundWorkCancelled), RunAttemptCreated(OrchestrationV2DomainEventRunAttemptCreated), RunAttemptUpdated(OrchestrationV2DomainEventRunAttemptUpdated), NodeUpdated(OrchestrationV2DomainEventNodeUpdated), SubagentUpdated(OrchestrationV2DomainEventSubagentUpdated), ProviderSessionAttached(OrchestrationV2DomainEventProviderSessionAttached), ProviderSessionDetached(OrchestrationV2DomainEventProviderSessionDetached), ProviderThreadUpdated(OrchestrationV2DomainEventProviderThreadUpdated), ProviderTurnUpdated(OrchestrationV2DomainEventProviderTurnUpdated), RuntimeRequestUpdated(OrchestrationV2DomainEventRuntimeRequestUpdated), MessageUpdated(OrchestrationV2DomainEventMessageUpdated), TurnItemUpdated(OrchestrationV2DomainEventTurnItemUpdated), PlanUpdated(OrchestrationV2DomainEventPlanUpdated), CheckpointScopeCreated(OrchestrationV2DomainEventCheckpointScopeCreated), CheckpointCaptured(OrchestrationV2DomainEventCheckpointCaptured), CheckpointRollbackRequested(OrchestrationV2DomainEventCheckpointRollbackRequested), ContextHandoffUpdated(OrchestrationV2DomainEventContextHandoffUpdated), ContextTransferCreated(OrchestrationV2DomainEventContextTransferCreated), ContextTransferUpdated(OrchestrationV2DomainEventContextTransferUpdated) },
+    variants { ThreadCreated(OrchestrationV2DomainEventThreadCreated), ThreadArchived(OrchestrationV2DomainEventThreadArchived), ThreadPullRequestLinkUpdated(OrchestrationV2DomainEventThreadPullRequestLinkUpdated), ThreadVisitRecorded(OrchestrationV2DomainEventThreadVisitRecorded), RunCreated(OrchestrationV2DomainEventRunCreated), RunUpdated(OrchestrationV2DomainEventRunUpdated), RunBackgroundWorkCancelled(OrchestrationV2DomainEventRunBackgroundWorkCancelled), RunAttemptCreated(OrchestrationV2DomainEventRunAttemptCreated), RunAttemptUpdated(OrchestrationV2DomainEventRunAttemptUpdated), NodeUpdated(OrchestrationV2DomainEventNodeUpdated), SubagentUpdated(OrchestrationV2DomainEventSubagentUpdated), ProviderSessionAttached(OrchestrationV2DomainEventProviderSessionAttached), ProviderSessionDetached(OrchestrationV2DomainEventProviderSessionDetached), ProviderThreadUpdated(OrchestrationV2DomainEventProviderThreadUpdated), ProviderTurnUpdated(OrchestrationV2DomainEventProviderTurnUpdated), RuntimeRequestUpdated(OrchestrationV2DomainEventRuntimeRequestUpdated), MessageUpdated(OrchestrationV2DomainEventMessageUpdated), TurnItemUpdated(OrchestrationV2DomainEventTurnItemUpdated), PlanUpdated(OrchestrationV2DomainEventPlanUpdated), CheckpointScopeCreated(OrchestrationV2DomainEventCheckpointScopeCreated), CheckpointCaptured(OrchestrationV2DomainEventCheckpointCaptured), CheckpointRollbackRequested(OrchestrationV2DomainEventCheckpointRollbackRequested), ContextHandoffUpdated(OrchestrationV2DomainEventContextHandoffUpdated), ContextTransferCreated(OrchestrationV2DomainEventContextTransferCreated), ContextTransferUpdated(OrchestrationV2DomainEventContextTransferUpdated) },
     dispatch {
         "thread.created" => [ThreadCreated(OrchestrationV2DomainEventThreadCreated)],
         "thread.archived" | "thread.unarchived" | "thread.deleted" | "thread.settled" | "thread.unsettled" | "thread.snoozed" | "thread.unsnoozed" | "thread.pinned" | "thread.auto-settle-set" | "thread.unpinned" | "thread.pin-reordered" | "thread.active-reordered" | "thread.tags-updated" | "thread.visited" | "thread.marked-unread" | "thread.metadata-updated" | "thread.pull-request-synced" | "thread.runtime-mode-updated" | "thread.interaction-mode-updated" | "thread.model-selection-updated" | "thread.provider-switched" | "thread.guest-share-updated" => [ThreadArchived(OrchestrationV2DomainEventThreadArchived)],
         "thread.pull-request-link-updated" => [ThreadPullRequestLinkUpdated(OrchestrationV2DomainEventThreadPullRequestLinkUpdated)],
+        "thread.visit-recorded" => [ThreadVisitRecorded(OrchestrationV2DomainEventThreadVisitRecorded)],
         "run.created" => [RunCreated(OrchestrationV2DomainEventRunCreated)],
         "run.updated" => [RunUpdated(OrchestrationV2DomainEventRunUpdated)],
         "run.background-work-cancelled" => [RunBackgroundWorkCancelled(OrchestrationV2DomainEventRunBackgroundWorkCancelled)],
@@ -7467,6 +7575,8 @@ pub struct OrchestrationV2DomainEventJsonThreadArchived {
     pub r#type: OrchestrationV2DomainEventJsonThreadArchivedType,
     pub payload: OrchestrationV2AppThread,
 }
+
+pub type OrchestrationV2ThreadVisitJson = OrchestrationV2ThreadVisit;
 
 pub type OrchestrationV2RunJson = OrchestrationV2Run;
 
@@ -7704,11 +7814,12 @@ pub struct OrchestrationV2DomainEventJsonTurnItemUpdated {
 
 tagged_union! {
     OrchestrationV2DomainEventJson, "type",
-    variants { ThreadCreated(OrchestrationV2DomainEventThreadCreated), ThreadArchived(OrchestrationV2DomainEventJsonThreadArchived), ThreadPullRequestLinkUpdated(OrchestrationV2DomainEventThreadPullRequestLinkUpdated), RunCreated(OrchestrationV2DomainEventRunCreated), RunUpdated(OrchestrationV2DomainEventRunUpdated), RunBackgroundWorkCancelled(OrchestrationV2DomainEventRunBackgroundWorkCancelled), RunAttemptCreated(OrchestrationV2DomainEventRunAttemptCreated), RunAttemptUpdated(OrchestrationV2DomainEventRunAttemptUpdated), NodeUpdated(OrchestrationV2DomainEventNodeUpdated), SubagentUpdated(OrchestrationV2DomainEventSubagentUpdated), ProviderSessionAttached(OrchestrationV2DomainEventProviderSessionAttached), ProviderSessionDetached(OrchestrationV2DomainEventProviderSessionDetached), ProviderThreadUpdated(OrchestrationV2DomainEventProviderThreadUpdated), ProviderTurnUpdated(OrchestrationV2DomainEventProviderTurnUpdated), RuntimeRequestUpdated(OrchestrationV2DomainEventRuntimeRequestUpdated), MessageUpdated(OrchestrationV2DomainEventMessageUpdated), TurnItemUpdated(OrchestrationV2DomainEventJsonTurnItemUpdated), PlanUpdated(OrchestrationV2DomainEventPlanUpdated), CheckpointScopeCreated(OrchestrationV2DomainEventCheckpointScopeCreated), CheckpointCaptured(OrchestrationV2DomainEventCheckpointCaptured), CheckpointRollbackRequested(OrchestrationV2DomainEventCheckpointRollbackRequested), ContextHandoffUpdated(OrchestrationV2DomainEventContextHandoffUpdated), ContextTransferCreated(OrchestrationV2DomainEventContextTransferCreated), ContextTransferUpdated(OrchestrationV2DomainEventContextTransferUpdated) },
+    variants { ThreadCreated(OrchestrationV2DomainEventThreadCreated), ThreadArchived(OrchestrationV2DomainEventJsonThreadArchived), ThreadPullRequestLinkUpdated(OrchestrationV2DomainEventThreadPullRequestLinkUpdated), ThreadVisitRecorded(OrchestrationV2DomainEventThreadVisitRecorded), RunCreated(OrchestrationV2DomainEventRunCreated), RunUpdated(OrchestrationV2DomainEventRunUpdated), RunBackgroundWorkCancelled(OrchestrationV2DomainEventRunBackgroundWorkCancelled), RunAttemptCreated(OrchestrationV2DomainEventRunAttemptCreated), RunAttemptUpdated(OrchestrationV2DomainEventRunAttemptUpdated), NodeUpdated(OrchestrationV2DomainEventNodeUpdated), SubagentUpdated(OrchestrationV2DomainEventSubagentUpdated), ProviderSessionAttached(OrchestrationV2DomainEventProviderSessionAttached), ProviderSessionDetached(OrchestrationV2DomainEventProviderSessionDetached), ProviderThreadUpdated(OrchestrationV2DomainEventProviderThreadUpdated), ProviderTurnUpdated(OrchestrationV2DomainEventProviderTurnUpdated), RuntimeRequestUpdated(OrchestrationV2DomainEventRuntimeRequestUpdated), MessageUpdated(OrchestrationV2DomainEventMessageUpdated), TurnItemUpdated(OrchestrationV2DomainEventJsonTurnItemUpdated), PlanUpdated(OrchestrationV2DomainEventPlanUpdated), CheckpointScopeCreated(OrchestrationV2DomainEventCheckpointScopeCreated), CheckpointCaptured(OrchestrationV2DomainEventCheckpointCaptured), CheckpointRollbackRequested(OrchestrationV2DomainEventCheckpointRollbackRequested), ContextHandoffUpdated(OrchestrationV2DomainEventContextHandoffUpdated), ContextTransferCreated(OrchestrationV2DomainEventContextTransferCreated), ContextTransferUpdated(OrchestrationV2DomainEventContextTransferUpdated) },
     dispatch {
         "thread.created" => [ThreadCreated(OrchestrationV2DomainEventThreadCreated)],
         "thread.archived" | "thread.unarchived" | "thread.deleted" | "thread.settled" | "thread.unsettled" | "thread.snoozed" | "thread.unsnoozed" | "thread.pinned" | "thread.auto-settle-set" | "thread.unpinned" | "thread.pin-reordered" | "thread.active-reordered" | "thread.tags-updated" | "thread.visited" | "thread.marked-unread" | "thread.pull-request-synced" | "thread.metadata-updated" | "thread.runtime-mode-updated" | "thread.interaction-mode-updated" | "thread.model-selection-updated" | "thread.provider-switched" | "thread.guest-share-updated" => [ThreadArchived(OrchestrationV2DomainEventJsonThreadArchived)],
         "thread.pull-request-link-updated" => [ThreadPullRequestLinkUpdated(OrchestrationV2DomainEventThreadPullRequestLinkUpdated)],
+        "thread.visit-recorded" => [ThreadVisitRecorded(OrchestrationV2DomainEventThreadVisitRecorded)],
         "run.created" => [RunCreated(OrchestrationV2DomainEventRunCreated)],
         "run.updated" => [RunUpdated(OrchestrationV2DomainEventRunUpdated)],
         "run.background-work-cancelled" => [RunBackgroundWorkCancelled(OrchestrationV2DomainEventRunBackgroundWorkCancelled)],
@@ -8962,6 +9073,8 @@ pub struct ProviderAdapterEventStreamError {
     pub tag: lit::ProviderAdapterEventStreamError,
     pub driver: String,
     pub provider_session_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detached_thread_id: Option<String>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -13142,38 +13255,6 @@ pub struct PeerLinkRemoveResult {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum PreviewAdjustInputColorScheme {
-    #[serde(rename = "system")]
-    System,
-    #[serde(rename = "light")]
-    Light,
-    #[serde(rename = "dark")]
-    Dark,
-}
-
-number_literals! {
-    PreviewAdjustInputZoomFactor, {
-        V0_25 = 0.25,
-        V0_33 = 0.33,
-        V0_5 = 0.5,
-        V0_67 = 0.67,
-        V0_75 = 0.75,
-        V0_8 = 0.8,
-        V0_9 = 0.9,
-        V1 = 1.0,
-        V1_1 = 1.1,
-        V1_25 = 1.25,
-        V1_5 = 1.5,
-        V1_75 = 1.75,
-        V2 = 2.0,
-        V2_5 = 2.5,
-        V3 = 3.0,
-        V4 = 4.0,
-        V5 = 5.0,
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PreviewAdjustInputClear {
     #[serde(rename = "cookies")]
     Cookies,
@@ -13187,9 +13268,9 @@ pub struct PreviewAdjustInput {
     pub thread_id: String,
     pub tab_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub color_scheme: Option<PreviewAdjustInputColorScheme>,
+    pub color_scheme: Option<PreviewOpenInputColorScheme>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub zoom_factor: Option<PreviewAdjustInputZoomFactor>,
+    pub zoom_factor: Option<PreviewOpenInputZoomFactor>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hard_reload: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -13264,9 +13345,9 @@ pub struct PreviewSessionSnapshot {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub viewport: Option<PreviewViewportSetting>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub color_scheme: Option<PreviewAdjustInputColorScheme>,
+    pub color_scheme: Option<PreviewOpenInputColorScheme>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub zoom_factor: Option<PreviewAdjustInputZoomFactor>,
+    pub zoom_factor: Option<PreviewOpenInputZoomFactor>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -13521,6 +13602,38 @@ pub enum PreviewOpenInputRuntime {
     Server,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum PreviewOpenInputColorScheme {
+    #[serde(rename = "system")]
+    System,
+    #[serde(rename = "light")]
+    Light,
+    #[serde(rename = "dark")]
+    Dark,
+}
+
+number_literals! {
+    PreviewOpenInputZoomFactor, {
+        V0_25 = 0.25,
+        V0_33 = 0.33,
+        V0_5 = 0.5,
+        V0_67 = 0.67,
+        V0_75 = 0.75,
+        V0_8 = 0.8,
+        V0_9 = 0.9,
+        V1 = 1.0,
+        V1_1 = 1.1,
+        V1_25 = 1.25,
+        V1_5 = 1.5,
+        V1_75 = 1.75,
+        V2 = 2.0,
+        V2_5 = 2.5,
+        V3 = 3.0,
+        V4 = 4.0,
+        V5 = 5.0,
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewOpenInput {
@@ -13533,6 +13646,10 @@ pub struct PreviewOpenInput {
     pub profile_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime: Option<PreviewOpenInputRuntime>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color_scheme: Option<PreviewOpenInputColorScheme>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zoom_factor: Option<PreviewOpenInputZoomFactor>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reveal: Option<bool>,
 }
@@ -13955,6 +14072,14 @@ tagged_union! {
         "EnvironmentAuthorizationError" => [EnvironmentAuthorizationError(EnvironmentAuthorizationError)],
     },
     fallback []
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectListIgnoredFilesInput {
+    pub cwd: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -15385,6 +15510,12 @@ pub struct PullRequestMergeCapabilities {
     pub merge: bool,
     pub squash: bool,
     pub rebase: bool,
+    #[serde(
+        rename = "fast-forward",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub fast_forward: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -15405,6 +15536,8 @@ pub enum PullRequestDetailAutoMergeMethod {
     Squash,
     #[serde(rename = "rebase")]
     Rebase,
+    #[serde(rename = "fast-forward")]
+    FastForward,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -17694,6 +17827,8 @@ pub struct ExecutionEnvironmentCapabilities {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ignored_file_listing: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ignored_file_search: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub environment_icon: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub desktop_app_update: Option<bool>,
@@ -17731,6 +17866,8 @@ pub struct ExecutionEnvironmentCapabilities {
     pub shell_thread_families: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shell_older_settled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub linked_thread_refreshes: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -17929,6 +18066,8 @@ pub struct ServerProvidersItemItemAuth {
     pub profile_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -18165,6 +18304,8 @@ pub struct ServerProvidersItemItemUsageLimitsUnavailable {
 pub struct ServerProvidersItemItemUsageLimits {
     pub checked_at: String,
     pub windows: Vec<Option<ServerProvidersItemItemUsageLimitsWindowsItem>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zero_spend_cap: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credential_fingerprint: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -18648,6 +18789,18 @@ pub struct ServerSettingsBackgroundActivity {
     pub overrides: Option<BackgroundActivityOverrides>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ServerSettingsDefaultAppearance {
+    #[serde(rename = "")]
+    Empty,
+    #[serde(rename = "light")]
+    Light,
+    #[serde(rename = "dark")]
+    Dark,
+    #[serde(rename = "system")]
+    System,
+}
+
 kind_union! {
     ServerSettingsSourceControlWritingStyle, {
         object => Object(SourceControlWritingStyleSettings),
@@ -18749,6 +18902,8 @@ pub struct ServerSettings {
     pub continue_threads_after_server_update: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keep_awake_while_agents_work: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub require_connect_device_approval: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enable_agent_browser_access: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -18854,6 +19009,10 @@ pub struct ServerSettings {
     pub default_theme: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_theme_set_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_appearance: Option<ServerSettingsDefaultAppearance>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_appearance_set_at: Option<String>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -19044,6 +19203,8 @@ pub struct EnvironmentTheme {
     pub colors: Option<Map<String, String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub variants: Option<EnvironmentThemeVariants>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub css: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -19066,6 +19227,8 @@ pub struct UsageLimitSourceSnapshotsItemItem {
     pub id: String,
     pub kind: lit::Cliproxy,
     pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
     pub checked_at: String,
     pub accounts: Vec<Option<UsageLimitSourceSnapshotsItemItemAccountsItem>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -19125,6 +19288,8 @@ pub struct ServerConfig {
     pub new_projects_root: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_event_loop_stall: Option<ServerEventLoopStall>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_time: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub environment_themes: Option<Vec<EnvironmentTheme>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -20797,7 +20962,7 @@ tagged_union! {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ServerSettingsPatchSetModelFavoritesItem {
+pub struct ClientServerSettingsPatchSetModelFavoritesItem {
     pub provider: String,
     pub model: String,
     pub favorite: bool,
@@ -20805,7 +20970,7 @@ pub struct ServerSettingsPatchSetModelFavoritesItem {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ServerSettingsPatchSetModelsHiddenItem {
+pub struct ClientServerSettingsPatchSetModelsHiddenItem {
     pub provider: String,
     pub model: String,
     pub hidden: bool,
@@ -20813,7 +20978,7 @@ pub struct ServerSettingsPatchSetModelsHiddenItem {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ServerSettingsPatchSetProviderModelOrder {
+pub struct ClientServerSettingsPatchSetProviderModelOrder {
     pub provider: String,
     pub model_order: Vec<String>,
 }
@@ -20840,7 +21005,7 @@ pub type ProviderModelPreferences = Map<String, ProviderModelPreferencesValue>;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ServerSettingsPatchMigrateModelPreferences {
+pub struct ClientServerSettingsPatchMigrateModelPreferences {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub favorites: Option<ModelFavorites>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -20859,7 +21024,7 @@ pub enum WorktreeKeepWhen {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ServerSettingsPatchWorktreeCleanupCustomRules {
+pub struct ClientServerSettingsPatchWorktreeCleanupCustomRules {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worktree_keep_when: Option<WorktreeKeepWhen>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -20876,24 +21041,24 @@ pub struct ServerSettingsPatchWorktreeCleanupCustomRules {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ServerSettingsPatchWorktreeCleanupCustom {
+pub struct ClientServerSettingsPatchWorktreeCleanupCustom {
     pub mode: lit::Custom,
-    pub rules: ServerSettingsPatchWorktreeCleanupCustomRules,
+    pub rules: ClientServerSettingsPatchWorktreeCleanupCustomRules,
 }
 
 tagged_union! {
-    ServerSettingsPatchWorktreeCleanup, "mode",
-    variants { Off(ServerSettingsWorktreeCleanupOff), Custom(ServerSettingsPatchWorktreeCleanupCustom) },
+    ClientServerSettingsPatchWorktreeCleanup, "mode",
+    variants { Off(ServerSettingsWorktreeCleanupOff), Custom(ClientServerSettingsPatchWorktreeCleanupCustom) },
     dispatch {
         "off" => [Off(ServerSettingsWorktreeCleanupOff)],
-        "custom" => [Custom(ServerSettingsPatchWorktreeCleanupCustom)],
+        "custom" => [Custom(ClientServerSettingsPatchWorktreeCleanupCustom)],
     },
     fallback []
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ServerSettingsPatchStorageCleanup {
+pub struct ClientServerSettingsPatchStorageCleanup {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worktree_keep_when: Option<WorktreeKeepWhen>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -20997,7 +21162,7 @@ pub struct SourceControlWritingStyleSettings {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ServerSettingsPatchProjectSettingsOverridesValue {
+pub struct ClientServerSettingsPatchProjectSettingsOverridesValue {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worktree_cleanup: Option<ServerSettingsWorktreeCleanup>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -21133,7 +21298,7 @@ pub struct BackgroundActivityOverrides {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum ServerSettingsPatchEnvironmentIcon {
+pub enum ClientServerSettingsPatchEnvironmentIcon {
     #[serde(rename = "server")]
     Server,
     #[serde(rename = "cloud")]
@@ -21151,7 +21316,7 @@ pub enum ServerSettingsPatchEnvironmentIcon {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum ServerSettingsPatchWorktreeSubmodules {
+pub enum ClientServerSettingsPatchWorktreeSubmodules {
     #[serde(rename = "recursive")]
     Recursive,
     #[serde(rename = "top-level")]
@@ -21183,7 +21348,7 @@ kind_union! {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ServerSettingsPatchTextGenerationModelSelection {
+pub struct ClientServerSettingsPatchTextGenerationModelSelection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instance_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -21249,23 +21414,23 @@ pub struct UsageLimitSourceConfig {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ServerSettingsPatch {
+pub struct ClientServerSettingsPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub set_model_favorites: Option<Vec<ServerSettingsPatchSetModelFavoritesItem>>,
+    pub set_model_favorites: Option<Vec<ClientServerSettingsPatchSetModelFavoritesItem>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub set_models_hidden: Option<Vec<ServerSettingsPatchSetModelsHiddenItem>>,
+    pub set_models_hidden: Option<Vec<ClientServerSettingsPatchSetModelsHiddenItem>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub set_provider_model_order: Option<ServerSettingsPatchSetProviderModelOrder>,
+    pub set_provider_model_order: Option<ClientServerSettingsPatchSetProviderModelOrder>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub favorites: Option<ModelFavorites>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_model_preferences: Option<ProviderModelPreferences>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub migrate_model_preferences: Option<ServerSettingsPatchMigrateModelPreferences>,
+    pub migrate_model_preferences: Option<ClientServerSettingsPatchMigrateModelPreferences>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub worktree_cleanup: Option<ServerSettingsPatchWorktreeCleanup>,
+    pub worktree_cleanup: Option<ClientServerSettingsPatchWorktreeCleanup>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub storage_cleanup: Option<ServerSettingsPatchStorageCleanup>,
+    pub storage_cleanup: Option<ClientServerSettingsPatchStorageCleanup>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worktrees_directory: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -21278,6 +21443,8 @@ pub struct ServerSettingsPatch {
     pub continue_threads_after_server_update: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keep_awake_while_agents_work: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub require_connect_device_approval: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enable_agent_browser_access: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -21312,7 +21479,7 @@ pub struct ServerSettingsPatch {
     pub fallback_model_selection: Option<ModelSelection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_settings_overrides:
-        Option<Map<String, Option<ServerSettingsPatchProjectSettingsOverridesValue>>>,
+        Option<Map<String, Option<ClientServerSettingsPatchProjectSettingsOverridesValue>>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enable_agent_device_access: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -21362,19 +21529,20 @@ pub struct ServerSettingsPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub background_activity_profile: Option<BackgroundActivityProfile>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub environment_icon: Option<ServerSettingsPatchEnvironmentIcon>,
+    pub environment_icon: Option<ClientServerSettingsPatchEnvironmentIcon>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_thread_env_mode: Option<ThreadEnvMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub new_worktrees_start_from_origin: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub worktree_submodules: Option<ServerSettingsPatchWorktreeSubmodules>,
+    pub worktree_submodules: Option<ClientServerSettingsPatchWorktreeSubmodules>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub add_project_base_directory: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ghq_clone_layout: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub text_generation_model_selection: Option<ServerSettingsPatchTextGenerationModelSelection>,
+    pub text_generation_model_selection:
+        Option<ClientServerSettingsPatchTextGenerationModelSelection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thread_title_instructions: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -21454,7 +21622,7 @@ tagged_union! {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServerUpdateSettingsPayload {
-    pub patch: ServerSettingsPatch,
+    pub patch: ClientServerSettingsPatch,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_instance_mutation: Option<ProviderInstanceMutation>,
 }
@@ -23950,7 +24118,7 @@ pub mod rpc {
         pub mod list_ignored_files {
             #[allow(unused_imports)]
             use crate::{support::*, *};
-            pub type Payload = VcsPullInput;
+            pub type Payload = ProjectListIgnoredFilesInput;
             pub type Success = ProjectListIgnoredFilesResult;
             pub type Error = ProjectsListEntriesError;
         }
@@ -24357,6 +24525,14 @@ pub mod rpc {
             pub type Payload = PullRequestSubmitReviewInput;
             pub type Success = ();
             pub type Error = PullRequestsActivityError;
+        }
+        /// `pullRequests.subscribeLinkedThreadRefreshes`
+        pub mod subscribe_linked_thread_refreshes {
+            #[allow(unused_imports)]
+            use crate::{support::*, *};
+            pub type Payload = ServerProbePayload;
+            pub type Item = i64;
+            pub type Error = EnvironmentAuthorizationError;
         }
         /// `pullRequests.subscribeRefreshes`
         pub mod subscribe_refreshes {

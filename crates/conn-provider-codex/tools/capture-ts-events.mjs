@@ -140,7 +140,7 @@ for (const name of names) {
   };
   NodeFS.writeFileSync(
     NodePath.join(CRATE, "testdata/ts", `${name}.json`),
-    `${JSON.stringify(golden)}\n`,
+    `${JSON.stringify(golden, null, 2)}\n`,
   );
   NodeFS.copyFileSync(
     NodePath.join(testkit, "fixtures", name, "codex_transcript.ndjson"),

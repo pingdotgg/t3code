@@ -9,7 +9,7 @@
 //!
 //! Patches follow `applyServerSettingsPatch` (`packages/shared/src/serverSettings.ts`): a deep
 //! merge, with the replacements and entry maps listed in [`apply_patch`]. A patch must decode
-//! as `ServerSettingsPatch` and the result as `ServerSettings`. Secrets stay in the file
+//! as `ClientServerSettingsPatch` and the result as `ServerSettings`. Secrets stay in the file
 //! (0600) instead of a secret store. They are redacted for clients per group, and a secret a
 //! client echoes as `••••••` keeps its stored value; the groups and fields come from the T3
 //! server (`settings/generated.rs`, by `tools/gen-upstream.mjs`). The TypeScript server moves
@@ -27,7 +27,7 @@ use std::{
 use serde_json::{Map, Value, json};
 use tokio::sync::watch;
 
-use conn_contract::{ProviderInstanceMutation, ServerSettings, ServerSettingsPatch};
+use conn_contract::{ClientServerSettingsPatch, ProviderInstanceMutation, ServerSettings};
 
 use crate::auth::write_private;
 
@@ -37,10 +37,16 @@ pub const SECRET_REDACTED: &str = "\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{20
 mod generated;
 
 use generated::{
-    BACKGROUND_PRESETS, CLOUD_SPEECH, EAS_DEVICE_HOST, PROJECT_OVERRIDE_KEYS, PROVIDER_CONFIG,
-    SECRET_PROVIDER_KINDS, SIMLOCK_DEVICE_HOST, SOURCE_CONTROL_HOST, TEXT_GENERATOR,
-    USAGE_LIMIT_SOURCE,
+    BACKGROUND_PRESETS, CLIENT_PATCH_KEYS, CLOUD_SPEECH, EAS_DEVICE_HOST, PROJECT_OVERRIDE_KEYS,
+    PROVIDER_CONFIG, SECRET_PROVIDER_KINDS, SIMLOCK_DEVICE_HOST, SOURCE_CONTROL_HOST,
+    TEXT_GENERATOR, USAGE_LIMIT_SOURCE,
 };
+
+/// Drops the top-level keys that `ClientServerSettingsPatch` does not have, as the T3 server's
+/// decode does: a client cannot set the theme defaults, which only the theme service writes.
+fn keep_client_patch_keys(patch: &mut Map<String, Value>) {
+    patch.retain(|key, _| CLIENT_PATCH_KEYS.contains(&key.as_str()));
+}
 
 /// Keys a patch replaces whole instead of merging.
 const REPLACED: &[&str] = &[
@@ -149,12 +155,12 @@ impl SettingsStore {
 
     /// Applies a `server.updateSettings` patch, saves, and returns the client view.
     ///
-    /// The patch must decode as `ServerSettingsPatch` and the mutation as
+    /// The patch must decode as `ClientServerSettingsPatch` and the mutation as
     /// `ProviderInstanceMutation`, and the result must decode as `ServerSettings`, so a client
     /// can never store settings that no client decodes. A secret a client echoes as `••••••`
     /// keeps its stored value (`persistSettingsSecrets`).
     pub fn update(&self, patch: Value, mutation: Option<Value>) -> Result<Value, SettingsError> {
-        if let Err(error) = conn_contract::from_json::<ServerSettingsPatch>(patch.clone()) {
+        if let Err(error) = conn_contract::from_json::<ClientServerSettingsPatch>(patch.clone()) {
             return Err(self.error("normalize", format!("invalid settings patch: {error}")));
         }
         if let Some(mutation) = &mutation
@@ -166,9 +172,10 @@ impl SettingsStore {
                 format!("invalid provider instance mutation: {error}"),
             ));
         }
-        let Value::Object(patch) = patch else {
+        let Value::Object(mut patch) = patch else {
             return Err(self.error("normalize", "the patch is not an object"));
         };
+        keep_client_patch_keys(&mut patch);
         let mut sparse = self.lock();
         let mut next = sparse.clone();
         if let Some(mutation) = &mutation
@@ -962,6 +969,26 @@ mod tests {
         // Every write stores the idle compaction mode, as the T3 server does.
         assert_eq!(next["idleCompaction"], "onReturn");
         assert_eq!(next["compactIdleThreads"], false);
+    }
+
+    #[test]
+    fn a_client_patch_cannot_set_the_theme_defaults() {
+        let Value::Object(mut patch) = json!({
+            "defaultTheme": "dracula",
+            "defaultThemeSetAt": "2026-11-14T00:00:00.000Z",
+            "defaultAppearance": "dark",
+            "defaultAppearanceSetAt": "2026-11-14T00:00:00.000Z",
+            "notAKey": 1,
+            "enableAgentBrowserAccess": true,
+        }) else {
+            panic!()
+        };
+        keep_client_patch_keys(&mut patch);
+        assert_eq!(
+            Value::Object(patch),
+            json!({ "enableAgentBrowserAccess": true }),
+            "only ClientServerSettingsPatch keys stay"
+        );
     }
 
     #[test]

@@ -91,11 +91,22 @@ const payloadRules = [
   ]),
 ].sort();
 
-// Settings keys that need `providers:manage`: ask the T3 function key by key.
+// The scope each settings patch key needs: ask the T3 function key by key. A key needs
+// `settings:write`, `providers:manage` or `access:write`, alone. Any other answer is a new
+// domain that `scopes.rs` settings_scopes does not know, so generation fails.
 const patchKeys = Object.keys(settings.ServerSettingsPatch.fields).sort();
-const providerKeys = patchKeys.filter((key) =>
-  settings.requiredScopesForServerSettingsPatch({ [key]: {} }).includes("providers:manage"),
+const keyScopes = new Map(
+  patchKeys.map((key) => [key, settings.requiredScopesForServerSettingsPatch({ [key]: {} }).join(",")]),
 );
+for (const [key, scope] of keyScopes) {
+  if (!["settings:write", "providers:manage", "access:write"].includes(scope)) {
+    throw new Error(
+      `settings key ${key} needs "${scope}": teach gen-upstream.mjs and scopes.rs settings_scopes this domain`,
+    );
+  }
+}
+const providerKeys = patchKeys.filter((key) => keyScopes.get(key) === "providers:manage");
+const accessKeys = patchKeys.filter((key) => keyScopes.get(key) === "access:write");
 if (providerKeys.length === 0) throw new Error("no settings key needs providers:manage");
 
 // Scope rules inside handlers, outside the two maps.
@@ -126,6 +137,11 @@ const scopesRs = rustfmt(
     "/// Settings keys whose change needs `providers:manage`; any other key needs `settings:write`.",
     "pub(super) const PROVIDER_SETTINGS: &[&str] = &[",
     ...providerKeys.map((key) => `${str(key)},`),
+    "];",
+    "",
+    "/// Settings patch keys that need `access:write` (requiredScopesForServerSettingsPatch).",
+    "pub(super) const ACCESS_SETTINGS: &[&str] = &[",
+    ...accessKeys.map((key) => `${str(key)},`),
     "];",
     "",
     "/// Scope rules the T3 server applies inside a handler, outside the method table. A served",
@@ -273,6 +289,11 @@ const secretsRs = rustfmt(
     "/// The keys of a `projectSettingsOverrides` entry (`ProjectSettingsOverrides`). A patch",
     "/// writes only these; a stored entry keeps the others (`mergeProjectSettingsOverridesPatch`).",
     `pub(super) const PROJECT_OVERRIDE_KEYS: &[&str] = ${strs(Object.keys(contracts.ProjectSettingsOverrides.fields).sort())};`,
+    "",
+    "/// The keys of `ClientServerSettingsPatch`, the patch `server.updateSettings` decodes. The",
+    "/// T3 server's decode drops every other top-level key, such as the theme defaults that only",
+    "/// its theme service sets.",
+    `pub(super) const CLIENT_PATCH_KEYS: &[&str] = ${strs(Object.keys(contracts.ClientServerSettingsPatch.fields).sort())};`,
     "",
   ].join("\n"),
 );

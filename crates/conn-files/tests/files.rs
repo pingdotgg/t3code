@@ -270,9 +270,36 @@ fn lists_folders_with_links_inside_and_ignored_marks() {
     let all = entries::list_all(&f.project, &f.files.internal);
     let paths: Vec<&str> = all.entries.iter().map(|e| e.path.as_str()).collect();
     assert_eq!(paths, [".gitignore", "src", "src/main.rs"]);
-    let ignored = entries::list_ignored(&f.project, &f.files.internal);
+    let ignored = entries::list_ignored(&f.project, &f.files.internal, None);
     let ignored: Vec<&str> = ignored.files.iter().map(|f| f.path.as_str()).collect();
     assert_eq!(ignored, ["debug.log"], "build/ is a wholly ignored folder");
+}
+
+/// T3's WorkspaceEntries test: a query finds ignored files that sort past the 200 cap.
+#[test]
+fn a_query_finds_ignored_files_past_the_listing_limit() {
+    let f = fixture("ignored-query");
+    git(&f.project, &["init", "-q"]);
+    let d = Dir(f.project.clone());
+    d.write(".gitignore", "*.secret\n");
+    for index in 1..=205 {
+        d.write(&format!("file-{index:03}.secret"), "s");
+    }
+    let all = entries::list_ignored(&f.project, &f.files.internal, None);
+    assert!(all.truncated, "205 files pass the cap");
+    assert!(!all.files.iter().any(|f| f.path == "file-205.secret"));
+    let found = entries::list_ignored(&f.project, &f.files.internal, Some("FILE-205"));
+    let paths: Vec<(&str, i64)> = found
+        .files
+        .iter()
+        .map(|f| (f.path.as_str(), f.byte_length))
+        .collect();
+    assert_eq!(
+        paths,
+        [("file-205.secret", 1)],
+        "case-insensitive, before the cap"
+    );
+    assert!(!found.truncated);
 }
 
 #[test]

@@ -657,7 +657,7 @@ async fn an_agent_delegates_a_task_and_is_woken() {
     let task_id = task["taskId"].as_str().unwrap().to_owned();
     assert_eq!(
         task["next"],
-        "Completion wakes this thread, so end your turn. Do not wait on it or poll it."
+        "Completion wakes this thread. Do not wait on it or poll it. Continue other work, and end your turn when none is left."
     );
     let child = task["childThreadId"].as_str().unwrap().to_owned();
     c.ok(

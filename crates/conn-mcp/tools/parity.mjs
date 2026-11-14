@@ -3,7 +3,9 @@
 // state; compares outcome, failure code and result shape. By default no model is called:
 // the thread launch and every step on its thread are skipped. `--model` runs them too, with
 // one Haiku turn on the T3 server. `--no-model` is accepted and is the default.
-// Usage: parity.mjs [--model] <conn-server-binary>. Needs `vp i` in `CONN_MONOREPO`.
+// Usage: parity.mjs [--model] [--record-tools-list <file>] <conn-server-binary>. Needs `vp i`
+// in `CONN_MONOREPO`. `--record-tools-list` also writes the T3 server's `tools/list` reply to
+// <file>: after a pin bump, refresh `fixtures/ts-tools-list.json` with it (docs/upkeep.md).
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeNet from "node:net";
@@ -15,7 +17,13 @@ import { monorepo } from "../../../tools/monorepo.mjs";
 
 const argv = process.argv.slice(2);
 const noModel = !argv.includes("--model");
-const rustBinary = argv.find((a) => !a.startsWith("--"));
+const recordAt = argv.indexOf("--record-tools-list");
+const recordFile = recordAt === -1 ? undefined : argv[recordAt + 1];
+if (recordAt !== -1 && (recordFile === undefined || recordFile.startsWith("--"))) {
+  console.error("--record-tools-list needs a file");
+  process.exit(2);
+}
+const rustBinary = argv.find((a, i) => !a.startsWith("--") && (recordAt === -1 || i !== recordAt + 1));
 if (rustBinary === undefined) {
   console.error("usage: parity.mjs [--model] <conn-server-binary>");
   process.exit(2);
@@ -206,6 +214,10 @@ const report = (line, ok) => {
 
 // tools/list: the implemented tools' definitions must be equal.
 const lists = await Promise.all(sessions.map((s) => s.request("tools/list", {})));
+if (recordFile !== undefined) {
+  NodeFS.writeFileSync(recordFile, `${JSON.stringify(lists[0], null, 2)}\n`);
+  console.log(`wrote the T3 server's tools/list (${lists[0].result.tools.length} tools) to ${recordFile}`);
+}
 for (const name of implemented) {
   const [ts, rust] = lists.map((list) => list.result.tools.find((tool) => tool.name === name));
   report(`tools/list ${name}`, ts !== undefined && JSON.stringify(ts) === JSON.stringify(rust));

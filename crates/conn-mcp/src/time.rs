@@ -29,3 +29,92 @@ pub fn now_iso() -> String {
         millis.rem_euclid(1000)
     )
 }
+
+/// Milliseconds since the epoch of a wire time (`2026-11-13T08:49:41.123Z`, a fraction and a
+/// `Z` or `+hh:mm` offset optional), or `None` for text that is not one. The T3 server gets
+/// this from `Date.parse`; it only ever sees the wire form.
+pub fn parse_iso_ms(text: &str) -> Option<i64> {
+    let digits = |s: &str| -> Option<i64> {
+        (!s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
+            .then(|| s.parse::<i64>().ok())
+            .flatten()
+    };
+    let (date, time) = text.split_once('T')?;
+    let mut date = date.split('-');
+    let (y, m, d) = (
+        digits(date.next()?)?,
+        digits(date.next()?)?,
+        digits(date.next()?)?,
+    );
+    if date.next().is_some() || !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+        return None;
+    }
+    let (clock, offset_minutes) = if let Some(clock) = time.strip_suffix('Z') {
+        (clock, 0)
+    } else {
+        let at = time.rfind(['+', '-'])?;
+        let (clock, zone) = time.split_at(at);
+        let (hh, mm) = zone.get(1..)?.split_once(':')?;
+        let minutes = digits(hh)? * 60 + digits(mm)?;
+        (
+            clock,
+            if zone.starts_with('-') {
+                -minutes
+            } else {
+                minutes
+            },
+        )
+    };
+    let (clock, fraction) = clock.split_once('.').unwrap_or((clock, ""));
+    let mut parts = clock.split(':');
+    let (hh, mm, ss) = (
+        digits(parts.next()?)?,
+        digits(parts.next()?)?,
+        digits(parts.next()?)?,
+    );
+    if parts.next().is_some() || hh > 23 || mm > 59 || ss > 59 {
+        return None;
+    }
+    let millis = if fraction.is_empty() {
+        0
+    } else {
+        let head: String = fraction.chars().take(3).collect();
+        digits(&head)? * 10_i64.pow(3 - head.len() as u32)
+    };
+    // Howard Hinnant's `days_from_civil`.
+    let y = y - i64::from(m <= 2);
+    let era = y.div_euclid(400);
+    let yoe = y.rem_euclid(400);
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    Some(((days * 86_400 + hh * 3600 + mm * 60 + ss - offset_minutes * 60) * 1000) + millis)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_the_wire_form() {
+        assert_eq!(parse_iso_ms("1970-01-01T00:00:00.000Z"), Some(0));
+        assert_eq!(parse_iso_ms("1970-01-01T00:00:01Z"), Some(1000));
+        assert_eq!(
+            parse_iso_ms("2026-11-13T08:49:41.123Z"),
+            Some(1_794_559_781_123)
+        );
+        assert_eq!(
+            parse_iso_ms("2026-11-13T09:49:41.123+01:00"),
+            parse_iso_ms("2026-11-13T08:49:41.123Z")
+        );
+        assert_eq!(parse_iso_ms("not a time"), None);
+        assert_eq!(parse_iso_ms("2026-13-01T00:00:00Z"), None);
+    }
+
+    #[test]
+    fn agrees_with_now_iso() {
+        let now = now_iso();
+        let ms = parse_iso_ms(&now).unwrap();
+        assert_eq!(ms.rem_euclid(1000), now[20..23].parse::<i64>().unwrap());
+    }
+}

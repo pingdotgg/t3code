@@ -10,6 +10,8 @@
     {"group":"auth","method":"GET","path":"/api/auth/clients"},
     {"group":"auth","method":"POST","path":"/api/auth/clients/revoke"},
     {"group":"auth","method":"POST","path":"/api/auth/clients/revoke-others"},
+    {"group":"auth","method":"POST","path":"/api/auth/connect-devices/approve"},
+    {"group":"auth","method":"POST","path":"/api/auth/connect-devices/revoke"},
     {"group":"auth","method":"POST","path":"/api/auth/pairing-links/revoke"},
     {"group":"auth","method":"POST","path":"/api/auth/pairing-token"},
     {"group":"auth","method":"GET","path":"/api/auth/session"},

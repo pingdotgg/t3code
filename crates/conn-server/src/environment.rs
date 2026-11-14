@@ -154,6 +154,9 @@ pub fn capabilities() -> ExecutionEnvironmentCapabilities {
     capabilities.thread_force_stop = Some(true);
     capabilities.shell_thread_families = Some(true);
     capabilities.shell_older_settled = Some(true);
+    // projects.listIgnoredFiles, with `query` (conn-files entries::list_ignored).
+    capabilities.ignored_file_listing = Some(true);
+    capabilities.ignored_file_search = Some(true);
     capabilities
 }
 
@@ -226,6 +229,8 @@ mod tests {
             [
                 "attachmentUploads",
                 "fileAttachments",
+                "ignoredFileListing",
+                "ignoredFileSearch",
                 "shellOlderSettled",
                 "shellThreadFamilies",
                 "threadForceStop"

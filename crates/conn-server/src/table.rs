@@ -224,8 +224,13 @@ mod tests {
     #[test]
     fn reports_coverage() {
         let coverage = table().coverage();
-        assert_eq!(coverage.to_string(), "2 of 235 methods (1 of 32 streams)");
-        assert_eq!(coverage.missing.len(), 233);
+        let all = conn_contract::methods();
+        let streams = all.iter().filter(|m| m.stream).count();
+        assert_eq!(
+            coverage.to_string(),
+            format!("2 of {} methods (1 of {streams} streams)", all.len())
+        );
+        assert_eq!(coverage.missing.len(), all.len() - 2);
         assert!(!coverage.missing.contains(&"server.probe"));
     }
 

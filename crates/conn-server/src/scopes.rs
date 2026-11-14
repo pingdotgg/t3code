@@ -20,11 +20,12 @@ const ORCHESTRATION_OPERATE: &str = "orchestration:operate";
 const FILESYSTEM_READ: &str = "filesystem:read";
 const SETTINGS_WRITE: &str = "settings:write";
 const PROVIDERS_MANAGE: &str = "providers:manage";
+const ACCESS_WRITE: &str = "access:write";
 const SOURCE_CONTROL_WRITE: &str = "source-control:write";
 
 mod generated;
 
-use generated::{PAYLOAD_RULES, PROVIDER_SETTINGS, SCOPES};
+use generated::{ACCESS_SETTINGS, PAYLOAD_RULES, PROVIDER_SETTINGS, SCOPES};
 
 /// The methods [`from_payload`] decides. A test checks this list against the T3 server's own
 /// (`generated::PAYLOAD_RULES`), so a new or dropped payload rule upstream fails the build.
@@ -144,19 +145,27 @@ fn from_payload(tag: &str, payload: &Value) -> Option<Vec<&'static str>> {
 /// `requiredScopesForServerSettingsPatch`: a patch needs the scope of every domain it changes.
 fn settings_scopes(patch: &Map<String, Value>) -> Vec<&'static str> {
     let is_provider_key = |key: &String| PROVIDER_SETTINGS.contains(&key.as_str());
+    let is_access_key = |key: &String| ACCESS_SETTINGS.contains(&key.as_str());
     let changes_providers = patch.keys().any(is_provider_key);
+    let changes_access = patch.keys().any(is_access_key);
     // Removing a secret provider also clears the settings fields that read from it.
     let removes_secret_provider = patch
         .get("secretProviders")
         .and_then(Value::as_object)
         .is_some_and(|entries| entries.values().any(Value::is_null));
-    let changes_settings = removes_secret_provider || patch.keys().any(|k| !is_provider_key(k));
+    let changes_settings = removes_secret_provider
+        || patch
+            .keys()
+            .any(|k| !is_provider_key(k) && !is_access_key(k));
     let mut scopes = Vec::new();
-    if changes_settings || !changes_providers {
+    if changes_settings || (!changes_providers && !changes_access) {
         scopes.push(SETTINGS_WRITE);
     }
     if changes_providers {
         scopes.push(PROVIDERS_MANAGE);
+    }
+    if changes_access {
+        scopes.push(ACCESS_WRITE);
     }
     scopes
 }
@@ -224,6 +233,15 @@ mod tests {
         );
         let mixed = json!({"patch": {"providerInstances": {}, "enableAgentBrowserAccess": true}});
         let error = denied(&["providers:manage"], "server.updateSettings", mixed);
+        assert_eq!(error.unwrap()["requiredPermission"], "settings:write");
+
+        // T3 Connect device approval is access, not settings.
+        let access = json!({"patch": {"requireConnectDeviceApproval": true}});
+        let error = denied(&["settings:write"], "server.updateSettings", access.clone());
+        assert_eq!(error.unwrap()["requiredPermission"], "access:write");
+        assert!(denied(&["access:write"], "server.updateSettings", access).is_none());
+        let mixed = json!({"patch": {"requireConnectDeviceApproval": true, "enableAgentBrowserAccess": true}});
+        let error = denied(&["access:write"], "server.updateSettings", mixed);
         assert_eq!(error.unwrap()["requiredPermission"], "settings:write");
 
         let media = json!({"resource": {"_tag": "media-file", "path": "/etc/hosts"}});

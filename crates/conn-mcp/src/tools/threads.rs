@@ -16,8 +16,10 @@ const DEFAULT_LIST_LIMIT: usize = 10;
 const DEFAULT_READ_LIMIT: usize = 10;
 const DEFAULT_RUN_LIMIT: usize = 10;
 const DEFAULT_ITEM_MAX_CHARS: usize = 500;
-/// A read stays near this size; later items wait for the next page.
-const READ_BUDGET_CHARS: usize = 30_000;
+/// A read result stays within this many bytes of JSON; later items wait for the next page.
+/// Claude Code saves MCP results over about 25k tokens to a file. Bytes, not characters: CJK
+/// text runs near one token per character (`THREAD_READ_RESULT_MAX_BYTES`).
+const READ_RESULT_MAX_BYTES: usize = 30_000;
 const DEFAULT_WAIT_MS: u64 = 10 * 60 * 1000;
 pub const MAX_WAIT_MS: u64 = 60 * 60 * 1000;
 const MESSAGE_VIEW_TYPES: [&str; 3] = ["user_message", "assistant_message", "proposed_plan"];
@@ -174,16 +176,12 @@ pub async fn read(cx: &Cx<'_>, args: &Args) -> ToolResult {
     } else {
         0
     };
-    let mut items: Vec<Value> = page
-        .iter()
-        .map(|row| view::timeline_item(row, messages, max_chars, offset))
-        .collect();
-    let page = if after.is_none() && before.is_none() && item_id.is_none() {
+    let page_kind = if after.is_none() && before.is_none() && item_id.is_none() {
         view::Page::First
     } else {
         view::Page::Later
     };
-    let thread = view::thread_detail(cx.config(), cx.caller, &projection, &now_iso(), page);
+    let thread = view::thread_detail(cx.config(), cx.caller, &projection, &now_iso(), page_kind);
     let mut runs: Vec<&Value> = projection["runs"]
         .as_array()
         .map(|r| r.iter().collect())
@@ -195,27 +193,16 @@ pub async fn read(cx: &Cx<'_>, args: &Args) -> ToolResult {
         .map(|run| view::thread_run(&projection, run))
         .collect();
 
-    // Keep the end of the page the caller reads toward, and at least one item.
-    let mut size = json!({"thread": thread, "recentRuns": recent_runs})
-        .to_string()
-        .len();
-    let mut kept = 0;
-    let order: Vec<usize> = if newest_first {
-        (0..items.len()).rev().collect()
-    } else {
-        (0..items.len()).collect()
-    };
-    for index in order {
-        size += items[index].to_string().len() + 1;
-        if kept > 0 && size > READ_BUDGET_CHARS {
-            break;
-        }
-        kept += 1;
-    }
-    let start = if newest_first { items.len() - kept } else { 0 };
-    let total = items.len();
-    items = items.drain(start..start + kept).collect();
-    if !newest_first && kept < total {
+    let total = page.len();
+    let (items, start) = items_within_budget(
+        &json!({"thread": thread, "recentRuns": recent_runs}),
+        &page,
+        messages,
+        max_chars,
+        offset,
+        newest_first,
+    );
+    if !newest_first && items.len() < total {
         has_more = true;
     }
     let earlier = (has_earlier || start > 0)
@@ -229,6 +216,56 @@ pub async fn read(cx: &Cx<'_>, args: &Args) -> ToolResult {
         "earlierPosition": earlier,
         "items": items,
     }))
+}
+
+/// `timelineItemsWithinBudget`: the items, taken from the end the caller pages toward, whose
+/// result fits `READ_RESULT_MAX_BYTES`, and the index of the first one kept. The result is
+/// never empty for a page with rows: an oversized first item is cut to fit.
+fn items_within_budget(
+    envelope: &Value,
+    rows: &[&Value],
+    messages: &[Value],
+    max_chars: usize,
+    offset: usize,
+    newest_first: bool,
+) -> (Vec<Value>, usize) {
+    let mut empty = envelope.clone();
+    empty["nextPosition"] = Value::Null;
+    empty["hasMore"] = json!(false);
+    empty["earlierPosition"] = Value::Null;
+    empty["items"] = json!([]);
+    // An oversized envelope (a huge thread title, say) must not starve the items.
+    let budget = READ_RESULT_MAX_BYTES
+        .saturating_sub(view::json_bytes(&empty))
+        .max(READ_RESULT_MAX_BYTES / 2);
+    let ordered: Vec<&Value> = if newest_first {
+        rows.iter().rev().copied().collect()
+    } else {
+        rows.to_vec()
+    };
+    let mut items: Vec<Value> = Vec::new();
+    let mut bytes = 0;
+    for row in ordered {
+        let item = view::timeline_item(row, messages, max_chars, offset);
+        bytes += view::json_bytes(&item) + usize::from(!items.is_empty());
+        if bytes <= budget {
+            items.push(item);
+            continue;
+        }
+        if items.is_empty() {
+            items.push(view::timeline_item_within(
+                row, messages, max_chars, offset, budget,
+            ));
+        }
+        break;
+    }
+    if newest_first {
+        items.reverse();
+        let start = rows.len().saturating_sub(items.len());
+        (items, start)
+    } else {
+        (items, 0)
+    }
 }
 
 const SNIPPET_CHARS: usize = 240;
@@ -837,4 +874,70 @@ pub async fn pending_request(cx: &Cx<'_>, args: &Args) -> ToolResult {
         }))
         .await?;
     Ok(json!({ "sequence": sequence }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(position: i64, text: &str) -> Value {
+        json!({ "position": position, "visibility": "visible", "sourceThreadId": "t",
+                "sourceItemId": format!("i{position}"),
+                "item": { "type": "reasoning", "runId": "r", "status": "completed",
+                          "title": null, "updatedAt": "2026-01-01T00:00:00.000Z", "text": text } })
+    }
+
+    fn positions(items: &[Value]) -> Vec<i64> {
+        items
+            .iter()
+            .filter_map(|i| i["position"].as_i64())
+            .collect()
+    }
+
+    #[test]
+    fn a_read_keeps_the_end_it_pages_toward_within_the_byte_budget() {
+        // 20 rows of 2,000 bytes of text: about 14 fit in 30,000 bytes.
+        let rows: Vec<Value> = (0..20).map(|p| row(p, &"x".repeat(2_000))).collect();
+        let refs: Vec<&Value> = rows.iter().collect();
+        let envelope = json!({"thread": {}, "recentRuns": []});
+        let (items, start) = items_within_budget(&envelope, &refs, &[], 2_000, 0, true);
+        assert_eq!(items.len(), 20 - start);
+        assert!(start > 0);
+        assert_eq!(positions(&items).last(), Some(&19));
+        let size: usize = items.iter().map(|i| view::json_bytes(i) + 1).sum();
+        assert!(size <= READ_RESULT_MAX_BYTES, "{size}");
+        // One more row would not fit.
+        let next = view::timeline_item(&rows[start - 1], &[], 2_000, 0);
+        assert!(size + view::json_bytes(&next) + 1 > READ_RESULT_MAX_BYTES);
+        // Paging forward keeps the start.
+        let (items, start) = items_within_budget(&envelope, &refs, &[], 2_000, 0, false);
+        assert_eq!((positions(&items).first().copied(), start), (Some(0), 0));
+        assert!(items.len() < 20);
+    }
+
+    #[test]
+    fn the_byte_budget_counts_bytes_not_characters() {
+        // 3,000 CJK characters are 9,000 bytes; the same 20 rows keep far fewer than by chars.
+        let rows: Vec<Value> = (0..20).map(|p| row(p, &"漢".repeat(3_000))).collect();
+        let refs: Vec<&Value> = rows.iter().collect();
+        let envelope = json!({"thread": {}, "recentRuns": []});
+        let (items, _) = items_within_budget(&envelope, &refs, &[], 3_000, 0, true);
+        assert_eq!(items.len(), 3);
+    }
+
+    #[test]
+    fn an_oversized_first_item_is_cut_not_dropped() {
+        let rows = [row(0, &"漢".repeat(20_000))];
+        let refs: Vec<&Value> = rows.iter().collect();
+        let envelope = json!({"thread": {}, "recentRuns": []});
+        let (items, start) = items_within_budget(&envelope, &refs, &[], 20_000, 0, true);
+        assert_eq!((items.len(), start), (1, 0));
+        let item = &items[0];
+        assert_eq!(item["textTruncated"], true);
+        assert!(view::json_bytes(item) <= READ_RESULT_MAX_BYTES);
+        assert_eq!(
+            item["nextTextOffset"].as_u64(),
+            item["text"].as_str().map(|t| t.chars().count() as u64)
+        );
+    }
 }
