@@ -3,6 +3,9 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
+// oxlint-disable-next-line t3code/no-global-process-runtime -- Vite loads this before workspace dependencies are installed.
+const isWindows = process.platform === "win32";
+
 interface CachedTestTask {
   command: string;
   cwd?: string;
@@ -15,10 +18,18 @@ interface CachedTestTask {
       };
 }
 
-export function matchesTestPath(file: string, filters: Array<string>) {
+export function relativeTestPath(from: string, to: string): string {
+  return NodePath.relative(from, to).split(NodePath.sep).join("/");
+}
+
+export function matchesTestPath(file: string, filters: Array<string>, ignoreCase = isWindows) {
+  const candidate = ignoreCase ? file.toLowerCase() : file;
   return (
     filters.length === 0 ||
-    filters.some((filter) => filter === "" || file === filter || file.startsWith(`${filter}/`))
+    filters.some((filter) => {
+      const prefix = ignoreCase ? filter.toLowerCase() : filter;
+      return prefix === "" || candidate === prefix || candidate.startsWith(`${prefix}/`);
+    })
   );
 }
 
@@ -94,10 +105,12 @@ export function cachedTestTasks(
     groups.push(...entries.filter((file) => uncached.includes(file)).map((file) => [file]));
     for (const group of groups) {
       const key = NodeCrypto.createHash("sha256").update(group.join("\0")).digest("hex");
+      // Vite+'s Windows tracing can miss files read by Vitest workers.
+      const skipCache = isWindows || uncached.includes(group[0]!);
       tasks[`test-cache:${key}`] = {
-        command: `${command} ${group.map((file) => `'${NodePath.relative(directory, NodePath.join(root, file)).replaceAll("'", "'\"'\"'")}'`).join(" ")}`,
-        ...(directory === root ? {} : { cwd: NodePath.relative(root, directory) }),
-        cache: uncached.includes(group[0]!)
+        command: `${command} ${group.map((file) => `'${relativeTestPath(directory, NodePath.join(root, file)).replaceAll("'", "'\"'\"'")}'`).join(" ")}`,
+        ...(directory === root ? {} : { cwd: relativeTestPath(root, directory) }),
+        cache: skipCache
           ? false
           : {
               // Vitest reads and rewrites these caches while running otherwise unchanged tests.
