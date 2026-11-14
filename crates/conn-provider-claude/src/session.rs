@@ -45,6 +45,10 @@ const MCP_REGISTRATION_TIMEOUT: Duration = Duration::from_secs(90);
 const MCP_TOOL_TIMEOUT_MS: u64 = 65 * 60 * 1000;
 /// How long a closing query may take: the SDK's 2 s grace, SIGTERM, then SIGKILL after 5 s.
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(20);
+/// How long T3's `interruptTurn` waits for the SDK's `interrupt` (`"10 seconds"`).
+const INTERRUPT_TIMEOUT: Duration = Duration::from_secs(10);
+/// `CLAUDE_STOP_CONFIRM_TIMEOUT_MS`: how long an interrupt waits for the CLI to exit.
+const STOP_CONFIRM_TIMEOUT: Duration = Duration::from_secs(10);
 /// The helper's session-file calls (T3's worker timeout).
 const FUNCTION_TIMEOUT: Duration = Duration::from_secs(30);
 const FLUSH_INTERVAL: Duration = Duration::from_millis(50);
@@ -70,6 +74,11 @@ struct Inner {
     config: ClaudeConfig,
     helper: Helper,
     state: Mutex<State>,
+    /// Runs turn starts and interrupts one at a time, as T3's effect outbox runs a thread's
+    /// effects: a turn sent after a Stop starts once the interrupted CLI has exited.
+    turn_control: tokio::sync::Mutex<()>,
+    /// [`STOP_CONFIRM_TIMEOUT`]; shorter in tests.
+    stop_confirm_timeout: Duration,
 }
 
 struct State {
@@ -145,8 +154,19 @@ impl ClaudeSession {
                 closed: false,
                 logged_skips: HashSet::new(),
             }),
+            turn_control: tokio::sync::Mutex::new(()),
+            stop_confirm_timeout: STOP_CONFIRM_TIMEOUT,
         });
         Self { id, inner }
+    }
+
+    /// A session whose interrupt waits `timeout` for the CLI to exit.
+    #[cfg(test)]
+    pub(crate) fn with_stop_confirm_timeout(mut self, timeout: Duration) -> Self {
+        if let Some(inner) = Arc::get_mut(&mut self.inner) {
+            inner.stop_confirm_timeout = timeout;
+        }
+        self
     }
 
     #[cfg(test)]
@@ -1294,11 +1314,14 @@ impl Session for ClaudeSession {
     /// a turn that shows the output Claude already holds, and sends no prompt
     /// (`isClaudeProviderContinuationTurn`).
     fn start_turn(&self, input: TurnInput) -> BoxFuture<'_, ProviderResult<()>> {
-        if input.message.is_provider_continuation() {
-            Box::pin(self.start_continuation(input))
-        } else {
-            Box::pin(self.start_turn_inner(input))
-        }
+        Box::pin(async move {
+            let _serial = self.inner.turn_control.lock().await;
+            if input.message.is_provider_continuation() {
+                self.start_continuation(input).await
+            } else {
+                self.start_turn_inner(input).await
+            }
+        })
     }
 
     fn steer_turn(&self, input: SteerInput) -> BoxFuture<'_, ProviderResult<()>> {
@@ -1351,21 +1374,52 @@ impl Session for ClaudeSession {
         })
     }
 
+    /// `ClaudeAdapterV2.interruptTurn` for the running turn: the SDK's `interrupt` (at most
+    /// 10 s), then `close` (the CLI's stdin ends; the SDK sends SIGTERM after 2 s and SIGKILL
+    /// 5 s later), then up to 10 s for the CLI to exit. The next turn resumes in a new CLI.
+    /// When the CLI does not exit in time the turn stays open: `InterruptTimeout`, and the
+    /// user decides with Force stop.
     fn interrupt_turn(&self, input: InterruptInput) -> BoxFuture<'_, ProviderResult<()>> {
         Box::pin(async move {
-            {
+            let _serial = self.inner.turn_control.lock().await;
+            let (query, mut ended) = {
                 let mut state = self.inner.lock();
-                if state.live.is_none()
-                    || state.mapper.active_turn_id() != Some(input.provider_turn_id.as_str())
-                {
+                if state.mapper.active_turn_id() != Some(input.provider_turn_id.as_str()) {
                     return Ok(());
                 }
+                let Some(live) = &state.live else {
+                    return Ok(());
+                };
+                let pair = (live.query.clone(), live.ended.clone());
                 state.mapper.mark_interrupted();
+                pair
+            };
+            if !*ended.borrow() {
+                let sent = tokio::time::timeout(
+                    INTERRUPT_TIMEOUT,
+                    query.call("interrupt", json!([]), CONTROL_TIMEOUT),
+                )
+                .await;
+                // Teardown can close the CLI between the check and the write.
+                if let Ok(Err(e)) = sent
+                    && !*ended.borrow()
+                {
+                    return Err(e);
+                }
+                query.close().await;
             }
-            self.inner
-                .call("interrupt", json!([]), CONTROL_TIMEOUT)
+            // A dropped sender means the driver is gone, so the query ended too.
+            let wait = self.inner.stop_confirm_timeout;
+            let exited = tokio::time::timeout(wait, ended.wait_for(|done| *done))
                 .await
-                .map(|_| ())
+                .is_ok();
+            if exited {
+                return Ok(());
+            }
+            eprintln!("conn-provider-claude: the interrupted Claude query did not exit in time");
+            Err(ProviderError::InterruptTimeout {
+                timeout_ms: u64::try_from(wait.as_millis()).unwrap_or(u64::MAX),
+            })
         })
     }
 

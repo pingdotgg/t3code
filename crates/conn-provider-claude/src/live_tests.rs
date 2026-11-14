@@ -23,10 +23,10 @@ use crate::{ClaudeConfig, ClaudeProvider, ClaudeSession};
 
 const TURN_TIMEOUT: Duration = Duration::from_secs(180);
 
-struct Scratch(PathBuf);
+pub(crate) struct Scratch(pub(crate) PathBuf);
 
 impl Scratch {
-    fn new(name: &str) -> Self {
+    pub(crate) fn new(name: &str) -> Self {
         let dir =
             std::env::temp_dir().join(format!("conn-claude-live-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -34,7 +34,7 @@ impl Scratch {
         Self(std::fs::canonicalize(&dir).unwrap())
     }
 
-    fn cwd(&self) -> String {
+    pub(crate) fn cwd(&self) -> String {
         self.0.to_str().unwrap().to_string()
     }
 }
@@ -129,7 +129,7 @@ async fn open(
     (session, events)
 }
 
-fn turn(
+pub(crate) fn turn(
     n: u32,
     thread: &conn_contract::ProviderThread,
     text: &str,
@@ -172,7 +172,7 @@ fn turn(
 }
 
 /// Collects events until `stop` matches one. Returns them all, the matching one last.
-async fn until(
+pub(crate) async fn until(
     events: &mut mpsc::Receiver<ProviderEvent>,
     stop: impl Fn(&Value) -> bool,
 ) -> Vec<Value> {
@@ -191,7 +191,7 @@ async fn until(
     }
 }
 
-fn is_terminal(e: &Value) -> bool {
+pub(crate) fn is_terminal(e: &Value) -> bool {
     e["type"] == "turn.terminal"
 }
 
@@ -205,7 +205,11 @@ fn assistant_text(events: &[Value]) -> String {
         .to_string()
 }
 
-async fn new_thread(session: &dyn Session, mode: &str, cwd: &str) -> conn_contract::ProviderThread {
+pub(crate) async fn new_thread(
+    session: &dyn Session,
+    mode: &str,
+    cwd: &str,
+) -> conn_contract::ProviderThread {
     session
         .ensure_thread(EnsureThreadInput {
             thread_id: "thread-live".into(),
@@ -362,8 +366,11 @@ async fn live_interrupt_then_continue() {
             .clone(),
     )
     .unwrap();
-    let query = session.live_query();
-    assert!(query.is_some());
+    // As T3: the interrupt closed the query, and the CLI exited before it returned.
+    assert!(
+        session.live_query().is_none(),
+        "the interrupt closed the query"
+    );
     session
         .start_turn(turn(
             2,
@@ -377,10 +384,9 @@ async fn live_interrupt_then_continue() {
     let seen = until(&mut events, is_terminal).await;
     assert_eq!(seen.last().unwrap()["status"], "completed");
     assert!(assistant_text(&seen).to_lowercase().contains("alive"));
-    assert_eq!(
-        query,
-        session.live_query(),
-        "the same query served both turns"
+    assert!(
+        session.live_query().is_some(),
+        "turn 2 resumed in a new query"
     );
     session.close().await;
 }
