@@ -69,6 +69,7 @@ import {
 import { getProviderOptionCurrentValue, withLegacyUltracodeEffort } from "@t3tools/shared/model";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
+import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import { threadPullRequestUpdatedAtMs } from "@t3tools/shared/threadPullRequests";
 import {
@@ -1449,6 +1450,28 @@ const make = Effect.gen(function* () {
     );
   };
 
+  const implicitFallbackSelection = (input: {
+    readonly parent: Pick<OrchestrationV2ThreadProjection, "thread">;
+    readonly providers: ReadonlyArray<ServerProvider>;
+    readonly settings: Effect.Success<typeof serverSettings.getSettings>;
+    readonly orchestrationCapableInstanceIds: ReadonlySet<string>;
+    readonly now: number;
+  }) => {
+    const { selection, fallback } = resolveNewThreadModelSelection({
+      defaultSelection: input.parent.thread.modelSelection,
+      fallbackSelection: input.settings.fallbackModelSelection,
+      providers: input.providers,
+      settings: input.settings,
+      projectId: input.parent.thread.projectId,
+      now: input.now,
+    });
+    return fallback !== null &&
+      selection !== null &&
+      input.orchestrationCapableInstanceIds.has(selection.instanceId)
+      ? selection
+      : null;
+  };
+
   const resolveTarget = Effect.fn("OrchestratorMcpService.resolveTarget")(function* (input: {
     readonly parent: Pick<OrchestrationV2ThreadProjection, "thread">;
     readonly target: OrchestratorMcpTarget | undefined;
@@ -1456,9 +1479,35 @@ const make = Effect.gen(function* () {
     /** Receipt replays bypass current settings because they start no work. Dispatch must reuse the checked command ID. */
     readonly skipProjectEnablementFilter?: boolean;
   }): Effect.fn.Return<ResolvedTarget, OrchestratorMcpFailure> {
-    const requestedInstanceId = input.target?.providerInstanceId;
-    const requestedDriver = input.target?.driverKind;
     const orchestrationCapableInstanceIds = yield* loadOrchestrationCapableInstanceIds();
+    let target = input.target;
+    if (
+      target?.providerInstanceId === undefined &&
+      target?.driverKind === undefined &&
+      target?.model === undefined &&
+      input.skipProjectEnablementFilter !== true
+    ) {
+      const settings = yield* serverSettings.getSettings.pipe(
+        Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
+      );
+      const selection = implicitFallbackSelection({
+        parent: input.parent,
+        providers: input.providers,
+        settings,
+        orchestrationCapableInstanceIds,
+        now: yield* Clock.currentTimeMillis,
+      });
+      if (selection !== null) {
+        target = {
+          ...target,
+          providerInstanceId: selection.instanceId,
+          model: selection.model,
+          options: target?.options ?? selection.options,
+        };
+      }
+    }
+    const requestedInstanceId = target?.providerInstanceId;
+    const requestedDriver = target?.driverKind;
     let instanceId = requestedInstanceId;
 
     if (instanceId === undefined && requestedDriver !== undefined) {
@@ -1531,7 +1580,7 @@ const make = Effect.gen(function* () {
     }
 
     const inheritedSelection = input.parent.thread.modelSelection;
-    const requestedModel = input.target?.model;
+    const requestedModel = target?.model;
     const model =
       requestedModel ??
       (instanceId === inheritedSelection.instanceId
@@ -1546,7 +1595,7 @@ const make = Effect.gen(function* () {
     if (requestedModel !== undefined) yield* requireAdvertisedModel(provider, requestedModel);
     const advertised = advertisedModel(provider, model);
     const descriptors = advertised?.capabilities?.optionDescriptors;
-    const requestedOptions = withLegacyUltracodeEffort(descriptors, input.target?.options);
+    const requestedOptions = withLegacyUltracodeEffort(descriptors, target?.options);
     if (requestedOptions !== undefined) {
       const invalid = invalidOptionSelections(requestedOptions, descriptors);
       if (invalid.length > 0) {
@@ -2464,10 +2513,28 @@ const make = Effect.gen(function* () {
       );
       const inherited = parent?.thread.modelSelection;
       const searchTerms = input.search?.toLowerCase().split(/\s+/).filter(Boolean) ?? [];
+      const fallback = settings.fallbackModelSelection;
       return {
         parentThreadId: parent?.thread.id ?? null,
         inheritedProviderInstanceId: inherited?.instanceId ?? null,
         inheritedModel: inherited?.model ?? null,
+        ...(fallback === null
+          ? {}
+          : {
+              fallback: {
+                providerInstanceId: fallback.instanceId,
+                model: fallback.model,
+                active:
+                  parent !== undefined &&
+                  implicitFallbackSelection({
+                    parent,
+                    providers,
+                    settings,
+                    orchestrationCapableInstanceIds,
+                    now: yield* Clock.currentTimeMillis,
+                  }) !== null,
+              },
+            }),
         inheritedOptions:
           knownOptions(
             inherited?.options,
