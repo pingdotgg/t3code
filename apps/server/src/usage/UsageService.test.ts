@@ -33,8 +33,11 @@ import * as FileSystem from "effect/FileSystem";
 import * as Context from "effect/Context";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Scheduler from "effect/Scheduler";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
@@ -51,6 +54,9 @@ import * as AntigravityUsage from "../provider/Drivers/AntigravityUsage.ts";
 import * as ProviderHostLive from "../provider/ProviderHostLive.ts";
 import { totalTokens, type UsageRecord } from "@t3tools/provider-core/server/usage";
 import * as UsageService from "./UsageService.ts";
+import * as UsageTranscriptParser from "./UsageTranscriptParser.ts";
+import { TRANSCRIPT_USAGE_FORMATS } from "./usageTranscriptFormats.ts";
+import { BUILT_IN_USAGE_DRIVERS } from "../provider/builtInDrivers.ts";
 import { DESKTOP_HOST_SCOPE_ENV, physicalSourceIdOf } from "./usageTranscriptReader.ts";
 import * as MuseSdk from "../../../../packages/provider-muse/src/server/sdk.ts";
 import { MuseUsageHome } from "@t3tools/provider-muse/server";
@@ -195,8 +201,14 @@ const layerService = (input: {
   readonly platform?: NodeJS.Platform;
   readonly hostname?: string;
   readonly secretStore?: Partial<ServerSecretStore.ServerSecretStore["Service"]>;
+  readonly transcriptParser?: Layer.Layer<
+    UsageTranscriptParser.UsageTranscriptParser,
+    never,
+    ChildProcessSpawner.ChildProcessSpawner | Path.Path
+  >;
 }) =>
   layerCursorUsageAccounts(CursorAccountReader.layer).pipe(
+    Layer.provideMerge(input.transcriptParser ?? UsageTranscriptParser.layerInProcess),
     Layer.provideMerge(AntigravityUsage.layer),
     Layer.provideMerge(MuseUsageHome.layer),
     Layer.provideMerge(ProviderHostLive.layer),
@@ -522,6 +534,134 @@ describe("Codex usage history", () => {
 });
 
 describe("UsageService", () => {
+  it("parses every built-in transcript format in the parse subprocess", () => {
+    for (const driver of BUILT_IN_USAGE_DRIVERS) {
+      if (driver.usage?.kind !== "transcripts") continue;
+      assert.strictEqual(TRANSCRIPT_USAGE_FORMATS.get(driver.usage.provider), driver.usage.format);
+    }
+  });
+
+  it.live("subprocess parsing matches in-process totals and cache entries", () =>
+    Effect.gen(function* () {
+      const { home, transcript, settings } = yield* setup;
+      const sessions = NodePath.join(home, "codex", "sessions");
+      const rolloutPath = NodePath.join(sessions, "plain.jsonl");
+      const codexUsage = (output_tokens: number, timestamp: string) =>
+        encodeUnknownJsonString({
+          type: "event_msg",
+          timestamp,
+          payload: {
+            type: "token_count",
+            info: { last_token_usage: { input_tokens: 10, output_tokens } },
+          },
+        }) + "\n";
+      const rollout = (id: string, output: number) =>
+        [
+          { type: "session_meta", payload: { id } },
+          { type: "turn_context", payload: { model: "gpt-6-astra" } },
+        ]
+          .map((line) => encodeUnknownJsonString(line))
+          .join("\n") +
+        "\n" +
+        codexUsage(output, "2026-08-01T10:00:00Z");
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(sessions, { recursive: true });
+        await NodeFSP.writeFile(transcript, claudeLine(1, 5) + claudeLine(2, 7));
+        await NodeFSP.writeFile(rolloutPath, rollout("plain-session", 17));
+        await NodeFSP.writeFile(
+          NodePath.join(sessions, "compressed.jsonl.zst"),
+          NodeZlib.zstdCompressSync(rollout("compressed-session", 23)),
+        );
+      });
+      const comparable = ({ readAt: _, scanDurationMs: __, ...summary }: UsageSummary) => summary;
+      let requestedFiles = 0;
+      let childResultLines = 0;
+      // Every request goes to a child here, so each must come back as a child result line;
+      // a silent in-process fallback for any file cannot pass for parity.
+      const subprocessParser = Layer.effect(
+        UsageTranscriptParser.UsageTranscriptParser,
+        Effect.gen(function* () {
+          // Small fixtures would otherwise stay in process.
+          const parser = yield* UsageTranscriptParser.make({ minChildBytes: 0 });
+          return UsageTranscriptParser.UsageTranscriptParser.of({
+            parse: (requests) =>
+              Effect.sync(() => {
+                requestedFiles += requests.length;
+              }).pipe(Effect.andThen(parser.parse(requests))),
+          });
+        }).pipe(Effect.orDie),
+      ).pipe(
+        Layer.provide(
+          Layer.effect(
+            ChildProcessSpawner.ChildProcessSpawner,
+            Effect.gen(function* () {
+              const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+              return ChildProcessSpawner.make((command) =>
+                spawner.spawn(command).pipe(
+                  Effect.map((handle) =>
+                    ChildProcessSpawner.makeHandle({
+                      ...handle,
+                      stdout: handle.stdout.pipe(
+                        Stream.tap((chunk) =>
+                          Effect.sync(() => {
+                            for (const byte of chunk) if (byte === 10) childResultLines += 1;
+                          }),
+                        ),
+                      ),
+                    }),
+                  ),
+                ),
+              );
+            }),
+          ),
+        ),
+      );
+      const scan = (transcriptParser: "inProcess" | "subprocess") =>
+        Effect.gen(function* () {
+          requestedFiles = 0;
+          childResultLines = 0;
+          const service = yield* UsageService.make;
+          const summary = yield* service.readSummary(WINDOW);
+          yield* service.awaitPersisted;
+          const { stateDir } = yield* ServerConfig.ServerConfig;
+          const cache = yield* Effect.promise(() =>
+            NodeFSP.readFile(NodePath.join(stateDir, SCAN_CACHE_FILE_NAME), "utf8"),
+          );
+          if (transcriptParser === "subprocess") {
+            assert.isAbove(requestedFiles, 0);
+            assert.strictEqual(childResultLines, requestedFiles);
+          } else assert.strictEqual(childResultLines, 0);
+          return { summary: comparable(summary), cache };
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            layerService({
+              prefix: transcriptParser,
+              home,
+              settings,
+              transcriptParser:
+                transcriptParser === "subprocess"
+                  ? subprocessParser
+                  : UsageTranscriptParser.layerInProcess,
+            }),
+          ),
+        );
+
+      const inProcess = yield* scan("inProcess");
+      assert.strictEqual(totalOutputTokens(inProcess.summary), 52);
+      assert.deepStrictEqual(yield* scan("subprocess"), inProcess);
+
+      // Grown files resume from each saved position; an unterminated tail stays tentative.
+      yield* Effect.promise(async () => {
+        await NodeFSP.appendFile(transcript, claudeLine(3, 11) + claudeLine(4, 13).trimEnd());
+        await NodeFSP.appendFile(rolloutPath, codexUsage(19, "2026-08-01T10:00:05Z"));
+      });
+      const resumed = yield* scan("inProcess");
+      assert.strictEqual(totalOutputTokens(resumed.summary), 95);
+      assert.deepStrictEqual(yield* scan("subprocess"), resumed);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("keeps pricing metadata paired with the rates used during a concurrent refresh", () =>
     Effect.gen(function* () {
       const { home, settings } = yield* setup;

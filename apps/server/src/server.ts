@@ -206,6 +206,7 @@ import { MuseUsageHome } from "@t3tools/provider-muse/server";
 import * as CursorAccountReader from "@t3tools/provider-cursor/server/CursorAccountReader";
 import * as CursorUsageAccounts from "@t3tools/provider-cursor/server/CursorUsageAccounts";
 import * as UsageService from "./usage/UsageService.ts";
+import * as UsageTranscriptParser from "./usage/UsageTranscriptParser.ts";
 import * as CodexUsageHistory from "./usage/CodexUsageHistory.ts";
 import * as RuntimeLayer from "./orchestration-v2/runtimeLayer.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
@@ -303,6 +304,7 @@ const layerBackground = BackgroundPolicy.layer.pipe(
 const layerUsage = UsageService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
+      UsageTranscriptParser.layer,
       AntigravityUsage.layer,
       MuseUsageHome.layer,
       CodexUsageHistory.layer,
