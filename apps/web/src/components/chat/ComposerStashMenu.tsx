@@ -57,6 +57,7 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
   });
 
   const handleKeyDown = useEffectEvent((event: KeyboardEvent) => {
+    if (event.isComposing || event.keyCode === 229) return;
     const drawer = drawerRef.current;
     if (!drawer) return;
     const target = event.target;
