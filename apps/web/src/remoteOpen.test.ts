@@ -96,7 +96,7 @@ describe("resolveRemoteOpenState", () => {
   it("leaves a bare desktop SSH alias for the editor to resolve through SSH config", () => {
     const state = resolveRemoteOpenState({
       target: new SshConnectionTarget({ environmentId, label: "sol", connectionId: "ssh-1" }),
-      sshTarget: { alias: "sol", username: null },
+      sshTarget: { alias: "sol", username: null, port: null },
       isDesktopRenderer: true,
       remoteOpenTargets: [
         { kind: "tailscale", host: "sol.tail1234.ts.net", username: "server-user" },
@@ -127,7 +127,7 @@ describe("resolveRemoteOpenState", () => {
   ])("keeps one login username in editor links for $alias (username: '$username')", (sshTarget) => {
     const state = resolveRemoteOpenState({
       target: new SshConnectionTarget({ environmentId, label: "server", connectionId: "ssh-1" }),
-      sshTarget,
+      sshTarget: { ...sshTarget, port: null },
       isDesktopRenderer: true,
       remoteOpenTargets: TAILSCALE_TARGETS,
       hostEnvironmentId: null,
@@ -145,6 +145,27 @@ describe("resolveRemoteOpenState", () => {
     ).toBe(
       "jetbrains://gateway/ssh/environment?h=server&launchIde=true&ideHint=IU&projectHint=%2Fwork%2Fproject&u=admin-user",
     );
+  });
+
+  it.each([
+    { port: 10171, vscode: "dockware%40localhost%3A10171", zed: "dockware@localhost:10171" },
+    { port: 22, vscode: "dockware%40localhost", zed: "dockware@localhost" },
+    { port: null, vscode: "dockware%40localhost", zed: "dockware@localhost" },
+  ])("keeps a non-default SSH port in editor links (port: $port)", ({ port, vscode, zed }) => {
+    const state = resolveRemoteOpenState({
+      target: new SshConnectionTarget({ environmentId, label: "dockware", connectionId: "ssh-1" }),
+      sshTarget: { alias: "localhost", username: "dockware", port },
+      isDesktopRenderer: true,
+      remoteOpenTargets: TAILSCALE_TARGETS,
+      hostEnvironmentId: null,
+    });
+    if (state.mode !== "remote-links") throw new Error("Expected a remote link");
+    expect(
+      buildRemoteOpenUrl({ editor: "vscode", ...state.host, absolutePath: "/var/www/html" }),
+    ).toBe(`vscode://vscode-remote/ssh-remote+${vscode}/var/www/html`);
+    expect(
+      buildRemoteOpenUrl({ editor: "zed", ...state.host, absolutePath: "/var/www/html" }),
+    ).toBe(`zed://ssh/${zed}/var/www/html`);
   });
 
   it("uses the advertised login username in editor links over a relay", () => {
@@ -226,15 +247,18 @@ describe("buildRemoteOpenUrl", () => {
     ).toBe("vscode://vscode-remote/ssh-remote+sol/C%3A/Users/theo");
   });
 
-  it("keeps a plus in the SSH username through Remote-SSH's authority parsing", () => {
+  it.each([
+    { host: "ssh.example.com", username: "vm+demo" },
+    { host: "2001:db8::1", username: "dev" },
+  ])("keeps $username@$host and its port through Remote-SSH's authority parsing", (target) => {
     const url = buildRemoteOpenUrl({
       editor: "vscode",
-      host: "ssh.example.com",
-      username: "vm+demo",
+      ...target,
+      port: 2222,
       absolutePath: "/workspace/project",
     });
     // VS Code decodes the authority, then Remote-SSH (0.129) takes `authority.split("+")[1]` and
-    // reads it as hex-encoded JSON `{ hostName, user }` or as `user@host`.
+    // reads it as hex-encoded JSON `{ hostName, user, port }` or as `user@host[:port]`.
     const authority = decodeURIComponent(new URL(url ?? "").pathname.split("/")[1] ?? "");
     const destination = authority.split("+")[1] ?? "";
     const hexBytes = /^(?:[0-9a-f]{2})+$/i.test(destination)
@@ -244,9 +268,10 @@ describe("buildRemoteOpenUrl", () => {
       hexBytes === undefined
         ? destination.match(/^(?:(?<user>.*)@)?(?<hostName>.+?)$/)?.groups
         : JSON.parse(new TextDecoder().decode(new Uint8Array(hexBytes)));
-    expect({ user: resolved?.user, hostName: resolved?.hostName }).toEqual({
-      user: "vm+demo",
-      hostName: "ssh.example.com",
+    expect({ user: resolved?.user, hostName: resolved?.hostName, port: resolved?.port }).toEqual({
+      user: target.username,
+      hostName: target.host,
+      port: 2222,
     });
   });
 

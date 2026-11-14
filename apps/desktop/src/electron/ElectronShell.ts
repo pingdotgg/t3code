@@ -32,8 +32,8 @@ const isAppLaunchUrl = (url: URL) =>
   url.hash.length === 0 &&
   [...url.searchParams.keys()].join() === "text";
 
-// Zed embeds [user@]host in the path; reject passwords and ports there.
-const ZED_SSH_PATHNAME = /^\/(?:[^/@:]+@)?[^/@:]+\/.*$/;
+// Zed embeds [user@]host[:port] in the path; reject passwords there.
+const ZED_SSH_PATHNAME = /^\/(?:[^/@:]+@)?[^/@:]+(?::\d+)?\/.*$/;
 
 const isRemoteEditorUrl = (url: URL) =>
   REMOTE_EDITOR_PROTOCOLS.has(url.protocol) &&

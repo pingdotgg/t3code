@@ -193,6 +193,7 @@ export const buildRemoteOpenUrl = (input: {
   readonly editor: EditorId;
   readonly host: string;
   readonly username?: string;
+  readonly port?: number;
   readonly absolutePath: string;
   readonly isFile?: boolean;
 }): string | undefined => {
@@ -216,7 +217,12 @@ export const buildRemoteOpenUrl = (input: {
   // Windows server paths (`C:\...`) appear as `/C:/...` in vscode-remote URIs.
   const posixPath = input.absolutePath.replaceAll("\\", "/");
   const rootedPath = posixPath.startsWith("/") ? posixPath : `/${posixPath}`;
-  const encodedHost = encodeURIComponent(input.host);
+  // An unbracketed IPv6 literal cannot take a `:port` suffix without changing the address.
+  const isIpv6Host = input.host.includes(":");
+  const hostWithPort = input.port === undefined ? input.host : `${input.host}:${input.port}`;
+  const encodedHost =
+    encodeURIComponent(input.host) +
+    (input.port === undefined || isIpv6Host ? "" : `:${input.port}`);
   if (input.editor === "zed") {
     // Zed roots paths on the system drive, so omit the Windows drive prefix.
     const zedPath = /^[Cc]:[\\/]/.test(input.absolutePath) ? rootedPath.slice(3) : rootedPath;
@@ -230,15 +236,18 @@ export const buildRemoteOpenUrl = (input: {
   }
   const encodedPath = rootedPath.split("/").map(encodeURIComponent).join("/");
   const plainDestination =
-    input.username === undefined ? input.host : `${input.username}@${input.host}`;
-  // Remote-SSH splits the decoded authority on "+", so a destination containing one must use its
-  // hex-encoded JSON form instead.
-  const destination = plainDestination.includes("+")
-    ? Array.from(
-        new TextEncoder().encode(JSON.stringify({ hostName: input.host, user: input.username })),
-        (byte) => byte.toString(16).padStart(2, "0"),
-      ).join("")
-    : plainDestination;
+    input.username === undefined ? hostWithPort : `${input.username}@${hostWithPort}`;
+  // Remote-SSH splits the decoded authority on "+", so a destination containing one, or an IPv6
+  // host with a port, must use its hex-encoded JSON form instead.
+  const destination =
+    plainDestination.includes("+") || (isIpv6Host && input.port !== undefined)
+      ? Array.from(
+          new TextEncoder().encode(
+            JSON.stringify({ hostName: input.host, user: input.username, port: input.port }),
+          ),
+          (byte) => byte.toString(16).padStart(2, "0"),
+        ).join("")
+      : plainDestination;
   // VS Code opens a bare vscode-remote path as a folder; a trailing position makes it open the file.
   return `${scheme}://vscode-remote/ssh-remote+${encodeURIComponent(destination)}${encodedPath}${input.isFile ? ":1:1" : ""}`;
 };
