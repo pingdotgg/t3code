@@ -169,12 +169,12 @@ it.effect("caps the side chat context block without summarizing discarded parent
       ...importedItem({
         role: index % 2 === 0 ? "user" : "assistant",
         id: `parent-${index}`,
-        text: `item-${index} ${"x".repeat(300)}`,
+        text: `item-${index} ${"x".repeat(228)}😀${"x".repeat(70)}`,
         ordinal: index,
       }),
       get text() {
         summarizedItems++;
-        return `item-${index} ${"x".repeat(300)}`;
+        return `item-${index} ${"x".repeat(228)}😀${"x".repeat(70)}`;
       },
     }));
     const service = yield* ContextHandoffService.ContextHandoffServiceV2;
@@ -197,6 +197,7 @@ it.effect("caps the side chat context block without summarizing discarded parent
     assert.notInclude(context, "item-0 ");
     assert.include(context, "- Assistant: item-59 ");
     assert.isAtMost(context.length, 8_000);
+    assert.isTrue(context.isWellFormed());
     assert.isTrue(
       context.endsWith(
         `Use t3_thread_read on thread ${parentThreadId} to see the main thread's live state.`,
@@ -209,6 +210,36 @@ it.effect("caps the side chat context block without summarizing discarded parent
     });
     assert.isTrue(framingOnly.startsWith("You are in a side chat beside the main thread."));
     assert.notInclude(framingOnly, "Main thread activity");
+
+    const multiFilePatch = ContextHandoffService.makeSideChatContext({
+      parentThreadId,
+      digest: [
+        {
+          id: TurnItemId.make("turn-item:patch"),
+          threadId: parentThreadId,
+          runId: null,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 60,
+          status: "completed",
+          title: null,
+          startedAt: null,
+          completedAt: null,
+          updatedAt: DateTime.makeUnsafe(0),
+          type: "file_change",
+          fileName: "src/a.ts",
+          changes: [
+            { operation: "update", path: "src/a.ts" },
+            { operation: "add", path: "src/b.ts" },
+            { operation: "update", path: "src/new.ts", oldPath: "src/old.ts" },
+          ],
+        },
+      ],
+    });
+    assert.include(multiFilePatch, "- File change: src/a.ts, src/b.ts, src/new.ts");
   }).pipe(Effect.provide(layerTest)),
 );
 

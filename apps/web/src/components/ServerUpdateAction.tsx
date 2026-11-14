@@ -202,6 +202,7 @@ export function ServerUpdatesAction({
         const confirmed =
           (await requestConfirmDialog(
             `Update the T3 Code desktop apps on ${desktopTargets.map((target) => target.serverLabel).join(", ")}? They will close and relaunch on those machines.`,
+            { initialFocus: "confirm" },
           )) ?? true;
         if (!confirmed) return;
       }
@@ -275,17 +276,17 @@ export function ServerUpdateAction({
   const canUpdate = useAtomValue(sessionStateAtom, canUpdateServer);
   const updatesDenial = managedUpdatesDenial(useManagedPolicy(environmentId));
   const update = useServerUpdate();
+  const updatesInstall =
+    installation?.kind === "npm-global" || installation?.kind === "t3-launcher";
   const { copyToClipboard } = useCopyToClipboard<{ command: string }>({
-    target: installation?.kind === "npm-global" ? "update command" : "relaunch command",
+    target: updatesInstall ? "update command" : "relaunch command",
     onCopy: ({ command }) => {
       toastManager.add({
         type: "success",
-        title:
-          installation?.kind === "npm-global" ? "Update command copied" : "Relaunch command copied",
-        description:
-          installation?.kind === "npm-global"
-            ? `Run \`${command}\` on ${serverLabel}, then restart t3 with your usual options.`
-            : `Stop t3 on ${serverLabel}, then relaunch with \`${command}\` using the same subcommand and options. This does not update an installed t3 command.`,
+        title: updatesInstall ? "Update command copied" : "Relaunch command copied",
+        description: updatesInstall
+          ? `Run \`${command}\` on ${serverLabel}, then restart t3 with your usual options.`
+          : `Stop t3 on ${serverLabel}, then relaunch with \`${command}\` using the same subcommand and options. This does not update an installed t3 command.`,
       });
     },
     onError: (error) => {
@@ -308,6 +309,7 @@ export function ServerUpdateAction({
       const confirmed =
         (await requestConfirmDialog(
           `Update the T3 Code desktop app that runs the ${serverLabel}? It will close and relaunch on that machine.`,
+          { initialFocus: "confirm" },
         )) ?? true;
       if (!confirmed) {
         return;
@@ -351,7 +353,7 @@ export function ServerUpdateAction({
     selfUpdate === null ? manualServerUpdateCommand(targetVersion, installation) : null;
   const actionLabel =
     manualCommand !== null
-      ? installation?.kind === "npm-global"
+      ? updatesInstall
         ? "Copy update command"
         : "Copy relaunch command"
       : label;

@@ -89,7 +89,60 @@ it.layer(layer)("cascadeRebaseStack", (it) => {
       expect(yield* repo.git("log", "--format=%s", `${bottom}..${top}`)).toBe(
         "B: document the answer",
       );
-    }).pipe(Effect.scoped),
+    }),
+  );
+
+  it.effect("drops a squash-merged lower layer's commits from the layer above it", () =>
+    Effect.gen(function* () {
+      const repo = yield* setup;
+      const fs = yield* FileSystem.FileSystem;
+      const { process } = yield* SourceControlHost.SourceControlHost;
+      const scratch = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cascade-squash-" });
+      const run = (...args: string[]) =>
+        process
+          .run({
+            operation: "test",
+            command: "git",
+            args,
+            cwd: scratch,
+            env: {
+              GIT_AUTHOR_NAME: "t",
+              GIT_AUTHOR_EMAIL: "t@t",
+              GIT_COMMITTER_NAME: "t",
+              GIT_COMMITTER_EMAIL: "t@t",
+            },
+          })
+          .pipe(Effect.map((out) => out.stdout.trim()));
+      const write = (text: string) => fs.writeFileString(`${scratch}/index.ts`, text);
+      yield* run("clone", "--quiet", repo.remote, ".");
+      yield* run("switch", "--quiet", "-c", "feat/two-steps");
+      yield* write("export const answer = 40;\n");
+      yield* run("commit", "--quiet", "-am", "A1");
+      yield* write("export const answer = 42;\n");
+      yield* run("commit", "--quiet", "-am", "A2");
+      const mergedHeadSha = yield* run("rev-parse", "HEAD");
+      yield* run("switch", "--quiet", "-c", "feat/on-top");
+      yield* write("/** The answer. */\nexport const answer = 42;\n");
+      yield* run("commit", "--quiet", "-am", "B");
+      const headSha = yield* run("rev-parse", "HEAD");
+      yield* run("switch", "--quiet", "main");
+      yield* run("merge", "--quiet", "--squash", "feat/two-steps");
+      yield* run("commit", "--quiet", "-m", "A (#1)");
+      yield* run("push", "--quiet", "origin", "main", "feat/on-top");
+
+      const completed = yield* cascadeRebaseStack({
+        host: "github.com",
+        repository: "acme/web",
+        base: "main",
+        layers: [{ number: 2, headBranch: "feat/on-top", headSha }],
+        mergedHeadSha,
+        remote: repo.remote,
+      });
+      assert.strictEqual(completed, 1);
+      const top = yield* repo.head("feat/on-top");
+      expect(yield* repo.git("rev-parse", `${top}~1`)).toBe(yield* repo.head("main"));
+      expect(yield* repo.git("log", "--format=%s", `main..${top}`)).toBe("B");
+    }),
   );
 
   it.effect("refuses to overwrite a layer pushed after it was reviewed", () =>
@@ -107,7 +160,7 @@ it.layer(layer)("cascadeRebaseStack", (it) => {
       );
       expect(error).toMatchObject({ _tag: "GitHubStackRebaseGitError", number: 2, completed: 1 });
       expect(yield* repo.head("feat/answer-doc")).toBe(repo.layers[1]!.headSha);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("stops at a conflicting layer and leaves it untouched", () =>
@@ -149,6 +202,6 @@ it.layer(layer)("cascadeRebaseStack", (it) => {
         completed: 0,
       });
       expect(yield* repo.head("feat/answer-42")).toBe(repo.layers[0]!.headSha);
-    }).pipe(Effect.scoped),
+    }),
   );
 });
