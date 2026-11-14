@@ -15,16 +15,11 @@ reproduction steps or environment where relevant. -->
 <!-- Explain how this fixes the problem. If it spans components or clients,
 explain why those changes are needed for the same fix. Split independent fixes. -->
 
-## Scope and approval
+## Scope
 
-<!-- Link the triaged bug issue or the discussion with explicit maintainer approval
-of direction and scope, including the approval comment. For a very small, focused
-fix of an obvious bug, explain why it qualifies without a prior issue or discussion.
-For focused configuration of an established capability, explain what already exists,
-what the option controls, and why its effects stay within that capability. Adding a
-setting alone is not a new feature or an approval exemption; broader workflow or
-behavior changes still need approval. Scope and verification requirements still apply.
-There is no line-count or file-count cutoff. -->
+<!-- We accept bug fixes, not features. Link the issue that shows the bug. For a
+small fix of an obvious bug, say why it needs no issue. If a maintainer asked for
+this PR, link the request. -->
 
 ## Verification
 
