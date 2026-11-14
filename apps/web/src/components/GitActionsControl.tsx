@@ -1184,6 +1184,7 @@ export default function GitActionsControl({
   // Keep enabled until live status loads; the server rejects stale requests.
   const featureBranchUnavailableReason = pendingDefaultBranchAction
     ? resolveFeatureBranchUnavailableReason({
+        action: pendingDefaultBranchAction.action,
         branchName: pendingDefaultBranchAction.branchName,
         hasWorkingTreeChanges: gitStatus?.hasWorkingTreeChanges ?? true,
       })

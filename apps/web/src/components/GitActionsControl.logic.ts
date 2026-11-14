@@ -438,13 +438,19 @@ export function resolveDefaultBranchActionDialogCopy(input: {
   };
 }
 
-/** Clean trees cannot create feature branches because the server derives names from uncommitted changes. */
+/** The server names a feature branch from the commit it makes, so the action must commit changes. */
 export function resolveFeatureBranchUnavailableReason(input: {
+  action: DefaultBranchConfirmableAction;
   branchName: string;
   hasWorkingTreeChanges: boolean;
 }): string | null {
-  if (input.hasWorkingTreeChanges) return null;
-  return `There are no changes to commit, so a feature branch can't be named. Create a branch yourself or continue on ${input.branchName}.`;
+  if (!input.hasWorkingTreeChanges) {
+    return `There are no changes to commit, so a feature branch can't be named. Create a branch yourself or continue on ${input.branchName}.`;
+  }
+  if (input.action === "push" || input.action === "create_pr") {
+    return `This action doesn't commit your changes, so a feature branch can't be named. Create a branch yourself or continue on ${input.branchName}.`;
+  }
+  return null;
 }
 
 export function resolveThreadBranchUpdate(
