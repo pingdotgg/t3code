@@ -549,6 +549,7 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
     { name: "hooks.json", value: "{}", available: true },
     { name: "hooks.json", value: '{"hooks":{}}', available: true },
     { name: "mcp_config.json", value: '{"mcpServers":{}}', available: true },
+    { name: "mcp_config.json", value: "", available: true },
   ])("checks $name before starting a helper, available=$available", ({ name, value, available }) =>
     Effect.gen(function* () {
       const fixture = yield* makeFixture();

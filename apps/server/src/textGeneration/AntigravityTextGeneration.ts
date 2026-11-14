@@ -79,14 +79,20 @@ export const isAntigravityTextGenerationAvailable = Effect.fn(
     if (info.type !== "File" || info.size > 64_000n) {
       return false;
     }
+    // CLI 1.5.8 writes a 0-byte mcp_config.json before any server exists.
     const empty = yield* fs.readFileString(configurationPath).pipe(
-      Effect.flatMap(decodeConfiguration),
-      Effect.flatMap((configuration) =>
-        decodeConfigurationObject(
-          configuration[name === "hooks.json" ? "hooks" : "mcpServers"] ?? configuration,
-        ),
+      Effect.flatMap((text) =>
+        text.trim().length === 0
+          ? Effect.succeed(true)
+          : decodeConfiguration(text).pipe(
+              Effect.flatMap((configuration) =>
+                decodeConfigurationObject(
+                  configuration[name === "hooks.json" ? "hooks" : "mcpServers"] ?? configuration,
+                ),
+              ),
+              Effect.map((configuration) => Object.keys(configuration).length === 0),
+            ),
       ),
-      Effect.map((configuration) => Object.keys(configuration).length === 0),
       Effect.orElseSucceed(() => false),
     );
     if (!empty) return false;
