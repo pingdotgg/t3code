@@ -59,7 +59,9 @@ const withService = <A, E>(
     readonly mintCredential: CloudLink.CloudLink["Service"]["mintCredential"];
     readonly stored: Map<string, Uint8Array>;
     readonly relayCalls: Array<boolean>;
-    readonly pairingLinkLabels: Array<string | undefined>;
+    readonly connectCredentialRequests: Array<
+      Parameters<EnvironmentAuth.EnvironmentAuth["Service"]["issueConnectCredential"]>[0]
+    >;
   }) => Effect.Effect<A, E, never>,
 ) =>
   Effect.gen(function* () {
@@ -72,7 +74,9 @@ const withService = <A, E>(
       [CLOUD_LINKED_USER_ID, encode("cloud-user-1")],
     ]);
     const relayCalls: Array<boolean> = [];
-    const pairingLinkLabels: Array<string | undefined> = [];
+    const connectCredentialRequests: Array<
+      Parameters<EnvironmentAuth.EnvironmentAuth["Service"]["issueConnectCredential"]>[0]
+    > = [];
     const fetch: typeof globalThis.fetch = Object.assign(
       (_input: Parameters<typeof globalThis.fetch>[0], init?: RequestInit) => {
         const payload = JSON.parse(String(init?.body)) as { holdWebhooksWhileOffline: boolean };
@@ -122,17 +126,10 @@ const withService = <A, E>(
         latest: Effect.succeedNone,
       }),
       Layer.mock(EnvironmentAuth.EnvironmentAuth)({
-        createPairingLink: (input) =>
+        issueConnectCredential: (input) =>
           Effect.sync(() => {
-            pairingLinkLabels.push(input?.label);
-            return {
-              id: "pairing-1",
-              credential: "pairing-credential",
-              scopes: input?.scopes ?? [],
-              subject: input?.subject ?? "",
-              createdAt: DateTime.makeUnsafe(0),
-              expiresAt: DateTime.makeUnsafe(120_000),
-            };
+            connectCredentialRequests.push(input);
+            return { credential: "pairing-credential", expiresAt: DateTime.makeUnsafe(120_000) };
           }),
       }),
       Layer.mock(CliTokenManager.CloudCliTokenManager)({}),
@@ -154,7 +151,7 @@ const withService = <A, E>(
         mintCredential: link.mintCredential,
         stored,
         relayCalls,
-        pairingLinkLabels,
+        connectCredentialRequests,
       });
     }).pipe(
       Effect.provide(
@@ -299,8 +296,8 @@ it.effect("an update the client walks away from still finishes", () => {
   );
 });
 
-it.effect('names T3 Connect sessions "T3 Connect" in authorized clients', () =>
-  withService({}, ({ mintCredential, pairingLinkLabels }) =>
+it.effect("mints a T3 Connect credential under the host's device approval setting", () =>
+  withService({}, ({ mintCredential, connectCredentialRequests }) =>
     Effect.gen(function* () {
       const proof = yield* signRelayJwt({
         privateKey: cloudMintKeys.privateKey,
@@ -320,7 +317,9 @@ it.effect('names T3 Connect sessions "T3 Connect" in authorized clients', () =>
         },
       }).pipe(Effect.provide(NodePlatformCrypto.layerSignature));
       yield* mintCredential({ proof });
-      assert.deepEqual(pairingLinkLabels, ["T3 Connect"]);
+      assert.deepEqual(connectCredentialRequests, [
+        { proofKeyThumbprint: "client-jkt", requireApproval: false },
+      ]);
     }),
   ),
 );
