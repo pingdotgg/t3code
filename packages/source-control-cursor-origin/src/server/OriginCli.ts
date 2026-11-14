@@ -83,6 +83,7 @@ const OriginNamespaceListSchema = Schema.Struct({
       ),
     ),
   ),
+  nextPageToken: Schema.optional(Schema.NullOr(Schema.String)),
 });
 
 /** `owner/repo` for a REST path, each segment escaped. */
@@ -461,27 +462,31 @@ const make = Effect.gen(function* () {
     return repository;
   });
 
-  const personalNamespace: OriginCli["Service"]["personalNamespace"] = (cwd) =>
-    api(
-      { cwd, operation: "personalNamespace", path: "/v1/origin/namespaces" },
-      OriginNamespaceListSchema,
-    ).pipe(
-      Effect.flatMap((list) => {
-        const slug = list.namespaces?.find((entry) => entry.namespace.type === "user")?.namespace
-          .slug;
-        return slug
-          ? Effect.succeed(slug)
-          : Effect.fail(
-              new OriginCliError({
-                operation: "personalNamespace",
-                cwd,
-                reason: "not-found",
-                detail:
-                  "This Cursor account has no Origin namespace. Claim one at cursor.com/codebase.",
-              }),
-            );
-      }),
-    );
+  const personalNamespace: OriginCli["Service"]["personalNamespace"] = Effect.fn(
+    "OriginCli.personalNamespace",
+  )(function* (cwd) {
+    // A page token seen before would only read the same pages again.
+    const tokens = new Set<string>();
+    let pageToken: string | null | undefined;
+    do {
+      const query = pageToken ? `?${new URLSearchParams({ pageToken })}` : "";
+      const list = yield* api(
+        { cwd, operation: "personalNamespace", path: `/v1/origin/namespaces${query}` },
+        OriginNamespaceListSchema,
+      );
+      const slug = list.namespaces?.find((entry) => entry.namespace.type === "user")?.namespace
+        .slug;
+      if (slug) return slug;
+      if (pageToken) tokens.add(pageToken);
+      pageToken = list.nextPageToken;
+    } while (pageToken && !tokens.has(pageToken));
+    return yield* new OriginCliError({
+      operation: "personalNamespace",
+      cwd,
+      reason: "not-found",
+      detail: "This Cursor account has no Origin namespace. Claim one at cursor.com/codebase.",
+    });
+  });
 
   return OriginCli.of({ execute, api, viewer, personalNamespace, resolveRepository });
 });
