@@ -281,6 +281,27 @@ describe("DesktopObservability", () => {
     ),
   );
 
+  it.effect("startup prunes only canonical rotation suffixes", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-rotating-prune-test-",
+      });
+      const filePath = `${directory}/server-child.log`;
+      const retained = ["1", "3", "04", "4.0", "4e0", "0x4", "+4", "notes"];
+      for (const suffix of [...retained, "4", "50"]) {
+        yield* fileSystem.writeFileString(`${filePath}.${suffix}`, suffix);
+      }
+
+      yield* DesktopObservability.makeRotatingLogFileWriter({ filePath, maxFiles: 3 });
+
+      assert.deepEqual(
+        (yield* fileSystem.readDirectory(directory)).sort(),
+        retained.map((suffix) => `server-child.log.${suffix}`).sort(),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("stops every export when the OpenTelemetry SDK is disabled", () => {
     const requests: Array<ExportedRequest> = [];
     return Effect.gen(function* () {
