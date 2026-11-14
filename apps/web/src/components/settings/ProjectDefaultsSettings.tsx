@@ -14,6 +14,7 @@ import { useClientSettings } from "../../hooks/useSettings";
 import {
   defaultModelSelectionsAreMixed,
   getCustomModelOptionsByInstance,
+  resolveEffectiveDefaultModelSelection,
 } from "../../modelSelection";
 import { providerInstanceEntriesFor } from "../../providerInstances";
 import { useEnvironmentProviders, useEnvironments } from "../../state/environments";
@@ -291,7 +292,6 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                 model={iconSelection.model}
                 modelOptions={iconSelection.options ?? []}
                 allowPromptInjectedEffort={false}
-                planModeEnabled={settings.planModeEnabled}
                 triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                 onModelOptionsChange={(options) =>
                   updateSettings({
