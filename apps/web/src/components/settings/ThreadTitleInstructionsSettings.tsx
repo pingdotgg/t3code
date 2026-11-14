@@ -1,3 +1,4 @@
+import { uncontrolledFieldDirection } from "~/textDirection";
 import { useRef } from "react";
 
 import { Textarea } from "../ui/textarea";
@@ -42,7 +43,7 @@ export function ThreadTitleInstructionsSettings() {
           }}
           rows={4}
           defaultValue={mixed ? "" : settings.threadTitleInstructions}
-          dir="auto"
+          {...uncontrolledFieldDirection(mixed ? "" : settings.threadTitleInstructions)}
           placeholder={
             mixed
               ? "Mixed. Enter instructions to apply to all selected targets."

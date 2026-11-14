@@ -1,4 +1,4 @@
-import { textDirection } from "~/textDirection";
+import { textDirection, uncontrolledFieldDirection } from "~/textDirection";
 import { useNavigate } from "@tanstack/react-router";
 import { useRef, useState } from "react";
 import {
@@ -300,7 +300,7 @@ export function SourceControlWritingSettingsSection() {
               key={style.customInstructions}
               ref={customInstructionsRef}
               defaultValue={style.customInstructions}
-              dir="auto"
+              {...uncontrolledFieldDirection(style.customInstructions)}
               onBlur={(event) => {
                 const customInstructions = event.target.value.trim();
                 if (customInstructions !== style.customInstructions) {
@@ -459,7 +459,9 @@ export function SourceControlWritingSettingsSection() {
                 }}
                 rows={4}
                 defaultValue={mixedReviewGuideInstructions ? "" : settings.reviewGuideInstructions}
-                dir="auto"
+                {...uncontrolledFieldDirection(
+                  mixedReviewGuideInstructions ? "" : settings.reviewGuideInstructions,
+                )}
                 placeholder={
                   mixedReviewGuideInstructions
                     ? "Mixed. Enter instructions to apply to all selected targets."

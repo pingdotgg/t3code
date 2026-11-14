@@ -1,3 +1,4 @@
+import { uncontrolledFieldDirection } from "~/textDirection";
 import { useRef } from "react";
 import { BranchNamingMode, DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 
@@ -138,7 +139,9 @@ export function BranchNamingSettings() {
               }}
               rows={4}
               defaultValue={instructionsMixed ? "" : settings.branchNameInstructions}
-              dir="auto"
+              {...uncontrolledFieldDirection(
+                instructionsMixed ? "" : settings.branchNameInstructions,
+              )}
               placeholder={
                 instructionsMixed
                   ? "Mixed. Enter instructions to apply to all selected targets."
