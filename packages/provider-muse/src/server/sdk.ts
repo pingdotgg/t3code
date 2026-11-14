@@ -137,9 +137,10 @@ export function museApprovalMode(runtimeMode: RuntimeMode) {
   return runtimeMode === "full-access" ? "allowAll" : "promptUnmatched";
 }
 
-// Select explicitly; Muse defaults may let an AI reviewer decide approvals.
+// Select explicitly; Muse's default profile need not match the chosen runtime mode.
 export function musePermissionProfile(runtimeMode: RuntimeMode) {
-  return runtimeMode === "full-access" ? ":unrestricted" : ":ask-me";
+  if (runtimeMode === "full-access") return ":unrestricted";
+  return runtimeMode === "auto" ? ":auto-review" : ":ask-me";
 }
 
 export function museServeArgs(
