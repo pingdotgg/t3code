@@ -104,23 +104,35 @@ const runSetupAsRoot = (input: { readonly profile: string | undefined }) => {
 
 const LOAD = `apparmor_parser -r ${PreviewBrowserHost.APPARMOR_PROFILE_PATH}`;
 
+const CUSTOMIZED_PROFILE = PreviewBrowserHost.APPARMOR_PROFILE.replace(
+  "  userns,\n",
+  "  userns,\n  deny /tmp/t3-admin-private/** rw,\n",
+);
+
 it.effect.each([
   {
     label: "reloads a profile that is on disk",
     profile: PreviewBrowserHost.APPARMOR_PROFILE,
+    written: PreviewBrowserHost.APPARMOR_PROFILE,
     said: "Reloaded the AppArmor profile",
   },
-  { label: "writes and loads a missing profile", profile: undefined, said: "Wrote and loaded" },
   {
-    label: "rewrites and loads a profile that differs",
-    profile: "profile old {}\n",
+    label: "writes and loads a missing profile",
+    profile: undefined,
+    written: PreviewBrowserHost.APPARMOR_PROFILE,
     said: "Wrote and loaded",
+  },
+  {
+    label: "reloads a customized profile without rewriting it",
+    profile: CUSTOMIZED_PROFILE,
+    written: CUSTOMIZED_PROFILE,
+    said: "Reloaded the AppArmor profile",
   },
 ])("t3 browser setup as root $label", (input) =>
   Effect.gen(function* () {
     const result = yield* runSetupAsRoot({ profile: input.profile });
     expect(result.loads).toEqual([LOAD]);
-    expect(result.profile).toBe(PreviewBrowserHost.APPARMOR_PROFILE);
+    expect(result.profile).toBe(input.written);
     expect(result.output).toContain(input.said);
     expect(result.output).toContain("This host is ready for T3's browser.");
   }),

@@ -170,13 +170,11 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
       }
 
       if (needsProfile) {
-        const profileCurrent = yield* fs
-          .readFileString(PreviewBrowserHost.APPARMOR_PROFILE_PATH)
-          .pipe(
-            Effect.map((profile) => profile === PreviewBrowserHost.APPARMOR_PROFILE),
-            Effect.orElseSucceed(() => false),
-          );
-        if (!profileCurrent) {
+        // An existing profile may carry an administrator's edits, so it is reloaded as is.
+        const profileOnDisk = yield* fs
+          .exists(PreviewBrowserHost.APPARMOR_PROFILE_PATH)
+          .pipe(Effect.orElseSucceed(() => false));
+        if (!profileOnDisk) {
           yield* fs
             .writeFileString(
               PreviewBrowserHost.APPARMOR_PROFILE_PATH,
@@ -197,7 +195,7 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
           PreviewBrowserHost.APPARMOR_PROFILE_PATH,
         ]);
         yield* Console.log(
-          profileCurrent
+          profileOnDisk
             ? `Reloaded the AppArmor profile at ${PreviewBrowserHost.APPARMOR_PROFILE_PATH} that allows Chrome's sandbox for T3's browser.`
             : `Wrote and loaded the AppArmor profile at ${PreviewBrowserHost.APPARMOR_PROFILE_PATH} that allows Chrome's sandbox for T3's browser.`,
         );
