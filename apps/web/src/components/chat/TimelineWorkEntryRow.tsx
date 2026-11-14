@@ -192,7 +192,7 @@ export function ViewedImagesTimelineRow({
 }: {
   row: Extract<TimelineRow, { kind: "viewed-images" }>;
 }) {
-  const { threadRef, onImageExpand } = use(TimelineRowCtx);
+  const { threadRef, workspaceRoot: threadWorkspaceRoot, onImageExpand } = use(TimelineRowCtx);
   const workspaceRoot = useTimelineRowWorkspaceRoot();
   if (!threadRef) return null;
   return (
@@ -210,6 +210,7 @@ export function ViewedImagesTimelineRow({
             alt={image.alt}
             srcFragment={image.srcFragment}
             workspaceRoot={workspaceRoot}
+            threadWorkspaceRoot={threadWorkspaceRoot}
             maxHeightRem={10}
             onImageExpand={onImageExpand}
           />
@@ -629,6 +630,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
             alt={viewedImage.alt}
             srcFragment={viewedImage.srcFragment}
             workspaceRoot={workspaceRoot}
+            threadWorkspaceRoot={ctx.workspaceRoot}
             maxHeightRem={16}
             onImageExpand={expandImage}
           />

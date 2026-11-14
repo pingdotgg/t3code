@@ -141,7 +141,11 @@ const compactWorkEntryHeight = 24;
 function useWorkGroupViewedImages(
   groupedEntries: ReadonlyArray<TimelineWorkEntry>,
 ): ReadonlyArray<WorkGroupViewedImage> {
-  const { threadRef, activeThreadEnvironmentId } = use(TimelineRowCtx);
+  const {
+    threadRef,
+    activeThreadEnvironmentId,
+    workspaceRoot: threadWorkspaceRoot,
+  } = use(TimelineRowCtx);
   const workspaceRoot = useTimelineRowWorkspaceRoot();
   const viewed = threadRef
     ? workEntriesViewedImagePaths(groupedEntries).flatMap((path) => {
@@ -174,6 +178,7 @@ function useWorkGroupViewedImages(
           name: asset.alt || "image",
           src,
           workspaceRoot,
+          threadWorkspaceRoot,
         }),
       },
     };
