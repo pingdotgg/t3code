@@ -245,8 +245,10 @@ function SubagentAvatar({
           acpRegistryIconUrl={iconUrl}
           showBadge={showBadge}
           size="compact"
-          className="z-auto"
+          // Account badges are wider than an overlapped avatar edge, so they paint above every circle.
+          className="z-auto isolation-auto"
           iconClassName="size-3.5"
+          badgeClassName="z-1"
         />
       ) : (
         <BotIcon className="size-3.5 text-muted-foreground" />
