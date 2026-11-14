@@ -27,6 +27,11 @@ Protocol 4 changed the launcher alone, so its runtime still runs under protocol 
 The server names its launcher's protocol to preflight, not its own, since the two differ
 after the first such update.
 
+A client can stage the target early with `stageOnly`, which installs and preflights the
+runtime and restarts nothing. "Update everything" does this while provider installs run,
+because a restart would kill them. A server without the `serverUpdateStaging` capability
+ignores the flag and runs the whole update, so send it only to a server that advertises it.
+
 After a commit or rollback the launcher points the unit at the selected runtime and
 reloads the manager, so the next service start runs that version's launcher; the
 protocol check is what makes that safe. Each start after a finished update retries this, because
