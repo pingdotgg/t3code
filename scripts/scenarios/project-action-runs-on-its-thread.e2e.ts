@@ -17,20 +17,26 @@ test(
     // releaseTerminalOpen, so the switch lands before the terminal is ready.
     await browser.addInitScript(() => {
       const held: Array<() => void> = [];
+      const writeThreads: string[] = [];
       const page = window as unknown as Record<string, unknown>;
       page.holdTerminalOpen = false;
       page.heldTerminalOpens = () => held.length;
+      page.terminalWriteThreads = () => writeThreads;
       page.releaseTerminalOpen = () => {
         page.holdTerminalOpen = false;
         for (const send of held.splice(0)) send();
       };
       const send = WebSocket.prototype.send;
       WebSocket.prototype.send = function (data) {
-        const opensTerminal =
-          typeof data === "string" &&
-          [JSON.parse(data)]
-            .flat()
-            .some((message) => message?._tag === "Request" && message.tag === "terminal.open");
+        const messages = typeof data === "string" ? [JSON.parse(data)].flat() : [];
+        for (const message of messages) {
+          if (message?._tag === "Request" && message.tag === "terminal.write") {
+            writeThreads.push(message.payload.threadId);
+          }
+        }
+        const opensTerminal = messages.some(
+          (message) => message?._tag === "Request" && message.tag === "terminal.open",
+        );
         if (opensTerminal && page.holdTerminalOpen === true) {
           held.push(() => send.call(this, data));
           return;
@@ -72,8 +78,15 @@ test(
       return null;
     });
 
+    await expect
+      .poll(() =>
+        browser.evaluate(() =>
+          (window as unknown as { terminalWriteThreads: () => string[] }).terminalWriteThreads(),
+        ),
+      )
+      .toEqual([thread.threadId]);
+    await expect.poll(() => exists(`${project}/action-ran`)).toBe(true);
     await screen.getByRole("button", /^Action thread,/).tap();
     await app.screenshot("back-on-action-thread");
-    await expect.poll(() => exists(`${project}/action-ran`)).toBe(true);
   },
 );
