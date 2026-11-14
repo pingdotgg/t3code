@@ -159,7 +159,9 @@ refresh provider status. Cursor reports
 its monthly allowance, including separate Auto and API usage, for `CURSOR_AUTH_TOKEN` when it is set,
 otherwise for the account you signed in with in T3 or set as `CURSOR_API_KEY`.
 Sign-in and API keys report limits only with Cursor's default API endpoint. If you configure a custom
-Cursor endpoint, use an explicit `CURSOR_AUTH_TOKEN` for limits.
+Cursor endpoint, use an explicit `CURSOR_AUTH_TOKEN` for limits. Accounts without a monthly
+allowance, such as Enterprise, show a **Spend** bar for this billing cycle against your personal
+spend limit. If Cursor reports no personal limit, Usage links to Cursor's usage dashboard instead.
 
 Grok reports the remaining subscription allowance and reset time for its current billing period
 after signing in with `grok login`. Explicit `XAI_API_KEY` connections and custom authentication
