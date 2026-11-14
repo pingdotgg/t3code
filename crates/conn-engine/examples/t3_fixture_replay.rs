@@ -138,12 +138,12 @@ impl Run {
                 let key = step["key"]
                     .as_str()
                     .map_or_else(|| format!("dispatch:{}", self.anonymous), str::to_owned);
-                let engine = self.engine.clone();
-                let command = command.clone();
-                self.background.insert(
-                    key,
-                    tokio::spawn(async move { Self::dispatch(&engine, &command).await }),
-                );
+                // T3's dispatch of a message resolves when its run ends, so T3 forks it; this
+                // engine's resolves once the command is committed. Commit it before the next
+                // step, as T3's fork does at its next yield, and keep the result for `await`.
+                let result = Self::dispatch(&self.engine, command).await;
+                self.background
+                    .insert(key, tokio::spawn(std::future::ready(result)));
                 Ok(())
             }
             "await" => self.await_key(text(step, "key")?).await,
@@ -211,7 +211,10 @@ impl Run {
                 self.wait_for(
                     thread()?,
                     &format!("await_run_status:{rid}:{status}"),
-                    |p| rows(p, "runs").any(|r| r["id"] == rid.as_str() && r["status"] == status.as_str()),
+                    |p| {
+                        rows(p, "runs")
+                            .any(|r| r["id"] == rid.as_str() && r["status"] == status.as_str())
+                    },
                 )
                 .await
                 .map(drop)
@@ -255,15 +258,18 @@ impl Run {
             }
             "capture_shell_snapshot" => {
                 let snapshot = self.shell().await?;
-                self.captured.insert(text(step, "key")?.to_owned(), snapshot);
+                self.captured
+                    .insert(text(step, "key")?.to_owned(), snapshot);
                 Ok(())
             }
             "respond_to_next_runtime_request" => {
                 let tid = thread()?;
                 let projection = self
-                    .wait_for(tid, &format!("respond_to_next_runtime_request:{tid}"), |p| {
-                        rows(p, "runtimeRequests").any(|r| r["status"] == "pending")
-                    })
+                    .wait_for(
+                        tid,
+                        &format!("respond_to_next_runtime_request:{tid}"),
+                        |p| rows(p, "runtimeRequests").any(|r| r["status"] == "pending"),
+                    )
                     .await?;
                 if let Some(key) = step["shellSnapshotKeyWhilePending"].as_str() {
                     let snapshot = self.shell().await?;
@@ -308,6 +314,17 @@ async fn replay(plan: &Value) -> Result<Value, Value> {
         approval_policy: policy.get("approvalPolicy").cloned(),
         sandbox_policy: policy.get("sandboxPolicy").cloned(),
     });
+    // Live command output as T3's `CommandOutputRecorder` sees it: every chunk per item.
+    let output: Arc<std::sync::Mutex<Map<String, Value>>> = Arc::default();
+    let tap = output.clone();
+    config.command_output_tap = Some(Arc::new(move |item: &str, chunk: &str| {
+        if let Ok(mut recorded) = tap.lock() {
+            let chunks = recorded.entry(item.to_owned()).or_insert_with(|| json!([]));
+            if let Some(list) = chunks.as_array_mut() {
+                list.push(json!(chunk));
+            }
+        }
+    }));
     let engine = Arc::new(SqliteEngine::open(config).map_err(Value::String)?);
     let mut run = Run {
         engine: engine.clone(),
@@ -333,7 +350,13 @@ async fn replay(plan: &Value) -> Result<Value, Value> {
             }
         }
     }
-    let result = collect(&run, plan).await;
+    let mut result = collect(&run, plan).await;
+    if let Ok(result) = &mut result {
+        result["commandOutput"] = output
+            .lock()
+            .map(|o| Value::Object(o.clone()))
+            .unwrap_or_default();
+    }
     engine.shutdown().await;
     match (failure, result) {
         (None, Ok(result)) => Ok(result),

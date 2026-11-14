@@ -86,6 +86,7 @@ vi.mock("./ProviderReplayHarness.ts", async (importOriginal) => {
   const Effect = await import("effect/Effect");
   const Schema = await import("effect/Schema");
   const contracts: any = await import("@t3tools/contracts");
+  const terminal: any = await import("@t3tools/shared/terminalOutput");
   const CONFIG = JSON.parse(fs.readFileSync(__CONFIG__, "utf8"));
   const json = (schema: any) => Schema.decodeUnknownSync(Schema.toCodecJson(schema));
   const decodeEvents = json(Schema.Array(contracts.OrchestrationV2StoredEvent));
@@ -162,6 +163,19 @@ vi.mock("./ProviderReplayHarness.ts", async (importOriginal) => {
         shellSnapshot: decodeShell(raw.shellSnapshot),
         capturedShellSnapshots: new Map(
           Object.entries(raw.capturedShellSnapshots).map(([k, s]) => [k, decodeShell(s)]),
+        ),
+        // T3's CommandOutputRecorder: chunk count and appendTerminalOutput over the chunks.
+        commandOutput: new Map(
+          Object.entries(raw.commandOutput ?? {}).map(([item, chunks]: [string, any]) => [
+            item,
+            {
+              chunks: chunks.length,
+              output: chunks.reduce(
+                (state: any, chunk: string) => terminal.appendTerminalOutput(state, chunk),
+                terminal.EMPTY_TERMINAL_OUTPUT,
+              ),
+            },
+          ]),
         ),
       };
     });

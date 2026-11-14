@@ -60,7 +60,13 @@ pub struct EngineConfig {
     /// Laid over every turn's runtime policy, as T3's `RuntimePolicy.layerWithOverride`. The
     /// server sets none; the T3 fixture replay sets the fixture's policy.
     pub runtime_policy_override: Option<RuntimePolicyOverride>,
+    /// Sees every live command output chunk as `(turn item id, chunk)`, as T3's test kit taps
+    /// `CommandOutputHub.append`. The server sets none.
+    pub command_output_tap: Option<CommandOutputTap>,
 }
+
+/// See [`EngineConfig::command_output_tap`].
+pub type CommandOutputTap = Arc<dyn Fn(&str, &str) + Send + Sync>;
 
 /// `RuntimePolicyV2Override` in T3's `RuntimePolicy.ts`: fields that replace the policy the
 /// engine derives from the thread.
@@ -114,6 +120,7 @@ impl EngineConfig {
             turn_observer: None,
             checkpoints: false,
             runtime_policy_override: None,
+            command_output_tap: None,
         }
     }
 }
@@ -149,6 +156,8 @@ pub(crate) struct Inner {
     pub(crate) checkpoints: Option<crate::checkpoint::Checkpoints>,
     /// [`EngineConfig::runtime_policy_override`].
     pub(crate) policy_override: Option<RuntimePolicyOverride>,
+    /// [`EngineConfig::command_output_tap`].
+    pub(crate) output_tap: Option<CommandOutputTap>,
 }
 
 /// Stable project id for a folder, so a fresh database gives clients the same ids.
@@ -210,6 +219,7 @@ impl SqliteEngine {
                     .checkpoints
                     .then(crate::checkpoint::Checkpoints::default),
                 policy_override: config.runtime_policy_override.clone(),
+                output_tap: config.command_output_tap.clone(),
             }),
         };
         // Continuations and the reaper start on the caller's runtime; `open` never blocks.

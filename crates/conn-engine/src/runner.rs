@@ -712,6 +712,9 @@ impl Inner {
             {
                 self.command_output
                     .append(output_thread.as_str(), item_id.as_str(), chunk);
+                if let Some(tap) = &self.output_tap {
+                    tap(item_id.as_str(), chunk);
+                }
                 continue;
             }
             // Not persisted (`ProviderEventIngestor`); it holds the idle session while any

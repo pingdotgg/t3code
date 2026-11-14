@@ -603,12 +603,24 @@ fn run_statuses(projection: &Value) -> Vec<(String, String)> {
 }
 
 fn item_texts(projection: &Value) -> Vec<String> {
-    projection["visibleTurnItems"]
+    let rows: Vec<Value> = projection["visibleTurnItems"]
         .as_array()
         .unwrap()
         .iter()
-        .map(|row| {
-            let item = &row["item"];
+        .map(|row| row["item"].clone())
+        .collect();
+    texts(&rows)
+}
+
+/// Like [`item_texts`], over `turnItems`: hidden rows too.
+fn local_item_texts(projection: &Value) -> Vec<String> {
+    texts(projection["turnItems"].as_array().unwrap())
+}
+
+fn texts(items: &[Value]) -> Vec<String> {
+    items
+        .iter()
+        .map(|item| {
             format!(
                 "{} {}",
                 item["inputIntent"]
@@ -904,10 +916,12 @@ async fn a_declined_steer_waits_first_in_the_queue() {
         ]
     );
     assert_eq!(
-        item_texts(&p),
+        local_item_texts(&p),
         ["turn_start hang", "queued_turn steer me"],
         "the steer item now waits in the queue"
     );
+    // T3's timeline rule: a queued user message is not shown until its run starts.
+    assert_eq!(item_texts(&p), ["turn_start hang"]);
     dispatch(
         &engine,
         json!({"type": "run.interrupt", "commandId": "c5", "threadId": "t1", "runId": "run:t1:1"}),

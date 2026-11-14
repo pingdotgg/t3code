@@ -47,9 +47,11 @@ mod store;
 mod streams;
 mod time;
 mod titles;
+mod visibility;
 
 pub use engine::{
-    DEFAULT_IDLE_SESSION, EngineConfig, ProjectConfig, RuntimePolicyOverride, SqliteEngine,
+    CommandOutputTap, DEFAULT_IDLE_SESSION, EngineConfig, ProjectConfig, RuntimePolicyOverride,
+    SqliteEngine,
 };
 
 /// What a [`TitleGenerator`] titles: the first message of a new thread, or a whole thread whose

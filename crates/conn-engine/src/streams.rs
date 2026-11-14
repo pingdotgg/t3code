@@ -171,11 +171,11 @@ pub(crate) async fn subscribe_thread(
                     return Ok(Some((items, high)));
                 }
             }
-            let projection = store
+            let (projection, omitted) = store
                 .thread_projection_with(&id, omit_local)?
-                .unwrap_or(Value::Null);
+                .unwrap_or((Value::Null, false));
             Ok(Some((
-                vec![snapshot_item(projection, high, dedupe, omit_local)],
+                vec![snapshot_item(projection, high, dedupe, omitted)],
                 high,
             )))
         })
@@ -237,7 +237,7 @@ pub(crate) async fn subscribe_thread(
 /// the items `visibleTurnItems` already holds (`acceptCompactTurnItems`). Clients undo both
 /// with `boundedSnapshotProjection` on every snapshot. Either roughly halves a long thread's
 /// snapshot, as each item otherwise travels twice and each message three times.
-fn snapshot_item(mut projection: Value, high: u64, dedupe: bool, omit_local: bool) -> Value {
+fn snapshot_item(mut projection: Value, high: u64, dedupe: bool, omitted: bool) -> Value {
     if dedupe {
         let index = |collection: &str| -> HashMap<String, usize> {
             projection[collection]
@@ -303,12 +303,8 @@ fn snapshot_item(mut projection: Value, high: u64, dedupe: bool, omit_local: boo
         }
     }
     let mut snapshot = json!({"kind": "snapshot", "snapshotSequence": high});
-    // Every turn item of this engine is a local visible row, so `turnItems` was built empty.
-    if omit_local
-        && projection["visibleTurnItems"]
-            .as_array()
-            .is_some_and(|rows| !rows.is_empty())
-    {
+    // The store left the visible local rows out of `turnItems` (they were its first items).
+    if omitted {
         snapshot["turnItemsOmitLocalVisible"] = json!(true);
     }
     snapshot["projection"] = projection;
