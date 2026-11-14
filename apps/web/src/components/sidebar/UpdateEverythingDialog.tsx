@@ -2,7 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { EnvironmentId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import { ChevronRightIcon } from "lucide-react";
-import { Fragment, type RefObject, useRef } from "react";
+import { Fragment, type ReactNode, type RefObject, useRef } from "react";
 
 import { environmentThreadShells } from "~/state/threads";
 import {
@@ -51,6 +51,7 @@ interface UpdateEverythingDialogProps {
   readonly title?: string;
   readonly confirmLabel?: string;
   readonly notes?: ReadonlyArray<string>;
+  readonly releaseNotes?: ReactNode;
   /** Shown in place of running-thread counts; disables the confirm button. */
   readonly disabledReason?: string | null;
   /** The confirmed work is starting; it cannot be cancelled from here. */
@@ -102,6 +103,7 @@ function UpdateEverythingDialogContent({
   title,
   confirmLabel = "Update",
   notes = [],
+  releaseNotes = null,
   disabledReason = null,
   busy = false,
   checking = false,
@@ -151,6 +153,11 @@ function UpdateEverythingDialogContent({
       </AlertDialogHeader>
       <ScrollArea scrollFade>
         <div className="flex flex-col gap-3 px-6 pb-4">
+          {releaseNotes ? (
+            <section aria-label="Release notes" className="min-w-0 rounded-md border p-3">
+              {releaseNotes}
+            </section>
+          ) : null}
           {notes.map((note) => (
             <p key={note} className="text-muted-foreground text-sm">
               {note}
