@@ -65,7 +65,7 @@ const readyWslConfig: DesktopBackendManager.DesktopBackendStartConfig = {
 
 const defaultWslInstance: DesktopBackendManager.DesktopBackendInstance = {
   id: DesktopBackendManager.BackendInstanceId("wsl:default"),
-  label: Effect.succeed("DESKTOP-PC WSL"),
+  label: Effect.succeed("WSL (default distro)"),
   start: Effect.void,
   stop: () => Effect.void,
   currentConfig: Effect.succeedSome(readyWslConfig),
@@ -90,11 +90,7 @@ const backendConfigurationLayer = Layer.succeed(
 );
 
 const bootstrapsLayer = (instances: ReadonlyArray<DesktopBackendManager.DesktopBackendInstance>) =>
-  Layer.mergeAll(
-    DesktopBackendPool.layerTest([...instances]),
-    backendConfigurationLayer,
-    Layer.succeed(HostProcess.Hostname, "DESKTOP-PC"),
-  );
+  Layer.merge(DesktopBackendPool.layerTest([...instances]), backendConfigurationLayer);
 
 describe("getLocalEnvironmentBootstraps", () => {
   it.effect("hands out the current window's token to a backend launched with the secret", () =>
@@ -104,7 +100,7 @@ describe("getLocalEnvironmentBootstraps", () => {
       assert.deepEqual(result, [
         {
           id: "wsl:default",
-          label: "DESKTOP-PC WSL (Ubuntu)",
+          label: "WSL (Ubuntu)",
           runningDistro: "Ubuntu",
           httpBaseUrl: "http://127.0.0.1:3774/",
           wsBaseUrl: "ws://127.0.0.1:3774/",
@@ -155,7 +151,7 @@ describe("getLocalEnvironmentBootstraps", () => {
       assert.deepEqual(result, [
         {
           id: "wsl:default",
-          label: "DESKTOP-PC WSL",
+          label: "WSL (default distro)",
           runningDistro: null,
           httpBaseUrl: null,
           wsBaseUrl: null,
