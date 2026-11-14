@@ -1,7 +1,7 @@
 import ExpoModulesCore
 import UIKit
 
-private struct ComposerTokenPayload: Decodable {
+private struct ComposerTokenPayload: Decodable, Equatable {
   let type: String
   let source: String
   let label: String
@@ -9,8 +9,16 @@ private struct ComposerTokenPayload: Decodable {
   let accent: String?
   let tintsIcon: Bool?
   let detail: String?
-  let start: Int
-  let end: Int
+  var start: Int
+  var end: Int
+
+  func rendersLike(_ other: Self) -> Bool {
+    var moved = other
+    moved.start = start
+    moved.end = end
+    // String == accepts canonically equivalent sources, but their UTF-16 lengths differ.
+    return moved == self && source.utf16.elementsEqual(other.source.utf16)
+  }
 }
 
 private struct ComposerSelectionPayload: Decodable, Equatable {
@@ -714,8 +722,10 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     hasControlledDocument = true
     if tokensJson != document.tokensJson {
       tokensJson = document.tokensJson
-      tokens = decode([ComposerTokenPayload].self, from: document.tokensJson) ?? []
-      tokensNeedRebuild = true
+      let nextTokens = decode([ComposerTokenPayload].self, from: document.tokensJson) ?? []
+      // Typing before a chip only moves its offsets; rebuilding then makes iOS autocorrect behind the caret.
+      tokensNeedRebuild = tokensNeedRebuild || !nextTokens.elementsEqual(tokens, by: { $0.rendersLike($1) })
+      tokens = nextTokens
     }
     let previousSelection = sourceSelection()
     value = document.value
@@ -1330,7 +1340,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
 
   private func documentMatchesExpectedTokens() -> Bool {
     let source = value as NSString
-    let expectedSources = tokens.compactMap { token -> String? in
+    let expectedChips = tokens.compactMap { token -> (Int, String)? in
       guard token.start >= 0,
             token.end > token.start,
             token.end <= source.length,
@@ -1339,18 +1349,22 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
             ) == token.source else {
         return nil
       }
-      return token.source
+      return (token.start, token.source)
     }
-    var renderedSources: [String] = []
+    var renderedChips: [(Int, String)] = []
+    var sourceOffset = 0
     textView.attributedText.enumerateAttribute(
       .attachment,
       in: NSRange(location: 0, length: textView.attributedText.length)
-    ) { value, _, _ in
+    ) { value, range, _ in
       if let attachment = value as? ComposerTextAttachment {
-        renderedSources.append(attachment.source)
+        renderedChips.append((sourceOffset, attachment.source))
+        sourceOffset += (attachment.source as NSString).length
+      } else {
+        sourceOffset += range.length
       }
     }
-    return renderedSources == expectedSources
+    return renderedChips.elementsEqual(expectedChips, by: ==)
   }
 }
 
