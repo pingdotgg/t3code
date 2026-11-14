@@ -214,6 +214,9 @@ pub fn server_config(environment: &Environment, providers: Vec<Value>) -> Result
     Ok(conn_contract::to_json(&config))
 }
 
+/// `PROVIDER_STATUS_DEBOUNCE_MS`.
+const PROVIDER_STATUS_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(200);
+
 /// The config snapshot, then `settingsUpdated` after each settings write and
 /// `keybindingsUpdated` after each keybinding write, until the client unsubscribes.
 fn config_stream(env: Arc<Environment>, deps: Deps, config: Value) -> ItemStream {
@@ -224,8 +227,13 @@ fn config_stream(env: Arc<Environment>, deps: Deps, config: Value) -> ItemStream
     settings.mark_unchanged();
     keybindings.mark_unchanged();
     providers.mark_unchanged();
-    let mut sent_providers = config["providers"].clone();
+    // T3 de-dupes the provider list against the last one seen, then debounces 200 ms
+    // (`PROVIDER_STATUS_DEBOUNCE_MS`): only the last list of a burst goes out.
+    let mut seen_providers = config["providers"].clone();
+    let mut pending_providers: Option<Value> = None;
+    let debounce = tokio::time::sleep(PROVIDER_STATUS_DEBOUNCE);
     tokio::spawn(async move {
+        tokio::pin!(debounce);
         let snapshot = json!({ "version": 1, "type": "snapshot", "config": config });
         if tx.send(Ok(snapshot)).await.is_err() {
             return;
@@ -243,10 +251,15 @@ fn config_stream(env: Arc<Environment>, deps: Deps, config: Value) -> ItemStream
                 }
                 changed = providers.changed() => {
                     if changed.is_err() { break; }
-                    // T3 sends the list only when it differs from the one this client has.
                     let list = Value::Array(current_providers(&deps));
-                    if list == sent_providers { continue; }
-                    sent_providers = list.clone();
+                    if list == seen_providers { continue; }
+                    seen_providers = list.clone();
+                    pending_providers = Some(list);
+                    debounce.as_mut().reset(tokio::time::Instant::now() + PROVIDER_STATUS_DEBOUNCE);
+                    continue;
+                }
+                () = &mut debounce, if pending_providers.is_some() => {
+                    let Some(list) = pending_providers.take() else { continue };
                     json!({ "version": 1, "type": "providerStatuses", "payload": { "providers": list } })
                 }
                 _ = tx.closed() => break,
@@ -415,6 +428,17 @@ mod tests {
         let event = stream.recv().await.unwrap().unwrap();
         assert_eq!(event["type"], "providerStatuses");
         assert_eq!(event["payload"]["providers"][0]["instanceId"], "grok");
+        // A burst of refreshes sends one list, the last, after T3's 200 ms debounce.
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        super::super::provider::refresh(&deps, None).await;
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        super::super::provider::refresh(&deps, None).await;
+        let started = std::time::Instant::now();
+        let event = stream.recv().await.unwrap().unwrap();
+        assert_eq!(event["type"], "providerStatuses");
+        assert!(started.elapsed() >= std::time::Duration::from_millis(150));
+        let more = tokio::time::timeout(std::time::Duration::from_millis(400), stream.recv()).await;
+        assert!(more.is_err(), "one list per burst");
         std::fs::remove_dir_all(dir).unwrap();
     }
 

@@ -344,13 +344,40 @@ pub(crate) fn compaction_placeholder(tool_call_id: &str) -> ToolState {
 }
 
 /// `toolOutputText`.
-fn tool_output_text(tool: &ToolState) -> String {
+pub(crate) fn tool_output_text(tool: &ToolState) -> String {
     match tool.data.get("rawOutput") {
         Some(Value::String(text)) => text.clone(),
         Some(raw) if raw["text"].is_string() => raw["text"].as_str().unwrap_or("").to_owned(),
         Some(raw) => text_from_unknown(raw).unwrap_or_default(),
         None => String::new(),
     }
+}
+
+/// `appendToolContentText`: the text extends the last text entry, or becomes a new one.
+pub(crate) fn append_content_text(content: Option<&Value>, text: &str) -> Value {
+    let mut next: Vec<Value> = content
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let extend = next.last().is_some_and(|last| {
+        last["type"] == "content"
+            && last["content"]["type"] == "text"
+            && last["content"]["text"].is_string()
+    });
+    if extend && let Some(last) = next.last_mut() {
+        let joined = format!("{}{text}", last["content"]["text"].as_str().unwrap_or(""));
+        last["content"]["text"] = json!(joined);
+    } else {
+        next.push(json!({"type": "content", "content": {"type": "text", "text": text}}));
+    }
+    Value::Array(next)
+}
+
+/// `setToolOutputText`: the output becomes `{type: "Text", text}`.
+pub(crate) fn set_output_text(mut tool: ToolState, text: &str) -> ToolState {
+    tool.data
+        .insert("rawOutput".into(), json!({"type": "Text", "text": text}));
+    tool
 }
 
 /// `appendToolOutputText`: the output becomes `{type: "Text", text}`.

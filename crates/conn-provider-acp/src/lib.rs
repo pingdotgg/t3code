@@ -14,6 +14,7 @@ mod connection;
 mod diff;
 pub mod flavor;
 mod grok;
+mod grok_background;
 mod grok_status;
 #[rustfmt::skip]
 mod instructions;
@@ -54,17 +55,25 @@ pub(crate) fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, 
 
 /// One agent line may be this long; longer lines are dropped and logged.
 const MAX_LINE_BYTES: usize = 64 * 1024 * 1024;
+/// How long the end of input may take before the SIGKILL goes anyway (a writer stuck on a
+/// full pipe must not hold the kill back).
+const END_INPUT_WAIT: Duration = Duration::from_millis(200);
 /// `processGroupTerminationGrace`: SIGTERM to SIGKILL on Stop.
 const TERMINATE_GRACE: Duration = Duration::from_secs(1);
 
 /// Ends an agent as T3 ends one it owns in a detached process group.
-async fn stop_process(process: Process, kind: session::StopKind) {
+async fn stop_process(mut process: Process, kind: session::StopKind) {
     #[cfg(unix)]
     {
         use conn_provider_support::process::signal_group;
         use rustix::process::Signal;
         match kind {
-            session::StopKind::Kill => signal_group(process.pid, Signal::KILL),
+            // The scope's close: the end of input first (T3's ACP writer completes and ends
+            // stdin), then SIGKILL to the group at once.
+            session::StopKind::Kill => {
+                process.end_input(END_INPUT_WAIT).await;
+                signal_group(process.pid, Signal::KILL);
+            }
             session::StopKind::Terminate => {
                 signal_group(process.pid, Signal::TERM);
                 let pid = process.pid;
@@ -80,23 +89,24 @@ async fn stop_process(process: Process, kind: session::StopKind) {
     process.shutdown().await;
 }
 
-/// The ACP `initialize` probe (`discoverGrokMetadataViaAcpInitialize`): starts
+/// The ACP `initialize` probe of a flavor (Grok's `discoverGrokMetadataViaAcpInitialize`): starts
 /// `<binary> agent stdio` in `cwd` with the probe environment, sends `initialize` as client
 /// `t3-code-provider-probe`, and ends the agent as the runtime's scope does (SIGKILL to its
 /// process group). `None` when the agent cannot start, fails or misses the timeout.
 pub(crate) async fn initialize_probe(
+    flavor: &Flavor,
     binary: &str,
     environment: &[(String, String)],
     cwd: &std::path::Path,
     timeout: Duration,
 ) -> Option<serde_json::Value> {
-    let launch = (GROK.launch)(binary, None, environment);
+    let launch = (flavor.launch)(binary, None, environment);
     let spawned = process_spawner(launch, cwd.display().to_string())().ok()?;
     let (connection, mut incoming) =
         connection::Connection::start(spawned.writer, spawned.events, session::EVENT_CAPACITY);
     // Nothing is served during the probe; agent frames are read and dropped.
     let drain = tokio::spawn(async move { while incoming.recv().await.is_some() {} });
-    let params = session::initialize_params(&GROK, "t3-code-provider-probe", "0.0.0", false);
+    let params = session::initialize_params(flavor, "t3-code-provider-probe", "0.0.0", false);
     let result = tokio::time::timeout(timeout, connection.call("initialize", params)).await;
     (spawned.stop)(session::StopKind::Kill).await;
     drain.abort();
@@ -121,6 +131,15 @@ pub struct AcpConfig {
     /// goes out this long later. `None` holds it until its segment closes, as T3's paused test
     /// clock does; only replays of T3's fixtures set that.
     pub text_flush_interval: Option<Duration>,
+    /// `ACP_DEFERRED_FINALIZE_DEBOUNCE` (3 s): a turn whose background work ended finalizes
+    /// this long after the last change. Replays of T3's fixtures shorten it, as T3's test
+    /// clock skips it.
+    pub finalize_debounce: Duration,
+    /// The executable an agent starts for the stdio MCP bridge (`<it> acp-mcp-bridge`);
+    /// `None`: this process's own executable (T3's `resolveSelfInvocation`).
+    pub self_command: Option<String>,
+    /// Where `conn-files` saves attachments: paths in the prompt and image blocks.
+    pub attachments_dir: Option<PathBuf>,
 }
 
 impl Default for AcpConfig {
@@ -131,6 +150,9 @@ impl Default for AcpConfig {
             server_cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")),
             workspace_cwd: None,
             text_flush_interval: Some(session::FLUSH_INTERVAL),
+            finalize_debounce: session::FINALIZE_DEBOUNCE,
+            self_command: None,
+            attachments_dir: None,
         }
     }
 }
@@ -215,7 +237,9 @@ impl AcpProvider {
     }
 
     /// `checkGrokProviderStatus` with the given settings, and the result kept as the entry.
-    async fn probe(&self, settings: GrokSettings) {
+    /// Probes and publishes the entry. With `defer`, a failed check (`error`, not signed out)
+    /// over a ready, enabled entry keeps the old entry and returns `true`.
+    async fn probe(&self, settings: GrokSettings, defer: bool) -> bool {
         let _one = self.probing.lock().await;
         {
             // New settings take effect at once; until the probe ends the entry is T3's
@@ -242,8 +266,17 @@ impl AcpProvider {
             grok_status::check_status(self.instance_id.as_str(), &settings, &context, &checked_at)
                 .await;
         let mut status = lock(&self.status);
+        if defer
+            && entry["status"] == "error"
+            && entry["auth"]["status"] != "unauthenticated"
+            && status.entry["enabled"] == true
+            && status.entry["status"] == "ready"
+        {
+            return true;
+        }
         status.settings = settings;
         status.entry = entry;
+        false
     }
 }
 
@@ -331,7 +364,25 @@ impl Provider for AcpProvider {
     fn refresh_status(&self, instance: Option<serde_json::Value>) -> BoxFuture<'_, ()> {
         Box::pin(async move {
             let settings = GrokSettings::from_instance(instance.as_ref());
-            self.probe(settings).await;
+            self.probe(settings, false).await;
+        })
+    }
+
+    fn refresh_status_on_interval(
+        &self,
+        instance: Option<serde_json::Value>,
+        defer: bool,
+    ) -> BoxFuture<'_, bool> {
+        Box::pin(async move {
+            // `shouldRefreshOnInterval`: a disabled instance has nothing to probe.
+            if !lock(&self.status).entry["enabled"]
+                .as_bool()
+                .unwrap_or(false)
+            {
+                return false;
+            }
+            let settings = GrokSettings::from_instance(instance.as_ref());
+            self.probe(settings, defer).await
         })
     }
 
@@ -357,6 +408,7 @@ impl Provider for AcpProvider {
             let policy = to_json(&input.runtime_policy);
             let config = session::Config {
                 flush_interval: self.config.text_flush_interval,
+                finalize_debounce: self.config.finalize_debounce,
                 flavor: self.flavor,
                 instance_id: self.instance_id.as_str().to_owned(),
                 provider_session_id: input.provider_session_id.as_str().to_owned(),
@@ -366,12 +418,19 @@ impl Provider for AcpProvider {
                     .as_str()
                     .unwrap_or("full-access")
                     .to_owned(),
+                effort: crate::grok::selection_effort(&to_json(&input.model_selection)),
                 model: to_json(&input.model_selection)["model"]
                     .as_str()
                     .unwrap_or("")
                     .to_owned(),
                 mcp_servers: input.mcp_servers.clone(),
                 client_version: "0.0.0".into(),
+                attachments_dir: self.config.attachments_dir.clone(),
+                self_command: self.config.self_command.clone().unwrap_or_else(|| {
+                    std::env::current_exe()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_default()
+                }),
             };
             let (tx, events) = mpsc::channel(session::EVENT_CAPACITY);
             let (session, _) = AcpSession::open(

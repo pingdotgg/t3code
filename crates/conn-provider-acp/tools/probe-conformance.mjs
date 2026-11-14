@@ -32,6 +32,22 @@ const MONOREPO = monorepo();
 const HERE = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const STUB = NodePath.join(HERE, "grok-cli-stub.mjs");
 
+// The instance variables whose `~` T3 expands (`HOME_PATH_VARIABLES`) must equal ours.
+{
+  const ts = NodeFS.readFileSync(
+    NodePath.join(MONOREPO, "packages/provider-core/src/server/pathExpansion.ts"),
+    "utf8",
+  );
+  const rust = NodeFS.readFileSync(NodePath.join(HERE, "../src/grok_status.rs"), "utf8");
+  const names = (text, re) => [...(text.match(re)?.[1] ?? "").matchAll(/"([A-Z_]+)"/g)].map((m) => m[1]).toSorted();
+  const theirs = names(ts, /HOME_PATH_VARIABLES = new Set\(\[([^\]]*)\]/);
+  const ours = names(rust, /HOME_PATH_VARIABLES: \[&str; \d+\] = \[([^\]]*)\]/);
+  if (theirs.length === 0 || JSON.stringify(theirs) !== JSON.stringify(ours)) {
+    console.error(`HOME_PATH_VARIABLES differ: T3 ${JSON.stringify(theirs)}, ours ${JSON.stringify(ours)}`);
+    process.exit(1);
+  }
+}
+
 const args = process.argv.slice(2);
 const keep = args.includes("--keep");
 const verbose = args.includes("--verbose");

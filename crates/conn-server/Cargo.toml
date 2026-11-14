@@ -45,7 +45,9 @@ serde_json.workspace = true
 thiserror.workspace = true
 # `signal`: a clean stop on SIGTERM and SIGINT. `fs` streams asset files and uploads
 # (tokio's own spawn_blocking file I/O).
-tokio = { workspace = true, features = ["signal", "fs"] }
+# `io-std`: the `acp-mcp-bridge` command relays stdin and stdout (tokio reads stdin on its
+# blocking pool).
+tokio = { workspace = true, features = ["signal", "fs", "io-std"] }
 # The ownership lock shared with the T3 server (`server-owner.sqlite`); already in the tree
 # through conn-engine, same version and features.
 rusqlite.workspace = true

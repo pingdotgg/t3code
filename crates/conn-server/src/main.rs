@@ -45,6 +45,8 @@ fn main() {
         &conn_provider_acp::GROK,
         conn_provider_acp::AcpConfig {
             workspace_cwd: Some(options.cwd.clone()),
+            // The same store Claude and Codex read.
+            attachments_dir: Some(options.state_dir.join("attachments")),
             ..Default::default()
         },
         conn_server::serve::stored_grok_settings(&options.state_dir),

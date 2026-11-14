@@ -115,7 +115,7 @@ fn normalize_mcp(mut tool: ToolState) -> ToolState {
 }
 
 /// `xAiToolOutputText`.
-fn output_text(tool: &ToolState) -> Option<String> {
+pub(crate) fn output_text(tool: &ToolState) -> Option<String> {
     let raw_output = tool.data.get("rawOutput").cloned().unwrap_or(Value::Null);
     if raw_output.is_object() {
         let direct = non_empty(&raw_output["text"])
@@ -180,7 +180,7 @@ fn monitor_start_ack(output: Option<&str>) -> bool {
     })
 }
 
-fn is_monitor(tool: &ToolState) -> bool {
+pub(crate) fn is_monitor(tool: &ToolState) -> bool {
     let title = tool.title.as_deref().unwrap_or("").trim().to_lowercase();
     if title == "monitor" || title.starts_with("monitor ") {
         return true;
@@ -244,9 +244,25 @@ pub(crate) fn normalize_tool(incoming: ToolState) -> ToolState {
 /// `GROK_DEFAULT_MODEL_SLUG`.
 pub(crate) const DEFAULT_MODEL: &str = "grok-build";
 
-/// `applyGrokSessionModelSelection` for ACP protocol 1: the model to switch to with
-/// `session/set_model`, or `None` when the session already runs it.
-pub(crate) fn model_switch(setup: &Value, requested: &str) -> Option<String> {
+/// The `reasoningEffort` option of a model selection (`getModelSelectionStringOptionValue`).
+pub(crate) fn selection_effort(selection: &Value) -> Option<String> {
+    selection["options"]
+        .as_array()?
+        .iter()
+        .find(|o| o["id"] == "reasoningEffort")?["value"]
+        .as_str()
+        .map(str::to_owned)
+}
+
+/// `applyGrokSessionModelSelection` for ACP protocol 1 with `applyGrokAcpModelSelection`:
+/// the `session/set_model` to send (model id, and `_meta.reasoningEffort`), or `None`.
+/// The effort goes only when the target model offers it (or offers none); T3 passes no
+/// current effort here, so a valid requested effort always sends.
+pub(crate) fn model_switch(
+    setup: &Value,
+    requested: &str,
+    effort: Option<&str>,
+) -> Option<(String, Option<String>)> {
     let requested = requested.trim();
     let requested = if requested.is_empty() {
         DEFAULT_MODEL
@@ -257,10 +273,40 @@ pub(crate) fn model_switch(setup: &Value, requested: &str) -> Option<String> {
         .as_str()
         .map(str::trim)
         .filter(|s| !s.is_empty());
-    if requested == DEFAULT_MODEL {
-        return None;
-    }
-    (current != Some(requested)).then(|| requested.to_owned())
+    let target = if requested == DEFAULT_MODEL {
+        current
+    } else {
+        Some(requested)
+    };
+    let effort = effort.filter(|effort| {
+        let offered = target
+            .and_then(|target| {
+                setup["models"]["availableModels"]
+                    .as_array()?
+                    .iter()
+                    .find(|m| m["modelId"].as_str().map(str::trim) == Some(target))
+            })
+            .map(crate::grok_status::offered_efforts)
+            .unwrap_or_default();
+        offered.is_empty() || offered.iter().any(|o| o == effort)
+    });
+    apply_selection(current, requested, effort)
+}
+
+/// `applyGrokAcpModelSelection` without a current effort.
+pub(crate) fn apply_selection(
+    current: Option<&str>,
+    requested: &str,
+    effort: Option<&str>,
+) -> Option<(String, Option<String>)> {
+    let requested = (requested != DEFAULT_MODEL).then_some(requested);
+    let model_changed = requested.is_some_and(|r| Some(r) != current);
+    let effort = effort
+        .map(str::trim)
+        .filter(|e| crate::grok_status::is_effort_token(e))
+        .map(str::to_owned);
+    let target = requested.or(current)?;
+    (model_changed || effort.is_some()).then(|| (target.to_owned(), effort))
 }
 
 // ---- ask_user_question --------------------------------------------------------------------
@@ -391,5 +437,40 @@ pub(crate) fn question_response(params: &Value, answers: &Value) -> crate::order
         response
     } else {
         response.with("annotations", J::Obj(annotations))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{model_switch, selection_effort};
+
+    #[test]
+    fn sends_the_effort_as_t3s_protocol_1_selection() {
+        let setup = json!({"models": {"currentModelId": "grok-4.7", "availableModels": [
+            {"modelId": "grok-4.7", "_meta": {"reasoningEfforts": [{"value": "low"}, {"value": "high"}], "reasoningEffort": "high"}},
+            {"modelId": "grok-4.7-build-fast"}
+        ]}});
+        // Same model, an offered effort: T3 passes no current effort, so it sends.
+        assert_eq!(
+            model_switch(&setup, "grok-4.7", Some("low")),
+            Some(("grok-4.7".into(), Some("low".into())))
+        );
+        // An effort the model does not offer is skipped; the model stays: nothing to send.
+        assert_eq!(model_switch(&setup, "grok-4.7", Some("max")), None);
+        // A model without efforts takes any valid token.
+        assert_eq!(
+            model_switch(&setup, "grok-4.7-build-fast", Some("high")),
+            Some(("grok-4.7-build-fast".into(), Some("high".into())))
+        );
+        // The default slug keeps the session's model.
+        assert_eq!(model_switch(&setup, "grok-build", None), None);
+        assert_eq!(
+            selection_effort(
+                &json!({"model": "m", "options": [{"id": "reasoningEffort", "value": "low"}]})
+            ),
+            Some("low".into())
+        );
     }
 }

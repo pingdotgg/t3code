@@ -13,11 +13,13 @@
 */pi            provider: out of scope (AGENTS.md)
 
 # --- Grok (conn-provider-acp; its own replay shows these adapter events equal to T3's) ---
-grok_subagent_lineage/grok           provider: Grok subagents are not built (crates/conn-provider-acp README)
-grok_background_bash/grok            driver: finish_held_run (no replay gate in acp-stub.mjs); provider: Grok background tasks are not built
-grok_background_bash_fast_wake/grok  driver: finish_held_run; provider: Grok background tasks are not built
-grok_background_subagent/grok        driver: finish_held_run; provider: Grok background tasks and subagents are not built
-grok_monitor/grok                    driver: finish_held_run; provider: Grok monitors are not built
+# The provider replays all five equal to T3 in its own test (17 of 17). Here they fail in the
+# replay driver or the engine's projection.
+grok_subagent_lineage/grok           engine: a Grok subagent's provider thread is missing from the projection (the assertion gets null for its id)
+grok_background_bash/grok            driver: the replay agent never starts; the driver's replay gate and finish_held_run are not wired to the ACP stub
+grok_background_bash_fast_wake/grok  driver: as grok_background_bash
+grok_background_subagent/grok        driver: as grok_background_bash
+grok_monitor/grok                    driver: as grok_background_bash
 
 # --- Claude provider: background roster, monitors and wakes are not built ---
 claude_background_subagent_after_root/claudeAgent    provider: no background_work.updated roster for Claude subagents; the subagent item never shows

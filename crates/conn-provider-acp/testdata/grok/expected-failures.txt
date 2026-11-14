@@ -1,7 +1,2 @@
 # Grok transcripts that cannot pass yet, with the reason. The replay test fails when a listed
 # one passes or an unlisted one fails. Format: <fixture> <reason>
-grok_background_bash background shell tasks (BackgroundTaskStarted, deferred finalize with T3's 3 s debounce, the continuation prompt "Background task completed.") are not built
-grok_background_bash_fast_wake same as grok_background_bash: background tasks and the post-settle continuation are not built
-grok_background_subagent subagents (child app threads, subagent rows, x.ai subagent_finished) and background tasks are not built
-grok_monitor Grok monitors (persistent background tasks, monitor-event hydration, continuation) are not built
-grok_subagent_lineage subagent child threads (app_thread.created, subagent.updated) are not built
