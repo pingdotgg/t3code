@@ -5,9 +5,10 @@ stdio). One shared runtime, one small flavor per agent. Reference behaviour: T3'
 `packages/provider-acp` (`makeAcpAdapterV2`, `AcpSessionRuntime`) and the flavor packages
 (`packages/provider-grok`, …) in the Conn monorepo.
 
-**State (2026-11-14): Grok only, and not registered in the server.** Kiro, fx, Antigravity
-and the ACP registry are not built. See "Not built" for what Grok still lacks and why the
-server does not offer it yet.
+**State (2026-11-14): Grok, offered by the server.** The server lists T3's default `grok`
+instance, off until `providerInstances.grok` enables it, and probes the CLI as T3 does (see
+"Server entry"). Kiro, fx, Antigravity and the ACP registry are not built. Grok's background
+work and subagents are not built: see "Not built" and "Map: Grok background work".
 
 ## Trial: the official crates or our own JSON-RPC?
 
@@ -36,6 +37,7 @@ write is built from `ordered::J`, which keeps T3's key order.
 | `prompt`, `instructions` | T3's prompt wrapper and runtime notes (`instructions.rs` is generated) |
 | `session` | `Session`: process, handshake, model switch, prompts, Stop, close |
 | `flavor`, `grok` | what differs per agent; Grok's tool normalizer, questions and model switch |
+| `grok_status`, `probe` | Grok's `ServerProvider` entry: the CLI probes and the entry T3 builds from them |
 
 ## Wire (proven equal to T3's for Grok, see "Proofs")
 
@@ -60,6 +62,36 @@ write is built from `ordered::J`, which keeps T3's key order.
 - **Close:** `session/close` when the agent offers it, then SIGKILL to the process group at
   once (T3's scope finalizer for an owned detached group). No end of input first.
 
+## Server entry (proven equal to T3's for Grok, see "Proofs")
+
+`AcpProvider::refresh_status` runs T3's `checkGrokProviderStatus` with the instance's settings
+entry; `server_provider_entry` returns the last result. The server calls it once it listens,
+when `providerInstances.grok` changes, every `providerHealthRefreshInterval` (5 minutes), and on
+`server.refreshProviders`, and sends `providerStatuses` on config streams.
+
+- **Enabled:** `resolveProviderInstanceEnabled`: an explicit `false` on the envelope or in the
+  config wins, then the envelope, then the config, then Grok's default: off. Off: no probe,
+  `status: "disabled"`, "Grok is disabled in T3 Code settings."; a session on it is refused.
+- **Probes**, in order, each in its own process group with the server's environment, the
+  instance's entries, `MISE_OFFLINE=1` and `GROK_DISABLE_AUTOUPDATER=1`, stdin an open pipe:
+  `grok --version` (10 s), `grok models` (10 s; once more after "not authenticated" when no
+  `XAI_API_KEY` is set), `grok inspect --json` in the server's workspace (4 s, skills), and
+  `grok agent stdio` with one `initialize` as client `t3-code-provider-probe` without the
+  elicitation capability (20 s, models and slash commands), ended with SIGKILL to its group.
+  A timeout sends SIGTERM to the group and SIGKILL after 1 s. `T3CODE_GROK_PROBE_TIMEOUT_MS`
+  only lengthens a timeout.
+- **Results:** a missing executable: installed `false`, "Grok CLI (`grok`) is not installed or
+  not on PATH."; any other spawn failure: "Failed to execute Grok CLI health check."; a hang:
+  "… timed out while running `grok --version`."; a non-zero exit: "… failed to run."; logged
+  out: `error`, "Run `grok login`."; a failed ACP probe or no models: `warning`, "Model
+  options may be incomplete." T3 has no minimum Grok version: an old CLI is reported with its
+  version and whatever its probes give.
+- **Not ported, on purpose:** `readGrokAccount` (it reads Grok's credentials file and calls
+  xAI's billing API; this server never reads credentials), the version advisory (it asks a
+  package registry for the latest version), the background-work demand gate on the periodic
+  probe and the 30 s recheck after a failed check, the debounce on `providerStatuses`.
+  `XAI_API_KEY` is checked for presence only; its value is never stored or sent anywhere.
+
 ## Supported (Grok)
 
 Streamed text and reasoning (named and unnamed segments, the 50 ms flush), session titles and
@@ -75,28 +107,78 @@ not serve get a -32601 reply.
 - **Grok background work:** background shell tasks, monitors, deferred finalize (3 s
   debounce), post-settle continuation prompts, subagents and their child threads, the x.ai
   extension notifications behind them. The five transcripts that need them are on
-  `testdata/grok/expected-failures.txt`.
+  `testdata/grok/expected-failures.txt`. See "Map: Grok background work" for the plan.
 - **Grok extras:** `x.ai/exit_plan_mode`, skill mentions (`rewriteUserText`), compaction via
-  `/compact`, the reasoning effort in `session/set_model` meta, model slug aliases,
-  `promptInactivityTimeout`, image attachments as blocks (text paths only), MCP tool
+  `/compact` (the entry lists `/compact` as T3's does; a `/compact` turn reaches Grok as a
+  plain prompt, without T3's compaction item or its refusal when the session does not
+  advertise the command), the reasoning effort in `session/set_model` meta, model slug
+  aliases, `promptInactivityTimeout`, image attachments as blocks (text paths only), MCP tool
   presentation (`extractMcpToolCallIdentity`), web search and fetch projections, structured
   file changes, notices, retries.
 - **Shared runtime:** ACP protocol 2 responses (Kiro answers with v2), `session/load` and
   resume at open, fork, `session/set_config_option`, steering, elicitation, MCP over ACP,
-  client file and terminal callbacks (`ProviderHost`), authentication on `auth_required`.
+  client file and terminal callbacks (`ProviderHost`; only Antigravity's files and the
+  registry's terminals use them in T3, Grok never does), authentication on `auth_required`.
 - **Linux launch:** T3 puts Grok's process tree in a cgroup wrapper on Linux
   (`ownDescendantProcessGroups`); we spawn it directly. macOS matches.
-- **Server:** the `ServerConfig` provider entry. T3 builds Grok's from probes that run the
-  CLI (`grok --version`, a model probe, an ACP `initialize` probe) and reports auth from them;
-  none is built, so the server does not offer Grok yet.
 - **Flavors:** Kiro, fx, Antigravity (its own adapter and stdout filter), the ACP registry
   and its 11 `server.*` methods.
+
+## Map: Grok background work
+
+What T3 does (`packages/provider-acp/src/server/adapter.ts` at the pin, with Grok's hooks in
+`packages/provider-grok/src/server/adapter.ts` and `xaiAcpExtension.ts`), read for the
+`grok_background_bash` transcript. Our replay of it differs first at event 26: we complete
+the tool and the turn when the prompt settles; T3 keeps both open.
+
+1. **Hooks** (`makeGrokAcpAdapterFlavor`): `extractBackgroundTaskId` =
+   `extractXAiMonitorTaskId`; `isBackgroundCommandTool` = a `BackgroundTaskStarted`
+   `rawOutput`; `extractBackgroundTaskCompletion` = `extractXAiBackgroundTaskCompletion` +
+   `extractXAiKilledBackgroundTasks`; `extractBackgroundToolMutation` (monitor events in agent
+   text); `isPersistentBackgroundTool` = `isXAiPersistentMonitor`;
+   `isProviderWakeNotification` = a `task-completed-*` `_meta.promptId`;
+   `deferFinalizeForBackgroundWork` and `enablePostSettleContinuation`. Our
+   `normalizeXAiAcpToolCallState` port lacks the "BackgroundTaskStarted → inProgress" and
+   monitor reopen rules.
+2. **Per turn** (`ActiveAcpTurn`): `backgroundCommands` (task id → completion or null),
+   `toolCallIdsByBackgroundTaskId`, `persistentBackgroundTaskIds`,
+   `awaitingBackgroundHydration` (60 s), `pendingInjectedReport` (25 s), `promptSettled` and
+   its status, `backgroundFinalizeGeneration`. **Per session:** `runningBackgroundTaskIds`,
+   `endedBackgroundTaskIds` (128 tombstones), `handledBackgroundTaskIdsInActiveTurn`,
+   `midTurnUnreportedCompletedTaskIds`, `wakeBuffer`, `wakeReports`,
+   `continuationRequested` and its generation, `lastTurnRoute`.
+3. **Tools** (`emitTool`): a background command keeps its tool `inProgress`; tool updates that
+   arrive after the prompt settled still update the open turn's tool (the `tock` output).
+4. **Lifecycle notifications** (`registerXAiBackgroundTaskTracking`):
+   `x.ai/task_backgrounded` and `x.ai/task_completed` (and the `_x.ai/` forms) become
+   `applyBackgroundTaskMutation`: completion recorded, wake report, `finishRegisteredBackgroundTool`.
+5. **Prompt settles** with background work: `promptSettled = true`, text streams close, no
+   finalize. Each change re-arms `scheduleDeferredFinalize`: after 3 s with no deferred work
+   the turn finalizes with the settled status.
+6. **Wakes:** after the settle, Grok starts its own `task-completed-*` turn. Its frames go to
+   `wakeBuffer` (`bufferPostSettleWake`, with `acpPostSettleWakeEvidence`,
+   `acpPostSettleContinuationOfferEvidence`, `acpPostSettleWakeShouldBuffer`), and once no
+   background task runs, `offerContinuationRun` asks the engine for a continuation
+   (`ProviderEvent::ContinuationRequested` exists in `conn-provider` and the engine runs it).
+7. **Continuation turn:** `startTurn` with a provider continuation message (`createdBy:
+   agent`, `creationSource: provider`) sends **no** prompt: it drains `wakeBuffer` through the
+   normal update handler, marks the prompt settled, and finalizes (or defers) as in 5.
+   Today we send the message text ("Background task completed.") as a prompt: the frame
+   check fails there.
+8. **Subagents and monitors** add `extractXAiAcpSubagentUpdate`, child app threads
+   (`app_thread.created`, `subagent.updated`), `registerXAiSubagentFinished`, carryover
+   subagents across turns, and monitor-event hydration. They come after 1 to 7.
+
+The work is in `mapper.rs` (turn state, tools) and `session.rs` (prompt settle, wake routing,
+continuation turn); the clock seam for the 3 s debounce is the session's `flush_interval`
+style option, so the replay can run without real waits.
 
 ## Proofs
 
 ```sh
 cargo test -p conn-provider-acp                                                 # offline
 CONN_MONOREPO=/path/to/conn node crates/conn-provider-acp/tools/conformance.mjs   # the wire check
+CONN_MONOREPO=/path/to/conn node crates/conn-provider-acp/tools/probe-conformance.mjs   # the status probe
 CONN_MONOREPO=/path/to/conn node crates/conn-provider-acp/tools/gen-instructions.mjs --check
 CONN_MONOREPO=/path/to/conn node crates/conn-provider-acp/tools/capture-ts-events.mjs grok   # regenerate testdata
 ```
@@ -108,6 +190,17 @@ CONN_MONOREPO=/path/to/conn node crates/conn-provider-acp/tools/capture-ts-event
   (captured by `tools/capture-ts-events.mjs` through T3's own fixture runner; timestamps and
   random uuids normalized). **10 of 15 pass**; the other 5 are listed with their reason, and
   the test fails when a listed one passes or an unlisted one fails.
+- **Probe conformance (`tools/probe-conformance.mjs`, in `tools/check.sh`):** T3's own
+  `checkGrokProviderStatus` and ours, each against a stub CLI (`tools/grok-cli-stub.mjs`) per
+  scenario: disabled, missing, not executable, `--version` hangs and ignores SIGTERM,
+  `--version` fails, an old CLI without `models`, `inspect` or ACP, ready, logged out, a
+  refreshed token, an API key in the instance environment, ACP hangs, ACP error, `models`
+  hangs with bad skills output, custom models with a display name. Compared: the entry
+  (`checkedAt` aside) and, per CLI run, argv, environment, folder, stdin lines and signals.
+  **14 of 14 the same.** One normalisation: T3 ends the ACP probe's stdin just before its
+  SIGKILL and the stub logs that only sometimes, so a last "stdin-closed" is not compared.
+  The real client decodes a probed, ready Grok entry: `effect-client.mjs` enables Grok with
+  the stub CLI through `server.updateSettings` and reads `server.refreshProviders`.
 - **Stub conformance (`tools/conformance.mjs`, in `tools/check.sh`):** the same stub agent
   under T3's real Grok adapter and spawn path and under `AcpProvider`; argv, environment,
   every stdin line byte for byte (workspace path and trace ids normalized) and the shutdown
@@ -121,7 +214,9 @@ CONN_MONOREPO=/path/to/conn node crates/conn-provider-acp/tools/capture-ts-event
 
 ## Memory
 
-One agent process per session, as T3. Our side per session: one mapper (per-turn maps dropped
+One agent process per session, as T3. The status probe holds one entry per instance and
+starts at most one CLI at a time; each probe stream keeps at most 4 MiB of output (T3 keeps
+all of it). Our side per session: one mapper (per-turn maps dropped
 at the turn's end), one connection (a pending map with one entry per request in flight), two
 bounded channels (256) and four small tasks (stdin writer, stdout reader, stderr tail,
 supervisor) plus the reader that routes frames. Agent lines are capped at 64 MiB; longer ones

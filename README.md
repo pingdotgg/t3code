@@ -89,6 +89,7 @@ line when the variable is missing. Without it, `tools/check.sh` runs the Rust ch
 | Codex conformance   | `node crates/conn-provider-codex/tools/conformance.mjs`                                                                         | Codex argv, environment, every stdin frame and shutdown equal the T3 server's, on a stub `codex`      |
 | ACP instructions    | `node crates/conn-provider-acp/tools/gen-instructions.mjs --check` | T3's ACP prompt wrapper and runtime notes are current, byte for byte |
 | ACP conformance     | `node crates/conn-provider-acp/tools/conformance.mjs` | Grok argv, environment, every stdin line and shutdown equal the T3 server's, on a stub agent |
+| Grok probe conformance | `node crates/conn-provider-acp/tools/probe-conformance.mjs` | Grok's `ServerProvider` entry and every CLI run of its status probe equal the T3 server's, on a stub CLI |
 | Claude catalog      | `crates/conn-provider-claude/tools/gen-catalog/run.sh --check`                                                                   | The Claude model catalog matches T3's bundled catalog                                                |
 | Claude conformance  | `crates/conn-provider-claude/tools/conformance/run.sh` (skipped, with one line, without `npm ci` in `helpers/sdk-host`)          | The `claude` CLI gets the same argv, environment and stdin as from the T3 server, on a stub CLI      |
 | T3 replay (Claude)  | `node crates/conn-provider-claude/tools/t3-replay/check.mjs`                                                                    | The T3 server's Claude transcripts: exactly the scenarios in `expected-failures.txt` fail            |
@@ -138,7 +139,7 @@ See [`fixtures/README.md`](fixtures/README.md) for every scenario and which need
 | `conn-provider`         | `Provider` and `Session` traits, `ProviderEvent`                      |
 | `conn-provider-claude`  | The Claude provider, through the official Agent SDK in the SDK host (see [Claude](#claude)) |
 | `conn-provider-codex`   | The Codex provider over `codex app-server` (JSON-RPC on stdio)        |
-| `conn-provider-acp`     | The ACP provider (Grok so far; not yet offered by the server)         |
+| `conn-provider-acp`     | The ACP provider (Grok so far, offered by the server; off until settings enable it) |
 | `conn-provider-support` | Ids, line framing, the process supervisor, the SDK host client (`sdk_host`) and a rooted file host, shared by providers |
 | `conn-mcp`              | `/mcp`: T3 tools over MCP Streamable HTTP; see its README             |
 | `conn-vcs`              | Git status, refs, review diffs, worktrees and their setup             |
@@ -399,7 +400,7 @@ lists what it serves.
 | --------------- | ----------------------------------------------------------------------------------------------- |
 | Connect, config | `methods/server.rs`: config and lifecycle streams, settings, keybindings, access, diagnostics   |
 | Threads         | `conn-engine`: dispatch (43 of 56 commands), launch, streams, reads, search, families, projects, checkpoints |
-| Agents          | `conn-provider-claude`, `conn-provider-codex`; `/mcp` (`conn-mcp`, 20 tools)                    |
+| Agents          | `conn-provider-claude`, `conn-provider-codex`, `conn-provider-acp` (Grok); `/mcp` (`conn-mcp`, 20 tools) |
 | Workspace       | `conn-vcs` (status, refs, review, worktrees), `conn-files` (files, search, assets, uploads)     |
 | Terminals       | `conn-terminal`                                                                                 |
 | Source control  | `conn-source-control`: discovery of 7 hosts, `sourceControl.*` sign-in and stars (6 of 9)       |
@@ -476,7 +477,7 @@ What a real Conn session hits that this server does not do:
 - **`/mcp` serves 20 of 87 T3 tools** (`crates/conn-mcp/README.md`).
 - **Worktree launch:** the worktree is made before the thread exists; `prepared-run.*` stays
   refused and no project setup script runs.
-- **Providers:** Claude and Codex. Their gaps are in each crate's README.
+- **Providers:** Claude, Codex and Grok (Grok without background work or subagents). Their gaps are in each crate's README.
 - **Auth:** bearer and ticket only. No cookie sessions, DPoP or relay (`DROP-IN.md` §4).
 - **Desktop-local backend:** the `--bootstrap-fd` start works; the desktop itself still
   spawns the T3 server (`DROP-IN.md` §2).
