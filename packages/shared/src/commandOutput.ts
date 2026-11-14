@@ -5,11 +5,8 @@ import * as Schema from "effect/Schema";
 
 type CommandExecutionItem = Extract<OrchestrationV2TurnItem, { type: "command_execution" }>;
 
-/**
- * Only nightlies 20261003.2610 to 20261004.2644 stored Claude Bash results as raw JSON
- * envelopes. Later builds unwrap them in the adapter, including the first preview (20261008.2800)
- * and stable (v0.1.0) to ship the V2 adapter. The cutoff gives nightly laggards four days.
- */
+// Only nightlies 20261003.2610 to 20261004.2644 stored raw Claude Bash envelopes; rows carry no
+// build stamp, so start time is the only discriminator. The cutoff leaves nightly laggards four days.
 const CLAUDE_RAW_BASH_RESULT_CUTOFF = DateTime.makeUnsafe("2026-10-08T00:00:00Z");
 
 const decodeClaudeBashResult = Schema.decodeUnknownOption(

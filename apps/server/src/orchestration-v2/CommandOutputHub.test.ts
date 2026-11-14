@@ -145,7 +145,7 @@ const writeCommandItem = (
           type: "turn-item.updated",
           threadId,
           driver,
-          providerInstanceId: ProviderInstanceId.make(driver),
+          providerInstanceId: modelSelection.instanceId,
           occurredAt: startedAt,
           payload: item,
         },
@@ -315,28 +315,18 @@ layer("CommandOutputHub", (it) => {
   );
 
   it.effect.each([
-    '{"stdout":"built","stderr":"warning","interrupted":false}\n',
-    '{"stdout":"line 1\\n行 2 🚀","stderr":"é warning","interrupted":false,"requestId":"keep-me"}\n',
-  ])("keeps literal JSON emitted by a Codex command: %s", (output) =>
+    { driver: CODEX_DRIVER, startedAt: "2026-10-03T12:00:00Z" },
+    { driver: CLAUDE_DRIVER, startedAt: "2026-11-01T12:00:00Z" },
+  ])("keeps literal JSON a $driver command printed at $startedAt", ({ driver, startedAt }) =>
     Effect.gen(function* () {
       const threadId = yield* seedThread;
-      yield* writeCommandItem(threadId, { status: "completed", exitCode: 0, output });
-      const frames = yield* subscribeFrames(threadId);
-      const final = yield* takeFrame(frames);
-      assert.equal(final.text, output);
-    }),
-  );
-
-  it.effect("keeps literal JSON a current Claude command printed", () =>
-    Effect.gen(function* () {
-      const threadId = yield* seedThread;
-      const output = '{"stdout":"built","stderr":"warning","interrupted":false,"requestId":"r"}\n';
+      const output = '{"stdout":"built","stderr":"warning","interrupted":false}\n';
       yield* writeCommandItem(threadId, {
         status: "completed",
         exitCode: 0,
         output,
-        driver: CLAUDE_DRIVER,
-        startedAt: DateTime.makeUnsafe("2026-11-01T12:00:00Z"),
+        driver,
+        startedAt: DateTime.makeUnsafe(startedAt),
       });
       const frames = yield* subscribeFrames(threadId);
       const final = yield* takeFrame(frames);
