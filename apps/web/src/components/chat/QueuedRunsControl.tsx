@@ -28,7 +28,7 @@ import { useId, useImperativeHandle, useRef, useState, type ReactNode, type Ref 
 
 import { useAssetUrls } from "../../assets/assetUrls";
 import { threadEnvironment } from "../../state/threads";
-import { useQuietThreadShell, useThreadProjection } from "../../state/entities";
+import { useQuietThreadProjection, useQuietThreadShell } from "../../state/entities";
 import { useEnvironment } from "../../state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { isImageAttachment, type ChatMessage } from "../../types";
@@ -94,7 +94,7 @@ export function QueuedRunsControl({
   readonly timestampFormat: TimestampFormat;
   readonly onOpenThread: (threadId: ThreadId, environmentId?: EnvironmentId) => void;
 }) {
-  const projection = useThreadProjection(
+  const projection = useQuietThreadProjection(
     scopeThreadRef(props.environmentId, props.threadId),
   )?.projection;
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun);
@@ -253,9 +253,7 @@ export function QueuedRunsControl({
           const previewText = isAttachmentOnlyBootstrapPrompt(item.text)
             ? ""
             : assistantCitationsToPlainText(
-                replaceComposerContextReferences(item.text, (reference) =>
-                  reference.kind === "image" && item.thumbnails.length > 0 ? "" : reference.label,
-                ),
+                replaceComposerContextReferences(item.text, (reference) => reference.label),
               ).trim();
           const isEditing = item.runId !== null && item.runId === props.editingRunId;
           return (

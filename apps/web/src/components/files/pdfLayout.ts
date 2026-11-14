@@ -40,7 +40,7 @@ export function visiblePdfPages(
 ) {
   return ratios.flatMap((ratio, index) =>
     offsets[index + 1]! >= scrollTop - viewportHeight &&
-    offsets[index]! <= scrollTop + viewportHeight * 2
+    offsets[index]! <= scrollTop + viewportHeight * 3
       ? [{ index, ratio }]
       : [],
   );

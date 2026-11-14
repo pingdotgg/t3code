@@ -343,6 +343,7 @@ function getWindowTitleBarOptions(
 
 function syncWindowAppearance(
   window: Electron.BrowserWindow,
+  hasTitleBarOverlay: boolean,
   shouldUseDarkColors: boolean,
   platform: NodeJS.Platform,
 ): Effect.Effect<void> {
@@ -353,7 +354,7 @@ function syncWindowAppearance(
 
     window.setBackgroundColor(getInitialWindowBackgroundColor(shouldUseDarkColors));
     const { titleBarOverlay } = getWindowTitleBarOptions(shouldUseDarkColors, platform);
-    if (typeof titleBarOverlay === "object") {
+    if (hasTitleBarOverlay && typeof titleBarOverlay === "object") {
       window.setTitleBarOverlay(titleBarOverlay);
     }
   });
@@ -424,7 +425,6 @@ export const make = Effect.gen(function* () {
     );
 
   const currentMainWindow = electronWindow.currentMainOrFirst.pipe(Effect.flatMap(withoutSplash));
-  const focusedMainWindow = electronWindow.focusedMainOrFirst.pipe(Effect.flatMap(withoutSplash));
 
   const zoomWindow = Effect.fn("desktop.window.zoomWindow")(function* (
     window: Electron.BrowserWindow,
@@ -1018,7 +1018,7 @@ export const make = Effect.gen(function* () {
 
   const ensureMain = Effect.gen(function* () {
     if (yield* Ref.get(desktopState.quitting)) return Option.none<Electron.BrowserWindow>();
-    const existingWindow = yield* currentMainWindow;
+    const existingWindow = yield* electronWindow.main;
     if (Option.isSome(existingWindow)) {
       return existingWindow;
     }
@@ -1105,7 +1105,8 @@ export const make = Effect.gen(function* () {
     { reveal = true }: { readonly reveal?: boolean } = {},
   ) {
     if (yield* Ref.get(desktopState.quitting)) return;
-    const existingWindow = yield* reveal ? focusedMainWindow : electronWindow.main;
+    // Only the main renderer loads the app preload that listens on these channels.
+    const existingWindow = yield* electronWindow.main;
     if (Option.isNone(existingWindow) && (!reveal || (yield* waitingForBackend))) return;
     const window = Option.isSome(existingWindow) ? existingWindow : yield* ensureMain;
     if (Option.isNone(window) || window.value.isDestroyed()) return;
@@ -1202,8 +1203,8 @@ export const make = Effect.gen(function* () {
     }),
     syncAppearance: Effect.gen(function* () {
       const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
-      yield* electronWindow.syncAllAppearance((window) =>
-        syncWindowAppearance(window, shouldUseDarkColors, environment.platform),
+      yield* electronWindow.syncAllAppearance((window, { titleBarOverlay }) =>
+        syncWindowAppearance(window, titleBarOverlay, shouldUseDarkColors, environment.platform),
       );
     }).pipe(Effect.withSpan("desktop.window.syncAppearance")),
   });

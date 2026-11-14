@@ -252,8 +252,9 @@ function useSettingsIndexSections(): SettingsListSection[] {
         selectedTargets.some((target) => target.environmentId === project.environmentId),
       ) ?? [];
   const projectLabel =
-    scopedProjectMembers.length > 0
+    selectedProject && scopedProjectMembers.length > 0
       ? deriveProjectGroupLabel({
+          groupKey: selectedProject.key,
           representative: scopedProjectMembers[0]!,
           members: scopedProjectMembers,
         })

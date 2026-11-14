@@ -14,8 +14,10 @@ import {
   orderItemsByPreferredIds,
   pinOrderKeyBetween,
   resolveSidebarSweepKeys,
+  resolveSidebarRowStatus,
   resolveSidebarThreadStatus,
   resolveThreadStatusPill,
+  resolveWindowTitleThreadStatus,
   resolveWorkingStartedAt,
   searchSidebarThreads,
   shouldRecedeSidebarThread,
@@ -309,6 +311,53 @@ describe("resolveSidebarThreadStatus", () => {
         runtime: { ...runtime, status: "idle" as const, lastError: "persisted" },
       }),
     ).toBe("waiting");
+  });
+
+  it("titles the window with live work and requests only", () => {
+    const cases = [
+      [{ ...idle, hasPendingApprovals: true, runtime }, "Needs approval"],
+      [{ ...idle, hasPendingUserInput: true }, "Needs your input"],
+      [{ ...idle, runtime: { ...runtime, status: "preparing" as const } }, "Working"],
+      [{ ...idle, runtime }, "Working"],
+      [{ ...idle, runtime, pendingGuestMessageCount: 1 }, "Working"],
+      [{ ...idle, runtime, blockedOnThreadWait: true }, "Working"],
+      [{ ...idle, runtime: { ...runtime, status: "idle" as const } }, null],
+      [{ ...idle, runtime: { ...runtime, status: "failed" as const } }, null],
+      [{ ...idle, runtime: { ...runtime, status: "completed" as const } }, null],
+      [idle, null],
+    ] as const;
+    for (const [thread, title] of cases) {
+      expect(resolveWindowTitleThreadStatus(thread)).toBe(title);
+    }
+  });
+});
+
+describe("resolveSidebarRowStatus", () => {
+  const failedRuntime = {
+    status: "failed" as const,
+    activeRunId: null,
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    providerName: "Codex",
+    lastError: "Provider turn failed.",
+    updatedAt: "2026-03-09T10:05:00.000Z",
+  };
+  const failed = {
+    hasActionableProposedPlan: false,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    interactionMode: "default" as const,
+    runtime: failedRuntime,
+    latestRun: { ...makeLatestRun(), status: "failed" as const },
+  };
+
+  it("settles a failure the user opened to ready, without showing Done", () => {
+    expect(resolveSidebarRowStatus({ ...failed, lastVisitedAt: undefined })).toBe("failed");
+
+    const opened = { ...failed, lastVisitedAt: "2026-03-09T10:06:00.000Z" };
+    expect(resolveSidebarRowStatus(opened)).toBe("ready");
+    expect(hasUnseenCompletion(opened)).toBe(false);
+    // A runtime failure without a failed run has no date, so a visit cannot settle it.
+    expect(resolveSidebarRowStatus({ ...opened, latestRun: null })).toBe("failed");
   });
 });
 

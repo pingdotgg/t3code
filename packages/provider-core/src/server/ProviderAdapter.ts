@@ -277,6 +277,15 @@ export class ProviderAdapterThreadInUseError extends Schema.TaggedError<Provider
 /**
  * The user sent `/compact` to a driver whose session has no native compaction.
  */
+export class ProviderResumeUnsupportedError extends Schema.TaggedError<ProviderResumeUnsupportedError>()(
+  "ProviderResumeUnsupportedError",
+  { driver: ProviderDriverKind, providerThreadId: ProviderThreadId },
+) {
+  override get message(): string {
+    return "This provider cannot resume without a new message. Send a message to continue.";
+  }
+}
+
 export class ProviderCompactionUnsupportedError extends Schema.TaggedError<ProviderCompactionUnsupportedError>()(
   "ProviderCompactionUnsupportedError",
   {
@@ -439,6 +448,8 @@ export class ProviderAdapterEventStreamError extends Schema.TaggedError<Provider
   {
     driver: ProviderDriverKind,
     providerSessionId: ProviderSessionId,
+    /** Set when T3 closed the session because this thread detached from it, not the provider. */
+    detachedThreadId: Schema.optional(ThreadId),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
@@ -489,6 +500,7 @@ export const ProviderAdapterV2Error = Schema.Union([
   ProviderAdapterRollbackThreadError,
   ProviderAdapterForkThreadError,
   ProviderAdapterTurnStartError,
+  ProviderResumeUnsupportedError,
   ProviderAdapterSteerRunUnsupportedError,
   ProviderAdapterSteerRunError,
   ProviderAdapterSteerDeclinedError,
@@ -531,13 +543,34 @@ export interface ProviderAdapterV2TurnInput {
   readonly nativeThreadHasTurns?: boolean;
   readonly providerTurnOrdinal: number;
   readonly restartContinuationOfRunId?: RunId;
+  readonly resume?: true;
   readonly attemptId: RunAttemptId;
   readonly rootNodeId: NodeId;
   readonly providerThread: OrchestrationV2ProviderThread;
   readonly message: ProviderAdapterV2TurnMessage;
+  /** Leading characters of `message.text` that are inline handoff context, not the user's words. */
+  readonly inlineContextLength?: number;
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
   readonly appContext?: ReadonlyArray<{ readonly key: string; readonly text: string }>;
+}
+
+export type ProviderAdapterV2ResumeTurnInput = Omit<
+  ProviderAdapterV2TurnInput,
+  "message" | "resume"
+> & {
+  readonly messageId: MessageId;
+};
+
+export function resumeTurnInput(
+  input: ProviderAdapterV2ResumeTurnInput,
+): ProviderAdapterV2TurnInput {
+  const { messageId, ...turn } = input;
+  return {
+    ...turn,
+    resume: true,
+    message: { messageId, text: "", attachments: [], createdBy: "user", creationSource: "server" },
+  };
 }
 
 export interface ProviderAdapterV2SteerInput {
@@ -672,7 +705,11 @@ export interface ProviderAdapterV2SessionRuntime {
     providerThread: OrchestrationV2ProviderThread,
     options?: { readonly includeSubagents?: boolean },
   ) => Effect.Effect<boolean>;
-  /** Set only if all session background tasks end with its process; otherwise threads must keep Waiting. */
+  /**
+   * Set only if all session background tasks and tool calls end with its process. Releasing the
+   * session then clears its task roster and interrupts its open tool calls; otherwise threads
+   * must keep Waiting.
+   */
   readonly backgroundTasksEndWithProcess?: true;
   readonly getModelContextWindow?: (
     modelSelection: ModelSelection,
@@ -698,6 +735,9 @@ export interface ProviderAdapterV2SessionRuntime {
   ) => Effect.Effect<boolean, ProviderAdapterV2Error>;
   readonly startTurn: (
     input: ProviderAdapterV2TurnInput,
+  ) => Effect.Effect<void, ProviderAdapterV2Error>;
+  readonly resumeTurn?: (
+    input: ProviderAdapterV2ResumeTurnInput,
   ) => Effect.Effect<void, ProviderAdapterV2Error>;
   readonly compactThread?: (
     input: ProviderAdapterV2TurnInput,

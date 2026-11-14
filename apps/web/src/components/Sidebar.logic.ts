@@ -28,6 +28,7 @@ import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/c
 import type { AsyncResult } from "effect/reactivity";
 import {
   effectiveSnoozed,
+  hasUnseenRunFailure,
   type ThreadSnoozeShell,
 } from "@t3tools/client-runtime/state/thread-settled";
 import {
@@ -40,6 +41,7 @@ import {
 import type { SidebarThreadSummary, Thread } from "../types";
 import { normalizeSearchText } from "../lib/utils";
 import { isLatestRunSettled } from "../session-logic";
+import { THREAD_STATUS_TEXT } from "@t3tools/client-runtime/state/thread-activity-announcement";
 import { observeIntersection } from "../lib/observeIntersection";
 import { deadlineAfter, deadlineStore, type ClockStore } from "@t3tools/client-runtime/clock";
 import { useDeadlinePassed } from "../hooks/useDeadline";
@@ -806,16 +808,6 @@ export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
   return completedAt > lastVisitedAt;
 }
 
-/** Unopened threads' failures still count as unseen, unlike completions. */
-function hasUnseenFailure(thread: ThreadStatusInput): boolean {
-  if (thread.latestRun?.status !== "failed") return false;
-  if (!thread.lastVisitedAt) return true;
-  const completedAt = Date.parse(thread.latestRun.completedAt ?? "");
-  const lastVisitedAt = Date.parse(thread.lastVisitedAt);
-  if (Number.isNaN(completedAt) || Number.isNaN(lastVisitedAt)) return true;
-  return completedAt > lastVisitedAt;
-}
-
 // Suppress trailing double-click navigation; keyboard and synthetic clicks use detail 0.
 export function isTrailingDoubleClick(detail: number): boolean {
   return detail > 1;
@@ -990,6 +982,35 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   return "ready";
 }
 
+/** Sidebar row status: a failure the user has already opened settles to ready, like Done. */
+export function resolveSidebarRowStatus(
+  thread: ThreadStatusInput & SidebarThreadStatusInput,
+): SidebarThreadStatus {
+  const status = resolveSidebarThreadStatus(thread);
+  // A runtime failure without a failed run has nothing to date it, so it stays.
+  if (status !== "failed" || thread.latestRun?.status !== "failed") return status;
+  return hasUnseenRunFailure(thread) ? status : "ready";
+}
+
+/** What the window title says the open thread is doing, in the words its announcer uses. */
+export function resolveWindowTitleThreadStatus(thread: SidebarThreadStatusInput): string | null {
+  // A guest waiting doesn't hide that the agent is still working.
+  switch (resolveSidebarThreadStatus({ ...thread, pendingGuestMessageCount: 0 })) {
+    case "approval":
+      return THREAD_STATUS_TEXT.approval;
+    case "input":
+      return THREAD_STATUS_TEXT.input;
+    case "preparing":
+    case "working":
+      return THREAD_STATUS_TEXT.working;
+    case "waiting":
+      // Waiting on a child thread is still this turn, so it must not read as finished.
+      return thread.runtime?.status === "running" ? THREAD_STATUS_TEXT.working : null;
+    default:
+      return null;
+  }
+}
+
 /**
  * The dot on a closed boring-sidebar folder: the most urgent state among its
  * hidden threads. Waiting threads stay quiet, like their rows.
@@ -997,7 +1018,7 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
 export function resolveSidebarFolderDot(
   threads: ReadonlyArray<ThreadStatusInput & SidebarThreadStatusInput>,
 ): "attention" | "failed" | "unread" | "working" | null {
-  const statuses = new Set(threads.map(resolveSidebarThreadStatus));
+  const statuses = new Set(threads.map(resolveSidebarRowStatus));
   if (
     statuses.has("input") ||
     statuses.has("approval") ||
@@ -1009,7 +1030,7 @@ export function resolveSidebarFolderDot(
   if (statuses.has("failed")) return "failed";
   // Rows show Done only for ready threads, so the dot follows the same rule.
   const hasUnread = threads.some(
-    (thread) => resolveSidebarThreadStatus(thread) === "ready" && hasUnseenCompletion(thread),
+    (thread) => resolveSidebarRowStatus(thread) === "ready" && hasUnseenCompletion(thread),
   );
   if (hasUnread) return "unread";
   if (statuses.has("working") || statuses.has("preparing")) return "working";
@@ -1257,7 +1278,7 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
-  if (hasUnseenFailure(thread)) {
+  if (hasUnseenRunFailure(thread)) {
     return {
       label: "Failed",
       colorClass: "text-red-600 dark:text-red-300/90",
