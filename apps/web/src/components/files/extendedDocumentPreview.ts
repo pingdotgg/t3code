@@ -36,7 +36,7 @@ function parseXml(source: string): XmlNode {
   // declaration is rejected, but CDATA and comments are literal text and pass through untouched.
   let declares = false;
   source = source.replaceAll(
-    /<!\[CDATA\[[\s\S]*?]]>|<!--[\s\S]*?-->|(<!DOCTYPE\s+[^<>[\]]*>)|(<!\s*(?:DOCTYPE|ENTITY))/gi,
+    /<!\[CDATA\[[\s\S]*?(?:]]>|$)|<!--[\s\S]*?(?:-->|$)|(<!DOCTYPE\s+[^<>[\]]*>)|(<!\s*(?:DOCTYPE|ENTITY))/gi,
     (markup, externalDoctype?: string, declaration?: string) => {
       if (declaration) declares = true;
       return externalDoctype ? "" : markup;
@@ -65,10 +65,12 @@ function parseXml(source: string): XmlNode {
       const name = Object.keys(item).find((key) => key !== ":@") ?? "#text";
       const value = item[name];
       const attrs = Object.fromEntries(
-        Object.entries((item[":@"] ?? {}) as Record<string, string>).map(([key, value]) => [
-          key,
-          decodeEntities(value),
-        ]),
+        Object.entries((item[":@"] ?? {}) as Record<string, string>).map(([key, value]) => {
+          // fast-xml-parser accepts raw '<' in attributes, which can mask declarations above.
+          if (value.includes("<"))
+            throw new Error("This document contains invalid or unsupported XML.");
+          return [key, decodeEntities(value)];
+        }),
       );
       const namespaces = Object.create(inherited) as Record<string, string>;
       for (const [key, value] of Object.entries(attrs)) {
