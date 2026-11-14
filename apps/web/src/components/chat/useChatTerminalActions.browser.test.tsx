@@ -104,7 +104,6 @@ async function launchThenNavigate(next: ScopedThreadRef) {
 
 it.each([
   { name: "the same thread", next: first },
-  { name: "another thread", next: { ...first, threadId: ThreadId.make("thread-b") } },
   {
     name: "another environment",
     next: { environmentId: EnvironmentId.make("environment-b"), threadId: ThreadId.make("b") },

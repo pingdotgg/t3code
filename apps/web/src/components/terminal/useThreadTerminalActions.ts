@@ -81,10 +81,7 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
         }
       : null;
 
-  /**
-   * place mounts the destination before the server open resolves. write types into the launched
-   * terminal on the thread that launched it, even after the hook moves to another thread.
-   */
+  /** place mounts the destination before the server open resolves. write stays on the launching thread. */
   const launchTerminal = (input: {
     readonly place: (terminalId: string) => void;
     readonly terminalId?: string;
@@ -115,7 +112,7 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
       },
     });
     const write = (data: string) =>
-      readEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope)
+      canWrite()
         ? writeTerminal({
             environmentId: threadRef.environmentId,
             input: { threadId: threadRef.threadId, terminalId, data },
