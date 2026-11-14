@@ -12,6 +12,7 @@ import { useEnvironmentQuery } from "~/state/query";
 import { getEnvironmentBrowsePlatform } from "../CommandPalette.logic";
 import type { ComposerCommandItem } from "./ComposerCommandMenu";
 import {
+  folderMoveCannotRead,
   folderMoveFolderRows,
   folderMoveNoMatchText,
   folderMoveProjectRows,
@@ -85,7 +86,7 @@ export function useFolderMoveMenu(input: {
           query: input.query ?? "",
         });
   const cannotRead =
-    browse.isBrowsing && (unreadable || listing.error !== null || access.error !== null);
+    browse.isBrowsing && folderMoveCannotRead({ unreadable, listingError: listing.error, access });
   const cannotReadText = `Cannot read ${listing.data?.parentPath ?? browse.directoryPath}.`;
   const noMatch = active
     ? folderMoveNoMatchText({

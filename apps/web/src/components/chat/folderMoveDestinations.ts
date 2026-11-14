@@ -173,13 +173,13 @@ export function folderMoveFolderRows(input: {
   const projectAt = (folder: string) =>
     projects.find((project) => samePath(project.workspaceRoot, folder));
   const rows: Array<FolderMoveRow> = [];
-  if (browse.filterQuery === "") {
+  if (browse.filterQuery === "" && input.unreadable !== true) {
     const project = projectAt(input.directoryFullPath);
     const isCurrent =
       input.currentFolder !== null && samePath(input.directoryFullPath, input.currentFolder);
     if (project !== undefined) {
       rows.push({ ...projectRow(project), id: "folder-move:here", group: "Folders" });
-    } else if (!isCurrent && input.unreadable !== true) {
+    } else if (!isCurrent) {
       rows.push({
         id: "folder-move:here",
         group: "Folders",
@@ -236,6 +236,23 @@ export function folderMoveFolderRows(input: {
     ...folders.filter((row) => row.isProject),
     ...folders.filter((row) => !row.isProject),
   ];
+}
+
+/**
+ * True when the pane gets no listing of the typed folder: the server may not read the folder,
+ * the listing failed, or the session may not read files. A session without that permission
+ * settles with no error. A pending access check is no failure.
+ */
+export function folderMoveCannotRead(input: {
+  readonly unreadable: boolean;
+  readonly listingError: string | null;
+  readonly access: { readonly canReadFiles: boolean; readonly isPending: boolean };
+}): boolean {
+  return (
+    input.unreadable ||
+    input.listingError !== null ||
+    (!input.access.isPending && !input.access.canReadFiles)
+  );
 }
 
 /**

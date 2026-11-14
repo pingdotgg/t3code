@@ -1,6 +1,7 @@
 import { expect, it } from "vite-plus/test";
 
 import {
+  folderMoveCannotRead,
   folderMoveFolderRows,
   folderMoveHighlightsFirstRow,
   folderMoveNoMatchText,
@@ -174,16 +175,28 @@ it("marks the thread's own folder as current, with the project icon on a project
 });
 
 it("does not offer to use a folder the server may not read, and keeps the parent row", () => {
-  const rows = folderMoveFolderRows({
-    projects,
-    currentFolder: null,
-    query: "/repos/locked/",
-    platform: "MacIntel",
-    directoryFullPath: "/repos/locked",
-    entries: [],
-    unreadable: true,
-  });
-  expect(labels(rows)).toEqual([".."]);
+  const locked = (folder: string) =>
+    folderMoveFolderRows({
+      projects,
+      currentFolder: null,
+      query: `${folder}/`,
+      platform: "MacIntel",
+      directoryFullPath: folder,
+      entries: [],
+      unreadable: true,
+    });
+  expect(labels(locked("/repos/locked"))).toEqual([".."]);
+  // The server refuses a project root it may not read like any other folder.
+  expect(labels(locked("/repos/beta"))).toEqual([".."]);
+});
+
+it("stops waiting for a listing once the session may not read files", () => {
+  const cannotRead = (access: { canReadFiles: boolean; isPending: boolean; error: null }) =>
+    folderMoveCannotRead({ unreadable: false, listingError: null, access });
+  expect(cannotRead({ canReadFiles: true, isPending: false, error: null })).toBe(false);
+  expect(cannotRead({ canReadFiles: false, isPending: true, error: null })).toBe(false);
+  // A session without the file read permission settles with no error, and no listing follows.
+  expect(cannotRead({ canReadFiles: false, isPending: false, error: null })).toBe(true);
 });
 
 it("says when a typed path or project name matches nothing", () => {

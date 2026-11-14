@@ -237,6 +237,7 @@ async function click(element: HTMLElement) {
 function setup({ scheduledTasks = [] as ReadonlyArray<{ id: string; title: string }> } = {}) {
   environmentQuery.error = "Pull request not found";
   environmentQuery.data = { tasks: scheduledTasks };
+  fileMenu.targets.length = 0;
 }
 
 const TASK_ID = ScheduledTaskId.make("task-1");
@@ -2348,6 +2349,7 @@ it("shows the full folders in an expanded move receipt", async () => {
 });
 
 it("opens a row's relative links under its run's folder", async () => {
+  setup();
   const run = (id: string, folder: object = {}) => ({
     id: RunId.make(id),
     ordinal: 1,
