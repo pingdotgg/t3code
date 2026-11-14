@@ -2,6 +2,7 @@ import {
   USAGE_CONTRACT_VERSION,
   USAGE_MERGE_COMPATIBLE_SINCE,
   type EnvironmentId,
+  type ProjectId,
   type UsageBucket,
   type UsageDay,
   type UsageProviderKind,
@@ -134,6 +135,117 @@ describe("mergeUsage", () => {
     expect(merged.contributingEnvironments).toEqual(["env-a"]);
   });
 
+  it("totals projects per environment from owned sources only", () => {
+    const shared = { provider: "claude" as const, hostId: "mac", homePath: "/claude" };
+    const codex = { provider: "codex" as const, hostId: "mac", homePath: "/codex" };
+    const projectRow = (
+      provider: UsageProviderKind,
+      sourcePath: string,
+      costUsd: number,
+      projectId?: string,
+    ) => ({
+      ...(projectId === undefined ? {} : { projectId: projectId as ProjectId }),
+      provider,
+      sourcePath,
+      totals: bucket().totals,
+      costUsd,
+      records: 1,
+      unpricedRecords: 0,
+    });
+    const withProjects = (
+      usageSummary: UsageSummary,
+      projectTotals: UsageSummary["projectTotals"],
+    ): UsageSummary => ({
+      ...usageSummary,
+      projectTotals,
+      projects: [{ projectId: "p1" as ProjectId, title: "App" }],
+    });
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          withProjects(summary([bucket({ sourcePath: "/claude", costUsd: 10 })], [shared]), [
+            projectRow("claude", "/claude", 6, "p1"),
+            projectRow("claude", "/claude", 4),
+          ]),
+        ),
+        // Its shared Claude copy is env-a's; only its own Codex usage counts here.
+        environment(
+          "env-b",
+          withProjects(
+            summary(
+              [
+                bucket({ sourcePath: "/claude", costUsd: 10 }),
+                bucket({ provider: "codex", sourcePath: "/codex", costUsd: 3 }),
+              ],
+              [shared, codex],
+            ),
+            [projectRow("claude", "/claude", 10, "p1"), projectRow("codex", "/codex", 3, "p1")],
+          ),
+        ),
+        environment(
+          "env-old",
+          summary(
+            [bucket({ provider: "grok", sourcePath: "/grok", costUsd: 1 })],
+            [{ provider: "grok", hostId: "old", homePath: "/grok" }],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costUsd).toBe(14);
+    expect(
+      merged.projects.map((project) => [
+        project.kind,
+        project.kind === "project" ? `${project.environmentId}:${project.title}` : null,
+        project.costUsd,
+        project.costShare,
+      ]),
+    ).toEqual([
+      ["project", "env-a:App", 6, 6 / 14],
+      ["none", null, 5, 5 / 14],
+      ["project", "env-b:App", 3, 3 / 14],
+    ]);
+  });
+
+  it("gives same-titled projects in one environment a distinguishing id prefix", () => {
+    const source = { provider: "claude" as const, hostId: "mac", homePath: "/claude" };
+    const projectRow = (projectId: string, costUsd: number) => ({
+      projectId: projectId as ProjectId,
+      provider: "claude" as const,
+      sourcePath: "/claude",
+      totals: bucket().totals,
+      costUsd,
+      records: 1,
+      unpricedRecords: 0,
+    });
+    const merged = mergeUsage(
+      [
+        environment("env-a", {
+          ...summary([bucket({ sourcePath: "/claude", costUsd: 6 })], [source]),
+          projectTotals: [
+            projectRow("project-aaaa-1", 3),
+            projectRow("project-aaaa-2", 2),
+            projectRow("project-bbbb-1", 1),
+          ],
+          projects: [
+            { projectId: "project-aaaa-1" as ProjectId, title: "App" },
+            { projectId: "project-aaaa-2" as ProjectId, title: "App" },
+            { projectId: "project-bbbb-1" as ProjectId, title: "Site" },
+          ],
+        }),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.projects.map((project) => project.duplicateTitleId)).toEqual([
+      "project-aaaa-1",
+      "project-aaaa-2",
+      null,
+    ]);
+  });
+
   it("drops only the duplicated provider, keeping the environment's other one", () => {
     const sharedClaude = {
       provider: "claude" as const,
@@ -256,6 +368,18 @@ describe("mergeUsage", () => {
       ...partialSummary,
       readAt: "2026-08-08T01:00:00.000Z",
       sources: partialSummary.sources.map((entry) => ({ ...entry, status: "partial" as const })),
+      projectTotals: [
+        {
+          projectId: "p1" as ProjectId,
+          provider: "claude",
+          sourcePath: source.homePath,
+          totals: bucket().totals,
+          costUsd: 7,
+          records: 3,
+          unpricedRecords: 0,
+        },
+      ],
+      projects: [{ projectId: "p1" as ProjectId, title: "App" }],
     });
 
     for (const ordered of [
@@ -266,6 +390,10 @@ describe("mergeUsage", () => {
       expect(merged.costUsd).toBe(13);
       expect(merged.records).toBe(6);
       expect(merged.sessions).toBe(2);
+      expect(merged.projects.map(({ kind, costUsd }) => [kind, costUsd])).toEqual([["none", 13]]);
+      expect(merged.projects.reduce((sum, project) => sum + project.totalTokens, 0)).toBe(
+        merged.totalTokens,
+      );
       expect(merged.daily.map(({ day, costUsd }) => [day, costUsd])).toEqual([
         ["2026-08-07", 10],
         ["2026-08-08", 3],

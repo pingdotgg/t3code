@@ -1,6 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
+import { ProjectId } from "@t3tools/contracts";
+
+import { mergeUsageCopies, resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
 import type { RateTable } from "./usagePricing.ts";
 import type { UsageRecord } from "@t3tools/provider-core/server/usage";
 
@@ -261,6 +263,75 @@ describe("UsageAggregator", () => {
     expect(result.buckets[0]?.records).toBe(2);
     expect(result.buckets[0]?.costUsd).toBeCloseTo(0.00925, 9);
     expect(result.buckets[0]?.unpricedRecords).toBe(0);
+  });
+
+  it("totals each project per source from only the records that count", () => {
+    const aggregator = new UsageAggregator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      rates,
+      modelFilter: { exclude: [{ model: "claude-opus-5" }] },
+      attributeProject: (item, transcriptPath) =>
+        item.sessionId === "session-a" && transcriptPath === "/first.jsonl"
+          ? ProjectId.make("p1")
+          : null,
+    });
+    const partial = record({
+      dedupeKey: "msg_1:",
+      totals: { ...record().totals, outputTokens: 3 },
+    });
+    const complete = record({
+      dedupeKey: "msg_1:",
+      sessionId: "session-b",
+      totals: { ...record().totals, outputTokens: 264 },
+    });
+    aggregator.add(partial, "/claude", "/first.jsonl");
+    aggregator.add(complete, "/fork", "/other.jsonl");
+    aggregator.add(
+      record({ timestampMs: Date.parse("2026-07-01T00:00:00Z") }),
+      "/claude",
+      "/first.jsonl",
+    );
+    aggregator.add(record({ model: "claude-opus-5" }), "/claude", "/first.jsonl");
+    aggregator.add(record({ sessionId: "session-b", model: "kimi-k3" }), "/claude");
+    const later = record({ timestampMs: Date.parse("2026-08-09T00:00:00Z") });
+    aggregator.add(later, "/claude", "/first.jsonl");
+    const result = aggregator.finish();
+    const merged = mergeUsageCopies(partial, complete);
+    const projectCost = aggregate([merged, later]).buckets.reduce(
+      (sum, bucket) => sum + bucket.costUsd,
+      0,
+    );
+
+    expect(result.projectTotals).toEqual([
+      {
+        projectId: "p1",
+        provider: "claude",
+        sourcePath: "/claude",
+        totals: {
+          uncachedInputTokens: 200,
+          cachedInputTokens: 2000,
+          cacheCreationTokens: 20,
+          outputTokens: 314,
+          reasoningTokens: 0,
+        },
+        costUsd: expect.closeTo(projectCost, 9),
+        records: 2,
+        unpricedRecords: 0,
+      },
+      {
+        provider: "claude",
+        sourcePath: "/claude",
+        totals: expect.objectContaining({ outputTokens: 50 }),
+        costUsd: 0,
+        records: 1,
+        unpricedRecords: 1,
+      },
+    ]);
+    const bucketCost = result.buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0);
+    expect(bucketCost).toBeCloseTo(projectCost, 9);
+    expect(aggregate([record()]).projectTotals).toBeUndefined();
   });
 });
 

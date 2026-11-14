@@ -42,7 +42,9 @@ import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } fr
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as CodexUsageHistory from "./CodexUsageHistory.ts";
+import * as UsageProjectAttribution from "./UsageProjectAttribution.ts";
 import * as CursorAccountReader from "@t3tools/provider-cursor/server/CursorAccountReader";
 import * as CursorUsageAccounts from "@t3tools/provider-cursor/server/CursorUsageAccounts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -200,7 +202,12 @@ const layerService = (input: {
     Layer.provideMerge(AntigravityUsage.layer),
     Layer.provideMerge(MuseUsageHome.layer),
     Layer.provideMerge(ProviderHostLive.layer),
-    Layer.provideMerge(CodexUsageHistory.layer.pipe(Layer.provideMerge(Sqlite.layerMemory))),
+    Layer.provideMerge(
+      Layer.merge(
+        CodexUsageHistory.layer,
+        UsageProjectAttribution.layer.pipe(Layer.provide(ProjectStore.layer)),
+      ).pipe(Layer.provideMerge(Sqlite.layerMemory)),
+    ),
     Layer.provideMerge(Layer.mock(BackgroundPolicy.BackgroundPolicy)({})),
     Layer.provideMerge(
       Layer.mock(ServerSecretStore.ServerSecretStore)({

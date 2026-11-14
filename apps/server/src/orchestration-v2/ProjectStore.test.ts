@@ -97,6 +97,64 @@ it.layer(ProjectStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemor
       }),
     );
 
+    it.effect("lists each provider session with its thread's project", () =>
+      Effect.gen(function* () {
+        const projects = yield* ProjectStore.ProjectStoreV2;
+        const sql = yield* SqlClient.SqlClient;
+        const project = (id: string, title: string) =>
+          sql`INSERT INTO projection_projects (project_id, title, workspace_root, scripts_json, created_at, updated_at)
+            VALUES (${id}, ${title}, ${`/work/${id}`}, '[]', '2026-08-01', '2026-08-01')`;
+        const thread = (id: string, projectId: string) =>
+          sql`INSERT INTO orchestration_v2_projection_threads (thread_id, project_id, title, default_provider, runtime_mode, interaction_mode, created_at, updated_at, payload_json)
+            VALUES (${id}, ${projectId}, ${id}, 'claudeAgent', 'full-access', 'default', '2026-08-01', '2026-08-01', '{}')`;
+        const binding = (id: string, threadId: string, nativeId: string | null) =>
+          sql`INSERT INTO orchestration_v2_projection_provider_threads (provider_thread_id, thread_id, provider, driver, status, updated_at, payload_json)
+            VALUES (${id}, ${threadId}, 'claudeAgent', 'claudeAgent', 'idle', '2026-08-01', ${JSON.stringify(
+              { nativeThreadRef: nativeId === null ? null : { driver: "claudeAgent", nativeId } },
+            )})`;
+        const attempt = (
+          id: string,
+          threadId: string,
+          providerThreadId: string,
+          nativeThreadId?: string,
+        ) =>
+          sql`INSERT INTO orchestration_v2_projection_run_attempts (attempt_id, thread_id, run_id, attempt_ordinal, root_node_id, provider, provider_thread_id, status, payload_json)
+            VALUES (${id}, ${threadId}, ${id}, 1, ${id}, 'claudeAgent', ${providerThreadId}, 'completed', ${JSON.stringify(
+              { nativeThreadId },
+            )})`;
+
+        yield* project("p-app", "App");
+        yield* project("p-other", "Other");
+        yield* thread("t-main", "p-app");
+        yield* thread("t-worktree", "p-app");
+        yield* thread("t-other", "p-other");
+        yield* binding("pt-main", "t-main", "bound");
+        yield* binding("pt-worktree", "t-worktree", "worktree");
+        yield* binding("pt-ambiguous-app", "t-main", "ambiguous");
+        yield* binding("pt-ambiguous-other", "t-other", "ambiguous");
+        yield* binding("pt-forgotten", "t-worktree", null);
+        yield* attempt("a-old", "t-main", "pt-main", "before-recovery");
+        yield* attempt("a-old-again", "t-main", "pt-main", "before-recovery");
+        yield* attempt("a-current", "t-main", "pt-main", "bound");
+        yield* attempt("a-forgotten", "t-worktree", "pt-forgotten", "forgotten");
+        yield* attempt("a-no-native", "t-main", "pt-main");
+        yield* sql`UPDATE projection_projects SET deleted_at = '2026-08-02' WHERE project_id = 'p-app'`;
+
+        const rows = yield* projects.listProviderSessionProjects();
+        assert.deepStrictEqual(
+          rows.map((row) => `${row.nativeId} ${row.projectId} ${row.title}`).sort(),
+          [
+            "ambiguous p-app App",
+            "ambiguous p-other Other",
+            "before-recovery p-app App",
+            "bound p-app App",
+            "forgotten p-app App",
+            "worktree p-app App",
+          ],
+        );
+      }),
+    );
+
     it.effect("marks a project's title as custom only once it is renamed", () =>
       Effect.gen(function* () {
         const projects = yield* ProjectStore.ProjectStoreV2;

@@ -1,6 +1,7 @@
 import {
   USAGE_MERGE_COMPATIBLE_SINCE,
   type EnvironmentId,
+  type ProjectId,
   type UsageBucket,
   type UsageProviderKind,
   type UsageSource,
@@ -39,8 +40,10 @@ export interface ModelTotals {
 }
 
 /** When every record lacks rates, costUsd is unknown and must not be displayed as a dollar figure. */
-export function isModelCostUnknown(model: ModelTotals): boolean {
-  return model.records > 0 && model.unpricedRecords >= model.records;
+export function isModelCostUnknown(
+  totals: Pick<ModelTotals, "records" | "unpricedRecords">,
+): boolean {
+  return totals.records > 0 && totals.unpricedRecords >= totals.records;
 }
 
 export interface DailyTotals {
@@ -57,6 +60,29 @@ export interface HourlyTotals {
   readonly totalTokens: number;
   readonly byProvider: ReadonlyMap<UsageProviderKind, { costUsd: number; totalTokens: number }>;
 }
+
+/** Project ids are environment-local. */
+type ProjectIdentity =
+  | {
+      readonly kind: "project";
+      readonly environmentId: EnvironmentId;
+      readonly environmentLabel: string;
+      readonly projectId: ProjectId;
+      readonly title: string;
+    }
+  | { readonly kind: "none" };
+
+export type ProjectTotals = ProjectIdentity & {
+  readonly key: string;
+  /** Shortest id prefix that tells this project from same-titled ones in its environment. */
+  readonly duplicateTitleId: string | null;
+  readonly costUsd: number;
+  readonly totalTokens: number;
+  readonly records: number;
+  readonly unpricedRecords: number;
+  readonly costShare: number;
+  readonly tokenShare: number;
+};
 
 export interface CostQuality {
   readonly providerReportedShare: number;
@@ -98,6 +124,7 @@ export interface MergedUsage {
   readonly sessions: number;
   readonly providers: readonly ProviderTotals[];
   readonly models: readonly ModelTotals[];
+  readonly projects: readonly ProjectTotals[];
   readonly daily: readonly DailyTotals[];
   readonly hourly: readonly HourlyTotals[];
   readonly costQuality: CostQuality;
@@ -253,6 +280,7 @@ function ownedContribution(
   sourceKey: (fingerprint: UsageSourceFingerprint) => string,
 ): {
   readonly buckets: readonly UsageBucket[];
+  readonly owns: (cell: Pick<UsageBucket, "provider" | "sourcePath">) => boolean;
   readonly sessionsByProvider: ReadonlyMap<UsageProviderKind, number>;
 } {
   const ownedProviders = new Set<UsageProviderKind>();
@@ -275,19 +303,20 @@ function ownedContribution(
       );
     }
   }
+  const owns = (cell: Pick<UsageBucket, "provider" | "sourcePath">) =>
+    cell.sourcePath === undefined
+      ? ownedProviders.has(cell.provider)
+      : ownedSources.has(`${cell.provider}\u0000${cell.sourcePath}`);
   return {
     buckets: environment.summary.buckets.filter(
-      (bucket) =>
-        supplementalBuckets.has(bucket) ||
-        (bucket.sourcePath === undefined
-          ? ownedProviders.has(bucket.provider)
-          : ownedSources.has(`${bucket.provider}\u0000${bucket.sourcePath}`)),
+      (bucket) => supplementalBuckets.has(bucket) || owns(bucket),
     ),
+    owns,
     sessionsByProvider,
   };
 }
 
-function bucketTokens(bucket: UsageBucket): number {
+function bucketTokens(bucket: Pick<UsageBucket, "totals">): number {
   // reasoningTokens is a subset of outputTokens and must not be added again.
   return (
     bucket.totals.uncachedInputTokens +
@@ -313,6 +342,7 @@ const EMPTY_MERGED: MergedUsage = {
   sessions: 0,
   providers: [],
   models: [],
+  projects: [],
   daily: [],
   hourly: [],
   costQuality: {
@@ -409,10 +439,40 @@ export function mergeUsage(
       byProvider: Map<UsageProviderKind, { costUsd: number; totalTokens: number }>;
     }
   >();
+  const projectAccumulator = new Map<
+    string,
+    {
+      readonly identity: ProjectIdentity;
+      costUsd: number;
+      totalTokens: number;
+      records: number;
+      unpricedRecords: number;
+    }
+  >();
+  const addProjectUsage = (
+    key: string,
+    identity: ProjectIdentity,
+    usage: Pick<UsageBucket, "costUsd" | "totals" | "records" | "unpricedRecords">,
+  ) => {
+    const project = projectAccumulator.get(key) ?? {
+      identity,
+      costUsd: 0,
+      totalTokens: 0,
+      records: 0,
+      unpricedRecords: 0,
+    };
+    project.costUsd += usage.costUsd;
+    project.totalTokens += bucketTokens(usage);
+    project.records += usage.records;
+    project.unpricedRecords += usage.unpricedRecords;
+    projectAccumulator.set(key, project);
+  };
+  const noProjectKey = "none";
+  const noProjectIdentity = { kind: "none" } as const;
   const contributingEnvironments: EnvironmentId[] = [];
 
   for (const environment of current) {
-    const { buckets, sessionsByProvider } = ownedContribution(
+    const { buckets, owns, sessionsByProvider } = ownedContribution(
       environment,
       ownerScanByFingerprint,
       supplementalBucketsByEnvironment.get(environment.environmentId) ?? new Set(),
@@ -420,6 +480,35 @@ export function mergeUsage(
       sourceKey,
     );
     if (buckets.length > 0) contributingEnvironments.push(environment.environmentId);
+
+    const { projectTotals, projects = [] } = environment.summary;
+    if (projectTotals === undefined) {
+      for (const bucket of buckets) addProjectUsage(noProjectKey, noProjectIdentity, bucket);
+    } else {
+      // Window-wide project totals cannot attribute cells retained from another scan.
+      for (const bucket of buckets) {
+        if (!owns(bucket)) addProjectUsage(noProjectKey, noProjectIdentity, bucket);
+      }
+      const titles = new Map(projects.map((project) => [project.projectId, project.title]));
+      for (const row of projectTotals) {
+        if (!owns(row)) continue;
+        if (row.projectId === undefined) {
+          addProjectUsage(noProjectKey, noProjectIdentity, row);
+          continue;
+        }
+        addProjectUsage(
+          JSON.stringify([environment.environmentId, row.projectId]),
+          {
+            kind: "project",
+            environmentId: environment.environmentId,
+            environmentLabel: environment.label,
+            projectId: row.projectId,
+            title: titles.get(row.projectId) ?? row.projectId,
+          },
+          row,
+        );
+      }
+    }
 
     for (const [providerKind, providerSessions] of sessionsByProvider) {
       sessions += providerSessions;
@@ -566,6 +655,41 @@ export function mergeUsage(
     }))
     .sort((a, b) => b.costUsd - a.costUsd || b.totalTokens - a.totalTokens);
 
+  const projectIdsByTitle = new Map<string, ProjectId[]>();
+  const titleKey = (identity: ProjectIdentity & { readonly kind: "project" }) =>
+    JSON.stringify([identity.environmentId, identity.title]);
+  for (const { identity } of projectAccumulator.values()) {
+    if (identity.kind !== "project") continue;
+    const peers = projectIdsByTitle.get(titleKey(identity)) ?? [];
+    peers.push(identity.projectId);
+    projectIdsByTitle.set(titleKey(identity), peers);
+  }
+  const duplicateTitleId = (identity: ProjectIdentity): string | null => {
+    if (identity.kind !== "project") return null;
+    const peers = projectIdsByTitle.get(titleKey(identity)) ?? [];
+    if (peers.length < 2) return null;
+    const id = identity.projectId;
+    let length = Math.min(8, id.length);
+    while (
+      length < id.length &&
+      peers.some((peer) => peer !== id && peer.startsWith(id.slice(0, length)))
+    ) {
+      length += 1;
+    }
+    return id.slice(0, length);
+  };
+
+  const projects: ProjectTotals[] = [...projectAccumulator.entries()]
+    .map(([key, { identity, ...totals }]) => ({
+      ...identity,
+      key,
+      duplicateTitleId: duplicateTitleId(identity),
+      ...totals,
+      costShare: costUsd === 0 ? 0 : totals.costUsd / costUsd,
+      tokenShare: totalTokens === 0 ? 0 : totals.totalTokens / totalTokens,
+    }))
+    .sort((a, b) => b.costUsd - a.costUsd || b.totalTokens - a.totalTokens);
+
   const daily: DailyTotals[] = [...dailyAccumulator.entries()]
     .map(([day, totals]) => ({
       day,
@@ -591,6 +715,7 @@ export function mergeUsage(
     sessions,
     providers,
     models,
+    projects,
     daily,
     hourly,
     costQuality: {
