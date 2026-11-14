@@ -257,9 +257,11 @@ const hubAccountName = (account: { readonly id: string }) => account.id.replace(
 
 // Source ids are environment-local, so only a remote origin names the same hub across environments.
 function hubIdentity(environmentId: EnvironmentId, source: UsageLimitSourceSnapshot): string {
-  const origin = source.origin ? URL.parse(source.origin) : null;
-  return origin && !isLocalLoopbackHost(origin.hostname) && !isWildcardHost(origin.hostname)
-    ? origin.origin
+  // The server supplies canonical origins; native URL polyfills can misparse IPv6 hosts.
+  const origin = source.origin;
+  const host = origin?.match(/^https?:\/\/(\[[\da-f:.]+\]|[^:/?#@]+)(?::\d+)?$/)?.[1];
+  return origin && host && !isLocalLoopbackHost(host) && !isWildcardHost(host)
+    ? origin
     : `${environmentId}:${source.id}`;
 }
 

@@ -6,7 +6,7 @@ import {
   type ServerProvider,
   UsageLimitSourceId,
 } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   type LimitAccount,
@@ -759,6 +759,34 @@ describe("pools", () => {
       "http://localhost:8317",
       2,
     ],
+    ["IPv4 loopback", "http://127.0.0.2:8317", "hub", "http://127.0.0.2:8317", 2],
+    ["IPv6 loopback", "http://[::1]:8317", "hub", "http://[::1]:8317", 2],
+    [
+      "mapped IPv4 loopback",
+      "http://[::ffff:7f00:1]:8317",
+      "hub",
+      "http://[::ffff:7f00:1]:8317",
+      2,
+    ],
+    ["localhost subdomain", "http://hub.localhost:8317", "hub", "http://hub.localhost:8317", 2],
+    ["IPv4 wildcard", "http://0.0.0.0:8317", "hub", "http://0.0.0.0:8317", 2],
+    ["IPv6 wildcard", "http://[::]:8317", "hub", "http://[::]:8317", 2],
+    ["shared LAN hub", "http://192.168.1.10:8317", "hub", "http://192.168.1.10:8317", 1],
+    [
+      "shared tailnet IPv4 hub",
+      "http://100.100.100.100:8317",
+      "hub",
+      "http://100.100.100.100:8317",
+      1,
+    ],
+    [
+      "shared tailnet IPv6 hub",
+      "http://[fd7a:115c:a1e0::1]:8317",
+      "hub",
+      "http://[fd7a:115c:a1e0::1]:8317",
+      1,
+    ],
+    ["shared tailnet name", "https://hub.tailnet.ts.net", "hub", "https://hub.tailnet.ts.net", 1],
     ["hubs that report no origin", undefined, "hub", undefined, 2],
   ] as const)(
     "keeps email-less hub identity across environments: %s",
@@ -790,9 +818,15 @@ describe("pools", () => {
           },
         ],
       ]);
-      const accounts = collectLimitAccounts(input);
-      expect(accounts).toHaveLength(count);
-      expect(accounts[0]?.displayName).toBe("claude-team-seat");
+      // React Native's URL implementation has no static parse method.
+      vi.stubGlobal("URL", {});
+      try {
+        const accounts = collectLimitAccounts(input);
+        expect(accounts).toHaveLength(count);
+        expect(accounts[0]?.displayName).toBe("claude-team-seat");
+      } finally {
+        vi.unstubAllGlobals();
+      }
     },
   );
 
