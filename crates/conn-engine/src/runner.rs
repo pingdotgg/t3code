@@ -896,9 +896,10 @@ impl Inner {
                     self.commit_after(&mut held, &mut deadline, vec![]).await;
                     self.steer_updated(&thread_id, message_id, status).await;
                 }
-                Translated::Continuation(detail) => {
+                Translated::Continuation(detail, notification) => {
                     self.commit_after(&mut held, &mut deadline, vec![]).await;
-                    self.request_continuation(&thread_id, detail).await;
+                    self.request_continuation(&thread_id, detail, notification)
+                        .await;
                 }
                 Translated::Terminal(status, failure, broken) => {
                     self.commit_after(&mut held, &mut deadline, vec![]).await;
@@ -996,7 +997,12 @@ impl Inner {
 
     /// `continuation.requested`: a queued agent message whose run starts the provider's
     /// continuation turn (`ProviderContinuationService`), so it runs after any active run.
-    async fn request_continuation(self: &Arc<Self>, thread_id: &str, detail: Option<String>) {
+    async fn request_continuation(
+        self: &Arc<Self>,
+        thread_id: &str,
+        detail: Option<String>,
+        notification: Option<Value>,
+    ) {
         let message_id = format!(
             "message:provider-continuation:{}",
             crate::time::unique_suffix()
@@ -1007,12 +1013,12 @@ impl Inner {
             "threadId": thread_id,
             "messageId": message_id,
             "text": detail.unwrap_or_else(|| "Background task completed.".to_owned()),
-            // `ProviderContinuationService`'s default: the client shows a notice.
-            "notification": {
+            // The provider's notice, else `ProviderContinuationService`'s default.
+            "notification": notification.unwrap_or_else(|| json!({
                 "source": {"kind": "background_task"},
                 "outcome": "updated",
                 "summary": "Background activity updated",
-            },
+            })),
             "attachments": [],
             "dispatchMode": {"type": "queue_after_active"},
             "createdBy": "agent",
@@ -1531,7 +1537,7 @@ enum Translated {
         status: &'static str,
     },
     /// The provider has output with no turn running and asks for one.
-    Continuation(Option<String>),
+    Continuation(Option<String>, Option<Value>),
 }
 
 /// `providerThreadLoadKey`: the native thread, the provider's load part of the selection,
@@ -1669,7 +1675,9 @@ fn translate(thread_id: &str, active: Option<&ActiveRun>, event: ProviderEvent) 
                 SteerStatus::Cancelled => "cancelled",
             },
         },
-        ProviderEvent::ContinuationRequested(request) => Translated::Continuation(request.detail),
+        ProviderEvent::ContinuationRequested(request) => {
+            Translated::Continuation(request.detail, request.notification)
+        }
         // Handled before translation.
         ProviderEvent::BackgroundWorkUpdated { .. } => Translated::Ignore,
     }

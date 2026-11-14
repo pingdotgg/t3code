@@ -448,12 +448,16 @@ impl Run {
                     tokio::time::sleep(POLL).await;
                 };
                 self.gates.release(label)?;
-                self.wait_for(&tid, &format!("await_provider_background_tasks_cleared:{tid}"), |p| {
-                    rows(p, "providerThreads")
-                        .find(|t| t["id"] == provider_thread_id.as_str())
-                        .and_then(|t| t["pendingBackgroundTasks"].as_array())
-                        .is_none_or(Vec::is_empty)
-                })
+                self.wait_for(
+                    &tid,
+                    &format!("await_provider_background_tasks_cleared:{tid}"),
+                    |p| {
+                        rows(p, "providerThreads")
+                            .find(|t| t["id"] == provider_thread_id.as_str())
+                            .and_then(|t| t["pendingBackgroundTasks"].as_array())
+                            .is_none_or(Vec::is_empty)
+                    },
+                )
                 .await
                 .map(|_| ())
             }

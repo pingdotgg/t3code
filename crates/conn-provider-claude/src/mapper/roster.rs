@@ -32,6 +32,24 @@ pub(crate) struct Roster {
     monitor_calls: VecDeque<String>,
     /// Tasks a Monitor call started (`claudeMonitors.tasks`).
     monitor_tasks: VecDeque<String>,
+    /// Tasks as last listed (`lastKnownOpaqueTasks`): an empty roster can come before a
+    /// task's notification, and the wake still names the task.
+    known: VecDeque<Value>,
+    /// Tasks whose end will wake Claude (`wakeEligibleBackgroundTasksByNativeThread`).
+    wake_eligible: VecDeque<String>,
+    /// Tasks whose end arrived while idle and waits for its continuation
+    /// (`opaqueBackgroundTaskReplayTombstonesByNativeThread`).
+    tombstones: VecDeque<String>,
+}
+
+fn add_id(set: &mut VecDeque<String>, id: &str) {
+    if set.iter().any(|t| t == id) {
+        return;
+    }
+    set.push_back(id.to_string());
+    while set.len() > LINK_CAP {
+        set.pop_front();
+    }
 }
 
 impl Roster {
@@ -39,13 +57,85 @@ impl Roster {
         self.tasks.is_empty()
     }
 
-    pub(crate) fn tasks(&self) -> Value {
-        json!(self.tasks)
+    /// A Monitor's task is running.
+    pub(crate) fn has_monitor(&self) -> bool {
+        self.tasks.iter().any(|t| t["kind"] == "monitor")
+    }
+
+    /// `consumeWakeEligibilityForBufferedNotification`: a wake-eligible task's end, seen while
+    /// idle, stays owed until its continuation takes it in. Returns whether it was eligible.
+    pub(crate) fn consume_wake(&mut self, task_id: &str) -> bool {
+        let before = self.wake_eligible.len();
+        self.wake_eligible.retain(|t| t != task_id);
+        if self.wake_eligible.len() == before {
+            return false;
+        }
+        add_id(&mut self.tombstones, task_id);
+        true
+    }
+
+    pub(crate) fn clear_tombstones(&mut self) {
+        self.tombstones.clear();
+    }
+
+    /// A stopped or failed turn takes the owed wakes with it.
+    pub(crate) fn forget_wakes(&mut self) {
+        self.wake_eligible.clear();
+        self.tombstones.clear();
+    }
+
+    /// `owedWakeTasksForNativeThread`: tasks the thread last showed that left the roster but
+    /// whose wake has not run yet.
+    fn owed(&self, previous: Option<&Value>) -> Vec<Value> {
+        let listed = |id: &Value| self.tasks.iter().any(|t| &t["taskId"] == id);
+        previous
+            .and_then(|p| p["pendingBackgroundTasks"].as_array())
+            .into_iter()
+            .flatten()
+            .filter(|task| !listed(&task["taskId"]))
+            .filter(|task| {
+                task["taskId"].as_str().is_some_and(|id| {
+                    self.wake_eligible.iter().any(|t| t == id)
+                        || self.tombstones.iter().any(|t| t == id)
+                })
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// What the provider thread lists: the roster, then the owed wakes.
+    pub(crate) fn published(&self, previous: Option<&Value>) -> Value {
+        let mut tasks = self.tasks.clone();
+        tasks.extend(self.owed(previous));
+        json!(tasks)
+    }
+
+    /// `rememberOpaqueTasks`.
+    fn remember(&mut self, task: &Value) {
+        self.known.retain(|k| k["taskId"] != task["taskId"]);
+        self.known.push_back(task.clone());
+        while self.known.len() > LINK_CAP {
+            self.known.pop_front();
+        }
+        if let Some(id) = task["taskId"].as_str() {
+            add_id(&mut self.wake_eligible, id);
+        }
+    }
+
+    /// The task a notification ends, from the roster or as last known; it is forgotten then.
+    pub(crate) fn wake_task(&mut self, task_id: &str) -> Option<Value> {
+        let listed = self.tasks.iter().find(|t| t["taskId"] == task_id).cloned();
+        let at = self.known.iter().position(|k| k["taskId"] == task_id);
+        let known = at.and_then(|at| self.known.remove(at));
+        listed.or(known)
     }
 
     #[cfg(test)]
     pub(crate) fn sizes(&self) -> usize {
-        self.tasks.len()
+        self.known.len()
+            + self.wake_eligible.len()
+            + self.tombstones.len()
+            + self.tasks.len()
             + self.task_tools.len()
             + self.monitor_calls.len()
             + self.monitor_tasks.len()
@@ -106,10 +196,13 @@ impl Roster {
             .iter_mut()
             .find(|t| t["taskId"] == task["taskId"])
         {
-            *slot = task;
+            *slot = task.clone();
         } else if self.tasks.len() < ROSTER_CAP {
-            self.tasks.push(task);
+            self.tasks.push(task.clone());
+        } else {
+            return;
         }
+        self.remember(&task);
     }
 
     fn remove(&mut self, task_id: &str) -> bool {
@@ -238,11 +331,12 @@ impl<E: Env> Mapper<E> {
                     next.push(task);
                 }
                 next.truncate(ROSTER_CAP);
-                // T3 sends the thread for every such frame; an unchanged roster changes
-                // nothing on it, so this sends one only when the roster changed.
-                let changed = self.roster.tasks != next;
+                for task in &next {
+                    self.roster.remember(task);
+                }
+                // T3 sends the thread for every such frame, changed or not.
                 self.roster.tasks = next;
-                changed
+                true
             }
             "task_started" if msg.task_type.as_deref() == Some("local_bash") => {
                 let Some(task_id) = msg.task_id.as_deref() else {
@@ -286,6 +380,7 @@ impl<E: Env> Mapper<E> {
                 };
                 self.roster.monitor_tasks.retain(|t| t != task_id);
                 self.roster.task_tools.retain(|(t, _)| t != task_id);
+                self.roster.wake_eligible.retain(|t| t != task_id);
                 self.roster.remove(task_id)
             }
             _ => return false,
@@ -315,7 +410,8 @@ impl<E: Env> Mapper<E> {
         };
         thread["providerSessionId"] = json!(self.provider_session_id);
         thread["status"] = status;
-        thread["pendingBackgroundTasks"] = self.roster.tasks();
+        thread["pendingBackgroundTasks"] =
+            self.roster.published(self.last_provider_thread.as_ref());
         thread["updatedAt"] = json!(self.env.now());
         self.last_provider_thread = Some(thread.clone());
         emit(

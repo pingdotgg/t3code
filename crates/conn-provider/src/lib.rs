@@ -336,6 +336,10 @@ pub struct ContinuationRequest {
     pub thread_id: ThreadId,
     pub provider_thread_id: ProviderThreadId,
     pub detail: Option<String>,
+    /// The notice the client shows for the wake (`OrchestrationV2Notification`:
+    /// `source`, `outcome`, `summary`). Absent: the engine's default notice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notification: Option<serde_json::Value>,
 }
 
 /// `ProviderAdapterV2Event` `steer.updated` status.

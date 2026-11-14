@@ -706,7 +706,8 @@ fn the_background_roster_stays_bounded() {
         mapper.handle(Inbound::from_value(monitor));
     }
     let [.., roster] = mapper.held_sizes();
-    assert!(roster <= 64 * 4, "roster state: {roster}");
+    // Tasks, links, open Monitor calls, Monitor tasks, known tasks, wake-eligible ids, owed ids.
+    assert!(roster <= 64 * 7, "roster state: {roster}");
     let outs = mapper.on_exit(false, "done");
     let cleared = outs.iter().rev().find_map(|o| match o {
         Out::Event(ProviderEvent::ProviderThreadUpdated { provider_thread }) => {

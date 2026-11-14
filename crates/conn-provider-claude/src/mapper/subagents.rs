@@ -114,6 +114,13 @@ impl Subagents {
             .any(|s| s.tools.contains_key(tool_use_id))
     }
 
+    /// A running subagent's title and child thread, for the wake that its end reports.
+    pub(super) fn running_report(&self, task_id: &str) -> Option<(Option<String>, String)> {
+        let sub = self.by_task.get(task_id).filter(|s| s.running())?;
+        let title = sub.task["title"].as_str().map(str::to_string);
+        Some((title, sub.child_thread_id.clone()))
+    }
+
     pub(super) fn is_subagent_tool(&self, tool_use_id: &str) -> bool {
         self.by_tool.contains_key(tool_use_id)
     }

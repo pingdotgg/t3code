@@ -285,6 +285,9 @@ pub struct SystemMsg {
     /// `task_started`: the subagent task whose own background work this is (undeclared).
     #[serde(default)]
     pub parent_task_id: Option<Value>,
+    /// `task_started`: 1 for the root's subagents, more for nested ones.
+    #[serde(default)]
+    pub spawn_depth: Option<f64>,
     /// `background_tasks_changed`: the CLI's whole roster.
     #[serde(default)]
     pub tasks: Option<Value>,

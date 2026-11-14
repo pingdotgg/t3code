@@ -9,6 +9,7 @@ mod notices;
 mod presentation;
 mod roster;
 mod subagents;
+mod wakes;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -101,6 +102,8 @@ pub struct Mapper<E: Env> {
     roster: roster::Roster,
     /// The provider thread as last sent (`lastProviderThreadByNativeThread`).
     last_provider_thread: Option<Value>,
+    /// What the next wake reports (`wakeReportsByNativeThread`) and its message text.
+    wakes: wakes::Wakes,
 }
 
 /// Input and output tokens (`ClaudeLedgerUsage`).
@@ -319,6 +322,7 @@ impl<E: Env> Mapper<E> {
             result_growth: None,
             roster: roster::Roster::default(),
             last_provider_thread: None,
+            wakes: wakes::Wakes::default(),
         }
     }
 
@@ -347,8 +351,9 @@ impl<E: Env> Mapper<E> {
 
     /// Sizes of every collection that outlives a turn, for the memory checks.
     #[cfg(test)]
-    pub fn held_sizes(&self) -> [usize; 7] {
+    pub fn held_sizes(&self) -> [usize; 8] {
         [
+            self.wakes.len(),
             self.pending.len(),
             self.subagents.len(),
             self.wake.len(),
@@ -423,6 +428,11 @@ impl<E: Env> Mapper<E> {
 
     /// Opens a turn after its user message was written to the CLI.
     pub fn begin_turn(&mut self, input: &TurnInput, permission_mode: &str) -> Vec<Out> {
+        self.wakes.start_user_turn();
+        self.open_turn(input, permission_mode)
+    }
+
+    fn open_turn(&mut self, input: &TurnInput, permission_mode: &str) -> Vec<Out> {
         let now = self.env.now();
         // A user turn retires output held for a continuation that never started.
         self.wake.clear();
@@ -505,7 +515,10 @@ impl<E: Env> Mapper<E> {
     pub fn begin_continuation(&mut self, input: &TurnInput, permission_mode: &str) -> Vec<Out> {
         let held: Vec<Inbound> = self.wake.drain(..).collect();
         self.continuation_requested = false;
-        let mut out = self.begin_turn(input, permission_mode);
+        self.wakes.detail = None;
+        // The continuation takes in the notifications it was asked for.
+        self.roster.clear_tombstones();
+        let mut out = self.open_turn(input, permission_mode);
         for frame in held {
             out.extend(self.handle(frame));
         }
@@ -850,14 +863,25 @@ impl<E: Env> Mapper<E> {
     fn on_system(&mut self, msg: SystemMsg, out: &mut Vec<Out>) {
         match msg.subtype.as_str() {
             "task_started" => {
+                if msg.task_type.as_deref() != Some("local_bash")
+                    && msg.spawn_depth.is_some_and(|d| d > 1.0)
+                    && let Some(task_id) = &msg.task_id
+                {
+                    self.wakes.mark_nested(task_id);
+                }
                 self.on_task_started(&msg, out);
                 self.apply_roster(&msg, out);
                 return;
             }
             "task_progress" => return self.on_task_progress(&msg, out),
             "task_notification" => {
+                // Read the roster and the subagent before the notification settles them.
+                let wakes_root = self.turn.is_none() && self.record_wake_notification(&msg);
                 self.on_task_notification(&msg, out);
                 self.apply_roster(&msg, out);
+                if wakes_root {
+                    self.request_continuation(out);
+                }
                 return;
             }
             "background_tasks_changed" => {
@@ -1129,6 +1153,7 @@ impl<E: Env> Mapper<E> {
         self.end_running_subagents(if stopped { "cancelled" } else { "failed" }, &mut out);
         self.wake.clear();
         self.continuation_requested = false;
+        self.wakes.clear();
         let Some(turn) = &self.turn else {
             return out;
         };
@@ -1254,8 +1279,10 @@ impl<E: Env> Mapper<E> {
         // A stopped or failed turn takes its background work with it.
         if !completed {
             self.roster.clear();
+            self.roster.forget_wakes();
         }
-        thread["pendingBackgroundTasks"] = self.roster.tasks();
+        thread["pendingBackgroundTasks"] =
+            self.roster.published(self.last_provider_thread.as_ref());
         // A turn that wrote to the transcript moved past a rollback's pinned head.
         if completed || turn.cursor.is_some() {
             thread["nativeConversationHeadRef"] = Value::Null;
@@ -2714,20 +2741,86 @@ impl<E: Env> Mapper<E> {
             self.wake.pop_front();
         }
         self.wake.push_back(message);
-        if !starts_work || self.continuation_requested {
+        if !starts_work {
+            return;
+        }
+        self.request_continuation(out);
+    }
+
+    /// `offerWakeContinuation`: asks the engine for a continuation turn, once per wake, with
+    /// the wake's notice and the last notification's summary as its text.
+    fn request_continuation(&mut self, out: &mut Vec<Out>) {
+        if self.continuation_requested {
             return;
         }
         let Some(ctx) = &self.last_ctx else {
             return;
         };
         self.continuation_requested = true;
+        let mut reports = self.wakes.take();
+        // A wake with no finished work while a Monitor runs is the Monitor's event.
+        if reports.is_empty() && self.roster.has_monitor() {
+            reports.push(wakes::Report {
+                kind: wakes::Kind::Monitor,
+                label: None,
+                outcome: "updated",
+                child_thread_id: None,
+            });
+        }
         out.push(event(ProviderEvent::ContinuationRequested(
             ContinuationRequest {
                 thread_id: ctx.thread_id.as_str().into(),
                 provider_thread_id: ctx.provider_thread_id.as_str().into(),
-                detail: None,
+                detail: self.wakes.detail.clone(),
+                notification: wakes::notification(&reports),
             },
         )));
+    }
+
+    /// `bufferWakeMessage` for a `task_notification` with no turn running: records what the
+    /// wake reports. Returns whether the notification wakes the root by itself (a background
+    /// subagent of the root ended).
+    fn record_wake_notification(&mut self, msg: &SystemMsg) -> bool {
+        let Some(task_id) = msg.task_id.as_deref() else {
+            return false;
+        };
+        let outcome = wakes::task_outcome(msg.status.as_ref().and_then(Value::as_str));
+        let mut evidence = false;
+        let mut wakes_root = false;
+        if self.roster.consume_wake(task_id)
+            && let Some(task) = self.roster.wake_task(task_id)
+        {
+            // `opaqueTaskWakeReport`.
+            let kind = wakes::Kind::from_task_kind(task["kind"].as_str());
+            self.wakes.record(
+                task_id,
+                wakes::Report {
+                    kind,
+                    label: task["description"].as_str().map(str::to_string),
+                    outcome,
+                    child_thread_id: task["childThreadId"].as_str().map(str::to_string),
+                },
+            );
+            evidence = true;
+        } else if self.wakes.is_nested(task_id) {
+            evidence = true;
+        } else if let Some((title, child)) = self.subagents.running_report(task_id) {
+            self.wakes.record(
+                task_id,
+                wakes::Report {
+                    kind: wakes::Kind::Subagent,
+                    label: title,
+                    outcome,
+                    child_thread_id: Some(child),
+                },
+            );
+            evidence = true;
+            wakes_root = true;
+        }
+        if evidence && let Some(summary) = msg.summary.as_deref().filter(|s| !s.is_empty()) {
+            self.wakes.detail = Some(summary.to_string());
+        }
+        wakes_root
     }
 
     fn on_rate_limit(&mut self, info: &Value, out: &mut Vec<Out>) {
