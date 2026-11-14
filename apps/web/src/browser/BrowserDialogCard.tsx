@@ -19,7 +19,7 @@ export function BrowserDialogCard({
   const [promptText, setPromptText] = useState(dialog.defaultValue);
   return (
     <div
-      className="absolute inset-x-2 top-2 z-10 flex flex-col gap-2 rounded-lg border border-border bg-background p-3 shadow-lg"
+      className="absolute inset-x-2 top-2 z-40 flex flex-col gap-2 rounded-lg border border-border bg-background p-3 shadow-lg"
       role="dialog"
       aria-label="Browser dialog"
     >
