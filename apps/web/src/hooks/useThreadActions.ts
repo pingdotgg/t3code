@@ -944,7 +944,7 @@ export function useThreadActions() {
     showThreadUndoNotice({
       action: "Snoozed",
       claim: action,
-      undo: () => runUndoPlan(target, ThreadUndo.planThreadUndo("snooze")),
+      undo: () => runUndoPlan(target, ThreadUndo.planThreadUndo("snooze", resolved?.thread)),
       failureTitle: "Failed to wake thread",
     });
     return result;
@@ -955,6 +955,14 @@ export function useThreadActions() {
       plan,
       async (step) => {
         switch (step.action) {
+          case "settle":
+            return settleThreadMutation({
+              environmentId: target.environmentId,
+              input: {
+                threadId: target.threadId,
+                ...(step.settledAt === undefined ? {} : { settledAt: step.settledAt }),
+              },
+            });
           case "unsettle":
             return unsettleThread(target);
           case "unsnooze":

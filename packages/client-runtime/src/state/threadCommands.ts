@@ -471,7 +471,7 @@ export function createThreadEnvironmentAtoms<R, E>(
     rowActionsAtom,
     snapshotAtom: optimistic.snapshotAtom,
     pendingThreadIdsAtom: optimistic.pendingThreadIdsAtom,
-    settle: optimistic.wrap(commands.settle, (thread, _input, now, accepted) =>
+    settle: optimistic.wrap(commands.settle, (thread, input, now, accepted) =>
       !accepted &&
       (thread.pendingRuntimeRequest !== null ||
         ["preparing", "queued", "starting", "running", "waiting"].includes(thread.status))
@@ -480,7 +480,14 @@ export function createThreadEnvironmentAtoms<R, E>(
             ...thread,
             pendingRuntimeRequest: null,
             settledOverride: "settled",
-            settledAt: thread.settledOverride === "settled" ? (thread.settledAt ?? now) : now,
+            settledAt:
+              thread.settledOverride === "settled" &&
+              thread.settledAt != null &&
+              thread.pinnedAt == null
+                ? thread.settledAt
+                : input.settledAt === undefined
+                  ? now
+                  : DateTime.makeUnsafe(input.settledAt),
             unsettledAt: null,
             activeOrderKey: null,
             pinnedAt: null,
@@ -504,6 +511,9 @@ export function createThreadEnvironmentAtoms<R, E>(
         ? thread
         : {
             ...thread,
+            ...(thread.settledOverride === "settled"
+              ? { settledOverride: "active" as const, settledAt: null, unsettledAt: now }
+              : {}),
             snoozedUntil: DateTime.makeUnsafe(input.snoozedUntil),
             snoozedAt: now,
           },
