@@ -753,6 +753,13 @@ describe("pools", () => {
     ],
     ["two remote hubs under one id", "http://hub:8317", "hub", "http://hub-8317", 2],
     [
+      "two remote hubs under paths of one origin",
+      "https://proxy.example/team-a",
+      "hub-b",
+      "https://proxy.example/team-b",
+      2,
+    ],
+    [
       "a shared IPv6 tailnet hub",
       "http://[fd7a:115c:a1e0::1]:8317",
       "hub",
@@ -782,19 +789,19 @@ describe("pools", () => {
       2,
     ],
     ["each machine's own wildcard hub", "http://0.0.0.0:8317", "hub", "http://0.0.0.0:8317", 2],
-    ["hubs that report no origin", undefined, "hub", undefined, 2],
+    ["hubs that report no endpoint", undefined, "hub", undefined, 2],
   ] as const)(
     "keeps email-less hub identity across environments: %s",
-    (_, firstOrigin, secondId, secondOrigin, count) => {
+    (_, firstEndpoint, secondId, secondEndpoint, count) => {
       const seat = {
         id: "claude-team-seat.json",
         driver: claude,
         usageLimits: { checkedAt, windows: [window] },
       };
-      const hubAt = (id: string, origin: string | undefined) => ({
+      const hubAt = (id: string, endpoint: string | undefined) => ({
         ...source,
         id: UsageLimitSourceId.make(id),
-        ...(origin ? { origin } : {}),
+        ...(endpoint ? { origin: new URL(endpoint).origin, endpoint } : {}),
         accounts: [seat],
       });
       const input = new Map([
@@ -802,14 +809,14 @@ describe("pools", () => {
           EnvironmentId.make("env-a"),
           {
             ...laptop,
-            serverConfig: { providers: [], usageLimitSources: [hubAt("hub", firstOrigin)] },
+            serverConfig: { providers: [], usageLimitSources: [hubAt("hub", firstEndpoint)] },
           },
         ],
         [
           EnvironmentId.make("env-b"),
           {
             entry: { target: { label: "Desktop" } },
-            serverConfig: { providers: [], usageLimitSources: [hubAt(secondId, secondOrigin)] },
+            serverConfig: { providers: [], usageLimitSources: [hubAt(secondId, secondEndpoint)] },
           },
         ],
       ]);
@@ -818,33 +825,6 @@ describe("pools", () => {
       expect(accounts[0]?.displayName).toBe("claude-team-seat");
     },
   );
-
-  it("keeps hubs that share an origin apart within one environment", () => {
-    const seat = {
-      id: "claude-team-seat.json",
-      driver: claude,
-      usageLimits: { checkedAt, windows: [window] },
-    };
-    const hubAt = (id: string) => ({
-      ...source,
-      id: UsageLimitSourceId.make(id),
-      origin: "https://proxy.example",
-      accounts: [seat],
-    });
-    const input = new Map([
-      [
-        EnvironmentId.make("env-a"),
-        {
-          ...laptop,
-          serverConfig: { providers: [], usageLimitSources: [hubAt("hub-a"), hubAt("hub-b")] },
-        },
-      ],
-    ]);
-    expect(collectLimitAccounts(input).map((account) => account.key)).toEqual([
-      "env-a:hub-a:claude-team-seat.json",
-      "env-a:hub-b:claude-team-seat.json",
-    ]);
-  });
 
   it("labels a default-named instance merged with a hub account by e-mail, keeping a chosen name", () => {
     const native = provider({

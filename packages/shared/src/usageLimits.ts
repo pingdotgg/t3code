@@ -255,30 +255,18 @@ function accountKeyResolver(reports: Iterable<AccountReport>) {
 
 const hubAccountName = (account: { readonly id: string }) => account.id.replace(/\.json$/i, "");
 
-// The server supplies canonical origins; native URL polyfills can misparse IPv6 hosts.
-const remoteHubOrigin = (source: UsageLimitSourceSnapshot): string | null => {
-  const origin = source.origin;
-  const host = origin?.match(/^https?:\/\/(\[[\da-f:.]+\]|[^:/?#@]+)(?::\d+)?$/)?.[1];
-  if (!origin || !host || isLocalLoopbackHost(host) || isWildcardHost(host)) return null;
-  // Each machine resolves these to itself too; shared host classification leaves them out.
-  return /\.localhost$|^\[::ffff:(?:127\.|7f[\da-f]{2}:)/i.test(host) ? null : origin;
-};
-
-// Source ids are environment-local, so only a remote origin names the same hub across environments.
-// Origins drop the path, so hubs sharing one within an environment stay apart by id.
-function hubIdentities(
-  environmentId: EnvironmentId,
-  sources: ReadonlyArray<UsageLimitSourceSnapshot>,
-): (source: UsageLimitSourceSnapshot) => string {
-  const counts = new Map<string, number>();
-  for (const source of sources) {
-    const origin = remoteHubOrigin(source);
-    if (origin) counts.set(origin, (counts.get(origin) ?? 0) + 1);
-  }
-  return (source) => {
-    const origin = remoteHubOrigin(source);
-    return origin && counts.get(origin) === 1 ? origin : `${environmentId}:${source.id}`;
-  };
+// Source ids are environment-local, so only a remote endpoint names the same hub across environments.
+function hubIdentity(environmentId: EnvironmentId, source: UsageLimitSourceSnapshot): string {
+  // The server supplies canonical endpoints; native URL polyfills can misparse IPv6 hosts.
+  const endpoint = source.endpoint;
+  const host = endpoint?.match(/^https?:\/\/(\[[\da-f:.]+\]|[^:/?#@]+)(?::\d+)?(?:\/|$)/)?.[1];
+  const local =
+    !host ||
+    isLocalLoopbackHost(host) ||
+    isWildcardHost(host) ||
+    // Each machine resolves these to itself too; shared host classification leaves them out.
+    /\.localhost$|^\[::ffff:(?:127\.|7f[\da-f]{2}:)/i.test(host);
+  return endpoint && !local ? endpoint : `${environmentId}:${source.id}`;
 }
 
 export interface LimitAccount {
@@ -401,15 +389,13 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
   }
   const labelEnvironment = presentations.size > 1;
   for (const [environmentId, presentation] of presentations) {
-    const sources = presentation.serverConfig?.usageLimitSources ?? [];
-    const hubIdentity = hubIdentities(environmentId, sources);
-    for (const source of sources) {
+    for (const source of presentation.serverConfig?.usageLimitSources ?? []) {
       const sourceLabel = labelEnvironment
         ? `${presentation.entry.target.label} · ${source.label}`
         : source.label;
       for (const account of source.accounts) {
         if (limitsNotice(account.usageLimits) !== null) continue;
-        const key = `${hubIdentity(source)}:${account.id}${account.workspaceId ? `:${account.workspaceId}` : ""}`;
+        const key = `${hubIdentity(environmentId, source)}:${account.id}${account.workspaceId ? `:${account.workspaceId}` : ""}`;
         merge(resolveKey(account) ?? key, {
           key,
           driver: account.driver,
