@@ -292,6 +292,15 @@ export const make = Effect.gen(function* () {
       detail: "Waiting for the T3 Connect sign-in to load.",
     });
 
+  // A sign-in that failed to load never arrives on its own, so retrying cannot help.
+  const signInFailed = () =>
+    new ConnectionBlockedError({
+      reason: "authentication",
+      detail: "T3 Connect sign-in could not load on this device.",
+      hop: "device",
+      failureCause: "sign_in_failed",
+    });
+
   const assertSession = Effect.fnUntraced(function* (
     identity: ClientCapabilities.CloudSessionIdentity,
   ) {
@@ -408,7 +417,7 @@ export const make = Effect.gen(function* () {
   ) {
     const session = yield* cloudSession.identity;
     if (Option.isNone(session)) {
-      return yield* sessionPending();
+      return yield* (yield* cloudSession.signInFailed) ? signInFailed() : sessionPending();
     }
     const identity = session.value;
     const thumbprint = yield* signer.thumbprint.pipe(
@@ -538,6 +547,10 @@ export const make = Effect.gen(function* () {
     input: Parameters<RemoteEnvironmentAuthorization["Service"]["authorizeDpop"]>[0],
   ) {
     const endpoint = input.directEndpoint;
+    // A direct address needs the same sign-in, so don't let its reachability mask the failure.
+    if (Option.isNone(yield* cloudSession.identity) && (yield* cloudSession.signInFailed)) {
+      return yield* signInFailed();
+    }
     const directDescriptor =
       endpoint === undefined
         ? undefined

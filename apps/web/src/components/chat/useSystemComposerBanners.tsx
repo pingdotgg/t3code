@@ -11,7 +11,10 @@ import {
 import { WifiOffIcon } from "lucide-react";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { environmentCatalog } from "../../connection/catalog";
-import { ConnectionDiagnosisHeadline } from "../settings/ConnectionDiagnosisDetails";
+import {
+  ConnectionDiagnosisHeadline,
+  ConnectionRecoveryButton,
+} from "../settings/ConnectionDiagnosisDetails";
 import { isDesktopLocalConnectionTarget } from "../../connection/desktopLocal";
 import {
   useEnvironmentDisconnectDelay,
@@ -202,7 +205,17 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
         ) : undefined,
         actions: (
           <>
-            {unavailableConnection.phase !== "connecting" ? (
+            {unavailableConnection.phase === "connecting" ? null : activeEnvironment ? (
+              <ConnectionRecoveryButton
+                environment={activeEnvironment}
+                label={environmentReconnecting ? "Retry now" : "Reconnect"}
+                onReconnect={() =>
+                  void handleReconnectActiveEnvironmentStable(
+                    activeEnvironmentUnavailableState.environmentId,
+                  )
+                }
+              />
+            ) : (
               <Button
                 size="xs"
                 variant="ghost"
@@ -214,7 +227,7 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
               >
                 {environmentReconnecting ? "Retry now" : "Reconnect"}
               </Button>
-            ) : null}
+            )}
             {disconnectAction}
           </>
         ),

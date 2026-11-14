@@ -21,7 +21,12 @@ import {
 } from "@t3tools/client-runtime/connection";
 import { bootstrapRemoteBearerSession } from "@t3tools/client-runtime/authorization";
 import { fetchRemoteEnvironmentDescriptor } from "@t3tools/client-runtime/environment";
-import { managedRelayAccountChanges, managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
+import {
+  managedRelayAccountChanges,
+  managedRelaySessionAtom,
+  managedRelaySignInFailedAtom,
+  managedRelaySignInFailedChanges,
+} from "@t3tools/client-runtime/relay";
 import { EnvironmentRpcRequestObserver } from "@t3tools/client-runtime/rpc";
 import {
   AuthStandardClientScopes,
@@ -161,6 +166,10 @@ const layerWakeups = Wakeups.layer({
         ).pipe(Effect.asVoid),
       ),
       managedRelayAccountChanges(appAtomRegistry).pipe(
+        Stream.map(() => "credentials-changed" as const),
+      ),
+      // A failed sign-in load should replace "still loading" now, not at the next backoff retry.
+      managedRelaySignInFailedChanges(appAtomRegistry).pipe(
         Stream.map(() => "credentials-changed" as const),
       ),
       networkPathChanges,
@@ -351,6 +360,7 @@ const layerCapabilities = Layer.effectContext(
       identity: Effect.sync(() =>
         Option.fromNullishOr(appAtomRegistry.get(managedRelaySessionAtom)),
       ),
+      signInFailed: Effect.sync(() => appAtomRegistry.get(managedRelaySignInFailedAtom)),
       clerkToken: Effect.gen(function* () {
         const session = appAtomRegistry.get(managedRelaySessionAtom);
         if (session === null) {

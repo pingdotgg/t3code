@@ -29,6 +29,11 @@ export class CloudSession extends Context.Service<
   CloudSession,
   {
     readonly identity: Effect.Effect<Option.Option<CloudSessionIdentity>>;
+    /**
+     * The sign-in SDK failed to load in this client, so `identity` stays empty
+     * until the client reloads instead of arriving later.
+     */
+    readonly signInFailed: Effect.Effect<boolean>;
     readonly clerkToken: Effect.Effect<string, ConnectionAttemptError>;
   }
 >()("@t3tools/client-runtime/platform/capabilities/CloudSession") {}

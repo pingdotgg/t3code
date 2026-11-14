@@ -122,6 +122,9 @@ an active link between your account and the host.
   approval for new devices. Approve the code this device shows from a device
   that is already connected, or run `t3 auth connect-device approve <code>` on
   the host. See [Approve new devices](./remote-access.md#approve-new-devices).
+- **T3 Connect sign-in could not load on this device.** This happens when T3 Code
+  starts before the network is up. Choose **Reload** once you are online. You
+  stay signed in.
 - **Your account reached its tunnel limit.** Remove an environment you do not
   use from your T3 account's T3 Connect page, or
   [link a paid T3 Chat account](./remote-access.md#more-machines-with-t3-chat)

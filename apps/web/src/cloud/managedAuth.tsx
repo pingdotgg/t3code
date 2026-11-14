@@ -3,6 +3,7 @@ import {
   createCloudAccountService,
   ManagedRelay,
   setManagedRelaySession,
+  setManagedRelaySignInFailed,
 } from "@t3tools/client-runtime/relay";
 import {
   reportAtomCommandResult,
@@ -67,5 +68,15 @@ export function ManagedRelayAuthProvider({ children }: { readonly children: Reac
   const clerk = useClerk();
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches the Clerk instance to the managed relay account service for the provider's lifetime
   useEffect(() => managedRelayAccountService.attach(clerk), [clerk]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mirrors Clerk's load failure into the relay session state that connections read
+  useEffect(() => {
+    const onStatus = (status: typeof clerk.status) =>
+      setManagedRelaySignInFailed(appAtomRegistry, status === "error");
+    clerk.on("status", onStatus, { notify: true });
+    return () => {
+      clerk.off("status", onStatus);
+      setManagedRelaySignInFailed(appAtomRegistry, false);
+    };
+  }, [clerk]);
   return children;
 }
