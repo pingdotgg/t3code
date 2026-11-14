@@ -8,6 +8,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   PullRequestOperationError,
+  PullRequestUnavailableError,
   RunId,
   ThreadId,
   TurnItemId,
@@ -180,7 +181,7 @@ interface HarnessOptions {
   readonly snapshot: TestShellSnapshot;
   readonly summary?: (
     input: PullRequestRef,
-  ) => Effect.Effect<PullRequestSummary, PullRequestOperationError>;
+  ) => Effect.Effect<PullRequestSummary, PullRequestService.PullRequestError>;
   readonly stack?: (
     input: PullRequestRef,
   ) => Effect.Effect<PullRequestStack | null, PullRequestOperationError>;
@@ -1672,6 +1673,45 @@ describe("PullRequestSyncReactor", () => {
           );
         }).pipe(Effect.provide(fixture.layer));
       }),
+  );
+
+  it.effect("stops reading a pull request on a host it cannot browse each sweep", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(NOW));
+      const fixture = yield* makeHarness({
+        snapshot: makeSnapshot([
+          makeThread("unsupported", { pullRequests: [makeLink(9, { state: "open" })] }),
+          makeThread("fine", { pullRequests: [makeLink(8, { state: "open" })] }),
+        ]),
+        summary: (input) =>
+          input.number === 9
+            ? Effect.fail(new PullRequestUnavailableError({ reason: "provider-unsupported" }))
+            : Effect.succeed(makeSummary(input)),
+      });
+      const unsupportedReads = Ref.get(fixture.summaryCalls).pipe(
+        Effect.map((calls) => calls.filter((call) => call.number === 9).length),
+      );
+      yield* Effect.gen(function* () {
+        const reactor = yield* startAndSweep(fixture);
+        for (let index = 0; index < 5; index += 1) yield* sweepAgain(fixture, reactor);
+        const afterSweeps = yield* unsupportedReads;
+
+        // A refresh another link asks for must not re-read the unsupported one as well.
+        yield* reactor.requestSync(makeLink(9));
+        yield* Queue.take(fixture.snapshotReads);
+        yield* reactor.drain;
+        const afterItsRefresh = yield* unsupportedReads;
+        for (let index = 0; index < 3; index += 1) {
+          yield* reactor.requestSync(makeLink(8));
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+        }
+        assert.deepStrictEqual(
+          { afterSweeps, afterItsRefresh, afterOtherRefreshes: yield* unsupportedReads },
+          { afterSweeps: 1, afterItsRefresh: 2, afterOtherRefreshes: 2 },
+        );
+      }).pipe(Effect.provide(fixture.layer));
+    }),
   );
 
   it.effect(
