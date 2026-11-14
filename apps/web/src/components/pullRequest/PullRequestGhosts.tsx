@@ -212,7 +212,7 @@ export function PullRequestDetailGhost({
                 )
               }
               updated={
-                seed && (summary ?? entry)?.updatedAtState === undefined ? (
+                seed ? (
                   <span>
                     updated <RelativeTime timestamp={seed.updatedAt} />
                   </span>

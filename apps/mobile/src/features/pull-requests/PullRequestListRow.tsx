@@ -131,22 +131,9 @@ export const PullRequestListRow = memo(
                     </Text>
                   </View>
                 ) : null}
-                {item.updatedAtState === undefined ? (
-                  <Text className={cn("text-2xs tabular-nums", tertiaryForeground)}>
-                    <RelativeTime timestamp={item.updatedAt} />
-                  </Text>
-                ) : (
-                  <Text
-                    accessibilityLabel={
-                      item.updatedAtState === "pending"
-                        ? "Checking for recent activity"
-                        : "Recent activity could not be read"
-                    }
-                    className={cn("text-2xs tabular-nums", tertiaryForeground)}
-                  >
-                    {item.updatedAtState === "pending" ? "…" : "?"}
-                  </Text>
-                )}
+                <Text className={cn("text-2xs tabular-nums", tertiaryForeground)}>
+                  <RelativeTime timestamp={item.updatedAt} />
+                </Text>
               </View>
               <Text
                 className={cn("text-base leading-5 font-t3-medium", foreground)}

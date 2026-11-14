@@ -246,7 +246,6 @@ function PullRequestRowImpl({
             </>
           }
           updatedAt={entry.updatedAt}
-          updatedAtState={entry.updatedAtState}
         />
       </button>
       {hostActions.size > 0 ? (
