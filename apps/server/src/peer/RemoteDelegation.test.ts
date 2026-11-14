@@ -2952,9 +2952,12 @@ it.effect.each([
       const resumed = yield* box_.orchestrator.getThreadProjection(remoteId);
       expect(resumed.runs.find((run) => run.id === queuedRun.id)?.status).toBe("cancelled");
 
-      // A repeat cancel sees the run ended unstarted and stops nothing.
+      // A repeat cancel sees the run ended unstarted and stops nothing. Hidden by newer runs, it
+      // cannot be told from a promoted run, so it stops the thread.
       yield* a.call("task_cancel", { taskId: queuedTask.id, clientRequestId: "cancel-again" });
-      expect(yield* Ref.get(thread.stops)).toEqual([]);
+      expect(yield* Ref.get(thread.stops)).toEqual(
+        outcome === "older" ? ["thread.stop", "delegated-tasks"] : [],
+      );
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

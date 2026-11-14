@@ -630,8 +630,8 @@ const make = Effect.gen(function* () {
               if (current !== undefined && current.status !== "queued") {
                 return endedUnstarted(current);
               }
-              // Newer runs can hide it from recent history; its exact run there says whether it
-              // still waits, ran on, or ended. Unproven, a lost reply or refusal is not a start.
+              // Newer runs can hide it from recent history. Its exact run there says only whether
+              // it still waits; a promoted run reads as cancelled, so any other state needs Stop.
               const exact = yield* forwarding
                 .waitForThread(scope, remote.environmentId, {
                   threadId: remote.threadId,
@@ -640,7 +640,7 @@ const make = Effect.gen(function* () {
                 })
                 .pipe(Effect.orElseSucceed(() => undefined));
               if (exact === undefined || exact.status === "queued") return yield* error;
-              return isTerminal(exact.status);
+              return false;
             }),
           ),
         );
