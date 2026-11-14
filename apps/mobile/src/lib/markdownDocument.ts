@@ -2,7 +2,10 @@ import type { Root, RootContent } from "mdast";
 import { unified, type Processor } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
-import { remarkKeepWindowsProsePaths } from "@t3tools/shared/markdownWindowsPaths";
+import {
+  escapeWindowsPathBackslashes,
+  remarkKeepWindowsProsePaths,
+} from "@t3tools/shared/markdownWindowsPaths";
 import { absoluteFilePathMatches, parseMarkdownFileLink } from "@t3tools/shared/markdownLinks";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 
@@ -470,7 +473,7 @@ function markdownWithWindowsPathDestinations(markdown: string): string {
       return;
     const start = token.start.offset;
     const end = token.end.offset;
-    const escaped = authored.replace(/\\(?!&)/g, "\\\\");
+    const escaped = escapeWindowsPathBackslashes(authored);
     // A bare destination ends at an unescaped `)`, so wrap it to keep `\)` inside.
     const angled = markdown[start - 1] === "<";
     edits.push({ start, end, content: angled ? escaped : `<${escaped}>` });

@@ -8,15 +8,19 @@ interface DestinationCompileContext {
   sliceSerialize(token: unknown): string;
 }
 
+/** Escapes a Windows path's backslashes for a Markdown destination; `\&` stays an escape. */
+export function escapeWindowsPathBackslashes(path: string): string {
+  return path.replace(/\\(?!&)/g, "\\\\");
+}
+
 function keepWindowsPathDestination(this: DestinationCompileContext, token: unknown) {
   const decoded = this.resume();
   const authored = this.sliceSerialize(token);
   const node = this.stack.at(-1);
-  // Escaping each separator keeps it while character references still decode. `\&` stays an
-  // escape, as mobile's `markdownWithWindowsPathDestinations` reads it.
+  // Escaping each separator keeps it while character references still decode.
   if (node)
     node.url = isWindowsAbsolutePath(authored)
-      ? decodeString(authored.replace(/\\(?!&)/g, "\\\\"))
+      ? decodeString(escapeWindowsPathBackslashes(authored))
       : decoded;
 }
 
