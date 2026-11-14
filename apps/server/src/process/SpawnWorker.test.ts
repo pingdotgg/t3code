@@ -152,6 +152,12 @@ describe("SpawnWorker", () => {
       const scoped = yield* Deferred.await(started);
       yield* Fiber.interrupt(running);
       expect(yield* scoped.isRunning).toBe(false);
+      // Direct callers such as the Claude adapter pass an AbortSignal, which cannot cross to a worker.
+      const direct = SpawnWorker.spawnPiped(process.execPath, ["-e", "process.stdin.resume()"], {
+        signal: AbortSignal.abort(),
+      });
+      const exited = new Promise((resolve) => direct.once("exit", () => resolve(direct.killed)));
+      expect(yield* Effect.promise(() => exited)).toBe(true);
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 });

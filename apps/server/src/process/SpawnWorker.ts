@@ -159,6 +159,7 @@ class WorkerChild
   stderr: NodeStream.Readable | null = null;
   readonly stdio: Array<NodeStream.Readable | NodeStream.Writable | null | undefined> = [];
   referenced = true;
+  killed = false;
   spawned = false;
   exited = false;
   readonly #writes = new Map<number, Array<(error?: Error | null) => void>>();
@@ -247,6 +248,7 @@ class WorkerChild
 
   kill(signal: NodeJS.Signals | number = "SIGTERM"): boolean {
     if (this.exited) return false;
+    this.killed = true;
     this.worker.post({ type: "kill", id: this.id, signal });
     return true;
   }
@@ -313,6 +315,16 @@ class SpawnWorker {
     const stdio =
       typeof io === "string" || io === undefined ? [io ?? "pipe", io ?? "pipe", io ?? "pipe"] : io;
     const child = new WorkerChild(this, id, stdio);
+    // An AbortSignal cannot cross to the worker, so this thread kills on abort as Node would.
+    const { signal, ...rest } = options;
+    if (signal !== undefined) {
+      const abort = () => child.kill();
+      if (signal.aborted) queueMicrotask(abort);
+      else {
+        signal.addEventListener("abort", abort, { once: true });
+        child.once("exit", () => signal.removeEventListener("abort", abort));
+      }
+    }
     this.children.set(id, child);
     this.launching++;
     this.syncRef();
@@ -322,7 +334,7 @@ class SpawnWorker {
       command,
       args: [...args],
       // A worker's process.env is a copy from when it started; children get the server's current one.
-      options: { ...options, stdio, env: options.env ?? { ...process.env } },
+      options: { ...rest, stdio, env: rest.env ?? { ...process.env } },
     });
     return child;
   }
@@ -487,6 +499,23 @@ class SpawnWorkerPool {
     for (const worker of this.workers) worker.close();
   }
 }
+
+let sharedPool: SpawnWorkerPool | undefined;
+
+/** A piped `child_process.spawn` for Windows launches outside Effect's spawner. */
+export const spawnPiped = (
+  command: string,
+  args: ReadonlyArray<string>,
+  options: Omit<NodeChildProcess.SpawnOptions, "stdio">,
+) =>
+  (sharedPool ??= new SpawnWorkerPool("win32")).spawn(command, args, {
+    ...options,
+    stdio: ["pipe", "pipe", "pipe"],
+  }) as WorkerChild & {
+    readonly stdin: NodeStream.Writable;
+    readonly stdout: NodeStream.Readable;
+    readonly stderr: NodeStream.Readable;
+  };
 
 export const layer = Layer.unwrap(
   Effect.gen(function* () {
