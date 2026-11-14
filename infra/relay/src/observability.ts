@@ -17,12 +17,12 @@ import { relayResourceNameForStage } from "./deploymentConfig.ts";
 import { MobileMonitoring } from "./mobileTelemetry/monitoring.ts";
 import { RelayMonitoring } from "./monitoring.ts";
 
-const relayRecentSpansQuery = (dataset: string) =>
+export const relayRecentSpansQuery = (dataset: string) =>
   [
     `['${dataset}']`,
     `| where isnotnull(span_id) or isnotnull(trace_id)`,
     `| extend requestMethod = column_ifexists('attributes.http.request.method', ''), path = column_ifexists('attributes.url.path', ''), endpoint = column_ifexists('attributes.http.route', ''), statusCode = column_ifexists('attributes.http.response.status_code', 0), customAttributes = column_ifexists('attributes.custom', dynamic({}))`,
-    `| extend userId = customAttributes['user']['id']`,
+    `| extend userId = coalesce(tostring(column_ifexists('attributes.user.id', '')), tostring(customAttributes['user.id']))`,
     `| project _time, name, trace_id, span_id, duration, requestMethod, path, statusCode, endpoint, userId`,
     `| order by _time desc`,
     `| limit 200`,

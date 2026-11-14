@@ -43,7 +43,7 @@ For example:
     ['attributes.url.path'],
     ['attributes.http.response.status_code'],
     endpoint,
-    relayOperation = customAttributes['relay']['operation']
+    relayOperation = customAttributes['relay.operation']
 | order by _time desc
 | limit 200
 ```
