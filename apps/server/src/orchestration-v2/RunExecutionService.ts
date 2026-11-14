@@ -578,8 +578,11 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly providerThread: OrchestrationV2ProviderThread;
   readonly attempt: OrchestrationV2RunAttempt;
   readonly attemptId: RunAttemptId;
+  /** Waits for a baseline started with `forkBaseline`; without it the run captures one itself. */
+  readonly baseline?: Effect.Effect<void>;
   readonly providerTurnOrdinal: number;
   readonly nativeThreadHasTurns?: boolean;
+  readonly resume?: boolean;
   readonly loadInheritedBackgroundTurnItems?: () => Effect.Effect<
     ReadonlyArray<InheritedBackgroundTurnItemRoute>,
     unknown
@@ -596,10 +599,20 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
 }
 
+type RunBaselineInput = Pick<
+  RunExecutionServiceV2StartRootRunInput,
+  "appThread" | "run" | "checkpointScope"
+>;
+
 export interface RunExecutionServiceV2Shape {
   readonly startRootRun: (
     input: RunExecutionServiceV2StartRootRunInput,
   ) => Effect.Effect<void, RunExecutionServiceV2Error>;
+  /**
+   * Starts the run's baseline capture on a child fiber so it overlaps provider session startup.
+   * Pass the returned effect to `startRootRun`, which awaits it before prompting the provider.
+   */
+  readonly forkBaseline: (input: RunBaselineInput) => Effect.Effect<Effect.Effect<void>>;
 }
 
 export class RunExecutionServiceV2 extends Context.Service<
@@ -918,7 +931,34 @@ export const layer: Layer.Layer<
       },
     );
 
+    const captureRunBaseline = Effect.fn("RunExecutionService.captureBaseline")(function* (
+      input: RunBaselineInput,
+    ) {
+      // Side chats share the parent's worktree; a snapshot would capture the parent's edits.
+      if (input.appThread.lineage.sideChat === true) return;
+      yield* checkpointService
+        .captureBaseline({
+          scope: input.checkpointScope,
+          ordinalWithinScope: Math.max(0, input.run.ordinal - 1),
+        })
+        .pipe(
+          Effect.catchCause((cause) =>
+            Cause.hasInterruptsOnly(cause)
+              ? Effect.interrupt
+              : Effect.logWarning(
+                  "orchestration V2 checkpoint baseline capture failed; starting provider without a baseline",
+                  { runId: input.run.id },
+                ),
+          ),
+        );
+    });
+
     return RunExecutionServiceV2.of({
+      forkBaseline: (input) =>
+        captureRunBaseline(input).pipe(
+          Effect.forkChild({ startImmediately: true }),
+          Effect.map(Fiber.join),
+        ),
       startRootRun: Effect.fn("RunExecutionService.startRootRun")(function* (input) {
         const rootTurnOrigin: ProviderUsageAnalytics.ProviderTurnOrigin = {
           createdBy: input.message.createdBy,
@@ -966,24 +1006,7 @@ export const layer: Layer.Layer<
                   .responseStreamingMode,
             ),
           );
-          // Side chats share the parent's worktree; a snapshot would capture the parent's edits.
-          yield* (
-            input.appThread.lineage.sideChat === true
-              ? Effect.void
-              : checkpointService.captureBaseline({
-                  scope: input.checkpointScope,
-                  ordinalWithinScope: Math.max(0, input.run.ordinal - 1),
-                })
-          ).pipe(
-            Effect.catchCauseIf(
-              (cause) => !Cause.hasInterruptsOnly(cause),
-              (_cause) =>
-                Effect.logWarning(
-                  "orchestration V2 checkpoint baseline capture failed; starting provider without a baseline",
-                  { runId: input.run.id },
-                ),
-            ),
-          );
+          yield* input.baseline ?? captureRunBaseline(input);
           if (
             input.shouldStartProviderTurn !== undefined &&
             !(yield* input.shouldStartProviderTurn())
@@ -1940,21 +1963,37 @@ export const layer: Layer.Layer<
         const compact =
           input.message.attachments.length === 0 &&
           input.message.text.trim().toLowerCase() === "/compact";
-        const startTurn = compact
-          ? (input.session.compactThread?.(turnInput) ??
-            Effect.fail(
-              new ProviderAdapter.ProviderAdapterTurnStartError({
-                driver: input.session.driver,
-                threadId: input.run.threadId,
-                providerThreadId: input.providerThread.id,
-                runId: input.run.id,
-                cause: new ProviderAdapter.ProviderCompactionUnsupportedError({
+        const { message: _message, ...resumeInput } = turnInput;
+        const startTurn =
+          input.resume === true
+            ? (input.session.resumeTurn?.({ ...resumeInput, messageId: input.message.messageId }) ??
+              Effect.fail(
+                new ProviderAdapter.ProviderAdapterTurnStartError({
                   driver: input.session.driver,
+                  threadId: input.run.threadId,
                   providerThreadId: input.providerThread.id,
+                  runId: input.run.id,
+                  cause: new ProviderAdapter.ProviderResumeUnsupportedError({
+                    driver: input.session.driver,
+                    providerThreadId: input.providerThread.id,
+                  }),
                 }),
-              }),
-            ))
-          : input.session.startTurn(turnInput);
+              ))
+            : compact
+              ? (input.session.compactThread?.(turnInput) ??
+                Effect.fail(
+                  new ProviderAdapter.ProviderAdapterTurnStartError({
+                    driver: input.session.driver,
+                    threadId: input.run.threadId,
+                    providerThreadId: input.providerThread.id,
+                    runId: input.run.id,
+                    cause: new ProviderAdapter.ProviderCompactionUnsupportedError({
+                      driver: input.session.driver,
+                      providerThreadId: input.providerThread.id,
+                    }),
+                  }),
+                ))
+              : input.session.startTurn(turnInput);
         yield* Effect.andThen(shouldStart, startTurn).pipe(
           // Wait for acceptance so abandoned startup cannot leave a refresher
           // on the already-detached ingestion fiber.
