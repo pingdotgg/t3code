@@ -2557,6 +2557,9 @@ importers:
       esbuild:
         specifier: 0.28.2
         version: 0.28.2
+      jszip:
+        specifier: 3.10.1
+        version: 3.10.1
       postject:
         specifier: 1.0.0-alpha.6
         version: 1.0.0-alpha.6

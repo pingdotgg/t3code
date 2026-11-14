@@ -407,6 +407,32 @@ Third}`;
     },
   );
 
+  it.each([
+    ["expanded", "<table:table-row>{cell}{cell}</table:table-row>".repeat(2)],
+    ["repeated", '<table:table-row table:number-rows-repeated="2">{cell}</table:table-row>'],
+  ])("renders every cell of a %s ODT table", async (encoding, rows) => {
+    const repeat = encoding === "repeated" ? ' table:number-columns-repeated="2"' : "";
+    const archive = new JSZip().file(
+      "content.xml",
+      `<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:text><table:table><table:table-column table:number-columns-repeated="2"/>${rows.replaceAll("{cell}", `<table:table-cell${repeat}><text:p>Approved <text:span>now</text:span></text:p></table:table-cell>`)}</table:table></office:text></office:body></office:document-content>`,
+    );
+    const result = await openDocument(archive, "odt");
+    if (result.type !== "document") throw new Error("Expected document");
+    const cell = "<td><p>Approved <span>now</span></p></td>";
+    expect(result.pages[0]!.html).toBe(`<table>${`<tr>${cell}${cell}</tr>`.repeat(2)}</table>`);
+  });
+
+  it("bounds repeated ODT table rows and cells", async () => {
+    const archive = new JSZip().file(
+      "content.xml",
+      '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:text><table:table><table:table-row table:number-rows-repeated="999999999"><table:table-cell table:number-columns-repeated="999999999"><text:p>x</text:p></table:table-cell></table:table-row></table:table></office:text></office:body></office:document-content>',
+    );
+    const result = await openDocument(archive, "odt");
+    if (result.type !== "document") throw new Error("Expected document");
+    const row = `<tr>${"<td><p>x</p></td>".repeat(50)}</tr>`;
+    expect(result.pages[0]!.html).toBe(`<table>${row.repeat(500)}</table>`);
+  });
+
   it.each(["odt", "odp"] as const)("reads %s text and rejects XML entities", async (kind) => {
     const archive = new JSZip().file(
       "content.xml",
