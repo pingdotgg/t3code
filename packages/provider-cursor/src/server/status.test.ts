@@ -1,7 +1,9 @@
 import type { SDKModel } from "@cursor/sdk";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 import type { CursorSettings } from "../settings.ts";
 import { CursorSettings as CursorSettingsSchema } from "../settings.ts";
 import { createModelCapabilities } from "@t3tools/shared/model";
@@ -10,10 +12,12 @@ import {
   buildCursorCapabilitiesFromSdkModel,
   buildCursorDiscoveredModelsFromSdk,
   buildCursorProviderSnapshot,
-  buildInitialCursorProviderSnapshot,
   checkCursorProviderStatus,
 } from "./status.ts";
 import * as CursorSdkCatalog from "./CursorSdkCatalog.ts";
+import { loadCursorSdk } from "./sdk.ts";
+
+const { CursorSdkError } = loadCursorSdk();
 
 const decodeCursorSettings = Schema.decodeSync(CursorSettingsSchema);
 
@@ -92,19 +96,6 @@ const sdkParameterizedModel = {
   ],
 } satisfies SDKModel;
 
-describe("buildInitialCursorProviderSnapshot", () => {
-  it.effect("uses SDK-specific pending status copy", () =>
-    Effect.gen(function* () {
-      const provider = yield* buildInitialCursorProviderSnapshot(baseCursorSettings);
-
-      expect(provider).toMatchObject({
-        status: "warning",
-        message: "Checking Cursor SDK availability...",
-      });
-    }),
-  );
-});
-
 describe("buildCursorProviderSnapshot", () => {
   it("downgrades ready status to warning when SDK model discovery returns no models", () => {
     expect(
@@ -147,19 +138,32 @@ describe("Cursor SDK model discovery", () => {
     );
   });
 
-  it("filters invalid and duplicate SDK model entries", () => {
+  it("keeps catalog aliases and filters invalid and duplicate SDK model entries", () => {
+    const composer = {
+      id: "composer-2",
+      displayName: "Composer 2",
+      aliases: [" composer-latest ", "", "composer"],
+    } satisfies SDKModel;
     expect(
       buildCursorDiscoveredModelsFromSdk([
         sdkParameterizedModel,
         { ...sdkParameterizedModel, displayName: "Duplicate" },
         { id: "", displayName: "Invalid" },
+        composer,
       ]),
-    ).toEqual([
+    ).toStrictEqual([
       {
         slug: "claude-opus-4-8",
         name: "Opus 4.8",
         isCustom: false,
         capabilities: buildCursorCapabilitiesFromSdkModel(sdkParameterizedModel),
+      },
+      {
+        slug: "composer-2",
+        name: "Composer 2",
+        aliases: ["composer-latest", "composer"],
+        isCustom: false,
+        capabilities: buildCursorCapabilitiesFromSdkModel(composer),
       },
     ]);
   });
@@ -206,6 +210,33 @@ describe("checkCursorProviderStatus", () => {
     }),
   );
 
+  it.effect("allows slow SDK discovery with a configured readiness timeout", () =>
+    Effect.gen(function* () {
+      const fiber = yield* checkCursorProviderStatus(baseCursorSettings, {
+        CURSOR_API_KEY: "test-key",
+        T3CODE_CURSOR_PROBE_TIMEOUT_MS: "30000",
+      }).pipe(
+        Effect.provide(
+          CursorSdkCatalog.layerTest(() =>
+            Effect.sleep("20 seconds").pipe(
+              Effect.as({
+                user: {
+                  apiKeyName: "test",
+                  userEmail: "cursor@example.com",
+                  createdAt: "2026-01-01",
+                },
+                models: [sdkParameterizedModel],
+              }),
+            ),
+          ),
+        ),
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust("20 seconds");
+      expect((yield* Fiber.join(fiber)).status).toBe("ready");
+    }),
+  );
+
   it.effect("surfaces SDK authentication failures", () =>
     Effect.gen(function* () {
       const provider = yield* checkCursorProviderStatus(baseCursorSettings, {
@@ -228,6 +259,170 @@ describe("checkCursorProviderStatus", () => {
         auth: { status: "unauthenticated" },
         message: "Cursor SDK authentication failed. Check CURSOR_API_KEY.",
       });
+    }),
+  );
+
+  it.effect.each([
+    {
+      authenticationType: "browser" as const,
+      message:
+        "Cursor needs a paid plan to run in T3 Code. Upgrade this account or sign in with a different one.",
+    },
+    {
+      authenticationType: "api-key" as const,
+      message:
+        "Cursor needs a paid plan to run in T3 Code. Upgrade the account that owns CURSOR_API_KEY or use a key from a paid account.",
+    },
+  ])(
+    "explains a rejected plan for $authenticationType authentication",
+    ({ authenticationType, message }) =>
+      Effect.gen(function* () {
+        const provider = yield* checkCursorProviderStatus(
+          baseCursorSettings,
+          { CURSOR_API_KEY: "free-plan-key" },
+          authenticationType,
+        ).pipe(
+          Effect.provide(
+            CursorSdkCatalog.layerTest(() =>
+              Effect.fail(
+                new CursorSdkCatalog.CursorSdkCatalogError({
+                  authenticationFailure: false,
+                  code: "plan_required",
+                  cause: new CursorSdkError(
+                    "[plan_required] Cloud Agent is not available for free users. Please upgrade to Pro.",
+                    { code: "plan_required", status: 403 },
+                  ),
+                }),
+              ),
+            ),
+          ),
+        );
+
+        expect(provider).toMatchObject({
+          status: "error",
+          auth: { status: "unknown" },
+          message,
+        });
+      }),
+  );
+
+  it.effect.each([
+    {
+      name: "keeps models when /v1/me is blocked",
+      meFailure: new CursorSdkError("[feature_unavailable] Not available for this team.", {
+        code: "feature_unavailable",
+        status: 403,
+      }),
+      expected: {
+        status: "ready",
+        auth: { status: "authenticated", type: "api-key", label: "Cursor API key" },
+        models: [{ slug: "claude-opus-4-8", isCustom: false }],
+      },
+    },
+    {
+      name: "keeps models when /v1/me returns a 403 without a code",
+      meFailure: new CursorSdkError("[unknown] Forbidden", { code: "unknown", status: 403 }),
+      expected: {
+        status: "ready",
+        auth: { status: "authenticated", type: "api-key", label: "Cursor API key" },
+        models: [{ slug: "claude-opus-4-8", isCustom: false }],
+      },
+    },
+    {
+      name: "keeps the paid-plan message when /v1/me returns plan_required",
+      meFailure: new CursorSdkError("[plan_required] Not available for free users.", {
+        code: "plan_required",
+        status: 403,
+      }),
+      expected: {
+        status: "error",
+        auth: { status: "unknown" },
+        message:
+          "Cursor needs a paid plan to run in T3 Code. Upgrade the account that owns CURSOR_API_KEY or use a key from a paid account.",
+      },
+    },
+    {
+      name: "fails when /v1/me has a server error",
+      meFailure: new CursorSdkError("[unknown] Service unavailable", {
+        code: "unknown",
+        status: 503,
+      }),
+      expected: {
+        status: "error",
+        auth: { status: "unknown" },
+        message: "Cursor SDK catalog request failed. Check server logs for details.",
+      },
+    },
+    {
+      name: "rejects a 401 even when its code is feature_unavailable",
+      meFailure: new CursorSdkError("Unauthorized", {
+        code: "feature_unavailable",
+        status: 401,
+      }),
+      expected: {
+        status: "error",
+        auth: { status: "unauthenticated" },
+        message: "Cursor SDK authentication failed. Check CURSOR_API_KEY.",
+      },
+    },
+    {
+      name: "fails a key that /v1/me rejects",
+      meFailure: new CursorSdkError("Unauthorized", { status: 401 }),
+      expected: {
+        status: "error",
+        auth: { status: "unauthenticated" },
+        message: "Cursor SDK authentication failed. Check CURSOR_API_KEY.",
+      },
+    },
+  ])("$name", ({ meFailure, expected }) =>
+    Effect.gen(function* () {
+      const catalog = yield* CursorSdkCatalog.makeCursorSdkCatalog({
+        readUser: () =>
+          Effect.fail(
+            new CursorSdkCatalog.CursorSdkCatalogError({
+              authenticationFailure: meFailure.status === 401,
+              ...(meFailure.status === undefined ? {} : { status: meFailure.status }),
+              ...(meFailure.code === undefined ? {} : { code: meFailure.code }),
+              cause: meFailure,
+            }),
+          ),
+        readModels: () => Effect.succeed([sdkParameterizedModel]),
+      });
+      const provider = yield* checkCursorProviderStatus(baseCursorSettings, {
+        CURSOR_API_KEY: "enterprise-key",
+      }).pipe(Effect.provideService(CursorSdkCatalog.CursorSdkCatalog, catalog));
+
+      expect(provider).toMatchObject(expected);
+    }),
+  );
+
+  it.effect("does not report a single slow catalog read as a provider error", () =>
+    Effect.gen(function* () {
+      let reads = 0;
+      const fiber = yield* checkCursorProviderStatus(baseCursorSettings, {
+        CURSOR_API_KEY: "test-cursor-key",
+      }).pipe(
+        Effect.provide(
+          CursorSdkCatalog.layerTest(() => {
+            reads += 1;
+            return reads === 1
+              ? Effect.never
+              : Effect.succeed({
+                  user: {
+                    apiKeyName: "test-key",
+                    userEmail: "cursor@example.com",
+                    createdAt: "2026-01-01T00:00:00.000Z",
+                  },
+                  models: [sdkParameterizedModel],
+                });
+          }),
+        ),
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* TestClock.adjust("1 minute");
+      const provider = yield* Fiber.join(fiber);
+
+      expect(provider.status).not.toBe("error");
     }),
   );
 

@@ -1,16 +1,8 @@
-import type {
-  Apply,
-  Create,
-  Delete,
-  NoopUpdate,
-  Plan,
-  Replace,
-  Update,
-} from "@/Plan.ts";
+import * as Effect from "effect/Effect";
+import type { Apply, Create, Delete, NoopUpdate, Plan, Replace, Update } from "@/Plan.ts";
 import type { ProviderService } from "@/Provider.ts";
 import type { ResourceLike } from "@/Resource.ts";
 import type { CreatedResourceState } from "@/State/index.ts";
-import * as Effect from "effect/Effect";
 
 const provider: ProviderService<ResourceLike> = {
   list: () => Effect.succeed([]),
@@ -57,11 +49,7 @@ const baseNode = (id: string, props: object) => ({
   bindings: [],
 });
 
-export const updateNode = (
-  olds: object,
-  news: object,
-  id = "Worker",
-): Update => ({
+export const updateNode = (olds: object, news: object, id = "Worker"): Update => ({
   ...baseNode(id, news),
   action: "update",
   props: news,
@@ -81,11 +69,7 @@ export const noopNode = (props: object, id = "Worker"): NoopUpdate => ({
   state: state(id, props),
 });
 
-export const replaceNode = (
-  olds: object,
-  news: object,
-  id = "Worker",
-): Replace => ({
+export const replaceNode = (olds: object, news: object, id = "Worker"): Replace => ({
   ...baseNode(id, news),
   action: "replace",
   props: news,
@@ -99,16 +83,9 @@ export const deleteNode = (props: object, id = "Worker"): Delete => ({
   state: state(id, props),
 });
 
-export const planWith = (
-  resources: Apply[] = [],
-  deletions: Delete[] = [],
-): Plan<undefined> => ({
-  resources: Object.fromEntries(
-    resources.map((node) => [node.resource.FQN, node]),
-  ),
-  deletions: Object.fromEntries(
-    deletions.map((node) => [node.resource.FQN, node]),
-  ),
+export const planWith = (resources: Apply[] = [], deletions: Delete[] = []): Plan<undefined> => ({
+  resources: Object.fromEntries(resources.map((node) => [node.resource.FQN, node])),
+  deletions: Object.fromEntries(deletions.map((node) => [node.resource.FQN, node])),
   actions: {},
   actionDeletions: {},
   output: undefined,
