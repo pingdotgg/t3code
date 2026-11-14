@@ -21,6 +21,7 @@ import { EnvironmentId, ThreadId, type WorkflowQuestion } from "@t3tools/contrac
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useState, type ReactNode } from "react";
 import { View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { RelativeTime } from "../../components/RelativeTime";
 import { AppText as Text } from "../../components/ui/AppText";
@@ -138,7 +139,7 @@ function BeatCard(props: {
       {beat.status === "failed" && beat.detail !== null ? (
         <Text className="text-sm text-danger-foreground">{beat.detail}</Text>
       ) : null}
-      <Facts facts={summary.facts} />
+      {answer === null ? <Facts facts={summary.facts} /> : null}
       {thread === null && child === null ? null : (
         <View className="flex-row gap-2 pt-1">
           {thread === null ? null : (
@@ -226,6 +227,7 @@ function RunBody(props: { readonly environmentId: EnvironmentId; readonly node: 
   const { environmentId, node } = props;
   const { run } = node;
   const navigation = useNavigation();
+  const insets = useSafeAreaInsets();
   const detail = useEnvironmentQuery(
     serverEnvironment.workflowRun({ environmentId, input: { runId: run.runId } }),
   );
@@ -319,9 +321,10 @@ function RunBody(props: { readonly environmentId: EnvironmentId; readonly node: 
   return (
     <ScreenScrollView
       contentInsetAdjustmentBehavior="automatic"
-      contentContainerClassName="gap-3 px-4 pb-10 pt-3"
+      contentContainerClassName="gap-3 px-4 pt-3"
+      contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
     >
-      <NativeStackScreenOptions options={{ title: run.title }} />
+      <NativeStackScreenOptions options={{ title: run.workflow }} />
       <View className="gap-1 px-1">
         <View className="flex-row items-start gap-3">
           <Text className="min-w-0 flex-1 font-t3-bold text-lg text-foreground">{run.title}</Text>

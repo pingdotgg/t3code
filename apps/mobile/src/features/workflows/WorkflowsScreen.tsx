@@ -13,6 +13,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { useNavigation } from "@react-navigation/native";
 import { useState } from "react";
 import { Pressable, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { RelativeTime } from "../../components/RelativeTime";
 import { AppText as Text } from "../../components/ui/AppText";
@@ -159,6 +160,7 @@ function EnvironmentRuns(props: {
 export function WorkflowsScreen() {
   const { environments, isReady } = useEnvironments();
   const [tab, setTab] = useState<WorkflowListTab | null>(null);
+  const insets = useSafeAreaInsets();
   if (isReady && environments.length === 0) {
     return (
       <EmptyState
@@ -169,7 +171,10 @@ export function WorkflowsScreen() {
     );
   }
   return (
-    <ScreenScrollView contentInsetAdjustmentBehavior="automatic">
+    <ScreenScrollView
+      contentInsetAdjustmentBehavior="automatic"
+      contentContainerStyle={{ paddingBottom: insets.bottom + 96 }}
+    >
       {environments.map((environment) => (
         <EnvironmentRuns
           key={environment.environmentId}
