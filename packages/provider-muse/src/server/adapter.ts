@@ -356,6 +356,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       let nativeSessionId: string | undefined;
       let thread: OrchestrationV2ProviderThread | undefined;
       let active: ActiveTurn | undefined;
+      let lastItemOrdinal = 0;
       let lastProviderTurn: OrchestrationV2ProviderTurn | undefined;
       let latestSubscriptionUsage: MuseSubscriptionUsage | undefined;
       const agentEndedAt = new Map<string, DateTime.Utc>();
@@ -449,7 +450,11 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       const itemIdentity = (turn: ActiveTurn, nativeId: string) =>
         `${options.instanceId}:${turn.input.providerThread.id}:${turn.nativeId}:${nativeId}`;
       const baseItem = (turn: ActiveTurn, nativeId: string, time: DateTime.Utc) => {
-        if (!turn.ordinals.has(nativeId)) turn.ordinals.set(nativeId, turn.nextOrdinal++);
+        if (!turn.ordinals.has(nativeId)) {
+          // Overflowing turns continue past their band; the next band starts past this mark.
+          lastItemOrdinal = Math.max(lastItemOrdinal, turn.nextOrdinal);
+          turn.ordinals.set(nativeId, turn.nextOrdinal++);
+        }
         if (!turn.started.has(nativeId)) turn.started.set(nativeId, time);
         const identity = itemIdentity(turn, nativeId);
         return {
@@ -2133,7 +2138,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           settledRequests: new Set(),
           retries: [],
           done: yield* Deferred.make<void>(),
-          nextOrdinal: turnInput.providerTurnOrdinal * 100 + 1,
+          nextOrdinal: Math.max(lastItemOrdinal + 1, turnInput.providerTurnOrdinal * 100 + 1),
           flushScheduled: false,
           interruptRequested: false,
           compact,
