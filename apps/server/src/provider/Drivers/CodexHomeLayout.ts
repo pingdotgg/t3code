@@ -71,6 +71,22 @@ export const resolveCodexHomeLayout = Effect.fn("resolveCodexHomeLayout")(functi
   };
 });
 
+// Codex accepts bundled plugins only from this path under CODEX_HOME. The shared
+// config names the original home, so shadow homes must override it through their .tmp link.
+const BUNDLED_MARKETPLACE = "openai-bundled";
+
+const quoteCliArg = (value: string) => `"${value.replace(/["\\$`]/g, "\\$&")}"`;
+
+export function codexHomeLaunchArgs(path: Path.Path, layout: CodexHomeLayout, launchArgs: string) {
+  const homePath = layout.effectiveHomePath;
+  if (layout.mode !== "authOverlay" || homePath === undefined) return launchArgs;
+  const source = path.join(homePath, ".tmp", "bundled-marketplaces", BUNDLED_MARKETPLACE);
+  const setting = `marketplaces.${BUNDLED_MARKETPLACE}.source=${JSON.stringify(source)}`;
+  const override = `-c ${quoteCliArg(setting)}`;
+  // User launch args come last so an explicit source still wins.
+  return launchArgs.length > 0 ? `${override} ${launchArgs}` : override;
+}
+
 const CodexShadowHomeContext = {
   sharedHomePath: Schema.String,
   effectiveHomePath: Schema.String,
