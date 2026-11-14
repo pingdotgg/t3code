@@ -4,6 +4,7 @@ import {
   MessageId,
   OrchestrationMessageContext,
   ThreadId,
+  TurnItemId,
   type PreviewAnnotationPayload,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
@@ -24,6 +25,7 @@ import {
   previewAnnotationFromRecord,
   pullRequestContextKindLabel,
   resolveUserMessageContext,
+  responseContextRecord,
   reviewCommentContextLabel,
   selectedMessageContextFragment,
   reviewCommentContextRecord,
@@ -217,6 +219,34 @@ describe("composerContextRecords", () => {
     const image = context.records.find((record) => record.kind === "image");
     expect(preview).toMatchObject({ screenshotContextId: image!.contextId });
     expect(image).toMatchObject({ attachmentId: "uploaded-image" });
+  });
+
+  it("shortens a long annotation comment label without splitting an emoji", () => {
+    const record = previewAnnotationContextRecord({
+      ...annotation,
+      comment: `${"a".repeat(46)}😀 and make the button bigger`,
+    });
+    expect(record.label).toBe(`${"a".repeat(46)}…`);
+  });
+
+  it("shortens a long reply label without splitting an emoji", () => {
+    const text = `${"a".repeat(63)}😀 trailing`;
+    const record = responseContextRecord({
+      citation: {
+        version: 1,
+        environmentId: EnvironmentId.make("environment-1"),
+        threadId: ThreadId.make("thread-1"),
+        messageId: MessageId.make("message-1"),
+        text,
+        start: 0,
+        end: text.length,
+        prefix: "",
+        suffix: "",
+      },
+      itemId: TurnItemId.make("item-1"),
+      subagents: [],
+    });
+    expect(record.label).toBe("a".repeat(63));
   });
 
   it("restores multiple edits on one target without parsing display strings", () => {
