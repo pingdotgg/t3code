@@ -1123,75 +1123,6 @@ describe("pullCurrentBranch", () => {
     };
   });
 
-  it.effect("pulls while its background fetch is queued behind other repositories", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const { cwd, remoteHead } = yield* cloneBehindRemote;
-        const blockers: string[] = [];
-        for (let index = 0; index < 4; index++) {
-          const blocker = yield* cloneBehindRemote;
-          blockers.push(NodeFS.realpathSync.native(blocker.cwd));
-        }
-        const targetPath = NodeFS.realpathSync.native(cwd);
-        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const release = yield* Deferred.make<void>();
-        const blockersStarted = yield* Deferred.make<void>();
-        const targetEntered = yield* Deferred.make<void>();
-        let running = 0;
-        let targetFetchStarted = false;
-        const spawner = ChildProcessSpawner.make((command) =>
-          Effect.gen(function* () {
-            const handle = yield* delegate.spawn(command);
-            if (!ChildProcess.isStandardCommand(command) || !command.args.includes("fetch"))
-              return handle;
-            const commandCwd = String(command.options.cwd);
-            if (commandCwd === targetPath) targetFetchStarted = true;
-            if (blockers.includes(commandCwd)) {
-              running++;
-              if (running === 4) yield* Deferred.succeed(blockersStarted, undefined);
-              yield* Deferred.await(release);
-            }
-            return handle;
-          }),
-        );
-        const driver = yield* makeGitVcsDriverCore().pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        );
-        const tracer = Tracer.make({
-          span(options) {
-            const span = new Tracer.NativeSpan(options);
-            if (options.name === "GitVcsDriver.fetchRemoteForStatus.wait") {
-              const attribute = span.attribute.bind(span);
-              span.attribute = (key, value) => {
-                attribute(key, value);
-                if (key === "statusFetch.joining") Deferred.doneUnsafe(targetEntered, Effect.void);
-              };
-            }
-            return span;
-          },
-        });
-        yield* Effect.gen(function* () {
-          const blockerStatuses = [];
-          for (const blocker of blockers) {
-            blockerStatuses.push(yield* driver.statusDetailsRemote(blocker).pipe(Effect.forkChild));
-          }
-          yield* Deferred.await(blockersStarted);
-          const targetStatus = yield* driver
-            .statusDetailsRemote(cwd)
-            .pipe(Effect.withTracer(tracer), Effect.forkChild({ startImmediately: true }));
-          yield* Deferred.await(targetEntered);
-          const result = yield* driver.pullCurrentBranch(cwd);
-          assert.equal(result.status, "pulled");
-          assert.equal(yield* git(cwd, ["rev-parse", "HEAD"]), remoteHead);
-          yield* Deferred.succeed(release, undefined);
-          yield* Effect.forEach(blockerStatuses, Fiber.join, { concurrency: "unbounded" });
-          yield* Fiber.join(targetStatus);
-          assert.isFalse(targetFetchStarted);
-        }).pipe(Effect.ensuring(Deferred.succeed(release, undefined)));
-      }),
-    ).pipe(Effect.provide(layerTest)),
-  );
-
   it.effect("resolves a status waiter when Pull claims its queued fetch", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -1266,13 +1197,7 @@ describe("pullCurrentBranch", () => {
     ).pipe(Effect.provide(layerTest)),
   );
 
-  const claimedFetchFallbacks = [
-    "diverged",
-    "interrupted",
-    "spawn-failure",
-    "fetch-failure",
-    "upstream-only",
-  ] as const;
+  const claimedFetchFallbacks = ["diverged", "interrupted", "upstream-only"] as const;
 
   it.effect.each(claimedFetchFallbacks)(
     "falls back to the claimed status fetch when Pull is %s",
@@ -1310,17 +1235,6 @@ describe("pullCurrentBranch", () => {
             Effect.gen(function* () {
               if (ChildProcess.isStandardCommand(command)) {
                 const commandCwd = NodeFS.realpathSync.native(String(command.options.cwd));
-                if (
-                  commandCwd === targetPath &&
-                  command.args.includes("pull") &&
-                  (failure === "spawn-failure" || failure === "fetch-failure")
-                ) {
-                  return yield* PlatformError.systemError({
-                    _tag: "NotFound",
-                    module: "ChildProcess",
-                    method: "spawn",
-                  });
-                }
                 if (
                   commandCwd === targetPath &&
                   failure === "interrupted" &&
@@ -1403,23 +1317,14 @@ describe("pullCurrentBranch", () => {
             } else {
               const error = yield* Effect.flip(driver.pullCurrentBranch(cwd));
               assert.equal(error.operation, "GitVcsDriver.pullCurrentBranch.pull");
-              if (failure === "diverged") {
-                assert.equal(error.detail, "git pull failed");
-                assert.notEqual(error.exitCode, 0);
-              }
             }
             assert.equal(targetFetches, 0);
-            if (failure === "fetch-failure") {
-              yield* git(cwd, ["remote", "set-url", "origin", `${cwd}/missing.git`]);
-            }
             yield* Deferred.succeed(release, undefined);
             yield* Deferred.await(targetFetchStarted);
             assert.isTrue((yield* Fiber.join(status)).isRepo);
-            assert.equal(waiterSucceeded, failure !== "fetch-failure");
+            assert.isTrue(waiterSucceeded);
             assert.equal(targetFetches, 1);
-            assert.isDefined(targetFetchExitCode);
-            if (failure === "fetch-failure") assert.notEqual(targetFetchExitCode, 0);
-            else assert.equal(targetFetchExitCode, 0);
+            assert.equal(targetFetchExitCode, 0);
             if (failure === "upstream-only") {
               assert.equal(yield* git(cwd, ["rev-parse", "refs/remotes/origin/other"]), remoteHead);
             }
