@@ -469,7 +469,7 @@ export function createNewThreadHandler(router: AnyRouter) {
  * once a project exists, unless that thread already holds its own text.
  */
 function takeNoProjectsDraft(draftId: DraftId) {
-  const { getComposerDraft, moveComposerPromptAndImages } = useComposerDraftStore.getState();
+  const { getComposerDraft, moveComposerContent } = useComposerDraftStore.getState();
   const sendOnMove = useDraftSendOnOpenStore.getState().armed;
   if (
     !composerDraftHasUserContent(getComposerDraft(NO_PROJECTS_DRAFT_ID)) ||
@@ -478,7 +478,7 @@ function takeNoProjectsDraft(draftId: DraftId) {
     if (sendOnMove) useDraftSendOnOpenStore.setState({ armed: false });
     return;
   }
-  moveComposerPromptAndImages(NO_PROJECTS_DRAFT_ID, draftId);
+  moveComposerContent(NO_PROJECTS_DRAFT_ID, draftId);
   // Send on the no-projects home: this draft sends what just moved in.
   if (sendOnMove) useDraftSendOnOpenStore.setState({ armed: false, draftId });
 }
