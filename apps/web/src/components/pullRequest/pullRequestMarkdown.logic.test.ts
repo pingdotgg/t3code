@@ -81,12 +81,11 @@ describe("authored mentions after sanitizing HTML", () => {
       ["@reader", "https://github.com/reader", "mention"],
     ]);
   });
-});
-
-it("preserves authored mentions after recovering an over-indented list", () => {
-  expect(links("-         \\@reader &#64;reader @reader")).toEqual([
-    ["@reader", "https://github.com/reader", "mention"],
-  ]);
+  it("preserves authored mentions after recovering an over-indented list", () => {
+    expect(links("Thanks \\@team, see below.\n\n-         \\@reader &#64;reader @reader")).toEqual([
+      ["@reader", "https://github.com/reader", "mention"],
+    ]);
+  });
 });
 
 describe("pullRequestCommentPreview", () => {
