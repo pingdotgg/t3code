@@ -5314,6 +5314,91 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  // The CLI holds a "now" steer until a foreground command returns; the
+  // terminal's send-now moves the command to the background first.
+  it.effect("moves a running foreground command to the background before a steer", () =>
+    Effect.gen(function* () {
+      const offeredBeforeMove: Array<number> = [];
+      const moved: Array<string> = [];
+      const harness = yield* makeWakeHarnessWithOptions({
+        backgroundTasks: (toolUseId) =>
+          Effect.sync(() => {
+            offeredBeforeMove.push(harness.offeredMessages.length);
+            moved.push(toolUseId);
+            return true;
+          }),
+      });
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const input = makeClaudeTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("attempt-steer-background-command"),
+        text: "Render the video.",
+        attachments: [],
+      });
+      yield* harness.runtime.startTurn(input);
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "assistant",
+          uuid: "00000000-0000-4000-8000-000000015801",
+          session_id: WAKE_NATIVE_SESSION,
+          parent_tool_use_id: null,
+          message: {
+            id: "msg_steer_background_command",
+            type: "message",
+            role: "assistant",
+            model: "claude-sonnet-4-6",
+            content: [
+              {
+                type: "tool_use",
+                id: "toolu-steer-render",
+                name: "Bash",
+                input: { command: "npx remotion render" },
+              },
+              {
+                type: "tool_use",
+                id: "toolu-steer-read",
+                name: "Read",
+                input: { file_path: "/tmp/notes.md" },
+              },
+            ],
+          },
+        }),
+      );
+      yield* harness.runtime.steerTurn({
+        threadId: harness.threadId,
+        runId: input.runId,
+        providerThread: harness.providerThread,
+        providerTurnId: idAllocator.derive.providerTurn({
+          driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+          nativeTurnId: `turn:${input.attemptId}`,
+        }),
+        message: {
+          createdBy: "user",
+          creationSource: "web",
+          messageId: MessageId.make("steer-background-command"),
+          text: "How is it going?",
+          attachments: [],
+        },
+      });
+      assert.deepEqual(moved, ["toolu-steer-render"]);
+      // Moved before the steer went out, so the CLI can take the steer in at once.
+      assert.deepEqual(offeredBeforeMove, [1]);
+      assert.lengthOf(harness.offeredMessages, 2);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   // regression: #23948 Claude holds a steer behind a running foreground tool
   // call and goes silent, so each steer stays pending until Claude starts it.
   it.effect("keeps a steer pending until Claude starts it", () =>
