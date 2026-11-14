@@ -2,6 +2,7 @@ import { remapComposerContextAttachments } from "@t3tools/shared/composerContext
 import { appendUserInputAttachmentPaths } from "../provider/userInputAttachments.ts";
 import type { ChatAttachment, OrchestrationV2Command } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import { resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
@@ -24,8 +25,10 @@ function dispatchWasNotAccepted(
     case "OrchestratorCommandIdConflictError":
     case "OrchestratorSubagentThreadReadOnlyError":
     case "OrchestratorThreadAboveModeLimitError":
+    case "OrchestratorProviderSelectionBusyError":
     case "OrchestratorRuntimeModeAboveCeilingError":
     case "ThreadManagementProviderInstanceDisabledError":
+    case "ThreadManagementWorktreeRestoreError":
       return true;
     default:
       return false;
@@ -157,6 +160,24 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
     (command.type !== "queued-run.edit" || command.attachments === undefined)
   )
     return yield* threads.dispatch(command);
+  // An accepted edit's retry replays its receipt even if a later cleanup removed its files.
+  if (command.type === "queued-run.edit" && !(yield* threads.hasReceipt(command.commandId))) {
+    const config = yield* ServerConfig.ServerConfig;
+    const fileSystem = yield* FileSystem.FileSystem;
+    // A stale view can keep a file that another client's edit dropped and deleted.
+    for (const attachment of command.attachments ?? []) {
+      if (AttachmentClaims.attachmentIsPendingUpload(attachment)) continue;
+      const path = resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment });
+      if (
+        path !== null &&
+        !(yield* fileSystem.exists(path).pipe(Effect.orElseSucceed(() => false)))
+      ) {
+        return yield* new AttachmentClaims.AttachmentClaimError({
+          message: `Attachment '${attachment.name}' cannot be sent: attachment not found.`,
+        });
+      }
+    }
+  }
   const claimed = yield* AttachmentClaims.claimPendingAttachments({
     threadId: command.threadId,
     attachments: command.attachments ?? [],

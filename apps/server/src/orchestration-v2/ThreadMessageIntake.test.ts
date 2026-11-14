@@ -10,6 +10,7 @@ import {
   EventId,
   GuestMessageId,
   MessageId,
+  RunId,
   RuntimeRequestId,
   ThreadId,
   TurnItemId,
@@ -424,5 +425,53 @@ it.effect("sends a guest message with the guest's files, never ones the client n
     expect(command.attachments).toHaveLength(1);
     // The guest's file, which is already the thread's.
     expect(command.attachments).toEqual([guestFile]);
+  }).pipe(Effect.provide(layerIntakeTest)),
+);
+
+it.effect("refuses a queued edit that keeps a file another edit already deleted", () =>
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    const storedFile = (name: string) => ({
+      type: "image" as const,
+      id: ChatAttachmentId.make(createAttachmentId("thread-queued-edit")!),
+      name,
+      mimeType: "image/png",
+      sizeBytes: 3,
+    });
+    const kept = storedFile("kept.png");
+    const deleted = storedFile("deleted.png");
+    NodeFS.writeFileSync(
+      NodePath.join(config.attachmentsDir, `${kept.id}.png`),
+      new Uint8Array([1, 2, 3]),
+    );
+    const captured: OrchestrationV2ServerCommand[] = [];
+    const edit = (attachments: ReadonlyArray<typeof kept>) =>
+      dispatchCommand({
+        type: "queued-run.edit",
+        commandId: CommandId.make(`queued-edit-${attachments.length}`),
+        threadId: ThreadId.make("thread-queued-edit"),
+        runId: RunId.make("run-queued-edit"),
+        text: "Edited from a stale view.",
+        attachments,
+      }).pipe(
+        Effect.provide(
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            dispatch: layerFailingDispatchHandler(captured),
+            hasReceipt: (commandId) =>
+              Effect.succeed(captured.some((command) => command.commandId === commandId)),
+          }),
+        ),
+        Effect.result,
+      );
+
+    yield* edit([kept]);
+    expect(captured).toHaveLength(1);
+    const result = yield* edit([kept, deleted]);
+    expect(result._tag).toBe("Failure");
+    expect(captured).toHaveLength(1);
+    // A retry of the accepted edit replays its receipt even after a later cleanup removed its file.
+    NodeFS.rmSync(NodePath.join(config.attachmentsDir, `${kept.id}.png`));
+    yield* edit([kept]);
+    expect(captured).toHaveLength(2);
   }).pipe(Effect.provide(layerIntakeTest)),
 );
