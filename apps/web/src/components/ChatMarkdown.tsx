@@ -260,6 +260,8 @@ interface ChatMarkdownProps {
   /** The change request's repository, when it can differ from the checkout at `cwd`. */
   sourceControlMediaRepository?: string | undefined;
   headingLevelOffset?: number | undefined;
+  /** Run after raw HTML is parsed and sanitized; keep the list stable to share the parse cache. */
+  extraRehypePlugins?: PluggableList;
 }
 
 export interface ChatMarkdownContextReference {
@@ -273,6 +275,7 @@ export interface ChatMarkdownContextReference {
 
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<ServerProviderSkill> = [];
 const EMPTY_REMARK_PLUGINS: NonNullable<ReactMarkdownOptions["remarkPlugins"]> = [];
+const EMPTY_REHYPE_PLUGINS: PluggableList = [];
 
 const ARTIFACT_TEMPLATE_ICON_BY_KIND = {
   document: FileTextIcon,
@@ -1830,6 +1833,7 @@ function ChatMarkdown({
   lineBreaks = false,
   parseRawHtml = true,
   extraRemarkPlugins = EMPTY_REMARK_PLUGINS,
+  extraRehypePlugins = EMPTY_REHYPE_PLUGINS,
   renderInsights = false,
   ...props
 }: ChatMarkdownProps) {
@@ -1895,11 +1899,12 @@ function ChatMarkdown({
             key={index}
             text={source}
             remarkPlugins={remarkPlugins}
-            rehypePlugins={
+            rehypePlugins={withExtraPlugins(
               parseRawHtml
                 ? CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS
-                : CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS
-            }
+                : CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS,
+              extraRehypePlugins,
+            )}
             shared={!uncachedPlugins}
             // Every block before the last is finished, so its parse can be reused.
             cache={!props.isStreaming || index < blocks.length - 1}

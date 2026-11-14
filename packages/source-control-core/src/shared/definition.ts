@@ -296,6 +296,12 @@ export interface SourceControlDefinition {
     text: string,
     repositoryUrl: string,
   ) => ReadonlyArray<ReferenceAutolink>;
+  /**
+   * The absolute URL for a link destination this host's bodies write relative to the change
+   * request's page at `changeRequestUrl`, or null for any other destination. Absent for a host
+   * whose bodies link absolutely.
+   */
+  readonly resolveRelativeUrl?: (url: string, changeRequestUrl: string) => string | null;
   /** True when the host renders a single newline in change request text as a line break. */
   readonly hardLineBreaks?: boolean;
   /** Where the host lists a change request's checks. Absent means the change request's own page. */

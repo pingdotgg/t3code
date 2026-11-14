@@ -135,6 +135,7 @@ vi.mock(import("../hooks/useSettings"), async (original) => {
 import ChatMarkdown from "./ChatMarkdown";
 import { chatMarkdownClipboardPayload } from "../markdown-clipboard";
 import { AudioPreview } from "./files/AudioPreview";
+import { pullRequestRehypePlugins } from "./pullRequest/pullRequestMarkdown.logic";
 
 it("keeps compact audio playback loaded across signed URL renewals", async () => {
   const original =
@@ -311,6 +312,39 @@ it("reuses the parse of a remounted message that has stable extra plugins", asyn
   await using screen = await render(message);
   await expect.element(screen.getByText("Cached text")).toBeVisible();
   expect(parsed).toHaveBeenCalledTimes(1);
+});
+
+it("resolves destinations in parsed html and reference links, but not code", async () => {
+  setup();
+  const extraRehypePlugins = pullRequestRehypePlugins({
+    provider: "github",
+    url: "https://github.com/team/repo/pull/8",
+  });
+  await using screen = await renderText(
+    [
+      '<img alt="before > after" src="/team/repo/blob/abc/a.png">',
+      "",
+      `<img alt="b" title="src='example'" src="../blob/abc/b.png">`,
+      "",
+      '<a href="../blob/abc/docs.md">docs</a> [ref][r] `![c](../blob/abc/c.png)`',
+      "",
+      "[r]: ../blob/abc/ref.md",
+    ].join("\n"),
+    { extraRehypePlugins },
+  );
+  await expect
+    .element(screen.getByAltText("before > after"))
+    .toHaveAttribute("src", "https://github.com/team/repo/blob/abc/a.png");
+  await expect
+    .element(screen.getByAltText("b"))
+    .toHaveAttribute("src", "https://github.com/team/repo/blob/abc/b.png");
+  await expect
+    .element(screen.getByRole("link", { name: "docs" }))
+    .toHaveAttribute("href", "https://github.com/team/repo/blob/abc/docs.md");
+  await expect
+    .element(screen.getByRole("link", { name: "ref" }))
+    .toHaveAttribute("href", "https://github.com/team/repo/blob/abc/ref.md");
+  await expect.element(screen.getByText("![c](../blob/abc/c.png)", { exact: true })).toBeVisible();
 });
 
 it("highlights a code block's own source when an earlier block of the same length was cached", async () => {

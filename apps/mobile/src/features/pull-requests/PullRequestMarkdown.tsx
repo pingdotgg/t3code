@@ -15,6 +15,7 @@ import {
 import { videoMimeType } from "@t3tools/shared/video";
 import { createContext, useContext, useMemo, useState } from "react";
 import {
+  changeRequestLinkResolver,
   changeRequestReferenceAutolinker,
   resolveChangeRequestMediaUrl,
 } from "@t3tools/client-runtime/pull-request-markdown";
@@ -22,21 +23,28 @@ import {
   sourceControlClients,
   type ReferenceAutolink,
 } from "@t3tools/client-runtime/source-control-clients";
+import { assetUrlStateFromResult } from "@t3tools/client-runtime/state/assets";
 import { linkReferenceAutolinks } from "./pullRequestAutolinks";
+import { assetEnvironment } from "../../state/assets";
+import { usePreparedConnection } from "../../state/session";
+import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
 import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
 import { markdownImageSources } from "../../lib/markdownImageSources";
 import { FilePreviewGallery, useFilePreviewGallery } from "../../components/ui/FilePreviewGallery";
-import { pullRequestImageSource } from "./pullRequestMediaSource";
+import { pullRequestImageSource, pullRequestMediaSource } from "./pullRequestMediaSource";
 import {
   FilePreviewModal,
   type FilePreviewSource,
   type FilePreviewItem,
 } from "../../components/ui/FilePreviewModal";
 import { ThreadMarkdownImageView } from "../threads/ThreadMarkdownImage";
-import type { MarkdownImageRenderer } from "../../native/SelectableMarkdownText";
+import type {
+  MarkdownImageRenderer,
+  MarkdownImageSourceResolver,
+} from "../../native/SelectableMarkdownText";
 import type { SelectableMarkdownTextProps } from "../../native/SelectableMarkdownText.types";
 
 const AutolinksContext = createContext<((text: string) => ReadonlyArray<ReferenceAutolink>) | null>(
@@ -44,6 +52,7 @@ const AutolinksContext = createContext<((text: string) => ReadonlyArray<Referenc
 );
 const LineBreaksContext = createContext(false);
 const ChangeRequestUrlContext = createContext<string | null>(null);
+const LinkResolverContext = createContext<((url: string) => string) | null>(null);
 
 export function PullRequestMarkdownRepository(props: {
   /** The change request the markdown belongs to, whose host decides what its text links. */
@@ -58,6 +67,7 @@ export function PullRequestMarkdownRepository(props: {
       ? null
       : changeRequestReferenceAutolinker({ provider, url });
   const lineBreaks = sourceControlClients.find(provider ?? "")?.hardLineBreaks ?? false;
+  const linkResolver = changeRequestLinkResolver(props.changeRequest);
   const target = pullRequestTarget(props.params);
   const project = useProject({
     environmentId: target.environmentId,
@@ -71,11 +81,61 @@ export function PullRequestMarkdownRepository(props: {
     <AutolinksContext value={autolinks}>
       <LineBreaksContext value={lineBreaks}>
         <ChangeRequestUrlContext value={url ?? null}>
-          <PullRequestMediaContext value={media}>{props.children}</PullRequestMediaContext>
+          <LinkResolverContext value={linkResolver}>
+            <PullRequestMediaContext value={media}>{props.children}</PullRequestMediaContext>
+          </LinkResolverContext>
         </ChangeRequestUrlContext>
       </LineBreaksContext>
     </AutolinksContext>
   );
+}
+
+/** A body's destinations, as its host resolves them; a guide's stay relative to the checkout. */
+function useResolveLink() {
+  const linkResolver = useContext(LinkResolverContext);
+  return (href: string) => linkResolver?.(href) ?? href;
+}
+
+function useResolveMediaUrl() {
+  const resolveLink = useResolveLink();
+  const changeRequestUrl = useContext(ChangeRequestUrlContext);
+  return (href: string) => {
+    const url = resolveLink(href);
+    return changeRequestUrl ? resolveChangeRequestMediaUrl(url, changeRequestUrl) : url;
+  };
+}
+
+/**
+ * Enriched draws an image in a table, list or link itself, from this source, not `renderImage`.
+ * It keeps a resolved source for the life of the view, so the view is keyed to everything an
+ * answer depends on: the change request it resolves against, the media location and the origin.
+ */
+function usePullRequestImageSource(resolve: (url: string) => string): {
+  readonly resolveImageSource: MarkdownImageSourceResolver;
+  readonly sourceKey: string;
+} {
+  const location = useContext(PullRequestMediaContext);
+  const connection = usePreparedConnection(location?.environmentId ?? null);
+  const httpBaseUrl = connection._tag === "Some" ? connection.value.httpBaseUrl : null;
+  const createUrl = useAtomQueryRunner(assetEnvironment.createUrl, { reportFailure: false });
+  const resolveImageSource: MarkdownImageSourceResolver = async (image) => {
+    const url = resolve(image.href);
+    const source = pullRequestMediaSource(url, location);
+    if ("uri" in source) return /^https?:\/\//i.test(url) ? { uri: url } : null;
+    const state = assetUrlStateFromResult(
+      await createUrl({
+        environmentId: source.environmentId,
+        input: { resource: source.resource },
+      }),
+      httpBaseUrl,
+    );
+    if (state._tag !== "Success") throw new Error("Pull request image is unavailable");
+    return { uri: state.url };
+  };
+  return {
+    resolveImageSource,
+    sourceKey: `${location?.environmentId ?? ""}\n${location?.cwd ?? ""}\n${httpBaseUrl ?? ""}`,
+  };
 }
 
 function MarkdownImage(props: {
@@ -120,13 +180,13 @@ export function PullRequestMarkdown(props: {
   }) => boolean;
 }) {
   const mediaContext = useContext(PullRequestMediaContext);
-  const changeRequestUrl = useContext(ChangeRequestUrlContext);
+  const resolveMediaUrl = useResolveMediaUrl();
   const segments = useMemo(() => splitPullRequestBody(props.markdown), [props.markdown]);
   const [undoneTicks, setUndoneTicks] = useState(0);
   const gallery: FilePreviewItem[] = markdownImageSources(
     props.imageGroupMarkdown ?? props.markdown,
   )
-    .map((href) => (changeRequestUrl ? resolveChangeRequestMediaUrl(href, changeRequestUrl) : href))
+    .map(resolveMediaUrl)
     .filter(
       (uri) =>
         /^https?:\/\//i.test(uri) &&
@@ -146,6 +206,15 @@ export function PullRequestMarkdown(props: {
         <PullRequestBodySegmentView key={segment.id} segment={segment} {...segmentProps} />
       ))}
     </View>
+  );
+}
+
+/** The agent writes the guide about the checkout, so its relative links name workspace files. */
+export function PullRequestGuideMarkdown(props: { readonly markdown: string }) {
+  return (
+    <LinkResolverContext value={null}>
+      <PullRequestMarkdown lineBreaks={false} markdown={props.markdown} />
+    </LinkResolverContext>
   );
 }
 
@@ -221,26 +290,30 @@ function PullRequestMarkdownContent(props: {
   const autolinks = useContext(AutolinksContext);
   const mediaContext = useContext(PullRequestMediaContext);
   const changeRequestUrl = useContext(ChangeRequestUrlContext);
-  const resolveMediaUrl = (href: string) =>
-    changeRequestUrl ? resolveChangeRequestMediaUrl(href, changeRequestUrl) : href;
+  const resolveLink = useResolveLink();
+  const resolveMediaUrl = useResolveMediaUrl();
   const markdown = linkReferenceAutolinks(props.markdown, autolinks);
   const openPullRequest = useOpenPullRequest();
   const openLink = (href: string) => {
-    void openPullRequest(href);
+    void openPullRequest(resolveLink(href));
   };
   const [preview, setPreview] = useState<FilePreviewSource | null>(null);
   const renderImage: MarkdownImageRenderer = (image) => (
     <MarkdownImage href={resolveMediaUrl(image.href)} alt={image.alt} onPreview={setPreview} />
   );
+  const { resolveImageSource, sourceKey } = usePullRequestImageSource(resolveMediaUrl);
+  const nativeKey = `${changeRequestUrl ?? ""}\n${sourceKey}`;
   const styles = useMarkdownPreviewStyles();
   return (
     <FilePreviewGallery value={props.gallery}>
       <SelectableMarkdownText
+        key={nativeKey}
         markdown={markdown}
         preserveSoftBreaks={props.lineBreaks ?? hostLineBreaks}
         textStyle={styles.nativeTextStyle}
         onLinkPress={openLink}
         renderImage={renderImage}
+        resolveImageSource={resolveImageSource}
         onImagePress={(href) =>
           setPreview(pullRequestImageSource(resolveMediaUrl(href), mediaContext))
         }

@@ -3,7 +3,7 @@ import { createContext, useContext } from "react";
 
 import { cn } from "~/lib/utils";
 
-import { PullRequestMarkdown } from "../PullRequestMarkdown";
+import { PullRequestMarkdown, PullRequestMarkdownContext } from "../PullRequestMarkdown";
 
 export const GuideProseContext = createContext<{
   readonly environmentId: EnvironmentId;
@@ -20,14 +20,20 @@ export function GuideProse({
   className?: string;
 }) {
   const context = useContext(GuideProseContext);
+  const markdownContext = useContext(PullRequestMarkdownContext);
   if (plain || context === null) return text;
   return (
-    <PullRequestMarkdown
-      text={text}
-      cwd={context.cwd}
-      environmentId={context.environmentId}
-      lineBreaks={false}
-      className={cn("space-y-0 [&_.chat-markdown]:text-inherit", className)}
-    />
+    // The agent writes the guide about the checkout, so its relative links name workspace files.
+    <PullRequestMarkdownContext
+      value={markdownContext === null ? null : { ...markdownContext, rehypePlugins: [] }}
+    >
+      <PullRequestMarkdown
+        text={text}
+        cwd={context.cwd}
+        environmentId={context.environmentId}
+        lineBreaks={false}
+        className={cn("space-y-0 [&_.chat-markdown]:text-inherit", className)}
+      />
+    </PullRequestMarkdownContext>
   );
 }
