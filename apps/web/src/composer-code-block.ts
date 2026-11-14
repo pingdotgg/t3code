@@ -137,7 +137,7 @@ export function indentCodeBlock(
     return true;
   }
 
-  const lineStart = block.text.lastIndexOf("\n", Math.max(0, startOffset - 1)) + 1;
+  const lineStart = startOffset === 0 ? 0 : block.text.lastIndexOf("\n", startOffset - 1) + 1;
   const newlineAfter = block.text.indexOf("\n", Math.max(startOffset, endOffset - 1));
   const lineEnd = newlineAfter === -1 ? block.text.length : newlineAfter;
 

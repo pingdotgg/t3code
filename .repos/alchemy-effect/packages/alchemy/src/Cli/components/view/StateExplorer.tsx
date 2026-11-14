@@ -1,21 +1,17 @@
+/** @jsxRuntime automatic */
 /** @jsxImportSource @alchemy.run/sigil */
-import {
-  useEffect,
-  useMemo,
-  useState,
-  useSyncExternalStore,
-} from "@alchemy.run/sigil/react";
-import type { JSX } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "@alchemy.run/sigil/react";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import type * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
-import type {
-  InvalidStatePath,
-  StateStoreError,
-} from "../../../State/index.ts";
+import type { JSX } from "react";
+import { Screen, type ScreenController } from "../../../Interaction.ts";
+import type { InvalidStatePath, StateStoreError } from "../../../State/index.ts";
+import { theme } from "../../../Util/Theme.ts";
+import { formatYamlLines, matchYamlKey } from "../../PropertyDiff.ts";
 import {
   Box,
   KeyBar,
@@ -29,8 +25,6 @@ import {
   useTerminalInput,
   useTerminalSize,
 } from "../ui/index.ts";
-import { Screen, theme, type ScreenController } from "../../CliKit/index.ts";
-import { formatYamlLines, matchYamlKey } from "../../PropertyDiff.ts";
 
 export type StateFileRef =
   | {
@@ -50,16 +44,12 @@ export type StateExplorerError = InvalidStatePath | StateStoreError;
 export interface StateExplorerSource {
   readonly backend: string;
   readonly listStacks: Effect.Effect<ReadonlyArray<string>, StateExplorerError>;
-  readonly listStages: (
-    stack: string,
-  ) => Effect.Effect<ReadonlyArray<string>, StateExplorerError>;
+  readonly listStages: (stack: string) => Effect.Effect<ReadonlyArray<string>, StateExplorerError>;
   readonly listResources: (
     stack: string,
     stage: string,
   ) => Effect.Effect<ReadonlyArray<string>, StateExplorerError>;
-  readonly readFile: (
-    file: StateFileRef,
-  ) => Effect.Effect<unknown, StateExplorerError>;
+  readonly readFile: (file: StateFileRef) => Effect.Effect<unknown, StateExplorerError>;
   readonly deleteNodes: (
     nodes: ReadonlyArray<StateBrowserNode>,
   ) => Effect.Effect<void, StateExplorerError>;
@@ -113,17 +103,12 @@ type LoadState<Value> =
 
 interface ExplorerSnapshot {
   readonly root: LoadState<ReadonlyArray<StateBrowserNode>>;
-  readonly children: ReadonlyMap<
-    string,
-    LoadState<ReadonlyArray<StateBrowserNode>>
-  >;
+  readonly children: ReadonlyMap<string, LoadState<ReadonlyArray<StateBrowserNode>>>;
   readonly files: ReadonlyMap<string, LoadState<unknown>>;
 }
 
 const errorMessage = (error: StateExplorerError) =>
-  error._tag === "InvalidStatePath"
-    ? `${error.path}: ${error.reason}`
-    : error.message;
+  error._tag === "InvalidStatePath" ? `${error.path}: ${error.reason}` : error.message;
 
 const causeMessage = (cause: Cause.Cause<StateExplorerError>) =>
   Option.match(Cause.findErrorOption(cause), {
@@ -177,8 +162,7 @@ export class StateExplorerStore {
     fiber.addObserver((exit) => {
       if (!this.fibers.delete(fiber)) return;
       if (Exit.isSuccess(exit)) handlers.onSuccess(exit.value);
-      else if (!Cause.hasInterrupts(exit.cause))
-        handlers.onFailure(causeMessage(exit.cause));
+      else if (!Cause.hasInterrupts(exit.cause)) handlers.onFailure(causeMessage(exit.cause));
     });
   }
 
@@ -234,15 +218,11 @@ export class StateExplorerStore {
     const parents = new Map<string, StateBrowserNode | undefined>();
     for (const target of targets) {
       for (const id of files.keys()) {
-        if (id.slice(id.indexOf(":") + 1).startsWith(`${target.path}/`))
-          files.delete(id);
+        if (id.slice(id.indexOf(":") + 1).startsWith(`${target.path}/`)) files.delete(id);
       }
       if (target.kind === "stack") {
         for (const id of children.keys()) {
-          if (
-            id === `stack:${target.stack}` ||
-            id.startsWith(`stage:${target.stack}/`)
-          )
+          if (id === `stack:${target.stack}` || id.startsWith(`stage:${target.stack}/`))
             children.delete(id);
         }
         parents.set("root", undefined);
@@ -256,8 +236,7 @@ export class StateExplorerStore {
           stack: target.stack,
         });
       } else if (target.kind !== "output") {
-        const { stack, stage } =
-          target.kind === "resource" ? target.file : target;
+        const { stack, stage } = target.kind === "resource" ? target.file : target;
         parents.set(`stage:${stack}/${stage}`, {
           kind: "stage",
           id: `stage:${stack}/${stage}`,
@@ -284,11 +263,7 @@ export class StateExplorerStore {
   };
 
   readonly loadChildren = (node: StateBrowserNode) => {
-    if (
-      node.kind === "namespace" ||
-      node.kind === "resource" ||
-      node.kind === "output"
-    ) {
+    if (node.kind === "namespace" || node.kind === "resource" || node.kind === "output") {
       return;
     }
     if ((this.state.children.get(node.id)?.status ?? "idle") !== "idle") return;
@@ -308,9 +283,8 @@ export class StateExplorerStore {
               stage,
             })),
           )
-        : Effect.map(
-            this.source.listResources(node.stack, node.stage!),
-            (fqns) => buildStageNodes(node.stack, node.stage!, fqns),
+        : Effect.map(this.source.listResources(node.stack, node.stage!), (fqns) =>
+            buildStageNodes(node.stack, node.stage!, fqns),
           );
     this.run(request, {
       onSuccess: (value) => {
@@ -462,9 +436,7 @@ const buildColumns = (
   state: ExplorerSnapshot,
   selection: ReadonlyArray<string>,
 ): BrowserColumn[] => {
-  const columns: BrowserColumn[] = [
-    { id: "root", title: "Stacks", state: state.root },
-  ];
+  const columns: BrowserColumn[] = [{ id: "root", title: "Stacks", state: state.root }];
   let current = state.root;
   for (let depth = 0; depth < selection.length; depth++) {
     if (current.status !== "ready") break;
@@ -475,11 +447,7 @@ const buildColumns = (
     columns.push({
       id: selected.id,
       title:
-        selected.kind === "stack"
-          ? "Stages"
-          : selected.kind === "stage"
-            ? "State"
-            : selected.name,
+        selected.kind === "stack" ? "Stages" : selected.kind === "stage" ? "State" : selected.name,
       state: children,
     });
     current = children;
@@ -496,14 +464,7 @@ type ColumnProps = {
   readonly marked: ReadonlySet<string>;
 };
 
-function Column({
-  column,
-  selected,
-  focused,
-  height,
-  query,
-  marked,
-}: ColumnProps) {
+function Column({ column, selected, focused, height, query, marked }: ColumnProps) {
   const { unicode } = useCliEnvironment();
   const borderStyle = useBorderStyle();
   if (column.state.status === "idle" || column.state.status === "loading") {
@@ -516,9 +477,7 @@ function Column({
   const items =
     needle === ""
       ? column.state.value
-      : column.state.value.filter((node) =>
-          node.path.toLowerCase().includes(needle),
-        );
+      : column.state.value.filter((node) => node.path.toLowerCase().includes(needle));
   const selectedIndex = Math.max(
     0,
     items.findIndex((node) => node.id === selected),
@@ -556,19 +515,13 @@ function Column({
             <Text
               bold={active}
               color={
-                active
-                  ? focused
-                    ? theme.color.accentBright
-                    : theme.color.emphasis
-                  : undefined
+                active ? (focused ? theme.color.accentBright : theme.color.emphasis) : undefined
               }
               wrap="truncate-end"
             >
               {node.name}
             </Text>
-            {(node.kind === "stack" ||
-              node.kind === "stage" ||
-              node.kind === "namespace") && (
+            {(node.kind === "stack" || node.kind === "stage" || node.kind === "namespace") && (
               <Box flexGrow={1} justifyContent="flex-end">
                 <Text tone="muted">{unicode ? "›" : ">"}</Text>
               </Box>
@@ -625,29 +578,18 @@ type PreviewProps = {
 };
 
 function Preview({ node, state, lines = [], offset, height }: PreviewProps) {
-  if (
-    node === undefined ||
-    (node.kind !== "resource" && node.kind !== "output")
-  ) {
+  if (node === undefined || (node.kind !== "resource" && node.kind !== "output")) {
     return <Text tone="muted">Select a state file to preview it.</Text>;
   }
-  if (
-    state === undefined ||
-    state.status === "idle" ||
-    state.status === "loading"
-  ) {
+  if (state === undefined || state.status === "idle" || state.status === "loading") {
     return <Spinner label="Reading state" detail={node.name} />;
   }
-  if (state.status === "error")
-    return <Text tone="danger">{state.message}</Text>;
+  if (state.status === "error") return <Text tone="danger">{state.message}</Text>;
   if (state.value === undefined) {
     return <Text tone="muted">No stored value.</Text>;
   }
   const bodyHeight = Math.max(1, height - 2);
-  const start = Math.max(
-    0,
-    Math.min(offset, Math.max(0, lines.length - bodyHeight)),
-  );
+  const start = Math.max(0, Math.min(offset, Math.max(0, lines.length - bodyHeight)));
   return (
     <Box flexDirection="column" height={height}>
       <Text bold color={nodeStyle[node.kind].color} wrap="truncate-middle">
@@ -676,9 +618,7 @@ function StateExplorer({
   const [searching, setSearching] = useState(false);
   const [previewOffset, setPreviewOffset] = useState(0);
   const [previewFocused, setPreviewFocused] = useState(false);
-  const [marked, setMarked] = useState<ReadonlyMap<string, StateBrowserNode>>(
-    new Map(),
-  );
+  const [marked, setMarked] = useState<ReadonlyMap<string, StateBrowserNode>>(new Map());
   const [deletion, setDeletion] = useState<
     | {
         readonly status: "confirm" | "deleting";
@@ -699,10 +639,7 @@ function StateExplorer({
     store.loadRoot();
     return store.dispose;
   }, [store]);
-  const columns = useMemo(
-    () => buildColumns(state, selection),
-    [selection, state],
-  );
+  const columns = useMemo(() => buildColumns(state, selection), [selection, state]);
   const markedIds = useMemo(() => new Set(marked.keys()), [marked]);
   const activeColumn = Math.min(columnIndex, columns.length - 1);
   const column = columns[activeColumn]!;
@@ -715,38 +652,29 @@ function StateExplorer({
             node.path.toLowerCase().includes(query.trim().toLowerCase()),
           );
   const selectedId = selection[activeColumn];
-  const selectedIndex = filteredItems.findIndex(
-    (node) => node.id === selectedId,
-  );
+  const selectedIndex = filteredItems.findIndex((node) => node.id === selectedId);
   const selected = filteredItems[selectedIndex];
   const lastSelected = (() => {
     for (let index = columns.length - 1; index >= 0; index--) {
       const candidate = columns[index];
       if (candidate?.state.status !== "ready") continue;
-      const node = candidate.state.value.find(
-        (item) => item.id === selection[index],
-      );
+      const node = candidate.state.value.find((item) => item.id === selection[index]);
       if (node !== undefined) return node;
     }
     return undefined;
   })();
   const file =
-    lastSelected?.kind === "resource" || lastSelected?.kind === "output"
-      ? lastSelected
-      : undefined;
+    lastSelected?.kind === "resource" || lastSelected?.kind === "output" ? lastSelected : undefined;
   const fileState = file === undefined ? undefined : state.files.get(file.id);
   // The delete prompt replaces the key bar (a margin row + the keys) with a
   // bordered panel: border, header line, one line per target (capped, with
   // a "+N more" line), and its own key bar. KeyBar is a full-width block,
   // so it gets its own row rather than sharing one with the header.
-  const promptTargets =
-    deletion === undefined ? [] : deletion.targets.slice(0, MAX_PROMPT_TARGETS);
+  const promptTargets = deletion === undefined ? [] : deletion.targets.slice(0, MAX_PROMPT_TARGETS);
   const promptOverflow =
     deletion === undefined ? 0 : deletion.targets.length - promptTargets.length;
   const footerHeight =
-    deletion === undefined
-      ? 2
-      : 3 + promptTargets.length + (promptOverflow > 0 ? 1 : 0);
+    deletion === undefined ? 2 : 3 + promptTargets.length + (promptOverflow > 0 ? 1 : 0);
   const contentHeight = Math.max(6, terminalRows - 8 - footerHeight);
   const previewLines = useMemo(
     () =>
@@ -763,8 +691,7 @@ function StateExplorer({
   const choose = (index: number, node: StateBrowserNode) => {
     setSelection((current) => [...current.slice(0, index), node.id]);
     setPreviewOffset(0);
-    if (node.kind === "resource" || node.kind === "output")
-      store.loadFile(node);
+    if (node.kind === "resource" || node.kind === "output") store.loadFile(node);
     else store.loadChildren(node);
   };
   const move = (delta: number) => {
@@ -774,16 +701,12 @@ function StateExplorer({
         ? delta < 0
           ? filteredItems.length - 1
           : 0
-        : Math.max(
-            0,
-            Math.min(filteredItems.length - 1, selectedIndex + delta),
-          );
+        : Math.max(0, Math.min(filteredItems.length - 1, selectedIndex + delta));
     choose(activeColumn, filteredItems[next]!);
   };
 
   const beginDelete = () => {
-    const targets =
-      marked.size > 0 ? [...marked.values()] : selected ? [selected] : [];
+    const targets = marked.size > 0 ? [...marked.values()] : selected ? [selected] : [];
     if (targets.length === 0) return;
     if (targets.some((node) => node.kind === "output")) {
       setDeletion({
@@ -800,10 +723,7 @@ function StateExplorer({
     if (deletion === undefined || deletion.status === "deleting") return;
     const targets = deletion.targets;
     const deletes = (node: StateBrowserNode) =>
-      targets.some(
-        (target) =>
-          node.id === target.id || node.path.startsWith(`${target.path}/`),
-      );
+      targets.some((target) => node.id === target.id || node.path.startsWith(`${target.path}/`));
     // The shallowest column whose selected node is going away: the cursor
     // moves there, onto the next surviving sibling (or the previous one).
     // Deeper selection is dropped; everything above it is untouched.
@@ -812,9 +732,7 @@ function StateExplorer({
         const column = columns[index]!;
         if (column.state.status !== "ready") return undefined;
         const items = column.state.value;
-        const position = items.findIndex(
-          (node) => node.id === selection[index],
-        );
+        const position = items.findIndex((node) => node.id === selection[index]);
         if (position < 0 || !deletes(items[position]!)) continue;
         const fallback =
           items.slice(position + 1).find((node) => !deletes(node)) ??
@@ -843,8 +761,7 @@ function StateExplorer({
         );
         store.invalidate(targets);
       },
-      onFailure: (message) =>
-        setDeletion({ status: "error", message, targets }),
+      onFailure: (message) => setDeletion({ status: "error", message, targets }),
     });
   };
 
@@ -852,10 +769,8 @@ function StateExplorer({
     (input, key) => {
       if (deletion !== undefined) {
         if (deletion.status === "deleting") return;
-        if (key.escape || input === "n" || input === "q")
-          setDeletion(undefined);
-        else if (deletion.status === "confirm" && input === "y")
-          confirmDelete();
+        if (key.escape || input === "n" || input === "q") setDeletion(undefined);
+        else if (deletion.status === "confirm" && input === "y") confirmDelete();
         return;
       }
       if (input === "q") return controller.submit(undefined);
@@ -897,24 +812,18 @@ function StateExplorer({
       if (previewFocused) {
         if (key.left) setPreviewFocused(false);
         else if (key.up) setPreviewOffset((value) => Math.max(0, value - 1));
-        else if (key.down)
-          setPreviewOffset((value) => Math.min(maxPreviewOffset, value + 1));
-        else if (key.pageUp)
-          setPreviewOffset((value) => Math.max(0, value - contentHeight));
+        else if (key.down) setPreviewOffset((value) => Math.min(maxPreviewOffset, value + 1));
+        else if (key.pageUp) setPreviewOffset((value) => Math.max(0, value - contentHeight));
         else if (key.pageDown)
-          setPreviewOffset((value) =>
-            Math.min(maxPreviewOffset, value + contentHeight),
-          );
+          setPreviewOffset((value) => Math.min(maxPreviewOffset, value + contentHeight));
         else if (key.home) setPreviewOffset(0);
         else if (key.end) setPreviewOffset(maxPreviewOffset);
         return;
       }
       if (key.up || input === "k") move(-1);
       else if (key.down || input === "j") move(1);
-      else if (key.home && filteredItems[0])
-        choose(activeColumn, filteredItems[0]);
-      else if (key.end && filteredItems.at(-1))
-        choose(activeColumn, filteredItems.at(-1)!);
+      else if (key.home && filteredItems[0]) choose(activeColumn, filteredItems[0]);
+      else if (key.end && filteredItems.at(-1)) choose(activeColumn, filteredItems.at(-1)!);
       else if (key.left && activeColumn > 0) setColumnIndex(activeColumn - 1);
       else if (key.right || key.enter) {
         if (selected === undefined) return;
@@ -929,27 +838,15 @@ function StateExplorer({
     { active: !searching },
   );
 
-  const previewWidth =
-    file === undefined ? 0 : Math.max(34, Math.floor(terminalColumns * 0.42));
-  const columnWidth = Math.max(
-    20,
-    Math.min(28, Math.floor((terminalColumns - previewWidth) / 2)),
-  );
-  const availableForColumns = Math.max(
-    columnWidth,
-    terminalColumns - previewWidth - 2,
-  );
-  const visibleColumnCount = Math.max(
-    1,
-    Math.floor(availableForColumns / (columnWidth + 1)),
-  );
+  const previewWidth = file === undefined ? 0 : Math.max(34, Math.floor(terminalColumns * 0.42));
+  const columnWidth = Math.max(20, Math.min(28, Math.floor((terminalColumns - previewWidth) / 2)));
+  const availableForColumns = Math.max(columnWidth, terminalColumns - previewWidth - 2);
+  const visibleColumnCount = Math.max(1, Math.floor(availableForColumns / (columnWidth + 1)));
   const visibleStart = Math.max(0, columns.length - visibleColumnCount);
   const visibleColumns = columns.slice(visibleStart);
   const currentPath = selected?.path ?? "/";
   const displayPath =
-    selected === undefined ||
-    selected.kind === "resource" ||
-    selected.kind === "output"
+    selected === undefined || selected.kind === "resource" || selected.kind === "output"
       ? currentPath
       : `${currentPath}/`;
 
@@ -957,11 +854,7 @@ function StateExplorer({
     // Pinned to the terminal width: without it the root sizes to its content,
     // and the layout visibly narrows whenever the full-width key bar is
     // swapped out for the delete panel.
-    <Box
-      flexDirection="column"
-      width={terminalColumns}
-      height={Math.max(12, terminalRows - 2)}
-    >
+    <Box flexDirection="column" width={terminalColumns} height={Math.max(12, terminalRows - 2)}>
       <Box
         justifyContent="space-between"
         flexShrink={0}
@@ -1023,17 +916,13 @@ function StateExplorer({
               borderTop={false}
               borderBottom={false}
               borderColor={
-                !previewFocused && index === activeColumn
-                  ? theme.color.accent
-                  : theme.color.muted
+                !previewFocused && index === activeColumn ? theme.color.accent : theme.color.muted
               }
             >
               <Text
                 bold
                 color={
-                  !previewFocused && index === activeColumn
-                    ? theme.color.accent
-                    : theme.color.muted
+                  !previewFocused && index === activeColumn ? theme.color.accent : theme.color.muted
                 }
               >
                 {item.title.toUpperCase()}
@@ -1061,14 +950,9 @@ function StateExplorer({
             borderRight={false}
             borderTop={false}
             borderBottom={false}
-            borderColor={
-              previewFocused ? theme.color.accent : theme.color.muted
-            }
+            borderColor={previewFocused ? theme.color.accent : theme.color.muted}
           >
-            <Text
-              bold
-              color={previewFocused ? theme.color.accent : theme.color.muted}
-            >
+            <Text bold color={previewFocused ? theme.color.accent : theme.color.muted}>
               PREVIEW
             </Text>
             <Preview
@@ -1121,10 +1005,7 @@ function StateExplorer({
                 <Text bold color={theme.color.danger}>
                   Delete state records?
                 </Text>
-                <Text tone="muted">
-                  {" "}
-                  · Cloud resources will not be deleted.
-                </Text>
+                <Text tone="muted"> · Cloud resources will not be deleted.</Text>
               </Text>
             )}
           </Box>
@@ -1136,9 +1017,7 @@ function StateExplorer({
                 {target.kind === "resource" ? "" : "/"}
               </Text>
             ))}
-            {promptOverflow > 0 ? (
-              <Text tone="muted">{`  +${promptOverflow} more`}</Text>
-            ) : null}
+            {promptOverflow > 0 ? <Text tone="muted">{`  +${promptOverflow} more`}</Text> : null}
           </Box>
           <DeletionAction status={deletion.status} />
         </Box>
@@ -1155,8 +1034,7 @@ type DeletionActionProps = {
 
 function DeletionAction({ status }: DeletionActionProps) {
   if (status === "deleting") return null;
-  if (status === "error")
-    return <KeyBar marginTop={0} keys={[["esc", "dismiss"]]} />;
+  if (status === "error") return <KeyBar marginTop={0} keys={[["esc", "dismiss"]]} />;
   return (
     <KeyBar
       marginTop={0}

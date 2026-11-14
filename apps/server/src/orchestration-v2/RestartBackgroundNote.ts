@@ -1,11 +1,17 @@
 import type {
+  NodeId,
+  OrchestrationV2ConversationMessage,
   OrchestrationV2PendingBackgroundTask,
+  OrchestrationV2ProviderThread,
   OrchestrationV2ProviderTurn,
   OrchestrationV2RestartCancelledBackgroundWork,
   OrchestrationV2Run,
   OrchestrationV2RunAttempt,
+  OrchestrationV2Subagent,
   OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
+import { subagentHoldsCompletion } from "@t3tools/provider-core/server/subagentProjection";
+import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { latestRootProviderFailure, runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 
 type Work = OrchestrationV2RestartCancelledBackgroundWork;
@@ -17,7 +23,11 @@ function compactLabel(value: unknown, maxLength = MAX_LABEL_LENGTH): string | un
   if (typeof value !== "string") return undefined;
   const text = value.replaceAll(/\s+/g, " ").trim();
   if (text.length === 0) return undefined;
-  return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
+  if (text.length <= maxLength) return text;
+  // Half an emoji serializes to a lone surrogate escape, which provider JSON parsers reject.
+  const last = text.charCodeAt(maxLength - 2);
+  const end = last >= 0xd800 && last <= 0xdbff ? maxLength - 2 : maxLength - 1;
+  return `${text.slice(0, end)}…`;
 }
 
 /** A bounded label that keeps its id suffix whole whenever it fits. */
@@ -51,6 +61,7 @@ export function cancelledTurnItemWork(
         kind: item.monitor === true ? "monitor" : "shell",
         label: compactLabel(item.input) ?? compactLabel(item.title) ?? "background command",
         id: item.id,
+        ...(item.completionWake === "always" ? { awaited: true as const } : {}),
       };
     case "dynamic_tool": {
       const monitor =
@@ -179,6 +190,79 @@ export function cancelledBeforeStart(
   run: Pick<OrchestrationV2Run, "status" | "startedAt" | "restartContinuationOfRunId">,
 ): boolean {
   return run.status === "cancelled" && neverStarted(run);
+}
+
+/** A follow-up task's runs: those tagged with it, and the untagged wakes for subagents they started. */
+export function delegatedTaskRuns(
+  projection: {
+    readonly runs: ReadonlyArray<OrchestrationV2Run>;
+    readonly messages: ReadonlyArray<
+      Pick<OrchestrationV2ConversationMessage, "runId" | "delegatedCompletion">
+    >;
+  },
+  taskId: NodeId,
+): ReadonlyArray<OrchestrationV2Run> {
+  const owned = new Set(
+    projection.runs.filter((run) => run.delegatedTaskId === taskId).map((run) => run.id),
+  );
+  const untagged = new Set(
+    projection.runs.filter((run) => run.delegatedTaskId === undefined).map((run) => run.id),
+  );
+  for (let grew = owned.size > 0; grew;) {
+    grew = false;
+    for (const { runId, delegatedCompletion } of projection.messages) {
+      if (
+        runId === null ||
+        !untagged.has(runId) ||
+        owned.has(runId) ||
+        delegatedCompletion === undefined ||
+        !owned.has(delegatedCompletion.parentRunId)
+      )
+        continue;
+      owned.add(runId);
+      grew = true;
+    }
+  }
+  return projection.runs.filter((run) => owned.has(run.id));
+}
+
+/**
+ * A follow-up task's runs still owe a subagent they started its result, or the child still
+ * awaits background work, as the original task waits on both.
+ */
+export function delegatedTaskAwaitsWork(
+  runs: ReadonlyArray<OrchestrationV2Run>,
+  child: {
+    readonly subagents: ReadonlyArray<
+      Pick<OrchestrationV2Subagent, "runId" | "status" | "completionDelivery">
+    >;
+    readonly providerThreads: ReadonlyArray<
+      Pick<OrchestrationV2ProviderThread, "pendingBackgroundTasks">
+    >;
+  },
+): boolean {
+  const runIds = new Set<string | null>(runs.map((run) => run.id));
+  return (
+    child.subagents.some((task) => runIds.has(task.runId) && subagentHoldsCompletion(task)) ||
+    child.providerThreads.some((thread) =>
+      backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []),
+    )
+  );
+}
+
+/** A follow-up task's latest run, passing over queued work it no longer waits on, as the original task does. */
+export function delegatedTaskResultRun(
+  runs: ReadonlyArray<OrchestrationV2Run>,
+): OrchestrationV2Run | undefined {
+  const taskRuns = runs.toSorted((a, b) => b.ordinal - a.ordinal);
+  const awaited = taskRuns.filter(
+    (run) => !cancelledBeforeStart(run) && !(run.status === "queued" && run.queueHeld === true),
+  );
+  // Executing work reports the task's state; a reordered queue can finish a newer run before an older one.
+  const executing = awaited.find((run) =>
+    ["preparing", "starting", "running", "waiting"].includes(run.status),
+  );
+  return executing ?? awaited.find((run) => run.status === "queued") ?? awaited[0] ?? taskRuns[0];
 }
 
 /** The provider never accepted this continuation's prompt, so starting it again repeats nothing. */

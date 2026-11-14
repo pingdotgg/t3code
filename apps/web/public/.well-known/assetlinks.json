@@ -1,0 +1,32 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.t3tools.t3code",
+      "sha256_cert_fingerprints": [
+        "B9:F5:1E:D5:A7:6C:D1:86:C9:51:08:F2:19:91:B7:D5:3A:58:FD:A9:83:12:A9:E3:53:E2:1A:59:B2:42:03:B6"
+      ]
+    }
+  },
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.t3tools.t3code.preview",
+      "sha256_cert_fingerprints": [
+        "BE:B8:BD:67:53:2F:12:95:0A:30:62:88:91:C1:2F:D0:CF:20:28:C3:81:5D:6D:31:45:E7:5A:AF:24:A2:8F:18"
+      ]
+    }
+  },
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.t3tools.t3code.dev",
+      "sha256_cert_fingerprints": [
+        "FA:C6:17:45:DC:09:03:78:6F:B9:ED:E6:2A:96:2B:39:9F:73:48:F0:BB:6F:89:9B:83:32:66:75:91:03:3B:9C"
+      ]
+    }
+  }
+]

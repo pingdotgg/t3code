@@ -33,6 +33,10 @@ export const MERGE_METHODS = {
     description: "Keep the commits and add a merge commit.",
   },
   rebase: { title: "Rebase and merge", description: "Add the commits without a merge commit." },
+  "fast-forward": {
+    title: "Fast-forward merge",
+    description: "Add the commits as they are. Needs the branch to contain the base.",
+  },
 } as const satisfies Record<PullRequestMergeMethod, { title: string; description: string }>;
 
 export function pullRequestActionLabel(
@@ -117,8 +121,6 @@ export function canPerformPullRequestAction(pr: ActionDetail, action: PullReques
   }
 }
 
-export const MERGE_CONFLICT_REASON = "Resolve the branch conflicts before merging.";
-
 export function mergeUnavailableReason(
   pr: ActionDetail,
   connectionAllowsWrites: boolean,
@@ -132,7 +134,7 @@ export function mergeUnavailableReason(
   if (!pr.viewerPermissions.actions.includes("merge"))
     return `Your account cannot merge this ${terminology.singular}.`;
   if (pr.isDraft) return "Mark this draft ready for review before merging.";
-  if (pr.mergeability === "conflicting") return MERGE_CONFLICT_REASON;
+  if (pr.mergeability === "conflicting") return "Resolve the branch conflicts before merging.";
   if (!allowedMergeMethods(pr).length) return "This repository has no available merge methods.";
   return null;
 }

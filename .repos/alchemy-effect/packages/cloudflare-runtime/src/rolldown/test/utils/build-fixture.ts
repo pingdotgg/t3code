@@ -29,13 +29,11 @@ export interface BuiltFixture {
   entry: OutputChunk;
 }
 
-export async function buildFixture(
-  options: BuildFixtureOptions,
-): Promise<BuiltFixture> {
+export async function buildFixture(options: BuildFixtureOptions): Promise<BuiltFixture> {
   const fixture = normalizeFixturePath(options.fixture);
   const bundle = await rolldown({
     input: fixture,
-    ...(options.inputOptions ?? {}),
+    ...options.inputOptions,
     plugins: [
       ...(options.plugins ?? []),
       cloudflare(options.pluginOptions ?? DEFAULT_PLUGIN_OPTIONS),
@@ -47,7 +45,7 @@ export async function buildFixture(
       file: defaultOutputPath(fixture),
       format: "esm",
       sourcemap: true,
-      ...(options.generateOptions ?? {}),
+      ...options.generateOptions,
     });
     return {
       fixture,
@@ -60,9 +58,7 @@ export async function buildFixture(
 }
 
 function normalizeFixturePath(fixture: string): string {
-  return path.isAbsolute(fixture)
-    ? fixture
-    : path.join("test", "fixtures", fixture);
+  return path.isAbsolute(fixture) ? fixture : path.join("test", "fixtures", fixture);
 }
 
 function defaultOutputPath(fixture: string): string {
