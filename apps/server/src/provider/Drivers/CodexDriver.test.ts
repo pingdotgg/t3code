@@ -42,6 +42,7 @@ import { CodexDriver } from "./CodexDriver.ts";
 import * as CodexAdapterV2 from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as PortScanner from "../../preview/PortScanner.ts";
 import * as ProviderCredentialStore from "../ProviderCredentialStore.ts";
 import * as ProviderHostLive from "../ProviderHostLive.ts";
 
@@ -51,6 +52,7 @@ const layerDeps = ServerConfig.layerTest(process.cwd(), {
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   Layer.provideMerge(IdAllocator.layer),
   Layer.provideMerge(McpProviderSessions.layer),
+  Layer.provideMerge(PortScanner.layerTest),
   Layer.provideMerge(
     Layer.mock(CodexAdapterV2.CodexAppServerClientFactory)({
       open: () => Effect.die("Maintenance resolution must not open a Codex session"),
@@ -727,6 +729,7 @@ it.layer(layerTest)("CodexDriver", (it) => {
         const shimDir = NodePath.join(tempDir, fixture.dataRoot, "shims");
         const npmPrefix = NodePath.join(tempDir, "mise", "installs", "node", "24.13.0");
         const npmBin = NodePath.join(npmPrefix, "bin");
+        const npmPath = NodePath.join(npmBin, "npm");
         const npmEntry = NodePath.join(
           npmPrefix,
           "lib",
@@ -736,7 +739,7 @@ it.layer(layerTest)("CodexDriver", (it) => {
           "bin",
           "codex.js",
         );
-        for (const file of [brewPath, misePath, npmEntry]) {
+        for (const file of [brewPath, misePath, npmPath, npmEntry]) {
           yield* fs.makeDirectory(NodePath.dirname(file), { recursive: true });
           yield* fs.writeFileString(file, "#!/bin/sh\n");
           yield* fs.chmod(file, 0o755);
@@ -751,12 +754,20 @@ it.layer(layerTest)("CodexDriver", (it) => {
         ].join(NodePath.delimiter);
         const probes: Array<ReadonlyArray<string>> = [];
         const metadataSpawner = ChildProcessSpawner.make((command) => {
-          if (!ChildProcess.isStandardCommand(command) || command.command !== brewPath) {
+          const isNpmOutdated =
+            ChildProcess.isStandardCommand(command) &&
+            command.command === npmPath &&
+            command.args[0] === "outdated";
+          if (
+            !ChildProcess.isStandardCommand(command) ||
+            (command.command !== brewPath && !isNpmOutdated)
+          ) {
             return Effect.die("Provider resolution must not execute a provider or updater");
           }
-          probes.push(command.args.map(String));
-          const stdout =
-            command.args[0] === "--prefix"
+          if (!isNpmOutdated) probes.push(command.args.map(String));
+          const stdout = isNpmOutdated
+            ? JSON.stringify({ "@openai/codex": { latest: "0.153.4" } })
+            : command.args[0] === "--prefix"
               ? brewPrefix
               : JSON.stringify({ formulae: [{ versions: { stable: "2026.9.1" } }] });
           return Effect.succeed(
