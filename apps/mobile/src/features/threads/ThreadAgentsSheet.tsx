@@ -14,7 +14,7 @@ import { deriveSubagentElapsedMs, formatDuration } from "@t3tools/shared/orchest
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import * as DateTime from "effect/DateTime";
 import { Atom } from "effect/reactivity";
-import * as Haptics from "expo-haptics";
+import * as Haptics from "../../lib/haptics";
 import { useMemo } from "react";
 import { Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";

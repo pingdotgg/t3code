@@ -1,6 +1,6 @@
 import { Slider } from "@expo/ui/jetpack-compose";
 import { fillMaxWidth } from "@expo/ui/jetpack-compose/modifiers";
-import * as Haptics from "expo-haptics";
+import * as Haptics from "../../lib/haptics";
 import { useRef } from "react";
 import { View } from "react-native";
 
