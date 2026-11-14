@@ -4075,6 +4075,8 @@ describe("orchestration v2 provider switching", () => {
         if (restored?.type === "turn-item.updated") {
           assert.deepEqual(restored.payload, {
             ...queuedItem,
+            // Its run is now the second one, so it moves into that run's positions.
+            ordinal: 2_000_001,
             status: "failed",
             completedAt: restored.occurredAt,
             updatedAt: restored.occurredAt,
@@ -4128,6 +4130,12 @@ describe("orchestration v2 provider switching", () => {
       assert.equal(
         failureItem?.type === "error" ? failureItem.failure.code : null,
         "context_handoff_unsupported",
+      );
+      assert.isBelow(
+        projection.turnItems.find(
+          (item) => item.type === "user_message" && item.messageId === rejectedMessageId,
+        )!.ordinal,
+        failureItem!.ordinal,
       );
       assert.isTrue(
         projection.visibleTurnItems.some(
