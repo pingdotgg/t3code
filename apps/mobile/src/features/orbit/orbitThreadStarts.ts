@@ -1,10 +1,16 @@
 import {
+  admitOrbitCompletion,
+  followOrbitCompletion,
+  markOrbitCompletionRetry,
   newOrbitThreadStart,
-  orbitPhoneFollowsCompletion,
+  orbitCompletionNeedsAdmission,
+  orbitCompletionNeedsFollow,
+  orbitCompletionPhase,
   runOrbitThreadStart,
   sendOrbitFirstMessage,
   type OrbitFirstMessagePorts,
   type OrbitGatewayClient,
+  type OrbitCompletionPorts,
   type OrbitGatewayProject,
   type OrbitThreadStart,
 } from "@t3tools/client-runtime/orbit-gateway";
@@ -73,6 +79,7 @@ export function beginOrbitThreadStart(
       messageId: input.uuid(),
       commandId: input.uuid(),
       now: input.now,
+      instanceDomainSuffix: input.project.instanceDomainSuffix ?? null,
     }),
     workspaceId: input.workspaceId,
   };
@@ -100,6 +107,8 @@ function afterSave(store: OrbitThreadStartStore, gateway: OrbitGatewayClient): O
     operation: saved(gateway.operation),
     environments: saved(gateway.environments),
     startPairing: saved(gateway.startPairing),
+    // A completion Retry's key is on disk before Orbit sees it, so a restart repeats that key.
+    completeInstance: saved(gateway.completeInstance),
     // Not readPairing: the Operation poll before it already waited, and a failed wait there
     // would make Retry mint a second pairing.
   };
@@ -151,12 +160,109 @@ export async function runSavedOrbitThreadStart(
       },
     });
     if (!sent || environmentId === null) return null;
-    // The phone does not follow the create's completion: the start goes after the send.
-    if (!orbitPhoneFollowsCompletion()) {
-      store.update((starts) => starts.filter((entry) => entry.id !== id));
-    }
+    // The create's completion runs on after the send: the runner keeps the start and its row
+    // follows it (`orbitSentStartStep`). Without one (an older Gateway) the start is done.
     return { environmentId, threadId: start.threadId };
   } finally {
     running.delete(id);
+  }
+}
+
+/**
+ * What the runner does with a sent start: drop it (nothing left to show), mark it as followed
+ * after the send (also a start saved by a build or a run that stopped before it marked it), or
+ * follow its completion.
+ */
+export function orbitSentStartStep(start: OrbitThreadStart): "drop" | "mark" | "follow" {
+  if (orbitCompletionSettled(start)) return "drop";
+  return start.pendingThread === true ? "follow" : "mark";
+}
+
+/**
+ * A sent start with nothing left to show: its completion succeeded, a removal cancelled it (the
+ * removal takes the thread away), or it has none (an older Gateway). Its row goes.
+ */
+export function orbitCompletionSettled(start: OrbitThreadStart): boolean {
+  if (start.sentAt == null) return false;
+  const phase = orbitCompletionPhase(start);
+  return phase === "none" || phase === "succeeded" || phase === "removed";
+}
+
+function completionPorts(
+  id: string,
+  ports: Pick<MobileOrbitThreadStartPorts, "store" | "gateway" | "sleep" | "now">,
+): OrbitCompletionPorts {
+  return {
+    client: afterSave(ports.store, ports.gateway),
+    read: () => ports.store.starts().find((entry) => entry.id === id) ?? null,
+    // Saves only a start that is still there: a Dismiss wins.
+    save: ports.store.save,
+    sleep: ports.sleep,
+    now: ports.now,
+  };
+}
+
+/** Completions and Retries this app session works on, so a re-run of the runner does each once. */
+const following = new Set<string>();
+
+/** After a follow stopped quietly (Gateway away, read refused), the wait before the next one. */
+const REFOLLOW_MS = 30_000;
+
+/**
+ * Follows a sent start's completion, or sends its unanswered Retry and then follows the new
+ * Operation, as the desktop's runner does. A restart resumes from the saved Operation id or key.
+ */
+export async function followSavedOrbitCompletion(
+  id: string,
+  ports: Pick<MobileOrbitThreadStartPorts, "store" | "gateway" | "sleep" | "now" | "orbitMode">,
+): Promise<void> {
+  const start = ports.store.starts().find((entry) => entry.id === id);
+  if (start === undefined || !ports.orbitMode() || following.has(id)) return;
+  const follow = orbitCompletionNeedsFollow(start);
+  if (!follow && !orbitCompletionNeedsAdmission(start)) return;
+  following.add(id);
+  try {
+    const completion = completionPorts(id, ports);
+    if (!follow) await admitOrbitCompletion(completion);
+    // An admitted Retry is followed at once: its save came while this run still held the id. A
+    // follow that stopped quietly starts again after a wait, as the desktop's next runner pass.
+    for (;;) {
+      const fresh = completion.read();
+      if (fresh === null || !ports.orbitMode() || !orbitCompletionNeedsFollow(fresh)) return;
+      if ((await followOrbitCompletion(completion)) !== "lost") return;
+      await ports.sleep(REFOLLOW_MS);
+    }
+  } finally {
+    following.delete(id);
+  }
+}
+
+/** Retry of a failed or cancelled completion: saves a new key; the runner sends it. */
+export function retrySavedOrbitCompletion(
+  id: string,
+  ports: Pick<MobileOrbitThreadStartPorts, "store" | "now">,
+): boolean {
+  return markOrbitCompletionRetry({
+    read: () => ports.store.starts().find((entry) => entry.id === id) ?? null,
+    save: ports.store.save,
+    now: ports.now,
+  });
+}
+
+/**
+ * One runner pass over a sent start: drops it, marks it as followed (a save that changes the list,
+ * so the next pass follows it), or follows its completion.
+ */
+export async function runSentOrbitThreadStart(
+  start: OrbitThreadStart,
+  ports: Pick<MobileOrbitThreadStartPorts, "store" | "gateway" | "sleep" | "now" | "orbitMode">,
+): Promise<void> {
+  const step = orbitSentStartStep(start);
+  if (step === "drop") {
+    ports.store.update((starts) => starts.filter((entry) => entry.id !== start.id));
+  } else if (step === "mark") {
+    ports.store.save({ ...start, pendingThread: true });
+  } else {
+    await followSavedOrbitCompletion(start.id, ports);
   }
 }

@@ -1,6 +1,11 @@
 import {
+  ORBIT_INSTANCE_STAYS_LINE,
+  orbitCompletionFailure,
+  orbitSetupStages,
+  orbitThreadStartCanRetry,
   orbitThreadStartStep,
   readOrbitThreadStarts,
+  type OrbitSetupCreateRow,
   type OrbitThreadStart,
 } from "@t3tools/client-runtime/orbit-gateway";
 
@@ -8,7 +13,8 @@ import { writeFileAtomically } from "../../lib/atomic-file";
 
 /**
  * Conn: the threads started in an Orbit Project on this phone (FORK.md, "Orbit"), kept in a file
- * until their first message is sent, so an app restart resumes them. Every change is written in
+ * until their first message is sent and the create's completion ended, so an app restart resumes
+ * them. Every change is written in
  * order; the shared state machine saves after each step.
  */
 
@@ -138,24 +144,79 @@ export function dismissOrbitThreadStart(id: string, store = orbitThreadStartStor
 
 /** Instances whose server a start pairs with itself; the environment sync leaves them alone. */
 export function heldOrbitInstanceIds(store = orbitThreadStartStore): number[] {
-  return store.starts().flatMap((start) => (start.instanceId === null ? [] : [start.instanceId]));
+  // A sent start no longer pairs; its Instance follows the sync, as on the desktop.
+  return store
+    .starts()
+    .flatMap((start) =>
+      start.instanceId === null || start.sentAt != null ? [] : [start.instanceId],
+    );
 }
 
-export type OrbitThreadStartStage = "creating" | "pairing" | "sending" | "stopped";
+export type OrbitThreadStartStage =
+  | "creating"
+  | "pairing"
+  | "sending"
+  | "stopped"
+  /** Sent; the create's completion runs (the rows show where). */
+  | "setup"
+  /** Sent; the completion failed, or was cancelled outside a removal. */
+  | "setupFailed";
 
-const STAGE_LABELS: Record<OrbitThreadStartStage, string> = {
+const STAGE_LABELS: Record<"creating" | "pairing" | "sending" | "stopped", string> = {
   creating: "Creating the clone…",
   pairing: "Pairing…",
   sending: "Sending the first message…",
   stopped: "Stopped",
 };
 
-/** What a start row shows: the stage, and the error or the first message underneath. */
-export function orbitThreadStartRow(start: OrbitThreadStart): {
+/** What a start row shows. After the send it shows the desktop card's rows and words. */
+export interface OrbitThreadStartRowView {
   readonly stage: OrbitThreadStartStage;
+  /** After the project: the stage, the Instance while its setup runs, or the card's title. */
   readonly label: string;
+  /** The error or the first message; after a failed setup, Conn's message or Orbit's line. */
   readonly detail: string;
-} {
+  /** The desktop card's rows under "Create Instance", while the completion runs or failed. */
+  readonly rows: readonly OrbitSetupCreateRow[] | null;
+  /** Orbit's `code · detail` under the message, and the line that the Instance stays. */
+  readonly notes: readonly string[];
+  readonly canRetry: boolean;
+}
+
+export function orbitThreadStartRow(start: OrbitThreadStart): OrbitThreadStartRowView {
+  if (start.sentAt != null && start.error === null) {
+    const rows = orbitSetupStages({ start }).find((stage) => stage.id === "create")?.rows ?? null;
+    const failure = orbitCompletionFailure(start);
+    if (failure !== null) {
+      const notes = [
+        ...(failure.message !== null && failure.detailLine !== null ? [failure.detailLine] : []),
+        ...(failure.instanceStays ? [ORBIT_INSTANCE_STAYS_LINE] : []),
+      ];
+      return {
+        stage: "setupFailed",
+        label: failure.title,
+        detail: failure.message ?? failure.detailLine ?? start.message,
+        rows,
+        notes,
+        canRetry: failure.canRetry,
+      };
+    }
+    return {
+      stage: "setup",
+      label: start.instanceName,
+      detail: start.message,
+      rows,
+      notes: [],
+      canRetry: false,
+    };
+  }
   const stage = start.error === null ? orbitThreadStartStep(start) : "stopped";
-  return { stage, label: STAGE_LABELS[stage], detail: start.error ?? start.message };
+  return {
+    stage,
+    label: STAGE_LABELS[stage],
+    detail: start.error ?? start.message,
+    rows: null,
+    notes: [],
+    canRetry: stage === "stopped" && orbitThreadStartCanRetry(start),
+  };
 }

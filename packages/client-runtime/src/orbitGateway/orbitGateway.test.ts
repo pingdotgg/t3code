@@ -825,9 +825,23 @@ describe("createOrbitGatewayClient", () => {
       },
     ]);
     expect(projects.map(startableOrbitProject)).toEqual([
-      { id: 3, slug: "mealou", name: "Mealou", nodeId: 7, nodeName: "beast" },
+      {
+        id: 3,
+        slug: "mealou",
+        name: "Mealou",
+        nodeId: 7,
+        nodeName: "beast",
+        instanceDomainSuffix: null,
+      },
       null,
-      { id: 5, slug: "nckrtl", name: "nckrtl", nodeId: 7, nodeName: "beast" },
+      {
+        id: 5,
+        slug: "nckrtl",
+        name: "nckrtl",
+        nodeId: 7,
+        nodeName: "beast",
+        instanceDomainSuffix: ".nckrtl.test",
+      },
     ]);
     await expect(client.createThreadInstance(3, "fix-k3j9", "key-1")).resolves.toEqual({
       id: 100,

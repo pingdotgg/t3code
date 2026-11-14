@@ -19,8 +19,13 @@ import {
 } from "./orbitThreadStartStore";
 import {
   beginOrbitThreadStart,
+  followSavedOrbitCompletion,
+  orbitCompletionSettled,
   orbitStartReturn,
+  orbitSentStartStep,
+  retrySavedOrbitCompletion,
   runSavedOrbitThreadStart,
+  runSentOrbitThreadStart,
   type MobileOrbitThreadStartPorts,
 } from "./orbitThreadStarts";
 
@@ -30,6 +35,7 @@ const project = {
   name: "Create bench",
   nodeId: 7,
   nodeName: "beast",
+  instanceDomainSuffix: ".create-bench.test",
 };
 
 /** A file that keeps what was last written, as the app's documents folder does across restarts. */
@@ -155,6 +161,9 @@ describe("Orbit thread starts on the phone", () => {
     expect(run.calls).toEqual(["create 66", "pair env-41", "connect env-41"]);
     expect(run.launches).toEqual([`env-41 ${start.threadId} List the files in this folder`]);
     expect(run.kept).toEqual([["work", "env-41:workspace"]]);
+    // No completion (an older Gateway): the runner's next pass drops the sent start.
+    expect(orbitSentStartStep(store.starts()[0]!)).toBe("drop");
+    await runSentOrbitThreadStart(store.starts()[0]!, run.ports);
     expect(store.starts()).toEqual([]);
   });
 
@@ -175,6 +184,8 @@ describe("Orbit thread starts on the phone", () => {
     const after = createOrbitThreadStartStore(storage);
     await after.load();
     expect(heldOrbitInstanceIds(after)).toEqual([41]);
+    // The row's "Publish the address" shows the address with the listed domain.
+    expect(after.starts()[0]!.instanceDomainSuffix).toBe(".create-bench.test");
     expect(orbitThreadStartRow(after.starts()[0]!)).toMatchObject({ stage: "pairing" });
     const run = ports(after);
     expect(await runSavedOrbitThreadStart(start.id, run.ports)).not.toBeNull();
@@ -201,6 +212,9 @@ describe("Orbit thread starts on the phone", () => {
       stage: "stopped",
       label: "Stopped",
       detail: "Could not pair with the clone: refused",
+      rows: null,
+      notes: [],
+      canRetry: true,
     });
     // A stopped start does not run again on its own.
     expect(await runSavedOrbitThreadStart(start.id, ports(store).ports)).toBeNull();
@@ -346,5 +360,247 @@ describe("Orbit thread starts on the phone", () => {
     });
     // A direct new/orbit link.
     expect(orbitStartReturn(stack(home, orbit))).toEqual({ back: 1, returnRouteKey: "home" });
+  });
+});
+
+describe("the create's completion on the phone (same answers as the desktop)", () => {
+  /** A Gateway whose create admits completion 106; `completion` answers its reads in turn. */
+  function withCompletion(store: MobileOrbitThreadStartPorts["store"], reads: unknown[]) {
+    const run = ports(store);
+    const base = run.ports.gateway;
+    const completeCalls: string[] = [];
+    let read = 0;
+    run.ports = {
+      ...run.ports,
+      gateway: {
+        ...base,
+        operation: async (id: number) =>
+          id === 106
+            ? ({
+                id,
+                kind: "instance.complete",
+                targetId: 41,
+                pollAfterSeconds: 0,
+                ...(reads[Math.min(read++, reads.length - 1)] as object),
+              } as OrbitGatewayOperation)
+            : id === 100
+              ? { ...(await base.operation(id)), completionOperationId: 106 }
+              : base.operation(id),
+        completeInstance: async (instanceId: number, key: string) => {
+          completeCalls.push(`complete ${instanceId} ${key}`);
+          return {
+            id: 107,
+            kind: "instance.complete",
+            targetId: 41,
+            status: "running",
+            errorCode: null,
+            pollAfterSeconds: 0,
+          } as OrbitGatewayOperation;
+        },
+      } as OrbitGatewayClient,
+    };
+    return { ...run, completeCalls };
+  }
+
+  async function sentStart(reads: unknown[]) {
+    const store = createOrbitThreadStartStore(memoryFile().storage);
+    await store.load();
+    const start = beginOrbitThreadStart(store, {
+      project,
+      message: "Fix it",
+      workspaceId: null,
+      uuid: uuids(),
+      now: 0,
+    });
+    const run = withCompletion(store, reads);
+    expect(await runSavedOrbitThreadStart(start.id, run.ports)).not.toBeNull();
+    // The runner's pass after the send marks the start as followed.
+    expect(orbitSentStartStep(store.starts()[0]!)).toBe("mark");
+    await runSentOrbitThreadStart(store.starts()[0]!, run.ports);
+    return { store, start, run };
+  }
+
+  const workspaceFailed = {
+    status: "failed",
+    errorCode: "instance.create_workspace_failed",
+    error: { code: "instance.create_workspace_failed", detail: "composer exit 1" },
+    recoveryRetryable: true,
+    steps: [
+      {
+        name: "clone-services",
+        job: "complete",
+        status: "failed",
+        startedAt: null,
+        finishedAt: null,
+      },
+    ],
+  };
+
+  it("keeps the start after the send, shows the running rows, and lets it go on success", async () => {
+    const { store, start, run } = await sentStart([
+      { status: "running", errorCode: null },
+      { status: "succeeded", errorCode: null },
+    ]);
+    const kept = store.starts()[0]!;
+    expect(kept).toMatchObject({ completionOperationId: 106, pendingThread: true });
+    // A sent start leaves its Instance to the sync, so a removed one is cleaned up.
+    expect(heldOrbitInstanceIds(store)).toEqual([]);
+    const row = orbitThreadStartRow(kept);
+    expect(row.stage).toBe("setup");
+    expect(row.rows?.map((entry) => `${entry.label}:${entry.status}`)).toContain(
+      "Publish the address:running",
+    );
+    expect(orbitCompletionSettled(kept)).toBe(false);
+
+    await followSavedOrbitCompletion(start.id, run.ports);
+    expect(orbitCompletionSettled(store.starts()[0]!)).toBe(true);
+  });
+
+  it("a failure shows the desktop's title, message, failed row, Retry and Dismiss", async () => {
+    const { store, start, run } = await sentStart([workspaceFailed]);
+    await followSavedOrbitCompletion(start.id, run.ports);
+    const failed = store.starts()[0]!;
+    const row = orbitThreadStartRow(failed);
+    expect(row).toMatchObject({
+      stage: "setupFailed",
+      label: "Instance setup failed",
+      detail: "Orbit could not set up the workspace.",
+      notes: [
+        "instance.create_workspace_failed · composer exit 1",
+        "The Instance stays; remove it in Orbit.",
+      ],
+      canRetry: true,
+    });
+    expect(row.rows?.find((entry) => entry.id === "address")?.status).toBe("failed");
+    expect(failed.error).toBeNull();
+    expect(failed.connected).toBe(true);
+
+    // Retry saves a new key; the runner sends it and follows the new Operation.
+    expect(retrySavedOrbitCompletion(start.id, run.ports)).toBe(true);
+    expect(orbitThreadStartRow(store.starts()[0]!).stage).toBe("setup");
+    await followSavedOrbitCompletion(start.id, run.ports);
+    expect(run.completeCalls).toHaveLength(1);
+    expect(run.completeCalls[0]).toMatch(/^complete 41 conn-thread-start:.*:complete:/);
+    expect(store.starts()[0]!.completionOperationId).toBe(107);
+
+    dismissOrbitThreadStart(start.id, store);
+    expect(store.starts()).toEqual([]);
+  });
+
+  it("Q4: a cancel outside a removal is titled Instance setup cancelled, with Retry", async () => {
+    const { store, start, run } = await sentStart([
+      { status: "cancelled", errorCode: "operation.cancelled", recoveryRetryable: true },
+    ]);
+    await followSavedOrbitCompletion(start.id, run.ports);
+    expect(orbitThreadStartRow(store.starts()[0]!)).toMatchObject({
+      stage: "setupFailed",
+      label: "Instance setup cancelled",
+      detail: "operation.cancelled",
+      canRetry: true,
+    });
+  });
+
+  it("Q3: a removal's cancel shows nothing new, and the row goes", async () => {
+    const { store, start, run } = await sentStart([
+      { status: "cancelled", errorCode: "operation.cancelled", recoveryRetryable: false },
+    ]);
+    await followSavedOrbitCompletion(start.id, run.ports);
+    expect(orbitCompletionSettled(store.starts()[0]!)).toBe(true);
+  });
+
+  it("Q7: a process that did not start says …then retry, also without requires", async () => {
+    const { store, start, run } = await sentStart([
+      {
+        status: "failed",
+        errorCode: "instance.container_process_inactive",
+        processFailureUnit: "conn-web.service",
+        recoveryRetryable: true,
+      },
+    ]);
+    await followSavedOrbitCompletion(start.id, run.ports);
+    expect(orbitThreadStartRow(store.starts()[0]!).detail).toBe(
+      "A process of this Project did not start: conn-web.service. Change or remove this process in the Project's Orbit settings, then retry.",
+    );
+  });
+
+  it("a sent start saved without the follow mark (a quit between two writes) is marked, then followed", async () => {
+    const { store, start, run } = await sentStart([workspaceFailed]);
+    store.save({ ...store.starts()[0]!, pendingThread: false });
+    await runSentOrbitThreadStart(store.starts()[0]!, run.ports);
+    expect(store.starts()[0]!.pendingThread).toBe(true);
+    expect(orbitSentStartStep(store.starts()[0]!)).toBe("follow");
+    await runSentOrbitThreadStart(store.starts()[0]!, run.ports);
+    expect(orbitThreadStartRow(store.starts()[0]!).stage).toBe("setupFailed");
+    expect(start.id).toBe(store.starts()[0]!.id);
+  });
+
+  it("after a restart, sends an unanswered Retry again under its saved key", async () => {
+    const { store, start, run } = await sentStart([workspaceFailed]);
+    await followSavedOrbitCompletion(start.id, run.ports);
+    retrySavedOrbitCompletion(start.id, run.ports);
+    const key = store.starts()[0]!.completionKey;
+    // As read back from the file after a restart: the key, no Operation yet.
+    const [reloaded] = parseOrbitThreadStarts(JSON.stringify(store.starts()));
+    const after = createOrbitThreadStartStore(memoryFile(JSON.stringify([reloaded])).storage);
+    await after.load();
+    await runSentOrbitThreadStart(after.starts()[0]!, { ...run.ports, store: after });
+    expect(run.completeCalls).toEqual([`complete 41 ${key}`]);
+    expect(after.starts()[0]!.completionOperationId).toBe(107);
+  });
+
+  it("a follow that stops quietly starts again after a wait", async () => {
+    const { store, start, run } = await sentStart([{ status: "running", errorCode: null }]);
+    let reads = 0;
+    const waits: number[] = [];
+    const base = run.ports.gateway;
+    const flaky = {
+      ...run.ports,
+      sleep: async (ms: number) => {
+        waits.push(ms);
+      },
+      // Each read fails as a refused read (404); the third pass sees the completion succeed.
+      now: () => reads * 100_000,
+      gateway: {
+        ...base,
+        operation: async (id: number) => {
+          reads += 1;
+          if (reads < 3) {
+            const { OrbitGatewayError } = await import("@t3tools/client-runtime/orbit-gateway");
+            throw new OrbitGatewayError({
+              code: "operation.not_found",
+              message: "no",
+              status: 404,
+              details: {},
+            });
+          }
+          return {
+            id,
+            kind: "instance.complete",
+            targetId: 41,
+            status: "succeeded",
+            errorCode: null,
+            pollAfterSeconds: null,
+          } as OrbitGatewayOperation;
+        },
+      } as OrbitGatewayClient,
+    };
+    await followSavedOrbitCompletion(start.id, flaky);
+    expect(waits.filter((ms) => ms === 30_000)).toHaveLength(2);
+    expect(orbitSentStartStep(store.starts()[0]!)).toBe("drop");
+  });
+
+  it("an older Gateway without a completion: the start goes after the send, as before", () => {
+    const start = newOrbitThreadStart({
+      id: "s",
+      project,
+      message: "Hi",
+      suffix: "abc",
+      threadId: "t",
+      messageId: "m",
+      commandId: "c",
+      now: 0,
+    });
+    expect(orbitCompletionSettled({ ...start, sentAt: 5 })).toBe(true);
+    expect(orbitCompletionSettled(start)).toBe(false);
   });
 });

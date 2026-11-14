@@ -93,6 +93,7 @@ export interface OrbitThreadStart {
   /**
    * The start opened a pending thread (the palette flow). It stays saved after the send, so the
    * real thread finds it by `threadId` for its "Instance ready" row. Older and dialog starts lack it.
+   * The phone sets it after the send when the create has a completion, for its start row.
    */
   readonly pendingThread?: boolean;
   /** Display facts for the pending thread and Change name; null on older rows. */

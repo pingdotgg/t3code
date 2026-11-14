@@ -24,6 +24,8 @@ import { orbitGatewayClient } from "./orbitGatewayClient";
 import { orbitThreadStartStore } from "./orbitThreadStartStore";
 import {
   beginOrbitThreadStart,
+  runSentOrbitThreadStart,
+  retrySavedOrbitCompletion,
   runSavedOrbitThreadStart,
   type MobileOrbitThreadStartPorts,
 } from "./orbitThreadStarts";
@@ -163,6 +165,11 @@ function runReadyStarts(): void {
     return;
   }
   for (const start of orbitThreadStartStore.starts()) {
+    if (start.sentAt != null) {
+      // After the send the row follows the create's completion; it goes once nothing is left to show.
+      void runSentOrbitThreadStart(start, ports);
+      continue;
+    }
     if (start.error !== null) continue;
     void runSavedOrbitThreadStart(start.id, ports).then((sent) => {
       // A null result also means "already running": only the run that sent may use the key.
@@ -174,6 +181,11 @@ function runReadyStarts(): void {
       }
     });
   }
+}
+
+/** Retry on a start row whose completion failed or was cancelled; the runner sends it. */
+export function retryOrbitCompletion(id: string): void {
+  retrySavedOrbitCompletion(id, ports);
 }
 
 /** Runs the saved starts now and whenever the list or the provider changes. */

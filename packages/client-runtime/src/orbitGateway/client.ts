@@ -139,6 +139,8 @@ export interface OrbitGatewayProject {
   readonly name: string;
   readonly nodeId: number;
   readonly nodeName: string;
+  /** The Project's domain after the Instance name, as listed; the phone shows the address with it. */
+  readonly instanceDomainSuffix?: string | null;
 }
 
 /** One start check of a Project, in Orbit's order. `code` and `message` come only with a fail. */
@@ -180,6 +182,7 @@ export function startableOrbitProject(
     name: listing.name,
     nodeId: listing.nodeId,
     nodeName: listing.nodeName,
+    instanceDomainSuffix: listing.instanceDomainSuffix,
   };
 }
 
