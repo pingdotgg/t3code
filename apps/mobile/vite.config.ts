@@ -15,6 +15,7 @@ const reactTests = [
   "src/features/pull-requests/usePullRequestEnvironmentFallback.test.tsx",
   "src/lib/filePreview.test.ts",
   "src/lib/filePreview.part2.test.ts",
+  "src/lib/filePreview.part3.test.ts",
   "src/features/threads/thread-inspector-navigation.test.tsx",
   "src/features/diffs/nativeReviewDiffSurface.test.tsx",
   "src/features/pull-requests/usePullRequestDiff.test.tsx",

@@ -92,26 +92,8 @@ import {
   surfaceSelectAll,
 } from "./surfaceSelection";
 import { surfaceInstallEvents, surfaceRemoveEvents } from "./surfaceEvents";
-
-export interface GhosttySelectionPosition {
-  readonly start: { readonly x: number; readonly y: number };
-  readonly end: { readonly x: number; readonly y: number };
-}
-
-export interface GhosttyTerminalSurfaceOptions {
-  readonly theme: GhosttyTheme;
-  readonly font?: GhosttyTerminalFont;
-  /** Read after font and WASM loading. */
-  readonly visible?: boolean;
-  readonly onData: (data: string) => void;
-  readonly onResize: (cols: number, rows: number) => void;
-  readonly onSelectionChange: () => void;
-  readonly beforeKey: (event: KeyboardEvent) => boolean;
-  readonly onLinkActivate: (text: string, event: MouseEvent) => void;
-  readonly canActivateLink?: (text: string) => boolean;
-  /** The host must prevent the default menu; native Paste cannot reach a canvas terminal. */
-  readonly onContextMenu?: (event: MouseEvent) => void;
-}
+import { createGhosttyTerminalElements } from "./surfaceElements";
+import type { GhosttySelectionPosition, GhosttyTerminalSurfaceOptions } from "./surfaceOptions";
 
 export class GhosttyTerminalSurface {
   readonly canvas: HTMLCanvasElement;
@@ -253,38 +235,10 @@ export class GhosttyTerminalSurface {
     mount: HTMLElement,
     options: GhosttyTerminalSurfaceOptions,
   ): Promise<GhosttyTerminalSurface> {
-    const canvas = document.createElement("canvas");
-    canvas.className = "block size-full cursor-text";
-    canvas.style.touchAction = "pan-x pinch-zoom";
-    canvas.setAttribute("aria-hidden", "true");
-
-    const input = document.createElement("textarea");
-    input.className = "t3-ghostty-input";
-    input.setAttribute("aria-label", "Terminal input");
-    input.autocapitalize = "off";
-    input.autocomplete = "off";
-    input.spellcheck = false;
-    input.style.cssText =
-      "position:absolute;left:4px;top:4px;width:1px;height:1px;opacity:0;padding:0;border:0;resize:none;pointer-events:none;";
-
-    const scrollbar = document.createElement("div");
-    scrollbar.className =
-      "group absolute top-1 right-px bottom-1 z-1 w-[var(--app-scrollbar-width)] cursor-default touch-none";
-    scrollbar.setAttribute("role", "scrollbar");
-    scrollbar.setAttribute("aria-label", "Terminal scrollback");
-    scrollbar.setAttribute("aria-orientation", "vertical");
-    scrollbar.tabIndex = 0;
-    scrollbar.hidden = true;
-    const scrollbarThumb = document.createElement("div");
-    scrollbarThumb.className =
-      "absolute inset-x-px top-0 rounded-[3px] bg-[var(--app-scrollbar-thumb)] transition-[background-color] duration-[120ms] ease-[ease-out] group-hover:bg-[var(--app-scrollbar-thumb-hover)] group-focus-visible:bg-[var(--app-scrollbar-thumb-hover)]";
-    scrollbar.append(scrollbarThumb);
-    mount.replaceChildren(canvas, input, scrollbar);
-
-    const context = canvas.getContext("2d", { alpha: false });
-    if (!context) throw new Error("Canvas 2D is unavailable");
-    context.fillStyle = `rgb(${options.theme.background.r}, ${options.theme.background.g}, ${options.theme.background.b})`;
-    context.fillRect(0, 0, canvas.width, canvas.height);
+    const { canvas, input, scrollbar, scrollbarThumb, context } = createGhosttyTerminalElements(
+      mount,
+      options.theme,
+    );
     const fontSize = terminalFontSize(options.font?.size);
     try {
       // Load bundled fonts before measuring; fallback metrics would size the wrong grid.
@@ -829,3 +783,4 @@ export * from "./surfaceRender";
 export * from "./surfaceMouse";
 export * from "./surfaceSelection";
 export * from "./surfaceEvents";
+export * from "./surfaceOptions";

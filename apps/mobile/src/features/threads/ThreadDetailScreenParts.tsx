@@ -314,4 +314,11 @@ export interface ThreadDetailScreenProps {
   readonly showContent?: boolean;
 }
 
+export interface ThreadDetailBodyProps extends ThreadDetailScreenProps {
+  readonly statusRequests: Record<string, BackgroundWorkStopRequest | undefined>;
+  readonly setStatusRequests: React.Dispatch<
+    React.SetStateAction<Record<string, BackgroundWorkStopRequest | undefined>>
+  >;
+}
+
 // iOS questions overlay the controls; Android questions stack with child approvals.
