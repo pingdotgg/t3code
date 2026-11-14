@@ -27,10 +27,11 @@ export class WindowsTcpListeners extends Context.Service<
   }
 >()("t3/preview/WindowsTcpListeners") {}
 
+// A single-executable server resolves packages on disk only through `require`.
+const requireForFfi = NodeModule.createRequire(import.meta.url);
+
 const loadApi = () => {
-  const { DataType, load, open }: typeof import("ffi-rs") = NodeModule.createRequire(
-    import.meta.url,
-  )("ffi-rs");
+  const { DataType, load, open } = requireForFfi("ffi-rs") as typeof import("ffi-rs");
   const iphlpapi = "t3-preview-iphlpapi";
   const kernel32 = "t3-preview-kernel32";
   open({ library: iphlpapi, path: "iphlpapi.dll" });
