@@ -100,7 +100,13 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
 ) {
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fileSystem = yield* FileSystem.FileSystem;
-  const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
+  const baseClaudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
+  // These one-shot calls end within seconds, so they never reuse a cache past 5 minutes and 1h
+  // cache writes only cost more. An explicit value still wins.
+  const claudeEnvironment: NodeJS.ProcessEnv =
+    baseClaudeEnvironment.CLAUDE_CODE_PROMPT_CACHE_TTL === undefined
+      ? { ...baseClaudeEnvironment, CLAUDE_CODE_PROMPT_CACHE_TTL: "5m" }
+      : baseClaudeEnvironment;
   const scopedModelCatalog = modelCatalog.pipe(
     Effect.map((catalog) => scopeClaudeModelCatalog(catalog, claudeSettings.customModels)),
   );
