@@ -1765,6 +1765,7 @@ describe("VcsStatusBroadcaster", () => {
       assert.equal(state.remoteStatusCalls, 3);
     }).pipe(Effect.provide(layerTestFor(state)));
   });
+
   it.effect("a failed refresh releases interrupted waiters and runs the shared follow-up", () => {
     const state: Parameters<typeof layerTestFor>[0] = {
       currentLocalStatus: baseLocalStatus,

@@ -799,8 +799,9 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  // Requests during a refresh need a later read; share one follow-up per raw cwd.
-  // Raw paths preserve auto-pull policy. Missing means idle; null means running without a follow-up.
+  // A request made during a refresh needs a read that starts after it, so overlapping requests
+  // share one follow-up. Keyed by raw cwd because auto-pull policy depends on it.
+  // Missing means idle; null means running with no follow-up queued.
   type SharedRefresh = Deferred.Deferred<VcsStatusResult, GitManagerServiceError>;
   const queuedRefreshesRef = yield* Ref.make(new Map<string, SharedRefresh | null>());
 
