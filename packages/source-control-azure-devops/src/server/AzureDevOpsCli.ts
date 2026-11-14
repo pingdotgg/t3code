@@ -356,7 +356,7 @@ function decodeAzureDevOpsJson<S extends Schema.Top>(
   );
 }
 
-/** The remote RepositoryIdentityResolver would pick from `git remote -v` output. */
+/** The remote that scopes `az` when T3 selected none, from `git remote -v` output. */
 export function primaryRemoteUrl(output: string) {
   if (!output.endsWith("\n")) return null;
   const remotes = new Map<string, string>();
@@ -367,13 +367,12 @@ export function primaryRemoteUrl(output: string) {
     if (!match?.[1] || !match[2]) return null;
     if (match[3] === "fetch" && !remotes.has(match[1])) remotes.set(match[1], match[2]);
   }
-  // Match RepositoryIdentityResolver's primary remote, even if its URL is unsupported.
-  const selected = remotes.has("upstream")
-    ? "upstream"
-    : remotes.has("origin")
-      ? "origin"
-      : [...remotes.keys()].toSorted((left, right) => left.localeCompare(right))[0];
-  return selected === undefined ? null : (remotes.get(selected) ?? null);
+  // Match the provider context SourceControlProviderRegistry binds, and `az`'s own detection.
+  return (
+    remotes.get("origin") ??
+    [...remotes.values()].find((url) => scopeFromRemoteUrl(url) !== null) ??
+    null
+  );
 }
 
 function scopeFromRemoteUrl(remote: string) {
