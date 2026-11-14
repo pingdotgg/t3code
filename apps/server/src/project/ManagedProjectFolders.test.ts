@@ -318,6 +318,21 @@ it.effect("gives each Scratch thread its own folder, named from its message", ()
       );
       assert.equal(path.dirname(pasted), root);
       assert.isAtMost(path.basename(pasted).length, 80);
+
+      // Diacritics fold to their base letters instead of splitting the word.
+      for (const [text, words] of [
+        ["tìm kiếm skill", "tim-kiem-skill"],
+        ["Đặt tên dự án", "dat-ten-du-an"],
+      ] as const) {
+        const folder = Option.getOrThrow(
+          yield* scratch.folderForThread({
+            projectId,
+            threadId: ThreadId.make("thread-diacritics"),
+            text,
+          }),
+        );
+        assert.match(path.basename(folder), new RegExp(`^\\d{4}-\\d{2}-\\d{2}-${words}-`));
+      }
     }),
   ),
 );

@@ -63,10 +63,17 @@ export function normalizeProjectPathForComparison(value: string): string {
 // Windows refuses these as file names, with or without an extension.
 const WINDOWS_RESERVED_NAME = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/;
 
-export function newProjectFolderName(name: string): string {
-  const slug = name
+/** Folds accented Latin letters to ASCII ("tìm" -> "tim"); other scripts pass through. */
+export function foldLatinDiacritics(text: string): string {
+  return text
     .normalize("NFKD")
-    .replace(/[̀-ͯ]/g, "")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d") // d-with-stroke has no Unicode decomposition
+    .replace(/Đ/g, "D");
+}
+
+export function newProjectFolderName(name: string): string {
+  const slug = foldLatinDiacritics(name)
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+/, "")
