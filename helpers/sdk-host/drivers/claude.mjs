@@ -26,8 +26,15 @@ const EXIT_WAIT_MS = 10_000;
 
 // T3's CLAUDE_GROUP_WATCH_SCRIPT: the CLI runs as `t3-claude` under /bin/sh; a watcher stops the
 // CLI's process group when fd 3 (a pipe only this process holds) closes, also when we crash.
+// fd 4 gates the launch: T3 first records the process so a restarted server can reap it. This
+// host has no such record (nothing reaps after a restart), so it opens the gate at once. The
+// shell enters the cwd itself (`cd -P`), as T3 does, so a mount that hangs chdir hangs only it.
 const GROUP_WATCH_SCRIPT = [
+  "read -r _ <&4 || exit 1",
+  "exec 4<&-",
   "{ trap '' TERM; read -r _ <&3; kill -TERM 0; sleep 5; kill -KILL 0; } </dev/null >/dev/null 2>&1 &",
+  'cd -P -- "$1" || exit 125',
+  "shift",
   'exec "$@" 3<&-',
 ].join("\n");
 
@@ -129,14 +136,22 @@ function makeSpawner(state, describeError) {
       child.stderr.setEncoding("utf8").on("data", (chunk) => state.appendStderr(chunk));
       return child;
     }
+    // Relative to this process's cwd, as a native cwd is; the `./` keeps CDPATH out of it.
+    const cwd = spawnOptions.cwd ?? ".";
     const child = spawn(
       "/bin/sh",
-      ["-c", GROUP_WATCH_SCRIPT, "t3-claude", spawnOptions.command, ...spawnOptions.args],
+      [
+        "-c",
+        GROUP_WATCH_SCRIPT,
+        "t3-claude",
+        cwd.startsWith("/") ? cwd : `./${cwd}`,
+        spawnOptions.command,
+        ...spawnOptions.args,
+      ],
       {
-        cwd: spawnOptions.cwd,
         env: spawnOptions.env,
         signal: spawnOptions.signal,
-        stdio: ["pipe", "pipe", "pipe", "pipe"],
+        stdio: ["pipe", "pipe", "pipe", "pipe", "pipe"],
         detached: true,
       },
     );
@@ -162,6 +177,17 @@ function makeSpawner(state, describeError) {
       .once("close", stderrDone);
     // Unhandled 'error' on the fd 3 pipe would throw; it only matters as an EOF signal.
     child.stdio[3]?.on("error", () => {});
+    const gate = child.stdio[4];
+    if (child.pid !== undefined && gate) {
+      try {
+        gate.on("error", () => child.kill("SIGKILL"));
+        gate.end("ready\n");
+      } catch (cause) {
+        child.kill("SIGKILL");
+        gate.destroy();
+        throw cause;
+      }
+    }
     if (child.pid !== undefined) {
       const tracker = trackDescendants(child.pid);
       const timer = setInterval(() => {

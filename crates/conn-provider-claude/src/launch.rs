@@ -62,7 +62,8 @@ pub struct ClaudeConfig {
     /// query alive. T3: 4 hours.
     pub idle_max_hold: Duration,
     /// Text appended to the system prompt when the session has a `t3-code` MCP server
-    /// (`T3_CODE_ORCHESTRATION_INSTRUCTIONS` + `CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS` in TS).
+    /// (`T3_CODE_ORCHESTRATION_INSTRUCTIONS` and the adapter's own texts in TS;
+    /// `conn_mcp::CLAUDE_INSTRUCTIONS`).
     pub mcp_instructions: Option<String>,
     /// The SDK helper. Default: [`HelperCommand::discover`].
     pub helper: HelperCommand,
@@ -93,8 +94,10 @@ pub const READ_ONLY_T3_MCP_TOOLS: &[&str] = &[
     "mcp__t3-code__t3_preview_list",
     "mcp__t3-code__t3_environment_read",
     "mcp__t3-code__t3_environment_links",
+    "mcp__t3-code__t3_theme_read",
     "mcp__t3-code__html_preview",
     "mcp__t3-code__html_render",
+    "mcp__t3-code__send_to_user",
 ];
 
 impl Default for ClaudeConfig {

@@ -16,7 +16,7 @@ fn main() {
         mcp_instructions: Some(format!(
             "{}{}",
             conn_mcp::AGENT_INSTRUCTIONS,
-            conn_mcp::CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS
+            conn_mcp::CLAUDE_INSTRUCTIONS
         )),
         ..ClaudeConfig::default()
     };

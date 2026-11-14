@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Checks the tables this repository keeps by hand against the Conn monorepo, where a generator
 // would be more churn than the table: the auth scope lists in crates/conn-server/src/auth.rs and
-// the wire constants in crates/conn-wire/src/lib.rs. Fails with each difference.
+// the wire constants in crates/conn-wire/src/lib.rs, and the Claude launch lists in
+// crates/conn-provider-claude/src/launch.rs. Fails with each difference.
 //
 //   CONN_MONOREPO=<conn checkout> node tools/check-copies.mjs
 //
@@ -116,6 +117,31 @@ same("ack_window MAX_PENDING_BYTES", rustNumber(wireRs, "MAX_PENDING_BYTES"), ts
 same("ack_window VALUE_OVERHEAD_BYTES = EVENT_OVERHEAD", rustNumber(wireRs, "VALUE_OVERHEAD_BYTES"), tsNumber(output, "EVENT_OVERHEAD"));
 same("ack_window COUNT_WINDOWED", sorted(rustStrings(wireRs, "COUNT_WINDOWED")), sorted(tsSet(output, "COUNT_WINDOWED_STREAMS", methods)));
 same("ack_window BYTE_WINDOWED", sorted(rustStrings(wireRs, "BYTE_WINDOWED")), sorted(tsSet(output, "BYTE_WINDOWED_STREAMS", methods)));
+
+// ---- Claude launch lists (apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts) ------
+/** The string literals of `export const NAME ... = [ ... ]` in TypeScript. */
+function tsStrings(text, name) {
+  const m = new RegExp(`const ${name}\\b[^=]*= \\[([\\s\\S]*?)\\]`).exec(text);
+  if (!m) throw new Error(`no array ${name} upstream`);
+  return [...m[1].replace(/\/\/.*$/gm, "").matchAll(/"([^"]*)"/g)].map((x) => x[1]);
+}
+const launchRs = rust("crates/conn-provider-claude/src/launch.rs");
+const claudeTs = ts("apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts");
+same(
+  "launch.rs READ_ONLY_TOOLS = CLAUDE_READ_ONLY_ALLOWED_TOOLS",
+  rustStrings(launchRs, "READ_ONLY_TOOLS"),
+  tsStrings(claudeTs, "CLAUDE_READ_ONLY_ALLOWED_TOOLS"),
+);
+same(
+  "launch.rs READ_ONLY_T3_MCP_TOOLS = CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS",
+  rustStrings(launchRs, "READ_ONLY_T3_MCP_TOOLS"),
+  tsStrings(claudeTs, "CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS"),
+);
+same(
+  "launch.rs T3_MCP_WILDCARD = CLAUDE_T3_MCP_TOOL_WILDCARD",
+  /const T3_MCP_WILDCARD: &str = "([^"]*)";/.exec(launchRs)?.[1],
+  /export const CLAUDE_T3_MCP_TOOL_WILDCARD = "([^"]*)";/.exec(claudeTs)?.[1],
+);
 
 for (const failure of failures) console.log(`FAIL ${failure}`);
 if (failures.length > 0) process.exitCode = 1;
