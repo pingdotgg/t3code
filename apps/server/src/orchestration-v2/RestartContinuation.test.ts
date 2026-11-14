@@ -148,23 +148,64 @@ it("continues a live turn whose session the adapter never marked running", () =>
     assert.isUndefined(restartContinuationRun(withSessionStatus(status), now), status);
 });
 
-it("recovers an admitted continuation after another crash before provider start", () => {
-  const projection = makeProjection();
-  const starting = {
-    ...projection,
-    runs: [
-      {
-        ...projection.runs[0]!,
-        status: "starting" as const,
-        restartContinuationOfRunId: RunId.make("run:previous-crash"),
-      },
-    ],
-    providerThreads: [{ ...projection.providerThreads[0]!, status: "idle" as const }],
-    providerSessions: [{ ...projection.providerSessions[0]!, status: "stopped" as const }],
-    providerTurns: [],
-  };
-  assert.equal(restartContinuationRun(starting, now)?.id, runId);
-});
+it.effect("recovers an admitted continuation after another crash before provider start", () =>
+  Effect.gen(function* () {
+    const projection = makeProjection();
+    const starting = {
+      ...projection,
+      runs: [
+        {
+          ...projection.runs[0]!,
+          status: "starting" as const,
+          restartContinuationOfRunId: RunId.make("run:previous-crash"),
+        },
+      ],
+      providerThreads: [{ ...projection.providerThreads[0]!, status: "idle" as const }],
+      providerSessions: [{ ...projection.providerSessions[0]!, status: "stopped" as const }],
+      providerTurns: [],
+    };
+    assert.equal(restartContinuationRun(starting, now)?.id, runId);
+
+    // Marked running, but the provider never accepted its prompt.
+    const running = {
+      ...projection,
+      runs: [
+        { ...projection.runs[0]!, restartContinuationOfRunId: RunId.make("run:previous-crash") },
+      ],
+      providerTurns: [],
+    } as unknown as OrchestrationV2ThreadProjection;
+    const commits: Parameters<EventSink.EventSinkV2["Service"]["commitCommand"]>[0][] = [];
+    const recovery = yield* ProviderRuntimeRecovery.make.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getRecoveryThreadIds: () => Effect.succeed([threadId]),
+            getRuntimeRecoveryProjection: () => Effect.succeed(running),
+            getThreadRecords: () => Effect.succeed(running),
+          }),
+          Layer.mock(EventSink.EventSinkV2)({
+            commitCommand: (input) =>
+              Effect.sync(() => {
+                commits.push(input);
+                return { committed: true, cancelledEffectCount: 0 } as never;
+              }),
+          }),
+          IdAllocator.layer,
+          Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({}),
+          Layer.mock(EffectOutbox.EffectOutboxV2)({
+            reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
+          }),
+        ),
+      ),
+    );
+    yield* recovery.reconcile("startup");
+    assert.deepEqual(
+      commits.flatMap((commit) => commit.effects.map((effect) => effect.request)),
+      [{ type: "provider-runtime.continue", sourceRunId: runId }],
+    );
+  }),
+);
 
 it("does not continue settled root runs with restart-cancelled background work", () => {
   const projection = makeProjection();
@@ -599,20 +640,39 @@ const devServer = {
   work: { kind: "shell" as const, label: "vp run dev", id: "turn-item:dev-server" },
 };
 
+const unacceptedFollowUp = {
+  id: RunId.make("run:follow-up"),
+  ordinal: 2,
+  activeAttemptId: RunAttemptId.make("attempt:follow-up"),
+  userMessageId: MessageId.make("message:follow-up"),
+  status: "running",
+  startedAt: now,
+};
+
 it.effect.each([
-  ["completed", scratchProjectId, backgroundSubagent, true],
-  ["waiting", ProjectId.make("restart-project"), backgroundSubagent, true],
-  ["completed", ProjectId.make("restart-project"), devServer, false],
-  ["waiting", scratchProjectId, devServer, false],
+  ["completed", scratchProjectId, backgroundSubagent, true, ""],
+  ["waiting", ProjectId.make("restart-project"), backgroundSubagent, true, ""],
+  ["completed", ProjectId.make("restart-project"), devServer, false, ""],
+  ["waiting", scratchProjectId, devServer, false, ""],
+  [
+    "completed",
+    ProjectId.make("restart-project"),
+    backgroundSubagent,
+    true,
+    ", past a later prompt the provider never accepted",
+  ],
 ] as const)(
-  "cleans up background work of a %s run in project %s and wakes it only for awaited work",
-  ([status, projectId, background, wakes]) =>
+  "cleans up background work of a $0 run in project $1 and wakes it only for awaited work$4",
+  ([status, projectId, background, wakes, followUp]) =>
     Effect.gen(function* () {
       const base = makeProjection();
       const projection = {
         ...base,
         thread: { ...base.thread, projectId },
-        runs: [{ ...base.runs[0]!, status }],
+        runs: [
+          { ...base.runs[0]!, status },
+          ...(followUp === "" ? [] : [{ ...base.runs[0]!, ...unacceptedFollowUp }]),
+        ],
         providerTurns: [{ ...base.providerTurns[0]!, status: "completed" }],
         turnItems: [background.turnItem],
         subagents:
@@ -639,6 +699,16 @@ it.effect.each([
               Layer.mock(ProjectionStore.ProjectionStoreV2)({
                 getRecoveryThreadIds: () => Effect.succeed([threadId]),
                 getRuntimeRecoveryProjection: () => Effect.succeed(projection),
+                getThreadRecords: () => Effect.succeed(projection),
+                getMessagesById: () =>
+                  Effect.succeed(
+                    new Map([
+                      [
+                        unacceptedFollowUp.userMessageId,
+                        { id: unacceptedFollowUp.userMessageId, createdBy: "user" } as never,
+                      ],
+                    ]),
+                  ),
               }),
               Layer.mock(EventSink.EventSinkV2)({
                 writeWithEffects: (input) =>
@@ -681,7 +751,9 @@ it.effect.each([
         assert.equal(note?.runId, runId);
         assert.deepEqual(note?.payload.restartCancelledBackgroundWork, [background.work]);
         if (status === "completed")
-          assert.isFalse(events.some((event) => event.type === "run.updated"));
+          assert.isFalse(
+            events.some((event) => event.type === "run.updated" && event.runId === runId),
+          );
       }
     }),
 );
