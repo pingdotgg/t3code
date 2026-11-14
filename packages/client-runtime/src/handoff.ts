@@ -11,6 +11,7 @@ import {
   getModelSelectionStringOptionValue,
   getProviderOptionCurrentValue,
 } from "@t3tools/shared/model";
+import { isAutoModelSelection, resolveAutoModelSelection } from "@t3tools/shared/autoModel";
 
 import { isReasoningSelect } from "./modelTraits.ts";
 import type { ThreadStructure } from "./state/models.ts";
@@ -27,6 +28,7 @@ export function resolvePendingHandoff(
   projection: Pick<ThreadStructure, "runs" | "visibleTurnItems"> | null | undefined,
   selection: ModelSelection | null | undefined,
   providers: ReadonlyArray<ServerProvider>,
+  now: number,
 ): HandoffEndpoints | null {
   // A thread with an empty timeline has nothing to hand off. Any loaded row
   // counts: paging can leave a window of only tool rows.
@@ -39,6 +41,18 @@ export function resolvePendingHandoff(
       (run.startedAt !== null || (run.status === "starting" && run.contextHandoffId !== null)),
   )?.modelSelection;
   if (from === undefined || selection == null) return null;
+  // The server swaps Auto for a concrete model per message, keeping the current one while it fits.
+  if (isAutoModelSelection(selection)) {
+    const route = resolveAutoModelSelection({
+      selection,
+      providers,
+      now,
+      current: from,
+    });
+    return route === null
+      ? null
+      : resolvePendingHandoff(projection, route.selection, providers, now);
+  }
   const source = providers.find((provider) => provider.instanceId === from.instanceId);
   const target = providers.find((provider) => provider.instanceId === selection.instanceId);
   const needsHandoff =
