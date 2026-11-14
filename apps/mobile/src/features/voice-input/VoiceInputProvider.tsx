@@ -13,6 +13,7 @@ import {
   preferredMicrophoneInput,
   rememberMicrophones,
 } from "../../lib/microphonePriority";
+import { playVoiceInputCue } from "../../native/voiceInputCue";
 import { getLocalVoiceTranscriber } from "../../native/voiceTranscription";
 import { createVoiceRecorder } from "../../native/voiceRecorder";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
@@ -127,6 +128,7 @@ const voiceInputAtom = Atom.make((get) => {
       return transcriber === "checking" ? null : transcriber;
     },
     requestPermission: permission.requestPermission,
+    playRecordingCue: playVoiceInputCue,
     configureRecording: async () => {
       const token = acquireAudioSession("recording");
       audioToken = token;
