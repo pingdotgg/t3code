@@ -101,7 +101,7 @@ it.effect("reads Go limits with the instance's XDG credentials and preserves res
 );
 
 it.effect(
-  "uses the selected public Console key for Go limits, falling back only on auth rejection",
+  "uses the selected public Console credential for Go limits, falling back only on auth rejection",
   () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -120,9 +120,18 @@ it.effect(
       );
       const insert = database.prepare("INSERT INTO credential VALUES (?, ?, ?, ?, ?, ?)");
       const window = { percent: 1, resetsAt: "2026-09-17T12:00:00.000Z" };
-      const consoleKey = { type: "key", key: "console-key" };
+      const consoleKey = {
+        type: "key",
+        key: "console-key",
+        metadata: { orgID: "workspace-id" },
+      };
+      // Console OAuth logins share one workspace fingerprint across token refreshes.
+      const workspaceFingerprint =
+        "b57cd91082439e0caec0a8016b42c874b7c0cb734814d5fedfca398f62a3614f";
       const fingerprints = new Map([
+        // A Console API key keeps the fingerprint it has when supplied inline.
         ["console-key", "3e45cfde9158185930d4cc7020a4e390895574fd54bd8f9631d23a336bbf94f0"],
+        ["oauth-access", workspaceFingerprint],
         ["go-key", "d0e590e93fc9bd9353f2b993c0c287391cae505da2a78cb698b75418d2f5367e"],
         ["inline-key", "85649de18e63305548b6407e185f708483727ee6189cc4bc9512ddb17e23e776"],
       ]);
@@ -133,9 +142,16 @@ it.effect(
         inline = false,
         databaseFile,
         requested,
+        workspaces = requested.map((key) =>
+          key === "console-key" || key === "oauth-access" ? "workspace-id" : undefined,
+        ),
+        fingerprint = fingerprints.get(requested.at(-1)!),
       } of [
         {
-          consoleRow: { ...consoleKey, metadata: { server: "https://opencode.ai/console" } },
+          consoleRow: {
+            ...consoleKey,
+            metadata: { server: "https://opencode.ai/console", orgID: "workspace-id" },
+          },
           requested: ["console-key"],
         },
         { consoleStatus: 401, requested: ["console-key", "go-key"] },
@@ -146,14 +162,28 @@ it.effect(
           consoleRow: {
             type: "oauth",
             methodID: "device",
-            access: "token",
+            access: "oauth-access",
             refresh: "refresh",
-            expires: 0,
+            expires: 1_800_000_000_000,
+            metadata: { server: "https://opencode.ai/console", orgID: "workspace-id" },
           },
-          requested: ["go-key"],
+          requested: ["oauth-access"],
         },
         {
-          consoleRow: { ...consoleKey, metadata: { server: "https://console.example" } },
+          consoleRow: {
+            type: "oauth",
+            access: "go-key",
+            metadata: { server: "https://opencode.ai/console", orgID: "workspace-id" },
+          },
+          requested: ["go-key"],
+          workspaces: ["workspace-id"],
+          fingerprint: workspaceFingerprint,
+        },
+        {
+          consoleRow: {
+            ...consoleKey,
+            metadata: { server: "https://console.example", orgID: "workspace-id" },
+          },
           requested: ["go-key"],
         },
         { inline: true, requested: ["inline-key"] },
@@ -184,6 +214,7 @@ it.effect(
         }
         const before = yield* fs.readFile(`${dataHome}/opencode/opencode.db`);
         const authorizations: string[] = [];
+        const workspaceIDs: Array<string | undefined> = [];
         const limits = yield* readOpenCodeGoUsageLimits({
           enabled: true,
           serverUrl: "",
@@ -201,6 +232,7 @@ it.effect(
               NodeAssert.equal(request.url, "https://opencode.ai/zen/go/v1/usage");
               const key = (request.headers.authorization ?? "").replace("Bearer ", "");
               authorizations.push(key);
+              workspaceIDs.push(request.headers["x-opencode-org-id"]);
               // The legacy key is expired in the regression; it only works in fallback scenarios.
               const status =
                 key === "console-key" ? consoleStatus : requested.includes(key) ? 200 : 401;
@@ -217,6 +249,7 @@ it.effect(
           ),
         );
         NodeAssert.deepEqual(authorizations, requested);
+        NodeAssert.deepEqual(workspaceIDs, workspaces);
         NodeAssert.deepEqual(yield* fs.readFile(`${dataHome}/opencode/opencode.db`), before);
         NodeAssert.equal(
           limits.unavailable?.reason,
@@ -225,7 +258,7 @@ it.effect(
         NodeAssert.equal(limits.windows.length, consoleStatus === 500 ? 0 : 3);
         NodeAssert.equal(
           limits.credentialFingerprint,
-          consoleStatus === 500 ? undefined : fingerprints.get(requested.at(-1)!),
+          consoleStatus === 500 ? undefined : fingerprint,
         );
       }
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
