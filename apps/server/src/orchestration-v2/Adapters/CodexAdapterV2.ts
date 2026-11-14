@@ -1468,6 +1468,7 @@ function codexThreadRuntimeParams(input: {
           http_headers: { Authorization: mcpSession.authorizationHeader },
         };
   return {
+    // Codex tags the child's MCP calls with thread_source "subagent".
     ...(input.isSubagent ? { threadSource: "subagent" } : {}),
     ...(input.runtimePolicy?.cwd == null ? {} : { cwd: input.runtimePolicy.cwd }),
     ...(input.modelSelection === undefined ? {} : { model: input.modelSelection.model }),

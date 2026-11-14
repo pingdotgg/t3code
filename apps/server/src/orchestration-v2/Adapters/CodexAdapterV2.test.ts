@@ -1806,6 +1806,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
+  // regression: #36520 MCP servers can tell a delegate_task child from a user thread
   it.effect.each(["thread/start", "thread/fork"] as const)(
     "classifies delegated children as subagents in %s",
     (method) =>
