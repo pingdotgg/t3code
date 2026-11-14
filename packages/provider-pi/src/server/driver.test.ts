@@ -1,9 +1,11 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
@@ -181,6 +183,23 @@ it.layer(layerTest)("PiDriver workspace discovery", (it) => {
         );
       }
     }),
+  );
+
+  it.effect("launches a ~/ binary path from the home directory", () =>
+    Effect.gen(function* () {
+      const { spawner, launches } = yield* makePiSpawner();
+      const instance = yield* create({ binaryPath: "~/bin/pi" }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(HostProcess.HomeDirectory, "/test-home"),
+      );
+      yield* instance.snapshot.refresh;
+      const path = yield* Path.Path;
+      assert.isNotEmpty(launches);
+      assert.deepEqual(
+        [...new Set(launches.map((launch) => launch.command))],
+        [path.join("/test-home", "bin", "pi")],
+      );
+    }).pipe(Effect.scoped),
   );
 
   it.effect("does not run a disabled provider's workspace probe", () =>
