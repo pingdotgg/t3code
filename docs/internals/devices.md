@@ -154,3 +154,29 @@ the same canvas sink, so the panel and the mobile WebView keep one surface.
 Android asks serve-emu's `/api` before opening its video socket and streams
 WebRTC when it is advertised (EAS Simulator), keeping a separate `video=0`
 socket for input so input can reconnect without restarting video.
+
+## 3D device models
+
+The GLBs under `apps/web/src/components/device/models` are generated. The
+record is [`sources.json`](../../apps/web/src/components/device/models/sources.json)
+plus [`convert-device-model.py`](../../scripts/convert-device-model.py), whose
+header lists the gltf-transform steps that follow the Blender export.
+
+Apple's AR assets build glass and finishes from stacked shells. Where a shell
+is an exact copy of the layer beneath it, depth ties resolve the same way every
+frame. Where it crosses that layer, as the iPhone 16 and 16 Plus back glass
+does, WebGL draws a flickering patchwork, so `surfaceOffsets` pushes that shell
+0.0003 units outward. Quantization has the same failure mode: per-mesh grids
+round coincident layers apart, so meshopt runs on one scene-wide 16-bit grid.
+Do not simplify: even a 1e-5 error changes rim highlights and seams the Duo's
+inner displays.
+
+`hiddenNodes` lists parts that never change a pixel when hidden, rendered from
+26 directions with a logarithmic depth buffer. Parts that are only nearly
+hidden stay. The Duo has none listed because its hinge pose changes what is
+visible.
+
+Display meshes are quantized like everything else.
+[`modelScene.ts`](../../packages/client-runtime/src/device/modelScene.ts)
+bakes their node transforms back into float geometry at load, because screen
+UVs, touch projection, and the normalization checks work in model space.

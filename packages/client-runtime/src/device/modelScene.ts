@@ -1,8 +1,46 @@
 // @effect-diagnostics globalFetch:off - This browser-only renderer owns abortable asset requests without an Effect runtime, like the live stream.
-import { Box3, Group, Mesh, MeshBasicMaterial, Texture, type Material, type Object3D } from "three";
+import {
+  Box3,
+  BufferAttribute,
+  Group,
+  Mesh,
+  MeshBasicMaterial,
+  Texture,
+  type Material,
+  type Object3D,
+} from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
 import type { DeviceAssetSource } from "./model.ts";
 import { createDisplayProjection, updateDisplayUv, type PhoneDisplayLayout } from "./phoneScene.ts";
+
+const DISPLAY_MESHES = new Set([
+  "device-screen",
+  "cover-display",
+  "inner-display-left",
+  "inner-display-right",
+]);
+
+// Quantized glTF keeps positions in a node-local box; the screen math needs model-space floats.
+export function bakeDisplayTransforms(root: Object3D) {
+  root.traverse((object) => {
+    if (!(object instanceof Mesh) || !DISPLAY_MESHES.has(object.name)) return;
+    const geometry = object.geometry;
+    for (const name of Object.keys(geometry.attributes)) {
+      const attribute = geometry.getAttribute(name);
+      const values = new Float32Array(attribute.count * attribute.itemSize);
+      for (let i = 0; i < attribute.count; i++)
+        for (let c = 0; c < attribute.itemSize; c++)
+          values[i * attribute.itemSize + c] = attribute.getComponent(i, c);
+      geometry.setAttribute(name, new BufferAttribute(values, attribute.itemSize));
+    }
+    object.updateMatrix();
+    geometry.applyMatrix4(object.matrix);
+    object.position.set(0, 0, 0);
+    object.quaternion.identity();
+    object.scale.set(1, 1, 1);
+  });
+}
 
 /** GLB resources belong to one viewer; the live framebuffer texture belongs to its stream presentation. */
 export function disposeDeviceModel(root: Object3D) {
@@ -105,10 +143,10 @@ export async function loadDeviceModel(source: DeviceAssetSource, signal: AbortSi
   if (!response.ok) throw new Error(`Device model request failed: ${response.status}`);
   const data = await response.arrayBuffer();
   signal.throwIfAborted();
-  const gltf = await new GLTFLoader().parseAsync(
-    data,
-    new URL(".", new URL(source.url, globalThis.location.href)).href,
-  );
+  const gltf = await new GLTFLoader()
+    .setMeshoptDecoder(MeshoptDecoder)
+    .parseAsync(data, new URL(".", new URL(source.url, globalThis.location.href)).href);
+  bakeDisplayTransforms(gltf.scene);
   if (signal.aborted) {
     disposeDeviceModel(gltf.scene);
     signal.throwIfAborted();
