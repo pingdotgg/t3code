@@ -5,6 +5,7 @@ import {
   AuthGrantScope,
   EnvironmentAuthInvalidError,
   type EnvironmentAuthInvalidReason,
+  EnvironmentConnectApprovalPendingError,
   EnvironmentHttpApi,
   EnvironmentHttpForbiddenError,
   EnvironmentInternalError,
@@ -253,7 +254,7 @@ export const layerAuthenticatedAuth = Layer.effect(
             scopes: new Set(session.scopes),
           }),
         );
-        return yield* session.subject === "cloud-connect"
+        return yield* session.subject === EnvironmentAuth.CLOUD_CONNECT_SUBJECT
           ? traceAuthenticatedRelayRequest(handler, { startTime, endTime })
           : handler;
       }).pipe(Effect.catchTags({ EnvironmentAuthInvalidError: appendDpopChallengeOnUnauthorized }));
@@ -407,6 +408,19 @@ export const layer = HttpApiBuilder.group(
               EnvironmentAuth.serverAuthDpopFailureReason(error),
             ),
           ),
+          Effect.catchTags({
+            ServerAuthConnectApprovalPendingError: () =>
+              currentEnvironmentTraceId.pipe(
+                Effect.flatMap((traceId) =>
+                  Effect.fail(
+                    new EnvironmentConnectApprovalPendingError({
+                      code: "connect_approval_pending",
+                      traceId,
+                    }),
+                  ),
+                ),
+              ),
+          }),
           Effect.catchIf(EnvironmentAuth.isServerAuthInvalidRequestError, (error) =>
             failEnvironmentInvalidRequest(EnvironmentAuth.serverAuthInvalidRequestReason(error)),
           ),
@@ -506,6 +520,34 @@ export const layer = HttpApiBuilder.group(
           }),
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
             failEnvironmentInternal("client_session_revoke_failed", error),
+          ),
+        ),
+      )
+      .handle(
+        "approveConnectDevice",
+        Effect.fn("environment.auth.approveConnectDevice")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            yield* requireEnvironmentScope(AuthAccessWriteScope);
+            const approved = yield* serverAuth.approveConnectDevice(args.payload.pairingLinkId);
+            return { approved };
+          },
+          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+            failEnvironmentInternal("connect_device_approve_failed", error),
+          ),
+        ),
+      )
+      .handle(
+        "revokeConnectDevice",
+        Effect.fn("environment.auth.revokeConnectDevice")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            yield* requireEnvironmentScope(AuthAccessWriteScope);
+            const revoked = yield* serverAuth.revokeConnectDevice(args.payload.proofKeyThumbprint);
+            return { revoked };
+          },
+          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+            failEnvironmentInternal("connect_device_revoke_failed", error),
           ),
         ),
       )

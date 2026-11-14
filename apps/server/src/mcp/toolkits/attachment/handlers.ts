@@ -49,7 +49,10 @@ export const layer = McpToolAccess.toLayer(
               yield* McpInvocationContext.McpInvocationContext,
               result.attachmentId,
             );
-            return result;
+            const { origin } = yield* McpInvocationContext.McpInvocationContext;
+            return origin === undefined
+              ? result
+              : { ...result, uploadUrl: `${origin}${result.relativeUrl}` };
           }),
         { linkedCallers: "allowed" },
       ),
