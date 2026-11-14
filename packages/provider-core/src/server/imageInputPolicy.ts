@@ -11,7 +11,7 @@ function imageSupportFromInput(value: unknown): boolean | undefined {
   const image = field(value, "image");
   if (typeof image === "boolean") return image;
   if (Array.isArray(value) && value.every((item) => typeof item === "string")) {
-    return value.includes("image");
+    return value.some((item: string) => item === "image" || item.startsWith("image/"));
   }
   return undefined;
 }
@@ -26,6 +26,7 @@ function imageSupportFromInput(value: unknown): boolean | undefined {
 export function modelImageInputSupport(model: unknown): boolean | undefined {
   return (
     imageSupportFromInput(field(field(model, "capabilities"), "input")) ??
+    imageSupportFromInput(field(field(field(model, "capabilities"), "modalities"), "input")) ??
     imageSupportFromInput(field(model, "input")) ??
     imageSupportFromInput(field(field(model, "modalities"), "input"))
   );
