@@ -1043,6 +1043,18 @@ impl Engine for SqliteEngine {
         Box::pin(self.inner.close_all_sessions())
     }
 
+    fn await_background_tasks(
+        &self,
+        thread_id: ThreadId,
+        task_ids: Vec<String>,
+        awaited: bool,
+    ) -> BoxFuture<'_, Result<crate::BackgroundWait, crate::BackgroundWaitError>> {
+        Box::pin(
+            self.inner
+                .await_background_tasks(thread_id.0, task_ids, awaited),
+        )
+    }
+
     fn methods(&self) -> &'static [&'static str] {
         crate::calls::METHODS
     }
