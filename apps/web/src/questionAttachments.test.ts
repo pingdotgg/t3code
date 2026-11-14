@@ -2,12 +2,25 @@ import {
   makeThreadRequestsResolvedAnnouncer,
   userInputDraftKey,
 } from "@t3tools/client-runtime/state/thread-requests";
-import { ApprovalRequestId, EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
+import {
+  ApprovalRequestId,
+  EnvironmentId,
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  RuntimeRequestId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 import { beforeEach, expect, it, vi } from "vite-plus/test";
 import { useComposerDraftStore } from "./composerDraftStore";
-import { formatInlineContextReference } from "./lib/composerContextReferences";
-import { threadContextReference } from "./lib/composerContextRecords";
+import {
+  ensureInlineContextReferences,
+  formatInlineContextReference,
+} from "./lib/composerContextReferences";
+import {
+  fileContextReference,
+  imageContextReference,
+  threadContextReference,
+} from "./lib/composerContextRecords";
 import {
   questionAttachmentDraftId,
   countQuestionAttachments,
@@ -20,6 +33,8 @@ import {
 
 const release = vi.hoisted(() => vi.fn());
 vi.mock("./lib/attachmentUploadQueue", () => ({ releaseDraftAttachments: release }));
+const toast = vi.hoisted(() => vi.fn());
+vi.mock("./components/ui/toast", () => ({ toastManager: { add: toast } }));
 const environmentId = EnvironmentId.make("environment-1");
 const threadId = ThreadId.make("thread-1");
 const requestId = ApprovalRequestId.make("request-1");
@@ -28,6 +43,7 @@ beforeEach(() => {
   useQuestionAttachmentPreparation.setState({ counts: {} });
   usePendingUserInputAnswers.setState({}, true);
   release.mockClear();
+  toast.mockClear();
 });
 it("keeps question files separate from the normal draft and other questions", () => {
   const revoke = vi.spyOn(URL, "revokeObjectURL");
@@ -157,21 +173,44 @@ it("clears attachment drafts for requests the thread resolved, wherever they wer
   expect(usePendingUserInputAnswers.getState()).toEqual({});
 });
 
+const textFile = (id: string) => ({
+  type: "file" as const,
+  id,
+  name: `${id}.txt`,
+  mimeType: "text/plain",
+  sizeBytes: 5,
+  file: new File(["notes"], `${id}.txt`, { type: "text/plain" }),
+});
+
 // Stop cancels an open question; a provider timeout expires it. Neither sends the answer.
 it.each(["cancelled", "expired"] as const)(
-  "returns typed answers and their thread chips to the thread draft when a question is %s",
+  "returns typed answers, their thread chips, and attachments to the thread draft when a question is %s",
   (status) => {
+    const revoke = vi.spyOn(URL, "revokeObjectURL");
     const store = useComposerDraftStore.getState();
     const request = RuntimeRequestId.make("stopped");
+    const first = questionAttachmentDraftId(environmentId, threadId, request, "first");
+    // Answered only by its attachment: no typed text is stored for it.
+    const fourth = questionAttachmentDraftId(environmentId, threadId, request, "fourth");
     const reference = threadContextRecord(
       { environmentId, threadId: ThreadId.make("reference-thread") },
       "Reference work",
     );
     const answer = `Purple, like ${formatInlineContextReference(threadContextReference(reference))}`;
     store.setPrompt({ environmentId, threadId }, "Earlier draft");
-    store.setThreadContexts(questionAttachmentDraftId(environmentId, threadId, request, "first"), [
-      reference,
-    ]);
+    store.setThreadContexts(first, [reference]);
+    const file = textFile("notes");
+    store.addFiles(first, [file]);
+    const image = {
+      type: "image" as const,
+      id: "unsent-question-image",
+      name: "screen.png",
+      mimeType: "image/png",
+      sizeBytes: 5,
+      previewUrl: "blob:unsent-question-image",
+      file: new File(["image"], "screen.png", { type: "image/png" }),
+    };
+    store.addImages(fourth, [image]);
     usePendingUserInputAnswers.setState({
       [userInputDraftKey(environmentId, threadId, request)]: {
         first: { customAnswer: answer },
@@ -183,9 +222,48 @@ it.each(["cancelled", "expired"] as const)(
     makeThreadRequestsResolvedAnnouncer(environmentId, threadId)([{ id: request, status }]);
 
     expect(store.getComposerDraft({ environmentId, threadId })).toMatchObject({
-      prompt: `Earlier draft\n\n${answer}\n\nAlso this`,
+      prompt: ensureInlineContextReferences(`Earlier draft\n\n${answer}\n\nAlso this`, [
+        fileContextReference(file),
+        imageContextReference(image),
+      ]),
       threadContexts: [reference],
+      files: [file],
+      images: [image],
     });
     expect(usePendingUserInputAnswers.getState()).toEqual({});
+    expect(store.getComposerDraft(first)).toBeNull();
+    expect(store.getComposerDraft(fourth)).toBeNull();
+    // The thread draft owns the upload and preview URL now.
+    expect(release.mock.calls.flat(2)).toEqual([]);
+    expect(revoke).not.toHaveBeenCalledWith(image.previewUrl);
+    expect(toast).not.toHaveBeenCalled();
+    revoke.mockRestore();
   },
 );
+
+it("names and releases the question attachments a full thread draft cannot take", () => {
+  const store = useComposerDraftStore.getState();
+  const request = RuntimeRequestId.make("stopped");
+  const question = questionAttachmentDraftId(environmentId, threadId, request, "first");
+  const draftFiles = Array.from({ length: PROVIDER_SEND_TURN_MAX_ATTACHMENTS - 1 }, (_, index) =>
+    textFile(`draft-${index}`),
+  );
+  store.addFiles({ environmentId, threadId }, draftFiles);
+  const [fits, overflows] = [textFile("fits"), textFile("overflows")];
+  store.addFiles(question, [fits, overflows]);
+
+  makeThreadRequestsResolvedAnnouncer(
+    environmentId,
+    threadId,
+  )([{ id: request, status: "cancelled" }]);
+
+  expect(store.getComposerDraft({ environmentId, threadId })?.files).toEqual([...draftFiles, fits]);
+  expect(store.getComposerDraft(question)).toBeNull();
+  expect(release).toHaveBeenCalledExactlyOnceWith([overflows]);
+  expect(toast).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({
+      type: "warning",
+      description: expect.stringContaining(overflows.name),
+    }),
+  );
+});

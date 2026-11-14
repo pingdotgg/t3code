@@ -84,6 +84,7 @@ import {
 } from "./lib/composerContextReferences";
 import {
   fileContextReference,
+  imageContextReference,
   previewAnnotationContextId,
   previewAnnotationContextReference,
   reviewCommentContextId,
@@ -759,6 +760,14 @@ interface ComposerDraftStoreState {
   clearComposerPromptAndImages: (threadRef: ComposerThreadTarget) => void;
   /** Keeps attachments over destination limits, other environments' uploads, terminal/element contexts, annotations, and review comments in source. */
   moveComposerPromptAndImages: (from: ComposerThreadTarget, to: ComposerThreadTarget) => void;
+  /**
+   * Moves images and files the destination can take, chipped into its prompt, and returns
+   * the ones left in source: over the destination's limit or unreachable from its environment.
+   */
+  moveComposerAttachments: (
+    from: ComposerThreadTarget,
+    to: ComposerThreadTarget,
+  ) => ReadonlyArray<ComposerImageAttachment | ComposerFileAttachment>;
 }
 
 export interface EffectiveComposerModelState {
@@ -994,6 +1003,99 @@ function normalizeTerminalContextsForThread(
   }
 
   return normalizedContexts;
+}
+
+function composerTargetEnvironmentId(
+  state: Pick<ComposerDraftStoreState, "draftThreadsByThreadKey">,
+  target: ComposerThreadTarget,
+  targetKey: string,
+): EnvironmentId | null {
+  return typeof target === "string"
+    ? (state.draftThreadsByThreadKey[targetKey]?.environmentId ??
+        parseScopedThreadKey(targetKey)?.environmentId ??
+        null)
+    : target.environmentId;
+}
+
+/**
+ * Splits `source`'s images and files between it and `destination`: up to the send limit,
+ * skipping files the destination already has or cannot reach. Moved images keep their
+ * blob URLs and moved files their uploads, so neither side may release them.
+ */
+function transferComposerAttachments(
+  source: ComposerThreadDraftState,
+  destination: ComposerThreadDraftState,
+  destinationEnvironmentId: EnvironmentId | null,
+) {
+  const destinationFileIds = new Set(destination.files.map((file) => file.id));
+  const destinationFileKeys = new Set(destination.files.map(composerFileDedupKey));
+  const transferableFiles = source.files.filter(
+    (file) =>
+      (file.file !== null || file.uploadEnvironmentId === destinationEnvironmentId) &&
+      !destinationFileIds.has(file.id) &&
+      !destinationFileKeys.has(composerFileDedupKey(file)),
+  );
+  const remainingAttachmentSlots = Math.max(
+    0,
+    PROVIDER_SEND_TURN_MAX_ATTACHMENTS - destination.images.length - destination.files.length,
+  );
+  const movedImages = source.images.slice(0, remainingAttachmentSlots);
+  const movedImageIds = new Set(movedImages.map((image) => image.id));
+  const movedFiles = transferableFiles
+    .slice(0, remainingAttachmentSlots - movedImages.length)
+    .map((file) => {
+      // Re-upload local bytes across environments; the destination cannot reach source upload ids.
+      if (
+        file.file === null ||
+        file.uploadEnvironmentId === undefined ||
+        file.uploadEnvironmentId === destinationEnvironmentId
+      ) {
+        return file;
+      }
+      const { uploadedAttachmentId: _a, uploadEnvironmentId: _e, ...rest } = file;
+      return rest;
+    });
+  const movedFileIds = new Set(movedFiles.map((file) => file.id));
+  return {
+    moved: [...movedImages, ...movedFiles],
+    source: {
+      ...source,
+      images: source.images.filter((image) => !movedImageIds.has(image.id)),
+      files: source.files.filter((file) => !movedFileIds.has(file.id)),
+      nonPersistedImageIds: source.nonPersistedImageIds.filter(
+        (imageId) => !movedImageIds.has(imageId),
+      ),
+      persistedAttachments: source.persistedAttachments.filter(
+        (attachment) => !movedImageIds.has(attachment.id),
+      ),
+    },
+    destination: {
+      ...destination,
+      images: [...destination.images, ...movedImages],
+      files: [...destination.files, ...movedFiles],
+      nonPersistedImageIds: [
+        ...destination.nonPersistedImageIds,
+        ...source.nonPersistedImageIds.filter((imageId) => movedImageIds.has(imageId)),
+      ],
+      persistedAttachments: [
+        ...destination.persistedAttachments,
+        ...source.persistedAttachments.filter((attachment) => movedImageIds.has(attachment.id)),
+      ],
+    },
+  };
+}
+
+/** Writes `updates` over `drafts`, dropping the ones left empty. */
+function withComposerDrafts(
+  drafts: Record<string, ComposerThreadDraftState>,
+  updates: Record<string, ComposerThreadDraftState>,
+): Record<string, ComposerThreadDraftState> {
+  const next = { ...drafts };
+  for (const [key, draft] of Object.entries(updates)) {
+    if (shouldRemoveDraft(draft)) delete next[key];
+    else next[key] = draft;
+  }
+  return next;
 }
 
 function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
@@ -4357,94 +4459,71 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               return state;
             }
             const destination = state.draftsByThreadKey[toKey] ?? createEmptyThreadDraft();
-            const destinationEnvironmentId =
-              typeof to === "string"
-                ? (state.draftThreadsByThreadKey[toKey]?.environmentId ??
-                  parseScopedThreadKey(toKey)?.environmentId ??
-                  null)
-                : to.environmentId;
-            const destinationFileIds = new Set(destination.files.map((file) => file.id));
-            const destinationFileKeys = new Set(destination.files.map(composerFileDedupKey));
-            const transferableFiles = source.files.filter(
-              (file) =>
-                (file.file !== null || file.uploadEnvironmentId === destinationEnvironmentId) &&
-                !destinationFileIds.has(file.id) &&
-                !destinationFileKeys.has(composerFileDedupKey(file)),
+            const transfer = transferComposerAttachments(
+              source,
+              destination,
+              composerTargetEnvironmentId(state, to, toKey),
             );
-            const remainingAttachmentSlots = Math.max(
-              0,
-              PROVIDER_SEND_TURN_MAX_ATTACHMENTS -
-                destination.images.length -
-                destination.files.length,
-            );
-            const movedImages = source.images.slice(0, remainingAttachmentSlots);
-            const movedImageIds = new Set(movedImages.map((image) => image.id));
-            const retainedImages = source.images.filter((image) => !movedImageIds.has(image.id));
-            const movedFiles = transferableFiles
-              .slice(0, remainingAttachmentSlots - movedImages.length)
-              .map((file) => {
-                // Re-upload local bytes across environments; the destination cannot reach source upload ids.
-                if (
-                  file.file === null ||
-                  file.uploadEnvironmentId === undefined ||
-                  file.uploadEnvironmentId === destinationEnvironmentId
-                ) {
-                  return file;
-                }
-                const { uploadedAttachmentId: _a, uploadEnvironmentId: _e, ...rest } = file;
-                return rest;
-              });
-            const movedFileIds = new Set(movedFiles.map((file) => file.id));
-            const retainedFiles = source.files.filter((file) => !movedFileIds.has(file.id));
-            const movedPrompt = ensureInlineContextReferences(
-              stripInlineContextReferences(source.prompt),
-              destination.terminalContexts.map(terminalContextReference),
-            );
-            const nextDestination: ComposerThreadDraftState = {
-              ...destination,
-              prompt: movedPrompt,
-              images: [...destination.images, ...movedImages],
-              files: [...destination.files, ...movedFiles],
-              nonPersistedImageIds: [
-                ...destination.nonPersistedImageIds,
-                ...source.nonPersistedImageIds.filter((imageId) => movedImageIds.has(imageId)),
-              ],
-              persistedAttachments: [
-                ...destination.persistedAttachments,
-                ...source.persistedAttachments.filter((attachment) =>
-                  movedImageIds.has(attachment.id),
-                ),
-              ],
+            return {
+              draftsByThreadKey: withComposerDrafts(state.draftsByThreadKey, {
+                [fromKey]: {
+                  ...transfer.source,
+                  prompt: ensureInlineContextReferences(
+                    "",
+                    source.terminalContexts.map(terminalContextReference),
+                  ),
+                },
+                [toKey]: {
+                  ...transfer.destination,
+                  prompt: ensureInlineContextReferences(
+                    stripInlineContextReferences(source.prompt),
+                    destination.terminalContexts.map(terminalContextReference),
+                  ),
+                },
+              }),
             };
-            // Moved images still use these blob URLs at the destination; do not revoke them.
-            const nextSource: ComposerThreadDraftState = {
-              ...source,
-              prompt: ensureInlineContextReferences(
-                "",
-                source.terminalContexts.map(terminalContextReference),
-              ),
-              images: retainedImages,
-              files: retainedFiles,
-              nonPersistedImageIds: source.nonPersistedImageIds.filter(
-                (imageId) => !movedImageIds.has(imageId),
-              ),
-              persistedAttachments: source.persistedAttachments.filter(
-                (attachment) => !movedImageIds.has(attachment.id),
-              ),
-            };
-            const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
-            if (shouldRemoveDraft(nextSource)) {
-              delete nextDraftsByThreadKey[fromKey];
-            } else {
-              nextDraftsByThreadKey[fromKey] = nextSource;
-            }
-            if (shouldRemoveDraft(nextDestination)) {
-              delete nextDraftsByThreadKey[toKey];
-            } else {
-              nextDraftsByThreadKey[toKey] = nextDestination;
-            }
-            return { draftsByThreadKey: nextDraftsByThreadKey };
           });
+        },
+        moveComposerAttachments: (from, to) => {
+          const fromKey = resolveComposerDraftKey(get(), from) ?? "";
+          const toKey = resolveComposerDraftKey(get(), to) ?? "";
+          if (fromKey.length === 0 || toKey.length === 0 || fromKey === toKey) {
+            return [];
+          }
+          let kept: Array<ComposerImageAttachment | ComposerFileAttachment> = [];
+          set((state) => {
+            const source = state.draftsByThreadKey[fromKey];
+            if (!source) {
+              return state;
+            }
+            const destination = state.draftsByThreadKey[toKey] ?? createEmptyThreadDraft();
+            const transfer = transferComposerAttachments(
+              source,
+              destination,
+              composerTargetEnvironmentId(state, to, toKey),
+            );
+            kept = [...transfer.source.images, ...transfer.source.files];
+            if (transfer.moved.length === 0) {
+              return state;
+            }
+            return {
+              draftsByThreadKey: withComposerDrafts(state.draftsByThreadKey, {
+                [fromKey]: transfer.source,
+                [toKey]: {
+                  ...transfer.destination,
+                  prompt: ensureInlineContextReferences(
+                    destination.prompt,
+                    transfer.moved.map((attachment) =>
+                      attachment.type === "image"
+                        ? imageContextReference(attachment)
+                        : fileContextReference(attachment),
+                    ),
+                  ),
+                },
+              }),
+            };
+          });
+          return kept;
         },
       };
     },

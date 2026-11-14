@@ -3,17 +3,20 @@ import type { PendingUserInputDraftAnswer } from "@t3tools/client-runtime/state/
 import {
   onThreadRequestsResolved,
   pruneResolvedUserInputDrafts,
+  questionDraftKeysForRequests,
   resolvedQuestionDraftKeys,
   userInputDraftKey,
 } from "@t3tools/client-runtime/state/thread-requests";
-import type {
-  EnvironmentId,
-  RuntimeRequestId,
-  ScopedThreadRef,
-  ThreadContextRecord,
-  ThreadId,
+import {
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  type EnvironmentId,
+  type RuntimeRequestId,
+  type ScopedThreadRef,
+  type ThreadContextRecord,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { create } from "zustand";
+import { toastManager } from "./components/ui/toast";
 import { DraftId, useComposerDraftStore } from "./composerDraftStore";
 import { releaseDraftAttachments } from "./lib/attachmentUploadQueue";
 import {
@@ -134,8 +137,8 @@ function pruneResolvedQuestionAttachmentDrafts(
 
 /**
  * Stop cancels an open question and a provider timeout expires it; neither sent
- * the typed answers, so they move to the thread's own draft (not a queued-message
- * edit the composer may be showing) with the thread chips they reference.
+ * the typed answers or attachments, so they move to the thread's own draft (not a
+ * queued-message edit the composer may be showing) with the thread chips they reference.
  */
 function returnUnsentAnswersToThreadDraft(
   environmentId: EnvironmentId,
@@ -165,9 +168,23 @@ function returnUnsentAnswersToThreadDraft(
       );
     }
   }
-  if (prompt === currentPrompt) return;
-  store.setPrompt(target, prompt);
-  store.addThreadContexts(target, threadContexts, { appendReference: false });
+  if (prompt !== currentPrompt) {
+    store.setPrompt(target, prompt);
+    store.addThreadContexts(target, threadContexts, { appendReference: false });
+  }
+  // What the thread draft cannot take stays in the question draft, which pruning then releases.
+  const left = questionDraftKeysForRequests(
+    Object.keys(useComposerDraftStore.getState().draftsByThreadKey),
+    questionAttachmentDraftPrefix(environmentId, threadId),
+    unansweredRequestIds,
+  ).flatMap((key) => store.moveComposerAttachments(DraftId.make(key), target));
+  if (left.length === 0) return;
+  toastManager.add({
+    type: "warning",
+    title: "Some question attachments were not returned",
+    description: `${left.map((attachment) => attachment.name).join(", ")} did not fit: a message holds at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments.`,
+    data: { threadRef: target },
+  });
 }
 
 // Resolution can come from anywhere: another device, an interrupt, the turn
