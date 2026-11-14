@@ -11643,6 +11643,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 });
                 context.assistant.fallbackText = "";
               }
+              // Native ids are unique per message, so the steer's reply needs only its own segment's record.
+              context.assistant.emittedNativeItemIds.clear();
               yield* sendHeldSteers(context);
               return;
             }

@@ -5997,89 +5997,96 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("runs a held steer within the turn when Claude ends it without a tool boundary", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeWakeHarness;
-      const idAllocator = yield* IdAllocator.IdAllocatorV2;
-      const attemptId = RunAttemptId.make("attempt-steer-no-boundary");
-      const input = makeClaudeTestTurnInput({
-        threadId: harness.threadId,
-        providerThread: harness.providerThread,
-        now: yield* DateTime.now,
-        attemptId,
-        text: "Explain the build.",
-        attachments: [],
-      });
-      yield* harness.runtime.startTurn(input);
-      yield* harness.runtime.steerTurn({
-        threadId: harness.threadId,
-        runId: input.runId,
-        providerThread: harness.providerThread,
-        providerTurnId: idAllocator.derive.providerTurn({
-          driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
-          nativeTurnId: `turn:${attemptId}`,
-        }),
-        message: {
-          createdBy: "user",
-          creationSource: "web",
-          messageId: MessageId.make("message-steer-no-boundary"),
-          text: "Keep it short.",
+  it.effect.each([{ firstReplyStreamed: false }, { firstReplyStreamed: true }])(
+    "runs a held steer within the turn when Claude ends it without a tool boundary (%j)",
+    ({ firstReplyStreamed }) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const attemptId = RunAttemptId.make("attempt-steer-no-boundary");
+        const input = makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId,
+          text: "Explain the build.",
           attachments: [],
-        },
-      });
-      yield* harness.offerAndWait(
-        claudeSdkFrame({
-          ...makeResultFrame({ uuid: "00000000-0000-4000-8000-000000021892", result: "Long." }),
-          user_message_uuid: harness.promptUuid(0),
-        }),
-      );
-      // Claude finished without reading it, so it starts the steer as its next native turn.
-      assert.lengthOf(harness.offeredMessages, 2);
-      assert.equal(harness.offeredMessages[1]?.priority, "next");
-      yield* harness.offerAndWait(
-        claudeSdkFrame({
-          type: "command_lifecycle",
-          command_uuid: harness.promptUuid(1),
-          state: "started",
-          uuid: "00000000-0000-4000-8000-000000021893",
-          session_id: WAKE_NATIVE_SESSION,
-        }),
-      );
-      yield* harness.offerAndWait(
-        claudeSdkFrame({
-          ...makeResultFrame({ uuid: "00000000-0000-4000-8000-000000021894", result: "Short." }),
-          user_message_uuid: harness.promptUuid(1),
-        }),
-      );
-      yield* harness.awaitTerminal(1);
-      assert.deepEqual(
-        harness.terminalEvents().map((event) => event.status),
-        ["completed"],
-      );
-      assert.deepEqual(
-        harness.events.flatMap((event) => (event.type === "steer.updated" ? [event.status] : [])),
-        ["pending", "completed"],
-      );
-      // Each reply came only in its result; the steer's must not lose to the first.
-      assert.deepEqual(
-        harness.events.flatMap((event) =>
-          event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
-            ? [event.turnItem.text]
-            : [],
-        ),
-        ["Long.", "Short."],
-      );
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        Layer.mergeAll(
-          IdAllocator.layer,
-          McpProviderSessions.layer,
-          NodeServices.layer,
-          NodeCrypto.layer,
+        });
+        yield* harness.runtime.startTurn(input);
+        yield* harness.runtime.steerTurn({
+          threadId: harness.threadId,
+          runId: input.runId,
+          providerThread: harness.providerThread,
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+            nativeTurnId: `turn:${attemptId}`,
+          }),
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: MessageId.make("message-steer-no-boundary"),
+            text: "Keep it short.",
+            attachments: [],
+          },
+        });
+        if (firstReplyStreamed) {
+          yield* harness.offerAndWait(
+            makeAssistantTextFrame({ uuid: "00000000-0000-4000-8000-000000021891", text: "Long." }),
+          );
+        }
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            ...makeResultFrame({ uuid: "00000000-0000-4000-8000-000000021892", result: "Long." }),
+            user_message_uuid: harness.promptUuid(0),
+          }),
+        );
+        // Claude finished without reading it, so it starts the steer as its next native turn.
+        assert.lengthOf(harness.offeredMessages, 2);
+        assert.equal(harness.offeredMessages[1]?.priority, "next");
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "command_lifecycle",
+            command_uuid: harness.promptUuid(1),
+            state: "started",
+            uuid: "00000000-0000-4000-8000-000000021893",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            ...makeResultFrame({ uuid: "00000000-0000-4000-8000-000000021894", result: "Short." }),
+            user_message_uuid: harness.promptUuid(1),
+          }),
+        );
+        yield* harness.awaitTerminal(1);
+        assert.deepEqual(
+          harness.terminalEvents().map((event) => event.status),
+          ["completed"],
+        );
+        assert.deepEqual(
+          harness.events.flatMap((event) => (event.type === "steer.updated" ? [event.status] : [])),
+          ["pending", "completed"],
+        );
+        // The steer's reply came only in its result; it must not lose to the first reply.
+        assert.deepEqual(
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+              ? [event.turnItem.text]
+              : [],
+          ),
+          ["Long.", "Short."],
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
         ),
       ),
-    ),
   );
 
   // regression: #34393 a provider switch replayed a $skill from the handoff history
