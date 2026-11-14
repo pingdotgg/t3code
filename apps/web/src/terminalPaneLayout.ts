@@ -51,7 +51,7 @@ export function terminalPaneLayoutEqual(
 }
 
 /** Builds the layout the same way a legacy flat group rendered: one level, one direction. */
-export function buildFlatLayout(
+function buildFlatLayout(
   terminalIds: readonly string[],
   direction: TerminalSplitDirection = "horizontal",
 ): TerminalPaneLayout {
@@ -183,7 +183,7 @@ export function removePaneFromLayout(
 }
 
 /** Drops leaves outside `validTerminalIds` and collapses any split left with one child. */
-export function normalizePaneLayout(
+function normalizePaneLayout(
   layout: TerminalPaneLayout,
   validTerminalIds: ReadonlySet<string>,
 ): TerminalPaneLayout | null {
@@ -196,4 +196,43 @@ export function normalizePaneLayout(
   if (children.length === 0) return null;
   if (children.length === 1) return children[0]!;
   return { ...layout, children };
+}
+
+export interface TerminalPaneRect {
+  terminalId: string;
+  /** Fractions of the container, 0..1. */
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Flattens the tree into pane rectangles so every pane renders as a sibling keyed by its
+ * terminal id: nesting or collapsing a split then moves a viewport instead of remounting it.
+ */
+export function layoutPaneRects(layout: TerminalPaneLayout): TerminalPaneRect[] {
+  const rects: TerminalPaneRect[] = [];
+  const visit = (
+    node: TerminalPaneLayout,
+    left: number,
+    top: number,
+    width: number,
+    height: number,
+  ) => {
+    if (node.kind === "pane") {
+      rects.push({ terminalId: node.terminalId, left, top, width, height });
+      return;
+    }
+    const count = node.children.length;
+    node.children.forEach((child, index) => {
+      if (node.direction === "vertical") {
+        visit(child, left, top + (height * index) / count, width, height / count);
+      } else {
+        visit(child, left + (width * index) / count, top, width / count, height);
+      }
+    });
+  };
+  visit(layout, 0, 0, 1, 1);
+  return rects;
 }

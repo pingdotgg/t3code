@@ -46,10 +46,11 @@ export function migratePersistedTerminalUiStateStoreState(
   const candidate = persistedState as PersistedTerminalUiStateStoreState;
   const persistedUiStateByThreadKey =
     candidate.terminalUiStateByThreadKey ?? candidate.terminalStateByThreadKey ?? {};
+  // Normalizing gives groups saved before nested splits (version 4) their `layout`.
   const terminalUiStateByThreadKey = Object.fromEntries(
-    Object.entries(persistedUiStateByThreadKey).filter(([threadKey]) =>
-      parseScopedThreadKey(threadKey),
-    ),
+    Object.entries(persistedUiStateByThreadKey)
+      .filter(([threadKey]) => parseScopedThreadKey(threadKey))
+      .map(([threadKey, state]) => [threadKey, normalizeThreadTerminalUiState(state)]),
   );
 
   return { terminalUiStateByThreadKey };
@@ -169,8 +170,7 @@ function terminalGroupsEqual(left: ThreadTerminalGroup[], right: ThreadTerminalG
     const rightGroup = right[index];
     if (!leftGroup || !rightGroup) return false;
     if (leftGroup.id !== rightGroup.id) return false;
-    // A group persisted before nested splits existed has no `layout`, which
-    // would otherwise crash the comparison below on the first normalize pass.
+    // Legacy input reaching normalize has no `layout` yet.
     if (!isTerminalPaneLayout(leftGroup.layout) || !isTerminalPaneLayout(rightGroup.layout)) {
       return false;
     }
@@ -802,7 +802,7 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
     },
     {
       name: TERMINAL_UI_STATE_STORAGE_KEY,
-      version: 4,
+      version: 5,
       storage: createJSONStorage(createTerminalUiStateStorage),
       migrate: migratePersistedTerminalUiStateStoreState,
       partialize: (state) => ({

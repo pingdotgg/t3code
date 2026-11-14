@@ -581,7 +581,7 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                       safeTerminalIds.includes(surface.activeTerminalId)
                         ? surface.activeTerminalId
                         : (safeTerminalIds[0] ?? surface.resourceId);
-                    // Pre-v14 surfaces carry `splitDirection` instead of `layout`.
+                    // Pre-v15 surfaces carry `splitDirection` instead of `layout`.
                     const legacySplitDirection = (surface as { splitDirection?: unknown })
                       .splitDirection;
                     const legacyDirection =
