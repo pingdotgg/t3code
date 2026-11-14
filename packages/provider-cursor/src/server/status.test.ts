@@ -139,8 +139,7 @@ describe("Cursor SDK model discovery", () => {
   });
 
   it("keeps catalog aliases and filters invalid and duplicate SDK model entries", () => {
-    // Aliases from the List Models example at https://prod.cursor.com/docs/cloud-agent/api/endpoints,
-    // padded and with a blank entry the wire contract rejects.
+    // The wire contract rejects padded and blank aliases.
     const composer = {
       id: "composer-2",
       displayName: "Composer 2",
