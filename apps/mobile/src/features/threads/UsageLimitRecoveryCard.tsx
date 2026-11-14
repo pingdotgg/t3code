@@ -3,6 +3,7 @@ import { AsyncResult } from "effect/reactivity";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { limitRecoveryOwnsSnooze } from "@t3tools/client-runtime/state/thread-execution";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { providerFailureTitle } from "@t3tools/shared/orchestrationV2ThreadError";
 import {
   CHATGPT_USAGE_LIMIT_CODE,
   CHATGPT_USAGE_URL,
@@ -151,9 +152,9 @@ export function UsageLimitRecoveryCard({
               : "You've reached your workspace's limit for using your ChatGPT plan in other apps. Copy a request to ask your workspace admin for increased usage limits."
             : chatGptLimit
               ? (resetText ?? "Review your usage settings in ChatGPT.")
-              : resetText
-                ? `Usage limit reached. ${resetText}`
-                : "Usage limit reached. The provider did not report a reset time. Retry manually when your limit is available."}
+              : `${providerFailureTitle(thread.runtime.lastErrorClass, code)}. ${
+                  resetText ?? "No reset time reported; retry manually."
+                }`}
         </Text>
         {chatGptLimit || canSchedule ? (
           // The margins cancel the 44pt touch height so the links sit 8pt under the text.

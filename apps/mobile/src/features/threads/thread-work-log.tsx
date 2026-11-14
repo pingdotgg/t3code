@@ -55,6 +55,7 @@ import { environmentThreadDetails, threadEnvironment } from "../../state/threads
 import { useAtomCommand } from "../../state/use-atom-command";
 import { toolActivityFaviconUrl } from "@t3tools/shared/favicon";
 import { isJavaScriptReplTool } from "@t3tools/shared/toolActivity";
+import { providerFailureTitle } from "@t3tools/shared/orchestrationV2ThreadError";
 import { useMarkdownCodeHighlight } from "./markdownCodeHighlightState";
 import { highlightCommand, type HighlightedLines } from "../../lib/highlights";
 import {
@@ -905,11 +906,11 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
         })} (${new Intl.DateTimeFormat().resolvedOptions().timeZone})`
       : null;
     const label = warning
-      ? `Usage limit reached.${resetTime ? ` Retry after ${resetTime}.` : ""}`
+      ? `${providerFailureTitle(failureItem.failure.class, failureItem.failure.code)}.${resetTime ? ` Retry after ${resetTime}.` : ""}`
       : row.summary;
     return (
       <WorkLogPressable
-        accessibilityLabel={warning ? label : `${row.summary}: ${failureItem.failure.message}`}
+        accessibilityLabel={`${label}: ${failureItem.failure.message}`}
         accessibilityHint="Long press to copy."
         onLongPress={() => props.onCopyRow(row.id, row.getCopyText())}
       >
@@ -948,11 +949,9 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
               })}
             </Text>
           </View>
-          {!warning ? (
-            <Text selectable className="ml-7 text-sm text-foreground">
-              {failureItem.failure.message}
-            </Text>
-          ) : null}
+          <Text selectable className="ml-7 text-sm text-foreground">
+            {failureItem.failure.message}
+          </Text>
           {failureItem.failure.code === ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE &&
           failureItem.runId !== null ? (
             <WorkspacePreparationRetryButton

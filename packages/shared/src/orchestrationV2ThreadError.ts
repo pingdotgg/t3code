@@ -5,6 +5,17 @@ import type {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
+export function providerFailureTitle(
+  failureClass: OrchestrationV2ProviderFailure["class"] | null | undefined,
+  code: string | null | undefined,
+): string {
+  if (failureClass !== "usage_limit") return "Provider error";
+  // Codex's usage_limit retry exhaustion retains HTTP 429, but loses the upstream reason.
+  return code === "responseTooManyFailedAttempts"
+    ? "Provider rate limit (HTTP 429)"
+    : "Usage limit reached";
+}
+
 type ErrorTurnItem = Extract<OrchestrationV2TurnItem, { type: "error" }>;
 /** Only error items are read, so callers may pass items stripped of other fields. */
 type FailureScanTurnItem =

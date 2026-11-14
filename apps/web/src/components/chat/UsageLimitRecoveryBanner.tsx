@@ -6,6 +6,7 @@ import {
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { deadlineStore } from "@t3tools/client-runtime/clock";
 import { limitRecoveryOwnsSnooze } from "@t3tools/client-runtime/state/thread-execution";
+import { providerFailureTitle } from "@t3tools/shared/orchestrationV2ThreadError";
 import {
   CHATGPT_USAGE_LIMIT_CODE,
   CHATGPT_WORKSPACE_USAGE_LIMIT_CODE,
@@ -62,14 +63,14 @@ export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBann
       : resetAt;
   const resetDescription = displayAt
     ? `${resumes ? "Resumes" : "Resets"} ${formatUpcomingTimestamp(displayAt, timestampFormat)}`
-    : "Reset time unavailable; retry manually";
+    : "No reset time reported; retry manually";
   if (!chatGptLimit) {
     return {
       id: `usage-limit-recovery:${runId}`,
       variant: "warning",
       group: "environment",
       icon: <GaugeIcon />,
-      title: "Usage limit reached",
+      title: providerFailureTitle("usage_limit", errorCode),
       description: resetDescription,
       actions: recoveryActions,
     };
