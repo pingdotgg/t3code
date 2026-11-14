@@ -53,12 +53,16 @@ function setup() {
   vi.useFakeTimers();
   mocks.searchEntries.mockClear();
   const root = createRoot(document.createElement("div"));
+  let latest: ReturnType<typeof useComposerPathSearch> | null = null;
   function Probe({ target }: { readonly target: ComposerPathSearchTarget }) {
-    useComposerPathSearch(target);
+    latest = useComposerPathSearch(target);
     return null;
   }
 
   return {
+    get result() {
+      return latest;
+    },
     render(target: ComposerPathSearchTarget) {
       act(() => root.render(<Probe target={{ ...target }} />));
     },
@@ -126,6 +130,19 @@ it.each([
     environmentId: changed.environmentId,
     input: { cwd: changed.cwd, query: changed.query.slice(0, 256), limit: 20 },
   });
+});
+
+it.each([
+  { field: "environment", changed: { ...target, environmentId: EnvironmentId.make("other") } },
+  { field: "project directory", changed: { ...target, cwd: "/other" } },
+])("reports settled results as pending when the $field changes", ({ changed }) => {
+  using harness = setup();
+  harness.render(target);
+  act(() => vi.advanceTimersByTime(200));
+  expect(harness.result?.isPending).toBe(false);
+
+  harness.render(changed);
+  expect(harness.result?.isPending).toBe(true);
 });
 
 it("keeps compiled branch results stable and resets pagination for a new target or refresh", () => {
