@@ -464,8 +464,13 @@ describe("CloudManagedEndpointRuntime", () => {
       yield* Deferred.succeed(recorded, undefined);
       yield* Fiber.join(interrupting);
 
+      // The handed-over connector is supervised: its exit starts a replacement.
+      expect(yield* Queue.take(fixture.started)).toBe(0);
+      yield* Deferred.succeed(fixture.exits[0]!, ChildProcessSpawner.ExitCode(1));
+      expect(yield* Queue.take(fixture.started)).toBe(1);
+
       yield* runtime.applyConfig(null);
-      expect(fixture.killed).toEqual([800]);
+      expect(fixture.killed).toEqual([800, 801]);
     }).pipe(
       Effect.provideService(HostProcess.Environment, {}),
       Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),

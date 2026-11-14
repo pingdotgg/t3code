@@ -827,8 +827,8 @@ export const make = Effect.gen(function* () {
     }
 
     if (!("status" in child)) {
-      // An interrupt before activeRef owns the connector would leave its scope, and the client, open.
-      const connector = yield* Effect.uninterruptible(
+      // An interrupt before activeRef owns a supervised connector would leave its client open or unwatched.
+      yield* Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {
           forgetRelayClient = yield* relayClientLedger.track(Number(child.pid));
           const connector = {
@@ -843,13 +843,12 @@ export const make = Effect.gen(function* () {
             protocol: yield* Ref.make<string | null>(null),
           } satisfies ActiveConnector;
           yield* Ref.set(activeRef, connector);
-          return connector;
+          yield* Effect.forkIn(restore(observeConnectorOutput(connector)), connectorScope);
+          yield* Effect.forkIn(restore(superviseConnector(connector)), connectorScope);
+          yield* Effect.forkIn(restore(watchConnectorRegistration(connector)), connectorScope);
+          yield* Effect.forkIn(restore(watchConnectorReadiness(connector)), connectorScope);
         }),
       );
-      yield* Effect.forkIn(observeConnectorOutput(connector), connectorScope);
-      yield* Effect.forkIn(superviseConnector(connector), connectorScope);
-      yield* Effect.forkIn(watchConnectorRegistration(connector), connectorScope);
-      yield* Effect.forkIn(watchConnectorReadiness(connector), connectorScope);
       return {
         status: "running",
         providerKind: "cloudflare_tunnel",
