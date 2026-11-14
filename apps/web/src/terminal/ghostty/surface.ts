@@ -1056,6 +1056,10 @@ export class GhosttyTerminalSurface {
     return this.core.isViewportActive();
   }
 
+  isAlternateScreen(): boolean {
+    return this.core.isAlternateScreen();
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
