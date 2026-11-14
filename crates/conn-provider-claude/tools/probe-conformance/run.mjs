@@ -28,7 +28,7 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
 import { monorepo, repoRoot } from "../../../../tools/monorepo.mjs";
-import { gitEnv, sealedNodeEnv } from "../../../../tools/sealed-env.mjs";
+import { cargoBuildEnv, sealedNodeEnv } from "../../../../tools/sealed-env.mjs";
 
 const MONOREPO = monorepo();
 const HERE = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
@@ -294,7 +294,7 @@ NodeFS.writeFileSync(
 const build = NodeChildProcess.spawnSync("cargo", ["build", "--quiet", "-p", "conn-provider-claude", "--example", "claude_probe"], {
   cwd: repoRoot,
   stdio: ["ignore", "inherit", "inherit"],
-  env: gitEnv(),
+  env: cargoBuildEnv(),
 });
 if (build.status !== 0) {
   console.error("probe-conformance: claude_probe did not build");

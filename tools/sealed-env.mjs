@@ -96,6 +96,27 @@ export function sealedCargoEnv(dir) {
     CARGO_HOME: NodePath.join(NodeOS.homedir(), ".cargo"),
     RUSTUP_HOME: NodePath.join(NodeOS.homedir(), ".rustup"),
     ...cargo,
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_NOSYSTEM: "1",
+  };
+}
+
+/**
+ * The environment for a `cargo build` that a tool makes: the tool's own, with a throwaway
+ * HOME (cargo reads `~/.gitconfig` through HOME), cargo's and rustup's folders kept, and no
+ * global git configuration. Without `dir`, a temp folder of its own, removed at exit.
+ */
+export function cargoBuildEnv(dir) {
+  if (dir === undefined) {
+    dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "conn-cargo-"));
+    const made = dir;
+    process.once("exit", () => NodeFS.rmSync(made, { recursive: true, force: true }));
+  }
+  return {
+    ...gitEnv(),
+    CARGO_HOME: process.env.CARGO_HOME ?? NodePath.join(NodeOS.homedir(), ".cargo"),
+    RUSTUP_HOME: process.env.RUSTUP_HOME ?? NodePath.join(NodeOS.homedir(), ".rustup"),
+    HOME: freshHome(dir),
   };
 }
 

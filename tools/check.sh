@@ -35,10 +35,24 @@ node tools/canary.mjs setup "$canary" || exit 1
 node tools/canary.mjs watch "$canary" &
 canary_watch=$!
 
-# Cargo reads the global git configuration (its own `http.proxy` lookup), and the tests run
-# `git` through the code under test, which inherits this environment. Neither may read the
-# git settings of this machine.
-cargo() { GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 command cargo "$@"; }
+# Cargo reads ~/.gitconfig through HOME (its git library ignores GIT_CONFIG_GLOBAL), so cargo
+# runs with a throwaway HOME. A target runner gives the test and example binaries it starts
+# the decoy HOME back, so the canary still sees what the code under test reads; their `git`
+# runs get no global or system git configuration.
+canary_cargo_home="$canary/cargo-home"
+mkdir -p "$canary_cargo_home"
+cat >"$canary/runner" <<'RUNNER'
+#!/bin/sh
+if [ "$HOME" = "$CONN_CANARY_CARGO_HOME" ]; then HOME="$CONN_CANARY_TEST_HOME"; export HOME; fi
+exec "$@"
+RUNNER
+chmod +x "$canary/runner"
+canary_host="$(rustc -vV | sed -n 's/^host: //p' | tr 'a-z.-' 'A-Z__')"
+export "CARGO_TARGET_${canary_host}_RUNNER=$canary/runner"
+export CONN_CANARY_CARGO_HOME="$canary_cargo_home" CONN_CANARY_TEST_HOME="$HOME"
+cargo() {
+  HOME="$canary_cargo_home" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 command cargo "$@"
+}
 
 passed=()
 failed=()
@@ -88,8 +102,10 @@ run "cargo fmt --check" cargo fmt --check
 run "cargo clippy" cargo clippy --workspace --all-targets --all-features -- -D warnings
 run "cargo test" cargo test --workspace
 run "release build" cargo build --release --workspace --bins --examples
-run "decode check" env CARGO_TARGET_DIR="$repo/target" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
-  cargo test --manifest-path fixtures/decode-check/Cargo.toml
+decode_check() {
+  CARGO_TARGET_DIR="$repo/target" cargo test --manifest-path fixtures/decode-check/Cargo.toml
+}
+run "decode check" decode_check
 
 # Advisories, licences, bans and sources (deny.toml). Advisories need network access for the
 # RustSec database; DENY_OFFLINE=1 (`cargo deny --offline`) uses the cached copy.

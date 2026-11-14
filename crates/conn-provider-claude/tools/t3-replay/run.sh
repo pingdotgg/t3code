@@ -12,9 +12,14 @@ out="$(mktemp -d "${TMPDIR:-/tmp}/conn-t3-replay.XXXXXX")"
 # Sealed: T3's code runs with a throwaway HOME and only what node needs from the shell, so it
 # finds no real ~/.claude and no ANTHROPIC_*, CLAUDE_* or token variable.
 sealed_home="$(mktemp -d "${TMPDIR:-/tmp}/conn-claude-sealed.XXXXXX")"
-sealed() { env -i PATH="$PATH" HOME="$sealed_home" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-C}" "$@"; }
+sealed() { env -i PATH="$PATH" HOME="$sealed_home" SHELL=/bin/sh TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-C}" "$@"; }
 trap 'rm -rf "$out" "$sealed_home"' EXIT
-(cd "$root" && GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 cargo build -q -p conn-provider-claude --example t3_replay)
+# Cargo reads ~/.gitconfig through HOME: it builds with a throwaway HOME of its own.
+cargo_home="$sealed_home/cargo-home"
+mkdir -p "$cargo_home"
+cargo_env=(HOME="$cargo_home" CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
+  GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1)
+(cd "$root" && env "${cargo_env[@]}" cargo build -q -p conn-provider-claude --example t3_replay)
 # Each scenario's runtime policy, from T3's own fixture table (runs from $out: the monorepo
 # gets no new file).
 (cd "$out" && sealed node "$here/policies.mjs" "$repo") > "$out/policies.json"

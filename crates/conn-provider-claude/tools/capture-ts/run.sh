@@ -21,7 +21,7 @@ CAPTURE_CLI_DIR="$(cd "$CAPTURE_CLI_DIR" && pwd)"
 # Sealed: T3's code runs with a throwaway HOME and only what node needs from the shell, so it
 # finds no real ~/.claude and no ANTHROPIC_*, CLAUDE_* or token variable.
 sealed_home="$(mktemp -d "${TMPDIR:-/tmp}/conn-claude-sealed.XXXXXX")"
-sealed() { env -i PATH="$PATH" HOME="$sealed_home" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-C}" "$@"; }
+sealed() { env -i PATH="$PATH" HOME="$sealed_home" SHELL=/bin/sh TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-C}" "$@"; }
 trap 'rm -f "$copy"; rm -rf "$sealed_home"' EXIT
 cp "$here/claudeCapture.test.ts" "$copy"
 cd "$repo/apps/server"

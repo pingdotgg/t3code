@@ -27,6 +27,11 @@ node_bin="$(dirname "$(command -v node)")"
 OUT="${CONFORMANCE_OUT:-$(mktemp -d "${TMPDIR:-/tmp}/conn-claude-conformance.XXXXXX")}"
 mkdir -p "$OUT"
 OUT="$(cd "$OUT" && pwd -P)"
+# Cargo reads ~/.gitconfig through HOME: it builds with a throwaway HOME of its own.
+cargo_home="$OUT/cargo-home"
+mkdir -p "$cargo_home"
+cargo_env=(HOME="$cargo_home" CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
+  GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1)
 mkdir -p "$OUT/workspace" "$OUT/attachments" "$OUT/claude-home" "$OUT/home"
 echo "output: $OUT"
 
@@ -100,7 +105,7 @@ printf '%s\n' "${base_env[@]}" > "$OUT/base.env"
 
 if [ "${CONFORMANCE_SKIP_RUST:-}" != "1" ]; then
   echo "== Conn Server (helper)"
-  (cd "$workspace_root" && GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 cargo build -q -p conn-provider-claude --example conformance)
+  (cd "$workspace_root" && env "${cargo_env[@]}" cargo build -q -p conn-provider-claude --example conformance)
   # The same working directory as the T3 side below: the spawn script's `cd -P` gives the CLI
   # OLDPWD, which is the spawning server's own working directory on both sides.
   (

@@ -28,7 +28,7 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
 import { monorepo, repoRoot } from "../../../../tools/monorepo.mjs";
-import { gitEnv, sealedNodeEnv } from "../../../../tools/sealed-env.mjs";
+import { cargoBuildEnv, sealedNodeEnv } from "../../../../tools/sealed-env.mjs";
 
 const MONOREPO = monorepo();
 const HERE = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
@@ -50,7 +50,7 @@ const only = onlyAt === -1 ? null : args[onlyAt + 1];
 const build = NodeChildProcess.spawnSync(
   "cargo",
   ["build", "--quiet", "-p", "conn-engine", "--example", "t3_fixture_replay"],
-  { cwd: repoRoot, stdio: ["ignore", "inherit", "inherit"], env: gitEnv() },
+  { cwd: repoRoot, stdio: ["ignore", "inherit", "inherit"], env: cargoBuildEnv() },
 );
 if (build.status !== 0) {
   console.error("t3-fixture-replay: the driver did not build");
