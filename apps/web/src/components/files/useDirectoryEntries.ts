@@ -8,6 +8,21 @@ import { environmentCatalog } from "~/connection/catalog";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { projectEnvironment } from "~/state/projects";
 
+// True when a loaded ancestor's listing no longer holds the folder on the way to `path`.
+function isDetached(
+  listings: ReadonlyMap<string, readonly ProjectEntry[]>,
+  listedDirectories: ReadonlySet<string>,
+  path: string,
+) {
+  if (path === "") return false;
+  const segments = path.split("/");
+  return segments.some(
+    (_, depth) =>
+      listings.has(segments.slice(0, depth).join("/")) &&
+      !listedDirectories.has(segments.slice(0, depth + 1).join("/")),
+  );
+}
+
 export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
   const [directories, setDirectories] = useState(new Map<string, readonly ProjectEntry[]>());
   const [errors, setErrors] = useState(new Map<string, string>());
@@ -15,6 +30,8 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
   const [loadingDirectories, setLoadingDirectories] = useState<ReadonlySet<string>>(
     () => new Set([""]),
   );
+  // Source of truth for `directories`, so a listing can purge folders it no longer holds.
+  const listings = useRef(new Map<string, readonly ProjectEntry[]>());
   const requests = useRef(new Map<string, Promise<void>>());
   const followUpRefreshes = useRef(new Map<string, Promise<void>>());
   const loaded = useRef(new Set<string>());
@@ -43,21 +60,42 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
       return result;
     })()
       .then((result) => {
-        if (!active.current || !result) return;
+        // A request is dropped from `requests` when its folder disappears, so its read is stale.
+        if (!active.current || !result || requests.current.get(directoryPath) !== request) return;
         if (result._tag === "Success") {
-          setDirectories((previous) =>
-            new Map(previous).set(
-              directoryPath,
-              result.value.entries.filter(
-                (entry) =>
-                  entry.path.slice(0, Math.max(0, entry.path.lastIndexOf("/"))) === directoryPath,
-              ),
+          const next = new Map(listings.current).set(
+            directoryPath,
+            result.value.entries.filter(
+              (entry) =>
+                entry.path.slice(0, Math.max(0, entry.path.lastIndexOf("/"))) === directoryPath,
             ),
           );
+          const listedDirectories = new Set(
+            [...next.values()].flatMap((listing) =>
+              listing.filter((entry) => entry.kind === "directory").map((entry) => entry.path),
+            ),
+          );
+          const removed = [...requested.current].filter((path) =>
+            isDetached(next, listedDirectories, path),
+          );
+          for (const path of removed) {
+            next.delete(path);
+            loaded.current.delete(path);
+            requested.current.delete(path);
+            requests.current.delete(path);
+          }
+          listings.current = next;
+          setDirectories(next);
+          if (removed.length > 0)
+            setLoadingDirectories((previous) => {
+              const remaining = new Set(previous);
+              for (const path of removed) remaining.delete(path);
+              return remaining;
+            });
           setErrors((previous) => {
-            const next = new Map(previous);
-            next.delete(directoryPath);
-            return next;
+            const remaining = new Map(previous);
+            for (const path of [directoryPath, ...removed]) remaining.delete(path);
+            return remaining;
           });
         } else {
           loaded.current.delete(directoryPath);
@@ -71,10 +109,11 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
         }
       })
       .finally(() => {
-        requests.current.delete(directoryPath);
+        const current = requests.current.get(directoryPath) === request;
+        if (current) requests.current.delete(directoryPath);
         if (!active.current) return;
         setPending((count) => count - 1);
-        if (!refresh)
+        if (!refresh && current)
           setLoadingDirectories((previous) => {
             const next = new Set(previous);
             next.delete(directoryPath);
@@ -93,7 +132,8 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
       if (!followUp) {
         followUp = existing.then(() => {
           followUpRefreshes.current.delete(directoryPath);
-          if (active.current) return loadDirectory(directoryPath, true);
+          if (active.current && requested.current.has(directoryPath))
+            return loadDirectory(directoryPath, true);
         });
         followUpRefreshes.current.set(directoryPath, followUp);
       }

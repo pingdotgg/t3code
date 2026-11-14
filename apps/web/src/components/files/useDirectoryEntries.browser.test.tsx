@@ -214,3 +214,28 @@ it("reads a folder that failed while unreachable again once a new session is up"
   });
   await expect.element(screen.getByText("README.md")).toBeInTheDocument();
 });
+
+it("reloads a removed folder when it reappears under the same name", async () => {
+  const state = setup();
+  // The hook probe does not navigate.
+  await using _screen = await render(<state.Probe />, { router: false });
+  const folder = { path: "src", kind: "directory" } as const;
+  await state.settle(0, [folder]);
+  await act(async () => {
+    void state.view.load("src");
+  });
+  await state.settle(1, [{ path: "src/old.ts", kind: "file" }]);
+
+  await act(async () => state.view.refresh());
+  await state.settle(2, []);
+  await state.settle(3, [{ path: "src/old.ts", kind: "file" }]);
+  expect(state.view.entries).toEqual([]);
+
+  await act(async () => state.view.refresh());
+  await state.settle(4, [folder]);
+  listEntries.mockResolvedValue({ entries: [{ path: "src/new.ts", kind: "file" }] });
+  await act(async () => {
+    await state.view.load("src");
+  });
+  expect(state.view.entries).toEqual([folder, { path: "src/new.ts", kind: "file" }]);
+});
