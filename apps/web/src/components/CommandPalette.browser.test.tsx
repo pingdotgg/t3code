@@ -14,7 +14,32 @@ import { CommandPalette } from "./CommandPalette";
 const entities = vi.hoisted(() => ({
   projects: [] as ReadonlyArray<Project>,
   threads: [] as ReadonlyArray<Thread>,
+  handleNewThread: vi.fn(async () => undefined),
 }));
+vi.mock("../state/server", async (original) => {
+  const actual = await original<typeof import("../state/server")>();
+  const { Atom } = await import("effect/reactivity");
+  const { compileResolvedKeybindingsConfig } = await import("@t3tools/shared/keybindings");
+  const { THREAD_JUMP_KEYBINDING_COMMANDS } = await import("@t3tools/contracts");
+  // The default jump bindings are desktop-only; these hold in the browser too.
+  const jumpBindings = compileResolvedKeybindingsConfig(
+    THREAD_JUMP_KEYBINDING_COMMANDS.map((command, index) => ({
+      key: `mod+${index + 1}`,
+      command,
+    })),
+  );
+  return { ...actual, primaryServerKeybindingsAtom: Atom.make(jumpBindings) };
+});
+vi.mock("../hooks/useHandleNewThread", async (original) => {
+  const actual = await original<typeof import("../hooks/useHandleNewThread")>();
+  return {
+    ...actual,
+    useHandleNewThread: () => ({
+      ...actual.useHandleNewThread(),
+      handleNewThread: entities.handleNewThread,
+    }),
+  };
+});
 vi.mock("../state/entities", async (original) => ({
   ...(await original<typeof import("../state/entities")>()),
   useProjects: () => entities.projects,
@@ -28,6 +53,21 @@ function setup(state: { projects?: ReadonlyArray<Project>; threads?: ReadonlyArr
   useCommandPaletteStore.setState(useCommandPaletteStore.getInitialState(), true);
   entities.projects = state.projects ?? [];
   entities.threads = state.threads ?? [];
+  entities.handleNewThread.mockClear();
+}
+
+function makeProject(title: string): Project {
+  return {
+    id: ProjectId.make(title),
+    environmentId: EnvironmentId.make("local"),
+    title,
+    workspaceRoot: `/work/${title}`,
+    repositoryIdentity: null,
+    defaultModelSelection: null,
+    createdAt: "2026-03-01T00:00:00.000Z",
+    updatedAt: "2026-03-01T00:00:00.000Z",
+    scripts: [],
+  };
 }
 
 describe("CommandPalette open intents", () => {
@@ -178,5 +218,24 @@ describe("CommandPalette open intents", () => {
     await page.getByRole("option", { name: /Acme/ }).first().click();
 
     await vi.waitFor(() => expect(screen.router?.state.location.pathname).toBe("/local/parent"));
+  });
+
+  it("numbers filtered New thread in... rows from 1 and jumps to them", async () => {
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+    setup({ projects: [makeProject("server"), makeProject("lima")] });
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+
+    openCommandPalette({ open: "new-thread-in" });
+    await userEvent.fill(page.getByPlaceholder("Search..."), "li");
+    await expect.element(page.getByRole("option", { name: /server/ })).not.toBeInTheDocument();
+    await expect.element(page.getByRole("option", { name: /lima/ })).toMatchTextContent("Ctrl+1");
+    await userEvent.keyboard("{Control>}1{/Control}");
+
+    await vi.waitFor(() =>
+      expect(entities.handleNewThread).toHaveBeenCalledWith({
+        environmentId: EnvironmentId.make("local"),
+        projectId: ProjectId.make("lima"),
+      }),
+    );
   });
 });
