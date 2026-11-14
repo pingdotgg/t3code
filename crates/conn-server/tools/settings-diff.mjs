@@ -13,7 +13,9 @@
 // It compares the client view (the answer) and the stored settings, each decoded as
 // `ServerSettings` and encoded back, so defaults and key order do not count. A patch the T3
 // schema rejects must be refused. Not modelled: `normalizeServerSettings` (enabled flags,
-// idle compaction, legacy override derivation), managed policy, the secret store itself.
+// idle compaction, legacy override derivation), managed policy. The stored file is compared in
+// its T3 form (`••••••` where a secret went to the store); `secrets-interop.mjs` runs the T3
+// server's own settings service on the store itself.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -102,8 +104,17 @@ function t3Result(stored, patch, mutation) {
       ? { value: kept.get(secret.secretName), redacted: false }
       : { value: secret.value, redacted: secret.redacted },
   );
+  // The file holds the marker where a value went to the secret store (persistSettingsSecrets);
+  // a cleared or non-sensitive slot holds its value.
+  const filed = secrets.mapSettingsSecrets(next, (secret) =>
+    !secret.sensitive
+      ? { value: secret.value, redacted: false }
+      : secret.redacted || secret.value.length > 0
+        ? { value: "", redacted: true }
+        : { value: "", redacted: false },
+  );
   return {
-    stored: normal(encodeSettings(next)),
+    stored: normal(encodeSettings(filed)),
     view: normal(encodeSettings(t3.redactServerSettingsForClient(next, { secretReferences: false }))),
   };
 }

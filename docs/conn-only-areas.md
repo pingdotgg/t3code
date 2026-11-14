@@ -42,6 +42,48 @@ Rules used for the tables:
 - For MCP tools, the caller gate in `S/mcp/McpToolAccess.ts` (finds the calling thread, checks modes) is not counted. A tool counts as `engine` only when its work uses threads, turns or projects beyond that gate.
 - "T3 handler" is the file:line where the T3 server answers the tag or tool.
 
+## Settings secrets (the T3 server's secret store)
+
+Every secret a `ServerSettings` field holds. The T3 server keeps the value in its secret store,
+`<state>/secrets/<name>.bin` (`S/auth/ServerSecretStore.ts`: folder 0700, file 0600, a temp
+file `<name>.bin.<uuid>.tmp` and a rename), and `settings.json` holds `••••••` in its place.
+`e(x)` is base64url of the UTF-8 text without padding; `host` is a server host, trimmed and
+lowercase. Names come from `mapSecretFieldGroups` (`S/settingsSecrets.ts`) and
+`sourceControlHostSecretName` (`S/sourceControl/sourceControlHostSecrets.ts`).
+
+| Settings field | Store name |
+| --- | --- |
+| `providerInstances.<id>.config.<field>` (OpenCode `serverPassword`, Antigravity `apiKey`) | `provider-config-e(id)-e(driver)-e(field)[-e(host)]` |
+| `providerInstances.<id>.environment[]` with `sensitive: true` | `provider-env-e(id)-e(name)`; the file holds `value: ""` and `valueRedacted: true` |
+| `sourceControlHosts.<kind>.<field>` (GitHub `tokens` and `signIns` per host, Bitbucket `accessToken` and `apiToken`, GitCafe `token`) | `source-control-e(kind)-e(field)[-e(host)]` |
+| `usageLimitSources.<id>.managementKey` | `usage-limit-source-e(id)` |
+| `textGenerators.<id>.apiKey` | `text-generator-e(id)-e("apiKey")` |
+| `cloudSpeechCredentials.<openai, xai, openrouter>` | `voice-cloud-<field>` (not encoded) |
+| `easDeviceHosts[].accessToken` | `device-host-e(id)-e("accessToken")` |
+| `simlockDeviceHosts[].agentToken` | `simlock-device-host-e(id)-e("agentToken")` |
+
+- **When a value moves.** At start, a field secret that `settings.json` holds as a value moves
+  to the store and the file gets the marker (`moveInlineSettingsSecrets`); a value that cannot
+  be stored stays inline. A sensitive variable moves at the next save, not at start. On a save
+  (`persistSettingsSecrets`): a new value is written and the slot gets the marker; the marker
+  keeps the stored value; an empty slot, a variable no longer sensitive, or a slot that is
+  gone removes the stored value. A failed store or file write undoes the store changes.
+- **What a client sees.** `••••••` for a saved field secret (also for a secret provider
+  reference, to a client without `secretReferences`), `""` with `valueRedacted: true` for a
+  saved sensitive variable, `""` when nothing is saved (also a marker whose file is gone). A
+  client that sends the marker back keeps the stored value.
+- **A reference** (`{ provider, reference }`) is not a secret: it stays in `settings.json`.
+- **This server** (since 2026-11-14) does the same, in `crates/conn-server/src/settings/secrets.rs`
+  with `conn_support::secret_store`. The settings it hands its own code (`SettingsStore::raw`)
+  hold the values read from the store, kept in memory as before. Before, it kept every value
+  in `settings.json` (0600). Both servers can read and write the same state folder:
+  `crates/conn-server/tools/secrets-interop.mjs` runs the T3 server's own settings service and
+  this server on shared folders (a folder from before the change, saves by either server, a
+  key used for a text generator request) and checks that no value is lost or left in the file.
+- **Who can read a value.** The OS user that runs the server (and any process of that user,
+  such as an agent's shell): the files are 0600 in a 0700 folder, in clear text, as in T3.
+  No client can: no method returns a settings secret.
+
 ## Finding that changes the plan
 
 At this pin the T3 server mounts only `annotations.subscribe`, `annotations.create` and `annotations.remove` from the Conn-only RPC group (`S/wsFork.ts:9-13`; `M/FORK.md:1126-1139`). `credentials.*`, `testLogins.*` and `panels.*` are declared in `ForkWsRpcGroup` (`C/rpc.ts:2329-2342`) but have **no handler**. FORK.md:1138: "`credentials*`, `testLogins*` and `panels.*` remain unmounted. Do not broaden this allowlist". `S/wsMountedRpc.test.ts:8-10` enforces a three-method allowlist. What a client sees for an unmounted tag is unconfirmed. The logic behind them exists as services (`TestLoginStore`, `CredentialAutofill`, `AgentPanelBroker`) and the MCP tools use it, so the table cites those lines.

@@ -222,11 +222,10 @@ that list.
   request fails without a call. A first title keeps its seed (a short `titleRegeneration`
   shows), a regenerate reports "This server generates titles only with a text generator.
   Choose one as the title model in Settings."
-- **The key.** In `settings.json` (`textGenerators.<id>.apiKey`, file 0600), where this server
-  keeps every settings secret (`settings.rs`). When settings hold the redaction marker, the
-  key is read from the T3 server's store, `<state>/secrets/text-generator-<b64url id>-<b64url
-  "apiKey">.bin`. A secret provider reference cannot be read (no secret provider here) and
-  fails with T3's `SettingsSecretUnresolvedError` text. Only the request header holds the
+- **The key.** In the T3 server's secret store, `<state>/secrets/text-generator-<b64url
+  id>-<b64url "apiKey">.bin`, as every settings secret (see `docs/conn-only-areas.md`,
+  "Settings secrets"). A secret provider reference cannot be read (no secret provider here)
+  and fails with T3's `SettingsSecretUnresolvedError` text. Only the request header holds the
   key (`conn_source_control::Secret`); no `Debug`, error or log shows it.
 - **Proofs.** 22 unit tests (the cases of `TextGenerators.test.ts` on a loopback stub, the
   title retries on a paused clock, the project override); the client's decoders accept both

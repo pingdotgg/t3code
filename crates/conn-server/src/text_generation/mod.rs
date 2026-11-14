@@ -18,11 +18,7 @@ pub mod js;
 pub mod prompts;
 pub mod title;
 
-use std::{
-    collections::VecDeque,
-    path::{Path, PathBuf},
-    sync::Mutex,
-};
+use std::{collections::VecDeque, sync::Mutex};
 
 use conn_contract::{
     ListTextGeneratorModelsInput, ListTextGeneratorModelsResult, TextGeneratorModel, to_json,
@@ -48,15 +44,12 @@ struct CachedModels {
 
 pub struct TextGenerators {
     settings: ReadSettings,
-    secrets_dir: PathBuf,
     cache: Mutex<VecDeque<CachedModels>>,
 }
 
 impl std::fmt::Debug for TextGenerators {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TextGenerators")
-            .field("secrets_dir", &self.secrets_dir)
-            .finish_non_exhaustive()
+        f.debug_struct("TextGenerators").finish_non_exhaustive()
     }
 }
 
@@ -122,33 +115,19 @@ fn unresolved(settings: &Map<String, Value>, provider: &str) -> RequestError {
     ))
 }
 
-/// The T3 server's secret store file for a text generator's key (`settingsSecrets.ts`).
-fn store_path(secrets_dir: &Path, id: &str) -> PathBuf {
-    let encode = |text: &str| conn_support::base64::url_encode(text.as_bytes());
-    secrets_dir.join(format!(
-        "text-generator-{}-{}.bin",
-        encode(id),
-        encode("apiKey")
-    ))
-}
-
 impl TextGenerators {
-    /// `settings` reads the stored settings (secrets included); `state_dir` holds `secrets/`.
-    pub fn new(
-        settings: impl Fn() -> Map<String, Value> + Send + Sync + 'static,
-        state_dir: &Path,
-    ) -> Self {
+    /// `settings` reads the settings with their secrets (`SettingsStore::raw`, which reads
+    /// the secret store).
+    pub fn new(settings: impl Fn() -> Map<String, Value> + Send + Sync + 'static) -> Self {
         Self {
             settings: Box::new(settings),
-            secrets_dir: state_dir.join("secrets"),
             cache: Mutex::new(VecDeque::new()),
         }
     }
 
     /// Reads the server's own settings and its state folder.
     pub fn for_environment(environment: std::sync::Arc<crate::environment::Environment>) -> Self {
-        let state_dir = environment.state_dir.clone();
-        Self::new(move || environment.settings.raw(), &state_dir)
+        Self::new(move || environment.settings.raw())
     }
 
     /// The stored settings, secrets included.
@@ -166,7 +145,7 @@ impl TextGenerators {
     }
 
     /// `connect`: the config's connection with its key read.
-    async fn connect(&self, id: &str, config: &Value) -> Result<Connection, RequestError> {
+    async fn connect(&self, config: &Value) -> Result<Connection, RequestError> {
         let label = generator_label(config);
         let invalid = || RequestError(format!("{label} returned a reply T3 Code couldn't read."));
         let kind = config
@@ -183,20 +162,6 @@ impl TextGenerators {
             .to_owned();
         let api_key = match config.get("apiKey") {
             None | Some(Value::Null) => Secret::new(""),
-            Some(Value::String(marker)) if marker == SECRET_REDACTED => {
-                let path = store_path(&self.secrets_dir, id);
-                // A missing file reads as no key, as `materializeSettingsSecrets` does.
-                let read = tokio::task::spawn_blocking(move || std::fs::read(path)).await;
-                match read {
-                    Ok(Ok(bytes)) => Secret::new(String::from_utf8_lossy(&bytes).into_owned()),
-                    Ok(Err(e)) if e.kind() == std::io::ErrorKind::NotFound => Secret::new(""),
-                    _ => {
-                        return Err(RequestError(
-                            "Couldn't read this environment's settings.".to_owned(),
-                        ));
-                    }
-                }
-            }
             Some(Value::String(key)) => Secret::new(key.clone()),
             Some(reference) => {
                 let provider = reference
@@ -224,7 +189,7 @@ impl TextGenerators {
                 "{label} is off. Turn it on in Settings \u{2192} Providers."
             )));
         }
-        let result = match self.connect(id, &config).await {
+        let result = match self.connect(&config).await {
             Ok(connection) => connection.generate(model, prompt).await,
             Err(error) => Err(error),
         };
@@ -270,7 +235,7 @@ impl TextGenerators {
                 });
             }
         }
-        let connection = self.connect(&input.id, &config).await.map_err(|e| e.0)?;
+        let connection = self.connect(&config).await.map_err(|e| e.0)?;
         let models = connection.list_models().await.map_err(|e| e.0)?;
         if input.test == Some(true) {
             // An explicit test sends one tiny request: some APIs list models without checking

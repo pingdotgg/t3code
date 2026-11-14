@@ -84,6 +84,7 @@ monorepo_checks=(
   "replay"
   "decode coverage"
   "settings-diff"
+  "secrets-interop"
   "textgen-diff"
   "limits-diff"
   "parity"
@@ -126,6 +127,8 @@ else
   run "decode coverage" \
     node crates/conn-server/tools/decode-coverage.mjs "$decoded" "$release/conn-server"
   run "settings-diff" node crates/conn-server/tools/settings-diff.mjs "$release/conn-server"
+  # Settings secrets: the T3 server's own settings service and this server on one state folder.
+  run "secrets-interop" node crates/conn-server/tools/secrets-interop.mjs "$release"
   # Text generators and thread titles against T3's own code, on a loopback stub (no model).
   run "textgen-diff" node crates/conn-server/tools/textgen-diff.mjs "$release/examples/text_generation"
   run "limits-diff" node crates/conn-server/tools/limits-diff.mjs

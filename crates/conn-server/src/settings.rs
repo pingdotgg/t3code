@@ -9,11 +9,12 @@
 //!
 //! Patches follow `applyServerSettingsPatch` (`packages/shared/src/serverSettings.ts`): a deep
 //! merge, with the replacements and entry maps listed in [`apply_patch`]. A patch must decode
-//! as `ClientServerSettingsPatch` and the result as `ServerSettings`. Secrets stay in the file
-//! (0600) instead of a secret store. They are redacted for clients per group, and a secret a
-//! client echoes as `••••••` keeps its stored value; the groups and fields come from the T3
-//! server (`settings/generated.rs`, by `tools/gen-upstream.mjs`). The TypeScript server moves
-//! inline secrets into its store when it next starts.
+//! as `ClientServerSettingsPatch` and the result as `ServerSettings`. Secrets live in the T3
+//! server's secret store, `<state>/secrets/<name>.bin`, and the file holds `••••••` in their
+//! place (`settings/secrets.rs`); a secret found inline moves to the store at start, as in T3.
+//! Clients see secrets redacted per group, and a secret a client echoes as `••••••` keeps its
+//! stored value; the groups and fields come from the T3 server (`settings/generated.rs`, by
+//! `tools/gen-upstream.mjs`).
 //!
 //! `crates/conn-server/tools/settings-diff.mjs` runs the T3 server's own functions and this
 //! server on the same cases (`settings-cases.json`) and fails when they differ.
@@ -36,12 +37,13 @@ pub const SECRET_REDACTED: &str = "\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{20
 
 mod generated;
 
+mod secrets;
+
 use generated::{
-    BACKGROUND_PRESETS, CLIENT_PATCH_KEYS, CLOUD_SPEECH, DEFAULT_DISABLED_DRIVERS,
-    DEFAULT_ENABLED_INSTANCES, EAS_DEVICE_HOST, PROJECT_OVERRIDE_KEYS, PROVIDER_CONFIG,
-    SECRET_PROVIDER_KINDS, SIMLOCK_DEVICE_HOST, SOURCE_CONTROL_HOST, TEXT_GENERATOR,
-    USAGE_LIMIT_SOURCE,
+    BACKGROUND_PRESETS, CLIENT_PATCH_KEYS, DEFAULT_DISABLED_DRIVERS, DEFAULT_ENABLED_INSTANCES,
+    PROJECT_OVERRIDE_KEYS,
 };
+use secrets::redact;
 
 /// Drops the top-level keys that `ClientServerSettingsPatch` does not have, as the T3 server's
 /// decode does: a client cannot set the theme defaults, which only the theme service writes.
@@ -109,9 +111,19 @@ impl SettingsError {
 
 pub struct SettingsStore {
     path: PathBuf,
-    sparse: Mutex<Map<String, Value>>,
+    /// `<state>/secrets`, the T3 server's secret store.
+    secrets_dir: PathBuf,
+    state: Mutex<Loaded>,
     /// Bumped after each write; `subscribeServerConfig` sends `settingsUpdated` on it.
     revision: watch::Sender<u64>,
+}
+
+/// The settings in both forms.
+struct Loaded {
+    /// As the file holds them: `••••••` where a secret is saved.
+    sparse: Map<String, Value>,
+    /// With each saved secret read from the store, for the server's own use.
+    materialized: Map<String, Value>,
 }
 
 impl std::fmt::Debug for SettingsStore {
@@ -124,11 +136,25 @@ impl std::fmt::Debug for SettingsStore {
 }
 
 impl SettingsStore {
-    /// Reads `path`. A missing file is no settings; a malformed one is logged and treated the
-    /// same, as the TypeScript server does, and is not rewritten until a client changes one.
+    /// Reads `path` and the secret store beside it (`secrets/`). A missing file is no
+    /// settings; a malformed one is logged and treated the same, as the TypeScript server
+    /// does, and is not rewritten until a client changes one. A secret the file holds inline
+    /// moves to the store, and the file is rewritten with the marker (`moveInlineSettingsSecrets`).
+    /// Blocking: call it at start or from a blocking thread.
     pub fn open(path: PathBuf) -> Self {
-        let sparse = match read(&path) {
-            Ok(sparse) => sparse,
+        let secrets_dir = path
+            .parent()
+            .map_or_else(|| PathBuf::from("secrets"), |dir| dir.join("secrets"));
+        let mut sparse = match read(&path) {
+            Ok(sparse) => {
+                if let Err(error) = conn_support::secret_store::ensure_dir(&secrets_dir) {
+                    eprintln!(
+                        "conn-server: failed to prepare {}: {error}",
+                        secrets_dir.display()
+                    );
+                }
+                sparse
+            }
             Err(error) => {
                 eprintln!(
                     "conn-server: failed to parse {}, using defaults: {error}",
@@ -137,9 +163,30 @@ impl SettingsStore {
                 Map::new()
             }
         };
+        if secrets::move_inline(&secrets_dir, &mut sparse)
+            && let Err(error) = write_settings(&path, &sparse)
+        {
+            // The store holds the values now and the file still holds them inline; the next
+            // start moves them again.
+            eprintln!(
+                "conn-server: failed to write {} after moving its secrets: {error}",
+                path.display()
+            );
+        }
+        let materialized = match secrets::materialize(&secrets_dir, &sparse) {
+            Ok(materialized) => materialized,
+            Err((name, error)) => {
+                eprintln!("conn-server: failed to read settings secret {name}: {error}");
+                sparse.clone()
+            }
+        };
         Self {
             path,
-            sparse: Mutex::new(sparse),
+            secrets_dir,
+            state: Mutex::new(Loaded {
+                sparse,
+                materialized,
+            }),
             revision: watch::Sender::new(0),
         }
     }
@@ -148,12 +195,12 @@ impl SettingsStore {
         &self.path
     }
 
-    /// The settings as stored, secrets included. For the server's own use.
+    /// The settings with their secrets, for the server's own use (`getSettings`).
     pub fn raw(&self) -> Map<String, Value> {
-        self.lock().clone()
+        self.lock().materialized.clone()
     }
 
-    /// `ServerSettings` for clients: the stored settings with secrets redacted.
+    /// `ServerSettings` for clients: the settings with secrets redacted.
     pub fn for_client(&self) -> Value {
         let mut settings = self.raw();
         redact(&mut settings);
@@ -165,11 +212,13 @@ impl SettingsStore {
     }
 
     /// Applies a `server.updateSettings` patch, saves, and returns the client view.
+    /// Blocking: it writes the secret store and the file.
     ///
     /// The patch must decode as `ClientServerSettingsPatch` and the mutation as
     /// `ProviderInstanceMutation`, and the result must decode as `ServerSettings`, so a client
-    /// can never store settings that no client decodes. A secret a client echoes as `••••••`
-    /// keeps its stored value (`persistSettingsSecrets`).
+    /// can never store settings that no client decodes. Secrets go to the store as
+    /// `persistSettingsSecrets` sends them: a new value is written, a value a client echoes as
+    /// `••••••` stays, a cleared one is removed; on a failure the store changes are undone.
     pub fn update(&self, patch: Value, mutation: Option<Value>) -> Result<Value, SettingsError> {
         if let Err(error) = conn_contract::from_json::<ClientServerSettingsPatch>(patch.clone()) {
             return Err(self.error("normalize", format!("invalid settings patch: {error}")));
@@ -187,8 +236,8 @@ impl SettingsStore {
             return Err(self.error("normalize", "the patch is not an object"));
         };
         keep_client_patch_keys(&mut patch);
-        let mut sparse = self.lock();
-        let mut next = sparse.clone();
+        let mut state = self.lock();
+        let mut next = state.sparse.clone();
         if let Some(mutation) = &mutation
             && mutation["operation"] == "create"
             && let Some(id) = mutation["instanceId"].as_str()
@@ -206,7 +255,6 @@ impl SettingsStore {
             apply_provider_instance_mutation(&mut next, mutation)
                 .map_err(|detail| self.error("normalize", detail))?;
         }
-        restore_echoed_secrets(&sparse, &mut next);
         if let Err(error) = conn_contract::from_json::<ServerSettings>(Value::Object(next.clone()))
         {
             return Err(self.error(
@@ -214,12 +262,25 @@ impl SettingsStore {
                 format!("the settings would not decode: {error}"),
             ));
         }
-        let mut bytes =
-            serde_json::to_vec(&next).map_err(|e| self.error("normalize", e.to_string()))?;
-        bytes.push(b'\n');
-        write_private(&self.path, &bytes).map_err(|e| self.error("write-file", e.to_string()))?;
-        *sparse = next;
-        drop(sparse);
+        let changes = secrets::persist(&state.sparse, &mut next);
+        let undo = secrets::apply(&self.secrets_dir, &changes)
+            .map_err(|(operation, error)| self.error(operation, error.to_string()))?;
+        let materialized = match secrets::materialize(&self.secrets_dir, &next) {
+            Ok(materialized) => materialized,
+            Err((_, error)) => {
+                undo.run(&self.secrets_dir);
+                return Err(self.error("read-secret", error.to_string()));
+            }
+        };
+        if let Err(error) = write_settings(&self.path, &next) {
+            undo.run(&self.secrets_dir);
+            return Err(self.error("write-file", error));
+        }
+        *state = Loaded {
+            sparse: next,
+            materialized,
+        };
+        drop(state);
         self.revision.send_modify(|r| *r += 1);
         Ok(self.for_client())
     }
@@ -233,9 +294,16 @@ impl SettingsStore {
         }
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, Map<String, Value>> {
-        crate::lock(&self.sparse)
+    fn lock(&self) -> std::sync::MutexGuard<'_, Loaded> {
+        crate::lock(&self.state)
     }
+}
+
+/// Writes the file form, as `writeSettingsAtomically` (0600, a temp file and a rename).
+fn write_settings(path: &Path, settings: &Map<String, Value>) -> Result<(), String> {
+    let mut bytes = serde_json::to_vec(settings).map_err(|e| e.to_string())?;
+    bytes.push(b'\n');
+    write_private(path, &bytes).map_err(|e| e.to_string())
 }
 
 fn read(path: &Path) -> io::Result<Map<String, Value>> {
@@ -651,290 +719,6 @@ fn apply_provider_instance_mutation(
     }
 }
 
-/// One group of settings fields that may hold secrets: its place, and which fields.
-struct SecretGroup<'a> {
-    /// Names the group across two versions of the settings (`textGenerators/<id>`).
-    key: String,
-    fields: &'a mut Map<String, Value>,
-    secret_fields: &'static [&'static str],
-}
-
-fn listed(
-    table: &'static [(&'static str, &'static [&'static str])],
-    name: &str,
-) -> &'static [&'static str] {
-    table
-        .iter()
-        .find(|(n, _)| *n == name)
-        .map_or(&[], |(_, fields)| *fields)
-}
-
-/// Every secret group of `settings`, as `mapSecretFieldGroups` (`settingsSecrets.ts`) walks
-/// them, and each provider instance's environment.
-fn secret_groups(
-    settings: &mut Map<String, Value>,
-    group: &mut dyn FnMut(SecretGroup<'_>),
-    environment: &mut dyn FnMut(&str, &mut Vec<Value>),
-) {
-    for (name, value) in settings.iter_mut() {
-        match (name.as_str(), value) {
-            ("cloudSpeechCredentials", Value::Object(fields)) => group(SecretGroup {
-                key: name.clone(),
-                fields,
-                secret_fields: CLOUD_SPEECH,
-            }),
-            ("providerInstances", Value::Object(instances)) => {
-                for (id, instance) in instances.iter_mut() {
-                    let Value::Object(instance) = instance else {
-                        continue;
-                    };
-                    let driver = instance
-                        .get("driver")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_owned();
-                    if let Some(Value::Object(config)) = instance.get_mut("config") {
-                        group(SecretGroup {
-                            key: format!("providerInstances/{id}/{driver}"),
-                            fields: config,
-                            secret_fields: listed(PROVIDER_CONFIG, &driver),
-                        });
-                    }
-                    if let Some(Value::Array(variables)) = instance.get_mut("environment") {
-                        environment(id, variables);
-                    }
-                }
-            }
-            ("sourceControlHosts", Value::Object(hosts)) => {
-                for (kind, fields) in hosts.iter_mut() {
-                    if let Value::Object(fields) = fields {
-                        group(SecretGroup {
-                            key: format!("sourceControlHosts/{kind}"),
-                            fields,
-                            secret_fields: listed(SOURCE_CONTROL_HOST, kind),
-                        });
-                    }
-                }
-            }
-            (map @ ("usageLimitSources" | "textGenerators"), Value::Object(entries)) => {
-                let secret_fields = if map == "usageLimitSources" {
-                    USAGE_LIMIT_SOURCE
-                } else {
-                    TEXT_GENERATOR
-                };
-                for (id, fields) in entries.iter_mut() {
-                    if let Value::Object(fields) = fields {
-                        group(SecretGroup {
-                            key: format!("{map}/{id}"),
-                            fields,
-                            secret_fields,
-                        });
-                    }
-                }
-            }
-            (list @ ("easDeviceHosts" | "simlockDeviceHosts"), Value::Array(hosts)) => {
-                let secret_fields = if list == "easDeviceHosts" {
-                    EAS_DEVICE_HOST
-                } else {
-                    SIMLOCK_DEVICE_HOST
-                };
-                for fields in hosts.iter_mut() {
-                    if let Value::Object(fields) = fields {
-                        let id = fields
-                            .get("id")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_owned();
-                        group(SecretGroup {
-                            key: format!("{list}/{id}"),
-                            fields,
-                            secret_fields,
-                        });
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
-/// `{ provider, reference }`: a secret kept by a secret provider, not a secret itself.
-fn is_secret_reference(value: &Value) -> bool {
-    value.get("provider").is_some_and(Value::is_string)
-        && value.get("reference").is_some_and(Value::is_string)
-}
-
-/// The value a client sees for one stored secret: the marker for a saved one, including a
-/// reference (a client without `secretReferences` decodes only strings).
-fn redacted_secret(value: &Value) -> Value {
-    match value {
-        Value::String(s) if s.is_empty() => value.clone(),
-        Value::String(_) => json!(SECRET_REDACTED),
-        _ if is_secret_reference(value) => json!(SECRET_REDACTED),
-        _ => value.clone(),
-    }
-}
-
-/// `redactServerSettingsForClient` for a client without `secretReferences`: secret fields
-/// show `••••••`, a field that maps server hosts to secrets shows it per host, sensitive
-/// environment values show empty with `valueRedacted`, and a secret provider of a kind this
-/// server does not know shows no `config`.
-fn redact(settings: &mut Map<String, Value>) {
-    secret_groups(
-        settings,
-        &mut |group| {
-            for field in group.secret_fields {
-                let Some(value) = group.fields.get_mut(*field) else {
-                    continue;
-                };
-                let shown = match &*value {
-                    Value::Object(hosts) if !is_secret_reference(value) => Value::Object(
-                        hosts
-                            .iter()
-                            .map(|(host, secret)| {
-                                (host.trim().to_lowercase(), redacted_secret(secret))
-                            })
-                            .collect(),
-                    ),
-                    other => redacted_secret(other),
-                };
-                *value = shown;
-            }
-        },
-        &mut |_, variables| {
-            for variable in variables.iter_mut() {
-                let Value::Object(variable) = variable else {
-                    continue;
-                };
-                let redacted = variable.remove("valueRedacted") == Some(Value::Bool(true));
-                let value = variable.get("value").cloned().unwrap_or(Value::Null);
-                if is_secret_reference(&value)
-                    || variable.get("sensitive") != Some(&Value::Bool(true))
-                {
-                    continue;
-                }
-                let saved = redacted || value.as_str().is_some_and(|s| !s.is_empty());
-                variable.insert("value".into(), json!(""));
-                if saved {
-                    variable.insert("valueRedacted".into(), json!(true));
-                }
-            }
-        },
-    );
-    if let Some(Value::Object(providers)) = settings.get_mut("secretProviders") {
-        for entry in providers.values_mut() {
-            let known = entry
-                .get("kind")
-                .and_then(Value::as_str)
-                .is_some_and(|kind| SECRET_PROVIDER_KINDS.contains(&kind));
-            if !known && let Value::Object(entry) = entry {
-                entry.remove("config");
-            }
-        }
-    }
-}
-
-/// `persistSettingsSecrets` with `withEchoedSecretReferences`: a client shown `••••••` (or a
-/// sensitive variable as `valueRedacted`) sends it back unchanged; the stored secret or
-/// reference stays instead of the marker.
-fn restore_echoed_secrets(current: &Map<String, Value>, next: &mut Map<String, Value>) {
-    // The stored secrets, by group, field and server host.
-    let mut saved: Vec<(String, Value)> = Vec::new();
-    let mut saved_env: Vec<(String, Value)> = Vec::new();
-    let mut current = current.clone();
-    secret_groups(
-        &mut current,
-        &mut |group| {
-            for field in group.secret_fields {
-                match group.fields.get(*field) {
-                    Some(value @ Value::Object(hosts)) if !is_secret_reference(value) => {
-                        for (host, value) in hosts {
-                            saved.push((
-                                format!("{}/{field}/{}", group.key, host.trim().to_lowercase()),
-                                value.clone(),
-                            ));
-                        }
-                    }
-                    Some(value) => saved.push((format!("{}/{field}", group.key), value.clone())),
-                    None => {}
-                }
-            }
-        },
-        &mut |id, variables| {
-            for variable in variables.iter() {
-                if let Some(name) = variable.get("name").and_then(Value::as_str) {
-                    saved_env.push((
-                        format!("{id}/{name}"),
-                        variable.get("value").cloned().unwrap_or(Value::Null),
-                    ));
-                }
-            }
-        },
-    );
-    let find = |list: &[(String, Value)], key: &str| {
-        list.iter()
-            .find(|(k, v)| {
-                k == key
-                    && (is_secret_reference(v)
-                        || v.as_str()
-                            .is_some_and(|s| !s.is_empty() && s != SECRET_REDACTED))
-            })
-            .map(|(_, v)| v.clone())
-    };
-    secret_groups(
-        next,
-        &mut |group| {
-            for field in group.secret_fields {
-                let Some(value) = group.fields.get_mut(*field) else {
-                    continue;
-                };
-                match value {
-                    Value::String(s) if s == SECRET_REDACTED => {
-                        if let Some(old) = find(&saved, &format!("{}/{field}", group.key)) {
-                            *value = old;
-                        }
-                    }
-                    Value::Object(hosts) => {
-                        for (host, secret) in hosts.iter_mut() {
-                            if secret == SECRET_REDACTED
-                                && let Some(old) = find(
-                                    &saved,
-                                    &format!(
-                                        "{}/{field}/{}",
-                                        group.key,
-                                        host.trim().to_lowercase()
-                                    ),
-                                )
-                            {
-                                *secret = old;
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        },
-        &mut |id, variables| {
-            for variable in variables.iter_mut() {
-                let Value::Object(variable) = variable else {
-                    continue;
-                };
-                let echoed = variable.get("valueRedacted") == Some(&Value::Bool(true))
-                    && variable.get("value").is_none_or(|v| v == "");
-                let name = variable
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned();
-                if echoed && let Some(old) = find(&saved_env, &format!("{id}/{name}")) {
-                    variable.insert("value".into(), old);
-                    variable.remove("valueRedacted");
-                }
-            }
-        },
-    );
-}
-
 /// `resolveProjectProviderInstanceEnabled`: the project's `providerInstances[id].enabled`
 /// override when set, else the machine-wide `resolveProviderInstanceEnabled` of the instance's
 /// entry (an explicit `false` on the envelope or in its `config` wins; then the envelope, the
@@ -1156,54 +940,247 @@ mod tests {
         assert_eq!(view["secretProviders"]["x"], json!({ "kind": "future" }));
     }
 
-    #[test]
-    fn echoed_markers_keep_the_stored_secrets() {
-        let current = object(json!({
+    fn temp_state() -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("conn-settings-{}", crate::auth::random_hex(6)));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn stored(dir: &Path, name: &str) -> Option<String> {
+        fs::read_to_string(dir.join("secrets").join(format!("{name}.bin"))).ok()
+    }
+
+    fn on_disk(dir: &Path) -> Value {
+        serde_json::from_str(&fs::read_to_string(dir.join("settings.json")).unwrap()).unwrap()
+    }
+
+    /// Inline secrets as this server wrote them before it used the store.
+    fn inline_settings() -> Value {
+        json!({
             "providerInstances": { "oc": { "driver": "opencode", "config": { "serverPassword": "pw" },
-                "environment": [{ "name": "KEY", "value": "s3cret", "sensitive": true }] } },
-            "textGenerators": { "t": { "apiKey": "key", "enabled": true } },
-            "sourceControlHosts": { "github": { "tokens": { "github.com": "ghp" } } },
-            "cloudSpeechCredentials": { "openai": { "provider": "op", "reference": "op://v/i/f" } },
-        }));
-        let mut next = current.clone();
-        let mut view = current.clone();
-        redact(&mut view);
-        // The client edits what it was shown and sends it all back.
-        next.insert(
-            "providerInstances".into(),
-            view["providerInstances"].clone(),
-        );
-        next["providerInstances"]["oc"]["displayName"] = json!("OpenCode");
-        next.insert(
-            "textGenerators".into(),
-            json!({ "t": { "apiKey": SECRET_REDACTED, "enabled": false } }),
-        );
-        next.insert(
-            "sourceControlHosts".into(),
-            view["sourceControlHosts"].clone(),
-        );
-        next.insert(
-            "cloudSpeechCredentials".into(),
-            view["cloudSpeechCredentials"].clone(),
-        );
-        restore_echoed_secrets(&current, &mut next);
-        let saved = &next["providerInstances"]["oc"];
-        assert_eq!(saved["config"]["serverPassword"], "pw");
-        assert_eq!(saved["environment"][0]["value"], "s3cret");
-        assert_eq!(saved["environment"][0].get("valueRedacted"), None);
-        assert_eq!(saved["displayName"], "OpenCode");
+                "environment": [{ "name": "KEY", "value": "s3cret", "sensitive": true }, { "name": "MODE", "value": "x", "sensitive": false }] } },
+            "textGenerators": { "t": { "kind": "openaiCompatible", "label": "T", "baseUrl": "http://127.0.0.1:9/v1", "apiKey": "key", "enabled": true } },
+            "sourceControlHosts": { "github": { "tokens": { "GitHub.com": "ghp" } }, "bitbucket": { "accessToken": "a" } },
+            "cloudSpeechCredentials": { "openai": "sk", "xai": { "provider": "op", "reference": "op://v/i/f" } },
+            "usageLimitSources": { "u": { "kind": "cliproxy", "url": "http://127.0.0.1:9", "managementKey": "mk" } },
+        })
+    }
+
+    #[test]
+    fn inline_secrets_move_to_the_store_at_start_under_t3_names() {
+        let dir = temp_state();
+        fs::write(dir.join("settings.json"), inline_settings().to_string()).unwrap();
+        let store = SettingsStore::open(dir.join("settings.json"));
+        // The names `mapSecretFieldGroups` gives (base64url parts).
         assert_eq!(
-            next["textGenerators"]["t"],
-            json!({ "apiKey": "key", "enabled": false })
+            stored(&dir, "provider-config-b2M-b3BlbmNvZGU-c2VydmVyUGFzc3dvcmQ").as_deref(),
+            Some("pw")
         );
         assert_eq!(
-            next["sourceControlHosts"]["github"]["tokens"]["github.com"],
+            stored(&dir, "text-generator-dA-YXBpS2V5").as_deref(),
+            Some("key")
+        );
+        assert_eq!(
+            stored(&dir, "source-control-Z2l0aHVi-dG9rZW5z-Z2l0aHViLmNvbQ").as_deref(),
+            Some("ghp")
+        );
+        assert_eq!(
+            stored(&dir, "source-control-Yml0YnVja2V0-YWNjZXNzVG9rZW4").as_deref(),
+            Some("a")
+        );
+        assert_eq!(stored(&dir, "voice-cloud-openai").as_deref(), Some("sk"));
+        assert_eq!(stored(&dir, "usage-limit-source-dQ").as_deref(), Some("mk"));
+        // Environment variables move on the next save, as in T3, not at start.
+        assert_eq!(stored(&dir, "provider-env-b2M-S0VZ"), None);
+        let file = on_disk(&dir);
+        assert_eq!(file["textGenerators"]["t"]["apiKey"], SECRET_REDACTED);
+        assert_eq!(
+            file["sourceControlHosts"]["github"]["tokens"]["github.com"],
+            SECRET_REDACTED
+        );
+        assert_eq!(file["cloudSpeechCredentials"]["xai"]["provider"], "op");
+        assert_eq!(
+            file["providerInstances"]["oc"]["environment"][0]["value"],
+            "s3cret"
+        );
+        // The server's own view holds the values.
+        let raw = Value::Object(store.raw());
+        assert_eq!(raw["textGenerators"]["t"]["apiKey"], "key");
+        assert_eq!(
+            raw["providerInstances"]["oc"]["config"]["serverPassword"],
+            "pw"
+        );
+        assert_eq!(
+            raw["sourceControlHosts"]["github"]["tokens"]["github.com"],
             "ghp"
         );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = |p: PathBuf| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode(dir.join("secrets")), 0o700);
+            assert_eq!(
+                mode(dir.join("secrets/text-generator-dA-YXBpS2V5.bin")),
+                0o600
+            );
+            assert_eq!(mode(dir.join("settings.json")), 0o600);
+        }
+        // No secret in a Debug output.
+        assert!(!format!("{store:?}").contains("ghp"));
+        // A second start finds nothing to move and the same values.
+        let again = SettingsStore::open(dir.join("settings.json"));
+        assert_eq!(again.raw(), store.raw());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn saves_write_keep_and_remove_stored_secrets() {
+        let dir = temp_state();
+        fs::write(dir.join("settings.json"), inline_settings().to_string()).unwrap();
+        let store = SettingsStore::open(dir.join("settings.json"));
+        let view = store.for_client();
+        assert_eq!(view["textGenerators"]["t"]["apiKey"], SECRET_REDACTED);
+        assert_eq!(view["cloudSpeechCredentials"]["xai"], SECRET_REDACTED);
+        // The client edits what it was shown and sends it back: markers keep the values, and
+        // the sensitive variable moves to the store now.
+        let mut instances = view["providerInstances"].clone();
+        instances["oc"]["displayName"] = json!("OpenCode");
+        let answer = store
+            .update(
+                json!({
+                    "providerInstances": instances,
+                    "textGenerators": { "t": { "kind": "openaiCompatible", "label": "T", "baseUrl": "http://127.0.0.1:9/v1", "apiKey": SECRET_REDACTED, "enabled": false } },
+                    "cloudSpeechCredentials": view["cloudSpeechCredentials"].clone(),
+                }),
+                None,
+            )
+            .unwrap();
+        assert_eq!(answer["textGenerators"]["t"]["apiKey"], SECRET_REDACTED);
         assert_eq!(
-            next["cloudSpeechCredentials"]["openai"],
-            json!({ "provider": "op", "reference": "op://v/i/f" })
+            answer["providerInstances"]["oc"]["environment"][0]["value"],
+            ""
         );
+        assert_eq!(
+            answer["providerInstances"]["oc"]["environment"][0]["valueRedacted"],
+            true
+        );
+        assert_eq!(
+            stored(&dir, "text-generator-dA-YXBpS2V5").as_deref(),
+            Some("key")
+        );
+        assert_eq!(
+            stored(&dir, "provider-env-b2M-S0VZ").as_deref(),
+            Some("s3cret")
+        );
+        assert_eq!(
+            stored(&dir, "provider-config-b2M-b3BlbmNvZGU-c2VydmVyUGFzc3dvcmQ").as_deref(),
+            Some("pw")
+        );
+        let file = on_disk(&dir);
+        assert_eq!(
+            file["providerInstances"]["oc"]["environment"][0],
+            json!({ "name": "KEY", "value": "", "sensitive": true, "valueRedacted": true })
+        );
+        assert_eq!(
+            file["providerInstances"]["oc"]["environment"][1]["value"],
+            "x"
+        );
+        assert_eq!(
+            file["cloudSpeechCredentials"]["xai"]["reference"], "op://v/i/f",
+            "the reference stays"
+        );
+        let raw = Value::Object(store.raw());
+        assert_eq!(
+            raw["providerInstances"]["oc"]["environment"][0]["value"],
+            "s3cret"
+        );
+        assert_eq!(raw["providerInstances"]["oc"]["displayName"], "OpenCode");
+        // A new value replaces, an empty one removes, a removed entry removes its secret.
+        store
+            .update(json!({ "textGenerators": { "t": { "kind": "openaiCompatible", "label": "T", "baseUrl": "http://127.0.0.1:9/v1", "apiKey": "new" } }, "cloudSpeechCredentials": { "openai": "" } }), None)
+            .unwrap();
+        assert_eq!(
+            stored(&dir, "text-generator-dA-YXBpS2V5").as_deref(),
+            Some("new")
+        );
+        assert_eq!(stored(&dir, "voice-cloud-openai"), None);
+        assert_eq!(store.raw()["textGenerators"]["t"]["apiKey"], "new");
+        store
+            .update(json!({ "textGenerators": { "t": null } }), None)
+            .unwrap();
+        assert_eq!(stored(&dir, "text-generator-dA-YXBpS2V5"), None);
+        // No secret value in the file.
+        let text = fs::read_to_string(dir.join("settings.json")).unwrap();
+        for secret in ["pw", "s3cret", "ghp", "\"mk\"", "new"] {
+            assert!(!text.contains(secret), "{secret} is in the file");
+        }
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn reads_a_state_folder_the_t3_server_wrote() {
+        // What the T3 server leaves after it moved a key (names from `mapSecretFieldGroups`).
+        let dir = temp_state();
+        fs::write(
+            dir.join("settings.json"),
+            json!({
+                "textGenerators": { "t": { "kind": "openaiCompatible", "label": "T", "baseUrl": "http://127.0.0.1:9/v1", "apiKey": SECRET_REDACTED } },
+                "providerInstances": { "oc": { "driver": "opencode", "environment": [{ "name": "KEY", "value": "", "sensitive": true, "valueRedacted": true }] } },
+                "easDeviceHosts": [{ "id": "h", "accessToken": SECRET_REDACTED }],
+                "cloudSpeechCredentials": { "xai": SECRET_REDACTED },
+            })
+            .to_string(),
+        )
+        .unwrap();
+        for (name, value) in [
+            ("text-generator-dA-YXBpS2V5", "key"),
+            ("provider-env-b2M-S0VZ", "s3cret"),
+            ("device-host-aA-YWNjZXNzVG9rZW4", "eas"),
+        ] {
+            conn_support::secret_store::write(&dir.join("secrets"), name, value.as_bytes())
+                .unwrap();
+        }
+        let store = SettingsStore::open(dir.join("settings.json"));
+        let raw = Value::Object(store.raw());
+        assert_eq!(raw["textGenerators"]["t"]["apiKey"], "key");
+        assert_eq!(
+            raw["providerInstances"]["oc"]["environment"][0]["value"],
+            "s3cret"
+        );
+        assert_eq!(raw["easDeviceHosts"][0]["accessToken"], "eas");
+        // A marker whose file is gone reads as no secret, and the client sees none.
+        assert_eq!(raw["cloudSpeechCredentials"]["xai"], "");
+        assert_eq!(store.for_client()["cloudSpeechCredentials"]["xai"], "");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_failed_settings_write_undoes_the_store_changes() {
+        let dir = temp_state();
+        let store = SettingsStore::open(dir.join("settings.json"));
+        store
+            .update(
+                json!({ "cloudSpeechCredentials": { "openai": "old" } }),
+                None,
+            )
+            .unwrap();
+        // The settings file cannot be replaced: its path is now a folder.
+        fs::remove_file(dir.join("settings.json")).unwrap();
+        fs::create_dir(dir.join("settings.json")).unwrap();
+        fs::write(dir.join("settings.json").join("x"), "").unwrap();
+        let error = store
+            .update(
+                json!({ "cloudSpeechCredentials": { "openai": "new", "xai": "x" } }),
+                None,
+            )
+            .unwrap_err();
+        assert_eq!(error.operation, "write-file");
+        assert!(!error.to_string().contains("new"));
+        assert_eq!(stored(&dir, "voice-cloud-openai").as_deref(), Some("old"));
+        assert_eq!(stored(&dir, "voice-cloud-xai"), None);
+        assert_eq!(store.raw()["cloudSpeechCredentials"]["openai"], "old");
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

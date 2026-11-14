@@ -61,7 +61,8 @@ fn title_message(value: &Value) -> TitleMessage {
 
 fn generators(settings: &Value, state_dir: &std::path::Path) -> Arc<TextGenerators> {
     let settings: Map<String, Value> = settings.as_object().cloned().unwrap_or_default();
-    Arc::new(TextGenerators::new(move || settings.clone(), state_dir))
+    let _ = state_dir;
+    Arc::new(TextGenerators::new(move || settings.clone()))
 }
 
 async fn answer(case: &Value, state_dir: &std::path::Path) -> Result<Value, String> {

@@ -7,6 +7,7 @@ pub mod hex;
 pub mod hmac;
 pub mod ids;
 pub mod login_env;
+pub mod secret_store;
 pub mod time;
 
 /// A random version 4 UUID from the OS random source, lowercase and hyphenated, as
