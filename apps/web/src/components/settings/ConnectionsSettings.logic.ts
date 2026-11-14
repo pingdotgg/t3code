@@ -487,5 +487,5 @@ export function describeConnectDeviceClient({
   const bits = [client?.label, client?.os, client?.browser, client?.ipAddress].filter(
     (value): value is string => typeof value === "string" && value.length > 0,
   );
-  return bits.length > 0 ? [...new Set(bits)].join(" · ") : "Unknown device";
+  return bits.length > 0 ? [...new Set(bits)].join(", ") : "Unknown device";
 }

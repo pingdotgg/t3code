@@ -1262,7 +1262,7 @@ export function ThemeEditorPanel({
               </Button>
               {cssOpen ? (
                 <>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-meta text-muted-foreground">
                     Saved with this theme and included when you export it. Web and desktop only.
                     Rules that load remote files are ignored.
                   </p>
