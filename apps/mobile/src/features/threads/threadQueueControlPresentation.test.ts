@@ -16,10 +16,26 @@ describe("threadQueueControlPresentation", () => {
         isEditing,
         canPromoteToSteer: false,
         canSendNow: true,
-        text: "Queued message",
+        steerRejectionReason: "Context compaction must run as a separate turn.",
+        text: "/compact",
       });
 
       expect(controls.canSend).toBe(expected);
+    },
+  );
+
+  it.each([false, true])(
+    "gates a queued /compact with compaction skip %s",
+    (promoteSkipsCompaction) => {
+      const controls = resolveThreadQueueRowControls({
+        busy: false,
+        canPromoteToSteer: true,
+        canSendNow: false,
+        steerRejectionReason: "Context compaction must run as a separate turn.",
+        text: "/compact",
+        promoteSkipsCompaction,
+      });
+      expect(controls.canSend).toBe(promoteSkipsCompaction);
     },
   );
 
@@ -39,6 +55,7 @@ describe("threadQueueControlPresentation", () => {
       busy: false,
       canPromoteToSteer: true,
       canSendNow: false,
+      steerRejectionReason: null,
       text: `[Assistant quote](${href}) Can we add a backoff here?`,
     });
 
@@ -53,6 +70,7 @@ describe("threadQueueControlPresentation", () => {
       canPromoteToSteer: true,
       canSendNow: false,
       isEditing: true,
+      steerRejectionReason: null,
       text: "Being edited",
     });
 
@@ -68,6 +86,7 @@ describe("threadQueueControlPresentation", () => {
       canPromoteToSteer: true,
       canSendNow: false,
       isGuestMessage: true,
+      steerRejectionReason: null,
       text: "Why?",
     });
 

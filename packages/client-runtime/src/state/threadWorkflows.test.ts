@@ -138,6 +138,73 @@ describe("thread workflows", () => {
     expect(state.canSendNow).toBe(false);
   });
 
+  it("marks queued runs the server refuses to steer", () => {
+    const state = deriveThreadQueueWorkflowState({
+      thread: { id: "thread", activeProviderThreadId: null },
+      runs: [
+        { id: "compact", status: "queued", userMessageId: "message-compact", ordinal: 1 },
+        { id: "goal", status: "queued", userMessageId: "message-goal", ordinal: 2 },
+        { id: "loading", status: "queued", userMessageId: "message-loading", ordinal: 3 },
+      ],
+      messages: [
+        { id: "message-compact", text: "/compact", attachments: [] },
+        { id: "message-goal", text: "/goal finish the refactor", attachments: [] },
+      ],
+      providerTurns: [],
+      providerThreads: [],
+      providerSessions: [],
+    } as never);
+
+    expect(
+      state.queuedRuns.map(({ run, steerRejectionReason }) => [run.id, steerRejectionReason]),
+    ).toEqual([
+      ["compact", "Context compaction must run as a separate turn."],
+      ["goal", null],
+      ["loading", "Queued message is still loading."],
+    ]);
+  });
+
+  it.each([
+    ["codex", undefined, "codex", null],
+    ["opencode", true, "opencode", null],
+    ["opencode", false, "opencode", "Goal commands must run as a separate turn."],
+    ["pi", undefined, "pi", "Goal commands must run as a separate turn."],
+    ["pi", undefined, "codex", null],
+  ])(
+    "lets a queued goal steer a %s session (native goals %s) when queued for %s",
+    (driver, supportsNativeGoals, queuedInstanceId, reason) => {
+      const state = deriveThreadQueueWorkflowState({
+        thread: {
+          id: "thread",
+          activeProviderThreadId: null,
+          modelSelection: { instanceId: queuedInstanceId },
+        },
+        runs: [
+          {
+            id: "goal",
+            status: "queued",
+            userMessageId: "message-goal",
+            ordinal: 1,
+            modelSelection: { instanceId: queuedInstanceId },
+          },
+        ],
+        messages: [{ id: "message-goal", text: "/goal finish the refactor", attachments: [] }],
+        providerTurns: [],
+        providerThreads: [],
+        providerSessions: [
+          {
+            id: "session",
+            driver,
+            providerInstanceId: driver,
+            status: "running",
+            capabilities: { turns: { supportsNativeGoals } },
+          },
+        ],
+      } as never);
+
+      expect(state.queuedRuns[0]?.steerRejectionReason).toBe(reason);
+    },
+  );
   it.each(["completed", "interrupted", "cancelled", "failed"])(
     "allows sending a held message after a %s turn without a live session",
     (status) => {

@@ -9,13 +9,14 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { AsyncResult, type Atom, AtomRegistry } from "effect/reactivity";
-import { Profiler, type ComponentProps } from "react";
+import { createRef, Profiler, type ComponentProps } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 
 const state = vi.hoisted(() => ({
   threadState: null as unknown as Atom.Writable<AsyncResult.AsyncResult<EnvironmentThreadState>>,
   workflow: null as unknown,
+  runCommand: vi.fn(async (_input: unknown) => undefined),
 }));
 
 vi.mock(import("@t3tools/client-runtime/state/thread-workflows"), async (importOriginal) => ({
@@ -66,7 +67,7 @@ vi.mock(import("../../state/threads"), async (importOriginal) => {
 
 vi.mock(import("../../state/use-atom-command"), async (importOriginal) => ({
   ...(await importOriginal()),
-  useAtomCommand: (() => async () => undefined) as never,
+  useAtomCommand: (() => state.runCommand) as never,
 }));
 
 vi.mock(import("../../assets/assetUrls"), async (importOriginal) => ({
@@ -80,10 +81,11 @@ import { EMPTY_ENVIRONMENT_THREAD_STATE } from "@t3tools/client-runtime/state/th
 
 import { act, render as renderUi } from "../../../test/render";
 import { makeStreamingTimelineFixture, makeThreadProjectionFixture } from "../../test-fixtures";
-import { QueuedRunsControl } from "./QueuedRunsControl";
+import { QueuedRunsControl, type QueuedRunsControlHandle } from "./QueuedRunsControl";
 
 function setup() {
   state.workflow = null;
+  state.runCommand.mockClear();
 }
 
 const baseProps = {
@@ -330,4 +332,57 @@ it("does not re-render while assistant text streams into the thread", async () =
 
   await act(() => registry.set(state.threadState, thread("Hello there", true)));
   expect(renders).toBeGreaterThan(settled);
+});
+
+it.each([
+  { canSendNow: false, promoteSkipsCompaction: false },
+  { canSendNow: true, promoteSkipsCompaction: false },
+  { canSendNow: false, promoteSkipsCompaction: true },
+])("gates queued command sending with %j", async ({ canSendNow, promoteSkipsCompaction }) => {
+  setup();
+  state.workflow = {
+    activeRun: { id: "run:active" },
+    canSendNow,
+    promoteSkipsCompaction,
+    canPromoteToSteer: !canSendNow,
+    canReorder: true,
+    queuedRuns: [
+      {
+        run: { id: "run:compact", userMessageId: "message:compact" },
+        text: "/compact",
+        attachments: [],
+        steerRejectionReason: "Context compaction must run as a separate turn.",
+      },
+      {
+        run: { id: "run:plain", userMessageId: "message:plain" },
+        text: "Also update the docs",
+        attachments: [],
+        steerRejectionReason: null,
+      },
+    ],
+  };
+  const ref = createRef<QueuedRunsControlHandle>();
+  await using _screen = await renderQueue({ ref });
+
+  const steerButtons = page.getByRole("button", {
+    name: "Send now",
+    exact: true,
+  });
+  if (canSendNow || promoteSkipsCompaction) await expect.element(steerButtons.nth(0)).toBeEnabled();
+  else await expect.element(steerButtons.nth(0)).toBeDisabled();
+  await expect.element(steerButtons.nth(1)).toBeEnabled();
+
+  expect(ref.current?.steerNext(false)).toBe(true);
+  expect(state.runCommand).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({
+      input: expect.objectContaining(
+        canSendNow
+          ? { runId: "run:compact" }
+          : {
+              queuedRunId: promoteSkipsCompaction ? "run:compact" : "run:plain",
+              targetRunId: "run:active",
+            },
+      ),
+    }),
+  );
 });

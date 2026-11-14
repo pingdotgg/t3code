@@ -26,6 +26,7 @@ import {
   type ChatAttachment,
   CommandId,
   type GuestMessageId,
+  isNativeMaintenanceCommand,
   isCompactionCommandMessage,
   isOrchestrationV2WorkActive,
   isProviderNativeSubagentThread,
@@ -65,6 +66,7 @@ import {
   latestProviderTurnForAttempt,
   parseGoalCommand,
   orchestrationV2RunWorkStartedAt,
+  orchestrationV2SteerRejectionReason,
   ProviderInstanceId,
   ProviderInteractionMode,
   isRuntimeModeAbove,
@@ -113,7 +115,6 @@ import {
   followUpOwnerRun,
   goalCommandStopsActiveRun,
   isActiveRun,
-  isNativeMaintenanceCommand,
   resolveMessageDispatchIntent,
 } from "./CommandPolicy.ts";
 import { CommandReceiptStoreV2, type CommandReceiptV2 } from "./CommandReceiptStore.ts";
@@ -5811,14 +5812,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     >,
     message: Pick<OrchestrationV2ConversationMessage, "text" | "attachments" | "context">,
   ) {
-    if (isNativeMaintenanceCommand(message)) {
+    const rejectionReason = orchestrationV2SteerRejectionReason(message);
+    if (rejectionReason !== null) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
-        cause:
-          message.text.trim().toLowerCase() === "/compact"
-            ? "Context compaction must run as a separate turn. Queue it or wait for the active turn to finish."
-            : "Signing out must run as a separate turn. Queue it or wait for the active turn to finish.",
+        cause: `${rejectionReason} Queue it or wait for the active turn to finish.`,
       });
     }
     if (parseGoalCommand(message) !== null) {

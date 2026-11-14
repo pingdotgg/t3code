@@ -1,8 +1,10 @@
 import {
   type ChatAttachment,
-  isCompactionCommandMessage,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2ProviderCapabilities,
+  orchestrationV2SteerRejectionReason,
+  isCompactionCommandMessage,
+  parseGoalCommand,
 } from "@t3tools/contracts";
 import { copySorted } from "@t3tools/shared/Array";
 
@@ -27,6 +29,8 @@ export interface QueuedThreadRun {
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly messageId: Message["id"];
   readonly context?: Message["context"];
+  /** Set when the server would reject promoting this run to a steer. */
+  readonly steerRejectionReason: string | null;
   /** Carries the attribution a sent message shows: automation, agent sender, or guest. */
   readonly message?: Message;
 }
@@ -136,10 +140,31 @@ export function getUserQueuedThreadRuns(
   );
 }
 
+function steerRejectionReason(
+  message: { readonly text: string; readonly attachments: ReadonlyArray<ChatAttachment> },
+  runsNativeGoals: boolean,
+): string | null {
+  const reason = orchestrationV2SteerRejectionReason(message);
+  if (reason !== null || runsNativeGoals || parseGoalCommand(message) === null) return reason;
+  return "Goal commands must run as a separate turn.";
+}
+
 export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQueueWorkflowState {
   const activeRun = resolveActiveThreadRun(projection);
   const session = resolveThreadProviderSession(projection);
   const capabilities = session?.capabilities.turns;
+  // Mirrors the server's goalDriverFor: elsewhere a goal cannot stop the turn, so it cannot steer.
+  const sessionRunsNativeGoals =
+    session === null ||
+    session.driver === "codex" ||
+    session.driver === "claudeAgent" ||
+    ((session.driver === "opencode" || session.driver === "antigravity") &&
+      capabilities?.supportsNativeGoals === true);
+  // The server checks the queued run's own provider; one the session does not show is left to it.
+  const runsNativeGoals = (run: Run) =>
+    sessionRunsNativeGoals ||
+    run.modelSelection?.instanceId !== session?.providerInstanceId ||
+    projection.thread.modelSelection?.instanceId !== session?.providerInstanceId;
   const activeMessage = projection.messages.find(
     (message) => message.id === activeRun?.userMessageId,
   );
@@ -163,6 +188,13 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
       // A queued guest message shows the guest's words; the agent still gets the attributed text.
       text: message?.context?.guest?.text ?? message?.text ?? "Queued message",
       attachments: message?.attachments ?? [],
+      steerRejectionReason:
+        message === undefined
+          ? "Queued message is still loading."
+          : steerRejectionReason(
+              { text: message.text, attachments: message.attachments ?? [] },
+              runsNativeGoals(run),
+            ),
       messageId: run.userMessageId,
       ...(message?.context ? { context: message.context } : {}),
       ...(message ? { message } : {}),
