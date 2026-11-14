@@ -1171,6 +1171,38 @@ const withAdvertisedSchemas = Effect.fn("McpHttpServer.withAdvertisedSchemas")(f
   return yield* registration.pipe(Effect.provideService(McpServer.McpServer, advertisingServer));
 });
 
+/**
+ * `registerToolkit` raises `InvalidParams` only for invalid arguments. MCP before 2025-11-25 sends
+ * that as a JSON-RPC error, which Cursor shows models as "Tool execution error", so it goes back
+ * as a tool result the model can read and correct.
+ */
+const withReadableInvalidArguments = Effect.fn("McpHttpServer.withReadableInvalidArguments")(
+  function* <A, E, R>(registration: Effect.Effect<A, E, R>) {
+    const server = yield* McpServer.McpServer;
+    const readableServer = McpServer.McpServer.of({
+      ...server,
+      addTool: Effect.fn("McpServer.addTool")(function (options) {
+        return server.addTool({
+          ...options,
+          handle: (payload) =>
+            options.handle(payload).pipe(
+              Effect.catchTags({
+                InvalidParams: (error) =>
+                  Effect.succeed(
+                    new McpSchema.CallToolResult({
+                      isError: true,
+                      content: [{ type: "text", text: error.message }],
+                    }),
+                  ),
+              }),
+            ),
+        });
+      }),
+    });
+    return yield* registration.pipe(Effect.provideService(McpServer.McpServer, readableServer));
+  },
+);
+
 /** Hands each call the services its registration was built with; the request's own still win. */
 const provideRegistrationServices = <Services>() =>
   McpServer.middleware<{ provides: Services }>()(
@@ -1195,7 +1227,10 @@ export const toolkitRegistration = <Tools extends Record<string, Tool.Any>, EX, 
   Layer.effectDiscard(
     withToolAnalytics(
       withToolSpans(
-        withAdvertisedSchemas(toolkit, McpServer.registerToolkit(decodeAsAdvertised(toolkit))),
+        withAdvertisedSchemas(
+          toolkit,
+          withReadableInvalidArguments(McpServer.registerToolkit(decodeAsAdvertised(toolkit))),
+        ),
       ),
     ),
   ).pipe(
