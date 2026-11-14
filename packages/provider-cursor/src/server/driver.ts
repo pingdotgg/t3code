@@ -10,6 +10,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
+import { cursorRateModel } from "./accountUsage.ts";
 import { readCursorUsageLimits } from "./usageLimits.ts";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
@@ -72,6 +73,7 @@ export const CursorDriver: ProviderDriver<
   usage: {
     kind: "scan",
     provider: "cursor",
+    rateModel: cursorRateModel,
     scan: ({ instances, windowStartMs, retentionCutoffMs, awaitRefresh }) =>
       CursorUsageAccounts.CursorUsageAccounts.pipe(
         Effect.flatMap((accounts) =>
