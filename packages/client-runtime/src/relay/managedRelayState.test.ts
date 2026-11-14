@@ -8,6 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
+import * as TestClock from "effect/testing/TestClock";
 import { Atom, AtomRegistry } from "effect/reactivity";
 import { afterEach, vi } from "vite-plus/test";
 
@@ -188,6 +189,42 @@ describe("createManagedRelayQueryManager", () => {
       expect(yield* Fiber.join(readsFiber)).toEqual([token, token]);
       expect(yield* session.readClerkToken()).toBe(token);
       expect(readClerkToken).toHaveBeenCalledTimes(1);
+    }),
+  );
+
+  it.effect("replaces a Clerk token read that has not answered after 4 seconds", () =>
+    Effect.gen(function* () {
+      const token = clerkToken(4_102_444_800);
+      const readClerkToken = vi
+        .fn<() => Promise<string | null>>()
+        .mockReturnValueOnce(new Promise(() => {}))
+        .mockResolvedValue(token);
+      const session = createManagedRelaySession({ accountId: "account-1", readClerkToken });
+
+      const readsFiber = yield* Effect.all([session.readClerkToken(), session.readClerkToken()], {
+        concurrency: "unbounded",
+      }).pipe(Effect.forkChild);
+      yield* TestClock.adjust("3999 millis");
+      expect(readClerkToken).toHaveBeenCalledTimes(1);
+
+      yield* TestClock.adjust("1 millis");
+      expect(yield* Fiber.join(readsFiber)).toEqual([token, token]);
+      expect(readClerkToken).toHaveBeenCalledTimes(2);
+    }),
+  );
+
+  it.effect("fails a Clerk token read that never answers after three tries", () =>
+    Effect.gen(function* () {
+      const readClerkToken = vi.fn(() => new Promise<string | null>(() => {}));
+      const session = createManagedRelaySession({ accountId: "account-1", readClerkToken });
+
+      const readFiber = yield* session.readClerkToken().pipe(Effect.flip, Effect.forkChild);
+      yield* TestClock.adjust("12 seconds");
+
+      expect((yield* Fiber.join(readFiber)).message).toBe(
+        "Timed out obtaining the T3 Connect session token.",
+      );
+      expect(readClerkToken).toHaveBeenCalledTimes(3);
     }),
   );
 
