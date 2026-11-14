@@ -9956,6 +9956,72 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
     );
 
+    it.effect("/goal resume tracks the goal turn Codex already started", () =>
+      Effect.gen(function* () {
+        const requests: string[] = [];
+        const transcript = makeCodexReplayTranscript({
+          scenario: "goal-resume-running",
+          entries: [
+            ...sessionStart,
+            // Codex restores an active goal on thread/resume and starts its turn on its own.
+            notification("goal restored", "thread/goal/updated", {
+              threadId: nativeThreadId,
+              goal: codexGoal("active", 0),
+            }),
+            notification("native goal turn", "turn/started", {
+              threadId: nativeThreadId,
+              turn: makeCodexReplayTurn({ id: "native-goal-turn", status: "inProgress" }),
+            }),
+            ...request(
+              3,
+              "thread/goal/get",
+              { threadId: nativeThreadId },
+              { goal: codexGoal("active", 0) },
+            ),
+            notification("goal complete", "thread/goal/updated", {
+              threadId: nativeThreadId,
+              turnId: "native-goal-turn",
+              goal: codexGoal("complete", 10),
+            }),
+            notification("native goal turn done", "turn/completed", {
+              threadId: nativeThreadId,
+              turn: makeCodexReplayTurn({ id: "native-goal-turn", status: "completed" }),
+            }),
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(
+          transcript,
+          () => Effect.void,
+          (method) =>
+            Effect.sync(() => {
+              requests.push(method);
+            }),
+        );
+        const start = yield* harness.runtime
+          .startTurn(yield* goalTurnInput(harness, "/goal resume"))
+          .pipe(Effect.result);
+
+        // Codex answers an empty turn/start on a running turn with EmptyInput.
+        assert.notInclude(requests, "turn/start");
+        assert.equal(start._tag, "Success");
+        yield* harness.firstTerminal;
+        assert.deepEqual(
+          harness.terminalEvents().map((event) => event.status),
+          ["completed"],
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    );
+
     it.effect("rejects an oversized /goal objective before any goal request", () =>
       Effect.gen(function* () {
         const oversized = "x".repeat(4001);

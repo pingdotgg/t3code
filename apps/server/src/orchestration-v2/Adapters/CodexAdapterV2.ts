@@ -2166,6 +2166,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         const goalStops = new Map<string, number>();
         // Goals paused because a delegated task will wake the thread; the next ordinary turn resumes them.
         const goalsPausedForWake = new Set<string>();
+        // Running turns Codex started with no owning run, such as an active goal's turn on thread/resume.
+        const unownedTurns = new Map<
+          string,
+          { readonly nativeTurnId: string; readonly startedAt: DateTime.Utc }
+        >();
         const latestRunTurnId = (providerTurnId: ProviderTurnId) =>
           continuedRuns.get(providerTurnId)?.at(-1)?.providerTurnId ?? providerTurnId;
         const isContinuedRunDescendant = (
@@ -5056,6 +5061,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 );
               return;
             }
+            unownedTurns.set(payload.threadId, {
+              nativeTurnId: payload.turn.id,
+              startedAt: codexTimestamp(payload.turn.startedAt),
+            });
             yield* rememberSubagentTurnStarted({
               nativeThreadId: payload.threadId,
               nativeTurnId: payload.turn.id,
@@ -7133,7 +7142,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               yield* restoreAdditionalContext(payload.threadId).pipe(
                 Effect.forkIn(scope, { startImmediately: true }),
               );
-            const context = (yield* Ref.get(activeTurns)).get(payload.turn.id);
+            // Serialized with /goal resume adopting the turn, so it cannot miss this completion.
+            const context = yield* turnTerminalizationPermit.withPermits(1)(
+              Effect.suspend(() => {
+                if (unownedTurns.get(payload.threadId)?.nativeTurnId === payload.turn.id) {
+                  unownedTurns.delete(payload.threadId);
+                }
+                return Ref.get(activeTurns).pipe(Effect.map((turns) => turns.get(payload.turn.id)));
+              }),
+            );
             if (context === undefined) {
               return;
             }
@@ -7357,6 +7374,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           );
         });
 
+        const clearPendingRootTurn = (
+          threadId: string,
+          turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
+        ) =>
+          Ref.update(pendingRootTurns, (current) => {
+            if (current.get(threadId) !== turnInput) return current;
+            const updated = new Map(current);
+            updated.delete(threadId);
+            return updated;
+          });
+
         const startNativeTurn = Effect.fn("CodexAdapterV2.startNativeTurn")(
           function* (
             turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
@@ -7430,12 +7458,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             effect.pipe(
               Effect.ensuring(
                 Effect.flatMap(getNativeThreadId(turnInput.providerThread), (threadId) =>
-                  Ref.update(pendingRootTurns, (current) => {
-                    if (current.get(threadId) !== turnInput) return current;
-                    const updated = new Map(current);
-                    updated.delete(threadId);
-                    return updated;
-                  }),
+                  clearPendingRootTurn(threadId, turnInput),
                 ).pipe(Effect.ignore),
               ),
             ),
@@ -7495,6 +7518,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             if (command.type === "set") yield* validateCodexGoalObjective(command.objective);
             const threadId = yield* getNativeThreadId(turnInput.providerThread);
             rootProviderThreads.set(threadId, turnInput.providerThread);
+            // Codex starts an active goal's turn on its own (on thread/resume); bind it to this run.
+            if (command.type === "resume") {
+              yield* Ref.update(pendingRootTurns, (current) =>
+                current.has(threadId) ? current : new Map(current).set(threadId, turnInput),
+              );
+            }
             const readGoal = client
               .request("thread/goal/get", { threadId })
               .pipe(
@@ -7538,6 +7567,24 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               });
               goalsByNativeThread.set(threadId, providerGoalFromCodex(goal));
             }
+            // Codex rejects an empty turn/start while its own goal turn runs, so own that turn instead.
+            if (command.type === "resume" && current?.status === "active") {
+              const adopted = yield* turnTerminalizationPermit.withPermits(1)(
+                Effect.gen(function* () {
+                  yield* clearPendingRootTurn(threadId, turnInput);
+                  const owned = Array.from((yield* Ref.get(activeTurns)).values()).some(
+                    (context) => context.input.attemptId === turnInput.attemptId,
+                  );
+                  if (owned) return true;
+                  const running = unownedTurns.get(threadId);
+                  if (running === undefined) return false;
+                  unownedTurns.delete(threadId);
+                  yield* registerRootTurn({ turnInput, ...running });
+                  return true;
+                }),
+              );
+              if (adopted) return;
+            }
             // A bare objective gets echoed back, and "start this goal" gets a
             // create_goal call that Codex rejects because the goal already exists.
             yield* activateGoal(
@@ -7559,9 +7606,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               Effect.ensuring(
                 Effect.suspend(() => {
                   const threadId = turnInput.providerThread.nativeThreadRef?.nativeId;
-                  return threadId == null || !goalUpdatesHeld.has(threadId)
-                    ? Effect.void
-                    : releaseGoalUpdates(threadId);
+                  if (threadId == null) return Effect.void;
+                  return clearPendingRootTurn(threadId, turnInput).pipe(
+                    Effect.andThen(
+                      goalUpdatesHeld.has(threadId) ? releaseGoalUpdates(threadId) : Effect.void,
+                    ),
+                  );
                 }),
               ),
               Effect.mapError(
