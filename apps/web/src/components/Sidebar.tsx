@@ -189,6 +189,7 @@ import {
   planSidebarThreadDrop,
   reduceSidebarProjectScopeMenuState,
   resolveAdjacentThreadId,
+  resolveSidebarRowActionKeys,
   resolveSidebarSweepKeys,
   resolveSidebarDropTarget,
   resolveSidebarDropVerb,
@@ -1673,6 +1674,27 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       attemptSettle(scopeThreadRef(thread.environmentId, thread.id), { coSettlingKeys });
     }
   };
+  const settleFromRow = (threadRef: ScopedThreadRef) => {
+    const threadKeys = resolveSidebarRowActionKeys(
+      scopedThreadKey(threadRef),
+      useThreadSelectionStore.getState().selectedThreadKeys,
+    );
+    if (threadKeys.length === 1) {
+      attemptSettle(threadRef);
+      return;
+    }
+    const settlingThreads = threadKeys.flatMap((threadKey) => {
+      const thread = threadByKeyRef.current.get(threadKey);
+      return thread && thread.settledOverride !== "settled" ? [thread] : [];
+    });
+    if (!checkThreadOperations(settlingThreads)) return;
+    settleThreads(
+      settlingThreads.map((thread) =>
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      ),
+    );
+    clearSelection();
+  };
   const attemptUnsettle = (threadRef: ScopedThreadRef) => {
     void (async () => {
       const result = await unsettleThread(threadRef);
@@ -1764,8 +1786,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const contextDragThreads = (): ReadonlyArray<ScopedThreadRef> => {
     const key = contextDragKeyRef.current;
     if (key === null) return [];
-    const selected = useThreadSelectionStore.getState().selectedThreadKeys;
-    const keys = selected.has(key) ? [...selected] : [key];
+    const keys = resolveSidebarRowActionKeys(
+      key,
+      useThreadSelectionStore.getState().selectedThreadKeys,
+    );
     return keys.flatMap((candidate) => {
       const ref = parseScopedThreadKey(candidate);
       return ref ? [ref] : [];
@@ -3476,7 +3500,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             isRenaming={renamingThreadKey === threadKey}
                             renamingTitle={renamingThreadKey === threadKey ? renamingTitle : ""}
                             onContextMenu={handleThreadContextMenu}
-                            onSettle={attemptSettle}
+                            onSettle={settleFromRow}
                             onActionSweepStart={startActionSweep}
                             onUnsettle={attemptUnsettle}
                             onSnooze={attemptSnooze}
