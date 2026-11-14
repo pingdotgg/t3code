@@ -64,4 +64,30 @@ describe("ReadOnlySourcePreview", () => {
     document.getSelection()!.setBaseAndExtent(firstText, 4, pre, pre.childNodes.length);
     expect(copiedText(rows()[0]!)).toBeNull();
   });
+
+  it("copies a partial selection after its rows scroll out of the mounted window", async () => {
+    await getSyntaxHighlighterPromise("text");
+    await using screen = await render(
+      <div className="flex h-[400px] flex-col">
+        <ReadOnlySourcePreview name="notes.txt" text={text} wordWrap={false} />
+      </div>,
+    );
+    const root = screen.container.querySelector("diffs-container")!.shadowRoot!;
+    const rows = () => root.querySelectorAll("[data-line]");
+    await vi.waitFor(() => expect(rows()[0]?.textContent).toBe("line 1"));
+
+    const rowText = (line: number) =>
+      [...rows()].find((row) => row.textContent === `line ${line}`)!.querySelector("span")!
+        .firstChild!;
+    document.getSelection()!.setBaseAndExtent(rowText(5), 0, rowText(20), "line 20".length);
+    const selected = Array.from({ length: 16 }, (_, index) => `line ${index + 5}`).join("\n");
+
+    const scroller = screen.container.querySelector(".file-preview-virtualizer")!;
+    scroller.scrollTop = scroller.scrollHeight;
+    await vi.waitFor(() => expect(rows()[0]?.textContent).not.toBe("line 1"));
+    scroller.scrollTop = 0;
+    await vi.waitFor(() => expect(rows()[0]?.textContent).toBe("line 1"));
+
+    expect(copiedText(rows()[0]!) ?? document.getSelection()!.toString()).toBe(selected);
+  });
 });
