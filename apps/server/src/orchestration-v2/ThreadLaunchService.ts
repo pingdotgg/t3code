@@ -237,15 +237,15 @@ export class ThreadLaunchService extends Context.Service<
 const isThreadLaunchError = Schema.is(ThreadLaunchError);
 
 /**
- * The primary remote's default branch, else a conventional `main` or `master`, as a base
- * `launch` resolves. Falls back to `main`, which fails at launch where no such branch exists.
+ * The primary remote's default branch, else a conventional `main` or `master`, else the
+ * checked-out branch, as the composer picks. A detached or empty repository gets `main`.
  */
 export const resolveDefaultWorktreeBaseRef = Effect.fn(
   "ThreadLaunchService.resolveDefaultWorktreeBaseRef",
 )(function* (
   git: Pick<
     GitVcsDriver.GitVcsDriver["Service"],
-    "resolvePrimaryRemoteName" | "resolveDefaultBranchName" | "resolveCommit"
+    "resolvePrimaryRemoteName" | "resolveDefaultBranchName" | "resolveCommit" | "resolveBranchName"
   >,
   cwd: string,
 ) {
@@ -274,7 +274,8 @@ export const resolveDefaultWorktreeBaseRef = Effect.fn(
   for (const branch of conventional) {
     if (yield* refExists(`refs/heads/${branch}`)) return branch;
   }
-  return "main";
+  const current = yield* git.resolveBranchName(cwd, "HEAD").pipe(Effect.orElseSucceed(() => null));
+  return current ?? "main";
 });
 
 function failureDetail(error: unknown): string {

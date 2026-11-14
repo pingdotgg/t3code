@@ -3587,6 +3587,14 @@ describe("OrchestratorMcpService provider resolution", () => {
         remote: null,
         remoteDefault: null,
         refs: ["refs/heads/develop"],
+        current: "develop",
+        baseRef: "develop",
+      },
+      {
+        name: "no remote, nothing conventional, detached",
+        remote: null,
+        remoteDefault: null,
+        refs: [],
         baseRef: "main",
       },
       {
@@ -3638,7 +3646,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         refs: ["refs/remotes/upstream/main"],
         baseRef: "upstream/main",
       },
-    ])("$name starts from $baseRef", ({ remote, remoteDefault, refs, baseRef }) =>
+    ])("$name starts from $baseRef", ({ remote, remoteDefault, refs, current, baseRef }) =>
       Effect.gen(function* () {
         const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]);
         const gitFailure = (cwd: string, detail: string) =>
@@ -3652,6 +3660,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                     ? Effect.fail(gitFailure(cwd, "No git remote is configured."))
                     : Effect.succeed(remote),
                 resolveDefaultBranchName: () => Effect.succeed(remoteDefault),
+                resolveBranchName: () => Effect.succeed(current ?? null),
                 resolveCommit: ({ cwd, revision }) =>
                   refs.includes(revision)
                     ? Effect.succeed({ commitSha: "abc123" })

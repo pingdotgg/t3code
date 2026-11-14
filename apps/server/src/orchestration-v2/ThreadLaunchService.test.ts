@@ -1336,11 +1336,48 @@ it.effect.each(["stable", "upstream/release"])(
 );
 
 it.effect.each([
-  { name: "a Settings default", baseRef: "main", defaultBaseRef: true, prepares: true },
-  { name: "an explicit master", baseRef: "master", defaultBaseRef: undefined, prepares: true },
+  {
+    name: "a Settings default",
+    branch: "master",
+    remote: false,
+    defaultBaseRef: true,
+    baseRef: "main",
+    saved: "master",
+  },
+  {
+    name: "a Settings default",
+    branch: "trunk",
+    remote: false,
+    defaultBaseRef: true,
+    baseRef: "main",
+    saved: "trunk",
+  },
+  {
+    name: "a Settings default",
+    branch: "trunk",
+    remote: true,
+    defaultBaseRef: true,
+    baseRef: "main",
+    saved: "origin/trunk",
+  },
+  {
+    name: "an explicit master",
+    branch: "master",
+    remote: false,
+    defaultBaseRef: undefined,
+    baseRef: "master",
+    saved: "master",
+  },
   // An explicit base that does not exist is kept, so its runs fail rather than silently moving.
-  { name: "an explicit missing main", baseRef: "main", defaultBaseRef: undefined, prepares: false },
-])("a scheduled task saved with $name in a master-only repository prepares: $prepares", (row) =>
+  {
+    name: "an explicit missing main",
+    branch: "master",
+    remote: false,
+    defaultBaseRef: undefined,
+    baseRef: "main",
+    saved: "main",
+  },
+])("a scheduled task saved with $name on $branch (remote: $remote) saves $saved", (row) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const git = yield* GitVcsDriver.GitVcsDriver;
@@ -1350,11 +1387,17 @@ it.effect.each([
     yield* fs.makeDirectory(cwd);
     const command = (at: string, args: string[]) =>
       git.execute({ operation: "launch-test", cwd: at, args });
-    yield* command(cwd, ["init", "-b", "master"]);
+    yield* command(cwd, ["init", "-b", row.branch]);
     yield* command(cwd, ["config", "user.name", "Test"]);
     yield* command(cwd, ["config", "user.email", "test@example.test"]);
     yield* command(cwd, ["commit", "--allow-empty", "-m", "initial"]);
     const head = (yield* command(cwd, ["rev-parse", "HEAD"])).stdout.trim();
+    if (row.remote) {
+      yield* command(cwd, ["init", "--bare", `${directory}/remote.git`]);
+      yield* command(cwd, ["remote", "add", "origin", `${directory}/remote.git`]);
+      yield* command(cwd, ["push", "-u", "origin", row.branch]);
+      yield* command(cwd, ["remote", "set-head", "origin", row.branch]);
+    }
     const harness = makeHarness({
       projectRoot: cwd,
       gitDriver: Layer.succeed(GitVcsDriver.GitVcsDriver, git),
@@ -1393,12 +1436,12 @@ it.effect.each([
       });
       assert.deepEqual(task.workspaceStrategy, {
         type: "worktree",
-        baseRef: row.prepares ? "master" : "main",
+        baseRef: row.saved,
         startFromOrigin: true,
       });
       const { threadId } = yield* tasks.runNow({ id: task.id });
       const prepared = yield* preparationSettled(threadId!);
-      if (!row.prepares) {
+      if (row.saved === "main") {
         assert.equal(prepared.runs[0]?.status, "failed");
         return;
       }

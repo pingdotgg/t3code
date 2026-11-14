@@ -1,6 +1,6 @@
 import type { ScheduledTaskUpsertInput } from "@t3tools/contracts";
 
-/** Where a task's runs work, as the Settings forms edit it. A blank `baseRef` is the project's default branch. */
+/** A Settings form's workspace fields; a blank `baseRef` means the project's default branch. */
 export interface ScheduledTaskWorkspaceDraft {
   readonly mode: "worktree" | "root" | "existing_worktree";
   readonly baseRef: string;
@@ -8,7 +8,6 @@ export interface ScheduledTaskWorkspaceDraft {
   readonly worktreePath: string;
 }
 
-/** The save input's workspace fields for a Settings draft. */
 export function scheduledTaskWorkspaceInput(
   draft: ScheduledTaskWorkspaceDraft,
 ): Pick<ScheduledTaskUpsertInput, "workspaceStrategy" | "defaultBaseRef"> {
