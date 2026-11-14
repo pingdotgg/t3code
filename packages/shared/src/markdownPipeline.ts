@@ -471,13 +471,14 @@ function remarkKeepAutolinkSuffixes(): Transformer<Root> {
   };
 }
 
-// Punctuation and symbols from CJK Symbols and Punctuation and from Halfwidth and Fullwidth Forms.
-const CJK_PUNCTUATION = /(?=[　-〿＀-￯])[\p{P}\p{S}]/u;
+// Punctuation and symbols from CJK Symbols and Punctuation and from Halfwidth and Fullwidth Forms,
+// plus the Arabic-script comma, semicolon, question mark, and full stop.
+const CJK_PUNCTUATION = /(?=[　-〿＀-￯،؛؟۔])[\p{P}\p{S}]/u;
 
 /**
- * GFM runs a bare URL on until whitespace, so Chinese and Japanese punctuation joins it, along with
- * the rest of the sentence and any `**` that should have closed around it. A URL that is ASCII up to
- * such a mark ends there. Unicode earlier in the URL means the mark may belong to it, so it stays.
+ * GFM runs a bare URL on until whitespace, so Chinese, Japanese, and Arabic punctuation joins it,
+ * along with the rest of the sentence and any `**` that should have closed around it. A URL that is
+ * ASCII up to such a mark ends there. Unicode earlier in the URL means the mark may belong to it, so it stays.
  */
 function cjkPunctuationIndex(link: Link): number {
   const label = link.children.length === 1 ? link.children[0] : undefined;
