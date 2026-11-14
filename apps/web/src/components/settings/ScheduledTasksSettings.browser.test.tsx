@@ -244,6 +244,16 @@ describe("ScheduledTasksSettings", () => {
     await expect.element(name).toHaveValue("Review stale issues");
   });
 
+  it("offers no model choice for a task bound to a thread, whose runs use the thread's model", async () => {
+    setup();
+    await using _screen = await render(<ScheduledTasksSettings taskId={task.id} />);
+    await expect.element(page.getByRole("dialog").getByText("Fix login bug")).toBeVisible();
+    const enabledPicker = document.querySelector(
+      '[role="dialog"] [data-chat-provider-model-picker]:not(:disabled)',
+    );
+    expect(enabledPicker).toBeNull();
+  });
+
   it("keeps an editor the user opened when the linked task loads later", async () => {
     setup();
     state.tasksLoaded = false;
