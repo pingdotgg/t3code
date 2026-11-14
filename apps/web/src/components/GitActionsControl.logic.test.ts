@@ -4,10 +4,12 @@ import { resolveAutoFeatureBranchName } from "@t3tools/shared/git";
 import { assert, describe, it } from "vite-plus/test";
 import {
   buildMenuItems,
+  type DefaultBranchConfirmableAction,
   hasUsableGitMenuContent,
   requiresDefaultBranchConfirmation,
   resolveChangesTotals,
   resolveDefaultBranchActionDialogCopy,
+  resolveFeatureBranchUnavailableReason,
   resolveLiveThreadBranchUpdate,
   resolveQuickAction,
   getMenuActionDisabledReason,
@@ -124,6 +126,16 @@ describe("when: on default ref without open PR", () => {
       label: "Commit & push",
       disabled: false,
     });
+  });
+
+  it("offers a feature branch only to actions that commit the changes", () => {
+    const reason = (action: DefaultBranchConfirmableAction, hasWorkingTreeChanges: boolean) =>
+      resolveFeatureBranchUnavailableReason({ action, branchName: "main", hasWorkingTreeChanges });
+    assert.isNull(reason("commit_push", true));
+    assert.isNull(reason("commit_push_pr", true));
+    assert.isNotNull(reason("commit_push", false));
+    assert.isNotNull(reason("push", true));
+    assert.isNotNull(reason("create_pr", true));
   });
 });
 
