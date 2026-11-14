@@ -1,10 +1,16 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
-import { ProjectId, type PullRequestSummary, type VcsStatusResult } from "@t3tools/contracts";
+import {
+  ProjectId,
+  type PullRequestSummary,
+  type ThreadPullRequestLink,
+  type VcsStatusResult,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
 import {
   resolveDisplayedThreadPr,
   resolveDisplayedThreadPrProvider,
+  resolveLinkedThreadPullRequestReference,
 } from "./ThreadStatusIndicators";
 import { newestPullRequestSummary } from "../state/pullRequests";
 
@@ -73,6 +79,64 @@ describe("shared pull request state", () => {
     const reopened = pullRequestSummary("open", "2026-09-03T01:01:00.000Z");
 
     expect(newestPullRequestSummary(closed, reopened)).toBe(reopened);
+  });
+});
+
+describe("linked pull request metadata", () => {
+  const projectId = ProjectId.make("project-1");
+  const current: ThreadPullRequestLink = {
+    host: "github.com",
+    repository: "pingdotgg/t3code",
+    number: 122,
+    url: "https://github.com/pingdotgg/t3code/pull/122",
+    source: "manual",
+    linkedAt: "2026-10-24T00:00:00.000Z",
+    snapshot: null,
+    stack: null,
+  };
+  const snapshot: NonNullable<ThreadPullRequestLink["snapshot"]> = {
+    title: "Feature PR",
+    state: "open",
+    headBranch: "feature/current",
+    baseBranch: "main",
+    isDraft: false,
+    updatedAt: "2026-10-24T00:00:00.000Z",
+    syncedAt: "2026-10-24T00:00:00.000Z",
+  };
+
+  it.each([
+    {
+      name: "fetches the current PR when its snapshot is missing",
+      projectId,
+      snapshot: null,
+      expected: { projectId, host: current.host, repository: current.repository, number: 122 },
+    },
+    {
+      name: "uses a loaded snapshot without another metadata request",
+      projectId,
+      snapshot,
+      expected: null,
+    },
+    {
+      name: "does not route a current PR through a missing project",
+      projectId: null,
+      snapshot: null,
+      expected: null,
+    },
+  ])("$name", ({ projectId, snapshot, expected }) => {
+    expect(
+      resolveLinkedThreadPullRequestReference({
+        current: { ...current, snapshot },
+        projectId,
+        supportsLinks: true,
+        linkedPullRequest: {
+          projectId: ProjectId.make("old-project"),
+          repository: "another/repository",
+          number: 99,
+          url: "https://github.com/another/repository/pull/99",
+        },
+      }),
+    ).toEqual(expected);
   });
 });
 

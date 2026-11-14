@@ -699,13 +699,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   };
 
   const gitCwd = thread.worktreePath ?? props.project?.workspaceRoot ?? null;
-  const linkedPullRequestStatus = useLinkedThreadPullRequest(
-    thread.environmentId,
-    thread.linkedPullRequest,
-    leaseLiveStatus,
-    thread.pullRequests,
-    thread.branchPullRequest,
-  );
+  const linkedPullRequestStatus = useLinkedThreadPullRequest({
+    environmentId: thread.environmentId,
+    projectId: thread.projectId,
+    linkedPullRequest: thread.linkedPullRequest,
+    enabled: leaseLiveStatus,
+    pullRequests: thread.pullRequests,
+    branchPullRequest: thread.branchPullRequest,
+  });
   const branchTarget =
     leaseLiveStatus && (thread.branch != null || thread.worktreePath !== null) && gitCwd !== null
       ? { environmentId: thread.environmentId, cwd: gitCwd }
@@ -1089,6 +1090,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         pullRequests={thread.pullRequests}
         number={pr?.number ?? currentLinkedPr?.number}
         url={pr?.url ?? currentLinkedPr?.url}
+        pr={pr}
         status={prStatus}
         onOpenList={handlePrListClick}
         onOpenPullRequest={handlePrClick}
