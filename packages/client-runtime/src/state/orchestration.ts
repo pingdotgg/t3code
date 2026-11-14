@@ -38,7 +38,7 @@ import { fetchEnvironmentThreadTranscript } from "./threadTranscriptHttp.ts";
 export function createOrchestrationEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | HttpClient.HttpClient | R, E>,
   options: {
-    /** Re-checks `threadTitles` and the archive when one of their threads leaves the shell. */
+    /** Re-checks `threadTitles` when one of their threads leaves the shell, and the archive on any removal. */
     readonly shellState?: (
       environmentId: EnvironmentId,
     ) => Atom.Atom<Pick<EnvironmentShellState, "removedAt">>;
@@ -67,27 +67,20 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
     staleTimeMs: Number.POSITIVE_INFINITY,
     idleTtlMs: 5 * 60_000,
   });
-  /** The latest removal sequence of these threads, or of any thread when none are given. */
-  const lastRemoval = (environmentId: EnvironmentId, threadIds?: ReadonlyArray<ThreadId>) => {
-    if (shellState === undefined) return undefined;
-    const state = shellState(environmentId);
-    return Atom.make((get) => {
-      const { removedAt } = get(state);
-      return Math.max(
-        -1,
-        ...(threadIds === undefined
-          ? removedAt.values()
-          : threadIds.map((threadId) => removedAt.get(threadId) ?? -1)),
-      );
-    });
-  };
   const refreshThreadLookup = ({
     environmentId,
     input,
   }: {
     readonly environmentId: EnvironmentId;
     readonly input: { readonly threadIds: ReadonlyArray<ThreadId> };
-  }) => lastRemoval(environmentId, input.threadIds);
+  }) => {
+    if (shellState === undefined) return undefined;
+    const state = shellState(environmentId);
+    return Atom.make((get) => {
+      const { removedAt } = get(state);
+      return Math.max(-1, ...input.threadIds.map((threadId) => removedAt.get(threadId) ?? -1));
+    });
+  };
   return {
     threadTitles: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:thread-titles",
@@ -246,8 +239,13 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
     archivedShellSnapshot: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:archived-shell-snapshot",
       tag: ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot,
-      // The shell reports archiving a thread, and deleting or changing an archived one, as a removal.
-      refreshTrigger: ({ environmentId }) => lastRemoval(environmentId),
+      // The shell reports archiving a thread, and deleting or changing an archived one, as a removal,
+      // and replaces `removedAt` on each one.
+      refreshTrigger: ({ environmentId }) => {
+        if (shellState === undefined) return undefined;
+        const state = shellState(environmentId);
+        return Atom.make((get) => get(state).removedAt);
+      },
     }),
     threadFamily: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:thread-family-for-delete",
