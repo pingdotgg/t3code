@@ -758,6 +758,8 @@ export const NodesIssueComment = Schema.Struct({
   lastEditedAt: Schema.NullOr(Shared.DateTime),
   /** The HTTP URL for this issue comment */
   url: Shared.URI,
+  /** Check if the current viewer can update this object. */
+  viewerCanUpdate: Schema.Boolean,
   /** Returns whether or not a comment has been minimized. */
   isMinimized: Schema.Boolean,
   /** The actor who authored the comment. */
@@ -847,7 +849,7 @@ export const PullRequestActivity = GraphQL.query("PullRequestActivity", {
       { name: "reviewsAfter", body: "String" }
     ],
     selections: [
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){author@include(if:$", "head", "){__typename login avatarUrl...on User{name}}commits(last:100)@include(if:$", "head", "){nodes{commit{id oid messageHeadline committedDate parents(first:1){totalCount}authors(first:10){nodes{name email user{login}}}}}}comments(first:100 after:$", "commentsAfter", ")@include(if:$", "withComments", "){pageInfo{hasNextPage endCursor}nodes{id body createdAt lastEditedAt url isMinimized author{__typename login avatarUrl...on User{name}}}}reviews(first:100 after:$", "reviewsAfter", ")@include(if:$", "withReviews", "){pageInfo{hasNextPage endCursor}nodes{id body state submittedAt lastEditedAt url isMinimized author{__typename login avatarUrl...on User{name}}}}}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){author@include(if:$", "head", "){__typename login avatarUrl...on User{name}}commits(last:100)@include(if:$", "head", "){nodes{commit{id oid messageHeadline committedDate parents(first:1){totalCount}authors(first:10){nodes{name email user{login}}}}}}comments(first:100 after:$", "commentsAfter", ")@include(if:$", "withComments", "){pageInfo{hasNextPage endCursor}nodes{id body createdAt lastEditedAt url viewerCanUpdate isMinimized author{__typename login avatarUrl...on User{name}}}}reviews(first:100 after:$", "reviewsAfter", ")@include(if:$", "withReviews", "){pageInfo{hasNextPage endCursor}nodes{id body state submittedAt lastEditedAt url isMinimized author{__typename login avatarUrl...on User{name}}}}}}"] }
     ],
     fragments: []
   },

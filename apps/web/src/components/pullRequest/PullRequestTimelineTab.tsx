@@ -53,6 +53,7 @@ import {
 } from "./pullRequestDetail.logic";
 import { canEditPullRequestComment } from "@t3tools/client-runtime/pull-request-editing";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
+import { usePullRequestTaskToggle } from "./usePullRequestTaskToggle";
 import { PullRequestMoreReplies } from "./PullRequestMoreReplies";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
@@ -92,21 +93,27 @@ function TimelineBody({
   cwd,
   environmentId,
   threadRef,
+  saveTasks,
+  onRefresh,
 }: {
   body: string;
   markdown: boolean;
   cwd: string;
   environmentId: EnvironmentId;
   threadRef: ScopedThreadRef | null;
+  saveTasks: ((body: string) => Promise<boolean>) | null;
+  onRefresh: () => void;
 }) {
+  const tasks = usePullRequestTaskToggle(body, saveTasks, onRefresh);
   return (
     <div className="mt-3">
       {markdown ? (
         <PullRequestMarkdown
-          text={body}
+          text={tasks.text}
           cwd={cwd}
           environmentId={environmentId}
           threadRef={threadRef}
+          onTaskListChange={tasks.onTaskListChange}
         />
       ) : (
         <p className="whitespace-pre-wrap text-xs text-muted-foreground">{body}</p>
@@ -269,6 +276,24 @@ function ConversationCard({
     reactions.onRefresh();
   };
 
+  const saveTasks = async (shown: string, toggled: string) => {
+    if (editable === null || editable.kind === "review") return false;
+    // The timeline shows a trimmed body; put the toggled text back where it came from.
+    const start = editable.body.indexOf(shown);
+    if (start < 0) return false;
+    const body =
+      editable.body.slice(0, start) + toggled + editable.body.slice(start + shown.length);
+    const result = await updateComment({
+      environmentId: reactions.environmentId,
+      input: { ...reactions.reference, commentId: editable.id, kind: editable.kind, body },
+    });
+    if (result._tag === "Failure") {
+      toastManager.add({ type: "error", title: "Could not update the task" });
+      return false;
+    }
+    return true;
+  };
+
   return (
     <article
       {...(reactions.revealAnchor != null &&
@@ -342,6 +367,8 @@ function ConversationCard({
             cwd={cwd}
             environmentId={reactions.environmentId}
             threadRef={reactions.threadRef}
+            saveTasks={editable === null ? null : (toggled) => saveTasks(event.body ?? "", toggled)}
+            onRefresh={reactions.onRefresh}
           />
         </div>
       ) : null}
@@ -726,6 +753,8 @@ function ReviewVerdictEvent({
           cwd={cwd}
           environmentId={reactions.environmentId}
           threadRef={reactions.threadRef}
+          saveTasks={null}
+          onRefresh={reactions.onRefresh}
         />
       ) : null}
     </div>
