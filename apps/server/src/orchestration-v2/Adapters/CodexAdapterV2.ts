@@ -8395,7 +8395,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   ],
                   { concurrency: "unbounded" },
                 );
-                if (Option.isSome(completed) || !(yield* deferToActiveRoots)) {
+                // A replacement turn cannot wait for Codex to confirm, so it settles the lineage now.
+                if (
+                  Option.isSome(completed) ||
+                  turnInput.endOnTimeout === true ||
+                  !(yield* deferToActiveRoots)
+                ) {
                   yield* settleInterruptedLineage;
                   return false;
                 }

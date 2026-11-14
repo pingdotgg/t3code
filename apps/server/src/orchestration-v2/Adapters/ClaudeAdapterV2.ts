@@ -13096,6 +13096,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               next.add(turnInput.providerTurnId);
               return next;
             });
+            const stopStartedAt = yield* Clock.currentTimeMillis;
             if (!(yield* Deferred.isDone(existing.closed))) {
               yield* existing.query.interrupt.pipe(
                 Effect.timeoutOption("10 seconds"),
@@ -13108,19 +13109,45 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               );
               yield* existing.query.close.pipe(Effect.ignore);
             }
+            // A restart must end within ProviderSessionManager's interrupt timeout, so it shares one budget.
+            const confirmWaitMs =
+              turnInput.endOnTimeout === true
+                ? Math.max(
+                    0,
+                    CLAUDE_STOP_CONFIRM_TIMEOUT_MS -
+                      ((yield* Clock.currentTimeMillis) - stopStartedAt),
+                  )
+                : CLAUDE_STOP_CONFIRM_TIMEOUT_MS;
             const closed = yield* Deferred.await(existing.closed).pipe(
-              Effect.timeoutOption(CLAUDE_STOP_CONFIRM_TIMEOUT_MS),
+              Effect.timeoutOption(confirmWaitMs),
             );
             if (Option.isSome(closed)) {
               return;
             }
-            // The turn stays open: the CLI may still be working, and the user decides
-            // whether to Force stop it.
             yield* Effect.logWarning("orchestration-v2.claude-query-interrupt-timeout", {
               providerSessionId: input.providerSessionId,
               providerThreadId: turnInput.providerThread.id,
               providerTurnId: turnInput.providerTurnId,
             });
+            if (turnInput.endOnTimeout === true) {
+              const ownedLiveQuery = yield* Ref.modify(queryContext, (current) =>
+                current?.query === existing.query ? [true, null] : [false, current],
+              );
+              if (!ownedLiveQuery) {
+                // Whoever claimed the query settles its turn, then signals closed.
+                if ((yield* Ref.get(activeTurn)) === currentTurn) {
+                  yield* Deferred.await(existing.closed);
+                }
+                return;
+              }
+              existing.stopping = true;
+              yield* finalizeActiveTurnAfterQueryExit(existing);
+              yield* endSubagentCallsOfClosedQuery(existing.nativeThreadId, "interrupted");
+              yield* Deferred.succeed(existing.closed, undefined);
+              return;
+            }
+            // The turn stays open: the CLI may still be working, and the user decides
+            // whether to Force stop it.
             return yield* new ProviderAdapter.ProviderAdapterInterruptTimeoutError({
               driver: CLAUDE_PROVIDER,
               providerThreadId: turnInput.providerThread.id,
