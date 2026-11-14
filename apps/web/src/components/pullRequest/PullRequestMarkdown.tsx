@@ -1,8 +1,12 @@
 import { ExternalLinkIcon, PaperclipIcon } from "lucide-react";
 import { markdownImageSourceFragment } from "@t3tools/client-runtime/markdown-images";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { pullRequestMediaResource } from "@t3tools/client-runtime/pull-request-markdown";
-import type { AssetResource, EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import {
+  SOURCE_CONTROL_MEDIA_ASSET,
+  type AssetResource,
+  type EnvironmentId,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
 import { createContext, useContext } from "react";
 import type { PluggableList } from "unified";
 
@@ -23,19 +27,29 @@ export const PullRequestMarkdownContext = createContext<{
   repository: string | null;
 } | null>(null);
 
-function PullRequestAssetVideo({
+function PullRequestHostVideo({
   environmentId,
+  cwd,
   url,
-  resource,
+  fetchUrl,
+  repository,
 }: {
   environmentId: EnvironmentId;
+  cwd: string;
   url: string;
-  resource: Extract<AssetResource, { _tag: "github-media" | "azure-devops-media" }>;
+  fetchUrl: string;
+  repository: string | undefined;
 }) {
+  const resource: AssetResource = {
+    _tag: SOURCE_CONTROL_MEDIA_ASSET,
+    cwd,
+    url: fetchUrl,
+    ...(repository ? { repository } : {}),
+  };
   const assetUrl = useAssetUrlState(environmentId, resource);
   const refreshAssetUrl = useAssetUrlRefresh(environmentId, resource);
   const src =
-    assetUrl._tag === "Success" ? assetUrl.url : assetUrl._tag === "Failure" ? resource.url : null;
+    assetUrl._tag === "Success" ? assetUrl.url : assetUrl._tag === "Failure" ? fetchUrl : null;
   return (
     <MediaVideoPlayer
       src={src === null ? null : src + markdownImageSourceFragment(url)}
@@ -124,15 +138,15 @@ function PullRequestBodySegmentView({
     );
   }
   const hostMedia = sourceControlClients.mediaUrl(segment.url);
-  const resource =
-    segment.media === "video" ? pullRequestMediaResource(segment.url, cwd, repository) : null;
-  if (resource !== null) {
+  if (segment.media === "video" && hostMedia !== null) {
     return (
-      <PullRequestAssetVideo
+      <PullRequestHostVideo
         key={`${segment.id}:${segment.url}`}
         environmentId={environmentId}
+        cwd={cwd}
         url={segment.url}
-        resource={resource}
+        fetchUrl={hostMedia.fetchUrl}
+        repository={repository}
       />
     );
   }

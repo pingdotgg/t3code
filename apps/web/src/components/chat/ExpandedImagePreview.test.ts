@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, SOURCE_CONTROL_MEDIA_ASSET } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 
 import { buildExpandedImagePreview, resolveMarkdownMediaPreview } from "./ExpandedImagePreview";
@@ -18,7 +18,7 @@ describe("resolveMarkdownMediaPreview", () => {
       const url = `https://dev.azure.com/org/project/_apis/git/repositories/repo/pullRequests/42/attachments/demo.${extension}#t=2`;
       const source = protocolRelative ? url.slice(6) : url;
       const environmentId = EnvironmentId.make("azure-environment");
-      const resource = { _tag: "azure-devops-media", cwd: "/repo", url: url.split("#")[0] };
+      const resource = { _tag: SOURCE_CONTROL_MEDIA_ASSET, cwd: "/repo", url: url.split("#")[0] };
       const createAssetUrl = vi.fn(async () =>
         AsyncResult.success({
           relativeUrl: `/api/assets/signed/demo.${extension}`,

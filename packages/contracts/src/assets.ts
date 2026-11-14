@@ -71,11 +71,6 @@ export const AssetResource = Schema.Union([
     url: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),
     repository: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(512))),
   }),
-
-  Schema.TaggedStruct("azure-devops-media", {
-    cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
-    url: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),
-  }),
 ]);
 export type AssetResource = typeof AssetResource.Type;
 
@@ -324,15 +319,6 @@ export class AssetSourceControlMediaUrlValidationError extends Schema.TaggedErro
   }
 }
 
-export class AssetAzureDevOpsMediaUrlValidationError extends Schema.TaggedError<AssetAzureDevOpsMediaUrlValidationError>()(
-  "AssetAzureDevOpsMediaUrlValidationError",
-  {},
-) {
-  override get message(): string {
-    return "Only Azure DevOps pull request attachments can be fetched with an Azure DevOps credential.";
-  }
-}
-
 export const AssetAccessError = Schema.Union([
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
@@ -347,7 +333,6 @@ export const AssetAccessError = Schema.Union([
   AssetProjectFaviconInspectionError,
   AssetProjectFaviconNotFoundError,
   AssetSourceControlMediaUrlValidationError,
-  AssetAzureDevOpsMediaUrlValidationError,
   AssetSigningKeyLoadError,
 ]);
 export type AssetAccessError = typeof AssetAccessError.Type;
