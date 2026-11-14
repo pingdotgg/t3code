@@ -1,4 +1,8 @@
-import { decodeFilePreviewText, FILE_TEXT_PREVIEW_MAX_BYTES } from "@t3tools/shared/filePreview";
+import {
+  decodeFilePreviewText,
+  FILE_TEXT_PREVIEW_MAX_BYTES,
+  type ModelPreviewFormat,
+} from "@t3tools/shared/filePreview";
 
 /** Consume only a bounded prefix, even when a host ignores the requested HTTP range. */
 export async function readFilePreviewResponse(
@@ -41,4 +45,40 @@ export async function readFilePreviewResponse(
     offset += chunk.length;
   }
   return decodeFilePreviewText(bytes);
+}
+
+/**
+ * Copy for a 3D file's preview: what the image shows and its toggle's label, what the 3D view says
+ * while loading and when the server cannot supply geometry, and why a file may have no image.
+ */
+export function modelPreviewCopy(format: ModelPreviewFormat) {
+  switch (format) {
+    case "blend":
+      return {
+        notice:
+          "Blender's saved thumbnail, or a fresh render of the scene when the saved one is blank.",
+        imageLabel: "Show thumbnail",
+        loading: "Opening the scene in Blender…",
+        viewerMissing: "Viewing .blend files in 3D needs Blender.",
+        unavailable:
+          "No saved thumbnail or render is available. Blender may be missing or unable to render this scene.",
+      };
+    case "gltf":
+      return {
+        notice: "Rendered preview of the mesh, viewed from the front right.",
+        imageLabel: "Show preview image",
+        loading: null,
+        viewerMissing: "The file could not be loaded.",
+        unavailable:
+          "This mesh could not be drawn. It may be empty, damaged, compressed, over 64 MB, or keep its data in separate .bin files.",
+      };
+    default:
+      return {
+        notice: "Rendered preview of the mesh, viewed from the front right.",
+        imageLabel: "Show preview image",
+        loading: null,
+        viewerMissing: "The file could not be loaded.",
+        unavailable: "This mesh could not be drawn. It may be empty, damaged, or over 64 MB.",
+      };
+  }
 }
