@@ -36,7 +36,12 @@ it("keeps the draft when stashing while a pasted image is still compressing", as
     },
   };
   addPreparingComposerImages(target, [
-    { id: "pasted", name: "shot.png", file: new File(["png"], "shot.png", { type: "image/png" }) },
+    {
+      id: "pasted",
+      name: "shot.png",
+      file: new File(["png"], "shot.png", { type: "image/png" }),
+      hidden: false,
+    },
   ]);
   using _preparing = {
     [Symbol.dispose]: () => removePreparingComposerImages(target, new Set(["pasted"])),
