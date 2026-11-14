@@ -1,3 +1,4 @@
+// @effect-diagnostics-next-line extendsNativeError:off - vendored upstream code without Effect; kept as published.
 export class HttpError extends Error {
   constructor(
     public status: number,
