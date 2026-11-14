@@ -219,7 +219,134 @@ const QUERY_METHODS = new Set([
   "mcpServerStatus",
 ]);
 
-const FUNCTIONS = { forkSession, getSessionMessages, getSubagentMessages, resolveSettings };
+/** T3's `DEFAULT_TIMEOUT_MS`: the deadline of the probe's optional usage and settings reads. */
+const PROBE_READ_TIMEOUT_MS = 4_000;
+/** The account fields the probe reports (`ClaudeCapabilitiesProbe`); never a token. */
+const PROBE_ACCOUNT_FIELDS = ["email", "subscriptionType", "tokenSource", "apiKeySource", "apiProvider"];
+const ENV_TRAMPOLINE = "/usr/bin/env";
+
+const withTimeout = (ms, promise) =>
+  new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("timeout")), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+
+/** T3's `spawnClaudeProbeThroughEnv` (Linux, when `env -C` works): `env` enters the cwd. */
+function spawnProbeThroughEnv({ command, args, cwd, env, signal }) {
+  const usable = command !== "" && command !== "-" && !command.includes("=");
+  const launch = usable
+    ? { command: ENV_TRAMPOLINE, args: [...(cwd === undefined ? [] : ["-C", cwd]), "--", command, ...args] }
+    : { command, args, cwd };
+  return spawn(launch.command, launch.args, {
+    ...("cwd" in launch ? { cwd: launch.cwd } : {}),
+    env,
+    signal,
+    stdio: ["pipe", "pipe", "ignore"],
+  });
+}
+
+/**
+ * T3's `probeClaudeCapabilities`: a query whose prompt never yields, so the CLI initializes
+ * and no request reaches the API. `options` is T3's `buildClaudeCapabilitiesProbeQueryOptions`
+ * as JSON; `unsetEnv` names variables T3 sets to undefined. Returns the account status fields,
+ * the slash commands and models from initialization, and, with `includeStatus`, the usage
+ * windows and each settings source's effort caps. The CLI is stopped before this returns
+ * (after `graceMs` when gateway model discovery runs).
+ */
+async function probeCapabilities(options, extra = {}) {
+  const abort = new AbortController();
+  const env = { ...(options.env ?? {}) };
+  for (const name of extra.unsetEnv ?? []) env[name] = undefined;
+  const queryOptions = { ...options, env, abortController: abort, stderr: () => {} };
+  if (extra.spawnThroughEnv === true) queryOptions.spawnClaudeCodeProcess = spawnProbeThroughEnv;
+  const stop = () => {
+    if (!abort.signal.aborted) abort.abort();
+  };
+  const prompt = (async function* () {
+    await new Promise((resolve) => {
+      if (abort.signal.aborted) resolve();
+      else abort.signal.addEventListener("abort", resolve, { once: true });
+    });
+  })();
+  let ok = false;
+  try {
+    const q = query({ prompt, options: queryOptions });
+    const init = await withTimeout(extra.timeoutMs ?? 25_000, q.initializationResult());
+    const usageCheckedAt = new Date().toISOString();
+    const includeStatus = extra.includeStatus !== false;
+    const [usage, settings] = await Promise.allSettled([
+      includeStatus
+        ? withTimeout(
+            PROBE_READ_TIMEOUT_MS,
+            q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true }),
+          )
+        : Promise.reject(new Error("skipped")),
+      includeStatus && typeof q.getSettings === "function"
+        ? withTimeout(PROBE_READ_TIMEOUT_MS, q.getSettings())
+        : Promise.reject(new Error("skipped")),
+    ]);
+    const account = {};
+    for (const field of PROBE_ACCOUNT_FIELDS) {
+      const value = init.account?.[field];
+      if (typeof value === "string") account[field] = value;
+    }
+    // Only the effort caps of each settings source leave the host, never other settings.
+    const caps = (raw) => {
+      if (!raw || typeof raw !== "object") return {};
+      const modelSettings = {};
+      for (const [model, entry] of Object.entries(raw.modelSettings ?? {})) {
+        if (entry && typeof entry === "object" && "maxEffortLevel" in entry) {
+          modelSettings[model] = { maxEffortLevel: entry.maxEffortLevel };
+        }
+      }
+      return { maxEffortLevel: raw.maxEffortLevel, modelSettings };
+    };
+    const settingsValue =
+      settings.status === "fulfilled"
+        ? Array.isArray(settings.value?.sources)
+          ? { sources: settings.value.sources.map((source) => ({ settings: caps(source?.settings) })) }
+          : { effective: caps(settings.value?.effective) }
+        : null;
+    ok = true;
+    return {
+      account,
+      commands: init.commands ?? [],
+      models: init.models ?? [],
+      ...(usage.status === "fulfilled"
+        ? {
+            usage: {
+              rate_limits_available: usage.value?.rate_limits_available,
+              rate_limits: usage.value?.rate_limits,
+            },
+            usageCheckedAt,
+          }
+        : {}),
+      ...(settingsValue === null ? {} : { settings: settingsValue }),
+    };
+  } finally {
+    // A failed probe stops at once; a good one after the gateway's discovery grace.
+    const grace = ok ? (extra.graceMs ?? 0) : 0;
+    if (grace > 0) setTimeout(stop, grace);
+    else stop();
+  }
+}
+
+const FUNCTIONS = {
+  forkSession,
+  getSessionMessages,
+  getSubagentMessages,
+  resolveSettings,
+  probeCapabilities,
+};
 
 /**
  * `host` gives `describeError`. A session handle from the host gives `emit(message)` for SDK

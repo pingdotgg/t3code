@@ -21,15 +21,3 @@ grok_background_bash_fast_wake/grok  driver: as grok_background_bash
 grok_background_subagent/grok        driver: as grok_background_bash
 grok_monitor/grok                    driver: as grok_background_bash
 
-# --- Claude provider: background roster, monitors and wakes are not built ---
-claude_background_subagent_after_root/claudeAgent    provider: no background_work.updated roster for Claude subagents; the subagent item never shows
-claude_background_monitor_wake/claudeAgent           provider: Claude Monitor wakes are not built
-claude_nested_background_subagent_wake/claudeAgent   provider: no Claude background roster for nested subagents
-claude_background_subagent_lifecycle/claudeAgent     provider: no Claude background roster; the subagent statuses differ
-claude_background_wake_before_queued_prompt/claudeAgent  provider: Claude background wakes are not built; the wake and queued prompt order differs
-claude_compact_after_resume_wake/claudeAgent         provider: Claude background wakes are not built (the resumed wake's compaction differs)
-claude_compact_after_peer_turn/claudeAgent           provider: Claude background wakes are not built (the peer turn's run never reaches its status)
-
-# --- Claude provider, past the replay gate ---
-claude_background_task_after_root/claudeAgent provider: Claude background wakes are not built (the task's pending row ends before its wake run)
-claude_background_task_wake/claudeAgent       provider: Claude background wakes are not built (the wake's message text differs)

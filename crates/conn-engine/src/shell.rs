@@ -84,6 +84,39 @@ fn pending_background_tasks(
     ))
 }
 
+/// The latest run that started and the provider thread whose background work outlives it,
+/// for a Stop with no active run (`dispatchThreadStop`: `derivePendingBackgroundWork` on the
+/// latest run). `None` when nothing runs in the background.
+pub(crate) fn settled_background_target(
+    tx: &Tx<'_>,
+    thread_id: &str,
+) -> StoreResult<Option<(Value, Value)>> {
+    let Some(thread) = tx.thread(thread_id)? else {
+        return Ok(None);
+    };
+    let latest_run = one(
+        tx,
+        "SELECT body FROM entities WHERE thread_id = ?1 AND kind = 'runs'
+         AND json_extract(body, '$.status') != 'queued' ORDER BY ordinal DESC LIMIT 1",
+        params![thread_id],
+    )?;
+    let provider_threads = tx.entities(thread_id, "providerThreads")?;
+    let pending = pending_background_tasks(
+        tx,
+        thread_id,
+        &thread,
+        latest_run.as_ref(),
+        &provider_threads,
+    )?;
+    let Some(run) = latest_run.filter(|_| !pending.is_empty()) else {
+        return Ok(None);
+    };
+    let provider_thread = provider_threads
+        .into_iter()
+        .find(|pt| pt["id"] == run["providerThreadId"]);
+    Ok(provider_thread.map(|pt| (run, pt)))
+}
+
 pub(crate) fn thread_shell(tx: &Tx<'_>, thread_id: &str) -> StoreResult<Value> {
     let thread = tx
         .thread(thread_id)?

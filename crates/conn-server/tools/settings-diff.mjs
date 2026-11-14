@@ -127,7 +127,8 @@ async function startServer(stored) {
   const server = NodeChildProcess.spawn(
     NodePath.resolve(binary),
     ["--listen", "127.0.0.1:0", "--state-dir", stateDir],
-    { cwd: tmp, stdio: ["ignore", "pipe", "pipe"] },
+    // CONN_CLAUDE_STATUS_PROBE=off: no run of this machine's `claude` for the status.
+    { cwd: tmp, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, CONN_CLAUDE_STATUS_PROBE: "off" } },
   );
   const stderr = [];
   server.stderr.on("data", (d) => stderr.push(String(d)));

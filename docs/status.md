@@ -50,13 +50,13 @@ settings; about 140 MiB for the `claude` program alone).
 
 ## What exists
 
-`main` is in a working state. `tools/check.sh` passes 35 checks with `CONN_MONOREPO` set (Conn `b12470dcad`, 2026-11-14).
+`main` is in a working state. `tools/check.sh` passes 36 checks with `CONN_MONOREPO` set (Conn `b12470dcad`, 2026-11-14; 36 with the Claude probe conformance).
 
 | Part | State |
 | --- | --- |
 | RPC methods | 102 of 236 served; 102 have a run that the real client's decoders accept |
 | Engine commands | 43 of 56 |
-| T3 testkit fixtures through this engine | 60 of 159 variants pass T3's own assertions (Claude 25 of 34, Codex 25 of 25, Grok 10 of 15; the other 85 are providers this server does not offer) |
+| T3 testkit fixtures through this engine | 69 of 159 variants pass T3's own assertions (Claude 34 of 34, Codex 25 of 25, Grok 10 of 15; the other 85 are providers this server does not offer) |
 | HTTP routes | 17 of 57 (the 4 of `/api/hooks/:hookId/:token`) |
 | `/mcp` tools | 33 of 87 |
 | Providers | Claude, Codex and Grok (with background work and subagents), of the 10 the T3 server has without Pi |
@@ -64,7 +64,7 @@ settings; about 140 MiB for the `claude` program alone).
 Proven:
 
 - **Claude** runs through Anthropic's official Claude Agent SDK in the SDK host
-  (`helpers/sdk-host`). In 14 scenarios (and one more with `JAVA_HOME` set) the `claude` CLI
+  (`helpers/sdk-host`). In 15 scenarios (and one more with `JAVA_HOME` set) the `claude` CLI
   gets the same argv, environment (with the login shell's `PATH`, `__MISE_DIFF` and
   `JAVA_HOME`) and stdin as from the T3 server. 18 of the T3 server's 39 Claude transcripts pass (all that the
   driver runs). 11 live tests
@@ -539,6 +539,91 @@ definition registry, provider detection and GitHub's GraphQL documents first
 the macOS release binary grew from 16,558,944 to 16,605,712 bytes (+46,768). `tools/check.sh`
 passed all 30 checks with `CONN_MONOREPO` set; the fixture replay is unchanged.
 
+## Claude provider: background work, Stop with no turn, the status probe (2026-11-14)
+
+Claude passes 32 of T3's 34 fixture variants through this engine, up from 24. Each step has a
+test; every change to what the CLI or the SDK receives was compared with the T3 server.
+
+- **Background work** (`crates/conn-provider-claude/README.md`, "Background work and wakes"):
+  wake reports and T3's notice on the continuation (`backgroundWorkNotification`), the
+  notification summary as its text, owed wake tasks, awaited tasks
+  (`Session::await_background_tasks`), the scheduled wakeup entry, wakes of backgrounded and
+  nested subagents, subagents resumed with `SendMessage` in a later turn, the prompt echo gate
+  (a wake Claude runs before a queued prompt), `compact_boundary` on the turn's compaction row,
+  `localCommand` usage and the usage ledger measured on arrival. Every
+  `background_tasks_changed` now sends the thread, as T3 (a difference the last worker left).
+  Proven by the fixture replay (8 more variants) and unit tests; the crate's 8 replays and the
+  T3 transcript replay (18 of 18) still pass. Bounded: 64 entries per list.
+- **The replay gate** in the replay driver and the fake SDK host (T3's `makeProviderReplayGate`:
+  `release_replay_gate`, `release_replay_gate_after_waiting`). Any stand-in can use it through
+  the plan's `replayGates`; only the fake SDK host reads it today.
+- **Stop with no turn running.** `thread.stop` with no active run now targets the latest run
+  when background work outlives it (`dispatchThreadStop`), and the engine calls the new
+  `Session::stop_background_work` for that settled turn (`interruptTurn` with
+  `requestRuntimeRestart`). Claude closes the thread's idle query and clears its roster and
+  wake state. Proven: engine test `stop_without_a_run_reaches_background_work`; conformance
+  scenario `stop_background_idle` (SAME, 2 CLI starts; it fails with 1 start when our side
+  skips the Stop). Not written: T3's interrupt request and result items for the settled run.
+- **The status entry, probed as T3 probes it** (Nick, 2026-11-14: both probes). `claude
+  --version`, the catalog filtered by version (the generator now writes each model's bounds),
+  and the capabilities probe in the SDK host (`probeCapabilities`; the host returns the
+  account status the SDK reports, never a token). Proven: `tools/probe-conformance/run.mjs`
+  runs T3's own `checkClaudeProviderStatus` and ours against stub CLIs: 10 of 10 scenarios
+  SAME (missing, failing and hanging `--version`, an old CLI, signed in, signed out with and
+  without a home folder, an API key, a failed initialization, disabled), entry, argv,
+  environment, stdin and signals. A new check in `tools/check.sh`.
+- **Memory of the probe** (macOS, release, stub CLI): the SDK host starts at server start for
+  the probe, peaks at 89 MiB RSS, and stops right after it (under 1 s with the stub CLI since the
+  fix below; 3 s before it). The server's RSS after it: 10.7 MiB,
+  against 10.0 MiB with the probe off. The periodic probe runs only while a foreground client
+  holds a `provider-status` activity lease (T3's `BackgroundPolicy`; `server.reportClientActivity`
+  now records leases, also for Grok): an idle container starts no CLI and no host after the
+  start. `CONN_CLAUDE_STATUS_PROBE=off` turns the Claude probe off; every check that starts the
+  server sets it, so no check runs this machine's `claude`.
+- **Engine changes (small, named):** `ContinuationRequest.notification` (the provider's notice;
+  else the default); `syncSubagentThreadModel` (a native subagent's child thread takes the model
+  the provider reports later); `Effect::StopBackgroundWork` from `thread.stop`. Trait additions:
+  `Session::stop_background_work` (default: nothing). Server: activity leases gate the periodic
+  probe; `main.rs` sets the Claude probe's cwd (the state folder) and the off switch.
+
+**A defect the fixture replay showed under load (fixed).** `Helper::function` still held its
+stdin sender when it called `stop_if_idle`, so an SDK host that served only a `fn` call
+(`resolveSettings` at every cold start, `probeCapabilities`, `forkSession`) never saw the end of
+its input: it waited out the 3 s grace and was SIGKILLed with its process group. Every cold start
+was 3 s slower for it. In the replay, the kill reached the shim first; the orphaned fake host
+then saw EOF and rewrote its state file, and under load the group kill could land between the
+truncate and the write, so the next host started at cursor 0 (`claude_idle_resume` failed once
+in a full run at load 17 with a `resume` where the recording expects a fresh `sessionId`). The
+host now ends on EOF at once (test `a_host_used_only_for_a_function_ends_on_end_of_input`, which
+fails without the fix); the fake host writes its state file through a rename. T3 runs the SDK
+in process, so it has no such step. Under load (a release build beside it, load 8 to 12): 15 of
+15 runs green after the fix; before it, 12 of 12 runs at load 13 to 20 passed too, so the
+proof is the test and the trace (four fake hosts for two turns, each `fn` host killed after
+3 s without its EOF save).
+
+After the merge of `main` (6ad65f2) Claude passes **34 of 34** fixture variants: the last one,
+`claude_background_subagent_after_root`, passes with `main`'s checkpoint capture in the thread's
+lane (the wake run now queues behind run 1, as in T3), and `queued_turn` with `main`'s message
+order.
+
+**Titles through Claude (built after the merge).** T3 does not use the SDK for them:
+`ClaudeTextGeneration.ts` runs the CLI directly (`claude -p --output-format json --json-schema
+<schema> --model <api model> [--effort] --settings <json> --tools "" --disable-slash-commands
+--no-session-persistence [--strict-mcp-config] --permission-mode dontAsk`, the prompt on stdin,
+a fresh temp folder, 180 s, a retry without `--no-session-persistence` for CLIs before 2.0.63).
+`ClaudeProvider::generate_text` does the same (`text_generation.rs`); no SDK host, so no memory
+cost. Proven: 4 title scenarios in `tools/probe-conformance` (T3's own `generateThreadTitle`
+against ours on the stub CLI: argv, environment, folder, stdin and the answer or failure
+equal), beside the 10 status scenarios.
+
+**Sealed proofs.** The probe proof's T3 side runs with `sealedNodeEnv` (`tools/sealed-env.mjs`:
+only what node needs, a throwaway HOME); a run with `ANTHROPIC_BASE_URL=http://canary.invalid`,
+`CLAUDE_CANARY` and `SHELL_CANARY` in the shell shows none of them in its output or files. The
+fixture replay, `gen-catalog`, `capture-ts` and the T3 transcript replay are sealed the same way
+(before, they passed the shell's environment and the real HOME; our provider read the real
+`~/.claude/settings.json` for `env.CLAUDE_CODE_ENTRYPOINT` in both replays). `sealedEnv` now also
+drops `ANTHROPIC_*`, `CLAUDE_*` and `CLAUDECODE`.
+
 ## Source control, part 4 (2026-11-14)
 
 The three foundations the pull request steps rest on are built and proven; on them, the
@@ -841,9 +926,9 @@ T3 Code.
    lints) are in `CRATES.md`, "Lint set".
 2. **Provider interface.** The server side of the host handle
    (`ProviderHost`: only the trait and a rooted file host exist; no terminals, and the
-   server passes none); the rest of Claude's background work: subagents in the roster,
-   monitors' and tasks' wakes, `stopTask`, `awaitBackgroundTasks` (in the trait, not built in
-   the provider), and a Stop with no running turn (T3's `requestRuntimeRestart`).
+   server passes none); `/mcp` `t3_background_wait` (Claude's `await_background_tasks` is
+   built; the engine lookup and the tool are not); titles through an agent provider (see
+   "Claude provider: background work, …"); Claude's workflow tasks and `stopTask`.
 3. **Other providers.** One ACP provider for Grok, Kiro, fx, Antigravity and the ACP registry:
    `crates/conn-provider-acp`. **Grok is offered by the server (2026-11-14):** T3's default
    `grok` instance, off until `providerInstances.grok` enables it, probed as T3 probes the CLI
@@ -893,8 +978,7 @@ T3 Code.
    `limits-diff` check); `git` children are reaped (a test). Left:
    T3's search ranking (`scoreThreadSearch`, `rankMessageMatches`) for `t3_thread_search` and
    `orchestration.searchThreads`; `@` file search ranks with nucleo, not T3's fff (`@hello`
-   finds `hello.ts`, T3 also `helper.ts`); the Claude model list is not filtered by the CLI's version (needs a CLI version probe in
-   the provider); the Linux systemd scope for provider processes;
+   finds `hello.ts`, T3 also `helper.ts`); the Linux systemd scope for provider processes;
    a cap on the blocking pool or one store thread (measure first: each store call takes its
    own blocking thread).
 8. **Proofs.** Live Codex; the Linux pass; Orbit in a scratch container on Beast; desktop and
@@ -903,8 +987,8 @@ T3 Code.
 9. **Upkeep.** Wire the bump into the nightly sync (its script is outside the Conn
    repository; `FORK.md` there says the Grok bot runs it). The first real bump
    (2026-11-14, `docs/upkeep.md` "Bumps") took about four hours. The provider gaps it left:
-   reaping a recorded Claude CLI after a restart, Claude
-   Monitor wakes, `workState: "waiting_for_children"` in `/mcp`.
+   reaping a recorded Claude CLI after a restart and `workState: "waiting_for_children"` in
+   `/mcp` (Claude Monitor wakes are built since 2026-11-14).
 
 ### Where the review reports are
 

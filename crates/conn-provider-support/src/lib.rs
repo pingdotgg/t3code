@@ -4,6 +4,7 @@
 //! - [`ids`]: `IdAllocatorV2` id formats, an injectable clock and uuids.
 //! - [`lines`]: newline framing with a per-line cap.
 //! - [`redact`]: secrets out of provider failure text, length capped (T3 `failure.ts`).
+//! - [`probe`]: a CLI run for a status probe, as T3's `spawnAndCollect`.
 //! - [`process`]: one child process with bounded stdin/stdout, a stderr tail, reaping and a
 //!   process-group kill.
 //!
@@ -13,6 +14,7 @@ pub mod attachments;
 pub mod host_files;
 pub mod ids;
 pub mod lines;
+pub mod probe;
 pub mod process;
 pub mod redact;
 pub mod sdk_host;

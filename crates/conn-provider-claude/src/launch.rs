@@ -67,6 +67,11 @@ pub struct ClaudeConfig {
     pub mcp_instructions: Option<String>,
     /// The SDK helper. Default: [`HelperCommand::discover`].
     pub helper: HelperCommand,
+    /// Where the status probe runs the CLI (T3: its state folder). `None`: the server's cwd.
+    pub status_cwd: Option<PathBuf>,
+    /// Runs the status probe. Off, the entry stays T3's pending one: checks that start a
+    /// server set `CONN_CLAUDE_STATUS_PROBE=off`, so they never run this machine's `claude`.
+    pub status_probe: bool,
 }
 
 /// T3's `DEFAULT_IDLE_TIMEOUT_MS`.
@@ -113,6 +118,8 @@ impl Default for ClaudeConfig {
             idle_max_hold: DEFAULT_IDLE_MAX_HOLD,
             mcp_instructions: None,
             helper: HelperCommand::discover(),
+            status_cwd: None,
+            status_probe: true,
         }
     }
 }
@@ -446,6 +453,20 @@ pub fn query_env(
     env
 }
 
+/// `mergeClaudeProcessEnvironment`, then `makeClaudeEnvironment`: the Claude process
+/// environment outside a turn (no thread id), as name and value pairs.
+pub fn process_environment(
+    config: &ClaudeConfig,
+    host: impl IntoIterator<Item = (String, String)>,
+    settings_entrypoint: Option<String>,
+) -> Vec<(String, String)> {
+    let mut env = query_env(config, "", false, host, settings_entrypoint);
+    env.remove(AGENT_THREAD_ENV);
+    env.into_iter()
+        .filter_map(|(k, v)| Some((k, v.as_str()?.to_owned())))
+        .collect()
+}
+
 /// The config directory T3 reads Claude's settings from (`resolveClaudeConfigDirPath`).
 pub fn config_dir(config: &ClaudeConfig, env: &Map<String, Value>) -> PathBuf {
     if let Some(home) = &config.home_path {
@@ -489,6 +510,25 @@ pub fn settings_entrypoint(config_dir: &std::path::Path) -> Option<String> {
             continue;
         };
         if let Some(entry) = value["env"]["CLAUDE_CODE_ENTRYPOINT"].as_str() {
+            found = Some(entry.to_string());
+        }
+    }
+    found
+}
+
+/// `readClaudeSettingsEnv(...)[name]` for a string value: user then managed settings, later
+/// wins. Blocking file reads; call off the runtime thread.
+pub fn settings_env_value(config_dir: &std::path::Path, name: &str) -> Option<String> {
+    let mut found = None;
+    let paths = std::iter::once(config_dir.join("settings.json")).chain(managed_settings_path());
+    for path in paths {
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_str::<Value>(&text) else {
+            continue;
+        };
+        if let Some(entry) = value["env"][name].as_str() {
             found = Some(entry.to_string());
         }
     }

@@ -26,6 +26,11 @@ pub struct Compiled {
     pub settings: Map<String, Value>,
 }
 
+/// The generated catalog as JSON.
+pub(crate) fn catalog_json() -> Value {
+    serde_json::from_str(CATALOG).unwrap_or(Value::Null)
+}
+
 /// The models the T3 server offers clients (`ServerProvider.models`): every model of its
 /// bundled catalog, with names, aliases, the legacy flag and option descriptors.
 pub fn provider_models() -> Vec<Value> {

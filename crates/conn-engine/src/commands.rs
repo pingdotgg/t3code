@@ -32,6 +32,12 @@ pub(crate) enum Effect {
         thread_id: String,
         run_id: String,
     },
+    /// Stop on a thread whose latest run settled while its background work still runs: the
+    /// provider gets `interruptTurn` with `requestRuntimeRestart` for that settled turn.
+    StopBackgroundWork {
+        thread_id: String,
+        run_id: String,
+    },
     Respond {
         thread_id: String,
         request: Value,
@@ -69,6 +75,7 @@ impl Effect {
             | Self::StartTurn { thread_id, .. }
             | Self::Steer { thread_id, .. }
             | Self::Interrupt { thread_id, .. }
+            | Self::StopBackgroundWork { thread_id, .. }
             | Self::Respond { thread_id, .. }
             | Self::CloseSession { thread_id }
             | Self::ApplyModelSelection { thread_id, .. }
@@ -1143,13 +1150,24 @@ fn thread_stop(tx: &mut Tx<'_>, command: Value) -> Outcome {
     if let Some(run) = &active {
         mark_stopped_run(tx, &c.thread_id, run, c.reason.as_deref())?;
     }
+    // With no active run, background work that outlives the latest run is the target: the
+    // provider alone knows whether work remains (`dispatchThreadStop`).
+    let settled = match &active {
+        Some(_) => None,
+        None => crate::shell::settled_background_target(tx, &c.thread_id)?
+            .and_then(|(run, _)| run["id"].as_str().map(str::to_owned)),
+    };
     let own = active
         .and_then(|run| run["id"].as_str().map(str::to_owned))
         .map(|run_id| Effect::Interrupt {
-            thread_id: c.thread_id,
+            thread_id: c.thread_id.clone(),
             run_id,
         });
-    Ok(children.into_iter().chain(own).collect())
+    let background = settled.map(|run_id| Effect::StopBackgroundWork {
+        thread_id: c.thread_id.clone(),
+        run_id,
+    });
+    Ok(children.into_iter().chain(own).chain(background).collect())
 }
 
 /// `RunExecutionService.USER_STOP_REASON`: a Stop without a reason came from a person.
