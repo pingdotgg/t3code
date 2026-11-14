@@ -6,7 +6,6 @@ import {
   CommandId,
   MessageId,
   NodeId,
-  PlanId,
   type OrchestrationV2AppThread,
   type OrchestrationV2CheckpointScope,
   type OrchestrationV2DomainEvent,
@@ -196,55 +195,6 @@ it.effect("routes shared-runtime events only to their owning root run", () =>
     );
   }),
 );
-
-it("routes a superseded plan from an earlier run on the same thread", () => {
-  const threadId = ThreadId.make("thread:superseded-plan");
-  const identity: RunExecutionService.ProviderEventRouteIdentity = {
-    threadId,
-    runId: RunId.make("run:superseded-plan:current"),
-    attemptId: RunAttemptId.make("attempt:superseded-plan:current"),
-    providerThreadId: ProviderThreadId.make("provider-thread:superseded-plan"),
-  };
-  const state = RunExecutionService.makeProviderEventRoutingState({
-    identity,
-    providerTurnId: null,
-  });
-  const plan = {
-    id: PlanId.make("plan:superseded-plan"),
-    threadId,
-    runId: RunId.make("run:superseded-plan:earlier"),
-    nodeId: NodeId.make("node:superseded-plan"),
-    kind: "proposed_plan" as const,
-    status: "superseded" as const,
-    markdown: "# Earlier plan",
-  };
-
-  assert.isTrue(
-    RunExecutionService.routeProviderEvent(
-      { type: "plan.updated", driver, plan },
-      identity,
-      state,
-    )[0],
-  );
-  assert.isFalse(
-    RunExecutionService.routeProviderEvent(
-      { type: "plan.updated", driver, plan: { ...plan, status: "active" } },
-      identity,
-      state,
-    )[0],
-  );
-  assert.isFalse(
-    RunExecutionService.routeProviderEvent(
-      {
-        type: "plan.updated",
-        driver,
-        plan: { ...plan, threadId: ThreadId.make("thread:superseded-plan:other") },
-      },
-      identity,
-      state,
-    )[0],
-  );
-});
 
 it("routes only enrolled workflow members after the root turn ends", () => {
   const threadId = ThreadId.make("thread:late-child");

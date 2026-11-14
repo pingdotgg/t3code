@@ -1,4 +1,3 @@
-import { withAttemptNativeSession } from "./AttemptNativeSession.ts";
 import {
   CheckpointId,
   CheckpointScopeId,
@@ -30,6 +29,7 @@ import {
   isCheckpointRestoreIsolated,
   SHARED_WORKSPACE_RESTORE_MESSAGE,
 } from "./CheckpointRestoreSafety.ts";
+import { withAttemptNativeSession } from "./AttemptNativeSession.ts";
 import { CheckpointRestoreError, CheckpointServiceV2 } from "./CheckpointService.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -149,8 +149,8 @@ export const layer: Layer.Layer<
       readonly restoreFiles?: boolean;
     }) {
       const context = yield* projections.getCheckpointRollbackContext(input.threadId, input);
-      const { checkpoint, scope, targetAttempt, runsToRollback, staleCheckpoints } = context;
-      const providerThread = context.providerThread;
+      const { providerThread, checkpoint, scope, targetAttempt, runsToRollback, staleCheckpoints } =
+        context;
       if (
         providerThread === undefined ||
         providerThread.providerSessionId === null ||

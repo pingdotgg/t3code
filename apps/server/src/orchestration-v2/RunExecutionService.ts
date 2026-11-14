@@ -512,15 +512,7 @@ export function routeProviderEvent(
       return [true, { ...state, inheritedBackgroundTurnItems }];
     }
     case "plan.updated":
-      return [
-        ownsRun(event.plan.runId) ||
-          ownsChildThread(event.plan.threadId) ||
-          // A replacement plan supersedes the previous plan, which still carries
-          // the run that created it. Accept that update for the current thread so
-          // the superseded status reaches the projection instead of being dropped.
-          (event.plan.status === "superseded" && event.plan.threadId === input.threadId),
-        state,
-      ];
+      return [ownsRun(event.plan.runId) || ownsChildThread(event.plan.threadId), state];
     case "runtime_request.updated":
       return [
         (event.threadId !== undefined && ownsChildThread(event.threadId)) ||
