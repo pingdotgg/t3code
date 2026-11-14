@@ -1,4 +1,11 @@
-import type { ConnectionTarget } from "@t3tools/client-runtime/connection";
+import {
+  connectionRouteId,
+  connectionRouteKind,
+  connectionRoutes,
+  type ConnectionCatalogEntry,
+  type ConnectionRoute,
+  type ConnectionTarget,
+} from "@t3tools/client-runtime/connection";
 import {
   REMOTE_CAPABLE_EDITOR_IDS,
   type EditorId,
@@ -14,7 +21,9 @@ import { browserClientOs, type BrowserIdentity } from "~/connection/clientMetada
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { isLoopbackHostname } from "~/environments/primary/target";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { environmentPresentations } from "~/state/presentation";
+import { environmentSession } from "~/state/session";
 import { hostEnvironmentIdAtom } from "~/state/primaryEnvironment";
 
 export interface RemoteOpenHost {
@@ -37,9 +46,19 @@ export interface RemoteOpenResolution {
 
 const LOCAL_EXEC: RemoteOpenState = { mode: "local-exec" };
 const REMOTE_UNAVAILABLE: RemoteOpenState = { mode: "remote-unavailable" };
-const UNRESOLVED_REMOTE_OPEN: RemoteOpenResolution = {
+// The saved entry and advertised targets a resolution was computed from.
+interface SourcedRemoteOpenResolution extends RemoteOpenResolution {
+  readonly entry: ConnectionCatalogEntry | null;
+  readonly remoteOpenTargets: ReadonlyArray<RemoteOpenTarget> | undefined;
+  readonly hostEnvironmentId: string | null;
+}
+
+const UNRESOLVED_REMOTE_OPEN: SourcedRemoteOpenResolution = {
   state: LOCAL_EXEC,
   isResolved: false,
+  entry: null,
+  remoteOpenTargets: undefined,
+  hostEnvironmentId: null,
 };
 
 function parseHostname(url: string): string | null {
@@ -52,6 +71,8 @@ function parseHostname(url: string): string | null {
 
 export function resolveRemoteOpenState(input: {
   readonly target: ConnectionTarget | null;
+  /** The saved route the client is connected through, which need not be the first one. */
+  readonly connectedRoute: ConnectionRoute | null;
   readonly sshTarget: { readonly alias: string; readonly username: string | null } | null;
   readonly remoteOpenTargets: ReadonlyArray<RemoteOpenTarget> | undefined;
   readonly isDesktopRenderer: boolean;
@@ -59,6 +80,9 @@ export function resolveRemoteOpenState(input: {
 }): RemoteOpenState {
   const { target } = input;
   if (target === null || target.environmentId === input.hostEnvironmentId) {
+    return LOCAL_EXEC;
+  }
+  if (input.connectedRoute !== null && connectionRouteKind(input.connectedRoute) === "loopback") {
     return LOCAL_EXEC;
   }
   if (target._tag === "PrimaryConnectionTarget") {
@@ -107,32 +131,50 @@ function remoteOpenStatesEqual(previous: RemoteOpenState, next: RemoteOpenState)
   );
 }
 
-// Config pushes recreate presentations; preserve equal resolutions to avoid re-rendering file links.
+// Keep the last route decision during reconnects while its source is unchanged.
 const remoteOpenResolutionAtom = Atom.family((environmentId: EnvironmentId) =>
-  Atom.make((get): RemoteOpenResolution => {
+  Atom.make((get): SourcedRemoteOpenResolution => {
     const presentation = get(environmentPresentations.presentationAtom(environmentId));
     const entry = presentation?.entry ?? null;
     if (entry === null) {
       return UNRESOLVED_REMOTE_OPEN;
     }
+    const remoteOpenTargets = presentation?.serverConfig?.remoteOpenTargets;
+    const hostEnvironmentId = get(hostEnvironmentIdAtom);
+    const previous = Option.getOrNull(get.self<SourcedRemoteOpenResolution>());
+    const sourceUnchanged =
+      previous !== null &&
+      previous.isResolved &&
+      previous.entry === entry &&
+      previous.remoteOpenTargets === remoteOpenTargets &&
+      previous.hostEnvironmentId === hostEnvironmentId;
+    const connection = Option.getOrNull(
+      get(environmentSession.preparedConnectionValueAtom(environmentId)),
+    );
+    if (connection === null && sourceUnchanged) {
+      return previous;
+    }
+    const connectedRouteId = connection === null ? null : connectionRouteId(connection.target);
     const profile = Option.getOrNull(entry.profile);
-    const next: RemoteOpenResolution = {
+    const next: SourcedRemoteOpenResolution = {
       state: resolveRemoteOpenState({
         target: entry.target,
+        connectedRoute:
+          connectionRoutes(entry).find(
+            (route) => connectionRouteId(route.target) === connectedRouteId,
+          ) ?? null,
         sshTarget:
           profile !== null && profile._tag === "SshConnectionProfile" ? profile.target : null,
-        remoteOpenTargets: presentation?.serverConfig?.remoteOpenTargets,
+        remoteOpenTargets,
         isDesktopRenderer: window.desktopBridge !== undefined,
-        hostEnvironmentId: get(hostEnvironmentIdAtom),
+        hostEnvironmentId,
       }),
       isResolved: true,
+      entry,
+      remoteOpenTargets,
+      hostEnvironmentId,
     };
-    const previous = Option.getOrNull(get.self<RemoteOpenResolution>());
-    return previous !== null &&
-      previous.isResolved &&
-      remoteOpenStatesEqual(previous.state, next.state)
-      ? previous
-      : next;
+    return sourceUnchanged && remoteOpenStatesEqual(previous.state, next.state) ? previous : next;
   }).pipe(Atom.withLabel(`remote-open-resolution:${environmentId}`)),
 );
 
@@ -146,6 +188,10 @@ export function useRemoteOpenResolution(environmentId: EnvironmentId | null): Re
 
 export function useRemoteOpenState(environmentId: EnvironmentId | null): RemoteOpenState {
   return useRemoteOpenResolution(environmentId).state;
+}
+
+export function readRemoteOpenState(environmentId: EnvironmentId): RemoteOpenState {
+  return appAtomRegistry.get(remoteOpenResolutionAtom(environmentId)).state;
 }
 
 const REMOTE_FALLBACK_EDITORS: ReadonlyArray<EditorId> = ["vscode"];
