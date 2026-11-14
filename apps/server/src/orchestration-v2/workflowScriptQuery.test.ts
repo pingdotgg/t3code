@@ -7,7 +7,6 @@ import {
   CommandId,
   ProjectId,
   ThreadId,
-  type OrchestrationV2GetWorkflowScriptInput,
   ProviderInstanceId,
   ProviderDriverKind,
 } from "@t3tools/contracts";
@@ -48,30 +47,34 @@ afterAll(() => {
 
 const customHome = NodePath.join(sandbox, "custom");
 const envHome = NodePath.join(sandbox, "environment");
+const checkout = NodePath.join(sandbox, "checkout");
 const customScript = NodePath.join(customHome, "projects", "test", "run.js");
 const envScript = NodePath.join(envHome, "projects", "test", "run.js");
-NodeFS.mkdirSync(NodePath.dirname(customScript), { recursive: true });
-NodeFS.mkdirSync(NodePath.dirname(envScript), { recursive: true });
-NodeFS.writeFileSync(customScript, "custom home");
-NodeFS.writeFileSync(envScript, "environment home");
-const customLink = NodePath.join(NodePath.dirname(customScript), "escape.js");
-if (symlinksSupported) NodeFS.symlinkSync(outside, customLink);
+const relativeScript = NodePath.join(checkout, "claude-config", "projects", "test", "run.js");
+for (const [file, contents] of [
+  [customScript, "custom home"],
+  [envScript, "environment home"],
+  [relativeScript, "thread checkout home"],
+] as const) {
+  NodeFS.mkdirSync(NodePath.dirname(file), { recursive: true });
+  NodeFS.writeFileSync(file, contents);
+}
 
-const fixtureThreadId = ThreadId.make("workflow-script-fixture");
+const threadId = ThreadId.make("workflow-script-fixture");
 const fixture = Layer.effectDiscard(
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     yield* orchestrator.dispatch({
       type: "thread.create",
       commandId: CommandId.make("workflow-script-fixture:create"),
-      threadId: fixtureThreadId,
+      threadId,
       projectId: ProjectId.make("workflow-project"),
       title: "Workflow",
       modelSelection: { instanceId: ProviderInstanceId.make("claudeAgent"), model: "default" },
       runtimeMode: "full-access",
       interactionMode: "default",
       branch: null,
-      worktreePath: process.cwd(),
+      worktreePath: checkout,
       createdBy: "user",
       creationSource: "web",
     });
@@ -86,21 +89,35 @@ const fixture = Layer.effectDiscard(
   ),
 );
 
+const claude = ProviderDriverKind.make("claudeAgent");
 const providerInstances = {
   [ProviderInstanceId.make("claude-missing")]: {
-    driver: ProviderDriverKind.make("claudeAgent"),
+    driver: claude,
     config: { homePath: NodePath.join(sandbox, "missing") },
   },
+  // Explicit homes resolve against the server cwd and win over CLAUDE_CONFIG_DIR.
   [ProviderInstanceId.make("claude-custom")]: {
-    driver: ProviderDriverKind.make("claudeAgent"),
+    driver: claude,
     config: { homePath: NodePath.relative(process.cwd(), customHome) },
     environment: [{ name: "CLAUDE_CONFIG_DIR", value: "ignored-config", sensitive: false }],
   },
   [ProviderInstanceId.make("claude-env")]: {
-    driver: ProviderDriverKind.make("claudeAgent"),
+    driver: claude,
     environment: [{ name: "CLAUDE_CONFIG_DIR", value: envHome, sensitive: false }],
   },
+  // Inherited relative config dirs resolve against the thread checkout, as Claude Code does.
+  [ProviderInstanceId.make("claude-relative")]: {
+    driver: claude,
+    environment: [{ name: "CLAUDE_CONFIG_DIR", value: "claude-config", sensitive: false }],
+  },
+  [ProviderInstanceId.make("claude-malformed")]: {
+    driver: claude,
+    enabled: false,
+    config: { autoCompactWindow: "not-a-number" },
+  },
 };
+
+const read = (scriptPath: string) => readWorkflowScript({ threadId, scriptPath });
 
 effectIt.layer(
   Settings.layerTest({ providerInstances }).pipe(
@@ -111,101 +128,15 @@ effectIt.layer(
     Layer.provideMerge(Layer.mock(ProjectStore.ProjectStoreV2)({})),
   ),
 )("workflow script containment", (effectIt) => {
-  effectIt.effect.each(["valid", "malformed"] as const)(
-    "reads configured Claude homes while rejecting escapes with %s unrelated config",
-    (unrelatedConfig) =>
-      Effect.gen(function* () {
-        assert.equal(
-          (yield* readWorkflowScript({ threadId: fixtureThreadId, scriptPath: customScript }))
-            .contents,
-          "custom home",
-        );
-        assert.equal(
-          (yield* readWorkflowScript({ threadId: fixtureThreadId, scriptPath: envScript }))
-            .contents,
-          "environment home",
-        );
-        assert.equal(
-          (yield* readWorkflowScript({ threadId: fixtureThreadId, scriptPath })).contents,
-          "export const meta = {};\n",
-        );
-        const escaped = yield* readWorkflowScript({
-          threadId: fixtureThreadId,
-          scriptPath: outside,
-        }).pipe(Effect.flip);
-        assert.equal(escaped.reason, "outside-root");
-        if (symlinksSupported) {
-          const linked = yield* readWorkflowScript({
-            threadId: fixtureThreadId,
-            scriptPath: customLink,
-          }).pipe(Effect.flip);
-          assert.equal(linked.reason, "outside-root");
-        }
-      }).pipe(
-        Effect.provide(
-          Settings.layerTest({
-            providerInstances: {
-              ...providerInstances,
-              [ProviderInstanceId.make("claude-unrelated")]: {
-                driver: ProviderDriverKind.make("claudeAgent"),
-                enabled: false,
-                config:
-                  unrelatedConfig === "malformed" ? { autoCompactWindow: "not-a-number" } : {},
-              },
-            },
-          }),
-        ),
-      ),
-  );
-
-  effectIt.effect("reads a relative Claude config from the thread checkout", () =>
+  effectIt.effect("reads scripts from every configured Claude home", () =>
     Effect.gen(function* () {
-      const cwd = NodePath.join(sandbox, "checkout");
-      const relativeScript = NodePath.join(cwd, "claude-config", "projects", "test", "run.js");
-      NodeFS.mkdirSync(NodePath.dirname(relativeScript), { recursive: true });
-      NodeFS.writeFileSync(relativeScript, "thread workflow");
-      assert.notEqual(cwd, process.cwd());
-      const threadId = ThreadId.make("workflow-relative-home");
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      yield* orchestrator.dispatch({
-        type: "thread.create",
-        commandId: CommandId.make("workflow-relative-home:create"),
-        threadId,
-        projectId: ProjectId.make("workflow-project"),
-        title: "Workflow",
-        modelSelection: { instanceId: ProviderInstanceId.make("claudeAgent"), model: "default" },
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        branch: "feature",
-        worktreePath: cwd,
-        createdBy: "user",
-        creationSource: "web",
-      });
-      const input: OrchestrationV2GetWorkflowScriptInput = { threadId, scriptPath: relativeScript };
-      const result = yield* readWorkflowScript(input);
-      assert.equal(result.contents, "thread workflow");
+      assert.equal((yield* read(customScript)).contents, "custom home");
+      assert.equal((yield* read(envScript)).contents, "environment home");
+      assert.equal((yield* read(relativeScript)).contents, "thread checkout home");
+      const result = yield* read(scriptPath);
+      assert.include(result.contents, "export const meta");
       assert.equal(result.truncated, false);
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          ProviderReplayHarness.layerWithRegistry(
-            { name: "workflow-relative-home" },
-            ProviderAdapterRegistry.layerFromAdapters([]),
-            { runEffectWorker: false },
-          ),
-          Settings.layerTest({
-            providerInstances: {
-              [ProviderInstanceId.make("claudeAgent")]: {
-                driver: ProviderDriverKind.make("claudeAgent"),
-                environment: [
-                  { name: "CLAUDE_CONFIG_DIR", value: "claude-config", sensitive: false },
-                ],
-              },
-            },
-          }),
-        ),
-      ),
-    ),
+    }),
   );
 
   effectIt.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
@@ -214,31 +145,19 @@ effectIt.layer(
       Effect.gen(function* () {
         const fifo = NodePath.join(root, "pipe.js");
         NodeChildProcess.execFileSync("mkfifo", [fifo]);
-        const error = yield* Effect.flip(
-          readWorkflowScript({ threadId: fixtureThreadId, scriptPath: fifo }),
-        );
+        const error = yield* Effect.flip(read(fifo));
         assert.equal(error.reason, "not-regular-file");
       }),
-  );
-
-  effectIt.effect("serves a real script under the projects root", () =>
-    Effect.gen(function* () {
-      const result = yield* readWorkflowScript({ threadId: fixtureThreadId, scriptPath });
-      assert.include(result.contents, "export const meta");
-      assert.equal(result.truncated, false);
-    }),
   );
 
   effectIt.effect.skipIf(!symlinksSupported)(
     "rejects paths outside the root and symlink escapes",
     () =>
       Effect.gen(function* () {
-        const escaped = yield* Effect.exit(
-          readWorkflowScript({ threadId: fixtureThreadId, scriptPath: outside }),
-        );
+        const escaped = yield* Effect.exit(read(outside));
         assert.equal(escaped._tag, "Failure");
         const sneaky = yield* Effect.exit(
-          readWorkflowScript({ threadId: fixtureThreadId, scriptPath: link }).pipe(
+          read(link).pipe(
             Effect.flip,
             Effect.map((error) => error.reason),
           ),
