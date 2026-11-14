@@ -39,6 +39,23 @@ const threadId = ThreadId.make("thread-1");
 const sourceThreadId = ThreadId.make("thread-source");
 const runId = RunId.make("run-1");
 
+it.each(["info", "warning", "error", undefined] as const)(
+  "renders %s system notice severity",
+  (level) => {
+    const item = {
+      ...base("notice", "2026-08-29T00:00:00.000Z", 1),
+      type: "system_notice" as const,
+      message: "Extension notice",
+      ...(level === undefined ? {} : { level }),
+    };
+    const activity = buildThreadFeed([projected(item, 0)]).flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities : [],
+    )[0];
+    expect(activity?.icon).toBe(level === "info" ? "zap" : "warning");
+    expect(activity?.summary).toBe(item.message);
+  },
+);
+
 it("shows a captured MCP app for a failed deferred write", () => {
   const mcpApp = {
     attachmentId: "deferred-app-html",
@@ -1497,6 +1514,16 @@ describe("buildThreadFeed", () => {
         phase === "final_answer",
       );
     }
+    const confirmed = { ...answer, phase: "final_answer" as const };
+    const continued = buildThreadFeed(
+      [user, confirmed, passed, final].map((item, index) => projected(item, index)),
+    );
+    expect(
+      deriveThreadFeedPresentation(continued, null, new Set()).some(
+        (row) => row.type === "message" && row.message.id === answer.messageId,
+      ),
+    ).toBe(true);
+    expect(rows([user, confirmed, passed, final], "zen")).toEqual(["user", "answer", "final"]);
     expect(rows([user, steer, step, passed, final], "zen")).toEqual(["user", "steer", "final"]);
     expect(rows([user, steer, answer, step], "zen", running)).toEqual([
       "user",
