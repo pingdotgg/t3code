@@ -27,6 +27,8 @@ export const ptBR: Messages = {
     downloadForMac: "Baixar para macOS",
     downloadForWindows: "Baixar para Windows",
     downloadForLinux: "Baixar para Linux",
+    downloadForIos: "Baixar para iOS",
+    downloadForAndroid: "Baixar para Android",
     sourceLink: "Roube nosso código (legalmente)",
     alsoOnPhone: "Também no seu celular:",
     screenshotAlt:
