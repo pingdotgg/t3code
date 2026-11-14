@@ -100,8 +100,9 @@ const unitTestProject = {
   },
 } satisfies TestProjectInlineConfiguration;
 
-// Hash checkout paths to ports 61000-64999; Vitest's fixed port collides under inherited strictPort.
-const browserTestApiPort = 61_000 + ((Hash.string(import.meta.dirname) >>> 0) % 4_000);
+// Hash checkout paths to ports 20000-23999; Vitest's fixed port collides under inherited strictPort.
+// Stay below ephemeral ranges: Windows reserves Hyper-V/WSL blocks there and EACCES is not skipped.
+const browserTestApiPort = 20_000 + ((Hash.string(import.meta.dirname) >>> 0) % 4_000);
 
 const browserTestProject = {
   extends: true,
