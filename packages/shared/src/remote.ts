@@ -193,11 +193,14 @@ export const buildPairingAppLink = (pairingUrl: string): string =>
 
 /** Reads the pairing URL from a `t3code://pair` link on any app channel scheme. */
 export const readPairingAppLink = (value: string): string | null => {
-  if (!URL.canParse(value)) return null;
-  const url = new URL(value);
-  if (!APP_LINK_PROTOCOL.test(url.protocol) || url.host !== "pair") return null;
-  if (url.pathname !== "" && url.pathname !== "/") return null;
-  return url.searchParams.get(PAIRING_APP_LINK_PARAM)?.trim() || null;
+  try {
+    const url = new URL(value);
+    if (!APP_LINK_PROTOCOL.test(url.protocol) || url.host !== "pair") return null;
+    if (url.pathname !== "" && url.pathname !== "/") return null;
+    return url.searchParams.get(PAIRING_APP_LINK_PARAM)?.trim() || null;
+  } catch {
+    return null;
+  }
 };
 
 export const resolveRemotePairingTarget = (input: {

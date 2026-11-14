@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   buildPairingAppLink,
@@ -145,8 +145,12 @@ describe("remote", () => {
   });
 
   it("round-trips pairing urls through app links on every channel scheme", () => {
+    using _canParse = vi.spyOn(URL, "canParse").mockImplementation(() => {
+      throw new TypeError("URL.canParse is not a function");
+    });
     const pairingUrl = "https://vps.example.com/pair#token=ABC123";
     const appLink = buildPairingAppLink(pairingUrl);
+    expect(readPairingAppLink("not a URL")).toBeNull();
     expect(appLink.startsWith("t3code://pair?")).toBe(true);
     expect(readPairingAppLink(appLink)).toBe(pairingUrl);
     expect(readPairingAppLink(appLink.replace("t3code:", "t3code-dev:"))).toBe(pairingUrl);
