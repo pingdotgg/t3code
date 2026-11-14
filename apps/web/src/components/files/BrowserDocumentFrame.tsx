@@ -75,7 +75,12 @@ export const isPdfPreviewFile = (path: string): boolean =>
 const PdfViewer = lazy(() => import("./PdfViewer"));
 
 // The document stays mounted while each revision gets a fresh PDF.js document.
-function PdfDocument(props: { src: string; title: string; documentKey: string }) {
+function PdfDocument(props: {
+  src: string;
+  title: string;
+  documentKey: string;
+  refreshSrc?: (() => Promise<string | null>) | undefined;
+}) {
   const [view, setView] = useState<PdfViewState>({ page: 0, offset: 0, zoom: null, left: 0 });
   return (
     <PdfDocumentRevision
@@ -85,6 +90,7 @@ function PdfDocument(props: { src: string; title: string; documentKey: string })
       positionKey={props.documentKey}
       initialView={view}
       onViewChange={setView}
+      refreshSrc={props.refreshSrc}
     />
   );
 }
@@ -96,6 +102,7 @@ function PdfDocumentRevision(props: {
   positionKey: string;
   initialView: PdfViewState;
   onViewChange: (view: PdfViewState) => void;
+  refreshSrc?: (() => Promise<string | null>) | undefined;
 }) {
   const [src] = useState(props.src);
   // The Electron shell does not enable PDF plugins. WebKit embeds on iOS
@@ -120,6 +127,7 @@ function PdfDocumentRevision(props: {
         positionKey={props.positionKey}
         initialView={props.initialView}
         onViewChange={props.onViewChange}
+        refreshSrc={props.refreshSrc}
       />
     </Suspense>
   );
@@ -139,6 +147,7 @@ export function BrowserDocumentFrame(props: {
   readonly documentKey?: string | undefined;
   /** Resource identity without its revision, so PDF reloads can retain the reading position. */
   readonly documentId?: string | undefined;
+  readonly refreshSrc?: (() => Promise<string | null>) | undefined;
 }) {
   const key = props.documentKey ?? props.src;
   return props.pdf ? (
@@ -147,6 +156,7 @@ export function BrowserDocumentFrame(props: {
       documentKey={key}
       src={props.src}
       title={props.title}
+      refreshSrc={props.refreshSrc}
     />
   ) : props.htmlRender ? (
     <HtmlRenderDocument
