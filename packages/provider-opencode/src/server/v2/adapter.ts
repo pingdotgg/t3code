@@ -75,10 +75,11 @@ import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
 import { causeErrorTag } from "@t3tools/shared/observability";
 
+import { providerMessageTextWithAttachmentPaths } from "@t3tools/provider-core/server/attachmentPrompt";
 import {
-  isProviderNativeImageAttachment,
-  providerMessageTextWithAttachmentPaths,
-} from "@t3tools/provider-core/server/attachmentPrompt";
+  modelImageInputSupport,
+  shouldSendNativeImage,
+} from "@t3tools/provider-core/server/imageInputPolicy";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
   backgroundWorkNotification,
@@ -830,9 +831,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     // Project config changes model limits; key by directory because this runtime serves all instance threads.
     const contextWindows = new Map<string, Map<string, number>>();
     const modelVariants = new Map<string, Map<string, ReadonlySet<string>>>();
+    const modelImageInputs = new Map<string, Map<string, boolean | undefined>>();
     const directoryOf = (cwd: string | null | undefined) => cwd ?? host.paths.cwd;
     const windowOf = (cwd: string | null | undefined, model: string) =>
       contextWindows.get(directoryOf(cwd))?.get(model);
+    const imageInputSupportOf = (cwd: string | null | undefined, model: string) =>
+      modelImageInputs.get(directoryOf(cwd))?.get(model);
     const listedModelRef = (selection: ModelSelection, cwd: string | null | undefined) =>
       modelRef(selection, modelVariants.get(directoryOf(cwd))?.get(selection.model));
     const now = yield* DateTime.now;
@@ -3846,6 +3850,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         contextWindows.set(directory, windows);
         const variants = modelVariants.get(directory) ?? new Map<string, ReadonlySet<string>>();
         modelVariants.set(directory, variants);
+        const imageInputs = modelImageInputs.get(directory) ?? new Map<string, boolean | undefined>();
+        modelImageInputs.set(directory, imageInputs);
         return client.model.list({ location: { directory } }).pipe(
           Effect.timeout("5 seconds"),
           Effect.tap((models) =>
@@ -3854,6 +3860,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                 const slug = `${model.providerID}/${model.id}`;
                 windows.set(slug, model.limit.input ?? model.limit.context);
                 variants.set(slug, new Set(model.variants.map((variant) => variant.id)));
+                imageInputs.set(slug, modelImageInputSupport(model));
               }
             }),
           ),
@@ -4153,12 +4160,17 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       })).trim();
     });
 
-    const promptFiles = Effect.fnUntraced(function* (attachments: ReadonlyArray<ChatAttachment>) {
+    const promptFiles = Effect.fnUntraced(function* (
+      attachments: ReadonlyArray<ChatAttachment>,
+      modelSelection: ModelSelection,
+      cwd: string | null | undefined,
+    ) {
       const files: Array<{ uri: string; name: string }> = [];
       // An external server may not share T3's attachment directory.
       if (connection.external) return files;
+      const supportsImageInput = imageInputSupportOf(cwd, modelSelection.model);
       for (const attachment of attachments) {
-        if (!isProviderNativeImageAttachment(attachment)) continue;
+        if (!shouldSendNativeImage({ attachment, supportsImageInput })) continue;
         const path = host.resolveAttachmentPath(attachment);
         if (path === null) continue;
         // OpenCode rejects the whole prompt if an attached file is missing.
@@ -4543,7 +4555,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       }
       const mentions = skillMentions(text);
       const skills = mentions.length === 0 ? [] : yield* skillsMentioned(location, mentions);
-      const files = yield* promptFiles(turnInput.message.attachments);
+      const files = yield* promptFiles(
+        turnInput.message.attachments,
+        turnInput.modelSelection,
+        turnInput.runtimePolicy.cwd,
+      );
       const messageText = turnInput.resume ? "" : yield* promptText(turnInput);
       if (!sending()) return;
       return yield* client.session
@@ -4883,7 +4899,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           turn.steers.add(inboxID);
           state.strandedSteers.delete(inboxID);
           const { files, messageText } = yield* Effect.gen(function* () {
-            const files = yield* promptFiles(steerInput.message.attachments);
+            const files = yield* promptFiles(
+              steerInput.message.attachments,
+              turn.input.modelSelection,
+              turn.input.runtimePolicy.cwd,
+            );
             const messageText = (yield* providerMessageTextWithAttachmentPaths({
               text: steerInput.message.text,
               attachments: steerInput.message.attachments,
