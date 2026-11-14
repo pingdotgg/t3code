@@ -2845,7 +2845,8 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
   }
 }
 
-const MARKDOWN_LINK = /!?\[([^\]\n]*)\]\((?:<[^>\n]*>|[^\s)]*)\)/g;
+// Each part stops at the delimiter that could begin another match, so a run of `[`, `](` or `](<` stays linear.
+const MARKDOWN_LINK = /!?\[([^[\]\n]*)\]\((?:<[^<>\n]*>|[^\s()<]*)\)/g;
 
 export function visibleUserMessageText(text: string): string {
   const linkLabels = (segment: string) => segment.replace(MARKDOWN_LINK, "$1");
