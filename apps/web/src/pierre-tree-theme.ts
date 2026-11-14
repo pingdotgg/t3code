@@ -23,5 +23,7 @@ export function pierreTreeStyle(colorScheme: "light" | "dark"): CSSProperties {
   return {
     colorScheme,
     ["--trees-fg-override" as string]: "var(--contrast-foreground)",
+    ["--trees-fg-muted-override" as string]: "var(--contrast-muted-foreground)",
+    ["--trees-status-ignored-override" as string]: "var(--contrast-muted-foreground)",
   };
 }
