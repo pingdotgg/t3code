@@ -268,9 +268,7 @@ export function createTerminalSession(
   let loggedFirstOutput = false;
   let commandRegistry: AtomRegistry.AtomRegistry | null = null;
   let attachedVersion = 0;
-  // Bumped when the shell behind the session changes: a new generation or a detach.
-  let shellTurn = 0;
-  // Settles once the current generation has received the measured grid.
+  // Settles once the current shell has the measured grid; replaced on every new generation or detach.
   let shellResized: Promise<unknown> = Promise.resolve();
 
   const sendResize = () => {
@@ -281,24 +279,19 @@ export function createTerminalSession(
     });
   };
 
+  // Called on every attachment; the first call whose shell is still current once resized writes.
   const writeInitialInput = () => {
     const data = options.initialInput;
     const registry = commandRegistry;
     if (!initialInputPending || !data || attachedVersion === 0 || registry === null) return;
-    if (!options.canOperate()) return;
-    initialInputPending = false;
-    const turn = shellTurn;
-    void shellResized.then(() => {
-      if (turn === shellTurn && options.canOperate()) {
-        void runAtomCommand(registry, atoms.write, {
-          environmentId,
-          input: { threadId, terminalId, data },
-        });
-        return;
-      }
-      // The shell detached, restarted or lost operate meanwhile; retry against the current one.
-      initialInputPending = true;
-      writeInitialInput();
+    const resized = shellResized;
+    void resized.then(() => {
+      if (!initialInputPending || resized !== shellResized || !options.canOperate()) return;
+      initialInputPending = false;
+      void runAtomCommand(registry, atoms.write, {
+        environmentId,
+        input: { threadId, terminalId, data },
+      });
     });
   };
 
@@ -384,7 +377,6 @@ export function createTerminalSession(
       buffer.version > 0 && status === "running" ? buffer.output.generation : null;
     if (nextGeneration !== generation) {
       generation = nextGeneration;
-      shellTurn += 1;
       shellResized = sendResize() ?? Promise.resolve();
     }
 
@@ -413,7 +405,6 @@ export function createTerminalSession(
       const registry = get.registry;
       get.addFinalizer(() => {
         generation = null;
-        shellTurn += 1;
         shellResized = Promise.resolve();
         attachedVersion = 0;
         lastStatus = null;

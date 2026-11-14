@@ -192,16 +192,23 @@ it("writes the launch's initial input once, after the measured resize lands", as
 
 it("keeps initial input for the reattached shell when the first one detaches mid-resize", async () => {
   const firstResize = Promise.withResolvers<void>();
+  const secondResize = Promise.withResolvers<void>();
   const written = Promise.withResolvers<void>();
+  const settled: string[] = [];
   let resizes = 0;
-  const { attached, emit, detach, flush, mount, calls, of } = setup({
+  const { attached, emit, detach, flush, mount, of } = setup({
     initialInput: "pnpm dev\r",
     beforeCommand: async (name) => {
-      if (name === "resize" && ++resizes === 1) {
-        await firstResize.promise;
-        throw new Error("socket closed");
+      if (name === "resize") {
+        const nth = ++resizes;
+        await (nth === 1 ? firstResize : secondResize).promise;
+        settled.push(`resize ${nth}`);
+        if (nth === 1) throw new Error("socket closed");
       }
-      if (name === "write") written.resolve();
+      if (name === "write") {
+        settled.push("write");
+        written.resolve();
+      }
     },
   });
   const unmount = mount(attached);
@@ -209,13 +216,13 @@ it("keeps initial input for the reattached shell when the first one detaches mid
   unmount();
   flush();
   detach();
-  firstResize.resolve();
-
   mount(attached);
   emit({ status: "running", version: 1, generation: 2 });
+  secondResize.resolve();
   await written.promise;
-  // The detached shell's failed resize never released the input; the reattached one did.
-  expect(calls.map((call) => call.command)).toEqual(["resize", "resize", "write"]);
+  // Only the reattached shell's resize releases the input; the detached one is still in flight.
+  expect(settled).toEqual(["resize 2", "write"]);
+  firstResize.resolve();
   expect(of("write")).toEqual([{ threadId, terminalId: "term-1", data: "pnpm dev\r" }]);
 });
 
