@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - Injects a real file replacement during the native SQLite transaction.
 import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodeSqlite from "node:sqlite";
 
 import { assert, describe, it } from "@effect/vitest";
@@ -133,6 +134,29 @@ const startBesideBootService = Effect.fn("test.startBesideBootService")(function
     probes,
   );
   return { result, t3Home };
+});
+
+describe("server runtime state machine identity", () => {
+  it.effect("stamps the writing machine and recognises records from other machines", () =>
+    Effect.gen(function* () {
+      const state = yield* ServerRuntimeState.makePersistedServerRuntimeState({
+        config: { host: undefined, devUrl: undefined },
+        port: 3773,
+      });
+      assert.equal(state.hostname, NodeOS.hostname());
+      assert.isFalse(ServerRuntimeState.isRuntimeStateFromAnotherMachine(state));
+      assert.isTrue(
+        ServerRuntimeState.isRuntimeStateFromAnotherMachine({
+          ...state,
+          hostname: `${NodeOS.hostname()}-peer`,
+        }),
+      );
+      // Records written before the field existed carry no hostname and stay local.
+      assert.isFalse(
+        ServerRuntimeState.isRuntimeStateFromAnotherMachine({ ...state, hostname: undefined }),
+      );
+    }),
+  );
 });
 
 describe("server ownership", () => {

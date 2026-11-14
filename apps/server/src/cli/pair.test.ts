@@ -429,6 +429,36 @@ describe("t3 pair", () => {
     ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
+  // A shared $HOME makes another machine's record visible here; its pid can
+  // look alive locally, so pairing must name that machine, not mint or report
+  // "no running server".
+  it.effect("names the other machine when the only runtime record is foreign", () =>
+    withDescriptorServer((origin) =>
+      Effect.gen(function* () {
+        const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-foreign-test-"));
+        const state = yield* makePersistedServerRuntimeState({
+          config: { host: "127.0.0.1", devUrl: undefined },
+          port: Number(new URL(origin).port),
+        });
+        yield* persistServerRuntimeState({
+          path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
+          state: { ...state, hostname: `${NodeOS.hostname()}-peer` },
+        });
+
+        const error = yield* provideCliTestLayers(
+          runCli(["pair", "--base-dir", baseDir]).pipe(Effect.flip),
+        );
+
+        const rendered = String(
+          typeof error === "object" && error !== null && "cause" in error ? error.cause : error,
+        );
+        assert.include(rendered, "running on another machine");
+        assert.include(rendered, `${NodeOS.hostname()}-peer`);
+        assert.notInclude(rendered, "No running T3 Code server found.");
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   // regression: #10516 minting opens the target database with this checkout's
   // migrations, so a worktree must never fall back to the live install.
   it.effect("does not fall back to the shared home from a linked worktree", () =>

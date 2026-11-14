@@ -1,3 +1,5 @@
+import * as NodeOS from "node:os";
+
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -13,6 +15,8 @@ export const PersistedServerRuntimeState = Schema.Struct({
   version: Schema.Literal(1),
   pid: Schema.Int,
   ownerId: Schema.optional(Schema.String),
+  // The machine that wrote this record; every machine sharing the T3 home can read it.
+  hostname: Schema.optional(Schema.String),
   host: Schema.optional(Schema.String),
   privateNetworkOnly: Schema.optional(Schema.Boolean),
   port: Schema.Int,
@@ -73,6 +77,7 @@ export const makePersistedServerRuntimeState = (input: {
   Effect.map(DateTime.now, (now) => ({
     version: 1,
     pid: process.pid,
+    hostname: NodeOS.hostname(),
     ...(input.config.host ? { host: input.config.host } : {}),
     ...(input.config.privateNetworkOnly ? { privateNetworkOnly: true } : {}),
     port: input.port,
@@ -127,6 +132,10 @@ export const clearPersistedServerRuntimeState = Effect.fn(
     }),
   );
 });
+
+/** A record written by another machine sharing this T3 home; its pid means nothing here. */
+export const isRuntimeStateFromAnotherMachine = (state: PersistedServerRuntimeState): boolean =>
+  state.hostname !== undefined && state.hostname !== NodeOS.hostname();
 
 /** Signal 0 only probes existence; EPERM still means alive. */
 export const isProcessAlive = (pid: number): boolean => {
