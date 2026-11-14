@@ -390,14 +390,15 @@ to the socket.
 
 **Coverage:** 95 of 236 methods (20 of 33 streams), from the method table at startup. Every
 registered method checks the scope the T3 server requires (`src/scopes.rs`, its table
-generated). Every registered method but two has a run that decodes its answer with the real
+generated). `assets.createUrl`, `terminal.open` and `terminal.attach` also get the contract's
+length, pattern and range limits before decode (`src/limits.rs`, its table generated). Every registered method but two has a run that decodes its answer with the real
 client (`tools/decode-coverage.mjs`; the rest are in `decode-coverage.pending`). The engine's
 `dispatchCommand` coverage is in `crates/conn-engine/README.md`; each other area's crate README
 lists what it serves.
 
 | Area            | Served by                                                                                       |
 | --------------- | ----------------------------------------------------------------------------------------------- |
-| Connect, config | `methods/server.rs`: config and lifecycle streams, settings, keybindings, access, diagnostics   |
+| Connect, config | `methods/server.rs`: config and lifecycle streams, settings, keybindings, access, diagnostics. `docs/server-area.md` maps all 42 `server.*` methods |
 | Threads         | `conn-engine`: dispatch (43 of 56 commands), launch, streams, reads, search, families, projects, checkpoints |
 | Agents          | `conn-provider-claude`, `conn-provider-codex`; `/mcp` (`conn-mcp`, 20 tools)                    |
 | Workspace       | `conn-vcs` (status, refs, review, worktrees), `conn-files` (files, search, assets, uploads)     |

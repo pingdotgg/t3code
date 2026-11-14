@@ -50,7 +50,7 @@ settings; about 140 MiB for the `claude` program alone).
 
 ## What exists
 
-`main` is in a working state. `tools/check.sh` passes 27 checks with `CONN_MONOREPO` set (Conn `b12470dcad`, 2026-11-14).
+`main` is in a working state. `tools/check.sh` passes 28 checks with `CONN_MONOREPO` set (Conn `b12470dcad`, 2026-11-14).
 
 | Part | State |
 | --- | --- |
@@ -214,6 +214,16 @@ only the Claude provider orders Stop and start. Not done: a Stop while no Claude
 (T3's `requestRuntimeRestart` closes the query then, for background work; our engine does not
 call the provider without a running turn).
 
+## The server area (2026-11-14)
+
+`docs/server-area.md` maps all 42 `server.*` methods: 11 served, 11 for the ACP registry
+(another worker), 20 not served. None of the 20 can be served without an outside service, a
+change to software on the machine, or a large port into the engine, VCS or store (storage
+cleanup, database storage). No new method was registered. Done: the contract's payload limits
+for `assets.createUrl`, `terminal.open` and `terminal.attach` (generated from the schema AST;
+37 cases agree with the T3 contract's own decode), and a test that proves `git` children are
+reaped. Its section "Decisions for Nick" lists what waits on him.
+
 ## What is left, in the planned order
 
 1. **Rust hygiene, step 1: done (2026-11-14).** The toolchain is pinned to 1.99.1; BeautifulRust's
@@ -262,13 +272,15 @@ call the provider without a running turn).
    (annotations, panels, scheduled tasks, peer links, test logins, credentials, secrets, guest
    share); 67 more `/mcp` tools (11 need nothing new: `crates/conn-mcp/README.md`, "All 87 tools"); Codex subagents and MCP elicitation; worktree setup scripts
    the T3 way (typed into a thread terminal, with a completion marker).
-7. **Small leftovers.** Limits on terminal environment variables; string caps on
-   `assets.createUrl`; finished `git` children stay unreaped while the server runs;
+7. **Small leftovers.** Done on 2026-11-14 (`docs/server-area.md`, end): the contract's
+   limits on terminal environment variables and `assets.createUrl` strings (generated,
+   `limits-diff` check); `git` children are reaped (a test). Left:
    T3's search ranking (`scoreThreadSearch`, `rankMessageMatches`) for `t3_thread_search` and
    `orchestration.searchThreads`; `@` file search ranks with nucleo, not T3's fff (`@hello`
    finds `hello.ts`, T3 also `helper.ts`); `server.listTextGeneratorModels`, without which the
-   client's "Add text generator" wizard cannot save; the Claude model list is not filtered by
-   the CLI's version; the Linux systemd scope for provider processes;
+   client's "Add text generator" wizard cannot save (it calls a model API: Nick's decision);
+   the Claude model list is not filtered by the CLI's version (needs a CLI version probe in
+   the provider); the Linux systemd scope for provider processes;
    a cap on the blocking pool or one store thread (measure first: each store call takes its
    own blocking thread).
 8. **Proofs.** Live Codex; the Linux pass; Orbit in a scratch container on Beast; desktop and
