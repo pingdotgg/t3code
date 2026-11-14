@@ -25,7 +25,7 @@ import { createLazyVoiceRecorder } from "./lazyVoiceRecorder";
 import { VOICE_WAVEFORM_SAMPLE_COUNT } from "./voiceInputMetering";
 import { VoiceInputSession } from "./voiceInputSession";
 import { createVoiceRecordingPermission } from "./voiceRecordingPermission";
-import { voiceRouteAtom } from "./voiceDestination";
+import { voiceGrantAtom, voiceRouteAtom } from "./voiceDestination";
 import { makePermissionStatusAtom } from "../../lib/permissionStatusAtom";
 import {
   acquireAudioSession,
@@ -119,6 +119,7 @@ const voiceInputAtom = Atom.make((get) => {
     },
   });
   const session: VoiceInputSession = new VoiceInputSession({
+    retryFailedRecording: true,
     recorder,
     getTranscriber: () => {
       const route = registry.get(voiceRouteAtom);
@@ -151,7 +152,9 @@ const voiceInputAtom = Atom.make((get) => {
     publishAudioLevels: (levels) => audioLevels.set(levels),
     keepAwake: () => keepScreenAwake(`voice-input:${++keepAwakeSequence}`),
   });
-  get.subscribe(voiceRouteAtom, () => session.controller.cancel());
+  // The route also changes on every reconnect, which must not discard a dictation.
+  get.mount(voiceRouteAtom);
+  get.subscribe(voiceGrantAtom, () => session.controller.cancel());
   get.addFinalizer(() => {
     permission.dispose();
     session.dispose();

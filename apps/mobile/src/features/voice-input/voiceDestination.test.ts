@@ -18,6 +18,11 @@ const mocks = vi.hoisted(() => ({
   probe: vi.fn(),
   fetch: vi.fn<typeof fetch>(),
 }));
+// null takes a host offline; each number is one established connection to it.
+const link = await vi.hoisted(async () => {
+  const { Atom } = await import("effect/reactivity");
+  return Atom.family((_id: string) => Atom.make<number | null>(0));
+});
 vi.mock("expo", () => ({
   requireOptionalNativeModule: () => ({ decodeRecording: async () => new Uint8Array([0, 0]) }),
 }));
@@ -49,14 +54,14 @@ vi.mock("../../state/presentation", () => ({
   environmentPresentations: {
     presentationAtom: Atom.family((id: string) => {
       mocks.probe(id);
-      return Atom.make({
-        connection: { phase: id === "offline" ? "offline" : "connected" },
+      return Atom.make((get) => ({
+        connection: { phase: id === "offline" || get(link(id)) === null ? "offline" : "connected" },
         serverConfig: {
           environment: {
             capabilities: { voiceTranscription: true, cloudVoiceTranscription: true },
           },
         },
-      });
+      }));
     }),
   },
 }));
@@ -65,12 +70,14 @@ vi.mock("../../state/session", async () => {
   return {
     environmentSession: {
       preparedConnectionValueAtom: Atom.family((environmentId: string) =>
-        Atom.make(
-          Option.some({
-            environmentId,
-            httpBaseUrl: `https://${environmentId}.test`,
-            httpAuthorization: { _tag: "Bearer", token: "fixture" },
-          }),
+        Atom.make((get) =>
+          get(link(environmentId)) === null
+            ? Option.none()
+            : Option.some({
+                environmentId,
+                httpBaseUrl: `https://${environmentId}.test`,
+                httpAuthorization: { _tag: "Bearer", token: "fixture" },
+              }),
         ),
       ),
       sessionStateAtom: Atom.family((_id: string) => Atom.make(true)),
@@ -78,6 +85,21 @@ vi.mock("../../state/session", async () => {
     sessionHasScope: () => true,
   };
 });
+
+const readyStatus = () =>
+  Response.json({
+    supported: true,
+    state: "ready",
+    modelId: "fixture",
+    model: "Fixture",
+    size: 1,
+    supportsStreaming: false,
+    supportsTranslation: false,
+    acceleration: "cpu",
+    modelUnloadTimeout: "never",
+    gpuDevices: [],
+    benchmarkTier: "cpu",
+  });
 
 it.each(["secure store", "marker"])(
   "revokes across restarts when writing the %s fails",
@@ -146,21 +168,7 @@ it("keeps local as the default and never reuses consent for an offline or resele
     );
     expect(mocks.fetch).not.toHaveBeenCalled();
     mocks.fetch
-      .mockResolvedValueOnce(
-        Response.json({
-          supported: true,
-          state: "ready",
-          modelId: "fixture",
-          model: "Fixture",
-          size: 1,
-          supportsStreaming: false,
-          supportsTranslation: false,
-          acceleration: "cpu",
-          modelUnloadTimeout: "never",
-          gpuDevices: [],
-          benchmarkTier: "cpu",
-        }),
-      )
+      .mockResolvedValueOnce(readyStatus())
       .mockResolvedValueOnce(Response.json({ text: "hello" }));
     const options = { signal: new AbortController().signal };
     const recording = await current!.prepare(options);
@@ -229,6 +237,28 @@ it("keeps local as the default and never reuses consent for an offline or resele
     expect(() => chooseVoiceDestination(null)).toThrow("Device storage is unavailable");
     expect(appAtomRegistry.get(voiceGrantAtom)).toBeNull();
     await expect(current!.prepare(options)).rejects.toThrow("Your transcription choice changed.");
+  } finally {
+    unmount();
+    appAtomRegistry.reset();
+  }
+});
+
+it("keeps a recording sendable across a reconnect to the chosen host", async () => {
+  const unmount = appAtomRegistry.mount(voiceRouteAtom);
+  const host = EnvironmentId.make("flaky-host");
+  try {
+    chooseVoiceDestination(host);
+    mocks.fetch.mockResolvedValueOnce(readyStatus());
+    const options = { signal: new AbortController().signal };
+    const recording = await appAtomRegistry.get(voiceRouteAtom)!.transcriber!.prepare(options);
+    appAtomRegistry.set(link(host), null);
+    await expect(recording.transcribe("file:///voice.m4a", options)).rejects.toMatchObject({
+      code: "transcription-failed",
+      message: expect.stringContaining("Your recording is saved"),
+    });
+    appAtomRegistry.set(link(host), 1);
+    mocks.fetch.mockResolvedValueOnce(Response.json({ text: "kept" }));
+    await expect(recording.transcribe("file:///voice.m4a", options)).resolves.toBe("kept");
   } finally {
     unmount();
     appAtomRegistry.reset();
