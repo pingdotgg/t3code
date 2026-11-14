@@ -40,6 +40,7 @@ import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import { ExpandableText } from "./ExpandableText";
+import { MachineResourcesSection } from "./MachineResourcesSection";
 import { ResourceTelemetryDiagnostics } from "./ResourceTelemetryDiagnostics";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -922,6 +923,7 @@ function DiagnosticsSettingsBody() {
 
   return (
     <SettingsPageContainer width="expanded" className="gap-10">
+      {environmentId === null ? null : <MachineResourcesSection environmentId={environmentId} />}
       <ResourceTelemetryDiagnostics environmentId={environmentId} />
 
       <SettingsSection

@@ -59,6 +59,10 @@
       "types": "./src/worktreeSetup.ts",
       "default": "./src/worktreeSetup.ts"
     },
+    "./machine-resources": {
+      "types": "./src/machineResources.ts",
+      "default": "./src/machineResources.ts"
+    },
     "./load-balancing": {
       "types": "./src/load-balancing.ts",
       "default": "./src/load-balancing.ts"

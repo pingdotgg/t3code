@@ -1480,6 +1480,16 @@ export function createServerEnvironmentAtoms<R, E>(
       execute: (input: EnvironmentRpcInput<typeof WS_METHODS.serverGetHostResources>) =>
         request(WS_METHODS.serverGetHostResources, input).pipe(Effect.timeout("5 seconds")),
     }),
+    machineResources: createEnvironmentQueryAtomFamily(runtime, {
+      label: "environment-data:server:machine-resources",
+      idleTtlMs: 0,
+      staleTimeMs: 5_000,
+      refreshIntervalMs: 5_000,
+      execute: (_input: Record<string, never>) =>
+        request(WS_METHODS.serverGetHostResources, { detail: "machine" }).pipe(
+          Effect.timeout("10 seconds"),
+        ),
+    }),
     processResourceHistory: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:process-resource-history",
       tag: WS_METHODS.serverGetProcessResourceHistory,
