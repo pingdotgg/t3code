@@ -22,7 +22,7 @@ const withTerminals = <A, E>(use: (terminals: AcpClientTerminals) => Effect.Effe
       defaultCwd: process.cwd(),
     });
     return yield* use(terminals).pipe(Effect.ensuring(terminals.disposeAll));
-  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
+  }).pipe(Effect.provide(NodeServices.layer));
 
 describe("AcpClientTerminals", () => {
   it.live("runs a command, buffers output, and reports the exit status", () =>
@@ -94,7 +94,7 @@ describe("AcpClientTerminals", () => {
       expect(terminals.readOutputSnapshot("session", terminal.terminalId)?.output).toBe(
         output.output,
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.live("resolves terminal environment from the requesting ACP session", () =>
@@ -120,7 +120,7 @@ describe("AcpClientTerminals", () => {
         const output = yield* terminals.output({ sessionId, terminalId: created.terminalId });
         expect(output.output).toBe(expected);
       }
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("runs Devin shell source with arguments, pipes, and session fallback variables", () =>
@@ -139,7 +139,7 @@ describe("AcpClientTerminals", () => {
       const output = yield* terminals.output({ sessionId: "devin", ...terminal });
       expect(exit.exitCode).toBe(0);
       expect(output.output.trim()).toBe("MAILBOX-PROBE");
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live.each([
@@ -200,6 +200,46 @@ describe("AcpClientTerminals", () => {
     ),
   );
 
+  it.effect("answers wait_for_exit when a background child keeps the output pipes open", () =>
+    Effect.gen(function* () {
+      // Models `sh -c "setsid server & echo done"`: sh exits, the orphan inherits stdout/stderr.
+      const orphanExited = yield* Deferred.make<void>();
+      const heldOpen = Stream.fromEffectDrain(Deferred.await(orphanExited));
+      const child = ChildProcessSpawner.makeHandle({
+        pid: ChildProcessSpawner.ProcessId(1),
+        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+        isRunning: Effect.succeed(false),
+        kill: () => Effect.void,
+        stdin: Sink.drain,
+        stdout: Stream.make(new TextEncoder().encode("done\n")).pipe(Stream.concat(heldOpen)),
+        stderr: heldOpen,
+        all: Stream.empty,
+        getInputFd: () => Sink.drain,
+        getOutputFd: () => Stream.empty,
+        unref: Effect.succeed(Effect.void),
+      });
+      const terminals = yield* makeAcpClientTerminals({ defaultCwd: process.cwd() }).pipe(
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() => Effect.succeed(child)),
+        ),
+      );
+      yield* Effect.addFinalizer(() =>
+        Deferred.succeed(orphanExited, undefined).pipe(Effect.andThen(terminals.disposeAll)),
+      );
+      const terminal = yield* terminals.create({ sessionId: "session", command: "fixture" });
+      const request = { sessionId: "session", ...terminal };
+      const waiting = yield* terminals.waitForExit(request).pipe(Effect.forkChild);
+
+      yield* TestClock.adjust("5 seconds");
+      expect(waiting.pollUnsafe()).toBeDefined();
+      expect(yield* Fiber.join(waiting)).toEqual({ exitCode: 0, signal: null });
+      const output = yield* terminals.output(request);
+      expect(output.output).toBe("done\n");
+      expect(output.exitStatus).toEqual({ exitCode: 0, signal: null });
+    }),
+  );
+
   it.effect.each([
     { deadline: "default", forceKillAfter: undefined, deadlineMillis: 5000 },
     { deadline: "configured", forceKillAfter: "250 millis" as const, deadlineMillis: 250 },
@@ -258,7 +298,7 @@ describe("AcpClientTerminals", () => {
         expect(yield* child.isRunning).toBe(false);
         yield* Fiber.join(killing);
         expect(yield* Fiber.join(waiting)).toEqual({ exitCode: 137, signal: null });
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.live("force-kills commands that ignore SIGTERM and resolves wait_for_exit", () =>
@@ -312,7 +352,7 @@ describe("AcpClientTerminals", () => {
         expect(exit).toEqual({ exitCode: null, signal: "SIGKILL" });
       }
       expect(yield* child.isRunning).toBe(false);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("reserves terminal capacity across concurrent creates", () =>

@@ -20,7 +20,7 @@ export type McpAppHandoff =
       readonly link: string;
       /**
        * Opens the installed app first, given the message; `link` is the fallback. The desktop
-       * app opens only the link shapes `APP_LAUNCH_URLS` in ElectronShell lists.
+       * app opens only the link shapes `isAppLaunchUrl` in ElectronShell accepts.
        */
       readonly appLink?: (message: string) => string;
       readonly message: (mcpUrl: string) => string;
@@ -88,12 +88,11 @@ export const MCP_APPS: readonly McpApp[] = [
     id: "grok-bot",
     name: "Grok Bot",
     logo: grokBotLogo,
-    // No web chat, and no link that prefills a message yet (Grok Bot plans one), so the app
-    // opens bare and the copied message is pasted in.
+    // No web chat. The app link prefills the message only into an empty box, so it is copied too.
     handoff: {
       kind: "copy-message",
       link: "https://x.ai/bot",
-      appLink: () => "grokbot://app",
+      appLink: (message) => `grokbot://app/v1/prompt?text=${encoded(message)}`,
       message: (url) => `Add the MCP server ${url} and connect it.`,
     },
     steps: ["Send this message to any of your Grok Bots."],
