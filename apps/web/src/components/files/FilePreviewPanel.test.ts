@@ -134,6 +134,20 @@ describe("workspaceAssetResource", () => {
 describe("document preview contents", () => {
   const bytes = (text: string) => new TextEncoder().encode(text).buffer;
 
+  it.each([
+    ["control symbols", String.raw`{\rtf1 Jean\_Luc\-X\~Y}`, "Jean\u2011Luc\u00adX\u00a0Y"],
+    [
+      "named spaces, joiners and direction marks",
+      String.raw`{\rtf1 A\tab B\emspace C\enspace D\qmspace E\zwj F\zwnj G\zwbo H\ltrmark I\rtlmark J}`,
+      "A\tB\u2003C\u2002D\u2005E\u200dF\u200cG\u200bH\u200eI\u200fJ",
+    ],
+    ["a Unicode fallback", String.raw`{\rtf1 Jean\u8209\_Luc}`, "Jean\u2011Luc"],
+  ])("keeps the text of %s", (_name, source, expected) => {
+    const result = openRtf(bytes(source));
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages[0]!.html.replaceAll(/<[^>]*>/g, "")).toBe(expected);
+  });
+
   it.each(["?", String.raw`\'3f`, String.raw`\\`])(
     "consumes skipped rich text Unicode fallback %s",
     (fallback) => {
@@ -162,7 +176,7 @@ describe("document preview contents", () => {
   it("decodes rich text formatting and Unicode without showing hidden destinations", () => {
     const result = openRtf(
       bytes(
-        String.raw`{\rtf1\ansi{\fonttbl{\f0 Hidden font;}}Hello \b bold\b0\par Unicode: \u945?{\*\unknown hidden}{\field{\*\fldinst HYPERLINK "https://example.com"}{\fldrslt visible}}}`,
+        String.raw`{\rtf1\ansi{\fonttbl{\f0 Hidden font;}}Hello \b bold\b0\par Unicode: \u945?{\*\unknown hidden\_\emspace\zwj}{\field{\*\fldinst HYPERLINK "https://example.com"}{\fldrslt visible}}}`,
       ),
     );
     expect(result.type).toBe("document");
@@ -351,7 +365,7 @@ Third}`;
       },
       {
         kind: "text",
-        text: "\u001b[31mTraceback (most recent call last):\n\u001b[0m\u001b[32mCell In[3], line 1\n----> 1 fail()\n\u001b[0m\u001b[39m\u001b[31mValueError: preview proof\u001b[0m\nfinal entry",
+        text: "Traceback (most recent call last):\nCell In[3], line 1\n----> 1 fail()\nValueError: preview proof\nfinal entry",
       },
     ]);
     expect(() => openNotebook(bytes('{"nbformat":3,"cells":[]}'))).toThrow("version 4");
@@ -375,6 +389,16 @@ Third}`;
     expect(result.sheets[0]!.rows).toHaveLength(500);
     expect(result.sheets[0]!.rows[0]).toHaveLength(50);
     expect(result.sheets[0]!.rows[0]![0]).toBe("Research & design");
+  });
+
+  it("reads an ODS time cell that has no display paragraph", async () => {
+    const archive = new JSZip().file(
+      "content.xml",
+      `<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"><office:body><office:spreadsheet><table:table table:name="Values"><table:table-row><table:table-cell office:value-type="time" office:time-value="PT03H30M00S"></table:table-cell></table:table-row></table:table></office:spreadsheet></office:body></office:document-content>`,
+    );
+    const result = await openDocument(archive, "ods");
+    if (result.type !== "ods") throw new Error("Expected workbook");
+    expect(result.sheets[0]!.rows).toEqual([["PT03H30M00S"]]);
   });
 
   it.each([1, 500])("ignores styled ODS filler after %s populated rows", async (count) => {

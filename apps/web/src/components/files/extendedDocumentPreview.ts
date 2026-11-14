@@ -6,6 +6,7 @@ import {
 import { XMLParser, XMLValidator } from "fast-xml-parser";
 import { decodeHTMLAttribute, decodeHTMLStrict as decodeEntities } from "entities";
 import type JSZip from "jszip";
+import { terminalOutputPlainText } from "@t3tools/shared/terminalOutput";
 
 import { type OfficeWorkerResult, type NotebookCell } from "./officePreviewProtocol";
 
@@ -339,6 +340,7 @@ export async function openDocument(
               find(cell, "text:p", "office:annotation").map(text).join("\n") ||
               cell.attrs["office:value"] ||
               cell.attrs["office:date-value"] ||
+              cell.attrs["office:time-value"] ||
               cell.attrs["office:boolean-value"] ||
               cell.attrs["office:string-value"] ||
               "";
@@ -438,12 +440,14 @@ function notebookText(value: unknown, limit = 256_000): string {
   if (result.length > limit) throw new Error("A notebook cell is too large to preview.");
   return result;
 }
-// IPython traceback frames may omit a final newline or follow it with ANSI SGR sequences.
+// IPython traceback frames carry ANSI SGR colors and may omit a final newline.
 function tracebackLines(value: unknown): unknown {
   if (!Array.isArray(value)) return value;
-  const frames = value.filter((frame): frame is string => typeof frame === "string");
+  const frames = value
+    .filter((frame): frame is string => typeof frame === "string")
+    .map(terminalOutputPlainText);
   return frames.map((frame, index) =>
-    index && !/\n(?:\u001b\[[\d;:]*m)*$/.test(frames[index - 1]!) ? `\n${frame}` : frame,
+    index && !frames[index - 1]!.endsWith("\n") ? `\n${frame}` : frame,
   );
 }
 export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
@@ -487,6 +491,31 @@ export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
   });
   return { type: "notebook", language, cells };
 }
+
+// Characters RTF writes as control symbols (`\~`) and control words (`\emspace`).
+const RTF_CHARACTERS = new Map([
+  ["~", "\u00a0"],
+  ["_", "\u2011"],
+  ["-", "\u00ad"],
+  ["tab", "\t"],
+  ["cell", "\t"],
+  ["endash", "–"],
+  // oxlint-disable-next-line t3code/no-em-dash-copy -- Preserve the RTF document's punctuation.
+  ["emdash", "—"],
+  ["bullet", "•"],
+  ["lquote", "‘"],
+  ["rquote", "’"],
+  ["ldblquote", "“"],
+  ["rdblquote", "”"],
+  ["enspace", "\u2002"],
+  ["emspace", "\u2003"],
+  ["qmspace", "\u2005"],
+  ["zwbo", "\u200b"],
+  ["zwnj", "\u200c"],
+  ["zwj", "\u200d"],
+  ["ltrmark", "\u200e"],
+  ["rtlmark", "\u200f"],
+]);
 
 export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
   if (bytes.byteLength > 8 * 1024 * 1024)
@@ -589,7 +618,8 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
       }
       const match = /^([a-z]+)(-?\d+)? ?/i.exec(source.slice(i));
       if (!match) {
-        if (next === "~") emit("\u00a0");
+        const character = RTF_CHARACTERS.get(next!);
+        if (character) emit(character);
         // A backslash before a line break is \par; TextEdit ends paragraphs this way.
         else if ((next === "\n" || next === "\r") && !state.skip) html += "<br>";
         i++;
@@ -682,15 +712,10 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
         fallback = state.uc;
       } else if (!state.skip && word === "page") finishPage();
       else if (!state.skip && (word === "par" || word === "line" || word === "row")) html += "<br>";
-      else if (word === "tab" || word === "cell") emit("\t");
-      else if (word === "endash") emit("–");
-      // oxlint-disable-next-line t3code/no-em-dash-copy -- Preserve the RTF document's punctuation.
-      else if (word === "emdash") emit("—");
-      else if (word === "bullet") emit("•");
-      else if (word === "lquote") emit("‘");
-      else if (word === "rquote") emit("’");
-      else if (word === "ldblquote") emit("“");
-      else if (word === "rdblquote") emit("”");
+      else {
+        const character = RTF_CHARACTERS.get(word!);
+        if (character) emit(character);
+      }
     } else if (char !== "\r" && char !== "\n" && char) emitByte(char.charCodeAt(0));
   }
   if (stack.length) throw new Error("This rich text document is damaged.");

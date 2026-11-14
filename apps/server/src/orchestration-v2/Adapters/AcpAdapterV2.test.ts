@@ -2535,12 +2535,7 @@ describe("AcpAdapterV2", () => {
           },
           stopReason === "error",
         );
-        const expectedStatus =
-          stopReason === "error"
-            ? "failed"
-            : stopReason === "cancelled"
-              ? "cancelled"
-              : "completed";
+        const expectedStatus = stopReason === "cancelled" ? "cancelled" : "failed";
         yield* reportNextPromptStopped(stopReason);
         assertReinjectedInstructions(yield* runTurn("Start work.", expectedStatus), "Start work.");
         assertReinjectedInstructions(
