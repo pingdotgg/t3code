@@ -296,9 +296,11 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     ...(runtimeCoordinator === undefined
       ? {}
       : {
-          onAvailableCommandsUpdate: (commands, context) =>
+          // The command catalog is shared by every project on this instance, so it lists only
+          // personal skills; project skills stay slash commands, as other projects lack them.
+          onAvailableCommandsUpdate: (commands) =>
             isCopilot
-              ? discoverCopilotSkills(context?.cwd, options.environment).pipe(
+              ? discoverCopilotSkills(undefined, options.environment).pipe(
                   Effect.provideService(FileSystem.FileSystem, fileSystem),
                   Effect.provideService(Path.Path, path),
                   Effect.flatMap((knownSkills) =>

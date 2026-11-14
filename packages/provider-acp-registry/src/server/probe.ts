@@ -460,7 +460,7 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
         Effect.timeoutOption(COMMAND_ADVERTISEMENT_GRACE),
       );
       const knownSkills = isCopilotAcpSettings(input.settings)
-        ? yield* discoverCopilotSkills(input.cwd, input.environment)
+        ? yield* discoverCopilotSkills(undefined, input.environment)
         : [];
       return {
         resolved,
