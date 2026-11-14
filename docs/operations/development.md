@@ -2,8 +2,20 @@
 
 ## First checkout
 
-Install `vp` using the [root README](../../README.md#install-vp). It provides the Node version
-pinned in `package.json` (Node 26), so no separate Node install is needed. From the repository root:
+T3 Code uses [Vite+](https://viteplus.dev/guide/). Install its global `vp` command:
+
+```sh
+curl -fsSL https://vite.plus | bash
+```
+
+On Windows, in PowerShell:
+
+```powershell
+irm https://vite.plus/ps1 | iex
+```
+
+`vp` provides the Node version pinned in `package.json` (Node 26), so no separate Node install is
+needed. From the repository root:
 
 ```sh
 vp i
@@ -15,38 +27,21 @@ a new browser.
 
 Prefer a container? See [Dev container](../internals/devcontainer.md) for VS Code and Codespaces setup.
 
-## GitCafe mirror (optional)
+## Forge mirror (optional)
 
-GitHub is the source of truth. [git.cafe/pingdotgg/t3code](https://git.cafe/pingdotgg/t3code) is a
-two-way synced mirror with much higher API rate limits, which helps when many agents work at once.
-You never need it to contribute.
-
-Pushes, PRs, comments, reviews, labels, and issue edits made on GitCafe sync to GitHub within
-about a minute, and PR and issue numbers match. CI runs on GitHub, and its checks show up on
-GitCafe.
+GitHub is the source of truth. [source.tanstack.com/@pingdotgg/t3code](https://source.tanstack.com/@pingdotgg/t3code)
+is a two-way synced mirror built for many agents working at once. You never need it to contribute.
 
 ```sh
-git remote set-url origin https://git.cafe/pingdotgg/t3code.git
+git remote set-url origin https://source.tanstack.com/@pingdotgg/t3code.git
 git remote add github https://github.com/pingdotgg/t3code.git
-gh repo set-default pingdotgg/t3code   # `gh` is still used for merging
-bun install -g @gitcafe/cli@latest   # `cafe` needs Bun 1.2 or newer
-cafe auth login && cafe auth http setup
-cafe skills install --global  # optional: cafe-* skills for coding agents
+src auth login --web && src auth setup-git
 ```
 
-With `origin` on git.cafe, work through GitCafe and leave GitHub's API alone:
-
-- Push to `origin`, open PRs with `cafe pr create` (`--head owner/repo:branch` from a fork) or
-  `cafe stack submit`, and use `cafe` for everything after that. Link the git.cafe PR URL, not the
-  github.com one, wherever a tool tracks the PR, so polling stays on GitCafe.
-- Read checks with `cafe pr status <n>`, and GitHub Actions logs with `cafe ci logs <run>` (run ids
-  from `cafe ci list --pr <n>`). `cafe ci rerun <run>` reruns one. These need `cafe` 0.11 or newer.
-- Write closing references as `Fixes pingdotgg/t3code#<n>`. GitCafe turns a bare `#<n>` in text it
-  syncs to GitHub into a git.cafe link, and GitHub does not close issues from those.
-- Merge with `gh pr merge <n> --match-head-commit <sha>`, because `cafe pr merge` cannot pin the
-  commit you reviewed.
-- `cafe` commands differ from `gh`: `cafe issue comments <n>` not `--comments`, `cafe pr status`
-  not `pr checks`.
+With `origin` on the mirror, use `src` (it takes `gh`'s commands and flags) and its `source` agent
+skill for PRs, issues, reviews, and CI, and leave GitHub's API alone. Pull requests into `main`
+merge on GitHub, so GitHub's required checks and reviews still apply. Numbers can differ between
+the two forges; in text that reaches GitHub, use the GitHub number.
 
 ## Choosing a dev process
 
@@ -71,6 +66,9 @@ The first start in a worktree seeds its empty database from a read-only copy of
 and dev starts with an empty database. `--no-seed` or `T3CODE_DEV_SEED=0` skips seeding.
 To copy a larger source, run `vp run migrate-dev-db` with dev stopped. It may use
 substantial disk space before pruning.
+The first start in any checkout also builds the native resource monitor with Cargo when
+`native/resource-monitor/target` has no binary. Without Rust, dev starts with a warning
+and no process telemetry; install Rust and run `vp run build:resource-monitor`.
 Never run a development server against the live `~/.t3/userdata`.
 See [test data](../../AGENTS.md#test-data) for copying a consistent database snapshot.
 
@@ -129,7 +127,7 @@ Leave `VITE_HTTP_URL` and `VITE_WS_URL` unset. Vite proxies the backend through 
 origin so the same build works over localhost and remote connections.
 
 Shared runs enable bundled dev to avoid a network round trip for each import level.
-`T3CODE_BUNDLED_DEV=0` opts out when debugging bundler differences. Two reload traps matter
+`T3CODE_BUNDLED_DEV=0` opts out when debugging bundler differences. These traps matter
 when changing this setup:
 
 - The web entry must dynamically import the app so React refresh initializes before application
@@ -139,6 +137,9 @@ when changing this setup:
 - The app and its routes are lazy chunks, built on first request. A plugin pre-bundles the
   startup chain when the server starts. Renaming or moving a startup route or the app entry
   silently drops it from that list.
+- Bundled dev and `--built` hand Rolldown its own watcher, which skips Vite's default
+  `node_modules` ignore. Those files are pnpm-store hardlinks, so another worktree's install or
+  removal rebuilds every long-running server and leaks memory. Keep `node_modules` excluded.
 
 The workarounds live in the [web entry](../../apps/web/src/bootstrap.ts),
 [Tailwind plugin](../../apps/web/vite/tailwind.ts), and
