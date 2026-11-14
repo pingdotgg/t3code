@@ -115,12 +115,28 @@ export function glmUpdateRequiredLimits(input: {
   };
 }
 
+// glm-acp-agent 1.17 leaves Z.ai's month unit (5) without a duration; an agent-sent one wins.
+const GLM_MONTH_WINDOW_ID = /^[a-z_]+-5-(\d+)(?:-\d+)?$/;
+const MONTH_MINS = 30 * 24 * 60;
+
+function withGlmMonthUnit(window: ServerProviderUsageWindow): ServerProviderUsageWindow {
+  if (window.windowDurationMins !== undefined) return window;
+  const months = Number(GLM_MONTH_WINDOW_ID.exec(window.id)?.[1]);
+  if (!Number.isSafeInteger(months) || months < 1) return window;
+  return {
+    ...window,
+    kind: "monthly",
+    label: `${months}-month ${window.label}`,
+    windowDurationMins: months * MONTH_MINS,
+  };
+}
+
 function mapGlmWindow(raw: unknown): readonly ServerProviderUsageWindow[] {
   const decoded = decodeGlmUsageWindow(raw);
   if (Option.isNone(decoded)) return [];
   const { id, label, kind, usedPercent, resetsAt, windowDurationMins } = decoded.value;
   return [
-    {
+    withGlmMonthUnit({
       id,
       label,
       kind: windowKind(kind),
@@ -133,7 +149,7 @@ function mapGlmWindow(raw: unknown): readonly ServerProviderUsageWindow[] {
         : {}),
       // time_limit-* windows are the agent's tool-call allowance; the model itself stays usable.
       ...(id.startsWith("time_limit-") ? { blocksModel: false } : {}),
-    },
+    }),
   ];
 }
 

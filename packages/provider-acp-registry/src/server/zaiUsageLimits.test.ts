@@ -64,9 +64,10 @@ describe("mapGlmUsageLimits", () => {
         },
         {
           id: "time_limit-5-1",
-          kind: "other",
-          label: "MCP quota",
+          kind: "monthly",
+          label: "1-month MCP quota",
           usedPercent: 4,
+          windowDurationMins: 43200,
           resetsAt: "2026-11-30T20:12:01.999Z",
           blocksModel: false,
         },
@@ -75,7 +76,14 @@ describe("mapGlmUsageLimits", () => {
     });
   });
 
-  it("maps a weekly credit window through", () => {
+  it("maps a weekly credit window and an agent-sized month window through", () => {
+    const monthly = {
+      id: "time_limit-5-1",
+      label: "Monthly MCP quota",
+      kind: "monthly",
+      usedPercent: 10,
+      windowDurationMins: 44640,
+    } as const;
     const limits = map({
       checkedAt: "2026-11-05T22:29:01.960Z",
       windows: [
@@ -86,6 +94,7 @@ describe("mapGlmUsageLimits", () => {
           usedPercent: 64,
           windowDurationMins: 10080,
         },
+        monthly,
       ],
     });
     expect(limits.unavailable).toBeUndefined();
@@ -98,6 +107,7 @@ describe("mapGlmUsageLimits", () => {
         usedPercent: 64,
         windowDurationMins: 10080,
       },
+      { ...monthly, blocksModel: false },
     ]);
     expect("blocksModel" in limits.windows[0]!).toBe(false);
   });
