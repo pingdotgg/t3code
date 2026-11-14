@@ -3618,6 +3618,17 @@ function isClaudeTurnStartMessage(message: SDKMessage): boolean {
   return message.type === "system" && message.subtype === "init";
 }
 
+// Claude Code replays a local command's stdout, such as set_model's "Set model to", as a user frame.
+function isClaudeLocalCommandEcho(message: SDKMessage): boolean {
+  return (
+    message.type === "user" &&
+    "isReplay" in message &&
+    message.isReplay === true &&
+    typeof message.message.content === "string" &&
+    message.message.content.startsWith("<local-command-stdout>")
+  );
+}
+
 function isClaudeRootTurnFrame(message: SDKMessage): boolean {
   return (
     isClaudeTurnStartMessage(message) ||
@@ -9374,6 +9385,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly message: SDKMessage;
         }) {
           const message = wakeInput.message;
+          // An idle echo is no wake: buffered, it reads as background work and blocks switches.
+          if (isClaudeLocalCommandEcho(message)) return;
           const isNotification =
             message.type === "system" && message.subtype === "task_notification";
           const isPendingTaskNotification =
