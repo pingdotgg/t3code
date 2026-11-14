@@ -289,6 +289,7 @@ function useSettingsIndexSections(): SettingsListSection[] {
       title: gt("Agents"),
       rows: [
         serverPage("SettingsProviderAccounts", "person.crop.circle", gt("Providers")),
+        serverPage("SettingsNativeTools", "gearshape", gt("T3 tools")),
         serverPage("SettingsThreads", "text.bubble", gt("Threads")),
         page("SettingsScheduledTasks", "clock", gt("Scheduled tasks")),
       ],
