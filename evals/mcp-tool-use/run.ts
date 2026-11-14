@@ -307,6 +307,11 @@ export const McpToolUseCase = Schema.Struct({
     role: Schema.Literals(["top", "delegated-child", "native-subagent"]),
     /** Runs only on this harness, for cases whose right answer depends on it. */
     harness: Schema.optional(Schema.Literals(["claude", "codex"])),
+    /**
+     * Codex only: the agent device access of the session that ran `priorTurns`. Codex keeps every
+     * turn's T3 context in history, so that session's goes before `priorTurns` and the current one after.
+     */
+    earlierDeviceAccess: Schema.optional(Schema.Boolean),
     /** The Linked environments beta is on, so T3 lists its link tools. */
     linkedEnvironments: Schema.optional(Schema.Boolean),
     /** delegate_task `role` for a delegated child. T3 builds the child's first message from it. */
@@ -712,6 +717,8 @@ export const buildBase = (
 
 type Base = ReturnType<typeof buildBase> & {
   readonly codex?: typeof ResponsesRequest.Type;
+  /** The current session's T3 context, sent just before the prompt, when an earlier session's leads. */
+  readonly codexContext?: ReadonlyArray<Block>;
   /** What T3's SubagentStart hooks give a native subagent. */
   readonly subagentContext?: string;
 };
@@ -727,6 +734,7 @@ const buildCodexBase = (
     readonly links?: boolean;
     /** false: the thread has no agent device access, so T3's text leaves devices out. */
     readonly deviceAccess?: boolean;
+    readonly earlierDeviceAccess?: boolean | undefined;
     /** false: the thread has no agent browser access, so T3's text leaves the browser out. */
     readonly browserAccess?: boolean;
   },
@@ -762,13 +770,16 @@ const buildCodexBase = (
     if (item.role === "assistant") return [];
     return [JSON.parse(clean(JSON.stringify(item))) as Block];
   });
-  const context = buildCodexAdditionalContext(
-    { model: options.model, reasoningEffort: effort },
-    { browser: options.browserAccess ?? true, device: options.deviceAccess ?? true },
-  );
-  input.push(
-    ...Object.entries(context).map(([key, entry]) => message(`<${key}>${entry.value}</${key}>`)),
-  );
+  const context = (device: boolean) =>
+    Object.entries(
+      buildCodexAdditionalContext(
+        { model: options.model, reasoningEffort: effort },
+        { browser: options.browserAccess ?? true, device },
+      ),
+    ).map(([key, entry]) => message(`<${key}>${entry.value}</${key}>`));
+  const current = context(options.deviceAccess ?? true);
+  const earlier = options.earlierDeviceAccess;
+  input.push(...(earlier === undefined ? current : context(earlier)));
   const nativeTools = input
     .flatMap((item) =>
       item.type === "additional_tools" && Array.isArray(item.tools)
@@ -794,6 +805,7 @@ const buildCodexBase = (
     t3,
     deferred: [...t3],
     codex: { ...template, input, reasoning: { ...template.reasoning, effort } },
+    ...(earlier === undefined ? {} : { codexContext: current }),
   };
 };
 
@@ -842,6 +854,17 @@ const codexMessages = (messages: ReadonlyArray<ApiMessage>): Array<Block> =>
             },
     ),
   );
+/** A case's Codex input after the base's: the current session's context goes just before the prompt. */
+const codexInput = (
+  sample: Pick<Sample, "testCase" | "base">,
+  messages: ReadonlyArray<ApiMessage>,
+) => {
+  const input = codexMessages(messages);
+  const context = sample.base.codexContext ?? [];
+  return sample.testCase.prompt === ""
+    ? [...input, ...context]
+    : input.toSpliced(-1, 0, ...context);
+};
 /** One tool call the shell simulator has answered, or one from the case's prior turns. */
 type ShellEntry = { readonly tool: string; readonly input: unknown; readonly output: string };
 /** PRs T3 links by itself because a shell command created them, as `gh pr create` does. */
@@ -2196,7 +2219,7 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
   yield* withBackgroundWait(sample);
   const runPromise = Effect.runPromiseWith(yield* Effect.context<HttpClient.HttpClient>());
   const messages = buildMessages(sample);
-  const input = base.codex ? codexMessages(messages) : undefined;
+  const input = base.codex ? codexInput(sample, messages) : undefined;
   const transcript: Array<unknown> = [];
   const start = messages.length;
   const calls: Array<Call> = [];
@@ -2559,6 +2582,7 @@ const main = Effect.gen(function* () {
     deviceAccess: boolean,
     browserAccess: boolean,
     links: boolean,
+    earlierDeviceAccess: boolean | undefined,
   ): Effect.Effect<Base, Schema.SchemaError> =>
     codex
       ? decodeCodexCapture(template).pipe(
@@ -2571,6 +2595,7 @@ const main = Effect.gen(function* () {
               links,
               deviceAccess,
               browserAccess,
+              earlierDeviceAccess,
             }),
           ),
         )
@@ -2594,19 +2619,24 @@ const main = Effect.gen(function* () {
         );
   // Codex has no native subagents; its cases with that role run as top-level threads.
   const baseKey = ({ setup }: McpToolUseCase) =>
-    `${codex && setup.role === "native-subagent" ? "top" : setup.role}:${setup.world?.deviceAgentAccess !== false}:${setup.world?.browserAgentAccess !== false}:${setup.linkedEnvironments === true}`;
-  const base = yield* buildFor("top", true, true, false);
-  const bases = new Map<string, Base>([["top:true:true:false", base]]);
+    `${codex && setup.role === "native-subagent" ? "top" : setup.role}:${setup.world?.deviceAgentAccess !== false}:${setup.world?.browserAgentAccess !== false}:${setup.linkedEnvironments === true}:${setup.earlierDeviceAccess ?? ""}`;
+  const base = yield* buildFor("top", true, true, false, undefined);
+  const bases = new Map<string, Base>([["top:true:true:false:", base]]);
   for (const testCase of selected) {
     const key = baseKey(testCase);
     if (bases.has(key)) continue;
-    const [role = "top", device, browser, links] = key.split(":") as [
+    const [role = "top", device, browser, links, earlier] = key.split(":") as [
       McpToolUseCase["setup"]["role"],
       string,
       string,
       string,
+      string,
     ];
-    bases.set(key, yield* buildFor(role, device === "true", browser === "true", links === "true"));
+    const earlierAccess = earlier === "" ? undefined : earlier === "true";
+    bases.set(
+      key,
+      yield* buildFor(role, device === "true", browser === "true", links === "true", earlierAccess),
+    );
   }
   const baseFor = (testCase: McpToolUseCase) => bases.get(baseKey(testCase)) ?? base;
   const effort = flags.effort ?? base.codex?.reasoning.effort ?? "high";
@@ -2617,7 +2647,7 @@ const main = Effect.gen(function* () {
       yield* Effect.scoped(Effect.andThen(withDevices(sample), withBackgroundWait(sample)));
       const messages = buildMessages(sample);
       const body = sample.base.codex
-        ? codexRequest(sample.base, codexMessages(messages))
+        ? codexRequest(sample.base, codexInput(sample, messages))
         : requestBody(sample, effort, messages);
       process.stdout.write(`${yield* encodeJson(body)}\n`);
     }

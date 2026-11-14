@@ -1,6 +1,9 @@
 import * as NodeAssert from "node:assert/strict";
 
-import { T3_CODE_DEVICE_TOOL_INSTRUCTIONS } from "@t3tools/provider-core/server/orchestrationInstructions";
+import {
+  T3_CODE_DEVICE_TOOL_INSTRUCTIONS,
+  T3_CODE_DEVICE_TOOLS_OFF_INSTRUCTIONS,
+} from "@t3tools/provider-core/server/orchestrationInstructions";
 import { describe, it } from "vite-plus/test";
 
 import {
@@ -68,14 +71,18 @@ describe("Codex orchestration context", () => {
 });
 
 describe("Codex device context", () => {
-  it("adds the shared device block only when the session holds device access", () => {
-    const tools = (device: boolean) =>
-      buildCodexAdditionalContext({ model: "gpt-6.1-sol" }, { browser: true, device }).t3_code_tools
+  it("adds the device block with device access and retracts it without", () => {
+    const tools = (device: boolean, browser = true) =>
+      buildCodexAdditionalContext({ model: "gpt-6.1-sol" }, { browser, device }).t3_code_tools
         ?.value ?? "";
 
     NodeAssert.ok(tools(true).includes(T3_CODE_DEVICE_TOOL_INSTRUCTIONS));
     NodeAssert.ok(!tools(true).includes("ToolSearch"));
     NodeAssert.ok(!tools(false).includes("## T3 Code devices"));
+    // Codex keeps earlier turns' context, so a device-off session must retract the old block.
+    NodeAssert.ok(!tools(true).includes(T3_CODE_DEVICE_TOOLS_OFF_INSTRUCTIONS));
+    NodeAssert.equal(tools(false, false), T3_CODE_DEVICE_TOOLS_OFF_INSTRUCTIONS);
+    NodeAssert.ok(tools(false).endsWith(T3_CODE_DEVICE_TOOLS_OFF_INSTRUCTIONS));
   });
 });
 

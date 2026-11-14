@@ -50,6 +50,10 @@ Never do those with \`xcrun simctl\`, \`idb\`, \`adb\`, ssh, or scripts that wra
 /** Device guidance for sessions holding the `device` capability, from top-level threads to delegated children. */
 export const T3_CODE_DEVICE_TOOL_INSTRUCTIONS = deviceToolInstructions("");
 
+/** Codex keeps earlier turns' context in history, so a session without devices must retract the device block. */
+export const T3_CODE_DEVICE_TOOLS_OFF_INSTRUCTIONS =
+  "T3 Code device tools are off for this thread. Earlier T3 Code device instructions no longer apply.";
+
 /** Claude Code defers MCP tools behind ToolSearch, so Claude's copy says how to load them. */
 export const T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH = deviceToolInstructions(
   ` Load them with ToolSearch \`select:${T3_CODE_DEVICE_TOOLS.map((tool) => `mcp__t3-code__${tool}`).join(",")}\`.`,
