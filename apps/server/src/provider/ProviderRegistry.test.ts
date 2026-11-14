@@ -254,16 +254,21 @@ const makeWorkspaceRescanHarness = Effect.gen(function* () {
     yield* Fiber.join(pending);
   });
   // A later requested cwd reaching the serial consumer proves the previous rescan settled,
-  // including when that rescan correctly publishes no change. Seed "/barrier" first.
+  // including when that rescan correctly publishes no change. Seed "/barrier" first; it rescans
+  // to the skills it was seeded with, so it never stamps workspaceRescannedAt.
   const drainRescans = Effect.gen(function* () {
     yield* Queue.offer(first.rescans, "/barrier");
     const complete = yield* nextScan("/barrier");
-    yield* complete("barrier");
+    yield* complete("initial");
   });
   const skillsOf = (cwd: string) =>
     Effect.map(registry.getProviders, (providers) =>
       providers[0]?.workspaceSnapshots?.find((s) => s.cwd === cwd)?.skills?.map((s) => s.name),
     );
+  const rescannedAtOf = Effect.map(
+    registry.getProviders,
+    (providers) => providers[0]?.workspaceRescannedAt,
+  );
   return {
     first,
     makeInstance,
@@ -276,6 +281,7 @@ const makeWorkspaceRescanHarness = Effect.gen(function* () {
     seed,
     drainRescans,
     skillsOf,
+    rescannedAtOf,
   };
 });
 
@@ -1054,6 +1060,20 @@ it.layer(
         unchanged.workspaceSnapshots?.map((snapshot) => snapshot.cwd),
         ["/project", "/plain"],
       );
+      // A machine health refresh must not read as a rescan, nor erase the last one.
+      const rescanned = { ...withCatalog, workspaceRescannedAt: "2026-03-25T00:01:00.000Z" };
+      assert.equal(
+        ProviderRegistry.mergeProviderSnapshot(rescanned, provider).workspaceRescannedAt,
+        "2026-03-25T00:01:00.000Z",
+      );
+      assert.equal(
+        ProviderRegistry.mergeProviderSnapshot(rescanned, {
+          ...provider,
+          workspaceRescannedAt: "2026-03-25T00:02:00.000Z",
+        }).workspaceRescannedAt,
+        "2026-03-25T00:02:00.000Z",
+      );
+      assert.equal(unchanged.workspaceRescannedAt, undefined);
       const changed = ProviderRegistry.mergeProviderSnapshot(withCatalog, {
         ...provider,
         models: [machineModel, addedModel],
@@ -2404,6 +2424,26 @@ it.layer(
         yield* complete("hook");
         yield* h.drainRescans;
         assert.deepEqual(yield* h.skillsOf("/workspace"), ["hook"]);
+        // Clients that fetched the old skills are told to fetch again.
+        const scannedAt = (yield* h.registry.getProviders)[0]?.workspaceSnapshots?.find(
+          (snapshot) => snapshot.cwd === "/workspace",
+        )?.checkedAt;
+        assert.isString(scannedAt);
+        assert.equal(yield* h.rescannedAtOf, scannedAt);
+      }),
+    );
+
+    it.effect("leaves workspaceRescannedAt unset when a rescan changes nothing", () =>
+      Effect.gen(function* () {
+        const h = yield* makeWorkspaceRescanHarness;
+        yield* h.seed("/barrier");
+        yield* h.seed("/workspace");
+        yield* Queue.offer(h.first.rescans, "/workspace");
+        const complete = yield* h.nextScan("/workspace");
+        yield* complete("initial");
+        yield* h.drainRescans;
+        assert.deepEqual(yield* h.skillsOf("/workspace"), ["initial"]);
+        assert.equal(yield* h.rescannedAtOf, undefined);
       }),
     );
 

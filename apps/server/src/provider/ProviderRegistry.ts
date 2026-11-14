@@ -328,6 +328,10 @@ export const mergeProviderSnapshot = (
       : previousWorkspaceSnapshots !== undefined
         ? { workspaceSnapshots: previousWorkspaceSnapshots }
         : {}),
+    ...(nextProvider.workspaceRescannedAt === undefined &&
+    previousProvider.workspaceRescannedAt !== undefined
+      ? { workspaceRescannedAt: previousProvider.workspaceRescannedAt }
+      : {}),
     ...(shouldRetainMissingOpenCodeMetadata(nextProvider)
       ? {
           slashCommands:
@@ -504,7 +508,11 @@ export const layer = Layer.effect(
         cacheDir: config.providerStatusCacheDir,
         instanceId: key,
       }).pipe(Effect.provideService(Path.Path, path));
-      const { workspaceSnapshots: _workspaceSnapshots, ...machineProvider } = provider;
+      const {
+        workspaceSnapshots: _workspaceSnapshots,
+        workspaceRescannedAt: _workspaceRescannedAt,
+        ...machineProvider
+      } = provider;
       yield* writeProviderStatusCache({ filePath, provider: machineProvider }).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
@@ -1125,18 +1133,30 @@ export const layer = Layer.effect(
                 if (Ref.getUnsafe(workspaceRefreshesRef).get(instance)?.get(input.cwd) !== token) {
                   return currentProviders;
                 }
-                return currentProviders.map((candidate) =>
-                  candidate.instanceId === input.instanceId &&
-                  Equal.equals(workspaceSnapshotOf(candidate), scanBase)
-                    ? upsertProviderWorkspaceSnapshot(candidate, input.cwd, {
-                        ...scopedSnapshot,
-                        checkedAt: scannedAt,
-                        // Without driver command discovery, retain previous commands after failed health checks and retry.
-                        slashCommandsPending:
-                          scopedSnapshot.slashCommandsPending ?? scopedSnapshot.status === "error",
-                      })
-                    : candidate,
-                );
+                return currentProviders.map((candidate) => {
+                  if (
+                    candidate.instanceId !== input.instanceId ||
+                    !Equal.equals(workspaceSnapshotOf(candidate), scanBase)
+                  ) {
+                    return candidate;
+                  }
+                  const scanned = upsertProviderWorkspaceSnapshot(candidate, input.cwd, {
+                    ...scopedSnapshot,
+                    checkedAt: scannedAt,
+                    // Without driver command discovery, retain previous commands after failed health checks and retry.
+                    slashCommandsPending:
+                      scopedSnapshot.slashCommandsPending ?? scopedSnapshot.status === "error",
+                  });
+                  // Clients keep fetched snapshots, so a changed rescan must tell them to fetch again.
+                  const rescanned = workspaceSnapshotOf(scanned);
+                  return input.rescan &&
+                    !(
+                      Equal.equals(rescanned?.skills, scanBase?.skills) &&
+                      Equal.equals(rescanned?.slashCommands, scanBase?.slashCommands)
+                    )
+                    ? { ...scanned, workspaceRescannedAt: scannedAt }
+                    : scanned;
+                });
               });
             }),
           ),
