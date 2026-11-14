@@ -169,6 +169,8 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
     ) => Effect.Effect<ConnectionBlockedError | undefined>;
     readonly initialDisabled?: ReadonlyArray<EnvironmentId>;
     readonly directEndpoints?: ServerConfig["directEndpoints"];
+    /** Conn: what the server says about itself on each connection. */
+    readonly descriptor?: (target: ConnectionTarget) => ExecutionEnvironmentDescriptor;
   },
 ) {
   const storedTargets = yield* Ref.make<ReadonlyArray<ConnectionTarget>>(initialTargets);
@@ -399,6 +401,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
           ? { _tag: "Bearer", token: credential.value.token }
           : null,
         target,
+        ...(options?.descriptor === undefined ? {} : { descriptor: options.descriptor(target) }),
       };
       if (options?.prepareError) return yield* options.prepareError;
       const heldError = options?.beforePrepareRoute
@@ -2495,6 +2498,165 @@ describe("EnvironmentRegistry routes", () => {
         const entry = (yield* SubscriptionRef.get(registry.entries)).get(LAN_TARGET.environmentId);
         expect(entry?.target).toEqual(LAN_TARGET);
         expect(entry?.alternateRoutes ?? []).toEqual([]);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+});
+
+describe("Conn: a saved environment takes the name its server presents", () => {
+  const PAIRED = new BearerConnectionTarget({
+    environmentId: EnvironmentId.make("environment-instance"),
+    label: "instance-1846",
+    connectionId: "bearer:instance",
+  });
+  const PAIRED_PROFILE = new BearerConnectionProfile({
+    connectionId: PAIRED.connectionId,
+    environmentId: PAIRED.environmentId,
+    label: PAIRED.label,
+    httpBaseUrl: "https://instance.example.test/",
+    wsBaseUrl: "wss://instance.example.test/",
+  });
+  const descriptorFor =
+    (label: string, environmentId: EnvironmentId = PAIRED.environmentId) =>
+    (): ExecutionEnvironmentDescriptor => ({
+      environmentId,
+      label,
+      platform: { os: "linux", arch: "x64" },
+      serverVersion: "1.0.0",
+      orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
+      capabilities: { repositoryIdentity: true },
+    });
+  const harnessWith = (
+    target: BearerConnectionTarget,
+    descriptor: () => ExecutionEnvironmentDescriptor,
+  ) =>
+    makeHarness([target], [PAIRED_PROFILE], [[PAIRED.connectionId, BEARER_CREDENTIAL]], {
+      descriptor,
+    });
+  const settle = Effect.gen(function* () {
+    for (let index = 0; index < 50; index += 1) yield* Effect.yieldNow;
+  });
+
+  it.effect("a connection that verified the same environment saves the new name", () =>
+    Effect.gen(function* () {
+      const harness = yield* harnessWith(PAIRED, descriptorFor("task-5003.dlf-leden"));
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.start;
+        const entry = yield* SubscriptionRef.changes(registry.entries).pipe(
+          Stream.map((entries) => entries.get(PAIRED.environmentId)),
+          Stream.filter((entry) => entry?.target.label === "task-5003.dlf-leden"),
+          Stream.runHead,
+          Effect.map(Option.getOrThrow),
+        );
+        expect(entry?.target).toEqual(
+          new BearerConnectionTarget({ ...PAIRED, label: "task-5003.dlf-leden" }),
+        );
+        expect(routesOf(yield* Ref.get(harness.storedTargets), PAIRED.environmentId)).toEqual([
+          new BearerConnectionTarget({ ...PAIRED, label: "task-5003.dlf-leden" }),
+        ]);
+        // The live connection stays: one session, none released.
+        yield* awaitConnectionState(
+          registry,
+          PAIRED.environmentId,
+          (state) => state.phase === "connected",
+        );
+        yield* settle;
+        expect((yield* Ref.get(harness.sessions)).length).toBe(1);
+        expect(yield* Ref.get(harness.releasedSessions)).toBe(0);
+        const supervisorLabel = yield* registry.run(
+          PAIRED.environmentId,
+          Effect.service(EnvironmentSupervisor.EnvironmentSupervisor).pipe(
+            Effect.map((supervisor) => supervisor.target.label),
+          ),
+        );
+        expect(supervisorLabel).toBe("task-5003.dlf-leden");
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("the name follows the server again on a later connection", () =>
+    Effect.gen(function* () {
+      const renamed = new BearerConnectionTarget({ ...PAIRED, label: "task-5003.dlf-leden" });
+      const harness = yield* harnessWith(renamed, descriptorFor("task-5004.dlf-leden"));
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.start;
+        yield* SubscriptionRef.changes(registry.entries).pipe(
+          Stream.filter(
+            (entries) => entries.get(PAIRED.environmentId)?.target.label === "task-5004.dlf-leden",
+          ),
+          Stream.runHead,
+        );
+        expect(
+          routesOf(yield* Ref.get(harness.storedTargets), PAIRED.environmentId).map(
+            (target) => target.label,
+          ),
+        ).toEqual(["task-5004.dlf-leden"]);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect.each([
+    [
+      "a name the person chose",
+      { ...PAIRED, labelSetByUser: true as const },
+      descriptorFor("task-5003.dlf-leden"),
+    ],
+    [
+      "another environment id",
+      PAIRED,
+      descriptorFor("task-5003.dlf-leden", EnvironmentId.make("other")),
+    ],
+    ["an empty server name", PAIRED, descriptorFor("")],
+    ["a blank server name", PAIRED, descriptorFor("   ")],
+  ] as const)("keeps the saved name for %s", ([, fields, descriptor]) =>
+    Effect.gen(function* () {
+      const target = new BearerConnectionTarget(fields);
+      const harness = yield* harnessWith(target, descriptor);
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.start;
+        yield* awaitConnectionState(
+          registry,
+          PAIRED.environmentId,
+          (state) => state.phase === "connected",
+        );
+        yield* settle;
+        expect(
+          (yield* SubscriptionRef.get(registry.entries)).get(PAIRED.environmentId)?.target,
+        ).toEqual(target);
+        expect(routesOf(yield* Ref.get(harness.storedTargets), PAIRED.environmentId)).toEqual([
+          target,
+        ]);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("pairing again keeps a name the person chose", () =>
+    Effect.gen(function* () {
+      const chosen = new BearerConnectionTarget({
+        ...PAIRED,
+        label: "My box",
+        labelSetByUser: true,
+      });
+      const harness = yield* makeHarness(
+        [chosen],
+        [PAIRED_PROFILE],
+        [[PAIRED.connectionId, BEARER_CREDENTIAL]],
+      );
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.register(
+          new BearerConnectionRegistration({
+            target: PAIRED,
+            profile: PAIRED_PROFILE,
+            credential: BEARER_CREDENTIAL,
+          }),
+        );
+        expect(routesOf(yield* Ref.get(harness.storedTargets), PAIRED.environmentId)).toEqual([
+          chosen,
+        ]);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );

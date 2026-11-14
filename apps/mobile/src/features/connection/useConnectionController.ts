@@ -90,12 +90,17 @@ export function useConnectionController() {
     setEnvironmentEnabledMutation({ environmentId, enabled });
   const updateEnvironment = (
     environmentId: EnvironmentId,
-    updates: { readonly label: string; readonly displayUrl: string },
+    updates: {
+      readonly label: string;
+      readonly displayUrl: string;
+      readonly openedLabel?: string;
+    },
   ) =>
     updateBearer({
       environmentId,
       label: updates.label,
       httpBaseUrl: updates.displayUrl,
+      ...(updates.openedLabel === undefined ? {} : { openedLabel: updates.openedLabel }),
     });
 
   return {

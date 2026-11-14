@@ -73,6 +73,16 @@ const REMOTE_TOKEN = new TokenStore.RemoteDpopAccessToken({
 });
 
 describe("ConnectionCatalogDocument", () => {
+  it("Conn: keeps the mark on a name the person chose, and reads documents without it", () => {
+    const encode = Schema.encodeSync(Schema.fromJsonString(ConnectionCatalogDocument));
+    const decode = Schema.decodeUnknownSync(Schema.fromJsonString(ConnectionCatalogDocument));
+    const named = new RelayConnectionTarget({ ...RELAY_TARGET, labelSetByUser: true });
+    const document = setRoutesInCatalog(EMPTY_CONNECTION_CATALOG_DOCUMENT, ENVIRONMENT_ID, [named]);
+    expect(decode(encode(document)).targets).toEqual([named]);
+    const old = decode(encode(setRoutesInCatalog(document, ENVIRONMENT_ID, [RELAY_TARGET])));
+    expect(old.targets[0]?.labelSetByUser).toBeUndefined();
+  });
+
   it.effect("persists explicit GitHub trust and forgets it when a connection is removed", () =>
     Effect.gen(function* () {
       let document = EMPTY_CONNECTION_CATALOG_DOCUMENT;

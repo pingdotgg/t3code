@@ -1,4 +1,4 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, type ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
@@ -56,6 +56,7 @@ import {
   upsertRoute,
   type ReportedEndpoint,
 } from "./routes.ts";
+import { entryWithServerLabel, routesWithUserLabel } from "./serverLabel.ts";
 
 const isSshConnectionProfile = Schema.is(SshConnectionProfile);
 
@@ -398,6 +399,10 @@ export const make = Effect.gen(function* () {
               entry.unsupportedReason === undefined &&
               !(yield* isParked(environmentId)),
             learnRoutes: (input) => learnRoutes({ environmentId, ...input }),
+            learnLabel: (descriptor) => learnLabel({ environmentId, descriptor }),
+            latestEntry: SubscriptionRef.get(entries).pipe(
+              Effect.map((current) => Option.fromUndefinedOr(current.get(environmentId))),
+            ),
           }).pipe(
             Effect.provideService(Connectivity.Connectivity, connectivity),
             Effect.provideService(ConnectionDriver.ConnectionDriver, driver),
@@ -614,7 +619,10 @@ export const make = Effect.gen(function* () {
               existing !== sameAddress ||
               connectionRouteId(existing.target) === connectionRouteId(route.target),
           );
-          const next = withRoutes(previous, upsertRoute(routes, route));
+          const next = withRoutes(
+            previous,
+            routesWithUserLabel(previous, route.target, upsertRoute(routes, route)),
+          );
           if (next.addressesChanged) {
             yield* forgetRoutingTrust(environmentId, "register-connection");
           }
@@ -940,6 +948,47 @@ export const make = Effect.gen(function* () {
       ),
       Effect.ignore,
     );
+
+  /**
+   * Conn: a saved environment takes the name its server presents on a connection that verified
+   * the same environment id. A name the person chose stays (see `entryWithServerLabel`). The live
+   * supervisor keeps running; only its entry is replaced, as for learned routes.
+   */
+  const learnLabel = Effect.fn("EnvironmentRegistry.learnLabel")(function* (input: {
+    readonly environmentId: EnvironmentId;
+    readonly descriptor: ExecutionEnvironmentDescriptor;
+  }) {
+    return yield* withLeaseLock(
+      input.environmentId,
+      Effect.gen(function* () {
+        if ((yield* Ref.get(platformEnvironmentIds)).has(input.environmentId)) {
+          return Option.none<ConnectionCatalogEntry>();
+        }
+        const entry = (yield* SubscriptionRef.get(entries)).get(input.environmentId);
+        if (entry === undefined) return Option.none<ConnectionCatalogEntry>();
+        const next = entryWithServerLabel(entry, input.environmentId, input.descriptor);
+        if (next === null) return Option.none<ConnectionCatalogEntry>();
+        yield* registrations.setRoutes(input.environmentId, persistedRoutes(next));
+        const lease = (yield* SubscriptionRef.get(serviceScopes)).get(input.environmentId);
+        if (lease !== undefined) {
+          yield* SubscriptionRef.update(serviceScopes, (current) =>
+            new Map(current).set(input.environmentId, { ...lease, entry: next }),
+          );
+        }
+        yield* SubscriptionRef.update(entries, (current) =>
+          new Map(current).set(input.environmentId, next),
+        );
+        return Option.some(next);
+      }),
+    ).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("Could not save the name the environment presents.", {
+          environmentId: input.environmentId,
+          error,
+        }).pipe(Effect.as(Option.none<ConnectionCatalogEntry>())),
+      ),
+    );
+  });
 
   // Plain HTTP routes are unusable from an HTTPS page, which blocks mixed content.
   const allowInsecureRoutes =

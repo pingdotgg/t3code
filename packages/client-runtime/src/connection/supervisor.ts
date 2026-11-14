@@ -1,3 +1,4 @@
+import type { ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -11,6 +12,7 @@ import * as Queue from "effect/Queue";
 import * as Random from "effect/Random";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as Tracer from "effect/Tracer";
@@ -27,6 +29,7 @@ import {
   type SupervisorConnectionState,
 } from "./model.ts";
 import * as RpcSession from "../rpc/session.ts";
+import { withTargetLabel } from "./serverLabel.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
@@ -150,6 +153,18 @@ export interface EnvironmentSupervisorOptions {
     readonly activeRoute: ConnectionRoute;
     readonly reported: ReadonlyArray<ReportedEndpoint>;
   }) => Effect.Effect<Option.Option<ConnectionCatalogEntry>>;
+  /**
+   * Conn: called once per connection with what the server said about itself. The resolver has
+   * already checked that it answers as this environment.
+   */
+  readonly learnLabel?: (
+    descriptor: ExecutionEnvironmentDescriptor,
+  ) => Effect.Effect<Option.Option<ConnectionCatalogEntry>>;
+  /**
+   * Conn: the registry's entry now. After a learned change the supervisor takes this instead of the
+   * value that change returned, so two changes that finish out of order cannot restore an older one.
+   */
+  readonly latestEntry?: Effect.Effect<Option.Option<ConnectionCatalogEntry>>;
 }
 
 function retryDelayMs(failureCount: number, random: number): number {
@@ -289,9 +304,13 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   const usesRelay = connectionRoutes(entry).some(
     (route) => route.target._tag === "RelayConnectionTarget",
   );
-  const setupTimeoutDetail = `${target.label} did not respond during connection setup.${
-    usesRelay ? ` ${NETWORK_BLOCKING_HINT}` : ""
-  }`;
+  // Conn: the saved name can follow the server's own name while this supervisor runs (see
+  // `learnLabel`), so texts read it here instead of from the target fixed at creation.
+  let labelledTarget: ConnectionTarget = target;
+  const setupTimeoutDetail = () =>
+    `${labelledTarget.label} did not respond during connection setup.${
+      usesRelay ? ` ${NETWORK_BLOCKING_HINT}` : ""
+    }`;
   yield* annotateTarget(target);
 
   const connectivity = yield* Connectivity.Connectivity;
@@ -322,6 +341,19 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   // Learned routes arrive while a session is live, so the route list is read
   // fresh by each attempt and check instead of being fixed at creation.
   const currentEntry = yield* Ref.make(entry);
+  const adoptLock = yield* Semaphore.make(1);
+  const adoptEntry = (updated: ConnectionCatalogEntry) =>
+    adoptLock.withPermits(1)(
+      Effect.gen(function* () {
+        const latest =
+          options?.latestEntry === undefined ? Option.none() : yield* options.latestEntry;
+        const next = Option.getOrElse(latest, () => updated);
+        if (next.target.label !== labelledTarget.label) {
+          labelledTarget = withTargetLabel(target, next.target.label);
+        }
+        yield* Ref.set(currentEntry, next);
+      }),
+    );
   const currentRoutes = Ref.get(currentEntry).pipe(Effect.map(connectionRoutes));
   const preferredRouteId = yield* Ref.make(Option.none<string>());
   const routeCooldowns = yield* Ref.make<ReadonlyMap<string, bigint>>(new Map());
@@ -364,7 +396,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         Effect.gen(function* () {
           const updated = yield* learn({ activeRoute, reported });
           if (Option.isSome(updated)) {
-            yield* Ref.set(currentEntry, updated.value);
+            yield* adoptEntry(updated.value);
             yield* requestBetterRouteCheck(lease);
           }
         }),
@@ -447,13 +479,13 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     yield* Queue.offer(signals, next);
   });
 
-  const logManagedRelayAccountChange = Effect.logInfo(
-    "Managed relay account changed; restarting the environment connection.",
-  ).pipe(
-    Effect.annotateLogs({
-      "environment.id": target.environmentId,
-      "environment.label": target.label,
-    }),
+  const logManagedRelayAccountChange = Effect.suspend(() =>
+    Effect.logInfo("Managed relay account changed; restarting the environment connection.").pipe(
+      Effect.annotateLogs({
+        "environment.id": target.environmentId,
+        "environment.label": labelledTarget.label,
+      }),
+    ),
   );
 
   const reportProgress = Effect.fn("EnvironmentSupervisor.reportProgress")(function* (
@@ -861,7 +893,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           if (longResume) return true;
           return yield* new ConnectionTransientError({
             reason: "timeout",
-            detail: `${target.label} did not respond to a connection health check.`,
+            detail: `${labelledTarget.label} did not respond to a connection health check.`,
           });
         }
         if (probeEvent._tag === "ProbeCompleted") {
@@ -973,7 +1005,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         failure: {
           error: new ConnectionTransientError({
             reason: "timeout",
-            detail: setupTimeoutDetail,
+            detail: setupTimeoutDetail(),
           }),
           attemptSpan: Option.none(),
         },
@@ -983,13 +1015,13 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       const isUnexpectedDefect =
         !Cause.hasInterruptsOnly(establishment.exit.cause) &&
         !establishment.exit.cause.reasons.some(Cause.isFailReason);
-      const outcome = failureFromExit(target, establishment.exit, false, false);
+      const outcome = failureFromExit(labelledTarget, establishment.exit, false, false);
       if (isUnexpectedDefect) {
         const defect = establishment.exit.cause.reasons.find(Cause.isDieReason)?.defect;
         yield* Effect.logError("Connection attempt failed with an unexpected defect.").pipe(
           Effect.annotateLogs({
             "environment.id": target.environmentId,
-            "environment.label": target.label,
+            "environment.label": labelledTarget.label,
             "cause.reason_count": establishment.exit.cause.reasons.length,
             ...safeErrorLogAttributes(defect),
           }),
@@ -1032,6 +1064,20 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     if (options?.learnRoutes !== undefined) {
       yield* learnRoutesFrom(options.learnRoutes, connectedLease).pipe(Effect.forkScoped);
     }
+    const descriptor = connectedLease.prepared.descriptor;
+    if (
+      options?.learnLabel !== undefined &&
+      descriptor !== undefined &&
+      descriptor.environmentId === target.environmentId
+    ) {
+      const learnLabel = options.learnLabel;
+      yield* learnLabel(descriptor).pipe(
+        Effect.flatMap((updated) =>
+          Option.isSome(updated) ? adoptEntry(updated.value) : Effect.void,
+        ),
+        Effect.forkScoped,
+      );
+    }
     yield* setState({
       desired: true,
       network: currentIntent.network,
@@ -1067,7 +1113,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       } satisfies AttemptOutcome;
     }
     const outcome = failureFromExit(
-      target,
+      labelledTarget,
       connectedExit,
       true,
       connectedForMs >= BACKOFF_RESET_AFTER_MS,
@@ -1078,7 +1124,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           root: true,
           attributes: {
             "environment.id": target.environmentId,
-            "environment.label": target.label,
+            "environment.label": labelledTarget.label,
             "environment.target.kind": target._tag,
             "connection.connected_ms": connectedForMs,
             "connection.failure.reason": outcome.failure.error.reason,
@@ -1322,7 +1368,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   yield* Effect.addFinalizer(() => Queue.shutdown(signals).pipe(Effect.andThen(clearLease)));
 
   return EnvironmentSupervisor.of({
-    target,
+    get target() {
+      return labelledTarget;
+    },
     state,
     session,
     prepared,

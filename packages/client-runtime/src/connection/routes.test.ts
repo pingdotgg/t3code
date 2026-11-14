@@ -165,6 +165,24 @@ describe("learned routes", () => {
     });
   });
 
+  it("Conn: a learned route keeps a name the person chose", () => {
+    const named: ConnectionCatalogEntry = {
+      ...relayOnly,
+      target: new RelayConnectionTarget({
+        environmentId: RELAY.target.environmentId,
+        label: "My box",
+        labelSetByUser: true,
+      }),
+    };
+    const routes = mergeLearnedRoutes({
+      entry: named,
+      activeRoute: { target: named.target, profile: named.profile },
+      reported: [{ httpBaseUrl: "http://192.168.1.10:3773/" }],
+      allowInsecure: true,
+    });
+    expect(routes![0]!.target).toMatchObject({ label: "My box", labelSetByUser: true });
+  });
+
   it("replaces a learned LAN address when the server reports a new one", () => {
     const first = mergeLearnedRoutes({
       entry: relayOnly,

@@ -172,7 +172,11 @@ export function useRemoteConnections() {
     controller.setEnvironmentEnabled(environmentId, enabled);
   const onUpdateEnvironment = (
     environmentId: EnvironmentId,
-    updates: { readonly label: string; readonly displayUrl: string },
+    updates: {
+      readonly label: string;
+      readonly displayUrl: string;
+      readonly openedLabel?: string;
+    },
   ) => controller.updateEnvironment(environmentId, updates);
 
   const onRemoveEnvironmentPress = (environmentId: EnvironmentId) => {

@@ -614,6 +614,96 @@ describe("connection onboarding", () => {
         },
         credential: { token: "bearer-token" },
       });
+      expect(registration.target.labelSetByUser).toBe(true);
+    }),
+  );
+
+  it.effect(
+    "Conn: saving the same name with a new URL does not mark the name as the person's",
+    () =>
+      Effect.gen(function* () {
+        const environmentId = EnvironmentId.make("environment-paired");
+        const entry = (labelSetByUser: boolean) =>
+          Option.some({
+            target: new BearerConnectionTarget({
+              environmentId,
+              label: "instance-1846",
+              connectionId: "bearer:environment-paired",
+              ...(labelSetByUser ? { labelSetByUser: true as const } : {}),
+            }),
+            profile: Option.some(
+              new BearerConnectionProfile({
+                connectionId: "bearer:environment-paired",
+                environmentId,
+                label: "instance-1846",
+                httpBaseUrl: "http://old.example.test/",
+                wsBaseUrl: "ws://old.example.test/",
+              }),
+            ),
+            enabled: true,
+          });
+        const update = (labelSetByUser: boolean) =>
+          prepareBearerConnectionUpdate({
+            input: {
+              environmentId,
+              label: "instance-1846",
+              httpBaseUrl: "http://new.example.test/",
+            },
+            entry: entry(labelSetByUser),
+            credential: Option.some(new BearerConnectionCredential({ token: "bearer-token" })),
+          });
+
+        expect((yield* update(false)).target.labelSetByUser).toBeUndefined();
+        expect((yield* update(true)).target.labelSetByUser).toBe(true);
+      }),
+  );
+
+  it.effect("Conn: a form opened before the server renamed itself keeps the newer name", () =>
+    Effect.gen(function* () {
+      const environmentId = EnvironmentId.make("environment-paired");
+      const entry = Option.some({
+        target: new BearerConnectionTarget({
+          environmentId,
+          label: "task-5003.dlf-leden",
+          connectionId: "bearer:environment-paired",
+        }),
+        profile: Option.some(
+          new BearerConnectionProfile({
+            connectionId: "bearer:environment-paired",
+            environmentId,
+            label: "instance-1846",
+            httpBaseUrl: "http://old.example.test/",
+            wsBaseUrl: "ws://old.example.test/",
+          }),
+        ),
+        enabled: true,
+      });
+      const credential = Option.some(new BearerConnectionCredential({ token: "bearer-token" }));
+      const untouched = yield* prepareBearerConnectionUpdate({
+        input: {
+          environmentId,
+          label: "instance-1846",
+          openedLabel: "instance-1846",
+          httpBaseUrl: "http://new.example.test/",
+        },
+        entry,
+        credential,
+      });
+      expect(untouched.target.label).toBe("task-5003.dlf-leden");
+      expect(untouched.target.labelSetByUser).toBeUndefined();
+      expect(untouched.profile.label).toBe("task-5003.dlf-leden");
+
+      const typed = yield* prepareBearerConnectionUpdate({
+        input: {
+          environmentId,
+          label: "My box",
+          openedLabel: "instance-1846",
+          httpBaseUrl: "http://new.example.test/",
+        },
+        entry,
+        credential,
+      });
+      expect(typed.target).toMatchObject({ label: "My box", labelSetByUser: true });
     }),
   );
 

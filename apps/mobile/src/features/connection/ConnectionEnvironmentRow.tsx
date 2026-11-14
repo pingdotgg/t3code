@@ -46,11 +46,28 @@ export function ConnectionEnvironmentRow(props: {
   readonly onSetEnabled: (environmentId: EnvironmentId, enabled: boolean) => void;
   readonly onUpdate: (
     environmentId: EnvironmentId,
-    updates: { readonly label: string; readonly displayUrl: string },
+    updates: {
+      readonly label: string;
+      readonly displayUrl: string;
+      readonly openedLabel?: string;
+    },
   ) => Promise<AtomCommandResult<unknown, unknown>>;
 }) {
   const [label, setLabel] = useState(props.environment.environmentLabel);
+  // Conn: the name the form opened with, so an untouched name is not saved as the person's own.
+  const [openedLabel, setOpenedLabel] = useState(props.environment.environmentLabel);
   const [url, setUrl] = useState(props.environment.displayUrl);
+  // Conn: the saved name can follow the server while this row stays mounted, so each opening of
+  // the form starts from the current name and address.
+  const [wasExpanded, setWasExpanded] = useState(props.expanded);
+  if (props.expanded !== wasExpanded) {
+    setWasExpanded(props.expanded);
+    if (props.expanded) {
+      setLabel(props.environment.environmentLabel);
+      setOpenedLabel(props.environment.environmentLabel);
+      setUrl(props.environment.displayUrl);
+    }
+  }
   const serverConfig = useAtomValue(
     serverEnvironment.configValueAtom(props.environment.environmentId),
   );
@@ -78,6 +95,7 @@ export function ConnectionEnvironmentRow(props: {
     const result = await props.onUpdate(props.environment.environmentId, {
       label: label.trim(),
       displayUrl: url.trim(),
+      openedLabel,
     });
     if (AsyncResult.isSuccess(result)) {
       props.onToggle();

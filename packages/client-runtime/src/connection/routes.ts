@@ -312,6 +312,8 @@ export function mergeLearnedRoutes(input: {
         environmentId: entry.target.environmentId,
         label: entry.target.label,
         connectionId,
+        // Conn: a name the person chose stays theirs on every route.
+        ...(entry.target.labelSetByUser === true ? { labelSetByUser: true as const } : {}),
       }),
       profile: Option.some(
         new BearerConnectionProfile({

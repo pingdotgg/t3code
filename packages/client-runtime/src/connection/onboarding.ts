@@ -51,6 +51,12 @@ export interface BearerConnectionUpdateInput {
   readonly environmentId: EnvironmentId;
   readonly label: string;
   readonly httpBaseUrl: string;
+  /**
+   * Conn: the name the edit form showed when it opened. When `label` equals it, the person did not
+   * edit the name: the saved name stays (it may have followed the server since) and is not marked
+   * as theirs. Without it, a name that differs from the saved one counts as edited.
+   */
+  readonly openedLabel?: string;
 }
 
 export class ConnectionOnboarding extends Context.Service<
@@ -225,7 +231,10 @@ export const prepareBearerConnectionUpdate = Effect.fn(
     });
   }
 
-  const label = options.input.label.trim();
+  const typed = options.input.label.trim();
+  const opened = options.input.openedLabel?.trim();
+  const edited = opened === undefined ? typed !== entry.target.label : typed !== opened;
+  const label = edited ? typed : entry.target.label;
   if (label === "") {
     return yield* new ConnectionBlockedError({
       reason: "configuration",
@@ -241,11 +250,15 @@ export const prepareBearerConnectionUpdate = Effect.fn(
       }),
   });
   const connectionId = entry.target.connectionId;
+  // Conn: a name the person typed is theirs; the server's own name never replaces it. A save that
+  // left the name alone (only the URL changed) keeps the saved name and whatever mark it had.
+  const labelSetByUser = edited || entry.target.labelSetByUser === true;
   return new BearerConnectionRegistration({
     target: new BearerConnectionTarget({
       environmentId: options.input.environmentId,
       label,
       connectionId,
+      ...(labelSetByUser ? { labelSetByUser: true as const } : {}),
     }),
     profile: new BearerConnectionProfile({
       connectionId,

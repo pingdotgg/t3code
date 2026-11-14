@@ -5,6 +5,11 @@ import * as Schema from "effect/Schema";
 const ConnectionTargetBase = {
   environmentId: EnvironmentId,
   label: Schema.String,
+  /**
+   * Conn: the person named this environment (the phone's Label field). A server's own name never
+   * replaces it; without the mark, the saved name follows the name the server presents.
+   */
+  labelSetByUser: Schema.optionalKey(Schema.Literal(true)),
 };
 
 export class PrimaryConnectionTarget extends Schema.TaggedClass<PrimaryConnectionTarget>()(
