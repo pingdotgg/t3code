@@ -2408,6 +2408,10 @@ it.effect("refuses Azure cross-organization reads and writes without its checkou
     const writeError = yield* Effect.flip(service.runAction({ ...reference, action: "close" }));
     assert.strictEqual(readError._tag, "PullRequestUnavailableError");
     assert.strictEqual(writeError._tag, "PullRequestUnavailableError");
+    // regression: #36946 Azure is supported; the refusal must name the missing checkout.
+    if (readError._tag === "PullRequestUnavailableError") {
+      assert.notStrictEqual(readError.reason, "provider-unsupported");
+    }
   }),
 );
 
