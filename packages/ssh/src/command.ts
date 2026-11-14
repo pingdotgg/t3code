@@ -153,11 +153,20 @@ const collectProcessOutput = <E>(
     ),
   );
 
+// Covers the headless server startup output a failed launch tails from server.log.
+function redactSshCredentials(output: string): string {
+  return output
+    .replace(
+      /("(?:access_token|bearerToken|credential|pairingToken|token)"\s*:\s*")[^"]+(")/giu,
+      "$1[redacted]$2",
+    )
+    .replace(/((?:[?#&]|%23|%26|%3F)token(?:=|%3D))[^&#\s"'<>]+/giu, "$1[redacted]")
+    .replace(/^([ \t]*Token:[ \t]*)\S+/gmu, "$1[redacted]")
+    .replace(/^ *[█▀▄][ █▀▄]*(?:\r?\n *[█▀▄][ █▀▄]*)*$/gmu, "[redacted QR code]");
+}
+
 function redactSshErrorOutput(output: string, keepTail = false): string {
-  const redacted = output.replace(
-    /("(?:access_token|bearerToken|credential|pairingToken|token)"\s*:\s*")[^"]+(")/giu,
-    "$1[redacted]$2",
-  );
+  const redacted = redactSshCredentials(output);
   if (redacted.length <= MAX_SSH_ERROR_OUTPUT_LENGTH) return redacted;
   return keepTail
     ? `[truncated]\n${redacted.slice(-MAX_SSH_ERROR_OUTPUT_LENGTH)}`
@@ -328,28 +337,30 @@ const runSshCommandInScope = Effect.fn("ssh/command.runSshCommand.inScope")(func
   const { stdout, stderr } = output;
   if (exitCode !== 0) {
     const diagnosticStdout = redactSshErrorOutput(stdout, input.keepErrorOutputTail);
+    // ssh and the remote scripts print the failure reason last.
+    const diagnosticStderr = redactSshErrorOutput(stderr, true);
     yield* Effect.logWarning("ssh.command.failed", {
       ...sshTargetLogFields(target),
       command: ["ssh", ...args],
       exitCode,
       stdout: diagnosticStdout,
-      stderr,
+      stderr: diagnosticStderr,
     });
     return yield* new SshCommandError({
       command: ["ssh", ...args],
       exitCode,
       stdout: diagnosticStdout,
-      stderr,
+      stderr: diagnosticStderr,
       message:
         hostKeyVerificationMessage({
           target,
           hostSpec,
-          stderr,
+          stderr: diagnosticStderr,
           platform: yield* HostProcess.Platform,
         }) ??
         normalizeSshErrorMessage({
           stdout: diagnosticStdout,
-          stderr,
+          stderr: diagnosticStderr,
           fallbackMessage: `SSH command failed for ${hostSpec} (exit ${exitCode}).`,
         }),
     });
