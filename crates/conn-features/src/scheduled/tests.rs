@@ -1537,3 +1537,149 @@ async fn a_release_only_ends_its_own_run() {
     let row = tasks(&service).await.into_iter().next().expect("row");
     assert_eq!(row.last_run_status, ScheduledTaskRunStatus::Failed);
 }
+
+/// Orbit freezes a container. On wake the wall clock has jumped, and the monotonic clock has
+/// either run on (Linux's cgroup freezer: `CLOCK_MONOTONIC` keeps counting) or stood still
+/// (a sleeping Mac, a checkpoint restore). These tests act out both.
+mod clock_jumps {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+    use crate::clock::Clock;
+
+    const MIN: u64 = 60;
+    const JUMPS: [u64; 3] = [10 * MIN, 2 * 60 * MIN, 3 * 24 * 60 * MIN];
+
+    /// Counts launch attempts; each fails, so the run is recorded and planned again.
+    fn counting(launches: &Arc<AtomicUsize>) -> Fake {
+        let launches = launches.clone();
+        Fake {
+            launch: Box::new(move |_| {
+                launches.fetch_add(1, Ordering::SeqCst);
+                Box::pin(async { Err("synthetic dispatch failure".to_owned()) })
+            }),
+            ..Fake::default()
+        }
+    }
+
+    /// Lets the timer run what is due now. Saves run on blocking threads, so this sleeps a
+    /// few milliseconds of paused time, which waits for them.
+    async fn settle() {
+        for _ in 0..20 {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    }
+
+    /// The monotonic clock ran on: the timer wakes at once and an overdue interval runs once,
+    /// then counts its next run from the wake, as T3's `runDueTasks` with `nextRunAfterRun`.
+    /// No burst for the intervals the freeze skipped.
+    #[tokio::test(start_paused = true)]
+    async fn an_overdue_interval_runs_once_after_a_freeze() {
+        let env = Env::new("jump-interval", "2026-07-01T09:00:00.000Z");
+        let launches = Arc::new(AtomicUsize::new(0));
+        let service = env.start(counting(&launches), "UTC", true).await;
+        let task = upsert(
+            &service,
+            json!({"schedule": {"type": "interval", "everyMs": 5 * 60_000}}),
+        )
+        .await;
+        settle().await;
+        let mut expected = 0;
+        for jump in JUMPS {
+            tokio::time::advance(Duration::from_secs(jump)).await;
+            let woke = env.clock.now_ms();
+            settle().await;
+            expected += 1;
+            assert_eq!(launches.load(Ordering::SeqCst), expected, "+{jump}s: one run");
+            let listed = service.find(&task.id).await.expect("task");
+            let next = listed.next_run_at.as_deref().and_then(parse_iso).expect("next");
+            assert!(
+                (woke + 5 * 60_000..=env.clock.now_ms() + 5 * 60_000).contains(&next),
+                "+{jump}s: planned from the wake"
+            );
+        }
+    }
+
+    /// The monotonic clock ran on. A fixed time 5 minutes late at the wake runs; one days
+    /// late is recorded missed once, not once per skipped day, and moves to the next slot
+    /// after the wake (`isMissedFixedTimeRun`, `Schedule.ts`).
+    #[tokio::test(start_paused = true)]
+    async fn a_fixed_time_after_a_freeze_runs_within_ten_minutes_else_is_missed_once() {
+        let env = Env::new("jump-fixed", "2026-07-01T08:55:00.000Z");
+        let launches = Arc::new(AtomicUsize::new(0));
+        let service = env.start(counting(&launches), "UTC", true).await;
+        let task = upsert(
+            &service,
+            json!({"schedule": {"type": "fixed_time", "timeOfDay": "09:00"}}),
+        )
+        .await;
+        settle().await;
+
+        tokio::time::advance(Duration::from_secs(10 * MIN)).await; // 09:05
+        settle().await;
+        assert_eq!(launches.load(Ordering::SeqCst), 1, "5 minutes late runs");
+
+        tokio::time::advance(Duration::from_secs(2 * 60 * MIN)).await; // 11:05
+        settle().await;
+        assert_eq!(launches.load(Ordering::SeqCst), 1, "nothing due");
+
+        tokio::time::advance(Duration::from_secs(3 * 24 * 60 * MIN)).await; // 07-04 11:05
+        settle().await;
+        assert_eq!(launches.load(Ordering::SeqCst), 1, "missed, not run");
+        let listed = service.find(&task.id).await.expect("task");
+        assert_eq!(listed.next_run_at.as_deref(), Some("2026-07-05T09:00:00.000Z"));
+        assert_eq!(
+            listed.last_run_error.as_deref(),
+            Some("Missed a scheduled run because the server was not running at that time.")
+        );
+        assert_eq!(listed.run_count, 1, "the missed days are not counted as runs");
+    }
+
+    /// The monotonic clock stood still. The timer wakes when its monotonic sleep ends, at
+    /// most 10 minutes (`MAX_SLEEP`) after the thaw, and then runs once; no burst. This is a
+    /// difference from T3, which polls every 5 seconds (`Scheduler.ts`): here the run is up
+    /// to 10 minutes late, and a fixed time due shortly before the wake can be recorded
+    /// missed where T3 runs it (below).
+    #[tokio::test(start_paused = true)]
+    async fn with_a_still_monotonic_clock_the_timer_wakes_within_ten_minutes() {
+        for jump in JUMPS {
+            let env = Env::new("jump-still", "2026-07-01T09:00:00.000Z");
+            let launches = Arc::new(AtomicUsize::new(0));
+            let service = env.start(counting(&launches), "UTC", true).await;
+            upsert(
+                &service,
+                json!({"schedule": {"type": "interval", "everyMs": 10 * 60_000}}),
+            )
+            .await;
+            settle().await;
+            // Frozen one minute into the 10-minute sleep; the wall clock jumps past the run.
+            tokio::time::advance(Duration::from_secs(MIN)).await;
+            env.clock.set(env.clock.now_ms() + i64::try_from(jump * 1000).expect("ms"));
+            settle().await;
+            assert_eq!(launches.load(Ordering::SeqCst), 0, "+{jump}s: still asleep");
+            tokio::time::advance(Duration::from_secs(9 * MIN)).await;
+            settle().await;
+            assert_eq!(launches.load(Ordering::SeqCst), 1, "+{jump}s: one run");
+        }
+
+        // A daily 09:00 task. The timer sleeps 10 minutes from 08:00; the container freezes
+        // at 08:01 and wakes at 09:05. T3 runs the slot at 09:05 (5 minutes late); here the
+        // timer wakes at 09:14 and records it missed.
+        let env = Env::new("jump-still-fixed", "2026-07-01T08:00:00.000Z");
+        let launches = Arc::new(AtomicUsize::new(0));
+        let service = env.start(counting(&launches), "UTC", true).await;
+        let task = upsert(
+            &service,
+            json!({"schedule": {"type": "fixed_time", "timeOfDay": "09:00"}}),
+        )
+        .await;
+        settle().await;
+        tokio::time::advance(Duration::from_secs(MIN)).await;
+        env.clock.set(ms("2026-07-01T09:05:00.000Z"));
+        tokio::time::advance(Duration::from_secs(9 * MIN)).await;
+        settle().await;
+        assert_eq!(launches.load(Ordering::SeqCst), 0, "recorded missed, not run");
+        let listed = service.find(&task.id).await.expect("task");
+        assert_eq!(listed.next_run_at.as_deref(), Some("2026-07-02T09:00:00.000Z"));
+    }
+}
