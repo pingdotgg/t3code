@@ -9,6 +9,7 @@ import * as Scope from "effect/Scope";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as UrlParams from "effect/http/UrlParams";
 import * as HttpClient from "effect/http/HttpClient";
@@ -55,6 +56,37 @@ describe("OpenCode2Client authorization", () => {
   );
 });
 
+// Frames captured from OpenCode 2.1.4, which no longer sends `data.recent`.
+const COMPACTION_FRAMES = [
+  {
+    id: "evt_17fbf08bf0027kXxWvCuGCkaol",
+    created: 1793144588479,
+    type: "session.compaction.started",
+    location: { directory: "/tmp/proj" },
+    data: {
+      sessionID: "ses_e80415922ffetjml4RUW7tRPQL",
+      reason: "manual",
+      inputID: "msg_17fbf08b10019CxokkaEaAaZ8f",
+    },
+    durable: { aggregateID: "ses_e80415922ffetjml4RUW7tRPQL", seq: 16, version: 1 },
+  },
+  {
+    id: "evt_17fbf1179001YzrfiloDXDkGMV",
+    created: 1793144590713,
+    type: "session.compaction.ended",
+    location: { directory: "/tmp/proj" },
+    data: {
+      sessionID: "ses_e80415922ffetjml4RUW7tRPQL",
+      reason: "manual",
+      model: { id: "claude-haiku-5-5", providerID: "anthropic", variant: "default" },
+      text: "## Objective\n- (none)",
+      tokens: { input: 4, output: 140, reasoning: 0, cache: { read: 5113, write: 10821 } },
+      cost: 0.001474155,
+    },
+    durable: { aggregateID: "ses_e80415922ffetjml4RUW7tRPQL", seq: 18, version: 1 },
+  },
+];
+
 describe("OpenCode2Client event subscription", () => {
   it.effect("times out and cancels a subscription with no response headers", () =>
     Effect.gen(function* () {
@@ -81,6 +113,37 @@ describe("OpenCode2Client event subscription", () => {
       assert.strictEqual(error._tag, "HttpClientError");
       assert.strictEqual(error.reason._tag, "TransportError");
       assert.isTrue(Cause.isTimeoutError(error.cause));
+    }),
+  );
+
+  it.effect("delivers compaction events from OpenCode 2.1", () =>
+    Effect.gen(function* () {
+      const transport = Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(
+                COMPACTION_FRAMES.map((frame) => `data: ${JSON.stringify(frame)}\n\n`).join(""),
+                { headers: { "content-type": "text/event-stream" } },
+              ),
+            ),
+          ),
+        ),
+      );
+      const opencode = yield* OpenCode2Client.OpenCode2Client.pipe(
+        Effect.provide(OpenCode2Client.layer.pipe(Layer.provide(transport))),
+      );
+      const { events } = yield* opencode.connect({
+        baseUrl: "http://127.0.0.1:4096",
+        password: "test-password",
+      });
+      const received = yield* Stream.runCollect(yield* events);
+      assert.deepStrictEqual(
+        received.map((event) => event.type),
+        ["session.compaction.started", "session.compaction.ended"],
+      );
     }),
   );
 });
