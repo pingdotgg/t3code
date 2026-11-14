@@ -22,6 +22,7 @@ import { PierreEntryIcon } from "../../components/PierreEntryIcon";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { cn } from "../../lib/cn";
 import type { ModelOption } from "../../lib/modelOptions";
+import type { ComposerPathSearchTarget } from "../../state/queryTargets";
 import { pullRequestStatus } from "../pull-requests/pullRequestStatus";
 export type ComposerCommandItem =
   | {
@@ -36,6 +37,7 @@ export type ComposerCommandItem =
       readonly type: "path";
       readonly path: string;
       readonly kind: "file" | "directory";
+      readonly searchTarget: ComposerPathSearchTarget;
       readonly label: string;
       readonly description: string;
     }

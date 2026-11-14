@@ -8,8 +8,26 @@ export interface CheckpointDiffTarget {
   readonly ignoreWhitespace: boolean;
 }
 
+export interface ComposerPathSearchTarget {
+  readonly environmentId: EnvironmentId | null;
+  readonly cwd: string | null;
+  readonly query: string | null;
+}
+
 export function normalizeComposerPathSearchQuery(query: string | null): string | null {
   return query?.trim() ?? null;
+}
+
+/** Whether a path search ran for this environment, directory and normalized query. */
+export function isComposerPathSearchTarget(
+  searched: ComposerPathSearchTarget,
+  current: ComposerPathSearchTarget,
+): boolean {
+  return (
+    searched.environmentId === current.environmentId &&
+    searched.cwd === current.cwd &&
+    searched.query === normalizeComposerPathSearchQuery(current.query)
+  );
 }
 
 export function buildCheckpointDiffTargets(target: CheckpointDiffTarget) {

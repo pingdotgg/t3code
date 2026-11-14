@@ -8,9 +8,10 @@ import { expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({
   sessionAtom: {},
-  searchEntries: vi.fn(() => null),
+  searchEntries: vi.fn((_target: unknown): unknown => null),
   listRefs: vi.fn(),
   refresh: vi.fn(),
+  pathFixture: false,
 }));
 
 vi.mock("./session", () => ({
@@ -35,30 +36,46 @@ vi.mock("./query", () => ({
     data:
       atom === mocks.sessionAtom
         ? { authenticated: true, scopes: [AuthFilesystemReadScope] }
-        : null,
+        : mocks.pathFixture && atom !== null
+          ? {
+              entries: [
+                {
+                  path:
+                    (atom as { input: { cwd: string } }).input.cwd === "/original"
+                      ? "src/only-in-original.ts"
+                      : "src/replacement.ts",
+                  kind: "file",
+                },
+              ],
+            }
+          : null,
     error: null,
     isPending: false,
     refresh: () => {},
   }),
 }));
 
-import {
-  useComposerPathSearch,
-  usePaginatedBranches,
-  type ComposerPathSearchTarget,
-} from "./queries";
+import { useComposerPathSearch, usePaginatedBranches } from "./queries";
+import type { ComposerPathSearchTarget } from "./queryTargets";
 
 function setup() {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   vi.useFakeTimers();
   mocks.searchEntries.mockClear();
   const root = createRoot(document.createElement("div"));
+  let search: ReturnType<typeof useComposerPathSearch> | undefined;
   function Probe({ target }: { readonly target: ComposerPathSearchTarget }) {
-    useComposerPathSearch(target);
+    const result = useComposerPathSearch(target);
+    useLayoutEffect(() => {
+      search = result;
+    });
     return null;
   }
 
   return {
+    get isPending() {
+      return search?.isPending;
+    },
     render(target: ComposerPathSearchTarget) {
       act(() => root.render(<Probe target={{ ...target }} />));
     },
@@ -126,6 +143,21 @@ it.each([
     environmentId: changed.environmentId,
     input: { cwd: changed.cwd, query: changed.query.slice(0, 256), limit: 20 },
   });
+});
+
+it.each([
+  { field: "environment", changed: { ...target, environmentId: EnvironmentId.make("other") } },
+  { field: "project directory", changed: { ...target, cwd: "/other" } },
+])("reports settled results as pending when the $field changes", ({ changed }) => {
+  using harness = setup();
+  harness.render(target);
+  act(() => vi.advanceTimersByTime(200));
+  expect(harness.isPending).toBe(false);
+
+  harness.render(changed);
+  expect(harness.isPending).toBe(true);
+  act(() => vi.advanceTimersByTime(200));
+  expect(harness.isPending).toBe(false);
 });
 
 it("keeps compiled branch results stable and resets pagination for a new target or refresh", () => {
@@ -215,3 +247,87 @@ it("keeps compiled branch results stable and resets pagination for a new target 
   expect(current!.data).toBeNull();
   expect(current!.refs).toEqual([]);
 });
+
+vi.mock("../lib/uuid", () => ({ uuidv4: () => "id" }));
+vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));
+vi.mock("./use-composer-drafts", () => ({
+  getComposerDraftSnapshot: () => ({ context: null }),
+  setComposerDraftContext: vi.fn(),
+  useComposerDraftSelection: () => null,
+}));
+vi.mock("./provider-workspace-snapshot-refresh", () => ({
+  providerWorkspaceSnapshotRefresh: vi.fn(),
+}));
+vi.mock("./queries", async (original) => ({
+  ...(await original<typeof import("./queries")>()),
+  useThreadSearch: () => ({ matches: [], query: "", isPending: false }),
+  useComposerPullRequestSearch: () => ({ entries: [], isPending: false, error: null }),
+}));
+import { useComposerCommandMenu } from "../features/threads/use-composer-command-menu";
+
+it.each(["unchanged", "workspace", "remounted-environment", "settled-workspace"])(
+  "does not insert an old workspace result into a replacement target: %s",
+  (change) => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    vi.useFakeTimers();
+    mocks.pathFixture = true;
+    mocks.searchEntries.mockImplementation((value) => value);
+    const root = createRoot(document.createElement("div"));
+    const onChangeDraftMessage = vi.fn();
+    let menu: ReturnType<typeof useComposerCommandMenu> | undefined;
+    function Probe({ cwd, environment }: { cwd: string; environment: EnvironmentId }) {
+      const result = useComposerCommandMenu({
+        draftMessage: "@src",
+        ownerKey: "draft-owner",
+        environmentId: environment,
+        projectCwd: cwd,
+        selectedProviderStatus: null,
+        hasThread: true,
+        hasCompactableConversation: false,
+        onChangeDraftMessage,
+      });
+      useLayoutEffect(() => {
+        menu = result;
+      });
+      return null;
+    }
+    try {
+      act(() => root.render(<Probe cwd="/original" environment={target.environmentId} />));
+      expect(menu?.items[0]?.label).toBe("only-in-original.ts");
+      if (change !== "unchanged") {
+        act(() =>
+          root.render(
+            <Probe
+              key={change === "remounted-environment" ? "replacement" : undefined}
+              cwd="/replacement"
+              environment={
+                change === "remounted-environment"
+                  ? EnvironmentId.make("other")
+                  : target.environmentId
+              }
+            />,
+          ),
+        );
+      }
+      if (change === "settled-workspace") {
+        act(() => vi.advanceTimersByTime(200));
+        expect(menu?.items[0]?.label).toBe("replacement.ts");
+      }
+      const item = menu?.items.find((item) => item.type === "path");
+      if (!item || !menu) throw new Error("Expected displayed path suggestion");
+      act(() => menu!.onSelect(item));
+      if (change !== "workspace") {
+        expect(onChangeDraftMessage).toHaveBeenCalledOnce();
+      } else {
+        expect(onChangeDraftMessage).not.toHaveBeenCalledWith(
+          "[only-in-original.ts](src/only-in-original.ts) ",
+        );
+      }
+    } finally {
+      act(() => root.unmount());
+      vi.useRealTimers();
+      mocks.pathFixture = false;
+      mocks.searchEntries.mockImplementation(() => null);
+    }
+  },
+);

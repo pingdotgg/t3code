@@ -64,6 +64,7 @@ import {
   useComposerPullRequestSearch,
   useThreadSearch,
 } from "../../state/queries";
+import { isComposerPathSearchTarget } from "../../state/queryTargets";
 import type { ModelOption } from "../../lib/modelOptions";
 import type { ComposerCommandItem } from "./ComposerCommandPopover";
 import { matchesSlashSkillQuery } from "./composerSlashSkillSearch";
@@ -335,11 +336,12 @@ export function useComposerCommandMenu({
     }
     return detectComposerTrigger(draftMessage, selection.end);
   })();
-  const pathSearch = useComposerPathSearch({
+  const pathSearchTarget = {
     environmentId,
     cwd: trigger?.kind === "path" ? projectCwd : null,
     query: trigger?.kind === "path" ? trigger.query : null,
-  });
+  };
+  const pathSearch = useComposerPathSearch(pathSearchTarget);
   // Mounts older settled threads matching the mention, which shells may leave out.
   useThreadSearch(
     trigger?.kind === "path" && environmentId ? [environmentId] : [],
@@ -526,6 +528,7 @@ export function useComposerCommandMenu({
             type: "path" as const,
             path: entry.path,
             kind: entry.kind,
+            searchTarget: pathSearch.searchedTarget,
             label: parts[parts.length - 1] ?? entry.path,
             description: parts.length > 1 ? parts.slice(0, -1).join("/") : "",
           };
@@ -627,6 +630,10 @@ export function useComposerCommandMenu({
       return;
     }
 
+    // A result still on screen from another workspace must not insert into this draft.
+    if (item.type === "path" && !isComposerPathSearchTarget(item.searchTarget, pathSearchTarget)) {
+      return;
+    }
     if (item.type === "slash-command" && item.command === "clear" && onFreshSession) {
       const cleared = replaceTextRange(draftMessage, trigger.rangeStart, trigger.rangeEnd, "");
       setSelection({ start: cleared.cursor, end: cleared.cursor });

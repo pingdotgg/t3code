@@ -128,7 +128,7 @@ function project(environment: string, id: string): EnvironmentProject {
   };
 }
 
-function setup() {
+function setup(flowKey = "test-flow") {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   vi.useFakeTimers();
   vi.clearAllMocks();
@@ -172,11 +172,14 @@ function setup() {
     Atom.make(() => {
       const [, cwd] = JSON.parse(key) as [string, string];
       const result: VcsListRefsResult = {
-        refs: [{ name: "main", current: true, isDefault: true, worktreePath: cwd }],
+        refs: [
+          { name: "main", current: true, isDefault: true, worktreePath: cwd },
+          { name: "other", current: false, isDefault: false, worktreePath: "/replacement" },
+        ],
         isRepo: true,
         hasPrimaryRemote: true,
         nextCursor: null,
-        totalCount: 1,
+        totalCount: 2,
       };
       return AsyncResult.success(result);
     }).pipe(Atom.keepAlive),
@@ -249,7 +252,7 @@ function setup() {
       await act(async () =>
         root.render(
           <RegistryContext.Provider value={registry}>
-            <NewTaskFlowProvider active={active} flowKey="test-flow">
+            <NewTaskFlowProvider active={active} flowKey={flowKey}>
               <Probe />
             </NewTaskFlowProvider>
           </RegistryContext.Provider>,
@@ -442,3 +445,24 @@ it.each([
     expect(screen.current.selectedProject).toEqual(screen.projects[expectedProject]);
   },
 );
+
+it("keeps the draft owner while selecting an existing worktree", async () => {
+  mocks.serverConfig.mockReset();
+  using screen = setup("ownership-control");
+  await screen.render(true);
+  await act(async () => screen.current.setWorkspaceMode("local"));
+  const owner = screen.current.draftKey;
+  expect(screen.current.workspaceCwd).toBe("/a");
+  await act(async () => screen.current.setPrompt("@src"));
+  await act(async () =>
+    screen.current.selectBranch({
+      name: "other",
+      current: false,
+      isDefault: false,
+      worktreePath: "/replacement",
+    }),
+  );
+  expect(screen.current.workspaceCwd).toBe("/replacement");
+  expect(screen.current.draftKey).toBe(owner);
+  expect(screen.current.prompt).toBe("@src");
+});

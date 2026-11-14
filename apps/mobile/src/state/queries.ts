@@ -46,8 +46,10 @@ import { vcsEnvironment } from "./vcs";
 import { composerPullRequests } from "./pull-requests";
 import {
   buildCheckpointDiffTargets,
+  isComposerPathSearchTarget,
   normalizeComposerPathSearchQuery,
   type CheckpointDiffTarget,
+  type ComposerPathSearchTarget,
 } from "./queryTargets";
 
 const COMPOSER_PATH_SEARCH_DEBOUNCE_MS = 200;
@@ -84,12 +86,6 @@ const threadSearch = createThreadSearchResultsAtomFamily({
   olderSettledBefore: olderSettledBeforeAtom,
   labelPrefix: "mobile:thread-search",
 });
-
-export interface ComposerPathSearchTarget {
-  readonly environmentId: EnvironmentId | null;
-  readonly cwd: string | null;
-  readonly query: string | null;
-}
 
 export function useDebouncedValue<A>(value: A, delayMs: number): A {
   const [debounced, setDebounced] = useState(value);
@@ -450,8 +446,9 @@ export function useComposerPathSearch(target: ComposerPathSearchTarget) {
           ? result.error
           : (fileAccess.error ?? "This connection cannot search host files."),
     isPending:
-      normalizedTarget.query !== debouncedTarget.query ||
+      !isComposerPathSearchTarget(debouncedTarget, target) ||
       (hasTarget && (fileAccess.isPending || result.isPending)),
+    searchedTarget: debouncedTarget,
     refresh: result.refresh,
   };
 }
