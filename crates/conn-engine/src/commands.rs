@@ -1096,6 +1096,15 @@ struct ThreadMetadataUpdate {
     thread_id: String,
     title: Option<String>,
     regenerate_title: Option<bool>,
+    continuation: Option<MetadataContinuation>,
+}
+
+/// A message queued in the same commit as the update (`metadataUpdateContinuation`).
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MetadataContinuation {
+    message_id: String,
+    text: String,
 }
 
 fn thread_metadata_update(tx: &mut Tx<'_>, command: Value) -> Outcome {
@@ -1106,6 +1115,7 @@ fn thread_metadata_update(tx: &mut Tx<'_>, command: Value) -> Outcome {
     }
     let command_id = c.command_id.clone();
     let titled = c.title.is_some();
+    let thread_id = c.thread_id.clone();
     patch_thread(
         tx,
         &c.thread_id,
@@ -1122,15 +1132,29 @@ fn thread_metadata_update(tx: &mut Tx<'_>, command: Value) -> Outcome {
             }
         },
     )?;
-    Ok(if regenerate {
+    let mut effects = if regenerate {
         vec![Effect::GenerateTitle {
-            thread_id: c.thread_id,
-            request_id: c.command_id,
+            thread_id: thread_id.clone(),
+            request_id: command_id.clone(),
             regenerate: true,
         }]
     } else {
         vec![]
-    })
+    };
+    // T3 queues the follow-up in the same commit, as the agent through /mcp, so a workspace
+    // change cannot settle the thread before it exists. A refused message refuses the update.
+    if let Some(continuation) = c.continuation {
+        effects.extend(message_dispatch(
+            tx,
+            json!({
+                "type": "message.dispatch", "commandId": command_id, "threadId": thread_id,
+                "messageId": continuation.message_id, "text": continuation.text,
+                "attachments": [], "dispatchMode": {"type": "queue_after_active"},
+                "createdBy": "agent", "creationSource": "mcp",
+            }),
+        )?);
+    }
+    Ok(effects)
 }
 
 #[derive(Deserialize)]

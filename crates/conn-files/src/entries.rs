@@ -418,8 +418,14 @@ fn check_ignore(root: &Path, git_root: &str, paths: &[String]) -> Option<git::Ou
 
 /// `projects.listIgnoredFiles`: untracked files Git ignores, without wholly ignored folders such
 /// as `node_modules`, at most 200, with their sizes. Links are not followed; the server's
-/// internal files are left out.
-pub fn list_ignored(root: &Path, internal: &InternalPaths) -> ProjectListIgnoredFilesResult {
+/// internal files are left out. `query` keeps the paths that contain it, case-insensitive,
+/// before the cap, so files that sort past it stay reachable (`ignoredFileSearch`).
+pub fn list_ignored(
+    root: &Path,
+    internal: &InternalPaths,
+    query: Option<&str>,
+) -> ProjectListIgnoredFilesResult {
+    let query = query.unwrap_or_default().to_lowercase();
     let empty = ProjectListIgnoredFilesResult {
         files: Vec::new(),
         truncated: false,
@@ -449,7 +455,7 @@ pub fn list_ignored(root: &Path, internal: &InternalPaths) -> ProjectListIgnored
         .stdout
         .split(|&b| b == 0)
         .map(|p| String::from_utf8_lossy(p).into_owned())
-        .filter(|p| !p.is_empty() && !p.ends_with('/'))
+        .filter(|p| !p.is_empty() && !p.ends_with('/') && p.to_lowercase().contains(&query))
         .filter(|p| !internal.contains(&real_root.join(p)))
         .collect();
     paths.sort();

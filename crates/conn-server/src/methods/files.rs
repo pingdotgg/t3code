@@ -156,6 +156,7 @@ async fn archived_thread_root(
 #[serde(rename_all = "camelCase")]
 struct ListIgnoredInput {
     cwd: String,
+    query: Option<String>,
 }
 
 pub fn register(table: &mut MethodTable, deps: &Deps) {
@@ -228,7 +229,11 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
                 blocking(move || {
                     let root = entries::normalize_root(&input.cwd, f.home.as_deref(), &f.internal)
                         .map_err(|e| fail(e.into_list_error(&input.cwd)))?;
-                    Ok(entries::list_ignored(&root, &f.internal))
+                    Ok(entries::list_ignored(
+                        &root,
+                        &f.internal,
+                        input.query.as_deref(),
+                    ))
                 })
                 .await?
             }
