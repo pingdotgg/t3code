@@ -62,11 +62,7 @@ export const alchemyWalnutTheme = new ExpressiveCodeTheme({
       settings: { foreground: "#d4f26a" },
     },
     {
-      scope: [
-        "keyword.operator",
-        "punctuation.separator",
-        "punctuation.terminator",
-      ],
+      scope: ["keyword.operator", "punctuation.separator", "punctuation.terminator"],
       settings: { foreground: "#c7b795" },
     },
     {
@@ -82,11 +78,7 @@ export const alchemyWalnutTheme = new ExpressiveCodeTheme({
       settings: { foreground: "#ff9a6b" },
     },
     {
-      scope: [
-        "constant.language.boolean",
-        "constant.language.null",
-        "constant.language.undefined",
-      ],
+      scope: ["constant.language.boolean", "constant.language.null", "constant.language.undefined"],
       settings: { foreground: "#ff9a6b" },
     },
     {
@@ -186,16 +178,7 @@ export const alchemyWalnutTheme = new ExpressiveCodeTheme({
 
 import { InlineStyleAnnotation } from "@astrojs/starlight/expressive-code";
 
-const TARGET_LANGS = new Set([
-  "ts",
-  "tsx",
-  "typescript",
-  "js",
-  "jsx",
-  "javascript",
-  "mts",
-  "cts",
-]);
+const TARGET_LANGS = new Set(["ts", "tsx", "typescript", "js", "jsx", "javascript", "mts", "cts"]);
 
 const CAP_IDENT_RE = /\b[A-Z][A-Za-z0-9_]*\b/g;
 
@@ -203,8 +186,7 @@ const CYAN = "#7ddfff";
 const STRING_COLOR = "#ffe38a";
 const COMMENT_COLOR = "#b3a27a";
 
-const eq = (a: string, b: string) =>
-  (a || "").toLowerCase() === b.toLowerCase();
+const eq = (a: string, b: string) => (a || "").toLowerCase() === b.toLowerCase();
 
 /**
  * Expressive Code plugin that paints every bare capitalized identifier
@@ -286,9 +268,8 @@ const TS_CODE = /^ts\((\d+)\):?\s*/;
 /** The line's token container (`.code` child), or the node itself. */
 function codeContainer(node: any) {
   return (
-    node.children?.find(
-      (c: any) => c.type === "element" && getClassNames(c).includes("code"),
-    ) ?? node
+    node.children?.find((c: any) => c.type === "element" && getClassNames(c).includes("code")) ??
+    node
   );
 }
 
@@ -302,9 +283,7 @@ class ErrorUnderlineAnnotation extends ExpressiveCodeAnnotation {
       // cancelled from inside), so the box must be a sibling of the
       // underlined span, not its child.
       const code = codeContainer(node);
-      code.children = [
-        h("span.twoslash.twoslash-error-underline", code.children ?? []),
-      ];
+      code.children = [h("span.twoslash.twoslash-error-underline", code.children ?? [])];
       return node;
     });
   }
@@ -330,9 +309,7 @@ class ErrorBoxAnnotation extends ExpressiveCodeAnnotation {
         h("div.twoslash-error-box.twoslash-error-level-error", [
           h("span.twoslash-error-box-icon"),
           h("span.twoslash-error-box-content", [
-            ...(this.title
-              ? [h("span.twoslash-error-box-content-title", this.title)]
-              : []),
+            ...(this.title ? [h("span.twoslash-error-box-content-title", this.title)] : []),
             h("span.twoslash-error-box-content-message", this.message),
           ]),
         ]),

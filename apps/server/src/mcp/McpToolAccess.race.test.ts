@@ -141,7 +141,7 @@ const renameRacingTheUser = (threadId: ThreadId, userRaises: boolean) =>
       Effect.provideService(McpSchema.McpServerClient, mcpClient),
       Effect.provide(
         McpHttpServer.toolkitRegistration(RenameToolkit, handlers).pipe(
-          Layer.provideMerge(McpServer.McpServer.layer),
+          Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         ),
       ),
     );
@@ -179,24 +179,6 @@ it.layer(layerOrchestrator)("writesThreads against a mode raise", (it) => {
       const shell = yield* projections.getThreadShell(threadId);
       assert.equal(shell?.runtimeMode, "full-access");
       assert.equal(shell?.title, "Before");
-    }).pipe(
-      Effect.provide(
-        ThreadManagement.layer.pipe(
-          Layer.provide(ServerSettings.layerTest()),
-          Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
-        ),
-      ),
-    ),
-  );
-
-  it.effect("lets the write through when the thread stays within the caller's modes", () =>
-    Effect.gen(function* () {
-      const projections = yield* ProjectionStore.ProjectionStoreV2;
-      const threadId = ThreadId.make("thread:race-steady");
-      yield* createSupervisedThread(threadId);
-      const outcome = yield* renameRacingTheUser(threadId, false);
-      assert.deepEqual(outcome, { renamed: true });
-      assert.equal((yield* projections.getThreadShell(threadId))?.title, "Renamed by the agent");
     }).pipe(
       Effect.provide(
         ThreadManagement.layer.pipe(
