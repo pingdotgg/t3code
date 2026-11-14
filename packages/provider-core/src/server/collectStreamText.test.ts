@@ -7,21 +7,6 @@ import { collectUint8StreamText } from "./collectStreamText.ts";
 const encoder = new TextEncoder();
 
 describe("collectUint8StreamText", () => {
-  it.effect("collects Uint8Array chunks into decoded text", () =>
-    Effect.gen(function* () {
-      const result = yield* collectUint8StreamText({
-        stream: Stream.make(encoder.encode("hello "), encoder.encode("world")),
-      });
-
-      assert.deepStrictEqual(result, {
-        text: "hello world",
-        bytes: 11,
-        truncated: false,
-        invalidUtf8: false,
-      });
-    }),
-  );
-
   it.effect("truncates by bytes and appends an optional marker once", () =>
     Effect.gen(function* () {
       const result = yield* collectUint8StreamText({

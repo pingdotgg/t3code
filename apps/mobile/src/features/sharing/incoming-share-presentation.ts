@@ -1,3 +1,5 @@
+import { isDraftThreadRoute } from "../threads/thread-route-state";
+
 export interface IncomingSharePresentationState {
   readonly presentedShareId: string | null;
   readonly sheetSeen: boolean;
@@ -19,42 +21,27 @@ export const EMPTY_INCOMING_SHARE_PRESENTATION_STATE: IncomingSharePresentationS
 interface RouteLike {
   readonly name: string;
   readonly params?: object;
-  readonly state?: { readonly routes: ReadonlyArray<RouteLike> };
 }
 
-function incomingShareIdOfParams(params: object | undefined): string | null {
-  if (!params || !("incomingShareId" in params)) return null;
-  const value = params.incomingShareId;
-  const id = Array.isArray(value) ? value[0] : value;
-  return typeof id === "string" ? id : null;
-}
-
-// A root route above the sheet leaves it open. Before the nested navigator
-// mounts, the share ID lives in the navigate payload instead of its routes.
-export function incomingShareIdOfSheetRoute(
-  state: { readonly routes: ReadonlyArray<RouteLike> },
-  sheetRouteName: string,
-): { readonly isSheetPresented: boolean; readonly shareId: string | null } {
-  const sheet = state.routes.find((route) => route.name === sheetRouteName);
-  if (!sheet) {
-    return { isSheetPresented: false, shareId: null };
-  }
-  for (const route of sheet.state?.routes ?? []) {
-    const shareId = incomingShareIdOfParams(route.params);
-    if (shareId !== null) return { isSheetPresented: true, shareId };
-  }
-  const payload =
-    sheet.params && "params" in sheet.params && typeof sheet.params.params === "object"
-      ? (sheet.params.params as object | null)
-      : null;
-  return { isSheetPresented: true, shareId: incomingShareIdOfParams(payload ?? undefined) };
+/** Draft routes anywhere in the root stack: a route pushed above one leaves it open. */
+export function incomingShareDraftRoutes(routes: ReadonlyArray<RouteLike>): {
+  readonly isDraftPresented: boolean;
+  readonly shareIds: ReadonlyArray<string>;
+} {
+  const drafts = routes.filter(isDraftThreadRoute);
+  const shareIds = drafts.flatMap((route) => {
+    const value = (route.params as { draft: { incomingShareId?: unknown } }).draft.incomingShareId;
+    const id = Array.isArray(value) ? value[0] : value;
+    return typeof id === "string" ? [id] : [];
+  });
+  return { isDraftPresented: drafts.length > 0, shareIds };
 }
 
 export function transitionIncomingSharePresentation(
   state: IncomingSharePresentationState,
   input: {
-    readonly isSheetPresented: boolean;
-    readonly sheetShareId: string | null;
+    readonly isDraftPresented: boolean;
+    readonly draftShareIds: ReadonlyArray<string>;
     readonly pendingShareId: string | null;
   },
 ): IncomingSharePresentationTransition {
@@ -62,11 +49,7 @@ export function transitionIncomingSharePresentation(
   const { pendingShareId } = input;
 
   if (pendingShareId === null) {
-    return {
-      state: EMPTY_INCOMING_SHARE_PRESENTATION_STATE,
-      shareIdToPresent: null,
-      shareIdToDiscard: null,
-    };
+    return { ...hold, state: EMPTY_INCOMING_SHARE_PRESENTATION_STATE };
   }
 
   if (state.discardedShareId === pendingShareId) {
@@ -75,15 +58,15 @@ export function transitionIncomingSharePresentation(
   }
 
   const tracked = state.presentedShareId;
-  if (input.isSheetPresented) {
-    if (tracked !== null && input.sheetShareId === tracked && !state.sheetSeen) {
+  if (input.isDraftPresented) {
+    if (tracked !== null && !state.sheetSeen && input.draftShareIds.includes(tracked)) {
       return { ...hold, state: { ...state, sheetSeen: true } };
     }
     return hold;
   }
 
-  // A missing sheet is a dismissal only after it carried this entry's ID.
-  // Otherwise the navigation may never have landed and remains eligible.
+  // A missing draft is a dismissal only after it carried this entry's id; until
+  // then the navigation may not have landed and the request is retried.
   const shareIdToDiscard = tracked !== null && state.sheetSeen ? tracked : null;
   const shareIdToPresent = shareIdToDiscard === pendingShareId ? null : pendingShareId;
   return {

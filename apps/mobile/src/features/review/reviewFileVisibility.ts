@@ -3,25 +3,40 @@ import { useCallback, useMemo } from "react";
 import { updateReviewExpandedFileIds, updateReviewViewedFileIds } from "./reviewState";
 import type { ReviewRenderableFile } from "./reviewModel";
 
-function getDefaultReviewExpandedFileIds(
+// File ids are scoped to one diff text, so a refresh renames every file. Expansion is
+// stored by path, which survives a refresh; the occurrence index keeps apart entries
+// that share a path, such as the deletion and addition when a file becomes a symlink.
+function getReviewFileExpansionKeys(
   files: ReadonlyArray<ReviewRenderableFile>,
 ): ReadonlyArray<string> {
-  return files.map((file) => file.id);
+  const seen = new Map<string, number>();
+  return files.map((file) => {
+    const occurrence = seen.get(file.path) ?? 0;
+    seen.set(file.path, occurrence + 1);
+    return `${occurrence}:${file.path}`;
+  });
 }
 
-export function getValidReviewFileIds(
+function getExpandedReviewFileKeys(
+  keys: ReadonlyArray<string>,
+  storedKeys: ReadonlyArray<string> | undefined,
+): ReadonlyArray<string> {
+  return storedKeys === undefined ? keys : keys.filter((key) => storedKeys.includes(key));
+}
+
+function getValidReviewFileIds(
   files: ReadonlyArray<ReviewRenderableFile>,
   fileIds: ReadonlyArray<string> | undefined,
 ): ReadonlyArray<string> {
   if (fileIds === undefined) {
-    return getDefaultReviewExpandedFileIds(files);
+    return files.map((file) => file.id);
   }
 
   const fileIdSet = new Set(files.map((file) => file.id));
   return fileIds.filter((id) => fileIdSet.has(id));
 }
 
-export function getValidExplicitReviewFileIds(
+function getValidExplicitReviewFileIds(
   files: ReadonlyArray<ReviewRenderableFile>,
   fileIds: ReadonlyArray<string> | undefined,
 ): ReadonlyArray<string> {
@@ -32,17 +47,11 @@ export function getValidExplicitReviewFileIds(
   return getValidReviewFileIds(files, fileIds);
 }
 
-export function toggleReviewFileId(
-  fileIds: ReadonlyArray<string>,
-  fileId: string,
-): ReadonlyArray<string> {
+function toggleReviewFileId(fileIds: ReadonlyArray<string>, fileId: string): ReadonlyArray<string> {
   return fileIds.includes(fileId) ? fileIds.filter((id) => id !== fileId) : [...fileIds, fileId];
 }
 
-export function removeReviewFileId(
-  fileIds: ReadonlyArray<string>,
-  fileId: string,
-): ReadonlyArray<string> {
+function removeReviewFileId(fileIds: ReadonlyArray<string>, fileId: string): ReadonlyArray<string> {
   return fileIds.includes(fileId) ? fileIds.filter((id) => id !== fileId) : fileIds;
 }
 
@@ -55,10 +64,13 @@ export function useReviewFileVisibility(input: {
 }) {
   const { cachedExpandedFileIds, cachedViewedFileIds, files, sectionId, threadKey } = input;
 
-  const expandedFileIds = useMemo(
-    () => getValidReviewFileIds(files, cachedExpandedFileIds),
-    [cachedExpandedFileIds, files],
-  );
+  const expansionKeys = useMemo(() => getReviewFileExpansionKeys(files), [files]);
+  const expandedFileIds = useMemo(() => {
+    const expandedKeys = new Set(getExpandedReviewFileKeys(expansionKeys, cachedExpandedFileIds));
+    return files
+      .filter((_, index) => expandedKeys.has(expansionKeys[index]!))
+      .map((file) => file.id);
+  }, [cachedExpandedFileIds, expansionKeys, files]);
   const viewedFileIds = useMemo(
     () => getValidExplicitReviewFileIds(files, cachedViewedFileIds),
     [cachedViewedFileIds, files],
@@ -79,11 +91,15 @@ export function useReviewFileVisibility(input: {
         return;
       }
 
+      const key = expansionKeys[files.findIndex((file) => file.id === fileId)];
+      if (key === undefined) {
+        return;
+      }
       updateReviewExpandedFileIds(threadKey, sectionId, (existing) =>
-        toggleReviewFileId(getValidReviewFileIds(files, existing), fileId),
+        toggleReviewFileId(getExpandedReviewFileKeys(expansionKeys, existing), key),
       );
     },
-    [files, sectionId, threadKey],
+    [expansionKeys, files, sectionId, threadKey],
   );
 
   const toggleViewedFile = useCallback(
@@ -97,13 +113,14 @@ export function useReviewFileVisibility(input: {
         toggleReviewFileId(getValidExplicitReviewFileIds(files, existing), fileId),
       );
 
-      if (shouldCollapse) {
+      const key = expansionKeys[files.findIndex((file) => file.id === fileId)];
+      if (shouldCollapse && key !== undefined) {
         updateReviewExpandedFileIds(threadKey, sectionId, (existing) =>
-          removeReviewFileId(getValidReviewFileIds(files, existing), fileId),
+          removeReviewFileId(getExpandedReviewFileKeys(expansionKeys, existing), key),
         );
       }
     },
-    [files, sectionId, threadKey, viewedFileIds],
+    [expansionKeys, files, sectionId, threadKey, viewedFileIds],
   );
 
   return {

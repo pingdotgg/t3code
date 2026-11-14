@@ -30,7 +30,7 @@ export interface IncomingShareInboxDependencies {
   readonly onCleanupError?: (error: unknown) => void;
 }
 
-export function sortAndDedupeIncomingShares(
+function sortAndDedupeIncomingShares(
   drafts: ReadonlyArray<IncomingShareDraft>,
 ): ReadonlyArray<IncomingShareDraft> {
   const ids = new Set<string>();
@@ -45,10 +45,7 @@ export function sortAndDedupeIncomingShares(
     });
 }
 
-/**
- * This prevents a stale storage load or a foreground refresh from restoring an
- * item after it has been consumed.
- */
+/** Serialization prevents stale loads or refreshes from restoring consumed items. */
 export class IncomingShareInbox {
   private readonly operations = new SerializedAsyncQueue();
 
@@ -87,8 +84,8 @@ export class IncomingShareInbox {
         return persisted;
       }
 
-      // Persist replay detection separately from entry identity: a later identical
-      // handoff must not be addressed by an earlier sheet's dismissal or import.
+      // The fingerprint finds a replay after a crash between durable write and native
+      // acknowledgement; entry ids stay unique so a later identical share is its own entry.
       const payloadFingerprint = await this.dependencies.fingerprintForPayloads(payloads);
       if (loaded.some((draft) => (draft.payloadFingerprint ?? draft.id) === payloadFingerprint)) {
         if (this.dependencies.cleanupReplayedPayloads) {
@@ -112,9 +109,7 @@ export class IncomingShareInbox {
         );
       }
 
-      // The durable inbox write is the transaction boundary. Never clear the
-      // native handoff first: a process termination must leave one recoverable
-      // copy on one side of the boundary.
+      // Persist before clearing the native handoff so termination always leaves a recoverable copy.
       try {
         await this.dependencies.writeDraft(draft);
       } catch (error) {
