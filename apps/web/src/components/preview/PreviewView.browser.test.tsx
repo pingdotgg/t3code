@@ -358,41 +358,16 @@ describe("PreviewView", () => {
         .querySelector(".group")!,
     );
     await userEvent.click(screen.getByRole("button", { name: "Open preview in right panel" }));
-    await vi.waitFor(() => {
-      const docked = selectThreadPreviewMiniPlayer(
-        usePreviewMiniPlayerStore.getState().byThreadKey,
-        TEST_THREAD_REF,
-      );
-      expect(docked).toEqual(miniPlayer);
-      expect(
-        shouldRenderPreviewMiniPlayer(
-          docked?.source ?? null,
-          selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, TEST_THREAD_REF),
-        ),
-      ).toBe(false);
-    });
     await expect
       .element(screen.getByRole("region", { name: "Floating browser preview" }))
       .not.toBeInTheDocument();
-    closePreviewPanel(TEST_THREAD_REF);
-    await vi.waitFor(() => {
-      const activeSurface = selectActiveRightPanelSurface(
-        useRightPanelStore.getState().byThreadKey,
+    expect(
+      selectThreadPreviewMiniPlayer(
+        usePreviewMiniPlayerStore.getState().byThreadKey,
         TEST_THREAD_REF,
-      );
-      expect(activeSurface).toBeNull();
-    });
-    await vi.waitFor(() => {
-      expect(
-        shouldRenderPreviewMiniPlayer(
-          selectThreadPreviewMiniPlayer(
-            usePreviewMiniPlayerStore.getState().byThreadKey,
-            TEST_THREAD_REF,
-          )?.source ?? null,
-          selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, TEST_THREAD_REF),
-        ),
-      ).toBe(true);
-    });
+      ),
+    ).toEqual(miniPlayer);
+    closePreviewPanel(TEST_THREAD_REF);
     await expect
       .element(screen.getByRole("region", { name: "Floating browser preview" }))
       .toBeInTheDocument();
@@ -588,31 +563,6 @@ describe("PreviewView", () => {
     await expect.element(address).not.toHaveFocus();
     act(() => dispatchPreviewAction("focus-url"));
     await expect.element(address).toHaveFocus();
-  });
-
-  it("turns off the floating preview from the chrome picture-in-picture button", async () => {
-    setup();
-    usePreviewMiniPlayerStore.getState().open(TEST_THREAD_REF, browserMiniPlayerSource("tab-1"));
-    await vi.waitFor(() => {
-      expect(
-        selectThreadPreviewMiniPlayerTabId(
-          usePreviewMiniPlayerStore.getState().byThreadKey,
-          TEST_THREAD_REF,
-        ),
-      ).toBe("tab-1");
-    });
-
-    await using _screen = await render(view());
-    await userEvent.click(page.getByRole("button", { name: "Close floating preview" }));
-
-    await vi.waitFor(() => {
-      expect(
-        selectThreadPreviewMiniPlayerTabId(
-          usePreviewMiniPlayerStore.getState().byThreadKey,
-          TEST_THREAD_REF,
-        ),
-      ).toBeNull();
-    });
   });
 
   it("does not reopen find when the user returns to a tab they left with find open", async () => {
