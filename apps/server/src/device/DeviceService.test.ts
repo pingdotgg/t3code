@@ -347,7 +347,7 @@ const fixture = Effect.fn("fixture")(function* (
       }),
     ),
   );
-  // The host ending a device on its own, as EAS does at a session's limits.
+  // The host ending a device on its own, as Expo does at a session's limits.
   const endDevice = () => {
     booted = false;
   };

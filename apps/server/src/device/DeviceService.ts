@@ -163,7 +163,7 @@ export class DeviceService extends Context.Service<
     readonly testHost: (
       config: SshDeviceHostConfig,
     ) => Effect.Effect<DeviceHostSummary, DeviceError>;
-    /** Who an Expo credential signs in as and which EAS projects it can run sessions under. */
+    /** Who an Expo credential signs in as and which Expo projects it can run sessions under. */
     readonly easAccount: (
       input: DeviceEasAccountInput,
     ) => Effect.Effect<DeviceEasAccount, DeviceEasAccountError>;
@@ -598,7 +598,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
             ),
             ...devices.filter((device) => !incompletePlatforms.includes(device.platform)),
           ],
-          // A host that ends devices itself (EAS stops sessions at their limits)
+          // A host that ends devices itself (Expo stops sessions at their limits)
           // leaves sessions on devices it no longer lists with nothing to stream.
           // Other hosts can miss a device for one listing, so theirs stay.
           sessions: ready.devices.endsDevices
@@ -1127,7 +1127,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       easAccount: Effect.fn("DeviceService.easAccount")(function () {
         return Effect.fail(
           new DeviceEasAccountError({
-            reason: "EAS accounts are unavailable in this device service.",
+            reason: "Expo accounts are unavailable in this device service.",
           }),
         );
       }),

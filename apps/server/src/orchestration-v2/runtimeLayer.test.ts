@@ -5074,6 +5074,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
 
       const headSha = "6074dd48ff";
       let checks: PullRequestDetail["checks"] = [];
+      let activityUnavailable = false;
       const host = Layer.mergeAll(
         NodeServices.layer,
         NodeCrypto.layer,
@@ -5089,13 +5090,15 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
               checks,
             })),
           activity: () =>
-            Effect.succeed({
-              comments: [],
-              commentCount: 0,
-              commentsTruncated: false,
-              reviewThreads: [],
-              commits: [],
-            }),
+            activityUnavailable
+              ? Effect.die("comments unavailable")
+              : Effect.succeed({
+                  comments: [],
+                  commentCount: 0,
+                  commentsTruncated: false,
+                  reviewThreads: [],
+                  commits: [],
+                }),
         }),
       );
       const wakes = Effect.map(
@@ -5122,6 +5125,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* sweep;
       assert.lengthOf(yield* wakes, 1);
 
+      activityUnavailable = true;
       checks = [{ name: "lint", status: "success", description: null, url: null, required: true }];
       yield* TestClock.adjust("10 minutes");
       yield* sweep;
@@ -5250,6 +5254,109 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         yield* orchestrator.dispatch({
           type: "thread.pull-request.watch",
           commandId: CommandId.make(`pr-watch-due-end-${fingerprinted}`),
+          threadId,
+          ...key,
+          watching: false,
+        });
+        yield* worker.drain();
+      }),
+  );
+
+  it.effect.each([true, false])(
+    "rereads pending checks only on a fingerprint change when it covers them (covers: %s)",
+    (coversDetail) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const threadId = ThreadId.make(`runtime-pull-request-watch-covers-${coversDetail}`);
+        const projectId = ProjectId.make(`pr-watch-covers-project-${coversDetail}`);
+        yield* seedProject({
+          projectId,
+          title: "Watch pending checks",
+          workspaceRoot: "/workspace/watch-covers",
+          defaultModelSelection: null,
+          createdAt: "2026-10-01T00:00:00.000Z",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`pr-watch-covers-create-${coversDetail}`),
+          threadId,
+          projectId,
+          title: "Watch pending checks",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        const key = { host: "gitlab.com", repository: "acme/web", number: 15 };
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(`pr-watch-covers-start-${coversDetail}`),
+          threadId,
+          ...key,
+          watching: true,
+          link: { url: "https://gitlab.com/acme/web/-/merge_requests/15", source: "agent" },
+        });
+
+        let reads = 0;
+        let status = "running";
+        const host = Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          Layer.mock(PullRequestService.PullRequestService)({
+            watchFingerprint: () => Effect.sync(() => ({ status, remarks: "none", coversDetail })),
+            invalidate: () => Effect.void,
+            detail: (input) =>
+              Effect.sync(() => {
+                // Watches left by earlier cases in this layer are swept too.
+                if (input.projectId === projectId) reads++;
+                return {
+                  ...watchedPullRequestDetail({
+                    projectId,
+                    number: 15,
+                    at: "2026-10-02T12:00:00.000Z",
+                  }),
+                  headSha: "6074dd48ff",
+                  checks: [
+                    {
+                      name: "lint",
+                      status: "pending",
+                      description: null,
+                      url: null,
+                      required: true,
+                    },
+                  ],
+                };
+              }),
+            activity: () =>
+              Effect.succeed({
+                comments: [],
+                commentCount: 0,
+                commentsTruncated: false,
+                reviewThreads: [],
+                commits: [],
+              }),
+          }),
+        );
+        const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const sweep = reactor.sweep.pipe(Effect.andThen(worker.drain()));
+
+        yield* sweep;
+        yield* TestClock.adjust("2 minutes");
+        yield* sweep;
+        assert.equal(reads, coversDetail ? 1 : 2);
+
+        status = "passed";
+        yield* TestClock.adjust("2 minutes");
+        yield* sweep;
+        assert.equal(reads, coversDetail ? 2 : 3);
+
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(`pr-watch-covers-end-${coversDetail}`),
           threadId,
           ...key,
           watching: false,
@@ -10209,7 +10316,7 @@ it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
         commandId: CommandId.make("runtime-layer-snoozed-thread-create"),
         threadId,
         projectId,
-        title: "Snoozed thread",
+        title: "New thread",
         modelSelection,
         runtimeMode: "full-access",
         interactionMode: "default",
