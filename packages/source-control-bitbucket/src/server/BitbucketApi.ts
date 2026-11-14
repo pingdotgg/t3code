@@ -918,7 +918,18 @@ export const make = Effect.gen(function* () {
       repository: input.sourceRepositoryName,
       ...(input.context ? { context: input.context } : {}),
     }).pipe(Effect.map(normalizeRepositoryCloneUrls));
-    const originRemoteUrl = yield* readConfigValueNullable(input.cwd, "remote.origin.url");
+    // Git fetches from a remote's first URL; `config --get` returns the last of several, and
+    // `git remote -v` applies `insteadOf` rewrites.
+    const originRemoteUrl = yield* git
+      .execute({
+        operation: "BitbucketApi.readOriginRemoteUrl",
+        cwd: input.cwd,
+        args: ["config", "--get-all", "remote.origin.url"],
+      })
+      .pipe(
+        Effect.map((result) => result.stdout.split("\n", 1)[0]?.trim() || null),
+        Effect.orElseSucceed(() => null),
+      );
     return yield* git.ensureRemote({
       cwd: input.cwd,
       preferredName: input.isCrossRepository
