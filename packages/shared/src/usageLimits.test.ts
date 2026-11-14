@@ -112,6 +112,33 @@ describe("new thread model fallback", () => {
       }).selection,
     ).toEqual(selection);
   });
+  it("keeps a Claude default whose only exhausted limit is the extra-usage budget", () => {
+    const defaultSelection = {
+      instanceId: ProviderInstanceId.make("claude"),
+      model: "claude-opus-5-5",
+    };
+    const claude = provider({
+      instanceId: defaultSelection.instanceId,
+      driver: ProviderDriverKind.make("claudeAgent"),
+      usageLimits: {
+        checkedAt: limited.checkedAt,
+        windows: [
+          { ...window, usedPercent: 18 },
+          { ...window, id: "seven_day", kind: "weekly", usedPercent: 4 },
+          { id: "monthly_spend", kind: "monthly", label: "Monthly spend", usedPercent: 100 },
+        ],
+      },
+    });
+    const codex = provider({ instanceId: ProviderInstanceId.make("codex") });
+    expect(
+      resolveNewThreadModelSelection({
+        defaultSelection,
+        fallbackSelection: selection,
+        providers: [claude, codex],
+        now,
+      }).selection,
+    ).toEqual(defaultSelection);
+  });
   it.each([undefined, "invalid"])("treats an unknown reset as exhausted: %s", (resetsAt) => {
     expect(
       exhaustedUsageWindow(
