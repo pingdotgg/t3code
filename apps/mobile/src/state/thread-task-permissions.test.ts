@@ -1,12 +1,14 @@
 import {
   AuthOrchestrationOperateScope,
   DEFAULT_SERVER_SETTINGS,
+  EnvironmentId,
   MessageId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   RunId,
   RuntimeRequestId,
+  ThreadId,
   TurnItemId,
   type ModelSelection,
   type OrchestrationV2ThreadProjection,
@@ -18,6 +20,8 @@ import {
   v2Projection,
 } from "../../../../packages/client-runtime/src/state/orchestrationV2TestFixtures";
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
+import type { ComposerDraft } from "./use-composer-drafts";
+import type { ComposerAttachmentUploadState } from "../lib/composerAttachmentUploadQueue";
 import type { PendingThreadRequests } from "@t3tools/client-runtime/state/thread-requests";
 import { sendApprovalFeedback } from "@t3tools/client-runtime/state/thread-requests";
 import { DateTime } from "effect";
@@ -101,7 +105,10 @@ vi.mock("@effect/atom-react", async () => {
   const { appAtomRegistry } = await import("./atom-registry");
   return { useAtomValue: <A>(atom: Atom.Atom<A>) => appAtomRegistry.get(atom) };
 });
-vi.mock("./entities", () => ({ useServerConfigs: () => new Map() }));
+vi.mock("./entities", () => ({
+  useServerConfigs: () =>
+    new Map(state.serverConfig ? [[EnvironmentId.make("secondary"), state.serverConfig]] : []),
+}));
 vi.mock("./session", () => ({
   readEnvironmentScope: (environmentId: string, scope: string) =>
     scope === AuthOrchestrationOperateScope && state.grantedEnvironments.has(environmentId),
@@ -146,16 +153,18 @@ vi.mock("./use-thread-outbox", async () => {
 vi.mock("./thread-outbox", () => ({ enqueueThreadOutboxMessage: state.enqueue }));
 vi.mock("./composer-attachment-uploads", async () => {
   const { Atom } = await import("effect/reactivity");
+  const { composerAttachmentUploadBlockReason, composerAttachmentsStillUploading } =
+    await import("../lib/composerAttachmentUploadQueue");
   return {
-    composerAttachmentUploadsAtom: Atom.make({}),
-    composerAttachmentUploadBlockReason: () => null,
-    composerAttachmentsStillUploading: () => false,
+    composerAttachmentUploadsAtom: Atom.make<Record<string, ComposerAttachmentUploadState>>({}),
+    composerAttachmentUploadBlockReason,
+    composerAttachmentsStillUploading,
   };
 });
 vi.mock("./use-composer-drafts", async () => {
   const { Atom } = await import("effect/reactivity");
   return {
-    composerDraftsAtom: Atom.make({}),
+    composerDraftsAtom: Atom.make<Record<string, ComposerDraft>>({}),
     composerContextImportsAtom: Atom.make({}),
     getComposerDraftSnapshot: () => state.draft,
     isFreshSessionPending: () => state.freshPending,
@@ -195,6 +204,13 @@ vi.mock("./use-remote-environment-registry", () => ({ setPendingConnectionError:
 import { Alert } from "react-native";
 import { useThreadComposerState } from "./use-thread-composer-state";
 import { useSelectedThreadRequests } from "./use-selected-thread-requests";
+import { appAtomRegistry } from "./atom-registry";
+import { composerDraftsAtom } from "./use-composer-drafts";
+import { composerAttachmentUploadsAtom } from "./composer-attachment-uploads";
+import {
+  questionAttachmentDraftKey,
+  questionAttachmentPreparationAtom,
+} from "./question-attachments";
 
 const NO_SIDE_CHATS = { startSideChat: async () => false };
 
@@ -231,6 +247,9 @@ beforeEach(() => {
   state.approve.mockResolvedValue(AsyncResult.success(undefined));
   state.answer.mockResolvedValue(AsyncResult.success(undefined));
   state.feedback.mockResolvedValue(AsyncResult.success({ feedbackId: "feedback" }));
+  appAtomRegistry.set(composerDraftsAtom, {});
+  appAtomRegistry.set(composerAttachmentUploadsAtom, {});
+  appAtomRegistry.set(questionAttachmentPreparationAtom, {});
 });
 
 describe("mobile task permissions", () => {
@@ -491,17 +510,102 @@ describe("mobile task permissions", () => {
     state.grantedEnvironments.add("secondary");
     const requests = useSelectedThreadRequests();
     expect(requests.activePendingUserInputAnswers).toEqual({ language: "TypeScript" });
+    requests.onChangeUserInputCustomAnswer(requestId, "language", "你好");
     state.grantedEnvironments.delete("secondary");
     await requests.onSubmitUserInput();
     expect(state.answer).not.toHaveBeenCalled();
     expect(useSelectedThreadRequests().activePendingUserInputAnswers).toEqual({
-      language: "TypeScript",
+      language: "你好",
     });
     state.grantedEnvironments.add("secondary");
+    requests.onChangeUserInputCustomAnswer(requestId, "language", "   ");
+    await requests.onSubmitUserInput();
+    expect(state.answer).not.toHaveBeenCalled();
+    requests.onChangeUserInputCustomAnswer(requestId, "language", "你好");
     await requests.onSubmitUserInput();
     expect(state.answer).toHaveBeenCalledWith({
       environmentId: "secondary",
-      input: { threadId: "thread", requestId: "input", answers: { language: "TypeScript" } },
+      input: { threadId: "thread", requestId: "input", answers: { language: "你好" } },
+    });
+
+    const emptyRequests = useSelectedThreadRequests();
+    expect(emptyRequests.activePendingUserInputAnswers).toBeNull();
+    emptyRequests.onChangeUserInputCustomAnswer(requestId, "language", "最新");
+    await emptyRequests.onSubmitUserInput();
+    expect(state.answer).toHaveBeenLastCalledWith({
+      environmentId: "secondary",
+      input: { threadId: "thread", requestId: "input", answers: { language: "最新" } },
+    });
+  });
+  it("validates the latest attachments before submitting an attachment-only answer", async () => {
+    const environmentId = EnvironmentId.make("secondary");
+    const threadId = ThreadId.make("thread");
+    const requestId = RuntimeRequestId.make("attachment-input");
+    state.pendingRequests = {
+      approvals: [],
+      userInputs: [
+        {
+          requestId,
+          createdAt: "2026-11-11T00:00:00.000Z",
+          responseCapability: "live",
+          dismissible: false,
+          questions: [state.question],
+        },
+      ],
+    };
+    state.grantedEnvironments.add(environmentId);
+    const requests = useSelectedThreadRequests();
+    expect(requests.activePendingUserInputAnswers).toBeNull();
+    requests.onChangeUserInputCustomAnswer(requestId, "language", "Greeting");
+    const renderedAnswerRequests = useSelectedThreadRequests();
+    expect(renderedAnswerRequests.activePendingUserInputAnswers).toEqual({ language: "Greeting" });
+    const key = questionAttachmentDraftKey(environmentId, threadId, requestId, "language");
+    const attachment: DraftComposerImageAttachment = {
+      id: "image",
+      type: "image",
+      name: "greeting.png",
+      mimeType: "image/png",
+      sizeBytes: 4,
+      previewUri: "file:///tmp/greeting.png",
+      uploadedAttachmentId: "uploaded-image",
+      uploadEnvironmentId: environmentId,
+    };
+    appAtomRegistry.set(composerDraftsAtom, { [key]: { text: "", attachments: [attachment] } });
+    appAtomRegistry.set(composerAttachmentUploadsAtom, {
+      "secondary:image": { status: "uploading", progress: 0.5 },
+    });
+    await renderedAnswerRequests.onSubmitUserInput();
+    expect(state.answer).not.toHaveBeenCalled();
+    appAtomRegistry.set(composerAttachmentUploadsAtom, {
+      "secondary:image": { status: "failed", reason: "Upload failed" },
+    });
+    await renderedAnswerRequests.onSubmitUserInput();
+    expect(state.answer).not.toHaveBeenCalled();
+    appAtomRegistry.set(composerAttachmentUploadsAtom, { "secondary:image": { status: "ready" } });
+    appAtomRegistry.set(questionAttachmentPreparationAtom, { [key]: 1 });
+    await requests.onSubmitUserInput();
+    expect(state.answer).not.toHaveBeenCalled();
+    appAtomRegistry.set(questionAttachmentPreparationAtom, {});
+    requests.onChangeUserInputCustomAnswer(requestId, "language", "");
+    await requests.onSubmitUserInput();
+    expect(state.answer).toHaveBeenCalledExactlyOnceWith({
+      environmentId,
+      input: {
+        threadId,
+        requestId,
+        answers: { language: "" },
+        attachmentsByQuestionId: {
+          language: [
+            {
+              type: "image",
+              id: "uploaded-image",
+              name: "greeting.png",
+              mimeType: "image/png",
+              sizeBytes: 4,
+            },
+          ],
+        },
+      },
     });
   });
 });

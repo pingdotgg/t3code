@@ -36,6 +36,7 @@ export function QuestionAttachments(props: {
   questions: ReadonlyArray<UserInputQuestion>;
   disabled: boolean;
   value: string;
+  outsideChange: number;
   onChangeText: (value: string) => void;
   onInputFocusChange?: ((focused: boolean) => void) | undefined;
 }) {
@@ -69,13 +70,13 @@ export function QuestionAttachments(props: {
   // selection clearing the draft.
   const inputRef = useRef<TextInputInstance>(null);
   const [initialText] = useState(props.value);
-  const nativeText = useRef(props.value);
+  const outsideChange = useRef(props.outsideChange);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes an option selection's cleared draft into the uncontrolled native input
   useEffect(() => {
-    if (props.value !== "" || nativeText.current === "") return;
-    nativeText.current = "";
+    if (props.outsideChange === outsideChange.current) return;
+    outsideChange.current = props.outsideChange;
     inputRef.current?.clear();
-  }, [props.value]);
+  }, [props.outsideChange]);
   const append = (
     key: string,
     attachments: Parameters<typeof appendComposerDraftAttachments>[1],
@@ -215,10 +216,7 @@ export function QuestionAttachments(props: {
           multiline={props.question.initialAnswer !== undefined}
           submitBehavior={props.question.initialAnswer !== undefined ? "newline" : undefined}
           editable={!props.disabled}
-          onChangeText={(text) => {
-            nativeText.current = text;
-            props.onChangeText(text);
-          }}
+          onChangeText={props.onChangeText}
           onFocus={() => {
             focusedRef.current = true;
             onInputFocusChange?.(true);
