@@ -1,6 +1,7 @@
 import {
   CHAT_MARKDOWN_REHYPE_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS,
+  remarkAssistantInsights,
 } from "@t3tools/shared/markdownPipeline";
 import { renderToStaticMarkup } from "react-dom/server";
 import ReactMarkdown from "react-markdown";
@@ -12,7 +13,7 @@ import { splitMarkdownBlocks } from "./markdownStreamBlocks";
 const html = (source: string) =>
   renderToStaticMarkup(
     <ReactMarkdown
-      remarkPlugins={CHAT_MARKDOWN_REMARK_PLUGINS}
+      remarkPlugins={[remarkAssistantInsights, ...CHAT_MARKDOWN_REMARK_PLUGINS]}
       rehypePlugins={CHAT_MARKDOWN_REHYPE_PLUGINS}
     >
       {source}
@@ -33,6 +34,7 @@ describe("splitMarkdownBlocks", () => {
     "Setext\n===\n\nnext\n---\n\n- [ ] task\n- [x] done",
     "- a\n\n  ```\n  x\n\n```\n\nb",
     "- a\n\n  ```\n  x\n\ny\n\n  ```\n\nb",
+    "intro\n\n★ Insight ─────\nfirst\n\n```\n─────\n```\n\n- point\n─────\n\nafter\n\n`★ Insight ─────`\nsecond\n`─────`\n\nend",
   ])("renders each block as the whole text renders it, at every streamed prefix: %j", (text) => {
     for (let end = 0; end <= text.length; end++) {
       const source = text.slice(0, end);
