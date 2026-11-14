@@ -761,21 +761,9 @@ describe("question answer paths", () => {
             "xl/_rels/workbook.xml.rels":
               '<Relationships><Relationship Id="a" Target="worksheets/a.xml"/></Relationships>',
             "xl/worksheets/a.xml":
-              '<worksheet><row><c r="A1" t="b"><v>1</v></c><c r="B1" t="b"><v>0</v></c><c r="C1" t="n"><v>1</v></c><c r="D1"><v>0</v></c></row></worksheet>',
+              '<worksheet><row><c r="A1" t="b"><v>1</v></c><c r="B1" t="b"><v>0</v></c><c r="C1" t="n"><v>1</v></c><c r="D1" t="b"><v>2</v></c></row></worksheet>',
           },
-          expected: ["true\tfalse\t1\t0"],
-        },
-        {
-          ext: "xlsx",
-          bounded: true,
-          parts: {
-            "xl/workbook.xml": '<workbook><sheet name="BadFlag" r:id="a"/></workbook>',
-            "xl/_rels/workbook.xml.rels":
-              '<Relationships><Relationship Id="a" Target="worksheets/a.xml"/></Relationships>',
-            "xl/worksheets/a.xml": '<worksheet><row><c t="b"><v>2</v></c></row></worksheet>',
-          },
-          expected: ["2"],
-          absent: ["true", "false"],
+          expected: ["true\tfalse\t1\t2"],
         },
         {
           ext: "xlsx",
