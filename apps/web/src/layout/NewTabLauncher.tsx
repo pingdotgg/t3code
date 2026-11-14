@@ -275,7 +275,7 @@ function NewTabLauncherBody({
           }
         : null;
   const actions = SURFACE_LAUNCHER_ENTRIES.flatMap<SurfaceLauncherAction>(({ kind, shortcut }) =>
-    kind === "pull-requests"
+    kind === "pull-requests" || kind === "side-chat"
       ? []
       : kind === "pull-request"
         ? pullRequest

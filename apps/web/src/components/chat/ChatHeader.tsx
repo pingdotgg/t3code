@@ -96,6 +96,7 @@ interface ChatHeaderProps {
   onFindInThread?: ((threadRef: ScopedThreadRef) => void) | undefined;
   /** The chat's terminal pane while hidden (cmd+J): its notch offers it back. */
   hiddenTerminal?: HiddenTerminalChip | null | undefined;
+  onNewSideChat?: (() => void) | undefined;
 }
 
 export interface HiddenTerminalChip {
@@ -138,6 +139,7 @@ export const ChatHeader = memo(function ChatHeader({
   onOpenProjectSettings,
   onFindInThread,
   hiddenTerminal,
+  onNewSideChat,
 }: ChatHeaderProps) {
   // Right-click "+" for a terminal, browser, files or diff beside the chat (pen HQTgu).
   const openBesideMenu = (event: React.MouseEvent) => {
@@ -258,6 +260,7 @@ export const ChatHeader = memo(function ChatHeader({
     canShareWithGuest,
     leadingItems: layoutMenuItems,
     onLeadingAction: runLayoutMenuAction,
+    onNewSideChat,
   });
   const openMenuFromTitle = (event: ReactMouseEvent<HTMLButtonElement>) => {
     if (isTrailingDoubleClick(event.detail)) return;

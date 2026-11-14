@@ -3010,6 +3010,7 @@ export default function ChatView(props: ChatViewProps) {
                 ? "Available once the thread's worktree is set up."
                 : null;
   const sendSideChatStable = useStableCallback((prompt: string) => sideChat.open(prompt));
+  const openNewSideChatStable = useStableCallback(() => void sideChat.open());
   const { onConfirmRevertStable, onForkFromRunStable, onRevertTimelineTurnStable } =
     useTimelineRewind({
       environmentId,
@@ -3564,6 +3565,7 @@ export default function ChatView(props: ChatViewProps) {
               onOpenBeside={openBesideStable}
               newTabShortcutLabel={shortcutLabelForCommand(keybindings, "tab.new")}
               hiddenTerminal={hiddenTerminalChip}
+              onNewSideChat={sideChat.available ? openNewSideChatStable : undefined}
               {...(activeDraftLogicalProjectKey
                 ? { onOpenProjectSettings: handleOpenDraftProjectSettingsStable }
                 : {})}
