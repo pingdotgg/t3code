@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { PreparedVoiceTranscription } from "@t3tools/client-runtime/voice-input";
-import { Atom, AtomRegistry } from "effect/reactivity";
 import { resetVoiceInputGlobalsForTests } from "../../../../../packages/client-runtime/src/voice-input/controller";
 import {
   acquireAudioSession,
@@ -22,22 +21,21 @@ vi.mock("expo-audio", () => ({
 import {
   createVoiceInputTarget,
   VoiceInputSession,
-  type VoiceInputTarget,
+  type VoiceInputSessionDependencies,
+  type VoiceRecordingSample,
 } from "./voiceInputSession";
 
-function createTarget(
-  ownerKey: string,
-  readText: () => string | null,
-  commit: VoiceInputTarget["commitDraft"],
-  selection: { start: number; end: number },
+function createSession(
+  overrides?: Partial<
+    Pick<
+      VoiceInputSessionDependencies,
+      "configureRecording" | "releaseRecording" | "sampleRecording"
+    >
+  >,
 ) {
-  return createVoiceInputTarget(ownerKey, readText, commit, selection, () => () => {});
-}
-
-function createSession(recordingAudio?: {
-  configureRecording: () => Promise<void>;
-  releaseRecording: () => Promise<void>;
-}) {
+  const releaseKeepAwake = vi.fn();
+  const keepAwake = vi.fn(() => releaseKeepAwake);
+  const publishAudioLevels = vi.fn();
   const recorder = {
     uri: "file:///voice.m4a",
     prepareToRecordAsync: vi.fn(async () => {}),
@@ -54,11 +52,13 @@ function createSession(recordingAudio?: {
     requestPermission: async () => ({ granted: true, canAskAgain: true }),
     configureRecording: async () => {},
     releaseRecording: vi.fn(async () => {}),
-    ...recordingAudio,
     deleteRecording: vi.fn(),
-    onStateChange: vi.fn(),
+    sampleRecording: () => null,
+    publishAudioLevels,
+    keepAwake,
+    ...overrides,
   });
-  return { session, recorder, prepare };
+  return { session, recorder, prepare, keepAwake, releaseKeepAwake, publishAudioLevels };
 }
 
 describe("global voice input", () => {
@@ -105,7 +105,7 @@ describe("global voice input", () => {
       if (outcome === "activation failure") {
         audio.setActive.mockRejectedValueOnce(new Error("Audio activation failed"));
       }
-      await session.start(createTarget("first", () => "", vi.fn(), { start: 0, end: 0 }));
+      await session.start(createVoiceInputTarget("first", () => "", vi.fn(), { start: 0, end: 0 }));
       expect(pause).toHaveBeenCalledOnce();
       expect(isAudioSessionOwner(playback)).toBe(false);
       if (outcome === "complete") {
@@ -143,9 +143,9 @@ describe("global voice input", () => {
     async ({ selection, expected, cursor }) => {
       const { session } = createSession();
       const commit = vi.fn();
-      await session.start(createTarget("first", () => "hello world", commit, selection));
+      await session.start(createVoiceInputTarget("first", () => "hello world", commit, selection));
       await session.start(
-        createTarget("second", () => "other prompt", vi.fn(), { start: 12, end: 12 }),
+        createVoiceInputTarget("second", () => "other prompt", vi.fn(), { start: 12, end: 12 }),
       );
       await session.controller.stop();
       expect(commit).toHaveBeenCalledWith(expected, {
@@ -164,7 +164,7 @@ describe("global voice input", () => {
     let visibleDraft = "first";
     const targetKey = visibleDraft;
     await session.start(
-      createTarget(
+      createVoiceInputTarget(
         targetKey,
         () => drafts.get(targetKey) ?? null,
         (text) => drafts.set(targetKey, text),
@@ -196,7 +196,7 @@ describe("global voice input", () => {
       const firstCommit = vi.fn();
       const secondCommit = vi.fn();
       const starting = session.start(
-        createTarget("first", () => "first", firstCommit, { start: 5, end: 5 }),
+        createVoiceInputTarget("first", () => "first", firstCommit, { start: 5, end: 5 }),
       );
       await preparationEntered.promise;
       let stopping: Promise<void> | null = null;
@@ -215,7 +215,7 @@ describe("global voice input", () => {
         await transcriptionEntered.promise;
       }
       await session.start(
-        createTarget("second", () => "second", secondCommit, { start: 6, end: 6 }),
+        createVoiceInputTarget("second", () => "second", secondCommit, { start: 6, end: 6 }),
       );
       expect(session.ownerKey).toBe("first");
       expect(session.controller.currentState.phase).toBe(phase);
@@ -236,7 +236,9 @@ describe("global voice input", () => {
       const { session } = createSession();
       let text: string | null = "first";
       const commit = vi.fn();
-      await session.start(createTarget("first", () => text, commit, { start: 5, end: 5 }));
+      await session.start(
+        createVoiceInputTarget("first", () => text, commit, { start: 5, end: 5 }),
+      );
       text = change === "removed" ? null : "edited prompt";
       await session.controller.stop();
       expect(commit).not.toHaveBeenCalled();
@@ -244,10 +246,26 @@ describe("global voice input", () => {
     },
   );
 
+  it("retries a failed start against the draft as edited since", async () => {
+    const { session, prepare } = createSession();
+    prepare.mockRejectedValueOnce(new Error("model unavailable"));
+    let text = "first";
+    const commit = vi.fn();
+    await session.start(createVoiceInputTarget("first", () => text, commit, { start: 5, end: 5 }));
+    expect(session.controller.currentState.phase).toBe("error");
+    text = "first draft";
+    await session.retry();
+    await session.controller.stop();
+    expect(prepare).toHaveBeenCalledTimes(2);
+    expect(commit).toHaveBeenCalledWith("first spoken text draft", { start: 17, end: 17 });
+  });
+
   it("finishes the original draft at the recording limit while it is off screen", async () => {
     const { session, recorder } = createSession();
     const commit = vi.fn();
-    await session.start(createTarget("first", () => "first", commit, { start: 5, end: 5 }));
+    await session.start(
+      createVoiceInputTarget("first", () => "first", commit, { start: 5, end: 5 }),
+    );
     await session.controller.handleRecorderStatus({
       isFinished: true,
       hasError: false,
@@ -258,41 +276,14 @@ describe("global voice input", () => {
     expect(session.controller.currentState.phase).toBe("idle");
   });
 
-  it("rejects a transcript when its off-screen draft changes and returns to the original text", async () => {
-    const registry = AtomRegistry.make();
-    const draft = Atom.make("hello world");
-    const unsubscribe = vi.fn();
-    const { session } = createSession();
-    const commit = vi.fn();
-    const target = createVoiceInputTarget(
-      "first",
-      () => registry.get(draft),
-      commit,
-      { start: 6, end: 6 },
-      (onChange) => {
-        const stop = registry.subscribe(draft, onChange);
-        return () => {
-          stop();
-          unsubscribe();
-        };
-      },
-    );
-    await session.start(target);
-    registry.set(draft, "changed");
-    registry.set(draft, "hello world");
-    await session.controller.stop();
-    expect(commit).not.toHaveBeenCalled();
-    expect(session.controller.currentState.error).toContain("draft changed");
-    expect(unsubscribe).toHaveBeenCalledTimes(1);
-    registry.dispose();
-  });
-
   it("stops recording when its queued edit is discarded", async () => {
     const { session, recorder } = createSession();
     const commit = vi.fn();
     let draft: string | null = "queued prompt";
     const ownerKey = "thread~queued-edit~run";
-    await session.start(createTarget(ownerKey, () => draft, commit, { start: 13, end: 13 }));
+    await session.start(
+      createVoiceInputTarget(ownerKey, () => draft, commit, { start: 13, end: 13 }),
+    );
     session.cancel(ownerKey);
     draft = null;
     await session.controller.stop();
@@ -308,7 +299,9 @@ describe("global voice input", () => {
   it("keeps another prompt's recording when a queued edit is discarded", async () => {
     const { session, recorder } = createSession();
     const commit = vi.fn();
-    await session.start(createTarget("other prompt", () => "hello", commit, { start: 5, end: 5 }));
+    await session.start(
+      createVoiceInputTarget("other prompt", () => "hello", commit, { start: 5, end: 5 }),
+    );
     session.cancel("thread~queued-edit~run");
     expect(recorder.stop).not.toHaveBeenCalled();
     expect(session.controller.currentState.phase).toBe("recording");
@@ -327,12 +320,12 @@ describe("global voice input", () => {
     const oldCommit = vi.fn();
     const nextCommit = vi.fn();
     const firstStart = session.start(
-      createTarget("first", () => "first", oldCommit, { start: 5, end: 5 }),
+      createVoiceInputTarget("first", () => "first", oldCommit, { start: 5, end: 5 }),
     );
     await preparationEntered.promise;
     session.cancel("first");
     const nextStart = session.start(
-      createTarget("second", () => "second", nextCommit, { start: 6, end: 6 }),
+      createVoiceInputTarget("second", () => "second", nextCommit, { start: 6, end: 6 }),
     );
     expect(prepare).toHaveBeenCalledTimes(1);
     expect(recorder.record).not.toHaveBeenCalled();
@@ -343,5 +336,64 @@ describe("global voice input", () => {
     expect(recorder.record).toHaveBeenCalledTimes(1);
     expect(oldCommit).not.toHaveBeenCalled();
     expect(nextCommit).toHaveBeenCalledWith("second spoken text", { start: 18, end: 18 });
+  });
+
+  it("holds the screen awake and meters only while recording", async () => {
+    vi.useFakeTimers();
+    try {
+      let sample: VoiceRecordingSample = { durationMillis: 0, metering: -100 };
+      const { session, keepAwake, releaseKeepAwake, publishAudioLevels } = createSession({
+        sampleRecording: () => sample,
+      });
+      const snapshots: number[] = [];
+      session.subscribe(() => snapshots.push(session.getSnapshot().elapsedSeconds));
+
+      await session.start(
+        createVoiceInputTarget("first", () => "first", vi.fn(), { start: 5, end: 5 }),
+      );
+      expect(session.getSnapshot().state.phase).toBe("recording");
+      expect(keepAwake).toHaveBeenCalledTimes(1);
+      // Silence on a silent history publishes nothing.
+      expect(publishAudioLevels).not.toHaveBeenCalled();
+
+      sample = { durationMillis: 2_400, metering: 0 };
+      vi.advanceTimersByTime(80);
+      expect(session.getSnapshot().elapsedSeconds).toBe(2);
+      expect(publishAudioLevels).toHaveBeenLastCalledWith(expect.arrayContaining([1]));
+
+      await session.controller.stop();
+      expect(releaseKeepAwake).toHaveBeenCalledTimes(1);
+      const publishedLevels = publishAudioLevels.mock.calls.length;
+      const publishedSnapshots = snapshots.length;
+      vi.advanceTimersByTime(800);
+      expect(publishAudioLevels).toHaveBeenCalledTimes(publishedLevels);
+      expect(snapshots).toHaveLength(publishedSnapshots);
+      // The finished recording's time stays readable until the next one starts.
+      expect(session.getSnapshot().elapsedSeconds).toBe(2);
+
+      sample = { durationMillis: 0, metering: -100 };
+      await session.start(
+        createVoiceInputTarget("first", () => "first", vi.fn(), { start: 5, end: 5 }),
+      );
+      expect(session.getSnapshot().elapsedSeconds).toBe(0);
+      expect(publishAudioLevels).toHaveBeenLastCalledWith(expect.not.arrayContaining([1]));
+      expect(keepAwake).toHaveBeenCalledTimes(2);
+      session.dispose();
+      expect(releaseKeepAwake).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("publishes which owners are focused", () => {
+    const { session } = createSession();
+    const listener = vi.fn();
+    session.subscribe(listener);
+    session.setOwnerFocused("first", true);
+    session.setOwnerFocused("first", true);
+    expect(session.getSnapshot().focusedOwners).toEqual(new Set(["first"]));
+    expect(listener).toHaveBeenCalledTimes(1);
+    session.setOwnerFocused("first", false);
+    expect(session.getSnapshot().focusedOwners.size).toBe(0);
   });
 });

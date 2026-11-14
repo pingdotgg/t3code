@@ -5,12 +5,11 @@ on:
     branches:
       - main
   # Redeploys main after a variable or secret change. Alchemy redeploys the
-  # Worker when a value it reads changes, so force is rarely needed, and it
-  # replaces the Postgres runtime role (alchemy-run/alchemy#1832).
+  # Worker when a value it reads changes, so force is rarely needed.
   workflow_dispatch:
     inputs:
       force:
-        description: Redeploy every resource, including ones with no detected changes. Replaces the Postgres runtime role.
+        description: Redeploy every resource, including ones with no detected changes.
         type: boolean
         default: false
 
@@ -52,7 +51,7 @@ jobs:
       ALCHEMY_TELEMETRY_DISABLED: "1"
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           sparse-checkout: |
             /*
@@ -60,7 +59,7 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
         with:
           node-version-file: package.json
           cache: true
@@ -81,9 +80,10 @@ jobs:
           CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
           APNS_PRIVATE_KEY: ${{ secrets.APNS_PRIVATE_KEY }}
           FCM_SERVICE_ACCOUNT: ${{ secrets.FCM_SERVICE_ACCOUNT }}
+          T3CHAT_LINK_SECRET: ${{ secrets.T3CHAT_LINK_SECRET }}
 
       - name: Publish relay deploy commit status
-        uses: actions/github-script@v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
         with:
           script: |
             await github.rest.repos.createCommitStatus({

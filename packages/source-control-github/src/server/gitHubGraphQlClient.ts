@@ -1,8 +1,10 @@
+import { normalizeHost } from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import { dual } from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
 import * as Headers from "effect/http/Headers";
@@ -10,9 +12,13 @@ import { GraphQLClientError, GraphQLMiddleware, GraphQLProtocol } from "effect/g
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
 
+import * as GitHubCredentials from "./GitHubCredentials.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 
 const DEFAULT_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
+/** Added to the answer, never sent: names the credential an errored answer was given to. */
+const CREDENTIAL_SOURCE_HEADER = "x-t3code-credential-source";
+const isCredentialSource = Schema.is(GitHubCredentials.GitHubCredentialSource);
 
 /** One client serves all hosts; each call must supply its target. */
 export class GitHubGraphQlTarget extends Context.Service<
@@ -37,10 +43,31 @@ function queryHash(query: string): string {
   return (hash >>> 0).toString(16).padStart(8, "0");
 }
 
+/**
+ * Whether every error is a NOT_FOUND on a lookup: a root field (with its list items),
+ * `repository.pullRequest` or `repository.issueOrPullRequest`. A NOT_FOUND deeper down is one
+ * field GitHub could not resolve.
+ */
 export const isNotFoundOnly = (error: unknown): boolean =>
   GraphQLClientError.isGraphQLClientError(error) &&
   error.reason._tag === "ResponseError" &&
-  error.reason.errors.every((graphQlError) => graphQlError["type"] === "NOT_FOUND");
+  error.reason.errors.every(
+    ({ type, path }) =>
+      type === "NOT_FOUND" &&
+      (path === undefined ||
+        path.slice(1).every((segment) => typeof segment === "number") ||
+        (path.length === 2 &&
+          path[0] === "repository" &&
+          (path[1] === "pullRequest" || path[1] === "issueOrPullRequest"))),
+  );
+
+/** GitHub's message for each error in an answer, with the field it names. */
+export const describeErrors = (error: GraphQLClientError.GraphQLClientError) =>
+  error.reason._tag === "ResponseError"
+    ? error.reason.errors.map(({ message, path }) =>
+        path === undefined || path.length === 0 ? message : `${message} (at ${path.join(".")})`,
+      )
+    : [];
 
 /** Share REST's credentials/slots/quota/pause; leave non-rate-limit errors to each lookup. */
 export class GitHubGraphQlAuth extends GraphQLMiddleware.Service<
@@ -54,7 +81,7 @@ export class GitHubGraphQlAuth extends GraphQLMiddleware.Service<
       return GitHubGraphQlAuth.of({
         execute: Effect.fn("GitHubGraphQlAuth.execute")(function* ({ request, next }) {
           const target = yield* GitHubGraphQlTarget;
-          const host = GitHubRequestPolicy.normalizeHost(target.host);
+          const host = normalizeHost(target.host);
           yield* Effect.annotateCurrentSpan({
             "github.kind": "graphql",
             "github.graphql.query_hash": queryHash(request.query),
@@ -66,7 +93,7 @@ export class GitHubGraphQlAuth extends GraphQLMiddleware.Service<
               resource: "graphql",
               allowReserve: target.allowReserve ?? (yield* SourceControlRateLimit.Interactive),
             },
-            (headers) =>
+            (headers, source) =>
               next({ ...request, headers: Headers.setAll(request.headers, headers) }).pipe(
                 Effect.map((answer) => {
                   const status = answer.status;
@@ -76,9 +103,25 @@ export class GitHubGraphQlAuth extends GraphQLMiddleware.Service<
                     headers: responseHeaders,
                     ...(answer.errors === undefined ? {} : { graphqlErrors: answer.errors }),
                   });
+                  const withheld = (answer.errors ?? []).some(
+                    (error) => error["type"] === "NOT_FOUND" || error["type"] === "FORBIDDEN",
+                  );
                   return rateLimited
                     ? { _tag: "RateLimited" as const, status, headers: responseHeaders }
-                    : { _tag: "Ok" as const, value: answer, status, headers: responseHeaders };
+                    : {
+                        _tag: "Ok" as const,
+                        // The source is local; never trust one GitHub's answer carries.
+                        value: {
+                          ...answer,
+                          headers:
+                            source === undefined
+                              ? Headers.remove(responseHeaders, CREDENTIAL_SOURCE_HEADER)
+                              : Headers.set(responseHeaders, CREDENTIAL_SOURCE_HEADER, source),
+                        },
+                        withheld,
+                        status,
+                        headers: responseHeaders,
+                      };
                 }),
                 Effect.catchIf(GraphQLClientError.isGraphQLClientError, (error) =>
                   refused(error, { host, operation: target.operation }),
@@ -103,7 +146,7 @@ const refused = Effect.fn("gitHubGraphQlClient.refused")(function* (
 ) {
   const reason = error.reason;
   if (reason._tag !== "TransportError" && reason._tag !== "ResponseError") {
-    return yield* Effect.fail(error);
+    return yield* error;
   }
   const status = reason.status;
   if (reason._tag === "TransportError" && status === undefined) {
@@ -210,15 +253,25 @@ const fromClientError = (
   const reason = error.reason;
   if (reason._tag !== "ResponseError") return error;
   const context = {
-    host: GitHubRequestPolicy.normalizeHost(target.host),
+    host: normalizeHost(target.host),
     operation: target.operation,
+    githubErrors: describeErrors(error),
   };
+  const credential = Option.filter(
+    Headers.get(reason.headers ?? Headers.empty, CREDENTIAL_SOURCE_HEADER),
+    isCredentialSource,
+  );
   return isNotFoundOnly(error)
-    ? new GitHubRequestPolicy.GitHubApiNotFoundError(context)
+    ? new GitHubRequestPolicy.GitHubApiNotFoundError({
+        ...context,
+        ...(Option.isSome(credential) ? { credential: credential.value } : {}),
+      })
     : new GitHubRequestPolicy.GitHubApiResponseError({
         ...context,
         status: reason.status ?? 200,
-        githubErrors: reason.errors.map((graphQlError) => graphQlError.message),
+        githubErrorTypes: reason.errors.map((graphQlError) =>
+          typeof graphQlError["type"] === "string" ? graphQlError["type"] : null,
+        ),
       });
 };
 

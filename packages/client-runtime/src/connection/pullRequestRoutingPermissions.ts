@@ -135,12 +135,13 @@ export const makePullRequestRoutingPermissions = Effect.fn("makePullRequestRouti
         }),
       );
     return PullRequestRoutingPermissions.of({
-      get: (entry) =>
-        SubscriptionRef.get(state).pipe(
+      get: Effect.fn("PullRequestRoutingPermissions.get")(function (entry) {
+        return SubscriptionRef.get(state).pipe(
           Effect.map((permissions) => pullRequestRoutingPermissionFor(entry, permissions)),
-        ),
+        );
+      }),
       changes: SubscriptionRef.changes(state),
-      set: (entry, permission) => {
+      set: Effect.fn("PullRequestRoutingPermissions.set")(function (entry, permission) {
         const connectionKey = pullRequestRoutingConnectionKey(entry);
         if (connectionKey === null)
           return Effect.fail(
@@ -155,13 +156,14 @@ export const makePullRequestRoutingPermissions = Effect.fn("makePullRequestRouti
             ? []
             : [{ environmentId: entry.target.environmentId, connectionKey, permission }]),
         ]);
-      },
-      forget: (environmentId) =>
-        update((current) =>
+      }),
+      forget: Effect.fn("PullRequestRoutingPermissions.forget")(function (environmentId) {
+        return update((current) =>
           current.some((permission) => permission.environmentId === environmentId)
             ? current.filter((permission) => permission.environmentId !== environmentId)
             : current,
-        ),
+        );
+      }),
     });
   },
 );

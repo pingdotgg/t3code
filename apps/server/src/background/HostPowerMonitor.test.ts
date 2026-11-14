@@ -1,6 +1,7 @@
 import type { DesktopHostTelemetrySnapshot } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -114,6 +115,7 @@ describe("HostPowerMonitor", () => {
           },
         };
         const desktopChanges = yield* PubSub.sliding<DesktopHostTelemetrySnapshot>(1);
+        const changeApplied = yield* Deferred.make<void>();
         const layerReceiver = DesktopTelemetryReceiver.layerTest({
           latest: Effect.succeedSome(initial),
           changes: Stream.empty,
@@ -122,7 +124,10 @@ describe("HostPowerMonitor", () => {
             yield* PubSub.publish(desktopChanges, updated);
             return {
               latest: Option.some(initial),
-              changes: Stream.fromSubscription(subscription),
+              changes: Stream.fromSubscription(subscription).pipe(
+                Stream.take(1),
+                Stream.ensuring(Deferred.succeed(changeApplied, undefined)),
+              ),
             };
           }),
         });
@@ -130,13 +135,7 @@ describe("HostPowerMonitor", () => {
 
         yield* Effect.gen(function* () {
           const monitor = yield* HostPowerMonitor.HostPowerMonitor;
-          for (
-            let attempt = 0;
-            attempt < 100 && (yield* monitor.snapshot).onBattery !== "true";
-            attempt += 1
-          ) {
-            yield* Effect.yieldNow;
-          }
+          yield* Deferred.await(changeApplied);
           expect((yield* monitor.snapshot).onBattery).toBe("true");
         }).pipe(Effect.provide(layer));
       }),

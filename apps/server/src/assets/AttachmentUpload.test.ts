@@ -1,19 +1,24 @@
+import * as AssetSigner from "./AssetSigner.ts";
+import * as DocumentText from "../provider/DocumentText.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { ChatAttachmentId } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import { base64UrlEncode, signPayload } from "../auth/utils.ts";
+import { base64UrlEncode } from "../auth/utils.ts";
 import * as ServerConfig from "../config.ts";
 import {
   claimPendingAttachments,
@@ -27,9 +32,14 @@ import {
   validateAttachmentUploadToken,
 } from "./AttachmentUpload.ts";
 
-const layerTest = ServerSecretStore.layer.pipe(
+const layerTest = AssetSigner.layer.pipe(
+  Layer.provideMerge(ServerSecretStore.layer),
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-attachment-upload-" })),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(
+    DocumentText.layer.pipe(
+      Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    ),
+  ),
 );
 
 const uploadInput = {
@@ -52,6 +62,83 @@ const encodeLegacyAttachmentUploadClaims = Schema.encodeEffect(
 );
 
 describe("AttachmentUpload", () => {
+  it.effect.each([false, true])(
+    "persists and replays immutable uploads (hard links unsupported: %s)",
+    (unsupported) =>
+      Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const store = (claims: Parameters<typeof storeAttachmentUpload>[0], bytes: Uint8Array) =>
+          storeAttachmentUpload(claims, bytes).pipe(
+            Effect.provideService(
+              FileSystem.FileSystem,
+              unsupported
+                ? {
+                    ...fileSystem,
+                    link: () =>
+                      Effect.fail(
+                        PlatformError.systemError({
+                          _tag: "Unknown",
+                          module: "FileSystem",
+                          method: "link",
+                        }),
+                      ),
+                  }
+                : fileSystem,
+            ),
+          );
+        const bytes = new TextEncoder().encode(
+          JSON.stringify({
+            cells: [{ cell_type: "markdown", source: ["# Cargo\n", "Violet crates: 19"] }],
+          }),
+        );
+        const issued = yield* issueAttachmentUploadUrl({
+          type: "file",
+          name: "cargo.ipynb",
+          mimeType: "application/x-ipynb+json",
+          sizeBytes: bytes.length,
+        });
+        const claims = yield* validateAttachmentUploadToken(
+          issued.relativeUrl.slice(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/`.length),
+        );
+        if (!claims) throw new Error("Expected upload claims");
+        expect(yield* store(claims, bytes)).toEqual({ ok: true });
+        expect(yield* store(claims, bytes)).toEqual({ ok: true });
+        const path = NodePath.join(config.attachmentsDir, `${issued.attachmentId}.ipynb`);
+        expect(NodeFS.readFileSync(`${path}.txt`, "utf8")).toContain("Violet crates: 19");
+        const replacement = new TextEncoder().encode(
+          new TextDecoder().decode(bytes).replace("Violet crates: 19", "Violet crates: 28"),
+        );
+        expect(yield* store(claims, replacement)).toMatchObject({
+          ok: false,
+          status: 409,
+        });
+        expect(NodeFS.readFileSync(path)).toEqual(Buffer.from(bytes));
+        expect(NodeFS.readFileSync(`${path}.txt`, "utf8")).toContain("Violet crates: 19");
+        const claimed = yield* claimPendingAttachments({
+          threadId: "document-thread",
+          attachments: [
+            {
+              type: "file",
+              id: ChatAttachmentId.make(issued.attachmentId),
+              name: claims.name,
+              mimeType: claims.mimeType,
+              sizeBytes: bytes.length,
+            },
+          ],
+        });
+        expect(claimed.claimedPaths).toHaveLength(2);
+        expect(NodeFS.readFileSync(claimed.claimedPaths[1]!, "utf8")).toContain(
+          "Violet crates: 19",
+        );
+        yield* deletePendingAttachment(issued.attachmentId);
+        expect(NodeFS.existsSync(path)).toBe(false);
+        expect(NodeFS.existsSync(`${path}.txt`)).toBe(false);
+        expect(NodeFS.existsSync(claimed.claimedPaths[1]!)).toBe(true);
+        yield* releaseClaimedAttachments(claimed.claimedPaths);
+        expect(NodeFS.existsSync(claimed.claimedPaths[1]!)).toBe(false);
+      }).pipe(Effect.provide(layerTest)),
+  );
   it.effect("rejects tampered and malformed upload tokens", () =>
     Effect.gen(function* () {
       const issued = yield* issueAttachmentUploadUrl(uploadInput);
@@ -67,8 +154,7 @@ describe("AttachmentUpload", () => {
   it.effect("accepts unexpired image upload tokens issued before file support", () =>
     Effect.gen(function* () {
       const issued = yield* issueAttachmentUploadUrl(uploadInput);
-      const secretStore = yield* ServerSecretStore.ServerSecretStore;
-      const secret = yield* secretStore.getOrCreateRandom("asset-access-signing-key", 32);
+      const signer = yield* AssetSigner.AssetSigner;
       const encodedPayload = base64UrlEncode(
         yield* encodeLegacyAttachmentUploadClaims({
           version: 1,
@@ -80,7 +166,7 @@ describe("AttachmentUpload", () => {
           expiresAt: issued.expiresAt,
         }),
       );
-      const legacyToken = `${encodedPayload}.${signPayload(encodedPayload, secret)}`;
+      const legacyToken = `${encodedPayload}.${yield* signer.sign(encodedPayload)}`;
 
       expect(yield* validateAttachmentUploadToken(legacyToken)).toMatchObject({
         type: "image",
