@@ -432,9 +432,9 @@ describe("t3 pair", () => {
     ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
-  // A shared $HOME makes another machine's record visible here. A live local
-  // server still pairs, since a hostname can change while it runs.
-  it.effect("names the other machine only when its record has no live local server", () =>
+  // A shared $HOME makes another machine's record visible here. The server that
+  // owns the home still pairs, since a hostname can change while it runs.
+  it.effect("names the other machine unless the server that owns the home answers", () =>
     withDescriptorServer((origin) =>
       Effect.gen(function* () {
         const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-foreign-test-"));
@@ -446,13 +446,13 @@ describe("t3 pair", () => {
         const hostname = `${NodeOS.hostname()}-peer`;
 
         yield* persistServerRuntimeState({ path: statePath, state: { ...state, hostname } });
+        const environmentIdPath = NodePath.join(baseDir, "userdata", "environment-id");
+        NodeFS.writeFileSync(environmentIdPath, `${testDescriptor.environmentId}\n`);
         const output = yield* captureStdout(runCli(["pair", "--base-dir", baseDir]));
         assert.include(output, `Pairing URL: ${origin}/pair#token=`);
 
-        yield* persistServerRuntimeState({
-          path: statePath,
-          state: { ...state, hostname, pid: 4_194_305 },
-        });
+        // The recorded PID and port answer here, but for a server of another home.
+        NodeFS.writeFileSync(environmentIdPath, "another-home-environment\n");
         const error = yield* provideCliTestLayers(
           runCli(["pair", "--base-dir", baseDir]).pipe(Effect.flip),
         );
