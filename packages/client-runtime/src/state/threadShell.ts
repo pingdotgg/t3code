@@ -680,45 +680,82 @@ export function createEnvironmentThreadShellAtoms(input: {
     return next;
   }).pipe(Atom.withLabel("environment-quiet-thread-shell-list"));
 
-  let previousDelegatedUnderParent: ReadonlySet<string> = new Set();
-  const delegatedUnderParentAtom = Atom.make((get) => {
+  const sameKeys = (a: ReadonlySet<string>, b: ReadonlySet<string>) =>
+    a.size === b.size && [...a].every((key) => b.has(key));
+  let previousDelegated = {
+    underListedParent: new Set<string>() as ReadonlySet<string>,
+    underParent: new Set<string>() as ReadonlySet<string>,
+  };
+  const delegatedTasksAtom = Atom.make((get) => {
     const environmentIds = new Set(enabledEnvironmentIds(get(input.catalogValueAtom)));
-    const next = new Set<string>();
+    const delegators = new Set<string>();
     for (const environmentId of environmentIds) {
+      for (const thread of get(environmentThreadsAtom(environmentId))) {
+        if (thread.delegatedFrom !== undefined) delegators.add(threadKey(thread.delegatedFrom));
+      }
+    }
+    const underListedParent = new Set<string>();
+    const underParent = new Set<string>();
+    for (const environmentId of environmentIds) {
+      let busyRoots: Set<ThreadId> | undefined;
+      const isBusyLineage = (thread: OrchestrationV2ThreadShell) => {
+        if (busyRoots === undefined) {
+          busyRoots = new Set();
+          for (const member of get(environmentThreadsAtom(environmentId))) {
+            if (member.activeRunId !== null || isLiveSubagentShell(member)) {
+              busyRoots.add(member.lineage.rootThreadId);
+            }
+          }
+        }
+        return busyRoots.has(thread.lineage.rootThreadId);
+      };
       for (const thread of get(environmentThreadsAtom(environmentId))) {
         const parent = thread.delegatedFrom;
         if (parent === undefined || !environmentIds.has(parent.environmentId)) continue;
+        const key = threadKey({ environmentId, threadId: thread.id });
         const parentThread = get(environmentThreadIndexAtom(parent.environmentId)).get(
           parent.threadId,
         );
+        if (parentThread?.archivedAt === null) {
+          underListedParent.add(key);
+          underParent.add(key);
+          continue;
+        }
         // A missing parent in a cached shell does not prove its completed task is an orphan.
         const awaitingParent =
           parentThread === undefined &&
           get(input.shellStatusAtom(parent.environmentId)) !== "live" &&
           !get(input.removedAtAtom(parent.environmentId)).has(parent.threadId) &&
           thread.status === "completed" &&
-          thread.activeRunId === null &&
-          !isLiveSubagentShell(thread) &&
           (thread.pendingGuestMessageCount ?? 0) === 0 &&
           thread.lastError == null &&
           !thread.hasActionableProposedPlan &&
           thread.pinnedAt == null &&
           thread.settledOverride !== "active" &&
-          !get(pendingSubagentRequestsAtom(environmentId)).has(thread.id);
-        if (parentThread?.archivedAt === null || awaitingParent) {
-          next.add(threadKey({ environmentId, threadId: thread.id }));
-        }
+          !get(pendingSubagentRequestsAtom(environmentId)).has(thread.id) &&
+          !delegators.has(key) &&
+          !isBusyLineage(thread);
+        if (awaitingParent) underParent.add(key);
       }
     }
-    if (
-      next.size === previousDelegatedUnderParent.size &&
-      [...next].every((key) => previousDelegatedUnderParent.has(key))
-    ) {
-      return previousDelegatedUnderParent;
-    }
-    previousDelegatedUnderParent = next;
-    return next;
-  }).pipe(Atom.withLabel("environment-delegated-under-parent"));
+    previousDelegated = {
+      underListedParent: sameKeys(underListedParent, previousDelegated.underListedParent)
+        ? previousDelegated.underListedParent
+        : underListedParent,
+      underParent: sameKeys(underParent, previousDelegated.underParent)
+        ? previousDelegated.underParent
+        : underParent,
+    };
+    return previousDelegated;
+  }).pipe(Atom.withLabel("environment-delegated-tasks"));
+  /** Tasks whose parent is listed; that parent speaks for them, so notifications skip them. */
+  const delegatedUnderListedParentAtom = Atom.make(
+    (get) => get(delegatedTasksAtom).underListedParent,
+  ).pipe(Atom.withLabel("environment-delegated-under-listed-parent"));
+  /** Tasks lists show under their parent, including quiet ones whose parent is unavailable. */
+  const delegatedUnderParentAtom = Atom.make((get) => get(delegatedTasksAtom).underParent).pipe(
+    Atom.withLabel("environment-delegated-under-parent"),
+  );
 
   let previousNavigationShells: ReadonlyArray<EnvironmentThreadShell> = [];
   const navigationThreadShellsAtom = Atom.make((get) => {
@@ -756,6 +793,7 @@ export function createEnvironmentThreadShellAtoms(input: {
     quietThreadShellsAtom,
     navigationThreadShellsAtom,
     delegatedUnderParentAtom,
+    delegatedUnderListedParentAtom,
     pendingSubagentRequestsAtom,
     threadShellsForProjectRefsAtom: (refs: ReadonlyArray<ScopedProjectRef>) =>
       threadShellsForProjectRefsAtomFamily(projectRefCollectionKey(refs)),

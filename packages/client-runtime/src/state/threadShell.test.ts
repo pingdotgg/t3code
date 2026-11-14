@@ -484,6 +484,8 @@ describe("v2 thread shell lists", () => {
       );
       expect(listed()).toEqual([]);
     }
+    // No listed parent speaks for the task, so its completion still notifies.
+    expect(registry.get(threads.delegatedUnderListedParentAtom).size).toBe(0);
     expect(
       registry.get(
         threads.threadShellAtom({ environmentId: remoteEnvironmentId, threadId: task.id }),
@@ -533,6 +535,26 @@ describe("v2 thread shell lists", () => {
       threads: [task, helper],
     });
     expect(listed()).toEqual([task.id]);
+    for (const descendant of [
+      {
+        ...helper,
+        status: "completed" as const,
+        activityRunStatus: null,
+        pendingRuntimeRequest: null,
+        pendingBackgroundTasks: [{ taskId: "awaited-command", kind: "monitor" as const }],
+      },
+      {
+        ...task,
+        id: ThreadId.make("nested-task"),
+        delegatedFrom: { environmentId: remoteEnvironmentId, threadId: task.id, title: task.title },
+      },
+    ]) {
+      registry.set(snapshotAtom(remoteEnvironmentId), {
+        ...v2ShellSnapshot,
+        threads: [task, descendant],
+      });
+      expect(listed()).toEqual([task.id]);
+    }
     registry.set(snapshotAtom(remoteEnvironmentId), { ...v2ShellSnapshot, threads: [task] });
     expect(listed()).toEqual([]);
     registry.set(snapshotAtom(remoteEnvironmentId), {
