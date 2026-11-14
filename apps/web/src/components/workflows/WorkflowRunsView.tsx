@@ -12,7 +12,6 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import {
   RelativeLabel,
-  WORKFLOW_TONE_CLASS,
   WorkflowChip,
   WorkflowRunFeed,
   WorkflowStateWord,
@@ -189,18 +188,6 @@ export function WorkflowRunsView({
               {TABS.map(({ value, label }) => (
                 <Toggle key={value} value={value}>
                   {label}
-                  {value === "all" || lists[value].length === 0 ? null : (
-                    <span
-                      className={cn(
-                        "tabular-nums",
-                        value === "needs-you"
-                          ? cn("font-semibold", WORKFLOW_TONE_CLASS.input)
-                          : "text-muted-foreground",
-                      )}
-                    >
-                      {lists[value].length}
-                    </span>
-                  )}
                 </Toggle>
               ))}
             </ToggleGroup>

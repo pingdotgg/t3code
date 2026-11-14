@@ -9,6 +9,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { FileCode2Icon, PlusIcon } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { createPortal } from "react-dom";
 
 import { useTheme } from "../../hooks/useTheme";
 import { resolveDiffThemeName } from "../../lib/diffRendering";
@@ -83,6 +84,7 @@ function Surface({
   onDisk,
   draft,
   onDelete,
+  actions,
 }: {
   readonly environmentId: EnvironmentId;
   readonly name: string;
@@ -95,6 +97,8 @@ function Surface({
   readonly draft?: string;
   /** Take the file away. Absent where that cannot be done. */
   readonly onDelete?: (() => void) | undefined;
+  /** Where in the page's header the file's status and its actions go. */
+  readonly actions: HTMLElement | null;
 }) {
   const { resolvedTheme } = useTheme();
   const canSave = useAtomValue(
@@ -188,31 +192,26 @@ function Surface({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" onKeyDown={onKeyDown}>
-      <div className="flex shrink-0 items-center gap-3 border-b px-4 py-2">
-        <div className="min-w-0 flex-1">
-          <p className="truncate font-mono text-xs text-foreground">{path}</p>
-          <p className="truncate text-xs text-muted-foreground">
-            {canSave
-              ? "Saving checks the file first. One that passes runs at once, without a restart."
-              : "This connection can read the file but not change it."}
-          </p>
-        </div>
-        {status === null ? null : (
-          <span className="shrink-0 text-xs text-muted-foreground" role="status">
-            {status}
-          </span>
-        )}
-        {canSave && onDelete !== undefined ? (
-          <Button size="sm" variant="ghost" disabled={saving} onClick={onDelete}>
-            Delete
-          </Button>
-        ) : null}
-        {canSave ? (
-          <Button size="sm" disabled={!dirty || saving} onClick={() => void saveNow()}>
-            Save
-          </Button>
-        ) : null}
-      </div>
+      {actions === null
+        ? null
+        : createPortal(
+            <>
+              <span className="shrink-0 text-xs text-muted-foreground" role="status">
+                {canSave ? status : "Read-only"}
+              </span>
+              {canSave && onDelete !== undefined ? (
+                <Button size="sm" variant="ghost" disabled={saving} onClick={onDelete}>
+                  Delete
+                </Button>
+              ) : null}
+              {canSave ? (
+                <Button size="sm" disabled={!dirty || saving} onClick={() => void saveNow()}>
+                  Save
+                </Button>
+              ) : null}
+            </>,
+            actions,
+          )}
       {stale ? (
         <div role="status" className="flex shrink-0 items-center gap-3 border-b px-4 py-2 text-xs">
           <span className="min-w-0 flex-1 text-muted-foreground">
@@ -280,10 +279,12 @@ export default function WorkflowDefinitionEditor({
   environmentId,
   file,
   onOpen,
+  actions,
 }: {
   readonly environmentId: EnvironmentId;
   readonly file: string | null;
   readonly onOpen: (file: string | null) => void;
+  readonly actions: HTMLElement | null;
 }) {
   const query = useEnvironmentQuery(
     serverEnvironment.workflowDefinition({ environmentId, input: {} }),
@@ -357,6 +358,7 @@ export default function WorkflowDefinitionEditor({
             onDisk={shown?.problems ?? []}
             {...(shown === null ? { draft: NEW_FILE } : {})}
             onDelete={single || shown === null ? undefined : () => void removeFile(file)}
+            actions={actions}
           />
         </DiffWorkerPoolProvider>
       </div>
