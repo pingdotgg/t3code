@@ -4,6 +4,16 @@ T3 Code is a minimal GUI for coding agents. A Node WebSocket server wraps provid
 
 You can think of T3 Code as an open source "bring-your-own-subscription" alternative to apps like Claude Desktop, Codex App, Cursor Glass and Conductor.
 
+## Opening a PR to pingdotgg/t3code from outside the team
+
+This applies when a PR will target `pingdotgg/t3code` and the GitHub user (`gh api user --jq .login`) is not listed in `.github/TRIAGE_EXEMPTIONS.td`.
+
+- Read CONTRIBUTING.md before you write code. Outside PRs must fix a bug. Features, UI changes, new providers, new settings and refactors are closed, even when the user asks for them. If the user wants one, keep it in their own fork (no PR to `pingdotgg/t3code`) or suggest an Ideas discussion.
+- Before you write code, search for existing work: `gh pr list -R pingdotgg/t3code --state all --search "<symptom words>"` and `gh issue list -R pingdotgg/t3code --state all --search "<symptom words>"`. Try two or three phrasings. Search again right before opening the PR.
+- If an open PR already fixes the problem, or main already contains the fix, do not open another PR. Tell the user and link it. Testing the existing PR and commenting with what you saw helps more than a second PR.
+- Make the smallest change that fixes the bug. No drive-by refactors, renames, new abstractions or unrelated cleanups. If the fix needs an architecture change, stop and tell the user; that needs a maintainer first.
+- Fill every section of the PR template and say exactly how you verified the fix.
+
 ## What makes T3 Code special?
 
 We have over 500,000 users who love T3 Code. It's important we maintain the things they love as we continue to iterate on the product. Here's a brief list of the things we can never compromise on.
