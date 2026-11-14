@@ -98,6 +98,7 @@ import { WorktreeToolkit } from "../../mcp/toolkits/worktree/tools.ts";
 import { ThreadToolkit } from "../../mcp/toolkits/thread/tools.ts";
 import { OrchestratorToolkit } from "../../mcp/toolkits/orchestrator/tools.ts";
 import { ClaudeExecutableFileCheck } from "../../provider/Drivers/ClaudeExecutable.ts";
+import { claudeSignedOutMessage } from "../../provider/Drivers/ClaudeHome.ts";
 import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
   type ClaudeModelCatalog,
@@ -15554,6 +15555,470 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           McpProviderSessions.layer,
           NodeServices.layer,
           NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  const replayWake = (
+    id: string,
+    text: string,
+    result: Omit<Parameters<typeof makeResultFrame>[0], "uuid">,
+  ) => [
+    claudeSdkFrame({ ...wakeTurnInit, uuid: `${id}-init` }),
+    makeAssistantTextFrame({ uuid: `${id}-assistant`, text }),
+    makeResultFrame({ ...result, uuid: `${id}-result` }),
+  ];
+  const earlierWake = replayWake("earlier-a", "Earlier A.", {
+    result: "Earlier A.",
+    origin: { kind: "task-notification" },
+    usage: {
+      input_tokens: 10,
+      output_tokens: 20,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+    },
+  });
+  const earlierErrorWake = replayWake("earlier-error", "Earlier A.", {
+    result: "Earlier A.",
+    origin: { kind: "task-notification" },
+    isError: true,
+    terminalReason: "api_error",
+    errors: ["Tool execution failed: EACCES"],
+    usage: {
+      input_tokens: 10,
+      output_tokens: 20,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+    },
+  });
+  const emptyWakeSuccess = makeResultFrame({
+    uuid: "empty-wake-result",
+    result: "",
+    numTurns: 0,
+    origin: { kind: "task-notification" },
+    terminalReason: null,
+    usage: {
+      input_tokens: 7,
+      output_tokens: 7,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+    },
+  });
+  // Claude's modelUsage is a running total for the whole CLI process.
+  const ledgerTotal = (inputTokens: number, outputTokens: number) => ({
+    "claude-sonnet-4-6": {
+      inputTokens,
+      outputTokens,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0,
+      webSearchRequests: 0,
+      costUSD: 0,
+      contextWindow: 0,
+      maxOutputTokens: 32_000,
+    },
+  });
+  it.effect.each([
+    {
+      label: "stopping the successor preserves earlier billed usage",
+      before: earlierWake,
+      after: [wakeTurnInit],
+      beforeCheck: [wakeAssistant],
+      live: [],
+      texts: ["Earlier A.", WAKE_ASSISTANT_TEXT],
+      inputTokens: 10,
+      outputTokens: 20,
+      notices: [],
+      openOnAttach: true,
+      stop: true,
+    },
+    {
+      label: "older results preserve the active successor and its approval",
+      before: [wakeTurnInit, emptyWakeSuccess, ...earlierWake, ...earlierErrorWake],
+      after: [wakeTurnInit],
+      beforeCheck: [wakeAssistant],
+      live: [wakeResult],
+      texts: ["Earlier A.", "Earlier A.", WAKE_ASSISTANT_TEXT],
+      inputTokens: 21,
+      outputTokens: 41,
+      notices: ["Tool execution failed: EACCES"],
+      openOnAttach: true,
+    },
+    {
+      label: "fully buffered successor without assistant text uses its own result",
+      before: replayWake("silent-older", "", {
+        result: "Earlier A.",
+        origin: { kind: "task-notification" },
+        usage: {
+          input_tokens: 10,
+          output_tokens: 20,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+        },
+      }),
+      after: [
+        wakeTurnInit,
+        makeResultFrame({
+          uuid: "successor-result",
+          result: "Successor text.",
+          origin: { kind: "task-notification" },
+        }),
+      ],
+      beforeCheck: [],
+      live: [],
+      texts: ["Successor text."],
+      inputTokens: 11,
+      outputTokens: 21,
+      notices: [],
+      openOnAttach: false,
+    },
+    {
+      label: "the earlier wake's ledger growth stays in the successor's other usage",
+      // Totals 100/200, 115/225, 120/230, 126/238: the earlier wake grew 15/25 and the
+      // successor 6/8, against root usage 10/20 and 1/1, so other work is 10/12.
+      ledger: {
+        turnOne: ledgerTotal(100, 200),
+        prompt: ledgerTotal(120, 230),
+        otherUsage: { inputTokens: 10, outputTokens: 12 },
+      },
+      before: replayWake("ledger-older", "", {
+        result: "Earlier A.",
+        origin: { kind: "task-notification" },
+        usage: {
+          input_tokens: 10,
+          output_tokens: 20,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+        },
+        modelUsage: ledgerTotal(115, 225),
+      }),
+      after: [
+        wakeTurnInit,
+        makeResultFrame({
+          uuid: "ledger-successor-result",
+          result: "Successor text.",
+          origin: { kind: "task-notification" },
+          modelUsage: ledgerTotal(126, 238),
+        }),
+      ],
+      beforeCheck: [],
+      live: [],
+      texts: ["Successor text."],
+      inputTokens: 11,
+      outputTokens: 21,
+      notices: [],
+      openOnAttach: false,
+    },
+    {
+      label: "an earlier wake without a ledger total leaves other usage unknown",
+      // The earlier result has no modelUsage, so its growth is unknown; the prompt
+      // re-anchors the ledger and the successor grows 30/40. As zero, other work would be 19/19.
+      ledger: { turnOne: ledgerTotal(100, 200), prompt: ledgerTotal(120, 230) },
+      before: replayWake("unknown-ledger-older", "", {
+        result: "Earlier A.",
+        origin: { kind: "task-notification" },
+        usage: {
+          input_tokens: 10,
+          output_tokens: 20,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+        },
+      }),
+      after: [
+        wakeTurnInit,
+        makeResultFrame({
+          uuid: "unknown-ledger-successor-result",
+          result: "Successor text.",
+          origin: { kind: "task-notification" },
+          modelUsage: ledgerTotal(150, 270),
+        }),
+      ],
+      beforeCheck: [],
+      live: [],
+      texts: ["Successor text."],
+      inputTokens: 11,
+      outputTokens: 21,
+      notices: [],
+      openOnAttach: false,
+    },
+    {
+      label: "each earlier wake's failure notice follows that wake's own sign-in state",
+      before: [
+        claudeSdkFrame({ ...wakeTurnInit, uuid: "signed-out-init" }),
+        makeAssistantErrorFrame({ uuid: "signed-out-assistant", error: "authentication_failed" }),
+        makeResultFrame({
+          uuid: "signed-out-result",
+          result: "",
+          origin: { kind: "task-notification" },
+          isError: true,
+          terminalReason: "api_error",
+        }),
+        claudeSdkFrame({ ...wakeTurnInit, uuid: "api-error-init" }),
+        makeResultFrame({
+          uuid: "api-error-result",
+          result: "",
+          origin: { kind: "task-notification" },
+          isError: true,
+          terminalReason: "api_error",
+        }),
+        claudeSdkFrame({ ...wakeTurnInit, uuid: "denied-init" }),
+        makeAssistantErrorFrame({ uuid: "denied-assistant", error: "authentication_failed" }),
+        makeResultFrame({
+          uuid: "denied-result",
+          result:
+            "Failed to authenticate. API Error: 403 Your organization does not have access to this model.",
+          origin: { kind: "task-notification" },
+          isError: true,
+          apiErrorStatus: 403,
+          terminalReason: "api_error",
+        }),
+      ],
+      after: [
+        wakeTurnInit,
+        makeAssistantTextFrame({ uuid: "signed-in-successor-assistant", text: "Successor text." }),
+        makeResultFrame({
+          uuid: "signed-in-successor-result",
+          result: "Successor text.",
+          origin: { kind: "task-notification" },
+        }),
+      ],
+      beforeCheck: [],
+      live: [],
+      texts: [
+        "Claude could not complete this request.",
+        "Claude could not complete this request.",
+        "Successor text.",
+      ],
+      inputTokens: 4,
+      outputTokens: 4,
+      notices: [
+        claudeSignedOutMessage({ configDir: undefined, cwd: "/workspace" }),
+        "Claude gave up after repeated API errors.",
+        "Failed to authenticate. API Error: 403 Your organization does not have access to this model.",
+      ],
+      openOnAttach: false,
+    },
+    {
+      label: "two older results and latest empty successes keep base text fallback",
+      before: [
+        ...replayWake("fallback-x", "", {
+          result: "Earlier X.",
+          origin: { kind: "task-notification" },
+          usage: {
+            input_tokens: 10,
+            output_tokens: 20,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+          },
+        }),
+        ...replayWake("fallback-a", "", {
+          result: "Earlier A.",
+          origin: { kind: "task-notification" },
+          usage: {
+            input_tokens: 100,
+            output_tokens: 200,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+          },
+        }),
+      ],
+      after: [
+        wakeTurnInit,
+        makeAssistantTextFrame({ uuid: "empty-assistant", text: "" }),
+        emptyWakeSuccess,
+        claudeSdkFrame({ ...emptyWakeSuccess, uuid: "second-empty-result" }),
+      ],
+      beforeCheck: [],
+      live: [],
+      texts: ["Earlier A."],
+      inputTokens: 110,
+      outputTokens: 220,
+      notices: [],
+      openOnAttach: false,
+    },
+  ])("replays wakes: $label", (scenario) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({
+          close: (sdkMessages) => Queue.shutdown(sdkMessages),
+        });
+        const now = yield* DateTime.now;
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          cwd: "/workspace",
+        });
+        const wakeAttempt = RunAttemptId.make("attempt-claude-replay-3");
+        const wakeRun = RunId.make(`run-${wakeAttempt}`);
+        const ledger = "ledger" in scenario ? scenario.ledger : undefined;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            runtimePolicy,
+            attemptId: RunAttemptId.make("attempt-claude-replay-1"),
+            text: "Run the build in the background.",
+            attachments: [],
+          }),
+        );
+        yield* harness.offerAndWait(
+          ledger === undefined
+            ? turnOneResult
+            : claudeSdkFrame({ ...turnOneResult, modelUsage: ledger.turnOne }),
+        );
+        yield* harness.awaitTerminal(1);
+        for (const frame of scenario.before) yield* harness.offerAndWait(frame);
+        yield* Queue.take(harness.continuationReceipts);
+        // The queued user prompt runs before the buffered continuation attaches.
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            runtimePolicy,
+            attemptId: RunAttemptId.make("attempt-claude-replay-2"),
+            text: "Check the build.",
+            attachments: [],
+            providerTurnOrdinal: 2,
+          }),
+        );
+        yield* harness.offerAndWait(claudeSdkFrame({ ...wakeTurnInit, uuid: "prompt-init" }));
+        yield* harness.offerAndWait(
+          makeAssistantTextFrame({ uuid: "prompt-assistant", text: "Checked the build." }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            ...makeResultFrame({
+              uuid: "prompt-result",
+              result: "Checked the build.",
+              ...(ledger === undefined ? {} : { modelUsage: ledger.prompt }),
+            }),
+            user_message_uuid: harness.promptUuid(1),
+          }),
+        );
+        yield* harness.awaitTerminal(2);
+        for (const frame of scenario.after) yield* harness.offerAndWait(frame);
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            runtimePolicy,
+            attemptId: wakeAttempt,
+            text: "Background task completed.",
+            attachments: [],
+            providerTurnOrdinal: 3,
+            messageCreatedBy: "agent",
+            messageCreationSource: "provider",
+          }),
+        );
+        for (const frame of scenario.beforeCheck) {
+          yield* harness.offerAndWait(frame);
+          yield* harness.until(
+            () =>
+              harness.terminalEvents().length >= 3 ||
+              harness.events.some(
+                (event) =>
+                  event.type === "message.updated" &&
+                  event.message.runId === wakeRun &&
+                  event.message.text === WAKE_ASSISTANT_TEXT,
+              ),
+          );
+        }
+        if (!scenario.openOnAttach) yield* harness.awaitTerminal(3);
+        const terminalCountOnAttach = harness.terminalEvents().length;
+        if (scenario.openOnAttach) {
+          assert.equal(terminalCountOnAttach, 2);
+          const permission = yield* Effect.promise(() =>
+            harness.getOpenedOptions()!.canUseTool!(
+              "Bash",
+              { command: "git status" },
+              {
+                signal: new AbortController().signal,
+                toolUseID: "toolu_replayed_wake_approval",
+                requestId: "request-replayed-wake",
+              },
+            ),
+          ).pipe(Effect.forkScoped);
+          const request = yield* Queue.take(harness.runtimeRequestReceipts);
+          const wakeTurn = harness.events.findLast(
+            (event) =>
+              event.type === "provider_turn.updated" &&
+              event.providerTurn.runAttemptId === wakeAttempt,
+          );
+          assert.equal(
+            request.runtimeRequest.providerTurnId,
+            wakeTurn?.type === "provider_turn.updated" ? wakeTurn.providerTurn.id : undefined,
+          );
+          yield* harness.runtime.respondToRuntimeRequest({
+            requestId: request.runtimeRequest.id,
+            decision: "accept",
+          });
+          assert.equal((yield* Fiber.join(permission))?.behavior, "allow");
+        }
+        for (const frame of scenario.live) yield* harness.offerAndWait(frame);
+        if ("stop" in scenario && scenario.stop) {
+          yield* harness.runtime.interruptTurn({
+            providerThread: harness.providerThread,
+            providerTurnId: (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+              driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+              nativeTurnId: `turn:${wakeAttempt}`,
+            }),
+          });
+        }
+        yield* harness.awaitTerminal(3);
+        const completed = harness.events.findLast(
+          (event) => event.type === "provider_turn.updated",
+        );
+        assert.deepEqual(
+          {
+            terminalCountOnAttach,
+            texts: harness.events.flatMap((event) =>
+              event.type === "message.updated" && event.message.runId === wakeRun
+                ? [event.message.text]
+                : [],
+            ),
+            status: harness.terminalEvents()[2]?.status,
+            usage:
+              completed?.type === "provider_turn.updated"
+                ? completed.providerTurn.turnTokenUsage
+                : undefined,
+            notices: harness.events.flatMap((event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.runId === wakeRun &&
+              event.turnItem.type === "system_notice"
+                ? [event.turnItem.message]
+                : [],
+            ),
+          },
+          {
+            terminalCountOnAttach: scenario.openOnAttach ? 2 : 3,
+            texts: scenario.texts,
+            status: "stop" in scenario ? "interrupted" : "completed",
+            usage: {
+              usageScope: "main_agent",
+              usageStatus: "stop" in scenario ? "partial" : "complete",
+              hasSubagents: false,
+              inputTokens: scenario.inputTokens,
+              outputTokens: scenario.outputTokens,
+              cachedInputTokens: 0,
+              cacheCreationTokens: 0,
+              models: ["claude-sonnet-4-6"],
+              ...(ledger?.otherUsage === undefined ? {} : { otherUsage: ledger.otherUsage }),
+            },
+            notices: scenario.notices,
+          },
+        );
+        assert.lengthOf(harness.offeredMessages, 2);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
         ),
       ),
     ),
