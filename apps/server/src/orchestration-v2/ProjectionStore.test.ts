@@ -2588,6 +2588,296 @@ const subagentRecordsSelectById = Effect.gen(function* () {
   assert.deepEqual(yield* read([]), []);
 });
 
+const recordsAt = (second: number) => DateTime.makeUnsafe(Date.UTC(2026, 0, 1, 0, 0, second));
+const recordsThreadCreated = (threadId: ThreadId) =>
+  ({
+    id: EventId.make(`event:${threadId}:created`),
+    type: "thread.created",
+    threadId,
+    providerInstanceId,
+    occurredAt: recordsAt(0),
+    payload: {
+      createdBy: "user",
+      creationSource: "web",
+      id: threadId,
+      projectId: ProjectId.make("project:records"),
+      title: threadId,
+      providerInstanceId,
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      activeProviderThreadId: null,
+      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+      forkedFrom: null,
+      createdAt: recordsAt(0),
+      updatedAt: recordsAt(0),
+      archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      lastVisitedAt: null,
+      deletedAt: null,
+    },
+  }) as never;
+
+const queryPlan = Effect.fn("queryPlan")(function* (statement: string | undefined) {
+  assert.isDefined(statement);
+  const sql = yield* SqlClient.SqlClient;
+  const rows = yield* sql.unsafe<{ readonly detail: string }>(`EXPLAIN QUERY PLAN ${statement}`);
+  return rows.map((row) => row.detail);
+});
+
+// finalizeAppOwnedSubagent's parent read: one child's tasks and the transfers it sent, by index,
+// without depending on an index existing or on a sibling's rows decoding.
+const parentRecordsNarrowToOneChild = Effect.gen(function* () {
+  const store = yield* ProjectionStore.ProjectionStoreV2;
+  const sql = yield* SqlClient.SqlClient;
+  const parent = ThreadId.make("thread:records-parent");
+  const child = ThreadId.make("thread:records-child");
+  const sibling = ThreadId.make("thread:records-sibling");
+  const elsewhere = ThreadId.make("thread:records-elsewhere");
+  const task = (name: string, childThreadId: ThreadId | null, startedAt: number) => ({
+    id: EventId.make(`event:task:${name}`),
+    type: "subagent.updated",
+    threadId: parent,
+    nodeId: NodeId.make(`node:${name}`),
+    driver,
+    providerInstanceId,
+    occurredAt: recordsAt(startedAt),
+    payload: {
+      id: NodeId.make(`node:${name}`),
+      threadId: parent,
+      runId: null,
+      parentNodeId: NodeId.make("node:records-parent:root"),
+      origin: childThreadId === null ? "provider_native" : "app_owned",
+      createdBy: "agent",
+      driver,
+      providerInstanceId,
+      providerThreadId: null,
+      childThreadId,
+      nativeTaskRef: null,
+      prompt: name,
+      title: name,
+      model: null,
+      status: "completed",
+      result: null,
+      startedAt: recordsAt(startedAt),
+      completedAt: recordsAt(9),
+      updatedAt: recordsAt(9),
+    },
+  });
+  const transfer = (
+    name: string,
+    type: "subagent_spawn" | "subagent_result" | "fork",
+    sourceThreadId: ThreadId,
+    targetThreadId: ThreadId,
+  ) => ({
+    id: EventId.make(`event:transfer:${name}`),
+    type: "context-transfer.created",
+    threadId: targetThreadId,
+    providerInstanceId,
+    occurredAt: recordsAt(2),
+    payload: {
+      id: `transfer:${name}`,
+      type,
+      sourceThreadId,
+      targetThreadId,
+      sourcePoint: { threadId: sourceThreadId },
+      basePoint: null,
+      sourceProviderInstanceId: providerInstanceId,
+      targetProviderInstanceId: providerInstanceId,
+      targetRunId: null,
+      status: "consumed",
+      resolution: null,
+      createdBy: "agent",
+      error: null,
+      createdAt: recordsAt(2),
+      updatedAt: recordsAt(2),
+      consumedAt: recordsAt(2),
+    },
+  });
+  yield* store.apply(recordsThreadCreated(parent));
+  for (const event of [
+    task("child-late", child, 5),
+    task("sibling", sibling, 3),
+    task("child-early", child, 1),
+    task("native", null, 2),
+    transfer("child-spawn", "subagent_spawn", parent, child),
+    transfer("child-result", "subagent_result", child, parent),
+    transfer("child-follow-up", "fork", child, parent),
+    transfer("sibling-result", "subagent_result", sibling, parent),
+    transfer("child-elsewhere", "fork", child, elsewhere),
+    transfer("fork-in", "fork", elsewhere, parent),
+  ]) {
+    yield* store.apply(event as never);
+  }
+  const fields = ["subagents", "contextTransfers"] as const;
+  const narrowedTo = (threadId: ThreadId) =>
+    store.getThreadRecords(parent, fields, {
+      subagentChildThreadIds: [threadId],
+      contextTransferSourceThreadIds: [threadId],
+    });
+
+  const full = yield* store.getThreadRecords(parent, fields);
+  const { statements, tracer } = traceSqlStatements();
+  const narrowed = yield* narrowedTo(child).pipe(Effect.withTracer(tracer));
+  assert.deepEqual(
+    narrowed.subagents,
+    full.subagents.filter((candidate) => candidate.childThreadId === child),
+  );
+  assert.deepEqual(
+    narrowed.subagents.map((candidate) => String(candidate.id)),
+    ["node:child-early", "node:child-late"],
+  );
+  assert.deepEqual(
+    narrowed.contextTransfers,
+    full.contextTransfers.filter((candidate) => candidate.sourceThreadId === child),
+  );
+  assert.deepEqual(
+    narrowed.contextTransfers.map((candidate) => String(candidate.id)),
+    ["transfer:child-result", "transfer:child-follow-up"],
+  );
+  // Each read seeks the child's rows through its own index, never the parent's whole history.
+  for (const [table, index] of [
+    ["subagents", "orchestration_v2_projection_subagents_child_thread_idx (child_thread_id=?)"],
+    [
+      "context_transfers",
+      "orchestration_v2_projection_context_transfers_source_thread_status_idx (source_thread_id=?)",
+    ],
+  ]) {
+    const plan = yield* queryPlan(
+      statements.find((statement) =>
+        statement.includes(`FROM orchestration_v2_projection_${table}`),
+      ),
+    );
+    assert.include(plan[0] ?? "", `USING INDEX ${index}`);
+    assert.notOk(plan.some((detail) => detail.startsWith("SCAN orchestration_v2_projection")));
+  }
+  // The finishing task's card is sought by its node, not picked from every card of the parent.
+  for (const [ordinal, name] of ["child-early", "sibling", "child-late"].entries()) {
+    const nodeId = NodeId.make(`node:${name}`);
+    yield* store.apply({
+      id: EventId.make(`event:card:${name}`),
+      type: "turn-item.updated",
+      threadId: parent,
+      nodeId,
+      driver,
+      occurredAt: recordsAt(ordinal),
+      payload: {
+        id: TurnItemId.make(`item:card:${name}`),
+        type: "subagent",
+        threadId: parent,
+        runId: null,
+        nodeId,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal,
+        status: "completed",
+        title: name,
+        startedAt: recordsAt(ordinal),
+        completedAt: recordsAt(9),
+        updatedAt: recordsAt(9),
+        subagentId: nodeId,
+        origin: "app_owned",
+        driver,
+        providerInstanceId,
+        childThreadId: name === "sibling" ? sibling : child,
+        prompt: name,
+        result: null,
+      },
+    } as never);
+  }
+  const cardReads = traceSqlStatements();
+  const cards = yield* store
+    .getThreadRecords(parent, ["turnItems"], {
+      turnItemTypes: ["subagent"],
+      turnItemNodeIds: [NodeId.make("node:child-late")],
+    })
+    .pipe(Effect.withTracer(cardReads.tracer));
+  assert.deepEqual(
+    cards.turnItems.map((item) => String(item.id)),
+    ["item:card:child-late"],
+  );
+  const cardPlan = yield* queryPlan(
+    cardReads.statements.find((statement) =>
+      statement.includes("FROM orchestration_v2_projection_turn_items"),
+    ),
+  );
+  assert.isTrue(
+    cardPlan.some((detail) =>
+      detail.includes(
+        "USING INDEX orchestration_v2_projection_turn_items_node_ordinal_idx (node_id=?)",
+      ),
+    ),
+    cardPlan.join(" | "),
+  );
+  // Several children read through the id list.
+  const both = yield* store.getThreadRecords(parent, fields, {
+    subagentChildThreadIds: [child, sibling],
+    contextTransferSourceThreadIds: [child, sibling],
+  });
+  assert.deepEqual(
+    both.subagents,
+    full.subagents.filter(
+      (candidate) => candidate.childThreadId === child || candidate.childThreadId === sibling,
+    ),
+  );
+  assert.deepEqual(
+    both.contextTransfers,
+    full.contextTransfers.filter(
+      (candidate) => candidate.sourceThreadId === child || candidate.sourceThreadId === sibling,
+    ),
+  );
+  const none = yield* store.getThreadRecords(parent, fields, {
+    subagentChildThreadIds: [],
+    contextTransferSourceThreadIds: [],
+  });
+  assert.deepEqual([none.subagents, none.contextTransfers], [[], []]);
+
+  // A sibling's undecodable rows fail only reads that return them; the child's still fail it.
+  const corrupt = (table: string, column: string, id: string) =>
+    sql.unsafe(
+      `UPDATE orchestration_v2_projection_${table} SET payload_json = '{' WHERE ${column} = ?`,
+      [id],
+    );
+  yield* corrupt("subagents", "subagent_id", "node:sibling");
+  yield* corrupt("context_transfers", "context_transfer_id", "transfer:sibling-result");
+  assert.deepEqual(yield* narrowedTo(child), narrowed);
+  assert.strictEqual(
+    (yield* Effect.flip(store.getThreadRecords(parent, fields)))._tag,
+    "ProjectionStoreReadError",
+  );
+  for (const [table, column, id] of [
+    ["subagents", "subagent_id", "node:child-late"],
+    ["context_transfers", "context_transfer_id", "transfer:child-follow-up"],
+  ] as const) {
+    const [row] = yield* sql.unsafe<{ readonly payload_json: string }>(
+      `SELECT payload_json FROM orchestration_v2_projection_${table} WHERE ${column} = ?`,
+      [id],
+    );
+    yield* corrupt(table, column, id);
+    assert.strictEqual((yield* Effect.flip(narrowedTo(child)))._tag, "ProjectionStoreReadError");
+    yield* sql.unsafe(
+      `UPDATE orchestration_v2_projection_${table} SET payload_json = ? WHERE ${column} = ?`,
+      [row!.payload_json, id],
+    );
+  }
+  assert.deepEqual(yield* narrowedTo(child), narrowed);
+
+  // Without the child and source indexes the read is slower, never wrong.
+  yield* sql`DROP INDEX orchestration_v2_projection_subagents_child_thread_idx`;
+  yield* sql`DROP INDEX orchestration_v2_projection_context_transfers_source_thread_status_idx`;
+  assert.deepEqual(yield* narrowedTo(child), narrowed);
+});
+
+// It drops an index and corrupts rows, so it gets its own database.
+it.effect("record reads narrow a parent to one child's tasks and transfers", () =>
+  parentRecordsNarrowToOneChild.pipe(Effect.provide(layerTest)),
+);
+
 const assertProjectScopedShells = Effect.fn("assertProjectScopedShells")(function* (
   suffix: string,
 ) {
