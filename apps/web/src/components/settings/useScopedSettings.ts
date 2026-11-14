@@ -174,7 +174,7 @@ export function useClearProjectOverridesOn() {
     environments: Parameters<typeof planProjectOverridesClear>[0],
     entries: readonly ProjectOverrideEntry[],
     keys: Parameters<typeof planProjectOverridesClear>[2],
-  ) => run(planProjectOverridesClear(environments, entries, keys));
+  ) => run(environments, (current) => planProjectOverridesClear(current, entries, keys));
 }
 
 export function useScopedSettingsWriteAllowed() {

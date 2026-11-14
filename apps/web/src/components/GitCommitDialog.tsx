@@ -52,6 +52,7 @@ export function GitCommitDialog({
   canOpenFiles,
   onSubmit,
   onOpenFile,
+  retainedMessage = "",
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -63,6 +64,8 @@ export function GitCommitDialog({
   canOpenFiles: boolean;
   onSubmit: (submission: GitCommitDialogSubmission) => void;
   onOpenFile: (path: string) => void;
+  /** A message a failed commit left behind, offered again when the dialog reopens. */
+  retainedMessage?: string;
 }) {
   const branchFieldId = useId();
   const messageFieldId = useId();
@@ -75,7 +78,7 @@ export function GitCommitDialog({
   if (openSeen !== open) {
     setOpenSeen(open);
     if (open) {
-      setCommitMessage("");
+      setCommitMessage(retainedMessage);
       setExcludedFiles(new Set());
       setBranchTarget("current");
     }

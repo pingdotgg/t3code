@@ -1056,7 +1056,9 @@ function ResourceTelemetryDiagnosticsBody({
               label="Current CPU"
               value={measured ? `${measured.currentCpuPercent.toFixed(1)}%` : pendingValue}
               detail={
-                measured ? `${formatCpuTime(measured.cpuTimeMs / 1_000)} observed CPU time` : undefined
+                measured
+                  ? `${formatCpuTime(measured.cpuTimeMs / 1_000)} observed CPU time`
+                  : undefined
               }
             />
             <IconStat
