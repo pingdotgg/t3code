@@ -140,6 +140,21 @@ describe("GrokAdapterV2 capabilities", () => {
       code: null,
       retryable: null,
     });
+    assert.deepEqual(
+      flavor.promptFailure?.(
+        new EffectAcpErrors.AcpProcessExitedError({
+          code: 1,
+          stderr: "private provider diagnostic",
+        }),
+      ),
+      {
+        class: "transport_error",
+        message:
+          "The provider process exited with code 1. Check the server logs for the provider's output, then retry the turn.",
+        code: null,
+        retryable: null,
+      },
+    );
   });
 
   it("terminalizes only foreground tools under the actual Grok flavor", () => {

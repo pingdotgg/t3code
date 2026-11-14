@@ -87,7 +87,11 @@ export const GROK_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(GROK_DRIVER_K
 const DEFAULT_GROK_SETTINGS = Schema.decodeSync(GrokSettings)({});
 const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
 const isAcpConnectionError = Schema.is(
-  Schema.Union([EffectAcpErrors.AcpTransportError, EffectAcpErrors.AcpInputStreamEndedError]),
+  Schema.Union([
+    EffectAcpErrors.AcpTransportError,
+    EffectAcpErrors.AcpInputStreamEndedError,
+    EffectAcpErrors.AcpProcessExitedError,
+  ]),
 );
 
 const GrokProviderCapabilitiesV2 = {
@@ -318,7 +322,12 @@ export function makeGrokAcpAdapterFlavor(
               class: cause.code === xAiRateLimitedErrorCode ? "usage_limit" : "provider_error",
             }
           : isAcpConnectionError(cause)
-            ? { class: "transport_error", message: "Grok connection failed. Retry the turn." }
+            ? {
+                class: "transport_error",
+                ...(cause._tag === "AcpProcessExitedError"
+                  ? {}
+                  : { message: "Grok connection failed. Retry the turn." }),
+              }
             : { class: "provider_error" }),
       }),
     registerExtensions: registerGrokAcpExtensions,
