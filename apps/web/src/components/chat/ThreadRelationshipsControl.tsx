@@ -17,6 +17,7 @@ import { deriveProviderSubagentStatus } from "@t3tools/client-runtime/state/thre
 import {
   deriveThreadRelationshipGraph,
   immediateThreadRelationships,
+  indexImmediateThreadRelationships,
   isParentThreadRelationship,
   threadRelationshipRowStatus,
   orderWebThreadLineageRows,
@@ -603,11 +604,12 @@ export function ThreadRelationshipsPanel(props: {
     },
   ];
   // A subagent's own subagents nest one level under it.
+  const immediateRelationships = indexImmediateThreadRelationships(graph);
   const nestedSubagentRows = (row: ThreadRelationshipWalkRow) =>
     row.edge.kind === "subagent" && !isParentThreadRelationship(row.edge, props.threadId)
       ? orderWebThreadLineageRows({
           graph,
-          rows: immediateThreadRelationships(graph, row.threadId).filter(
+          rows: (immediateRelationships.get(row.threadId) ?? []).filter(
             (child) =>
               child.edge.kind === "subagent" &&
               child.edge.sourceThreadId === row.threadId &&

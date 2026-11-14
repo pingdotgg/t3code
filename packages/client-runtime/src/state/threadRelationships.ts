@@ -130,26 +130,34 @@ export function deriveThreadRelationshipGraph(input: {
   return { nodes, edges: [...edgesByKey.values()] };
 }
 
+/** The immediate relationships of every thread in the graph, in one pass over its edges. */
+export function indexImmediateThreadRelationships(
+  graph: ThreadRelationshipGraph,
+): ReadonlyMap<ThreadId, ReadonlyArray<ThreadRelationshipWalkRow>> {
+  const rowsByThread = new Map<ThreadId, ThreadRelationshipWalkRow[]>();
+  const relatedByThread = new Map<ThreadId, Set<ThreadId>>();
+  const add = (threadId: ThreadId, relatedId: ThreadId, edge: ThreadRelationshipEdge) => {
+    const related = relatedByThread.get(threadId) ?? new Set<ThreadId>();
+    if (related.has(relatedId)) return;
+    related.add(relatedId);
+    relatedByThread.set(threadId, related);
+    const row = { threadId: relatedId, fromThreadId: threadId, depth: 1, edge };
+    const rows = rowsByThread.get(threadId);
+    if (rows === undefined) rowsByThread.set(threadId, [row]);
+    else rows.push(row);
+  };
+  for (const edge of graph.edges) {
+    add(edge.sourceThreadId, edge.targetThreadId, edge);
+    add(edge.targetThreadId, edge.sourceThreadId, edge);
+  }
+  return rowsByThread;
+}
+
 export function immediateThreadRelationships(
   graph: ThreadRelationshipGraph,
   threadId: ThreadId,
 ): ReadonlyArray<ThreadRelationshipWalkRow> {
-  const visited = new Set<ThreadId>();
-  const rows: ThreadRelationshipWalkRow[] = [];
-
-  for (const edge of graph.edges) {
-    const relatedId =
-      edge.sourceThreadId === threadId
-        ? edge.targetThreadId
-        : edge.targetThreadId === threadId
-          ? edge.sourceThreadId
-          : null;
-    if (relatedId === null || visited.has(relatedId)) continue;
-    visited.add(relatedId);
-    rows.push({ threadId: relatedId, fromThreadId: threadId, depth: 1, edge });
-  }
-
-  return rows;
+  return indexImmediateThreadRelationships(graph).get(threadId) ?? [];
 }
 
 export function isParentThreadRelationship(
