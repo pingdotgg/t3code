@@ -469,6 +469,54 @@ describe("import resumability", () => {
       expect(store.rows.size).toBe(0);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
+  it.effect("refuses a bundle older than the imported snapshot", () =>
+    Effect.gen(function* () {
+      const { importer, store, writeBundle } = yield* harness;
+      yield* writeBundle({ threadId: "thread:a", snapshotSequence: 9 });
+      yield* importer.importBundle({ environmentId: ENVIRONMENT, drainId: DRAIN_ID });
+      yield* writeBundle({ threadId: "thread:a", snapshotSequence: 3 });
+
+      const older = yield* importer.importBundle({
+        environmentId: ENVIRONMENT,
+        drainId: DRAIN_ID,
+      });
+
+      expect(older.imported).toBe(0);
+      expect(older.skipped).toBe(1);
+      expect(older.warnings.join(" ")).toContain("newer snapshot");
+      expect(store.rows.get("thread:a")?.snapshotSequence).toBe(9);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("refuses a history page that belongs to another thread", () =>
+    Effect.gen(function* () {
+      const { importer, store, writeBundle, written, stateDir, fs, path } = yield* harness;
+      yield* writeBundle({ threadId: "thread:a", snapshotSequence: 3 });
+      const file = path.join(
+        stateDir,
+        "fleet-drain",
+        encodeURIComponent(ENVIRONMENT),
+        encodeURIComponent(DRAIN_ID),
+        `thread-${encodeURIComponent("thread:a")}.json`,
+      );
+      const envelope = JSON.parse(yield* fs.readFileString(file)) as { body: string };
+      const body = JSON.parse(envelope.body) as { pages: unknown };
+      body.pages = [{ items: [{ item: { threadId: "thread:victim" } }] }];
+      envelope.body = JSON.stringify(body);
+      yield* fs.writeFileString(file, JSON.stringify(envelope));
+
+      const result = yield* importer.importBundle({
+        environmentId: ENVIRONMENT,
+        drainId: DRAIN_ID,
+      });
+
+      expect(result.imported).toBe(0);
+      expect(result.skipped).toBe(1);
+      expect(result.warnings).toHaveLength(1);
+      expect(written).toEqual([]);
+      expect(store.rows.size).toBe(0);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });
 
 describe("attachment restore", () => {

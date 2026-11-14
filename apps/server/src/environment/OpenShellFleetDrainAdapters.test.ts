@@ -276,6 +276,40 @@ describe("fileDrainSink attachments", () => {
     ),
   );
 
+  it.effect("refuses a copy whose attachment bytes changed on disk", () =>
+    withSink((sink, stateDir) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* sink.write({
+          environmentId: EnvironmentId.make("environment:worker"),
+          drainId: "drain:environment:worker:1",
+          threadId: "thread:a",
+          body: '{"events":[1]}',
+          snapshotSequence: 2,
+          attachments: {
+            files: [{ name: "attach-1.png", bytes: base64Of("image-bytes") }],
+            oversizeSkipped: false,
+          },
+        });
+        const dir = path.join(
+          stateDir,
+          "fleet-drain",
+          "environment%3Aworker",
+          "drain%3Aenvironment%3Aworker%3A1",
+        );
+        const stored = (yield* fs.readDirectory(dir)).filter((name) => name.endsWith(".bin"));
+        yield* fs.writeFile(path.join(dir, stored[0]!), new TextEncoder().encode("tampered"));
+        const record = yield* sink.read({
+          environmentId: EnvironmentId.make("environment:worker"),
+          drainId: "drain:environment:worker:1",
+          threadId: "thread:a",
+        });
+        expect(record).toBeNull();
+      }),
+    ),
+  );
+
   it.effect("records an oversize skip without manifest entries", () =>
     withSink((sink) =>
       Effect.gen(function* () {
@@ -516,6 +550,7 @@ describe("linkDrainSource", () => {
   it.effect("drains archived threads like live ones", () =>
     Effect.gen(function* () {
       const shellRequests: Array<string> = [];
+      const shellHeaders: Array<Record<string, unknown>> = [];
       const http = HttpClient.make((request) =>
         Effect.succeed(
           HttpClientResponse.fromWeb(
@@ -524,6 +559,7 @@ describe("linkDrainSource", () => {
               JSON.stringify(
                 request.url.includes("/api/orchestration/shell")
                   ? (shellRequests.push(request.url),
+                    shellHeaders.push(request.headers as never),
                     {
                       threads: [{ threadId: "thread:a", status: "idle" }],
                       archivedThreads: [{ threadId: "thread:old", status: "archived" }],
@@ -574,6 +610,32 @@ describe("linkDrainSource", () => {
       expect(outcome.state).toBe("acked");
       expect(outcome.threads).toEqual({ total: 2, acked: 2, failed: 0 });
       expect(written.sort()).toEqual(["thread:a", "thread:old"]);
+      // The opt-in asks for archived rows and carries the required protocol header.
+      expect(shellRequests[0]).toContain("includeArchived=1");
+      expect(shellHeaders[0]?.["x-t3-orchestration-protocol"]).toBe("2");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("refuses an incomplete shell response instead of treating it as empty", () =>
+    Effect.gen(function* () {
+      const http = HttpClient.make((request) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response("{}", {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            }),
+          ),
+        ),
+      );
+      const source = OpenShellFleetDrainAdapters.linkDrainSource({
+        resolve: () => Effect.succeed({ url: "http://worker.test", token: "t" }),
+        http,
+      });
+      const failure = yield* refused(source.shell(EnvironmentId.make("environment:worker")));
+      expect(failure.step).toBe("shell");
+      expect(failure.message).toContain("incomplete");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

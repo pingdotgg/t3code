@@ -348,11 +348,18 @@ export const makeFleetBundleImporter = (input: {
           );
           // A bundle may name one thread and carry another's records; every
           // ownership id must agree with the envelope before anything is written.
+          const pageItems = (body.pages ?? []).flatMap((page) =>
+            (page.items ?? []).flatMap((entry) => (entry.item === undefined ? [] : [entry.item])),
+          );
           const foreignIds = [
             snapshot.projection.thread.id,
             ...snapshot.projection.turnItems.map((item) => item.threadId),
             ...snapshot.projection.messages.map((message) => message.threadId),
             ...snapshot.projection.providerThreads.map((entry) => entry.appThreadId),
+            ...pageItems.flatMap((item) => {
+              const id = (item as { readonly threadId?: unknown }).threadId;
+              return typeof id === "string" ? [id] : [];
+            }),
           ].filter((id) => id !== threadId);
           if (foreignIds.length > 0) {
             warnings.push(
@@ -365,10 +372,16 @@ export const makeFleetBundleImporter = (input: {
           if (
             existing !== null &&
             existing.snapshotSequence !== null &&
-            existing.snapshotSequence === snapshotSequence &&
             existing.importedAt !== PENDING_IMPORTED_AT
           ) {
-            return "skipped" as const;
+            if (existing.snapshotSequence === snapshotSequence) return "skipped" as const;
+            // A bundle older than what was imported is stale, not a supersede.
+            if (existing.snapshotSequence > snapshotSequence) {
+              warnings.push(
+                `Thread ${threadId} already holds a newer snapshot (${existing.snapshotSequence}); the older bundle was not imported.`,
+              );
+              return "skipped" as const;
+            }
           }
           const exists = yield* input.store.threadExists(threadId);
           if (exists && existing === null) {

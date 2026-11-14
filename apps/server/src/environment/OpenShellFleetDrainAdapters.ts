@@ -1,4 +1,9 @@
-import { isLiveSubagentShell, type EnvironmentId } from "@t3tools/contracts";
+import {
+  isLiveSubagentShell,
+  ORCHESTRATION_PROTOCOL_HEADER,
+  ORCHESTRATION_PROTOCOL_VERSION_TEXT,
+  type EnvironmentId,
+} from "@t3tools/contracts";
 import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -173,7 +178,21 @@ export const fileDrainSink = Effect.fn("DrainSink.make")(function* (input: {
           `thread-${thread}.json`,
         );
         const raw = yield* fs.readFileString(file).pipe(Effect.orElseSucceed(() => null));
-        return raw === null ? null : decodeEnvelope(raw);
+        if (raw === null) return null;
+        const record = decodeEnvelope(raw);
+        if (record === null) return null;
+        // A manifest without its bytes is not a copy: verify each hash so a
+        // corrupted attachment fails the ack instead of being imported later.
+        for (const entry of record.attachments ?? []) {
+          const bytes = yield* fs
+            .readFile(
+              path.join(path.dirname(file), `thread-${thread}-att-${entry.hash.slice(0, 16)}.bin`),
+            )
+            .pipe(Effect.orElseSucceed(() => null));
+          if (bytes === null) return null;
+          if (Hex.encode(yield* digest.digest(Digest.sha256, bytes)) !== entry.hash) return null;
+        }
+        return record;
       },
       Effect.mapError((cause) => new FleetDrainStepError({ step: "read", message: String(cause) })),
     ),
@@ -258,8 +277,13 @@ export const linkDrainSource = (input: {
   const getJson = (environmentId: EnvironmentId, path: string) =>
     input.resolve(environmentId).pipe(
       Effect.flatMap((link) =>
-        http.get(new URL(path, link.url), {
-          headers: { authorization: `Bearer ${link.token}` },
+        http.get(new URL(path, link.url).toString(), {
+          // The orchestration endpoints require the protocol header; without it
+          // the worker answers 400 and the drain would look empty.
+          headers: {
+            authorization: `Bearer ${link.token}`,
+            [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT,
+          },
         }),
       ),
       Effect.mapError(
@@ -291,39 +315,48 @@ export const linkDrainSource = (input: {
     shell: (environmentId) =>
       // Archived threads are drainable data: the worker lists them only on request.
       getJson(environmentId, "/api/orchestration/shell?includeArchived=1").pipe(
-        Effect.map((snapshot) => {
-          const shell = snapshot as {
-            readonly threads?: ReadonlyArray<DrainShellThread>;
-            readonly archivedThreads?: ReadonlyArray<DrainShellThread>;
-            readonly projects?: ReadonlyArray<{
-              readonly workspaceRoot?: string;
-              readonly path?: string;
-            }>;
-          };
-          const shellThreads = [...(shell.threads ?? []), ...(shell.archivedThreads ?? [])];
-          return {
-            threads: shellThreads.flatMap((thread) => {
-              const threadId = thread.threadId ?? thread.id;
-              if (threadId === undefined) return [];
-              // Liveness comes from the shell's own status, and an unreadable one
-              // counts as live: removing a worker that is still writing loses work.
-              const live =
-                thread.status === undefined && thread.activityRunStatus === undefined
-                  ? true
-                  : isLiveSubagentShell({
-                      status: thread.status ?? "idle",
-                      activityRunStatus: thread.activityRunStatus ?? null,
-                      pendingRuntimeRequest: thread.pendingRuntimeRequest ?? null,
-                      pendingBackgroundTasks: thread.pendingBackgroundTasks ?? null,
-                    } as never);
-              return [{ threadId, live }];
-            }),
-            projects: (shell.projects ?? []).flatMap((project) => {
-              const workspaceRoot = project.workspaceRoot ?? project.path;
-              return workspaceRoot === undefined ? [] : [{ workspaceRoot }];
-            }),
-          };
-        }),
+        Effect.flatMap((snapshot) =>
+          Effect.gen(function* () {
+            const shell = snapshot as {
+              readonly threads?: ReadonlyArray<DrainShellThread>;
+              readonly archivedThreads?: ReadonlyArray<DrainShellThread>;
+              readonly projects?: ReadonlyArray<{
+                readonly workspaceRoot?: string;
+                readonly path?: string;
+              }>;
+            };
+            // A body without both lists is an incomplete answer, not an empty
+            // worker: an empty ack here would delete unconverted threads.
+            if (!Array.isArray(shell.threads) || !Array.isArray(shell.projects))
+              return yield* new FleetDrainStepError({
+                step: "shell",
+                message: "The worker's shell response is incomplete; nothing was acknowledged.",
+              });
+            const shellThreads = [...shell.threads, ...(shell.archivedThreads ?? [])];
+            return {
+              threads: shellThreads.flatMap((thread) => {
+                const threadId = thread.threadId ?? thread.id;
+                if (threadId === undefined) return [];
+                // Liveness comes from the shell's own status, and an unreadable one
+                // counts as live: removing a worker that is still writing loses work.
+                const live =
+                  thread.status === undefined && thread.activityRunStatus === undefined
+                    ? true
+                    : isLiveSubagentShell({
+                        status: thread.status ?? "idle",
+                        activityRunStatus: thread.activityRunStatus ?? null,
+                        pendingRuntimeRequest: thread.pendingRuntimeRequest ?? null,
+                        pendingBackgroundTasks: thread.pendingBackgroundTasks ?? null,
+                      } as never);
+                return [{ threadId, live }];
+              }),
+              projects: (shell.projects ?? []).flatMap((project) => {
+                const workspaceRoot = project.workspaceRoot ?? project.path;
+                return workspaceRoot === undefined ? [] : [{ workspaceRoot }];
+              }),
+            };
+          }),
+        ),
       ),
     threadSequence: (request) =>
       getJson(
