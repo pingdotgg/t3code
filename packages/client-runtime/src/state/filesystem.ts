@@ -91,8 +91,7 @@ export function filterFilesystemBrowseEntries(
   const exactEntry =
     query.length > 0
       ? (visibleEntries.find((entry) => entry.name === query) ??
-        (normalizedMatches.length === 1 ? normalizedMatches[0] : null) ??
-        null)
+        (normalizedMatches.length === 1 ? normalizedMatches[0] : null))
       : null;
 
   return { visibleEntries, exactEntry };

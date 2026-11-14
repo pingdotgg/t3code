@@ -756,8 +756,7 @@ export function filterPinnedBrowseEntries(input: {
   const exactEntry =
     input.filterQuery.length > 0
       ? (input.browseEntries.find((entry) => namesMatch(entry.name, input.filterQuery)) ??
-        (normalizedMatches.length === 1 ? normalizedMatches[0] : null) ??
-        null)
+        (normalizedMatches.length === 1 ? normalizedMatches[0] : null))
       : null;
   return { visibleEntries, exactEntry };
 }
