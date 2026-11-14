@@ -3247,6 +3247,7 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     ...ThreadPullRequestKey.fields,
     watching: Schema.Boolean,
+    includeOwnRemarks: Schema.optional(Schema.Boolean),
     link: Schema.optional(
       Schema.Struct({
         url: TrimmedNonEmptyString,
@@ -3588,6 +3589,7 @@ const OrchestrationV2InternalCommand = Schema.Union([
     ...ThreadPullRequestKey.fields,
     startedAt: IsoDateTime,
     watch: Schema.NullOr(ThreadPullRequestWatch),
+    remarksPolicyRevision: Schema.optional(NonNegativeInt),
     /**
      * The watch's `checksPending` when this read started. A push that clears it during the read
      * makes the read's answer describe the old head, so the cleared answer stays.
@@ -3602,6 +3604,7 @@ const OrchestrationV2InternalCommand = Schema.Union([
           ...ThreadPullRequestKey.fields,
           startedAt: IsoDateTime,
           watch: Schema.NullOr(ThreadPullRequestWatch),
+          remarksPolicyRevision: Schema.optional(NonNegativeInt),
           checksPendingBefore: Schema.optional(Schema.Boolean),
           endedWatch: Schema.optional(ThreadPullRequestWatch),
           includesRemarks: Schema.optional(Schema.Boolean),

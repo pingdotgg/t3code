@@ -3851,7 +3851,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           pullRequestSnapshotEndsWatch(link?.snapshot ?? null, entry.startedAt),
       );
       if (
-        entries.some(({ entry, link }) => link?.watch?.startedAt !== entry.startedAt) ||
+        entries.some(
+          ({ entry, link }) =>
+            link?.watch?.startedAt !== entry.startedAt ||
+            // The revision changes without invalidating wakes already queued for this watch.
+            (entry.remarksPolicyRevision ?? 0) !== (link.watch.remarksPolicyRevision ?? 0),
+        ) ||
         (wake && inactive) ||
         // One wake cannot drop the news of just some of its pull requests; the sender splits it.
         (entries.length > 1 && outdated.some(Boolean))
@@ -4902,7 +4907,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               : linked;
           const existing = links.find(visible);
           if (existing === undefined) return thread;
-          const watch =
+          let watch =
             command.type === "thread.pull-request-watch.sync"
               ? existing.watch?.startedAt === command.startedAt
                 ? syncedPullRequestWatch(existing.watch, command)
@@ -4911,6 +4916,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 ? undefined
                 : (existing.watch ?? {
                     startedAt,
+                    ...(command.includeOwnRemarks && { includeOwnRemarks: true }),
                     headSha: null,
                     failedChecks: [],
                     passed: false,
@@ -4945,6 +4951,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     remarkIds: [],
                     wakes: 0,
                   });
+          if (
+            command.type === "thread.pull-request.watch" &&
+            watch !== undefined &&
+            watch === existing.watch &&
+            command.includeOwnRemarks !== undefined &&
+            command.includeOwnRemarks !== (watch.includeOwnRemarks ?? false)
+          ) {
+            watch = {
+              ...watch,
+              includeOwnRemarks: command.includeOwnRemarks,
+              remarksPolicyRevision: (watch.remarksPolicyRevision ?? 0) + 1,
+              remarksThrough: DateTime.formatIso(now),
+              remarkIds: [],
+              wakes: 0,
+            };
+          }
           if (watch === existing.watch && links === linked) return thread;
           const final =
             command.type === "thread.pull-request-watch.sync" && watch === undefined

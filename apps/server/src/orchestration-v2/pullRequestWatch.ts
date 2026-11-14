@@ -184,7 +184,7 @@ export function evaluatePullRequestWatch(
     const at = Date.parse(activeAt(remark));
     return (
       (at > through || (at === through && !watch.remarkIds.includes(remark.id))) &&
-      remark.author?.login.toLowerCase() !== own
+      (watch.includeOwnRemarks === true || remark.author?.login.toLowerCase() !== own)
     );
   });
   if (fresh.length > 0) changes.push({ kind: "remarks", remarks: fresh });
@@ -229,6 +229,12 @@ export function evaluatePullRequestWatch(
     changes,
     next: {
       startedAt: watch.startedAt,
+      ...(watch.remarksPolicyRevision === undefined
+        ? {}
+        : { remarksPolicyRevision: watch.remarksPolicyRevision }),
+      ...(watch.includeOwnRemarks === undefined
+        ? {}
+        : { includeOwnRemarks: watch.includeOwnRemarks }),
       headSha,
       failedChecks,
       passed,

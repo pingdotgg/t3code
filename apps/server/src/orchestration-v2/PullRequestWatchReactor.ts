@@ -115,7 +115,8 @@ interface HeldWake {
   readonly reason?: WatchEndReason;
 }
 
-const watchKey = ({ thread, watch }: WatchTarget) => `${thread.id} ${watch.startedAt}`;
+const watchKey = ({ thread, watch }: WatchTarget) =>
+  `${thread.id} ${watch.startedAt} ${watch.remarksPolicyRevision ?? 0}`;
 
 type WatchEndReason =
   | "merged"
@@ -194,6 +195,11 @@ function planRead(
 // Lets the orchestrator tell that a push cleared the answer while this read was in flight.
 const checksPendingBeforeOf = ({ watch }: WatchTarget) =>
   watch.checksPending === undefined ? {} : { checksPendingBefore: watch.checksPending };
+
+const remarksPolicyRevisionOf = ({ watch }: WatchTarget) =>
+  watch.remarksPolicyRevision === undefined
+    ? {}
+    : { remarksPolicyRevision: watch.remarksPolicyRevision };
 
 function watchesEqual(left: ThreadPullRequestWatch, right: ThreadPullRequestWatch): boolean {
   return (
@@ -321,6 +327,7 @@ export const make = Effect.gen(function* () {
       ...identityOf(target.link),
       startedAt: target.watch.startedAt,
       watch: next,
+      ...remarksPolicyRevisionOf(target),
       ...checksPendingBeforeOf(target),
       ...(endedWatch === undefined ? {} : { endedWatch }),
       ...(wake === undefined
@@ -463,12 +470,14 @@ export const make = Effect.gen(function* () {
       ...identityOf(first.target.link),
       startedAt: first.target.watch.startedAt,
       watch: first.next,
+      ...remarksPolicyRevisionOf(first.target),
       ...checksPendingBeforeOf(first.target),
       ...(first.endedWatch === undefined ? {} : { endedWatch: first.endedWatch }),
       others: rest.map((item) => ({
         ...identityOf(item.target.link),
         startedAt: item.target.watch.startedAt,
         watch: item.next,
+        ...remarksPolicyRevisionOf(item.target),
         ...checksPendingBeforeOf(item.target),
         ...(item.endedWatch === undefined ? {} : { endedWatch: item.endedWatch }),
         ...(item.wake.includesRemarks === true ? { includesRemarks: true } : {}),
@@ -596,8 +605,16 @@ export const make = Effect.gen(function* () {
       threadTails.delete(group.key);
     }
     const reference = referenceOf(group);
-    // Invalidate cached reads before using the newer fingerprint; clients receive no notification.
-    if (fingerprint !== null) yield* pullRequests.invalidate({ reference });
+    const policyChanged =
+      last !== undefined &&
+      group.targets.some(
+        (target) =>
+          (target.watch.remarksPolicyRevision ?? 0) > 0 && !last.watches.has(watchKey(target)),
+      );
+    // Refresh host reads for a changed policy or a fingerprint-driven read.
+    if (policyChanged || fingerprint !== null) {
+      yield* pullRequests.invalidate({ reference });
+    }
     const [detailRead, activityRead] = yield* Effect.all(
       [
         Effect.exit(pullRequests.detail({ ...reference, allowStale: false })),

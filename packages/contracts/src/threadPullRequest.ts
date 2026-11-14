@@ -81,6 +81,9 @@ export type ThreadPullRequestKey = typeof ThreadPullRequestKey.Type;
 
 export const ThreadPullRequestWatch = Schema.Struct({
   startedAt: IsoDateTime,
+  includeOwnRemarks: Schema.optional(Schema.Boolean),
+  /** Changes when remark filtering is reset without restarting the watch. */
+  remarksPolicyRevision: Schema.optional(NonNegativeInt),
   headSha: Schema.NullOr(TrimmedNonEmptyString),
   failedChecks: Schema.Array(TrimmedNonEmptyString),
   passed: Schema.Boolean,
