@@ -4,6 +4,7 @@ import {
   mergeDirectPreviewAnnotation,
   resolveBackgroundDraftWorkspaceOptions,
   shouldDockDraftHeroForSubmission,
+  clearSentComposer,
   buildExpiredTerminalContextToastCopy,
   deriveComposerSendState,
   boundAttachmentIds,
@@ -1171,9 +1172,14 @@ export function useComposerSend(input: ComposerSendInput) {
       : null;
     // Keep new-thread flows from reusing this draft while attachments and worktree setup settle.
     if (sentDraftThreadRef) markPromotedDraftThreadByRef(sentDraftThreadRef);
-    promptRef.current = "";
-    clearComposerDraftContent(composerDraftTarget);
-    composerRef.current?.resetCursorState();
+    clearSentComposer({
+      routeIsCurrent: currentRouteThreadKeyRef.current === routeThreadKey,
+      clearDraft: () => clearComposerDraftContent(composerDraftTarget),
+      clearComposerRefs: () => {
+        promptRef.current = "";
+      },
+      resetCursor: () => composerRef.current?.resetCursorState(),
+    });
 
     const title = deriveThreadTitleSeed({
       text: messageTextForSend,
