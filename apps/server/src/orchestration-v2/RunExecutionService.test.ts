@@ -3075,7 +3075,7 @@ it.effect("tells the user why /compact failed on a provider without compaction",
 );
 
 it.effect.each(["failure", "defect", "interrupt-failure", "ownership-lost"] as const)(
-  "stops the live provider and background work before settling an ingestion %s",
+  "stops the live provider and background work before settling an ingestion %s with the folder it recorded",
   (failureMode) =>
     Effect.gen(function* () {
       const started = yield* Deferred.make<void>();
@@ -3092,8 +3092,12 @@ it.effect.each(["failure", "defect", "interrupt-failure", "ownership-lost"] as c
         initialProviderTurnId: null,
         rejectTerminalWrite: failureMode === "ownership-lost",
         shouldFinalizeRun: () => Effect.succeed(true),
-        startTurn: () =>
-          Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(stopped))),
+        nativeStorageFolder: "/repo/a",
+        startTurn: (turnInput) =>
+          (turnInput.recordNativeStorageFolder?.("/repo/b") ?? Effect.void).pipe(
+            Effect.andThen(Deferred.succeed(started, undefined)),
+            Effect.andThen(Deferred.await(stopped)),
+          ),
         events: () =>
           Stream.unwrap(
             Deferred.await(started).pipe(
@@ -3172,6 +3176,12 @@ it.effect.each(["failure", "defect", "interrupt-failure", "ownership-lost"] as c
         assert.deepEqual(observed, ["run:failed", "pull-requests-refreshed"]);
         const error = written.find((item) => item.type === "error");
         assert.include(error?.failure.message ?? "", "(SQLITE_CANTOPEN)");
+        assert.deepEqual(
+          finalEvents.flatMap((event) =>
+            event.type === "provider-thread.updated" ? [event.payload.nativeStorageFolder] : [],
+          ),
+          ["/repo/b"],
+        );
         const repaired = finalEvents.find((event) => event.type === "provider-turn.updated");
         if (failureMode === "interrupt-failure") {
           assert.isUndefined(repaired);

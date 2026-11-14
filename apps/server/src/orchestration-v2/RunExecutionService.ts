@@ -1063,6 +1063,15 @@ export const layer: Layer.Layer<
         const terminalEvent = yield* Ref.make<ProviderTerminalEvent | null>(null);
         const latestTurnItemOrdinal = yield* Ref.make(input.providerTurnOrdinal * 100);
         const latestProviderThread = yield* Ref.make(input.providerThread);
+        let recordedNativeStorageFolder: string | undefined;
+        // A run that fails may not have stored the adapter's update that carried the folder.
+        const failedRunProviderThread = Ref.get(latestProviderThread).pipe(
+          Effect.map((providerThread) =>
+            recordedNativeStorageFolder === undefined
+              ? providerThread
+              : { ...providerThread, nativeStorageFolder: recordedNativeStorageFolder },
+          ),
+        );
         const latestRootProviderTurn = yield* Ref.make<OrchestrationV2ProviderTurn | null>(null);
         // Later root turns in one attempt are provider continuations, such as Codex goal turns.
         let firstRootProviderTurnId: ProviderTurnId | undefined;
@@ -1796,7 +1805,7 @@ export const layer: Layer.Layer<
                     cause,
                   });
                   if (yield* Ref.get(rootRunFinalized)) return;
-                  const providerThread = yield* Ref.get(latestProviderThread);
+                  const providerThread = yield* failedRunProviderThread;
                   // Stop background work too; the failed consumer cannot persist terminal events.
                   const abandonedProviderTurn =
                     routing.rootProviderTurnId !== null && !routing.rootTurnEnded
@@ -1927,7 +1936,6 @@ export const layer: Layer.Layer<
           key: `mcp_app_${entry.itemId.replace(/[^\w.-]/g, "_")}`,
           text: entry.text,
         }));
-        let recordedNativeStorageFolder: string | undefined;
         const turnInput = {
           appThread: input.appThread,
           threadId: input.run.threadId,
@@ -2001,13 +2009,7 @@ export const layer: Layer.Layer<
               cause,
             }).pipe(
               Effect.andThen(Fiber.interrupt(providerEventFiber)),
-              Effect.andThen(Ref.get(latestProviderThread)),
-              // Interrupting ingestion can drop the adapter's update that carried the folder.
-              Effect.map((providerThread) =>
-                recordedNativeStorageFolder === undefined
-                  ? providerThread
-                  : { ...providerThread, nativeStorageFolder: recordedNativeStorageFolder },
-              ),
+              Effect.andThen(failedRunProviderThread),
               Effect.flatMap((providerThread) =>
                 Ref.get(latestTurnItemOrdinal).pipe(
                   Effect.flatMap((latestItemOrdinal) =>
