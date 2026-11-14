@@ -1,4 +1,5 @@
-//! Runs `git` as a child process with a timeout and bounded output.
+//! Runs `git` (or a source control host's CLI, such as `gh`) as a child process with a
+//! timeout and bounded output.
 //!
 //! Every read is bounded: stdout stops at `max_stdout` bytes (then the child is killed and the
 //! output is either marked truncated or failed, as the caller chooses), stderr at
@@ -33,6 +34,8 @@ pub enum OnLimit {
 #[derive(Clone, Debug)]
 pub struct GitCommand {
     pub operation: &'static str,
+    /// `git`, or a host CLI from [`GitCommand::host_cli`].
+    pub program: OsString,
     pub cwd: PathBuf,
     pub args: Vec<OsString>,
     pub timeout: Duration,
@@ -52,6 +55,7 @@ impl GitCommand {
     {
         Self {
             operation,
+            program: "git".into(),
             cwd: cwd.to_owned(),
             args: args.into_iter().map(Into::into).collect(),
             timeout: DEFAULT_TIMEOUT,
@@ -61,6 +65,25 @@ impl GitCommand {
             stdin: None,
             env: Vec::new(),
         }
+    }
+
+    /// A source control host's CLI (`gh`, `glab`, `az`, ...), run as `VcsProcess.ts` runs a
+    /// command that is not `git`: the server's environment plus `safe.bareRepository=explicit`
+    /// through `GIT_CONFIG_*` (`explicitBareRepositoryEnv`), and none of the `git`-only
+    /// variables.
+    pub fn host_cli<I, S>(operation: &'static str, program: &str, cwd: &Path, args: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<OsString>,
+    {
+        Self {
+            program: program.into(),
+            ..Self::new(operation, cwd, args)
+        }
+    }
+
+    fn is_git(&self) -> bool {
+        self.program == "git"
     }
 
     pub fn timeout(mut self, timeout: Duration) -> Self {
@@ -91,9 +114,10 @@ impl GitCommand {
 
     /// `git <first arg>`, as the TypeScript errors name a command without its arguments.
     pub fn command_label(&self) -> String {
+        let program = self.program.to_string_lossy();
         match self.args.first() {
-            Some(sub) => format!("git {}", sub.to_string_lossy()),
-            None => "git".into(),
+            Some(sub) => format!("{program} {}", sub.to_string_lossy()),
+            None => program.into_owned(),
         }
     }
 
@@ -137,6 +161,8 @@ pub enum ProcessError {
     Spawn {
         context: ProcessContext,
         message: String,
+        /// The executable was not found (the cwd is checked by the caller).
+        not_found: bool,
     },
     #[error("{} timed out after {timeout_ms}ms in {}", .context.command, .context.operation)]
     Timeout {
@@ -183,14 +209,20 @@ async fn run(command: GitCommand) -> Result<GitOutput, ProcessError> {
         cwd: command.cwd.to_string_lossy().into_owned(),
         argument_count: command.args.len(),
     };
-    let mut child = Command::new("git");
-    child
-        .args(&command.args)
-        .current_dir(&command.cwd)
+    let mut child = Command::new(&command.program);
+    child.args(&command.args).current_dir(&command.cwd);
+    if command.is_git() {
         // Status reads must not take `index.lock` from under an agent's own git commands.
-        .env("GIT_OPTIONAL_LOCKS", "0")
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env("LC_ALL", "C")
+        child
+            .env("GIT_OPTIONAL_LOCKS", "0")
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env("LC_ALL", "C");
+    } else {
+        for (key, value) in explicit_bare_repository_env() {
+            child.env(key, value);
+        }
+    }
+    child
         .stdin(if command.stdin.is_some() {
             Stdio::piped()
         } else {
@@ -205,6 +237,7 @@ async fn run(command: GitCommand) -> Result<GitOutput, ProcessError> {
     let mut child = child.spawn().map_err(|e| ProcessError::Spawn {
         context: context.clone(),
         message: e.to_string(),
+        not_found: e.kind() == std::io::ErrorKind::NotFound,
     })?;
 
     let stdin = command.stdin.clone();
@@ -254,6 +287,7 @@ async fn run(command: GitCommand) -> Result<GitOutput, ProcessError> {
             return Err(ProcessError::Spawn {
                 context,
                 message: e.to_string(),
+                not_found: false,
             });
         }
         Err(_) => {
@@ -299,6 +333,45 @@ async fn run(command: GitCommand) -> Result<GitOutput, ProcessError> {
     })
 }
 
+/// `explicitBareRepositoryEnv` in `VcsProcess.ts`: one more `GIT_CONFIG_KEY_<n>` /
+/// `GIT_CONFIG_VALUE_<n>` pair after the ones the server inherited, so a `git` that a host CLI
+/// starts opens a bare repository only when told to.
+fn explicit_bare_repository_env() -> Vec<(String, String)> {
+    git_config_env(std::env::var("GIT_CONFIG_COUNT").ok().as_deref())
+}
+
+/// `gitConfigEnv` for `safe.bareRepository=explicit`: an inherited count that is not Git's
+/// count syntax (leading white space, an optional `+` and digits, or `-0`) adds nothing.
+fn git_config_env(inherited: Option<&str>) -> Vec<(String, String)> {
+    let count = match inherited {
+        None | Some("") => 0,
+        Some(text) => {
+            let body = text.trim_start_matches([' ', '\t', '\r', '\n', '\x0b', '\x0c']);
+            let digits = body.strip_prefix('+').unwrap_or(body);
+            let negative_zero =
+                body.len() > 1 && body.starts_with('-') && body.bytes().skip(1).all(|b| b == b'0');
+            if negative_zero {
+                0
+            } else if !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) {
+                match digits.parse::<u64>() {
+                    Ok(count) => count,
+                    Err(_) => return Vec::new(),
+                }
+            } else {
+                return Vec::new();
+            }
+        }
+    };
+    vec![
+        ("GIT_CONFIG_COUNT".into(), (count + 1).to_string()),
+        (
+            format!("GIT_CONFIG_KEY_{count}"),
+            "safe.bareRepository".into(),
+        ),
+        (format!("GIT_CONFIG_VALUE_{count}"), "explicit".into()),
+    ]
+}
+
 /// Reads at most `limit` bytes. Returns the bytes and, when the stream had more, how many
 /// bytes were seen. With `drain`, reading goes on to EOF and the excess is dropped (stderr,
 /// so the child never blocks on it); without, reading stops at the limit.
@@ -329,6 +402,39 @@ async fn read_bounded<R: AsyncRead + Unpin>(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn host_clis_get_the_bare_repository_guard() {
+        use super::git_config_env;
+        let pairs = |v: Option<&str>| git_config_env(v);
+        assert_eq!(
+            pairs(None),
+            vec![
+                ("GIT_CONFIG_COUNT".to_owned(), "1".to_owned()),
+                (
+                    "GIT_CONFIG_KEY_0".to_owned(),
+                    "safe.bareRepository".to_owned()
+                ),
+                ("GIT_CONFIG_VALUE_0".to_owned(), "explicit".to_owned()),
+            ],
+            "nothing inherited"
+        );
+        assert_eq!(
+            pairs(Some(" +2")).first().map(|p| p.1.as_str()),
+            Some("3"),
+            "+2"
+        );
+        assert_eq!(
+            pairs(Some("-00")).first().map(|p| p.1.as_str()),
+            Some("1"),
+            "-0"
+        );
+        assert!(pairs(Some("x")).is_empty(), "invalid count adds nothing");
+        assert!(
+            pairs(Some("2 ")).is_empty(),
+            "trailing text is not Git's syntax"
+        );
+    }
+
     use super::*;
 
     #[test]
@@ -344,6 +450,7 @@ mod tests {
                 ProcessError::Spawn {
                     context: context.clone(),
                     message: "not found".into(),
+                    not_found: true,
                 },
                 "git status failed to start in GitCore.status: not found",
             ),
