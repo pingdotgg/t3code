@@ -23,7 +23,7 @@ import { AsyncResult } from "effect/reactivity";
 import { useRouter } from "@tanstack/react-router";
 
 import { getFallbackThreadIdAfterDelete, pinOrderKeyBetween } from "../components/Sidebar.logic";
-import { folderTagChanges } from "../components/threadActionMenu.logic";
+import { folderTagChanges, type ThreadFolderTagChange } from "../components/threadActionMenu.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { environmentSession, readEnvironmentScope } from "../state/session";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -761,7 +761,10 @@ export function useThreadActions() {
   };
 
   /** One command per tag, stopping at the first failure. */
-  const moveThreadToFolder = async (target: ScopedThreadRef, folder: string | null) => {
+  const applyThreadTagChanges = async (
+    target: ScopedThreadRef,
+    changes: ReadonlyArray<ThreadFolderTagChange>,
+  ) => {
     const permissionFailure = threadOperationFailure(target);
     if (permissionFailure) return permissionFailure;
     if (!readEnvironmentServerConfigLoaded(target.environmentId)) {
@@ -774,7 +777,6 @@ export function useThreadActions() {
         ),
       );
     }
-    const changes = folderTagChanges(readThreadShell(target)?.source.tags ?? [], folder);
     for (const change of changes) {
       const result = await setThreadTagMutation({
         environmentId: target.environmentId,
@@ -784,6 +786,12 @@ export function useThreadActions() {
     }
     return AsyncResult.success(undefined);
   };
+
+  const moveThreadToFolder = (target: ScopedThreadRef, folder: string | null) =>
+    applyThreadTagChanges(
+      target,
+      folderTagChanges(readThreadShell(target)?.source.tags ?? [], folder),
+    );
 
   const sendPin = async (target: ScopedThreadRef, opts: { orderKey?: string } = {}) => {
     if (!readEnvironmentServerConfigLoaded(target.environmentId)) {
@@ -1069,6 +1077,7 @@ export function useThreadActions() {
     markThreadUnread,
     setThreadAutoSettle,
     moveThreadToFolder,
+    applyThreadTagChanges,
     turnThreadIntoProject: (target: ScopedThreadRef) =>
       createProjectFromThread({
         environmentId: target.environmentId,

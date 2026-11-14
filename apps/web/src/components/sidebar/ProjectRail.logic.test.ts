@@ -3,8 +3,10 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildProjectRailTiles,
+  folderEditPlan,
   nextProjectRailScope,
   railOrderAfterMove,
+  railKeysAfterFolderEdit,
   resolveProjectRailTileStates,
 } from "./ProjectRail.logic";
 
@@ -161,5 +163,52 @@ describe("resolveProjectRailTileStates", () => {
       "tag:docs": { dot: null, idle: true },
       "tag:ops": { dot: "attention", idle: false },
     });
+  });
+});
+
+describe("folder rename and delete", () => {
+  const threads = [
+    { id: "a", tags: ["ops"] },
+    { id: "b", tags: ["ops", "infra"] },
+    { id: "c", tags: ["infra"] },
+    { id: "d" },
+  ];
+  const plan = (to: string | null) =>
+    folderEditPlan(threads, "ops", to).map(({ thread, changes }) => ({ id: thread.id, changes }));
+
+  it("renames by adding the new tag before removing the old one, merging into an existing folder", () => {
+    expect(plan("infra")).toEqual([
+      {
+        id: "a",
+        changes: [
+          { tag: "infra", tagged: true },
+          { tag: "ops", tagged: false },
+        ],
+      },
+      { id: "b", changes: [{ tag: "ops", tagged: false }] },
+    ]);
+    expect(plan("ops")).toEqual([]);
+  });
+
+  it("deletes by removing the tag from every thread in the folder", () => {
+    expect(plan(null)).toEqual([
+      { id: "a", changes: [{ tag: "ops", tagged: false }] },
+      { id: "b", changes: [{ tag: "ops", tagged: false }] },
+    ]);
+  });
+
+  it("keeps a renamed folder's rail place and drops a deleted one", () => {
+    const keys = ["group:a", "tag:ops", "tag:infra"];
+    expect(railKeysAfterFolderEdit(keys, "ops", "build")).toEqual([
+      "group:a",
+      "tag:build",
+      "tag:infra",
+    ]);
+    // Merging keeps the target folder's own place.
+    expect(railKeysAfterFolderEdit(["tag:infra", "group:a", "tag:ops"], "ops", "infra")).toEqual([
+      "tag:infra",
+      "group:a",
+    ]);
+    expect(railKeysAfterFolderEdit(keys, "ops", null)).toEqual(["group:a", "tag:infra"]);
   });
 });

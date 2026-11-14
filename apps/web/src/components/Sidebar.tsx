@@ -8,7 +8,7 @@ import {
 } from "./chat/threadContextDrag";
 import { discardComposerDraft } from "../lib/discardComposerDraft";
 import { requestCustomSnooze } from "./CustomSnoozeDialog";
-import { resolveFolderMenuAction } from "./FolderNameDialog";
+import { requestFolderRename, resolveFolderMenuAction } from "./FolderNameDialog";
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
@@ -143,6 +143,7 @@ import {
 } from "../state/environments";
 import {
   readThreadShell,
+  readThreadShells,
   useAllEnvironmentProjectSnapshotsReady,
   useDelegatedUnderParent,
   useProjects,
@@ -227,6 +228,8 @@ import { ProjectRail } from "./sidebar/ProjectRail";
 import {
   nextProjectRailScope,
   buildProjectRailTiles,
+  folderEditPlan,
+  railKeysAfterFolderEdit,
   railOrderAfterMove,
 } from "./sidebar/ProjectRail.logic";
 import { createSidebarListMotion } from "./Sidebar.motion";
@@ -375,6 +378,25 @@ interface SidebarThreadPartitionInput {
   // on the clock, so the minute tick, the precise snooze-wake tick and the inbox
   // tracker's expiry version are inputs: a new key repartitions.
   readonly clockKey: string;
+}
+
+/** Toasts the first non-interrupt failure of a per-thread fan-out; `title` gets the failure count. */
+function toastThreadCommandFailures(
+  results: ReadonlyArray<AtomCommandResult<unknown, unknown>>,
+  title: (failureCount: number) => string,
+) {
+  const failures = results.flatMap((result) =>
+    result._tag === "Failure" && !isAtomCommandInterrupted(result) ? [result] : [],
+  );
+  if (failures.length === 0) return;
+  const firstError = squashAtomCommandFailure(failures[0]!);
+  toastManager.add(
+    stackedThreadToast({
+      type: "error",
+      title: title(failures.length),
+      description: firstError instanceof Error ? firstError.message : "An error occurred.",
+    }),
+  );
 }
 
 function scrollSidebarToTop(content: HTMLElement | null) {
@@ -945,6 +967,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     confirmAndUnpinThread,
     setThreadAutoSettle,
     moveThreadToFolder,
+    applyThreadTagChanges,
     turnThreadIntoProject,
     reorderPinnedThread,
     reorderActiveThread,
@@ -1283,6 +1306,68 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     if (isMobile) setOpenMobile(false);
     void handleNewThread(scopeProjectRef(group.environmentId, group.id));
   });
+  // A touch long press can raise both the browser's contextmenu and the rail's own long-press menu.
+  const folderTileMenuOpenRef = useRef(false);
+  const editRailFolder = async (from: string, to: string | null) => {
+    const plan = folderEditPlan(readThreadShells(), from, to);
+    const threadCount = `${plan.length} thread${plan.length === 1 ? "" : "s"}`;
+    if (to === null && plan.length > 0) {
+      const api = readLocalApi();
+      if (!api) return;
+      const confirmed = await settlePromise(() =>
+        api.dialogs.confirm(
+          [`Delete folder "${from}"?`, `Its ${threadCount} leave this folder.`].join("\n"),
+          { variant: "destructive" },
+        ),
+      );
+      if (confirmed._tag === "Failure" || !confirmed.value) return;
+    }
+    const results = await Promise.all(
+      plan.map(({ thread, changes }) =>
+        applyThreadTagChanges(scopeThreadRef(thread.environmentId, thread.id), changes),
+      ),
+    );
+    // While every thread still carries the old tag, the folder keeps its place and its filter.
+    if (plan.length === 0 || results.some((result) => result._tag === "Success")) {
+      const { railOrder, projectOrder, sidebarProjectScopeKeys } = useUiStateStore.getState();
+      setRailOrder({ railOrder: railKeysAfterFolderEdit(railOrder, from, to), projectOrder });
+      const scopeKeys = railKeysAfterFolderEdit(sidebarProjectScopeKeys, from, to);
+      if (scopeKeys.join("\n") !== sidebarProjectScopeKeys.join("\n")) {
+        setProjectScopeKeys(scopeKeys);
+      }
+    }
+    toastThreadCommandFailures(
+      results,
+      (count) =>
+        `Failed to ${to === null ? "delete" : "rename"} the folder for ${count} of ${threadCount}`,
+    );
+  };
+  const handleFolderTileContextMenu = useStableCallback(
+    (tag: string, position: { x: number; y: number }) => {
+      const api = readLocalApi();
+      if (!api || folderTileMenuOpenRef.current) return;
+      folderTileMenuOpenRef.current = true;
+      void (async () => {
+        const clicked = await settlePromise(() =>
+          api.contextMenu.show(
+            [
+              { id: "rename", label: "Rename folder…", icon: "pencil" },
+              { id: "delete", label: "Delete folder", icon: "trash", destructive: true },
+            ],
+            position,
+          ),
+        );
+        folderTileMenuOpenRef.current = false;
+        if (clicked._tag === "Failure") return;
+        if (clicked.value === "rename") {
+          const name = await requestFolderRename(tag);
+          if (name !== null) await editRailFolder(tag, name);
+        } else if (clicked.value === "delete") {
+          await editRailFolder(tag, null);
+        }
+      })();
+    },
+  );
   const handleProjectFolderContextMenu = useStableCallback(
     (group: SidebarProjectSnapshot, position: { x: number; y: number }) => {
       const api = readLocalApi();
@@ -2501,19 +2586,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             moveThreadToFolder(scopeThreadRef(thread.environmentId, thread.id), choice.folder),
           ),
         );
-        const failures = results.flatMap((result) =>
-          result._tag === "Failure" && !isAtomCommandInterrupted(result) ? [result] : [],
+        toastThreadCommandFailures(
+          results,
+          (count) => `Failed to move ${count} thread${count === 1 ? "" : "s"}`,
         );
-        if (failures.length > 0) {
-          const firstError = squashAtomCommandFailure(failures[0]!);
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: `Failed to move ${failures.length} thread${failures.length === 1 ? "" : "s"}`,
-              description: firstError instanceof Error ? firstError.message : "An error occurred.",
-            }),
-          );
-        }
         return;
       }
       if (clicked.value === "unpin") {
@@ -3062,6 +3138,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             onSelect={(key, additive) =>
               setProjectScopeKeys(nextProjectRailScope(projectScopeKeys, key, additive))
             }
+            onFolderMenu={handleFolderTileContextMenu}
             onMove={(activeKey, overKey) => {
               const next = railOrderAfterMove(railTiles, activeKey, overKey);
               if (next !== null) setRailOrder(next);

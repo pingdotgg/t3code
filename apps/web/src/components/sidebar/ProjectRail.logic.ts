@@ -8,6 +8,7 @@ import {
 } from "../../sidebarProjectGrouping";
 import { legacyProjectCwdPreferenceKey } from "../../uiStateStore";
 import { orderItemsByPreferredIds, resolveSidebarFolderDot } from "../Sidebar.logic";
+import type { ThreadFolderTagChange } from "../threadActionMenu.logic";
 
 export type ProjectRailDot = ReturnType<typeof resolveSidebarFolderDot>;
 
@@ -155,4 +156,42 @@ export function resolveProjectRailTileStates(
     states.set(tile.key, { dot, idle: dot === null && !live });
   }
   return states;
+}
+
+/**
+ * The tag changes that rename folder `from` to `to`, or delete it when `to` is
+ * null. A rename adds the new tag before removing the old one, so a thread that
+ * fails halfway stays in a folder; renaming onto an existing folder merges into it.
+ */
+export function folderEditPlan<TThread extends Pick<RailThread, "tags">>(
+  threads: readonly TThread[],
+  from: string,
+  to: string | null,
+): { readonly thread: TThread; readonly changes: ReadonlyArray<ThreadFolderTagChange> }[] {
+  if (from === to) return [];
+  return threads.flatMap((thread) => {
+    const tags = thread.tags ?? [];
+    if (!tags.includes(from)) return [];
+    const changes = [
+      ...(to === null || tags.includes(to) ? [] : [{ tag: to, tagged: true }]),
+      { tag: from, tagged: false },
+    ];
+    return [{ thread, changes }];
+  });
+}
+
+/** Rail order or scope keys with folder `from` renamed to `to` in place, or dropped when `to` is null. */
+export function railKeysAfterFolderEdit(
+  keys: readonly string[],
+  from: string,
+  to: string | null,
+): string[] {
+  const fromKey = folderScopeKey(from);
+  const toKey = to === null ? null : folderScopeKey(to);
+  const next: string[] = [];
+  for (const key of keys) {
+    const mapped = key === fromKey ? toKey : key;
+    if (mapped !== null && !next.includes(mapped)) next.push(mapped);
+  }
+  return next;
 }
