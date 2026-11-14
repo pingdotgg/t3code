@@ -707,7 +707,9 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         );
 
         const partial = yield* searchWorkspaceEntries({ cwd, query: "src/fo", limit: 25 });
-        expect(partial.entries.map((entry) => entry.path)).not.toContain(".worktrees/x/src/foo.py");
+        for (const path of expected) {
+          expect(partial.entries.map((entry) => entry.path)).not.toContain(path);
+        }
       }),
     );
   });
