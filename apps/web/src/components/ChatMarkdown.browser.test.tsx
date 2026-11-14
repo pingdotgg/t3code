@@ -3,7 +3,7 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { type ReactElement } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { page, userEvent } from "vite-plus/test/browser";
+import { commands, page, userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../test/render";
 import "../index.css";
@@ -682,6 +682,22 @@ describe("ChatMarkdown alert copy", () => {
 });
 
 describe("ChatMarkdown file chip tooltips", () => {
+  it("stays open while the pointer selects the path, then closes when it leaves", async () => {
+    setup();
+    await using screen = await renderText("[notes](/tmp/project/docs/notes.md)");
+    await userEvent.hover(screen.container.querySelector(".chat-markdown-file-link")!);
+    const path = page.getByText("/tmp/project/docs/notes.md");
+    await expect.element(path).toBeVisible();
+
+    // Forced so the pointer lands on the popup even when it ignores pointer events.
+    await userEvent.tripleClick(path, { force: true });
+    expect(window.getSelection()?.toString().trim()).toBe("/tmp/project/docs/notes.md");
+    await expect.element(path).toBeVisible();
+
+    await commands.resetPointer();
+    await expect.element(path).not.toBeInTheDocument();
+  });
+
   it("wraps a long path so its file name stays inside the tooltip", async () => {
     setup();
     const path =
