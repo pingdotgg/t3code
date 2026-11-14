@@ -9,6 +9,8 @@ const { Children, harness } = vi.hoisted(() => ({
     // The app-wide error slot other features (composer sends, branch refreshes) write to.
     pendingConnectionError: null as string | null,
     connectPress: vi.fn(),
+    cameraPermission: null as { granted: boolean } | null,
+    onBarcodeScanned: undefined as ((result: { data: string }) => void) | undefined,
   },
 }));
 
@@ -35,8 +37,11 @@ vi.mock("@react-navigation/native", () => ({
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
 vi.mock("@clerk/expo", () => ({ useAuth: () => ({ isLoaded: false, isSignedIn: false }) }));
 vi.mock("expo-camera", () => ({
-  CameraView: () => null,
-  useCameraPermissions: () => [null, vi.fn()],
+  CameraView: (props: { onBarcodeScanned: (result: { data: string }) => void }) => {
+    harness.onBarcodeScanned = props.onBarcodeScanned;
+    return null;
+  },
+  useCameraPermissions: () => [harness.cameraPermission, vi.fn()],
 }));
 vi.mock("expo-haptics", () => ({
   notificationAsync: vi.fn(async () => {}),
@@ -103,4 +108,25 @@ it("does not show another feature's error as a pairing failure", () => {
   act(() => root.unmount());
   // Leaving the form must not wipe an error that belongs to another screen.
   expect(harness.pendingConnectionError).toBe("Could not send the message.");
+});
+
+it("pairs as soon as a complete pairing code is scanned", async () => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  vi.stubGlobal("__DEV__", false);
+  harness.pendingConnectionError = null;
+  harness.cameraPermission = { granted: true };
+  harness.connectPress.mockResolvedValue({ ok: true, error: null });
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  act(() => root.render(<ConnectionsNewRouteScreen route={{ params: undefined }} />));
+
+  await act(async () => {
+    harness.onBarcodeScanned?.({ data: "http://192.168.1.74:3773/#token=pairing-token" });
+  });
+
+  expect(harness.connectPress).toHaveBeenCalledWith(
+    "http://192.168.1.74:3773/#token=pairing-token",
+    undefined,
+  );
+  act(() => root.unmount());
 });
