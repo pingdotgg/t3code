@@ -847,7 +847,13 @@ export const make = Effect.gen(function* () {
                       resolveContext: found.discovered
                         ? () => Effect.succeed(found.context)
                         : resolveContext,
-                    }) ?? Effect.succeed(null),
+                    }) ??
+                    // Discovery asked for the requested host, so its base URL is the web host.
+                    Effect.succeed(
+                      found.discovered && found.context.requestedHost !== undefined
+                        ? (URL.parse(found.context.provider.baseUrl)?.host.toLowerCase() ?? null)
+                        : null,
+                    ),
                 ),
                 Effect.orElseSucceed(() => null),
                 Effect.map((host): RemoteHost => ({ kind: found.context.provider.kind, host })),

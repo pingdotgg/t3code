@@ -90,8 +90,10 @@ function parseGitLabAuth(input: SourceControlAuthProbeInput) {
 const GITLAB_HOST_NOT_LOGGED_IN_PATTERN =
   /\bnot (?:been )?authenticated with glab\b|\bno gitlab instances? ha(?:s|ve) been authenticated\b/iu;
 
+// An SSH remote may name a git host other than the web host a link asked for; glab knows the latter.
 function refineUnknownGitLabRemote(input: SourceControlUnknownRemoteRefinementInput) {
-  const host = input.context.provider.name.toLowerCase();
+  const requestedHost = input.context.requestedHost?.toLowerCase();
+  const host = requestedHost ?? input.context.provider.name.toLowerCase();
   const output = combinedAuthOutput(input.auth);
   const authenticated = parseGitLabAuthStatusHosts(output).some(
     (entry) => entry.account !== null && entry.host === host,
@@ -104,7 +106,7 @@ function refineUnknownGitLabRemote(input: SourceControlUnknownRemoteRefinementIn
   return {
     kind: SourceControlProviderKind.make("gitlab"),
     name: "GitLab Self-Hosted",
-    baseUrl: input.context.provider.baseUrl,
+    baseUrl: requestedHost ? `https://${requestedHost}` : input.context.provider.baseUrl,
   } as const;
 }
 
@@ -150,7 +152,8 @@ export const discovery = {
   authArgs: ["auth", "status"],
   authRetryArgs: ["auth", "status", "--all"],
   // glab host matching requires the remote's exact spelling.
-  remoteRefinementArgs: ({ provider, remoteUrl }) => {
+  remoteRefinementArgs: ({ provider, remoteUrl, requestedHost }) => {
+    if (requestedHost) return ["auth", "status", "--hostname", requestedHost];
     const authority = /^[a-z][a-z0-9+.-]*:\/\/([^/]+)/iu.exec(remoteUrl.trim())?.[1];
     const remoteHost = authority
       ? authority.slice(authority.lastIndexOf("@") + 1)
