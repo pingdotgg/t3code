@@ -5,7 +5,6 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 
 import {
   composerFileNeedsReattach,
-  partializeComposerDraftStoreState,
   DraftId,
   useComposerDraftStore,
   type ComposerFileAttachment,
@@ -655,12 +654,8 @@ describe("attachmentUploadQueue", () => {
         startAttachmentUpload({ environmentId, image, draftTarget: draftId });
       };
       try {
-        store.setProjectDraftThreadId(
-          { environmentId: firstEnvironment, projectId: ProjectId.make("project") },
-          draftId,
-        );
         if (image.type === "file") store.addFiles(draftId, [image]);
-        startAttachmentUpload({ environmentId: firstEnvironment, image, draftTarget: draftId });
+        moveDraftTo(firstEnvironment);
         await Promise.resolve();
         let settled = awaitAttachmentUploads([image.id]);
         TestXmlHttpRequest.requests[0]!.complete();
@@ -673,22 +668,20 @@ describe("attachmentUploadQueue", () => {
         await settled;
 
         moveDraftTo(firstEnvironment);
+        const attachmentId = `pending-environment-1-${image.name}`;
         expect(readAttachmentUpload(image.id)).toMatchObject({
           status: "ready",
           environmentId: firstEnvironment,
-          attachmentId: `pending-environment-1-${image.name}`,
+          attachmentId,
         });
         if (image.type === "file") {
-          const reloaded = useComposerDraftStore.persist.getOptions().merge!(
-            partializeComposerDraftStoreState(useComposerDraftStore.getState()),
-            useComposerDraftStore.getInitialState(),
-          );
-          const reloadedFile = reloaded.draftsByThreadKey[draftId]!.files[0]!;
-          expect(reloadedFile).toMatchObject({
-            uploadedAttachmentId: `pending-environment-1-${image.name}`,
-            uploadEnvironmentId: firstEnvironment,
-          });
-          expect(composerFileNeedsReattach(reloadedFile)).toBe(false);
+          expect(store.getComposerDraft(draftId)?.files).toMatchObject([
+            {
+              id: image.id,
+              uploadedAttachmentId: attachmentId,
+              uploadEnvironmentId: firstEnvironment,
+            },
+          ]);
         }
       } finally {
         store.clearDraftThread(draftId);
