@@ -339,6 +339,30 @@ describe("scan cache round trip", () => {
     });
   });
 
+  it.each(
+    [11, 12, 13, 14, 15, 16].flatMap((version) =>
+      ["s:p:grok-4.5", "s:p:1786000000000:grok-4.5"].map((dedupeKey) => ({ version, dedupeKey })),
+    ),
+  )("re-parses v$version Grok transcripts with key $dedupeKey", ({ version, dedupeKey }) => {
+    const original = cacheWith([
+      ["/grok/updates.jsonl", 100, [record({ provider: "grok", model: "grok-4.5", dedupeKey })]],
+    ]);
+    original.set("/grok/updates.jsonl", {
+      ...original.get("/grok/updates.jsonl")!,
+      provider: "grok",
+    });
+    const encoded = parse(makeScanCacheWriter()(original, {}));
+    const restored = decodeScanCache({ ...encoded, version }, TEST_FORMAT_MAP);
+    expect(restored.get("/grok/updates.jsonl")).toEqual({
+      ...original.get("/grok/updates.jsonl"),
+      size: -1,
+      position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+      records: [
+        record({ provider: "grok", model: "grok-4.5", dedupeKey: "s:p:1786000000000:grok-4.5" }),
+      ],
+    });
+  });
+
   it("rewrites only changed entries and still restores the whole cache", () => {
     const write = makeScanCacheWriter();
     const cache = cacheWith([

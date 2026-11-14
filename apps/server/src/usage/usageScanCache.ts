@@ -10,7 +10,7 @@ import { CLAUDE_SYNTHETIC_MODEL } from "../provider/Drivers/claudeUsage.ts";
 import { mergeUsageCopies } from "./usageAggregation.ts";
 import { GUARD_LENGTH, type TranscriptParsePosition } from "./usageTranscriptReader.ts";
 
-const USAGE_SCAN_CACHE_VERSION = 16 as const;
+const USAGE_SCAN_CACHE_VERSION = 17 as const;
 const SPEED_COMPATIBLE_SINCE_VERSION = 4;
 
 /**
@@ -18,8 +18,9 @@ const SPEED_COMPATIBLE_SINCE_VERSION = 4;
  * replace it, dropping saved usage for deleted transcripts. Separate files keep
  * the newer one; older files are removed once it is saved.
  */
-export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v16.json";
+export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v17.json";
 export const LEGACY_SCAN_CACHE_FILE_NAMES = [
+  "usage-scan-cache-v16.json",
   "usage-scan-cache-v15.json",
   "usage-scan-cache-v14.json",
   "usage-scan-cache-v13.json",
@@ -264,7 +265,16 @@ export function decodeScanCache(
         ...(version >= 7 && unresolvedServiceTierTurnId != null
           ? { unresolvedServiceTierTurnId }
           : {}),
-        dedupeKey: typeof dedupeKey === "string" ? dedupeKey : null,
+        dedupeKey:
+          typeof dedupeKey !== "string"
+            ? null
+            : // Saved copies of moved transcripts must still match the re-parsed v17 key.
+              provider === "grok" &&
+                version < 17 &&
+                dedupeKey.endsWith(`:${model}`) &&
+                !dedupeKey.endsWith(`:${timestampMs}:${model}`)
+              ? `${dedupeKey.slice(0, -model.length)}${timestampMs}:${model}`
+              : dedupeKey,
       });
     }
     return records;
@@ -301,8 +311,10 @@ export function decodeScanCache(
     // Keep history for deleted rollouts, but re-parse incompatible reducer state.
     // v13 adds Claude 1-hour cache writes; v14 uses Codex request ledgers.
     // v15 repairs skipped Codex requests whose counters rewound; clean v14 entries stay served.
+    // v17 keys Grok turns by time, restoring turns previously dropped as repeats.
     const legacy =
       (entry.p === "claude" && version < 13) ||
+      (entry.p === "grok" && version < 17) ||
       (format.state !== undefined &&
         (version < 6 ||
           (entry.p === "codex" && (version < 14 || (version < 15 && malformedRecords > 0)))));
