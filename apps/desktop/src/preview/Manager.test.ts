@@ -1712,8 +1712,9 @@ describe("PreviewManager", () => {
     ),
   );
 
-  const makeAudioWebContents = (id: number) => {
+  const makeAudioWebContents = (id: number, nativeDialog?: (...args: never[]) => void) => {
     const listeners = new Map<string, (...args: never[]) => void>();
+    if (nativeDialog) listeners.set("-run-dialog", nativeDialog);
     let debuggerMessage: ((...args: ReadonlyArray<unknown>) => void) | undefined;
     const setAudioMuted = vi.fn();
     let audible = false;
@@ -1766,7 +1767,8 @@ describe("PreviewManager", () => {
         navigationHistory: { canGoBack: () => false, canGoForward: () => false },
         setIgnoreMenuShortcuts: vi.fn(),
         setWindowOpenHandler: vi.fn(),
-        listeners: () => [],
+        listeners: (event: string) =>
+          event === "-run-dialog" && nativeDialog ? [nativeDialog] : [],
         debugger: {
           isAttached: () => false,
           attach: vi.fn(),
@@ -1823,6 +1825,7 @@ describe("PreviewManager", () => {
             }),
           );
           yield* manager.createTab("tab_dialog");
+          yield* manager.prepareWebview(guest.wc);
           yield* manager.registerWebview("tab_dialog", 42);
           yield* Effect.yieldNow;
 
@@ -1853,6 +1856,7 @@ describe("PreviewManager", () => {
           yield* Effect.yieldNow;
           const replacement = makeAudioWebContents(43);
           fromId.mockReturnValue(replacement.wc);
+          yield* manager.prepareWebview(replacement.wc);
           yield* manager.registerWebview("tab_dialog", 43);
           yield* Effect.yieldNow;
           expect(states.at(-1)?.dialog).toBeUndefined();
@@ -1871,6 +1875,39 @@ describe("PreviewManager", () => {
           expect(states.at(-1)?.dialog).toBeUndefined();
         }),
       ),
+  );
+
+  effectIt.effect("holds a page dialog raised before the guest is registered", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const native = vi.fn();
+        const guest = makeAudioWebContents(45, native);
+        fromId.mockReturnValue(guest.wc);
+        const states: PreviewManager.PreviewTabState[] = [];
+        const answer = vi.fn();
+
+        yield* manager.subscribeStateChanges((_tabId, state) =>
+          Effect.sync(() => {
+            states.push(state);
+          }),
+        );
+        yield* manager.createTab("tab_dialog_early");
+        yield* manager.prepareWebview(guest.wc);
+        guest.emit(
+          "-run-dialog",
+          { dialogType: "alert", messageText: "Hi", defaultPromptText: "" },
+          answer,
+        );
+        yield* manager.registerWebview("tab_dialog_early", 45);
+        yield* Effect.yieldNow;
+
+        expect(native).not.toHaveBeenCalled();
+        expect(states.at(-1)?.dialog).toEqual({ type: "alert", message: "Hi", defaultValue: "" });
+
+        yield* manager.answerDialog("tab_dialog_early", true, undefined);
+        expect(answer).toHaveBeenCalledExactlyOnceWith(true, "");
+      }),
+    ),
   );
 
   effectIt.effect("ignores audio state from a replaced guest", () =>

@@ -13,7 +13,7 @@ export interface PageDialogHold {
   readonly answer: (accept: boolean, promptText?: string) => boolean;
   /** Forgets the pending dialog after something else, such as CDP, closed it. */
   readonly closed: () => void;
-  readonly release: () => void;
+  readonly current: () => DesktopPreviewDialog | null;
 }
 
 // Electron shows page dialogs as a native app-modal box from the `-run-dialog` event and never
@@ -22,11 +22,12 @@ export function holdPageDialogs(
   contents: NodeJS.EventEmitter,
   changed: (dialog: DesktopPreviewDialog | null) => void,
 ): PageDialogHold {
-  const native = contents.listeners("-run-dialog") as Array<(...args: unknown[]) => void>;
   let pending: DialogCallback | null = null;
+  let shown: DesktopPreviewDialog | null = null;
   const clear = () => {
     if (pending === null) return;
     pending = null;
+    shown = null;
     changed(null);
   };
   const deliver = (callback: DialogCallback, accept: boolean, userInput: string) => {
@@ -41,13 +42,16 @@ export function holdPageDialogs(
     const previous = pending;
     if (previous !== null) deliver(previous, false, "");
     pending = callback;
-    changed({
+    shown = {
       type: info.dialogType,
       message: info.messageText,
       defaultValue: info.defaultPromptText,
-    });
+    };
+    changed(shown);
   };
-  for (const listener of native) contents.off("-run-dialog", listener);
+  for (const listener of contents.listeners("-run-dialog")) {
+    contents.off("-run-dialog", listener as (...args: unknown[]) => void);
+  }
   contents.on("-run-dialog", run);
   contents.on("-cancel-dialogs", clear);
   return {
@@ -58,13 +62,6 @@ export function holdPageDialogs(
       return deliver(callback, accept, promptText ?? "");
     },
     closed: clear,
-    release: () => {
-      const callback = pending;
-      clear();
-      if (callback !== null) deliver(callback, false, "");
-      contents.off("-run-dialog", run);
-      contents.off("-cancel-dialogs", clear);
-      for (const listener of native) contents.on("-run-dialog", listener);
-    },
+    current: () => shown,
   };
 }

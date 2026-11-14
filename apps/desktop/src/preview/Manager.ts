@@ -965,16 +965,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   });
 
   const syncTabDialog = Effect.fn("PreviewManager.syncTabDialog")(function* (
-    tabId: string,
     wc: Electron.WebContents,
     dialog: DesktopPreviewDialog | null,
   ) {
     const updatedAt = yield* currentIso;
     const next = yield* SynchronizedRef.modify(tabsRef, (tabs) => {
-      const current = tabs.get(tabId);
-      if (!current || current.webContentsId !== wc.id) {
-        return [Option.none<PreviewTabState>(), tabs] as const;
-      }
+      const entry = [...tabs].find(([, tab]) => tab.webContentsId === wc.id);
+      if (!entry) return [Option.none<readonly [string, PreviewTabState]>(), tabs] as const;
+      const [tabId, current] = entry;
       const { dialog: _dialog, ...withoutDialog } = current;
       const state: PreviewTabState = {
         ...withoutDialog,
@@ -982,14 +980,22 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         updatedAt,
       };
       return [
-        Option.some(state),
+        Option.some([tabId, state] as const),
         replaceMap(tabs, (copy) => {
           copy.set(tabId, state);
         }),
       ] as const;
     });
-    if (Option.isSome(next)) yield* emitIfCurrent(tabId, next.value);
+    if (Option.isSome(next)) yield* emitIfCurrent(next.value[0], next.value[1]);
   });
+
+  const ensureDialogHold = (wc: Electron.WebContents) => {
+    if (dialogHolds.has(wc.id)) return;
+    dialogHolds.set(
+      wc.id,
+      holdPageDialogs(wc, (dialog) => runFork(syncTabDialog(wc, dialog))),
+    );
+  };
 
   const requireWebContents = Effect.fn("PreviewManager.requireWebContents")(function* (
     tabId: string,
@@ -1230,7 +1236,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const scope = yield* Scope.fork(parentScope, "sequential");
     const attachmentId = Symbol();
     let detachPasskeys = () => {};
-    let dialogHold: PageDialogHold | undefined;
     let documentId = 0;
     let nextRequestId = 0;
     let activeCapture: {
@@ -1687,8 +1692,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.ipc.off(RECORDING_INPUT_CHANNEL, recordingInput);
         wc.ipc.off(PAGE_UNHANDLED_SHORTCUT_CHANNEL, pageUnhandledShortcut);
         detachPasskeys();
-        if (dialogHolds.get(wc.id) === dialogHold) dialogHolds.delete(wc.id);
-        dialogHold?.release();
+        dialogHolds.get(wc.id)?.answer(false);
       }).pipe(Effect.ignore),
     );
     const install = Effect.fn("PreviewManager.installWebContentsListeners")(function* () {
@@ -1705,8 +1709,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.on("did-fail-load", failed as never);
         wc.on("audio-state-changed", audioStateChanged);
         wc.on("found-in-page", foundInPage as never);
-        dialogHold = holdPageDialogs(wc, (dialog) => runFork(syncTabDialog(tabId, wc, dialog)));
-        dialogHolds.set(wc.id, dialogHold);
         wc.ipc.on(HUMAN_INPUT_CHANNEL, humanInput);
         wc.ipc.on(RECORDING_INPUT_CHANNEL, recordingInput);
         wc.ipc.on(PAGE_UNHANDLED_SHORTCUT_CHANNEL, pageUnhandledShortcut);
@@ -2002,8 +2004,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         const pendingUrl = current.navStatus.kind === "Loading" ? current.navStatus.url : null;
         const failure = guestLoadFailures.get(webContentsId);
         const { favicon: _favicon, dialog: _dialog, ...currentWithoutFavicon } = current;
+        const pendingDialog = dialogHolds.get(webContentsId)?.current();
         const next: PreviewTabState = {
           ...currentWithoutFavicon,
+          ...(pendingDialog ? { dialog: pendingDialog } : {}),
           webContentsId,
           navStatus:
             failure && (pendingUrl === null || pendingUrl === failure.url)
@@ -2078,6 +2082,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   ) {
     yield* rendererHistory.register(wc, { surface: "preview" });
     const webContentsId = wc.id;
+    ensureDialogHold(wc);
     wc.on("did-start-navigation", (event) => {
       if (event.isMainFrame && !event.isSameDocument) guestLoadFailures.delete(webContentsId);
     });
@@ -2092,6 +2097,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     wc.once("destroyed", () => {
       guestLoadFailures.delete(webContentsId);
       dialogHolds.get(webContentsId)?.closed();
+      dialogHolds.delete(webContentsId);
       runFork(hideDestroyedGuest(webContentsId));
       runFork(detachControlSession(webContentsId));
     });

@@ -61,19 +61,4 @@ describe("holdPageDialogs", () => {
     expect(hold.answer(true)).toBe(false);
     expect(callback).not.toHaveBeenCalled();
   });
-
-  it("dismisses a pending dialog and hands the native handler back on release", () => {
-    const { contents, native, changed, hold, callback } = setup();
-    contents.emit("-run-dialog", info, callback);
-    callback.mockImplementation(() => {
-      throw new Error("callback already used");
-    });
-
-    hold.release();
-
-    expect(callback).toHaveBeenCalledWith(false, "");
-    expect(changed).toHaveBeenLastCalledWith(null);
-    contents.emit("-run-dialog", info, vi.fn());
-    expect(native).toHaveBeenCalledOnce();
-  });
 });
