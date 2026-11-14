@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { readUsagePagePreferences, saveUsagePagePreferences } from "./usagePagePreferences";
+import { ALL_TIME_WINDOW_DAYS } from "./usageWindow";
 
 const key = "t3code:usage-page-preferences:v1";
 let values: Map<string, string>;
@@ -28,8 +29,16 @@ describe("Usage page preferences", () => {
     saveUsagePagePreferences({ metric: "cost", windowDays: 7, hiddenProviders: ["codex"] });
     expect(readUsagePagePreferences().hiddenProviders).toEqual(["codex"]);
 
-    values.set(key, '{"metric":"tokens","windowDays":30}');
-    expect(readUsagePagePreferences()).toEqual({ metric: "tokens", windowDays: 30 });
+    for (const windowDays of [1, 7, 30, 90]) {
+      values.set(key, JSON.stringify({ metric: "tokens", windowDays }));
+      expect(readUsagePagePreferences()).toEqual({ metric: "tokens", windowDays });
+    }
+
+    saveUsagePagePreferences({ metric: "cost", windowDays: ALL_TIME_WINDOW_DAYS });
+    expect(readUsagePagePreferences()).toEqual({
+      metric: "cost",
+      windowDays: ALL_TIME_WINDOW_DAYS,
+    });
   });
 
   // regression: #10189 an invalid saved usage selection was never replaced

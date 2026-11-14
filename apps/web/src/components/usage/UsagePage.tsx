@@ -51,7 +51,6 @@ import {
   formatTokens,
   formatUsageContractMismatch,
   formatUsd,
-  makeWindow,
   usageSourceMessages,
 } from "@t3tools/shared/usageFormat";
 import { Button, InlineButton } from "../ui/button";
@@ -80,6 +79,7 @@ import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { UsageLimitsSection } from "./UsageLimits";
 import { UsagePriceOverrides } from "./UsagePriceOverrides";
 import { UsageProviderChart } from "./UsageProviderChart";
+import { makeUsageWindow, trimUsageWindow } from "./usageWindow";
 import { SpeedPremium, UsageModelDialog } from "./UsageModelDialog";
 import { UsageShareBar } from "./UsageShareBar";
 import {
@@ -188,11 +188,7 @@ export function UsagePage() {
   };
   const [windowSelection, setWindowSelection] = useState(() => ({
     days: preferences.windowDays,
-    window: makeWindow(
-      preferences.windowDays,
-      undefined,
-      preferences.windowDays === 1 ? "hour" : "day",
-    ),
+    window: makeUsageWindow(preferences.windowDays),
   }));
   const metric = preferences.metric;
   const showingLimits = metric === "limits";
@@ -204,7 +200,6 @@ export function UsagePage() {
     useState<ReadonlySet<EnvironmentId> | null>(null);
   const hiddenProviders = new Set(preferences.hiddenProviders);
   const { days: windowDays, window } = windowSelection;
-  const isPast24Hours = windowDays === 1;
   const {
     merged: answeredUsage,
     environments,
@@ -214,7 +209,7 @@ export function UsagePage() {
     refresh,
   } = useUsage(window, selectedEnvironmentIds, hiddenProviders);
   const merged = shown?.merged ?? answeredUsage;
-  const shownWindow = shown?.window ?? window;
+  const shownWindow = trimUsageWindow(shown?.window ?? window, merged.daily);
   const shownHourly = shownWindow.resolution === "hour";
   const refreshingUsage = isRefreshing && !showingLimits;
   const showingKept = shown !== null && shown.window !== window;
@@ -240,7 +235,7 @@ export function UsagePage() {
     updatePreferences({ windowDays: days });
     setWindowSelection({
       days,
-      window: makeWindow(days, undefined, days === 1 ? "hour" : "day"),
+      window: makeUsageWindow(days),
     });
   };
   const selectMetric = (nextMetric: UsageMetric) => {
@@ -305,7 +300,7 @@ export function UsagePage() {
       });
       return;
     }
-    const nextWindow = makeWindow(windowDays, undefined, isPast24Hours ? "hour" : "day");
+    const nextWindow = makeUsageWindow(windowDays);
     if (
       nextWindow.sinceDay !== window.sinceDay ||
       nextWindow.untilDay !== window.untilDay ||
@@ -357,7 +352,7 @@ export function UsagePage() {
       ? `${formatDateTimeShort(shownWindow.sinceTime, shownWindow.timeZone, hour12)} to ${formatDateTimeShort(shownWindow.untilTime, shownWindow.timeZone, hour12)}`
       : `${formatDayShort(shownWindow.sinceDay)} to ${formatDayShort(shownWindow.untilDay)}`;
   const topbarContent = (
-    <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 py-2 @4xl/usage-header:flex">
+    <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 py-2 @5xl/usage-header:flex">
       <WorkspaceBreadcrumb ariaLabel="Usage breadcrumb" className="min-w-0">
         <WorkspaceBreadcrumbItem>
           <h1>Usage</h1>
@@ -390,7 +385,7 @@ export function UsagePage() {
           {windowLabel}
         </span>
       ) : null}
-      <div className="ms-auto hidden shrink-0 items-center justify-end gap-2 @4xl/usage-header:flex">
+      <div className="ms-auto hidden shrink-0 items-center justify-end gap-2 @5xl/usage-header:flex">
         {/* Limits are always current, so they have no period. The period sits before the metric
             tabs so dropping it never moves them. */}
         {showingLimits ? null : (
@@ -436,7 +431,7 @@ export function UsagePage() {
           <RefreshIcon size="sm" refreshing={isRefreshing} />
         </Button>
       </div>
-      <div className="ms-auto flex shrink-0 items-center justify-end gap-1 @4xl/usage-header:hidden">
+      <div className="ms-auto flex shrink-0 items-center justify-end gap-1 @5xl/usage-header:hidden">
         {showingLimits ? null : (
           <Select value={String(windowDays)} onValueChange={(value) => selectWindow(Number(value))}>
             <SelectTrigger
