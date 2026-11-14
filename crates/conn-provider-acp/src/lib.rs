@@ -52,8 +52,31 @@ pub(crate) fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, 
 
 /// One agent line may be this long; longer lines are dropped and logged.
 const MAX_LINE_BYTES: usize = 64 * 1024 * 1024;
-/// How long a stopped agent may take before SIGKILL (Effect's `forceKillAfter`).
-const FORCE_KILL_AFTER: Duration = Duration::from_secs(2);
+/// `processGroupTerminationGrace`: SIGTERM to SIGKILL on Stop.
+const TERMINATE_GRACE: Duration = Duration::from_secs(1);
+
+/// Ends an agent as T3 ends one it owns in a detached process group.
+async fn stop_process(process: Process, kind: session::StopKind) {
+    #[cfg(unix)]
+    {
+        use conn_provider_support::process::signal_group;
+        use rustix::process::Signal;
+        match kind {
+            session::StopKind::Kill => signal_group(process.pid, Signal::KILL),
+            session::StopKind::Terminate => {
+                signal_group(process.pid, Signal::TERM);
+                let pid = process.pid;
+                if !conn_provider_support::process::wait_gone(pid, TERMINATE_GRACE).await {
+                    signal_group(pid, Signal::KILL);
+                }
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = kind;
+    // The child is gone or going; reap it.
+    process.shutdown().await;
+}
 
 /// One configured ACP agent instance.
 #[derive(Clone, Debug)]
@@ -128,7 +151,7 @@ fn process_spawner(launch: Launch, cwd: String) -> session::Spawner {
         Ok(session::Spawned {
             writer,
             events,
-            stop: Box::new(move || Box::pin(process.terminate(FORCE_KILL_AFTER))),
+            stop: Box::new(move |kind| Box::pin(stop_process(process, kind))),
         })
     })
 }
@@ -212,5 +235,53 @@ impl Provider for AcpProvider {
                 background_tasks_end_with_process: false,
             })
         })
+    }
+}
+
+/// For the conformance example and the replay tests: T3 call inputs as trait inputs.
+#[doc(hidden)]
+pub mod testing {
+    use conn_contract::from_json;
+    use conn_provider::{TurnInput, TurnMessage};
+    use serde_json::Value;
+
+    fn field<T: serde::de::DeserializeOwned>(v: &Value) -> T {
+        // Test inputs come from T3's own calls; a mismatch is a broken capture.
+        from_json(v.clone()).expect("a T3 call input field")
+    }
+
+    /// The TS `startTurn` input as the trait's `TurnInput`.
+    pub fn turn_input(v: &Value) -> TurnInput {
+        let message = &v["message"];
+        TurnInput {
+            native_thread_has_turns: v["nativeThreadHasTurns"].as_bool(),
+            restart_continuation_of_run_id: None,
+            app_context: vec![],
+            app_thread: field(&v["appThread"]),
+            thread_id: field(&v["threadId"]),
+            run_id: field(&v["runId"]),
+            run_ordinal: v["runOrdinal"]
+                .as_u64()
+                .and_then(|n| u32::try_from(n).ok())
+                .unwrap_or(1),
+            provider_turn_ordinal: v["providerTurnOrdinal"]
+                .as_u64()
+                .and_then(|n| u32::try_from(n).ok())
+                .unwrap_or(1),
+            attempt_id: field(&v["attemptId"]),
+            root_node_id: field(&v["rootNodeId"]),
+            provider_thread: field(&v["providerThread"]),
+            message: TurnMessage {
+                message_id: field(&message["messageId"]),
+                text: message["text"].as_str().unwrap_or("").to_owned(),
+                attachments: vec![],
+                created_by: field(&message["createdBy"]),
+                creation_source: field(&message["creationSource"]),
+                scheduled_task_id: None,
+                sender_thread_id: None,
+            },
+            model_selection: field(&v["modelSelection"]),
+            runtime_policy: field(&v["runtimePolicy"]),
+        }
     }
 }

@@ -1,7 +1,7 @@
 //! One agent connection: our request ids, the replies to them, and everything else the agent
 //! sends, in order, on one bounded channel.
 //!
-//! Request ids count from 1 per connection, as effect-acp does (`nextRequestId = Ref.make(1)`).
+//! Request ids count from 2^30 per connection, as T3's Effect RPC client writes them.
 //! The pending map holds one entry per request in flight and is emptied when the agent exits.
 
 use std::collections::HashMap;
@@ -77,6 +77,9 @@ impl std::fmt::Debug for Connection {
     }
 }
 
+/// Effect's RPC client numbers requests from 2^30 (seen in T3's stdin, conformance check).
+const FIRST_REQUEST_ID: i64 = 1 << 30;
+
 /// Unknown lines are counted, not kept; the first few are logged.
 const LOGGED_SKIPS: u32 = 5;
 
@@ -89,7 +92,7 @@ impl Connection {
         capacity: usize,
     ) -> (Self, mpsc::Receiver<Incoming>) {
         let pending = Arc::new(Mutex::new(Pending {
-            next_id: 1,
+            next_id: FIRST_REQUEST_ID,
             ..Pending::default()
         }));
         let (incoming_tx, incoming) = mpsc::channel(capacity);

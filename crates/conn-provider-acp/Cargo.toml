@@ -13,6 +13,8 @@ conn-provider.workspace = true
 conn-provider-support.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+# Signals the agent's process group at close and Stop, as T3 does; already in the tree.
+rustix = { workspace = true, features = ["process"] }
 tokio = { workspace = true, features = ["sync", "process", "io-util", "time", "rt", "macros"] }
 
 [lints]

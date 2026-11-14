@@ -100,13 +100,24 @@ impl Inbound {
     }
 }
 
-/// `{"jsonrpc":"2.0","id":…,"method":…,"params":…}` in the field order the T3 server writes.
+/// A request as effect-acp's RPC client writes it: `jsonrpc`, `method`, `params`, `id`, then
+/// the trace context Effect attaches to every request (`traceId`, `spanId`, `sampled`). T3's
+/// ids are fresh per request; ours are random too.
 pub(crate) fn request(id: i64, method: &str, params: J) -> String {
+    let trace = conn_provider_support::ids::uuid_v4().replace('-', "");
+    let span: String = conn_provider_support::ids::uuid_v4()
+        .replace('-', "")
+        .chars()
+        .take(16)
+        .collect();
     obj()
         .with("jsonrpc", "2.0")
-        .with("id", id)
         .with("method", method)
         .with("params", params)
+        .with("id", id)
+        .with("traceId", trace)
+        .with("spanId", span)
+        .with("sampled", true)
         .to_line()
 }
 
@@ -177,10 +188,12 @@ mod tests {
 
     #[test]
     fn writes_fields_in_order() {
-        assert_eq!(
-            request(1, "initialize", obj().with("protocolVersion", 2)),
-            r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":2}}"#
+        let line = request(1, "initialize", obj().with("protocolVersion", 2));
+        assert!(
+            line.starts_with(r#"{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":2},"id":1,"traceId":""#),
+            "{line}"
         );
+        assert!(line.ends_with(r#","sampled":true}"#), "{line}");
         assert_eq!(
             response(&RequestId::Text("x".into()), obj()),
             r#"{"jsonrpc":"2.0","id":"x","result":{}}"#

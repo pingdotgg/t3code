@@ -68,35 +68,6 @@ fn expected_failures(flavor: &str) -> BTreeMap<String, String> {
         .collect()
 }
 
-/// The TS `startTurn` input as the trait's `TurnInput`.
-fn turn_input(v: &Value) -> TurnInput {
-    let message = &v["message"];
-    TurnInput {
-        native_thread_has_turns: v["nativeThreadHasTurns"].as_bool(),
-        restart_continuation_of_run_id: None,
-        app_context: vec![],
-        app_thread: from_json(v["appThread"].clone()).unwrap(),
-        thread_id: from_json(v["threadId"].clone()).unwrap(),
-        run_id: from_json(v["runId"].clone()).unwrap(),
-        run_ordinal: u32::try_from(v["runOrdinal"].as_u64().unwrap()).unwrap(),
-        provider_turn_ordinal: u32::try_from(v["providerTurnOrdinal"].as_u64().unwrap()).unwrap(),
-        attempt_id: from_json(v["attemptId"].clone()).unwrap(),
-        root_node_id: from_json(v["rootNodeId"].clone()).unwrap(),
-        provider_thread: from_json(v["providerThread"].clone()).unwrap(),
-        message: conn_provider::TurnMessage {
-            message_id: from_json(message["messageId"].clone()).unwrap(),
-            text: message["text"].as_str().unwrap_or("").to_owned(),
-            attachments: vec![],
-            created_by: from_json(message["createdBy"].clone()).unwrap(),
-            creation_source: from_json(message["creationSource"].clone()).unwrap(),
-            scheduled_task_id: None,
-            sender_thread_id: None,
-        },
-        model_selection: from_json(v["modelSelection"].clone()).unwrap(),
-        runtime_policy: from_json(v["runtimePolicy"].clone()).unwrap(),
-    }
-}
-
 pub(crate) struct Run {
     pub events: Vec<Value>,
     pub script: Arc<Mutex<Script>>,
@@ -142,7 +113,7 @@ pub(crate) async fn replay(flavor: &'static Flavor, golden: &Value) -> Run {
         Ok(session::Spawned {
             writer,
             events,
-            stop: Box::new(|| Box::pin(async {})),
+            stop: Box::new(|_| Box::pin(async {})),
         })
     });
     let config = Config {
@@ -209,7 +180,7 @@ pub(crate) async fn replay(flavor: &'static Flavor, golden: &Value) -> Run {
                 }
             }
             "startTurn" => {
-                if let Err(e) = session.start_turn(turn_input(input)).await {
+                if let Err(e) = session.start_turn(crate::testing::turn_input(input)).await {
                     errors.push(format!("startTurn: {e}"));
                 }
             }

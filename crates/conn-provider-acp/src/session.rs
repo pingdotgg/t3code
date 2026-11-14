@@ -36,7 +36,17 @@ const STOP_CONFIRM_TIMEOUT: Duration = Duration::from_secs(10);
 pub(crate) struct Spawned {
     pub writer: mpsc::Sender<String>,
     pub events: mpsc::Receiver<ProcEvent>,
-    pub stop: Box<dyn FnOnce() -> BoxFuture<'static, ()> + Send>,
+    /// Ends the agent. `Kill` at session close, `Terminate` for Stop's hard restart.
+    pub stop: Box<dyn FnOnce(StopKind) -> BoxFuture<'static, ()> + Send>,
+}
+
+/// How a runtime ends (T3 `AcpSessionRuntime`, owned detached process group).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum StopKind {
+    /// The scope finalizer: SIGKILL to the process group, no end of input first.
+    Kill,
+    /// `terminateProcessGroup`: SIGTERM to the group, 1 s grace, then SIGKILL.
+    Terminate,
 }
 
 /// Starts the agent for this session (the real process, or a replay agent in tests).
@@ -59,7 +69,7 @@ pub(crate) struct Config {
 
 struct Runtime {
     connection: Connection,
-    stop: Option<Box<dyn FnOnce() -> BoxFuture<'static, ()> + Send>>,
+    stop: Option<Box<dyn FnOnce(StopKind) -> BoxFuture<'static, ()> + Send>>,
     generation: u64,
 }
 
@@ -842,7 +852,7 @@ impl Session for AcpSession {
                     let stop = state.runtime.take().and_then(|mut r| r.stop.take());
                     drop(state);
                     if let Some(stop) = stop {
-                        stop().await;
+                        stop(StopKind::Terminate).await;
                     }
                     Ok(())
                 }
@@ -936,7 +946,7 @@ impl Session for AcpSession {
                 .await;
             }
             if let Some(stop) = stop {
-                stop().await;
+                stop(StopKind::Kill).await;
             }
             let mut state = inner.state.lock().await;
             state.events = None;

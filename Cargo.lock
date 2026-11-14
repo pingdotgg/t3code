@@ -204,6 +204,7 @@ dependencies = [
  "conn-contract",
  "conn-provider",
  "conn-provider-support",
+ "rustix",
  "serde",
  "serde_json",
  "tokio",
