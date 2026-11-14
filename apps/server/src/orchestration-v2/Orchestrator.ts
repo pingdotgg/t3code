@@ -86,6 +86,7 @@ import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { expandAssistantCitationsForProvider } from "@t3tools/shared/assistantCitations";
 import { isAutoModelSelection, resolveAutoModelSelection } from "@t3tools/shared/autoModel";
+import { isAutoCoolingDown } from "./AutoCooldown.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { modelSwitchSince } from "./modelSwitch.ts";
 import { contextBoundaryOrdinal, isScheduledFreshRun } from "./contextBoundary.ts";
@@ -16878,11 +16879,13 @@ const withAutoModelRouting = Effect.fn("OrchestratorV2.withAutoModelRouting")(fu
         ? ((yield* orchestrator.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => null)))
             ?.modelSelection ?? null)
         : null;
+    const now = DateTime.toEpochMillis(yield* DateTime.now);
     const resolution = resolveAutoModelSelection({
       selection,
       providers: Option.isSome(registry) ? yield* registry.value.getProviders : [],
-      now: DateTime.toEpochMillis(yield* DateTime.now),
+      now,
       current,
+      blocked: (instanceId) => isAutoCoolingDown(instanceId, now),
     });
     if (resolution === null) {
       return yield* new OrchestratorCommandRejectedError({
