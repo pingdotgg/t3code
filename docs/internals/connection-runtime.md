@@ -17,22 +17,35 @@ client that can never connect retries all day. Offline states and authentication
 failures wait for a wakeup instead of spending attempts on unchanged conditions.
 
 Foregrounding, a network change, an explicit retry, and an offline report probe
-the established session, and only a failed probe reconnects. Offline reports are
-often wrong, for example for a loopback server. The OS can kill a suspended
-socket without a close event, so a probe still unanswered after 500 ms asks the
-host for its public descriptor over a fresh request, again each second until it
-answers. If the host answers while the socket delivers no frame, the socket is
-dead and is replaced, even while the network reports offline: at once on
-loopback and LAN, and 2.5 seconds after the check starts elsewhere, where one
-lost packet can stall a live socket. Without that evidence the probe deadline
-decides: 3 seconds on loopback and LAN routes and after a long mobile
-suspension, when the data on screen is stale; 15 seconds elsewhere, because a
-tailnet over DERP or a VPN can be slower than that on a live socket. A long
-suspension's probe that times out also replaces the socket regardless of the
-network report. The web and desktop foreground probe skips the fresh request,
-because a busy host can answer it before a queued probe. Foregrounding also
-wakes a pending retry immediately. A long suspension restarts an in-flight
-attempt; a short one leaves it alone.
+the established session instead of tearing it down. Offline reports are often
+wrong, for example for a loopback server. The OS can kill a suspended socket
+without a close event, so a probe still unanswered after 500 ms asks the host
+for its public descriptor over a fresh request, again each second until it
+answers. If the host answers while the socket delivers no frame, a replacement
+session starts connecting. The socket itself is declared dead, even while the
+network reports offline, immediately on loopback and LAN, and 2.5 seconds after
+the check starts elsewhere, where one lost packet can stall a live socket.
+Without that evidence the probe deadline decides: 3 seconds on loopback and LAN
+routes and after a long mobile suspension, when the data on screen is stale; 15
+seconds elsewhere, because a tailnet over DERP or a VPN can be slower than that
+on a live socket. A long suspension's probe that times out also replaces the
+socket regardless of the network report. The web and desktop foreground probe
+skips the fresh request, because a busy host can answer it before a queued
+probe. Foregrounding also wakes a pending retry immediately. A long suspension
+restarts an in-flight attempt; a short one leaves it alone. A long suspension
+also restarts a pending replacement, which may have stalled with the app.
+
+A replacement that connects first takes over the session directly, so
+subscriptions move without the client showing a reconnect, unless it landed on a
+worse route than the live socket; then it waits as the fallback. One still
+connecting when the socket is declared dead becomes the reconnect attempt; one
+that is not an upgrade closes when the live socket proves alive. A network
+change restarts or starts a replacement at once, except on loopback, because it
+can strand the socket's route, for example when leaving a LAN, and anything
+opened over the old path; that costs one extra connection per environment per
+change. A better route connects beside the live session the same way and takes
+over when it connects on that route; if it fails, the live session stays and the
+route waits five minutes.
 
 The [registry](../../packages/client-runtime/src/connection/registry.ts) scopes
 connections by environment. An involuntary disconnect retains the registration
