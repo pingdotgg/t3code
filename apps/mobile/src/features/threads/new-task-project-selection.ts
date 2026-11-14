@@ -117,6 +117,19 @@ export function resolveEnvironmentProjectMatch(
   );
 }
 
+/** Both projects have a known repository identity, and it is the same one. */
+export function isSameRepository(
+  left: EnvironmentProject | null,
+  right: EnvironmentProject | null,
+): boolean {
+  return (
+    left?.repositoryIdentity != null &&
+    right?.repositoryIdentity != null &&
+    repositoryGroupingKeyOf(left.repositoryIdentity) ===
+      repositoryGroupingKeyOf(right.repositoryIdentity)
+  );
+}
+
 export function resolveDraftProjectSelection(
   selectedProjectKey: string | null,
   projects: ReadonlyArray<EnvironmentProject>,
@@ -147,11 +160,35 @@ export function resolveDraftProjectSelection(
 
 type ProjectRef = { readonly environmentId: string; readonly projectId: string };
 
+/** The live copy of the thread list's filtered project a new thread starts in: the remembered one if it is a copy. */
+export function newTaskFilteredProject(
+  scope: HomeProjectScope,
+  preferredEnvironmentId: EnvironmentId | null,
+  connectedEnvironmentIds: ReadonlySet<EnvironmentId>,
+  lastProject: ProjectRef | undefined,
+): ProjectRef | undefined {
+  const live = scope.projects.filter((project) => project.archivedAt == null);
+  if (live.length === 0) return undefined;
+  const project =
+    live.find(
+      (candidate) =>
+        candidate.environmentId === lastProject?.environmentId &&
+        candidate.id === lastProject.projectId,
+    ) ??
+    getProjectScopeSelectionTarget(
+      { ...scope, projects: live },
+      preferredEnvironmentId,
+      connectedEnvironmentIds,
+    );
+  return { environmentId: project.environmentId, projectId: project.id };
+}
+
 export function newTaskDestination(options: {
   readonly projects: ReadonlyArray<EnvironmentProject>;
   readonly requestId: string;
   readonly useLastProject: boolean | undefined;
   readonly currentProject: ProjectRef | undefined;
+  readonly filteredProject: ProjectRef | undefined;
   readonly lastProject: ProjectRef | undefined;
 }) {
   const find = (ref: ProjectRef | undefined) =>
@@ -164,7 +201,9 @@ export function newTaskDestination(options: {
   const project =
     options.useLastProject === false
       ? undefined
-      : (find(options.currentProject) ?? (last?.archivedAt == null ? last : undefined));
+      : (find(options.currentProject) ??
+        find(options.filteredProject) ??
+        (last?.archivedAt == null ? last : undefined));
   return project
     ? {
         draft: {
