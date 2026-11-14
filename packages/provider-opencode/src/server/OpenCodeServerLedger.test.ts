@@ -56,7 +56,6 @@ const spawnGroupLeader = (args: ReadonlyArray<string>, script: string) =>
     if (pid === undefined) return yield* Effect.die("spawn failed");
     const grouped = yield* Deferred.make<true | string>();
     const exited = yield* Deferred.make<NodeJS.Signals | null>();
-    const printed = yield* Deferred.make<void>();
     child.once("exit", (_code, signal) => Deferred.doneUnsafe(exited, Effect.succeed(signal)));
     // "close" fires after stdout drains, so a guard line always lands first. It only fires before
     // "grouped" when the shell died without starting the script, such as from a signal.
@@ -77,12 +76,9 @@ const spawnGroupLeader = (args: ReadonlyArray<string>, script: string) =>
           Effect.succeed(`\`ps -o pgid= -p ${pid}\` printed ${JSON.stringify(output)}`),
         );
       }
-      if (line === "ready") Deferred.doneUnsafe(printed, Effect.void);
     });
     const result = yield* Deferred.await(grouped);
-    return result === true
-      ? { pid, exited: Deferred.await(exited), printed: Deferred.await(printed) }
-      : result;
+    return result === true ? { pid, exited: Deferred.await(exited) } : result;
   });
 
 // A pid colliding with a live group id is rare, so a few retries clear it. Repeated failures
@@ -152,24 +148,59 @@ describe.each(observedPlatforms)("OpenCodeServerLedger observing as %s", (platfo
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const stateDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-ledger-" });
-      // The inner shell prints once it has exec'd. Until then it still carries the wrapper's
-      // command line, and recording that would make the reaper skip the group as recycled.
+      const gate = path.join(stateDir, "gate");
+      const ready = path.join(stateDir, "ready");
+      NodeChildProcess.execFileSync("mkfifo", [gate, ready]);
+      // The wrapper's child is recorded before it execs and stopped after.
       const wrapper = yield* spawnGroup(
         SERVE_ARGS,
-        '/bin/sh -c "echo ready; sleep 600 & wait" "$0" "$@" & exit 0',
+        `(read _ < '${gate}'; exec /bin/sh -c 'echo > "${ready}"; sleep 600 & wait' "$0" "$@") & exit 0`,
       );
       yield* wrapper.exited;
-      yield* wrapper.printed;
       expect(groupExists(wrapper.pid)).toBe(true);
 
       yield* recordFromDeadServer(stateDir, wrapper);
       expect(yield* fs.readDirectory(path.join(stateDir, "opencode-servers"))).toHaveLength(1);
+      yield* fs.writeFileString(gate, "\n");
+      yield* fs.readFileString(ready);
 
       const restarted = yield* OpenCodeServerLedger.make({ stateDir });
       yield* restarted.reapOrphans;
 
       expect(groupExists(wrapper.pid)).toBe(false);
       expect(yield* fs.readDirectory(path.join(stateDir, "opencode-servers"))).toEqual([]);
+    }).pipe(provideHost),
+  );
+
+  it.live("stops a group recorded by an older server without serve arguments", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const stateDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-ledger-" });
+      const orphan = yield* spawnGroup(SERVE_ARGS);
+      yield* recordFromDeadServer(stateDir, orphan);
+      const entryPath = path.join(stateDir, "opencode-servers", `${orphan.pid}.json`);
+      const { args: _args, ...legacy } = JSON.parse(yield* fs.readFileString(entryPath));
+      yield* fs.writeFileString(entryPath, JSON.stringify(legacy));
+
+      const restarted = yield* OpenCodeServerLedger.make({ stateDir });
+      yield* restarted.reapOrphans;
+
+      expect(groupExists(orphan.pid)).toBe(false);
+    }).pipe(provideHost),
+  );
+
+  it.live("stops a group whose wrapper appends its own options", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const stateDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-ledger-" });
+      const orphan = yield* spawnGroup([...SERVE_ARGS, "--log-level=ERROR"]);
+      yield* recordFromDeadServer(stateDir, orphan);
+
+      const restarted = yield* OpenCodeServerLedger.make({ stateDir });
+      yield* restarted.reapOrphans;
+
+      expect(groupExists(orphan.pid)).toBe(false);
     }).pipe(provideHost),
   );
 
@@ -201,7 +232,7 @@ describe.each(observedPlatforms)("OpenCodeServerLedger observing as %s", (platfo
       yield* recordFromDeadServer(stateDir, unrelated);
       const entryPath = path.join(stateDir, "opencode-servers", `${unrelated.pid}.json`);
       const entry = yield* fs.readFileString(entryPath);
-      yield* fs.writeFileString(entryPath, entry.replace("--port=4096", "--port=4097"));
+      yield* fs.writeFileString(entryPath, entry.replaceAll("--port=4096", "--port=4097"));
 
       const restarted = yield* OpenCodeServerLedger.make({ stateDir });
       yield* restarted.reapOrphans;
