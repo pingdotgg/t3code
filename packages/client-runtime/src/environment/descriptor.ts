@@ -1,7 +1,11 @@
 import * as Effect from "effect/Effect";
 
 import { environmentEndpointUrl } from "./endpoint.ts";
-import { executeEnvironmentHttpRequest, makeEnvironmentHttpApiGroupClient } from "../rpc/http.ts";
+import {
+  executeEnvironmentHttpRequest,
+  hedgeIdempotentRequest,
+  makeEnvironmentHttpApiGroupClient,
+} from "../rpc/http.ts";
 
 const DEFAULT_REMOTE_REQUEST_TIMEOUT_MS = 10_000;
 
@@ -12,6 +16,6 @@ export const fetchRemoteEnvironmentDescriptor = Effect.fn(
   return yield* executeEnvironmentHttpRequest(
     environmentEndpointUrl(input.httpBaseUrl, "/.well-known/t3/environment"),
     input.timeoutMs ?? DEFAULT_REMOTE_REQUEST_TIMEOUT_MS,
-    client.descriptor(),
+    hedgeIdempotentRequest(client.descriptor()),
   );
 });
