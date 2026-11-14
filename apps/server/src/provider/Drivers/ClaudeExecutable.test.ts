@@ -78,13 +78,13 @@ describe("resolveClaudeSdkExecutablePath", () => {
     }),
   );
 
-  it.effect("returns the configured path when a shim has no known package entry", () =>
+  it.effect("keeps the resolved shim when it has no known package entry", () =>
     Effect.gen(function* () {
       expect(
         yield* resolveClaudeSdkExecutablePath("claude", {}).pipe(
           withWindowsResolution({ resolvedCommand: NPM_SHIM }),
         ),
-      ).toBe("claude");
+      ).toBe(NPM_SHIM);
     }),
   );
 });
