@@ -1258,7 +1258,7 @@ fn gateway_grace_ms(env: &[(String, String)], settings_base_url: Option<&str>) -
 }
 
 /// `hasClaudeManagedMcpConfig`.
-fn managed_mcp_config() -> bool {
+pub(crate) fn managed_mcp_config() -> bool {
     let path = if cfg!(target_os = "macos") {
         "/Library/Application Support/ClaudeCode/managed-mcp.json"
     } else {

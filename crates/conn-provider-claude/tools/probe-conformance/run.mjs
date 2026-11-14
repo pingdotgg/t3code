@@ -92,12 +92,55 @@ const SCENARIOS = [
     behaviour: signedIn({ tokenSource: "ANTHROPIC_API_KEY", apiKeySource: "ANTHROPIC_API_KEY" }, { usage: { rate_limits_available: false } }),
   },
   { name: "init-fails", instance: { driver: "claudeAgent" }, binary: "stub", behaviour: { ...signedIn(PRO), init: "error" } },
+  // Thread titles through Claude (`ClaudeTextGeneration.ts`): the CLI with `-p`, the prompt on
+  // stdin. T3 runs its own `generateThreadTitle`; ours gets T3's prompt and schema and runs
+  // `ClaudeProvider::generate_text`.
+  {
+    name: "title",
+    instance: { driver: "claudeAgent" },
+    binary: "stub",
+    title: { message: "Fix the login redirect after a password reset", modelSelection: { instanceId: "claudeAgent", model: "claude-haiku-4-5" } },
+    behaviour: { title: [{ code: 0, stdout: JSON.stringify({ type: "result", subtype: "success", is_error: false, structured_output: { title: "Login Redirect After Reset", needsRefinement: false } }) }] },
+  },
+  {
+    name: "title-options",
+    instance: { driver: "claudeAgent", environment: [{ name: "CLAUDE_EXTRA", value: "1" }] },
+    binary: "stub",
+    title: {
+      message: "Why does the build cache miss on CI?",
+      modelSelection: {
+        instanceId: "claudeAgent",
+        model: "opus",
+        options: [{ id: "effort", value: "high" }, { id: "fastMode", value: true }, { id: "ultracode", value: false }],
+      },
+    },
+    behaviour: { title: [{ code: 0, stdout: JSON.stringify([{ type: "system" }, { type: "result", structured_output: { title: "CI Build Cache Misses", needsRefinement: false } }]) }] },
+  },
+  {
+    name: "title-old-cli",
+    instance: { driver: "claudeAgent", config: { homePath: "<home>/claude-home" } },
+    binary: "stub",
+    title: { message: "Add dark mode", modelSelection: { instanceId: "claudeAgent", model: "claude-sonnet-4-6" } },
+    behaviour: {
+      title: [
+        { code: 1, stderr: "error: unknown option '--no-session-persistence'\n" },
+        { code: 0, stdout: JSON.stringify({ structured_output: { title: "Dark Mode", needsRefinement: false } }) },
+      ],
+    },
+  },
+  {
+    name: "title-error",
+    instance: { driver: "claudeAgent" },
+    binary: "stub",
+    title: { message: "Add dark mode", modelSelection: { instanceId: "claudeAgent", model: "claude-sonnet-4-6" } },
+    behaviour: { title: [{ code: 1, stdout: JSON.stringify({ is_error: true, result: "Credit balance is too low" }), stderr: "wrapper notice\n" }] },
+  },
 ].filter((s) => only.length === 0 || only.includes(s.name));
 
 const work = NodeFS.realpathSync(NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "conn-claude-probe-")));
 const home = NodePath.join(work, "home");
 NodeFS.mkdirSync(home, { recursive: true });
-const BASE_ENV = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home };
+const BASE_ENV = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home, TMPDIR: NodeOS.tmpdir() };
 
 const binaryFor = (scenario, side) => {
   const dir = NodePath.join(work, scenario.name, side);
@@ -130,6 +173,7 @@ const plan = SCENARIOS.map((scenario) => {
     tsInstance: withBinary(binaryFor(scenario, "ts")),
     rustInstance: withBinary(binaryFor(scenario, "rust")),
     tsOut: NodePath.join(dir, "ts-entry.json"),
+    title: scenario.title ?? null,
   };
 });
 
@@ -143,6 +187,10 @@ import * as Schema from "effect/Schema";
 import { ClaudeSettings, resolveProviderInstanceEnabled } from "@t3tools/contracts";
 import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
 import { checkClaudeProviderStatus, probeClaudeCapabilities } from "./ClaudeProvider.ts";
+import { makeClaudeTextGeneration } from "../textGeneration/ClaudeTextGeneration.ts";
+import { buildThreadTitlePrompt } from "@t3tools/provider-core/server/textGenerationPrompts";
+import { toJsonSchemaObject } from "@t3tools/provider-core/server/textGenerationUtils";
+import * as Exit from "effect/Exit";
 import { makeClaudeContinuationGroupKey, mergeClaudeProcessEnvironment } from "./Drivers/ClaudeHome.ts";
 
 const PLAN = __PLAN__;
@@ -158,6 +206,29 @@ it.live("conn claude probe: every scenario", () =>
         const enabled = resolveProviderInstanceEnabled(instance);
         const settings = { ...Schema.decodeSync(ClaudeSettings)(instance.config ?? {}), enabled };
         const processEnv = yield* mergeClaudeProcessEnvironment(settings, instance.environment, BASE_ENV);
+        if (scenario.title !== null) {
+          // What ours gets: T3's own prompt and output schema for this message.
+          const built = buildThreadTitlePrompt({ message: scenario.title.message });
+          const request = { prompt: built.prompt, outputSchema: JSON.stringify(toJsonSchemaObject(built.outputSchema)) };
+          const generation = yield* makeClaudeTextGeneration(settings, processEnv);
+          const exit = yield* Effect.scoped(
+            generation.generateThreadTitle({
+              cwd: scenario.cwd,
+              message: scenario.title.message,
+              modelSelection: scenario.title.modelSelection,
+            }),
+          ).pipe(Effect.exit);
+          fs.writeFileSync(
+            scenario.tsOut,
+            JSON.stringify({
+              request,
+              ok: Exit.isSuccess(exit),
+              title: Exit.isSuccess(exit) ? exit.value.title : null,
+              failure: Exit.isSuccess(exit) ? null : String((exit.cause as any)?.reasons?.[0]?.error?.detail ?? exit.cause),
+            }),
+          );
+          return;
+        }
         const draft = yield* checkClaudeProviderStatus(
           settings,
           (s: any) => probeClaudeCapabilities(s, processEnv, scenario.cwd),
@@ -217,7 +288,7 @@ NodeFS.writeFileSync(
   planFile,
   JSON.stringify({
     baseEnv: BASE_ENV,
-    scenarios: plan.map((p) => ({ name: p.name, instance: p.rustInstance, cwd: p.cwd })),
+    scenarios: plan.map((p) => ({ name: p.name, instance: p.rustInstance, cwd: p.cwd, title: p.title, tsOut: p.tsOut })),
   }),
 );
 const build = NodeChildProcess.spawnSync("cargo", ["build", "--quiet", "-p", "conn-provider-claude", "--example", "claude_probe"], {
@@ -261,6 +332,7 @@ const envDelta = (env, parent) =>
   );
 const scrub = (value, scenario, side) => {
   let text = JSON.stringify(value).replaceAll(NodePath.join(scenario.dir, side), "<stub>");
+  text = text.replace(/t3code-claude-title-[A-Za-z0-9]+/g, "t3code-claude-title-<rand>");
   text = text.replace(/"request_id":"[^"]*"/g, '"request_id":"<id>"');
   return JSON.parse(text);
 };
@@ -277,8 +349,9 @@ const tsParent = readJson(tsParentEnv) ?? {};
 const ours = readJson(rustOut) ?? {};
 let differ = 0;
 for (const scenario of plan) {
-  const t3 = stripStamps(readJson(scenario.tsOut), "ts", scenario);
-  const conn = stripStamps(ours[scenario.name], "rust", scenario);
+  const titleOf = (value) => (value === undefined ? undefined : canonical({ ok: value.ok, title: value.title, failure: value.failure }));
+  const t3 = scenario.title !== null ? titleOf(readJson(scenario.tsOut)) : stripStamps(readJson(scenario.tsOut), "ts", scenario);
+  const conn = scenario.title !== null ? titleOf(ours[scenario.name]) : stripStamps(ours[scenario.name], "rust", scenario);
   const problems = [];
   if (t3 === undefined) problems.push("T3 wrote no entry");
   if (conn === undefined) problems.push("ours wrote no entry");
@@ -296,7 +369,7 @@ for (const scenario of plan) {
     }
   }
   if (problems.length === 0) {
-    console.log(`SAME ${scenario.name} (${t3Runs.length} CLI run(s), status ${t3?.status})`);
+    console.log(`SAME ${scenario.name} (${t3Runs.length} CLI run(s), ${scenario.title !== null ? `title ${t3?.ok ? JSON.stringify(t3.title) : `failed: ${t3?.failure}`}` : `status ${t3?.status}`})`);
   } else {
     differ += 1;
     console.log(`DIFF ${scenario.name}\n  ${problems.join("\n  ")}`);

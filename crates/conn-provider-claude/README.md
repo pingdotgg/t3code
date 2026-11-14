@@ -22,6 +22,7 @@ in the Conn monorepo at the pinned commit.
 | `mapper/presentation` | Tool row titles, MCP tool source and icon (`mcpToolPresentation`), web search patterns and results |
 | `mapper/roster`    | The background roster: Bash and Monitor tasks on `pendingBackgroundTasks`, owed wakes, awaited tasks, the scheduled wakeup entry |
 | `mapper/wakes`     | What a wake reports (`backgroundWorkNotification`), the scheduled wakeup (`trackClaudeScheduledWakeup`) |
+| `text_generation`  | `Provider::generate_text`: the `claude` CLI directly, as `ClaudeTextGeneration.ts` |
 | `status`           | The `ServerProvider` entry, probed as `checkClaudeProviderStatus`: `claude --version`, the version-filtered catalog, the capabilities probe in the SDK host |
 | `tail`             | Live output of a foreground Bash call from the CLI's task file (`ClaudeTaskOutputTail.ts`) |
 | `attachments`      | Image blocks and attachment paths in a user message                                     |
@@ -128,7 +129,10 @@ Before the first probe the entry is T3's pending one. `CONN_CLAUDE_STATUS_PROBE=
 probe off; every check that starts the server sets it, so no check runs this machine's
 `claude`. Not ported: reset credits (Anthropic's API), the organization id (Claude's account
 file), the version advisory (a registry lookup), skills, custom models, applying effort caps.
-Proof: `tools/probe-conformance/run.mjs`, 10 scenarios against T3's own function.
+Proof: `tools/probe-conformance/run.mjs`, 10 status scenarios against T3's own function (and
+4 title scenarios against T3's `generateThreadTitle`). It runs T3's side with the sealed
+environment (`tools/sealed-env.mjs`, `sealedNodeEnv`): a throwaway HOME and no `ANTHROPIC_*`,
+`CLAUDE_*` or other variable of the shell.
 
 The SDK host starts for a probe and stops right after it (under 1 s with a stub CLI, 89 MiB
 RSS at its peak). The server probes at start, on a settings change, on `server.refreshProviders`,
@@ -235,9 +239,11 @@ Normalized in the comparison:
   that Claude resumes by itself is not shown as running again.
 - **Stop without a running turn:** the engine reaches the provider, but writes none of T3's
   interrupt request and result items for the settled run.
-- **Titles:** T3 asks Claude for a title with a direct CLI run (`ClaudeTextGeneration.ts`:
-  `claude -p --output-format json --json-schema … --tools "" --permission-mode dontAsk`, the
-  prompt on stdin, a fresh temp folder, 180 s). Not built; see `docs/status.md`.
+- **Titles:** none known. `Provider::generate_text` runs the CLI directly, as
+  `ClaudeTextGeneration.ts` does (`text_generation.rs`): `claude -p --output-format json
+  --json-schema … --tools "" --permission-mode dontAsk`, the prompt on stdin, a fresh temp
+  folder, 180 s, a retry without `--no-session-persistence` for CLIs before 2.0.63. No SDK host.
+  Proven by the four `title*` scenarios of `tools/probe-conformance`.
 - **Elicitation:** only field-less forms; TS fills simple forms.
 - **No `/mcp` instructions text** in this crate: the server passes it as `mcp_instructions`.
 

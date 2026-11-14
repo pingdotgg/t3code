@@ -33,7 +33,21 @@ for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {
   });
 }
 
-if (argv.includes("--version")) {
+if (argv.includes("-p")) {
+  // A text generation run: the prompt on stdin, one JSON answer on stdout. `title` lists the
+  // answers of the runs in order.
+  let prompt = "";
+  process.stdin.on("data", (chunk) => (prompt += chunk));
+  process.stdin.on("end", () => {
+    record.stdin.push(prompt);
+    const runs = (behaviour.title ?? []);
+    const answer = runs[Math.min(index, runs.length - 1)] ?? { code: 1, stderr: "no answer" };
+    save();
+    if (answer.stdout) process.stdout.write(answer.stdout);
+    if (answer.stderr) process.stderr.write(answer.stderr);
+    process.exitCode = answer.code ?? 0;
+  });
+} else if (argv.includes("--version")) {
   const version = behaviour.version ?? {};
   if (version.hang === true) {
     setInterval(() => {}, 1000);

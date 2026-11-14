@@ -22,6 +22,7 @@ pub mod protocol;
 pub mod session;
 pub mod status;
 mod tail;
+pub mod text_generation;
 
 /// Locks a std mutex. A poisoned lock means a thread panicked while it held the lock: a bug.
 /// With `panic = "abort"` a release build stops at the panic itself.
@@ -132,6 +133,31 @@ impl Provider for ClaudeProvider {
     fn server_provider_entry(&self, checked_at: &str) -> Option<Value> {
         let probed = lock(&self.status).clone();
         Some(probed.unwrap_or_else(|| pending_entry(self.instance_id.as_str(), checked_at)))
+    }
+
+    /// `ClaudeTextGeneration`: the `claude` CLI directly, outside any session and the SDK
+    /// host (see [`text_generation`]).
+    fn generate_text(
+        &self,
+        request: conn_provider::TextGenerationRequest,
+    ) -> BoxFuture<'_, ProviderResult<Value>> {
+        Box::pin(async move {
+            let config_dir = launch::config_dir(&self.config, &serde_json::Map::new());
+            let entrypoint =
+                tokio::task::spawn_blocking(move || launch::settings_entrypoint(&config_dir))
+                    .await
+                    .unwrap_or_default();
+            let env = launch::process_environment(
+                &self.config,
+                conn_support::login_env::child_env(),
+                entrypoint,
+            );
+            let managed = tokio::task::spawn_blocking(status::managed_mcp_config)
+                .await
+                .unwrap_or(false);
+            let program = self.config.binary.to_string_lossy().into_owned();
+            text_generation::generate(&program, &env, managed, request).await
+        })
     }
 
     /// `checkClaudeProviderStatus` with this instance's settings: `claude --version`, then

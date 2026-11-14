@@ -453,6 +453,20 @@ pub fn query_env(
     env
 }
 
+/// `mergeClaudeProcessEnvironment`, then `makeClaudeEnvironment`: the Claude process
+/// environment outside a turn (no thread id), as name and value pairs.
+pub fn process_environment(
+    config: &ClaudeConfig,
+    host: impl IntoIterator<Item = (String, String)>,
+    settings_entrypoint: Option<String>,
+) -> Vec<(String, String)> {
+    let mut env = query_env(config, "", false, host, settings_entrypoint);
+    env.remove(AGENT_THREAD_ENV);
+    env.into_iter()
+        .filter_map(|(k, v)| Some((k, v.as_str()?.to_owned())))
+        .collect()
+}
+
 /// The config directory T3 reads Claude's settings from (`resolveClaudeConfigDirPath`).
 pub fn config_dir(config: &ClaudeConfig, env: &Map<String, Value>) -> PathBuf {
     if let Some(home) = &config.home_path {

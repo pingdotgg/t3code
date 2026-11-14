@@ -42,6 +42,19 @@ pub async fn spawn_and_collect(
     cwd: Option<&Path>,
     timeout: Duration,
 ) -> Result<Option<CommandOutput>, CommandError> {
+    run_collect(program, args, environment, cwd, None, timeout).await
+}
+
+/// As [`spawn_and_collect`], with `stdin` written to the child and then closed (Effect's
+/// spawner with `stdin: { stream }`).
+pub async fn run_collect(
+    program: &str,
+    args: &[&str],
+    environment: &[(String, String)],
+    cwd: Option<&Path>,
+    stdin: Option<&str>,
+    timeout: Duration,
+) -> Result<Option<CommandOutput>, CommandError> {
     let mut command = tokio::process::Command::new(program);
     command
         .args(args)
@@ -61,17 +74,29 @@ pub async fn spawn_and_collect(
         _ => CommandError::Failed(error.to_string()),
     })?;
     let pid = child.id();
-    // Held open until the child ends, as Effect's spawner leaves an unused stdin pipe.
-    let stdin = child.stdin.take();
+    // Without input, held open until the child ends, as Effect's spawner leaves an unused
+    // stdin pipe; with input, written and closed.
+    let input = stdin.map(str::to_owned);
+    let (held, fed) = match input {
+        Some(_) => (None, child.stdin.take()),
+        None => (child.stdin.take(), None),
+    };
+    let feed = async move {
+        if let (Some(text), Some(mut pipe)) = (input, fed) {
+            use tokio::io::AsyncWriteExt;
+            let _ = pipe.write_all(text.as_bytes()).await;
+            let _ = pipe.shutdown().await;
+        }
+    };
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     let collect = async {
-        let (out, err, status) =
-            tokio::join!(read_capped(stdout), read_capped(stderr), child.wait());
+        let (_, out, err, status) =
+            tokio::join!(feed, read_capped(stdout), read_capped(stderr), child.wait());
         (out, err, status)
     };
     let result = tokio::time::timeout(timeout, collect).await;
-    drop(stdin);
+    drop(held);
     match result {
         Ok((stdout, stderr, status)) => {
             let status = status.map_err(|e| CommandError::Failed(e.to_string()))?;

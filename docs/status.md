@@ -560,21 +560,28 @@ in process, so it has no such step. Under load (a release build beside it, load 
 proof is the test and the trace (four fake hosts for two turns, each `fn` host killed after
 3 s without its EOF save).
 
-Still failing for Claude (2): `claude_background_subagent_after_root` (timing: T3's wake run
-queues behind run 1 while its checkpoint capture is pending; ours finds run 1 done and starts
-unqueued, so no `run.updated` "starting" is stored; every other assertion holds) and
-`queued_turn` (T3's test clock).
+After the merge of `main` (6ad65f2) Claude passes **34 of 34** fixture variants: the last one,
+`claude_background_subagent_after_root`, passes with `main`'s checkpoint capture in the thread's
+lane (the wake run now queues behind run 1, as in T3), and `queued_turn` with `main`'s message
+order.
 
-Not built: **titles through Claude.** T3 does not use the SDK for them:
+**Titles through Claude (built after the merge).** T3 does not use the SDK for them:
 `ClaudeTextGeneration.ts` runs the CLI directly (`claude -p --output-format json --json-schema
 <schema> --model <api model> [--effort] --settings <json> --tools "" --disable-slash-commands
---no-session-persistence [--strict-mcp-config] --permission-mode dontAsk`, the prompt on
-stdin, a fresh temp folder, 180 s, a retry without `--no-session-persistence` for CLIs before
-2.0.63). So the T3 way needs no SDK host. The plan: an additive `Provider::generate_text`
-(operation, prompt, JSON schema, model selection, cwd → the structured output) that the title
-flow calls when the title model is an agent provider; Claude runs the CLI as above, Codex its
-own CLI call; one stub comparison per provider of argv, environment and stdin. The schema
-string must come from T3 (a generator), since the CLI gets it verbatim.
+--no-session-persistence [--strict-mcp-config] --permission-mode dontAsk`, the prompt on stdin,
+a fresh temp folder, 180 s, a retry without `--no-session-persistence` for CLIs before 2.0.63).
+`ClaudeProvider::generate_text` does the same (`text_generation.rs`); no SDK host, so no memory
+cost. Proven: 4 title scenarios in `tools/probe-conformance` (T3's own `generateThreadTitle`
+against ours on the stub CLI: argv, environment, folder, stdin and the answer or failure
+equal), beside the 10 status scenarios.
+
+**Sealed proofs.** The probe proof's T3 side runs with `sealedNodeEnv` (`tools/sealed-env.mjs`:
+only what node needs, a throwaway HOME); a run with `ANTHROPIC_BASE_URL=http://canary.invalid`,
+`CLAUDE_CANARY` and `SHELL_CANARY` in the shell shows none of them in its output or files. The
+fixture replay, `gen-catalog`, `capture-ts` and the T3 transcript replay are sealed the same way
+(before, they passed the shell's environment and the real HOME; our provider read the real
+`~/.claude/settings.json` for `env.CLAUDE_CODE_ENTRYPOINT` in both replays). `sealedEnv` now also
+drops `ANTHROPIC_*`, `CLAUDE_*` and `CLAUDECODE`.
 
 ## Source control, part 4 (2026-11-14)
 
