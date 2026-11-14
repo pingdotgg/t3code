@@ -357,9 +357,11 @@ export const layerExecutor: Layer.Layer<
                           : { linkedSender: message.linkedSender }),
                       })
                       .pipe(
-                        // A disabled instance cannot retry this completed turn; its result stands.
-                        Effect.catchTags({
-                          ThreadManagementProviderInstanceDisabledError: (disabledError) =>
+                        // A disabled instance leaves the message in no run, so the steer still
+                        // fails: a succeeded steer means the message reached the agent.
+                        Effect.tapErrorTag(
+                          "ThreadManagementProviderInstanceDisabledError",
+                          (disabledError) =>
                             Effect.logInfo(
                               "orchestration-v2.effect-worker.steer-follow-up-disabled",
                               {
@@ -369,7 +371,7 @@ export const layerExecutor: Layer.Layer<
                                 instanceId: disabledError.instanceId,
                               },
                             ),
-                        }),
+                        ),
                       );
                   }),
                 ),

@@ -2167,6 +2167,8 @@ it.effect.each(["delivered", "failed"] as const)(
   (delivery) =>
     Effect.gen(function* () {
       const name = `settle-after-promoted-steer-${delivery}`;
+      // The delivered steer lands only after the run completed, as a slow provider call would.
+      const releaseSteer = yield* Deferred.make<void>();
       const { events, started, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
         name,
         false,
@@ -2176,7 +2178,7 @@ it.effect.each(["delivered", "failed"] as const)(
         undefined,
         (turn) =>
           delivery === "delivered"
-            ? Effect.void
+            ? Deferred.await(releaseSteer)
             : Effect.fail(
                 new ProviderAdapter.ProviderAdapterSteerRunError({
                   driver,
@@ -2221,19 +2223,13 @@ it.effect.each(["delivered", "failed"] as const)(
           queuedRunId: queuedRun.id,
           targetRunId: first.runId,
         });
-        yield* worker.drain();
+        const steering = yield* worker.drain().pipe(Effect.forkScoped);
         // A failed steer retries until the worker gives up, and no fallback run takes the message.
-        for (let retry = 1; delivery === "failed" && retry < 5; retry++) {
+        if (delivery === "failed") yield* Fiber.join(steering);
+        for (let retry = 2; delivery === "failed" && retry <= 5; retry++) {
           yield* TestClock.adjust(Duration.minutes(1));
           yield* worker.drain();
         }
-        assert.deepEqual(
-          (yield* outbox.listByCommandId(CommandId.make("promote"))).map((effect) => [
-            effect.request.type,
-            effect.status,
-          ]),
-          [["provider-turn.steer", delivery === "delivered" ? "succeeded" : "failed"]],
-        );
 
         const ended = yield* orchestrator.streamDomainEvents.pipe(
           Stream.filter(
@@ -2264,8 +2260,25 @@ it.effect.each(["delivered", "failed"] as const)(
         });
         yield* Fiber.join(ended);
         yield* worker.drain();
+        // The run's checkpoint capture queues behind the steer on the thread's effect lane, so the
+        // pending settle cannot see a completed run while the steer is still unresolved.
+        if (delivery === "delivered") {
+          assert.deepEqual(
+            (yield* orchestrator.getThreadProjection(threadId)).runs.map((run) => run.status),
+            ["waiting", "cancelled"],
+          );
+        }
+        yield* Deferred.succeed(releaseSteer, undefined);
+        yield* Fiber.join(steering);
         yield* Fiber.join(settleRequest);
 
+        assert.deepEqual(
+          (yield* outbox.listByCommandId(CommandId.make("promote"))).map((effect) => [
+            effect.request.type,
+            effect.status,
+          ]),
+          [["provider-turn.steer", delivery === "delivered" ? "succeeded" : "failed"]],
+        );
         const projection = yield* orchestrator.getThreadProjection(threadId);
         assert.deepEqual(
           projection.runs.map((run) => run.status),

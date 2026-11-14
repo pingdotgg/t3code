@@ -3,7 +3,10 @@ import {
   CheckpointId,
   CheckpointScopeId,
   CommandId,
+  MessageId,
   NodeId,
+  ProjectId,
+  ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
@@ -88,6 +91,7 @@ function layerExecutorFor(input: {
   readonly threads?: Partial<ThreadManagementService.ThreadManagementService["Service"]>;
   readonly continueAfterRestart?: boolean;
   readonly interrupt?: ProviderTurnControlService.ProviderTurnControlServiceV2Shape["interrupt"];
+  readonly steer?: ProviderTurnControlService.ProviderTurnControlServiceV2Shape["steer"];
   readonly rollback?: CheckpointRollbackService.CheckpointRollbackServiceV2Shape["execute"];
   readonly respond?: RuntimeRequestService.RuntimeRequestServiceV2["Service"]["respond"];
 }) {
@@ -97,7 +101,7 @@ function layerExecutorFor(input: {
       ProviderTurnControlService.ProviderTurnControlServiceV2,
       ProviderTurnControlService.ProviderTurnControlServiceV2.of({
         interrupt: input.interrupt ?? (() => Effect.void),
-        steer: () => Effect.void,
+        steer: input.steer ?? (() => Effect.void),
         applyModelSelection: () => Effect.void,
         interruptAndAwaitTerminal: (request) =>
           record(
@@ -706,6 +710,67 @@ it.effect("settles a delegated child once its restart continuation fails for goo
       assert.deepEqual(yield* Ref.get(recovered), [threadId]);
     }).pipe(Effect.provide(layer));
   }),
+);
+
+it.effect.each([false, true])(
+  "a steer whose fallback run a disabled instance refuses still fails (declined: %s)",
+  (steerDeclined) =>
+    Effect.gen(function* () {
+      const timestamp = DateTime.formatIso(yield* DateTime.now);
+      const messageId = MessageId.make("message:effect-worker-steer");
+      const layer = layerExecutorFor({
+        events: yield* Ref.make<ReadonlyArray<string>>([]),
+        steer: () =>
+          Effect.fail(
+            new ProviderTurnControlService.ProviderTurnControlError({
+              threadId,
+              operation: "steer",
+              providerTurnId,
+              ...(steerDeclined ? { steerDeclined } : { turnCompleted: true }),
+            }),
+          ),
+        threads: {
+          getThreadRecords: () =>
+            Effect.succeed({
+              messages: [{ id: messageId, runId, text: "steer", attachments: [] }],
+              runs: [{ id: runId }],
+            } as never),
+          dispatch: () =>
+            Effect.fail(
+              new ThreadManagementService.ThreadManagementProviderInstanceDisabledError({
+                projectId: ProjectId.make("project:effect-worker-steer"),
+                instanceId: ProviderInstanceId.make("codex"),
+              }),
+            ),
+        },
+      });
+      const effect: EffectOutbox.OrchestrationEffectV2 = {
+        id: "effect:steer",
+        commandId: CommandId.make("command:steer"),
+        threadId,
+        request: {
+          type: "provider-turn.steer",
+          providerSessionId: oldSessionId,
+          providerThreadId,
+          providerTurnId,
+          messageId,
+        },
+        status: "running",
+        attemptCount: 1,
+        availableAt: timestamp,
+        leaseOwner: "test-worker",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        completedAt: null,
+        lastError: null,
+      };
+      yield* Effect.gen(function* () {
+        const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
+        assert.isTrue(
+          Exit.isFailure(yield* Effect.exit(executor.execute(effect, { willRetry: false }))),
+        );
+      }).pipe(Effect.provide(layer));
+    }),
 );
 
 it.effect.each(["confirmed", "unconfirmed", "failed"] as const)(
