@@ -6,6 +6,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -31,17 +32,25 @@ import {
   waitForRun,
 } from "./thread.ts";
 
+const authMock = vi.hoisted(() => ({
+  issuedAccess: [] as Array<string>,
+  issuedTtlMinutes: [] as Array<number | undefined>,
+}));
+
 vi.mock("../auth/EnvironmentAuth.ts", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../auth/EnvironmentAuth.ts")>();
   return {
     ...actual,
     layerRuntime: Layer.mock(actual.EnvironmentAuth)({
-      issueMcpClientSession: () =>
-        Effect.map(DateTime.now, (expiresAt) => ({
+      issueMcpClientSession: (input) => {
+        authMock.issuedAccess.push(input.access);
+        authMock.issuedTtlMinutes.push(input.ttl && Duration.toMinutes(input.ttl));
+        return Effect.map(DateTime.now, (expiresAt) => ({
           sessionId: AuthSessionId.make("test-session"),
           token: "synthetic-token",
           expiresAt,
-        })),
+        }));
+      },
       revokeSession: () => Effect.succeed(true),
     }),
   };
@@ -164,6 +173,47 @@ it.effect("does not sign in to whatever took over a dead server's port", () =>
 
     assert.strictEqual(error._tag, "ThreadServerNotRunningError");
     assert.strictEqual(session.mock.calls.length, 0);
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        NetService.layer,
+        ConfigProvider.layer(ConfigProvider.fromEnv({ env: { T3CODE_PORT: "3773" } })),
+      ),
+    ),
+  ),
+);
+
+it.effect("list and show sign in read-only, so a killed CLI leaves no write credential", () =>
+  Effect.gen(function* () {
+    authMock.issuedAccess.length = 0;
+    authMock.issuedTtlMinutes.length = 0;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-thread-read-access-" });
+    yield* persistServerRuntimeState({
+      path: path.join(baseDir, "userdata", "server-runtime.json"),
+      state: yield* makePersistedServerRuntimeState({
+        config: { host: "127.0.0.1", devUrl: undefined },
+        port: 3_773,
+      }),
+    });
+    using _session = vi
+      .spyOn(McpBridge, "mcpToolSession")
+      .mockReturnValue(Effect.die("only the issued session matters here"));
+
+    for (const args of [["list"], ["show", threadId]]) {
+      yield* Command.runWith(threadCommand, { version: "0.0.0" })([
+        ...args,
+        "--base-dir",
+        baseDir,
+      ]).pipe(Effect.exit);
+    }
+
+    assert.deepStrictEqual(authMock.issuedAccess, ["read-only", "read-only"]);
+    assert.deepStrictEqual(authMock.issuedTtlMinutes, [10, 10]);
   }).pipe(
     Effect.scoped,
     Effect.provide(
