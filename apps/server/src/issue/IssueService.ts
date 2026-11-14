@@ -60,7 +60,6 @@ function trackerDetail(error: IssueTrackerError): string {
 
 /** One project's resolved tracker: which driver, where it is served from, and its container. */
 interface ProjectTrackerBinding {
-  readonly canonicalKey: string;
   readonly tracker: IssueTrackerKind;
   readonly host: string;
   readonly scope: string;
@@ -82,7 +81,6 @@ function resolveGitHostBinding(project: OrchestrationProjectShell): ProjectTrack
   const kind = identity?.provider;
   if (!identity || kind === undefined || kind === "unknown" || scope === null) return null;
   return {
-    canonicalKey: identity.canonicalKey,
     tracker: IssueTrackerKind.make(kind),
     host: sourceControlDefinitions.changeRequestHost(identity, kind),
     scope,
@@ -244,10 +242,12 @@ const make = Effect.gen(function* () {
   const list: IssueService["Service"]["list"] = Effect.fn("IssueService.list")(function* (input) {
     const { supported, unimplemented } = yield* listProjects(input);
     const limit = input.limit ?? DEFAULT_LIST_LIMIT;
-    // Worktrees of one repository are separate projects; read each scope once.
+    // Worktrees of one repository are separate projects, and every repository of an Azure
+    // DevOps project shares its work items; read each scope once.
     const scopes = new Map<string, SupportedProject>();
     for (const project of supported) {
-      if (!scopes.has(project.canonicalKey)) scopes.set(project.canonicalKey, project);
+      const key = listCursorKey(project.host, project.scope).toLowerCase();
+      if (!scopes.has(key)) scopes.set(key, project);
     }
     const continuing = input.cursors;
     const viewers = new Map<string, string>();

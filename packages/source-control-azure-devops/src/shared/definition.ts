@@ -143,6 +143,15 @@ export const definition = defineSourceControl({
     const name = identity.name || segments.at(-1);
     return name ? decodeUrlPathSegment(name) : null;
   },
+  // Work items belong to the project: `organization/project` out of the remote's
+  // `organization/project/_git/repository`.
+  issueScope: (identity) => {
+    const segments = (identity.displayName ?? "").split("/").filter((part) => part !== "");
+    const [organization, project] = segments.indexOf("_git") === 2 ? segments : [];
+    return organization && project
+      ? `${decodeUrlPathSegment(organization)}/${decodeUrlPathSegment(project)}`
+      : null;
+  },
   repositoryKeyFromRemote,
   canonicalRepositoryKey,
   isChangeRequestInRepository: (identity, link) => {

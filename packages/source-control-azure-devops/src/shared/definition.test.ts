@@ -193,3 +193,13 @@ describe("Azure DevOps repository selector", () => {
     ).toBe("checkout (eu)");
   });
 });
+
+describe("Azure DevOps issue scope", () => {
+  it("places work items in the project rather than the repository", () => {
+    const kind = SourceControlProviderKind.make("azure-devops");
+    expect(
+      definition.issueScope?.({ provider: kind, displayName: "acme/Web%20App/_git/web" }),
+    ).toBe("acme/Web App");
+    expect(definition.issueScope?.({ provider: kind, displayName: "web" })).toBeNull();
+  });
+});
