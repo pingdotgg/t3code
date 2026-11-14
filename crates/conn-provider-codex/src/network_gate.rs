@@ -313,10 +313,11 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn gives_up_after_the_budget() {
-        let port = {
-            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-            listener.local_addr().unwrap().port()
-        };
+        // Bound but not listening: a connection is refused, and no other process can take the
+        // port while the test runs (a freed port was taken by another test run under load).
+        let held = tokio::net::TcpSocket::new_v4().unwrap();
+        held.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let port = held.local_addr().unwrap().port();
         let result = wait_for_hosts(
             &[host("127.0.0.1", port)],
             Duration::from_millis(400),

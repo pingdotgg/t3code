@@ -688,11 +688,11 @@ mod tests {
         );
         assert_eq!(item.version, some("alpha-cli version test"), "version line");
         assert_eq!(item.auth.account, some("alpha-cli-user"), "auth parsed");
-        assert_eq!(
-            stubs.log("alpha-cli"),
-            "argv --version\nargv auth status\n",
-            "argv"
-        );
+        // The two probes run at the same time, so the order of their log records is not fixed.
+        let log = stubs.log("alpha-cli");
+        let mut runs: Vec<&str> = log.lines().collect();
+        runs.sort_unstable();
+        assert_eq!(runs, ["argv --version", "argv auth status"], "argv");
 
         let missing = probe_cli(ctx, &spec("conn-sc-absent-cli"), signed_in).await;
         assert_eq!(
