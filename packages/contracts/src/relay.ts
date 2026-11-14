@@ -37,6 +37,8 @@ export const RelayAgentAwarenessPreferences = Schema.Struct({
   notifyOnInput: Schema.Boolean,
   notifyOnCompletion: Schema.Boolean,
   notifyOnFailure: Schema.Boolean,
+  // Absent means allowed; only iOS reports this.
+  soundsEnabled: Schema.optional(Schema.Boolean),
 });
 export type RelayAgentAwarenessPreferences = typeof RelayAgentAwarenessPreferences.Type;
 
