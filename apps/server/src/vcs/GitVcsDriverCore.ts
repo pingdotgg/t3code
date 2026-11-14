@@ -1,4 +1,5 @@
 import * as Cache from "effect/Cache";
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
 import * as Digest from "effect/crypto/Digest";
@@ -4727,6 +4728,24 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     yield* refresh;
   });
 
+  // The branch is proof of ownership: this call created it, so a worktree on it at this path is
+  // this call's own, never a concurrent creator's that claimed the same folder.
+  const removeCancelledWorktree = Effect.fn("removeCancelledWorktree")(function* (
+    cwd: string,
+    branch: string,
+    worktreePath: string,
+  ) {
+    const { stdout } = yield* executeWorktreeList("GitVcsDriver.createWorktree.cancel", cwd, []);
+    const registered = parseWorktreeBranchPaths(stdout).get(branch);
+    if (registered === undefined) return;
+    // Git records the real path.
+    const target = yield* fileSystem
+      .realPath(worktreePath)
+      .pipe(Effect.orElseSucceed(() => path.resolve(worktreePath)));
+    if (path.resolve(cwd, registered) !== target) return;
+    yield* removeWorktree({ cwd, path: worktreePath, force: true });
+  });
+
   const createWorktree: GitVcsDriver.GitVcsDriver["Service"]["createWorktree"] = Effect.fn(
     "createWorktree",
   )(function* (input, options) {
@@ -4831,6 +4850,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           : {}),
       },
     );
+    // Until the caller claims the worktree, a cancel leaves its cleanup to this call.
+    let claimed = false;
+    const onWorktreeClaimed = progress?.onWorktreeClaimed;
     yield* (
       fastCheckout
         ? checkoutCache
@@ -4838,9 +4860,32 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             .pipe(Effect.flatMap((cloned) => (cloned ? Effect.void : stockCheckout)))
         : stockCheckout
     ).pipe(
-      Effect.onError(() =>
-        newRefName
-          ? deleteLocalBranch({ cwd: input.cwd, refName: newRefName, force: true }).pipe(
+      Effect.andThen(
+        fastCheckout ? checkoutCache.schedule(worktreePath, cacheGeneration) : Effect.void,
+      ),
+      Effect.andThen(
+        onWorktreeClaimed
+          ? Effect.uninterruptible(
+              onWorktreeClaimed(worktreePath).pipe(
+                Effect.andThen(
+                  Effect.sync(() => {
+                    claimed = true;
+                  }),
+                ),
+              ),
+            )
+          : Effect.void,
+      ),
+      Effect.onError((cause) =>
+        newRefName && !claimed
+          ? // A failed hook keeps its worktree, as Git does; only a cancel abandons it.
+            (Cause.hasInterrupts(cause)
+              ? removeCancelledWorktree(input.cwd, newRefName, worktreePath)
+              : Effect.void
+            ).pipe(
+              Effect.andThen(
+                deleteLocalBranch({ cwd: input.cwd, refName: newRefName, force: true }),
+              ),
               Effect.catch((cause) =>
                 Effect.logWarning("could not remove the branch of a failed worktree", { cause }),
               ),
@@ -4848,13 +4893,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           : Effect.void,
       ),
     );
-    if (fastCheckout) {
-      yield* checkoutCache.schedule(worktreePath, cacheGeneration);
-    }
-
-    if (progress?.onWorktreeClaimed) {
-      yield* progress.onWorktreeClaimed(worktreePath);
-    }
 
     // worktree add leaves submodules empty, potentially omitting project skills, tools or source.
     const hasSubmodules = yield* fileSystem

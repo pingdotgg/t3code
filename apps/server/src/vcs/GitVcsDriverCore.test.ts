@@ -5405,6 +5405,63 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
   });
 
   describe("worktree operations", () => {
+    it.effect("removes its worktree and branch when cancelled before the claim", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const worktreePath = path.join(yield* makeTmpDir("git-worktrees-"), "cancelled");
+        const hookPath = path.join(cwd, ".git/hooks/post-checkout");
+        // The hook reports a total no real checkout of this repository has, then blocks on a FIFO.
+        const gate = path.join(yield* makeTmpDir("git-hook-gate-"), "gate");
+        assert.equal(Number(yield* spawner.exitCode(ChildProcess.make("mkfifo", [gate]))), 0);
+        yield* writeTextFile(
+          cwd,
+          ".git/hooks/post-checkout",
+          `#!/bin/sh\nprintf 'Updating files:  50%% (1/1000)\\n' >&2\nread ignored < '${gate}'\n`,
+        );
+        yield* fs.chmod(hookPath, 0o755);
+        const hookStarted = yield* Deferred.make<void>();
+        let claims = 0;
+        const input = { cwd, path: worktreePath, refName: initialBranch, newRefName: "t3/cancel" };
+        const worktrees = git(cwd, ["worktree", "list", "--porcelain"]);
+
+        const cancelled = yield* driver
+          .createWorktree(input, {
+            progress: {
+              onCheckoutProgress: ({ total }) =>
+                total === 1000 ? Deferred.succeed(hookStarted, undefined) : Effect.void,
+              onWorktreeClaimed: () => Effect.sync(() => void claims++),
+            },
+          })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(hookStarted);
+        assert.include(yield* worktrees, worktreePath);
+        yield* Fiber.interrupt(cancelled);
+
+        assert.equal(claims, 0);
+        assert.notInclude(yield* worktrees, worktreePath);
+        assert.equal(yield* git(cwd, ["branch", "--list", "t3/cancel"]), "");
+        assert.isFalse(yield* fs.exists(worktreePath));
+
+        // A retry gets the same path and branch, and a claimed worktree outlives a later cancel.
+        yield* fs.remove(hookPath);
+        const claimed = yield* Deferred.make<void>();
+        const retry = yield* driver
+          .createWorktree(input, {
+            progress: { onWorktreeClaimed: () => Deferred.succeed(claimed, undefined) },
+          })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(claimed);
+        yield* Fiber.interrupt(retry);
+        assert.include(yield* worktrees, worktreePath);
+        assert.equal(yield* git(worktreePath, ["branch", "--show-current"]), "t3/cancel");
+      }),
+    );
+
     it.effect("uses parallel checkout without skipping filters or hooks", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
