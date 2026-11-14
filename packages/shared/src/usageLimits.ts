@@ -1025,3 +1025,46 @@ export function collectProviderUsageLimits(
   }
   return { createdAt: DateTime.formatIso(DateTime.makeUnsafe(now)), accounts, notices };
 }
+
+/**
+ * One instance's limits, for Thread details. Hub accounts carry no instance, so one stands in for
+ * unusable native limits only when it is on the instance's login, or when that login is unknown and
+ * it is the only account /usage-limits lists. Any other report entry may be a different login.
+ */
+export function collectInstanceUsageLimits(
+  instanceId: ProviderInstanceId,
+  providers: readonly ServerProvider[],
+  sources: UsageLimitSourceSnapshots,
+  now: number,
+): ServerProviderUsageLimits | undefined {
+  const report = collectProviderUsageLimits(instanceId, providers, sources, now);
+  const selected = providers.find((provider) => provider.instanceId === instanceId);
+  const own =
+    report?.accounts.find((account) => account.instanceId === instanceId)?.limits ??
+    selected?.usageLimits;
+  if (!report || !selected || (own && !limitsNotice(own))) return own;
+  const resolveKey = accountKeyResolver([
+    ...providers.filter((provider) => provider.enabled).map(nativeReport),
+    ...sources.flatMap((source) => source.accounts),
+  ]);
+  const selectedReport = nativeReport(selected);
+  if (accountKey(selected.driver, selectedReport.email, selectedReport.usageLimits) === null) {
+    const [only, ...others] = report.accounts;
+    const unbound = only && others.length === 0 && only.instanceId === undefined;
+    return unbound && !limitsNotice(only.limits) ? only.limits : own;
+  }
+  // A known login whose workspace is ambiguous must not borrow another account's limits.
+  const key = resolveKey(selectedReport);
+  if (key === null) return own;
+  const sameLogin = sources
+    .flatMap((source) => source.accounts)
+    .filter(
+      (account) =>
+        account.driver === selected.driver &&
+        resolveKey(account) === key &&
+        !limitsNotice(account.usageLimits),
+    )
+    .map((account) => account.usageLimits)
+    .sort((a, b) => Date.parse(b.checkedAt) - Date.parse(a.checkedAt));
+  return sameLogin[0] ?? own;
+}
