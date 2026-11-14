@@ -9,6 +9,7 @@ import {
 const makeTarget = (
   send: CdpRelayTarget["send"],
   setDownloadDirectory: CdpRelayTarget["setDownloadDirectory"] = () => {},
+  ackScreencastFrame: CdpRelayTarget["ackScreencastFrame"] = () => {},
 ): CdpRelayTarget => ({
   send,
   targetId: async () => "GUEST-TARGET",
@@ -17,6 +18,7 @@ const makeTarget = (
   userAgent: () => "Electron",
   setDownloadDirectory,
   receivesScreencast: () => true,
+  ackScreencastFrame,
 });
 
 const makeRelay = (target: CdpRelayTarget, write: (raw: string) => void) =>
@@ -140,7 +142,11 @@ describe("CDP relay extra sessions", () => {
   it("gives a second page session the page's commands and events", async () => {
     const send = vi.fn<CdpRelayTarget["send"]>(async () => ({}));
     const written: Array<Record<string, unknown>> = [];
-    const relay = makeRelay(makeTarget(send), (raw) => written.push(JSON.parse(raw)));
+    const nativeAcks: Array<number> = [];
+    const relay = makeRelay(
+      makeTarget(send, undefined, (frameId) => nativeAcks.push(frameId)),
+      (raw) => written.push(JSON.parse(raw)),
+    );
     relay.receive(JSON.stringify({ id: 1, method: "Target.setAutoAttach", params: {} }));
     relay.receive(JSON.stringify({ id: 2, method: "Target.attachToBrowserTarget" }));
     await settle();
@@ -196,9 +202,12 @@ describe("CDP relay extra sessions", () => {
     // A session that has not acknowledged its frame gets only the newest one, on its ack.
     for (let i = 2; i < 100; i++) frame(i);
     expect(delivered()).toEqual([]);
+    // Chromium waits on the newest frame while every session is busy; it is acknowledged once delivered.
+    expect(nativeAcks.at(-1)).toBe(98);
     ack(extra, 1);
     await settle();
     expect(delivered()).toEqual([[extra, 99]]);
+    expect(nativeAcks.at(-1)).toBe(99);
     ack(extra, 99);
     await settle();
     expect(delivered()).toEqual([]);

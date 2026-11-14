@@ -421,6 +421,10 @@ export const make = Effect.gen(function* () {
           dropSessionHolds(tab, owner);
         },
         receivesScreencast: (owner) => tab.screencasts.has(owner),
+        ackScreencastFrame: (frameId) =>
+          void debuggee
+            .sendCommand("Page.screencastFrameAck", { sessionId: frameId })
+            .catch(() => {}),
         targetId: () =>
           debuggee
             .sendCommand("Target.getTargetInfo")

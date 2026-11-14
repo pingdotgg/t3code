@@ -11,6 +11,8 @@ export interface CdpRelayTarget {
   readonly sessionDetached?: (owner: string) => void;
   /** Whether a page session, by owner as `send` names it, gets the page's screencast frames. */
   readonly receivesScreencast: (owner: string | undefined) => boolean;
+  /** Acknowledges a native screencast frame, letting Chromium send the next one. */
+  readonly ackScreencastFrame: (frameId: number) => void;
   /** The page's own CDP target id; Playwright keys the main frame by it. */
   readonly targetId: () => Promise<string>;
   readonly url: () => string;
@@ -103,10 +105,17 @@ export function createCdpRelayConnection(
   let downloadEventsEnabled = false;
   /** Relay-created page sessions share one real debugger; child frame sessions retain their own ids. */
   const sessions = new Map<string, "browser" | "page">([[PAGE_SESSION_ID, "page"]]);
-  // The manager acks native frames at once, so each page session waits on its own ack instead.
+  // Each page session holds one unacknowledged frame and keeps the newest one skipped meanwhile.
   const unackedFrames = new Map<string, number>();
-  // The newest frame skipped meanwhile, sent on the ack; Chromium sends none until the next repaint.
   const skippedFrames = new Map<string, Record<string, unknown>>();
+  // A frame every session is busy for stays unacknowledged natively, so Chromium waits for a consumer.
+  let heldNativeFrame: number | null = null;
+  const releaseNativeFrame = (frameId: unknown, delivered: boolean) => {
+    if (heldNativeFrame === null || heldNativeFrame !== frameId) return;
+    if (!delivered && [...skippedFrames.values()].some((f) => f["sessionId"] === frameId)) return;
+    heldNativeFrame = null;
+    target.ackScreencastFrame(frameId);
+  };
   const sendFrame = (sessionId: string, params: Record<string, unknown>) => {
     unackedFrames.set(sessionId, params["sessionId"] as number);
     send({ method: "Page.screencastFrame", params, sessionId });
@@ -179,7 +188,9 @@ export function createCdpRelayConnection(
         if (typeof sessionId === "string" && sessionId !== PAGE_SESSION_ID) {
           sessions.delete(sessionId);
           unackedFrames.delete(sessionId);
+          const skipped = skippedFrames.get(sessionId);
           skippedFrames.delete(sessionId);
+          releaseNativeFrame(skipped?.["sessionId"], false);
           target.sessionDetached?.(sessionId);
         }
         return {};
@@ -219,11 +230,11 @@ export function createCdpRelayConnection(
         unackedFrames.delete(sessionId);
         const skipped = skippedFrames.get(sessionId);
         skippedFrames.delete(sessionId);
-        if (
-          skipped &&
-          target.receivesScreencast(sessionId === PAGE_SESSION_ID ? undefined : sessionId)
-        )
-          sendFrame(sessionId, skipped);
+        const delivered =
+          skipped !== undefined &&
+          target.receivesScreencast(sessionId === PAGE_SESSION_ID ? undefined : sessionId);
+        if (delivered) sendFrame(sessionId, skipped);
+        releaseNativeFrame(skipped?.["sessionId"], delivered);
       }
       return Promise.resolve({});
     }
@@ -288,14 +299,26 @@ export function createCdpRelayConnection(
         return;
       }
       if (method === "Page.screencastFrame") {
-        const frame = params as Record<string, unknown> | null;
-        if (typeof frame?.["sessionId"] !== "number") return;
+        const frame = (params ?? {}) as Record<string, unknown>;
+        const frameId = frame["sessionId"];
+        if (typeof frameId !== "number") return;
+        if (heldNativeFrame !== null) target.ackScreencastFrame(heldNativeFrame);
+        heldNativeFrame = null;
+        let held = false;
+        let delivered = false;
         for (const [id, kind] of sessions) {
           if (kind !== "page") continue;
           if (!target.receivesScreencast(id === PAGE_SESSION_ID ? undefined : id)) continue;
-          if (unackedFrames.has(id)) skippedFrames.set(id, frame);
-          else sendFrame(id, frame);
+          if (unackedFrames.has(id)) {
+            skippedFrames.set(id, frame);
+            held = true;
+          } else {
+            sendFrame(id, frame);
+            delivered = true;
+          }
         }
+        if (held && !delivered) heldNativeFrame = frameId;
+        else target.ackScreencastFrame(frameId);
         return;
       }
       for (const [id, kind] of sessions)
