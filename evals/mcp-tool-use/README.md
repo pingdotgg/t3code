@@ -292,6 +292,7 @@ After the change, the first reference to a file is an absolute link. The remaini
 ## Where T3's text lives
 
 - `packages/provider-core/src/server/runtimeInstructions.ts`
+- `packages/contracts/src/settings.ts` (`DEFAULT_FILE_LINK_INSTRUCTIONS`)
 - `packages/provider-core/src/server/orchestrationInstructions.ts`
 - `apps/server/src/provider/CodexDeveloperInstructions.ts`
 - `apps/server/src/mcp/toolkits/*/tools.ts` (tool descriptions)
