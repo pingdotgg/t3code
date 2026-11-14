@@ -1921,6 +1921,18 @@ describe("composerDraftStore modelSelection", () => {
       });
     });
 
+    it.each([false, true])(
+      "an explicit optionless pick overrides base traits when threadStarted=%s",
+      (threadStarted) => {
+        const store = useComposerDraftStore.getState();
+        store.setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5.4"), {
+          explicit: true,
+          replaceOptions: true,
+        });
+        expect(effective(threadStarted)).toEqual({ model: "gpt-5.4", options: [] });
+      },
+    );
+
     it("keeps the thread's model when traits change over a seed", () => {
       const store = useComposerDraftStore.getState();
       store.setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5.4"));
