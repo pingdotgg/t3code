@@ -604,6 +604,7 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
             }),
           resumeThread: ({ providerThread }) => Effect.succeed(providerThread),
           startTurn,
+          resumeTurn: (input) => startTurn(ProviderAdapter.resumeTurnInput(input)),
           compactThread: startTurn,
           steerTurn: (turn) =>
             Effect.sync(() => {
@@ -698,6 +699,98 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
   });
   return { cwd, events, started, steered, steeredSelections, interrupted, layer, startFirstTurn };
 });
+
+it.effect.each([false, true])(
+  "preserves steering attachments stopped before acceptance, accepted: %s",
+  (accepted) =>
+    Effect.gen(function* () {
+      const { started, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
+        "resume-unaccepted-steering-replacement",
+        true,
+        true,
+      );
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = yield* startFirstTurn;
+        const sourceId = started[0]!.runId;
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("replace"),
+          threadId,
+          messageId: MessageId.make("replacement-input"),
+          text: "Updated steering request",
+          attachments: [
+            {
+              type: "image",
+              id: ChatAttachmentId.make("replacement-image"),
+              name: "screenshot.png",
+              mimeType: "image/png",
+              sizeBytes: 4,
+            },
+          ],
+          modelSelection: runSelection,
+          dispatchMode: { type: "restart_active", targetRunId: sourceId },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        if (accepted) {
+          const running = yield* orchestrator.streamDomainEvents.pipe(
+            Stream.filter(
+              (event) =>
+                event.type === "provider-turn.updated" &&
+                event.payload.status === "running" &&
+                event.payload.ordinal === 2,
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped,
+          );
+          yield* worker.drain();
+          yield* Fiber.join(running);
+        }
+        yield* orchestrator.dispatch({
+          type: "thread.stop",
+          commandId: CommandId.make("stop-replacement"),
+          threadId,
+        });
+        yield* worker.drain();
+        const stopped = yield* orchestrator.getThreadProjection(threadId);
+        const source = stopped.runs.find((run) => run.id === sourceId)!;
+        assert.equal(source.status, "interrupted");
+        assert.equal(source.userMessageId, "replacement-input");
+        assert.equal(stopped.providerTurns.length, accepted ? 2 : 1);
+        assert.equal(
+          stopped.attempts.find((attempt) => attempt.id === source.activeAttemptId)?.reason,
+          "steering_restart",
+        );
+        assert.lengthOf(started, accepted ? 2 : 1);
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("resume"),
+          threadId,
+          messageId: MessageId.make("resume-input"),
+          manualContinuationOfRunId: sourceId,
+          text: "",
+          attachments: [],
+          modelSelection: runSelection,
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* worker.drain();
+        assert.lengthOf(started, accepted ? 3 : 2);
+        assert.deepEqual(
+          started.at(-1)!.message.attachments.map((attachment) => attachment.id),
+          accepted ? [] : [ChatAttachmentId.make("replacement-image")],
+        );
+        const resumeText = started.at(-1)!.message.text;
+        assert.isTrue(
+          accepted ? resumeText === "" : resumeText.endsWith("\nUpdated steering request"),
+        );
+      }).pipe(Effect.provide(layer));
+    }),
+);
 
 it.effect.each([
   { notice: "delegated task question", goal: null, steers: true },
