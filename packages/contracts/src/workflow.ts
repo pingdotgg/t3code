@@ -87,10 +87,45 @@ export const WorkflowSummary = Schema.Struct({
 });
 export type WorkflowSummary = typeof WorkflowSummary.Type;
 
+/** Something wrong with a definitions file, at `line` of it when the problem names a place. */
+export const WorkflowDefinitionProblem = Schema.Struct({
+  message: Schema.String,
+  line: Schema.optional(Schema.Number),
+});
+export type WorkflowDefinitionProblem = typeof WorkflowDefinitionProblem.Type;
+
+/** Which loading of the definitions file is running, and what is wrong with the file now. */
+export const WorkflowDefinitionState = Schema.Struct({
+  /** Goes up whenever the file is loaded or found wrong, so a client knows to read it again. */
+  revision: Schema.Number,
+  /** Why the file on disk is not what runs. The last version that loaded keeps running. */
+  problem: Schema.NullOr(Schema.String),
+});
+
+export const WorkflowDefinitionSource = Schema.Struct({
+  path: Schema.String,
+  source: Schema.String,
+  ...WorkflowDefinitionState.fields,
+});
+export type WorkflowDefinitionSource = typeof WorkflowDefinitionSource.Type;
+
+export const WorkflowDefinitionGetInput = Schema.Struct({});
+export const WorkflowDefinitionGetResult = Schema.Struct({
+  /** Nothing, on a server that names no definitions file. */
+  definition: Schema.NullOr(WorkflowDefinitionSource),
+});
+export const WorkflowDefinitionSaveInput = Schema.Struct({ source: Schema.String });
+export const WorkflowDefinitionSaveResult = Schema.Struct({
+  /** Empty when the file was written and is what runs now. Otherwise nothing changed. */
+  problems: Schema.Array(WorkflowDefinitionProblem),
+});
+export type WorkflowDefinitionSaveResult = typeof WorkflowDefinitionSaveResult.Type;
+
 export const WorkflowRunsSnapshot = Schema.Struct({
   workflows: Schema.Array(WorkflowSummary),
   runs: Schema.Array(WorkflowRun),
   questions: Schema.Array(WorkflowQuestion),
+  definition: Schema.optional(WorkflowDefinitionState),
 });
 
 /** How much is going on, for a badge that must not cost a list of runs to keep current. */

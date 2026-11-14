@@ -18,10 +18,13 @@ task is enough.
 1. Write one definitions file (below). It imports nothing.
 2. Start the server with `T3CODE_WORKFLOWS=/absolute/path/to/workflows.ts`. Without it, workflows
    are off and every `t3 workflow` command says so.
-3. Restart the server after editing the file. Definitions are read once, at start.
+3. Edit the file whenever you like. The server reads it again when it changes and, if nothing is
+   wrong with it, runs it from then on without a restart. Files it imports are read once: restart
+   the server after changing one of those.
 
-If the file does not load, the server logs `Workflows are off: their definitions did not load`
-and keeps running without them.
+A changed file that does not load, defines a workflow twice, or drops a version that still has
+unfinished runs is not used: the last version that loaded keeps running, and the server logs
+`Workflow definitions were not loaded` with the reason. The Workflows page shows the same reason.
 
 ## The file
 

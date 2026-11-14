@@ -68,6 +68,14 @@ replay does not try the start again.
 gone, so its cleanup runs outside the engine and has only what the run was started with. Inside
 the engine `onEnd` is an ordinary last step.
 
+**Definitions reload by replacing the engine.** The engine is built from a fixed set of
+definitions, so a changed file closes it and builds a new one on the same database, which is
+what a restart does; runs come through it as they come through a restart. The service the rest
+of the server holds forwards to whichever engine is current, and callers during the swap wait
+for the new one. A file is loaded under a new address each time, because Node keeps a module by
+its address; modules the file imports keep theirs and are therefore not reloaded. Saving from a
+client verifies a copy beside the real file first, so its imports resolve the same way.
+
 ## Traps
 
 **A workflow body is replayed.** After a restart or a wait, the body runs again from the top and

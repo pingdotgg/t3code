@@ -1,6 +1,8 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useNavigate, useSearch } from "@tanstack/react-router";
+import { FileCode2Icon } from "lucide-react";
+import { lazy, Suspense } from "react";
 
 import { isElectron } from "~/env";
 import { cn } from "../../lib/utils";
@@ -9,6 +11,7 @@ import {
   useEnvironments,
   usePrimaryEnvironmentId,
 } from "../../state/environments";
+import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SidebarInset } from "../ui/sidebar";
 import { WorkspaceBreadcrumb, WorkspaceBreadcrumbItem } from "../WorkspaceBreadcrumb";
@@ -16,12 +19,17 @@ import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { WorkflowRunsView, WorkflowsEmpty } from "./WorkflowRunsView";
 import WorkflowThreadPane from "./WorkflowThreadPane";
 
+// The editor brings the code view's highlighter with it, which the run list has no use for.
+const WorkflowDefinitionEditor = lazy(() => import("./WorkflowDefinitionEditor"));
+
 export interface WorkflowsSearch {
   readonly env?: string;
   readonly run?: string;
   /** The agent thread open beside the run, and the linked environment it is in when not `env`. */
   readonly thread?: string;
   readonly threadEnv?: string;
+  /** Show the definitions file instead of the runs. */
+  readonly file?: boolean;
 }
 
 export function WorkflowsPage() {
@@ -44,8 +52,9 @@ export function WorkflowsPage() {
     void navigate({ to: "/workflows", search: next, replace: true });
   const env = search.env === undefined ? {} : { env: search.env };
   const run = search.run === undefined ? {} : { run: search.run };
+  const editing = search.file === true;
   const threadRef =
-    environmentId === null || search.thread === undefined
+    environmentId === null || search.thread === undefined || editing
       ? null
       : scopeThreadRef(
           search.threadEnv === undefined ? environmentId : EnvironmentId.make(search.threadEnv),
@@ -94,15 +103,39 @@ export function WorkflowsPage() {
                 </SelectPopup>
               </Select>
             ) : null}
+            {environmentId === null ? null : (
+              <Button
+                size="sm"
+                variant={editing ? "secondary" : "outline"}
+                aria-pressed={editing}
+                onClick={() =>
+                  select(editing ? { ...env, ...run } : { ...env, ...run, file: true })
+                }
+              >
+                <FileCode2Icon />
+                Definitions
+              </Button>
+            )}
           </WorkspacePageHeader>
           {environmentId === null ? (
             <WorkflowsEmpty
               title="No environment connected"
               description="Connect an environment to see its workflow runs."
             />
+          ) : editing ? (
+            <Suspense
+              fallback={
+                <p className="p-6 text-sm text-muted-foreground" role="status">
+                  Loading the editor…
+                </p>
+              }
+            >
+              <WorkflowDefinitionEditor key={environmentId} environmentId={environmentId} />
+            </Suspense>
           ) : (
             <WorkflowRunsView
               key={environmentId}
+              onOpenDefinitions={() => select({ ...env, ...run, file: true })}
               environmentId={environmentId}
               selectedRunId={search.run ?? null}
               openThreadId={search.thread ?? null}

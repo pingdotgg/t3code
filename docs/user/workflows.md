@@ -16,7 +16,20 @@ work has stages, such as triage, then a fix, then your approval, then a release.
    (for example `~/.claude/skills/` or `~/.agents/skills/`) and ask the agent to write the workflow
    for you.
 2. Start the server with `T3CODE_WORKFLOWS` set to the file's absolute path.
-3. Restart the server after you change the file.
+
+## Change a workflow
+
+**Definitions** on the Workflows page shows the file and lets you edit it. Saving checks the file
+first: one with a mistake is not saved and says what is wrong, and one that passes runs from then
+on without a restart. The check finds a file that does not load, a workflow defined twice, and a
+version removed while its runs are unfinished. It does not find a mistake inside a workflow's
+body; that shows when a run reaches it and pauses. Saving needs a connection that may use the
+terminal, since the server runs this file.
+
+You can also change the file in your own editor or have an agent do it. The server picks the
+change up the same way, and when the file is wrong it keeps running the last version that loaded
+and says so on the page. To change the steps of a workflow that has unfinished runs, add the new
+body under a higher `version` and keep the old one until those runs end.
 
 Runs live on the machine that started them and only make progress while its server is running. For
 a schedule that must not be missed, run the server on a machine that stays on.
