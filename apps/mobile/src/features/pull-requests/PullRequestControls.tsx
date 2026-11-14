@@ -45,11 +45,15 @@ export function PullRequestCardRow(props: {
   readonly compact?: boolean;
   readonly menu?: boolean;
   readonly expanded?: boolean;
+  /** Section rows announce as headings so screen readers can jump between them; they still activate. */
+  readonly heading?: boolean;
   readonly children?: ReactNode;
 }) {
   return (
     <Pressable
-      accessibilityRole={props.onPress || props.menu ? "button" : undefined}
+      accessibilityRole={
+        props.heading ? "header" : props.onPress || props.menu ? "button" : undefined
+      }
       accessibilityLabel={props.accessibilityLabel}
       accessibilityState={props.expanded === undefined ? undefined : { expanded: props.expanded }}
       onPress={props.onPress}

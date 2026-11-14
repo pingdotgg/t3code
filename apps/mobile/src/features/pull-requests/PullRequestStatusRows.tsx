@@ -122,6 +122,7 @@ export function PullRequestChecksRow(props: RowProps) {
         value={checks.count}
         compact
         accessibilityLabel={`Checks, ${checks.label}`}
+        heading
         expanded={expanded}
         onPress={() => setExpanded(!expanded)}
       />
@@ -221,6 +222,7 @@ export function PullRequestBranchRow(props: RowProps) {
       compact
       menu={methods.length > 0 || canResolve}
       accessibilityLabel={`Branch, ${summary}`}
+      heading
     />
   );
   if (!methods.length && !canResolve) return row;
@@ -270,6 +272,7 @@ export function PullRequestReviewersRow(props: RowProps) {
         value={summary.count}
         compact
         expanded={expanded}
+        heading
         onPress={() => setExpanded(!expanded)}
       />
       {expanded ? (

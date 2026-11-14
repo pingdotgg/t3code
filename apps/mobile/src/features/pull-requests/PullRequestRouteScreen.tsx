@@ -224,7 +224,7 @@ function PullRequestIdentity(props: {
           <View className="h-3 w-12 rounded bg-subtle-strong" />
         )}
       </View>
-      <Text selectable className="text-xl font-t3-bold leading-7">
+      <Text selectable accessibilityRole="header" className="text-xl font-t3-bold leading-7">
         {pr.title}
       </Text>
       <View className="flex-row items-center gap-2">
