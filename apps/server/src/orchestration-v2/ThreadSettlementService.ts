@@ -38,6 +38,7 @@ import { sourceControlDefinitions } from "../sourceControl/sourceControlDefiniti
 import { makeNoPullRequestRechecks } from "./noPullRequestRechecks.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { QUIET_AFTER_MS, QUIET_SYNC_INTERVAL_MS } from "./PullRequestSyncReactor.ts";
 
 export interface SettlementPullRequest {
   readonly state: "open" | "closed" | "merged";
@@ -320,6 +321,22 @@ export const make = Effect.gen(function* () {
   // A shell merge or close sends no event, and the branch lookup caches an open pull request for
   // a minute, so these threads' next lookup reads the host fresh.
   const shellClosedThreads = new Set<ThreadId>();
+  // Each summary read can be a host CLI process (one `az` per read on Azure DevOps), so a quiet
+  // open pull request is read on the sync reactor's quiet cadence rather than every sweep.
+  const quietOpenReadAt = new Map<string, number>();
+  const quietReadKey = (reference: {
+    readonly projectId: string;
+    readonly repository: string;
+    readonly number: number;
+  }) => `${reference.projectId}\0${reference.repository.toLowerCase()}\0${reference.number}`;
+  // A host can finish a merge minutes after the app's merge action and its refresh, and Azure's
+  // updatedAt never moves while open, so pull requests stay on the fast cadence for a while after.
+  // Sweeps that started before the pause fail the same check, so their reads record nothing.
+  let quietPausedAtMs = Number.NEGATIVE_INFINITY;
+  const pauseQuietReads = Effect.fn("ThreadSettlementServiceV2.pauseQuietReads")(function* () {
+    quietPausedAtMs = DateTime.toEpochMillis(yield* DateTime.now);
+    quietOpenReadAt.clear();
+  });
   const terminals = yield* TerminalManager.TerminalManager;
   const projectScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   // Repeated thread.settled retains settledAt; run the action only once per settlement.
@@ -330,6 +347,8 @@ export const make = Effect.gen(function* () {
     mergedPullRequest: PullRequestService.PullRequestMergeEvent | null,
     threadId?: ThreadId,
   ) {
+    // A thread that is not a candidate now (still running) must not keep a merged PR's quiet entry.
+    if (mergedPullRequest !== null) yield* pauseQuietReads();
     const settings = yield* settingsService.getSettings;
     const automaticSettlementEnabled = autoSettlementConfigured(settings);
     const threads = yield* projections.getSettlementCandidates(threadId);
@@ -337,6 +356,9 @@ export const make = Effect.gen(function* () {
     const projectShells = yield* projectStore.listShells();
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     const projects = new Map(projectShells.map((project) => [project.id, project]));
+    for (const [key, readAtMs] of quietOpenReadAt) {
+      if (nowMs - readAtMs >= QUIET_SYNC_INTERVAL_MS) quietOpenReadAt.delete(key);
+    }
     // Merge events resweep all candidates because unlinked threads settle through branch lookup.
     const candidates = threads.filter(
       (thread) =>
@@ -509,6 +531,13 @@ export const make = Effect.gen(function* () {
         if (!matchesMerge && !projects.has(reference.projectId)) {
           return yield* Effect.die(new Error("linked pull request project not found"));
         }
+        const readKey = quietReadKey(reference);
+        const shellClosed =
+          group.filter((member) => shellClosedThreads.delete(member.id)).length > 0;
+        if (shellClosed) quietOpenReadAt.delete(readKey);
+        else if (!matchesMerge && quietOpenReadAt.has(readKey)) {
+          return { state: "open", closedAt: null, mergedAt: null } satisfies SettlementPullRequest;
+        }
         const summary = matchesMerge
           ? ({
               state: "merged",
@@ -521,8 +550,16 @@ export const make = Effect.gen(function* () {
                 repository: reference.repository,
                 number: reference.number,
               },
-              { recoverTransientFailure: false },
+              { recoverTransientFailure: false, bypassCache: shellClosed },
             );
+        if (
+          "updatedAt" in summary &&
+          summary.state === "open" &&
+          nowMs - quietPausedAtMs >= QUIET_SYNC_INTERVAL_MS &&
+          nowMs - Date.parse(summary.updatedAt) >= QUIET_AFTER_MS
+        ) {
+          quietOpenReadAt.set(readKey, nowMs);
+        }
         const terminal = {
           state: summary.state,
           closedAt: summary.closedAt ?? null,
@@ -786,6 +823,7 @@ export const make = Effect.gen(function* () {
       }),
     );
     yield* forkParked(Stream.runForEach(mergedPullRequests, (event) => runSweep(event)));
+    yield* forkParked(Stream.runForEach(pullRequests.subscribeRefreshes, pauseQuietReads));
     yield* forkParked(
       Stream.runForEach(events, processEvent).pipe(
         Effect.catchCause((cause) =>

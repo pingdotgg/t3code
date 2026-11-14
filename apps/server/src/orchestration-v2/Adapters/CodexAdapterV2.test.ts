@@ -1382,6 +1382,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       const changes = yield* makeChangeSignal;
       const continuationRequests: Array<ProviderContinuationRequests.ProviderContinuationRequest> =
         [];
+      const commandStopWatchers: Array<PortScanner.AgentCommandStopWatcher> = [];
       const driver = yield* CodexReplay.makeReplayDriver(
         withConfigReads(transcript),
         beforeEmitInbound === undefined ? {} : { beforeEmitInbound },
@@ -1445,6 +1446,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               continuationRequests.push(request);
             }).pipe(Effect.andThen(changes.notify)),
         },
+        watchCommandStops: (watcher) =>
+          Effect.sync(() => {
+            commandStopWatchers.push(watcher);
+          }),
       });
       const threadId = ThreadId.make(`thread-${transcript.scenario}`);
       const runtime = yield* adapter.openSession({
@@ -1504,6 +1509,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         serverConfig,
         events,
         continuationRequests,
+        commandStopWatchers,
         terminalEvents,
         subagentUpdates,
         hasPendingBackgroundWork,
@@ -5274,6 +5280,89 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         ["running", "always"],
         ["completed", "always"],
       ]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect.each([
+    { stop: "onStop", woken: ["CODEX_BG_OTHER_DONE"] },
+    { stop: "onStopAbandoned", woken: ["CODEX_BG_OTHER_DONE", "CODEX_BG_WAKE_DONE"] },
+  ] as const)("wakes for every command but the one the user stopped ($stop)", ({ stop, woken }) =>
+    Effect.gen(function* () {
+      // Same command and start as the stopped one, and it finishes first.
+      const other = (status: "inProgress" | "completed") => ({
+        ...backgroundCommandItem(status),
+        id: "call-codex-bg-other",
+        processId: "4243",
+        aggregatedOutput: status === "completed" ? "CODEX_BG_OTHER_DONE\n" : null,
+      });
+      const [started, ...settle] = backgroundExecTranscript.entries.slice(-4, -1);
+      const inbound = (label: string, method: string, item: Record<string, unknown>) => ({
+        type: "emit_inbound" as const,
+        label,
+        frame: {
+          method,
+          params: { item, threadId: BG_NATIVE_THREAD, turnId: BG_NATIVE_TURN },
+        },
+      });
+      const released = yield* Deferred.make<void>();
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: `codex-bg-user-stop-${stop}`,
+          entries: [
+            ...backgroundExecTranscript.entries.slice(0, -4),
+            started!,
+            inbound("item/started/other", "item/started", other("inProgress")),
+            ...settle,
+            inbound("item/completed/other", "item/completed", other("completed")),
+            inbound("item/completed/stopped", "item/completed", backgroundCommandItem("completed")),
+          ],
+        }),
+        undefined,
+        undefined,
+        undefined,
+        (entry) =>
+          entry.label === "item/completed/other" ? Deferred.await(released) : Effect.void,
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-command-user-stop"),
+          text: BG_PROMPT,
+        }),
+      );
+      yield* harness.firstTerminal;
+      const [watcher] = harness.commandStopWatchers;
+      assert.equal(watcher?.variable, "CODEX_TOOL_CALL_ID");
+      yield* watcher!.onStop("not-a-command-of-this-session");
+      yield* watcher!.onStop(BG_COMMAND_ITEM);
+      if (stop === "onStopAbandoned") yield* watcher!.onStopAbandoned(BG_COMMAND_ITEM);
+      yield* Deferred.succeed(released, undefined);
+      yield* harness.until(
+        () =>
+          harness.events.filter(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "command_execution" &&
+              event.turnItem.status === "completed",
+          ).length === 2 && harness.continuationRequests.length === woken.length,
+      );
+      assert.isFalse(yield* harness.hasPendingBackgroundWork);
+      assert.deepEqual(
+        harness.continuationRequests.map((request) => request.detail?.trim().split("\n").at(-1)),
+        [...woken],
+      );
     }).pipe(
       Effect.scoped,
       Effect.provide(
