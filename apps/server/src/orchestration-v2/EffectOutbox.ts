@@ -145,6 +145,8 @@ export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "delegated-tasks.stop",
 ] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
 
+const CAPTURE_CLAIM_DEFERRAL = "+30 seconds";
+
 export const PROCESS_BOUND_EFFECT_TYPES = [
   "provider-session.apply-model-selection",
   "provider-turn.start",
@@ -568,7 +570,17 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
                 maxRunningTitleGenerations,
               )}
                 AND ${excludeRestartContinuations ? sql`candidate.effect_type != 'provider-runtime.continue'` : sql`1 = 1`}
-              ORDER BY candidate.available_at ASC, candidate.created_at ASC, candidate.effect_id ASC
+              -- Captures serialize per cwd, so a burst would fill every slot. Let newer work pass them,
+              -- but only within a bounded window so sustained traffic cannot starve a capture.
+              ORDER BY
+                CASE
+                  WHEN candidate.effect_type = 'checkpoint.capture'
+                  THEN strftime('%Y-%m-%dT%H:%M:%fZ', candidate.available_at, ${CAPTURE_CLAIM_DEFERRAL})
+                  ELSE candidate.available_at
+                END ASC,
+                candidate.available_at ASC,
+                candidate.created_at ASC,
+                candidate.effect_id ASC
               LIMIT 1
             )
             RETURNING *
