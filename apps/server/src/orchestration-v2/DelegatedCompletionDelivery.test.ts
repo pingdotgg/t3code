@@ -48,6 +48,7 @@ import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
 import * as RuntimeLayer from "./runtimeLayer.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
@@ -4853,6 +4854,98 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
           ["queued", true],
         ],
       );
+    }),
+  );
+
+  it.effect("holding a follow-up during runtime recovery makes its parent task idle", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:held-followup-parent");
+      const projectId = ProjectId.make("project:held-followup");
+      const runId = RunId.make("run:held-followup-parent");
+      const rootNodeId = NodeId.make("node:held-followup-parent");
+      yield* seedParentWithTerminalTask({
+        threadId,
+        projectId,
+        runId,
+        rootNodeId,
+        taskId: NodeId.make("node:held-followup-seed"),
+        deliveryState: "delivered",
+        now,
+      });
+      const child = yield* seedRestartCancelledChild({
+        parentThreadId: threadId,
+        projectId,
+        parentRunId: runId,
+        rootNodeId,
+        name: "held-followup-child",
+        completionWake: "always",
+        continuationPending: false,
+        now,
+      });
+      yield* orchestrator.recoverDelegatedTasks;
+      const parent = yield* orchestrator.getThreadProjection(threadId);
+      const original = parent.subagents.find((task) => task.id === child.taskId)!;
+      const taskId = NodeId.make("node:held-followup");
+      const held = runEvent({
+        threadId: child.childThreadId,
+        runId: RunId.make("run:held-followup"),
+        ordinal: 2,
+        status: "queued",
+        now,
+      });
+      yield* sink.write({
+        commandId: reconcileCommandId("held-followup"),
+        events: [
+          {
+            ...held,
+            payload: {
+              ...held.payload,
+              delegatedTaskId: taskId,
+              startedAt: null,
+              completedAt: null,
+              queueHeld: false,
+            },
+          },
+          {
+            id: EventId.make("event:held-followup-task"),
+            type: "subagent.updated",
+            threadId,
+            runId,
+            nodeId: taskId,
+            occurredAt: now,
+            payload: {
+              ...original,
+              id: taskId,
+              status: "pending",
+              result: null,
+              completedAt: null,
+              completionDelivery: { state: "pending", observedByRunId: null },
+            },
+          },
+        ],
+      });
+
+      const afterSequence = yield* sink.latestSequence();
+      yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).reconcile("startup");
+      yield* sink.stream({ afterSequence, eventType: "subagent.updated" }).pipe(
+        Stream.filter(
+          (stored) =>
+            stored.event.type === "subagent.updated" &&
+            stored.event.payload.id === taskId &&
+            stored.event.payload.status === "idle",
+        ),
+        Stream.take(1),
+        Stream.runDrain,
+      );
+
+      const recovered = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(recovered.subagents.find((task) => task.id === taskId)?.status, "idle");
+      const queued = (yield* orchestrator.getThreadProjection(child.childThreadId)).runs.at(-1)!;
+      assert.equal(queued.status, "queued");
+      assert.isTrue(queued.queueHeld);
     }),
   );
 

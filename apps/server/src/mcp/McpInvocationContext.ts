@@ -142,10 +142,16 @@ export interface McpInvocationScope {
   /** False while the Linked environments beta is off here; `/mcp` reads it per request. */
   readonly linkedEnvironments?: boolean;
   /**
+  /**
    * Whether this instance can manage a fleet: the OpenShell block is on and this
    * environment is the managing instance. Unset means unknown, so tools show.
    */
   readonly fleetAvailable?: boolean;
+  /**
+   * The origin this `/mcp` request reached, e.g. a T3 Connect tunnel. Hosted clients cannot
+   * see the URL they were configured with, so links they must fetch carry it. Unset in-process.
+   */
+  readonly origin?: string | undefined;
 }
 
 /**

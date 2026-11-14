@@ -1,5 +1,6 @@
 // @effect-diagnostics globalFetch:off - This browser transport runs without an Effect runtime, like the live stream.
 import * as Schema from "effect/Schema";
+import { extractPng } from "@t3tools/shared/png";
 import { withDeviceHubQuery } from "./hubAccess.ts";
 import type { DeviceStreamTarget } from "./stream.ts";
 
@@ -24,7 +25,7 @@ export async function captureDeviceScreenshot(target: DeviceStreamTarget, signal
     signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]),
   });
   if (!response.ok) throw new DeviceScreenshotError({ status: response.status });
-  const image = await response.blob();
-  if (!image.size) throw new Error("The device returned an empty screenshot. Try again.");
-  return image;
+  const png = extractPng(new Uint8Array(await response.arrayBuffer()));
+  if (!png) throw new Error("The device returned an incomplete screenshot. Try again.");
+  return new Blob([png], { type: "image/png" });
 }
