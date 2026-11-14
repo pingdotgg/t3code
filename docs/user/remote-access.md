@@ -268,7 +268,7 @@ directly. Every other device, and the desktop app for other environments,
 streams them from the host. Agents keep using them while no device is
 connected, and `localhost` addresses reach servers on the host.
 
-The first tab downloads a headless Chrome, about 120 MB, into the T3 home. It
+By default, the first tab downloads a headless Chrome, about 120 MB, into the T3 home. It
 is the same browser [HTML renders](html-renders.md) use, so a host downloads it
 only once. Some Linux hosts need [setup](#browser-host-setup) before it can
 start.
@@ -302,7 +302,23 @@ the background service, and restart it. Script preview URLs still appear.
 
 ### Browser host setup
 
-macOS, Windows, and Linux desktops run the browser as is. Some Linux hosts need
+To use a system-managed Chromium instead, such as on NixOS, set
+`T3CODE_BROWSER_EXECUTABLE_PATH` to its absolute executable path in the environment
+that starts the T3 Code server, then restart it. For the background service, set it in
+[`service.env`](./background-service.md#configure-the-service-environment).
+This also applies to HTML previews. T3 Code does not download or update that browser;
+you maintain its Playwright compatibility, libraries, and security updates. An empty,
+relative, missing, or non-executable path fails without falling back to a download.
+
+The configured browser also needs its own working sandbox. On Linux hosts that
+restrict user namespaces, its package must supply a usable sandbox helper or an
+AppArmor profile permitting user namespaces for that executable's actual path.
+See [Chromium's sandbox guidance](https://chromium.googlesource.com/chromium/src/+/main/docs/security/apparmor-userns-restrictions.md).
+`t3 browser setup` configures only T3's managed browser path; its success message
+and the managed-profile startup check do not establish that a configured browser
+can launch. Follow the configured browser package's sandbox setup instructions.
+
+For T3's default managed browser, macOS, Windows, and Linux desktops run it as is. Some Linux hosts need
 one-time setup: Ubuntu 23.10 and later block the sandbox the browser runs in,
 and minimal images and containers lack libraries it loads. When that happens,
 the server says so at startup, and browser tabs and HTML previews show the
