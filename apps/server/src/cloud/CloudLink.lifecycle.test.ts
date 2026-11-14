@@ -1,6 +1,7 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -715,28 +716,117 @@ describe("releaseManagedTunnelOnShutdown", () => {
     );
   });
 
-  it.effect("clears the revoked mark when the environment is linked again", () => {
-    const { store } = makeMemorySecretStore([
+  it.effect.each([
+    {
+      name: "replaces a revoked link to another account",
+      revoked: true,
+      startup: false,
+      cloudUserId: "user-456",
+    },
+    {
+      name: "replaces a revoked link to the same account",
+      revoked: true,
+      startup: false,
+      cloudUserId: "user-123",
+    },
+    {
+      name: "replaces a revoked link after a partial drop removed its user id",
+      revoked: true,
+      startup: false,
+      cloudUserId: "user-456",
+      partialDrop: true,
+    },
+    {
+      name: "rejects switching an active link to another account",
+      revoked: false,
+      startup: false,
+      cloudUserId: "user-456",
+    },
+    {
+      name: "keeps a revoked link when startup links another account",
+      revoked: true,
+      startup: true,
+      cloudUserId: "user-456",
+    },
+  ])("$name", ({ revoked, startup, cloudUserId, partialDrop }) => {
+    const { store, values } = makeMemorySecretStore([
       [RELAY_URL_SECRET, "https://relay.example.test"],
-      [CLOUD_LINKED_USER_ID, "user-123"],
-      [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "revoked-credential"],
-      [CLOUD_LINK_REVOKED, "true"],
+      ...(partialDrop ? [] : [[CLOUD_LINKED_USER_ID, "user-123"] as const]),
+      [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "old-credential"],
+      ...(revoked ? [[CLOUD_LINK_REVOKED, "true"] as const] : []),
+      [CLOUD_CLI_DESIRED_LINK_SECRET, startup ? "publish_only" : "managed"],
     ]);
     const cloudMintPublicKey =
       "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAqZ2u2LjMoAyG2QTHXmITJ9w6RzZtVUAv394XCcPV0zE=\n-----END PUBLIC KEY-----";
 
     return Effect.gen(function* () {
       const link = yield* CloudLink.CloudLink;
-      expect((yield* link.linkState()).linkRevoked).toBe(true);
-      yield* link.applyRelayConfig({
-        relayUrl: "https://relay.example.test",
-        cloudUserId: "user-123",
-        environmentCredential: "fresh-credential",
-        cloudMintPublicKey,
-        endpointRuntime: null,
+      expect((yield* link.linkState()).linkRevoked).toBe(revoked && !partialDrop);
+      const relink = Effect.gen(function* () {
+        if (startup) {
+          yield* link.reconcileDesiredLinkIfStillDesired("http://127.0.0.1:3773");
+        } else {
+          yield* link.applyRelayConfig({
+            relayUrl: "https://relay.example.test",
+            cloudUserId,
+            environmentCredential: "fresh-credential",
+            cloudMintPublicKey,
+            endpointRuntime: null,
+          });
+        }
       });
-      expect(yield* link.linkState()).toMatchObject({ linked: true, linkRevoked: false });
-    }).pipe(provideReleaseHarness({ store, applyConfigCalls: [], requests: [] }));
+      const result = yield* relink.pipe(
+        Effect.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromEnv({ env: { T3CODE_RELAY_URL: "https://relay.example.test" } }),
+          ),
+        ),
+        Effect.flip,
+        Effect.option,
+      );
+      if (revoked && !startup) {
+        expect(result).toEqual(Option.none());
+        expect(yield* link.linkState()).toMatchObject({
+          linked: true,
+          linkRevoked: false,
+          cloudUserId,
+        });
+        expect(new TextDecoder().decode(values.get(RELAY_ENVIRONMENT_CREDENTIAL_SECRET))).toBe(
+          "fresh-credential",
+        );
+        expect(values.has(CLOUD_CLI_DESIRED_LINK_SECRET)).toBe(cloudUserId === "user-123");
+      } else {
+        expect(Option.getOrThrow(result)).toBeInstanceOf(CloudLink.CloudLinkAccountMismatchError);
+        expect(yield* link.linkState()).toMatchObject({
+          cloudUserId: "user-123",
+          linkRevoked: revoked,
+        });
+        expect(values.has(CLOUD_CLI_DESIRED_LINK_SECRET)).toBe(true);
+      }
+    }).pipe(
+      provideReleaseHarness({
+        store,
+        applyConfigCalls: [],
+        requests: [],
+        respond: () =>
+          Response.json({
+            challenge: "challenge-1",
+            expiresAt: "2099-01-01T00:00:00.000Z",
+            ok: true,
+            cloudUserId: "user-456",
+            environmentId: "env_123",
+            endpoint: {
+              httpBaseUrl: "http://127.0.0.1:3773",
+              wsBaseUrl: "ws://127.0.0.1:3773",
+              providerKind: "manual",
+            },
+            endpointRuntime: null,
+            relayIssuer: "https://relay.example.test",
+            environmentCredential: "fresh-credential",
+            cloudMintPublicKey,
+          }),
+      }),
+    );
   });
 
   it.effect(

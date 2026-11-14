@@ -72,6 +72,7 @@ import { makeRelayEnvironmentClient } from "../relay/relayEnvironmentClient.ts";
 import { loopbackUrlHostForAddress } from "../startupAccess.ts";
 import {
   type CliDesiredLinkMode,
+  dropRevokedCloudLink,
   readCliDesiredCloudLink,
   readCliDesiredLinkMode,
   setCliDesiredCloudLink,
@@ -758,11 +759,11 @@ const make = Effect.gen(function* () {
     options?: {
       readonly lockHeld?: boolean;
       readonly confirmedOrigin?: RelayManagedEndpointOrigin;
+      readonly replaceRevokedLink?: boolean;
     },
   ) {
     const apply = Effect.gen(function* () {
       yield* validateRelayConfigPayload(payload);
-      yield* validateLinkedCloudUser(payload.cloudUserId);
       yield* validateCloudMintPublicKey(payload.cloudMintPublicKey);
       // Reject unsupported runtimes before they can stop a healthy tunnel.
       if (
@@ -777,6 +778,26 @@ const make = Effect.gen(function* () {
           },
         });
       }
+      // Only an explicit link replaces a revoked one: a clock-skew 401 can mark a live link revoked.
+      if (options?.replaceRevokedLink === true) {
+        const [revoked, previousUserId] = yield* Effect.all([
+          secrets.get(CLOUD_LINK_REVOKED),
+          secrets.get(CLOUD_LINKED_USER_ID),
+        ]);
+        // The CLI token may belong to the old account. Release it before the drop so a failed
+        // write leaves the revoked mark for a retry; a partial drop can leave no user id.
+        if (
+          Option.isSome(revoked) &&
+          Option.match(previousUserId, {
+            onNone: () => true,
+            onSome: (userId) => bytesToString(userId) !== payload.cloudUserId,
+          })
+        ) {
+          yield* setCliDesiredCloudLink(false).pipe(withSecrets);
+        }
+        yield* dropRevokedCloudLink.pipe(withSecrets);
+      }
+      yield* validateLinkedCloudUser(payload.cloudUserId);
       const endpointRuntimeJson = payload.endpointRuntime
         ? yield* encodeEndpointRuntimeConfigJson(payload.endpointRuntime)
         : null;
@@ -1169,7 +1190,7 @@ const make = Effect.gen(function* () {
 
   const applyRelayConfig = Effect.fn("environment.cloud.relayConfig")(
     function* (payload: RelayEnvironmentConfigRequest) {
-      const result = yield* applyCloudRelayConfig(payload);
+      const result = yield* applyCloudRelayConfig(payload, { replaceRevokedLink: true });
       if (payload.endpointRuntime?.providerKind === "cloudflare_tunnel") {
         const address = httpServer.address;
         if (typeof address === "string" || !("port" in address)) {
