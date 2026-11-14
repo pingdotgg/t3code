@@ -815,7 +815,27 @@ const make = Effect.gen(function* () {
     ensureCommandTranscripts(command).pipe(
       Effect.andThen(assertDispatchTargetEnabled(command)),
       Effect.andThen(orchestrator.dispatch(command)),
+      Effect.tap(() => cascadeBeforeReply(command)),
     );
+
+  // Clients read archive snapshots as soon as this returns; the outbox effect only backs it up.
+  const cascadeBeforeReply = (command: OrchestrationV2ServerCommand) =>
+    command.type === "thread.archive" ||
+    command.type === "thread.unarchive" ||
+    command.type === "thread.delete"
+      ? cascadeSubagentLifecycle({
+          commandId: command.commandId,
+          threadId: command.threadId,
+          operation: command.type,
+        }).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("Subagent lifecycle cascade left to the effect worker", {
+              threadId: command.threadId,
+              cause,
+            }),
+          ),
+        )
+      : Effect.void;
 
   const getProjectThreadRecords: ThreadManagementServiceShape["getProjectThreadRecords"] = (
     input,

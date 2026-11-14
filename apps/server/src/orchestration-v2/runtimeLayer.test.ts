@@ -11648,6 +11648,7 @@ describe("subagent lifecycle cascade", () => {
   const grandchild = ThreadId.make("grandchild:retry:31");
   const fixture = Effect.gen(function* () {
     const threads = yield* ThreadManagementService.ThreadManagementService;
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
     const store = yield* ProjectionStore.ProjectionStoreV2;
     const now = yield* DateTime.now;
     yield* threads.dispatch({
@@ -11681,12 +11682,21 @@ describe("subagent lifecycle cascade", () => {
       const lineage = { rootThreadId: parent, parentThreadId, relationshipToParent };
       yield* set(id, { lineage, projectId, creationSource: id === native ? "provider" : "mcp" });
     }
-    const run = (operation: "archive" | "unarchive" | "delete", threadId = parent, id?: string) =>
-      threads.dispatch({
+    const command = (
+      operation: "archive" | "unarchive" | "delete",
+      threadId: ThreadId,
+      id?: string,
+    ) =>
+      ({
         type: `thread.${operation}`,
         commandId: CommandId.make(id ?? `${operation}:${threadId}`),
         threadId,
-      });
+      }) as const;
+    const run = (operation: "archive" | "unarchive" | "delete", threadId = parent, id?: string) =>
+      threads.dispatch(command(operation, threadId, id));
+    // Committed by a process that stopped before its reply, leaving the cascade to the worker.
+    const commit = (operation: "archive" | "unarchive", threadId = parent, id?: string) =>
+      orchestrator.dispatch(command(operation, threadId, id));
     const state = (field: "archivedAt" | "deletedAt", ...ids: ReadonlyArray<string>) =>
       Effect.forEach(ids, (id) => store.getThread(ThreadId.make(id))).pipe(
         Effect.map((all) => all.map((thread) => (thread[field] === null ? 0 : 1)).join("")),
@@ -11698,7 +11708,7 @@ describe("subagent lifecycle cascade", () => {
       Option.getOrThrow,
     );
     const drain = (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
-    return { threads, now, set, run, state, archived, outbox, cascade, drain };
+    return { threads, now, set, run, commit, state, archived, outbox, cascade, drain };
   });
   const receipt = (id: string) =>
     Effect.flatMap(Receipts.CommandReceiptStoreV2, (r) => r.getByCommandId(CommandId.make(id)));
@@ -11709,8 +11719,8 @@ describe("subagent lifecycle cascade", () => {
       for (const operation of ["archive", "unarchive", "delete"] as const) {
         // A deleted intermediate must not hide surviving descendants from deletion.
         if (operation === "delete") yield* f.set(app, { deletedAt: f.now });
+        // Settled before the reply, without the effect worker, so a client refresh sees it.
         yield* f.run(operation);
-        yield* f.drain;
         const field = operation === "delete" ? "deletedAt" : "archivedAt";
         assert.equal(
           yield* f.state(field, ...all),
@@ -11754,30 +11764,30 @@ describe("subagent lifecycle cascade", () => {
   it.effect("skips a superseded parent action and keeps descendant choices made after it", () =>
     Effect.gen(function* () {
       const f = yield* fixture;
-      yield* f.run("archive");
+      yield* f.commit("archive");
       // Newer choices whose IDs only look like this cascade's still win.
-      yield* f.run("unarchive", parent, "archive:parent:subagent:parent");
+      yield* f.commit("unarchive", parent, "archive:parent:subagent:parent");
       yield* f.drain;
       assert.isTrue(Option.isNone(yield* receipt("archive:parent:subagent:app")));
-      yield* f.run("archive", app);
+      yield* f.commit("archive", app);
       yield* f.drain;
-      yield* f.run("unarchive", grandchild);
-      yield* f.run("archive", parent, "archive-later");
-      yield* f.run("unarchive", app, "archive-later:subagent:app:retry:31");
+      yield* f.commit("unarchive", grandchild);
+      yield* f.commit("archive", parent, "archive-later");
+      yield* f.commit("unarchive", app, "archive-later:subagent:app:retry:31");
       yield* f.drain;
       assert.equal(yield* f.archived(parent, native, app, grandchild), "1100");
-      yield* f.run("unarchive", parent, "unarchive-later");
-      yield* f.run("archive", app, "archive-app-later");
+      yield* f.commit("unarchive", parent, "unarchive-later");
+      yield* f.commit("archive", app, "archive-app-later");
       yield* f.drain;
       assert.equal(yield* f.archived(parent, native, app, grandchild), "0011");
       yield* f.set(app, { deletedAt: f.now });
       for (const operation of ["archive", "unarchive"] as const) {
         yield* f.set(grandchild, { archivedAt: operation === "archive" ? null : f.now });
-        yield* f.run(operation, parent, `${operation}-tombstone`).pipe(Effect.andThen(f.drain));
+        yield* f.commit(operation, parent, `${operation}-tombstone`).pipe(Effect.andThen(f.drain));
         assert.equal(yield* f.archived(grandchild), operation === "archive" ? "0" : "1");
       }
       // A root tombstoned without its own receipt, like a side chat deleted with its parent.
-      yield* f.run("archive", parent, "archive-deleted");
+      yield* f.commit("archive", parent, "archive-deleted");
       yield* f.set(parent, { deletedAt: f.now }).pipe(Effect.andThen(f.drain));
       assert.isTrue(Option.isNone(yield* receipt("archive-deleted:subagent:native")));
     }).pipe(Effect.provide(layerTest)),
@@ -11831,7 +11841,7 @@ describe("subagent lifecycle cascade", () => {
         yield* receipts.upsert({ ...created, commandId: id, threadId: app });
         yield* f.set(app, { archivedAt: f.now });
       }
-      yield* f.run("archive").pipe(Effect.provideService(DispatchModeLimit, limit));
+      yield* f.commit("archive").pipe(Effect.provideService(DispatchModeLimit, limit));
       const claimed = yield* f.outbox.claimNext({ workerId: "lost-caller" });
       assert.equal(Option.getOrThrow(claimed).request.type, "subagent-threads.cascade");
       assert.equal((yield* f.outbox.reconcileAfterProcessLoss).requeued, 1);
