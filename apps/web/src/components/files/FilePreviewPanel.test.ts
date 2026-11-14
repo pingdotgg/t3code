@@ -134,6 +134,29 @@ describe("workspaceAssetResource", () => {
 describe("document preview contents", () => {
   const bytes = (text: string) => new TextEncoder().encode(text).buffer;
 
+  // Rows written by Java's RTFEditorKit keep its font table and paragraph framing.
+  const jdk = (body: string) =>
+    `{\\rtf1\\ansi\n{\\fonttbl\\f0\\fnil Monospaced;}\n\n${body}\\par\n}\n`;
+  it.each([
+    ["a JDK nonbreaking hyphen", jdk(String.raw`Jean\_ Luc`), "Jean\u2011 Luc"],
+    ["a nonbreaking hyphen without a space", String.raw`{\rtf1 Jean\_Luc}`, "Jean\u2011Luc"],
+    ["an optional hyphen", String.raw`{\rtf1 Jean\-Luc}`, "Jean\u00adLuc"],
+    ["a JDK nonbreaking space", jdk(String.raw`Account\~Name`), "Account\u00a0Name"],
+    ["a JDK tab", jdk(String.raw`Account\tab Name`), "Account\tName"],
+    ["a JDK em space", jdk(String.raw`Account\emspace Name`), "Account\u2003Name"],
+    ["a JDK en space", jdk(String.raw`Account\enspace Name`), "Account\u2002Name"],
+    ["a quarter em space", String.raw`{\rtf1 Account\qmspace Name}`, "Account\u2005Name"],
+    ["a JDK zero-width joiner", jdk(String.raw`\u2325 ?\u2381 ?\zwj\u2359 ?`), "क्\u200dष"],
+    ["a zero-width non-joiner", String.raw`{\rtf1 a\zwnj b}`, "a\u200cb"],
+    ["a zero-width break opportunity", String.raw`{\rtf1 a\zwbo b}`, "a\u200bb"],
+    ["direction marks", String.raw`{\rtf1 a\ltrmark b\rtlmark c}`, "a\u200eb\u200fc"],
+    ["a Unicode fallback", String.raw`{\rtf1 Jean\u8209\_Luc}`, "Jean\u2011Luc"],
+  ])("keeps the text of %s", (_name, source, expected) => {
+    const result = openRtf(bytes(source));
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages[0]!.html.replaceAll(/<[^>]*>/g, "")).toBe(expected);
+  });
+
   it.each(["?", String.raw`\'3f`, String.raw`\\`])(
     "consumes skipped rich text Unicode fallback %s",
     (fallback) => {
@@ -162,7 +185,7 @@ describe("document preview contents", () => {
   it("decodes rich text formatting and Unicode without showing hidden destinations", () => {
     const result = openRtf(
       bytes(
-        String.raw`{\rtf1\ansi{\fonttbl{\f0 Hidden font;}}Hello \b bold\b0\par Unicode: \u945?{\*\unknown hidden}{\field{\*\fldinst HYPERLINK "https://example.com"}{\fldrslt visible}}}`,
+        String.raw`{\rtf1\ansi{\fonttbl{\f0 Hidden font;}}Hello \b bold\b0\par Unicode: \u945?{\*\unknown hidden\_\emspace\zwj}{\field{\*\fldinst HYPERLINK "https://example.com"}{\fldrslt visible}}}`,
       ),
     );
     expect(result.type).toBe("document");
