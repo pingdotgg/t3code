@@ -61,6 +61,8 @@ export interface FleetDrainImportStore {
 }
 
 const EVENT_PREFIX = "fleet-drain";
+/** `importedAt` value of a row claimed before its events were written. */
+const PENDING_IMPORTED_AT = "";
 const TRANSCRIPT_EVENT_BATCH_SIZE = 100;
 const TITLE_SUFFIX_OF = (environmentId: string) => ` (drained from ${environmentId})`;
 
@@ -180,11 +182,23 @@ const restoreAttachments = Effect.fn("FleetBundleImport.restoreAttachments")(fun
 }) {
   const segment = toSafeThreadAttachmentSegment(input.threadId);
   if (segment === null) return;
+  yield* input.fs.makeDirectory(input.attachmentsDir, { recursive: true }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new FleetDrainImportError({
+          operation: "restore-attachments",
+          threadId: ThreadId.make(input.threadId),
+          message: `Attachment directory for ${input.threadId} could not be created.`,
+          cause,
+        }),
+    ),
+  );
   for (const entry of input.manifest) {
-    // Names come from the worker's attachment segment listing; only a flat,
-    // traversal-free name may land under this thread's own directory.
+    // The store keeps attachments flat as `<thread-segment>-<uuid><ext>`; only
+    // such a name may land in the attachments root.
     const name = normalizeAttachmentRelativePath(entry.name);
     if (name === null || name.includes("/") || name !== entry.name) continue;
+    if (!name.startsWith(`${segment}-`)) continue;
     const source = input.path.join(
       input.bundleDir,
       `thread-${encodeURIComponent(input.threadId)}-att-${entry.hash.slice(0, 16)}.bin`,
@@ -200,18 +214,7 @@ const restoreAttachments = Effect.fn("FleetBundleImport.restoreAttachments")(fun
           }),
       ),
     );
-    const target = input.path.join(input.attachmentsDir, segment, name);
-    yield* input.fs.makeDirectory(input.path.dirname(target), { recursive: true }).pipe(
-      Effect.mapError(
-        (cause) =>
-          new FleetDrainImportError({
-            operation: "restore-attachments",
-            threadId: ThreadId.make(input.threadId),
-            message: `Attachment directory for ${input.threadId} could not be created.`,
-            cause,
-          }),
-      ),
-    );
+    const target = input.path.join(input.attachmentsDir, name);
     yield* input.fs.writeFile(target, bytes).pipe(
       Effect.mapError(
         (cause) =>
@@ -343,12 +346,27 @@ export const makeFleetBundleImporter = (input: {
                 }),
             ),
           );
+          // A bundle may name one thread and carry another's records; every
+          // ownership id must agree with the envelope before anything is written.
+          const foreignIds = [
+            snapshot.projection.thread.id,
+            ...snapshot.projection.turnItems.map((item) => item.threadId),
+            ...snapshot.projection.messages.map((message) => message.threadId),
+            ...snapshot.projection.providerThreads.map((entry) => entry.appThreadId),
+          ].filter((id) => id !== threadId);
+          if (foreignIds.length > 0) {
+            warnings.push(
+              `Bundle ${file} names ${threadId} but carries records of ${foreignIds[0]}; it was not imported.`,
+            );
+            return "skipped" as const;
+          }
           const snapshotSequence = snapshot.snapshotSequence;
           const existing = yield* input.store.find(threadId);
           if (
             existing !== null &&
             existing.snapshotSequence !== null &&
-            existing.snapshotSequence === snapshotSequence
+            existing.snapshotSequence === snapshotSequence &&
+            existing.importedAt !== PENDING_IMPORTED_AT
           ) {
             return "skipped" as const;
           }
@@ -362,6 +380,17 @@ export const makeFleetBundleImporter = (input: {
             return "skipped" as const;
           }
           const now = DateTime.makeUnsafe(yield* input.now);
+          // Claim the thread before writing its events: a crash after the head
+          // leaves this marker pending, and the retry replays instead of
+          // mistaking its own partial import for a local thread.
+          yield* input.store.record({
+            threadId,
+            environmentId: request.environmentId,
+            drainId: request.drainId,
+            snapshotSequence,
+            importedAt: PENDING_IMPORTED_AT,
+            oversizeAttachmentsSkipped: envelope.attachmentsSkipped === true,
+          });
           const payload = archivedThreadPayload({
             thread: snapshot.projection.thread,
             environmentId: request.environmentId,
@@ -383,7 +412,9 @@ export const makeFleetBundleImporter = (input: {
               kind: "thread",
               ref: String(snapshotSequence ?? "none"),
             }),
-            type: existing === null ? "thread.created" : "thread.metadata-updated",
+            // The projection decides, not the marker: a resume before the head
+            // wrote still has to create the thread.
+            type: exists ? "thread.metadata-updated" : "thread.created",
             threadId: thread,
             providerInstanceId: payload.providerInstanceId,
             occurredAt: now,

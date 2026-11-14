@@ -730,6 +730,8 @@ const EnvironmentOrchestrationThreadSnapshotParams = Schema.Struct({
 export const EnvironmentOrchestrationShellSnapshotQuery = Schema.Struct({
   omitIdleSubagents: Schema.optionalKey(Schema.String),
   omitOlderSettled: Schema.optionalKey(Schema.String),
+  /** `1` also lists archived threads, which a drain must export before deleting. */
+  includeArchived: Schema.optionalKey(Schema.String),
   /**
    * The cursor of rows the client holds, loaded with the same omissions. The server answers
    * `resumable` instead of a snapshot when the socket can replay from it.

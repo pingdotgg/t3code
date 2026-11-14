@@ -181,7 +181,7 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   isolation: Schema.optional(
     Schema.Literals(["shared", "worktree", "openshell-auto"]).annotate({
       description:
-        "'shared' (default): parent checkout. 'worktree': new prepared checkout from the parent commit, for a separate checkout or PR per child. Uncommitted edits stay out. 'openshell-auto': child runs on an ephemeral fleet worker; drains when the task settles.",
+        "'shared' (default): parent checkout. 'worktree': new prepared checkout from the parent commit, for a separate checkout or PR per child. Uncommitted edits stay out. 'openshell-auto': child runs on an ephemeral fleet worker that retires after its TTL; drain-first removal keeps the sandbox until the copies are verified.",
     }),
   ),
   mode: Schema.optional(

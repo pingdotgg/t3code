@@ -17,7 +17,6 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as Path from "effect/Path";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -51,13 +50,13 @@ import * as OpenShellFleetStore from "../environment/OpenShellFleetStore.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as PeerEnvironmentRegistry from "../peer/PeerEnvironmentRegistry.ts";
+import * as PeerSessionResolve from "../peer/PeerSessionResolve.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as SqlClient from "effect/sql/SqlClient";
 
 /** ServerSecretStore slot holding the gateway credential (spec section 4.2). */
 const GATEWAY_CREDENTIAL_SLOT = "openshell-gateway-credential";
 /** ServerSecretStore slot holding the driver's durable spawn fallback key. */
-const FALLBACK_KEY_SLOT = "openshell-fleet-fallback-id";
 
 const isDriverError = Schema.is(OpenShellGatewayDriverError);
 
@@ -244,13 +243,19 @@ const make = Effect.gen(function* () {
     client: OpenShellGatewayClient,
   ) {
     const context = yield* Effect.context<never>();
+    // A spawned worker has a fleet delegation session, not an ordinary link, so
+    // the drain resolves it the same way MCP forwarding does.
+    const resolvePeer = PeerSessionResolve.resolvePeerSession({
+      links,
+      registry: Option.some(registry),
+    });
     const linkResolve = (environmentId: EnvironmentId) =>
-      links.resolve(environmentId).pipe(
+      resolvePeer(environmentId).pipe(
         Effect.mapError(
-          (cause) =>
+          (failure) =>
             new OpenShellFleetDrain.FleetDrainStepError({
               step: "shell",
-              message: cause instanceof Error ? cause.message : "The worker link is unusable.",
+              message: failure.error.message,
             }),
         ),
       );
@@ -333,13 +338,6 @@ const make = Effect.gen(function* () {
     const { gatewayUrl, openshell } = yield* gatewaySettings;
     const credential = yield* gatewayCredential(operation);
     const client = yield* openClient(operation, gatewayUrl, credential);
-    // A spawn that omits a client id falls back to this durable key, so a
-    // restart cannot mint a key an earlier process already used and hijack
-    // that worker's sandbox.
-    const durableFallbackKey = secrets.getOrCreateRandom(FALLBACK_KEY_SLOT, 32).pipe(
-      Effect.map(Hex.encode),
-      Effect.mapError((cause) => failed(operation, cause)),
-    );
     const context = yield* Effect.context<never>();
     // The driver's collaborators are Promise-shaped because the OpenShell SDK
     // is; they run these Effects on the surrounding services rather than a
@@ -386,7 +384,9 @@ const make = Effect.gen(function* () {
       index,
       drainExecutor: drain.port,
       bundleImporter: drain.bundleImporter,
-      fallbackIdempotencyKey: () => run(durableFallbackKey),
+      // Only a caller's clientRequestId makes a spawn repeatable. Without one
+      // the driver mints a fresh key, so independent spawns never collapse onto
+      // one sandbox and overwrite its policy.
     });
   });
 

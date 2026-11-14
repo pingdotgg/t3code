@@ -330,8 +330,25 @@ export const makeDrainExecutor = (deps: DrainDependencies): DrainExecutorShape =
         else worktrees.failed += 1;
       }
     }
+    // Work that started after the enumeration was never copied. The manager's
+    // `draining` row does not reach the worker, so the ack is re-earned here:
+    // a live thread or a changed thread set keeps the sandbox.
+    const after = yield* deps.source
+      .shell(input.environmentId)
+      .pipe(Effect.orElseSucceed(() => null));
+    const moved =
+      after === null ||
+      after.threads.some((thread) => thread.live) ||
+      after.threads.length !== shell.threads.length ||
+      after.threads.some(
+        (thread) => !shell.threads.some((before) => before.threadId === thread.threadId),
+      );
+    if (moved)
+      warnings.push(
+        "The worker changed during the drain; its state was copied, nothing was acknowledged.",
+      );
     // A deadline that cut the run short is never an ack, even with no failures.
-    const complete = !deadlineHit && threads.failed === 0 && worktrees.failed === 0;
+    const complete = !moved && !deadlineHit && threads.failed === 0 && worktrees.failed === 0;
     return reported({
       threads,
       worktrees,

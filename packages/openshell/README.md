@@ -38,4 +38,10 @@ t3-native.
   `src/sandboxPolicy.ts`; whether the delegating thread's mode should be
   inherited is undecided.
 - Idle-TTL dial (spec section 5.6) needs worker activity heartbeats; v1
-  enforces the hard lifetime only.
+  enforces the hard lifetime only, and `idleTimeoutMs`/`resources` in worker
+  defaults are accepted but unused.
+- Worker baggage (`workerBaggage.ts`) builds the copy/mount plan but is not
+  executed by provisioning yet: provider config homes and project instructions
+  are not copied into a sandbox in this PR.
+- An `openshell.credential` reference is stored but not resolved; the gateway
+  reads the `openshell-gateway-credential` server secret.

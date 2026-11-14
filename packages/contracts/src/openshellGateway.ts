@@ -55,8 +55,10 @@ export const OpenShellWorkerDefaults = Schema.Struct({
    * integration reaps (spec section 6.1).
    */
   ttlMs: Schema.optionalKey(Schema.DurationFromMillis),
+  /** Reserved: idle reaping needs worker heartbeats; only the hard TTL runs. */
   idleTimeoutMs: Schema.optionalKey(Schema.DurationFromMillis),
   drainTimeoutMs: Schema.optionalKey(Schema.DurationFromMillis),
+  /** Reserved: template resources decide today; this override is not wired. */
   resources: Schema.optionalKey(OpenShellSandboxResources),
 });
 export type OpenShellWorkerDefaults = typeof OpenShellWorkerDefaults.Type;
@@ -91,6 +93,7 @@ export const OpenShellGatewaySettings = Schema.Struct({
   driver: OpenShellDriverId.pipe(Schema.withDecodingDefault(Effect.succeed("openshell"))),
   /** Gateway control-plane base URL. */
   gatewayUrl: Schema.optionalKey(TrimmedNonEmptyString),
+  /** Reserved: stored, but the gateway reads the fixed server secret slot. */
   credential: Schema.optionalKey(Schema.NullOr(SecretReference)),
   /** Worker template name; spawn and the desktop template picker may override. */
   defaultSandboxTemplate: Schema.optionalKey(TrimmedNonEmptyString),

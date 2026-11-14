@@ -167,13 +167,15 @@ function buildActiveShellSnapshot(input: {
   readonly projects: ReadonlyArray<OrchestrationProjectShell>;
   readonly threads: OrchestrationV2ThreadShellSnapshot;
   readonly snapshotSequence: number;
+  /** A drain has to copy archived threads too before it may delete them. */
+  readonly includeArchived?: boolean;
 }): OrchestrationV2ShellSnapshot {
   return {
     schemaVersion: input.threads.schemaVersion,
     snapshotSequence: input.snapshotSequence,
     projects: input.projects,
     threads: input.threads.threads,
-    archivedThreads: [],
+    archivedThreads: input.includeArchived === true ? input.threads.archivedThreads : [],
   };
 }
 
@@ -347,6 +349,7 @@ export function omitOlderSettledShells(input: {
 interface ShellSubscriberOptions {
   readonly omitIdleSubagents: boolean;
   readonly omitOlderSettled: boolean;
+  readonly includeArchived?: boolean;
 }
 
 function trimShellSnapshot(
@@ -441,6 +444,7 @@ export const loadSubscriberShellSnapshot = Effect.fn("ShellStream.loadSubscriber
       projects: read.projects,
       threads: yield* read.decodeThreads,
       snapshotSequence: read.snapshotSequence,
+      includeArchived: input.options.includeArchived === true,
     });
     const facts = shellTrimFacts(read.index ?? base.threads);
     return {

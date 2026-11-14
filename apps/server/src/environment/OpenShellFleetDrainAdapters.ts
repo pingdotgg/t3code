@@ -289,7 +289,8 @@ export const linkDrainSource = (input: {
     );
   return {
     shell: (environmentId) =>
-      getJson(environmentId, "/api/orchestration/shell").pipe(
+      // Archived threads are drainable data: the worker lists them only on request.
+      getJson(environmentId, "/api/orchestration/shell?includeArchived=1").pipe(
         Effect.map((snapshot) => {
           const shell = snapshot as {
             readonly threads?: ReadonlyArray<DrainShellThread>;
@@ -434,14 +435,14 @@ const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 /** Total decoded attachment bytes drained per thread before skipping the set. */
 const MAX_DRAIN_ATTACHMENT_BYTES = 50 * 1024 * 1024;
 
-/** Marks the start of one attachment file's base64 body on exec stdout. */
-const ATTACHMENT_FRAME_MARKER = "==T3ATT ";
+/** Marks one attachment file's name and size on the listing command's stdout. */
+const ATTACHMENT_LIST_FRAME = "==T3ATTL ";
 
 /**
  * Attachment files over gateway exec (the worker's HTTP API serves no
- * attachment bytes): the sandbox streams each file of the thread's attachment
- * segment base64-encoded on stdout, from the server default attachments
- * layout; a worker keeping state elsewhere yields no files (spec 7.4 OPEN).
+ * attachment bytes): the worker lists the thread's files with their sizes
+ * first, so an oversized set is skipped before any bytes cross exec, then each
+ * file is read on its own. Files live flat as `<thread-segment>-<uuid><ext>`.
  */
 export const execDrainAttachments = (input: {
   readonly exec: (
@@ -454,42 +455,59 @@ export const execDrainAttachments = (input: {
   readonly maxBytes?: number;
 }): NonNullable<DrainSource["attachments"]> => {
   const maxBytes = input.maxBytes ?? MAX_DRAIN_ATTACHMENT_BYTES;
+  const attachmentsDir = `"\${T3CODE_HOME:-$HOME/.t3}/userdata/attachments"`;
   const listCommand = (segment: string) => [
     "sh",
     "-c",
-    `d="\${T3CODE_HOME:-$HOME/.t3}/userdata/attachments/${segment}"; ` +
-      'if [ -d "$d" ]; then for f in "$d"/*; do if [ -f "$f" ]; then ' +
-      `printf '%s\\n' "${ATTACHMENT_FRAME_MARKER}$(basename "$f")"; base64 "$f"; fi; done; fi`,
+    `d=${attachmentsDir}; if [ -d "$d" ]; then for f in "$d"/${segment}-*; do ` +
+      `[ -f "$f" ] || continue; case "$f" in *.part) continue;; esac; ` +
+      `printf '%s\\n' "${ATTACHMENT_LIST_FRAME}$(basename "$f") $(wc -c <"$f" | tr -d '[:space:]')"; ` +
+      `done; fi`,
+  ];
+  const readCommand = (name: string) => [
+    "sh",
+    "-c",
+    `base64 ${attachmentsDir}/${shellQuote(name)}`,
   ];
   return ({ sandboxName, threadId }) =>
     Effect.gen(function* () {
       const segment = toSafeThreadAttachmentSegment(threadId);
       if (segment === null) return { files: [], oversizeSkipped: false } as const;
-      const result = yield* input.exec(sandboxName, listCommand(segment));
-      if (result.exitCode !== 0) {
+      const listed = yield* input.exec(sandboxName, listCommand(segment));
+      if (listed.exitCode !== 0) {
         return yield* new FleetDrainStepError({
           step: "attachments",
-          message: `The worker did not list attachments for ${threadId} (exit ${result.exitCode}).`,
+          message: `The worker did not list attachments for ${threadId} (exit ${listed.exitCode}).`,
         });
       }
-      const files: Array<{ name: string; bytes: string }> = [];
-      let totalBytes = 0;
-      let current: { name: string; lines: string[] } | undefined;
-      for (const line of result.stdout.split("\n")) {
-        if (line.startsWith(ATTACHMENT_FRAME_MARKER)) {
-          if (current !== undefined) {
-            files.push({ name: current.name, bytes: current.lines.join("") });
-          }
-          current = { name: line.slice(ATTACHMENT_FRAME_MARKER.length).trim(), lines: [] };
-          continue;
-        }
-        const body = line.trim();
-        if (body === "" || current === undefined) continue;
-        current.lines.push(body);
-        totalBytes += Math.floor((body.length * 3) / 4);
+      const entries: Array<{ name: string; size: number }> = [];
+      for (const line of listed.stdout.split("\n")) {
+        if (!line.startsWith(ATTACHMENT_LIST_FRAME)) continue;
+        const rest = line.slice(ATTACHMENT_LIST_FRAME.length).trim();
+        const separator = rest.lastIndexOf(" ");
+        if (separator <= 0) continue;
+        const name = rest.slice(0, separator);
+        const size = Number(rest.slice(separator + 1));
+        // The worker names files itself; anything else is not one of this thread's.
+        if (!name.startsWith(`${segment}-`)) continue;
+        if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) continue;
+        if (!Number.isSafeInteger(size) || size < 0) continue;
+        entries.push({ name, size });
       }
-      if (current !== undefined) files.push({ name: current.name, bytes: current.lines.join("") });
-      if (totalBytes > maxBytes) return { files: [], oversizeSkipped: true } as const;
+      if (entries.reduce((total, entry) => total + entry.size, 0) > maxBytes) {
+        return { files: [], oversizeSkipped: true } as const;
+      }
+      const files: Array<{ name: string; bytes: string }> = [];
+      for (const entry of entries) {
+        const read = yield* input.exec(sandboxName, readCommand(entry.name));
+        if (read.exitCode !== 0) {
+          return yield* new FleetDrainStepError({
+            step: "attachments",
+            message: `The worker did not read attachment ${entry.name} of ${threadId} (exit ${read.exitCode}).`,
+          });
+        }
+        files.push({ name: entry.name, bytes: read.stdout });
+      }
       return { files, oversizeSkipped: false } as const;
     });
 };
