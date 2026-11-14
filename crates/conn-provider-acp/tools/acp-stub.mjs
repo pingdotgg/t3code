@@ -28,7 +28,41 @@ const agent = NodeChildProcess.spawn(process.execPath, [config.replayAgent], {
   },
   stdio: ["pipe", "pipe", "inherit"],
 });
-agent.stdout.pipe(process.stdout);
+// Replay gates (T3's `ProviderReplayGate` across processes): the agent line of a transcript
+// entry with a gated label is held, with every line after it, until the test writes
+// `<gateDir>/<label>.released`; the stub writes `<label>.reached` when it holds one.
+const gates = config.gates ?? [];
+if (gates.length === 0) {
+  agent.stdout.pipe(process.stdout);
+} else {
+  const gateFile = (label, kind) => `${config.gateDir}/${encodeURIComponent(label)}.${kind}`;
+  const entries = JSON.parse(NodeFS.readFileSync(config.transcript, "utf8")).entries;
+  let index = 0;
+  try {
+    index = JSON.parse(NodeFS.readFileSync(config.status, "utf8")).cursor ?? 0;
+  } catch {
+    // A first process starts at the beginning.
+  }
+  let holding = null;
+  const held = [];
+  const output = NodeReadline.createInterface({ input: agent.stdout, crlfDelay: Infinity });
+  output.on("line", (line) => {
+    while (index < entries.length && entries[index].type !== "emit_inbound") index += 1;
+    const label = entries[index]?.label;
+    index += 1;
+    if (holding === null && gates.includes(label) && !NodeFS.existsSync(gateFile(label, "released"))) {
+      holding = label;
+      NodeFS.writeFileSync(gateFile(label, "reached"), "");
+    }
+    if (holding === null) process.stdout.write(`${line}\n`);
+    else held.push(line);
+  });
+  setInterval(() => {
+    if (holding === null || !NodeFS.existsSync(gateFile(holding, "released"))) return;
+    holding = null;
+    for (const line of held.splice(0)) process.stdout.write(`${line}\n`);
+  }, 5).unref();
+}
 agent.on("exit", (code) => {
   log({ kind: "agent-exit", code });
   process.exit(code ?? 0);

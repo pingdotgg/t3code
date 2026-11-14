@@ -62,13 +62,63 @@ async fn main() {
                 ..AcpConfig::default()
             },
         );
-        if let Err(error) = run(&provider, calls.as_array().cloned().unwrap_or_default()).await {
+        let gates = Gates {
+            dir: scenario["gateDir"].as_str().unwrap_or("").to_owned(),
+            labels: scenario["gates"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|g| Some((g["label"].as_str()?.to_owned(), g["afterRun"].as_u64()?)))
+                .collect(),
+        };
+        if let Err(error) = run(
+            &provider,
+            calls.as_array().cloned().unwrap_or_default(),
+            &gates,
+        )
+        .await
+        {
             eprintln!("{name}: {error}");
         }
     }
 }
 
-async fn run(provider: &AcpProvider, calls: Vec<Value>) -> Result<(), String> {
+/// T3's replay gates for one scenario: the stub holds a labelled line until this side writes
+/// `<dir>/<label>.released`, once the run before it ended (`finish_held_run`).
+struct Gates {
+    dir: String,
+    labels: Vec<(String, u64)>,
+}
+
+impl Gates {
+    fn release_after(&self, run_ordinal: u64) {
+        for (label, after) in &self.labels {
+            if run_ordinal >= *after {
+                let encoded: String = label
+                    .bytes()
+                    .map(|b| match b {
+                        b'A'..=b'Z'
+                        | b'a'..=b'z'
+                        | b'0'..=b'9'
+                        | b'-'
+                        | b'_'
+                        | b'.'
+                        | b'!'
+                        | b'~'
+                        | b'*'
+                        | b'\''
+                        | b'('
+                        | b')' => (b as char).to_string(),
+                        other => format!("%{other:02X}"),
+                    })
+                    .collect();
+                let _ = std::fs::write(format!("{}/{encoded}.released", self.dir), "");
+            }
+        }
+    }
+}
+
+async fn run(provider: &AcpProvider, calls: Vec<Value>, gates: &Gates) -> Result<(), String> {
     let open = calls
         .iter()
         .find(|c| c["method"] == "openSession")
@@ -90,10 +140,14 @@ async fn run(provider: &AcpProvider, calls: Vec<Value>) -> Result<(), String> {
     let mut events = opened.events;
     let mut pending: Vec<String> = Vec::new();
     let mut answered = 0usize;
-    // Collects events until none came for `quiet`.
+    let mut started = 0usize;
+    let mut ended = 0usize;
+    // Collects events until none came for `quiet`; counts ended turns and opens gates.
     async fn drain(
         events: &mut tokio::sync::mpsc::Receiver<conn_provider::ProviderEvent>,
         pending: &mut Vec<String>,
+        ended: &mut usize,
+        gates: &Gates,
         quiet: Duration,
     ) {
         while let Ok(Some(event)) = tokio::time::timeout(quiet, events.recv()).await {
@@ -104,11 +158,48 @@ async fn run(provider: &AcpProvider, calls: Vec<Value>) -> Result<(), String> {
             {
                 pending.push(id.to_owned());
             }
+            if value["type"] == "turn.terminal" {
+                *ended += 1;
+                gates.release_after(value["runOrdinal"].as_u64().unwrap_or(0));
+            }
         }
     }
     for call in &calls {
-        drain(&mut events, &mut pending, Duration::from_millis(400)).await;
+        drain(
+            &mut events,
+            &mut pending,
+            &mut ended,
+            gates,
+            Duration::from_millis(400),
+        )
+        .await;
         let input = &call["input"];
+        // The orchestrator starts a turn once the last one ended (a deferred finalize waits
+        // T3's 3 s debounce).
+        if call["method"] == "startTurn" {
+            for _ in 0..100 {
+                if ended >= started {
+                    break;
+                }
+                drain(
+                    &mut events,
+                    &mut pending,
+                    &mut ended,
+                    gates,
+                    Duration::from_millis(100),
+                )
+                .await;
+            }
+            drain(
+                &mut events,
+                &mut pending,
+                &mut ended,
+                gates,
+                Duration::from_millis(400),
+            )
+            .await;
+            started += 1;
+        }
         match call["method"].as_str().unwrap_or("") {
             "ensureThread" => {
                 session
@@ -159,7 +250,27 @@ async fn run(provider: &AcpProvider, calls: Vec<Value>) -> Result<(), String> {
             _ => {}
         }
     }
-    drain(&mut events, &mut pending, Duration::from_millis(400)).await;
+    for _ in 0..100 {
+        if ended >= started {
+            break;
+        }
+        drain(
+            &mut events,
+            &mut pending,
+            &mut ended,
+            gates,
+            Duration::from_millis(100),
+        )
+        .await;
+    }
+    drain(
+        &mut events,
+        &mut pending,
+        &mut ended,
+        gates,
+        Duration::from_millis(400),
+    )
+    .await;
     session.close().await;
     Ok(())
 }

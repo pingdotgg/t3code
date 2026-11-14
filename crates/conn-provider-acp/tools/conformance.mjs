@@ -59,8 +59,10 @@ const scenarios = fixtures.filter((f) => !expected.has(f));
 
 const work = NodeFS.realpathSync(NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "conn-acp-conformance-")));
 
-const wrapper = (dir, transcript) => {
+const wrapper = (dir, transcript, gates) => {
   NodeFS.mkdirSync(dir, { recursive: true });
+  const gateDir = NodePath.join(dir, "gates");
+  NodeFS.mkdirSync(gateDir, { recursive: true });
   const config = NodePath.join(dir, "stub-config.json");
   NodeFS.writeFileSync(
     config,
@@ -69,6 +71,8 @@ const wrapper = (dir, transcript) => {
       status: NodePath.join(dir, "status.json"),
       log: NodePath.join(dir, "stub.ndjson"),
       replayAgent: REPLAY_AGENT,
+      gates: gates.map((g) => g.label),
+      gateDir,
     }),
   );
   const script = NodePath.join(dir, "grok");
@@ -92,8 +96,11 @@ const plan = scenarios.map((name) => {
     name,
     dir,
     golden: NodePath.join(goldenDir, `${name}.json`),
-    tsBinary: wrapper(NodePath.join(dir, "ts"), transcript),
-    binary: wrapper(NodePath.join(dir, "rust"), transcript),
+    tsBinary: wrapper(NodePath.join(dir, "ts"), transcript, golden.gates ?? []),
+    binary: wrapper(NodePath.join(dir, "rust"), transcript, golden.gates ?? []),
+    tsGateDir: NodePath.join(dir, "ts", "gates"),
+    gateDir: NodePath.join(dir, "rust", "gates"),
+    gates: golden.gates ?? [],
     workspace: rustWorkspace,
   };
 });
@@ -126,18 +133,38 @@ process.env.TMPDIR = fs.realpathSync(os.tmpdir());
 const PLAN = __PLAN__;
 fs.writeFileSync(__PARENT_ENV__, JSON.stringify(process.env));
 
-const stubHarness = (binaryPath: string) => ({
+// The fixture's replay gate reaches across to the stub: the stub writes <label>.reached when it
+// holds the line, and the gate's release writes <label>.released.
+const bridgeGates = (scenario: any, gate: any) => {
+  if (gate === undefined) return;
+  for (const { label } of scenario.gates) {
+    const file = (kind: string) => scenario.tsGateDir + "/" + encodeURIComponent(label) + "." + kind;
+    const timer = setInterval(() => {
+      if (!fs.existsSync(file("reached"))) return;
+      clearInterval(timer);
+      void gate.beforeEmit(label).then(() => fs.writeFileSync(file("released"), ""));
+    }, 5);
+    timer.unref();
+  }
+};
+
+const stubHarness = (scenario: any) => ({
   ...GrokOrchestratorReplayHarness,
-  makeProviderAdapterRegistryLayer: () =>
+  makeProviderAdapterRegistryLayer: (_transcript: any, options?: any) =>
     ProviderAdapterRegistry.layerFromAdaptersEffect(
       Effect.gen(function* () {
+        const gate = options?.replayGate;
+        bridgeGates(scenario, gate);
         const adapter = yield* makeGrokAdapterV2({
           instanceId: GROK_DEFAULT_INSTANCE_ID,
-          settings: Schema.decodeSync(GrokSettings)({ binaryPath }),
+          settings: Schema.decodeSync(GrokSettings)({ binaryPath: scenario.tsBinary }),
           environment: {},
           hostPlatform: yield* HostProcess.Platform,
           selfInvocation: yield* resolveSelfInvocation(),
           continuationRequests: yield* ProviderContinuationRequests.ProviderContinuationRequests,
+          ...(gate === undefined
+            ? {}
+            : { testHooks: { onDeferredFinalizeScheduled: (debounce: any) => Effect.sync(() => gate.recordFinishArmed(debounce)) } }),
         });
         return [adapter];
       }),
@@ -156,7 +183,7 @@ const stubHarness = (binaryPath: string) => ({
 const runOne = (input: any) => {
     const scenario = PLAN.find((s: any) => s.name === input.fixtureName);
     if (scenario === undefined) return Effect.void;
-    return runReplayFixture({ ...input, harness: stubHarness(scenario.tsBinary) as any }).pipe(
+    return runReplayFixture({ ...input, harness: stubHarness(scenario) as any }).pipe(
       Effect.exit,
       Effect.tap((exit) => Effect.sync(() => fs.writeFileSync(scenario.dir + "/ts-outcome.txt", String(exit._tag === "Success" ? "passed" : exit.cause)))),
       Effect.asVoid,
