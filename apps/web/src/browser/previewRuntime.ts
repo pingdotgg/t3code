@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import type { EnvironmentId, PreviewRuntime, PreviewSessionSnapshot } from "@t3tools/contracts";
 
 import { isElectron } from "~/env";
@@ -62,26 +62,25 @@ function desktopHostsServerTab(
   );
 }
 
-// Fixed when a tab first appears, until T3 is on screen again: moving a page between hosts replaces it.
+// Fixed when a tab first appears, until someone views it with T3 on screen: moving a page between
+// hosts replaces it, so a tab nobody looks at keeps its live page in the background window.
 let backgroundHostedTabs = new Map<string, boolean>();
 const hostingListeners = new Set<() => void>();
 
-// Its window takes focus when T3 is shown again. Background tabs then move to panel webviews, where
-// every desktop tool works, and a new map makes memoized callers look again.
-const returnBackgroundTabsToPanel = () => {
-  if (![...backgroundHostedTabs.values()].some(Boolean)) return;
-  backgroundHostedTabs = new Map([...backgroundHostedTabs.keys()].map((key) => [key, false]));
+const hostingKey = (environmentId: EnvironmentId, snapshot: RuntimeSnapshot) =>
+  `${environmentId}\u0000${snapshot.threadId}\u0000${snapshot.tabId}`;
+
+// A new map makes memoized callers look again.
+const returnTabToPanel = (key: string) => {
+  if (backgroundHostedTabs.get(key) !== true) return;
+  backgroundHostedTabs = new Map(backgroundHostedTabs).set(key, false);
   for (const listener of hostingListeners) listener();
 };
 
 const subscribeBackgroundHosting = (listener: () => void) => {
   hostingListeners.add(listener);
-  if (hostingListeners.size === 1) window.addEventListener("focus", returnBackgroundTabsToPanel);
   return () => {
     hostingListeners.delete(listener);
-    if (hostingListeners.size === 0) {
-      window.removeEventListener("focus", returnBackgroundTabsToPanel);
-    }
   };
 };
 
@@ -111,7 +110,7 @@ export function hostsServerTabInBackground(
   ) {
     return false;
   }
-  const key = `${environmentId}\u0000${snapshot.threadId}\u0000${snapshot.tabId}`;
+  const key = hostingKey(environmentId, snapshot);
   const decided = backgroundHostedTabs.get(key) ?? hosting.get(key);
   if (decided !== undefined) return decided;
   const background = window.desktopBridge?.getWindowShown?.() === false;
@@ -131,14 +130,27 @@ export function rendersServerTabNatively(
   );
 }
 
+/** For the tab the panel shows: a background tab moves into the panel once T3 has focus. */
 export function useRendersServerTabNatively(
   environmentId: EnvironmentId,
   snapshot: RuntimeSnapshot | null | undefined,
 ): boolean {
-  return rendersServerTabNatively(
+  const primaryEnvironmentId = useAtomValue(primaryEnvironmentIdAtom);
+  const hosting = useBackgroundHosting();
+  const background = hostsServerTabInBackground(
     environmentId,
-    useAtomValue(primaryEnvironmentIdAtom),
+    primaryEnvironmentId,
     snapshot,
-    useBackgroundHosting(),
+    hosting,
   );
+  const backgroundKey = background && snapshot ? hostingKey(environmentId, snapshot) : null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- moves the viewed tab into the panel when the app window has focus, which React does not track
+  useEffect(() => {
+    if (backgroundKey === null) return;
+    const moveToPanel = () => returnTabToPanel(backgroundKey);
+    if (document.hasFocus()) moveToPanel();
+    window.addEventListener("focus", moveToPanel);
+    return () => window.removeEventListener("focus", moveToPanel);
+  }, [backgroundKey]);
+  return desktopHostsServerTab(environmentId, primaryEnvironmentId, snapshot) && !background;
 }

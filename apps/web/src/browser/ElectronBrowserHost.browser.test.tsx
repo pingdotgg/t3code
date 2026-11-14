@@ -67,6 +67,7 @@ import {
 import { reconcilePreviewServerSessions, resetPreviewStateForTests } from "~/previewStateStore";
 import { AppAtomRegistryProvider } from "~/rpc/atomRegistry";
 import { ElectronBrowserHost } from "./ElectronBrowserHost";
+import { useRendersServerTabNatively } from "./previewRuntime";
 
 const threadRef = scopeThreadRef(
   EnvironmentId.make("host-webview-order"),
@@ -187,14 +188,13 @@ describe("ElectronBrowserHost", () => {
     async ({ shown, tabId }) => {
       using _state = setup();
       using _bridge = stubDesktopWindowShown(shown);
+      const agentTab: PreviewSessionSnapshot = {
+        ...snapshot(tabId, "2026-01-01T00:00:01.000Z"),
+        runtime: "server",
+        automationOwner: "agent-session",
+      };
       reconcilePreviewServerSessions(threadRef, {
-        sessions: [
-          {
-            ...snapshot(tabId, "2026-01-01T00:00:01.000Z"),
-            runtime: "server",
-            automationOwner: "agent-session",
-          },
-        ],
+        sessions: [agentTab],
         serverEpoch: "server-a",
         revision: 1,
       });
@@ -218,7 +218,18 @@ describe("ElectronBrowserHost", () => {
           url: `https://example.com/${tabId}`,
         });
         expect(screen.container.querySelectorAll("webview")).toHaveLength(0);
-        // Back on screen, the tab moves into the panel, where every desktop tool works.
+        // Back on screen, a tab nobody views keeps its live page; the viewed one moves into the panel.
+        await act(() => window.dispatchEvent(new Event("focus")));
+        expect(screen.container.querySelectorAll("webview")).toHaveLength(0);
+        function Viewer() {
+          useRendersServerTabNatively(threadRef.environmentId, agentTab);
+          return null;
+        }
+        await using _viewer = await render(
+          <AppAtomRegistryProvider>
+            <Viewer />
+          </AppAtomRegistryProvider>,
+        );
         await act(() => window.dispatchEvent(new Event("focus")));
         expect(screen.container.querySelectorAll("webview")).toHaveLength(1);
       }
