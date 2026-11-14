@@ -616,7 +616,7 @@ function ConfiguredCloudLinkRow({
         description: enabled
           ? "This environment is available through T3 Connect."
           : publishAgentActivity
-            ? "The managed tunnel was removed. Agent activity publishing stays on."
+            ? "The managed tunnel was removed. Agent activity stays enabled."
             : "This environment is no longer available through T3 Connect.",
       });
     }
@@ -632,8 +632,8 @@ function ConfiguredCloudLinkRow({
         type: "success",
         title: enabled ? "Agent activity enabled" : "Agent activity disabled",
         description: enabled
-          ? "This environment publishes agent activity to your mobile clients."
-          : "This environment will stop publishing agent activity.",
+          ? "This environment sends agent activity to your mobile devices."
+          : "This environment will stop sending agent activity to your mobile devices.",
       });
     }
     setIsUpdatingPreference(false);
@@ -716,7 +716,7 @@ function ConfiguredCloudLinkRow({
           description={
             signedOut
               ? "Sign in to send activity to mobile notifications and Live Activities."
-              : "Send activity to mobile notifications and Live Activities without T3 Connect."
+              : "Use agent activity in push notifications or Live Activities on your phone."
           }
           managed={connectDenial}
           control={
@@ -724,7 +724,7 @@ function ConfiguredCloudLinkRow({
               signInButton
             ) : (
               <CloudLinkSwitch
-                ariaLabel="Publish agent activity to mobile clients"
+                ariaLabel="Send agent activity to mobile devices"
                 checked={publishAgentActivity}
                 disabled={switchDisabled}
                 disabledReason={disabledReason}
