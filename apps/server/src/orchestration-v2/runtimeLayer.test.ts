@@ -6564,6 +6564,34 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         blocked.runs.filter((run) => run.status === "queued").map((run) => run.userMessageId),
         ["settle-automatic-user-queued", "settle-automatic-agent-queued-2"],
       );
+
+      // An agent's edit restamps the user's held message; it stays the user's and still blocks.
+      const userRun = blocked.runs.find(
+        (run) => run.userMessageId === "settle-automatic-user-queued",
+      );
+      assert.isDefined(userRun);
+      yield* orchestrator.dispatch({
+        type: "queued-run.edit",
+        commandId: CommandId.make("settle-automatic-agent-edit"),
+        threadId,
+        runId: userRun.id,
+        text: "settle-automatic-user-queued, edited by an agent",
+        editor: { createdBy: "agent", creationSource: "mcp" },
+      });
+      const editedError = yield* orchestrator
+        .dispatch({
+          type: "thread.settle",
+          commandId: CommandId.make("settle-automatic-settle-3"),
+          threadId,
+        })
+        .pipe(Effect.flip);
+      assert.equal(editedError.cause, error.cause);
+      assert.deepEqual(
+        (yield* orchestrator.getThreadProjection(threadId)).runs
+          .filter((run) => run.status === "queued")
+          .map((run) => run.userMessageId),
+        ["settle-automatic-user-queued", "settle-automatic-agent-queued-2"],
+      );
     }),
   );
 

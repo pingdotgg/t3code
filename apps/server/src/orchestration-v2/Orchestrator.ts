@@ -4268,21 +4268,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           projection.runs.filter((run) => run.status === "queued").map((run) => run.userMessageId),
         )
         .pipe(mapDispatchError(command));
-      const automaticMessageIds = new Set(
-        [...queuedMessages.values()]
-          .filter(
-            (message) =>
-              message.role === "user" &&
-              (message.createdBy !== "user" ||
-                message.scheduledTaskId !== undefined ||
-                message.notification !== undefined ||
-                message.delegatedCompletion !== undefined),
-          )
-          .map((message) => message.id),
-      );
-      const automaticQueuedRuns = projection.runs.filter(
-        (run) => run.status === "queued" && automaticMessageIds.has(run.userMessageId),
-      );
+      const automaticQueuedRuns = projection.runs.filter((run) => {
+        const message = queuedMessages.get(run.userMessageId);
+        return (
+          run.status === "queued" &&
+          message?.role === "user" &&
+          ((run.queuedBy ?? message.createdBy) !== "user" ||
+            message.scheduledTaskId !== undefined ||
+            message.notification !== undefined ||
+            message.delegatedCompletion !== undefined)
+        );
+      });
       const runningRunExists = projection.runs.some((run) =>
         ["preparing", "starting", "running", "waiting"].includes(run.status),
       );
