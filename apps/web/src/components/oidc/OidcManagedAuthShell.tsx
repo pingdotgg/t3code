@@ -50,6 +50,7 @@ function ConfiguredOidcShell({
     isLoaded: true,
     isSignedIn: snapshot.userId !== null,
     hasSession: snapshot.userId !== null,
+    loadFailed: false,
     userId: snapshot.userId,
     accountLabel: snapshot.label,
     getToken: controller.getToken,

@@ -16,6 +16,8 @@ import {
   type FakeDriver,
 } from "../../test/fakeEnvironment";
 import { act, render } from "../../test/render";
+import { makeThreadFixture } from "../test-fixtures";
+import { SidebarSearchResultRow } from "./sidebar/SidebarThreadRow";
 
 // The socket is the only fake layer; see test/appScenarios.renders.tsx.
 vi.mock("../../../../packages/client-runtime/src/connection/driver.ts", async (importOriginal) => {
@@ -51,8 +53,13 @@ it("keeps the title when dragging a search result from a collapsed folder", asyn
   });
   const folder = page.getByRole("button", { name: /^render/ });
   await expect.element(folder).toHaveAttribute("aria-expanded", "true");
-  await userEvent.click(folder);
-  await expect.element(page.getByText(second.title, { exact: true })).not.toBeInTheDocument();
+  // A removed row fades out as a clone without its test id, so match the live row only.
+  const secondRow = page.getByTestId("sidebar-row-folder").filter({ hasText: second.title });
+  await expect.element(secondRow).toBeInTheDocument();
+  // The shift guard drops pointer presses on a row that appeared under 500ms ago; keys pass.
+  folder.element().focus();
+  await userEvent.keyboard("{Enter}");
+  await expect.element(secondRow).not.toBeInTheDocument();
   await userEvent.fill(page.getByRole("combobox", { name: "Search threads" }), "search-target");
   const result = page.getByRole("option", { name: /Thread search-target/ });
   await expect.element(result).toBeVisible();
@@ -80,4 +87,38 @@ it("keeps the title when dragging a search result from a collapsed folder", asyn
       document.querySelector('body > div[aria-hidden="true"].pointer-events-none')?.textContent,
     ).toBe(second.title);
   });
+});
+
+it("keeps focus in the search box when a click picks a search result", async () => {
+  const onSelect = vi.fn();
+  await using screen = await render(
+    <>
+      <input aria-label="Search threads" />
+      <ul role="listbox">
+        <SidebarSearchResultRow
+          isSettled={false}
+          thread={makeThreadFixture({ title: "Invoice export" })}
+          project={null}
+          projectDisplayName={null}
+          environmentLabel={null}
+          environmentMachine="server"
+          providerEntryByInstanceId={new Map()}
+          isHighlighted={false}
+          isRouteActive={false}
+          resultId="result-0"
+          searchMatch={null}
+          searchQuery="invoice"
+          onHighlight={() => {}}
+          onSelect={onSelect}
+          onFileDropThreads={() => {}}
+        />
+      </ul>
+    </>,
+  );
+  const search = screen.getByRole("textbox", { name: "Search threads" });
+  await userEvent.click(search);
+  await userEvent.click(screen.getByRole("option"));
+  expect(onSelect).toHaveBeenCalledOnce();
+  // Picking clears the results; a focused result would drop focus, and its recovery scrolls the list.
+  await expect.element(search).toHaveFocus();
 });

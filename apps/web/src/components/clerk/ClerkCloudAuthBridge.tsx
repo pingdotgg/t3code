@@ -6,6 +6,7 @@ import { resolveRelayClerkTokenOptions } from "../../cloud/publicConfig";
 import { isElectron } from "../../env";
 import { AppAtomRegistryProvider } from "../../rpc/atomRegistry";
 import { resolveClerkSignInProps } from "./authRedirect";
+import { useClerkLoadFailed } from "./clerkLoadFailure";
 import { useClerkAccountPage } from "./T3ConnectAccountPages";
 
 /** Presents Clerk through the provider-neutral `CloudAuth` the rest of the app reads. */
@@ -14,12 +15,14 @@ export function ClerkCloudAuthBridge({ children }: { readonly children: ReactNod
   const { isLoaded, isSignedIn, getToken } = useAuth();
   const { userId, isSignedIn: hasSession } = useAuth({ treatPendingAsSignedOut: false });
   const accountPage = useClerkAccountPage();
+  const loadFailed = useClerkLoadFailed();
 
   const value: CloudAuth = {
     provider: "clerk",
     isLoaded,
     isSignedIn: isSignedIn === true,
     hasSession: hasSession === true,
+    loadFailed,
     userId: userId ?? null,
     accountLabel: clerk.user?.primaryEmailAddress?.emailAddress ?? null,
     getToken: () => getToken(resolveRelayClerkTokenOptions()),

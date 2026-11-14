@@ -12,6 +12,8 @@ export interface CloudAuth extends CloudAuthState {
    * session does not look like a fresh sign-in once it completes.
    */
   readonly hasSession: boolean;
+  /** The provider's sign-in script failed to load, so signing in needs a page reload. */
+  readonly loadFailed: boolean;
   /** Clerk's account pages; null for providers that do not host any. */
   readonly openAccount: ((page?: T3ConnectAccountPageUrl) => void) | null;
 }
@@ -21,6 +23,7 @@ const SIGNED_OUT: CloudAuth = {
   signIn: () => {},
   signOut: async () => {},
   hasSession: false,
+  loadFailed: false,
   openAccount: null,
 };
 
