@@ -143,6 +143,21 @@ same(
   /export const CLAUDE_T3_MCP_TOOL_WILDCARD = "([^"]*)";/.exec(claudeTs)?.[1],
 );
 
+// ---- The Claude Agent SDK version (AGENTS.md: the same SDK version as the T3 server) ----------
+// T3 pins a range in apps/server/package.json; its pnpm lockfile holds the version it runs.
+const t3Sdk = [...ts("pnpm-lock.yaml").matchAll(/\n {2}'?@anthropic-ai\/claude-agent-sdk@([0-9][^':(]*)'?:/g)].map(
+  (m) => m[1],
+);
+const hostLock = JSON.parse(rust("helpers/sdk-host/package-lock.json"));
+same(
+  "helpers/sdk-host claude-agent-sdk = the T3 server's locked version",
+  [
+    JSON.parse(rust("helpers/sdk-host/package.json")).dependencies?.["@anthropic-ai/claude-agent-sdk"],
+    hostLock.packages?.["node_modules/@anthropic-ai/claude-agent-sdk"]?.version,
+  ],
+  [...new Set(t3Sdk)].length === 1 ? [t3Sdk[0], t3Sdk[0]] : [`one version in pnpm-lock.yaml, found ${t3Sdk.join(", ")}`],
+);
+
 for (const failure of failures) console.log(`FAIL ${failure}`);
 if (failures.length > 0) process.exitCode = 1;
 else console.log("hand-kept copies match the Conn monorepo");

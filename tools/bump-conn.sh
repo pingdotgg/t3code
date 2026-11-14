@@ -7,8 +7,8 @@
 #
 # <commit>     Default: HEAD of CONN_MONOREPO. CONN_MONOREPO must be at it
 #              (tools/conn-checkout --commit <sha> --dest <dir> moves a checkout there).
-# --capture    Also regenerate the provider crates' reference events from the TypeScript
-#              adapters (see capture_reference_events below). Off by default.
+# --capture    Also regenerate the provider crates' reference events (testdata/ts) from the
+#              TypeScript adapters, and report which changed. Off by default: about 2 minutes.
 # --no-checks  Skip tools/check.sh (quick look at the diff only; the report says so).
 #
 # It writes conn.pin, the README's base line and every generated file, and never commits. It
@@ -71,7 +71,10 @@ generated=(
   crates/conn-contract/methods.json
   crates/conn-mcp/src/catalog.jsonl
   crates/conn-mcp/src/instructions.txt
-  crates/conn-mcp/src/claude-background-wait.txt
+  crates/conn-mcp/src/claude-instructions.txt
+  crates/conn-provider-codex/src/instructions.rs
+  crates/conn-provider-codex/testdata/instructions.json
+  crates/conn-provider-claude/src/model_catalog.json
   crates/conn-server/keybindings.defaults.json
   crates/conn-server/keybindings.resolved.json
   crates/conn-server/src/scopes/generated.rs
@@ -80,10 +83,17 @@ generated=(
   crates/conn-server/src/settings/generated.rs
   tools/upkeep/mcp-tools.json
 )
-for rel in "${generated[@]}"; do
-  if [ -f "$rel" ]; then
+# The provider crates' reference events: what the TypeScript adapters emit for the recorded
+# CLI transcripts. Only --capture rewrites them; the report then lists the files that changed.
+reference_events=(
+  crates/conn-provider-codex/testdata/cli
+  crates/conn-provider-codex/testdata/ts
+  crates/conn-provider-claude/testdata/ts
+)
+for rel in "${generated[@]}" "${reference_events[@]}"; do
+  if [ -e "$rel" ]; then
     mkdir -p "$scratch/before/$(dirname "$rel")"
-    cp "$rel" "$scratch/before/$rel"
+    cp -R "$rel" "$scratch/before/$rel"
   fi
 done
 
@@ -125,6 +135,9 @@ mcp_digests() {
 step "mcp tool list" mcp_digests
 step "gen-keybindings" node crates/conn-server/tools/gen-keybindings.mjs
 step "gen-upstream" node tools/gen-upstream.mjs
+step "codex instructions" node crates/conn-provider-codex/tools/gen-instructions.mjs
+# The Claude model catalog comes from the T3 server's bundled catalog (about 30 s, vitest).
+step "claude catalog" crates/conn-provider-claude/tools/gen-catalog/run.sh
 # The keybinding files are formatted by hand; gen-keybindings --check compares values. Keep
 # the committed layout when the value did not change, so an empty bump leaves no diff.
 keep_layout() {
@@ -152,21 +165,20 @@ opaque_fallbacks() {
 }
 step "opaque fallbacks" opaque_fallbacks
 
-# 3. Reference events from the TypeScript adapters. This is the one place to call the
-# provider crates' capture tools. Both replay recorded CLI transcripts (no model call), and
-# both put a temporary test file into CONN_MONOREPO/apps/server while they run, so never
-# point CONN_MONOREPO at a shared checkout with --capture.
+# 3. Reference events from the TypeScript adapters: the provider crates' capture tools. Both
+# replay recorded CLI transcripts (no model call), and both put a temporary test file into
+# CONN_MONOREPO/apps/server while they run, so never point CONN_MONOREPO at a shared checkout
+# with --capture. The replay tests in `cargo test` then compare the Rust providers with the new
+# events; the report lists which files changed.
 capture_reference_events() {
-  # Not hooked in yet: the provider crates own these tools and are changing them. When they
-  # are stable, replace this body with:
-  #   node crates/conn-provider-codex/tools/capture-ts-events.mjs &&
-  #     CONN_MONOREPO="$mono" crates/conn-provider-claude/tools/capture-ts/run.sh
-  # and add their testdata/ts directories to `generated` above.
-  printf 'capture tools are not hooked in yet (tools/bump-conn.sh, capture_reference_events)\n'
-  return 1
+  node crates/conn-provider-codex/tools/capture-ts-events.mjs &&
+    crates/conn-provider-claude/tools/capture-ts/run.sh &&
+    node tools/reference-events.mjs "$scratch/before" "${reference_events[@]}" |
+    tee "$scratch/reference-events"
 }
 if $capture; then
-  step "reference events" capture_reference_events
+  # Before the checks, so `cargo test` replays against the new events.
+  step "reference events (--capture)" capture_reference_events
 fi
 
 # 4. Checks.
@@ -183,11 +195,12 @@ cat "$steps" "$scratch/checks" >"$scratch/all-checks"
 binary="$repo/target/release/conn-server"
 [ -x "$binary" ] || binary=""
 node tools/bump-report.mjs --before "$scratch/before" --from "$old" --to "$new" \
-  --checks "$scratch/all-checks" ${binary:+--binary "$binary"} >"$report" 2>>"$log"
+  --checks "$scratch/all-checks" ${binary:+--binary "$binary"} $($capture && printf -- '--reference-events %s' "$scratch/reference-events") \
+  >"$report" 2>>"$log"
 cat "$report"
 printf '\nreport: %s\nlog:    %s\n' "$report" "$log"
 if ! $capture; then
-  printf 'reference events (provider crates): not regenerated; pass --capture once it is hooked in.\n'
+  printf 'reference events (provider crates): not regenerated; pass --capture to regenerate and compare them.\n'
 fi
 
 if grep -q '^FAIL ' "$scratch/all-checks"; then
