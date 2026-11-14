@@ -74,15 +74,25 @@ export function filterFilesystemBrowseEntries(
   entries: ReadonlyArray<FilesystemBrowseEntry>,
   query: string,
 ) {
+  // macOS Finder stores names decomposed (NFD), while typed text is composed (NFC).
+  const normalizedQuery = query.normalize("NFC");
   const lowerQuery = query.toLowerCase();
+  const lowerNormalizedQuery = normalizedQuery.toLowerCase();
   const showHidden = query.startsWith(".");
   const visibleEntries = entries.filter(
     (entry) =>
-      entry.name.toLowerCase().startsWith(lowerQuery) &&
+      (entry.name.toLowerCase().startsWith(lowerQuery) ||
+        entry.name.normalize("NFC").toLowerCase().startsWith(lowerNormalizedQuery)) &&
       (showHidden || !entry.name.startsWith(".")),
   );
+  const normalizedMatches = visibleEntries.filter(
+    (entry) => entry.name.normalize("NFC") === normalizedQuery,
+  );
   const exactEntry =
-    query.length > 0 ? (visibleEntries.find((entry) => entry.name === query) ?? null) : null;
+    query.length > 0
+      ? (visibleEntries.find((entry) => entry.name === query) ??
+        (normalizedMatches.length === 1 ? normalizedMatches[0] : null))
+      : null;
 
   return { visibleEntries, exactEntry };
 }
@@ -154,7 +164,6 @@ export function createFilesystemEnvironmentAtoms<R, E>(
       // lists it again. The short TTL only keeps the old listing on screen while it refreshes.
       idleTtlMs: BROWSE_IDLE_TTL_MS,
       staleTimeMs: 0,
-      revalidateOnRemount: true,
     }),
   };
 }

@@ -21,7 +21,7 @@ import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/
 import { AppBar } from "../../components/ui/AppBar";
 import { Button } from "../../components/ui/Button";
 import { GlassSurface } from "../../components/ui/GlassSurface";
-import { relativeTime } from "../../lib/time";
+import { compareTimestamps, relativeTime } from "../../lib/time";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useEnvironmentQuery } from "../../state/query";
@@ -147,7 +147,7 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
     ...new Map(
       [...extra, ...(thread?.comments ?? [])].map((comment) => [comment.id, comment]),
     ).values(),
-  ].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  ].sort((left, right) => compareTimestamps(left.createdAt, right.createdAt));
   const scrollRef = useRef<ScrollViewInstance>(null);
   const pendingTop = useRef<number | null>(null);
   const positionedComment = useRef<string | null>(null);
