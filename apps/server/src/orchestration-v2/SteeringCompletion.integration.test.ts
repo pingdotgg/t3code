@@ -1390,11 +1390,32 @@ it.effect("starts a steer that missed the turn on the saved next-turn selection"
       assert.equal(started[1]?.message.messageId, MessageId.make("message:steer"));
       assert.deepEqual(started[1]?.modelSelection, composerSelection);
       assert.deepEqual(projection.thread.modelSelection, composerSelection);
+      const message = projection.turnItems.find(
+        (item) =>
+          item.type === "user_message" && item.messageId === MessageId.make("message:steer"),
+      );
+      assert.equal(message?.runId, started[1]!.runId);
+      assert.isAbove(
+        message!.ordinal,
+        Math.max(
+          ...projection.turnItems
+            .filter((item) => item.runId === first.runId)
+            .map((item) => item.ordinal),
+        ),
+      );
     }).pipe(Effect.provide(layer));
   }),
 );
 
-it.effect.each(["complete", "stop-before-decline", "stop-after-decline", "queued-model"] as const)(
+const declinedSteerTimings = [
+  "complete",
+  "stop-before-decline",
+  "stop-after-decline",
+  "queued-model",
+  "two-steers",
+] as const;
+
+it.effect.each(declinedSteerTimings)(
   "persists a declined steer without blocking the worker: %s",
   (timing) =>
     Effect.gen(function* () {
@@ -1465,6 +1486,26 @@ it.effect.each(["complete", "stop-before-decline", "stop-after-decline", "queued
             }),
           ).pipe(Effect.asVoid, Effect.orDie);
         }
+        if (timing === "two-steers") {
+          // The second steer arrives before the first is declined.
+          beforeDecline = orchestrator
+            .dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make("steer-second"),
+              threadId,
+              messageId: MessageId.make("message:steer-second"),
+              text: "second",
+              attachments: [],
+              dispatchMode: { type: "steer_active", targetRunId: first.runId },
+              createdBy: "user",
+              creationSource: "web",
+            })
+            .pipe(
+              Effect.andThen(Effect.sync(() => (beforeDecline = Effect.void))),
+              Effect.asVoid,
+              Effect.orDie,
+            );
+        }
         const messageId = MessageId.make("message:declined");
         yield* orchestrator.dispatch({
           type: "message.dispatch",
@@ -1514,6 +1555,19 @@ it.effect.each(["complete", "stop-before-decline", "stop-after-decline", "queued
               MessageId.make("message:steer-later"),
               MessageId.make("message:queued-last"),
             ],
+          );
+          return;
+        }
+        if (timing === "two-steers") {
+          assert.deepEqual(
+            pending.runs
+              .filter((run) => run.status === "queued")
+              .toSorted(
+                (left, right) =>
+                  (left.queuePosition ?? left.ordinal) - (right.queuePosition ?? right.ordinal),
+              )
+              .map((run) => run.userMessageId),
+            [messageId, MessageId.make("message:steer-second")],
           );
           return;
         }
