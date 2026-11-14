@@ -43,7 +43,12 @@ export const macPasskeyBackend: PasskeyBackend = {
       params.length === 0 ||
       params.some(
         (param: unknown) =>
-          typeof param === "object" && param !== null && "alg" in param && param.alg === ES256,
+          typeof param === "object" &&
+          param !== null &&
+          "type" in param &&
+          param.type === "public-key" &&
+          "alg" in param &&
+          param.alg === ES256,
       );
     if (!allowsEs256) return { success: false, error: "NotSupportedError" };
     const { webauthn, options } = await nativeOptions(context);
