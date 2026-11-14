@@ -5,9 +5,10 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import type { ContextMenuSource, EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { memo, useState, type MouseEvent as ReactMouseEvent } from "react";
 
+import { contextMenuSourceOf } from "../../contextMenuSource";
 import { readLocalApi } from "../../localApi";
 import { cn } from "../../lib/utils";
 import { shouldOpenMarkdownFileLinkInEditor } from "../../markdown-links";
@@ -220,31 +221,25 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
             }),
           ])
         : value.then((text) => navigator.clipboard.writeText(text));
-    void Promise.all([write, value]).then(
-      ([, text]) => {
-        toastManager.add({
-          type: "success",
-          title: `${title} copied`,
-          description: text,
-        });
-      },
-      (error) => {
-        reportMarkdownActionFailure(
-          { operation: "copy-file-path", target: targetPath, copyTarget: title },
-          error,
-        );
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: `Failed to copy ${title.toLowerCase()}`,
-            description: error instanceof Error ? error.message : "An error occurred.",
-          }),
-        );
-      },
-    );
+    void Promise.all([write, value]).catch((error) => {
+      reportMarkdownActionFailure(
+        { operation: "copy-file-path", target: targetPath, copyTarget: title },
+        error,
+      );
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: `Failed to copy ${title.toLowerCase()}`,
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    });
   };
 
-  const showFileContextMenu = async (position: { x: number; y: number }) => {
+  const showFileContextMenu = async (
+    position: { x: number; y: number },
+    source: ContextMenuSource,
+  ) => {
     const api = readLocalApi();
     if (!api) return;
 
@@ -261,6 +256,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
           ...copyItems.map(({ id, label }) => ({ id, label })),
         ] as const,
         position,
+        source,
       );
 
       if (clicked === "preview-media") {
@@ -306,7 +302,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
             return { x: bounds.left, y: bounds.bottom };
           })()
         : { x: event.clientX, y: event.clientY };
-    void showFileContextMenu(position);
+    void showFileContextMenu(position, contextMenuSourceOf(event));
   };
 
   const canOpenInEditor = onOpen !== undefined;
