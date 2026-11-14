@@ -210,9 +210,10 @@ function serializeAnchor(anchor: Element, inTableCell: boolean): string {
   if (!/^(?:https?:\/\/|mailto:)/i.test(href)) return content;
   const label = content.trim();
   if (!label) return "";
-  if (href === label) return escapeTablePipes(label, inTableCell);
-  // Keep ordinary GFM email autolinks as bare addresses.
-  if (href === `mailto:${label}` && /^[\w.+-]+@[\w-]+(?:\.[\w-]+)+(?<=[a-zA-Z])$/.test(label))
+  const cellHref = escapeTablePipes(href, inTableCell);
+  if (cellHref === label) return label;
+  // GFM autolinks a bare address only when it fits this shape.
+  if (cellHref === `mailto:${label}` && /^[\w.+-]+@[\w-]+(?:\.[\w-]+)+(?<=[a-zA-Z])$/.test(label))
     return label;
   const destination = escapeTablePipes(href.replace(/[\\()]/g, "\\$&"), inTableCell);
   return `[${label}](${destination})`;
