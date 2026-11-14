@@ -106,6 +106,16 @@ describe.each([
     expect(link?.type).toBe("link");
     expect(parseMarkdownFileLink(link?.url ?? "")).toEqual({ path, line: 7 });
   });
+
+  it("keeps an entity-like ampersand in the path literal", () => {
+    const markdown = render(
+      ':codex-file-citation{path="/tmp/a&amp;copy;.txt" line_range_start="7"}',
+    );
+    const link = parseOrdinaryMarkdown(markdown).children?.[0]?.children?.[0];
+
+    expect(link?.type).toBe("link");
+    expect(parseMarkdownFileLink(link?.url ?? "")).toEqual({ path: "/tmp/a&copy;.txt", line: 7 });
+  });
 });
 
 describe("native Markdown adapters", () => {
