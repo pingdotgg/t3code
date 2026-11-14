@@ -1022,6 +1022,14 @@ export const make = Effect.gen(function* () {
         const host = ref.host?.trim().toLowerCase();
         if (own !== undefined && own.repository.toLowerCase() === repository.toLowerCase()) {
           if (host === undefined || host === own.host) return Effect.succeed(own);
+          // An SSH checkout names no web port, so its hostname serves links on any port.
+          if (
+            isSshRemoteUrl(own.project.repositoryIdentity?.locator.remoteUrl ?? "") &&
+            URL.canParse(`https://${host}`) &&
+            new URL(`https://${host}`).hostname === own.host
+          ) {
+            return Effect.succeed(own);
+          }
         }
         if (host === undefined) {
           if (own === undefined) {

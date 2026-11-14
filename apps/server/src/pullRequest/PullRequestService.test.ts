@@ -1009,15 +1009,18 @@ it.effect.each([
     provider: "forgejo",
     host: "ssh.forge.example",
     remoteUrl: "ssh://git@ssh.forge.example:2222/team/repo.git",
+    projectIds: ["ssh", "ssh-worktree"],
   },
   {
+    // The HTTP remote already names the authority, so clients need no project ids.
     provider: "unknown",
     host: "forge.example",
     remoteUrl: "http://forge.example:3000/team/repo.git",
+    projectIds: undefined,
   },
 ])(
   "identifies every worktree behind an unavailable refined Forgejo authority",
-  ({ provider, host, remoteUrl }) =>
+  ({ provider, host, remoteUrl, projectIds }) =>
     Effect.gen(function* () {
       const service = yield* makeService({
         projects: ["ssh", "ssh-worktree"].map((id) =>
@@ -1064,7 +1067,7 @@ it.effect.each([
           configured,
           projectIds: projectIds?.map(String),
         })),
-        [{ host: "forge.example:3000", configured: false, projectIds: ["ssh", "ssh-worktree"] }],
+        [{ host: "forge.example:3000", configured: false, projectIds }],
       );
       assert.deepStrictEqual(result.entries, []);
       assert.deepStrictEqual(
@@ -2114,6 +2117,20 @@ it.effect("routes matching HTTP authorities and rejects a different web port", (
             host: "code.example",
             remoteUrl: "http://code.example:4000/team/repo.git",
           }),
+          // Forgejo names an SSH remote's web host itself, covered above.
+          ...(kind === "forgejo"
+            ? []
+            : [
+                project({
+                  id: "ssh",
+                  title: "ssh",
+                  workspaceRoot: "/ssh",
+                  repository: "team/repo",
+                  provider: kind,
+                  host: "code.example",
+                  remoteUrl: "ssh://git@code.example:2222/team/repo.git",
+                }),
+              ]),
         ],
         providers: [
           fakePullRequestProvider(SourceControlProviderKind.make(kind), {
@@ -2155,6 +2172,13 @@ it.effect("routes matching HTTP authorities and rejects a different web port", (
         .summary({ ...ref, host: "code.example:3000" }, { recoverTransientFailure: false })
         .pipe(Effect.flip);
       assert.strictEqual(failure._tag, "PullRequestUnavailableError");
+      if (kind === "forgejo") continue;
+      // An SSH checkout names no web port, so it serves its hostname's links on any port.
+      assert.strictEqual(
+        (yield* service.preview({ ...ref, projectId: "ssh" as ProjectId })).number,
+        42,
+      );
+      assert.strictEqual(reads.at(-1), "code.example");
     }
   }),
 );
