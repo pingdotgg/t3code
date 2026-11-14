@@ -29,6 +29,7 @@ it.each([false, true])("exports tray quotes and comments with context=%s", (with
         project: undefined,
         providers: [],
         threadModelSelection: null,
+        threadStarted: false,
         withContext,
       }),
     ).toBe(

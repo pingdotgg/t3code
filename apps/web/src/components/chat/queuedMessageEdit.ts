@@ -30,7 +30,7 @@ export function recoverQueuedMessageEdit(input: {
       !composerDraftHasUserContent(store.getComposerDraft(input.threadTarget)),
   });
   if (recovery === "kept") {
-    store.moveComposerPromptAndImages(input.editTarget, input.threadTarget);
+    store.moveComposerContent(input.editTarget, input.threadTarget);
   }
   store.clearComposerContent(input.editTarget);
   return recovery;
