@@ -139,7 +139,7 @@ describe("Cursor SDK model discovery", () => {
   });
 
   it("keeps catalog aliases and filters invalid and duplicate SDK model entries", () => {
-    // The wire contract rejects padded and blank aliases.
+    // Normalize padded aliases and drop blank aliases.
     const composer = {
       id: "composer-2",
       displayName: "Composer 2",
