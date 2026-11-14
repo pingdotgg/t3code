@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { runMigrations } from "../Migrations.ts";
-import TurnItemMessageOrdinalIndex from "./090_TurnItemMessageOrdinalIndex.ts";
+import TurnItemMessageOrdinalIndex from "./092_TurnItemMessageOrdinalIndex.ts";
 
 // The statement without the index's json_valid term, which the indexed one (below) must answer
 // the same over JSON payloads.
@@ -50,7 +50,7 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 89 });
+      yield* runMigrations({ toMigrationInclusive: 91 });
       for (const [id, threadId, ordinal, type, messageId] of [
         ["a1", "thread-a", 1, "user_message", "m1"],
         ["a2", "thread-a", 3, "assistant_message", "m2"],
@@ -78,7 +78,7 @@ it.effect(
 
       assert.deepEqual(
         (yield* runMigrations()).map(([id]) => id),
-        [90],
+        [92],
       );
       const index = () => sql<{ readonly sql: string }>`
       SELECT sql FROM sqlite_master
@@ -103,13 +103,13 @@ it.effect(
 it.effect("migrates over a message whose payload is not JSON, and takes one after it", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    yield* runMigrations({ toMigrationInclusive: 89 });
+    yield* runMigrations({ toMigrationInclusive: 91 });
     yield* insertTurnItem("bad-1", "thread-a", 1, "assistant_message", "{not json");
     yield* insertTurnItem("ok-1", "thread-a", 2, "user_message", '{"messageId":"m1"}');
 
     assert.deepEqual(
       (yield* runMigrations()).map(([id]) => id),
-      [90],
+      [92],
     );
     yield* insertTurnItem("bad-2", "thread-a", 3, "assistant_message", "{not json");
     yield* insertTurnItem("ok-2", "thread-a", 4, "assistant_message", '{"messageId":"m1"}');

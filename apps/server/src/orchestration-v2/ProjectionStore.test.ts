@@ -2637,7 +2637,7 @@ const assertReadsThroughMessageOrdinalIndex = Effect.fn("assertReadsThroughMessa
 );
 
 // Each message's first item orders it, not the stored message order (the assistant reply is stored
-// first); the message-ordinal statement reads those ordinals through migration 90's index.
+// first); the message-ordinal statement reads those ordinals through migration 92's index.
 const messageOrdinalsReadThroughTheirIndex = Effect.gen(function* () {
   const store = yield* ProjectionStore.ProjectionStoreV2;
   const sql = yield* SqlClient.SqlClient;
@@ -4528,9 +4528,16 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         workCursor = page.nextCursor;
       }
       assert.strictEqual(workIds.size, 999);
-      for (const toolName of ["t3-code.delegate_task", "mcp__t3_code__delegate_task"]) {
+      for (const [toolName, output] of [
+        ["t3-code.delegate_task", null],
+        ["mcp__t3_code__delegate_task", null],
+        ["mcp__t3-code__send_to_user", null],
+        // OpenCode Code Mode reports a nested send_to_user call as one `execute` item.
+        ["execute", JSON.stringify({ sentMessage: "Draft" })],
+      ] as const) {
         yield* sql`UPDATE orchestration_v2_projection_turn_items SET type = 'dynamic_tool',
-          payload_json = json_set(payload_json, '$.type', 'dynamic_tool', '$.toolName', ${toolName})
+          payload_json = json_set(payload_json, '$.type', 'dynamic_tool', '$.toolName', ${toolName},
+            '$.output', ${output})
           WHERE thread_id = ${threadId} AND ordinal = 2`;
         const window = yield* projectionStore.getThreadSnapshotWindow(threadId, {
           rowLimit: sqlPageLimit,
