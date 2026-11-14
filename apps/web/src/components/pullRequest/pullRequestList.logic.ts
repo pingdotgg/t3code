@@ -589,7 +589,7 @@ export function mergePullRequestLists(
 export function pullRequestListAnsweredEmpty(view: {
   readonly data: MergedPullRequestList | null;
   readonly isPending: boolean;
-  readonly error: string | null;
+  readonly error: unknown;
 }): boolean {
   return view.data?.entries.length === 0 && !view.isPending && view.error === null;
 }
