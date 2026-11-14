@@ -4818,6 +4818,21 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           yield* fileSystem.writeFileString(settingsFile, "{ invalid json");
           assert.equal((yield* open).permissionMode, "auto");
           yield* fileSystem.remove(settingsFile);
+          // Claude CLI rewrites remote-settings.json in place, truncating it first.
+          const midRewrite = yield* open.pipe(
+            Effect.provideService(FileSystem.FileSystem, {
+              ...fileSystem,
+              readFileString: (filePath, encoding) =>
+                filePath.endsWith("remote-settings.json")
+                  ? Effect.succeed("")
+                  : fileSystem.readFileString(filePath, encoding),
+            }),
+          );
+          assert.equal(
+            midRewrite.permissionMode,
+            "bypassPermissions",
+            "A remote-settings.json caught mid-rewrite must not downgrade Full access",
+          );
           const resolveSettings = vi
             .mocked(ClaudeSdk.resolveSettings)
             .mockClear()
