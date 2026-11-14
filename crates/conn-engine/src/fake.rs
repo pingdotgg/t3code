@@ -132,6 +132,7 @@ impl FakeProvider {
     }
 }
 
+#[derive(Clone)]
 struct Turn {
     thread_id: String,
     run_id: String,
@@ -503,6 +504,29 @@ impl Session for FakeSession {
                         "startedAt": now, "completedAt": null, "updatedAt": now,
                         "type": "command_execution", "input": "ls",
                     }})));
+                }
+                // `long-stream`: 400 growing snapshots of one reply (about 40 KB at the end),
+                // 2 ms apart, then the final text. For memory under a long streaming turn.
+                "long-stream" => {
+                    let id = format!("{}:a", turn.run_id);
+                    let streamed = turn.clone();
+                    let tx = tx.clone();
+                    tokio::spawn(async move {
+                        let turn = streamed;
+                        emit(&tx, started).await;
+                        let mut reply = String::new();
+                        for n in 0..400 {
+                            reply.push_str(&format!(
+                                "Paragraph {n}: the borrow checker keeps one writer or many readers.\n\n"
+                            ));
+                            emit(&tx, assistant(&turn, &id, &reply, true)).await;
+                            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+                        }
+                        emit(&tx, assistant(&turn, &id, &reply, false)).await;
+                        emit(&tx, [provider_turn(&turn, "completed"), terminal(&turn, TurnStatus::Completed, None)]).await;
+                    });
+                    *crate::lock(&self.turn) = Some(turn);
+                    return Ok(());
                 }
                 "fail" => started.push(terminal(
                     &turn,

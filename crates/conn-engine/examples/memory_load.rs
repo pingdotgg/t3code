@@ -6,6 +6,8 @@
 //! and a thread subscription open as a client would have. Prints the process RSS (from `ps`)
 //! every tenth of the run, then again after closing every provider session.
 //!
+//! `STREAM=1` makes every turn one long streamed reply (400 snapshots, about 40 KB).
+//!
 //! `CHECKPOINTS=1` runs the turns in a scratch git repository with checkpoints on; each turn
 //! writes one file, so each turn captures a checkpoint with one changed file. It prints the
 //! repository's `.git` size before and after.
@@ -154,6 +156,17 @@ async fn main() {
     // Drain the shell as the client would, in the background.
     tokio::spawn(async move { while shell.recv().await.is_some() {} });
 
+    // The highest live heap seen, sampled every 2 ms (also during a turn).
+    let peak = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let sampler = {
+        let peak = peak.clone();
+        tokio::spawn(async move {
+            loop {
+                peak.fetch_max(heap_kib(), std::sync::atomic::Ordering::Relaxed);
+                tokio::time::sleep(Duration::from_millis(2)).await;
+            }
+        })
+    };
     println!(
         "turns={turns} threads={threads} start_rss_kib={} heap_kib={}",
         rss_kib(),
@@ -162,7 +175,12 @@ async fn main() {
     // `REOPEN=0` keeps one thread view open for the whole run instead of reopening it per turn.
     let reopen = std::env::var("REOPEN").map_or(true, |v| v != "0");
     let mut kept = None;
-    let text = "Explain the borrow checker in a few sentences, with one short example.";
+    // `STREAM=1`: every turn is one long streamed reply (the fake's `long-stream`).
+    let text = if std::env::var("STREAM").is_ok_and(|v| v == "1") {
+        "long-stream"
+    } else {
+        "Explain the borrow checker in a few sentences, with one short example."
+    };
     for n in 0..turns {
         let thread = format!("t{}", n % threads);
         let ordinal = n / threads + 1;
@@ -220,6 +238,11 @@ async fn main() {
             );
         }
     }
+    sampler.abort();
+    println!(
+        "peak_heap_kib={}",
+        peak.load(std::sync::atomic::Ordering::Relaxed)
+    );
     let size = std::fs::metadata(dir.join("engine.sqlite"))
         .map(|m| m.len())
         .unwrap_or(0);
