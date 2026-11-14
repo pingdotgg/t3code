@@ -306,6 +306,14 @@ describe("acpRegistrySnapshotReadiness", () => {
     expect(snapshot.auth).toEqual({ status: "unknown", canLogout: false });
     expect(snapshot.supportsTextGeneration).toBe(false);
     expect(
+      buildCheckedAcpRegistrySnapshot({
+        ...identity,
+        settings: decodeSettings({ agentId: "glm-acp-agent" }),
+        checkedAt: "2026-08-13T10:00:00.000Z",
+        inspection: { status: "unconfigured" },
+      }).supportsTextGeneration,
+    ).toBe(true);
+    expect(
       snapshot.models.map(({ slug, name, isCustom, isDefault }) => ({
         slug,
         name,

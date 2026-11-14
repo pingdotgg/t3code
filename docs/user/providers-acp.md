@@ -132,8 +132,10 @@ so the next turn after a rollback starts a fresh agent session that no longer re
 conversation from before the checkpoint.
 
 Registry instances are not used for T3's app-owned text generation, such as thread titles, commit
-messages, branch names, or pull request descriptions. Configure a text-generation-capable provider
-for those actions.
+messages, branch names, or pull request descriptions, with one exception: Z.ai GLM
+(`glm-acp-agent`) can be selected in **Settings → Threads → Text generation model**. T3 runs it with
+tools and file access refused, in the default permission mode whatever mode you pick there, and
+removes its temporary session afterwards. GLM cannot write review guides.
 
 ## Advanced configuration
 

@@ -729,6 +729,29 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       }).pipe(Effect.provide(layerServerSettings())),
   );
 
+  it.effect.each([
+    { agentId: "glm-acp-agent", kept: true },
+    { agentId: "kilo", kept: false },
+  ])("keeps a registry text generation selection only for $agentId=$kept", ({ agentId, kept }) =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const instanceId = ProviderInstanceId.make("acpRegistry_text");
+      const selection = { instanceId, model: "glm-5.3-flash" };
+      const next = yield* serverSettings.updateSettings({
+        providerInstances: {
+          [instanceId]: {
+            driver: ProviderDriverKind.make("acpRegistry"),
+            enabled: true,
+            config: { agentId },
+          },
+        },
+        textGenerationModelSelection: selection,
+      });
+
+      assert.equal(next.textGenerationModelSelection.instanceId === instanceId, kept);
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
   it.effect.each(["codex"])(
     "falls back to enabled instance %s after disabling the selection",
     (fallbackId) =>
