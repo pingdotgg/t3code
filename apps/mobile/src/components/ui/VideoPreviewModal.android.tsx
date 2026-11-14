@@ -1,3 +1,4 @@
+import { MISSING_FILE_ACCESS_MESSAGE } from "@t3tools/client-runtime/state/assets";
 import { videoMimeType } from "@t3tools/shared/video";
 import { Modal, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -26,6 +27,7 @@ interface PlaybackState {
   readonly uri: string | null;
   readonly resolvePlaybackUri?: () => Promise<string | null>;
   readonly unavailable: boolean;
+  readonly unavailableDetail?: string | undefined;
   readonly error: string | null;
   readonly actionsSource: MediaActionsSource | undefined;
 }
@@ -46,6 +48,10 @@ function useMediaPlayback(source: MediaVideoPreviewSource): PlaybackState {
       uri === null &&
       environmentId !== null &&
       (connection._tag === "None" || asset._tag === "Failure"),
+    unavailableDetail:
+      asset._tag === "Failure" && asset.reason === "missing-file-access"
+        ? MISSING_FILE_ACCESS_MESSAGE
+        : undefined,
     error: null,
     actionsSource: source.actionsSource,
   };
@@ -134,6 +140,7 @@ function OpenVideoPreviewModal(props: {
             name={props.name}
             thumbnailKey={props.thumbnailKey}
             unavailable={playback.unavailable}
+            unavailableDetail={playback.unavailableDetail}
             paused={mediaActions.sharing}
             expanded
             autoPlay
