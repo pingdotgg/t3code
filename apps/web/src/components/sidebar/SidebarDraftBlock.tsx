@@ -9,8 +9,10 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentId } from "@t3tools/contracts";
 import { useShallow } from "zustand/react/shallow";
 import { cn } from "~/lib/utils";
+import { useTerminalLabelsByThreadKey } from "~/state/terminalSessions";
 import { resolveSidebarRowAccessibility } from "../Sidebar.logic";
 import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -23,9 +25,41 @@ import {
 } from "../../composerDraftStore";
 import { draftPenClassName, draftSurfaceClassName } from "./SidebarThreadRow";
 
+const EMPTY_COMPOSER_PARTS = {
+  prompt: "",
+  images: [],
+  persistedAttachments: [],
+  files: [],
+  terminalContexts: [],
+  previewAnnotations: [],
+  reviewComments: [],
+} as const;
+
+/** Terminal labels for draft threads; an unsent draft stays listed while it has a terminal. */
+export function useDraftTerminalLabels(): ReadonlyMap<string, string> {
+  const environmentIds = useComposerDraftStore((store) => {
+    const ids = new Set<string>();
+    for (const session of Object.values(store.draftThreadsByThreadKey)) {
+      if (session.promotedTo == null) ids.add(session.environmentId);
+    }
+    return [...ids].toSorted().join("\n");
+  });
+  return useTerminalLabelsByThreadKey(
+    environmentIds === "" ? [] : (environmentIds.split("\n") as EnvironmentId[]),
+  );
+}
+
+export function draftTerminalLabel(
+  session: DraftSessionState,
+  terminalLabels: ReadonlyMap<string, string>,
+): string | null {
+  return terminalLabels.get(`${session.environmentId}:${session.threadId}`) ?? null;
+}
+
 const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   draftId: DraftId;
-  composer: ComposerThreadDraftState;
+  composer: ComposerThreadDraftState | null;
+  terminalLabel: string | null;
   project: ProjectFaviconProject | null;
   projectDisplayName: string | null;
   isActive: boolean;
@@ -33,7 +67,8 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   onDiscard: (draftId: DraftId) => void;
   onContextMenu: (draftId: DraftId, position: { x: number; y: number }) => void;
 }) {
-  const { composer, draftId, onContextMenu, onDiscard, onNavigate } = props;
+  const { draftId, onContextMenu, onDiscard, onNavigate } = props;
+  const composer = props.composer ?? EMPTY_COMPOSER_PARTS;
   const promptPreview =
     assistantCitationsToPlainText(
       replaceComposerContextReferences(composer.prompt, (occurrence) => occurrence.label),
@@ -51,7 +86,9 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   const preview =
     promptPreview.length > 0
       ? promptPreview
-      : `${attachmentCount} attachment${attachmentCount === 1 ? "" : "s"}`;
+      : attachmentCount === 0 && props.terminalLabel !== null
+        ? props.terminalLabel
+        : `${attachmentCount} attachment${attachmentCount === 1 ? "" : "s"}`;
   const accessibility = resolveSidebarRowAccessibility({
     title: preview,
     statusLabel: "Unsent draft",
@@ -139,7 +176,7 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
 interface SidebarDraftRowData {
   draftId: DraftId;
   session: DraftSessionState;
-  composer: ComposerThreadDraftState;
+  composer: ComposerThreadDraftState | null;
 }
 
 export const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
@@ -160,6 +197,7 @@ export const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
       ),
     ),
   );
+  const terminalLabels = useDraftTerminalLabels();
   const [frozenActive, setFrozenActive] = useState<{
     routeDraftId: string | null;
     row: SidebarDraftRowData | null;
@@ -189,14 +227,18 @@ export const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
       ) {
         continue;
       }
+      const composer = draftsByThreadKey[draftKey] ?? null;
+      const hasTerminal = draftTerminalLabel(session, terminalLabels) !== null;
       if (draftKey === props.routeDraftId) {
+        // Composer edits stay frozen while active; terminals come and go live.
         if (frozenActive.routeDraftId === draftKey && frozenActive.row !== null) {
           rows.push(frozenActive.row);
+        } else if (hasTerminal) {
+          rows.push({ draftId: DraftId.make(draftKey), session, composer });
         }
         continue;
       }
-      const composer = draftsByThreadKey[draftKey];
-      if (!composer || !composerDraftHasUserContent(composer)) {
+      if (!hasTerminal && !composerDraftHasUserContent(composer)) {
         continue;
       }
       rows.push({ draftId: DraftId.make(draftKey), session, composer });
@@ -216,6 +258,7 @@ export const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
             key={draftId}
             draftId={draftId}
             composer={composer}
+            terminalLabel={draftTerminalLabel(session, terminalLabels)}
             project={props.projectByKey.get(projectKey) ?? null}
             projectDisplayName={props.projectDisplayNameByKey.get(projectKey) ?? null}
             isActive={draftId === props.routeDraftId}
