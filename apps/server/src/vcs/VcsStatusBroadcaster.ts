@@ -286,17 +286,29 @@ export const make = Effect.gen(function* () {
   const detailedSubscribers = new Map<string, number>();
   const branches = new Map<
     string,
-    { readonly refName: string | null; readonly isRepo: boolean; readonly revision: number }
+    {
+      readonly refName: string | null;
+      readonly isRepo: boolean;
+      readonly revision: number;
+      readonly observation: number;
+    }
   >();
   let branchRevision = 0;
+  // A slow detailed read must not replace a newer HEAD-only observation.
+  let branchObservation = 0;
   const publishBranch = Effect.fn("VcsStatusBroadcaster.publishBranch")(function* (
     cwd: string,
     { refName, isRepo }: { readonly refName: string | null; readonly isRepo: boolean },
+    observation: number,
   ) {
     const previous = branches.get(cwd);
-    if (previous?.refName === refName && previous.isRepo === isRepo) return;
+    if (previous && previous.observation > observation) return;
+    if (previous?.refName === refName && previous.isRepo === isRepo) {
+      branches.set(cwd, { ...previous, observation });
+      return;
+    }
     const revision = ++branchRevision;
-    branches.set(cwd, { refName, isRepo, revision });
+    branches.set(cwd, { refName, isRepo, revision, observation });
     yield* PubSub.publish(branchChangesPubSub, { cwd, refName, isRepo, revision });
   });
   const localRefreshLocks = yield* KeyedLock.make<string>();
@@ -317,7 +329,12 @@ export const make = Effect.gen(function* () {
   });
 
   const updateCachedLocalStatus = Effect.fn("VcsStatusBroadcaster.updateCachedLocalStatus")(
-    function* (cwd: string, local: VcsStatusLocalResult, options?: { publish?: boolean }) {
+    function* (
+      cwd: string,
+      local: VcsStatusLocalResult,
+      observation: number,
+      options?: { publish?: boolean },
+    ) {
       const nextLocal = { fingerprint: fingerprintStatusPart(local), value: local };
       const [localChanged, remoteCleared] = yield* Ref.modify(cacheRef, (cache) => {
         const previous = cache.get(cwd) ?? { local: null, remote: null };
@@ -327,7 +344,7 @@ export const make = Effect.gen(function* () {
           new Map(cache).set(cwd, { local: nextLocal, remote }),
         ] as const;
       });
-      yield* publishBranch(cwd, local);
+      yield* publishBranch(cwd, local, observation);
       if (options?.publish && remoteCleared) {
         yield* PubSub.publish(changesPubSub, {
           cwd,
@@ -366,9 +383,11 @@ export const make = Effect.gen(function* () {
 
   const loadLocalStatus = Effect.fn("VcsStatusBroadcaster.loadLocalStatus")(function* (
     cwd: string,
+    options?: { publish?: boolean },
   ) {
+    const observation = ++branchObservation;
     const local = yield* workflow.localStatus({ cwd });
-    return yield* updateCachedLocalStatus(cwd, local);
+    return yield* updateCachedLocalStatus(cwd, local, observation, options);
   });
 
   const getOrLoadLocalStatusUnlocked = Effect.fn("VcsStatusBroadcaster.getOrLoadLocalStatus")(
@@ -378,9 +397,7 @@ export const make = Effect.gen(function* () {
         const branch = yield* workflow.currentBranch(cwd);
         if (branch === cached.local.value.refName) return cached.local.value;
         yield* workflow.invalidateLocalStatus(cwd);
-        return yield* updateCachedLocalStatus(cwd, yield* workflow.localStatus({ cwd }), {
-          publish: true,
-        });
+        return yield* loadLocalStatus(cwd, { publish: true });
       }
       return yield* loadLocalStatus(cwd);
     },
@@ -439,9 +456,10 @@ export const make = Effect.gen(function* () {
           if (shared !== undefined && shared.startedAt >= requestedAt) return shared.local;
           const startedAt = localRefreshRequests.get(cwd) ?? requestedAt;
           yield* workflow.invalidateLocalStatus(cwd);
+          const observation = ++branchObservation;
           const local = yield* workflow.localStatus({ cwd });
           localRefreshResults.set(cwd, { startedAt, local });
-          return yield* updateCachedLocalStatus(cwd, local, { publish: true });
+          return yield* updateCachedLocalStatus(cwd, local, observation, { publish: true });
         }),
       );
     },
@@ -799,7 +817,7 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  // Serialize branch publication and cache invalidation with detailed reads and refreshes.
+  // Keep cache invalidation serialized with detailed reads and refreshes.
   const refreshBranchStatusCore = Effect.fn("VcsStatusBroadcaster.refreshBranchStatusCore")(
     (cwd: string) =>
       localRefreshLocks.withLock(
@@ -807,12 +825,15 @@ export const make = Effect.gen(function* () {
         Effect.gen(function* () {
           if (detailedSubscribers.has(cwd)) {
             const local = yield* getOrLoadLocalStatusUnlocked(cwd);
-            return {
-              refName: local.refName,
-              isRepo: local.isRepo,
-              revision: branches.get(cwd)?.revision ?? 0,
-            };
+            return (
+              branches.get(cwd) ?? {
+                refName: local.refName,
+                isRepo: local.isRepo,
+                revision: branches.get(cwd)?.revision ?? 0,
+              }
+            );
           }
+          const observation = ++branchObservation;
           const refName = yield* workflow.currentBranch(cwd);
           // A null branch is a detached HEAD or a checkout that is gone, such as a removed worktree.
           const isRepo = refName !== null || (yield* workflow.repositoryRoot(cwd)) !== null;
@@ -824,16 +845,17 @@ export const make = Effect.gen(function* () {
             return previous ? new Map(cache).set(cwd, { ...previous, local: null }) : cache;
           });
           if (detailedSubscribers.has(cwd)) {
-            const local = yield* workflow.localStatus({ cwd });
-            yield* updateCachedLocalStatus(cwd, local, { publish: true });
-            return {
-              refName: local.refName,
-              isRepo: local.isRepo,
-              revision: branches.get(cwd)?.revision ?? 0,
-            };
+            const local = yield* loadLocalStatus(cwd, { publish: true });
+            return (
+              branches.get(cwd) ?? {
+                refName: local.refName,
+                isRepo: local.isRepo,
+                revision: branches.get(cwd)?.revision ?? 0,
+              }
+            );
           }
-          yield* publishBranch(cwd, { refName, isRepo });
-          return { refName, isRepo, revision: branches.get(cwd)?.revision ?? 0 };
+          yield* publishBranch(cwd, { refName, isRepo }, observation);
+          return branches.get(cwd) ?? { refName, isRepo, revision: 0 };
         }),
       ),
   );
@@ -990,34 +1012,27 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  const pendingBranchRefreshes = new Set<string>();
   const refreshBranchStatus: VcsStatusBroadcaster["Service"]["refreshBranchStatus"] = Effect.fn(
     "VcsStatusBroadcaster.refreshBranchStatus",
   )(function* (input) {
     const cwd = yield* withFileSystem(normalizeCwd(input.cwd));
-    if (!detailedSubscribers.has(cwd) && !pendingBranchRefreshes.has(cwd)) {
+    if (!detailedSubscribers.has(cwd)) {
       const { refName, isRepo } = yield* refreshBranchStatusCore(cwd);
       return { refName, isRepo };
     }
+    const observation = ++branchObservation;
     const refName = yield* workflow.currentBranch(cwd);
     const isRepo = refName !== null || (yield* workflow.repositoryRoot(cwd)) !== null;
-    if (!pendingBranchRefreshes.has(cwd)) {
-      pendingBranchRefreshes.add(cwd);
-      yield* refreshBranchStatusCore(cwd).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("VCS branch refresh failed", {
-            cwdLength: cwd.length,
-            ...remoteRefreshFailureDiagnostics(cause),
-          }),
-        ),
-        Effect.ensuring(
-          Effect.sync(() => {
-            pendingBranchRefreshes.delete(cwd);
-          }),
-        ),
-        Effect.forkIn(broadcasterScope),
-      );
-    }
+    yield* publishBranch(cwd, { refName, isRepo }, observation);
+    yield* refreshBranchStatusCore(cwd).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("VCS branch refresh failed", {
+          cwdLength: cwd.length,
+          ...remoteRefreshFailureDiagnostics(cause),
+        }),
+      ),
+      Effect.forkIn(broadcasterScope),
+    );
     return { refName, isRepo };
   });
 
