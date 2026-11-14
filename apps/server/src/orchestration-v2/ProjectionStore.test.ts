@@ -10562,6 +10562,31 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           ["local", targetThreadId, "command_execution"],
         ],
       );
+
+      // Forks retain a deleted source's history, so their shell counts must keep it too.
+      const source = yield* projectionStore.getThreadProjection(sourceThreadId);
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-fork-source-rollback:source-deleted"),
+        type: "thread.deleted",
+        threadId: sourceThreadId,
+        occurredAt: now,
+        payload: { ...source.thread, deletedAt: now },
+      });
+      const afterDeletion = yield* projectionStore.getShellSnapshot();
+      assert.isNull(yield* projectionStore.getThreadShell(sourceThreadId));
+      assert.notInclude(
+        afterDeletion.threads.map((thread) => thread.id),
+        sourceThreadId,
+      );
+      for (const threadId of [targetThreadId, nestedThreadId]) {
+        const projection = yield* projectionStore.getThreadProjection(threadId);
+        for (const shell of [
+          yield* projectionStore.getThreadShell(threadId),
+          afterDeletion.threads.find((thread) => thread.id === threadId),
+        ]) {
+          assert.equal(shell?.visibleItemCount, projection.visibleTurnItems.length, threadId);
+        }
+      }
     }),
   );
 
