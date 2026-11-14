@@ -257,6 +257,9 @@ interface ChatMarkdownProps {
   /** Loads media a source control host keeps behind a credential through the server, which holds
       `cwd`'s; without it a private repository's uploads load unauthenticated and 404. */
   sourceControlMedia?: boolean | undefined;
+  /** Text written on another machine (a pull request) names paths there; only files inside `cwd`
+      become file links, and other path links render as their label. */
+  workspaceFileLinksOnly?: boolean | undefined;
   /** The change request's repository, when it can differ from the checkout at `cwd`. */
   sourceControlMediaRepository?: string | undefined;
   headingLevelOffset?: number | undefined;
@@ -463,35 +466,51 @@ const markdownServerConfigFieldsAtom = Atom.family((environmentId: EnvironmentId
   }).pipe(Atom.withLabel("markdown-server-config-fields")),
 );
 
-function fileLinkSourcesKey(
-  text: string,
-  cwd: string | undefined,
-  imageBaseDir: string | undefined,
-): string {
+interface FileLinkScope {
+  cwd: string | undefined;
+  imageBaseDir: string | undefined;
+  workspaceFileLinksOnly: boolean;
+}
+
+function keepFileLink(meta: MarkdownFileLinkMeta | null, scope: FileLinkScope) {
+  return meta && (!scope.workspaceFileLinksOnly || meta.workspaceRelativePath !== null)
+    ? meta
+    : null;
+}
+
+function markdownFileLinkMeta(href: string, scope: FileLinkScope) {
+  return keepFileLink(
+    resolveMarkdownFileLinkMeta(href, scope.cwd, scope.imageBaseDir ?? scope.cwd),
+    scope,
+  );
+}
+
+function inlineCodeFileLinkMeta(codeText: string, scope: FileLinkScope) {
+  return keepFileLink(
+    resolveInlineCodeFileLinkMeta(codeText, scope.cwd, scope.imageBaseDir ?? scope.cwd),
+    scope,
+  );
+}
+
+function fileLinkSourcesKey(text: string, scope: FileLinkScope): string {
   const hrefs = extractMarkdownLinkHrefs(renderCodexInlineDirectivesAsMarkdown(text))
     .filter((href) => !parseComposerContextHref(href))
     .map(normalizeMarkdownLinkHrefKey)
-    .filter((href) => resolveMarkdownFileLinkMeta(href, cwd, imageBaseDir ?? cwd));
-  const spans = extractInlineCodeSpans(text).filter((span) =>
-    resolveInlineCodeFileLinkMeta(span, cwd, imageBaseDir ?? cwd),
-  );
+    .filter((href) => markdownFileLinkMeta(href, scope));
+  const spans = extractInlineCodeSpans(text).filter((span) => inlineCodeFileLinkMeta(span, scope));
   return JSON.stringify([[...new Set(hrefs)], [...new Set(spans)]]);
 }
 
-function resolveFileLinkSources(
-  key: string,
-  cwd: string | undefined,
-  imageBaseDir: string | undefined,
-) {
+function resolveFileLinkSources(key: string, scope: FileLinkScope) {
   const [hrefs, spans] = JSON.parse(key) as [string[], string[]];
   const markdownFileLinkMetaByHref = new Map<string, MarkdownFileLinkMeta>();
   for (const href of hrefs) {
-    const meta = resolveMarkdownFileLinkMeta(href, cwd, imageBaseDir ?? cwd);
+    const meta = markdownFileLinkMeta(href, scope);
     if (meta) markdownFileLinkMetaByHref.set(href, meta);
   }
   const inlineCodeFileLinkMetaByText = new Map<string, MarkdownFileLinkMeta>();
   for (const span of spans) {
-    const meta = resolveInlineCodeFileLinkMeta(span, cwd, imageBaseDir ?? cwd);
+    const meta = inlineCodeFileLinkMeta(span, scope);
     if (meta) inlineCodeFileLinkMetaByText.set(span, meta);
   }
   const fileLinkParentSuffixByPath = buildFileLinkParentSuffixByPath([
@@ -520,6 +539,7 @@ function useChatMarkdownState({
   renderContextReference,
   headingLevelOffset = 0,
   sourceControlMedia = false,
+  workspaceFileLinksOnly = false,
   sourceControlMediaRepository,
 }: ChatMarkdownProps) {
   const resolvedTheme = useRenderedAppearance();
@@ -699,9 +719,10 @@ function useChatMarkdownState({
   // Keyed by the file links found, not the text, so streamed text that adds none keeps the
   // renderer context, and every block reading it, unchanged.
   // A template literal marks the key as a string, so the compiler memoizes the maps on its value.
-  const fileLinksKey = `${fileLinkSourcesKey(text, cwd, imageBaseDir)}`;
+  const fileLinkScope = { cwd, imageBaseDir, workspaceFileLinksOnly };
+  const fileLinksKey = `${fileLinkSourcesKey(text, fileLinkScope)}`;
   const { markdownFileLinkMetaByHref, inlineCodeFileLinkMetaByText, fileLinkParentSuffixByPath } =
-    resolveFileLinkSources(fileLinksKey, cwd, imageBaseDir);
+    resolveFileLinkSources(fileLinksKey, fileLinkScope);
   const resolveThreadPullRequest = (
     href: string,
   ): (ThreadPullRequestKey & { readonly url: string }) | null => {
@@ -972,6 +993,7 @@ function useChatMarkdownState({
     environmentId,
     expandMedia,
     fileLinkChip,
+    fileLinkScope,
     sourceControlMedia,
     sourceControlMediaRepository,
     renderContextReference,
@@ -1167,6 +1189,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       pullRequestsEnabled,
       updateThreadPullRequestLink,
       fileLinkChip,
+      fileLinkScope,
       renderContextReference,
     } = use(ChatMarkdownRendererContext);
     const text = use(ChatMarkdownTextContext);
@@ -1203,6 +1226,8 @@ const CHAT_MARKDOWN_COMPONENTS = {
       ? (markdownFileLinkMetaByHref.get(normalizedHref) ??
         resolveMarkdownFileLinkMeta(normalizedHref, cwd, imageBaseDir ?? cwd))
       : null;
+    // As a web link a local path would still open on this machine, so it keeps only its label.
+    if (fileLinkMeta && !keepFileLink(fileLinkMeta, fileLinkScope)) return <span>{children}</span>;
     if (!fileLinkMeta) {
       const faviconHost = resolveExternalWebLinkHost(href);
       const hasText = hastHasText(node);
@@ -1428,8 +1453,9 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
   },
   code: function MarkdownCode({ node, children, className, ...props }) {
-    const { cwd, imageBaseDir, inlineCodeFileLinkMetaByText, fileLinkChip, mathEnabled, inline } =
-      use(ChatMarkdownRendererContext);
+    const { fileLinkScope, inlineCodeFileLinkMetaByText, fileLinkChip, mathEnabled, inline } = use(
+      ChatMarkdownRendererContext,
+    );
     const math = mathEnabled ? mathKind(className) : null;
     if (math) {
       return (
@@ -1444,7 +1470,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       const codeText = nodeToPlainText(children);
       const fileLinkMeta =
         inlineCodeFileLinkMetaByText.get(codeText.trim()) ??
-        resolveInlineCodeFileLinkMeta(codeText, cwd, imageBaseDir ?? cwd);
+        inlineCodeFileLinkMeta(codeText, fileLinkScope);
       if (fileLinkMeta) {
         return fileLinkChip(
           fileLinkMeta,
@@ -1476,6 +1502,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       workspaceMutationId,
       renderContextReference,
       fileLinkChip,
+      fileLinkScope,
       resolvedTheme,
     } = use(ChatMarkdownRendererContext);
     const imageExpand = use(MarkdownLinkContext) ? undefined : expandMedia;
@@ -1536,9 +1563,12 @@ const CHAT_MARKDOWN_COMPONENTS = {
         />
       );
     }
-    if (mediaKind === null && imageSource._tag === "WorkspaceFile") {
+    if (mediaKind === null && imageSource._tag !== "Direct") {
       const fileLinkMeta = resolveMarkdownFileLinkMeta(srcString, cwd, imageBaseDir ?? cwd);
-      if (fileLinkMeta) return fileLinkChip(fileLinkMeta, copyMarkdown, srcString);
+      if (fileLinkMeta && !keepFileLink(fileLinkMeta, fileLinkScope)) return <span>{altText}</span>;
+      if (fileLinkMeta && imageSource._tag === "WorkspaceFile") {
+        return fileLinkChip(fileLinkMeta, copyMarkdown, srcString);
+      }
     }
     const kind = mediaKind ?? "image";
     const directUri = imageSource._tag === "Direct" ? imageSource.uri : null;
