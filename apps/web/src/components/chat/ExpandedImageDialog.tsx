@@ -9,6 +9,7 @@ import { useAssetUrlRefresh, useAssetUrlState } from "../../assets/assetUrls";
 import { OpenMediaLink } from "../media/OpenMediaLink";
 import { MediaActions, type MediaActionSource } from "../media/MediaActions";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
+import { ImagePreviewBackgroundSelect } from "../media/ImagePreviewBackgroundSelect";
 import { isContextMenuOpen } from "../../contextMenuFallback";
 import {
   SnapShotAccessibilityData,
@@ -123,7 +124,13 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.defaultPrevented || isContextMenuOpen() || event.target instanceof HTMLVideoElement)
+    if (
+      event.defaultPrevented ||
+      isContextMenuOpen() ||
+      event.target instanceof HTMLVideoElement ||
+      (event.target instanceof Element &&
+        event.target.closest('[role="combobox"], [role="listbox"]'))
+    )
       return;
     if (zoomableImageRef.current?.pan(event.key)) {
       event.preventDefault();
@@ -238,11 +245,17 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
                 onError={() => setFailedImageSrc(item.src)}
               />
             )}
-            <div className="mt-2 flex max-w-[var(--media-width)] items-center justify-center gap-1.5 text-xs text-white/80 max-sm:px-10">
+            <div className="mt-2 flex max-w-[var(--media-width)] flex-wrap items-center justify-center gap-1.5 text-xs text-white/80 max-sm:px-10">
               <span className="truncate" aria-live="polite" aria-atomic="true">
                 {item.name}
                 {preview.images.length > 1 ? ` (${index + 1}/${preview.images.length})` : ""}
               </span>
+              {item.type !== "video" &&
+              !showingAccessibilityDetails &&
+              item.src !== null &&
+              failedImageSrc !== item.src ? (
+                <ImagePreviewBackgroundSelect side="top" />
+              ) : null}
               {accessibilityDetails && item.source ? (
                 <Tooltip>
                   <TooltipTrigger

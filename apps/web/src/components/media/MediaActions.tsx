@@ -29,6 +29,15 @@ import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { downloadMedia, readMediaPng } from "./mediaContent";
+import {
+  imagePreviewBackgroundOptions,
+  readImagePreviewBackground,
+  setImagePreviewBackground,
+} from "./imagePreviewBackground";
+
+type ImageBackgroundAction =
+  `image-background-${(typeof imagePreviewBackgroundOptions)[number]["value"]}`;
+type MediaMenuAction = MediaActionId | "image-background" | ImageBackgroundAction;
 
 export interface MediaActionSource {
   readonly kind: "image" | "video";
@@ -139,7 +148,7 @@ export function MediaActions({
         typeof navigator !== "undefined" &&
         Boolean(navigator.clipboard?.write) &&
         typeof ClipboardItem !== "undefined";
-      const items: ContextMenuItem<MediaActionId>[] = [];
+      const items: ContextMenuItem<MediaMenuAction>[] = [];
       if (reference?.kind === "file") {
         items.push({ id: "copy-full-path", label: "Copy full path" });
         if (reference.relativePath)
@@ -156,10 +165,27 @@ export function MediaActions({
           label: "Copy image",
           disabled: unavailable || !canCopyImage,
         });
+        const background = readImagePreviewBackground();
+        items.push({
+          id: "image-background",
+          label: "Image background",
+          children: imagePreviewBackgroundOptions.map((option) => ({
+            id: `image-background-${option.value}`,
+            label: option.label,
+            checked: option.value === background,
+          })),
+        });
       }
 
       const action = await api.contextMenu.show(items, position);
       if (!action) return;
+      const backgroundOption = imagePreviewBackgroundOptions.find(
+        (option) => action === `image-background-${option.value}`,
+      );
+      if (backgroundOption) {
+        setImagePreviewBackground(backgroundOption.value);
+        return;
+      }
       failureTitle = `Could not ${items.find((item) => item.id === action)?.label.toLowerCase() ?? "complete media action"}`;
       const text =
         action === "copy-full-path" && reference?.kind === "file"

@@ -30,6 +30,7 @@ import { getRestingComposerImagePreviewCounts } from "../composerFooterLayout";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { AttachmentFilePreview } from "../files/AttachmentFilePreview";
 import { AttachmentImage } from "../media/AttachmentImage";
+import { ImagePreviewBackgroundSelect } from "../media/ImagePreviewBackgroundSelect";
 import { Button } from "../ui/button";
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -185,6 +186,7 @@ export function ComposerAttachmentMediaRow({
           : "flex-wrap",
       )}
     >
+      {expandedImages.length > 0 ? <ImagePreviewBackgroundSelect side="top" /> : null}
       {/* A preparing image renders through the same tile, keyed by the id its compressed image
           takes, so the thumbnail element survives the swap. */}
       {[
@@ -678,7 +680,12 @@ export function ComposerQueuedAttachmentRow({
           className="relative h-16 w-16 overflow-hidden rounded-lg border border-border/80 bg-background"
         >
           {attachment.type === "image" && url ? (
-            <img src={url} alt={attachment.name} className="h-full w-full object-cover" />
+            <AttachmentImage
+              name={attachment.name}
+              src={url}
+              alt={attachment.name}
+              className="h-full w-full object-cover"
+            />
           ) : (
             <div className="flex h-full w-full items-center justify-center px-1 text-center text-3xs text-secondary-label">
               {attachment.name}
