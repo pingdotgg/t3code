@@ -165,6 +165,34 @@ Deviations:
   trace2 variable only to a `git` call that reports hook progress, and a clone does not.
 - The error's `cause` is not sent; clients read `detail`.
 
+## What the next steps need
+
+Every step after repositories (change-request reads and checkout, `git.*`, `pr` in VCS status,
+`pullRequests.*`, the linked pull request commands, the `/mcp` tools) rests on two T3 parts that
+are not ported:
+
+1. **The definition registry** (`packages/source-control-definitions/src/registry.ts` and each
+   host's `src/shared/definition.ts`): `recognizeRemote` in its own order (GitCafe and others
+   first, because host labels overlap), `parseChangeRequestUrl` with GitCafe, Cursor Origin and
+   Azure DevOps claiming URLs first, `changeRequestUrl`, `canonicalRepositoryKey` and
+   `repositorySelector`. T3's thread pull request keys (`normalizeThreadPullRequestKey` in
+   `source-control-core/src/shared/threadPullRequests.ts`), the `/mcp` link tools
+   (`pullRequestTarget.ts` `resolveTarget`) and the engine's link commands all use it. The
+   engine's `thread.pull-request.link` and `unlink` here are simpler than T3's: they keep the
+   host and repository as sent (T3 lowercases and canonicalises them), do not canonicalise a
+   GitCafe URL, and do not undismiss a stack link as T3 does.
+2. **Provider detection** (`SourceControlProviderRegistry.ts`): the checkout's remotes, the
+   recognised context (origin first), `refineUnknownRemote` through GitHub, GitLab, Cursor
+   Origin and Forgejo CLI probes, both cached by T3.
+3. **GitHub's GraphQL documents.** T3 reads pull requests on GitHub through generated GraphQL
+   operations (`packages/source-control-github/src/server/*.graphql`, printed by
+   `effect/graphql`). Their query text must come from a generator that reads the monorepo
+   (rule 7), not a copy.
+
+`git.runStackedAction` and the review guides also call a text generator (another area), and
+`git.preparePullRequestThread` runs the project's setup script, which this server does not run
+the T3 way yet.
+
 ## Costs
 
 - Nothing runs while idle: no poll, no watch, no cache.
