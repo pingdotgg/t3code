@@ -72,6 +72,7 @@ generated=(
   crates/conn-mcp/src/catalog.jsonl
   crates/conn-mcp/src/instructions.txt
   crates/conn-mcp/src/claude-instructions.txt
+  crates/conn-mcp/src/running-task-next.txt
   crates/conn-provider-codex/src/instructions.rs
   crates/conn-provider-codex/testdata/instructions.json
   crates/conn-provider-claude/src/model_catalog.json

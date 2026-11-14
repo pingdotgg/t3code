@@ -212,8 +212,14 @@ const claudeTexts = claudeTextNames.map((name) => {
   return found[1].replace(/\\(.)/g, "$1");
 });
 const claudeOut = NodePath.join(here, "..", "src", "claude-instructions.txt");
+// The `next` text of a running task: the schema takes any string, so the catalog no longer holds it.
+const { ORCHESTRATOR_MCP_RUNNING_TASK_NEXT } = await import(
+  NodeURL.pathToFileURL(NodePath.join(repo, "packages/contracts/src/orchestratorMcp.ts")).href
+);
+const runningTaskNextOut = NodePath.join(here, "..", "src", "running-task-next.txt");
 const outputs = [
   [out, text, `${catalog.length} tools`],
+  [runningTaskNextOut, ORCHESTRATOR_MCP_RUNNING_TASK_NEXT, "running task next text"],
   [instructionsOut, T3_CODE_ORCHESTRATION_INSTRUCTIONS, "agent instructions"],
   [claudeOut, claudeTexts.join(""), `Claude texts (${claudeTextNames.join(" + ")})`],
 ];
