@@ -460,7 +460,9 @@ export function CloudEnvironmentConnectRows({
               className={cn(
                 "mt-1 truncate text-xs",
                 savedConnection?.tone === "error" ||
-                  (savedConnection?.tone === "connecting" && savedEnvironment?.connection.error) ||
+                  (savedConnection?.tone === "connecting" &&
+                    savedEnvironment?.connection.error &&
+                    !savedEnvironment.connection.awaitingApproval) ||
                   (savedConnection === null && availability === "error")
                   ? "text-destructive"
                   : "text-muted-foreground",
