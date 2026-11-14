@@ -21,6 +21,7 @@ import {
 import * as TextGeneration from "./TextGeneration.ts";
 import { sanitizeThreadTitle } from "@t3tools/provider-core/server/textGenerationUtils";
 import { makeClaudeTextGeneration } from "./ClaudeTextGeneration.ts";
+import { ClaudeSettingsLaunchArgError } from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { writeFakeCli } from "@t3tools/provider-testing/fakeCli";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
@@ -66,6 +67,7 @@ function withFakeClaudeEnv<A, E, R>(
     stdinMustContain?: string;
     configDirMustBe?: string;
     cwdMustNotBe?: string;
+    settingsMustEqual?: unknown;
     claudeConfig?: Partial<ClaudeSettings>;
   },
   effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
@@ -88,6 +90,8 @@ function withFakeClaudeEnv<A, E, R>(
       T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN: input.stdinMustContain,
       T3_FAKE_CLAUDE_CWD_MUST_NOT_BE: input.cwdMustNotBe,
       T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE: input.configDirMustBe,
+      T3_FAKE_CLAUDE_SETTINGS_MUST_EQUAL:
+        input.settingsMustEqual === undefined ? undefined : JSON.stringify(input.settingsMustEqual),
     };
     const environment: NodeJS.ProcessEnv = {
       ...Object.fromEntries(
@@ -199,6 +203,69 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
             instanceId: ProviderInstanceId.make("claudeAgent"),
             model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
           },
+        }),
+    ),
+  );
+
+  const launchSettings = {
+    disableAllHooks: false,
+    fastMode: true,
+    env: { ANTHROPIC_VERTEX_PROJECT_ID: "issue-25017-marker" },
+  };
+  it.effect.each([
+    { label: "inline JSON", inline: true },
+    { label: "a request-cwd-relative file", inline: false },
+  ])("merges --settings launch args from $label under T3 settings", ({ inline }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const requestCwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-claude-settings-" });
+      yield* fs.writeFileString(
+        path.join(requestCwd, "launch-settings.json"),
+        JSON.stringify(launchSettings),
+      );
+      return yield* withFakeClaudeEnv(
+        {
+          output: JSON.stringify({ structured_output: { title: "Use launch settings" } }),
+          settingsMustEqual: { ...launchSettings, disableAllHooks: true, fastMode: false },
+          claudeConfig: {
+            launchArgs: `--settings '${inline ? JSON.stringify(launchSettings) : "launch-settings.json"}'`,
+          },
+        },
+        (textGeneration) =>
+          textGeneration.generateThreadTitle({
+            cwd: requestCwd,
+            message: "thread title",
+            modelSelection: createModelSelection(
+              ProviderInstanceId.make("claudeAgent"),
+              SYNTHETIC_CLAUDE_CAPABLE_MODEL,
+              [{ id: "fastMode", value: false }],
+            ),
+          }),
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("reports an unreadable --settings launch arg as a text generation error", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({ structured_output: { title: "Unused" } }),
+        claudeConfig: { launchArgs: `--settings '{"env":'` },
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const error = yield* Effect.flip(
+            textGeneration.generateThreadTitle({
+              cwd: process.cwd(),
+              message: "Name this thread",
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("claudeAgent"),
+                model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+              },
+            }),
+          );
+
+          expect(error.detail).toBe(new ClaudeSettingsLaunchArgError({}).message);
         }),
     ),
   );
