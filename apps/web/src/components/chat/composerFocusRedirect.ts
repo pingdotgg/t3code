@@ -89,6 +89,16 @@ export function shouldRedirectInputToComposer(event: Event): boolean {
  */
 export type PendingQuestionKeyTarget = "answer" | "option" | "control" | "page";
 
+// Focus inside these owns its keys, even when the layer is not modal or a select is closed.
+const PENDING_QUESTION_FOREIGN_KEY_OWNER_SELECTOR = [
+  '[contenteditable]:not([contenteditable="false"])',
+  '[role="dialog"]',
+  '[aria-modal="true"]',
+  '[role="menu"]',
+  '[role="combobox"]',
+  '[data-slot$="popup"]',
+].join(",");
+
 /**
  * Where a key landed, for an open question's 1-9, Backspace and Enter. Null
  * leaves the key to another field or an open popup.
@@ -103,6 +113,7 @@ export function pendingQuestionKeyTarget(event: KeyboardEvent): PendingQuestionK
   if (eventPathContainsSelector(event, '[data-testid="composer-editor"]')) return "answer";
   if (eventPathContainsSelector(event, "[data-pending-user-input-option]")) return "option";
   if (eventPathContainsSelector(event, TYPE_TO_FOCUS_EDITABLE_SELECTOR)) return null;
+  if (eventPathContainsSelector(event, PENDING_QUESTION_FOREIGN_KEY_OWNER_SELECTOR)) return null;
   // Nothing holds focus, or only the question card does, as after clicking its text.
   const onQuestionCard =
     eventPathContainsSelector(event, '[data-chat-composer-top-drawer="true"]') &&
