@@ -302,6 +302,8 @@ it.layer(layerTest)("ThreadMoveService", (it) => {
       expect(yield* move()).toMatchObject(needsProject(at("plain")));
       assert.isUndefined(yield* added());
 
+      // The question's resolved folders still match once the project exists at `to`.
+      const approved = { from: at("w"), to: at("plain") };
       expect(yield* move({ addProject: true })).toMatchObject({
         _tag: "confirm",
         from: at("w"),
@@ -309,12 +311,11 @@ it.layer(layerTest)("ThreadMoveService", (it) => {
         wayBack: "add-project",
         staysOnDisk: expect.stringContaining("stays on disk"),
         otherThreads: [namedThread(forkId)],
+        resolvedFolders: approved,
       });
       assert.isUndefined(yield* added());
       assert.equal((yield* shell(threadId)).projectId, a.id);
 
-      // The folders the question showed still match once the project exists at `to`.
-      const approved = { from: at("w"), to: at("plain") };
       expect(yield* move({ addProject: true, confirm: true, approved })).toMatchObject(
         moved(at("plain"), [threadId, sideId]),
       );

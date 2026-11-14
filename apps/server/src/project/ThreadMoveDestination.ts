@@ -249,19 +249,24 @@ export const decideThreadMove = Effect.fn("ThreadMoveDestination.decideThreadMov
   });
   if (destination._tag === "refused" || destination._tag === "moved") return destination;
 
-  // Compared as resolved folders: a question can name a project root that is a symlink.
-  const { approved } = request;
-  if (approved !== undefined) {
-    const to =
+  // An answer sends these back as `approved`. They are resolved because a symlink in a path the
+  // question shows can change its target while the question is open.
+  const resolvedFolders = {
+    from: threadFolder,
+    to:
       destination._tag === "scratch"
         ? null
         : destination._tag === "project"
           ? yield* resolve(destination.project.workspaceRoot)
-          : destination.folder;
-    const left = approved.from !== undefined && (yield* resolve(approved.from)) !== threadFolder;
-    if (left || (approved.to === null ? null : yield* resolve(approved.to)) !== to) {
-      return refused("The thread or its destination changed while you were deciding. Try again.");
-    }
+          : destination.folder,
+  };
+  const { approved } = request;
+  if (
+    approved !== undefined &&
+    ((approved.from !== undefined && approved.from !== resolvedFolders.from) ||
+      approved.to !== resolvedFolders.to)
+  ) {
+    return refused("The thread or its destination changed while you were deciding. Try again.");
   }
 
   const members = collectMoveSet(thread.id, threads);
@@ -326,6 +331,7 @@ export const decideThreadMove = Effect.fn("ThreadMoveDestination.decideThreadMov
       _tag: "needs-project" as const,
       folder: destination.folder,
       ...(destination.nestedIn && { nestedIn: namedProject(destination.nestedIn) }),
+      resolvedFolders,
     };
   }
   const from = thread.worktreePath;
@@ -361,6 +367,7 @@ export const decideThreadMove = Effect.fn("ThreadMoveDestination.decideThreadMov
           : "add-project",
     ...(project === undefined ? {} : { project: namedProject(project) }),
     otherThreads,
+    resolvedFolders,
   };
   return request.confirm === true
     ? { _tag: "move" as const, destination, members, leaving }

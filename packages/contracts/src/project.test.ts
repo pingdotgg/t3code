@@ -187,7 +187,12 @@ describe("shared project payloads", () => {
     ];
     const results: ReadonlyArray<ThreadMoveResult> = [
       { _tag: "moved", folder: "/repo/b", members: [thread] },
-      { _tag: "needs-project", folder: "/repo/a/docs", nestedIn: project },
+      {
+        _tag: "needs-project",
+        folder: "/repo/a/docs",
+        nestedIn: project,
+        resolvedFolders: { from: "/repo/a", to: "/repo/a/docs" },
+      },
       {
         _tag: "confirm",
         from: "/w",
@@ -196,6 +201,7 @@ describe("shared project payloads", () => {
         wayBack: "add-project",
         project,
         otherThreads: [thread],
+        resolvedFolders: { from: "/real/w", to: null },
       },
       { _tag: "refused", reason: "Move the parent instead.", thread, projects: [project] },
     ];

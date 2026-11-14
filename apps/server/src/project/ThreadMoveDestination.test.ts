@@ -420,6 +420,7 @@ it.layer(NodeServices.layer)("decideThreadMove", (it) => {
         _tag: "confirm",
         from: at("W"),
         to: at("link-B"),
+        resolvedFolders: { from: at("W"), to: at("projB") },
         staysOnDisk: `The folder ${at("W")} stays on disk with all its files until you remove it.`,
         wayBack: "add-project",
         otherThreads: ["t2-fork", "picker", "linked"].map(namedThread),
@@ -465,33 +466,51 @@ it.layer(NodeServices.layer)("decideThreadMove", (it) => {
     }),
   );
 
-  it.effect.each<readonly [string, string, (at: World["at"]) => string, (world: World) => Options]>(
+  it.effect.each<
+    readonly [string, string, (at: World["at"]) => string, (world: World) => Options, string?]
+  >([
     [
-      [
-        "the thread left the folder in the question",
-        "t3",
-        (at) => at("projB"),
-        (world) => patch(world, "t3", { worktreePath: world.at("W") }),
-      ],
-      [
-        "the typed path resolves to another folder",
-        "p-root",
-        () => "nested",
-        (world) => patch(world, "p-root", { projectId: ProjectId.make("A") }),
-      ],
+      "the thread left the folder in the question",
+      "t3",
+      (at) => at("projB"),
+      (world) => patch(world, "t3", { worktreePath: world.at("W") }),
     ],
-  )("an answered question is refused when %s", ([, threadId, typed, change]) =>
+    [
+      "the typed path resolves to another folder",
+      "p-root",
+      () => "nested",
+      (world) => patch(world, "p-root", { projectId: ProjectId.make("A") }),
+    ],
+    [
+      "the thread changed project while the new-project question was open",
+      "p-root",
+      (at) => at("plain"),
+      (world) => patch(world, "p-root", { projectId: ProjectId.make("A") }),
+    ],
+    [
+      "a symlink in the question changed its target",
+      "t3",
+      (at) => at("link-B"),
+      () => ({}),
+      "link-B",
+    ],
+  ])("an answered question is refused when %s", ([, threadId, typed, change, relinked]) =>
     Effect.gen(function* () {
       const world = yield* makeWorld;
+      const fileSystem = yield* FileSystem.FileSystem;
       const input = request(threadId, typed(world.at));
       const question = yield* decide(world, input);
       const answer: ThreadMoveInput =
         question._tag === "confirm"
-          ? { ...input, confirm: true, approved: { from: question.from, to: question.to } }
+          ? { ...input, confirm: true, approved: question.resolvedFolders }
           : question._tag === "needs-project"
-            ? { ...input, addProject: true, approved: { to: question.folder } }
+            ? { ...input, addProject: true, approved: question.resolvedFolders }
             : input;
       expect(yield* decide(world, answer)).toMatchObject({ _tag: "move" });
+      if (relinked) {
+        yield* fileSystem.remove(world.at(relinked));
+        yield* fileSystem.symlink(world.at("plain"), world.at(relinked));
+      }
       expect(yield* decide(world, answer, change)).toMatchObject(
         refusal("changed while you were deciding"),
       );

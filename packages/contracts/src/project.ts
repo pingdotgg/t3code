@@ -563,9 +563,8 @@ export const ThreadMoveInput = Schema.Struct({
   addProject: Schema.optional(Schema.Boolean),
   confirm: Schema.optional(Schema.Boolean),
   /**
-   * The folders in the question this call answers: `from` of a `confirm`, and its `to` or the
-   * `folder` of a `needs-project`. The server refuses when the thread left `from` or the
-   * destination no longer resolves to `to`.
+   * The `resolvedFolders` of the question this call answers. The server refuses when the thread
+   * left `from` or the destination no longer resolves to `to`.
    */
   approved: Schema.optional(
     Schema.Struct({
@@ -577,6 +576,16 @@ export const ThreadMoveInput = Schema.Struct({
 });
 export type ThreadMoveInput = typeof ThreadMoveInput.Type;
 
+/**
+ * The thread's folder and the destination of a question, with symlinks resolved. The dialog
+ * shows the paths the user knows, and the answer sends these back as `approved`.
+ */
+const ThreadMoveResolvedFolders = Schema.Struct({
+  from: Schema.NonEmptyString,
+  /** Null for a new scratch folder. */
+  to: Schema.NullOr(Schema.NonEmptyString),
+});
+
 export const ThreadMoveResult = Schema.Union([
   /** No members when the thread already works in `folder`. */
   Schema.TaggedStruct("moved", {
@@ -586,6 +595,7 @@ export const ThreadMoveResult = Schema.Union([
   Schema.TaggedStruct("needs-project", {
     folder: Schema.NonEmptyString,
     nestedIn: Schema.optional(ThreadMoveProject),
+    resolvedFolders: ThreadMoveResolvedFolders,
   }),
   Schema.TaggedStruct("confirm", {
     from: Schema.NonEmptyString,
@@ -596,6 +606,7 @@ export const ThreadMoveResult = Schema.Union([
     /** Named instead of its root threads when `from` is its root. */
     project: Schema.optional(ThreadMoveProject),
     otherThreads: Schema.Array(ThreadMoveThread),
+    resolvedFolders: ThreadMoveResolvedFolders,
   }),
   Schema.TaggedStruct("refused", {
     reason: Schema.String,

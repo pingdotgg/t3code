@@ -191,7 +191,11 @@ it("splitInlineCode gives each path its own part and keeps the text around it", 
 
 const threadId = ThreadId.make("thread-1");
 const request: ThreadMoveInput = { threadId, destination: "app" };
-const needsProject = { _tag: "needs-project", folder: "/repo/app" } as const;
+const needsProject = {
+  _tag: "needs-project",
+  folder: "/repo/app",
+  resolvedFolders: { from: "/real/repo", to: "/real/app" },
+} as const;
 const confirm = {
   _tag: "confirm",
   from: "/worktrees/w",
@@ -199,19 +203,19 @@ const confirm = {
   staysOnDisk: "The worktree stays on disk at /worktrees/w.",
   wayBack: "add-project",
   otherThreads: [{ threadId, title: "Fork" }],
+  resolvedFolders: { from: "/real/w", to: "/real/app" },
 } as const satisfies ThreadMoveResult;
 const moved = { _tag: "moved", folder: "/repo/app", members: [] } as const;
 
-it("runThreadMove asks each question once, keeps every flag, sends back the folders it showed, and stops at a decline", async () => {
+it("runThreadMove asks each question once, keeps every flag, sends back each question's resolved folders, and stops at a decline", async () => {
   const calls: ThreadMoveInput[] = [];
   const answers: ReadonlyArray<ThreadMoveResult> = [needsProject, confirm, moved];
   const move = async (input: ThreadMoveInput) => answers[calls.push(input) - 1]!;
   expect(await runThreadMove(request, move, async () => true)).toBe(moved);
-  const approved = { from: "/worktrees/w", to: "/repo/app" };
   expect(calls).toEqual([
     request,
-    { ...request, addProject: true, approved: { to: "/repo/app" } },
-    { ...request, addProject: true, confirm: true, approved },
+    { ...request, addProject: true, approved: needsProject.resolvedFolders },
+    { ...request, addProject: true, confirm: true, approved: confirm.resolvedFolders },
   ]);
 
   calls.length = 0;
