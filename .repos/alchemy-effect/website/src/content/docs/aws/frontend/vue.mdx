@@ -6,6 +6,7 @@ sidebar:
 ---
 
 import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+import PackageManagers from "../../../../components/PackageManagers.astro";
 
 export const devDeps = "@alchemy.run/frontend-frameworks";
 export const routerDep = "vue-router";
@@ -24,34 +25,21 @@ The build integration is not bundled with alchemy. Install
 `/vite/aws` exports from your project at deploy time. It is only used at
 build time, so a dev dependency is enough:
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code={`bun add -d ${devDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code={`npm install -D ${devDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code={`pnpm add -D ${devDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code={`yarn add -D ${devDeps}`} lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers dev={devDeps} />
 
 ## Scaffold the app
 
 Start from Vite's official Vue + TypeScript template:
 
 <Tabs syncKey="pkgManager">
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm create vite my-vue-app --template vue-ts\ncd my-vue-app && pnpm install`} lang="sh" />
+  </TabItem>
   <TabItem label="bun" icon="bun">
     <Code code={`bun create vite@latest my-vue-app -- --template vue-ts\ncd my-vue-app && bun install`} lang="sh" />
   </TabItem>
   <TabItem label="npm" icon="npm">
     <Code code={`npm create vite@latest my-vue-app -- --template vue-ts\ncd my-vue-app && npm install`} lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code={`pnpm create vite my-vue-app --template vue-ts\ncd my-vue-app && pnpm install`} lang="sh" />
   </TabItem>
   <TabItem label="yarn" icon="seti:yarn">
     <Code code={`yarn create vite my-vue-app --template vue-ts\ncd my-vue-app && yarn install`} lang="sh" />
@@ -87,7 +75,7 @@ name:
 
 ```typescript
 // alchemy.run.ts
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 
 export const Website = AWS.Website.Vite("Vue");
 ```
@@ -130,20 +118,7 @@ deploy that changes nothing skips the build and the upload.
 so the router resolves the route on the client — that is the `spa`
 default and there is nothing to configure.
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code={`bun add ${routerDep}`} lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code={`npm install ${routerDep}`} lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code={`pnpm add ${routerDep}`} lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code={`yarn add ${routerDep}`} lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers add={routerDep} />
 
 ```typescript
 // src/main.ts

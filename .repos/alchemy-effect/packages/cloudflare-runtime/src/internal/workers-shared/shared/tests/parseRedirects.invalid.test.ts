@@ -47,8 +47,7 @@ test("parseRedirects should reject invalid status codes", ({ expect }) => {
       {
         line: `/c /d 418`,
         lineNumber: 5,
-        message:
-          "Valid status codes are 200, 301, 302 (default), 303, 307, or 308. Got 418.",
+        message: "Valid status codes are 200, 301, 302 (default), 303, 307, or 308. Got 418.",
       },
     ],
   });
@@ -79,12 +78,8 @@ test(`parseRedirects should reject duplicate 'from' paths`, ({ expect }) => {
   });
 });
 
-test(`parseRedirects should reject lines longer than ${maxLineLength} chars`, ({
-  expect,
-}) => {
-  const huge_line = `/${Array(maxLineLength).fill("a").join("")} /${Array(
-    maxLineLength,
-  )
+test(`parseRedirects should reject lines longer than ${maxLineLength} chars`, ({ expect }) => {
+  const huge_line = `/${Array(maxLineLength).fill("a").join("")} /${Array(maxLineLength)
     .fill("b")
     .join("")} 301`;
   const input = `
@@ -108,9 +103,7 @@ test(`parseRedirects should reject lines longer than ${maxLineLength} chars`, ({
   });
 });
 
-test("parseRedirects should reject any dynamic rules after the first 100", ({
-  expect,
-}) => {
+test("parseRedirects should reject any dynamic rules after the first 100", ({ expect }) => {
   const input = `
     # COMMENTS DON'T COUNT TOWARDS TOTAL VALID RULES
     ${Array(150)
@@ -239,8 +232,7 @@ test("parseRedirects should reject malformed URLs", ({ expect }) => {
       {
         line: `https://yeah.com https://nah.com`,
         lineNumber: 9,
-        message:
-          "Only relative URLs are allowed. Skipping absolute URL https://yeah.com.",
+        message: "Only relative URLs are allowed. Skipping absolute URL https://yeah.com.",
       },
     ],
     rules: [
@@ -287,9 +279,7 @@ test("parseRedirects should reject non-relative URLs for proxying (200) redirect
   });
 });
 
-test("parseRedirects should reject wildcard patterns to index", ({
-  expect,
-}) => {
+test("parseRedirects should reject wildcard patterns to index", ({ expect }) => {
   const input = `
 /* /index.html 200
 /* /index 200
