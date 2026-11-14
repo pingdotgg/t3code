@@ -1,47 +1,62 @@
-import * as Data from "effect/Data";
+import * as Schema from "effect/Schema";
 
-export class SshHostDiscoveryError extends Data.TaggedError("SshHostDiscoveryError")<{
-  readonly message: string;
-  readonly cause: unknown;
-}> {}
+export class SshHostDiscoveryError extends Schema.TaggedError<SshHostDiscoveryError>()(
+  "SshHostDiscoveryError",
+  {
+    message: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {}
 
-export class SshInvalidTargetError extends Data.TaggedError("SshInvalidTargetError")<{
-  readonly message: string;
-}> {}
+export class SshInvalidTargetError extends Schema.TaggedError<SshInvalidTargetError>()(
+  "SshInvalidTargetError",
+  {
+    message: Schema.String,
+  },
+) {}
 
-export class SshCommandError extends Data.TaggedError("SshCommandError")<{
-  readonly message: string;
-  readonly command: readonly string[];
-  readonly exitCode: number | null;
-  readonly stderr: string;
-  readonly stdout?: string;
-  readonly cause?: unknown;
-}> {}
+export class SshCommandError extends Schema.TaggedError<SshCommandError>()("SshCommandError", {
+  message: Schema.String,
+  command: Schema.Array(Schema.String),
+  exitCode: Schema.NullOr(Schema.Number),
+  stderr: Schema.String,
+  stdout: Schema.optional(Schema.String),
+  cause: Schema.optional(Schema.Defect()),
+}) {}
 
-export class SshLaunchError extends Data.TaggedError("SshLaunchError")<{
-  readonly message: string;
-  readonly stdout: string;
-  readonly cause?: unknown;
-}> {}
+export class SshLaunchError extends Schema.TaggedError<SshLaunchError>()("SshLaunchError", {
+  message: Schema.String,
+  stdout: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
 
-export class SshPairingError extends Data.TaggedError("SshPairingError")<{
-  readonly message: string;
-  readonly stdout: string;
-  readonly cause?: unknown;
-}> {}
+export class SshPairingError extends Schema.TaggedError<SshPairingError>()("SshPairingError", {
+  message: Schema.String,
+  stdout: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
 
-export class SshHttpBridgeError extends Data.TaggedError("SshHttpBridgeError")<{
-  readonly message: string;
-  readonly status?: number;
-  readonly cause?: unknown;
-}> {}
+export class SshHttpBridgeError extends Schema.TaggedError<SshHttpBridgeError>()(
+  "SshHttpBridgeError",
+  {
+    message: Schema.String,
+    status: Schema.optional(Schema.Number),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
 
-export class SshReadinessError extends Data.TaggedError("SshReadinessError")<{
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
+export class SshReadinessError extends Schema.TaggedError<SshReadinessError>()(
+  "SshReadinessError",
+  {
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
 
-export class SshPasswordPromptError extends Data.TaggedError("SshPasswordPromptError")<{
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
+export class SshPasswordPromptError extends Schema.TaggedError<SshPasswordPromptError>()(
+  "SshPasswordPromptError",
+  {
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
