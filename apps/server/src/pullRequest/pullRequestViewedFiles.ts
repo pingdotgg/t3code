@@ -30,7 +30,7 @@ const MAX_FILE_REVISION_PATHS = 1_000;
 interface FileRevisionsDependencies {
   readonly runFork: (effect: Effect.Effect<void>) => unknown;
   readonly refEpoch: (ref: PullRequestRef) => number;
-  readonly fileRevisionsEpoch: () => number;
+  readonly fileRevisionsEpoch: (ref: PullRequestRef) => string;
   readonly toPullRequestError: (
     operation: string,
   ) => (error: PullRequestProviderError) => PullRequestError;
@@ -50,7 +50,7 @@ const makeFileRevisions = (dependencies: FileRevisionsDependencies) => {
   const fileRevisionsKey = (project: SupportedProject, ref: PullRequestRef) =>
     [
       refEpoch({ ...ref, host: project.host, repository: project.repository }),
-      fileRevisionsEpoch(),
+      fileRevisionsEpoch({ ...ref, host: project.host, repository: project.repository }),
       ref.projectId,
       project.repository.trim().toLowerCase(),
       ref.number,

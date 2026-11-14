@@ -746,6 +746,74 @@ describe("PreviewManager", () => {
       ),
   );
 
+  effectIt.effect.each([
+    "navigate",
+    "reload",
+    "goBack",
+    "goForward",
+    "refresh",
+    "hardReload",
+  ] as const)("%s stops a page script that never yields before it navigates", (operation) =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const preview = makeFaviconWebContents();
+        // As in Chromium: the hung renderer answers nothing, and a terminate reaches it only
+        // while no navigation is pending.
+        let stopped = false;
+        const probed = yield* Deferred.make<void>();
+        const navigatedAfterStop: Array<boolean> = [];
+        const navigated = () => {
+          navigatedAfterStop.push(stopped);
+        };
+        const sendCommand = async (method: string) => {
+          if (method === "Runtime.evaluate") {
+            Deferred.doneUnsafe(probed, Effect.void);
+            await new Promise(() => {});
+          }
+          if (method === "Runtime.terminateExecution") stopped = true;
+        };
+        Object.assign(preview.webContents, {
+          getURL: () => "http://localhost:5173/busy",
+          reload: navigated,
+          reloadIgnoringCache: navigated,
+          loadURL: async () => navigated(),
+          navigationHistory: {
+            canGoBack: () => true,
+            canGoForward: () => true,
+            goBack: navigated,
+            goForward: navigated,
+          },
+          debugger: {
+            isAttached: () => false,
+            attach: vi.fn(),
+            sendCommand,
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+        });
+        fromId.mockReturnValue(preview.webContents);
+        yield* manager.createTab("tab_busy");
+        yield* manager.registerWebview("tab_busy", 42);
+
+        const leaving = yield* (
+          operation === "navigate"
+            ? manager.navigate("tab_busy", "http://localhost:5173/next")
+            : operation === "reload"
+              ? manager.navigate("tab_busy", "http://localhost:5173/busy")
+              : manager[operation]("tab_busy")
+        ).pipe(Effect.forkChild);
+        const probing = yield* Effect.raceFirst(
+          Deferred.await(probed).pipe(Effect.as(true)),
+          Fiber.await(leaving).pipe(Effect.as(false)),
+        );
+        if (probing) yield* TestClock.adjust(1_000);
+        yield* Fiber.join(leaving);
+
+        expect(navigatedAfterStop).toEqual([true]);
+      }),
+    ),
+  );
+
   effectIt.effect("keeps mouse back and forward buttons inside the preview tab", () =>
     withManager((manager) =>
       Effect.gen(function* () {
