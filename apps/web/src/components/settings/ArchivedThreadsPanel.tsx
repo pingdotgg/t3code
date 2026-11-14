@@ -20,7 +20,7 @@ import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsL
 import { searchableSetting } from "./settingsSearch";
 import { ProjectFavicon } from "../ProjectFavicon";
 
-import { useRef, useState } from "react";
+import { useDeferredValue, useRef, useState } from "react";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 
 const ARCHIVE_ACTIONS = [
@@ -28,6 +28,9 @@ const ARCHIVE_ACTIONS = [
   { action: "delete", label: "Delete", Icon: Trash2Icon },
 ] as const;
 type ArchiveAction = (typeof ARCHIVE_ACTIONS)[number]["action"];
+// Archives reach hundreds of rows. The first rows paint at once; the rest mount in a
+// background render, so every title stays in the DOM for find-in-page.
+const INITIAL_ARCHIVED_ROWS = 40;
 
 export function ArchivedThreadsPanel() {
   const { scope, groups: projectGroups, environments } = useSettingsScope();
@@ -132,6 +135,22 @@ export function ArchivedThreadsPanel() {
     }));
     return { groups: sortedGroups, hasMultipleEnvironments };
   })();
+  // The limit only rises once rows exist, so data that arrives after the loading render
+  // still paints the first rows before the background render mounts the rest.
+  const archivedRowLimit = useDeferredValue(
+    archivedGroups.length === 0 ? INITIAL_ARCHIVED_ROWS : Number.POSITIVE_INFINITY,
+    INITIAL_ARCHIVED_ROWS,
+  );
+  const renderedGroups = (() => {
+    const rendered: typeof archivedGroups = [];
+    let remaining = archivedRowLimit;
+    for (const group of archivedGroups) {
+      if (remaining <= 0) break;
+      rendered.push({ ...group, threads: group.threads.slice(0, remaining) });
+      remaining -= group.threads.length;
+    }
+    return rendered;
+  })();
 
   type ArchivedThread = (typeof archivedGroups)[number]["threads"][number];
 
@@ -216,7 +235,7 @@ export function ArchivedThreadsPanel() {
           />
         </SettingsSection>
       ) : (
-        archivedGroups.map(({ key, project, title, threads: projectThreads }, index) => (
+        renderedGroups.map(({ key, project, title, threads: projectThreads }, index) => (
           <SettingsSection
             key={key}
             id={index === 0 ? searchableSetting("archive").id : undefined}
