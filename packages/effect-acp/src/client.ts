@@ -60,6 +60,11 @@ export interface AcpClientOptions {
 }
 
 type AcpClientRaw = {
+  /**
+   * Inbound notifications. Unread ones are kept best-effort: the newest 32 whose
+   * JSON lines fit in 16Mi characters, always including the latest. Ends with the
+   * connection.
+   */
   readonly notifications: Stream.Stream<AcpProtocol.AcpIncomingNotification>;
   readonly request: (method: string, payload: unknown) => Effect.Effect<unknown, AcpError.AcpError>;
   readonly notify: (method: string, payload: unknown) => Effect.Effect<void, AcpError.AcpError>;
@@ -522,6 +527,15 @@ function normalizeV1SessionUpdate(
             raw: notification.update,
           },
     };
+  }
+  const update = notification.update;
+  // v1 defines a null tool name as unchanged; v2 consumers read null as a clear.
+  if (
+    (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") &&
+    update.name === null
+  ) {
+    const { name: _name, ...rest } = update;
+    return { ...notification, update: rest } as unknown as AcpSchema.SessionNotification;
   }
   if (notification.update.sessionUpdate !== "available_commands_update") {
     return notification as unknown as AcpSchema.SessionNotification;

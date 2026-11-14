@@ -5,7 +5,7 @@ import { View } from "react-native";
 import { AppText } from "../../components/ui/AppText";
 import { PaneContext } from "../../components/ui/Pane";
 import { useAdaptiveWorkspaceLayout } from "../layout/adaptive-workspace-context";
-import { useAndroidWorkspaceRoot } from "../workspace/AndroidWorkspaceTabsProvider";
+import { useAndroidWorkspaceRoot } from "../layout/workspace/AndroidWorkspaceTabsProvider";
 import { SettingsListScreen } from "./SettingsRouteScreen";
 import { SettingsScreen } from "./components/SettingsScreen";
 

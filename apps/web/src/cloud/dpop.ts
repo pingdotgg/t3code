@@ -3,7 +3,6 @@ import { computeDpopJwkThumbprint, DpopPublicJwk } from "@t3tools/shared/dpop";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Signature from "effect/crypto/Signature";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -14,10 +13,12 @@ export interface BrowserDpopKey {
   readonly thumbprint: string;
 }
 
-export class BrowserDpopError extends Data.TaggedError("BrowserDpopError")<{
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
+export class BrowserDpopError extends Schema.TaggedError<BrowserDpopError>()("BrowserDpopError", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
+
+const isBrowserDpopError = Schema.is(BrowserDpopError);
 
 const DPOP_DATABASE_NAME = "t3code:cloud-auth";
 const DPOP_DATABASE_VERSION = 1;
@@ -113,9 +114,7 @@ const generateBrowserDpopKey = Effect.gen(function* () {
   }).pipe(
     Effect.flatMap((jwk) => decodeDpopPublicJwk(jwk)),
     Effect.mapError((cause) =>
-      cause instanceof BrowserDpopError
-        ? cause
-        : dpopError("Generated DPoP public key is invalid.", cause),
+      isBrowserDpopError(cause) ? cause : dpopError("Generated DPoP public key is invalid.", cause),
     ),
   );
   const privateKey = yield* Effect.tryPromise({

@@ -19,6 +19,7 @@ import type {
   OrchestrationMessageContext,
   PreviewAnnotationContextRecord,
   PreviewAnnotationPayload,
+  ResponseContextRecord,
   ReviewCommentContextRecord,
   TerminalContextRecord,
   ThreadContextRecord,
@@ -47,6 +48,7 @@ import {
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 
 const PREVIEW_LABEL_MAX_CHARS = 48;
+const RESPONSE_LABEL_MAX_CHARS = 64;
 
 // Truncate selections to wire bounds before persistence to avoid send-time encoding failures.
 const TRUNCATION_MARKER = "\n… truncated …";
@@ -75,7 +77,9 @@ export function reviewCommentContextLabel(comment: ReviewCommentPresentation): s
   const rangeLabel = diffRange
     ? `L${diffRange[2]}${diffRange[3] ? ` to L${diffRange[3]}` : ""}${diffRange[1] === "-" ? " (before)" : ""}`
     : comment.rangeLabel;
-  return `${basename(comment.filePath)} ${rangeLabel}`;
+  const sectionPullRequest = /^pull-request:(\d+)$/u.exec(comment.sectionId)?.[1];
+  const prefix = sectionPullRequest === undefined ? "" : `#${sectionPullRequest} `;
+  return `${prefix}${basename(comment.filePath)} ${rangeLabel}`;
 }
 
 export function isPullRequestSummaryContext(comment: ReviewCommentPresentation): boolean {
@@ -115,9 +119,12 @@ export function pullRequestContextKindLabel(comment: ReviewCommentPresentation):
 export function previewAnnotationContextLabel(annotation: PreviewAnnotationPayload): string {
   const comment = annotation.comment.trim().replace(/\s+/g, " ");
   if (comment) {
-    return comment.length > PREVIEW_LABEL_MAX_CHARS
-      ? `${comment.slice(0, PREVIEW_LABEL_MAX_CHARS - 1)}…`
-      : comment;
+    if (comment.length <= PREVIEW_LABEL_MAX_CHARS) return comment;
+    let end = PREVIEW_LABEL_MAX_CHARS - 1;
+    const previous = comment.charCodeAt(end - 1);
+    const next = comment.charCodeAt(end);
+    if (previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) end -= 1;
+    return `${comment.slice(0, end)}…`;
   }
   return annotation.pageTitle?.trim() || "Preview annotation";
 }
@@ -160,6 +167,51 @@ export function previewAnnotationContextReference(
 
 export function threadContextReference(record: ThreadContextRecord): ComposerContextReference {
   return { kind: "thread", contextId: record.contextId, label: record.label };
+}
+
+export function isResponseContextRecord(
+  record: ComposerContextRecord,
+): record is ResponseContextRecord {
+  return record.kind === "response" && "citation" in record;
+}
+
+export function responseContextReference(record: ResponseContextRecord): ComposerContextReference {
+  return { kind: "response", contextId: record.contextId, label: record.label };
+}
+
+function responseContextLabel(text: string): string {
+  const last = text.charCodeAt(RESPONSE_LABEL_MAX_CHARS - 1);
+  const end =
+    last >= 0xd800 && last <= 0xdbff ? RESPONSE_LABEL_MAX_CHARS - 1 : RESPONSE_LABEL_MAX_CHARS;
+  return sanitizeComposerContextLabel(text.slice(0, end), "response");
+}
+
+/** One record per response, so replying to it again reuses the same reference. */
+export function responseContextRecord(
+  input: Pick<ResponseContextRecord, "citation" | "itemId"> & {
+    readonly subagents: ReadonlyArray<{
+      readonly threadId: ThreadId;
+      readonly title: string;
+      readonly environmentId?: EnvironmentId;
+    }>;
+  },
+): ResponseContextRecord {
+  return {
+    version: 1,
+    kind: "response",
+    contextId: toKindScopedComposerContextId("response", input.citation.messageId),
+    label: responseContextLabel(input.citation.text),
+    citation: input.citation,
+    itemId: input.itemId,
+    ...(input.subagents.length > 0
+      ? {
+          subagents: input.subagents.slice(0, 20).map(({ title, ...subagent }) => ({
+            ...subagent,
+            title: sanitizeComposerContextLabel(title, "response"),
+          })),
+        }
+      : {}),
+  };
 }
 
 /** One record per machine: mentioning the same machine twice reuses the chip. */
@@ -326,6 +378,7 @@ export function buildMessageContext(input: {
   previewAnnotations: ReadonlyArray<PreviewAnnotationPayload>;
   threadContexts?: ReadonlyArray<ThreadContextRecord>;
   environmentContexts?: ReadonlyArray<EnvironmentContextRecord>;
+  replyTo?: ResponseContextRecord | null;
   attachments?: ReadonlyArray<BoundComposerAttachment>;
 }): OrchestrationMessageContext | undefined {
   const screenshotAttachmentIds = new Set(
@@ -338,6 +391,7 @@ export function buildMessageContext(input: {
     ...input.reviewComments.map(reviewCommentContextRecord),
     ...(input.threadContexts ?? []),
     ...(input.environmentContexts ?? []),
+    ...(input.replyTo ? [input.replyTo] : []),
     ...input.previewAnnotations.map((annotation) =>
       previewAnnotationContextRecord(annotation, {
         screenshotContextId: screenshotAttachmentIds.has(annotation.id) ? annotation.id : undefined,
