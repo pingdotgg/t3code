@@ -15,15 +15,12 @@ export class PluginContext extends Context.Service<
     readonly worker: RuntimeWorker;
     readonly plugins: ReadonlyMap<
       string,
-      | Plugin.Plugin<any>
-      | Effect.Effect<Plugin.Plugin<any>, never, PluginContext>
+      Plugin.Plugin<any> | Effect.Effect<Plugin.Plugin<any>, never, PluginContext>
     >;
     readonly get: <Self, Identifier extends Plugin.PluginIdentifier, Api>(
       service: Plugin.PluginService<Self, Identifier, Api>,
     ) => Effect.Effect<Plugin.Plugin<Api>, ConfigError>;
-    readonly start: (
-      ports: Workerd.WorkerdPorts,
-    ) => Effect.Effect<void, RuntimeError, Scope.Scope>;
+    readonly start: (ports: Workerd.WorkerdPorts) => Effect.Effect<void, RuntimeError, Scope.Scope>;
     readonly config: Effect.Effect<
       {
         entry: string | undefined;
@@ -37,16 +34,8 @@ export class PluginContext extends Context.Service<
   }
 >()("cloudflare-runtime/PluginContext") {}
 
-export type ConfigHook<A, E, R> = Effect.Effect<
-  A,
-  E | ConfigError,
-  R | PluginContext
->;
-export type BindingHook<R = never> = ConfigHook<
-  WorkerdConfig.Worker_Binding,
-  never,
-  R
->;
+export type ConfigHook<A, E, R> = Effect.Effect<A, E | ConfigError, R | PluginContext>;
+export type BindingHook<R = never> = ConfigHook<WorkerdConfig.Worker_Binding, never, R>;
 
 export const make = (
   worker: RuntimeWorker,
@@ -72,10 +61,7 @@ export const make = (
         const services = configs.flatMap((config) => config.services ?? []);
         const sockets = configs.flatMap((config) => config.sockets ?? []);
         const extensions = configs.flatMap((config) => config.extensions ?? []);
-        const userWorker = Object.assign(
-          {},
-          ...configs.map((config) => config.userWorker ?? {}),
-        );
+        const userWorker = Object.assign({}, ...configs.map((config) => config.userWorker ?? {}));
         const middlewares = configs
           .flatMap((config) => config.middlewares ?? [])
           .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
@@ -108,14 +94,12 @@ export const make = (
         };
       }),
       start: Effect.fn(function* (ports) {
-        yield* Effect.forEach(plugins.values(), (plugin) => {
-          return plugin.start?.(ports) ?? Effect.void;
-        });
+        yield* Effect.forEach(plugins.values(), (plugin) => plugin.start?.(ports) ?? Effect.void);
       }),
       get: Effect.fn(function* (service) {
         const plugin = plugins.get(service.key);
         if (!plugin) {
-          return yield* new ConfigError({
+          return yield* ConfigError.make({
             subtag: "PluginNotFound",
             message: `Plugin "${service.key}" not found`,
             hint: `The plugin "${service.key}" is not registered in the current context.`,
@@ -143,17 +127,11 @@ export const make = (
     return context;
   });
 
-export type PluginMap = Map<
-  Plugin.PluginIdentifier<string>,
-  Plugin.PluginBuilder<any>
->;
+export type PluginMap = Map<Plugin.PluginIdentifier<string>, Plugin.PluginBuilder<any>>;
 
 export const pickPluginsFromContext = <R = never>() =>
   Effect.context<R>().pipe(
-    Effect.map(
-      (context): PluginMap =>
-        new Map(context.mapUnsafe.entries().filter(isPlugin)),
-    ),
+    Effect.map((context): PluginMap => new Map(context.mapUnsafe.entries().filter(isPlugin))),
   );
 
 const isPlugin = <Identifier extends string>(
@@ -161,9 +139,7 @@ const isPlugin = <Identifier extends string>(
 ): entry is [Plugin.PluginIdentifier<Identifier>, Plugin.PluginBuilder<any>] =>
   entry[0].startsWith("cloudflare-runtime/plugin/");
 
-export const use = Effect.fn("PluginContext.use")(
-  PluginContext.use.bind(PluginContext),
-);
+export const use = Effect.fn("PluginContext.use")(PluginContext.use.bind(PluginContext));
 export const useSync = Effect.fn("PluginContext.useSync")(
   PluginContext.useSync.bind(PluginContext),
 );

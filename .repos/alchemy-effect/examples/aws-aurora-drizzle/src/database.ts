@@ -1,4 +1,4 @@
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 import * as Effect from "effect/Effect";
 
 export const database = Effect.gen(function* () {
@@ -13,28 +13,22 @@ export const database = Effect.gen(function* () {
     cidrBlock: "10.62.1.0/24",
     availabilityZone: "us-west-2b",
   });
-  const lambdaSecurityGroup = yield* AWS.EC2.SecurityGroup(
-    "LambdaSecurityGroup",
-    {
-      vpcId: vpc.vpcId,
-      description: "Aurora example application; no inbound connections",
-    },
-  );
-  const dbSecurityGroup = yield* AWS.EC2.SecurityGroup(
-    "DatabaseSecurityGroup",
-    {
-      vpcId: vpc.vpcId,
-      description: "Postgres from the application security group only",
-      ingress: [
-        {
-          ipProtocol: "tcp",
-          fromPort: 5432,
-          toPort: 5432,
-          referencedGroupId: lambdaSecurityGroup.groupId,
-        },
-      ],
-    },
-  );
+  const lambdaSecurityGroup = yield* AWS.EC2.SecurityGroup("LambdaSecurityGroup", {
+    vpcId: vpc.vpcId,
+    description: "Aurora example application; no inbound connections",
+  });
+  const dbSecurityGroup = yield* AWS.EC2.SecurityGroup("DatabaseSecurityGroup", {
+    vpcId: vpc.vpcId,
+    description: "Postgres from the application security group only",
+    ingress: [
+      {
+        ipProtocol: "tcp",
+        fromPort: 5432,
+        toPort: 5432,
+        referencedGroupId: lambdaSecurityGroup.groupId,
+      },
+    ],
+  });
   const subnetIds = [subnetA.subnetId, subnetB.subnetId];
   const aurora = yield* AWS.RDS.Aurora("Database", {
     databaseName: "app",

@@ -59,9 +59,7 @@ export function createPlugin<TName extends string, A = any>(
       const applyToEnvironment = vitePlugin.applyToEnvironment;
       vitePlugin.applyToEnvironment = function (environment) {
         if (isSkippedEnvironment(options, environment.name)) return false;
-        return applyToEnvironment
-          ? applyToEnvironment.call(this, environment)
-          : true;
+        return applyToEnvironment ? applyToEnvironment.call(this, environment) : true;
       };
       // `applyToEnvironment` only gates the per-environment plugin pipeline;
       // `configEnvironment` runs during config resolution for every
@@ -69,9 +67,7 @@ export function createPlugin<TName extends string, A = any>(
       const configEnvironment = vitePlugin.configEnvironment;
       if (configEnvironment && options.skipEnvironments?.length) {
         const handler =
-          typeof configEnvironment === "function"
-            ? configEnvironment
-            : configEnvironment.handler;
+          typeof configEnvironment === "function" ? configEnvironment : configEnvironment.handler;
         const wrapped: typeof handler = function (environmentName, ...args) {
           if (options.skipEnvironments?.includes(environmentName)) return;
           return handler.call(this, environmentName, ...args);
