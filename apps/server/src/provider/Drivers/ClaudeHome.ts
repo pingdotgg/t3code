@@ -76,6 +76,9 @@ export const mergeClaudeProcessEnvironment = Effect.fn("mergeClaudeProcessEnviro
     CLAUDE_CODE_ENTRYPOINT: "t3-code",
   };
   for (const name of CLAUDE_HOST_SESSION_VARIABLES) delete baseEnvironment[name];
+  // The desktop runs the server as Node through Electron. Commands Claude runs inherit its env, so
+  // an Electron app they start (T3 Code itself, VS Code) would run as Node and exit.
+  delete baseEnvironment.ELECTRON_RUN_AS_NODE;
   const environment = yield* mergeProviderInstanceEnvironment(instanceEnvironment, baseEnvironment);
   const settingsEntrypoint = (yield* readClaudeSettingsEnv(config, undefined, environment))
     .CLAUDE_CODE_ENTRYPOINT;
@@ -95,6 +98,49 @@ export const hasClaudeManagedMcpConfig = Effect.fn("hasClaudeManagedMcpConfig")(
         ? "C:\\Program Files\\ClaudeCode\\managed-mcp.json"
         : "/etc/claude-code/managed-mcp.json";
   return yield* fileSystem.exists(managedMcpConfigPath).pipe(Effect.orElseSucceed(() => false));
+});
+
+// A worktree's .git file points at <main>/.git/worktrees/<name>, whose commondir leads back to
+// <main>/.git. A bare repository has no main checkout, so its worktree keeps its own file.
+// Untraced because claudeLocalSettingsDirectory already owns the span.
+const mainCheckoutRoot = Effect.fnUntraced(function* (checkout: string) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  return yield* fileSystem.readFileString(path.join(checkout, ".git")).pipe(
+    Effect.flatMap((pointer) => {
+      const gitDir = /^gitdir:\s*(.+)$/m.exec(pointer)?.[1]?.trim();
+      if (gitDir === undefined) return Effect.succeed(checkout);
+      const worktreeGitDir = path.resolve(checkout, gitDir);
+      return fileSystem.readFileString(path.join(worktreeGitDir, "commondir")).pipe(
+        Effect.map((commonDir) => {
+          const common = path.resolve(worktreeGitDir, commonDir.trim());
+          return path.basename(common) === ".git" ? path.dirname(common) : checkout;
+        }),
+      );
+    }),
+    Effect.orElseSucceed(() => checkout),
+  );
+});
+
+// Claude Code keeps .claude/settings.local.json at the repository root, or in cwd outside a
+// repository, on Windows, or when the root is home. Its owner check is skipped, so callers must
+// stay safe when Claude Code ignores the root file.
+export const claudeLocalSettingsDirectory = Effect.fn("claudeLocalSettingsDirectory")(function* (
+  cwd: string,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  if ((yield* HostProcess.Platform) === "win32") return cwd;
+  for (let directory = cwd; ; directory = path.dirname(directory)) {
+    const isCheckout = yield* fileSystem
+      .exists(path.join(directory, ".git"))
+      .pipe(Effect.orElseSucceed(() => false));
+    if (isCheckout) {
+      const root = yield* mainCheckoutRoot(directory);
+      return root === (yield* HostProcess.HomeDirectory) ? cwd : root;
+    }
+    if (path.dirname(directory) === directory) return cwd;
+  }
 });
 
 export const makeClaudeContinuationGroupKey = Effect.fn("makeClaudeContinuationGroupKey")(

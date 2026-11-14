@@ -132,7 +132,7 @@ function eraseLine(line: Line, col: number, mode: number): Line {
     for (const run of sliceLine(line, col + 1, length)) pushRun(runs, run);
     return runs;
   }
-  return [];
+  return mode === 2 ? [] : line;
 }
 
 function serializeLine(line: Line): string {
@@ -230,9 +230,10 @@ function applySgr(attributes: Attributes, params: ReadonlyArray<number>): void {
       attributes.bg = String(code);
     else if (code === 39) attributes.fg = "";
     else if (code === 49) attributes.bg = "";
-    else if (code === 38 || code === 48) {
+    else if (code === 38 || code === 48 || code === 58) {
+      // 58 (underline colour) is consumed but not kept: nothing renders it.
       const [color, next] = extendedColor(code, params, index);
-      if (color !== undefined) attributes[code === 38 ? "fg" : "bg"] = color;
+      if (color !== undefined && code !== 58) attributes[code === 38 ? "fg" : "bg"] = color;
       index = next;
       continue;
     }
@@ -246,6 +247,8 @@ const STRING_SEQUENCE_INTRODUCERS = new Set(["]", "P", "X", "_", "^"]);
 function escapeLength(input: string, index: number): number {
   const next = input[index + 1];
   if (next === undefined) return -1;
+  // A second ESC restarts the sequence.
+  if (next === ESC) return 1;
   if (next === "[") {
     for (let cursor = index + 2; cursor < input.length; cursor += 1) {
       const code = input.charCodeAt(cursor);
@@ -258,18 +261,28 @@ function escapeLength(input: string, index: number): number {
     for (let cursor = index + 2; cursor < input.length; cursor += 1) {
       if (input[cursor] === "\u0007") return cursor - index + 1;
       if (input[cursor] === "\n") return cursor - index;
+      // Like xterm.js, an ESC that does not start ST ends the string and begins the next sequence.
       if (input[cursor] === ESC) {
         if (cursor + 1 >= input.length) return -1;
-        if (input[cursor + 1] === "\\") return cursor - index + 2;
+        return input[cursor + 1] === "\\" ? cursor - index + 2 : cursor - index;
       }
     }
     return -1;
   }
-  // Charset designations take three bytes; other sequences take two.
-  if (next === "(" || next === ")" || next === "*" || next === "+") {
-    return index + 2 < input.length ? 3 : -1;
+  // ECMA-35: any intermediate bytes (0x20-0x2F, e.g. charset designations, DECALN) precede one final byte.
+  let cursor = index + 1;
+  while (
+    cursor < input.length &&
+    input.charCodeAt(cursor) >= 0x20 &&
+    input.charCodeAt(cursor) <= 0x2f
+  ) {
+    cursor += 1;
   }
-  return 2;
+  if (cursor >= input.length) return -1;
+  // After intermediates, a control or ESC is not a final byte; end before it so it is still processed.
+  const final = input.charCodeAt(cursor);
+  if (cursor > index + 1 && (final < 0x30 || final > 0x7e)) return cursor - index;
+  return cursor - index + 1;
 }
 
 const penTransitions = new Map<string, string>();
@@ -277,14 +290,44 @@ const penTransitions = new Map<string, string>();
 // Colon color sub-parameters carry an optional color-space id absent from the semicolon form.
 function csiParams(params: string): Array<number> {
   const numbers: Array<number> = [];
+  // After a semicolon-form 38/48/58 the next part is its mode, then that many
+  // colour values; tracking them keeps a value from being read as a code.
+  let pending: "code" | "mode" | number = "code";
   for (const part of params.split(";")) {
-    if (!part.includes(":")) {
-      numbers.push(Number(part));
+    const sub = part.split(":").map(Number);
+    const head = sub[0]!;
+    if (typeof pending === "number") {
+      numbers.push(head);
+      pending = pending > 1 ? pending - 1 : "code";
       continue;
     }
-    const sub = part.split(":").map(Number);
-    if ((sub[0] === 38 || sub[0] === 48) && sub[1] === 2 && sub.length >= 6) sub.splice(2, 1);
-    numbers.push(...sub);
+    if (pending === "mode") {
+      pending = "code";
+      if (sub.length === 1) {
+        numbers.push(head);
+        if (head === 5 || head === 2) pending = head === 5 ? 1 : 3;
+        continue;
+      }
+      // xterm also takes the mode's fields after colons (`38;2:255:0:0`).
+      if (head === 2 && sub.length >= 5) sub.splice(1, 1);
+      numbers.push(...sub.slice(0, head === 5 ? 2 : head === 2 ? 4 : 1));
+      continue;
+    }
+    if (sub.length === 1) {
+      numbers.push(head);
+      if (head === 38 || head === 48 || head === 58) pending = "mode";
+      continue;
+    }
+    if (head !== 38 && head !== 48 && head !== 58) {
+      // Other sub-parameters pick a style variant (`4:3` curly underline); keep
+      // only the head, except that `4:0` turns underline off.
+      numbers.push(head === 4 && sub[1] === 0 ? 24 : head);
+      continue;
+    }
+    if (sub[1] === 2 && sub.length >= 6) sub.splice(2, 1);
+    // The group is one parameter, so fields past its mode's length must not
+    // leak out as SGR codes of their own. Indexed colour has no colour-space id.
+    numbers.push(...sub.slice(0, sub[1] === 5 ? 3 : sub[1] === 2 ? 5 : 2));
   }
   return numbers;
 }
@@ -393,7 +436,7 @@ class Terminal {
   }
 
   csi(params: string, final: string): void {
-    if (/^[?>=]/u.test(params)) return; // Mode switches (cursor visibility, bracketed paste).
+    if (!/^[\d;:]*$/u.test(params) || (final !== "m" && params.includes(":"))) return;
     if (final === "m") {
       const key = `${this.pen}|${params}`;
       let pen = penTransitions.get(key);
@@ -443,7 +486,7 @@ class Terminal {
           if (this.settledHead !== "" || this.settledTail !== "") this.dropped = true;
           this.settledHead = "";
           this.settledTail = "";
-        } else {
+        } else if (mode === 2) {
           this.lines = [[]];
           this.row = 0;
           this.col = 0;
@@ -788,7 +831,7 @@ function spanStyle(pen: string, palette: ReadonlyArray<string>): TerminalSpanSty
       background !== undefined &&
       (foreground === undefined || contrastRatio(foreground, background) < 3)
     ) {
-      color = luminance(background) > 0.35 ? "#1f2328" : "#ffffff";
+      color = luminance(background) > 0.3 ? "#1f2328" : "#ffffff";
     }
   }
   const textDecorationLine = attributes.underline
