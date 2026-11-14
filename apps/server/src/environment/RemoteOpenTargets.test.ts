@@ -3,6 +3,7 @@ import * as NodeModule from "node:module";
 import { it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
+import { TailscaleHost } from "@t3tools/tailscale";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Sink from "effect/Sink";
@@ -78,11 +79,14 @@ const resolveTargets = (input: {
   readonly tailscale: { readonly status: CommandResult; readonly prefs: CommandResult };
   readonly hostname: string;
   readonly username?: string | null;
+  readonly platform?: NodeJS.Platform;
 }) => {
   const resolve = Effect.flatMap(RemoteOpenTargets.RemoteOpenTargets, (service) =>
     service.resolveTargets(),
   ).pipe(
     Effect.provideService(HostProcess.Hostname, input.hostname),
+    // The macOS apps are read without the CLI these cases answer through.
+    Effect.provideService(HostProcess.Platform, input.platform ?? "linux"),
     Effect.provide(
       RemoteOpenTargets.layer.pipe(
         Layer.provide(Layer.mergeAll(layerNet(input.sshd), layerSpawner(input.tailscale))),
@@ -185,6 +189,48 @@ describe("RemoteOpenTargets", () => {
         username: "t3-user",
       });
       expect(targets).toEqual([{ kind: "mdns", host: "bb-1.local", username: "t3-user" }]);
+    }),
+  );
+
+  it.effect("advertises the tailnet address when the macOS app gives no name", () =>
+    Effect.gen(function* () {
+      const targets = yield* resolveTargets({
+        sshd: { ipv4: true, ipv6: false },
+        tailscale: TAILSCALE_DOWN,
+        hostname: "bb-1",
+        username: "t3-user",
+        platform: "darwin",
+      }).pipe(
+        Effect.provideService(TailscaleHost, {
+          networkInterfaces: () => ({
+            utun4: [
+              {
+                address: "100.64.1.2",
+                netmask: "255.255.255.255",
+                family: "IPv4",
+                mac: "00:00:00:00:00:00",
+                internal: false,
+                cidr: "100.64.1.2/32",
+              },
+              {
+                address: "fd7a:115c:a1e0::1",
+                netmask: "ffff:ffff:ffff::",
+                family: "IPv6",
+                mac: "00:00:00:00:00:00",
+                internal: false,
+                cidr: "fd7a:115c:a1e0::1/48",
+                scopeid: 0,
+              },
+            ],
+          }),
+          tailscaledAnswers: Effect.succeed(false),
+          lookupMagicDnsName: () => Effect.succeed(null),
+        }),
+      );
+      expect(targets).toEqual([
+        { kind: "tailscale", host: "100.64.1.2", username: "t3-user" },
+        { kind: "mdns", host: "bb-1.local", username: "t3-user" },
+      ]);
     }),
   );
 
