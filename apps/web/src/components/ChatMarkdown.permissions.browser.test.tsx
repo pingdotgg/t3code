@@ -25,6 +25,7 @@ const state = vi.hoisted(() => ({
   openExternal: vi.fn(),
   copy: vi.fn(),
   pullRequests: [] as ThreadPullRequestLink[],
+  remoteMode: "local-exec" as "local-exec" | "remote-unavailable",
 }));
 
 vi.mock(import("../state/use-atom-query-runner"), async (original) => ({
@@ -80,7 +81,7 @@ vi.mock(import("../state/entities"), async (original) => ({
 }));
 vi.mock(import("../remoteOpen"), async (original) => ({
   ...(await original()),
-  useRemoteOpenResolution: () => ({ state: { mode: "local-exec" }, isResolved: true }) as never,
+  useRemoteOpenResolution: () => ({ state: { mode: state.remoteMode }, isResolved: true }) as never,
 }));
 vi.mock(import("../hooks/useLocalStorage"), async (original) => ({
   ...(await original()),
@@ -130,6 +131,7 @@ function setup() {
   state.allowed = true;
   state.listeners.clear();
   state.pullRequests = [];
+  state.remoteMode = "local-exec";
   state.openEditor.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.link.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.unlink.mockReset().mockResolvedValue(AsyncResult.success(undefined));
@@ -194,6 +196,26 @@ it("removes host actions after revocation while keeping file preview and copying
   await act(async () => screen.anchor().click());
   expect(state.openFile).toHaveBeenCalledWith(threadRef, "docs/readme.md", undefined);
   expect(state.openEditor).not.toHaveBeenCalled();
+});
+
+it("opens HTML in the system browser only when the environment is local", async () => {
+  using _setup = setup();
+  state.choose.mockResolvedValue("open-in-system-browser");
+  {
+    await using screen = await renderMarkdown("[Report](site/index.html)");
+    await screen.openContextMenu();
+    expect(offeredActions()).toContain("open-in-system-browser");
+    await vi.waitFor(() =>
+      expect(state.openEditor).toHaveBeenCalledExactlyOnceWith({
+        environmentId: threadRef.environmentId,
+        input: { cwd: "/work/site/index.html", editor: "file-manager" },
+      }),
+    );
+  }
+  state.remoteMode = "remote-unavailable";
+  await using screen = await renderMarkdown("[Report](site/index.html)");
+  await screen.openContextMenu();
+  expect(offeredActions()).not.toContain("open-in-system-browser");
 });
 
 it("does not launch an editor after revocation during a native context menu", async () => {
