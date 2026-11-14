@@ -23,7 +23,8 @@ const managedCodexLaunchArgs = (command: string, args: ReadonlyArray<string>) =>
   [
     'model_provider="openai_token_sharing"',
     // Codex persists this provider ID in rollouts and needs it unchanged to resume.
-    `model_providers.openai_token_sharing={name="OpenAI Token Sharing",base_url="https://api.openai.com/v1",model_catalog_url="https://api.openai.com/v1/models",wire_api="responses",requires_openai_auth=false,supports_websockets=false,auth={command=${JSON.stringify(command)},args=${JSON.stringify(args)},timeout_ms=${COMMAND_TIMEOUT_MS},refresh_interval_ms=0}}`,
+    // An explicit catalog URL disables bundled metadata fallback when discovery fails.
+    `model_providers.openai_token_sharing={name="OpenAI Token Sharing",base_url="https://api.openai.com/v1",wire_api="responses",requires_openai_auth=false,supports_websockets=false,auth={command=${JSON.stringify(command)},args=${JSON.stringify(args)},timeout_ms=${COMMAND_TIMEOUT_MS},refresh_interval_ms=0}}`,
     "features.api_key_model_discovery=true",
     "features.multi_agent=false",
     "features.multi_agent_v2=false",
