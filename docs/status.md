@@ -387,10 +387,10 @@ The fixture replay now passes 35 of 159 variants: Codex 17 of 25 (was 16), Claud
   caller that drives a session directly (the crate's tests and tools). Not removed: another
   worker is in that crate.
 - **Rollback retries.** Up to 5 attempts, 100 ms after the first failure and doubling (at most
-  30 s); only the last failure sets `rollbackFailure` (T3's `EffectWorker`). As in T3, a
-  failure after the provider rolled back (in the file restore) retries the provider rollback
-  too. Proof: `a_rollback_that_fails_twice_then_works_is_retried`; the failing test now
-  expects 5 tries.
+  30 s); only the last failure sets `rollbackFailure` (T3's `EffectWorker`). A failure after
+  the provider rolled back (in the file restore) retries only that step since the review
+  fixes ("Engine review fixes"); T3 retries the provider rollback too ("Faults found in the
+  T3 server"). Proof: `a_rollback_that_fails_twice_then_works_is_retried`.
 - **MCP elicitations for Codex** (`CodexMcpElicitation.ts`). A form elicitation is an
   approval with the app name and the persistence choices; the answer is the form's option,
   with `_meta.persist`. A URL elicitation, a form an approval cannot fill, or one without an
@@ -475,6 +475,43 @@ which T3 reports `status: warning`).
 Memory: the T3 transcript replay (18 scenarios, release) peaked at 4.11–4.16 MiB footprint on
 `main` and 3.94–4.28 MiB on the branch (3 runs each); the new state is bounded (64 roster
 tasks, 64 links, 8 tails per turn, 16 ledger models).
+
+## Engine review fixes (2026-11-14)
+
+The confirmed findings of the engine and provider review, fixed on `t3/33ce88b1`.
+
+Deliberate differences from the T3 server:
+
+- **A rollback sends the provider rollback once per request.** A retry repeats only the step
+  that failed (file restore, stale refs, the commit). The live session moves to the
+  rolled-back provider thread only after the commit. T3 sends the provider rollback again on
+  every retry, which cuts a Codex thread again each time (see "Faults found in the T3
+  server"). In that failure path Codex gets fewer `thread/rollback` requests from us than from
+  T3. Nick decided this on 2026-11-14. Proof: `a_failing_restore_rolls_the_provider_back_once`,
+  `a_failed_restore_leaves_the_live_session_on_its_thread`.
+
+## Faults found in the T3 server
+
+Faults in the T3 server at the pinned Conn commit, written so they can be reported upstream.
+Paths are under `apps/server/src/orchestration-v2/`.
+
+- **A rollback retry rolls a Codex thread back again.** `CheckpointRollbackService.ts`
+  `execute` (lines 335-346) calls `session.rollbackThread` first, then
+  `checkpoints.restore` and `checkpoints.deleteStaleRefs`, and only then writes the result.
+  When the restore or the ref delete fails (for example, `.git/index.lock` is held), the
+  effect fails and `EffectWorker.ts` (lines 842-886) runs the whole effect again, up to 5
+  attempts. Each attempt reads the same durable rows, and `CodexAdapterV2.ts`
+  `rollbackThread` (line 8526, with `resolveCodexRollbackTurnCount` at line 1102) counts the
+  turns to revert from those rows. Each attempt therefore asks Codex to revert the same number
+  of turns on a native thread that is already shorter. Example: three turns, roll back to turn
+  1, the index is locked. Codex is asked five times to drop 2 turns, so turn 1 and then the
+  whole conversation are dropped. The app still shows turn 1 and the later runs as completed
+  and records `rollbackFailure`. The next turn continues a Codex conversation that no longer
+  holds what the user sees. The Claude adapter's rollback only builds a row, so Claude is not
+  hurt. A crash after the provider rollback has the same effect once: `EffectOutbox.ts`
+  requeues `provider-thread.rollback` after a process loss
+  (`REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS`, line 135), and the effect starts again from
+  the provider rollback.
 
 ## What is left, in the planned order
 

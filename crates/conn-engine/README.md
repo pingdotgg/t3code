@@ -78,7 +78,12 @@ all 23 are.
   the files, deletes the stale refs, then commits the provider thread, the `stale`
   checkpoints and the `rolled_back` runs and nodes at once. A failure commits none of that and
   sets `rollbackFailure` with T3's client message, after T3's retries: up to 5 attempts, 100 ms
-  after the first failure and doubling, at most 30 s (`EffectWorker`).
+  after the first failure and doubling, at most 30 s (`EffectWorker`). **Deliberate difference
+  from T3:** a retry repeats only the step that failed, so the provider rollback is sent once
+  per request, and the live session moves to the rolled-back thread only after the commit. T3
+  repeats the provider rollback on every retry, which cuts a Codex thread again each time
+  (`docs/status.md`, "Faults found in the T3 server"). Test:
+  `a_failing_restore_rolls_the_provider_back_once`.
 - **Fork** (`src/fork.rs`). `thread.fork` makes the fork thread and a pending `fork` transfer
   (`ThreadForkService.plan`). Its first turn forks the source's native thread from the source
   run's turn (`Session::fork_thread`) and consumes the transfer (`native_fork`). T3's portable

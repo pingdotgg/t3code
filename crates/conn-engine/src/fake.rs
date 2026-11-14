@@ -53,6 +53,9 @@ pub struct FakeProvider {
     /// Session calls in order: `start <run>`, `interrupt <run>`, `interrupted <run>`,
     /// `rollback`, `rolled back`.
     pub calls: Arc<Mutex<Vec<String>>>,
+    /// The `nativeConversationHeadRef` of the provider thread each turn starts on. A rollback
+    /// sets it to `rolled-back:<target>`, so a test sees which row a turn continues.
+    pub turn_heads: Arc<Mutex<Vec<Value>>>,
     /// Provider threads made per app thread (`ensure_thread`); the second and later get a
     /// numbered id, as a real provider gives each new conversation its own.
     ensured: Arc<Mutex<std::collections::HashMap<String, usize>>>,
@@ -87,6 +90,7 @@ impl FakeProvider {
             forks: Arc::new(Mutex::new(vec![])),
             resumes: Arc::new(Mutex::new(vec![])),
             calls: Arc::new(Mutex::new(vec![])),
+            turn_heads: Arc::default(),
             ensured: Arc::default(),
             fail_rollbacks: Arc::new(AtomicUsize::new(0)),
             control_delay: std::time::Duration::ZERO,
@@ -157,6 +161,7 @@ struct FakeSession {
     forks: Arc<Mutex<Vec<String>>>,
     resumes: Arc<Mutex<Vec<String>>>,
     calls: Arc<Mutex<Vec<String>>>,
+    turn_heads: Arc<Mutex<Vec<Value>>>,
     ensured: Arc<Mutex<std::collections::HashMap<String, usize>>>,
     fail_rollbacks: Arc<AtomicUsize>,
     control_delay: std::time::Duration,
@@ -216,6 +221,7 @@ impl Provider for FakeProvider {
                     forks: self.forks.clone(),
                     resumes: self.resumes.clone(),
                     calls: self.calls.clone(),
+                    turn_heads: self.turn_heads.clone(),
                     ensured: self.ensured.clone(),
                     fail_rollbacks: self.fail_rollbacks.clone(),
                     control_delay: self.control_delay,
@@ -397,7 +403,17 @@ impl Session for FakeSession {
                 ordinal: input.run_ordinal,
             };
             crate::lock(&self.calls).push(format!("start {}", turn.run_id));
+            crate::lock(&self.turn_heads).push(
+                conn_contract::to_json(&input.provider_thread)["nativeConversationHeadRef"].clone(),
+            );
             let text = input.message.text.clone();
+            // `slowstart`: a slow cold start that fails when the session was closed meanwhile.
+            if text.starts_with("slowstart") {
+                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                if self.closed.load(Ordering::SeqCst) > 0 {
+                    return Err(ProviderError::SessionStopped);
+                }
+            }
             // `write <path> <text>`: writes `<text>\n` to `<path>` in the turn's folder, then
             // answers as any other message.
             if let (Some(rest), Some(cwd)) = (
@@ -636,12 +652,13 @@ impl Session for FakeSession {
         input: conn_provider::RollbackThreadInput,
     ) -> BoxFuture<'_, ProviderResult<conn_provider::ThreadSnapshot>> {
         Box::pin(async move {
-            crate::lock(&self.rollbacks).push(match &input.target {
+            let target = match &input.target {
                 conn_provider::RollbackTarget::ThreadStart { .. } => "start".to_owned(),
                 conn_provider::RollbackTarget::ProviderTurn {
                     app_run_ordinal, ..
                 } => format!("turn {app_run_ordinal}"),
-            });
+            };
+            crate::lock(&self.rollbacks).push(target.clone());
             crate::lock(&self.calls).push("rollback".into());
             tokio::time::sleep(self.control_delay).await;
             let fail = self
@@ -658,8 +675,13 @@ impl Session for FakeSession {
                 });
             }
             crate::lock(&self.calls).push("rolled back".into());
+            let mut thread = conn_contract::to_json(&input.provider_thread);
+            thread["nativeConversationHeadRef"] = json!({"driver": self.driver,
+                "nativeId": format!("rolled-back:{target}"), "strength": "strong"});
             Ok(conn_provider::ThreadSnapshot {
-                provider_thread: input.provider_thread,
+                provider_thread: from_json(thread).map_err(|e| ProviderError::Protocol {
+                    detail: e.to_string(),
+                })?,
                 provider_turns: vec![],
                 messages: vec![],
                 runtime_requests: vec![],

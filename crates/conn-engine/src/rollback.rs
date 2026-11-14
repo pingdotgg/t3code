@@ -8,8 +8,10 @@
 //! checkpoints it makes stale, and writes the result in one commit: the provider thread, the
 //! stale checkpoints, and every later run and its root node `rolled_back`. A failure at any of
 //! the three steps writes nothing of that and sets `rollbackFailure` on the thread
-//! (`checkpoint.rollback.fail`). T3's effect worker retries a failed rollback up to 5 times
-//! first; this server tries once.
+//! (`checkpoint.rollback.fail`), after T3's effect worker's retries (up to 5 attempts). A retry
+//! repeats only the step that failed: the provider rollback is sent once per request, and the
+//! live session moves to the rolled-back thread only after the commit (T3 repeats every step;
+//! see `RollbackProgress`).
 
 use std::{
     path::{Path, PathBuf},
@@ -393,6 +395,21 @@ fn retry_delay(attempt: u32) -> std::time::Duration {
     std::time::Duration::from_millis(100u64.saturating_mul(factor).min(30_000))
 }
 
+/// What one rollback request has done so far, kept across its attempts: a retry repeats only
+/// the step that failed. T3 runs every step again on each attempt
+/// (`CheckpointRollbackService.execute` under `EffectWorker`'s retries), so a Codex thread is
+/// cut again on each retry; this server sends the provider rollback once per request.
+#[derive(Default)]
+struct RollbackProgress {
+    /// The provider's answer: the row to commit, and the live session to move to it once the
+    /// commit is done.
+    provider: Option<(Value, Option<ProviderUpdate>)>,
+    files_restored: bool,
+    refs_deleted: bool,
+}
+
+type ProviderUpdate = (Arc<crate::runner::LiveThread>, conn_contract::ProviderThread);
+
 impl RollbackFailure {
     fn detail(&self) -> String {
         match self {
@@ -410,8 +427,9 @@ impl Inner {
     /// recorded. The effect holds its thread's lane meanwhile, so no turn starts in between.
     pub(crate) async fn rollback(self: &Arc<Self>, request: RollbackRequest) {
         let mut attempt = 1;
+        let mut progress = RollbackProgress::default();
         let outcome = loop {
-            match self.try_rollback(&request).await {
+            match self.try_rollback(&request, &mut progress).await {
                 Ok(()) => break Ok(()),
                 Err(failure) if attempt < ROLLBACK_ATTEMPTS => {
                     eprintln!(
@@ -478,6 +496,7 @@ impl Inner {
     async fn try_rollback(
         self: &Arc<Self>,
         request: &RollbackRequest,
+        progress: &mut RollbackProgress,
     ) -> Result<(), RollbackFailure> {
         let req = request.clone();
         let context = self
@@ -517,6 +536,9 @@ impl Inner {
 
         let snapshot_thread = if context.runs.is_empty() {
             context.provider_thread.clone()
+        } else if let Some((row, _)) = &progress.provider {
+            // An earlier attempt rolled the provider back; only a later step failed.
+            row.clone()
         } else {
             let live = self.rollback_session(&context).await?;
             live.touch(self.clock.now_millis());
@@ -534,16 +556,16 @@ impl Inner {
                 })
                 .await
                 .map_err(|e| RollbackFailure::Failed(e.to_string()))?;
-            // The live session continues from the rolled-back thread.
-            live.set_provider_thread(snapshot.provider_thread.clone());
-            to_json(&snapshot.provider_thread)
+            let row = to_json(&snapshot.provider_thread);
+            progress.provider = Some((row.clone(), Some((live, snapshot.provider_thread))));
+            row
         };
 
         let cwd = context.scope["cwd"].as_str().unwrap_or_default().to_owned();
         if let Some(checkpoints) = &self.checkpoints {
             let _held = checkpoints.workspace(&cwd).await;
             let path = PathBuf::from(&cwd);
-            if restore_files {
+            if restore_files && !progress.files_restored {
                 let reference = context.checkpoint["ref"].as_str().unwrap_or_default();
                 match git::restore(&path, reference).await {
                     Ok(true) => {}
@@ -554,8 +576,9 @@ impl Inner {
                     }
                     Err(e) => return Err(RollbackFailure::Failed(e.to_string())),
                 }
+                progress.files_restored = true;
             }
-            if !context.stale.is_empty() {
+            if !context.stale.is_empty() && !progress.refs_deleted {
                 let refs: Vec<String> = context
                     .stale
                     .iter()
@@ -564,6 +587,7 @@ impl Inner {
                 git::delete_refs(&path, &refs)
                     .await
                     .map_err(|e| RollbackFailure::Failed(e.to_string()))?;
+                progress.refs_deleted = true;
             }
         } else if restore_files {
             return Err(RollbackFailure::Failed("checkpoints are off".into()));
@@ -582,7 +606,12 @@ impl Inner {
             )
         })
         .await
-        .map_err(RollbackFailure::Failed)
+        .map_err(RollbackFailure::Failed)?;
+        // The live session continues from the rolled-back thread, once the store says so.
+        if let Some((_, Some((live, thread)))) = progress.provider.take() {
+            live.set_provider_thread(thread);
+        }
+        Ok(())
     }
 
     /// The thread's live session, or one opened for the rollback on the provider thread's own

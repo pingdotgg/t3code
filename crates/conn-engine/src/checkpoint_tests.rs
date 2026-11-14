@@ -895,3 +895,68 @@ async fn a_fork_refuses_a_missing_source_or_a_taken_target() {
         .await;
     assert!(refused(taken).contains("t2"), "the target exists");
 }
+
+/// A file restore that keeps failing retries the restore only: the provider is rolled back
+/// once per request, and the store keeps every run (review finding 1; T3 sends it again on
+/// every retry).
+#[tokio::test(flavor = "current_thread")]
+async fn a_failing_restore_rolls_the_provider_back_once() {
+    let db = TempDb::new("rb-once");
+    let repo = Repo::new("rb-once");
+    let (engine, provider) = with_turns(
+        &db,
+        &repo,
+        FakeProvider::new("claudeAgent"),
+        create_worktree_thread(&repo),
+        &["write a.txt one", "write b.txt two", "write c.txt three"],
+    )
+    .await;
+    let p = projection(&engine, "t1").await;
+    std::fs::write(repo.0.join(".git/index.lock"), "").unwrap();
+    dispatch(&engine, rollback("rb-1", &checkpoint_at(&p, 1), None)).await;
+    let p = until(&engine, |p| p["thread"]["rollbackFailure"].is_object()).await;
+    assert_eq!(
+        p["thread"]["rollbackFailure"]["message"],
+        "Git's index is locked. Wait for other Git operations to finish, then try again."
+    );
+    assert_eq!(p["runs"][2]["status"], "completed", "store unchanged");
+    assert_eq!(
+        *provider.rollbacks.lock().unwrap(),
+        ["turn 1"],
+        "the provider conversation is rolled back once"
+    );
+}
+
+/// A rollback whose file restore fails leaves the live session on the thread it had: the next
+/// turn continues the stored provider thread, not the one the provider rolled back to.
+#[tokio::test(flavor = "current_thread")]
+async fn a_failed_restore_leaves_the_live_session_on_its_thread() {
+    let db = TempDb::new("rb-live-kept");
+    let repo = Repo::new("rb-live-kept");
+    let (engine, provider) = with_turns(
+        &db,
+        &repo,
+        FakeProvider::new("claudeAgent"),
+        create_worktree_thread(&repo),
+        &["write a.txt one", "write b.txt two"],
+    )
+    .await;
+    let p = projection(&engine, "t1").await;
+    let lock = repo.0.join(".git/index.lock");
+    std::fs::write(&lock, "").unwrap();
+    dispatch(&engine, rollback("rb-1", &checkpoint_at(&p, 1), None)).await;
+    until(&engine, |p| p["thread"]["rollbackFailure"].is_object()).await;
+    std::fs::remove_file(&lock).unwrap();
+    let mut stream = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut stream).await;
+    turn(&engine, &mut stream, "c9", "after").await;
+    let heads = provider.turn_heads.lock().unwrap().clone();
+    assert_eq!(heads.len(), 3, "{heads:?}");
+    assert!(
+        heads[2].is_null(),
+        "the turn continues the stored thread: {heads:?}"
+    );
+}
