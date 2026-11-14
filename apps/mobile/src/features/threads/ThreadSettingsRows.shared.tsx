@@ -13,7 +13,6 @@ export type ModelRowProps = {
   readonly favoritesLoaded: boolean;
   readonly onToggleFavorite: () => void;
   readonly onToggleHidden?: () => void;
-  readonly hiddenUpdatePending?: boolean;
   readonly isFirst: boolean;
   readonly isLast: boolean;
 };
@@ -102,9 +101,7 @@ export function ModelRowContent(
         <Pressable
           accessibilityLabel={`${props.option.isHidden ? "Show" : "Hide"} model: ${props.option.providerLabel}, ${props.option.label}`}
           accessibilityRole="button"
-          accessibilityState={{ disabled: props.hiddenUpdatePending === true }}
           className="min-h-11 min-w-11 items-center justify-center"
-          disabled={props.hiddenUpdatePending}
           onPress={props.onToggleHidden}
         >
           <SymbolView
