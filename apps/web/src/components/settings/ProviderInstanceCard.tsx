@@ -734,14 +734,11 @@ function useCustomModelSaves(
     setSaves((list) => pendingCustomModelSaves(list, storedKey));
   }
   const current = saves.at(-1)?.models ?? stored;
-  const settle = useStableCallback((sent: CustomModelSave, saved: boolean) =>
-    setSaves((list) => settleCustomModelSave(list, sent, saved, storedKey)),
-  );
   const update = useStableCallback(async (next: ReadonlyArray<CustomModelDefinition>) => {
     const sent: CustomModelSave = { models: next, key: customModelsKey(next) };
     setSaves((list) => [...list, sent]);
     const saved = await save(next);
-    settle(sent, saved);
+    setSaves((list) => settleCustomModelSave(list, sent, saved));
     return saved;
   });
   return [current, update] as const;

@@ -24,7 +24,7 @@ function replay(initial: string, steps: ReadonlyArray<Step>) {
     } else if ("reply" in step) {
       const save = sent.find((entry) => entry.key === step.reply)!;
       sent.splice(sent.indexOf(save), 1);
-      saves = settleCustomModelSave(saves, save, step.saved ?? true, stored);
+      saves = settleCustomModelSave(saves, save, step.saved ?? true);
     } else if (step.echo !== stored) {
       stored = step.echo;
       saves = pendingCustomModelSaves(saves, stored);
@@ -47,9 +47,23 @@ describe("pending custom model saves", () => {
     ],
     ["a failed save is dropped", [{ send: "a" }, { reply: "a", saved: false }], []],
     [
-      "a repeated snapshot retires only its earliest save",
-      [{ send: "a" }, { send: "b" }, { send: "a" }, { echo: "a" }],
-      ["b", "a"],
+      "a coalesced repeated snapshot settles every save, so a later external match is not an echo",
+      [
+        { send: "a" },
+        { reply: "a" },
+        { send: "b" },
+        { reply: "b" },
+        { send: "a" },
+        { reply: "a" },
+        { echo: "a" },
+        { echo: "b" },
+      ],
+      [],
+    ],
+    [
+      "a save racing an external change is dropped on reply",
+      [{ send: "a" }, { echo: "x" }, { reply: "a" }],
+      [],
     ],
     [
       "a rename then restore survives both echoes",
