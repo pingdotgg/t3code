@@ -122,27 +122,31 @@ export function isTemporaryWorktreeBranch(refName: string): boolean {
   return TEMP_WORKTREE_BRANCH_PATTERN.test(refName.trim().toLowerCase());
 }
 
-function lowerCaseRemote(value: string): string {
-  return value
-    .trim()
-    .replace(/\/+$/g, "")
-    .replace(/\.git$/i, "")
-    .toLowerCase();
+const stripGitSuffix = (path: string) => path.replace(/\.git$/i, "");
+
+function lowerCaseRemote(value: string, dropSuffix = stripGitSuffix): string {
+  return dropSuffix(value.trim().replace(/\/+$/g, "")).toLowerCase();
 }
 
 /**
  * The host and repository path a remote names, lower case and without a port, or null for a
- * remote that names no host, such as a local path.
+ * remote that names no host, such as a local path. Most hosts serve `name.git` as `name`, so the
+ * path drops that suffix unless `keepGitSuffix` asks for the name as written.
  */
 export function parseGitRemoteRepository(
   value: string,
+  options?: { readonly keepGitSuffix?: boolean },
 ): { readonly host: string; readonly path: string } | null {
-  const normalized = lowerCaseRemote(value);
+  const dropSuffix = options?.keepGitSuffix ? (path: string) => path : stripGitSuffix;
+  const normalized = lowerCaseRemote(value, dropSuffix);
 
   if (/^(?:ssh|https?|git):\/\//i.test(normalized)) {
     try {
-      const url = new URL(normalized);
-      const repositorySegments = url.pathname.split("/").filter((segment) => segment.length > 0);
+      // Apply suffix policy to the path: `.git` may sit before a query or fragment.
+      const url = new URL(value.trim().toLowerCase());
+      const repositorySegments = dropSuffix(url.pathname.replace(/\/+$/, ""))
+        .split("/")
+        .filter((segment) => segment.length > 0);
       if (url.hostname && repositorySegments.length > 1) {
         return { host: url.hostname, path: repositorySegments.join("/") };
       }
@@ -154,15 +158,24 @@ export function parseGitRemoteRepository(
   // A userless one-letter prefix is a Windows drive, not an SCP host.
   const scpStyleHostAndPath = /^[a-z]:/i.test(normalized)
     ? null
-    : /^(?:[a-zA-Z0-9._-]+@)?([^@:/\\\s]+):\/?([^/\s]+(?:\/[^/\s]+)+)$/i.exec(normalized);
+    : /^(?:[a-zA-Z0-9._-]+@)?(\[[0-9a-f:.]+\]|[^@:/\\\s[\]]+):\/?([^/\s]+(?:\/[^/\s]+)+)$/i.exec(
+        normalized,
+      );
   const scpHost = scpStyleHostAndPath?.[1];
   const scpPath = scpStyleHostAndPath?.[2];
-  return scpHost && scpPath ? { host: scpHost, path: scpPath } : null;
+  if (!scpHost || !scpPath) return null;
+  if (!scpHost.startsWith("[")) return { host: scpHost, path: scpPath };
+  try {
+    // Spell an IPv6 host as the URL branch does, so `[::1]:a/b` and `ssh://[::1]/a/b` share a key.
+    return { host: new URL(`ssh://${scpHost}`).hostname, path: scpPath };
+  } catch {
+    return null;
+  }
 }
 
 /**
  * `host/path` for a remote that names a host, otherwise the remote itself, lower case. A host that
- * spells repositories differently over SSH has its source control registry's
+ * spells repositories differently over SSH or treats `.git` literally has its source control registry's
  * `repositoryKeyFromRemote` rewrite this, so persisted keys come from that, not from here.
  */
 export function normalizeGitRemoteUrl(value: string): string {
@@ -280,26 +293,6 @@ export function parseOriginUrlFromGitConfig(configText: string): string | null {
   return originUrl ?? firstRemoteUrl;
 }
 
-function deriveLocalBranchNameCandidatesFromRemoteRef(
-  branchName: string,
-  remoteName?: string,
-): ReadonlyArray<string> {
-  const candidates = new Set<string>();
-  const firstSlashCandidate = deriveLocalBranchNameFromRemoteRef(branchName);
-  if (firstSlashCandidate.length > 0) {
-    candidates.add(firstSlashCandidate);
-  }
-
-  if (remoteName) {
-    const remotePrefix = `${remoteName}/`;
-    if (branchName.startsWith(remotePrefix) && branchName.length > remotePrefix.length) {
-      candidates.add(branchName.slice(remotePrefix.length));
-    }
-  }
-
-  return [...candidates];
-}
-
 // Replace only Git-rejected whitespace; nonbreaking spaces are valid ref characters.
 export function sanitizeNewRefName(rawName: string): string {
   return rawName.trim().replace(/[ \t\n\r\f\v]+/g, "-");
@@ -315,19 +308,12 @@ export function dedupeRemoteBranchesWithLocalMatches(
   );
 
   return refs.filter((refName) => {
-    if (!refName.isRemote) {
+    if (!refName.isRemote || refName.remoteName !== "origin") {
       return true;
     }
 
-    if (refName.remoteName !== "origin") {
-      return true;
-    }
-
-    const localBranchCandidates = deriveLocalBranchNameCandidatesFromRemoteRef(
-      refName.name,
-      refName.remoteName,
-    );
-    return !localBranchCandidates.some((candidate) => localBranchNames.has(candidate));
+    const localBranchName = deriveLocalBranchNameFromRemoteRef(refName.name);
+    return localBranchName.length === 0 || !localBranchNames.has(localBranchName);
   });
 }
 
