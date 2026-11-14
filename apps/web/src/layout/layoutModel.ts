@@ -441,10 +441,11 @@ export function closedLayoutTabIds(before: LayoutState, after: LayoutState): str
   return layoutTabIds(before).filter((tabId) => !open.has(tabId));
 }
 
-/** How many tabs the layout holds across every workspace. */
+/** How many tabs the layout holds across every workspace, blank ones aside. */
 export function countLayoutTabs(state: LayoutState): number {
   let count = 0;
   for (const workspace of state.workspaces) {
+    if (isBlankLayoutWorkspace(workspace)) continue;
     for (const column of workspace.columns) {
       for (const pane of column.panes) count += pane.tabs.length;
     }
