@@ -719,7 +719,11 @@ async fn a_rollback_that_fails_twice_then_works_is_retried() {
     )
     .await;
     let p = projection(&engine, "t1").await;
-    dispatch(&engine, rollback("rb-1", &checkpoint_at(&p, 1), Some(false))).await;
+    dispatch(
+        &engine,
+        rollback("rb-1", &checkpoint_at(&p, 1), Some(false)),
+    )
+    .await;
     dispatch(&engine, message("t1", "c3", "after")).await;
     let p = until(&engine, |p| p["runs"][2]["status"] == "completed").await;
     assert_eq!(p["runs"][1]["status"], "rolled_back", "{}", p["runs"]);
@@ -727,7 +731,13 @@ async fn a_rollback_that_fails_twice_then_works_is_retried() {
     let calls = provider.calls.lock().unwrap().clone();
     assert_eq!(
         calls[calls.len() - 5..],
-        ["rollback", "rollback", "rollback", "rolled back", "start run:t1:3"]
+        [
+            "rollback",
+            "rollback",
+            "rollback",
+            "rolled back",
+            "start run:t1:3"
+        ]
     );
 }
 

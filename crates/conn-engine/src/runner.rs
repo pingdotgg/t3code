@@ -14,8 +14,7 @@ use conn_contract::{ProviderThread, ProviderTurnId, from_json, to_json};
 use conn_provider::{
     EnsureThreadInput, InterruptInput, OpenSessionInput, ProviderEvent, ResumeThreadInput,
     RuntimePolicy, RuntimeRequestResponse, Session, SteerInput, SteerStatus, ThreadDisposition,
-    TurnInput,
-    TurnMessage, TurnStatus,
+    TurnInput, TurnMessage, TurnStatus,
 };
 use serde_json::{Value, json};
 use tokio::{

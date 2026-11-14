@@ -360,15 +360,20 @@ impl Session for FakeSession {
         input: ResumeThreadInput,
     ) -> BoxFuture<'_, ProviderResult<ProviderThread>> {
         Box::pin(async move {
-            let native = conn_contract::to_json(&input.provider_thread)["nativeThreadRef"]
-                ["nativeId"]
-                .as_str()
-                .unwrap_or("-")
-                .to_owned();
+            let native =
+                conn_contract::to_json(&input.provider_thread)["nativeThreadRef"]["nativeId"]
+                    .as_str()
+                    .unwrap_or("-")
+                    .to_owned();
             let model = input
                 .model_selection
                 .as_ref()
-                .map(|s| conn_contract::to_json(s)["model"].as_str().unwrap_or("-").to_owned())
+                .map(|s| {
+                    conn_contract::to_json(s)["model"]
+                        .as_str()
+                        .unwrap_or("-")
+                        .to_owned()
+                })
                 .unwrap_or_else(|| "-".into());
             crate::lock(&self.resumes).push(format!("{native} {model}"));
             Ok(input.provider_thread)
