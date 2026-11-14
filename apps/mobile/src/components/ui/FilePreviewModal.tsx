@@ -38,7 +38,7 @@ const nativeUri = (image: FilePreviewImage) => (image.failed ? null : image.uri)
 
 function NativeFilePreview(props: FilePreviewViewerProps) {
   const identifier = useId();
-  // Later URLs reach the open viewer through updateFile instead of presenting again.
+  // Later URLs reach the native presentation through updateFile instead of presenting again.
   const [presented] = useState(props.source);
   const delivered = useRef<(string | null | undefined)[]>([]);
   const onRequestClose = useEffectEvent(props.onRequestClose);
@@ -51,7 +51,7 @@ function NativeFilePreview(props: FilePreviewViewerProps) {
   useEffect(() => {
     let canceled = false;
     let presentation: Promise<void>;
-    // Images open while still loading; other files must download first so Quick Look can refuse them.
+    // Images hand over before every URL resolves; other files must download first so Quick Look can refuse them.
     if (presented.kind === "image") {
       const { images, selectedIndex } = presented;
       delivered.current = images.map((image) => image.uri);
