@@ -156,6 +156,46 @@ pub(crate) fn spawn(
     ))
 }
 
+/// Lets every later child start with the default action of a signal this process inherited
+/// as ignored. node-pty resets every signal to its default in the shell; `std` resets only
+/// `SIGPIPE`. A child inherits an ignored signal across `exec`, so a server started with
+/// `SIGINT` ignored (a background job of a shell without job control) gave shells whose
+/// commands ignore Ctrl-C, and `nohup` gave shells that ignore `terminal.close`'s SIGHUP.
+/// `exec` resets a handled signal to its default, so this process handles each such signal
+/// instead, and drops it, as ignoring did. Linux only: it reads `SigIgn` from `/proc`.
+#[cfg(target_os = "linux")]
+fn stop_passing_on_ignored_signals() {
+    use tokio::signal::unix::{SignalKind, signal};
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let ignored = std::fs::read_to_string("/proc/self/status")
+            .ok()
+            .and_then(|status| {
+                let mask = status.lines().find_map(|l| l.strip_prefix("SigIgn:"))?;
+                u64::from_str_radix(mask.trim(), 16).ok()
+            })
+            .unwrap_or(0);
+        let kinds = [
+            SignalKind::hangup(),
+            SignalKind::interrupt(),
+            SignalKind::quit(),
+            SignalKind::terminate(),
+            SignalKind::user_defined1(),
+            SignalKind::user_defined2(),
+            SignalKind::from_raw(Signal::TSTP.as_raw()),
+        ];
+        for kind in kinds {
+            let bit = u32::try_from(kind.as_raw_value() - 1)
+                .ok()
+                .and_then(|n| 1u64.checked_shl(n));
+            if bit.is_some_and(|bit| ignored & bit != 0) {
+                // The handler stays installed after the stream is dropped.
+                let _ = signal(kind);
+            }
+        }
+    });
+}
+
 fn spawn_one(
     shell: &str,
     cwd: &str,
@@ -163,6 +203,8 @@ fn spawn_one(
     cols: u16,
     rows: u16,
 ) -> io::Result<Spawned> {
+    #[cfg(target_os = "linux")]
+    stop_passing_on_ignored_signals();
     let (pty, pts) = pty_process::open().map_err(to_io)?;
     pty.resize(pty_process::Size::new(rows, cols))
         .map_err(to_io)?;

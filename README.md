@@ -410,32 +410,51 @@ search, VCS views and the diff, files and uploads, terminals, a launch into a ne
 a turn that calls `/mcp`. `crates/conn-server/tools/orbit-flow.mjs` runs Orbit's container
 flow against a binary.
 
-**Memory on Linux** (x86_64, Ubuntu, kernel 7.0; the Orbit container host). Read with
-`smaps_rollup`, the server process only, in MiB. One client, real Claude Haiku turns from the web
-client; binary on ext4 (on tmpfs the binary would count as `Pss_Shmem` and dirty pages).
+**Memory on Linux**, measured 2026-11-14 (Conn pin `b12470dcad`) on the Orbit container host (x86_64, Ubuntu, kernel
+7.0). Figures are MiB from `/proc/<pid>/smaps_rollup`. The server is the musl release build of
+`examples/replay_server` (`conn-server` with the engine's fake provider, so no model and no
+`claude` process), with the binary on ext4. `crates/conn-server/tools/memory-flow.mjs` drives
+it: it pairs, opens the web client's boot streams over `/ws`, opens one thread stream per
+thread, and runs turns through `/mcp`.
 
-| Sample (musl build)         | Rss | Pss | Pss_Anon | Pss_File | Private_Dirty |
-| --------------------------- | --- | --- | -------- | -------- | ------------- |
-| Just after start            | 4.2 | 4.2 | 0.5      | 3.7      | 0.6           |
-| Connected, streams open     | 5.2 | 5.2 | 0.8      | 4.3      | 0.9           |
-| Peak during the first turn  | 6.3 | 6.3 | 1.2      | 5.1      | 1.3           |
-| After the first turn        | 6.4 | 6.4 | 1.3      | 5.1      | 1.3           |
-| After 11 turns in 3 threads | 7.7 | 7.7 | 2.6      | 5.1      | 2.6           |
-| After 2 idle minutes        | 7.7 | 7.7 | 2.6      | 5.1      | 2.6           |
+| Server (musl, fake provider) | Rss  | Pss  | Pss_Anon | Private_Dirty |
+| ---------------------------- | ---- | ---- | -------- | ------------- |
+| Just started                 | 8.7  | 8.7  | 1.4      | 1.4           |
+| Client connected, streams open | 10.0 | 10.0 | 1.9    | 1.9           |
+| After 20 turns in 3 threads  | 13.1 | 13.1 | 4.3      | 4.3           |
+| After 2 idle minutes         | 12.3 | 12.3 | 4.1      | 4.2           |
 
-At the same moments the 55 container T3 servers had `Pss_Anon` mean 302 MiB (min 284, max 360) and RSS mean 335 MiB: about 115 times the Rust server's anonymous memory after 11 turns.
-The glibc build used slightly more (`Pss_Anon` 3.0 MiB and RSS 10.6 MiB after 11 turns), so
-build for `x86_64-unknown-linux-musl`. Each open thread keeps its `claude` child (about
-140 MiB `Pss_Anon`) and the MCP helpers from the user's Claude settings; those are separate
-processes and not counted above, as they are not in the T3 figures.
+Five container T3 servers (`/opt/orbit-agent/current/agent/bin/t3 serve`), read at the same
+moments: `Pss_Anon` 354, 283, 285, 299 and 285 MiB (mean 301), unchanged through the run. The
+server's anonymous memory after 20 turns is about 70 times smaller. The rest of its `Rss` is the
+binary's file pages, which every container on the host shares through the page cache.
+
+| SDK host (Node 26.12.1 single executable, stub `claude`) | Rss   | Pss   | Pss_Anon | Private_Dirty |
+| -------------------------------------------------------- | ----- | ----- | -------- | ------------- |
+| Idle after start, no driver loaded                       | 66.3  | 60.3  | 20.9     | 20.9          |
+| In a session, turn 1 running                             | 81.1  | 74.9  | 32.0     | 32.0          |
+| After 10 turns                                           | 91.7  | 85.5  | 38.5     | 38.5          |
+| After the last session closed                            | gone  | gone  | gone     | gone          |
+
+The SDK host runs only while a Claude session is open. Measured with
+`crates/conn-provider-claude/examples/helper_memory` and
+`crates/conn-provider-claude/tools/conformance/stub-claude` replaying a 10-turn transcript. Its
+152 MB executable is mostly file pages, and how many are resident varies: a run before the
+2026-11-14 pin bump read 94 to 117 MiB `Rss` with the same `Pss_Anon` (21 to 41). Only
+`Pss_Anon` is private to one container. A real
+session also has the `claude` CLI (about 140 MiB `Pss_Anon` in an earlier run) and the MCP
+helpers from the user's Claude settings. The T3 figures do not count those either.
+
+Build for `x86_64-unknown-linux-musl`: in an earlier run the glibc build used slightly more
+(`Pss_Anon` 3.0 against 2.6 MiB after 11 Haiku turns).
 
 On macOS arm64 (release, `ps` RSS / `footprint`, one Haiku turn): `opt-level = "z"` gave a
 4.8 MiB binary and 5.7 / 2.5 MiB idle, 7.5 / 3.4 MiB peak; `opt-level = 3` gave 7.5 MiB and
 6.5 / 2.8, 9.4 / 3.9. The release profile keeps `"z"`.
 
-**Linux build:** on a Linux host, `cargo build --release -p conn-server` takes under a minute
-from clean with 4 jobs (7.1 MB binary); add `--target x86_64-unknown-linux-musl` (with
-`musl-gcc` installed) for a static binary of 7.2 MB. From macOS the build needs a C
+**Linux build:** on a Linux host, `cargo build --release -p conn-server` takes about a minute
+from clean with 4 jobs; add `--target x86_64-unknown-linux-musl` (with `musl-gcc` installed)
+for a static binary (15.7 MB on 2026-11-14; 7.2 MB in the early spike). From macOS the build needs a C
 cross-compiler for bundled SQLite, such as `cargo zigbuild`.
 
 ## Known gaps

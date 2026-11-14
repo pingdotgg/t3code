@@ -5,7 +5,8 @@ name: CI
 # registered on Nick's repositories).
 #
 # Jobs:
-# - rust: format, clippy with warnings as errors, tests, the recordings decode check.
+# - rust: format, clippy with warnings as errors, tests (with the SDK host installed, so its
+#   tests run), the recordings decode check.
 # - deny: cargo-deny (advisories, licences, bans, sources). Runs nightly too, so a new
 #   advisory shows without a code change.
 # - musl: the x86_64-unknown-linux-musl release binary that Orbit runs; prints its size.
@@ -70,11 +71,24 @@ jobs:
       - name: Clippy
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 
+      # Without the SDK host's dependencies its tests in conn-provider-claude skip quietly.
+      # Node as the T3 server pins it (helpers/sdk-host/README.md).
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "26.12.1"
+
+      - name: Install the SDK host
+        working-directory: helpers/sdk-host
+        run: npm ci --no-audit --no-fund --ignore-scripts
+
       - name: Tests
         # --no-fail-fast: one run shows every failing crate, not only the first.
         run: cargo test --locked --workspace --no-fail-fast
 
+      # Independent of the tests above: runs even when they fail.
       - name: Recordings decode
+        if: ${{ !cancelled() }}
         run: cargo test --locked --manifest-path fixtures/decode-check/Cargo.toml
         env:
           CARGO_TARGET_DIR: ${{ github.workspace }}/target
