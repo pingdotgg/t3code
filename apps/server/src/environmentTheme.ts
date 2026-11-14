@@ -12,7 +12,11 @@ import {
 } from "@t3tools/contracts";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 import { themeCssLoadsRemoteFiles } from "@t3tools/shared/themeCss";
-import { BUILT_IN_THEME_IDS, UNPUBLISHABLE_THEME_IDS } from "@t3tools/shared/themePalettes";
+import {
+  MOBILE_DEFAULT_THEME_ID,
+  MOBILE_THEME_IDS,
+  UNPUBLISHABLE_THEME_IDS,
+} from "@t3tools/shared/themePalettes";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -364,11 +368,13 @@ const make = Effect.gen(function* () {
     }
     // Timestamps make clients apply a set again when its value did not change. Theme and
     // appearance have one each, so setting one does not undo a later local choice of the other.
+    // The stock theme is an empty default with a set time, which clients adopt as stock.
+    const defaultTheme = themeId === MOBILE_DEFAULT_THEME_ID ? "" : themeId;
     const select = Effect.gen(function* () {
       const setAt = DateTime.formatIso(yield* DateTime.now);
       yield* settings
         .updateSettings({
-          ...(themeId === undefined ? {} : { defaultTheme: themeId, defaultThemeSetAt: setAt }),
+          ...(defaultTheme === undefined ? {} : { defaultTheme, defaultThemeSetAt: setAt }),
           ...(appearance === undefined
             ? {}
             : { defaultAppearance: appearance, defaultAppearanceSetAt: setAt }),
@@ -381,7 +387,7 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         if (themeId === undefined) return yield* select;
         if (theme === undefined) {
-          const known = [...BUILT_IN_THEME_IDS, ...(yield* refresh).themes.map(({ id }) => id)];
+          const known = [...MOBILE_THEME_IDS, ...(yield* refresh).themes.map(({ id }) => id)];
           if (!known.includes(themeId)) {
             return yield* new EnvironmentThemeRefusedError({
               themeId,

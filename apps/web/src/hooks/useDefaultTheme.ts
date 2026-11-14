@@ -2,7 +2,7 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { themeEnvironmentIdAtom } from "../state/primaryEnvironment";
 import { themeServerSettingsAtom } from "../state/server";
 import { getThemeDefinition, singleAppearanceOf, subscribeToCustomThemes } from "../themePalette";
-import { setAppearanceMode, setTheme } from "./useTheme";
+import { getThemeSnapshot, setAppearanceMode, setTheme } from "./useTheme";
 
 const APPLIED_DEFAULT_THEME_STORAGE_PREFIX = "t3code:default-theme-applied:v2:";
 const APPLIED_DEFAULT_APPEARANCE_STORAGE_PREFIX = "t3code:default-appearance-applied:v1:";
@@ -19,7 +19,9 @@ export function defaultThemeToApply(input: {
   readonly appliedGeneration: string | null;
   readonly resolves: boolean;
 }): string | null {
-  if (input.environmentId === null || input.defaultTheme.length === 0) return null;
+  // Empty with a set time means the stock theme was set; with none, no theme was.
+  if (input.environmentId === null) return null;
+  if (input.defaultTheme.length === 0 && input.defaultThemeSetAt.length === 0) return null;
   const generation = defaultThemeGeneration(input.defaultTheme, input.defaultThemeSetAt);
   if (input.appliedGeneration === generation) return null;
   // The setting and the palette it names arrive independently, so an id that
@@ -67,9 +69,14 @@ function adoptDefaultTheme(): void {
     defaultTheme,
     defaultThemeSetAt,
     appliedGeneration: readAppliedGeneration(storageKey),
-    resolves: definition !== null,
+    resolves: definition !== null || defaultTheme === "",
   });
-  if (generation === null || definition === null) return;
+  if (generation === null) return;
+  if (definition === null) {
+    // The stock theme keeps the client's own light, dark, or system mode.
+    if (setTheme(getThemeSnapshot().appearanceMode)) writeAppliedGeneration(storageKey, generation);
+    return;
+  }
 
   // A single-appearance theme needs both preference and appearance writes to take effect.
   if (!setTheme(defaultTheme)) return;
