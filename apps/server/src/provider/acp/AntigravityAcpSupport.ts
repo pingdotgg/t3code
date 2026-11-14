@@ -12,6 +12,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Predicate from "effect/Predicate";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -43,6 +44,7 @@ export interface AntigravityAcpRuntimeInput extends Omit<
   readonly onAuthorizationUrl?: (url: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
   /** Serve `fs/read_text_file` for runtimes whose native reader is not qualified. */
   readonly clientFileReads?: boolean;
+  readonly clientCapabilities?: AcpSessionRuntime.AcpSessionRuntimeOptions["clientCapabilities"];
   /** The installed version, known before `initialize`; it picks the file reader and client name. */
   readonly runtimeVersion?: string | null;
   /** Conversational sessions only; helpers and probes leave the system prompt untouched. */
@@ -93,7 +95,15 @@ const OPEN_MODEL_ACCESS_RELEASE = [1, 5, 1] as const;
  */
 export const antigravityAppendsSystemPrompt = (
   initializeResult: EffectAcpSchema.InitializeResponse,
-) => isQualifiedAntigravityRelease(initializeResult.agentInfo?.version);
+) => {
+  if (isQualifiedAntigravityRelease(initializeResult.agentInfo?.version)) return true;
+  const extension = initializeResult.agentCapabilities?._meta?.antigravity;
+  return (
+    Predicate.isObject(extension) &&
+    Predicate.isObject(extension.systemPrompt) &&
+    extension.systemPrompt.append === true
+  );
+};
 
 export function antigravitySessionMeta(
   initializeResult: EffectAcpSchema.InitializeResponse,
@@ -136,6 +146,7 @@ export const makeAntigravityAcpRuntime = Effect.fn("makeAntigravityAcpRuntime")(
       sessionMeta: (initializeResult) =>
         antigravitySessionMeta(initializeResult, input.sessionSystemPromptAppend),
       clientCapabilities: {
+        ...input.clientCapabilities,
         // Advertising writes swaps the agent's diff edits for whole-file client_edit_file.
         fs: {
           readTextFile:
@@ -170,6 +181,15 @@ export function antigravityPermissionMode(runtimeMode: RuntimeMode): string {
     case "approval-required":
       return "default";
   }
+}
+
+/**
+ * The agy CLI rejects the managed runtime's `yolo` and `auto_edit`. It stays in `default`, where
+ * it asks before acting and T3 answers from the live runtime policy, so permission changes apply
+ * on the next turn without a restart.
+ */
+export function antigravityCliSessionMode(modeId: string): string {
+  return modeId === "yolo" || modeId === "auto_edit" ? "default" : modeId;
 }
 
 /** The runtime mode an Antigravity session mode grants; the inverse of `antigravityPermissionMode`. */

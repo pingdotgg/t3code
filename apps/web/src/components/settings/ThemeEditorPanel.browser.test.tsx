@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../../test/render";
+import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
 import { ThemeEditorPanel } from "./ThemeEditorPanel";
 
 function dragHeader(panel: HTMLElement, toX: number, toY: number) {
@@ -72,6 +73,47 @@ async function renderPanel() {
     panel: panel.element() as HTMLElement,
     [Symbol.asyncDispose]: () => stack.disposeAsync(),
   };
+}
+
+// The editor floats beside the Settings dialog, whose Esc handler sits on the document.
+async function renderBesideSettings() {
+  const onSettingsOpenChange = vi.fn();
+  const onEditorOpenChange = vi.fn();
+  await using stack = new AsyncDisposableStack();
+  stack.use(
+    await render(
+      <>
+        <Dialog onOpenChange={onSettingsOpenChange} open>
+          <DialogPopup>
+            <DialogTitle>Settings</DialogTitle>
+          </DialogPopup>
+        </Dialog>
+        <ThemeEditorPanel
+          open
+          onOpenChange={onEditorOpenChange}
+          onSaved={() => true}
+          editingTheme={null}
+          initialAppearance="light"
+          restoreTheme={() => {}}
+        />
+      </>,
+    ),
+  );
+  // Settings moves focus in on a later frame; landing after the test focuses the editor, it steals it.
+  await expect.element(page.getByRole("button", { name: "Close" })).toHaveFocus();
+  const screen = stack.move();
+  return {
+    onSettingsOpenChange,
+    onEditorOpenChange,
+    [Symbol.asyncDispose]: () => screen.disposeAsync(),
+  };
+}
+
+// The modal Settings dialog marks the editor inert, hiding it from role queries and pointer input.
+async function editorElement(selector: string) {
+  const query = () => document.querySelector<HTMLElement>(`[data-theme-editor-panel] ${selector}`);
+  await expect.poll(query).toBeTruthy();
+  return query()!;
 }
 
 describe("ThemeEditorPanel", () => {
@@ -147,5 +189,25 @@ describe("ThemeEditorPanel", () => {
       pointerAt(hueSlider, "pointerup", 0.75);
     });
     expect((hex.element() as HTMLInputElement).value).toBe(original);
+  });
+
+  it("closes on Escape without closing Settings", async () => {
+    await using view = await renderBesideSettings();
+    (await editorElement("input")).focus();
+    await userEvent.keyboard("{Escape}");
+
+    expect(view.onEditorOpenChange).toHaveBeenCalledWith(false);
+    expect(view.onSettingsOpenChange).not.toHaveBeenCalled();
+  });
+
+  it("leaves inspection on Escape without closing the editor or Settings", async () => {
+    await using view = await renderBesideSettings();
+    (await editorElement('[aria-label="Inspect app colors"]')).click();
+    await editorElement('[aria-label="Cancel inspecting app colors"]');
+    await userEvent.keyboard("{Escape}");
+
+    await editorElement('[aria-label="Inspect app colors"]');
+    expect(view.onEditorOpenChange).not.toHaveBeenCalled();
+    expect(view.onSettingsOpenChange).not.toHaveBeenCalled();
   });
 });

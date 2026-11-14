@@ -115,6 +115,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("service commands
       env: "T3CODE_HOST=::\n",
       expected: "T3CODE_HOST=::\n",
     },
+    {
+      label: "a quoted multiline value",
+      installed: false,
+      env: 'CUSTOM="first\nT3CODE_LAN=example\nlast"\n',
+      expected: 'CUSTOM="first\nT3CODE_LAN=example\nlast"\nT3CODE_LAN=false\n',
+    },
   ])("install keeps $label off the local network only when it is new", (input) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
