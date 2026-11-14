@@ -313,7 +313,9 @@ const make = Effect.gen(function* () {
             },
             { onConflict: "ignore" },
           );
-          const existing = yield* Effect.option(orchestrator.getThreadRecords(threadId, []));
+          const existing = yield* Effect.option(
+            orchestrator.getThreadRecords(threadId, ["messages"]),
+          );
           if (Option.isSome(existing)) {
             if (existing.value.thread.projectId !== input.projectId) {
               return yield* new AgentSessionThreadProjectConflictError({
@@ -325,16 +327,15 @@ const make = Effect.gen(function* () {
             if (existing.value.thread.historyOrigin !== "v1_import") {
               return yield* new AgentSessionThreadModifiedError({ threadId });
             }
-            // Other recorded transcripts mean this one changed after the import, and the
-            // thread does not hold its new messages, so it must stay unrecorded.
-            const recorded = Option.flatMap(yield* runtimes.getByThreadId({ threadId }), (row) =>
-              AgentSessionScanner.decodeImportedTranscriptPayload(row.runtimePayload),
-            ).pipe(Option.flatMapNullishOr((payload) => payload.importedTranscripts));
+            // A transcript that changed since the import holds messages this thread lacks,
+            // so it is recorded only when the thread already holds exactly its messages.
+            const stored = existing.value.messages;
             if (
-              Option.isSome(recorded) &&
-              recorded.value.length > 0 &&
-              !recorded.value.some((imported) =>
-                AgentSessionScanner.sameTranscriptIdentity(imported, source),
+              stored.length !== thread.messages.length ||
+              stored.some(
+                (message, index) =>
+                  message.role !== thread.messages[index]?.role ||
+                  message.text !== thread.messages[index]?.text,
               )
             ) {
               return false;
