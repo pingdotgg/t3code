@@ -666,6 +666,12 @@ export const WsServerRefreshProvidersRpc = Rpc.make(WS_METHODS.serverRefreshProv
      * only when it changed. The other fields are ignored and the config stream carries the result.
      */
     modelCatalogOnly: Schema.optional(Schema.Boolean),
+    /**
+     * The Limits view asked for usage limits only: refresh the limit sources and let the provider
+     * probe finish in the background, since it re-checks every instance's install, auth, models,
+     * and skills. The other fields are ignored and the config stream carries the result.
+     */
+    usageLimitsOnly: Schema.optional(Schema.Boolean),
     /** Read secret references again; unlocking a vault can prompt on the host, so only explicit user refreshes ask. */
     reloadSecrets: Schema.optional(Schema.Boolean),
     /**

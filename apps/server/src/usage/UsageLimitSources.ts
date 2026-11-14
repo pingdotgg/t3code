@@ -24,6 +24,7 @@ import * as Stream from "effect/Stream";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as SecretResolverLayer from "../secrets/SecretResolver.ts";
 import { resolveSettingsSecrets } from "../secrets/settingsSecretValue.ts";
 import * as Settings from "../serverSettings.ts";
@@ -36,6 +37,12 @@ export class UsageLimitSources extends Context.Service<
     readonly current: Effect.Effect<ReadonlyArray<UsageLimitSourceSnapshot>>;
     readonly streamChanges: Stream.Stream<ReadonlyArray<UsageLimitSourceSnapshot>>;
     readonly refresh: Effect.Effect<void>;
+    /**
+     * The Limits view's refresh: reads the limit sources, then re-probes providers detached.
+     * The probe re-checks every instance's install, auth, models, and skills, and its
+     * results land through the config stream rather than the reply.
+     */
+    readonly refreshUsageLimits: Effect.Effect<void>;
     readonly consumeResetCredit: (
       input: UsageLimitSourceConsumeResetCreditInput,
     ) => Effect.Effect<ProviderConsumeResetCreditResult, UsageLimitSourceError>;
@@ -64,6 +71,7 @@ export const make = Effect.gen(function* () {
   const settingsService = yield* Settings.ServerSettingsService;
   const secrets = yield* SecretResolver.SecretResolver;
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
+  const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const readManagementKey = Effect.fn("UsageLimitSources.readManagementKey")(function* (
     config: UsageLimitSourceConfig,
   ) {
@@ -129,6 +137,13 @@ export const make = Effect.gen(function* () {
     yield* publish(snapshots);
   }).pipe(refreshLock.withPermits(1), Effect.ignoreCause({ log: true }));
 
+  const refreshUsageLimits = Effect.gen(function* () {
+    yield* refresh;
+    yield* providerRegistry
+      .refresh()
+      .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
+  }).pipe(Effect.withSpan("UsageLimitSources.refreshUsageLimits"));
+
   // Shares the refresh lock so a stale in-flight read cannot overwrite a redemption.
   const consumeResetCredit = Effect.fn("UsageLimitSources.consumeResetCredit")(function* (
     input: UsageLimitSourceConsumeResetCreditInput,
@@ -190,6 +205,7 @@ export const make = Effect.gen(function* () {
     current: Ref.get(stateRef),
     consumeResetCredit,
     refresh,
+    refreshUsageLimits,
     get streamChanges() {
       return Stream.unwrap(
         Effect.gen(function* () {

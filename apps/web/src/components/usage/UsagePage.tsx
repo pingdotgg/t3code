@@ -256,7 +256,7 @@ export function UsagePage() {
           if (presentation.connection.phase === "connected" && presentation.serverConfig !== null) {
             return refreshUsageLimits(
               environmentId,
-              () => refreshProviders({ environmentId, input: {} }),
+              () => refreshProviders({ environmentId, input: { usageLimitsOnly: true } }),
               automatic,
             );
           }

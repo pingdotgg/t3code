@@ -1641,6 +1641,8 @@ export function createServerEnvironmentAtoms<R, E>(
             input.fresh ?? false,
             input.refreshModels ?? false,
             input.modelCatalogOnly ?? false,
+            // A limits-only reply comes before the probe, so a full refresh cannot join it.
+            input.usageLimitsOnly ?? false,
           ]),
       },
     }),
