@@ -42,7 +42,6 @@ import {
   emitThreadEvent,
   hasPendingAssetUrl,
   fakeDriver,
-  emitThreadEvent,
   installFakeEnvironment,
   rejectPendingCommand,
   threadWithHistory,
