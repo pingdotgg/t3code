@@ -8,10 +8,16 @@ import {
   type RuntimeSubagent,
   type SubagentWorkflowGroup,
 } from "@t3tools/client-runtime/state/subagentRuntime";
-import { REASONING_EFFORT_OPTION_IDS } from "@t3tools/client-runtime/state/thread-execution";
+import { getSelectionSpeedIcon } from "@t3tools/client-runtime/model-traits";
+import {
+  formatSubagentEffort,
+  REASONING_EFFORT_OPTION_IDS,
+} from "@t3tools/client-runtime/state/thread-execution";
 import type {
   EnvironmentId,
+  ModelSelection,
   OrchestrationV2Subagent,
+  OrchestrationV2ThreadShell,
   ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
@@ -107,6 +113,49 @@ export function resolveSubagentRowPresentation(
     canOpenThread:
       subagent.childThreadId !== null || (subagent.remoteChild !== undefined && canOpenRemote),
     runsOn: subagent.remoteChild?.label ?? null,
+  };
+}
+
+/** The selection an agent ran with; an app-owned agent that saved none ran with its thread's. */
+export function subagentModelSelection(
+  subagent: Pick<OrchestrationV2Subagent, "origin" | "modelSelection">,
+  childThread: Pick<OrchestrationV2ThreadShell, "modelSelection"> | undefined,
+): ModelSelection | undefined {
+  return (
+    subagent.modelSelection ??
+    (subagent.origin === "app_owned" ? childThread?.modelSelection : undefined)
+  );
+}
+
+export interface SubagentTraits {
+  readonly effort: string | null;
+  readonly speedIcon: "fast" | "ultrafast" | null;
+}
+
+/** Labels a selection only when it is for the agent's own model and provider instance. */
+export function resolveSubagentTraits(input: {
+  readonly modelSlug: string | null;
+  readonly selection: ModelSelection | undefined;
+  readonly providerInstanceId: OrchestrationV2Subagent["providerInstanceId"];
+  readonly provider: Pick<ServerProvider, "driver" | "models"> | undefined;
+}): SubagentTraits {
+  const { modelSlug, selection, provider } = input;
+  if (
+    !provider ||
+    !selection ||
+    !modelSlug ||
+    selection.instanceId !== input.providerInstanceId ||
+    (resolveSelectableModel(provider.driver, selection.model, provider.models) ??
+      selection.model.trim()) !== modelSlug
+  ) {
+    return { effort: null, speedIcon: null };
+  }
+  const descriptors =
+    provider.models.find((model) => model.slug === modelSlug)?.capabilities?.optionDescriptors ??
+    [];
+  return {
+    effort: formatSubagentEffort({ modelSlug, modelSelection: selection, provider }),
+    speedIcon: getSelectionSpeedIcon(descriptors, selection),
   };
 }
 

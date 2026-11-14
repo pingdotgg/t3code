@@ -6,8 +6,10 @@ import {
 import {
   NodeId,
   ProviderDriverKind,
+  ProviderInstanceId,
   RunId,
   ThreadId,
+  type ModelSelection,
   type OrchestrationV2SubagentWorkflow,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -16,6 +18,8 @@ import {
   nextWorkflowSelection,
   resolveSubagentRowPresentation,
   resolveSubagentStopTarget,
+  resolveSubagentTraits,
+  subagentModelSelection,
   workflowMemberDetail,
   workflowMemberMetadata,
   workflowRail,
@@ -139,6 +143,82 @@ const agent = (
   state,
   ...(phaseIndex === undefined ? {} : { phaseIndex }),
   ...overrides,
+});
+
+describe("resolveSubagentTraits", () => {
+  const instance = ProviderInstanceId.make("codex");
+  const provider = {
+    driver: ProviderDriverKind.make("codex"),
+    models: [
+      {
+        slug: "gpt-test",
+        name: "GPT Test",
+        isCustom: false,
+        capabilities: {
+          optionDescriptors: [
+            {
+              id: "reasoningEffort",
+              label: "Effort",
+              type: "select" as const,
+              options: [{ id: "high", label: "High" }],
+            },
+            {
+              id: "serviceTier",
+              label: "Speed",
+              type: "select" as const,
+              options: [
+                { id: "default", label: "Normal" },
+                { id: "priority", label: "Fast" },
+                { id: "ultra", label: "Ultrafast" },
+              ],
+            },
+          ],
+        },
+      },
+    ],
+  };
+  const selection = (tier: string, overrides: Partial<ModelSelection> = {}): ModelSelection => ({
+    instanceId: instance,
+    model: "gpt-test",
+    options: [
+      { id: "reasoningEffort", value: "high" },
+      { id: "serviceTier", value: tier },
+    ],
+    ...overrides,
+  });
+  const traits = (value: ModelSelection | undefined) =>
+    resolveSubagentTraits({
+      modelSlug: "gpt-test",
+      selection: value,
+      providerInstanceId: instance,
+      provider,
+    });
+
+  it.each([
+    ["priority", "fast"],
+    ["ultra", "ultrafast"],
+    ["default", null],
+  ] as const)("labels effort and service tier %s", (tier, speedIcon) => {
+    expect(traits(selection(tier))).toEqual({ effort: "High", speedIcon });
+  });
+
+  it("labels nothing for another instance's or model's selection", () => {
+    const empty = { effort: null, speedIcon: null };
+    expect(traits(selection("priority", { instanceId: ProviderInstanceId.make("other") }))).toEqual(
+      empty,
+    );
+    expect(traits(selection("priority", { model: "other-model" }))).toEqual(empty);
+  });
+
+  it("falls back to the child thread's selection only for app-owned agents", () => {
+    const childThread = { modelSelection: selection("ultra") };
+    expect(
+      subagentModelSelection({ origin: "app_owned", modelSelection: undefined }, childThread),
+    ).toBe(childThread.modelSelection);
+    expect(
+      subagentModelSelection({ origin: "provider_native", modelSelection: undefined }, childThread),
+    ).toBeUndefined();
+  });
 });
 
 describe("workflowRail", () => {

@@ -186,3 +186,22 @@ export function buildTraitsTriggerDisplay(input: {
   }
   return { label: labels.join(" · "), speedLabel, ultracode };
 }
+
+/** The speed a saved selection runs at, read through the model's catalog descriptors. */
+export function getSelectionSpeedIcon(
+  descriptors: ReadonlyArray<ProviderOptionDescriptor>,
+  selection: ModelSelection | undefined,
+): "fast" | "ultrafast" | null {
+  for (const descriptor of descriptors) {
+    const saved = selection?.options?.find((option) => option.id === descriptor.id)?.value;
+    if (descriptor.id === "fastMode" && descriptor.type === "boolean" && saved === true) {
+      return "fast";
+    }
+    if (descriptor.id === "serviceTier" && descriptor.type === "select") {
+      const label = descriptor.options.find((option) => option.id === saved)?.label;
+      if (label === "Ultrafast") return "ultrafast";
+      if (label === "Fast") return "fast";
+    }
+  }
+  return null;
+}
