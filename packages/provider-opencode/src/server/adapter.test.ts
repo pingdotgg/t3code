@@ -1468,6 +1468,7 @@ describe("OpenCodeAdapterV2", () => {
     { state: "settled", end: "compact-takeover" },
     { state: "settled", end: "no-wake-continuation" },
     { state: "settled", end: "idle-during-abort-failure" },
+    { state: "settled", end: "overflow-during-abort-failure" },
     { state: "settled", end: "foreground-before-busy" },
     { state: "settled", end: "foreground-before-busy-timeout" },
     { state: "settled", end: "cancelled" },
@@ -1487,6 +1488,7 @@ describe("OpenCodeAdapterV2", () => {
     { state: "settled", end: "failed-stream" },
     { state: "settled", end: "sequential" },
     { state: "settled", end: "sequential-buffered" },
+    { state: "settled", end: "foreground-second-busy" },
     { state: "settled", end: "idle-only" },
     { state: "settled", end: "error-only" },
     { state: "settled", end: "routing-stalled" },
@@ -1579,7 +1581,8 @@ describe("OpenCodeAdapterV2", () => {
                     end === "cancelled-failure" ||
                     end === "stop-busy-failure" ||
                     end === "cancelled-busy-failure" ||
-                    end === "idle-during-abort-failure")
+                    end === "idle-during-abort-failure" ||
+                    end === "overflow-during-abort-failure")
                 ) {
                   aborting = true;
                   abortStarted.resolve();
@@ -1880,7 +1883,7 @@ describe("OpenCodeAdapterV2", () => {
           assert.equal(promptIds.length, 1);
           return;
         }
-        if (end === "idle-during-abort-failure") {
+        if (end === "idle-during-abort-failure" || end === "overflow-during-abort-failure") {
           const stopping = yield* harness.runtime
             .interruptTurn({
               providerThread: harness.providerThread,
@@ -1889,11 +1892,17 @@ describe("OpenCodeAdapterV2", () => {
             })
             .pipe(Effect.exit, Effect.forkScoped);
           yield* Effect.promise(() => abortStarted.promise);
-          yield* push(status("idle"));
+          // OpenCode stays busy and auto-compacts after an overflow, so it proves nothing stopped.
+          yield* push(
+            end === "idle-during-abort-failure"
+              ? status("idle")
+              : nativeError("ContextOverflowError"),
+          );
           abortFinished.resolve();
           assert.isTrue(Exit.isFailure(yield* Fiber.join(stopping)));
-          yield* harness.startTurn("after native idle");
-          assert.equal(promptIds.length, 2);
+          const next = yield* harness.startTurn("after native idle").pipe(Effect.exit);
+          assert.equal(Exit.isSuccess(next), end === "idle-during-abort-failure");
+          assert.equal(promptIds.length, end === "idle-during-abort-failure" ? 2 : 1);
           return;
         }
         if (end === "held-requests") {
@@ -2425,6 +2434,19 @@ describe("OpenCodeAdapterV2", () => {
         yield* push(status("idle"));
         yield* push({ type: "session.idle", properties: { sessionID: root } });
         if (foreground !== null) yield* Fiber.join(foreground);
+        if (end === "foreground-second-busy") {
+          yield* push(user("msg_second_background_result"));
+          yield* push(status("busy"));
+          const starting = yield* harness
+            .startTurn("follow up", undefined, undefined, false, "next")
+            .pipe(Effect.forkScoped);
+          yield* TestClock.adjust(0);
+          assert.equal(promptIds.length, 1, "foreground waits for the later buffered execution");
+          yield* push(status("idle"));
+          yield* Fiber.join(starting);
+          assert.equal(promptIds.length, 2);
+          return;
+        }
         if (end === "sequential" || end === "sequential-buffered") {
           const secondResult = Effect.gen(function* () {
             yield* push(user("msg_second_background_result"));

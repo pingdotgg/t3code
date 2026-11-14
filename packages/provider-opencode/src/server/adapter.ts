@@ -410,7 +410,7 @@ interface OpenCodeWake {
   offered: boolean;
   cancelling: boolean;
   readonly admission: Deferred.Deferred<boolean>;
-  readonly settled: Deferred.Deferred<void>;
+  settled: Deferred.Deferred<void>;
 }
 
 interface OpenCodeThreadState {
@@ -2882,6 +2882,14 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           const isRoot = sessionId === owner.nativeSessionId;
           const rootStatus =
             isRoot && event.type === "session.status" ? event.properties.status.type : undefined;
+          // A later execution buffered into the same wake is unsettled until its own idle.
+          if (
+            wake !== null &&
+            (rootStatus === "busy" || rootStatus === "retry") &&
+            (yield* Deferred.isDone(wake.settled))
+          ) {
+            wake.settled = Deferred.makeUnsafe<void>();
+          }
           if (wake?.cancelling) {
             if (!isRoot) return yield* routeEvent(event);
             wake.events.push(event);
@@ -2892,7 +2900,9 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               isRoot &&
               (rootStatus === "idle" ||
                 event.type === "session.idle" ||
-                event.type === "session.error")
+                // OpenCode stays busy and auto-compacts after an overflow.
+                (event.type === "session.error" &&
+                  event.properties.error?.name !== "ContextOverflowError"))
             ) {
               yield* Deferred.succeed(wake.admission, false);
               yield* Deferred.succeed(wake.settled, undefined);
