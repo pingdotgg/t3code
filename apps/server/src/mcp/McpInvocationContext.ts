@@ -142,7 +142,6 @@ export interface McpInvocationScope {
   /** False while the Linked environments beta is off here; `/mcp` reads it per request. */
   readonly linkedEnvironments?: boolean;
   /**
-  /**
    * Whether this instance can manage a fleet: the OpenShell block is on and this
    * environment is the managing instance. Unset means unknown, so tools show.
    */
