@@ -97,6 +97,10 @@ describe("evaluatePullRequestWatch", () => {
       noRemarks,
     );
     assert.deepEqual(pending.changes, []);
+    assert.isTrue(pending.next.checksPending);
+    const settled = evaluatePullRequestWatch(pending.next, green, noRemarks);
+    assert.deepEqual(settled.changes, []);
+    assert.isFalse(settled.next.checksPending);
     const failed = evaluatePullRequestWatch(
       pending.next,
       detail({ checks: [{ ...check("test", "failure"), required }] }),
@@ -340,6 +344,17 @@ describe("evaluatePullRequestWatch", () => {
       { kind: "checks-passed", count: 1, required: false },
     ]);
 
+    // A hold after a reported pass still wakes when the approved run finishes.
+    const passed = evaluatePullRequestWatch(watch(), detail({ checks: [bot] }), noRemarks);
+    const held = evaluatePullRequestWatch(passed.next, gated, noRemarks);
+    assert.deepEqual(held.changes, [{ kind: "checks-awaiting-approval", checks: [approval] }]);
+    const approved = detail({
+      checks: [bot, { ...check("CI", "success"), url: `${run(1)}/job/1` }],
+    });
+    assert.deepEqual(evaluatePullRequestWatch(held.next, approved, noRemarks).changes, [
+      { kind: "checks-passed", count: 2, required: false },
+    ]);
+
     // Approved, the run's jobs carry their own names under the run's URL.
     const job = { ...check("lint", "success"), url: `${run(1)}/job/7` };
     const pending = { ...check("test", "pending"), url: `${run(1)}/job/8` };
@@ -402,10 +417,10 @@ describe("evaluatePullRequestWatch", () => {
       detail({ checks: [{ ...bot, status: "pending" }, unknown] }),
       noRemarks,
     );
-    assert.isFalse(blocked.next.passed);
+    assert.deepEqual(blocked.changes, []);
     assert.deepEqual(
       evaluatePullRequestWatch(blocked.next, detail({ checks: [bot] }), noRemarks).changes,
-      [{ kind: "checks-passed", count: 1, required: false }],
+      [],
     );
   });
 
@@ -482,6 +497,31 @@ describe("evaluatePullRequestWatch", () => {
     ]);
   });
 
+  it.each([false, true])(
+    "does not repeat a passed gate after a pending read (required: %s)",
+    (required) => {
+      const green = detail({ checks: [{ ...check("test", "success"), required }] });
+      const first = evaluatePullRequestWatch(watch(), green, noRemarks);
+      assert.deepEqual(first.changes, [{ kind: "checks-passed", count: 1, required }]);
+      const pending = detail({ checks: [{ ...check("test", "pending"), required }] });
+      const waiting = evaluatePullRequestWatch(first.next, pending, noRemarks);
+      assert.deepEqual(waiting.changes, []);
+      assert.deepEqual(evaluatePullRequestWatch(waiting.next, green, noRemarks).changes, []);
+
+      const pushed = detail({ ...green, headSha: "bbbbbbbbbb" });
+      assert.deepEqual(evaluatePullRequestWatch(waiting.next, pushed, noRemarks).changes, [
+        { kind: "checks-passed", count: 1, required },
+      ]);
+
+      const failed = detail({ checks: [{ ...check("test", "failure"), required }] });
+      const failure = evaluatePullRequestWatch(waiting.next, failed, noRemarks);
+      assert.deepEqual(failure.changes, [{ kind: "checks-failed", failed: failed.checks }]);
+      const rerun = evaluatePullRequestWatch(failure.next, pending, noRemarks);
+      const recovered = evaluatePullRequestWatch(rerun.next, green, noRemarks);
+      assert.deepEqual(recovered.changes, [{ kind: "checks-passed", count: 1, required }]);
+    },
+  );
+
   // regression: #23712 required checks woke the agent early and the rest finishing never did
   it("wakes again when the other checks finish after the required ones passed", () => {
     const required = (name: string, status: PullRequestCheck["status"]) => ({
@@ -494,14 +534,19 @@ describe("evaluatePullRequestWatch", () => {
     const first = evaluatePullRequestWatch(watch(), early, noRemarks);
     assert.deepEqual(first.changes, [{ kind: "checks-passed", count: 1, required: true }]);
 
+    const rerun = evaluatePullRequestWatch(
+      first.next,
+      detail({ checks: [required("test", "pending"), check("e2e", "success")] }),
+      noRemarks,
+    );
+    assert.deepEqual(rerun.changes, []);
+    assert.deepEqual(rerun.next.owedChecks, ["e2e"]);
+
     const done = detail({
       checks: [required("test", "success"), check("e2e", "success")],
     });
-    const final = evaluatePullRequestWatch(first.next, done, noRemarks);
-    assert.deepEqual(
-      final.changes.map((change) => change.kind),
-      ["checks-passed"],
-    );
+    const final = evaluatePullRequestWatch(rerun.next, done, noRemarks);
+    assert.deepEqual(final.changes, [{ kind: "checks-passed", count: 2, required: false }]);
     assert.deepEqual(evaluatePullRequestWatch(final.next, done, noRemarks).changes, []);
     // A later advisory job running and passing is not more news.
     const botPending = detail({ checks: [...done.checks, check("bot", "pending")] });
@@ -579,6 +624,32 @@ describe("evaluatePullRequestWatch", () => {
     const saved = evaluatePullRequestWatch(told, green, noRemarks);
     assert.deepEqual(saved.changes, []);
     assert.deepEqual(saved.next.passedChecks, ["test"]);
+
+    const required = (name: string, status: PullRequestCheck["status"]) => ({
+      ...check(name, status),
+      required: true,
+    });
+    const rerun = evaluatePullRequestWatch(
+      told,
+      detail({ checks: [required("test", "pending")] }),
+      noRemarks,
+    );
+    assert.deepEqual(rerun.changes, []);
+    const grown = detail({ checks: [required("test", "success"), required("lint", "success")] });
+    assert.deepEqual(evaluatePullRequestWatch(rerun.next, grown, noRemarks).changes, [
+      { kind: "checks-passed", count: 2, required: true },
+    ]);
+
+    const joined = evaluatePullRequestWatch(
+      told,
+      detail({ checks: [required("test", "success"), required("lint", "pending")] }),
+      noRemarks,
+    );
+    assert.deepEqual(joined.changes, []);
+    const settled = evaluatePullRequestWatch(joined.next, grown, noRemarks);
+    assert.deepEqual(settled.changes, [{ kind: "checks-passed", count: 2, required: true }]);
+    assert.notInclude(joined.next.passedChecks, "lint");
+    assert.deepEqual(evaluatePullRequestWatch(settled.next, grown, noRemarks).changes, []);
   });
 
   it("keeps remarks for a later pass when the conversation was not read whole", () => {

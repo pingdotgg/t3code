@@ -123,17 +123,25 @@ export function evaluatePullRequestWatch(
     gate.every((check) => check.status !== "pending" && !isFailedCheck(check));
   if (checks.length > 0 && !(unread && passedNow)) {
     const gateNames = gate.map((check) => check.name);
-    const told = passed && passedChecks.length === 0 ? gateNames : passedChecks;
+    // Pending reruns do not undo a pass already reported for this head; a failed gate or an approval hold does.
+    if (gate.some(isFailedCheck) || awaitingApproval.length > 0) {
+      passed = false;
+      passedChecks = [];
+    }
+    // A legacy watch has no gate names to distinguish a rerun from a newly joined pending check.
+    if (passed && passedChecks.length === 0) {
+      passed = passedNow;
+      passedChecks = passedNow ? gateNames : [];
+    }
     // Required checks can finish between sweeps; detect new names. With no required checks, ignore advisory gate growth.
-    const gateGrew = required.length > 0 && gateNames.some((name) => !told.includes(name));
+    const gateGrew = required.length > 0 && gateNames.some((name) => !passedChecks.includes(name));
     // Other checks still pending when required ones passed are owed one wake when all settle.
     // Only those are owed, so later advisory churn never wakes. One turned required is gate news.
-    const owed =
-      passedNow && passed
-        ? checks
-            .filter((check) => check.required !== true && owedChecks.includes(check.name))
-            .map((check) => check.name)
-        : [];
+    const owed = passed
+      ? checks
+          .filter((check) => check.required !== true && owedChecks.includes(check.name))
+          .map((check) => check.name)
+      : [];
     const settled =
       failed.length === 0 &&
       awaitingApproval.length === 0 &&
@@ -153,8 +161,10 @@ export function evaluatePullRequestWatch(
       changes.push({ kind: "checks-passed", count: checks.length, required: false });
       owedChecks = [];
     }
-    passed = passedNow;
-    passedChecks = passedNow ? gateNames : [];
+    if (passedNow) {
+      passed = true;
+      passedChecks = gateNames;
+    }
   }
 
   // Only a head never read with checks waits for them; a legacy watch's clock starts at its next
