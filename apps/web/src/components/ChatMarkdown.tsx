@@ -221,6 +221,7 @@ import { hastHasText, hastPlainTextDeep, plainHastText } from "./chat/markdownHa
 import {
   extractCodeBlock,
   extractFenceLanguage,
+  hasFenceLanguage,
   extractFenceTitle,
   extractPreCodeMeta,
   isClosedCodeFence,
@@ -1737,6 +1738,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       <MarkdownCodeBlock
         code={codeBlock.code}
         language={language}
+        labelLanguage={hasFenceLanguage(codeBlock.className)}
         fenceTitle={fenceTitle}
         theme={resolvedTheme}
         onRunShellCommand={
