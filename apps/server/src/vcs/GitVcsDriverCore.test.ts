@@ -5760,7 +5760,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
 
         assert.equal(status.isRepo, true);
         assert.deepStrictEqual(status.workingTree.files, [
-          { path: "initial.ts", insertions: 1, deletions: 0 },
+          { path: "initial.ts", insertions: 1, deletions: 0, status: "added" },
         ]);
       }),
     );
