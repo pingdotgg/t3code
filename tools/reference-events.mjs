@@ -8,7 +8,8 @@
 // <dir> is a path in this repository; <before root>/<dir> holds its earlier copy. A JSON file
 // is compared after normalizing what changes on every capture: the top-level `note` and
 // `capturedOn`; `…At` times on the capture day (the replay tests read them as "now"); the
-// random part of a temp folder name; an event's `driver`, which the capture tools drop; and
+// random part of a temp folder name; an event's `driver`, which the capture tools drop; the
+// test-clock stamp on a turn input's provider thread, which moves between runs; and
 // uuids (numbered by first appearance, so a changed uuid order still shows).
 // Other files are compared byte for byte. Prints `changed <path>`, `added <path>` and
 // `removed <path>` lines and a summary line. Always exits 0: a change is for a person to read.
@@ -44,6 +45,14 @@ function normalized(file) {
     delete value.capturedOn;
     if (Array.isArray(value.events)) {
       for (const event of value.events) if (event && typeof event === "object") delete event.driver;
+    }
+    // The test clock's stamp on a later turn's input moves by a millisecond from run to run.
+    if (Array.isArray(value.startTurn)) {
+      for (const input of value.startTurn) {
+        if (input?.providerThread && typeof input.providerThread === "object") {
+          delete input.providerThread.updatedAt;
+        }
+      }
     }
   }
   const scrub = (node) => {
