@@ -97,25 +97,33 @@ function modelsFromDiscovery(
       >
     | undefined,
   customModels: ReadonlyArray<string>,
-  previousModels: ReadonlyArray<ServerProviderModel> = [],
+  observedModels: ReadonlyArray<ServerProviderModel> = [],
 ): ReadonlyArray<ServerProviderModel> {
   const discovered = discovery?.models ?? [];
   const capabilities =
     discovery === undefined || discovery.configOptions.length === 0
       ? EMPTY_CAPABILITIES
       : createModelCapabilities({ optionDescriptors: discovery.configOptions });
-  // Model-specific options describe only the session's current model; other
-  // models keep the shared ones plus what an earlier session reported for them.
+  // Model-specific options describe only the session's current model. A model an
+  // earlier session opened keeps what it reported; one no session opened borrows
+  // the current model's, and the adapter skips values the chosen model rejects.
   const modelOptionIds = new Set(discovery?.modelOptionIds ?? []);
   const shared = (discovery?.configOptions ?? []).filter(
     (descriptor) => !modelOptionIds.has(descriptor.id),
   );
+  const current = (discovery?.configOptions ?? []).filter((descriptor) =>
+    modelOptionIds.has(descriptor.id),
+  );
   const sharedIds = new Set(shared.map((descriptor) => descriptor.id));
   const capabilitiesFor = (slug: string) => {
     if (slug === discovery?.currentModelId) return capabilities;
-    const own = (
-      previousModels.find((model) => model.slug === slug)?.capabilities?.optionDescriptors ?? []
-    ).filter((descriptor) => !sharedIds.has(descriptor.id));
+    const observed = observedModels.find((model) => model.slug === slug);
+    const own =
+      observed === undefined
+        ? current
+        : (observed.capabilities?.optionDescriptors ?? []).filter(
+            (descriptor) => !sharedIds.has(descriptor.id),
+          );
     const optionDescriptors = [...shared, ...own];
     return optionDescriptors.length === 0
       ? EMPTY_CAPABILITIES
@@ -278,11 +286,18 @@ export function applyAcpRegistryAvailableCommands(
   });
 }
 
+// Only a probe session (it sets nativeSessions) proves the default model was opened;
+// without one, the default is the "default" placeholder.
+const openedModels = (provider: ServerProvider): ReadonlyArray<ServerProviderModel> =>
+  provider.nativeSessions === undefined
+    ? []
+    : provider.models.filter((model) => model.isDefault === true);
+
 export function applyAcpRegistryLiveConfiguration(
   provider: ServerProvider,
   configuration: AcpRegistryLiveConfiguration,
   customModels: ReadonlyArray<string>,
-  previousModels: ReadonlyArray<ServerProviderModel> = provider.models,
+  observedModels: ReadonlyArray<ServerProviderModel> = openedModels(provider),
 ): ServerProvider {
   const { message: _staleProbeMessage, ...snapshot } = provider;
   // session/load may omit models (Kimi returns `{}`); keep the probed list
@@ -309,7 +324,7 @@ export function applyAcpRegistryLiveConfiguration(
         : modelsFromDiscovery(
             discovery,
             customModels,
-            previousModels.filter((model) => !model.isCustom),
+            observedModels.filter((model) => !model.isCustom),
           ),
   };
 }
@@ -579,21 +594,33 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         environment,
         processEnvironment,
       });
-    // Refreshes rebuild the snapshot from the probe, so per-model options
-    // learned from earlier sessions are kept here.
+    // Refreshes rebuild the snapshot from the probe, so the models a session has
+    // opened (the probe's included) keep their reported options here.
     const learnedModels = yield* Ref.make<ReadonlyArray<ServerProviderModel>>([]);
     const applyLiveConfiguration = (
       provider: ServerProvider,
       configuration: AcpRegistryLiveConfiguration,
     ) =>
       Ref.modify(learnedModels, (learned) => {
+        const observed = [
+          ...learned,
+          ...openedModels(provider).filter(
+            (model) => !learned.some(({ slug }) => slug === model.slug),
+          ),
+        ];
         const next = applyAcpRegistryLiveConfiguration(
           provider,
           configuration,
           effectiveConfig.customModels,
-          learned.length > 0 ? learned : provider.models,
+          observed,
         );
-        return [next, next.models === provider.models ? learned : next.models];
+        if (next.models === provider.models) return [next, learned];
+        return [
+          next,
+          next.models.filter(
+            (model) => model.isDefault === true || observed.some(({ slug }) => slug === model.slug),
+          ),
+        ];
       });
     const clearLearnedModels = Ref.set(learnedModels, []);
     const withLiveRuntimeState = Effect.fn("AcpRegistryDriver.withLiveRuntimeState")(function* (

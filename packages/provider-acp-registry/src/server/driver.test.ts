@@ -253,7 +253,7 @@ describe("acpRegistrySnapshotReadiness", () => {
     });
     expect(
       twoModels.find((model) => model.slug === "opus")?.capabilities?.optionDescriptors ?? [],
-    ).toEqual([sharedMode]);
+    ).toEqual([sharedMode, ...liveOptions]);
     // A later session on another model keeps the options learned for this one.
     const afterOpus = applyAcpRegistryLiveConfiguration(
       afterGlm,
@@ -271,6 +271,85 @@ describe("acpRegistrySnapshotReadiness", () => {
     expect(afterOpus.find((model) => model.slug === "opus")).toMatchObject({
       capabilities: { optionDescriptors: [{ id: "thinking" }, { id: "mode" }] },
     });
+  });
+
+  it("gives models no session opened the current model's reasoning options", () => {
+    const reasoning = {
+      id: "reasoning_effort",
+      label: "Reasoning Effort",
+      type: "select" as const,
+      options: [
+        { id: "low", label: "Low" },
+        { id: "high", label: "High" },
+      ],
+      currentValue: "high",
+      role: "reasoning" as const,
+    };
+    const autonomy = {
+      id: "autonomy",
+      label: "Autonomy Level",
+      type: "select" as const,
+      options: [{ id: "auto-low", label: "Low" }],
+      currentValue: "auto-low",
+    };
+    const snapshot = buildCheckedAcpRegistrySnapshot({
+      ...identity,
+      settings: decodeSettings({ agentId: "test-agent" }),
+      checkedAt: "2026-11-13T10:00:00.000Z",
+      inspection: {
+        status: "ready",
+        agentId: "test-agent",
+        version: "1.0.0",
+        distribution: "npx",
+      },
+      probe: {
+        probe: {
+          instanceId: identity.instanceId,
+          ready: true,
+          icon: null,
+          authMethods: [],
+          models: [
+            { id: "claude-sonnet-5-5", name: "Sonnet 5.5", description: null },
+            { id: "claude-opus-5-5", name: "Opus 5.5", description: null },
+          ],
+          currentModelId: "claude-sonnet-5-5",
+          configOptions: [reasoning, autonomy],
+          modelOptionIds: ["reasoning_effort"],
+          sessionManagement: noSessionManagement,
+        },
+        slashCommands: [],
+        skills: [],
+      },
+    });
+
+    expect(
+      snapshot.models.find((model) => model.slug === "claude-opus-5-5")?.capabilities
+        ?.optionDescriptors,
+    ).toEqual([autonomy, reasoning]);
+
+    // Without a probe session the "default" placeholder was never opened either.
+    const unprobed = buildCheckedAcpRegistrySnapshot({
+      ...identity,
+      settings: decodeSettings({ agentId: "test-agent" }),
+      checkedAt: "2026-11-13T10:00:00.000Z",
+      inspection: { status: "failed", message: "Probe failed." },
+    });
+    const live = applyAcpRegistryLiveConfiguration(
+      unprobed,
+      {
+        models: [
+          { id: "default", name: "Default", description: null },
+          { id: "claude-opus-5-5", name: "Opus 5.5", description: null },
+        ],
+        currentModelId: "claude-opus-5-5",
+        configOptions: [reasoning, autonomy],
+        modelOptionIds: ["reasoning_effort"],
+      },
+      [],
+    );
+    expect(
+      live.models.find((model) => model.slug === "default")?.capabilities?.optionDescriptors,
+    ).toEqual([autonomy, reasoning]);
   });
 
   it("projects discovery without claiming authentication when no login methods are advertised", () => {
@@ -617,8 +696,9 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
       const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "acp-driver-" });
       const agentPath = path.join(directory, "agent.mjs");
       const modelsPath = path.join(directory, "models.json");
+      const models = ["model-a", "model-b", "model-c", "model-d"];
       yield* fileSystem.writeFileString(agentPath, fakeAgentSource);
-      yield* fileSystem.writeFileString(modelsPath, JSON.stringify(["model-a", "model-b"]));
+      yield* fileSystem.writeFileString(modelsPath, JSON.stringify(models));
       const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
 
       const instance = yield* AcpRegistryDriver.create({
@@ -649,51 +729,67 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
               `${model.slug}:${(model.capabilities?.optionDescriptors ?? []).map((option) => option.id).join("+")}`,
           )
           .join();
-      const waitFor = (expected: string) =>
+      const waitFor = (slug: string, optionIds: string) =>
         instance.snapshot.streamChanges.pipe(
-          Stream.filter((snapshot) => effortBySlug(snapshot) === expected),
+          Stream.filter((snapshot) =>
+            effortBySlug(snapshot).split(",").includes(`${slug}:${optionIds}`),
+          ),
           Stream.runHead,
         );
-      const session = (currentModelId: string) =>
+      const session = (currentModelId: string, optionId?: string) =>
         normalizeAcpRegistryLiveConfiguration(
-          [
-            {
-              id: "effort",
-              name: "Effort",
-              category: "thought_level",
-              type: "select",
-              currentValue: "high",
-              options: [
-                { value: "low", name: "Low" },
-                { value: "high", name: "High" },
+          optionId === undefined
+            ? []
+            : [
+                {
+                  id: optionId,
+                  name: optionId,
+                  category: "thought_level",
+                  type: "select",
+                  currentValue: "high",
+                  options: [
+                    { value: "low", name: "Low" },
+                    { value: "high", name: "High" },
+                  ],
+                },
               ],
-            },
-          ],
           undefined,
           {
             currentModelId,
-            availableModels: [
-              { modelId: "model-a", name: "model-a" },
-              { modelId: "model-b", name: "model-b" },
-            ],
+            availableModels: models.map((modelId) => ({ modelId, name: modelId })),
           },
         );
+      const publish = (currentModelId: string, optionId?: string) =>
+        Effect.gen(function* () {
+          const applied = yield* waitFor(currentModelId, optionId ?? "").pipe(
+            Effect.forkScoped({ startImmediately: true }),
+          );
+          yield* coordinator.publishLiveConfiguration(
+            identity.instanceId,
+            session(currentModelId, optionId),
+          );
+          yield* Fiber.join(applied);
+          return effortBySlug(yield* instance.snapshot.getSnapshot);
+        });
 
-      const probed = yield* waitFor("model-a:,model-b:").pipe(
+      const probed = yield* waitFor("model-a", "").pipe(
         Effect.forkScoped({ startImmediately: true }),
       );
       yield* instance.snapshot.refresh;
       yield* Fiber.join(probed);
-      const learned = yield* waitFor("model-a:effort,model-b:effort").pipe(
-        Effect.forkScoped({ startImmediately: true }),
+
+      // The probe saw model-a without effort; models no session opened borrow the current one's.
+      expect(yield* publish("model-b", "effort")).toBe(
+        "model-a:,model-b:effort,model-c:effort,model-d:effort",
       );
-      yield* coordinator.publishLiveConfiguration(identity.instanceId, session("model-b"));
-      yield* coordinator.publishLiveConfiguration(identity.instanceId, session("model-a"));
-      yield* Fiber.join(learned);
+      expect(yield* publish("model-c")).toBe("model-a:,model-b:effort,model-c:,model-d:");
+      expect(yield* publish("model-b", "thinking")).toBe(
+        "model-a:,model-b:thinking,model-c:,model-d:thinking",
+      );
 
       yield* instance.snapshot.refresh;
       expect(effortBySlug(yield* instance.snapshot.getSnapshot)).toBe(
-        "model-a:effort,model-b:effort",
+        "model-a:,model-b:thinking,model-c:,model-d:thinking",
       );
     }),
   );
