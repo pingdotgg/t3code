@@ -53,6 +53,7 @@ import {
   pullRequestLinkSubject,
   writePullRequestDetailSnapshot,
   readableFailure,
+  pullRequestQuoteReply,
 } from "./pullRequestDetail.logic";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 
@@ -544,6 +545,39 @@ describe("review thread conversations", () => {
     isOutdated: true,
     comments: [lastReply, { ...finding, body: "Stale finding" }, reply],
   };
+
+  it("quotes a comment without its hidden markup and mentions a bot by its handle", () => {
+    expect(
+      pullRequestQuoteReply({
+        ...finding,
+        body: "<!-- bot state -->\r\nFirst line\r\n\r\nSecond line",
+      }),
+    ).toBe("> First line\n>\n> Second line\n\n@review ");
+    expect(pullRequestQuoteReply({ ...loose, author: null, body: "Hi" })).toBe("> Hi\n\n");
+    expect(pullRequestQuoteReply({ ...loose, author: null }, "\n  picked\n\tlines \n")).toBe(
+      "> \u00a0\u00a0picked\n> \u00a0\u00a0\u00a0\u00a0lines\n\n",
+    );
+    expect(pullRequestQuoteReply({ ...loose, author: null }, "&copy;")).toBe("> \\&copy;\n\n");
+    expect(pullRequestQuoteReply({ ...loose, author: null }, "<!-- keep -->")).toBe(
+      "> \\<\\!\\-\\- keep \\-\\-\\>\n\n",
+    );
+    expect(pullRequestQuoteReply({ ...loose, author: null }, "# Heading")).toBe(
+      "> \\# Heading\n\n",
+    );
+    expect(
+      pullRequestQuoteReply({
+        ...loose,
+        author: null,
+        body: "Use `<!-- x -->`:\n```html\n<!-- keep -->\n```<!-- drop -->",
+      }),
+    ).toBe("> Use `<!-- x -->`:\n> ```html\n> <!-- keep -->\n> ```\n\n");
+    expect(
+      pullRequestQuoteReply({ ...loose, author: null, body: "~~~html\n<!-- keep -->\n~~~" }),
+    ).toBe("> ~~~html\n> <!-- keep -->\n> ~~~\n\n");
+    expect(
+      pullRequestQuoteReply({ ...loose, author: null, body: "Not code \\`<!-- drop -->\\`" }),
+    ).toBe("> Not code \\`\\`\n\n");
+  });
 
   it("keeps a timeline finding and its replies in one row at the finding time", () => {
     const events = buildPullRequestTimeline({
