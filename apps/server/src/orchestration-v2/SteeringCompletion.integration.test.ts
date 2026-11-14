@@ -2469,8 +2469,20 @@ it.effect.each([
           });
           yield* Fiber.join(settled);
           yield* worker.drain();
+          const compacting = yield* orchestrator.streamDomainEvents.pipe(
+            Stream.filter(
+              (event) =>
+                event.type === "provider-turn.updated" &&
+                event.payload.status === "running" &&
+                event.payload.runAttemptId !== first.attemptId,
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped,
+          );
           yield* orchestrator.resumeQueuedRuns;
           yield* worker.drain();
+          yield* Fiber.join(compacting);
           const compaction = started[1]!;
           assert.equal(compaction.message.text, "/compact");
 
@@ -2499,6 +2511,17 @@ it.effect.each([
           const queuedRun = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
             (run) => run.userMessageId === MessageId.make("message:queued"),
           )!;
+          const leftQueue = yield* orchestrator.streamDomainEvents.pipe(
+            Stream.filter(
+              (event) =>
+                event.type === "run.updated" &&
+                event.payload.id === queuedRun.id &&
+                event.payload.status !== "queued",
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped,
+          );
           yield* orchestrator.dispatch({
             type: "queued-message.promote-to-steer",
             commandId: CommandId.make("promote"),
@@ -2507,15 +2530,26 @@ it.effect.each([
             targetRunId: compaction.runId,
           });
           yield* worker.drain();
+          // A stopped compaction hands the queue to the message once its terminal is ingested.
+          if (stopsCompaction) {
+            yield* Fiber.join(leftQueue);
+            yield* worker.drain();
+          }
 
           const projection = yield* orchestrator.getThreadProjection(threadId);
           assert.equal(
             projection.runs.find((run) => run.id === compaction.runId)?.status,
             stopsCompaction ? "interrupted" : "running",
           );
-          const queued = projection.runs.find((run) => run.id === queuedRun.id);
-          assert.equal(queued?.status, "queued");
-          assert.equal(queued?.queuePosition, 1);
+          assert.deepEqual(
+            started.map((turn) => turn.message.text),
+            stopsCompaction ? ["first", "/compact", "status"] : ["first", "/compact"],
+          );
+          if (!stopsCompaction) {
+            const queued = projection.runs.find((run) => run.id === queuedRun.id);
+            assert.equal(queued?.status, "queued");
+            assert.equal(queued?.queuePosition, 1);
+          }
         }).pipe(Effect.provide(layer));
       }),
     ),
