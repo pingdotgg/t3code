@@ -3920,3 +3920,24 @@ it.effect("reports a desktop tab's load failure from before the server connected
     }),
   ).pipe(Effect.provide(layer)),
 );
+
+it.effect("a popup opens in its opener's appearance", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const manager = yield* Manager.PreviewManager;
+      yield* Effect.yieldNow;
+      const opened = yield* manager.open({
+        threadId: scope.thread.threadId,
+        runtime: "server",
+        colorScheme: "dark",
+      });
+      yield* browser.attachViewer(viewerInput(opened.tabId, true));
+      const events = yield* manager.subscribeEvents;
+      contexts[0]!.page.emit("popup", makeContext().page);
+      let event = yield* PubSub.take(events);
+      while (event.type !== "opened") event = yield* PubSub.take(events);
+      expect(event.snapshot.colorScheme).toBe("dark");
+    }),
+  ).pipe(Effect.provide(layer)),
+);
