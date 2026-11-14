@@ -9,6 +9,8 @@ export interface CdpRelayTarget {
     owner?: string,
   ) => Promise<unknown>;
   readonly sessionDetached?: (owner: string) => void;
+  /** Whether a page session, by owner as `send` names it, gets the page's screencast frames. */
+  readonly receivesScreencast: (owner: string | undefined) => boolean;
   /** The page's own CDP target id; Playwright keys the main frame by it. */
   readonly targetId: () => Promise<string>;
   readonly url: () => string;
@@ -98,6 +100,7 @@ export function createCdpRelayConnection(
     close();
   };
   let attached = false;
+  let downloadEventsEnabled = false;
   /** Relay-created page sessions share one real debugger; child frame sessions retain their own ids. */
   const sessions = new Map<string, "browser" | "page">([[PAGE_SESSION_ID, "page"]]);
   let sessionSequence = 0;
@@ -122,9 +125,15 @@ export function createCdpRelayConnection(
       case "Browser.setDownloadBehavior": {
         const directory = command.params?.["downloadPath"];
         const allowed = command.params?.["behavior"] !== "deny" && typeof directory === "string";
+        // Browser-scoped behavior targets Electron's app session; preview paths belong to will-download.
+        const result = await target.send(
+          "Page.setDownloadBehavior",
+          { behavior: command.params?.["behavior"] === "deny" ? "deny" : "default" },
+          undefined,
+        );
         target.setDownloadDirectory(allowed ? directory : null);
-        const { browserContextId: _ignored, ...params } = command.params ?? {};
-        return target.send("Browser.setDownloadBehavior", params, undefined);
+        downloadEventsEnabled = command.params?.["eventsEnabled"] === true;
+        return result;
       }
       case "Browser.getVersion":
         return {
@@ -181,6 +190,8 @@ export function createCdpRelayConnection(
     }
   };
 
+  let runtimeReset: Promise<unknown> | undefined;
+
   const pageCommand = (command: CdpCommand): Promise<unknown> => {
     const child = sessions.get(command.sessionId!) === "page" ? undefined : command.sessionId;
     const owner =
@@ -191,6 +202,14 @@ export function createCdpRelayConnection(
     }
     // Playwright asks for this on every page; the host emulates focus only while it is in use.
     if (command.method === "Emulation.setFocusEmulationEnabled") return Promise.resolve({});
+    // The shared debugger keeps Runtime enabled after an earlier connection, and a repeated
+    // enable reports no existing contexts; Playwright waits for them, so reset once per connection.
+    if (command.method === "Runtime.enable" && child === undefined) {
+      runtimeReset ??= target.send("Runtime.disable", {}, undefined, owner).catch(() => undefined);
+      return runtimeReset.then(() =>
+        target.send(command.method, command.params ?? {}, undefined, owner),
+      );
+    }
     return target.send(command.method, command.params ?? {}, child, owner);
   };
 
@@ -232,9 +251,10 @@ export function createCdpRelayConnection(
     },
     event: (method, params, sessionId) => {
       if (!attached) return;
+      if (method.startsWith("Page.download")) method = method.replace("Page.", "Browser.");
       // Download events are the browser's; Playwright listens on its root session.
       if (method.startsWith("Browser.download")) {
-        send({ method, params });
+        if (downloadEventsEnabled) send({ method, params });
         return;
       }
       // Electron reports the page's own events with an empty session id.
@@ -242,8 +262,15 @@ export function createCdpRelayConnection(
         send({ method, params, sessionId });
         return;
       }
-      for (const [id, kind] of sessions)
-        if (kind === "page") send({ method, params, sessionId: id });
+      for (const [id, kind] of sessions) {
+        if (kind !== "page") continue;
+        if (
+          method === "Page.screencastFrame" &&
+          !target.receivesScreencast(id === PAGE_SESSION_ID ? undefined : id)
+        )
+          continue;
+        send({ method, params, sessionId: id });
+      }
     },
   };
 }

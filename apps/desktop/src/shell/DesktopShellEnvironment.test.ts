@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Deferred from "effect/Deferred";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -14,6 +15,7 @@ import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as TestClock from "effect/testing/TestClock";
 import * as NodeOS from "node:os";
 import { vi } from "vite-plus/test";
 
@@ -53,6 +55,22 @@ function makeProcess(output: string, exitCode = 0): ChildProcessSpawner.ChildPro
     exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(exitCode)),
     isRunning: Effect.succeed(false),
     kill: () => Effect.void,
+    stdin: Sink.drain,
+    getInputFd: () => Sink.drain,
+    getOutputFd: () => Stream.empty,
+    unref: Effect.succeed(Effect.void),
+  });
+}
+
+function makeHungProcess(): ChildProcessSpawner.ChildProcessHandle {
+  return ChildProcessSpawner.makeHandle({
+    pid: ChildProcessSpawner.ProcessId(124),
+    stdout: Stream.never,
+    stderr: Stream.never,
+    all: Stream.never,
+    exitCode: Effect.never,
+    isRunning: Effect.succeed(true),
+    kill: () => Effect.never,
     stdin: Sink.drain,
     getInputFd: () => Sink.drain,
     getOutputFd: () => Stream.empty,
@@ -426,10 +444,13 @@ describe("DesktopShellEnvironment", () => {
       const env: NodeJS.ProcessEnv = { SHELL: "/bin/failing", PATH: "/usr/bin" };
       const commands: string[] = [];
 
-      yield* runShellEnvironment({
+      const discovery = (service: DesktopShellEnvironment.DesktopShellEnvironment["Service"]) =>
+        Effect.all([service.awaitDiscovery, service.awaitUserShellDiscovery]);
+      const answered = yield* runShellEnvironment({
         env,
         platform: "linux",
         userShell: "/usr/local/bin/fish",
+        use: (service) => discovery(service).pipe(Effect.map(([, fromUserShell]) => fromUserShell)),
         handler: (command) => {
           if (command._tag !== "StandardCommand") return "";
           commands.push(command.command);
@@ -441,6 +462,23 @@ describe("DesktopShellEnvironment", () => {
 
       assert.deepEqual(commands, ["/bin/failing", "/usr/local/bin/fish"]);
       assert.equal(env.PATH, "/home/test/.local/bin:/usr/bin");
+      // The account's own login shell answered.
+      assert.isTrue(answered);
+
+      // Only the platform fallback answered: its PATH can miss folders the user's shell adds.
+      const fallbackOnly = yield* runShellEnvironment({
+        env: { SHELL: "/usr/bin/fish", PATH: "/usr/bin" },
+        platform: "linux",
+        use: (service) =>
+          discovery(service).pipe(
+            Effect.map(([prepared, fromUserShell]) => prepared && !fromUserShell),
+          ),
+        handler: (command) =>
+          command._tag === "StandardCommand" && command.command === "/usr/bin/fish"
+            ? { output: "", exitCode: 7 }
+            : envOutput({ PATH: "/usr/bin" }),
+      }).pipe(Effect.provide(Logger.layer([])));
+      assert.isTrue(fallbackOnly);
     }),
   );
 
@@ -542,6 +580,39 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
+  it.effect.each([
+    {
+      name: "hydrates both Android SDK names when neither is inherited",
+      inherited: {},
+      expected: { ANDROID_HOME: "/shell/android-home", ANDROID_SDK_ROOT: "/shell/android-root" },
+    },
+    {
+      // The device host reads ANDROID_HOME before ANDROID_SDK_ROOT, so a shell
+      // ANDROID_HOME next to an inherited ANDROID_SDK_ROOT would change the SDK.
+      name: "keeps an inherited ANDROID_SDK_ROOT selected over a login-shell ANDROID_HOME",
+      inherited: { ANDROID_SDK_ROOT: "/inherited/android-sdk" },
+      expected: { ANDROID_HOME: undefined, ANDROID_SDK_ROOT: "/inherited/android-sdk" },
+    },
+  ])("$name", ({ inherited, expected }) =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", PATH: "/usr/bin", ...inherited };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: () =>
+          envOutput({
+            PATH: "/usr/bin",
+            ANDROID_HOME: "/shell/android-home",
+            ANDROID_SDK_ROOT: "/shell/android-root",
+          }),
+      });
+
+      assert.equal(env.ANDROID_HOME, expected.ANDROID_HOME);
+      assert.equal(env.ANDROID_SDK_ROOT, expected.ANDROID_SDK_ROOT);
+    }),
+  );
+
   it.effect("keeps mise's PATH record with the login shell PATH", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {
@@ -596,6 +667,52 @@ describe("DesktopShellEnvironment", () => {
       });
 
       assert.isFalse(prepared);
+    }),
+  );
+
+  it.effect("recovers the login-shell PATH when the first probe outlasts the timeout", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", PATH: "/usr/bin:/bin:/usr/sbin:/sbin" };
+      const output = envOutput({ PATH: "/opt/homebrew/bin:/usr/bin" });
+      let shellProbes = 0;
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: () => "",
+        processSpawner: ChildProcessSpawner.make((command) => {
+          if (command._tag !== "StandardCommand" || command.command !== "/bin/zsh") {
+            return Effect.succeed(makeProcess(""));
+          }
+          shellProbes += 1;
+          if (shellProbes > 1) return Effect.succeed(makeProcess(output));
+          // A cold start: the first login shell answers, but only after 7s.
+          const slow = Effect.sleep("7 seconds");
+          const stdout = Stream.fromEffect(slow.pipe(Effect.as(textEncoder.encode(output))));
+          return Effect.succeed(
+            ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(125),
+              stdout,
+              stderr: Stream.empty,
+              all: stdout,
+              exitCode: slow.pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+              isRunning: Effect.succeed(true),
+              kill: () => Effect.void,
+              stdin: Sink.drain,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+              unref: Effect.succeed(Effect.void),
+            }),
+          );
+        }),
+        use: (service) =>
+          Effect.gen(function* () {
+            yield* service.installIntoProcess;
+            yield* TestClock.adjust("10 minutes");
+            return true;
+          }),
+      }).pipe(Effect.provide(Logger.layer([])));
+
+      assert.equal(env.PATH, "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin");
     }),
   );
 
@@ -671,6 +788,36 @@ describe("DesktopShellEnvironment", () => {
         assert.include(env.PATH, "C:\\Working");
         assert.include(env.PATH, "C:\\Windows\\System32");
       }),
+  );
+
+  it.effect("gives up on a Windows shell that survives the kill", () =>
+    Effect.gen(function* () {
+      const commands: Array<string> = [];
+      // Both PowerShell probes spawn pwsh, time out, then spawn powershell. Each probe's timeout
+      // is armed before its spawn runs, so waiting for the spawns keeps the clock in step.
+      const spawned = yield* Effect.forEach([0, 1, 2, 3], () => Deferred.make<void>());
+      const fiber = yield* runShellEnvironment({
+        env: { PATH: "C:\\Windows", APPDATA: "C:\\Roaming" },
+        platform: "win32",
+        handler: () => "",
+        processSpawner: ChildProcessSpawner.make((command) => {
+          const spawn = spawned[commands.length];
+          commands.push(command._tag === "StandardCommand" ? command.command : "");
+          return (spawn ? Deferred.succeed(spawn, undefined) : Effect.void).pipe(
+            Effect.andThen(
+              Effect.acquireRelease(Effect.succeed(makeHungProcess()), () => Effect.never),
+            ),
+          );
+        }),
+      }).pipe(Effect.forkChild({ startImmediately: true }));
+
+      yield* Effect.forEach(spawned.slice(0, 2), Deferred.await);
+      yield* TestClock.adjust("5 seconds");
+      yield* Effect.forEach(spawned.slice(2), Deferred.await);
+      yield* TestClock.adjust("5 seconds");
+      yield* Fiber.join(fiber);
+      assert.deepEqual([...new Set(commands)], ["pwsh.exe", "powershell.exe"]);
+    }),
   );
 
   it.effect("replaces a Path-spelled Windows PATH instead of adding a second key", () =>
