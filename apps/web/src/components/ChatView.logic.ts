@@ -1014,6 +1014,25 @@ export function deriveCommittedServerUserMessageIds(
   );
 }
 
+/**
+ * The server checks the full history, but the first page of an
+ * agent-started thread or a long turn can hold no user message.
+ */
+export function hasCompactableConversation(input: {
+  readonly visibleTurnItems: ReadonlyArray<ThreadStructureRow>;
+  readonly hasMoreHistory: boolean;
+  readonly latestUserMessageAt: string | null;
+}): boolean {
+  return (
+    input.visibleTurnItems.some(
+      ({ item }) =>
+        item.type === "user_message" &&
+        (item.text.trim().toLowerCase() !== "/compact" || item.attachments.length > 0),
+    ) ||
+    (input.hasMoreHistory && input.latestUserMessageAt !== null)
+  );
+}
+
 export function hasServerAcknowledgedLocalDispatch(input: {
   localDispatch: LocalDispatchSnapshot | null;
   phase: SessionPhase;
@@ -1293,6 +1312,22 @@ export function snapshotComposerSend(contents: ComposerSendContents) {
 }
 
 export type ComposerSendSnapshot = ReturnType<typeof snapshotComposerSend>;
+
+/** Derived from the persisted run phase, so a starting run still reads as work after a reload. */
+export function deriveTimelineWorking(input: {
+  readonly phase: SessionPhase;
+  readonly isSendBusy: boolean;
+  readonly isCompacting: boolean;
+  readonly runlessWorkStartedAt: string | null;
+}): boolean {
+  return (
+    input.phase === "connecting" ||
+    input.phase === "running" ||
+    input.isSendBusy ||
+    input.isCompacting ||
+    input.runlessWorkStartedAt !== null
+  );
+}
 
 /** How a composer send dispatches: where it runs and whether it waits behind other work. */
 export function planComposerTurn(input: {

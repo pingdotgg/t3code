@@ -4285,7 +4285,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           .filter(
             (message) =>
               message.role === "user" &&
-              (message.notification !== undefined || message.delegatedCompletion !== undefined),
+              (message.createdBy !== "user" ||
+                message.scheduledTaskId !== undefined ||
+                message.notification !== undefined ||
+                message.delegatedCompletion !== undefined),
           )
           .map((message) => message.id),
       );
@@ -7144,10 +7147,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
       }
     }
+    const notification =
+      command.manualContinuationOfRunId === undefined
+        ? command.notification
+        : {
+            source: { kind: "system" as const },
+            outcome: "updated" as const,
+            summary: "Resumed thread",
+          };
     const dispatchText =
-      delegatedCompletion === undefined
-        ? command.text
-        : delegatedCompletionWakeDetail(delegatedCompletion.taskIds, projection.subagents);
+      command.manualContinuationOfRunId !== undefined
+        ? ""
+        : delegatedCompletion === undefined
+          ? command.text
+          : delegatedCompletionWakeDetail(delegatedCompletion.taskIds, projection.subagents);
     const sourcePlanProjection =
       command.sourcePlanRef === undefined
         ? null
@@ -7236,12 +7249,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         effects,
         projection,
         modelSelection:
-          delegatedCompletion === undefined && command.notification === undefined
+          delegatedCompletion === undefined && notification === undefined
             ? modelSelection
             : (projection.runs.find((run) => run.id === dispatchMode.targetRunId)?.modelSelection ??
               modelSelection),
         delegatedCompletion,
-        ...(command.notification === undefined ? {} : { notification: command.notification }),
+        ...(notification === undefined ? {} : { notification }),
         targetRunId: dispatchMode.targetRunId,
         messageId: command.messageId,
         text: dispatchText,
@@ -7502,6 +7515,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(command.restartContinuationOfRunId === undefined
           ? {}
           : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
+        ...(command.manualContinuationOfRunId === undefined
+          ? {}
+          : { manualContinuationOfRunId: command.manualContinuationOfRunId }),
         ...(command.usageLimitContinuationOfRunId === undefined
           ? {}
           : { usageLimitContinuationOfRunId: command.usageLimitContinuationOfRunId }),
@@ -7562,7 +7578,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         createdAt: now,
         updatedAt: now,
         ...(delegatedCompletion === undefined ? {} : { delegatedCompletion }),
-        ...(command.notification === undefined ? {} : { notification: command.notification }),
+        ...(notification === undefined ? {} : { notification }),
       };
       const emitEvent = emit(events, command);
       if (targetProviderThread === undefined) {
@@ -7913,6 +7929,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(command.restartContinuationOfRunId === undefined
           ? {}
           : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
+        ...(command.manualContinuationOfRunId === undefined
+          ? {}
+          : { manualContinuationOfRunId: command.manualContinuationOfRunId }),
         ...(command.usageLimitContinuationOfRunId === undefined
           ? {}
           : { usageLimitContinuationOfRunId: command.usageLimitContinuationOfRunId }),
@@ -7977,7 +7996,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         createdAt: now,
         updatedAt: now,
         ...(delegatedCompletion === undefined ? {} : { delegatedCompletion }),
-        ...(command.notification === undefined ? {} : { notification: command.notification }),
+        ...(notification === undefined ? {} : { notification }),
       };
       const turnItem: OrchestrationV2TurnItem = {
         createdBy: command.createdBy,
@@ -8708,6 +8727,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ...(command.restartContinuationOfRunId === undefined
         ? {}
         : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
+      ...(command.manualContinuationOfRunId === undefined
+        ? {}
+        : { manualContinuationOfRunId: command.manualContinuationOfRunId }),
       ...(command.usageLimitContinuationOfRunId === undefined
         ? {}
         : { usageLimitContinuationOfRunId: command.usageLimitContinuationOfRunId }),
@@ -8765,7 +8787,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       createdAt: now,
       updatedAt: now,
       ...(delegatedCompletion === undefined ? {} : { delegatedCompletion }),
-      ...(command.notification === undefined ? {} : { notification: command.notification }),
+      ...(notification === undefined ? {} : { notification }),
     };
     const turnItem: OrchestrationV2TurnItem = {
       createdBy: command.createdBy,

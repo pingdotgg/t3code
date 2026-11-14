@@ -138,6 +138,7 @@ import {
   type LayoutVariant,
 } from "../../lib/layout";
 import { editPendingThreadMessage } from "../../state/edit-pending-thread-message";
+import { environmentCatalog } from "../../connection/catalog";
 import { deviceEnvironment } from "../../state/device";
 import { useEnvironmentQuery } from "../../state/query";
 import { threadDevicePreviews } from "../devices/threadDevicePreviews";
@@ -374,6 +375,7 @@ const wakeAwareVisitShell = Atom.family((key: string) => {
 
 const threadVisitTracker = createThreadVisitTracker({
   threadShellAtom: (ref) => wakeAwareVisitShell(threadKey(ref)),
+  sessionGenerationAtom: environmentCatalog.sessionGenerationAtom,
   visit: threadEnvironment.visit,
 });
 
