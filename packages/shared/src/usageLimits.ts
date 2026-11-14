@@ -64,7 +64,14 @@ export function exhaustedUsageWindow(
       const hasPlanWindows = windows.some(
         (window) => window.id === "primary" || window.id === "secondary",
       );
-      return exhausted.find((window) => window.id !== "individual" || !hasPlanWindows);
+      // Spendable credits cover an exhausted plan window until the credit cap runs out too.
+      const coveredByCredits =
+        hasPlanWindows &&
+        provider.usageLimits?.continuesOnCredits === true &&
+        !exhausted.some((window) => window.id === "individual");
+      return coveredByCredits
+        ? undefined
+        : exhausted.find((window) => window.id !== "individual" || !hasPlanWindows);
     }
     case "opencode":
       return exhausted.find(

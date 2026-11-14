@@ -26,6 +26,8 @@ export interface CodexRateLimitSnapshot {
     readonly remainingPercent: number;
     readonly resetsAt: number;
   } | null;
+  readonly credits?: { readonly hasCredits: boolean; readonly unlimited: boolean } | null;
+  readonly spendControlReached?: boolean | null;
 }
 
 export interface CodexResetCreditsSummary {
@@ -97,6 +99,15 @@ function codexRateLimitsToWindows(
   return windows;
 }
 
+/** Null means Codex could not tell, so only an explicit signal counts as a block. */
+function codexCreditBlocks(snapshot: CodexRateLimitSnapshot) {
+  return [
+    snapshot.spendControlReached === true,
+    snapshot.rateLimitReachedType?.startsWith("workspace_") === true,
+    snapshot.credits != null && !snapshot.credits.hasCredits && !snapshot.credits.unlimited,
+  ] as const;
+}
+
 function codexResetCreditsToContract(
   summary: CodexResetCreditsSummary | null | undefined,
 ): ServerProviderResetCredits | undefined {
@@ -123,12 +134,17 @@ export function codexRateLimitsToLimits(input: {
   readonly checkedAt: string;
 }): ServerProviderUsageLimits {
   const resetCredits = codexResetCreditsToContract(input.resetCredits);
-  const windows = codexRateLimitsToWindows(input.rateLimitsByLimitId?.codex ?? input.snapshot);
+  const snapshot = input.rateLimitsByLimitId?.codex ?? input.snapshot;
+  const windows = codexRateLimitsToWindows(snapshot);
+  const continuesOnCredits =
+    (snapshot.credits?.hasCredits === true || snapshot.credits?.unlimited === true) &&
+    !codexCreditBlocks(snapshot).some(Boolean);
   return {
     ...makeUsageLimits({
       checkedAt: input.checkedAt,
       windows,
     }),
+    ...(continuesOnCredits ? { continuesOnCredits } : {}),
     ...(resetCredits ? { resetCredits } : {}),
   };
 }
@@ -149,7 +165,13 @@ export function codexRateLimitsToUpdate(
       existing.windowDurationMins !== window.windowDurationMins
     );
   });
-  return windows.length > 0 ? { windows } : undefined;
+  // Like windows, a block the session already reported may predate a probe that has since granted credits.
+  const previousBlocks = previous ? codexCreditBlocks(previous) : [];
+  const revokesCredits =
+    (!snapshot.limitId || snapshot.limitId === "codex") &&
+    codexCreditBlocks(snapshot).some((blocked, index) => blocked && !previousBlocks[index]);
+  if (windows.length === 0 && !revokesCredits) return undefined;
+  return { windows, ...(revokesCredits ? { continuesOnCredits: false as const } : {}) };
 }
 
 export function codexRateLimitsFailureMessage(error: CodexErrors.CodexAppServerError): string {
@@ -183,6 +205,11 @@ export function mergeCodexRateLimits(
     ...(update.primary !== undefined ? { primary: update.primary } : {}),
     ...(update.secondary !== undefined ? { secondary: update.secondary } : {}),
     ...(update.individualLimit !== undefined ? { individualLimit: update.individualLimit } : {}),
+    // Unlike the fields above, null here is "unavailable" and must not erase a known value.
+    ...(update.credits != null ? { credits: update.credits } : {}),
+    ...(update.spendControlReached != null
+      ? { spendControlReached: update.spendControlReached }
+      : {}),
   };
 }
 

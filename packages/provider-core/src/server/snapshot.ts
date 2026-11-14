@@ -26,6 +26,6 @@ export interface ManagedServerProvider {
   readonly refresh: Effect.Effect<ServerProvider>;
   readonly refreshUsage?: Effect.Effect<void, ServerSettingsError>;
   readonly streamChanges: Stream.Stream<ServerProvider>;
-  /** Merge windows by ID and set any authLabel; an update with no window leaves the snapshot untouched. */
+  /** Merge windows by ID and set any authLabel; an update with no window and no credit block leaves the snapshot untouched. */
   readonly applyUsageLimits: (update: ProviderUsageLimitsReport) => Effect.Effect<void>;
 }

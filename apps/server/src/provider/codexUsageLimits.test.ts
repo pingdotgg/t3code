@@ -8,6 +8,7 @@ import {
   codexRateLimitsToLimits,
   codexRateLimitsToUpdate,
   mergeCodexRateLimits,
+  type CodexRateLimitSnapshot,
 } from "./codexUsageLimits.ts";
 
 const checkedAt = "2026-07-18T10:00:00.000Z";
@@ -73,6 +74,62 @@ describe("codexRateLimitsToLimits", () => {
         "gpt-6.1-sol",
       ),
     ).toBeUndefined();
+  });
+
+  it("keeps an account with spendable credits past its exhausted weekly allowance unless spending is blocked", () => {
+    const exhausted = {
+      limitId: "codex",
+      planType: "plus",
+      primary: { usedPercent: 12, resetsAt: 1_784_000_000, windowDurationMins: 300 },
+      secondary: { usedPercent: 100, resetsAt: 1_784_500_000, windowDurationMins: 10080 },
+    };
+    const credits = { hasCredits: true, unlimited: false };
+    const exhaustedWindow = (snapshot: CodexRateLimitSnapshot) =>
+      exhaustedUsageWindow(
+        {
+          instanceId: ProviderInstanceId.make("codex"),
+          driver: ProviderDriverKind.make("codex"),
+          enabled: true,
+          installed: true,
+          version: null,
+          status: "ready",
+          auth: { status: "authenticated" },
+          checkedAt,
+          models: [],
+          slashCommands: [],
+          skills: [],
+          usageLimits: codexRateLimitsToLimits({ checkedAt, snapshot }),
+        },
+        Date.parse(checkedAt),
+        "gpt-6-luna",
+      )?.id;
+
+    expect(exhaustedWindow({ ...exhausted, credits, spendControlReached: false })).toBeUndefined();
+    expect(exhaustedWindow({ ...exhausted, credits, spendControlReached: null })).toBeUndefined();
+    expect(
+      exhaustedWindow({ ...exhausted, credits: { hasCredits: false, unlimited: true } }),
+    ).toBeUndefined();
+
+    expect(exhaustedWindow(exhausted)).toBe("secondary");
+    expect(exhaustedWindow({ ...exhausted, credits: null })).toBe("secondary");
+    expect(
+      exhaustedWindow({ ...exhausted, credits: { hasCredits: false, unlimited: false } }),
+    ).toBe("secondary");
+    expect(exhaustedWindow({ ...exhausted, credits, spendControlReached: true })).toBe("secondary");
+    expect(
+      exhaustedWindow({
+        ...exhausted,
+        credits,
+        rateLimitReachedType: "workspace_member_credits_depleted",
+      }),
+    ).toBe("secondary");
+    expect(
+      exhaustedWindow({
+        ...exhausted,
+        credits,
+        individualLimit: { remainingPercent: 0, resetsAt: 1_796_083_200 },
+      }),
+    ).toBe("secondary");
   });
 
   it("maps primary and secondary onto the session and weekly windows", () => {
@@ -204,6 +261,47 @@ describe("codexRateLimitsToUpdate", () => {
       ],
     });
     expect(codexRateLimitsToUpdate({ planType: "plus" })).toBeUndefined();
+  });
+
+  it("revokes credit spending once when a notification first reports a block", () => {
+    const windows = {
+      primary: { usedPercent: 0, resetsAt: 1_784_000_000, windowDurationMins: 300 },
+      secondary: { usedPercent: 100, resetsAt: 1_784_500_000, windowDurationMins: 10080 },
+    };
+    const spendable = {
+      ...windows,
+      credits: { hasCredits: true, unlimited: false },
+      spendControlReached: false,
+    };
+    const unknown = { ...windows, credits: null, spendControlReached: null };
+    const blocks: ReadonlyArray<CodexRateLimitSnapshot> = [
+      { ...windows, spendControlReached: true },
+      { ...windows, credits: { hasCredits: false, unlimited: false } },
+      { ...windows, rateLimitReachedType: "workspace_owner_usage_limit_reached" },
+    ];
+
+    expect(codexRateLimitsToUpdate(unknown, spendable)).toBeUndefined();
+    for (const blocked of blocks) {
+      expect(codexRateLimitsToUpdate(blocked, spendable)).toEqual({
+        windows: [],
+        continuesOnCredits: false,
+      });
+      const session = mergeCodexRateLimits(spendable, blocked);
+      expect(codexRateLimitsToUpdate(structuredClone(blocked), session)).toBeUndefined();
+      // Null is "unavailable", so it neither lifts the block nor lets the next tick repeat it.
+      const afterUnknown = mergeCodexRateLimits(session, unknown);
+      expect(codexRateLimitsToUpdate(structuredClone(blocked), afterUnknown)).toBeUndefined();
+    }
+    // A session that only knew "no credits" still reports a block it has not seen before.
+    expect(
+      codexRateLimitsToUpdate(
+        { ...windows, spendControlReached: true },
+        { ...windows, credits: { hasCredits: false, unlimited: false } },
+      ),
+    ).toEqual({ windows: [], continuesOnCredits: false });
+    expect(
+      codexRateLimitsToUpdate({ limitId: "codex_bengalfox", spendControlReached: true }, spendable),
+    ).toBeUndefined();
   });
 
   it("ignores Spark notifications so they cannot overwrite the main allowance", () => {

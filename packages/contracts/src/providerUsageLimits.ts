@@ -49,6 +49,8 @@ export const ServerProviderUsageLimits = Schema.Struct({
   windows: ForwardCompatibleArray(ServerProviderUsageWindow),
   /** A $0 monthly spend cap has no percentage, so it cannot be a window. */
   zeroSpendCap: Schema.optional(Schema.Boolean),
+  /** Spendable credits carry the account past its exhausted plan windows; false is a block reported after the probe. */
+  continuesOnCredits: Schema.optional(Schema.Boolean),
   credentialFingerprint: Schema.optional(TrimmedNonEmptyString),
   resetCredits: Schema.optional(ServerProviderResetCredits),
   externalUsage: Schema.optional(
@@ -69,6 +71,8 @@ export type ServerProviderUsageLimits = typeof ServerProviderUsageLimits.Type;
 /** Partial updates merge windows by id; omitted windows remain unchanged. */
 export const ProviderUsageLimitsUpdate = Schema.Struct({
   windows: Schema.Array(ServerProviderUsageWindow),
+  /** Only a full probe grants credit spending; an update can only revoke it. */
+  continuesOnCredits: Schema.optional(Schema.Literal(false)),
 });
 export type ProviderUsageLimitsUpdate = typeof ProviderUsageLimitsUpdate.Type;
 
