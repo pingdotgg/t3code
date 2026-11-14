@@ -65,7 +65,6 @@ describe("a folded Duo thread's vertical bar", () => {
       leading: [],
       trailing: [terminal, git, files],
       compose: false,
-      keyboardVisible: false,
     }).map((item) => item.id);
 
   it("keeps the thread actions while the outer camera is at rest", () => {

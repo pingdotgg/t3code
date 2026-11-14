@@ -68,7 +68,6 @@ export function fitColumnVerticalBarItems(
     readonly leading: readonly HeaderItem[];
     readonly trailing: readonly HeaderItem[];
     readonly compose: boolean;
-    readonly keyboardVisible: boolean;
   },
 ) {
   const leadingGroupSizes = [bar.backButtonVisible ? 1 : 0, ...verticalBarGroupSizes(bar.leading)];
@@ -77,7 +76,6 @@ export function fitColumnVerticalBarItems(
       ...leadingGroupSizes,
       ...groupSizes,
       bar.compose ? 1 : 0,
-      bar.keyboardVisible ? 1 : 0,
     ]),
   );
 }

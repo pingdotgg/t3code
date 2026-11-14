@@ -249,14 +249,15 @@ export function V5StackHeader(props: {
     props.column &&
     nativeMetrics &&
     nativeMetrics.verticalBarEdge !== "none" &&
-    nativeMetrics.horizontalSizeClass === "compact"
+    nativeMetrics.horizontalSizeClass === "compact" &&
+    // A menu opened above the keyboard has too little room for folded submenus.
+    !keyboardVisible
   ) {
     const fitted = fitColumnVerticalBarItems(nativeMetrics, workspaceTabCount, {
       backButtonVisible: props.canGoBack && options.headerBackVisible !== false,
       leading,
       trailing,
       compose: Boolean(props.onCompose),
-      keyboardVisible,
     });
     trailing.splice(0, trailing.length, ...fitted);
   }

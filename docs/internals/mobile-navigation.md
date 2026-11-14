@@ -72,7 +72,9 @@ preserves behavior that is easy to break when changing native headers:
   (compact) Duo's items do not fit,
   [`V5StackHeader`](../../apps/mobile/src/native/V5StackHeader.ios.tsx) folds
   them into one More menu. The open Duo's detail column has no Back on its first
-  screen and fit on device without folding, so it is left alone. Measure again if
+  screen and fit on device without folding, so it is left alone, and so is the
+  rail while the keyboard is up: a More menu opened above the keyboard clips its
+  submenus. Measure again if
   UIKit's bar metrics change.
 
 The fork adds native header props that require code generation and a new binary.
