@@ -257,8 +257,7 @@ export function parseOriginUrlFromGitConfig(configText: string): string | null {
   let section: string | null = null;
   let originUrl: string | null = null;
   let firstRemoteUrl: string | null = null;
-  const joined = configText.replace(/\\\r?\n[ \t]*/g, "");
-  for (const rawLine of joined.split(/\r?\n/)) {
+  for (const rawLine of gitConfigLines(configText)) {
     let line = rawLine.trim();
     if (line.length === 0 || line.startsWith("#") || line.startsWith(";")) continue;
     // Git preserves case in quoted remote subsections but lowercases legacy dotted ones,
