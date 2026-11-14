@@ -43,6 +43,7 @@ import type * as ProviderEventLoggers from "@t3tools/provider-core/server/Provid
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 
 import {
   advanceOpenCodePromptAdmission,
@@ -1394,6 +1395,8 @@ describe("OpenCodeAdapterV2", () => {
       const root = "ses_root";
       const child = "ses_child";
       let promptId = "";
+      const continuationRequests =
+        yield* Queue.unbounded<ProviderContinuationRequests.ProviderContinuationRequest>();
       const harness = yield* makeOpenCodeRuntimeHarness("background-child", root, {
         event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
         session: {
@@ -1409,7 +1412,12 @@ describe("OpenCodeAdapterV2", () => {
           abort: async () => ({ data: true }),
           children: async () => ({ data: [] }),
         },
-      });
+      }).pipe(
+        Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+          offer: (request) => Queue.offer(continuationRequests, request).pipe(Effect.asVoid),
+          take: Queue.take(continuationRequests),
+        }),
+      );
       const hasPendingBackgroundWork = harness.runtime.hasPendingBackgroundWork;
       if (hasPendingBackgroundWork === undefined) {
         return yield* Effect.die("OpenCode runtime must expose hasPendingBackgroundWork.");
@@ -1476,6 +1484,24 @@ describe("OpenCodeAdapterV2", () => {
       yield* push(status(child, "idle"));
       yield* push({ type: "session.idle", properties: { sessionID: child } });
       assert.isFalse(yield* hasPendingBackgroundWork, "an idle child must not pin idle release");
+
+      // OpenCode then prompts the root session with the child's result on its own.
+      yield* push({
+        type: "message.updated",
+        properties: {
+          sessionID: root,
+          info: { id: "msg_wake_user", sessionID: root, role: "user", time: { created: 4 } },
+        },
+      });
+      yield* push(status(root, "busy"));
+      yield* push(status(root, "idle"));
+      yield* push({ type: "session.idle", properties: { sessionID: root } });
+      const request = yield* Queue.poll(continuationRequests);
+      assert.equal(
+        Option.getOrUndefined(request)?.threadId,
+        harness.threadId,
+        "a root turn OpenCode starts on its own must ask for a continuation run",
+      );
     }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
