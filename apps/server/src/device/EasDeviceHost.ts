@@ -843,10 +843,13 @@ export const make = Effect.fn("EasDeviceHost.make")(function* (config: EasDevice
     "EasDeviceHost.ensureReady",
   )(function* () {
     if (ready) return ready;
+    const startedIn = epoch;
     yield* adoptRecorded;
     // Without a credential the host is still ready: opening a device then
     // says how to sign in, and listing reaps once one is there.
     yield* FiberSet.run(background)(api.pipe(Effect.flatMap(reapLeftovers), Effect.ignore));
+    if (epoch !== startedIn)
+      return yield* unavailable(`${config.label} was stopped while readiness started.`);
     ready = {
       nodePath,
       hub: { origin: "https://api.expo.dev" },
@@ -874,6 +877,7 @@ export const make = Effect.fn("EasDeviceHost.make")(function* (config: EasDevice
   // and stays in the ledger for the next server if this one closes first.
   const stopAll = Effect.gen(function* () {
     epoch++;
+    ready = null;
     // Interrupted starts stop the sessions they created before this returns.
     yield* FiberSet.clear(starts);
     yield* FiberSet.clear(background);

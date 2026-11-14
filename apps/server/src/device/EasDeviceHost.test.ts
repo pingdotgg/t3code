@@ -310,6 +310,7 @@ describe("EAS Simulator host", () => {
       ).toBeNull();
 
       yield* Scope.close(scope, Exit.void);
+      expect(yield* host.current).toBeNull();
       expect(expo.named("T3StopEasSimulatorSession").map((call) => call.variables.id)).toEqual([
         "session-1",
       ]);
