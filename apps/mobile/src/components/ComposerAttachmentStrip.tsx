@@ -49,7 +49,6 @@ type ComposerAttachmentThumbnailProps = {
   readonly attachment: DraftComposerAttachment;
   readonly size: number;
   readonly borderRadius: number;
-  readonly compact?: boolean;
   readonly onPressPreview?: (source: FilePreviewSource) => void;
   readonly onPressVideo?: (
     attachment: DraftComposerFileAttachment,
@@ -58,7 +57,7 @@ type ComposerAttachmentThumbnailProps = {
   readonly onPressDocument?: (attachment: DraftComposerFileAttachment) => void;
 };
 
-export function ComposerAttachmentThumbnail(props: ComposerAttachmentThumbnailProps) {
+function ComposerAttachmentThumbnail(props: ComposerAttachmentThumbnailProps) {
   const upload = useComposerAttachmentUploadState(props.environmentId, props.attachment.id);
   return (
     <View style={{ width: props.size, height: props.size }}>
@@ -81,15 +80,13 @@ export function ComposerAttachmentThumbnail(props: ComposerAttachmentThumbnailPr
         >
           <SymbolView
             name={upload.status === "failed" ? "arrow.clockwise" : "arrow.up"}
-            size={props.compact ? 8 : 10}
+            size={10}
             tintColor="#ffffff"
             type="monochrome"
           />
-          {!props.compact ? (
-            <Text className="text-2xs text-white">
-              {upload.status === "failed" ? "Retry" : `${Math.floor(upload.progress * 100)}%`}
-            </Text>
-          ) : null}
+          <Text className="text-2xs text-white">
+            {upload.status === "failed" ? "Retry" : `${Math.floor(upload.progress * 100)}%`}
+          </Text>
         </Pressable>
       ) : null}
     </View>
@@ -217,19 +214,13 @@ function ComposerFileAttachment(
                 })
               : onPressDocument?.(attachment)
           }
-          className={
-            props.compact
-              ? "items-center justify-center bg-subtle"
-              : "items-center justify-center gap-1 bg-subtle px-2"
-          }
+          className="items-center justify-center gap-1 bg-subtle px-2"
           style={style}
         >
-          <PierreEntryIcon path={attachment.name} kind="file" size={props.compact ? 15 : 22} />
-          {!props.compact ? (
-            <Text className="w-full text-center text-2xs text-foreground" numberOfLines={1}>
-              {attachment.name}
-            </Text>
-          ) : null}
+          <PierreEntryIcon path={attachment.name} kind="file" size={22} />
+          <Text className="w-full text-center text-2xs text-foreground" numberOfLines={1}>
+            {attachment.name}
+          </Text>
         </Pressable>
       </PresentationSource>
     </>
@@ -240,7 +231,6 @@ function ComposerVideoAttachment(props: {
   readonly attachment: DraftComposerFileAttachment;
   readonly size: number;
   readonly borderRadius: number;
-  readonly compact?: boolean;
   readonly onPressVideo: (
     attachment: DraftComposerFileAttachment,
     sourceIdentifier: string,
@@ -261,7 +251,6 @@ function ComposerVideoAttachment(props: {
       name={attachment.name}
       sourceIdentifier={sourceIdentifier}
       thumbnailSource={attachment}
-      compact={props.compact}
       onPress={() => props.onPressVideo(attachment, sourceIdentifier)}
       actionsSource={actionsSource}
       style={style}

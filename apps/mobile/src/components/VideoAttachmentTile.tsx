@@ -15,7 +15,6 @@ export function VideoAttachmentTile(props: {
   readonly sourceIdentifier: string;
   readonly thumbnailSource: string | DraftComposerFileAttachment | null;
   readonly actionsSource?: MediaActionsSource;
-  readonly compact?: boolean;
   readonly onPress: (sourceIdentifier: string) => void;
   readonly disabled?: boolean;
   readonly className?: string;
@@ -54,26 +53,14 @@ export function VideoAttachmentTile(props: {
           style={props.style}
         >
           <VideoThumbnailImage cacheKey={props.sourceIdentifier} source={props.thumbnailSource} />
-          <View
-            className={cn(
-              "items-center justify-center rounded-full bg-black/45",
-              props.compact ? "size-6" : "size-12",
-            )}
-          >
-            <SymbolView
-              name="play"
-              size={props.compact ? 15 : 24}
-              tintColor="#ffffff"
-              type="monochrome"
-            />
+          <View className="size-12 items-center justify-center rounded-full bg-black/45">
+            <SymbolView name="play" size={24} tintColor="#ffffff" type="monochrome" />
           </View>
-          {!props.compact ? (
-            <View className="absolute inset-x-0 bottom-0 bg-black/55 px-2 py-1.5">
-              <AppText className="text-center text-xs text-white" numberOfLines={1}>
-                {props.name}
-              </AppText>
-            </View>
-          ) : null}
+          <View className="absolute inset-x-0 bottom-0 bg-black/55 px-2 py-1.5">
+            <AppText className="text-center text-xs text-white" numberOfLines={1}>
+              {props.name}
+            </AppText>
+          </View>
         </Pressable>
       </MediaActionsMenu>
     </PresentationSource>
