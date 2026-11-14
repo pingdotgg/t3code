@@ -1817,6 +1817,8 @@ const make = Effect.gen(function* () {
     taskId: NodeId,
     wakePolicyRequestKey: string,
     requestedTimeoutMs: number | undefined,
+    restore: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R> = (effect) =>
+      effect,
   ): Effect.fn.Return<OrchestratorMcpDelegateTaskResult, OrchestratorMcpFailure> {
     const timeoutMs = Math.min(
       MAX_WAIT_TIMEOUT_MS,
@@ -1855,8 +1857,9 @@ const make = Effect.gen(function* () {
       );
     const delivered = (waited: Option.Option<OrchestratorMcpDelegateTaskResult>) =>
       Option.isSome(waited) && isTerminalTaskStatus(waited.value.status);
-    // The finalizer runs uninterruptibly, so a cancel right after the wait returns still upgrades.
-    const waited = yield* waitForTask(scope, taskId, timeoutMs).pipe(
+    // The finalizer runs uninterruptibly, and only the wait is restored, so a cancel just
+    // before or after the wait still upgrades.
+    const waited = yield* restore(waitForTask(scope, taskId, timeoutMs)).pipe(
       Effect.onExit((exit) =>
         Exit.isSuccess(exit) && delivered(exit.value) ? Effect.void : upgradeWake,
       ),
@@ -2635,7 +2638,7 @@ const make = Effect.gen(function* () {
       const parentNodeId = parentRun.rootNodeId;
       // The command commits the child's preparing run, which only this call
       // prepares, so a caller that goes away must not stop it in between.
-      const taskId = yield* Effect.uninterruptible(
+      return yield* Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {
           // ThreadManagementService.dispatch is the chokepoint for this command
           // type's own enablement check, using the same command id and its
@@ -2698,13 +2701,11 @@ const make = Effect.gen(function* () {
               runId: childRunEvent.event.payload.id,
             });
           }
-          return taskId;
+          return yield* input.mode === "wait"
+            ? awaitTask(scope, taskId, key, input.timeoutMs, restore)
+            : restore(readTask(scope, taskId, false, true));
         }),
       );
-
-      return yield* input.mode === "wait"
-        ? awaitTask(scope, taskId, key, input.timeoutMs)
-        : readTask(scope, taskId, false, true);
     }),
     taskStatus: Effect.fn("OrchestratorMcpService.taskStatus")(function* (callerScope, taskId) {
       const scope = yield* requireThreadScope(callerScope, "task_status");
