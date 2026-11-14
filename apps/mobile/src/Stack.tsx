@@ -493,11 +493,11 @@ const RootStackConfig = createWorkspaceStackNavigator({
     Home: createNativeStackScreen({
       screen: WorkspaceRootScreen,
       linking: "",
-      listeners: {
+      listeners: ({ navigation }) => ({
         transitionStart: ({ data }) => recordHomeTransitionStart(data.closing),
-        transitionEnd: ({ data }) => recordHomeTransitionEnd(data.closing),
+        transitionEnd: ({ data }) => recordHomeTransitionEnd(data.closing, navigation.isFocused()),
         focus: recordHomeFocus,
-      },
+      }),
       options: {
         ...pageRoute({ duoMinimize: "never", root: true }),
         contentStyle: { backgroundColor: "transparent" },
