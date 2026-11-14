@@ -355,7 +355,7 @@ export const VcsPullResult = Schema.Struct({
 export type VcsPullResult = typeof VcsPullResult.Type;
 
 // Git stderr can echo credentials from argv and remote URLs. Only a fixed
-// reason reaches the error and its diagnostic suffix; newer, unknown reasons
+// reason reaches this field and the diagnostic suffix; newer, unknown reasons
 // decode as absent through GitCommandError.
 export const GitCommandFailureReason = Schema.Literals([
   "authentication_failed",

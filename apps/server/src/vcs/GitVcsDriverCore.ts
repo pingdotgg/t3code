@@ -47,6 +47,7 @@ import {
   gitConfigEnv,
   unsetInheritedRepositoryEnv,
 } from "./VcsProcess.ts";
+import { withHookOutput } from "./gitHookOutput.ts";
 import { makeWorktreeCheckoutCache } from "./worktreeCheckoutCache.ts";
 import { removeLinkedWorktree } from "./worktreeRemoval.ts";
 import { resolveWorktreesDirectory } from "../worktreesDirectory.ts";
@@ -205,6 +206,7 @@ interface ExecuteGitOptions {
   timeoutMs?: number | null | undefined;
   allowNonZeroExit?: boolean | undefined;
   fallbackErrorDetail?: string | undefined;
+  hookOutputInDetail?: boolean | undefined;
   env?: NodeJS.ProcessEnv | undefined;
   maxOutputBytes?: number | undefined;
   appendTruncationMarker?: boolean | undefined;
@@ -1206,11 +1208,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           return Effect.succeed(result);
         }
         const reason = classifyGitFailure(result.stderr);
+        const detail = options.fallbackErrorDetail ?? gitFailureDetail(reason);
         return Effect.fail(
           new GitCommandError({
             ...gitCommandContext({ operation, cwd, args }),
             ...(reason === null ? {} : { reason }),
-            detail: options.fallbackErrorDetail ?? gitFailureDetail(reason),
+            detail: options.hookOutputInDetail ? withHookOutput(detail, result.stderr) : detail,
             ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
             stdoutLength: result.stdout.length,
             stderrLength: result.stderr.length,
@@ -4641,6 +4644,30 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     yield* refresh;
   });
 
+  // A failed post-checkout hook leaves the worktree registered, holding the branch that
+  // createWorktree just made, so Git refuses to delete the branch until the worktree is gone.
+  // `pathWasFree`: no checkout sat at the path before, so a worktree there now is this attempt's.
+  const discardFailedWorktree = Effect.fn("discardFailedWorktree")(
+    function* (cwd: string, worktreePath: string, branch: string, pathWasFree: boolean) {
+      const head = !pathWasFree
+        ? ""
+        : yield* executeGit(
+            "GitVcsDriver.createWorktree.rollbackHead",
+            path.resolve(cwd, worktreePath),
+            ["rev-parse", "--symbolic-full-name", "HEAD"],
+            { allowNonZeroExit: true },
+          ).pipe(
+            Effect.map((result) => result.stdout.trim()),
+            Effect.orElseSucceed(() => ""),
+          );
+      if (head === `refs/heads/${branch}`) {
+        yield* removeWorktree({ cwd, path: worktreePath, force: true });
+      }
+      yield* deleteLocalBranch({ cwd, refName: branch, force: true });
+    },
+    Effect.catch((cause) => Effect.logWarning("could not roll back a failed worktree", { cause })),
+  );
+
   const createWorktree: GitVcsDriver.GitVcsDriver["Service"]["createWorktree"] = Effect.fn(
     "createWorktree",
   )(function* (input, options) {
@@ -4694,6 +4721,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       );
     }
     const checkoutRef = newRefName ?? input.refName;
+    const pathWasFree =
+      newRefName !== undefined &&
+      !(yield* fileSystem
+        .exists(path.join(path.resolve(input.cwd, worktreePath), ".git"))
+        .pipe(Effect.orElseSucceed(() => true)));
     const progress = options?.progress;
     const onCheckoutProgress = progress?.onCheckoutProgress;
 
@@ -4724,6 +4756,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ],
       {
         fallbackErrorDetail: "git worktree add failed",
+        hookOutputInDetail: true,
         // Large checkouts and post-checkout hooks can legitimately run for many
         // minutes; a fixed deadline kills them and leaves an orphaned worktree.
         timeoutMs: null,
@@ -4754,11 +4787,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     ).pipe(
       Effect.onError(() =>
         newRefName
-          ? deleteLocalBranch({ cwd: input.cwd, refName: newRefName, force: true }).pipe(
-              Effect.catch((cause) =>
-                Effect.logWarning("could not remove the branch of a failed worktree", { cause }),
-              ),
-            )
+          ? discardFailedWorktree(input.cwd, worktreePath, newRefName, pathWasFree)
           : Effect.void,
       ),
     );

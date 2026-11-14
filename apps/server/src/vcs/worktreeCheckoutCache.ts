@@ -15,6 +15,7 @@ import * as Semaphore from "effect/Semaphore";
 
 import * as CheckoutCloner from "./CheckoutCloner.ts";
 import type * as GitVcsDriver from "./GitVcsDriver.ts";
+import { withHookOutput } from "./gitHookOutput.ts";
 import { indexEntryStat, parseIndex, restatIndex, type IndexEntryStat } from "./gitIndexStat.ts";
 
 const KEEP_PER_REPOSITORY = 3;
@@ -675,7 +676,10 @@ export const makeWorktreeCheckoutCache = Effect.fn("WorktreeCheckoutCache.make")
         operation: "GitVcsDriver.createWorktree",
         command: "git worktree add",
         cwd: input.cwd,
-        detail: "git worktree add failed: the post-checkout hook failed",
+        detail: withHookOutput(
+          "git worktree add failed: the post-checkout hook failed",
+          hook.stderr,
+        ),
         exitCode: hook.exitCode,
         stderrLength: hook.stderr.length,
       });

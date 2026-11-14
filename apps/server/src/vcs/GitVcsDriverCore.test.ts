@@ -560,11 +560,15 @@ it.effect.each([
         assert.isTrue(spawnedArgs.some((args) => args.includes("--git-common-dir")));
         const siblingRefs = yield* driver.listRefs({ cwd: siblingPath });
         const createdRef = siblingRefs.refs.find((ref) => ref.name === "feature/cache-created");
-        assert.isDefined(createdRef?.worktreePath);
-        assert.equal(
-          NodeFS.realpathSync.native(createdRef!.worktreePath!),
-          NodeFS.realpathSync.native(worktreePath),
-        );
+        if (hookExitCode === 0) {
+          assert.isDefined(createdRef?.worktreePath);
+          assert.equal(
+            NodeFS.realpathSync.native(createdRef!.worktreePath!),
+            NodeFS.realpathSync.native(worktreePath),
+          );
+        } else {
+          assert.isUndefined(createdRef);
+        }
         assert.isTrue(siblingRefs.hasPrimaryRemote);
         assert.isTrue(siblingRefs.refs.find((ref) => ref.name === "cache-sibling")?.current);
         const statusAfter = yield* driver.statusDetailsLocal(siblingPath);
@@ -5383,6 +5387,87 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             `${expected}\n`,
           );
         }
+      }),
+    );
+
+    it.effect("reports a failed post-checkout hook's output and rolls back for a retry", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const hook = path.join(cwd, ".git/hooks/post-checkout");
+        yield* fs.writeFileString(
+          hook,
+          "#!/bin/sh\n" +
+            "echo \"This repository is configured for Git LFS but 'git-lfs' was not found on your path.\" >&2\n" +
+            "echo 'see https://user:hun@ter2@example.com/lfs?token=sig' >&2\n" +
+            `echo '{"first":"https://u:p@a.example","second":"https://v:s3cret@b.example"}' >&2\n` +
+            "exit 2\n",
+        );
+        yield* fs.chmod(hook, 0o755);
+        const worktreePath = path.join(yield* makeTmpDir("git-worktrees-"), "retry");
+        // Relative to the repository, as Git resolves it.
+        const input = {
+          cwd,
+          path: path.relative(cwd, worktreePath),
+          refName: initialBranch,
+          newRefName: "t3/retry",
+        };
+
+        const error = yield* driver.createWorktree(input).pipe(Effect.flip);
+
+        assert.include(error.message, "'git-lfs' was not found on your path.");
+        assert.include(error.message, "https://<redacted>@example.com/lfs?<redacted>");
+        assert.notInclude(error.message, "ter2");
+        assert.notInclude(error.message, "token=");
+        assert.notInclude(error.message, "s3cret");
+        assert.notInclude(error.message, "Preparing worktree");
+        assert.isFalse(yield* fs.exists(worktreePath));
+        assert.notInclude(yield* git(cwd, ["branch", "--list", "t3/retry"]), "t3/retry");
+
+        yield* fs.writeFileString(hook, "#!/bin/sh\nexit 0\n");
+        yield* driver.createWorktree(input);
+        assert.equal(yield* git(worktreePath, ["branch", "--show-current"]), "t3/retry");
+      }),
+    );
+
+    it.effect("keeps a worktree it did not create when a failed checkout rolls back", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const existing = path.join(yield* makeTmpDir("git-worktrees-"), "existing");
+        yield* git(cwd, ["worktree", "add", "-q", "-b", "other", existing, initialBranch]);
+        yield* writeTextFile(existing, "notes.txt", "uncommitted\n");
+        const real = yield* GitVcsDriver.GitVcsDriver;
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        // Another process checks the new branch out at that path before the checkout runs.
+        const spawner = ChildProcessSpawner.make((command) =>
+          ChildProcess.isStandardCommand(command) &&
+          command.args.includes("worktree") &&
+          command.args.includes("add")
+            ? real
+                .execute({
+                  operation: "GitVcsDriver.test.race",
+                  cwd: existing,
+                  args: ["checkout", "-q", "t3/race"],
+                })
+                .pipe(Effect.orDie, Effect.andThen(delegate.spawn(command)))
+            : delegate.spawn(command),
+        );
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provide(layerServerConfig),
+        );
+
+        yield* driver
+          .createWorktree({ cwd, path: existing, refName: initialBranch, newRefName: "t3/race" })
+          .pipe(Effect.flip);
+
+        assert.equal(yield* fs.readFileString(path.join(existing, "notes.txt")), "uncommitted\n");
       }),
     );
 
