@@ -16,6 +16,7 @@ conn-engine = { path = "crates/conn-engine" }
 conn-provider = { path = "crates/conn-provider" }
 conn-provider-claude = { path = "crates/conn-provider-claude" }
 conn-provider-codex = { path = "crates/conn-provider-codex" }
+conn-provider-acp = { path = "crates/conn-provider-acp" }
 conn-provider-support = { path = "crates/conn-provider-support" }
 conn-mcp = { path = "crates/conn-mcp" }
 conn-vcs = { path = "crates/conn-vcs" }
