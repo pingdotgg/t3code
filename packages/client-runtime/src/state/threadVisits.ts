@@ -168,7 +168,7 @@ export function createThreadVisitTracker(options: ThreadVisitTrackerOptions) {
         // the shell arrives, so it still counts toward search ranking.
         if (openPending) {
           openPending = false;
-          if (lastDispatchedUpdatedAt !== visitedAt) {
+          if (retryPending || lastDispatchedUpdatedAt !== visitedAt) {
             dispatch(shell, visitedAt, true);
             return;
           }
