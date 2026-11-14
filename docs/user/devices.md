@@ -112,7 +112,9 @@ SSH device hosts currently need macOS or Linux. To use devices on a Windows
 machine, run T3 Code on that machine and connect to its environment.
 Node 22.12 or newer and npm must be available to non-interactive SSH commands.
 T3 checks common Homebrew and Android SDK locations; custom installations need
-the appropriate PATH and ANDROID_HOME on the host. Android emulator video needs
+the appropriate PATH and `ANDROID_HOME` or `ANDROID_SDK_ROOT` on the host.
+Android on an SSH host needs the same SDK tools as a local environment; adb on
+the PATH alone does not enable it. Android emulator video needs
 `ffmpeg` with libx264 on that host; physical Android devices use scrcpy and do
 not need ffmpeg.
 
