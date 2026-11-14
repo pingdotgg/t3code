@@ -1190,6 +1190,33 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
+    it.effect("excludes sandboxes when the configured base dir is itself a symlink", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const realBaseDir = yield* makeTempDir("t3code-scanner-base-");
+        const linkParent = yield* makeTempDir("t3code-scanner-links-");
+        const fileSystem = yield* FileSystem.FileSystem;
+
+        // The server is configured through a symlinked home, while the agent
+        // recorded the real path of the managed sandbox.
+        const configBaseDir = path.join(linkParent, "t3-home");
+        yield* fileSystem.symlink(realBaseDir, configBaseDir);
+        const worktreeCwd = path.join(realBaseDir, "worktrees", "t3code", "wt-4");
+        yield* fileSystem.makeDirectory(worktreeCwd, { recursive: true });
+        yield* writeTranscript({
+          filePath: path.join(claudeHomePath, "projects", "-slug", "a.jsonl"),
+          contents: claudeSessionLine(worktreeCwd),
+          mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
+        });
+
+        const result = yield* runScan({ claudeHomePath, codexHomePath, configBaseDir });
+
+        expect(result.candidates).toEqual([]);
+      }),
+    );
+
     it.effect("excludes sandboxes reached through a symlink into the worktrees dir", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
