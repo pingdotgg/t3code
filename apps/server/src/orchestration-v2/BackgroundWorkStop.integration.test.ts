@@ -11,6 +11,7 @@ import {
   ProviderTurnId,
   RunAttemptId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
   TurnItemId,
   type OrchestrationV2DomainEvent,
@@ -385,6 +386,79 @@ const stopEarlierBackgroundWork = ({
             },
           ],
         });
+        // Shaped like CodexAdapterV2's buildApprovalRequestArtifacts output.
+        const approvalRequestId = RuntimeRequestId.make("request:stalled-approval");
+        const approvalNodeId = NodeId.make("node:stalled-approval");
+        const approvalItemId = TurnItemId.make("turn-item:stalled-approval");
+        if (stalledRun === "returned-interrupt") {
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make("stalled-approval-node"),
+                type: "node.updated",
+                threadId,
+                runId: run.id,
+                occurredAt: now,
+                payload: {
+                  ...node,
+                  id: approvalNodeId,
+                  parentNodeId: node.id,
+                  kind: "approval_request",
+                  status: "waiting",
+                  countsForRun: false,
+                  runtimeRequestId: approvalRequestId,
+                },
+              },
+              {
+                id: EventId.make("stalled-approval-request"),
+                type: "runtime-request.updated",
+                threadId,
+                occurredAt: now,
+                payload: {
+                  id: approvalRequestId,
+                  nodeId: approvalNodeId,
+                  providerTurnId: codexTurn.id,
+                  nativeRequestRef: { driver, nativeId: "approval", strength: "strong" },
+                  kind: "command",
+                  status: "pending",
+                  responseCapability: {
+                    type: "live",
+                    providerSessionId: first.providerThread.providerSessionId!,
+                  },
+                  createdAt: now,
+                  resolvedAt: null,
+                },
+              },
+              {
+                id: EventId.make("stalled-approval-item"),
+                type: "turn-item.updated",
+                threadId,
+                runId: run.id,
+                occurredAt: now,
+                payload: {
+                  id: approvalItemId,
+                  threadId,
+                  runId: run.id,
+                  nodeId: approvalNodeId,
+                  providerThreadId: codexTurn.providerThreadId,
+                  providerTurnId: codexTurn.id,
+                  nativeItemRef: null,
+                  parentItemId: null,
+                  ordinal: 101,
+                  status: "waiting",
+                  title: null,
+                  startedAt: now,
+                  completedAt: null,
+                  updatedAt: now,
+                  type: "approval_request",
+                  requestId: approvalRequestId,
+                  requestKind: "command",
+                  prompt: "rm -rf build",
+                },
+              },
+            ],
+          });
+        }
         if (stalledRun === "superseded-attempt") {
           yield* sink.write({
             events: [
@@ -446,6 +520,16 @@ const stopEarlierBackgroundWork = ({
           interrupted ? 1 : 0,
         );
         assert.isEmpty(after.runs.filter((candidate) => candidate.status === "waiting"));
+        if (stalledRun === "returned-interrupt") {
+          assert.deepEqual(
+            [
+              after.runtimeRequests.find((candidate) => candidate.id === approvalRequestId)?.status,
+              after.nodes.find((candidate) => candidate.id === approvalNodeId)?.status,
+              after.turnItems.find((candidate) => candidate.id === approvalItemId)?.status,
+            ],
+            ["cancelled", "interrupted", "interrupted"],
+          );
+        }
         return;
       }
       const settled = yield* watch(
