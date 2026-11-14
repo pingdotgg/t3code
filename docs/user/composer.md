@@ -413,8 +413,10 @@ can break the preview, so save a copy if you need to keep it.
 ## Files outside the workspace
 
 Follow an agent's file link to read a report or other file outside the workspace.
-These files open read-only. An HTML file outside the workspace cannot load scripts,
-styles, or images from neighboring files.
+These files open read-only. An HTML file outside the workspace can load images,
+styles, scripts, fonts, audio, video, and other pages from its own folder and
+subfolders, except hidden files and folders. A page saved directly in your home
+folder or at a filesystem root such as `/` or `C:\` can't load other files.
 
 ## HTML and PDF files in the file viewer
 

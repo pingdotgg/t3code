@@ -136,8 +136,11 @@ Signed asset URLs are bearer credentials. A URL for media on the host grants
 access to one canonical file and its device/inode identity, not its containing directory.
 [Asset access](../../apps/server/src/assets/AssetAccess.ts) rechecks the opened
 file's identity when serving it, so atomic replacement requires a new URL while
-editing the same file in place does not. An HTML file authorized this way cannot
-load sibling assets; directory-scoped workspace previews are a separate grant.
+editing the same file in place does not. An inline HTML file's URL also pins its
+folder's identity and lets the page load allowlisted, non-hidden files below that
+folder, judged by both the requested and the resolved path. A page directly in a
+filesystem root or at or above the home directory gets no folder grant.
+Directory-scoped workspace previews are a separate grant.
 Clients should share the authored file reference so they do not disclose the
 temporary URL's credential. `filesystem:read` is checked when the URL is minted,
 not when it is served: a URL issued before the grant was revoked keeps working
