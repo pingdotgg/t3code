@@ -3231,17 +3231,20 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         };
         const externalFallback = { ...externalAsk, resource: "*" };
         const permissions = [
-          // Ahead of the plan paths, so a session grant for an outside directory still wins.
+          ...(runtimeMode === "full-access" ? [t3Rules[0]] : [supervisedRules[0]]),
+          // Native outside-directory rules keep their order, ahead of any session grant.
+          externalDeny,
           ...(runtimeMode === "full-access"
-            ? [t3Rules[0], { ...externalFallback, effect: "allow" }]
-            : [supervisedRules[0], externalFallback]),
+            ? [
+                { ...externalAsk, effect: "allow" },
+                { ...externalFallback, effect: "allow" },
+              ]
+            : [externalAsk, externalFallback]),
           { action: "edit", resource: "*", effect: "deny" },
           ...buildPaths,
           privatePath,
           denied,
           allowed,
-          externalDeny,
-          runtimeMode === "full-access" ? { ...externalAsk, effect: "allow" } : externalAsk,
           ...mcpRules,
         ];
         const runtime = yield* openCode2ReplayRuntime([

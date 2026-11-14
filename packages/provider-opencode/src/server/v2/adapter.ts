@@ -539,22 +539,22 @@ const formGone = {
   SessionNotFoundError: () => Effect.void,
 };
 
-const isPathRule = (entry: Rule) =>
-  entry.action === "edit" || entry.action === "external_directory";
-
 const agentPaths = (rules: ReadonlyArray<Rule>) =>
-  rules.filter((entry) => isPathRule(entry) && entry.effect === "allow" && entry.resource !== "*");
+  rules.filter(
+    (entry) =>
+      entry.effect === "allow" &&
+      entry.resource !== "*" &&
+      (entry.action === "edit" || entry.action === "external_directory"),
+  );
 
-// Replayed in order after plan's edit deny, so a later native deny still beats an earlier allow.
-// A catch-all that does not deny would also override the session grants placed before it.
-const planPaths = (rules: ReadonlyArray<Rule>, policy: RulesPolicy) =>
-  rules
-    .filter((entry) => isPathRule(entry) && (entry.resource !== "*" || entry.effect === "deny"))
-    .map((entry) =>
-      policy.runtimeMode === "full-access" && entry.effect === "ask"
-        ? { ...entry, effect: "allow" as const }
-        : entry,
-    );
+// Plan's edit deny is re-opened only by native edit allows, replayed in order with edit denies so a
+// later deny still wins. Other rules stay where Auto and Full access put them, before session grants.
+const planPaths = (rules: ReadonlyArray<Rule>) =>
+  rules.filter((entry) =>
+    entry.action === "edit"
+      ? entry.effect === "deny" || (entry.effect === "allow" && entry.resource !== "*")
+      : entry.action === "external_directory" && entry.effect === "allow" && entry.resource !== "*",
+  );
 
 const nativeSessionRules = (rules: ReadonlyArray<Rule>, policy: RulesPolicy) => {
   if (policy.runtimeMode === "auto") {
@@ -3936,7 +3936,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const plan = policy.interactionMode === "plan";
       const nativeRules = yield* rulesForAgents(thread.directory, [thread.agent]);
       const paths = plan
-        ? planPaths(yield* rulesForAgents(thread.directory, [thread.agent, "plan"]), policy)
+        ? planPaths(yield* rulesForAgents(thread.directory, [thread.agent, "plan"]))
         : policy.runtimeMode === "auto" || policy.runtimeMode === "full-access"
           ? []
           : agentPaths(nativeRules);
