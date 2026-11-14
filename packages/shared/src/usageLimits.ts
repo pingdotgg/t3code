@@ -259,7 +259,9 @@ const hubAccountName = (account: { readonly id: string }) => account.id.replace(
 const remoteHubOrigin = (source: UsageLimitSourceSnapshot): string | null => {
   const origin = source.origin;
   const host = origin?.match(/^https?:\/\/(\[[\da-f:.]+\]|[^:/?#@]+)(?::\d+)?$/)?.[1];
-  return origin && host && !isLocalLoopbackHost(host) && !isWildcardHost(host) ? origin : null;
+  if (!origin || !host || isLocalLoopbackHost(host) || isWildcardHost(host)) return null;
+  // Each machine resolves these to itself too; shared host classification leaves them out.
+  return /\.localhost$|^\[::ffff:(?:127\.|7f[\da-f]{2}:)/i.test(host) ? null : origin;
 };
 
 // Source ids are environment-local, so only a remote origin names the same hub across environments.

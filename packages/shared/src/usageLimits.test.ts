@@ -767,6 +767,20 @@ describe("pools", () => {
       2,
     ],
     ["each machine's own IPv6 loopback hub", "http://[::1]:8317", "hub", "http://[::1]:8317", 2],
+    [
+      "each machine's own localhost subdomain hub",
+      "http://hub.localhost:8317",
+      "hub",
+      "http://hub.localhost:8317",
+      2,
+    ],
+    [
+      "each machine's own mapped IPv4 loopback hub",
+      "http://[::ffff:7f00:1]:8317",
+      "hub",
+      "http://[::ffff:7f00:1]:8317",
+      2,
+    ],
     ["each machine's own wildcard hub", "http://0.0.0.0:8317", "hub", "http://0.0.0.0:8317", 2],
     ["hubs that report no origin", undefined, "hub", undefined, 2],
   ] as const)(
