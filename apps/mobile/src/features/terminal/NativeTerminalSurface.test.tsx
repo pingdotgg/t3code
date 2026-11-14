@@ -1,7 +1,7 @@
 import {
   applyTerminalAttachStreamEvent,
   EMPTY_TERMINAL_BUFFER_STATE,
-  terminalOutputText,
+  terminalOutputReplay,
 } from "@t3tools/client-runtime/state/terminal";
 import { act, useImperativeHandle, useLayoutEffect, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
@@ -106,7 +106,7 @@ function setup(revision: number | null) {
                 ? null
                 : (revision ?? 0) >= 1
                   ? ""
-                  : terminalOutputText(state.output)
+                  : terminalOutputReplay(state.output)
             }
             isRunning
             onInput={() => {}}
@@ -163,6 +163,24 @@ it.each([null, 1])(
     } else {
       expect(mocks.write).not.toHaveBeenCalled();
       expect(mocks.initialBuffers).toEqual(["retained", "ined-new"]);
+      // An older binary recreates its emulator unless the next buffer extends the last one.
+      // The buffer is full here, so the erase must not push the earlier output out.
+      let cleared = applyTerminalAttachStreamEvent(
+        state,
+        { type: "output", threadId: "thread", terminalId: "term-1", data: "\u001b[?1049h" },
+        16,
+      );
+      await harness.render(cleared);
+      cleared = applyTerminalAttachStreamEvent(
+        cleared,
+        { type: "cleared", threadId: "thread", terminalId: "term-1" },
+        16,
+      );
+      await harness.render(cleared);
+      expect(mocks.initialBuffers.slice(2)).toEqual([
+        "ined-new\u001b[?1049h",
+        "ined-new\u001b[?1049h\u001b[H\u001b[2J\u001b[3J",
+      ]);
     }
   },
 );
