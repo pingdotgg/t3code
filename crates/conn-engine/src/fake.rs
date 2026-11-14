@@ -203,6 +203,39 @@ async fn emit(tx: &mpsc::Sender<ProviderEvent>, events: impl IntoIterator<Item =
     }
 }
 
+impl FakeSession {
+    /// The run of a `continuation.requested` message: shows `continued` and ends the work.
+    fn continuation(&self, input: TurnInput) -> BoxFuture<'_, ProviderResult<()>> {
+        Box::pin(async move {
+            let provider_thread_id = conn_contract::to_json(&input.provider_thread)["id"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned();
+            let turn = Turn {
+                thread_id: input.thread_id.0.clone(),
+                run_id: input.run_id.0.clone(),
+                root: input.root_node_id.0.clone(),
+                provider_thread_id,
+                ordinal: input.run_ordinal,
+            };
+            self.background.store(false, Ordering::SeqCst);
+            let mut events = vec![provider_turn(&turn, "running")];
+            events.extend(assistant(
+                &turn,
+                &format!("{}:a", turn.run_id),
+                "continued",
+                false,
+            ));
+            events.push(provider_turn(&turn, "completed"));
+            events.push(terminal(&turn, TurnStatus::Completed, None));
+            *crate::lock(&self.turn) = Some(turn);
+            let tx = self.events.clone();
+            tokio::spawn(async move { emit(&tx, events).await });
+            Ok(())
+        })
+    }
+}
+
 impl Session for FakeSession {
     fn provider_session_id(&self) -> &ProviderSessionId {
         &self.id
@@ -241,6 +274,9 @@ impl Session for FakeSession {
     }
 
     fn start_turn(&self, input: TurnInput) -> BoxFuture<'_, ProviderResult<()>> {
+        if input.message.is_provider_continuation() {
+            return self.continuation(input);
+        }
         Box::pin(async move {
             let provider_thread_id = conn_contract::to_json(&input.provider_thread)["id"]
                 .as_str()
@@ -441,36 +477,6 @@ impl Session for FakeSession {
                 events
             };
             emit(&self.events, events).await;
-            Ok(())
-        })
-    }
-
-    fn start_continuation_turn(&self, input: TurnInput) -> BoxFuture<'_, ProviderResult<()>> {
-        Box::pin(async move {
-            let provider_thread_id = conn_contract::to_json(&input.provider_thread)["id"]
-                .as_str()
-                .unwrap_or_default()
-                .to_owned();
-            let turn = Turn {
-                thread_id: input.thread_id.0.clone(),
-                run_id: input.run_id.0.clone(),
-                root: input.root_node_id.0.clone(),
-                provider_thread_id,
-                ordinal: input.run_ordinal,
-            };
-            self.background.store(false, Ordering::SeqCst);
-            let mut events = vec![provider_turn(&turn, "running")];
-            events.extend(assistant(
-                &turn,
-                &format!("{}:a", turn.run_id),
-                "continued",
-                false,
-            ));
-            events.push(provider_turn(&turn, "completed"));
-            events.push(terminal(&turn, TurnStatus::Completed, None));
-            *crate::lock(&self.turn) = Some(turn);
-            let tx = self.events.clone();
-            tokio::spawn(async move { emit(&tx, events).await });
             Ok(())
         })
     }

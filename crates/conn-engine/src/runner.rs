@@ -490,8 +490,6 @@ impl Inner {
                 .await;
         }
 
-        // A run the provider asked for (`continuation.requested`) shows output it already holds.
-        let continuation = context.message["creationSource"] == "provider";
         let input = TurnInput {
             // The provider decides from the turn ordinal, as before.
             native_thread_has_turns: None,
@@ -532,12 +530,12 @@ impl Inner {
             model_selection,
             runtime_policy,
         };
-        let started = if continuation {
-            live.session.start_continuation_turn(input).await
-        } else {
-            live.session.start_turn(input).await
-        };
-        started.map_err(|e| StartError::Failed(e.to_string()))
+        // A run the provider asked for (`continuation.requested`) is an agent message with
+        // `creationSource: provider`; the provider shows the output it holds for it.
+        live.session
+            .start_turn(input)
+            .await
+            .map_err(|e| StartError::Failed(e.to_string()))
     }
 
     /// Reads one session's events until it closes. Ends a run the session leaves open.

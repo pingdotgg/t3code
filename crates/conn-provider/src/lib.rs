@@ -121,13 +121,6 @@ pub trait Session: Send + Sync {
     /// Ends the native process. The event channel closes after it.
     fn close(&self) -> BoxFuture<'_, ()>;
 
-    /// Starts a turn the provider asked for with [`ProviderEvent::ContinuationRequested`]
-    /// (`createdBy: agent`, `creationSource: provider` in TS). No user message is sent; the
-    /// turn shows the output the provider already holds for it.
-    fn start_continuation_turn(&self, _input: TurnInput) -> BoxFuture<'_, ProviderResult<()>> {
-        unsupported("start_continuation_turn")
-    }
-
     /// Sets the MCP servers every later turn of this session can use, replacing the previous
     /// list. A running process picks them up when the provider supports a live change.
     fn set_mcp_servers(&self, _servers: Vec<McpServer>) -> BoxFuture<'_, ProviderResult<()>> {
@@ -636,8 +629,9 @@ pub enum ProviderEvent {
         status: SteerStatus,
     },
     /// Not in `ProviderAdapterV2Event` (TS uses a separate service): the provider produced
-    /// output with no turn running and asks the engine to start a turn for it with
-    /// [`Session::start_continuation_turn`].
+    /// output with no turn running and asks the engine for a turn. The engine queues an agent
+    /// message with `creationSource: provider`; its turn reaches [`Session::start_turn`], which
+    /// shows the held output instead of sending a prompt.
     #[serde(rename = "continuation.requested")]
     ContinuationRequested(ContinuationRequest),
 }

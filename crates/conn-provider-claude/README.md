@@ -100,7 +100,7 @@ counts as background work (`Session::has_pending_background_work`).
 | `system` `task_progress` / `task_notification`    | `subagent.updated` and row with progress / result; child result message                                                |
 | frames with `parent_tool_use_id`                  | child-thread messages, reasoning and tool rows; held (capped) until `task_started`                                     |
 | Agent `tool_result`                               | settles a foreground subagent; a background launch ack is ignored                                                      |
-| root frames with no turn running                  | held (capped) and `continuation.requested`; `start_continuation_turn` replays them                                     |
+| root frames with no turn running                  | held (capped) and `continuation.requested`; the continuation turn (`creationSource: provider`) replays them                                     |
 | steer written (`priority: "now"`)                 | `steer.updated` pending; completed on `command_lifecycle` started or an echo; the `aborted_*` result folds in          |
 | `can_use_tool`                                    | approval: `node` + `runtime_request` + `turn_item` (`approval_request`)                                                |
 | `can_use_tool` AskUserQuestion / ExitPlanMode     | `user_input_request` / `plan.updated` (proposed plan)                                                                  |

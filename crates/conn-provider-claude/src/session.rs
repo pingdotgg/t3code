@@ -998,6 +998,24 @@ impl ClaudeSession {
         Ok(live_change)
     }
 
+    /// The provider's continuation turn: replays the output held for it.
+    async fn start_continuation(&self, input: TurnInput) -> ProviderResult<()> {
+        let (outs, query) = {
+            let mut state = self.inner.lock();
+            if state.mapper.turn_active() {
+                return Err(failed_err("start_turn", "a turn is running"));
+            }
+            let Some(live) = &state.live else {
+                return Err(ProviderError::SessionStopped);
+            };
+            let query = live.query.clone();
+            let mode = live.permission_mode.clone();
+            (state.mapper.begin_continuation(&input, &mode), query)
+        };
+        self.inner.deliver(Some(&query), outs).await;
+        Ok(())
+    }
+
     async fn start_turn_inner(&self, input: TurnInput) -> ProviderResult<()> {
         if self.inner.lock().mapper.turn_active() {
             return Err(failed_err(
@@ -1272,27 +1290,15 @@ impl Session for ClaudeSession {
         })
     }
 
+    /// A message the provider asked for (`createdBy: agent`, `creationSource: provider`) starts
+    /// a turn that shows the output Claude already holds, and sends no prompt
+    /// (`isClaudeProviderContinuationTurn`).
     fn start_turn(&self, input: TurnInput) -> BoxFuture<'_, ProviderResult<()>> {
-        Box::pin(self.start_turn_inner(input))
-    }
-
-    fn start_continuation_turn(&self, input: TurnInput) -> BoxFuture<'_, ProviderResult<()>> {
-        Box::pin(async move {
-            let (outs, query) = {
-                let mut state = self.inner.lock();
-                if state.mapper.turn_active() {
-                    return Err(failed_err("start_continuation_turn", "a turn is running"));
-                }
-                let Some(live) = &state.live else {
-                    return Err(ProviderError::SessionStopped);
-                };
-                let query = live.query.clone();
-                let mode = live.permission_mode.clone();
-                (state.mapper.begin_continuation(&input, &mode), query)
-            };
-            self.inner.deliver(Some(&query), outs).await;
-            Ok(())
-        })
+        if input.message.is_provider_continuation() {
+            Box::pin(self.start_continuation(input))
+        } else {
+            Box::pin(self.start_turn_inner(input))
+        }
     }
 
     fn steer_turn(&self, input: SteerInput) -> BoxFuture<'_, ProviderResult<()>> {
