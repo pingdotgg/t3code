@@ -281,6 +281,9 @@ function parseUvxPackageSpec(packageSpec: string): ExactPackageSpec {
   };
 }
 
+// Not "npm": installs made before dependency scripts were allowed may lack native deps; a new prefix reinstalls them once.
+const NPX_PREFIX_DIRECTORY = "npm-scripts";
+
 function packageManagerFor(distribution: AcpRegistryDistributionKind): "npm" | "uv" | undefined {
   return distribution === "npx" ? "npm" : distribution === "uvx" ? "uv" : undefined;
 }
@@ -352,7 +355,7 @@ export const acpRegistryManagedBinaryDirectories = Effect.fn("acpRegistryManaged
             installsDirectory,
             receipt.value.agentId,
             encodeURIComponent(receipt.value.agentVersion),
-            receipt.value.distribution === "npx" ? "npm" : "python",
+            receipt.value.distribution === "npx" ? NPX_PREFIX_DIRECTORY : "python",
             ...(receipt.value.distribution === "npx" && input.platform === "win32" ? [] : ["bin"]),
           ) &&
         path.dirname(receipt.value.executablePath) === receipt.value.binDirectory &&
@@ -660,7 +663,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
   const agentInstallRoot = (agent: AcpRegistryAgent) =>
     path.join(installsDirectory, agent.id, encodeURIComponent(agent.version));
   const packageInstallRoot = (agent: AcpRegistryAgent, distribution: "npx" | "uvx") =>
-    path.join(agentInstallRoot(agent), distribution === "npx" ? "npm" : "python");
+    path.join(agentInstallRoot(agent), distribution === "npx" ? NPX_PREFIX_DIRECTORY : "python");
   const packageBinDirectory = (agent: AcpRegistryAgent, distribution: "npx" | "uvx") =>
     distribution === "npx" && platform === "win32"
       ? packageInstallRoot(agent, distribution)
@@ -1280,11 +1283,32 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     const managerDirectory = yield* managerBinDirectory(managerPath);
     const installEnvironment = withPreferredPath(packageEnvironment, managerDirectory, platform);
     if (distribution === "npx") {
-      yield* runCommand(managerPath, ["install", "--global", packageSpec], {
-        env: installEnvironment,
-        timeout: PACKAGE_INSTALL_TIMEOUT,
-        truncatedOutputReason: "install_failed",
-      });
+      // npm 12 blocks dependency scripts by default and an agent's native deps are unknown before
+      // install, so allow all of them unless the user configured an allow-scripts policy. The query
+      // is --global because global installs ignore a project .npmrc.
+      const allowScriptsPolicy = yield* runCommand(
+        managerPath,
+        ["config", "get", "allow-scripts", "--global"],
+        {
+          env: installEnvironment,
+          timeout: PACKAGE_QUERY_TIMEOUT,
+          truncatedOutputReason: "install_failed",
+        },
+      );
+      yield* runCommand(
+        managerPath,
+        [
+          "install",
+          "--global",
+          ...(allowScriptsPolicy.trim() === "" ? ["--dangerously-allow-all-scripts"] : []),
+          packageSpec,
+        ],
+        {
+          env: installEnvironment,
+          timeout: PACKAGE_INSTALL_TIMEOUT,
+          truncatedOutputReason: "install_failed",
+        },
+      );
     } else {
       yield* runCommand(managerPath, ["tool", "install", "--force", packageSpec], {
         env: installEnvironment,
