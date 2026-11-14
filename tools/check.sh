@@ -100,6 +100,8 @@ monorepo_checks=(
   "acp instructions --check"
   "acp conformance"
   "grok probe conformance"
+  "thread-cli-diff"
+  "model-manifest-diff"
 )
 
 if [ -z "${CONN_MONOREPO:-}" ]; then
@@ -166,6 +168,12 @@ else
   run "acp conformance" node crates/conn-provider-acp/tools/conformance.mjs
   # T3's Grok status probe and ours against one stub CLI per scenario (no CLI, no model).
   run "grok probe conformance" node crates/conn-provider-acp/tools/probe-conformance.mjs
+  # Orbit's task-turn commands (`t3 thread`, `t3 auth session`) on the T3 server with its own
+  # CLI and on this server with ours, one stub codex each (about 2 minutes).
+  run "thread-cli-diff" node crates/conn-server/tools/thread-cli-diff.mjs "$release/conn-server"
+  # model-manifest.json: T3's encodeManifestCache against ours, on the bundled manifest.
+  run "model-manifest-diff" \
+    node crates/conn-server/tools/model-manifest-diff.mjs "$release/examples/model_manifest_cache"
 fi
 # orbit-flow needs no monorepo.
 run "orbit-flow (fake provider)" \
