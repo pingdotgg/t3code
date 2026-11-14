@@ -289,6 +289,7 @@ dependencies = [
  "futures-core",
  "getrandom 0.3.4",
  "jiff",
+ "regex-automata",
  "rusqlite",
  "rustix",
  "serde",

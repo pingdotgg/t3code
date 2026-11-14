@@ -8,6 +8,7 @@ pub mod home;
 pub mod host;
 pub mod http;
 pub mod keybindings;
+pub mod limits;
 pub mod methods;
 pub mod routes;
 pub mod scopes;
