@@ -416,6 +416,23 @@ function piApprovalRequestKind(title: string): "command" | "file-change" {
 /** Pi 1.4.0 rejects prompts with this when they race a compaction it already started. */
 const PI_COMPACTING_PROMPT_REJECTION = "Cannot submit a prompt while compaction is in progress";
 
+function piModelErrorFailure(errorMessage: string | undefined) {
+  // Pi prefixes the HTTP status to the raw response body, often a gateway's HTML page.
+  if (errorMessage !== undefined && /^\s*413\b/u.test(errorMessage)) {
+    return makeProviderFailure({
+      message:
+        "The model provider rejected the request as too large (HTTP 413). Sending again resends the same conversation; send /clear to continue with fresh context, or start a new thread.",
+      code: "413",
+      class: "provider_error",
+      retryable: false,
+    });
+  }
+  return makeProviderFailure({
+    message: errorMessage ?? "Pi reported a model error.",
+    class: "provider_error",
+  });
+}
+
 interface PiPromptSend {
   readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
   readonly kind: "turn_start" | "steer";
@@ -2187,10 +2204,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               turn.reportedModel = `${reportedProvider}/${reportedModelId}`;
             }
             if (recordString(message, "stopReason") === "error" && turn.failure === null) {
-              turn.failure = makeProviderFailure({
-                message: recordString(message, "errorMessage") ?? "Pi reported a model error.",
-                class: "provider_error",
-              });
+              turn.failure = piModelErrorFailure(recordString(message, "errorMessage"));
             }
             return;
           }
