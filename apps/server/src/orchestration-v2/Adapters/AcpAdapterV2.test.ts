@@ -5558,6 +5558,22 @@ describe("AcpAdapterV2", () => {
       ],
       optionId: "allow-once",
     },
+    {
+      label: "answers Always allow with the agent's option id unchanged when it has spaces",
+      options: [
+        { optionId: " opaque-choice ", name: "Allow once", kind: "allow_once" },
+        { optionId: "reject-once", name: "Reject", kind: "reject_once" },
+      ],
+      optionId: " opaque-choice ",
+    },
+    {
+      label: "answers Always allow with a whitespace-only option id instead of cancelling",
+      options: [
+        { optionId: " ", name: "Allow once", kind: "allow_once" },
+        { optionId: "reject-once", name: "Reject", kind: "reject_once" },
+      ],
+      optionId: " ",
+    },
   ] as const)("$label", ({ options, optionId }) =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
