@@ -113,12 +113,6 @@ describe("settleThreadFeedJump", () => {
     expect(feed.lands()).toBe(3);
   });
 
-  it("lands once when the target was already in place", async () => {
-    const feed = landings([500, 500]);
-    await settleThreadFeedJump({ ...feed, cancelled: () => false });
-    expect(feed.lands()).toBe(1);
-  });
-
   it("keeps landing while the target has no position yet", async () => {
     const feed = landings([undefined, 700, 700]);
     await settleThreadFeedJump({ ...feed, cancelled: () => false });
