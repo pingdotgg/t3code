@@ -102,6 +102,7 @@ import {
 } from "@t3tools/client-runtime/state/thread-workflows";
 import { compactionBlocksSteering } from "@t3tools/client-runtime/state/composer-dispatch";
 import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
+import { hasPendingProviderBackgroundWork } from "@t3tools/client-runtime/state/context-window";
 import { HandoffRow } from "./chat/V2LifecycleRow";
 import {
   codexFeedbackMessage,
@@ -2522,6 +2523,8 @@ export default function ChatView(props: ChatViewProps) {
     !compactDisabled &&
     !hasHeldQueuedRuns &&
     multipleModelSelections === null &&
+    // Background agents keep the session live and report into its next turn.
+    (serverProjection === null || !hasPendingProviderBackgroundWork(serverProjection)) &&
     shouldOfferResumeCompaction({
       provider: selectedProvider,
       usedTokens: activeContextWindow.usedTokens,

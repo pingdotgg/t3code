@@ -13,6 +13,7 @@ import {
   COMPACTION_SUGGESTION_MIN_TOKENS,
   isClaudeResumeCompactionQuestion,
 } from "@t3tools/shared/claudeCompaction";
+import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as DateTime from "effect/DateTime";
 
 import { resolvePendingHandoff } from "../handoff.ts";
@@ -234,6 +235,29 @@ export function shouldOfferResumeCompaction(input: {
 }
 
 /**
+ * Whether the provider still runs background agents or commands for the thread's latest run.
+ * Pull request watches do not count, and a queued run has not taken over the session yet.
+ */
+export function hasPendingProviderBackgroundWork(
+  projection: Pick<ThreadStructure, "thread" | "providerThreads" | "runs" | "turnItems">,
+): boolean {
+  const latestRun = projection.runs.reduce<ThreadStructure["runs"][number] | null>(
+    (latest, run) =>
+      run.status === "queued" || (latest !== null && latest.ordinal > run.ordinal) ? latest : run,
+    null,
+  );
+  return (
+    derivePendingBackgroundWork({
+      latestRun,
+      providerThreads: projection.providerThreads,
+      turnItems: projection.turnItems,
+      activeProviderThreadId: projection.thread.activeProviderThreadId,
+      runs: projection.runs,
+    }).length > 0
+  );
+}
+
+/**
  * The tokens a plain send into an idle thread compacts first, as web's composer does under
  * "When you return", or null when it sends as is. Web reads the same state for its "Compact and
  * send" button. A send that hands off to another conversation starts that one fresh, so only the
@@ -248,6 +272,7 @@ export function compactBeforeSendTokens(input: {
     | "providerTurns"
     | "runtimeRequests"
     | "runs"
+    | "turnItems"
     | "visibleTurnItems"
   >;
   readonly visibleTurnItems: ReadonlyArray<{ readonly item: ThreadStructureTurnItem }>;
@@ -297,6 +322,8 @@ export function compactBeforeSendTokens(input: {
   const providerThread = projection.providerThreads.find(
     (thread) => thread.id === activeProviderThreadId,
   );
+  // Background agents keep the session live and report into its next turn.
+  if (hasPendingProviderBackgroundWork(projection)) return null;
   const liveUsage = latestProviderTurnTokenUsage(
     projection.providerTurns.filter((turn) => turn.providerThreadId === activeProviderThreadId),
     input.selection.instanceId === projection.thread.modelSelection.instanceId ? projection : null,

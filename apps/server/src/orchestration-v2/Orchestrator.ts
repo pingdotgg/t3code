@@ -11129,8 +11129,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         occurredAt: now,
         payload: { ...queuedRun, queuePosition: 1 },
       });
+      // Stopping can end the provider process and its background work, so the message waits instead.
+      const targetProviderThread = projection.providerThreads.find(
+        (thread) => thread.id === target.providerThreadId,
+      );
+      const targetSession = projection.providerSessions.find(
+        (session) => session.id === targetProviderThread?.providerSessionId,
+      );
+      const holdsBackgroundWork =
+        (targetProviderThread?.pendingBackgroundTasks?.length ?? 0) > 0 ||
+        (targetProviderThread !== undefined &&
+          targetSession !== undefined &&
+          (yield* sessionHasBackgroundWork(targetSession, [targetProviderThread])));
       const stops =
-        isLiveRun(target) && !(yield* stopReachedRun(command, command.threadId, target.id));
+        isLiveRun(target) &&
+        !holdsBackgroundWork &&
+        !(yield* stopReachedRun(command, command.threadId, target.id));
       return yield* stopRunForQueuedCommand({
         command,
         events,
