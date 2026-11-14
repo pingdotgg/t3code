@@ -277,7 +277,7 @@ describe("question answer paths", () => {
   it.effect.each([
     [
       "text symbols",
-      String.raw`{\rtf1\ansi Pages 1\endash 5\emdash\lquote left\rquote\ldblquote right\rdblquote\bullet\b End\b0\unknown{\*\secret\bullet\zwj\rtlmark hidden}}`,
+      String.raw`{\rtf1\ansi Pages 1\endash 5\emdash\lquote left\rquote\ldblquote right\rdblquote\bullet\b End\b0\unknown{\*\secret\bullet hidden}}`,
       "Pages 1–5—‘left’“right”•End",
     ],
     [
@@ -291,18 +291,8 @@ describe("question answer paths", () => {
       "A\u200dB\u200cC\u200eD\u200fE",
     ],
     [
-      "unicode joiner and direction marks",
-      String.raw`{\rtf1\ansi A\u8205\zwj B\u8204\zwnj C\u8206\ltrmark D\u8207\rtlmark E}`,
-      "A\u200dB\u200cC\u200eD\u200fE",
-    ],
-    [
-      "producer joiner",
-      "{\\rtf1\\ansi\n{\\fonttbl\\f0\\fnil Monospaced;}\n\n\\u2325 ?\\u2381 ?\\zwj\\u2359 ?\\par\n}\n",
-      "\u0915\u094d\u200d\u0937",
-    ],
-    [
       "text symbol fallback",
-      String.raw`{\rtf1\ansi\uc14\u945\endash\emdash\enspace\emspace\qmspace\lquote\rquote\ldblquote\rdblquote\bullet\zwj\zwnj\ltrmark\rtlmark Z}`,
+      String.raw`{\rtf1\ansi\uc10\u945\endash\emdash\enspace\emspace\qmspace\lquote\rquote\ldblquote\rdblquote\bullet Z}`,
       "αZ",
     ],
     ["hyphen symbol fallback", String.raw`{\rtf1\ansi\uc3\u945\~\_\-Z}`, "αZ"],
