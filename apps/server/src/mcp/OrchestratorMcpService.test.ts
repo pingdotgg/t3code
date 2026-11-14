@@ -708,7 +708,15 @@ describe("OrchestratorMcpService", () => {
           cancelDelegatedTask: ({ command, stopDescendants }) =>
             stopDescendants(() => Effect.die("No remote descendants in this test")).pipe(
               Effect.andThen(Ref.update(dispatched, (commands) => [...commands, command])),
-              Effect.andThen(Effect.fail(new Error("simulated stop failure") as never)),
+              Effect.andThen(
+                Effect.fail(
+                  new OrchestratorDispatchError({
+                    commandId: command.commandId,
+                    commandType: command.type,
+                    cause: new Error("simulated stop failure"),
+                  }) as never,
+                ),
+              ),
             ),
         }),
         ServerSettings.layerTest(),
@@ -740,102 +748,16 @@ describe("OrchestratorMcpService", () => {
           .cancelTask(scope, { taskId, clientRequestId: "cancel-failed-task" })
           .pipe(Effect.flip);
         assert.equal(error.code, "task_not_cancellable");
+        assert.equal(
+          error.message,
+          `Unable to stop delegated task ${taskId}: simulated stop failure`,
+        );
         assert.deepEqual(
           (yield* Ref.get(dispatched)).map((command) => (command as { type: string }).type),
           ["thread.stop"],
         );
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
     }),
-  );
-
-  it.effect(
-    "reports the dispatch cause instead of the generic wrapper when stopping a delegated task fails",
-    () =>
-      Effect.gen(function* () {
-        const parentThreadId = ThreadId.make("thread:mcp-cancel-stop-cause-parent");
-        const childThreadId = ThreadId.make("thread:mcp-cancel-stop-cause-child");
-        const childRunId = RunId.make("run:mcp-cancel-stop-cause-child");
-        const taskId = NodeId.make("node:mcp-cancel-stop-cause-task");
-        const parentProjection = {
-          thread: { id: parentThreadId },
-          runs: [],
-          contextTransfers: [],
-          subagents: [
-            {
-              id: taskId,
-              threadId: parentThreadId,
-              origin: "app_owned",
-              childThreadId,
-              driver: "codex",
-              model: "gpt-5.6-terra",
-              result: null,
-              completionDelivery: { state: "pending" },
-            },
-          ],
-        } as unknown as OrchestrationV2ThreadProjection;
-        const childProjection = {
-          thread: { id: childThreadId, title: "Child" },
-          runs: [{ id: childRunId, status: "running" }],
-          contextTransfers: [],
-          messages: [],
-          subagents: [],
-          providerThreads: [],
-          providerTurns: [],
-          runtimeRequests: [],
-        } as unknown as OrchestrationV2ThreadProjection;
-        const layerDependencies = Layer.mergeAll(
-          NodeServices.layer,
-          NodeCrypto.layer,
-          Layer.mock(ThreadManagementService.ThreadManagementService)({
-            getThreadRecords: (threadId) =>
-              Effect.succeed(threadId === parentThreadId ? parentProjection : childProjection),
-            getThreadShell: (threadId) => Effect.succeed(liveThreadShell(threadId)),
-            listAppOwnedChildThreadIds: () => Effect.succeed([]),
-            stopDelegatedTasks: () => Effect.void,
-            cancelDelegatedTask: ({ command }) =>
-              Effect.fail(
-                new OrchestratorDispatchError({
-                  commandId: command.commandId,
-                  commandType: command.type,
-                  cause: new Error("private-storage-path"),
-                }) as never,
-              ),
-          }),
-          ServerSettings.layerTest(),
-          Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
-          Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
-            list: () => Effect.succeed([]),
-          }),
-          Layer.mock(ProjectService.ProjectService)({}),
-          Layer.mock(SecretRequests.SecretRequests)({}),
-          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
-          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-        );
-        const scope: McpInvocationScope = {
-          environmentId: EnvironmentId.make("environment:mcp-cancel-stop-cause"),
-          requestNamespace: "provider-session:mcp-cancel-stop-cause",
-          thread: {
-            threadId: parentThreadId,
-            providerSessionId: "provider-session:mcp-cancel-stop-cause",
-            providerInstanceId: ProviderInstanceId.make("codex"),
-          },
-          client: undefined,
-          capabilities: new Set(["orchestration"]),
-          issuedAt: 1,
-        };
-        const error = yield* Effect.gen(function* () {
-          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-          return yield* service
-            .cancelTask(scope, { taskId, clientRequestId: "cancel-stop-dispatch-cause" })
-            .pipe(Effect.flip);
-        }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
-        assert.equal(error.code, "task_not_cancellable");
-        assert.equal(
-          error.message,
-          `Unable to stop delegated task ${taskId}: private-storage-path`,
-        );
-        assert.notInclude(error.message, "Failed to dispatch orchestration command");
-      }),
   );
 
   it.effect("returns cancel requested when post-stop disposal fails", () =>
@@ -983,7 +905,7 @@ describe("OrchestratorMcpService", () => {
                     new OrchestratorDispatchError({
                       commandId: command.commandId,
                       commandType: command.type,
-                      cause: new Error("private-storage-path"),
+                      cause: new Error("refused by the orchestrator"),
                     }) as never,
                   )
                 : Effect.succeed({} as never),
@@ -1019,9 +941,8 @@ describe("OrchestratorMcpService", () => {
         assert.equal(error.code, "orchestration_error");
         assert.equal(
           error.message,
-          `Unable to dispose delegated task ${taskId} completion delivery: private-storage-path`,
+          `Unable to dispose delegated task ${taskId} completion delivery: refused by the orchestrator`,
         );
-        assert.notInclude(error.message, "Failed to dispatch orchestration command");
       }),
   );
 
@@ -2173,7 +2094,7 @@ describe("OrchestratorMcpService provider resolution", () => {
               new OrchestratorDispatchError({
                 commandId: command.commandId,
                 commandType: command.type,
-                cause: new Error("private-storage-path"),
+                cause: new Error("refused by the orchestrator"),
               }) as never,
             ),
         }),
@@ -2202,8 +2123,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           .pipe(Effect.flip);
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
       assert.equal(error.code, "orchestration_error");
-      assert.include(error.message, "private-storage-path");
-      assert.notInclude(error.message, "Failed to dispatch orchestration command");
+      assert.equal(error.message, "Unable to create delegated task: refused by the orchestrator");
     }),
   );
 
@@ -2241,7 +2161,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                     new OrchestratorDispatchError({
                       commandId: command.commandId,
                       commandType: command.type,
-                      cause: new Error("private-storage-path"),
+                      cause: new Error("refused by the orchestrator"),
                     }) as never,
                   )
                 : Effect.succeed({} as never),
@@ -2270,8 +2190,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             .pipe(Effect.flip);
         }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
         assert.equal(error.code, "orchestration_error");
-        assert.equal(error.message, `${prefix}private-storage-path`);
-        assert.notInclude(error.message, "Failed to dispatch orchestration command");
+        assert.equal(error.message, `${prefix}refused by the orchestrator`);
       }),
   );
 
@@ -4032,7 +3951,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                 new OrchestratorDispatchError({
                   commandId: input.commandId,
                   commandType: "thread.interrupt",
-                  cause: new Error("private-storage-path"),
+                  cause: new Error("refused by the orchestrator"),
                 }) as never,
               ),
           }),
@@ -4056,8 +3975,10 @@ describe("OrchestratorMcpService provider resolution", () => {
             .pipe(Effect.flip);
         }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
         assert.equal(error.code, "orchestration_error");
-        assert.include(error.message, "private-storage-path");
-        assert.notInclude(error.message, "Failed to dispatch orchestration command");
+        assert.equal(
+          error.message,
+          `Unable to interrupt thread ${parentThreadId}: refused by the orchestrator`,
+        );
       }),
   );
 
