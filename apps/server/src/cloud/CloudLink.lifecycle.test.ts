@@ -715,29 +715,35 @@ describe("releaseManagedTunnelOnShutdown", () => {
     );
   });
 
-  it.effect("clears the revoked mark when the environment is linked again", () => {
-    const { store } = makeMemorySecretStore([
-      [RELAY_URL_SECRET, "https://relay.example.test"],
-      [CLOUD_LINKED_USER_ID, "user-123"],
-      [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "revoked-credential"],
-      [CLOUD_LINK_REVOKED, "true"],
-    ]);
-    const cloudMintPublicKey =
-      "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAqZ2u2LjMoAyG2QTHXmITJ9w6RzZtVUAv394XCcPV0zE=\n-----END PUBLIC KEY-----";
+  it.effect.each([
+    { account: "the same", cloudUserId: "user-123" },
+    { account: "a different", cloudUserId: "user-456" },
+  ])(
+    "clears the revoked mark when the environment is linked again to $account account",
+    ({ cloudUserId }) => {
+      const { store } = makeMemorySecretStore([
+        [RELAY_URL_SECRET, "https://relay.example.test"],
+        [CLOUD_LINKED_USER_ID, "user-123"],
+        [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "revoked-credential"],
+        [CLOUD_LINK_REVOKED, "true"],
+      ]);
+      const cloudMintPublicKey =
+        "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAqZ2u2LjMoAyG2QTHXmITJ9w6RzZtVUAv394XCcPV0zE=\n-----END PUBLIC KEY-----";
 
-    return Effect.gen(function* () {
-      const link = yield* CloudLink.CloudLink;
-      expect((yield* link.linkState()).linkRevoked).toBe(true);
-      yield* link.applyRelayConfig({
-        relayUrl: "https://relay.example.test",
-        cloudUserId: "user-123",
-        environmentCredential: "fresh-credential",
-        cloudMintPublicKey,
-        endpointRuntime: null,
-      });
-      expect(yield* link.linkState()).toMatchObject({ linked: true, linkRevoked: false });
-    }).pipe(provideReleaseHarness({ store, applyConfigCalls: [], requests: [] }));
-  });
+      return Effect.gen(function* () {
+        const link = yield* CloudLink.CloudLink;
+        expect((yield* link.linkState()).linkRevoked).toBe(true);
+        yield* link.applyRelayConfig({
+          relayUrl: "https://relay.example.test",
+          cloudUserId,
+          environmentCredential: "fresh-credential",
+          cloudMintPublicKey,
+          endpointRuntime: null,
+        });
+        expect(yield* link.linkState()).toMatchObject({ linked: true, linkRevoked: false });
+      }).pipe(provideReleaseHarness({ store, applyConfigCalls: [], requests: [] }));
+    },
+  );
 
   it.effect(
     "starts a connector with a marker for the current origin without contacting relay",
