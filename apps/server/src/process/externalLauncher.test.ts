@@ -340,6 +340,7 @@ it.effect("launches an installed editor with platform-safe arguments", () =>
     assert.deepEqual(spawned.args, []);
     assert.equal(spawned.options.shell, true);
     assert.equal(spawned.options.detached, true);
+    assert.equal(spawned.options.windowsHide, true);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
