@@ -209,6 +209,20 @@ it("keeps decimal markers in nested user lists while documents keep their counte
   ).toEqual(["decimal", "lower-alpha", "lower-roman"]);
 });
 
+it("keeps single tildes in assistant replies and renders double-tilde strikethrough", async () => {
+  setup();
+  const text = "1~3月的数据不完整，建议使用4~9月的数据进行对比。 ~~删除~~";
+  await using screen = await renderText(text, { assistantReply: true, isStreaming: true });
+  await vi.waitFor(() => {
+    expect(screen.container.textContent).toBe(
+      "1~3月的数据不完整，建议使用4~9月的数据进行对比。 删除",
+    );
+    expect([...screen.container.querySelectorAll("del")].map((node) => node.textContent)).toEqual([
+      "删除",
+    ]);
+  });
+});
+
 it("shows unavailable audio when a workspace embed has no thread", async () => {
   setup();
   await using screen = await renderText("![recording](clip.wav)");
