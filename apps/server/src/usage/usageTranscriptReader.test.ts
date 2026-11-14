@@ -13,6 +13,8 @@ import * as Schema from "effect/Schema";
 import { TEST_FORMATS } from "./usageTestFormats.ts";
 import {
   listTranscriptFiles,
+  physicalSourceIdOf,
+  readPhysicalSourceId,
   readTranscriptRecords,
   transcriptLineGate,
 } from "./usageTranscriptReader.ts";
@@ -575,5 +577,51 @@ describe("transcriptLineGate", () => {
         assert.isFalse(gates[kind](Buffer.from(`{"text":"日本語 é ${marker.slice(1, -1)}"}`)));
       }
     }
+  });
+});
+
+describe("readPhysicalSourceId", () => {
+  const scope = "0123456789abcdef0123456789abcdef";
+  const windowsPath = "C:\\Users\\User\\.claude\\projects";
+
+  // One NTFS directory the Windows server reads natively and the WSL server
+  // through drvfs. The temp dir stands in for the drive's mount point.
+  async function drvfsFixture(extraMounts: (escapedMountPoint: string) => string = () => "") {
+    const mountPoint = NodePath.join(dir, "drive c");
+    await NodeFSP.mkdir(NodePath.join(mountPoint, "Users", "User", ".claude", "projects"), {
+      recursive: true,
+    });
+    const escaped = mountPoint.replaceAll(" ", "\\040");
+    const mountInfoPath = NodePath.join(dir, "mountinfo");
+    await NodeFSP.writeFile(
+      mountInfoPath,
+      [
+        "24 1 8:32 / / rw,relatime shared:1 - ext4 /dev/sdc rw,discard",
+        `81 24 0:61 / ${escaped} rw,noatime shared:2 - 9p C:\\134 rw,dirsync,aname=drvfs;path=C:\\;uid=1000;gid=1000;symlinkroot=/mnt/,mmap,access=client,msize=65536,trans=fd`,
+        extraMounts(escaped),
+      ].join("\n"),
+    );
+    return { mountPoint, mountInfoPath };
+  }
+
+  it("names a drvfs directory as the Windows server names it, whatever its typed case", async () => {
+    const { mountPoint, mountInfoPath } = await drvfsFixture();
+    const wslId = await readPhysicalSourceId(
+      `${mountPoint}/users/user/.claude/projects`,
+      scope,
+      "linux",
+      mountInfoPath,
+    );
+    assert.strictEqual(wslId, physicalSourceIdOf(scope, windowsPath));
+  });
+
+  it("gives no identity to native or shadowing Linux mounts, or without a desktop scope", async () => {
+    const { mountPoint, mountInfoPath } = await drvfsFixture(
+      (escaped) => `90 81 8:48 / ${escaped}/Users rw,relatime - ext4 /dev/sdd rw`,
+    );
+    const projects = `${mountPoint}/Users/User/.claude/projects`;
+    assert.isUndefined(await readPhysicalSourceId(projects, scope, "linux", mountInfoPath));
+    assert.isUndefined(await readPhysicalSourceId(dir, scope, "linux", mountInfoPath));
+    assert.isUndefined(await readPhysicalSourceId(projects, undefined, "linux", mountInfoPath));
   });
 });
