@@ -8,6 +8,11 @@ import {
   type PreviewStreamPointer,
   type PreviewStreamViewport,
 } from "@t3tools/client-runtime/preview/server-browser-stream";
+import {
+  type AccessibleDocumentView,
+  createAccessibleDocumentView,
+} from "@t3tools/client-runtime/preview/accessible-document";
+import type { PreviewAccessibilityDocument } from "@t3tools/contracts";
 
 import type { PreviewStreamConfiguration, PreviewStreamMessage } from "./preview-stream-document";
 
@@ -46,6 +51,7 @@ interface Viewer {
   readonly stop: () => void;
   readonly command: (input: PreviewStreamInput) => void;
   readonly togglePictureInPicture: () => void;
+  readonly accessibility: (enabled: boolean) => void;
 }
 
 let activeViewer: Viewer | null = null;
@@ -62,6 +68,16 @@ export function command(input: PreviewStreamInput) {
 export function pictureInPicture() {
   activeViewer?.togglePictureInPicture();
 }
+
+export function accessibility(enabled: boolean) {
+  activeViewer?.accessibility(enabled);
+}
+
+/** The app's theme only sends a background, so pick the text color that contrasts with it. */
+const readableTextColor = (background: string) => {
+  const [red = 255, green = 255, blue = 255] = (background.match(/\d+(\.\d+)?/g) ?? []).map(Number);
+  return 0.2126 * red + 0.7152 * green + 0.0722 * blue > 140 ? "#111" : "#f5f5f5";
+};
 
 export function start(configuration: PreviewStreamConfiguration) {
   stop();
@@ -87,15 +103,25 @@ export function start(configuration: PreviewStreamConfiguration) {
   input.spellcheck = false;
   input.setAttribute("autocorrect", "off");
   input.disabled = true;
-  document.body.replaceChildren(container, ...(interactive ? [input] : []));
+  // The page as a document the platform screen reader can walk; empty until turned on.
+  const accessibleContainer = document.createElement("div");
+  accessibleContainer.className = "accessible-view";
+  accessibleContainer.hidden = true;
+  document.body.replaceChildren(container, ...(interactive ? [input, accessibleContainer] : []));
 
   let stopped = false;
   let streaming = false;
+  let painted = false;
   let viewport: PreviewStreamViewport | null = null;
   let size: { width: number; height: number } | null = null;
   let cap: { width: number; height: number } | null = null;
   let client: PreviewStreamClient | null = null;
   let control: PreviewStreamControl | null = null;
+  let accessible = false;
+  let accessibleView: AccessibleDocumentView | null = null;
+  let accessibleDocument: PreviewAccessibilityDocument | null = null;
+  const showAccessibleDocument = () =>
+    accessibleView?.update(accessibleDocument, control?.controller === "you");
   let resizeTimer: ReturnType<typeof setTimeout> | null = null;
   let wheelFrame: number | null = null;
   let pendingWheel: WheelInput | null = null;
@@ -131,12 +157,19 @@ export function start(configuration: PreviewStreamConfiguration) {
     button: MouseInput["button"];
   } | null = null;
 
-  const reportStatus = (status: "connecting" | "streaming") => {
+  const reportStatus = (status: "connecting" | "streaming", preserveControl?: boolean) => {
     streaming = status === "streaming";
-    post({ type: "status", status });
+    post({ type: "status", status, ...(preserveControl ? { preserveControl } : {}) });
+  };
+  // The semantic view covers the canvas, so only its document shows the page while it is on.
+  const syncStatus = () => {
+    const ready = accessible ? accessibleDocument !== null : painted;
+    if (stopped || ready === streaming) return;
+    reportStatus(ready ? "streaming" : "connecting", !ready);
   };
   const painter = createPreviewFramePainter(canvas, () => {
-    if (!streaming && !stopped) reportStatus("streaming");
+    painted = true;
+    syncStatus();
     sendPictureInPictureFrame();
   });
   const send = (message: PreviewStreamInput) => client?.send(message) ?? false;
@@ -155,6 +188,7 @@ export function start(configuration: PreviewStreamConfiguration) {
   };
 
   const connect = () => {
+    painted = false;
     if (client) reportStatus("connecting");
     client?.stop();
     control = null;
@@ -205,10 +239,11 @@ export function start(configuration: PreviewStreamConfiguration) {
           const previous = control;
           control = nextControl;
           post({ type: "control", ...nextControl });
+          showAccessibleDocument();
           if (nextControl.controller === "you") agentCursor.style.opacity = "0";
           if (nextControl.controller !== "you") clearInput();
           else {
-            input.disabled = !interactive;
+            input.disabled = !interactive || accessible;
             if (interactive && size && previous?.controller !== "you")
               next.send({ type: "resize", ...size });
           }
@@ -216,17 +251,25 @@ export function start(configuration: PreviewStreamConfiguration) {
         onConnectedChange: (connected) => {
           if (!connected) {
             control = null;
+            painted = false;
             clearInput();
-            if (streaming) reportStatus("connecting");
+            reportStatus("connecting");
             return;
           }
         },
         onUnauthorized: () => post({ type: "unauthorized" }),
         onGone: () => post({ type: "gone" }),
         onHostSetup: (setup) => post({ type: "hostSetup", ...setup }),
+        onAccessibility: (document) => {
+          accessibleDocument = document;
+          showAccessibleDocument();
+          syncStatus();
+        },
+        onAccessibilityNotice: (message) => accessibleView?.notice(message),
       },
     );
     client = next;
+    next.accessibility(accessible);
   };
 
   const measure = () => {
@@ -671,9 +714,34 @@ export function start(configuration: PreviewStreamConfiguration) {
     }
   };
 
+  const setAccessible = (enabled: boolean) => {
+    // Passive previews never subscribe, even if asked.
+    if (!interactive || enabled === accessible) return;
+    accessible = enabled;
+    input.disabled = enabled || control?.controller !== "you";
+    client?.accessibility(enabled);
+    accessibleContainer.hidden = !enabled;
+    container.setAttribute("aria-hidden", String(enabled));
+    if (enabled) {
+      accessibleContainer.style.color = readableTextColor(
+        getComputedStyle(document.body).backgroundColor,
+      );
+      accessibleView = createAccessibleDocumentView(accessibleContainer, {
+        onAction: (action) => send(action),
+      });
+      showAccessibleDocument();
+    } else {
+      accessibleView?.destroy();
+      accessibleView = null;
+      accessibleDocument = null;
+    }
+    syncStatus();
+  };
+
   activeViewer = {
     stop: () => {
       stopped = true;
+      setAccessible(false);
       observer.disconnect();
       visualViewport?.removeEventListener("resize", followVisualViewport);
       visualViewport?.removeEventListener("scroll", followVisualViewport);
@@ -691,6 +759,7 @@ export function start(configuration: PreviewStreamConfiguration) {
       send(message);
     },
     togglePictureInPicture,
+    accessibility: setAccessible,
   };
   window.addEventListener("pagehide", stop, { once: true });
   reportStatus("connecting");

@@ -42,6 +42,7 @@ import * as DesktopChannel from "./DesktopBrowserChannel.ts";
 import * as Manager from "./Manager.ts";
 import * as PreviewAgentActivity from "./PreviewAgentActivity.ts";
 import * as ServerBrowser from "./ServerBrowser.ts";
+import { ServerBrowserAccessibility } from "./ServerBrowserAccessibility.ts";
 import * as PreviewBrowser from "./PreviewBrowser.ts";
 
 vi.mock("./ServerBrowserContexts.ts", () => ({
@@ -106,6 +107,9 @@ function makeSession(
   const events = new NodeEvents.EventEmitter();
   return {
     on: vi.fn((name: string, callback: (...args: unknown[]) => void) => events.on(name, callback)),
+    off: vi.fn((name: string, callback: (...args: unknown[]) => void) =>
+      events.off(name, callback),
+    ),
     emit: (name: string, ...args: unknown[]) => events.emit(name, ...args),
     emitAsync: (name: string, ...args: unknown[]) =>
       Promise.all(events.listeners(name).map((listener) => listener(...args))),
@@ -120,7 +124,21 @@ function makeSession(
       }
       // Snapshots shrink their screenshot in the page; the header stands in for the result.
       if (method === "Runtime.callFunctionOn") return { result: { value: PNG_HEADER } };
-      if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "main" } } };
+      if (method === "Page.getFrameTree") {
+        return { frameTree: { frame: { id: "main", loaderId: axLoader } } };
+      }
+      if (method === "Accessibility.getFullAXTree") return { nodes: axNodes };
+      if (method === "DOM.describeNode") {
+        const { backendNodeId } = input as { backendNodeId: number };
+        return {
+          node: { nodeName: "INPUT", attributes: backendNodeId === 30 ? ["type", "password"] : [] },
+        };
+      }
+      if (method === "DOM.resolveNode") {
+        return {
+          object: { objectId: `node-${(input as { backendNodeId: number }).backendNodeId}` },
+        };
+      }
       if (method === "Page.createIsolatedWorld") {
         return {
           executionContextId:
@@ -392,6 +410,8 @@ let pageCopy = "";
 let keyCopy = "";
 let focusedFrame: ReturnType<typeof makeFrame> | null = null;
 let contextFailure: Error | null = null;
+let axLoader = "loader-1";
+let axNodes: Array<Record<string, unknown>> = [];
 let pageSetupFailure: Error | null = null;
 let initialNavigation: (() => Promise<void>) | null = null;
 let desktopRendersNext = false;
@@ -580,6 +600,8 @@ beforeEach(() => {
   pageCopy = "";
   keyCopy = "";
   focusedFrame = null;
+  axLoader = "loader-1";
+  axNodes = pageTree();
   desktopTabs.clear();
   shownDesktopTabs.clear();
   desktopLoadFailures.clear();
@@ -3280,6 +3302,219 @@ it.effect(
     ).pipe(Effect.provide(layer)),
 );
 
+const axNode = (
+  nodeId: string,
+  role: string,
+  extra: Record<string, unknown> = {},
+  childIds: Array<string> = [],
+) => ({
+  nodeId,
+  ignored: false,
+  role: { value: role },
+  childIds,
+  ...extra,
+  ...(typeof extra.name === "string" ? { name: { value: extra.name } } : {}),
+});
+const pageTree = () => [
+  axNode("1", "RootWebArea", { name: "Shop" }, ["2", "3", "4"]),
+  axNode("2", "heading", {
+    backendDOMNodeId: 10,
+    properties: [{ name: "level", value: { value: 1 } }],
+    name: "Cart",
+  }),
+  axNode("3", "button", { backendDOMNodeId: 20, name: "Checkout" }),
+  {
+    ...axNode("4", "textbox", { backendDOMNodeId: 30, name: "Password" }),
+    value: { value: "hunter2" },
+  },
+];
+const accessibilitySession = () =>
+  contexts[0]!.sessions.findLast((session) =>
+    session.send.mock.calls.some(([method]) => method === "Accessibility.enable"),
+  )!;
+const takeAccessibility = Effect.fn(function* (viewer: ServerBrowser.ServerBrowserViewer) {
+  for (;;) {
+    const output = yield* Queue.take(viewer.output);
+    if (output._tag === "accessibility" || output._tag === "accessibilityNotice") return output;
+  }
+});
+
+it.effect("a read-only viewer reads the page's semantics but cannot act through them", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
+      const reader = yield* browser.attachViewer(viewerInput(tabId, false));
+      expect(
+        contexts[0]!.sessions.some((session) =>
+          session.send.mock.calls.some(([method]) => method.startsWith("Accessibility.")),
+        ),
+      ).toBe(false);
+      yield* reader.accessibility(true);
+      const shown = yield* takeAccessibility(reader);
+      expect(shown).toMatchObject({
+        _tag: "accessibility",
+        document: {
+          document: expect.stringContaining("loader-1"),
+        },
+      });
+      expect(JSON.stringify(shown)).not.toContain("hunter2");
+      const document = shown._tag === "accessibility" ? shown.document! : null;
+      expect(document!.root.children![2]).toMatchObject({ protected: true });
+      const button = document!.root.children![1]!;
+      yield* reader.input({
+        type: "accessibilityAction",
+        document: document!.document,
+        node: button.id,
+        action: "activate",
+      });
+      const session = accessibilitySession();
+      expect(session.send.mock.calls.some(([method]) => method === "Runtime.callFunctionOn")).toBe(
+        false,
+      );
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("only the controller's current-document actions reach the page", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
+      const operator = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* operator.accessibility(true);
+      const shown = yield* takeAccessibility(operator);
+      const document = shown._tag === "accessibility" ? shown.document! : null;
+      const [, button, password] = document!.root.children!;
+      const act = (action: Record<string, unknown>) =>
+        operator.input({ type: "accessibilityAction", document: document!.document, ...action });
+
+      yield* act({ node: button!.id, action: "activate" });
+      expect(yield* takeAccessibility(operator)).toEqual({
+        _tag: "accessibilityNotice",
+        message: "Take control of the browser to use the page.",
+      });
+      const session = accessibilitySession();
+      expect(session.send.mock.calls.some(([method]) => method === "Runtime.callFunctionOn")).toBe(
+        false,
+      );
+
+      yield* operator.input({ type: "takeControl" });
+      yield* act({ node: button!.id, action: "activate" });
+      expect(session.send).toHaveBeenCalledWith(
+        "Runtime.callFunctionOn",
+        expect.objectContaining({ objectId: "node-20", userGesture: true }),
+      );
+      session.send.mockClear();
+
+      yield* act({ node: "0.404", action: "activate" });
+      expect(yield* takeAccessibility(operator)).toMatchObject({
+        message: "The page changed. Try again.",
+      });
+      yield* act({ node: password!.id, action: "activate" });
+      expect(yield* takeAccessibility(operator)).toMatchObject({
+        message: "That item cannot be activated.",
+      });
+      expect(session.send.mock.calls.some(([method]) => method === "Runtime.callFunctionOn")).toBe(
+        false,
+      );
+      yield* operator.input({ type: "releaseControl" });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("turning the view off or leaving releases the Accessibility domain and its session", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, false));
+      yield* viewer.accessibility(true);
+      const first = yield* takeAccessibility(viewer);
+      const session = accessibilitySession();
+
+      yield* viewer.accessibility(false);
+      expect(yield* takeAccessibility(viewer)).toEqual({ _tag: "accessibility", document: null });
+      expect(session.send).toHaveBeenCalledWith("Accessibility.disable");
+      expect(session.detach).toHaveBeenCalled();
+
+      // A new document replaces the old one wholesale, including removed nodes.
+      axLoader = "loader-2";
+      axNodes = pageTree().filter((node) => node.nodeId !== "3");
+      axNodes[0] = { ...axNodes[0]!, childIds: ["2", "4"] };
+      yield* viewer.accessibility(true);
+      const second = yield* takeAccessibility(viewer);
+      const before = first._tag === "accessibility" ? first.document! : null;
+      const after = second._tag === "accessibility" ? second.document! : null;
+      expect(after!.document).not.toBe(before!.document);
+      expect(after!.root.children!.map((node) => node.role)).toEqual(["heading", "textbox"]);
+
+      const reopened = accessibilitySession();
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const other = yield* browser.attachViewer(viewerInput(tabId, false));
+          yield* other.accessibility(true);
+          yield* takeAccessibility(other);
+        }),
+      );
+      expect(reopened.send).not.toHaveBeenCalledWith("Accessibility.disable");
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("a viewer whose backlog is replaced still gets the page's semantics", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
+      const operator = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* operator.accessibility(true);
+      const session = contexts[0]!.sessions.find((each) =>
+        each.on.mock.calls.some(([name]) => name === "Page.screencastFrame"),
+      )!;
+      // A stalled viewer: frames fill its queue behind the accepted document.
+      for (let index = 0; index < 80; index += 1) {
+        session.emit("Page.screencastFrame", { data: "ZnJhbWU=", sessionId: index });
+      }
+      yield* operator.input({
+        type: "accessibilityAction",
+        document: "stale-document",
+        node: "missing-node",
+        action: "activate",
+      });
+      yield* operator.input({ type: "takeControl" });
+      const backlog = yield* Queue.takeAll(operator.output);
+      expect(backlog.map((output) => output._tag)).toContain("control");
+      expect(backlog.filter((output) => output._tag === "accessibility")).toEqual([
+        expect.objectContaining({ document: expect.objectContaining({ version: 1 }) }),
+      ]);
+      expect(backlog.findIndex((output) => output._tag === "accessibilityNotice")).toBeGreaterThan(
+        backlog.findIndex((output) => output._tag === "accessibility"),
+      );
+      yield* operator.input({
+        type: "accessibilityAction",
+        document: "stale-document",
+        node: "missing-node",
+        action: "activate",
+      });
+      yield* operator.accessibility(false);
+      yield* operator.accessibility(true);
+      for (let index = 0; index < 80; index += 1) {
+        session.emit("Page.screencastFrame", { data: "ZnJhbWU=", sessionId: index });
+      }
+      yield* operator.input({ type: "takeControl" });
+      const refreshed = yield* Queue.takeAll(operator.output);
+      expect(refreshed.map((output) => output._tag)).not.toContain("accessibilityNotice");
+      expect(refreshed.filter((output) => output._tag === "accessibility")).toHaveLength(1);
+      for (let index = 0; index < 80; index += 1) {
+        session.emit("Page.screencastFrame", { data: "ZnJhbWU=", sessionId: index });
+      }
+      yield* operator.accessibility(false);
+      const disabled = yield* Queue.takeAll(operator.output);
+      expect(disabled.filter((output) => output._tag === "accessibility")).toEqual([
+        { _tag: "accessibility", document: null },
+      ]);
+      yield* operator.input({ type: "releaseControl" });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 // Holds the next profile save at its temp-file cleanup, after the rename, until released.
 const gateSaveCleanup = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -3685,6 +3920,34 @@ it.effect("failed session and browser launches release capacity, as does closing
         input: {},
       });
       expect(status.tabs).toHaveLength(8);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("a superseded accessibility failure leaves the newer viewer request enabled", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
+      const operator = yield* browser.attachViewer(viewerInput(tabId, true));
+      const started = Promise.withResolvers<void>();
+      const rejected = Promise.withResolvers<never>();
+      using subscribe = vi
+        .spyOn(ServerBrowserAccessibility.prototype, "subscribe")
+        .mockImplementationOnce(async () => {
+          started.resolve();
+          return rejected.promise;
+        })
+        .mockResolvedValue(undefined);
+      const first = yield* Effect.forkChild(operator.accessibility(true));
+      yield* Effect.promise(() => started.promise);
+      yield* operator.accessibility(false);
+      yield* operator.accessibility(true);
+      rejected.reject(new Error("Old startup failed"));
+      yield* Fiber.join(first);
+      const output = yield* Queue.takeAll(operator.output);
+      expect(output.filter((message) => message._tag === "accessibilityNotice")).toEqual([]);
+      yield* operator.accessibility(true);
+      expect(subscribe).toHaveBeenCalledTimes(2);
     }),
   ).pipe(Effect.provide(layer)),
 );

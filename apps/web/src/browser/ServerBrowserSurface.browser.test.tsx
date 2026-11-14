@@ -1,4 +1,4 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, type PreviewAccessibilityDocument } from "@t3tools/contracts";
 import type {
   PreviewStreamControl,
   PreviewStreamEvents,
@@ -13,6 +13,9 @@ const mocks = vi.hoisted(() => ({
   createClient: vi.fn<(target: unknown, handlers: PreviewStreamEvents) => unknown>(),
   sent: [] as PreviewStreamInput[],
   access: { url: "ws://preview.test", token: "test" },
+  subscriptions: [] as boolean[],
+  documentShown: false,
+  controller: "you" as PreviewStreamControl["controller"],
   painted: null as (() => void) | null,
 }));
 
@@ -34,14 +37,34 @@ import { ServerBrowserSurface } from "./ServerBrowserSurface";
 
 function setup() {
   mocks.sent.length = 0;
+  mocks.subscriptions.length = 0;
   mocks.painted = null;
-  mocks.createClient.mockReset().mockImplementation(() => ({
-    send: (input: PreviewStreamInput) => mocks.sent.push(input),
-    stop: () => undefined,
-  }));
+  mocks.documentShown = false;
+  mocks.createClient.mockReset().mockImplementation((_target, handlers) => {
+    queueMicrotask(() =>
+      handlers.onControl?.({
+        canOperate: true,
+        controller: mocks.controller,
+        generation: 1,
+        dialog: null,
+      }),
+    );
+    return {
+      send: (input: PreviewStreamInput) => mocks.sent.push(input),
+      accessibility: (enabled: boolean) => {
+        mocks.subscriptions.push(enabled);
+        if (!enabled && mocks.documentShown) {
+          mocks.documentShown = false;
+          handlers.onAccessibility?.(null);
+        }
+      },
+      stop: () => undefined,
+    };
+  });
 }
 
 async function renderSurface(controller: PreviewStreamControl["controller"]) {
+  mocks.controller = controller;
   const container = document.createElement("div");
   container.style.cssText = "width: 400px; height: 300px; display: flex;";
   await using stack = new AsyncDisposableStack();
@@ -219,4 +242,73 @@ describe("ServerBrowserSurface history", () => {
     press("pointerdown", 0);
     expect(mouseInputs()).not.toEqual([]);
   });
+});
+
+it("does not restore a previous page or notice after a PDF transition", async () => {
+  setup();
+  const { screen } = await renderSurface("you");
+  await using _screen = screen;
+  const handlers = () => mocks.createClient.mock.calls.at(-1)![1];
+  const deliver = (name: string) => {
+    mocks.documentShown = true;
+    handlers().onAccessibility?.(snapshot(name));
+  };
+  const snapshot = (name: string): PreviewAccessibilityDocument => ({
+    document: name,
+    version: 1,
+    truncated: false,
+    root: { id: name, role: "heading", name, level: 1 },
+  });
+  const surface = (pdfUrl: string | null) => (
+    <ServerBrowserSurface
+      environmentId={EnvironmentId.make("environment-copy")}
+      threadId="thread-copy"
+      tabId="tab-copy"
+      visible
+      followSize={false}
+      className="flex-1"
+      pdfUrl={pdfUrl}
+    />
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Accessible view" }));
+  await act(() => handlers().onAccessibilityNotice?.("Capture unavailable"));
+  await expect
+    .element(
+      screen.getByRole("region", { name: "Accessible view of the page" }).getByRole("status"),
+    )
+    .toHaveTextContent("Capture unavailable");
+  await screen.rerender(surface("about:blank"));
+  await screen.rerender(surface(null));
+  await expect
+    .element(
+      screen.getByRole("region", { name: "Accessible view of the page" }).getByRole("status"),
+    )
+    .toHaveTextContent("Loading the page's accessible view...");
+  await act(() => deliver("First page"));
+  await expect.element(screen.getByRole("heading", { name: "First page" })).toBeVisible();
+  await act(() => handlers().onAccessibilityNotice?.("Previous page notice"));
+  await expect
+    .element(
+      screen.getByRole("region", { name: "Accessible view of the page" }).getByRole("status"),
+    )
+    .toHaveTextContent("Previous page notice");
+  await act(() => deliver("Second page"));
+  await screen.rerender(surface("about:blank"));
+  await screen.rerender(surface(null));
+  await expect
+    .element(
+      screen.getByRole("region", { name: "Accessible view of the page" }).getByRole("status"),
+    )
+    .toHaveTextContent("Loading the page's accessible view...");
+  await expect
+    .element(screen.getByRole("heading", { name: "Second page" }))
+    .not.toBeInTheDocument();
+  await expect
+    .element(screen.getByRole("textbox", { name: "Browser page" }))
+    .not.toBeInTheDocument();
+  expect(mocks.subscriptions.slice(-2)).toEqual([false, true]);
+  await act(() => deliver("Current page"));
+  await expect.element(screen.getByRole("heading", { name: "Current page" })).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "Accessible view" }));
+  await expect.element(screen.getByRole("textbox", { name: "Browser page" })).toBeEnabled();
 });

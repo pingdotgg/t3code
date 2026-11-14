@@ -93,7 +93,7 @@ async function prepareStreamScripts() {
       ["packages/client-runtime/src/device", ["stream.ts", "hubAccess.ts"], generateAll],
       [
         "packages/client-runtime/src/preview",
-        ["serverBrowserStream.ts"],
+        ["serverBrowserStream.ts", "accessibleDocument.ts"],
         generatePreviewStreamScript,
       ],
     ]) {
