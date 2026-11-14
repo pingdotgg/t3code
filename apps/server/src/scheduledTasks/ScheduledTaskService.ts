@@ -1488,7 +1488,7 @@ export const layer = Layer.effect(
                   (yield* threadLaunch
                     .defaultWorktreeBaseRef(
                       input.projectId,
-                      input.workspaceStrategy.startFromOrigin,
+                      input.workspaceStrategy.startFromOrigin === true,
                     )
                     .pipe(
                       Effect.mapError((cause) =>

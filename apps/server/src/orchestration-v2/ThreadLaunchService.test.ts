@@ -203,7 +203,10 @@ function makeHarness(options: HarnessOptions = {}) {
       getById: (id) =>
         Effect.succeed(
           id === projectId
-            ? Option.some({ ...project, workspaceRoot: options.projectRoot ?? project.workspaceRoot })
+            ? Option.some({
+                ...project,
+                workspaceRoot: options.projectRoot ?? project.workspaceRoot,
+              })
             : id === otherProjectId
               ? Option.some(otherProject)
               : Option.none(),

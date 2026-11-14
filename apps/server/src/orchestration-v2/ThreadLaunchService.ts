@@ -499,10 +499,7 @@ const make = Effect.gen(function* () {
   });
 
   const defaultWorktreeBaseRef: ThreadLaunchService["Service"]["defaultWorktreeBaseRef"] =
-    Effect.fn("ThreadLaunchService.defaultWorktreeBaseRef")(function* (
-      projectId,
-      startFromOrigin,
-    ) {
+    Effect.fn("ThreadLaunchService.defaultWorktreeBaseRef")(function* (projectId, startFromOrigin) {
       const project = yield* projects.getById(projectId);
       if (Option.isNone(project)) return null;
       return yield* resolveDefaultWorktreeBaseRef(
