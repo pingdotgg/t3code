@@ -69,7 +69,6 @@ const transientCursorUpdates = new Set([
   "token-delta",
   "shell-output-delta",
   "partial-tool-call",
-  "tool-call-delta",
 ]);
 
 export type EventNdjsonStream = "native" | "canonical" | "orchestration";
@@ -228,8 +227,13 @@ export function shouldPersistProviderEvent(stream: EventNdjsonStream, event: unk
     }
 
     if (nativeType === "interaction.update") {
-      const update = Reflect.get(nativeEvent, "update");
+      let update = Reflect.get(nativeEvent, "update");
       if (typeof update !== "object" || update === null) return true;
+      // Subagent updates arrive wrapped; keep the wrapper when it carries a lifecycle record.
+      if (Reflect.get(update, "type") === "tool-call-delta") {
+        update = Reflect.get(update, "taskUpdate");
+        if (typeof update !== "object" || update === null) return true;
+      }
       const updateType = Reflect.get(update, "type");
       return typeof updateType !== "string" || !transientCursorUpdates.has(updateType);
     }

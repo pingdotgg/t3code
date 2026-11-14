@@ -285,6 +285,12 @@ it.layer(NodeServices.layer)("EventNdjsonLogger", (it) => {
       ].map(cursorUpdate);
       const retained = [
         { type: "tool-call-started", callId: "call-1", modelCallId: "m-1", toolCall },
+        {
+          type: "tool-call-delta",
+          callId: "call-1",
+          modelCallId: "m-1",
+          taskUpdate: { type: "tool-call-completed", callId: "call-2", toolCall },
+        },
         { type: "tool-call-completed", callId: "call-1", modelCallId: "m-1", toolCall },
         { type: "turn-ended" },
       ].map(cursorUpdate);
