@@ -1,5 +1,5 @@
 import { PullRequestProviderError } from "@t3tools/source-control-core/server/PullRequestProvider";
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import { PullRequestUnavailableError, SourceControlProviderKind } from "@t3tools/contracts";
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
 import { createOrchestrationV2TurnItemVisibility } from "@t3tools/shared/orchestrationV2Timeline";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -3806,6 +3806,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     { reason: "failed", activityFails: true },
     { reason: "not-found", activityFails: true },
     { reason: "forbidden", activityFails: true },
+    { reason: "cli-missing", activityFails: false },
+    { reason: "cli-missing", activityFails: true },
+    { reason: "cli-unauthenticated", activityFails: false },
+    { reason: "cli-unauthenticated", activityFails: true },
   ] as const)(
     "handles repeated host read failures: $reason (activity fails: $activityFails)",
     ({ reason, activityFails }) =>
@@ -3849,18 +3853,26 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         let disconnected = false;
         let passed = false;
         let genericFailure = false;
+        const activityOnly =
+          activityFails && (reason === "cli-missing" || reason === "cli-unauthenticated");
         const activityFailures = yield* Queue.unbounded<void>();
-        const readFailure = (operation: string, failure: "failed" | "not-found" | "forbidden") =>
-          new PullRequestOperationError({
-            operation,
-            detail: "host read failed",
-            cause: new PullRequestProviderError({
-              provider: SourceControlProviderKind.make("github"),
-              operation,
-              reason: failure,
-              detail: "host read failed",
-            }),
-          });
+        const readFailure = (operation: string, failure: typeof reason) =>
+          failure === "cli-missing" || failure === "cli-unauthenticated"
+            ? new PullRequestUnavailableError({
+                reason: failure,
+                provider: SourceControlProviderKind.make("forgejo"),
+                cause: new Error("private subprocess output"),
+              })
+            : new PullRequestOperationError({
+                operation,
+                detail: "host read failed",
+                cause: new PullRequestProviderError({
+                  provider: SourceControlProviderKind.make("github"),
+                  operation,
+                  reason: failure,
+                  detail: "host read failed",
+                }),
+              });
         const reactor = yield* PullRequestWatchReactor.make.pipe(
           Effect.provide(
             Layer.mergeAll(
@@ -3871,7 +3883,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                 detail: () =>
                   genericFailure
                     ? Effect.die("host read failed")
-                    : disconnected
+                    : disconnected && !activityOnly
                       ? (activityFails ? Queue.take(activityFailures) : Effect.void).pipe(
                           Effect.andThen(Effect.fail(readFailure("detail", reason))),
                         )
@@ -3895,7 +3907,9 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                 activity: () =>
                   disconnected && activityFails
                     ? Queue.offer(activityFailures, undefined).pipe(
-                        Effect.andThen(Effect.fail(readFailure("activity", "failed"))),
+                        Effect.andThen(
+                          Effect.fail(readFailure("activity", activityOnly ? reason : "failed")),
+                        ),
                       )
                     : Effect.succeed({
                         comments: [],
@@ -3926,7 +3940,17 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         const thread = yield* orchestrator.getThreadShell(threadId);
         if (reason !== "failed") {
           assert.isUndefined(thread?.pullRequests?.[0]?.watch);
-          assert.deepEqual(yield* summaries, ["#8: stopped watching, could not read it"]);
+          assert.deepEqual(yield* summaries, [
+            reason === "cli-missing"
+              ? "#8: stopped watching, server host CLI missing"
+              : reason === "cli-unauthenticated"
+                ? "#8: stopped watching, server host CLI unauthenticated"
+                : "#8: stopped watching, could not read it",
+          ]);
+          const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
+          assert.isFalse(
+            messages.some((message) => message.text.includes("private subprocess output")),
+          );
           return;
         }
         assert.isDefined(thread?.pullRequests?.[0]?.watch);

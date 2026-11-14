@@ -329,19 +329,38 @@ export const make = Effect.gen(function* () {
     });
   });
 
-  const giveUp = (target: WatchTarget) =>
-    record(target, null, {
-      text: `T3 Code stopped watching pull request #${target.link.number} (${target.link.url}) because it failed to read it from the host ${READ_FAILURE_LIMIT} times in a row. Check it yourself, and call watch_pull_request only if it is still open.`,
+  const giveUp = (target: WatchTarget, cause: Cause.Cause<PullRequestService.PullRequestError>) => {
+    const error = Option.getOrUndefined(Cause.findErrorOption(cause));
+    const cliReason =
+      error?._tag === "PullRequestUnavailableError" &&
+      (error.reason === "cli-missing" || error.reason === "cli-unauthenticated")
+        ? error.reason
+        : null;
+    const problem =
+      cliReason === "cli-missing"
+        ? "server host CLI missing"
+        : cliReason === "cli-unauthenticated"
+          ? "server host CLI unauthenticated"
+          : "could not read it";
+    const recovery =
+      cliReason === "cli-missing"
+        ? "The host CLI is missing in the T3 Code server environment. Install it on that server, then call watch_pull_request only if the pull request is still open."
+        : cliReason === "cli-unauthenticated"
+          ? "The host CLI has no working credentials in the T3 Code server environment. Authenticate it on that server, then call watch_pull_request only if the pull request is still open."
+          : "Check it yourself, and call watch_pull_request only if it is still open.";
+    return record(target, null, {
+      text: `T3 Code stopped watching pull request #${target.link.number} (${target.link.url}) because it failed to read it from the host ${READ_FAILURE_LIMIT} times in a row. ${recovery}`,
       notification: {
         source: { kind: "monitor" },
         outcome: "failed",
-        summary: `#${target.link.number}: stopped watching, could not read it`,
+        summary: `#${target.link.number}: stopped watching, ${problem}`,
       },
     }).pipe(
       Effect.tap(() => woke(target)),
       Effect.catch(() => record(target, null)),
       Effect.tap(() => ended(target, "unreadable")),
     );
+  };
 
   const readRemarks = Effect.fn("PullRequestWatchReactor.readRemarks")(
     function* (
@@ -630,7 +649,10 @@ export const make = Effect.gen(function* () {
       }
       const failures = (readFailures.get(group.key) ?? 0) + 1;
       readFailures.set(group.key, failures);
-      if (failures >= READ_FAILURE_LIMIT && (yield* eachTarget(group, giveUp))) {
+      if (
+        failures >= READ_FAILURE_LIMIT &&
+        (yield* eachTarget(group, (target) => giveUp(target, read.cause)))
+      ) {
         readFailures.delete(group.key);
       }
       return yield* Effect.failCause(read.cause);
