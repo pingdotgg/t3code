@@ -307,8 +307,8 @@ describe("index.html boot script", () => {
     });
 
     expect(boot.themeId).toBe("nightfall");
-    expect(boot.bootVariables["--boot-background"]).toBe(published.colors.canvas);
-    expect(boot.backgroundColor).toBe(published.colors.chrome);
+    expect(boot.bootVariables["--boot-background"]).toBe(published.colors.sidebar);
+    expect(boot.backgroundColor).toBe(published.colors.sidebar);
   });
 
   it("keeps every built-in boot splash in sync with the real palettes", () => {
