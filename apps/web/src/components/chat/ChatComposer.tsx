@@ -2544,6 +2544,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       )
     : bannerItems;
 
+  const composerAcceptsText = () =>
+    !activePendingIsResponding &&
+    !(pendingUserInputs.length > 0 && !activePendingProgress?.activeQuestion) &&
+    !projectSelectionRequired &&
+    !(activePendingUserInput && activePendingProgress?.activeQuestion?.allowCustomAnswer === false);
+
   const insertComposerText = (
     text: string,
     position: "cursor" | "end",
@@ -2555,9 +2561,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   ): boolean => {
     if (
       text.length === 0 ||
-      activePendingIsResponding ||
-      (pendingUserInputs.length > 0 && !activePendingProgress?.activeQuestion) ||
-      projectSelectionRequired ||
+      !composerAcceptsText() ||
       (options?.citationCommentAnchor && !composerEditorRef.current)
     ) {
       return false;
@@ -2677,7 +2681,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           ) === true,
     });
   const canInsertDroppedPaths = () =>
-    window.desktopBridge?.getPathForFile !== undefined && droppedPathTarget() !== "remote";
+    composerAcceptsText() &&
+    window.desktopBridge?.getPathForFile !== undefined &&
+    droppedPathTarget() !== "remote";
   const canInsertDroppedPathsStable = useStableCallback(canInsertDroppedPaths);
 
   const insertComposerPathReferences = async (
