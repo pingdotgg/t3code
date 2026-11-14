@@ -466,11 +466,15 @@ export interface LimitPoolWindow {
   readonly remainingPercent: number;
   readonly usedPercent: number;
   readonly pace: LimitPace | null;
-  readonly resets: ReadonlyArray<{
-    readonly member: LimitPoolMember;
-    readonly at: number;
-    readonly restoresPercent: number;
-  }>;
+  readonly resets: ReadonlyArray<LimitPoolReset>;
+  /** The earliest instant that restores quota, summed over every member resetting then. */
+  readonly nextReset: LimitPoolReset | null;
+}
+
+export interface LimitPoolReset {
+  readonly member: LimitPoolMember;
+  readonly at: number;
+  readonly restoresPercent: number;
 }
 
 export interface LimitPool {
@@ -672,7 +676,7 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
       timed.length > 0
         ? timed.reduce((sum, t) => sum + t.elapsed * t.weight, 0) / timedWeight
         : null;
-    const resets = members
+    const refills = members
       .flatMap((member) => {
         const at = resetMillis(member.window);
         return at === null
@@ -681,13 +685,27 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
               {
                 member,
                 at,
-                restoresPercent: Math.round(
-                  (member.refillPercent * weightOf.get(member)!) / totalWeight,
-                ),
+                restores: (member.refillPercent * weightOf.get(member)!) / totalWeight,
               },
             ];
       })
       .sort((left, right) => left.at - right.at);
+    const resets = refills.map(({ member, at, restores }): LimitPoolReset => ({
+      member,
+      at,
+      restoresPercent: Math.round(restores),
+    }));
+    const nextReset =
+      [...new Set(refills.map((refill) => refill.at))]
+        .map((at): LimitPoolReset => {
+          const together = refills.filter((refill) => refill.at === at);
+          return {
+            member: together[0]!.member,
+            at,
+            restoresPercent: Math.round(together.reduce((sum, refill) => sum + refill.restores, 0)),
+          };
+        })
+        .find((reset) => reset.restoresPercent > 0) ?? null;
     return {
       id,
       kind: first.kind,
@@ -700,6 +718,7 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
       remainingPercent: Math.round(100 - usedPercent),
       pace: meanElapsed === null ? null : paceOfShares(timedUsed, meanElapsed),
       resets,
+      nextReset,
     };
   });
   return pools.sort((left, right) => WINDOW_KIND_ORDER[left.kind] - WINDOW_KIND_ORDER[right.kind]);
