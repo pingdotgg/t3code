@@ -136,7 +136,15 @@ async function install(name, version, entry) {
   const ios = process.platform === 'darwin' && run('xcrun', ['simctl', 'help']).status === 0;
   // The SSH shell setup chose ANDROID_HOME, so later commands use the SDK accepted here.
   const sdk = process.env.ANDROID_HOME;
-  const executable = (relative) => { try { const file = path.join(sdk, relative); fs.accessSync(file, fs.constants.X_OK); return fs.statSync(file).isFile(); } catch { return false; } };
+  const executable = (relative) => {
+    try {
+      const file = path.join(sdk, relative);
+      fs.accessSync(file, fs.constants.X_OK);
+      return fs.statSync(file).isFile();
+    } catch {
+      return false;
+    }
+  };
   const androidReason = !sdk ? 'Android SDK was not found. Install it with Android Studio or set ANDROID_HOME on the SSH host.'
     : !executable('platform-tools/adb') ? 'Android SDK Platform-Tools are missing from ' + sdk + '. Install them in Android Studio SDK Manager.'
     : !executable('emulator/emulator') ? 'Android Emulator is missing from ' + sdk + '. Install it in Android Studio SDK Manager.'

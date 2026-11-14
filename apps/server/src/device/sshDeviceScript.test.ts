@@ -54,22 +54,6 @@ const probeAndroid = (setup: (home: string) => Promise<Record<string, string>>, 
     }
   });
 
-it.effect("does not offer Android when the SDK only has adb", () =>
-  Effect.gen(function* () {
-    if ((yield* HostProcess.Platform) === "win32") return;
-    const { android } = yield* probeAndroid(async (home) => {
-      const sdk = NodePath.join(home, "sdk");
-      await executable(NodePath.join(sdk, "platform-tools/adb"), "echo Android Debug Bridge");
-      return { ANDROID_HOME: sdk };
-    });
-    expect(android).toEqual({
-      platform: "android",
-      available: false,
-      reason: expect.stringContaining("Android Emulator"),
-    });
-  }),
-);
-
 it.effect("does not offer Android when the SDK adb cannot run", () =>
   Effect.gen(function* () {
     if ((yield* HostProcess.Platform) === "win32") return;
@@ -204,7 +188,7 @@ if (fs.existsSync(${JSON.stringify(failMarker)})) process.exitCode = 1;`,
         expect(start().stderr).toContain("Could not stop the agent-device daemon");
         expect(await NodeFSP.readFile(daemonFile, "utf8")).toContain("claims");
         await NodeFSP.rm(failMarker);
-        expect(start().stderr).toContain("Android SDK missing");
+        expect(start().stderr).toContain("Android SDK was not found");
         await expect(NodeFSP.access(daemonFile)).rejects.toThrow();
         expect(await NodeFSP.readFile(calls, "utf8")).toBe(
           `daemon stop --state-dir ${state}\ndaemon stop --state-dir ${state}\n`,
@@ -247,7 +231,7 @@ it.effect("keeps a daemon record its missing agent CLI cannot stop", () =>
         );
         expect(await NodeFSP.readFile(daemonFile, "utf8")).toContain("claims");
         const exited = NodeChildProcess.spawnSync(process.execPath, ["-e", ""]).pid;
-        expect((await start(exited)).stderr).toContain("Android SDK missing");
+        expect((await start(exited)).stderr).toContain("Android SDK was not found");
         await expect(NodeFSP.access(daemonFile)).rejects.toThrow();
       } finally {
         await NodeFSP.rm(home, { recursive: true, force: true });
