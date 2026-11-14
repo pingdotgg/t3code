@@ -40,7 +40,7 @@ export function visiblePdfPages(
 ) {
   return ratios.flatMap((ratio, index) =>
     offsets[index + 1]! >= scrollTop - viewportHeight &&
-    offsets[index]! <= scrollTop + viewportHeight * 2
+    offsets[index]! <= scrollTop + viewportHeight * 3
       ? [{ index, ratio }]
       : [],
   );
@@ -50,10 +50,31 @@ export function pdfPageScrollTop(offsets: readonly number[], index: number) {
   return Math.max(0, (offsets[index] ?? PDF_PAGE_GAP) - PDF_PAGE_GAP);
 }
 
+/** A saved offset was taken at `savedWidth`; a reloaded document can have fewer or shorter pages. */
+export function pdfRestoredScrollTop(
+  ratios: readonly number[],
+  width: number,
+  view: { page: number; offset: number },
+  savedWidth = width,
+) {
+  const page = Math.min(view.page, ratios.length - 1);
+  const offsets = pdfPageOffsets(ratios, width);
+  return (
+    offsets[page]! -
+    PDF_PAGE_GAP +
+    Math.min((view.offset * width) / savedWidth, Math.max(0, width * ratios[page]! - 1))
+  );
+}
+
 export function pdfPageText(
   items: readonly ({ str: string; hasEOL: boolean } | { type: string })[],
 ) {
   return items.map((item) => ("str" in item ? item.str + (item.hasEOL ? "\n" : "") : "")).join("");
+}
+
+// A typed straight quote finds a typeset curly one, as pdf.js's own find does.
+function foldQuotes(text: string) {
+  return text.replace(/[\u2018-\u201b]/g, "'").replace(/[\u201c-\u201f]/g, '"');
 }
 
 /**
@@ -63,7 +84,7 @@ export function pdfPageText(
  */
 function pdfFindText(runs: readonly string[]) {
   const chars = runs.flatMap((run, index) =>
-    Array.from(run.toLowerCase(), (char) => ({ char, run: index })),
+    Array.from(foldQuotes(run.toLowerCase()), (char) => ({ char, run: index })),
   );
   let text = "";
   let last = "";
@@ -95,10 +116,9 @@ function pdfFindText(runs: readonly string[]) {
 /** Whether a page's text holds the query, under the same rules as `pdfFindMatchRuns`, without
  * mapping characters back to runs: the page scan checks every page on each query. */
 export function pdfFindIncludes(text: string, query: string) {
-  const needle = query.toLowerCase().replace(/\s+/g, " ");
+  const needle = foldQuotes(query.toLowerCase()).replace(/\s+/g, " ");
   if (!needle.trim()) return false;
-  return text
-    .toLowerCase()
+  return foldQuotes(text.toLowerCase())
     .replace(/(\p{L})-\n(?=\p{L})/gu, "$1")
     .replace(/\s+/g, " ")
     .includes(needle);
@@ -107,7 +127,7 @@ export function pdfFindIncludes(text: string, query: string) {
 /** Which text runs hold part of a case-insensitive match, when pdf.js splits words across spans. */
 export function pdfFindMatchRuns(runs: readonly string[], query: string) {
   const { text, owner } = pdfFindText(runs);
-  const needle = query.toLowerCase().replace(/\s+/g, " ");
+  const needle = foldQuotes(query.toLowerCase()).replace(/\s+/g, " ");
   const hits = runs.map(() => false);
   if (!needle.trim()) return hits;
   for (
