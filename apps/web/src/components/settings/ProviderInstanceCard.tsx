@@ -70,6 +70,12 @@ import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayo
 import { AcpSessionManagementSection } from "./AcpSessionManagementSection";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { readCodexSetupMode } from "./CodexSetupSection.logic";
+import {
+  type CustomModelSave,
+  customModelsKey,
+  pendingCustomModelSaves,
+  settleCustomModelSave,
+} from "./customModelSaves.logic";
 import { getProviderRestartNotice } from "../ProviderUpdateLaunchNotification.logic";
 import {
   getProviderVersionAdvisoryPresentation,
@@ -711,35 +717,6 @@ const EMPTY_ACP_PROJECTS: NonNullable<ProviderInstanceCardProps["acpProjects"]> 
 const NO_SECRET_SOURCES: ReadonlyArray<SecretSource> = [];
 const NO_CUSTOM_MODELS: ReadonlyArray<CustomModelDefinition> = [];
 
-interface CustomModelSave {
-  readonly models: ReadonlyArray<CustomModelDefinition>;
-  /** The models as the config stream will read them back once this save lands. */
-  readonly key: string;
-  /** The stored list when the save replied; unset while in flight. */
-  readonly storedAtReply?: string;
-}
-
-const customModelsKey = (models: ReadonlyArray<CustomModelDefinition>) =>
-  JSON.stringify(readCustomModelEntries(models.map(toCustomModelSetting)));
-
-/**
- * Saves the stored list does not reflect yet. Saves land in order, so the echo of one settles it
- * and every save before it; repeated snapshots retire only the earliest match because later
- * identical saves may still be pending. Any other stored change drops the replied ones.
- */
-function pendingCustomModelSaves(saves: ReadonlyArray<CustomModelSave>, storedKey: string) {
-  const echoed = saves.findIndex((entry) => entry.key === storedKey);
-  return saves
-    .slice(echoed + 1)
-    .flatMap((entry) =>
-      entry.storedAtReply === undefined
-        ? [entry]
-        : echoed >= 0 || entry.storedAtReply === storedKey
-          ? [{ ...entry, storedAtReply: storedKey }]
-          : [],
-    );
-}
-
 /**
  * Every custom model save writes the whole list, so the next edit starts from the last list sent
  * until the config stream echoes it, which can land before or after the save's reply.
@@ -758,11 +735,7 @@ function useCustomModelSaves(
   }
   const current = saves.at(-1)?.models ?? stored;
   const settle = useStableCallback((sent: CustomModelSave, saved: boolean) =>
-    setSaves((list) =>
-      list.flatMap((entry) =>
-        entry !== sent ? [entry] : saved ? [{ ...entry, storedAtReply: storedKey }] : [],
-      ),
-    ),
+    setSaves((list) => settleCustomModelSave(list, sent, saved, storedKey)),
   );
   const update = useStableCallback(async (next: ReadonlyArray<CustomModelDefinition>) => {
     const sent: CustomModelSave = { models: next, key: customModelsKey(next) };
