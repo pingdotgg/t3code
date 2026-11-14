@@ -28,6 +28,60 @@ export function resolveSelectionActionPosition(options: {
 
 type SelectionRect = { left: number; top: number; right: number; bottom: number };
 
+// Covers the small hand drift between releasing a drag and the next click.
+const RELEASE_MARGIN = 16;
+
+export function resolveChatSelectionActionPosition({
+  selectionRect,
+  bounds,
+  outerBounds = bounds,
+  pointer = null,
+  actionSize,
+  viewport,
+}: {
+  selectionRect: SelectionRect;
+  bounds: SelectionRect;
+  outerBounds?: SelectionRect;
+  pointer?: SelectionActionPoint | null;
+  actionSize: { width: number; height: number };
+  viewport: { width: number; height: number };
+}): SelectionActionPoint {
+  const above = selectionRect.top - actionSize.height - 6;
+  const below = selectionRect.bottom + 6;
+  const x = Math.max(
+    8,
+    Math.min(
+      (selectionRect.left + selectionRect.right - actionSize.width) / 2,
+      viewport.width - actionSize.width - 8,
+    ),
+  );
+  const nearRelease = (y: number) =>
+    pointer !== null &&
+    pointer.x >= x - RELEASE_MARGIN &&
+    pointer.x <= x + actionSize.width + RELEASE_MARGIN &&
+    pointer.y >= y - RELEASE_MARGIN &&
+    pointer.y <= y + actionSize.height + RELEASE_MARGIN;
+  for (const clip of [bounds, outerBounds]) {
+    const top = Math.max(8, clip.top);
+    const bottom = Math.min(viewport.height - 8, clip.bottom);
+    for (const y of [above, below]) {
+      if (y >= top && y + actionSize.height <= bottom && !nearRelease(y)) return { x, y };
+    }
+  }
+  const maxY = viewport.height - actionSize.height - 8;
+  const pinTop = Math.max(8, Math.min(Math.max(8, outerBounds.top) + 8, maxY));
+  const pinBottom = Math.max(8, Math.min(outerBounds.bottom - actionSize.height - 8, maxY));
+  if (!pointer || !nearRelease(pinTop)) return { x, y: pinTop };
+  if (!nearRelease(pinBottom)) return { x, y: pinBottom };
+  // A chat area too short for either pin: step sideways off the release point.
+  const right = pointer.x + RELEASE_MARGIN;
+  const left = Math.max(8, pointer.x - actionSize.width - RELEASE_MARGIN);
+  return {
+    x: right + actionSize.width <= viewport.width - 8 ? right : left,
+    y: pinTop,
+  };
+}
+
 export function isSelectionRectVisible(rect: SelectionRect, clips: readonly SelectionRect[]) {
   let { left, top, right, bottom } = rect;
   for (const clip of clips) {
