@@ -74,3 +74,11 @@
 - Numbers: autoModel 12/12, handoff + contextWindow 39/39 (a recursion the stamp caused was caught by the handoff test); shared, client-runtime, web, mobile and server typecheck clean. Checked in a clean incognito browser on a scratch copy of hub2's data: a thread started on Auto Low over the CLI shows Auto Low in the composer.
 - Deploy: service now runs from `~/.t3/fork-current` (a symlink to the deploy checkout), so a new build goes into a fresh checkout and the restart flips the link.
 - Next: hub (link it first) and a fork build of the PC desktop app; the stock app still shows the concrete model.
+
+## 2026-11-14: Auto fails over to the next subscription the moment one hits its limit
+
+- What: `AutoFailoverService` watches failed runs. When a run on an Auto thread fails with a usage limit (`usage_limit` class: Claude 429 / 5-hour / weekly, Codex `usageLimitExceeded`, Antigravity `RESOURCE_EXHAUSTED`) or no capacity (`UNAVAILABLE`, Claude 529), it benches that provider instance (`AutoCooldown`, until the reported reset, else 30 min; 5 min for no capacity) and sends the thread back through Auto with "Continue where you left off". Auto routing (`resolveAutoModelSelection`) skips benched instances, the sticky current one included. At most 6 failovers per thread per hour.
+- Why: Auto routed only when a message was sent. A limit hit mid-work left the thread failed, and the upstream recovery worker resumed it on the same account hours later, at reset. Tomáš wants Auto to chain across all subscriptions as soon as one runs out. The PC's own DB showed 28 failed runs in two days, most of them limit errors (429, quota, capacity) that should have moved on.
+- Numbers: autoModel 13/13 (new blocked case), AutoFailoverService 6/6; server typecheck clean.
+- Limits: the bench is in memory, so a server restart forgets it (the usage report takes over). A failure whose session error differs from the run's error item has no error class and is not failed over.
+- Next: build the PC desktop app from `tomas/pc-nightly`; deploy to hub/hub2.
