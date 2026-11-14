@@ -135,6 +135,19 @@ describe("serverSettings helpers", () => {
     });
   });
 
+  it("replaces a folder icon whole and removes one patched to null", () => {
+    const saved = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      folderIcons: {
+        ops: { kind: "lucide", name: "rocket", color: "blue" },
+        docs: { kind: "emoji", emoji: "📚" },
+      },
+    });
+    const patched = applyServerSettingsPatch(saved, {
+      folderIcons: { ops: { kind: "emoji", emoji: "🚀" }, docs: null },
+    });
+    expect(patched.folderIcons).toEqual({ ops: { kind: "emoji", emoji: "🚀" } });
+  });
+
   it("keeps a source control host's saved tokens when a patch sets another host's token", () => {
     const reference = { provider: "vault", reference: "github/token" };
     const saved = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {

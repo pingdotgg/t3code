@@ -71,6 +71,8 @@ import {
   SettingsIcon,
 } from "lucide-react";
 import {
+  lazy,
+  Suspense,
   useEffect,
   useLayoutEffect,
   useReducer,
@@ -131,7 +133,12 @@ import { useSidebarProjectGroups } from "../hooks/useSidebarProjectGroups";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { registerSettleAndAdvance } from "../settleAndAdvance";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
-import { useClientSettings } from "../hooks/useSettings";
+import {
+  useClientSettings,
+  usePrimarySettings,
+  usePrimarySettingsAvailable,
+  useUpdatePrimarySettings,
+} from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
@@ -151,7 +158,7 @@ import {
   useQuietThreadShells,
 } from "../state/entities";
 import { environmentPresentations } from "../state/presentation";
-import { primaryServerKeybindingsAtom } from "../state/server";
+import { primaryServerKeybindingsAtom, primaryServerSettingsAtom } from "../state/server";
 import { environmentProjects } from "../state/projects";
 import { threadEnvironment } from "../state/threads";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../state/olderSettledShelf";
@@ -230,6 +237,8 @@ import {
   buildProjectRailTiles,
   folderEditPlan,
   railKeysAfterFolderEdit,
+  folderIconsPatchAfterEdit,
+  type ProjectRailTile,
   railOrderAfterMove,
 } from "./sidebar/ProjectRail.logic";
 import { createSidebarListMotion } from "./Sidebar.motion";
@@ -291,6 +300,12 @@ import {
   SidebarSectionHeader,
   SidebarSectionPlaceholder,
 } from "./sidebar/SidebarListMarkers";
+
+const ProjectIconPickerDialog = lazy(() =>
+  import("./settings/ProjectIconPickerDialog").then((module) => ({
+    default: module.ProjectIconPickerDialog,
+  })),
+);
 
 function sameSidebarProviderEntries(
   left: ReadonlyMap<string, SidebarProviderEntry>,
@@ -1307,7 +1322,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     void handleNewThread(scopeProjectRef(group.environmentId, group.id));
   });
   // A touch long press can raise both the browser's contextmenu and the rail's own long-press menu.
-  const folderTileMenuOpenRef = useRef(false);
+  const contextMenuOpenRef = useRef(false);
+  const folderIcons = usePrimarySettings((settings) => settings.folderIcons);
+  const folderIconsAvailable = usePrimarySettingsAvailable();
+  const updatePrimarySettings = useUpdatePrimarySettings();
+  const [folderIconTag, setFolderIconTag] = useState<string | null>(null);
   const editRailFolder = async (from: string, to: string | null) => {
     const plan = folderEditPlan(readThreadShells(), from, to);
     const threadCount = `${plan.length} thread${plan.length === 1 ? "" : "s"}`;
@@ -1327,8 +1346,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         applyThreadTagChanges(scopeThreadRef(thread.environmentId, thread.id), changes),
       ),
     );
-    // While every thread still carries the old tag, the folder keeps its place and its filter.
+    // While every thread still carries the old tag, the folder keeps its place, filter and icon.
     if (plan.length === 0 || results.some((result) => result._tag === "Success")) {
+      const iconsPatch = folderIconsPatchAfterEdit(
+        appAtomRegistry.get(primaryServerSettingsAtom).folderIcons,
+        from,
+        to,
+        results.some((result) => result._tag === "Failure"),
+      );
+      if (iconsPatch !== null) updatePrimarySettings({ folderIcons: iconsPatch });
       const { railOrder, projectOrder, sidebarProjectScopeKeys } = useUiStateStore.getState();
       setRailOrder({ railOrder: railKeysAfterFolderEdit(railOrder, from, to), projectOrder });
       const scopeKeys = railKeysAfterFolderEdit(sidebarProjectScopeKeys, from, to);
@@ -1342,36 +1368,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         `Failed to ${to === null ? "delete" : "rename"} the folder for ${count} of ${threadCount}`,
     );
   };
-  const handleFolderTileContextMenu = useStableCallback(
-    (tag: string, position: { x: number; y: number }) => {
-      const api = readLocalApi();
-      if (!api || folderTileMenuOpenRef.current) return;
-      folderTileMenuOpenRef.current = true;
-      void (async () => {
-        const clicked = await settlePromise(() =>
-          api.contextMenu.show(
-            [
-              { id: "rename", label: "Rename folder…", icon: "pencil" },
-              { id: "delete", label: "Delete folder", icon: "trash", destructive: true },
-            ],
-            position,
-          ),
-        );
-        folderTileMenuOpenRef.current = false;
-        if (clicked._tag === "Failure") return;
-        if (clicked.value === "rename") {
-          const name = await requestFolderRename(tag);
-          if (name !== null) await editRailFolder(tag, name);
-        } else if (clicked.value === "delete") {
-          await editRailFolder(tag, null);
-        }
-      })();
-    },
-  );
   const handleProjectFolderContextMenu = useStableCallback(
     (group: SidebarProjectSnapshot, position: { x: number; y: number }) => {
       const api = readLocalApi();
-      if (!api) return;
+      if (!api || contextMenuOpenRef.current) return;
+      contextMenuOpenRef.current = true;
       void (async () => {
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
@@ -1390,6 +1391,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             position,
           ),
         );
+        contextMenuOpenRef.current = false;
         if (clicked._tag === "Failure") return;
         switch (clicked.value) {
           case "new-thread":
@@ -1405,6 +1407,49 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           case "project-settings":
             openProjectSettings(group);
             return;
+        }
+      })();
+    },
+  );
+  const handleRailTileContextMenu = useStableCallback(
+    (tile: ProjectRailTile, position: { x: number; y: number }) => {
+      if (tile.kind === "project") {
+        handleProjectFolderContextMenu(tile.group, position);
+        return;
+      }
+      const api = readLocalApi();
+      if (!api || contextMenuOpenRef.current) return;
+      contextMenuOpenRef.current = true;
+      void (async () => {
+        const clicked = await settlePromise(() =>
+          api.contextMenu.show(
+            [
+              ...(folderIconsAvailable
+                ? [
+                    { id: "icon", label: "Change icon…", icon: "folder" },
+                    ...(folderIcons[tile.tag]
+                      ? [{ id: "icon-reset", label: "Reset icon", icon: "refresh-cw" }]
+                      : []),
+                  ]
+                : []),
+              { id: "rename", label: "Rename folder…", icon: "pencil" },
+              { id: "delete", label: "Delete folder", icon: "trash", destructive: true },
+            ],
+            position,
+          ),
+        );
+        contextMenuOpenRef.current = false;
+        if (clicked._tag === "Failure") return;
+        const tag = tile.tag;
+        if (clicked.value === "icon") {
+          setFolderIconTag(tag);
+        } else if (clicked.value === "icon-reset") {
+          updatePrimarySettings({ folderIcons: { [tag]: null } });
+        } else if (clicked.value === "rename") {
+          const name = await requestFolderRename(tag);
+          if (name !== null) await editRailFolder(tag, name);
+        } else if (clicked.value === "delete") {
+          await editRailFolder(tag, null);
         }
       })();
     },
@@ -3138,12 +3183,27 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             onSelect={(key, additive) =>
               setProjectScopeKeys(nextProjectRailScope(projectScopeKeys, key, additive))
             }
-            onFolderMenu={handleFolderTileContextMenu}
+            folderIcons={folderIcons}
+            onTileMenu={handleRailTileContextMenu}
             onMove={(activeKey, overKey) => {
               const next = railOrderAfterMove(railTiles, activeKey, overKey);
               if (next !== null) setRailOrder(next);
             }}
           />
+        ) : null}
+        {folderIconTag !== null ? (
+          <Suspense fallback={null}>
+            <ProjectIconPickerDialog
+              current={folderIcons[folderIconTag] ?? null}
+              projectName={folderIconTag}
+              title="Choose folder icon"
+              open
+              onOpenChange={(open) => {
+                if (!open) setFolderIconTag(null);
+              }}
+              onSelect={(icon) => updatePrimarySettings({ folderIcons: { [folderIconTag]: icon } })}
+            />
+          </Suspense>
         ) : null}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <SidebarContent

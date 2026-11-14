@@ -163,6 +163,23 @@ it("drops a hand-edited non-string hidden tag and keeps the rest of the settings
   expect(settings.hideTaggedThreads).toBe(true);
 });
 
+it("drops a bad folder icon and keeps the other icons and settings", () => {
+  const settings = decodeServerSettings({
+    folderIcons: {
+      work: { kind: "emoji", emoji: "🚀" },
+      broken: { kind: "lucide", name: "Not An Icon", color: "blue" },
+      future: { kind: "image", url: "x.png" },
+      legacy: { kind: "lucide", name: "folder", color: "red", monogramText: "LG" },
+    },
+    hideTaggedThreads: true,
+  });
+  expect(settings.folderIcons).toEqual({
+    work: { kind: "emoji", emoji: "🚀" },
+    legacy: { kind: "monogram", text: "LG", color: "red" },
+  });
+  expect(settings.hideTaggedThreads).toBe(true);
+});
+
 describe("ServerSettings secret providers", () => {
   const onePassword = (account: string) => ({
     kind: "one_password",

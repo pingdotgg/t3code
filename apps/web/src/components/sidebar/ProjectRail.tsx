@@ -12,6 +12,7 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-
 import { CSS } from "@dnd-kit/utilities";
 import { EyeIcon, EyeOffIcon, LayersIcon } from "lucide-react";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import type { ProjectIconOverride } from "@t3tools/contracts";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import * as Schema from "effect/Schema";
 import { type MouseEvent, type ReactNode, useRef } from "react";
@@ -22,7 +23,7 @@ import { useNowMinute } from "../../hooks/useNowMinute";
 import { deriveProjectIdentity } from "../../projectIdentity";
 import { useUiStateStore } from "../../uiStateStore";
 import { resolveSidebarFolderDot, resolveThreadLastVisitedAt } from "../Sidebar.logic";
-import { ProjectFavicon } from "../ProjectFavicon";
+import { ProjectFavicon, ProjectIconOverrideView } from "../ProjectFavicon";
 import { ProjectMonogram } from "../ProjectMonogram";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -49,7 +50,8 @@ export function ProjectRail(props: {
   onSelectAll: () => void;
   onSelect: (key: string, additive: boolean) => void;
   onMove: (activeKey: string, overKey: string) => void;
-  onFolderMenu: (tag: string, position: { x: number; y: number }) => void;
+  folderIcons: Readonly<Record<string, ProjectIconOverride>>;
+  onTileMenu: (tile: ProjectRailTile, position: { x: number; y: number }) => void;
 }) {
   const { selectedKeys } = props;
   const nowMinute = useNowMinute();
@@ -95,8 +97,8 @@ export function ProjectRail(props: {
     ) {
       const tile = props.tiles.find((candidate) => candidate.key === event.active.id);
       const rect = event.active.rect.current.initial;
-      if (tile?.kind === "folder" && rect !== null) {
-        props.onFolderMenu(tile.tag, { x: rect.right, y: rect.top });
+      if (tile !== undefined && rect !== null) {
+        props.onTileMenu(tile, { x: rect.right, y: rect.top });
       }
       return;
     }
@@ -160,8 +162,9 @@ export function ProjectRail(props: {
               dot={states.get(tile.key)?.dot ?? null}
               idle={states.get(tile.key)?.idle ?? false}
               selected={selectedKeys.includes(tile.key)}
+              folderIcon={tile.kind === "folder" ? props.folderIcons[tile.tag] : undefined}
               onSelect={props.onSelect}
-              onFolderMenu={props.onFolderMenu}
+              onTileMenu={props.onTileMenu}
             />
           ))}
         </SortableContext>
@@ -175,8 +178,9 @@ function SortableRailTile(props: {
   dot: ProjectRailDot;
   idle: boolean;
   selected: boolean;
+  folderIcon: ProjectIconOverride | undefined;
   onSelect: (key: string, additive: boolean) => void;
-  onFolderMenu: (tag: string, position: { x: number; y: number }) => void;
+  onTileMenu: (tile: ProjectRailTile, position: { x: number; y: number }) => void;
 }) {
   const { tile, dot, idle } = props;
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -191,14 +195,10 @@ function SortableRailTile(props: {
       {...listeners}
       // The tile button inside takes focus; the sortable wrapper stays out of tab order.
       tabIndex={-1}
-      onContextMenu={
-        tile.kind === "folder"
-          ? (event) => {
-              event.preventDefault();
-              props.onFolderMenu(tile.tag, { x: event.clientX, y: event.clientY });
-            }
-          : undefined
-      }
+      onContextMenu={(event) => {
+        event.preventDefault();
+        props.onTileMenu(tile, { x: event.clientX, y: event.clientY });
+      }}
     >
       <RailTileButton
         label={tile.kind === "project" ? tile.group.displayName : tile.tag}
@@ -212,6 +212,8 @@ function SortableRailTile(props: {
       >
         {tile.kind === "project" ? (
           <ProjectFavicon project={tile.group} className="size-5" />
+        ) : props.folderIcon ? (
+          <ProjectIconOverrideView icon={props.folderIcon} className="size-5" />
         ) : (
           <FolderMonogram tag={tile.tag} />
         )}

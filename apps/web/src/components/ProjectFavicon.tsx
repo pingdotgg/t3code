@@ -1,4 +1,5 @@
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import type { ProjectIconOverride } from "@t3tools/contracts";
 import {
   getProjectFaviconResourceKey,
   isProjectFaviconFallbackUrl,
@@ -38,43 +39,45 @@ export function ProjectFavicon(input: {
   fallbackIcon?: ComponentType<{ className?: string }>;
 }) {
   const { project } = input;
-  if (project.projectIcon?.kind === "monogram") {
-    return (
-      <ProjectMonogram
-        text={project.projectIcon.text}
-        color={project.projectIcon.color}
-        className={input.className}
-      />
-    );
+  if (project.projectIcon) {
+    return <ProjectIconOverrideView icon={project.projectIcon} className={input.className} />;
   }
-  if (project.projectIcon?.kind === "emoji") {
+  return <AutomaticProjectFavicon {...input} />;
+}
+
+/** A chosen project or folder icon, without the automatic favicon lookup. */
+export function ProjectIconOverrideView(input: {
+  icon: ProjectIconOverride;
+  className?: string | undefined;
+}) {
+  const { icon } = input;
+  if (icon.kind === "monogram") {
+    return <ProjectMonogram text={icon.text} color={icon.color} className={input.className} />;
+  }
+  if (icon.kind === "emoji") {
     return (
       <ProjectFaviconFallback
         className={input.className}
         icon={FolderCodeIcon}
-        emoji={project.projectIcon.emoji}
+        emoji={icon.emoji}
       />
     );
   }
-  if (project.projectIcon?.kind === "lucide") {
-    const colorClassName = projectIconColorClassName(project.projectIcon.color);
-    const iconClassName = cn(
-      "inline-flex size-3.5 shrink-0 items-center justify-center",
-      colorClassName,
-      input.className,
-    );
-    return (
-      <span aria-hidden="true" className={iconClassName}>
-        <Suspense fallback={<DynamicProjectIconFallback />}>
-          <LucideProjectIcon
-            name={project.projectIcon.name}
-            className={cn("size-full", colorClassName)}
-          />
-        </Suspense>
-      </span>
-    );
-  }
-  return <AutomaticProjectFavicon {...input} />;
+  const colorClassName = projectIconColorClassName(icon.color);
+  return (
+    <span
+      aria-hidden="true"
+      className={cn(
+        "inline-flex size-3.5 shrink-0 items-center justify-center",
+        colorClassName,
+        input.className,
+      )}
+    >
+      <Suspense fallback={<DynamicProjectIconFallback />}>
+        <LucideProjectIcon name={icon.name} className={cn("size-full", colorClassName)} />
+      </Suspense>
+    </span>
+  );
 }
 
 function AutomaticProjectFavicon(input: Parameters<typeof ProjectFavicon>[0]) {
