@@ -3375,7 +3375,21 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     );
     const stagedDeletions = new Set(stagedDeletionsStdout.split("\0").filter(Boolean));
     // Staged deletions never enter the index, so their worktree copies must not spend the budget.
-    const candidates = untrackedPaths.filter((relativePath) => !stagedDeletions.has(relativePath));
+    // A nested repository (listed with a trailing slash) with no commits cannot be indexed:
+    // Git before 2.53 fails the add, and later versions accept it and then fail every diff.
+    const candidates = yield* Effect.filter(
+      untrackedPaths.filter((relativePath) => !stagedDeletions.has(relativePath)),
+      (relativePath) =>
+        relativePath.endsWith("/")
+          ? executeGit(
+              "GitVcsDriver.readUnifiedWorkingTreeReviewDiff.nestedRepositoryHead",
+              path.resolve(cwd, relativePath),
+              ["rev-parse", "--verify", "--quiet", "HEAD"],
+              { allowNonZeroExit: true },
+            ).pipe(Effect.map((result) => result.exitCode !== 1))
+          : Effect.succeed(true),
+      { concurrency: 16 },
+    );
     const sizes = yield* Effect.forEach(
       candidates,
       (relativePath) =>
