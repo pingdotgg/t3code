@@ -1196,9 +1196,8 @@ function codexUsageLimitError(
 }
 
 /**
- * ChatGPT sharing reports its own reason inside Codex's generic turn error, so
- * the code it names replaces Codex's, and clients pick a recovery from it. Its
- * allowance limits get the usage-limit recovery; other sharing failures keep their class.
+ * Codex wraps structured service failures in generic turn errors. Preserve the
+ * inner code and safe message; sharing allowance limits also change the class.
  */
 function withCodexManagedFailure(
   failure: OrchestrationV2ProviderFailure,
