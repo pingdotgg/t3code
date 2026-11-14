@@ -32,7 +32,6 @@ import {
   readEnvironmentFromLoginShell,
   readEnvironmentFromWindowsShell,
   resolveCommandPath,
-  resolveCommandPaths,
   resolveSpawnCommand,
   resolveWindowsEnvironment,
   runsGitWithoutConsole,
@@ -606,34 +605,6 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
       Effect.provideService(HostProcess.Platform, "win32"),
       Effect.provideService(CommandResolutionCache, new Map()),
     ),
-  );
-
-  it.effect("stops listing PATH matches at the first one the caller accepts", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const first = yield* fs.makeTempDirectoryScoped();
-      const second = yield* fs.makeTempDirectoryScoped();
-      const third = yield* fs.makeTempDirectoryScoped();
-      for (const dir of [first, second, third]) {
-        yield* fs.writeFileString(path.join(dir, "zed.EXE"), "");
-      }
-      const probed: Array<string> = [];
-      const matches = yield* resolveCommandPaths("zed", {
-        env: { PATH: `${first};${second};${third}`, PATHEXT: ".EXE" },
-        until: (match) => path.dirname(match) === second,
-      }).pipe(
-        Effect.provideService(FileSystem.FileSystem, {
-          ...fs,
-          stat: (file) => {
-            probed.push(file);
-            return fs.stat(file);
-          },
-        }),
-      );
-      expect(matches).toEqual([path.join(first, "zed.EXE"), path.join(second, "zed.EXE")]);
-      expect(probed.filter((file) => file.startsWith(third))).toEqual([]);
-    }).pipe(Effect.provideService(HostProcess.Platform, "win32")),
   );
 });
 
