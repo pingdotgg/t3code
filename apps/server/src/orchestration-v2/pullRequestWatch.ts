@@ -11,6 +11,8 @@ import * as DateTime from "effect/DateTime";
 export const PULL_REQUEST_WATCH_WAKE_LIMIT = 10;
 /** How long a head may go without any check before the agent is told none reported. */
 export const PULL_REQUEST_WATCH_NO_CHECKS_MS = 15 * 60_000;
+/** Outlasts a bot's countdown rewrites, so a remark already reported on a head wakes once more. */
+const TOLD_EDIT_SETTLE_MS = 10 * 60_000;
 const LISTED_ITEMS = 10;
 const SNIPPET_LENGTH = 200;
 
@@ -18,7 +20,11 @@ export type PullRequestWatchChange =
   | { readonly kind: "checks-failed"; readonly failed: ReadonlyArray<PullRequestCheck> }
   | { readonly kind: "checks-passed"; readonly count: number; readonly required: boolean }
   | { readonly kind: "checks-awaiting-approval"; readonly checks: ReadonlyArray<PullRequestCheck> }
-  | { readonly kind: "remarks"; readonly remarks: ReadonlyArray<PullRequestComment> }
+  | {
+      readonly kind: "remarks";
+      readonly remarks: ReadonlyArray<PullRequestComment>;
+      readonly edited?: true;
+    }
   | { readonly kind: "no-checks"; readonly minutes: number }
   | { readonly kind: "conflicting" }
   | { readonly kind: "merge-queue-removed"; readonly reason: string | null };
@@ -180,14 +186,42 @@ export function evaluatePullRequestWatch(
   const through = Date.parse(watch.remarksThrough);
   const activeAt = (remark: PullRequestComment) => remark.editedAt ?? remark.createdAt;
   // Hosts can stamp remarks to the second, so remarks at the boundary time are told apart by ID.
-  const fresh = (remarks ?? []).filter((remark) => {
-    const at = Date.parse(activeAt(remark));
-    return (
-      (at > through || (at === through && !watch.remarkIds.includes(remark.id))) &&
-      remark.author?.login.toLowerCase() !== own
-    );
-  });
-  if (fresh.length > 0) changes.push({ kind: "remarks", remarks: fresh });
+  const isNew = (at: string, id: string) =>
+    Date.parse(at) > through || (Date.parse(at) === through && !watch.remarkIds.includes(id));
+  const byOthers = (remarks ?? []).filter((remark) => remark.author?.login.toLowerCase() !== own);
+  const fresh = byOthers.filter((remark) => isNew(activeAt(remark), remark.id));
+  // Bots rewrite one status comment many times, so an edit of a remark the agent already saw
+  // waits until a read finds it unchanged and then wakes once with its final text.
+  // An edit held on an older head describes that head, so a push drops it.
+  const pending = headMoved ? [] : (watch.pendingEdits ?? []);
+  const held = new Map(pending.map((edit) => [edit.id, edit.editedAt]));
+  // Some bots keep rewriting one comment on the same head (a review countdown, a CI status
+  // table), so after a remark's edit is reported on a head its later edits settle for longer.
+  const editsTold = headMoved ? [] : (watch.remarkEditsTold ?? []);
+  const added: Array<PullRequestComment> = [];
+  const edits: Array<PullRequestComment> = [];
+  const heldNow: Array<{ id: string; editedAt: string }> = [];
+  for (const remark of byOthers) {
+    if (remark.editedAt != null && held.get(remark.id) === remark.editedAt) {
+      const settling =
+        editsTold.includes(remark.id) && now - Date.parse(remark.editedAt) < TOLD_EDIT_SETTLE_MS;
+      if (settling) heldNow.push({ id: remark.id, editedAt: remark.editedAt });
+      else edits.push(remark);
+    } else if (!fresh.includes(remark)) {
+      // A rewatch moves the watermark past an edit made while the watch was stopped.
+      if (remark.editedAt != null && held.has(remark.id)) {
+        heldNow.push({ id: remark.id, editedAt: remark.editedAt });
+      }
+    } else if (remark.editedAt == null || isNew(remark.createdAt, remark.id)) {
+      added.push(remark);
+    } else {
+      heldNow.push({ id: remark.id, editedAt: remark.editedAt });
+    }
+  }
+  const pendingEdits = remarks === null ? pending : heldNow;
+  const remarkEditsTold = [...new Set([...editsTold, ...edits.map((remark) => remark.id)])];
+  if (added.length > 0) changes.push({ kind: "remarks", remarks: added });
+  if (edits.length > 0) changes.push({ kind: "remarks", remarks: edits, edited: true });
   const latest = Math.max(through, ...fresh.map((remark) => Date.parse(activeAt(remark))));
   const atLatest = fresh.filter((remark) => Date.parse(activeAt(remark)) === latest);
   const remarksThrough = latest === through ? watch.remarksThrough : activeAt(atLatest[0]!);
@@ -238,6 +272,8 @@ export function evaluatePullRequestWatch(
       approvalAnnounced,
       remarksThrough,
       remarkIds,
+      ...(pendingEdits.length > 0 ? { pendingEdits } : {}),
+      ...(remarkEditsTold.length > 0 ? { remarkEditsTold } : {}),
       conflicting,
       mergeQueueRemovalId,
       wakes,
@@ -296,7 +332,7 @@ function changeLines(
       ];
     case "remarks":
       return [
-        `- ${change.remarks.length} new ${change.remarks.length === 1 ? "comment" : "comments"}:`,
+        `- ${change.remarks.length} ${change.edited ? "edited" : "new"} ${change.remarks.length === 1 ? "comment" : "comments"}:`,
         ...listed(change.remarks, (remark) => {
           const where = remark.path === null ? "" : ` on ${remark.path}`;
           const body = snippet(remark.body);
@@ -390,7 +426,9 @@ export function pullRequestWatchMessage(input: {
       change.kind === "conflicting" ||
       change.kind === "merge-queue-removed",
   );
-  const summary = changes.map((change) => SUMMARY[change.kind]);
+  const summary = changes.map((change) =>
+    change.kind === "remarks" && change.edited ? "edited comments" : SUMMARY[change.kind],
+  );
   if (exhausted) summary.push("stopped watching");
   return {
     text,
