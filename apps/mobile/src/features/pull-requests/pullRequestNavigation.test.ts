@@ -1,6 +1,6 @@
 import { EnvironmentId, ProjectId, SourceControlProviderKind } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { nativePullRequestDestination } from "../../lib/pullRequestNavigation";
+import { nativePullRequestDestination as destination } from "../../lib/pullRequestNavigation";
 
 const context = { environmentId: "remote", projectId: "project" };
 const project = (id: string, canonicalKey: string, provider: string, remoteUrl: string) => ({
@@ -19,6 +19,13 @@ const projects = [
   project("forgejo", "forgejo.test/org/repo", "forgejo", "http://forgejo.test:3000/org/repo.git"),
 ];
 
+const nativePullRequestDestination = (
+  url: string,
+  linkContext: typeof context | null,
+  linkProjects: typeof projects,
+  configLoaded: Parameters<typeof destination>[3] = () => true,
+) => destination(url, linkContext, linkProjects, configLoaded);
+
 describe("native PR entry points", () => {
   it("keeps a thread link in its own environment and handles renamed host path shapes", () => {
     expect(
@@ -27,7 +34,13 @@ describe("native PR entry points", () => {
         context,
         projects,
       ),
-    ).toEqual({ ...context, host: "github.com", repository: "org/repo", number: 12 });
+    ).toEqual({
+      ...context,
+      host: "github.com",
+      repository: "org/repo",
+      number: 12,
+      navigationUrl: "https://github.com/org/repo/pull/12/files#diff",
+    });
     expect(
       nativePullRequestDestination(
         "https://git.example/group/sub/repo/-/merge_requests/9",
@@ -41,10 +54,15 @@ describe("native PR entry points", () => {
     ).toBe("forgejo.test:3000");
   });
 
-  it("leaves pull requests from repositories without a project to the external opener", () => {
+  it("opens a repository nobody has checked out under a project on its host, as web does", () => {
     expect(
       nativePullRequestDestination("https://github.com/someone/else/pull/12", context, projects),
-    ).toBeNull();
+    ).toEqual({ ...context, host: "github.com", repository: "someone/else", number: 12 });
+  });
+
+  it("leaves links to the external opener when the environment cannot show them", () => {
+    const url = "https://github.com/org/repo/pull/12";
+    expect(nativePullRequestDestination(url, context, projects, () => false)).toBeNull();
   });
 
   it("leaves issues, unknown sites, and unscoped links to the external opener", () => {

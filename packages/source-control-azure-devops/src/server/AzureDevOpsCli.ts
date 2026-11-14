@@ -13,6 +13,9 @@ import {
 } from "@t3tools/contracts";
 
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
+import { AzureCliInstallLocation } from "./azureCliLauncher.ts";
 import {
   decodeAzureDevOpsPullRequestJson,
   decodeAzureDevOpsPullRequestListJson,
@@ -256,13 +259,8 @@ export class AzureDevOpsCli extends Context.Service<
 
     readonly getDefaultBranch: (input: {
       readonly cwd: string;
+      readonly repository: string;
     }) => Effect.Effect<string | null, AzureDevOpsCliError>;
-
-    readonly checkoutPullRequest: (input: {
-      readonly cwd: string;
-      readonly reference: string;
-      readonly remoteName?: string;
-    }) => Effect.Effect<void, AzureDevOpsCliError>;
   }
 >()("@t3tools/source-control-azure-devops/server/AzureDevOpsCli") {}
 
@@ -356,23 +354,58 @@ const classifyAzFailure = (stderr: string): VcsProcessExitFailureKind | null => 
   if (normalized.includes("az devops login") || /please run '?az login'?/.test(normalized)) {
     return "authentication";
   }
+  // Azure DevOps reports usage-limit throttling as TF400733, often without an HTTP status.
+  if (normalized.includes("tf400733")) return "rate-limited";
   return normalized.includes("pull request") &&
     (normalized.includes("not found") || normalized.includes("does not exist"))
     ? "not-found"
     : null;
 };
 
-/** @public Service construction is part of the canonical Effect module API. */
+export interface AzureCliInvocation {
+  readonly command: string;
+  /** Arguments `az` needs before the caller's, to run the CLI in UTF-8 mode. */
+  readonly args: ReadonlyArray<string>;
+  readonly env?: NodeJS.ProcessEnv;
+}
+
+/**
+ * `-X utf8` is the only way in: the launcher's `-I` implies `-E`, so `PYTHONUTF8` and
+ * `PYTHONIOENCODING` are ignored, and the ANSI code page loses text `az` cannot encode.
+ * Resolved once when the service is built: installing `az` later needs a restart.
+ */
+export const azureCliInvocation = Effect.fn("AzureDevOpsCli.invocation")(function* () {
+  if ((yield* HostProcess.Platform) !== "win32") {
+    return { command: "az", args: [] } satisfies AzureCliInvocation;
+  }
+  const resolveExecutable = yield* SpawnExecutableResolution;
+  const launcher = resolveExecutable("az", "win32", yield* HostProcess.Environment);
+  const installFor = yield* AzureCliInstallLocation;
+  const install = launcher === undefined ? undefined : installFor(launcher);
+  // Unrecognized installs (pipx's Scripts\az.exe) keep the launcher and today's decode.
+  return install === undefined
+    ? ({ command: "az", args: [] } satisfies AzureCliInvocation)
+    : ({
+        command: install.interpreter,
+        args: ["-X", "utf8", "-IBm", "azure.cli"],
+        // What the launcher sets before running this same interpreter.
+        env: { AZ_INSTALLER: install.installer },
+      } satisfies AzureCliInvocation);
+});
+
+/** @public */
 export const make = Effect.gen(function* () {
   const { process } = yield* SourceControlHost.SourceControlHost;
+  const invocation = yield* azureCliInvocation();
 
   const execute: AzureDevOpsCli["Service"]["execute"] = (input) =>
     process
       .run({
         operation: "AzureDevOpsCli.execute",
-        command: "az",
-        args: input.args,
+        command: invocation.command,
+        args: [...invocation.args, ...input.args],
         cwd: input.cwd,
+        ...(invocation.env === undefined ? {} : { env: invocation.env }),
         classifyFailure: classifyAzFailure,
         notFoundDetail: "Pull request not found.",
         timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
@@ -400,8 +433,13 @@ export const make = Effect.gen(function* () {
 
   return AzureDevOpsCli.of({
     execute,
-    listPullRequests: (input) =>
-      executeJson({
+    listPullRequests: Effect.fn("AzureDevOpsCli.listPullRequests")(function (input) {
+      const branch = SourceControlProvider.sourceBranch(input);
+      // az checks literal ref prefixes before constructing the request URL.
+      const refPrefix =
+        ["refs/heads/", "refs/pull/", "refs/tags/"].find((prefix) => branch.startsWith(prefix)) ??
+        "";
+      return executeJson({
         cwd: input.cwd,
         args: [
           "repos",
@@ -410,7 +448,8 @@ export const make = Effect.gen(function* () {
           "--detect",
           "true",
           "--source-branch",
-          SourceControlProvider.sourceBranch(input),
+          // az puts this in the query string unescaped; a `#` would cut the request.
+          refPrefix + encodeURIComponent(branch.slice(refPrefix.length)),
           "--status",
           toAzureStatus(input.state),
           "--top",
@@ -439,9 +478,10 @@ export const make = Effect.gen(function* () {
                 }),
               ),
         ),
-      ),
-    getPullRequest: (input) =>
-      executeJson({
+      );
+    }),
+    getPullRequest: Effect.fn("AzureDevOpsCli.getPullRequest")(function (input) {
+      return executeJson({
         cwd: input.cwd,
         args: [
           "repos",
@@ -473,11 +513,21 @@ export const make = Effect.gen(function* () {
             }),
           ),
         ),
-      ),
-    getRepositoryCloneUrls: (input) =>
-      executeJson({
+      );
+    }),
+    getRepositoryCloneUrls: Effect.fn("AzureDevOpsCli.getRepositoryCloneUrls")(function (input) {
+      const repository = parseRepositorySpecifier(input.repository);
+      return executeJson({
         cwd: input.cwd,
-        args: ["repos", "show", "--detect", "true", "--repository", input.repository],
+        args: [
+          "repos",
+          "show",
+          "--detect",
+          "true",
+          "--repository",
+          repository.name,
+          ...(repository.project ? ["--project", repository.project] : []),
+        ],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>
@@ -489,13 +539,11 @@ export const make = Effect.gen(function* () {
           ),
         ),
         Effect.map(normalizeRepositoryCloneUrls),
-      ),
-    createRepository: (input) => {
+      );
+    }),
+    createRepository: Effect.fn("AzureDevOpsCli.createRepository")(function (input) {
       const repository = parseRepositorySpecifier(input.repository);
-      // Azure Repos access is governed by project/organization permissions.
-      // `az repos create` does not expose a per-repository visibility flag, so
-      // the generic source-control visibility input is intentionally not
-      // translated into CLI args for this provider.
+      // Project/organization permissions control visibility; `az repos create` has no flag.
       return executeJson({
         cwd: input.cwd,
         args: [
@@ -514,9 +562,9 @@ export const make = Effect.gen(function* () {
         ),
         Effect.map(normalizeRepositoryCloneUrls),
       );
-    },
-    createPullRequest: (input) =>
-      execute({
+    }),
+    createPullRequest: Effect.fn("AzureDevOpsCli.createPullRequest")(function (input) {
+      return execute({
         cwd: input.cwd,
         args: [
           "repos",
@@ -534,34 +582,29 @@ export const make = Effect.gen(function* () {
           "--description",
           `@${input.bodyFile}`,
         ],
-      }).pipe(Effect.asVoid),
-    getDefaultBranch: (input) =>
-      executeJson({
+      }).pipe(Effect.asVoid);
+    }),
+    getDefaultBranch: Effect.fn("AzureDevOpsCli.getDefaultBranch")(function (input) {
+      const repository = parseRepositorySpecifier(input.repository);
+      return executeJson({
         cwd: input.cwd,
-        args: ["repos", "show", "--detect", "true"],
+        args: [
+          "repos",
+          "show",
+          "--detect",
+          "true",
+          // Joined so a name starting with `-` stays the option's value.
+          `--repository=${repository.name}`,
+          ...(repository.project ? ["--project", repository.project] : []),
+        ],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>
           decodeAzureDevOpsJson(raw, RawAzureDevOpsRepositorySchema, "getDefaultBranch", input.cwd),
         ),
         Effect.map((repo) => normalizeDefaultBranch(repo.defaultBranch)),
-      ),
-    checkoutPullRequest: (input) =>
-      execute({
-        cwd: input.cwd,
-        args: [
-          "repos",
-          "pr",
-          "checkout",
-          "--only-show-errors",
-          "--detect",
-          "true",
-          "--id",
-          normalizeChangeRequestId(input.reference),
-          "--remote-name",
-          input.remoteName ?? "origin",
-        ],
-      }).pipe(Effect.asVoid),
+      );
+    }),
   });
 });
 

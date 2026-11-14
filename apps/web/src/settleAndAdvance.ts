@@ -11,9 +11,7 @@ export function registerSettleAndAdvance(handler: SettleAndAdvance): () => void 
   };
 }
 
-/**
- * Returns false when no sidebar is mounted, so the caller settles in place.
- */
+/** False means no sidebar is mounted; settle in place. */
 export function settleAndAdvance(threadRef: ScopedThreadRef): boolean {
   if (!registeredSettleAndAdvance) return false;
   registeredSettleAndAdvance(threadRef);

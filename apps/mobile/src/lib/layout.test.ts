@@ -3,11 +3,24 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   alignListPaneToHinge,
   deriveLayout,
-  deriveThreadFeedInitialContentInset,
+  deriveThreadArrangementSizing,
   deriveThreadWorkLogSizing,
   deriveWorkspacePaneLayout,
+  nativeInspectorColumnWidth,
   isPrimarySidebarPinned,
 } from "./layout";
+
+describe("thread arrangement text sizing", () => {
+  it("fits two title lines and section labels with combined app and system text scaling", () => {
+    const sizing = deriveThreadArrangementSizing({ baseFontSize: 22, fontScale: 1.3 });
+    expect(sizing.rowHeight).toBeGreaterThanOrEqual(2 * 32 * 1.3 + 10);
+    expect(sizing.headerHeight).toBeGreaterThanOrEqual(26 * 1.3 + 24);
+    expect(deriveThreadArrangementSizing({ baseFontSize: 16, fontScale: 1 })).toEqual({
+      rowHeight: 56,
+      headerHeight: 48,
+    });
+  });
+});
 
 describe("thread work-log text sizing", () => {
   it.each([
@@ -36,19 +49,6 @@ describe("thread work-log text sizing", () => {
   });
 });
 
-describe("deriveThreadFeedInitialContentInset", () => {
-  // regression: #5585 land the first thread open above the composer on Android
-  it("does not double native iOS insets", () => {
-    expect(
-      deriveThreadFeedInitialContentInset({
-        platform: "ios",
-        usesNativeAutomaticInsets: true,
-        bottomContentInset: 174,
-      }),
-    ).toBeUndefined();
-  });
-});
-
 describe("native workspace sizing", () => {
   it.each([
     { width: 669, height: 951, hasHinge: true, nativeWorkspace: true, overlay: true },
@@ -66,7 +66,7 @@ describe("native workspace sizing", () => {
         reservedRegions: [],
       };
       const layout = deriveLayout({ ...size, nativeMetrics, nativeWorkspace });
-      expect(layout.primarySidebarOverlaysContent).toBe(overlay);
+      expect(layout.variant === "medium").toBe(overlay);
       for (const primarySidebarPreferredVisible of [true, false]) {
         expect(
           deriveWorkspacePaneLayout({
@@ -118,6 +118,18 @@ describe("native workspace sizing", () => {
   });
 });
 
+describe("width classes", () => {
+  it.each([
+    { width: 599, height: 900, variant: "compact" },
+    { width: 600, height: 900, variant: "medium" },
+    { width: 719, height: 900, variant: "medium" },
+    { width: 720, height: 900, variant: "expanded" },
+    { width: 900, height: 599, variant: "compact" },
+  ] as const)("classes a window without native columns by size: %j", ({ variant, ...size }) => {
+    expect(deriveLayout(size).variant).toBe(variant);
+  });
+});
+
 describe("isPrimarySidebarPinned", () => {
   // regression: #20406 sidebar toggle works on iPad and iPhone Duo
   it("keeps compact native roots pinned so search cannot hide the sidebar for a later split", () => {
@@ -128,6 +140,50 @@ describe("isPrimarySidebarPinned", () => {
 });
 
 describe("deriveWorkspacePaneLayout", () => {
+  it.each([
+    { width: 1_194, height: 834, horizontalSafeArea: 0, fraction: 0.4, suppressed: false },
+    { width: 1_032, height: 1_376, horizontalSafeArea: 0, fraction: 0.4, suppressed: true },
+    // The unfolded Duo's system bar leaves no room for the sidebar beside even the narrowest inspector.
+    { width: 951, height: 669, horizontalSafeArea: 76, fraction: 0, suppressed: true },
+  ])(
+    "steps the sidebar aside for the native inspector only when the page gets too narrow ($width wide)",
+    ({ width, height, horizontalSafeArea, fraction, suppressed }) => {
+      const layout = deriveLayout({ width, height });
+      for (const primarySidebarPreferredVisible of [true, false]) {
+        expect(
+          deriveWorkspacePaneLayout({
+            layout,
+            viewportWidth: width,
+            horizontalSafeArea,
+            nativeWorkspace: true,
+            primarySidebarPreferredVisible,
+            auxiliaryPanePreferredVisible: true,
+            nativeInspectorWidth: nativeInspectorColumnWidth({
+              viewportWidth: width,
+              horizontalSafeArea,
+              fraction,
+            }),
+          }),
+        ).toMatchObject({
+          primarySidebarVisible: primarySidebarPreferredVisible && !suppressed,
+          primarySidebarSuppressedByAuxiliary: primarySidebarPreferredVisible && suppressed,
+          auxiliaryPaneVisible: true,
+        });
+      }
+    },
+  );
+
+  it.each([
+    { viewportWidth: 1_376, horizontalSafeArea: 0 },
+    { viewportWidth: 951, horizontalSafeArea: 76 },
+  ])(
+    "never widens the native inspector past the page's minimum ($viewportWidth wide)",
+    ({ viewportWidth, horizontalSafeArea }) => {
+      const width = nativeInspectorColumnWidth({ viewportWidth, horizontalSafeArea, fraction: 1 });
+      expect(viewportWidth - horizontalSafeArea - width).toBeGreaterThanOrEqual(320);
+    },
+  );
+
   it("keeps an explicitly hidden thread sidebar hidden when the file inspector is visible", () => {
     const layout = deriveLayout({ width: 1_024, height: 1_366 });
 
@@ -137,7 +193,6 @@ describe("deriveWorkspacePaneLayout", () => {
         viewportWidth: 1_024,
         primarySidebarPreferredVisible: false,
         auxiliaryPanePreferredVisible: true,
-        auxiliaryPaneRole: "inspector",
       }),
     ).toMatchObject({
       primarySidebarVisible: false,

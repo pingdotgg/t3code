@@ -1,19 +1,34 @@
+import { isWindowsDrivePath } from "./path.ts";
+
 export type CloneProtocol = "ssh" | "https";
 
-const SCP_LIKE_URL = /^(?:[^@/\s]+@)?([^:/\s]+):(?!\/)(.+)$/;
-const SSH_URL = /^ssh:\/\/(?:[^@/\s]+@)?([^:/\s]+)(:\d+)?\/(.+)$/;
-const HTTPS_URL = /^https?:\/\/(?:[^@/\s]+@)?([^:/\s]+)(:\d+)?\/(.+)$/;
+const SCP_LIKE_URL = /^(?:[^@/\s]+@)?(\[[^\]@/\s]+\]|[^:/\s[\]]+):(?!\/)(.+)$/;
+// Userinfo may contain `@`; the last one before the first slash separates the host.
+const SSH_URL = /^ssh:\/\/(?:[^/\s]*@)?(\[[^\]@/\s]+\]|[^@:/\s]+)(:\d+)?\/(.+)$/;
+const HTTPS_URL = /^https?:\/\/(?:[^/\s]*@)?(\[[^\]@/\s]+\]|[^@:/\s]+)(:\d+)?\/(.+)$/;
 
-function parseCloneUrl(
-  url: string,
-): { protocol: CloneProtocol; host: string; path: string; customPort: boolean } | null {
+function parseCloneUrl(url: string): {
+  protocol: CloneProtocol;
+  host: string;
+  path: string;
+  customPort: boolean;
+  scp: boolean;
+} | null {
   const trimmed = url.trim();
   const ssh = SSH_URL.exec(trimmed);
-  if (ssh) return { protocol: "ssh", host: ssh[1]!, path: ssh[3]!, customPort: !!ssh[2] };
+  if (ssh)
+    return { protocol: "ssh", host: ssh[1]!, path: ssh[3]!, customPort: !!ssh[2], scp: false };
   const https = HTTPS_URL.exec(trimmed);
-  if (https) return { protocol: "https", host: https[1]!, path: https[3]!, customPort: !!https[2] };
+  if (https)
+    return {
+      protocol: "https",
+      host: https[1]!,
+      path: https[3]!,
+      customPort: !!https[2],
+      scp: false,
+    };
   const scp = SCP_LIKE_URL.exec(trimmed);
-  if (scp) return { protocol: "ssh", host: scp[1]!, path: scp[2]!, customPort: false };
+  if (scp) return { protocol: "ssh", host: scp[1]!, path: scp[2]!, customPort: false, scp: true };
   return null;
 }
 
@@ -31,7 +46,47 @@ export function cloneUrlForProtocol(url: string, protocol: CloneProtocol): strin
   if (!parsed) return null;
   if (parsed.protocol === protocol) return url.trim();
   if (parsed.customPort) return null;
-  return protocol === "ssh"
-    ? `git@${parsed.host}:${parsed.path}`
-    : `https://${parsed.host}/${parsed.path}`;
+  // Azure's transports use different hosts and put the repository marker in
+  // different positions; changing only the scheme produces an invalid clone URL.
+  if (parsed.protocol === "ssh" && parsed.host.toLowerCase() === "ssh.dev.azure.com") {
+    const azure = /^v3\/([^/?#]+)\/([^/?#]+)\/([^/?#]+)$/.exec(parsed.path);
+    return azure ? `https://dev.azure.com/${azure[1]}/${azure[2]}/_git/${azure[3]}` : null;
+  }
+  if (parsed.protocol === "https" && parsed.host.toLowerCase() === "dev.azure.com") {
+    const azure = /^([^/?#]+)\/([^/?#]+)\/_git\/([^/?#]+)$/.exec(parsed.path);
+    return azure ? `git@ssh.dev.azure.com:v3/${azure[1]}/${azure[2]}/${azure[3]}` : null;
+  }
+  // SCP paths are literal; URI paths use percent escapes.
+  try {
+    if (protocol === "ssh") return `git@${parsed.host}:${decodeURIComponent(parsed.path)}`;
+    const path = parsed.scp
+      ? parsed.path.split("/").map(encodeURIComponent).join("/")
+      : parsed.path;
+    return `https://${parsed.host}/${path}`;
+  } catch {
+    return null;
+  }
+}
+
+const UNSAFE_SEGMENT = /^\.{1,2}$|[\\:*?"<>|\p{Cc}]|[ .]$/u;
+const WINDOWS_DEVICE_NAME =
+  /^(?:con|prn|aux|nul|conin\$|conout\$|com[0-9¹²³]|lpt[0-9¹²³])(?: *\.| *$)/i;
+
+/**
+ * The `<host>/<owner>/<repo>` folders ghq clones a URL into, or null for local paths and
+ * anything with a folder that could leave the root.
+ */
+export function cloneUrlRepositoryPath(url: string): string | null {
+  if (isWindowsDrivePath(url.trim())) return null;
+  const parsed = parseCloneUrl(url);
+  if (!parsed) return null;
+  const segments = [parsed.host, ...parsed.path.split(/[?#]/)[0]!.split("/").filter(Boolean)];
+  const last = segments.at(-1)!;
+  if (last.endsWith(".git")) segments[segments.length - 1] = last.slice(0, -".git".length);
+  if (
+    segments.length < 2 ||
+    segments.some((s) => s === "" || UNSAFE_SEGMENT.test(s) || WINDOWS_DEVICE_NAME.test(s))
+  )
+    return null;
+  return segments.join("/");
 }

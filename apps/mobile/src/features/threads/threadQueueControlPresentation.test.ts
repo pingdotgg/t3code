@@ -1,10 +1,7 @@
 import { formatAssistantCitationHref } from "@t3tools/shared/assistantCitations";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  resolveThreadQueueRowControls,
-  resolveQueueDropBeforeRunId,
-} from "./threadQueueControlPresentation";
+import { resolveThreadQueueRowControls } from "./threadQueueControlPresentation";
 
 describe("threadQueueControlPresentation", () => {
   it.each([
@@ -19,9 +16,6 @@ describe("threadQueueControlPresentation", () => {
         isEditing,
         canPromoteToSteer: false,
         canSendNow: true,
-        canReorder: false,
-        index: 0,
-        queuedCount: 1,
         text: "Queued message",
       });
 
@@ -45,9 +39,6 @@ describe("threadQueueControlPresentation", () => {
       busy: false,
       canPromoteToSteer: true,
       canSendNow: false,
-      canReorder: true,
-      index: 0,
-      queuedCount: 1,
       text: `[Assistant quote](${href}) Can we add a backoff here?`,
     });
 
@@ -61,38 +52,26 @@ describe("threadQueueControlPresentation", () => {
       busy: false,
       canPromoteToSteer: true,
       canSendNow: false,
-      canReorder: true,
-      index: 1,
       isEditing: true,
-      queuedCount: 3,
       text: "Being edited",
     });
 
     expect(editing.isEditing).toBe(true);
     expect(editing.canEdit).toBe(false);
     expect(editing.canSend).toBe(false);
-    expect(editing.canMoveUp).toBe(true);
     expect(editing.canDismiss).toBe(true);
   });
-});
 
-describe("queue drag insertion", () => {
-  const rows = [
-    { id: "first" as never, y: 0, height: 80 },
-    { id: "second" as never, y: 80, height: 140 },
-    { id: "third" as never, y: 220, height: 80 },
-  ];
+  it("lets the owner cancel a guest's queued message but not rewrite it", () => {
+    const guest = resolveThreadQueueRowControls({
+      busy: false,
+      canPromoteToSteer: true,
+      canSendNow: false,
+      isGuestMessage: true,
+      text: "Why?",
+    });
 
-  it("moves between variable-height rows and to either end", () => {
-    expect(resolveQueueDropBeforeRunId(rows, rows[0]!.id, 140)).toBe("third");
-    expect(resolveQueueDropBeforeRunId(rows, rows[0]!.id, 300)).toBeNull();
-    expect(resolveQueueDropBeforeRunId(rows, rows[2]!.id, -300)).toBe("first");
-  });
-
-  it("does not send a reorder for an unchanged or unmeasured drop", () => {
-    expect(resolveQueueDropBeforeRunId(rows, rows[1]!.id, 0)).toBeUndefined();
-    expect(resolveQueueDropBeforeRunId(rows, rows[2]!.id, 20)).toBeUndefined();
-    expect(resolveQueueDropBeforeRunId([{ id: rows[0]!.id }], rows[0]!.id, 10)).toBeUndefined();
-    expect(resolveQueueDropBeforeRunId(rows, "missing" as never, 100)).toBeUndefined();
+    expect(guest.canEdit).toBe(false);
+    expect(guest.canDismiss).toBe(true);
   });
 });

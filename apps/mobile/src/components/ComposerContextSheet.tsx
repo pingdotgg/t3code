@@ -13,7 +13,7 @@ import type {
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { videoMimeType } from "@t3tools/shared/video";
-import { Platform, Pressable, ScrollView, View } from "react-native";
+import { Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { REVIEW_MONO_FONT_FAMILY } from "../features/review/reviewDiffRendering";
 import { ReviewCommentCard, useReviewCommentColors } from "../features/review/ReviewCommentCard";
@@ -23,8 +23,8 @@ import {
   type DraftComposerAttachment,
 } from "../lib/composerImages";
 import { contextImageGallery } from "../lib/contextImageGallery";
-import { FilePreviewModal } from "./FilePreviewModal";
-import { VideoPreviewModal } from "./VideoPreviewModal";
+import { FilePreviewModal } from "./ui/FilePreviewModal";
+import { VideoPreviewModal } from "./ui/VideoPreviewModal";
 import { ComposerContextAttachment } from "./ComposerContextAttachment";
 import { AppText as Text } from "./ui/AppText";
 import { Sheet } from "./ui/Sheet";
@@ -111,7 +111,7 @@ export function ComposerContextSheet(props: {
       : undefined;
   if (record && !("payload" in record) && (record.kind === "image" || record.kind === "file")) {
     const mimeType = videoMimeType(record) ?? record.mimeType;
-    const previewKind = filePreviewKind(record);
+    const previewKind = filePreviewKind(record, { richDocuments: false });
     const resource = {
       _tag: "attachment" as const,
       attachmentId: record.attachmentId,
@@ -193,7 +193,7 @@ export function ComposerContextSheet(props: {
       <ScrollView
         nestedScrollEnabled
         className="flex-1"
-        contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
+        contentInsetAdjustmentBehavior="automatic"
         contentContainerStyle={{
           paddingHorizontal: 20,
           paddingTop: 12,
@@ -268,18 +268,23 @@ export function ComposerContextSheet(props: {
                 <ContextField label="Comment" value={record.comment} />
                 <ContextField label="Selection" value={record.targetSummary} />
                 <ContextField label="Requested changes" value={record.styleChanges.join("\n")} />
-                {record.elements?.map((element, index) => (
-                  <View key={`${element.selector ?? element.tagName}:${index}`} className="gap-3">
-                    <ContextField
-                      label="Element"
-                      value={element.componentName ?? element.tagName}
-                    />
-                    <ContextField label="Selector" value={element.selector} code />
-                    <ContextSource source={element.source} />
-                    <ContextField label="HTML" value={element.htmlPreview} code />
-                    <ContextField label="Styles" value={element.styles} code />
-                  </View>
-                ))}
+                {record.elements?.map(
+                  (element, index) => (
+                    /* oxlint-disable react/no-array-index-key -- Captured DOM elements are a fixed snapshot without persistent element IDs. */ <View
+                      key={`${element.selector ?? element.tagName}:${index}`}
+                      className="gap-3"
+                    >
+                      <ContextField
+                        label="Element"
+                        value={element.componentName ?? element.tagName}
+                      />
+                      <ContextField label="Selector" value={element.selector} code />
+                      <ContextSource source={element.source} />
+                      <ContextField label="HTML" value={element.htmlPreview} code />
+                      <ContextField label="Styles" value={element.styles} code />
+                    </View>
+                  ) /* oxlint-enable react/no-array-index-key */,
+                )}
               </>
             ) : null}
             {record.kind === "element" ? (
@@ -318,6 +323,9 @@ export function ComposerContextSheet(props: {
                   />
                 ) : null}
               </View>
+            ) : null}
+            {record.kind === "environment" ? (
+              <ContextField label="Machine" value={record.label} />
             ) : null}
             {record.kind === "skill" ? (
               <View className="gap-3">

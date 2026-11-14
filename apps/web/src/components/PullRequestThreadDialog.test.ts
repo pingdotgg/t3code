@@ -50,13 +50,13 @@ vi.mock("~/state/session", () => ({
       ? state.canOperate
       : scope === AuthSourceControlWriteScope && state.canWriteSourceControl,
 }));
-vi.mock("~/lib/sourceControlActions", async () => {
+vi.mock("~/state/sourceControlActions", async () => {
   const { usePreparePullRequestThreadAction } = await vi.importActual<
     typeof import("~/state/sourceControlActions")
   >("~/state/sourceControlActions");
   return {
     readCachedPullRequestResolution: () => null,
-    usePullRequestResolution: () => ({
+    usePullRequestResolutionState: () => ({
       data: { pullRequest: { number: 123, title: "Pull request", state: "open" } },
     }),
     usePreparePullRequestThreadAction,

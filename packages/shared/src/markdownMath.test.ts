@@ -124,8 +124,18 @@ describe("chat math parsing", () => {
       "It costs $5 and $10.",
       "Budget $5-$10 per seat, or $20,000-$30,000 a year.",
       "Plans are $5/$10 monthly.",
+      "Pay $5,$10 now.",
       "Run $browser then $deploy on it.",
       "Set $HOME before running.",
+      "Set $HOME,$PATH before running.",
+      "Set $HOME, $PATH before running.",
+      "Set $HOME,$_PATH before running.",
+      "Set $home,$path before running.",
+      "Set $HOME,${PATH} before running.",
+      "Set $HOME,$? before running.",
+      "Set $HOME,$@ before running.",
+      "Set $HOME,$(pwd) before running.",
+      "Pay $1,000,$2,000 now.",
     ]) {
       expect(formulas(prose), prose).toEqual([]);
       expect(text(prose), prose).toBe(prose);
@@ -141,6 +151,17 @@ describe("chat math parsing", () => {
       ]);
       expect(text(source)).toBe(`Price ${price} stays literal. The formula is  and .`);
     }
+  });
+
+  it("reads formulas that end in a comma", () => {
+    for (const boundary of ["", " ", "\n", ".", ",", ";", ":", ")", "]", "}"]) {
+      expect(formulas(`$x,$${boundary}`)).toEqual([["inline", "x,"]]);
+    }
+    expect(formulas("Where $x = 1,$ with $$a,$$ and $$ b,$$.")).toEqual([
+      ["inline", "x = 1,"],
+      ["display", "a,"],
+      ["display", " b,"],
+    ]);
   });
 
   it("leaves code, escapes, links, and citations alone", () => {
@@ -170,6 +191,15 @@ describe("chat math parsing", () => {
 
   it("starts a formula right after an escaped dollar", () => {
     expect(formulas("Pay \\$$x$ now.")).toEqual([["inline", "x"]]);
+  });
+
+  it("starts a formula right after an escaped backslash", () => {
+    const markdown = "Path \\\\\\(x^2\\) and \\\\\\[y\\].";
+    expect(formulas(markdown)).toEqual([
+      ["inline", "x^2"],
+      ["display", "y"],
+    ]);
+    expect(text(markdown)).toBe("Path \\ and \\.");
   });
 
   it.each([

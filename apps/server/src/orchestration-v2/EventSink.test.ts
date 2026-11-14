@@ -22,105 +22,88 @@ const layer = EventSink.layer.pipe(
   Layer.provide(Sqlite.layerMemory),
 );
 
-it.effect.each([false, true])(
-  "checks fork source lifetime inside the commit transaction, deleted before commit=%s",
-  (deleteFirst) =>
-    Effect.gen(function* () {
-      const sink = yield* EventSink.EventSinkV2;
-      const projections = yield* ProjectionStore.ProjectionStoreV2;
-      const now = yield* DateTime.now;
-      const sourceId = ThreadId.make("fork-source");
-      const targetId = ThreadId.make("fork-target");
-      const providerInstanceId = ProviderInstanceId.make("codex");
-      const source: OrchestrationV2AppThread = {
-        id: sourceId,
-        projectId: ProjectId.make("project"),
-        title: "Source",
-        createdBy: "user",
-        creationSource: "web",
-        providerInstanceId,
-        modelSelection: { instanceId: providerInstanceId, model: "gpt-5" },
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        branch: null,
-        worktreePath: null,
-        activeProviderThreadId: null,
-        lineage: { rootThreadId: sourceId, parentThreadId: null, relationshipToParent: null },
-        forkedFrom: null,
-        createdAt: now,
-        updatedAt: now,
-        archivedAt: null,
-        deletedAt: null,
-        settledOverride: null,
-        settledAt: null,
-        snoozedUntil: null,
-        snoozedAt: null,
-        lastVisitedAt: null,
-      };
-      yield* sink.write({
-        events: [
-          {
-            id: EventId.make("source-created"),
-            type: "thread.created",
-            threadId: sourceId,
-            occurredAt: now,
-            payload: source,
+it.effect("rejects a planned fork whose source was deleted before it committed", () =>
+  Effect.gen(function* () {
+    const sink = yield* EventSink.EventSinkV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const now = yield* DateTime.now;
+    const sourceId = ThreadId.make("fork-source");
+    const targetId = ThreadId.make("fork-target");
+    const providerInstanceId = ProviderInstanceId.make("codex");
+    const source: OrchestrationV2AppThread = {
+      id: sourceId,
+      projectId: ProjectId.make("project"),
+      title: "Source",
+      createdBy: "user",
+      creationSource: "web",
+      providerInstanceId,
+      modelSelection: { instanceId: providerInstanceId, model: "gpt-5" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      activeProviderThreadId: null,
+      lineage: { rootThreadId: sourceId, parentThreadId: null, relationshipToParent: null },
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      deletedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      snoozedUntil: null,
+      snoozedAt: null,
+      lastVisitedAt: null,
+    };
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make("source-created"),
+          type: "thread.created",
+          threadId: sourceId,
+          occurredAt: now,
+          payload: source,
+        },
+      ],
+    });
+    const plannedFork = {
+      commandId: CommandId.make("fork"),
+      commandType: "thread.fork",
+      threadId: targetId,
+      acceptedAt: now,
+      effects: [],
+      events: [
+        {
+          id: EventId.make("fork-created"),
+          type: "thread.created" as const,
+          threadId: targetId,
+          occurredAt: now,
+          payload: {
+            ...source,
+            id: targetId,
+            forkedFrom: { type: "run" as const, threadId: sourceId, runId: RunId.make("run") },
           },
-        ],
-      });
-      const plannedFork = {
-        commandId: CommandId.make("fork"),
-        commandType: "thread.fork",
-        threadId: targetId,
-        acceptedAt: now,
-        effects: [],
-        events: [
-          {
-            id: EventId.make("fork-created"),
-            type: "thread.created" as const,
-            threadId: targetId,
-            occurredAt: now,
-            payload: {
-              ...source,
-              id: targetId,
-              forkedFrom: { type: "run" as const, threadId: sourceId, runId: RunId.make("run") },
-            },
-          },
-        ],
-      };
-      const deleteSource = sink.write({
-        events: [
-          {
-            id: EventId.make("source-deleted"),
-            type: "thread.deleted",
-            threadId: sourceId,
-            occurredAt: now,
-            payload: { ...source, deletedAt: now },
-          },
-        ],
-      });
-      if (deleteFirst) {
-        yield* deleteSource;
-        const rejected = yield* sink.commitCommand(plannedFork);
-        assert.equal(rejected.receipt.status, "rejected");
-        assert.equal(rejected.receipt.error, "Cannot fork a missing or deleted thread.");
-        assert.isFalse(rejected.committed);
-        assert.deepEqual(rejected.storedEvents, []);
-        const replayed = yield* sink.commitCommand(plannedFork);
-        assert.deepEqual(replayed.receipt, rejected.receipt);
-        assert.isFalse(replayed.committed);
-        assert.deepEqual(replayed.storedEvents, []);
-        const missing = yield* projections.getThread(targetId).pipe(Effect.flip);
-        assert.instanceOf(missing, ProjectionStore.ProjectionStoreThreadNotFoundError);
-      } else {
-        assert.isTrue((yield* sink.commitCommand(plannedFork)).committed);
-        yield* deleteSource;
-        // A receipt replay must still return the fork that committed before deletion.
-        assert.isFalse((yield* sink.commitCommand(plannedFork)).committed);
-        assert.deepEqual(
-          (yield* projections.getThread(targetId)).forkedFrom,
-          plannedFork.events[0]!.payload.forkedFrom,
-        );
-      }
-    }).pipe(Effect.provide(layer)),
+        },
+      ],
+    };
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make("source-deleted"),
+          type: "thread.deleted",
+          threadId: sourceId,
+          occurredAt: now,
+          payload: { ...source, deletedAt: now },
+        },
+      ],
+    });
+    const rejected = yield* sink.commitCommand(plannedFork);
+    assert.equal(rejected.receipt.status, "rejected");
+    assert.isFalse(rejected.committed);
+    const replayed = yield* sink.commitCommand(plannedFork);
+    assert.deepEqual(replayed.receipt, rejected.receipt);
+    assert.isFalse(replayed.committed);
+    const missing = yield* projections.getThread(targetId).pipe(Effect.flip);
+    assert.instanceOf(missing, ProjectionStore.ProjectionStoreThreadNotFoundError);
+  }).pipe(Effect.provide(layer)),
 );

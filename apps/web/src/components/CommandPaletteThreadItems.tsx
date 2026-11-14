@@ -1,5 +1,5 @@
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { findForMessageMatch, requestThreadFindQuery } from "./chat/threadFindActionBus";
+import { findForMessageMatch, openThreadFindOnQuery } from "./chat/threadFindStore";
 import {
   claimThreadOpen,
   nextShownOrder,
@@ -23,7 +23,7 @@ import {
   deriveProviderInstanceEntries,
   type ProviderInstanceEntry,
 } from "../providerInstances";
-import { useThreadShells } from "../state/entities";
+import { useVisibleThreadShells } from "../state/entities";
 import {
   useEnvironmentProviders,
   useEnvironments,
@@ -68,10 +68,25 @@ function useProviderEntryByEnvironmentAndInstanceId() {
 
 function useConnectedThreadSearch(query: string) {
   const { environments } = useEnvironments();
+  const { projectEnvironmentLocationById } = useEnvironmentLookups();
   const environmentIds: ReadonlyArray<EnvironmentId> = environments
     .filter((environment) => environment.connection.phase === "connected")
     .map((environment) => environment.environmentId);
-  return useThreadSearch(environmentIds, query);
+  // The palette matches environment names when there are several; older rows must match the same.
+  const environmentLabels =
+    environments.length > 1
+      ? Object.fromEntries(
+          environmentIds.flatMap((environmentId) => {
+            const label = projectEnvironmentLocationById.get(environmentId)?.label;
+            return label === undefined || label === null ? [] : [[environmentId, label]];
+          }),
+        )
+      : undefined;
+  return useThreadSearch(
+    environmentIds,
+    query,
+    environmentLabels === undefined ? {} : { environmentLabels },
+  );
 }
 
 /**
@@ -84,7 +99,7 @@ export function useCommandPaletteThreadItems(input: {
 }) {
   const { activeThread, threadSearchQuery } = input;
   const navigate = useNavigate();
-  const threads = useThreadShells();
+  const threads = useVisibleThreadShells();
   const { projectEnvironmentLocationById } = useEnvironmentLookups();
   const providerEntryByEnvironmentAndInstanceId = useProviderEntryByEnvironmentAndInstanceId();
   const messageSearch = useConnectedThreadSearch(threadSearchQuery);
@@ -149,6 +164,7 @@ export function useCommandPaletteThreadItems(input: {
       const isOpen =
         activeThread?.environmentId === thread.environmentId && activeThread.id === thread.id;
       if (threadSearchQuery.trim().length > 0 && !threadSearchQuery.startsWith(">") && !isOpen) {
+        // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)
         claimThreadOpen(thread.environmentId, thread.id, Date.now());
       }
       if (
@@ -203,7 +219,7 @@ export function useCommandPaletteThreadItems(input: {
         // Opens the thread with find on the word at the matched message, so it is in view.
         run: async () => {
           await item.run();
-          requestThreadFindQuery(
+          openThreadFindOnQuery(
             scopedThreadKey(scopeThreadRef(match.environmentId, match.threadId)),
             findForMessageMatch(match, messageSearch.query),
           );

@@ -278,8 +278,7 @@ describe("resolveInitialServerAuthGateState", () => {
         const requiresAuth = { status: "requires-auth", auth: LOOPBACK_AUTH };
         await expect(resolveInitialServerAuthGateState()).resolves.toEqual(requiresAuth);
 
-        // The pairing form strips the token before submitting. TanStack history
-        // reloads the auth gate synchronously when replaceState runs.
+        // Token removal synchronously reloads the TanStack auth gate via replaceState.
         const token = takePairingTokenFromUrl();
         expect(gateLoads).toHaveLength(1);
         await expect(gateLoads[0]).resolves.toEqual(requiresAuth);
