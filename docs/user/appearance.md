@@ -14,6 +14,20 @@ those modes. Customize these shortcuts under **Settings → Keybindings**.
 On mobile, open **Settings → Appearance**. Mobile has its own themes and text,
 code, and terminal preferences. It does not follow environment themes or defaults.
 
+Under mobile **Appearance → Fonts**, choose fonts independently for the interface, replies,
+composer, and code in messages or Markdown previews. Reply and composer sizes can follow Text size
+or use their own size. Diffs and the terminal keep their existing fonts.
+
+On iOS, choose **Choose installed font…** from a font menu to open the system font picker.
+iOS manages each family's matching styles. Installed fonts must be available to apps through iOS;
+if a selected font becomes unavailable, the app uses its default. Android offers the built-in
+system sans, serif, and monospace choices.
+
+Use **Reply emphasis weight** to choose an available Medium, Semibold, or Bold face for emphasized
+reply text. Default keeps the font's existing emphasis. The choice is remembered for each reply
+font, so changing fonts restores that font's choice. Unavailable weights are disabled. Reset font
+choices and message sizes to clear these selections. Fonts and preferences stay on this device.
+
 On Android 12 or newer, choose the **Material You** theme in Appearance to use colors from
 your wallpaper. Selecting another theme replaces those colors. Like other themes, Material You
 can be selected separately for light and dark appearances.

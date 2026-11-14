@@ -130,6 +130,12 @@ vi.mock("../lib/contextChipIconSource", () => ({ contextChipIconUri: () => "" })
 vi.mock("../features/settings/appearance/useScaledTextRole", () => ({
   useScaledTextRole: () => ({ fontSize: 16, lineHeight: 22 }),
 }));
+vi.mock("../features/settings/appearance/AppearancePreferencesProvider", () => ({
+  useAppearancePreferences: () => ({
+    fonts: { composer: { regular: "System" } },
+    composerFontSize: 16,
+  }),
+}));
 vi.mock("../lib/uuid", () => ({ uuidv4: () => "uuid", randomHex: () => "0000" }));
 vi.mock("../state/assets", () => ({ assetEnvironment: {} }));
 vi.mock("../state/attachments", () => ({ attachmentEnvironment: {} }));
