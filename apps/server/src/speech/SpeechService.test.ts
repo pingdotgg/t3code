@@ -552,6 +552,12 @@ it.effect.each([
     text: "First um\r\n\r\nuh Second.",
     expected: "First\r\n\r\nSecond.",
   },
+  {
+    cue: undefined,
+    remove: true,
+    text: "Uh-huh, that's right. Um, uh-oh, it failed. Mm-hmm.",
+    expected: "Uh-huh, that's right. uh-oh, it failed. Mm-hmm.",
+  },
   { cue: "um", remove: true, text: "Make it red, um, blue.", expected: "Make it red, um, blue." },
   {
     cue: "uh no",
