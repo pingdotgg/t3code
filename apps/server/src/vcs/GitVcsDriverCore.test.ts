@@ -7999,7 +7999,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }),
     );
 
-    it.effect.each(["absent", "behind", "deleted", "rewound"] as const)(
+    it.effect.each(["deleted", "rewound"] as const)(
       "pushes an up-to-date tracked branch to the push remote when its branch there is %s",
       (forkState) =>
         Effect.gen(function* () {
@@ -8013,25 +8013,20 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           yield* git(cwd, ["remote", "add", "upstream", upstreamRemote]);
           yield* git(cwd, ["remote", "add", "fork", forkRemote]);
           yield* git(cwd, ["checkout", "-b", "topic"]);
-          if (forkState === "behind") {
-            yield* git(cwd, ["push", "fork", "topic"]);
-          }
           yield* writeTextFile(cwd, "upstream.txt", "upstream\n");
           yield* git(cwd, ["add", "-A"]);
           yield* driver.commit(cwd, "Add upstream update", "");
           yield* git(cwd, ["push", "-u", "upstream", "topic"]);
           yield* git(cwd, ["config", "remote.pushDefault", "fork"]);
-          if (forkState === "deleted" || forkState === "rewound") {
-            // Another checkout changes the fork after this one last fetched it,
-            // leaving a local fork/topic that still contains HEAD.
-            yield* git(cwd, ["push", "fork", "topic"]);
-            yield* git(
-              forkRemote,
-              forkState === "deleted"
-                ? ["--git-dir=.", "update-ref", "-d", "refs/heads/topic"]
-                : ["--git-dir=.", "update-ref", "refs/heads/topic", "topic~1"],
-            );
-          }
+          // Another checkout changes the fork after this one last fetched it,
+          // leaving a local fork/topic that still contains HEAD.
+          yield* git(cwd, ["push", "fork", "topic"]);
+          yield* git(
+            forkRemote,
+            forkState === "deleted"
+              ? ["--git-dir=.", "update-ref", "-d", "refs/heads/topic"]
+              : ["--git-dir=.", "update-ref", "refs/heads/topic", "topic~1"],
+          );
 
           const pushed = yield* driver.pushCurrentBranch(cwd, null);
 

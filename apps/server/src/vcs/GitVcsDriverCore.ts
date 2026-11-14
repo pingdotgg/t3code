@@ -2880,6 +2880,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         branchName: branch,
         publishes: true,
         upstream: { remoteName: ".", branchName: localUpstream, upstreamRef: localUpstream },
+        pushRemote: null,
       };
     }
 
