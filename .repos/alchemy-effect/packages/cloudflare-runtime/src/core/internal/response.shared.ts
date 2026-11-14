@@ -8,11 +8,12 @@ const ErrorEnvelope = Schema.Struct({
 });
 type ErrorEnvelope = typeof ErrorEnvelope.Type;
 
+// Shared by sync/Promise call sites (Response.json, node:http), not Effect code.
+// oxlint-disable-next-line effecttsgo/schema-sync
 const encodeErrorResponse = Schema.encodeSync(ErrorEnvelope);
 const decodeErrorResponse = Schema.decodeUnknownResult(ErrorEnvelope);
 
-export const makeErrorEnvelope = (error: RuntimeError) =>
-  encodeErrorResponse({ ok: false, error });
+export const makeErrorEnvelope = (error: RuntimeError) => encodeErrorResponse({ ok: false, error });
 
 export const makeErrorResponse = (
   error: RuntimeError,
@@ -29,7 +30,7 @@ export const decodeResponse = async <T>(response: Response) => {
   try {
     json = JSON.parse(text);
   } catch {
-    throw new SystemError({
+    throw SystemError.make({
       subtag: "InvalidResponse",
       message: `Invalid response from server (${response.status} ${response.statusText})`,
       detail: { status: response.status, body: text },
@@ -42,7 +43,7 @@ export const decodeResponse = async <T>(response: Response) => {
   if (Result.isSuccess(decoded)) {
     throw decoded.success.error;
   }
-  throw new SystemError({
+  throw SystemError.make({
     subtag: "InvalidResponse",
     message: `Invalid response from server (${response.status} ${response.statusText})`,
     detail: { status: response.status, body: text },
