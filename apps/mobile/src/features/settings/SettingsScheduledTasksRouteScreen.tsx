@@ -1024,7 +1024,7 @@ function TaskForm({
               }
               onSelect={(id) => {
                 const mode = SCHEDULED_TASK_SEND_MODES.find((candidate) => candidate === id);
-                if (mode) setDraft({ ...draft, sendMode: mode });
+                if (mode) setDraft((current) => ({ ...current, sendMode: mode }));
               }}
             />
           </SettingsSection>
