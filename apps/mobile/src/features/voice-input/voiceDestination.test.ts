@@ -1,6 +1,5 @@
 import { EnvironmentId } from "@t3tools/contracts";
-import { Atom } from "effect/reactivity";
-import { AsyncResult } from "effect/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { decodeSpeechPcmRequest } from "@t3tools/shared/speech";
 import { expect, it, vi } from "vite-plus/test";
 import { appAtomRegistry } from "../../state/atom-registry";
@@ -39,22 +38,6 @@ vi.mock("../../state/preferences", () => {
   return { mobilePreferencesAtom };
 });
 
-it("keeps the recording route stable across unrelated preference updates and auto hydration", () => {
-  const unmount = appAtomRegistry.mount(voiceRouteAtom);
-  try {
-    chooseVoiceDestination(EnvironmentId.make("my-server"));
-    const germanRoute = appAtomRegistry.get(voiceRouteAtom);
-    mocks.preferencesChanged({ speechLanguage: "de", language: "fr" });
-    expect(appAtomRegistry.get(voiceRouteAtom)).toBe(germanRoute);
-    mocks.preferencesChanged(null);
-    const autoRoute = appAtomRegistry.get(voiceRouteAtom);
-    mocks.preferencesChanged({});
-    expect(appAtomRegistry.get(voiceRouteAtom)).toBe(autoRoute);
-  } finally {
-    unmount();
-    appAtomRegistry.reset();
-  }
-});
 vi.mock("expo-file-system", () => ({
   Paths: { document: "file:///app/" },
   File: class {
@@ -296,6 +279,23 @@ it("a late cloud key save cannot override a newer destination choice", () => {
     expect(appAtomRegistry.get(voiceGrantAtom)).toBe(grant);
     expect(grant?.destination).toEqual({ kind: "cloud", environmentId: host, provider: "xai" });
   } finally {
+    appAtomRegistry.reset();
+  }
+});
+
+it("keeps the recording route stable across unrelated preference updates and auto hydration", () => {
+  const unmount = appAtomRegistry.mount(voiceRouteAtom);
+  try {
+    chooseVoiceDestination(EnvironmentId.make("my-server"));
+    const germanRoute = appAtomRegistry.get(voiceRouteAtom);
+    mocks.preferencesChanged({ speechLanguage: "de", language: "fr" });
+    expect(appAtomRegistry.get(voiceRouteAtom)).toBe(germanRoute);
+    mocks.preferencesChanged(null);
+    const autoRoute = appAtomRegistry.get(voiceRouteAtom);
+    mocks.preferencesChanged({});
+    expect(appAtomRegistry.get(voiceRouteAtom)).toBe(autoRoute);
+  } finally {
+    unmount();
     appAtomRegistry.reset();
   }
 });

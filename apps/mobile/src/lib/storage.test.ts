@@ -138,7 +138,7 @@ describe("mobile connection storage", () => {
     await savePreferencesPatch({ speechLanguage: "de" });
     await savePreferencesPatch({ baseFontSize: 18 });
     await expect(loadPreferences()).resolves.toEqual({ speechLanguage: "de", baseFontSize: 18 });
-    mocks.setPreferencesJson(JSON.stringify({ speechLanguage: "invalid", baseFontSize: 18 }), 100);
+    mocks.setPreferencesJson(JSON.stringify({ speechLanguage: "x", baseFontSize: 18 }), 100);
     await expect(loadPreferences()).resolves.toEqual({ baseFontSize: 18 });
   });
 

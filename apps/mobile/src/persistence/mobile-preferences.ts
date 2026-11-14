@@ -13,9 +13,9 @@ import {
   type ProviderInstanceId,
   PullRequestMergeMethod,
   type SidebarProjectGroupingMode,
+  SpeechLanguage,
 } from "@t3tools/contracts";
 import { ToolCallVisibility } from "@t3tools/contracts/settings";
-import { cloudSpeechLanguages } from "@t3tools/shared/speech";
 import type { AndroidNavigationStyle } from "../lib/androidNavigationStyle";
 import type { ComposerEnterBehavior } from "../lib/composerEnterBehavior";
 import type { FollowUpBehavior } from "../lib/followUpBehavior";
@@ -28,6 +28,7 @@ import { MobileStorageDecodeError, MobileStorageEncodeError } from "./mobile-sto
 const PREFERENCES_KEY = "t3code.preferences";
 const PREFERENCES_FALLBACK_KEY = "t3code.preferences.fallback";
 const encodeJson = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
+const isSpeechLanguage = Schema.is(SpeechLanguage);
 
 export const PullRequestListControls = Schema.Struct({
   state: PullRequestListState,
@@ -309,10 +310,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     preferences.followUpBehavior = parsed.followUpBehavior;
   }
   if (typeof parsed.language === "string") preferences.language = parsed.language;
-  if (
-    parsed.speechLanguage === "auto" ||
-    cloudSpeechLanguages.languages.includes(parsed.speechLanguage ?? "")
-  ) {
+  if (isSpeechLanguage(parsed.speechLanguage)) {
     preferences.speechLanguage = parsed.speechLanguage;
   }
   if (Array.isArray(parsed.microphones)) {
