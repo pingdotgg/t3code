@@ -4,6 +4,7 @@ import type { ResourceTelemetryProcess } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
 import {
+  formatCpuTime,
   formatSamplingStatus,
   visibleResourceTelemetryProcesses,
 } from "./ResourceTelemetryDiagnostics.logic";
@@ -46,6 +47,17 @@ describe("visibleResourceTelemetryProcesses", () => {
       processes[0],
       processes[1],
       processes[3],
+    ]);
+  });
+});
+
+describe("formatCpuTime", () => {
+  it("switches units when rounding reaches the next unit", () => {
+    expect([59.94, 59.97, 3_599.7, 3_600].map((seconds) => formatCpuTime(seconds))).toEqual([
+      "59.9s",
+      "1m",
+      "1h",
+      "1h",
     ]);
   });
 });
