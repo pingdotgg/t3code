@@ -43,9 +43,13 @@ export function exhaustedUsageWindow(
   if (model === undefined) return exhausted[0];
   switch (provider?.driver) {
     case "cursor": {
-      const api = exhausted.find((window) => window.id === "apiPercentUsed");
-      const auto = exhausted.find((window) => window.id === "autoPercentUsed");
-      return /^(auto|default|grok|composer)/.test(model) ? auto && api : api;
+      const find = (id: (typeof CURSOR_USAGE_WINDOWS)[number]["id"]) =>
+        exhausted.find((window) => window.id === id);
+      // Unified plans report no API pool; their total meters every model.
+      if (!windows.some((window) => window.id === "apiPercentUsed"))
+        return find("totalPercentUsed");
+      const api = find("apiPercentUsed");
+      return /^(auto|default|grok|composer)/.test(model) ? find("autoPercentUsed") && api : api;
     }
     case "antigravity": {
       const family = model.match(/^(gemini|claude|gpt)-/)?.[1];
