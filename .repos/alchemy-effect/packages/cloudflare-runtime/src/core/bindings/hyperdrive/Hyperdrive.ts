@@ -1,6 +1,6 @@
-import { loadInternalWorker } from "../../internal/internal-worker.ts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import { loadInternalWorker } from "../../internal/internal-worker.ts";
 const HyperdriveBindingWorker = {
   worker: () =>
     loadInternalWorker(
@@ -14,42 +14,34 @@ import * as PluginContext from "../../PluginContext.ts";
 import { ConfigError } from "../../RuntimeError.shared.ts";
 import type { HyperdriveOrigin } from "./HyperdriveOrigin.shared.ts";
 
-export class Hyperdrive extends Plugin.Service<
-  Hyperdrive,
-  Record<string, HyperdriveOrigin>
->()("cloudflare-runtime/plugin/Hyperdrive") {}
+export class Hyperdrive extends Plugin.Service<Hyperdrive, Record<string, HyperdriveOrigin>>()(
+  "cloudflare-runtime/plugin/Hyperdrive",
+) {}
 
 export const HyperdriveLive = Layer.succeed(
   Hyperdrive,
   Hyperdrive.of(
     PluginContext.use(({ worker: { hyperdrives } }) => {
-      if (!hyperdrives || Object.keys(hyperdrives).length === 0)
-        return Effect.succeed({ api: {} });
-      return Effect.map(
-        formatExtensionModule(HyperdriveBindingWorker),
-        (esModule) => ({
-          extensions: [
-            {
-              modules: [
-                {
-                  name: "cloudflare-runtime:hyperdrive",
-                  internal: true,
-                  esModule,
-                },
-              ],
-            },
-          ],
-          api: hyperdrives,
-        }),
-      );
+      if (!hyperdrives || Object.keys(hyperdrives).length === 0) return Effect.succeed({ api: {} });
+      return Effect.map(formatExtensionModule(HyperdriveBindingWorker), (esModule) => ({
+        extensions: [
+          {
+            modules: [
+              {
+                name: "cloudflare-runtime:hyperdrive",
+                internal: true,
+                esModule,
+              },
+            ],
+          },
+        ],
+        api: hyperdrives,
+      }));
     }),
   ),
 );
 
-export const local = (
-  binding: string,
-  hyperdriveId: string,
-): BindingHook<Hyperdrive> =>
+export const local = (binding: string, hyperdriveId: string): BindingHook<Hyperdrive> =>
   Plugin.use(Hyperdrive, (hyperdrive) =>
     hyperdrive.api[hyperdriveId]
       ? Effect.succeed({
@@ -65,7 +57,7 @@ export const local = (
           },
         })
       : Effect.fail(
-          new ConfigError({
+          ConfigError.make({
             subtag: "HyperdriveOriginMissing",
             message: `No hyperdrive origin was provided for binding "${binding}" (id: ${hyperdriveId}).`,
             hint: `Add an entry for "${hyperdriveId}" to \`worker.hyperdrives\`.`,
