@@ -50,7 +50,7 @@ settings; about 140 MiB for the `claude` program alone).
 
 ## What exists
 
-`main` is in a working state. `tools/check.sh` passes 28 checks with `CONN_MONOREPO` set (Conn `b12470dcad`, 2026-11-14).
+`main` is in a working state. `tools/check.sh` has 28 checks with `CONN_MONOREPO` set (Conn `b12470dcad`, 2026-11-14). On the server-area branch 27 passed in one run; `acp conformance` failed there under load (in 10 scenarios the T3 side started a second agent process) and passed alone right after (10 of 10).
 
 | Part | State |
 | --- | --- |
