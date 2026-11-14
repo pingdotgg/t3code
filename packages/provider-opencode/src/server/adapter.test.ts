@@ -1726,14 +1726,14 @@ describe("OpenCodeAdapterV2", () => {
             assert.isTrue(Exit.isSuccess(yield* Fiber.join(starting)));
             assert.equal(promptIds.length, 2);
           } else {
+            // A noReply prompt saves a user message and never reports busy or idle.
             yield* TestClock.adjust("10 seconds");
             assert.isTrue(
               returned,
               "a lone reemitted user message cannot block foreground forever",
             );
-            assert.isTrue(Exit.isFailure(yield* Fiber.join(starting)));
-            assert.equal(promptIds.length, 1);
-            assert.isTrue(Exit.isFailure(yield* harness.startTurn("retry").pipe(Effect.exit)));
+            assert.isTrue(Exit.isSuccess(yield* Fiber.join(starting)));
+            assert.equal(promptIds.length, 2, "the foreground prompt submits normally");
           }
           return;
         }
@@ -1746,18 +1746,15 @@ describe("OpenCodeAdapterV2", () => {
             })
             .pipe(Effect.exit, Effect.forkScoped);
           yield* TestClock.adjust("10 seconds");
-          assert.isTrue(Exit.isFailure(yield* Fiber.join(stopping)));
+          assert.isTrue(Exit.isSuccess(yield* Fiber.join(stopping)));
           assert.deepEqual(
             aborted,
             [root, "ses_descendant"],
             "uncertain registration still attempts native cleanup",
           );
           assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
-          assert.isTrue(
-            Exit.isFailure(
-              yield* harness.startTurn("after uncertain cancellation").pipe(Effect.exit),
-            ),
-          );
+          yield* harness.startTurn("after uncertain cancellation");
+          assert.equal(promptIds.length, 2, "a never-run saved message does not break the session");
           return;
         }
         if (end === "stop-before-busy") {

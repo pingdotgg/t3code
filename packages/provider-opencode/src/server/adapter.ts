@@ -2800,23 +2800,12 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             if (closing || nativeStreamFailure !== null || state.wake !== wake) return;
             wake.cancelling = true;
             // prompt.ts publishes its user message before run-state.ts registers a cancellable runner.
+            // A noReply prompt saves one and never runs, so an undecided wake is aborted anyway.
             const running =
               wake.offered ||
               (yield* Deferred.await(wake.admission).pipe(
-                Effect.timeout("10 seconds"),
-                Effect.tapError(() =>
-                  Effect.gen(function* () {
-                    nativeStreamFailure = makeProviderFailure({
-                      message:
-                        "OpenCode prompt registration did not settle during cancellation; reconnect the provider session.",
-                      class: "transport_error",
-                    });
-                    yield* updateProviderSession("error", nativeStreamFailure.message);
-                    yield* cleanupSessionWork(state, abortRootSession(state)).pipe(
-                      Effect.ignore({ log: true }),
-                    );
-                  }),
-                ),
+                Effect.timeoutOption("10 seconds"),
+                Effect.map(Option.getOrElse(() => true)),
               ));
             yield* cleanupSessionWork(state, running ? abortRootSession(state) : Effect.void).pipe(
               Effect.tapError(() =>
@@ -3799,19 +3788,12 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 Effect.gen(function* () {
                   const candidate = state.wake;
                   if (!continuation && candidate !== null && !candidate.offered) {
-                    yield* Deferred.await(candidate.admission).pipe(
-                      Effect.timeout("10 seconds"),
-                      Effect.tapError(() => {
-                        // An idle snapshot cannot rule out prompt.ts still registering this saved message.
-                        nativeStreamFailure = makeProviderFailure({
-                          message:
-                            "OpenCode wake registration did not settle before foreground admission; reconnect the provider session.",
-                          class: "transport_error",
-                        });
-                        if (state.wake === candidate) state.wake = null;
-                        return updateProviderSession("error", nativeStreamFailure.message);
-                      }),
+                    // A noReply prompt saves a user message and never runs; OpenCode queues a
+                    // prompt behind a loop that did start, so the foreground submits either way.
+                    const admission = yield* Deferred.await(candidate.admission).pipe(
+                      Effect.timeoutOption("10 seconds"),
                     );
+                    if (Option.isNone(admission) && state.wake === candidate) state.wake = null;
                   }
                   yield* eventPermit.withPermit(
                     Effect.gen(function* () {
