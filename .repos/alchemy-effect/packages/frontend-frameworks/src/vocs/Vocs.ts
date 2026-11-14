@@ -1,3 +1,8 @@
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import type * as vite from "vite";
 /**
  * `Framework` implementation driving Vocs on Cloudflare Workers.
  *
@@ -24,16 +29,7 @@
  */
 import * as FrameworkCore from "../core/index.ts";
 import { WAKU_SERVER_ENTRY_MODULE } from "../waku/Waku.ts";
-import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
-import * as Path from "effect/Path";
-import type * as vite from "vite";
-import {
-  selectVocsTargetInput,
-  type VocsTarget,
-  type VocsTargetOption,
-} from "./Target.ts";
+import { selectVocsTargetInput, type VocsTarget, type VocsTargetOption } from "./Target.ts";
 
 type ReactPluginModule = typeof import("@vitejs/plugin-react");
 type VocsViteModule = typeof import("vocs/vite");
@@ -73,9 +69,7 @@ const PREVIEW_SERVER_GLOBAL = "__WAKU_START_PREVIEW_SERVER__";
 interface WakuPreviewServer {
   readonly baseUrl: string;
   readonly middlewares: {
-    readonly use: (
-      fn: (req: unknown, res: unknown, next: (err?: unknown) => void) => void,
-    ) => void;
+    readonly use: (fn: (req: unknown, res: unknown, next: (err?: unknown) => void) => void) => void;
   };
   readonly close: () => Promise<void>;
 }
@@ -125,78 +119,72 @@ const RESOLVED_VIRTUAL_USER_CONFIG = `\0${VIRTUAL_USER_CONFIG}`;
  * `dist/server/vocs.config.js`, without separately resolving or serializing
  * the user's configuration in Alchemy.
  */
-const workerdConfigBridge = (configPath: string | undefined): vite.Plugin => {
-  return {
-    name: "@alchemy.run/frontend-frameworks/vocs:workerd-config-bridge",
-    resolveId(id) {
-      if (id === VIRTUAL_USER_CONFIG) return RESOLVED_VIRTUAL_USER_CONFIG;
-      return;
-    },
-    load(id) {
-      if (id === RESOLVED_VIRTUAL_USER_CONFIG) {
-        return configPath === undefined
-          ? "export default {};"
-          : `export { default } from ${JSON.stringify(configPath)};`;
-      }
-      return;
-    },
-    transform(code, id) {
-      // In the production build the modules are vocs's shipped
-      // `dist/internal/*.js`; in dev, vite serves vocs's TS sources
-      // (`src/internal/*.ts`) through the module runner, so both shapes (and
-      // the raw-TS formatting, which user plugins see before vite's esbuild
-      // transform) must match.
-      // Strip the query (dev serves ids like `.../config.js?v=<hash>`).
-      const normalized = (id.split("?")[0] ?? id).replaceAll("\\", "/");
-      const isVocsInternal = (name: string) =>
-        normalized.endsWith(`/vocs/dist/internal/${name}.js`) ||
-        normalized.endsWith(`/vocs/src/internal/${name}.ts`);
-      const mustReplace = (
-        source: string,
-        pattern: RegExp,
-        replacement: string,
-      ): string => {
-        if (!pattern.test(source)) {
-          throw new Error(
-            `@alchemy.run/frontend-frameworks/vocs: ${normalized} no longer matches the workerd config bridge ` +
-              `pattern ${pattern} — update the transform in packages/frontend-frameworks/src/vocs/Vocs.ts ` +
-              "for the installed vocs version",
-          );
-        }
-        return source.replace(pattern, replacement);
-      };
-      // `deserializeFunctions` revives `_vocs-fn_`-serialized config functions
-      // with `new Function`, which workerd forbids. Vocs' server runtime does
-      // not need the browser-side search callbacks that take this path, so
-      // degrade them to `undefined` when dynamic evaluation is unavailable.
-      // Node paths (SSG and dev tooling) still revive them normally.
-      if (isVocsInternal("config-serializer")) {
-        return mustReplace(
-          code,
-          // Avoid the escaped copy inside `deserializeFunctionsStringified`.
-          /return new Function\(`return \$\{value\.slice\(9\)\}`\)\(\);?/,
-          "try { return new Function(`return ${value.slice(9)}`)(); } catch { return undefined; }",
+const workerdConfigBridge = (configPath: string | undefined): vite.Plugin => ({
+  name: "@alchemy.run/frontend-frameworks/vocs:workerd-config-bridge",
+  resolveId(id) {
+    if (id === VIRTUAL_USER_CONFIG) return RESOLVED_VIRTUAL_USER_CONFIG;
+    return;
+  },
+  load(id) {
+    if (id === RESOLVED_VIRTUAL_USER_CONFIG) {
+      return configPath === undefined
+        ? "export default {};"
+        : `export { default } from ${JSON.stringify(configPath)};`;
+    }
+    return;
+  },
+  transform(code, id) {
+    // In the production build the modules are vocs's shipped
+    // `dist/internal/*.js`; in dev, vite serves vocs's TS sources
+    // (`src/internal/*.ts`) through the module runner, so both shapes (and
+    // the raw-TS formatting, which user plugins see before vite's esbuild
+    // transform) must match.
+    // Strip the query (dev serves ids like `.../config.js?v=<hash>`).
+    const normalized = (id.split("?")[0] ?? id).replaceAll("\\", "/");
+    const isVocsInternal = (name: string) =>
+      normalized.endsWith(`/vocs/dist/internal/${name}.js`) ||
+      normalized.endsWith(`/vocs/src/internal/${name}.ts`);
+    const mustReplace = (source: string, pattern: RegExp, replacement: string): string => {
+      if (!pattern.test(source)) {
+        throw new Error(
+          `@alchemy.run/frontend-frameworks/vocs: ${normalized} no longer matches the workerd config bridge ` +
+            `pattern ${pattern} — update the transform in packages/frontend-frameworks/src/vocs/Vocs.ts ` +
+            "for the installed vocs version",
         );
       }
-      if (!isVocsInternal("config")) return;
-      let result = mustReplace(
+      return source.replace(pattern, replacement);
+    };
+    // `deserializeFunctions` revives `_vocs-fn_`-serialized config functions
+    // with `new Function`, which workerd forbids. Vocs' server runtime does
+    // not need the browser-side search callbacks that take this path, so
+    // degrade them to `undefined` when dynamic evaluation is unavailable.
+    // Node paths (SSG and dev tooling) still revive them normally.
+    if (isVocsInternal("config-serializer")) {
+      return mustReplace(
         code,
-        /const \{ server, rootDir = process\.cwd\(\) \} = options;?/,
-        "const { server } = options;\n" +
-          "  const rootDir = options.rootDir ?? (() => { try { return process.cwd(); } catch { return '/'; } })();",
+        // Avoid the escaped copy inside `deserializeFunctionsStringified`.
+        /return new Function\(`return \$\{value\.slice\(9\)\}`\)\(\);?/,
+        "try { return new Function(`return ${value.slice(9)}`)(); } catch { return undefined; }",
       );
-      result = mustReplace(
-        result,
-        /if \(server && process\.env\['NODE_ENV'\] === 'production'\) \{\s*const configPath = path\.resolve\(import\.meta\.dirname, '\.\.\/vocs\.config\.js'\);?\s*const resolved = \(await import\(\/\* @vite-ignore \*\/ configPath\)\)\.default( as define\.Options)?;?\s*return define\(\{ \.\.\.resolved, rootDir \}\);?\s*\}/,
-        "if (server) {\n" +
-          `    const resolved = (await import(${JSON.stringify(VIRTUAL_USER_CONFIG)})).default;\n` +
-          "    return define(resolved);\n" +
-          "  }",
-      );
-      return result;
-    },
-  };
-};
+    }
+    if (!isVocsInternal("config")) return;
+    let result = mustReplace(
+      code,
+      /const \{ server, rootDir = process\.cwd\(\) \} = options;?/,
+      "const { server } = options;\n" +
+        "  const rootDir = options.rootDir ?? (() => { try { return process.cwd(); } catch { return '/'; } })();",
+    );
+    result = mustReplace(
+      result,
+      /if \(server && process\.env\['NODE_ENV'\] === 'production'\) \{\s*const configPath = path\.resolve\(import\.meta\.dirname, '\.\.\/vocs\.config\.js'\);?\s*const resolved = \(await import\(\/\* @vite-ignore \*\/ configPath\)\)\.default( as define\.Options)?;?\s*return define\(\{ \.\.\.resolved, rootDir \}\);?\s*\}/,
+      "if (server) {\n" +
+        `    const resolved = (await import(${JSON.stringify(VIRTUAL_USER_CONFIG)})).default;\n` +
+        "    return define(resolved);\n" +
+        "  }",
+    );
+    return result;
+  },
+});
 
 /**
  * Replicates waku's `cmd-build.ts` `startPreviewServerImpl`: the SSG step of
@@ -229,9 +217,7 @@ const setPreviewServerGlobal = (
       });
       const baseUrl = server.resolvedUrls?.local[0];
       if (!baseUrl) {
-        throw new Error(
-          "Could not determine the URL of the vocs SSG preview server",
-        );
+        throw new Error("Could not determine the URL of the vocs SSG preview server");
       }
       return {
         baseUrl,
@@ -260,11 +246,7 @@ const clearPreviewServerGlobal = (): void => {
  */
 export const make = (
   options: VocsFrameworkOptions = {},
-): Layer.Layer<
-  FrameworkCore.Framework,
-  never,
-  FileSystem.FileSystem | Path.Path
-> =>
+): Layer.Layer<FrameworkCore.Framework, never, FileSystem.FileSystem | Path.Path> =>
   Layer.effect(
     FrameworkCore.Framework,
     Effect.gen(function* () {
@@ -279,11 +261,9 @@ export const make = (
 
       const resolveTarget = (root: string) => {
         const { input, config } = selectVocsTargetInput(options);
-        return FrameworkCore.resolveDeployTarget<VocsTarget, unknown>(
-          root,
-          input,
-          config,
-        ).pipe(Effect.mapError(fail("Failed to resolve the deploy target")));
+        return FrameworkCore.resolveDeployTarget<VocsTarget, unknown>(root, input, config).pipe(
+          Effect.mapError(fail("Failed to resolve the deploy target")),
+        );
       };
 
       const findConfig = (root: string) =>
@@ -304,21 +284,11 @@ export const make = (
         Effect.all(
           {
             bundler: FrameworkCore.loadProjectModule<typeof vite>(root, "vite"),
-            react: FrameworkCore.loadProjectModule<ReactPluginModule>(
-              root,
-              "@vitejs/plugin-react",
-            ),
-            vite: FrameworkCore.loadProjectModule<VocsViteModule>(
-              root,
-              "vocs/vite",
-            ),
+            react: FrameworkCore.loadProjectModule<ReactPluginModule>(root, "@vitejs/plugin-react"),
+            vite: FrameworkCore.loadProjectModule<VocsViteModule>(root, "vocs/vite"),
           },
           { concurrency: "unbounded" },
-        ).pipe(
-          Effect.mapError(
-            fail("Failed to load Vocs from the project dependencies"),
-          ),
-        );
+        ).pipe(Effect.mapError(fail("Failed to load Vocs from the project dependencies")));
 
       /** Resolve the target's adapter module + vite plugins for one pass. */
       const prepareTarget = Effect.fn(function* (
@@ -326,24 +296,15 @@ export const make = (
         root: string,
         phase: "build" | "dev",
       ) {
-        const wakuDirectory =
-          yield* FrameworkCore.resolveProjectPackageDirectory(
-            root,
-            "waku",
-          ).pipe(
-            Effect.mapError(
-              fail("Failed to resolve the project's waku package directory"),
-            ),
-          );
+        const wakuDirectory = yield* FrameworkCore.resolveProjectPackageDirectory(
+          root,
+          "waku",
+        ).pipe(Effect.mapError(fail("Failed to resolve the project's waku package directory")));
         const context = { root, wakuDirectory, phase } as const;
         const [adapterPath, plugins] = yield* Effect.all(
           [target.adapter(context), target.vitePlugins(context)],
           { concurrency: "unbounded" },
-        ).pipe(
-          Effect.mapError(
-            fail(`The cloudflare target failed preparing the vocs ${phase}`),
-          ),
-        );
+        ).pipe(Effect.mapError(fail(`The cloudflare target failed preparing the vocs ${phase}`)));
         return { adapterPath, plugins, wakuDirectory };
       });
 
@@ -360,11 +321,7 @@ export const make = (
                 Effect.mapError(fail("The deploy target's build failed")),
               );
           }
-          const { adapterPath, plugins } = yield* prepareTarget(
-            target,
-            root,
-            "build",
-          );
+          const { adapterPath, plugins } = yield* prepareTarget(target, root, "build");
           const project = yield* loadProject(root);
           const configPath = yield* findConfig(root);
           // vocs's CLI (like waku's) runs with NODE_ENV set before loading
@@ -376,9 +333,7 @@ export const make = (
             entryEnvironment: "rsc",
             selectEntry: (chunk) => chunk.name === WAKU_SERVER_ENTRY_MODULE,
           }).pipe(Effect.provideService(FileSystem.FileSystem, fs));
-          const previewPort = yield* FrameworkCore.resolveViteDevPort(
-            project.bundler.version,
-          );
+          const previewPort = yield* FrameworkCore.resolveViteDevPort(project.bundler.version);
           yield* Effect.tryPromise({
             try: async () => {
               const builder = await project.bundler.createBuilder(
@@ -396,13 +351,7 @@ export const make = (
                 },
                 null,
               );
-              setPreviewServerGlobal(
-                root,
-                adapterPath,
-                configPath,
-                project,
-                previewPort,
-              );
+              setPreviewServerGlobal(root, adapterPath, configPath, project, previewPort);
               try {
                 await builder.buildApp();
               } finally {
@@ -429,11 +378,7 @@ export const make = (
         dev: Effect.fn(function* (devOptions) {
           const root = yield* resolveRoot(devOptions?.root);
           const target = yield* resolveTarget(root);
-          const { adapterPath, plugins } = yield* prepareTarget(
-            target,
-            root,
-            "dev",
-          );
+          const { adapterPath, plugins } = yield* prepareTarget(target, root, "dev");
           const project = yield* loadProject(root);
           const configPath = yield* findConfig(root);
           yield* Effect.sync(() => {
@@ -470,10 +415,7 @@ export const make = (
               Effect.promise(async () => {
                 try {
                   (
-                    server.httpServer as
-                      | { closeAllConnections?: () => void }
-                      | null
-                      | undefined
+                    server.httpServer as { closeAllConnections?: () => void } | null | undefined
                   )?.closeAllConnections?.();
                   await server.close();
                 } catch {
@@ -486,11 +428,7 @@ export const make = (
           );
           const url = server.resolvedUrls?.local[0];
           if (url === undefined) {
-            return yield* Effect.fail(
-              fail("Could not determine the URL of the vocs dev server")(
-                undefined,
-              ),
-            );
+            return yield* fail("Could not determine the URL of the vocs dev server")(undefined);
           }
           return { url };
         }),

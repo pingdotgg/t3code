@@ -26,9 +26,7 @@ describe("makeNodeTarget", () => {
   it("exposes a dependency-free marker adapter named node", () => {
     expect(MARKER_NAME).toBe("node");
     expect(node()).toEqual({ name: "node", serverTarget: "node" });
-    expect(ADAPTER_PACKAGE).toBe(
-      "@alchemy.run/frontend-frameworks/octane/node-adapter",
-    );
+    expect(ADAPTER_PACKAGE).toBe("@alchemy.run/frontend-frameworks/octane/node-adapter");
   });
 
   it("exposes the named `target` module export as the factory", () => {

@@ -1,0 +1,201 @@
+---
+title: "Part 3: Testing"
+description: Write integration tests that deploy your stack and make HTTP requests against the live Cloud Run service.
+sidebar:
+  order: 3
+---
+
+In [Part 2](/gcp/tutorial/part-2) you deployed a Cloud Run service
+bound to a Bucket. Now you write tests that deploy the Stack, call the
+live service, and check it works.
+
+## Install the test harness
+
+`Test.make` ships in `@alchemy.run/test`. Add it as a dev dependency:
+
+```sh
+bun add -d @alchemy.run/test
+```
+
+## Create the test file
+
+`Test.make` takes the same providers and state as your Stack:
+
+```typescript
+// test/integ.test.ts
+import * as Alchemy from "alchemy";
+import * as GCP from "@alchemy.run/gcp";
+import * as Test from "@alchemy.run/test/Bun";
+import { expect } from "bun:test";
+import * as Effect from "effect/Effect";
+import Stack from "../alchemy.run.ts";
+
+const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
+  providers: GCP.providers(),
+  state: GCP.state(),
+});
+```
+
+:::note[Using Vitest or alchemy-test?]
+`@alchemy.run/test/Vitest` and `@alchemy.run/test/Alchemy` have the same API.
+Take `expect` from `@effect/vitest` or `@alchemy.run/test` instead. See
+[Test harness → Runners](/testing/test-harness#runners).
+:::
+
+## Deploy before the tests
+
+Deploy the Stack once, before any test runs:
+
+```diff lang="typescript"
+const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
+  providers: GCP.providers(),
+  state: GCP.state(),
+});
+
++const stack = beforeAll(deploy(Stack), { timeout: 600_000 });
+```
+
+`beforeAll` returns a handle. `yield*` it inside a test to get the
+Stack outputs. The first deploy builds an image, so give it a long
+timeout.
+
+## Read the outputs
+
+```diff lang="typescript"
+const stack = beforeAll(deploy(Stack), { timeout: 600_000 });
+
++test(
++  "stack exposes a service url",
++  Effect.gen(function* () {
++    const { url } = yield* stack;
++
++    expect(url).toStartWith("https://");
++  }),
++);
+```
+
+## Run the tests
+
+```sh
+bun test test/integ.test.ts
+```
+
+The first run deploys. Later runs reuse the deployment and only change
+what you changed.
+
+:::note[Which stage do tests use?]
+Tests deploy to `test_$USER` (e.g. `test_sam`), apart from the
+`live_$USER` stage `alchemy deploy` uses. Your working deployment is
+never touched. More on stages in [Part 4](/gcp/tutorial/part-4).
+:::
+
+## Call the service
+
+Replace the first test with a round trip through the Bucket:
+
+```diff lang="typescript"
+// test/integ.test.ts
+import * as Alchemy from "alchemy";
+import * as GCP from "@alchemy.run/gcp";
+import * as Test from "@alchemy.run/test/Bun";
+import { expect } from "bun:test";
+import * as Effect from "effect/Effect";
++import * as HttpBody from "effect/http/HttpBody";
++import * as HttpClient from "effect/http/HttpClient";
++import * as Schedule from "effect/Schedule";
+import Stack from "../alchemy.run.ts";
+
+const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
+  providers: GCP.providers(),
+  state: GCP.state(),
+});
+
+const stack = beforeAll(deploy(Stack), { timeout: 600_000 });
+
+-test(
+-  "stack exposes a service url",
+-  Effect.gen(function* () {
+-    const { url } = yield* stack;
+-
+-    expect(url).toStartWith("https://");
+-  }),
+-);
++test(
++  "PUT and GET round-trip an object",
++  Effect.gen(function* () {
++    const { url } = yield* stack;
++
++    const put = yield* HttpClient.put(`${url}/hello.txt`, {
++      body: HttpBody.text("Hello, World!"),
++    }).pipe(
++      Effect.retry({ schedule: Schedule.exponential("500 millis"), times: 10 }),
++    );
++    expect(put.status).toBe(204);
++
++    const get = yield* HttpClient.get(`${url}/hello.txt`);
++    expect(yield* get.text).toBe("Hello, World!");
++  }),
++  { timeout: 120_000 },
++);
++
++test(
++  "GET a missing key returns 404",
++  Effect.gen(function* () {
++    const { url } = yield* stack;
++    const response = yield* HttpClient.get(`${url}/no-such-key`);
++    expect(response.status).toBe(404);
++  }),
++);
+```
+
+`HttpClient` comes with the test harness.
+
+:::tip[Retry the first request]
+A new service's Bucket grant can take a few seconds to reach Cloud
+Storage. Retry the first request with a bounded schedule, as above.
+:::
+
+## Let destroy empty the Bucket
+
+The PUT test leaves `hello.txt` in the Bucket. Cloud Storage won't
+delete a Bucket that still has objects, so destroy would fail. This
+Bucket only holds test data, so let destroy empty it first:
+
+```diff lang="typescript"
+// src/api.ts
+Effect.gen(function* () {
+-  const bucket = yield* GCP.Storage.Bucket("Bucket", {});
++  const bucket = yield* GCP.Storage.Bucket("Bucket", {
++    forceDestroy: true,
++  });
+  const files = yield* GCP.Storage.ReadWriteBucket(bucket);
+```
+
+Leave `forceDestroy` off for Buckets that hold data you need to keep.
+
+## Destroy after tests in CI
+
+Locally, keep the Stack deployed between runs so tests start fast. In
+CI, tear it down:
+
+```diff lang="typescript"
+const stack = beforeAll(deploy(Stack), { timeout: 600_000 });
+
++afterAll.skipIf(!process.env.CI)(destroy(Stack), { timeout: 600_000 });
+```
+
+With `CI=true` the Stack is destroyed after the tests. Without it,
+`skipIf` skips the destroy.
+
+## Recap
+
+You now have:
+
+- `Test.make({ providers, state })` wiring GCP into the test runner
+- `beforeAll(deploy(Stack))` deploying once before the tests
+- HTTP assertions against the live Cloud Run URL
+- `forceDestroy: true` so destroy can delete a Bucket tests wrote to
+- `afterAll.skipIf(!process.env.CI)(destroy(Stack))` cleaning up in CI
+
+In [Part 4](/gcp/tutorial/part-4), you give every developer,
+environment, and pull request its own copy of the Stack.

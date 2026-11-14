@@ -13,10 +13,8 @@ export interface Diagnostic {
 // `InvalidInput` — and these errors travel in unions with cloud errors,
 // where `catchTag` discriminates by tag alone.
 
-/** The caller sent something the route cannot act on. */
-export class AlchemistInvalidInput extends Data.TaggedError(
-  "AlchemistInvalidInput",
-)<{
+/** The caller sent something the operation cannot act on. */
+export class AlchemistInvalidInput extends Data.TaggedError("AlchemistInvalidInput")<{
   readonly message: string;
   readonly field?: string;
 }> {
