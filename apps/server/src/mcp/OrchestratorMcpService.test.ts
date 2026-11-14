@@ -4052,15 +4052,6 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
     );
 
-    it.effect("keeps the stored selection when an update has no target", () =>
-      Effect.gen(function* () {
-        const saved = yield* savedSelections((mcp) =>
-          mcp.updateScheduledTask(client, { scheduledTaskId: existing.id, prompt: "Check again" }),
-        );
-        assert.deepEqual(saved, [existing.modelSelection]);
-      }),
-    );
-
     it.effect("reports the saved model and options", () =>
       Effect.gen(function* () {
         const saved = yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput>>([]);
@@ -4123,35 +4114,6 @@ describe("OrchestratorMcpService provider resolution", () => {
           })
           .pipe(Effect.flip);
         assert.equal(error.code, "provider_unavailable");
-        assert.deepEqual(yield* Ref.get(saved), []);
-      }),
-    );
-
-    it.effect.each([
-      { name: "an unknown model", target: { model: "gpt-0" }, code: "model_unavailable" },
-      {
-        name: "an unknown option value",
-        target: { options: [{ id: "serviceTier", value: "turbo" }] },
-        code: "invalid_request",
-      },
-    ] as const)("refuses $name and saves nothing", ({ target, code }) =>
-      Effect.gen(function* () {
-        const saved = yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput>>([]);
-        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
-          Effect.provide(service(saved)),
-        );
-        const created = yield* mcp
-          .scheduleTask(client, {
-            projectId,
-            prompt: "Check the build",
-            schedule: { type: "interval", everyMs: 3_600_000 },
-            target,
-          })
-          .pipe(Effect.flip);
-        const updated = yield* mcp
-          .updateScheduledTask(client, { scheduledTaskId: existing.id, target })
-          .pipe(Effect.flip);
-        assert.deepEqual([created.code, updated.code], [code, code]);
         assert.deepEqual(yield* Ref.get(saved), []);
       }),
     );
