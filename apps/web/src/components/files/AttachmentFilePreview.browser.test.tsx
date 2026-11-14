@@ -1561,10 +1561,13 @@ it("keeps a workspace HTML preview loaded until its revision or grant changes", 
   expect(edited).not.toBe(opened);
   expect(edited?.getAttribute("src")).toMatch(/^data:text\/html,edited/);
 
-  state("data:text/html,regranted", "two", 7_200_000);
-  await screen.rerender(preview("fourth"));
-  expect(screen.container.querySelector("iframe")).toBe(edited);
+  refresh.mockReset().mockResolvedValue(null);
   await act(() => vi.advanceTimersByTime(3_540_000));
+  expect(refresh).toHaveBeenCalledTimes(1);
+  expect(screen.container.querySelector("iframe")).toBe(edited);
+
+  state("data:text/html,regranted", "two", 7_200_000);
+  await screen.rerender(preview("third"));
   expect(screen.container.querySelector("iframe")).not.toBe(edited);
   expect(screen.container.querySelector("iframe")?.getAttribute("src")).toMatch(
     /^data:text\/html,regranted/,

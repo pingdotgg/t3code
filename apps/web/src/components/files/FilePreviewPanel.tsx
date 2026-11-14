@@ -284,6 +284,18 @@ export function WorkspaceBrowserPreview(props: {
   ) {
     setGrant({ documentKey, expiresAt: assetUrl.expiresAt });
   }
+  // An idle preview keeps its shown URL until it nears expiry, so ask for a fresh one at the deadline.
+  const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
+  const renewGrant = useStableCallback(() => void refreshAssetUrl().catch(() => undefined));
+  const grantStale =
+    !pdf &&
+    grantExpiring &&
+    assetUrl._tag === "Success" &&
+    assetUrl.expiresAt <= (grant?.expiresAt ?? 0);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- requests a fresh grant from the server when the retained one is about to expire
+  useEffect(() => {
+    if (grantStale) renewGrant();
+  }, [grantStale, renewGrant]);
 
   if (assetUrl._tag === "Failure") {
     return (
