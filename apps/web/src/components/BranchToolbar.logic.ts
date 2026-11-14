@@ -199,6 +199,36 @@ export function resolveBranchToolbarValue(input: {
   return currentGitBranch ?? activeThreadBranch;
 }
 
+export interface BranchHold {
+  readonly branch: string | null;
+  readonly environmentId: EnvironmentId;
+  /**
+   * Each checkout the thread can show before it catches up, with the branch its status reported
+   * before the switch. A move from a worktree to the project root lists both.
+   */
+  readonly checkouts: ReadonlyArray<{ readonly cwd: string; readonly replaces: string | null }>;
+}
+
+/**
+ * A finished checkout's branch stays on screen until status reports any change, because the status
+ * stream and the RPC reply are not ordered and showing status first would flip back to the old branch.
+ */
+export function isBranchHoldCurrent(
+  hold: BranchHold,
+  current: {
+    readonly canonicalBranch: string | null;
+    readonly environmentId: EnvironmentId;
+    readonly cwd: string | null;
+  },
+): boolean {
+  return (
+    hold.environmentId === current.environmentId &&
+    hold.checkouts.some(
+      (checkout) => checkout.cwd === current.cwd && checkout.replaces === current.canonicalBranch,
+    )
+  );
+}
+
 /**
  * The base a New worktree thread gets without the user picking one. Only a listed ref qualifies:
  * during a clone the status names an unborn HEAD that no ref backs.
@@ -256,6 +286,20 @@ export function resolveLocalCheckoutBranchMismatch(input: {
     return null;
   }
   return { threadBranch: activeThreadBranch, currentBranch: currentGitBranch };
+}
+
+/**
+ * Keeps a picked ref's worktree claim only when a read in that worktree finds it checked out.
+ * `freshRead` is `null` when the read failed.
+ */
+export function resolveConfirmedSelectedRef(
+  listedRef: VcsRef,
+  freshRead: { readonly refs: ReadonlyArray<VcsRef> } | null,
+): VcsRef {
+  const checkedOut =
+    freshRead?.refs.some((ref) => ref.name === listedRef.name && !ref.isRemote && ref.current) ??
+    false;
+  return checkedOut ? listedRef : { ...listedRef, worktreePath: null };
 }
 
 export function resolveBranchSelectionTarget(input: {
