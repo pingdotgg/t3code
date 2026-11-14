@@ -321,10 +321,10 @@ pub fn start_status_refresh(deps: &Deps) {
                     let next = snapshot(&deps);
                     for (id, after) in &next {
                         let before = last.iter().find(|(b, _)| b == id).map(|(_, e)| e);
-                        if rebuilt.contains(id) || before != Some(after) {
-                            if let Some(provider) = deps.providers.get(id) {
-                                provider.refresh_status(after.clone()).await;
-                            }
+                        if (rebuilt.contains(id) || before != Some(after))
+                            && let Some(provider) = deps.providers.get(id)
+                        {
+                            provider.refresh_status(after.clone()).await;
                         }
                     }
                     if !rebuilt.is_empty() || next != last {

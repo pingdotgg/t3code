@@ -59,11 +59,10 @@ fn main() {
             },
         ),
     ));
-    let mut providers: Vec<Arc<dyn Provider>> = Vec::new();
     // T3's default `grok` instance: off until `providerInstances.grok` enables it. It starts
     // with the stored settings, so a Grok task due at start can run; the server's status task
     // applies later changes and probes the CLI.
-    providers.push(Arc::new(conn_provider_acp::AcpProvider::with_settings(
+    let grok: Arc<dyn Provider> = Arc::new(conn_provider_acp::AcpProvider::with_settings(
         "grok".into(),
         &conn_provider_acp::GROK,
         conn_provider_acp::AcpConfig {
@@ -73,7 +72,7 @@ fn main() {
             ..Default::default()
         },
         conn_server::serve::stored_grok_settings(&options.state_dir),
-    )));
+    ));
     // One thread: a container serves a handful of clients, and each worker thread costs
     // stack and allocator arenas.
     let runtime = conn_server::serve::or_exit(
@@ -82,7 +81,7 @@ fn main() {
             .build(),
         "cannot start the runtime",
     );
-    runtime.block_on(serve_with_instances(options, providers, Some(instances)));
+    runtime.block_on(serve_with_instances(options, vec![grok], Some(instances)));
     // Dropping the tasks drops provider children, which kills them (`kill_on_drop`).
     runtime.shutdown_timeout(std::time::Duration::from_secs(2));
 }

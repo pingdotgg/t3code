@@ -1191,8 +1191,8 @@ impl ClaudeSession {
         let applied =
             tokio::task::spawn_blocking(move || crate::launch_args::apply(&args, cwd.as_deref()))
                 .await
-                .map_err(|e| failed_err("start_turn", &e.to_string()))?
-                .map_err(|e| failed_err("start_turn", &e))?;
+                .map_err(|e| failed_err("start_turn", e.to_string()))?
+                .map_err(|e| failed_err("start_turn", e))?;
         let options = launch::query_options(&inner.config, &input, env, &applied);
         let mut query = inner.helper.open(options, json!({}))?;
         let Some(rx) = query.take_events() else {
