@@ -1,15 +1,18 @@
-# Status: parked on 2026-11-13
+# Status
 
-The Conn Server is parked. Nick decided on 2026-11-13 to stay with the T3 server (the server in
-the Conn repository, `nckrtl/conn`) for now. Work may continue later. This file says where the
-work stands, why it stopped, and how to start again.
+**The work is active.** It was parked on 2026-11-13 and Nick resumed it on 2026-11-14. This file
+says where the work stands, what is proven, and what is left, in order. Keep it true: update
+it with every merged step.
 
-Nothing in the Conn repository depends on this repository. No container, desktop or mobile
+Nothing in the Conn repository depends on this repository yet. No container, desktop or mobile
 client uses the Conn Server.
 
-## Why it is parked
+## Why it was parked for a day, and what that means
 
-The goal was memory. Each Orbit Instance container runs its own T3 server, and that server
+Nick parked the work on 2026-11-13 and resumed it on 2026-11-14, knowing the facts below. They
+stay here because they are the honest picture of what this server buys and what it costs.
+
+The goal is memory. Each Orbit Instance container runs its own T3 server, and that server
 holds about 300 MiB of private memory, also when idle.
 
 Measured on Beast on 2026-11-13, with 54 containers and none active:
@@ -76,8 +79,7 @@ Proven:
 
 Not proven:
 
-- **Linux, in part.** A Linux pass on Beast (Ubuntu, x86_64) was stopped half way when the
-  project was parked. Proven there: all tests pass on the gnu and musl targets after two
+- **Linux, in part.** A Linux pass on Beast (Ubuntu, x86_64) was stopped half way on 2026-11-13. Proven there: all tests pass on the gnu and musl targets after two
   fixes that are on `main` (a terminal test that assumed the macOS shell, and a clippy 1.99
   finding); the process group kill reaches grandchildren; `--bootstrap-fd` reads a socket
   pair as Electron passes it; the musl binary is static, 14.5 MB, and starts; the SDK host
@@ -204,7 +206,7 @@ The check is the one to trust; several review findings did not hold.
   `split/conn-server*`), with the same history under `native/conn-server`. They were never
   pushed. They change nothing under `apps/` or `packages/`.
 
-## To start again
+## To set up a checkout
 
 1. Read `AGENTS.md` and `README.md`.
 2. `eval "$(tools/conn-checkout --source <conn git dir or URL>)"` gives a Conn checkout at
@@ -212,9 +214,8 @@ The check is the one to trust; several review findings did not hold.
 3. `(cd helpers/sdk-host && npm ci)`, then `tools/check.sh`. It must pass before any change.
 4. Move the pin with `tools/bump-conn.sh <commit>` and read its report (`docs/upkeep.md`).
    Expect a large report: the pin is from 2026-11-13.
-5. Before more features, redo the comparison in "Why it is parked" with current numbers.
 
-CI: on the last code commit the test step passed on Linux in one run and failed in the next
-on the terminal test named above. `cargo-deny` and the musl release build pass. The nightly
-schedule is switched off while the project is parked. The job with the Conn
-checkout needs the repository secret `CONN_READ_TOKEN` (read access to `nckrtl/conn`).
+CI: on 2026-11-13 the test step passed on Linux in one run and failed in the next on the
+terminal test named above. `cargo-deny` and the musl release build pass. The nightly schedule
+is switched off until the job with the Conn checkout can run: it needs the repository secret
+`CONN_READ_TOKEN` (read access to `nckrtl/conn`).

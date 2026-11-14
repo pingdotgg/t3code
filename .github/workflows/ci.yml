@@ -18,7 +18,8 @@ on:
   push:
     branches:
       - main
-  # The project is parked (docs/status.md), so the nightly run is off. To turn it on again:
+  # The nightly run is off until the job with the Conn checkout has its secret
+  # (docs/status.md). To turn it on:
   # schedule:
   #   # After the Conn nightly sync (about 03:30-04:00 UTC).
   #   - cron: "30 5 * * *"

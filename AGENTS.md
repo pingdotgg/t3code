@@ -1,7 +1,7 @@
 # conn-server
 
-**Parked on 2026-11-13.** Read `docs/status.md` first: it says what is proven, what is left,
-and what to check before work starts again. Do not start feature work without Nick's word.
+Read `docs/status.md` first: it says what is proven, what is not, and what is left, in order.
+Update it with every merged step.
 
 The **Conn Server**: a Rust server for Conn clients. It serves the same client contract as the
 **T3 server** (`apps/server` in the Conn monorepo, TypeScript on Effect) with a far smaller
