@@ -3381,3 +3381,39 @@ async fn a_late_start_failure_after_force_stop_does_not_hold_the_queue() {
         );
     }
 }
+
+/// A thread's effects run in the order their lane slots were taken, not the order they were
+/// started (review finding 2.1: dispatch takes the slot inside the store closure, so lane order
+/// is commit order). A slot given up without running (its commit failed) keeps that order.
+#[tokio::test(flavor = "current_thread")]
+async fn lane_order_is_reservation_order() {
+    let db = TempDb::new("lane-reserve");
+    let host = Arc::new(RecordingHost::default());
+    let mut config = EngineConfig::new(db.path());
+    config.host = Some(host.clone());
+    let engine = SqliteEngine::open(config).unwrap();
+    let inner = engine.inner();
+    let close = |reason| crate::commands::Effect::ThreadClosed {
+        thread_id: "t1".into(),
+        reason,
+    };
+    let first = inner.reserve_effect(close(crate::ThreadClose::Archived));
+    let given_up = inner.reserve_effect(close(crate::ThreadClose::Settled));
+    let last = inner.reserve_effect(close(crate::ThreadClose::Deleted));
+    drop(given_up);
+    last.start();
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    assert!(
+        host.closed.lock().unwrap().is_empty(),
+        "waits for the first"
+    );
+    first.start();
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    assert_eq!(
+        *host.closed.lock().unwrap(),
+        [
+            ("t1".to_owned(), crate::ThreadClose::Archived),
+            ("t1".to_owned(), crate::ThreadClose::Deleted),
+        ]
+    );
+}

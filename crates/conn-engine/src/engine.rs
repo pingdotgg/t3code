@@ -175,6 +175,59 @@ pub(crate) struct Inner {
     pub(crate) effect_seq: std::sync::atomic::AtomicU64,
 }
 
+/// An effect with its place in its thread's lane. Dropped without [`Self::start`] (its commit
+/// failed), it gives its place up only after the effect before it ended, so the lane keeps its
+/// order.
+pub(crate) struct ReservedEffect {
+    inner: Arc<Inner>,
+    effect: Option<Effect>,
+    lane: Option<String>,
+    seq: u64,
+    previous: Option<oneshot::Receiver<()>>,
+    done: Option<oneshot::Sender<()>>,
+}
+
+impl ReservedEffect {
+    /// Runs the effect once every earlier effect of its thread ended.
+    pub(crate) fn start(mut self) {
+        let effect = self.effect.take();
+        self.spawn(effect);
+    }
+
+    fn spawn(&mut self, effect: Option<Effect>) {
+        let (inner, lane, seq) = (self.inner.clone(), self.lane.take(), self.seq);
+        let (previous, done) = (self.previous.take(), self.done.take());
+        let task = async move {
+            if let Some(previous) = previous {
+                // Ends when the earlier effect ends, or its task is gone.
+                let _ = previous.await;
+            }
+            if let Some(effect) = effect {
+                inner.clone().run_effect(effect).await;
+            }
+            drop(done);
+            if let Some(thread_id) = lane {
+                let mut lanes = crate::lock(&inner.effect_lanes);
+                if lanes.get(&thread_id).is_some_and(|(last, _)| *last == seq) {
+                    lanes.remove(&thread_id);
+                }
+            }
+        };
+        // No runtime (a store opened outside one): nothing can run, and nothing waits.
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(task);
+        }
+    }
+}
+
+impl Drop for ReservedEffect {
+    fn drop(&mut self) {
+        if self.done.is_some() {
+            self.spawn(None);
+        }
+    }
+}
+
 /// Stable project id for a folder, so a fresh database gives clients the same ids.
 pub(crate) fn project_id(workspace_root: &str) -> String {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
@@ -521,6 +574,7 @@ impl Inner {
             ));
         };
         let host = self.host.clone();
+        let inner = self.clone();
         let outcome = self
             .db(move |store| {
                 if let Some(seq) = store.receipt(&command_id).map_err(CommandError::Store)? {
@@ -543,7 +597,13 @@ impl Inner {
                         let seq = tx
                             .commit(Some((&command_id, &command_type)))
                             .map_err(CommandError::Store)?;
-                        Ok((effects, seq, false))
+                        // Lane slots are taken under the store lock, so a thread's effects
+                        // run in the order their commands committed.
+                        let reserved = effects
+                            .into_iter()
+                            .map(|effect| inner.reserve_effect(effect))
+                            .collect::<Vec<_>>();
+                        Ok((reserved, seq, false))
                     }
                     Err(e) => {
                         tx.rollback();
@@ -560,7 +620,7 @@ impl Inner {
             self.notify.send_replace(seq);
         }
         for effect in effects {
-            self.spawn_effect(effect);
+            effect.start();
         }
         Ok((seq, replayed))
     }
@@ -568,7 +628,13 @@ impl Inner {
     /// Runs an effect after every earlier effect of its thread. Title generation has its own
     /// lane in T3 and runs at once here.
     pub(crate) fn spawn_effect(self: &Arc<Self>, effect: Effect) {
-        let inner = self.clone();
+        self.reserve_effect(effect).start();
+    }
+
+    /// Takes the effect's place at the end of its thread's lane now; it runs once
+    /// [`ReservedEffect::start`] is called and every earlier effect of the thread ended. Call it
+    /// inside the store closure that commits the effect's cause, so lane order is commit order.
+    pub(crate) fn reserve_effect(self: &Arc<Self>, effect: Effect) -> ReservedEffect {
         let lane = effect.lane().map(str::to_owned);
         let seq = self
             .effect_seq
@@ -580,20 +646,14 @@ impl Inner {
                 .insert(thread_id.clone(), (seq, ended))
                 .map(|(_, previous)| previous)
         });
-        tokio::spawn(async move {
-            if let Some(previous) = previous {
-                // Ends when the earlier effect ends, or its task is gone.
-                let _ = previous.await;
-            }
-            inner.clone().run_effect(effect).await;
-            drop(done);
-            if let Some(thread_id) = lane {
-                let mut lanes = crate::lock(&inner.effect_lanes);
-                if lanes.get(&thread_id).is_some_and(|(last, _)| *last == seq) {
-                    lanes.remove(&thread_id);
-                }
-            }
-        });
+        ReservedEffect {
+            inner: self.clone(),
+            effect: Some(effect),
+            lane,
+            seq,
+            previous,
+            done: Some(done),
+        }
     }
 
     async fn run_effect(self: Arc<Self>, effect: Effect) {
