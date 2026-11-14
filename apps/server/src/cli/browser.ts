@@ -128,12 +128,6 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
           : undefined;
 
       const restricted = yield* PreviewBrowserHost.usernsRestricted;
-      const profileCurrent =
-        restricted &&
-        (yield* fs.readFileString(PreviewBrowserHost.APPARMOR_PROFILE_PATH).pipe(
-          Effect.map((profile) => profile === PreviewBrowserHost.APPARMOR_PROFILE),
-          Effect.orElseSucceed(() => false),
-        ));
       // The kernel can lack a profile that is on disk, as on a host restored from an image,
       // and only root can read the loaded list, so root reloads it on every run.
       const needsProfile = isRoot ? restricted : yield* PreviewBrowserHost.sandboxBlocked;
@@ -176,6 +170,12 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
       }
 
       if (needsProfile) {
+        const profileCurrent = yield* fs
+          .readFileString(PreviewBrowserHost.APPARMOR_PROFILE_PATH)
+          .pipe(
+            Effect.map((profile) => profile === PreviewBrowserHost.APPARMOR_PROFILE),
+            Effect.orElseSucceed(() => false),
+          );
         if (!profileCurrent) {
           yield* fs
             .writeFileString(

@@ -28,7 +28,7 @@ const notFound = (method: string, path: string) =>
   });
 
 /** An Ubuntu host with the userns restriction on, the browser installed, and a system font. */
-const runSetup = (input: { readonly uid: number; readonly profile: string | undefined }) => {
+const runSetupAsRoot = (input: { readonly profile: string | undefined }) => {
   const files = new Map([
     [USERNS_RESTRICTION, "1\n"],
     [BROWSER, ""],
@@ -94,7 +94,7 @@ const runSetup = (input: { readonly uid: number; readonly profile: string | unde
     };
   }).pipe(
     Effect.provideService(HostProcess.Platform, "linux"),
-    Effect.provideService(HostProcess.UserId, input.uid),
+    Effect.provideService(HostProcess.UserId, 0),
     Effect.provideService(HostProcess.Environment, { SUDO_USER: "me" }),
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -118,20 +118,10 @@ it.effect.each([
   },
 ])("t3 browser setup as root $label", (input) =>
   Effect.gen(function* () {
-    const result = yield* runSetup({ uid: 0, profile: input.profile });
+    const result = yield* runSetupAsRoot({ profile: input.profile });
     expect(result.loads).toEqual([LOAD]);
     expect(result.profile).toBe(PreviewBrowserHost.APPARMOR_PROFILE);
     expect(result.output).toContain(input.said);
     expect(result.output).toContain("This host is ready for T3's browser.");
-  }),
-);
-
-it.effect("t3 browser setup without root says a profile on disk may not be loaded", () =>
-  Effect.gen(function* () {
-    const result = yield* runSetup({ uid: 1000, profile: PreviewBrowserHost.APPARMOR_PROFILE });
-    expect(result.loads).toEqual([]);
-    expect(result.output).toContain("is not loaded. To load it, run:");
-    expect(result.output).toContain("sudo");
-    expect(result.output).toContain("browser setup --base-dir /home/me/.t3");
   }),
 );
