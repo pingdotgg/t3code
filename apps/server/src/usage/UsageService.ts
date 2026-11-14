@@ -40,7 +40,12 @@ import type {
   UsageRecord,
 } from "@t3tools/provider-core/server/usage";
 import { canonicalModelFilter, resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
-import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
+import {
+  createOverrideRateTable,
+  isUnlistedModel,
+  parseRateTable,
+  type RateTable,
+} from "./usagePricing.ts";
 import {
   DESKTOP_HOST_SCOPE_ENV,
   listTranscriptFiles,
@@ -85,7 +90,7 @@ const scanReaders = BUILT_IN_USAGE_DRIVERS.flatMap((driver) =>
   driver.usage?.kind === "scan" ? [{ driver, reader: driver.usage }] : [],
 );
 
-const rateModels = new Map(
+const providerRateModels = new Map(
   BUILT_IN_USAGE_DRIVERS.flatMap(({ usage }) =>
     usage?.rateModel === undefined ? [] : [[usage.provider, usage.rateModel] as const],
   ),
@@ -317,6 +322,24 @@ export const make = Effect.gen(function* () {
   });
 
   const ensureRates = (force: boolean) => ratesLock.withPermit(loadRates(force));
+
+  // Rates are kept for RATES_TTL_MS, so a model released after the table was fetched would stay unpriced
+  // that long. A scan that meets a model the table does not list refetches early: once per model against
+  // a fresh table, with loadRates keeping RATES_REFRESH_FLOOR_MS between attempts.
+  const checkedUnlistedModels = new Set<string>();
+  const refreshForUnlistedModels = Effect.fn("UsageService.refreshForUnlistedModels")(function* (
+    models: ReadonlySet<string>,
+  ) {
+    const unlisted = [...models].filter(
+      (model) => !checkedUnlistedModels.has(model) && isUnlistedModel(rates, model),
+    );
+    if (unlisted.length === 0) return;
+    yield* ensureRates(true);
+    const now = yield* Clock.currentTimeMillis;
+    // A failed fetch leaves the models unchecked, so a later scan tries again.
+    if (ratesFetchedAtMs === null || now - ratesFetchedAtMs >= RATES_REFRESH_FLOOR_MS) return;
+    for (const model of unlisted) checkedUnlistedModels.add(model);
+  });
 
   const refreshRates = ensureRates(true).pipe(
     Effect.map(pricing),
@@ -887,20 +910,8 @@ export const make = Effect.gen(function* () {
       { concurrency: 2 },
     );
 
-    const summaryPricing = pricing();
-    const aggregator = new UsageAggregator({
-      timeZone: input.timeZone,
-      sinceDay: input.sinceDay,
-      untilDay: input.untilDay,
-      resolution: input.resolution ?? "day",
-      ...hourlyWindow,
-      rates,
-      priceOverrides: createOverrideRateTable(settings.usagePriceOverrides),
-      modelAliases: resolveModelAliases(settings.usageModelAliases),
-      rateModel: (provider, model) => rateModels.get(provider)?.(model),
-      ...(input.modelFilter === undefined ? {} : { modelFilter: input.modelFilter }),
-    });
-
+    const priceOverrides = createOverrideRateTable(settings.usagePriceOverrides);
+    const modelAliases = resolveModelAliases(settings.usageModelAliases);
     const sources: UsageSource[] = [];
 
     // Deleted transcripts' saved usage still aggregates and deduplicates normally.
@@ -966,6 +977,37 @@ export const make = Effect.gen(function* () {
       for (const filePath of ordered) fileCache.set(filePath, entries.get(filePath)!);
       cacheDirty = true;
     }
+
+    // The models priced below, as UsageAggregator resolves them: an alias replaces rateModel.
+    const rateModels = new Set<string>();
+    for (const files of filesByDir) {
+      for (const file of files) {
+        for (const record of file.records) {
+          const alias = modelAliases.get(record.model);
+          const model = alias ?? record.model;
+          if (priceOverrides.has(model.trim())) continue;
+          rateModels.add(alias === undefined ? (record.rateModel ?? model) : model);
+        }
+      }
+    }
+    // A saved answer prices with saved rates and the full scan after it refetches.
+    if (!fromMemory) yield* refreshForUnlistedModels(rateModels);
+
+    const summaryPricing = pricing();
+
+    const aggregator = new UsageAggregator({
+      timeZone: input.timeZone,
+      sinceDay: input.sinceDay,
+      untilDay: input.untilDay,
+      resolution: input.resolution ?? "day",
+      ...hourlyWindow,
+      rates,
+      priceOverrides,
+      modelAliases,
+      rateModel: (provider, model) => providerRateModels.get(provider)?.(model),
+      ...(input.modelFilter === undefined ? {} : { modelFilter: input.modelFilter }),
+    });
+
     const windowEndMs =
       hourlyWindow?.untilTimeMs ??
       Date.parse(`${input.untilDay}T00:00:00Z`) + 86400000 + MTIME_SLACK_MS;
