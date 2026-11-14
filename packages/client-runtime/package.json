@@ -443,6 +443,10 @@
       "types": "./src/work-log/scrollAnchor.ts",
       "default": "./src/work-log/scrollAnchor.ts"
     },
+    "./work-log/activity-summary": {
+      "types": "./src/work-log/activitySummary.ts",
+      "default": "./src/work-log/activitySummary.ts"
+    },
     "./pull-request-link-input": {
       "types": "./src/pullRequestLinkInput.ts",
       "default": "./src/pullRequestLinkInput.ts"
