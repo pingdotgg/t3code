@@ -182,8 +182,8 @@ export const ensureServerDirectories = Effect.fn(function* (derivedPaths: Server
 
   yield* fs.makeDirectory(derivedPaths.stateDir, { recursive: true });
   // Only before the database exists: a No_COW WAL beside an existing copy-on-write database
-  // could not be reflinked into one backup folder with it.
-  if (!(yield* fs.exists(derivedPaths.dbPath))) {
+  // could not be reflinked into one backup folder with it. When unsure, leave the folder as is.
+  if (!(yield* fs.exists(derivedPaths.dbPath).pipe(Effect.orElseSucceed(() => true)))) {
     yield* Effect.promise(() => markNoCopyOnWrite(derivedPaths.stateDir));
   }
   yield* Effect.all(
