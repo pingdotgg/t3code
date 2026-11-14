@@ -126,6 +126,7 @@ import { downloadLocalUpdate } from "../sidebar/SidebarUpdatePill";
 import { useUpdateEverythingRun } from "../sidebar/updateEverythingRun";
 import { awaitsTrackSwitch, channelSwitchLabel } from "../sidebar/updateEverything.logic";
 import { isHostedByThisApp } from "../sidebar/useUpdateEverything";
+import { useDesktopUpdateEverything } from "../sidebar/SidebarUpdatePill";
 
 const RESPONSE_STREAMING_MODE_LABELS: Record<ResponseStreamingMode, string> = {
   turn: "Wait for the full response",
@@ -174,6 +175,7 @@ function AboutVersionSection() {
   );
   // A second run would replace the first run's progress and local download.
   const updateRun = useUpdateEverythingRun();
+  const updateEverything = useDesktopUpdateEverything(updateState);
   const checkProviderUpdates = useCheckProviderUpdates();
 
   const hasDesktopBridge = typeof window !== "undefined" && Boolean(window.desktopBridge);
@@ -210,6 +212,11 @@ function AboutVersionSection() {
     if (!bridge) return;
 
     const action = updateState ? resolveDesktopUpdateButtonAction(updateState) : "none";
+
+    if (action !== "none" && updateEverything.runsEverything) {
+      updateEverything.confirm();
+      return;
+    }
 
     if (action === "download") {
       void downloadLocalUpdate(bridge, { notifyDownloaded: false });
@@ -322,7 +329,12 @@ function AboutVersionSection() {
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={buttonDisabled || isUpdateActionPending}
+                  disabled={
+                    buttonDisabled ||
+                    isUpdateActionPending ||
+                    updateEverything.isPending ||
+                    (updateRun !== null && action !== "none")
+                  }
                   onClick={handleButtonClick}
                 >
                   {buttonLabel}
@@ -429,6 +441,7 @@ function AboutVersionSection() {
       {switchChannel === null ? null : (
         <UpdateTrackSwitchDialog channel={switchChannel} onClose={() => setSwitchChannel(null)} />
       )}
+      {updateEverything.dialog}
     </>
   );
 }
