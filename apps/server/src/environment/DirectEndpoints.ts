@@ -162,6 +162,7 @@ export const make = Effect.gen(function* () {
   const resolve = Effect.gen(function* () {
     if (isLoopbackHost(config.host) && !config.tailscaleServeEnabled)
       return yield* resolveAvailable();
+    // Kept outside the timeout so a slow HTTPS probe does not drop the direct route.
     const observedStatus = yield* Ref.make<TailscaleStatus | null>(null);
     const discovered = yield* readTailscaleStatus.pipe(
       Effect.tap((status) => Ref.set(observedStatus, status)),
