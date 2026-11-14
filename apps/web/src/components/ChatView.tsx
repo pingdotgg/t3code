@@ -281,6 +281,7 @@ import { useEnvironmentShellHasSnapshot } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialogHost, openExpandedImagePreview } from "./chat/ExpandedImageDialog";
+import { FilePreviewDialogHost } from "./files/FilePreviewDialog";
 import {
   BranchRestoreConfirmHost,
   DeviceSetupDialogHost,
@@ -4059,6 +4060,21 @@ export default function ChatView(props: ChatViewProps) {
       {embedded ? null : <LinkPullRequestDialogHost />}
       <ThreadVisitWatermark threadRef={routeThreadRef} />
       <ExpandedImageDialogHost threadKey={routeThreadKey} />
+      {activeThreadRef ? (
+        <FilePreviewDialogHost
+          threadRef={activeThreadRef}
+          environmentId={activeThread.environmentId}
+          workspaceRoot={activeWorkspaceRoot}
+          projectName={activeProject?.title ?? null}
+          projectId={activeProject?.id}
+          composerDraftTarget={composerDraftTarget}
+          keybindings={keybindings}
+          availableEditors={availableEditors}
+          pendingSurfaceIds={pendingFileSurfaceIds}
+          onPendingChange={handleFilePendingChangeStable}
+          workspaceMutationId={workspaceMutationId}
+        />
+      ) : null}
     </div>
   );
   return (
