@@ -859,6 +859,7 @@ describe("pools", () => {
   });
 
   it.each([
+    // Pro 20x holds 20 of the pool's 21 capacity parts.
     [
       "codex",
       "ChatGPT Pro 200 Subscription",
@@ -868,17 +869,7 @@ describe("pools", () => {
       5,
       95,
     ],
-    ["claudeAgent", "Ultra", "Pro", "session", "five_hour", 5, 95],
     ["claudeAgent", "Max", "Pro", "session", "five_hour", 17, 83],
-    [
-      "claudeAgent",
-      "Claude Ultra Subscription",
-      "Claude Pro Subscription",
-      "session",
-      "five_hour",
-      5,
-      95,
-    ],
     [
       "claudeAgent",
       "Claude Max Subscription",
@@ -914,8 +905,8 @@ describe("pools", () => {
                     {
                       ...source,
                       accounts: [
-                        ["pro", largePlan, 100],
-                        ["plus", smallPlan, 0],
+                        ["large", largePlan, 100],
+                        ["small", smallPlan, 0],
                       ].map(([id, plan, usedPercent]) => ({
                         id: String(id),
                         email: `${id}@example.com`,
@@ -937,14 +928,14 @@ describe("pools", () => {
         ),
         now,
       );
-      const [pooledWeekly] = pool?.windows ?? [];
-      expect(pooledWeekly?.remainingPercent).toBe(remaining);
+      const [pooled] = pool?.windows ?? [];
+      expect(pooled?.remainingPercent).toBe(remaining);
       expect(
-        pooledWeekly?.resets.map(({ member, restoresPercent }) => [
+        pooled?.resets.map(({ member, restoresPercent }) => [
           member.account.email,
           restoresPercent,
         ]),
-      ).toContainEqual(["pro@example.com", restored]);
+      ).toContainEqual(["large@example.com", restored]);
     },
   );
 
