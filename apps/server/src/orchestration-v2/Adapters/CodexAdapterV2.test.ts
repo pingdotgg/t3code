@@ -2160,7 +2160,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     }),
   );
 
-  it.effect("waits for native start before Stop", () =>
+  it.effect("waits for native start before interrupting an acknowledged queued turn", () =>
     Effect.gen(function* () {
       const nativeThreadId = "early-stop-thread";
       const nativeTurnId = "early-stop-turn";
@@ -2212,10 +2212,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               method: "turn/completed",
               params: {
                 threadId: nativeThreadId,
-                turn: makeCodexReplayTurn({
-                  id: nativeTurnId,
-                  status: "interrupted",
-                }),
+                turn: makeCodexReplayTurn({ id: nativeTurnId, status: "interrupted" }),
               },
             },
           },
