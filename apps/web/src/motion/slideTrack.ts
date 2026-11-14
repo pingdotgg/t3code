@@ -11,8 +11,23 @@ export function slideTrackEdge(
   return track === "center" ? (rect.left + rect.right) / 2 : rect.left;
 }
 
-/** After the app's resize observers commit what the new width moves (the chat lanes), before paint. */
-export function afterResizeObservers(callback: () => void): void {
+let sidebarSlidePending = false;
+
+/** Between a sidebar toggle's commit and the slide it starts: the panes' width change is the
+ * sidebar's, which they animate with instead of following it 1:1. */
+export const sidebarSlideStarting = () => sidebarSlidePending;
+
+export function markSidebarSlide(pending: boolean): void {
+  sidebarSlidePending = pending;
+}
+
+/** After the app's resize observers commit what the new width moves (the chat lanes), before paint.
+ * Called from inside a resize observer, it must watch `targets` deeper than what that one reported,
+ * or the browser holds it for the next frame. */
+export function afterResizeObservers(
+  callback: () => void,
+  targets: Iterable<Element> = [document.documentElement],
+): void {
   if (typeof ResizeObserver === "undefined") {
     window.requestAnimationFrame(callback);
     return;
@@ -22,7 +37,7 @@ export function afterResizeObservers(callback: () => void): void {
     observer.disconnect();
     callback();
   });
-  observer.observe(document.documentElement);
+  for (const target of targets) observer.observe(target);
 }
 
 /** Lets `elements` show past `root`'s box: `root` and the clipping, non-scrolling boxes between
