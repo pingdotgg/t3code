@@ -69,6 +69,7 @@ const transientCursorUpdates = new Set([
   "token-delta",
   "shell-output-delta",
   "partial-tool-call",
+  "tool-call-delta",
 ]);
 
 export type EventNdjsonStream = "native" | "canonical" | "orchestration";
