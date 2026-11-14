@@ -30,8 +30,19 @@ describe("compileClaudeModelSelection", () => {
     ).toMatchObject({
       apiModelId: "claude-opus-4-6[1m]",
       effort: "max",
-      settings: { fastMode: true },
     });
+  });
+
+  it("sends Fast Mode only for models Claude Code runs fast", () => {
+    const fastSetting = (model: string) =>
+      compileClaudeModelSelection(selection(model, [{ id: "fastMode", value: true }])).settings
+        .fastMode;
+    for (const model of ["claude-opus-5-5", "claude-opus-5", "claude-opus-4-8"]) {
+      expect(fastSetting(model), model).toBe(true);
+    }
+    for (const model of ["claude-opus-4-7", "claude-opus-4-6", "claude-opus-4-5"]) {
+      expect(fastSetting(model), model).toBeUndefined();
+    }
   });
 
   it("runs Ultracode at the chosen effort and reads the old Ultracode effort as xhigh", () => {
