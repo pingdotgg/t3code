@@ -1093,6 +1093,15 @@ function ThreadDetailBody(
     }),
     flexGrow: 0,
   }));
+  // The sticky view lifts the composer by the keyboard less its opened offset, and the
+  // composer's measured height already includes its bottom inset. A measured Android screen
+  // already sits below its opaque header.
+  const composerPopoverRoom =
+    screenAreaHeight -
+    (Platform.OS === "android" && screenHeight !== null ? 0 : navigationHeaderHeight) -
+    controlInsets.bottom -
+    (keyboardStickyEnabled ? Math.max(0, liveKeyboardHeight - composerKeyboardOffset) : 0) -
+    composerOverlapHeight;
   // The usage panel stacks with the composer and any approval card, so it gets
   // whatever room they leave below the header. Measured only while it is open
   // so typing in the composer does not re-render the screen.
@@ -1575,6 +1584,8 @@ function ThreadDetailBody(
             hidden={composerSlotHidden}
             popoverHeight={composerPopoverHeight}
             inFlow={questionInFlow}
+            popoverRoom={composerPopoverRoom}
+            composerHeight={composerOverlapHeight}
           >
             {/* The fixed sticky host gives this bottom-anchored child a stable
               coordinate space. Its top and height can then animate together

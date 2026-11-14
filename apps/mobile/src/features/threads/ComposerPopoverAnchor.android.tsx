@@ -2,18 +2,26 @@ import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import { View, type ViewInstance } from "react-native";
 
-import { useComposerPopoverHost } from "./ComposerPopoverHost";
-
-const COMPOSER_GAP = 8;
+import {
+  COMPOSER_POPOVER_GAP,
+  composerPopoverPlacement,
+  useComposerPopoverHost,
+} from "./ComposerPopoverHost";
 
 type Frame = { readonly x: number; readonly y: number; readonly width: number };
 
 /** Android only delivers drags inside parent bounds; bottom-full popover lists cannot scroll. */
-export function ComposerPopoverAnchor(props: { readonly children: ReactNode }) {
+export function ComposerPopoverAnchor(props: {
+  readonly children: (overlapsComposer: boolean) => ReactNode;
+}) {
   const host = useComposerPopoverHost();
   const anchorRef = useRef<ViewInstance>(null);
   const [frame, setFrame] = useState<Frame | null>(null);
   const popoverHeight = host?.popoverHeight;
+  const placement = composerPopoverPlacement(host);
+  // A pinned popover's top sits `above` over the composer whatever its height.
+  const pinnedAbove = placement?.pinnedToTop ? placement.above : null;
+  const measuredHeightRef = useRef(0);
 
   const measure = () => {
     const hostView = host?.hostRef.current;
@@ -31,24 +39,45 @@ export function ComposerPopoverAnchor(props: { readonly children: ReactNode }) {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the anchor view after every commit and hands its popover content to the composer popover host
   useEffect(() => {
     measure();
+    if (frame === null) {
+      host?.setContent(null);
+      return;
+    }
+    // The host's top can sit above the screen while the keyboard lifts it, so the room
+    // estimate, not the anchor's offset, bounds the height.
+    const bottom = frame.y - COMPOSER_POPOVER_GAP;
+    const pinnedToTop = placement?.pinnedToTop === true;
+    const height = placement === null ? bottom : Math.min(bottom, placement.maxHeight);
     host?.setContent(
-      frame === null ? null : (
+      <View
+        pointerEvents="box-none"
+        className={pinnedToTop ? "absolute justify-start" : "absolute justify-end"}
+        style={{
+          left: frame.x,
+          width: frame.width,
+          top: pinnedToTop ? bottom - placement.above : bottom - height,
+          height: pinnedToTop ? placement.maxHeight : height,
+        }}
+      >
         <View
-          pointerEvents="box-none"
-          className="absolute top-0 justify-end"
-          style={{ left: frame.x, width: frame.width, height: frame.y - COMPOSER_GAP }}
+          className="shrink"
+          onLayout={(event) => {
+            measuredHeightRef.current = event.nativeEvent.layout.height;
+            popoverHeight?.set(pinnedAbove ?? measuredHeightRef.current);
+          }}
         >
-          <View
-            onLayout={(event) => {
-              popoverHeight?.set(event.nativeEvent.layout.height);
-            }}
-          >
-            {props.children}
-          </View>
+          {props.children(pinnedToTop)}
         </View>
-      ),
+      </View>,
     );
   });
+
+  // New room can leave the popover's own size unchanged, so no layout event reports it.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- re-reports the popover's height above the composer when the room estimate changes
+  useEffect(() => {
+    if (measuredHeightRef.current === 0) return;
+    popoverHeight?.set(pinnedAbove ?? measuredHeightRef.current);
+  }, [pinnedAbove, popoverHeight]);
 
   const setHostContent = host?.setContent;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the popover host's content and shared height value when the anchor unmounts
@@ -61,7 +90,9 @@ export function ComposerPopoverAnchor(props: { readonly children: ReactNode }) {
   );
 
   if (host === null) {
-    return <View className="absolute inset-x-0 bottom-full z-10 mb-2">{props.children}</View>;
+    return (
+      <View className="absolute inset-x-0 bottom-full z-10 mb-2">{props.children(false)}</View>
+    );
   }
 
   return (
