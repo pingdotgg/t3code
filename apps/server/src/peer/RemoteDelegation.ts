@@ -652,6 +652,7 @@ const make = Effect.gen(function* () {
             threadId: remote.threadId,
             view: "messages",
             limit: 100,
+            maxCharsPerItem: 20_000,
             afterPosition: tailPosition,
           });
           const tailReply = tail.items.findLast(
