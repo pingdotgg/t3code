@@ -53,6 +53,7 @@ import * as Stream from "effect/Stream";
 import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as ChildProcess from "effect/process/ChildProcess";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 import type * as EffectAcpSchema from "effect-acp/compat";
@@ -570,6 +571,36 @@ function makeMockRuntime(input: {
       return input.wrapRuntime?.(wrapped, runtimeOrdinal) ?? wrapped;
     });
 }
+
+it.effect("detaches owned ACP processes on POSIX hosts but not on Windows", () =>
+  Effect.gen(function* () {
+    for (const [platform, expected] of [
+      ["win32", false],
+      ["linux", true],
+    ] as const) {
+      let detached: boolean | undefined;
+      yield* AcpSessionRuntime.make({
+        spawn: { command: "acp-agent", args: [] },
+        cwd: process.cwd(),
+        clientInfo: { name: "test", version: "1" },
+        ownDetachedProcessGroup: true,
+        processGroupPlatform: platform,
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, platform),
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) => {
+            if (ChildProcess.isStandardCommand(command)) detached = command.options.detached;
+            return Effect.die("spawn stopped by test");
+          }),
+        ),
+        Effect.scoped,
+        Effect.exit,
+      );
+      assert.equal(detached, expected, platform);
+    }
+  }).pipe(Effect.provide(layerTest)),
+);
 
 const isProviderAdapterProtocolError = Schema.is(ProviderAdapter.ProviderAdapterProtocolError);
 
