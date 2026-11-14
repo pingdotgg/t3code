@@ -2,7 +2,11 @@ import {
   EnvironmentId,
   EventId,
   MessageId,
+  NodeId,
+  ProviderThreadId,
+  ProviderTurnId,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2ProviderTurn,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -133,6 +137,53 @@ describe("remote message replay", () => {
             applyOrchestrationV2ProjectionEvent(current, {
               ...event,
               payload: { ...event.payload, text: ` next ${index}` },
+            }) ?? current;
+        }
+      }).run(runOptions);
+    });
+  }
+});
+
+const providerTurn: OrchestrationV2ProviderTurn = {
+  id: ProviderTurnId.make("provider-turn-0"),
+  providerThreadId: ProviderThreadId.make("provider-thread"),
+  nodeId: NodeId.make("provider-node"),
+  runAttemptId: null,
+  nativeTurnRef: null,
+  ordinal: 1,
+  status: "running",
+  startedAt: v2Now,
+  completedAt: null,
+};
+// The bench counts module export getter reads as iteration overhead, so read it once.
+const applyProviderTurnProjectionEvent = applyOrchestrationV2ProjectionEvent;
+
+describe("remote provider turn replay", () => {
+  for (const count of [100, 1_000]) {
+    const loaded = {
+      ...thread,
+      providerTurns: Array.from({ length: count }, (_, index) => ({
+        ...providerTurn,
+        id: ProviderTurnId.make(`provider-turn-${index}`),
+        ordinal: index + 1,
+      })),
+    };
+    const event: Extract<OrchestrationV2DomainEvent, { type: "provider-turn.updated" }> = {
+      id: EventId.make("provider-turn"),
+      type: "provider-turn.updated",
+      threadId: thread.thread.id,
+      occurredAt: v2Now,
+      payload: loaded.providerTurns.at(-1)!,
+    };
+    const name = `apply 200 provider turn updates to ${count} loaded turns`;
+    test(name, async ({ bench }) => {
+      await bench(name, () => {
+        let current: OrchestrationV2ThreadProjection = loaded;
+        for (let index = 0; index < 200; index += 1) {
+          current =
+            applyProviderTurnProjectionEvent(current, {
+              ...event,
+              payload: { ...event.payload, status: index % 2 === 0 ? "running" : "completed" },
             }) ?? current;
         }
       }).run(runOptions);

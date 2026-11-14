@@ -2,12 +2,15 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   type ThreadPullRequestLink,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2ProviderTurn,
   type OrchestrationV2Run,
+  type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
   MessageId,
   ProjectId,
   ProviderInstanceId,
+  ProviderDriverKind,
   NodeId,
   ProviderThreadId,
   ProviderTurnId,
@@ -62,6 +65,48 @@ function commandItem(id: string, output = "done", ordinal = 1): OrchestrationV2T
     exitCode: 0,
   };
 }
+
+function subagentRecord(id: string): OrchestrationV2Subagent {
+  return {
+    id: NodeId.make(id),
+    threadId,
+    runId,
+    parentNodeId: NodeId.make("node-root"),
+    origin: "app_owned",
+    createdBy: "agent",
+    driver: ProviderDriverKind.make("codex"),
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    providerThreadId: null,
+    childThreadId: null,
+    nativeTaskRef: null,
+    prompt: `brief for ${id}`,
+    title: null,
+    model: null,
+    status: "running",
+    result: `result for ${id}`,
+    startedAt: now,
+    completedAt: null,
+    updatedAt: now,
+  };
+}
+
+function providerTurnRecord(
+  id: string,
+  status: OrchestrationV2ProviderTurn["status"] = "running",
+): OrchestrationV2ProviderTurn {
+  return {
+    id: ProviderTurnId.make(id),
+    providerThreadId: ProviderThreadId.make("provider-thread-reducer"),
+    nodeId: NodeId.make("provider-node-reducer"),
+    runAttemptId: null,
+    nativeTurnRef: null,
+    ordinal: 1,
+    status,
+    startedAt: now,
+    completedAt: null,
+  };
+}
+
 const emptyProjection = {
   thread: {
     id: threadId,
@@ -171,6 +216,105 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
 
     expect(next?.providerTurns[0]?.status).toBe("completed");
     expect(next?.providerTurns[0]?.tokenUsage).toEqual(running.tokenUsage);
+  });
+
+  it("updates the first provider turn with a repeated id from the one index it locates", () => {
+    const usage = {
+      usedTokens: 50_000,
+      maxTokens: 200_000,
+      updatedAt: "2026-08-29T00:00:00.000Z",
+    };
+    const first = { ...providerTurnRecord("turn-repeated"), tokenUsage: usage };
+    const duplicate = providerTurnRecord("turn-repeated", "failed");
+    const other = providerTurnRecord("turn-other");
+    let turnIdReads = 0;
+    const stored = [first, duplicate, other].map((turn) => ({
+      ...turn,
+      get id() {
+        turnIdReads += 1;
+        return turn.id;
+      },
+    }));
+
+    const next = applyOrchestrationV2ProjectionEvent(
+      { ...emptyProjection, providerTurns: stored },
+      {
+        id: "event-provider-turn-repeated",
+        type: "provider-turn.updated",
+        threadId,
+        occurredAt: now,
+        payload: { ...first, status: "completed", completedAt: now, tokenUsage: undefined },
+      } as OrchestrationV2DomainEvent,
+    );
+
+    expect(turnIdReads).toBe(1);
+    expect(next?.providerTurns.map((turn) => turn.tokenUsage)).toEqual([
+      usage,
+      undefined,
+      undefined,
+    ]);
+    expect(next?.providerTurns[0]?.status).toBe("completed");
+    expect(next?.providerTurns[1]).toBe(stored[1]);
+    expect(next?.providerTurns[2]).toBe(stored[2]);
+  });
+
+  it("appends a new provider turn with the token usage it carries", () => {
+    const usage = {
+      usedTokens: 1_200,
+      maxTokens: 200_000,
+      updatedAt: "2026-08-29T00:00:00.000Z",
+    };
+    const stored = [providerTurnRecord("turn-existing", "completed")];
+    const fresh = { ...providerTurnRecord("turn-new"), tokenUsage: usage };
+
+    const next = applyOrchestrationV2ProjectionEvent(
+      { ...emptyProjection, providerTurns: stored },
+      {
+        id: "event-provider-turn-new",
+        type: "provider-turn.updated",
+        threadId,
+        occurredAt: now,
+        payload: fresh,
+      } as OrchestrationV2DomainEvent,
+    );
+
+    expect(next?.providerTurns.map((turn) => turn.id)).toEqual([stored[0]!.id, fresh.id]);
+    expect(next?.providerTurns[0]).toBe(stored[0]);
+    expect(next?.providerTurns[1]?.tokenUsage).toEqual(usage);
+  });
+
+  it("restores a repeated subagent body from the one record it locates", () => {
+    const records = ["node-a", "node-b", "node-c"].map((id) => subagentRecord(id));
+    const target = records[2]!;
+    let subagentIdReads = 0;
+    const stored = records.map((record) => ({
+      ...record,
+      get id() {
+        subagentIdReads += 1;
+        return record.id;
+      },
+    }));
+
+    const next = applyOrchestrationV2ProjectionEvent({ ...emptyProjection, subagents: stored }, {
+      id: "event-subagent-repeated",
+      type: "subagent.updated",
+      threadId,
+      runId,
+      occurredAt: now,
+      payload: {
+        ...target,
+        prompt: "",
+        promptOmitted: true,
+        result: null,
+        resultOmitted: true,
+        progress: "step 2",
+      },
+    } as OrchestrationV2DomainEvent);
+
+    expect(subagentIdReads).toBe(records.length);
+    expect(next?.subagents).toEqual([records[0], records[1], { ...target, progress: "step 2" }]);
+    expect(next?.subagents[0]).toBe(stored[0]);
+    expect(next?.subagents[1]).toBe(stored[1]);
   });
 
   it("applies thread lifecycle payloads instead of leaving stale metadata", () => {
