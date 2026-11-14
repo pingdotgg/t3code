@@ -4816,45 +4816,57 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }),
     );
 
-    it.effect("makes background upstream status fetches non-interactive", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTmpDir();
-        const tempDir = yield* makeTmpDir("git-vcs-driver-ssh-env-");
-        const { initialBranch } = yield* initRepoWithCommit(cwd);
-        const fileSystem = yield* FileSystem.FileSystem;
-        const pathService = yield* Path.Path;
-        const sshLogPath = pathService.join(tempDir, "ssh-env.txt");
-        const sshWrapperPath = yield* pathService.fromFileUrl(
-          new URL("./testing/GitVcsDriverCore.fixture.sh", import.meta.url),
-        );
+    it.effect.each([false, true])(
+      "makes background and workspace fetches non-interactive (preserve askpass: %s)",
+      (preserveAskpass) =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const tempDir = yield* makeTmpDir("git-vcs-driver-ssh-env-");
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          const fileSystem = yield* FileSystem.FileSystem;
+          const pathService = yield* Path.Path;
+          const sshLogPath = pathService.join(tempDir, "ssh-env.txt");
+          const sshWrapperPath = yield* pathService.fromFileUrl(
+            new URL("./testing/GitVcsDriverCore.fixture.sh", import.meta.url),
+          );
 
-        yield* git(cwd, ["remote", "add", "origin", "ssh://example.invalid/repo.git"]);
-        yield* git(cwd, ["update-ref", `refs/remotes/origin/${initialBranch}`, "HEAD"]);
-        yield* git(cwd, ["branch", "--set-upstream-to", `origin/${initialBranch}`]);
+          yield* git(cwd, ["remote", "add", "origin", "ssh://example.invalid/repo.git"]);
+          yield* git(cwd, ["update-ref", `refs/remotes/origin/${initialBranch}`, "HEAD"]);
+          yield* git(cwd, ["branch", "--set-upstream-to", `origin/${initialBranch}`]);
 
-        yield* Effect.gen(function* () {
-          yield* (yield* GitVcsDriver.GitVcsDriver).statusDetails(cwd);
+          yield* Effect.gen(function* () {
+            const driver = yield* GitVcsDriver.GitVcsDriver;
+            const expected = [
+              "GCM_INTERACTIVE=never",
+              `GIT_ASKPASS=${preserveAskpass ? "git-askpass" : ""}`,
+              "GIT_TERMINAL_PROMPT=0",
+              "SSH_ASKPASS=",
+              "SSH_ASKPASS_REQUIRE=never",
+            ];
+            const readLog = fileSystem
+              .readFileString(sshLogPath)
+              .pipe(Effect.map((log) => log.trim().split(/\r?\n/)));
 
-          assert.deepEqual((yield* fileSystem.readFileString(sshLogPath)).trim().split(/\r?\n/), [
-            "GCM_INTERACTIVE=never",
-            "GIT_ASKPASS=",
-            "GIT_TERMINAL_PROMPT=0",
-            "SSH_ASKPASS=",
-            "SSH_ASKPASS_REQUIRE=never",
-          ]);
-        }).pipe(
-          Effect.provideService(HostProcess.Environment, {
-            ...(yield* HostProcess.Environment),
-            GIT_SSH: sshWrapperPath,
-            GCM_INTERACTIVE: "always",
-            GIT_ASKPASS: "git-askpass",
-            GIT_TERMINAL_PROMPT: "1",
-            SSH_ASKPASS: "ssh-askpass",
-            SSH_ASKPASS_REQUIRE: "force",
-            T3_TEST_SSH_ASKPASS_LOG: sshLogPath,
-          }),
-        );
-      }),
+            yield* driver.statusDetails(cwd);
+            assert.deepEqual(yield* readLog, expected);
+            yield* fileSystem.remove(sshLogPath);
+
+            yield* Effect.result(driver.fetchRemote({ cwd, remoteName: "origin" }));
+            assert.deepEqual(yield* readLog, expected);
+          }).pipe(
+            Effect.provideService(HostProcess.Environment, {
+              ...(yield* HostProcess.Environment),
+              GIT_SSH: sshWrapperPath,
+              GCM_INTERACTIVE: "always",
+              GIT_ASKPASS: "git-askpass",
+              GIT_TERMINAL_PROMPT: "1",
+              SSH_ASKPASS: "ssh-askpass",
+              SSH_ASKPASS_REQUIRE: "force",
+              T3_TEST_SSH_ASKPASS_LOG: sshLogPath,
+              T3CODE_GIT_PRESERVE_ASKPASS: preserveAskpass ? "1" : "0",
+            }),
+          );
+        }),
     );
 
     it.effect("reuses the no-upstream fallback ahead count for default-branch delta", () =>
