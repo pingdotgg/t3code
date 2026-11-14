@@ -237,7 +237,7 @@ export function SettingsSection({
       ) : (
         <div
           data-settings-scroll-target
-          className="flex min-h-7 flex-wrap items-start justify-between gap-x-3 gap-y-1 px-3 sm:px-4"
+          className="flex min-h-7 flex-wrap items-start justify-between gap-x-4 gap-y-1 px-3 sm:px-4"
         >
           <div className="flex min-w-0 items-center gap-1">
             <h2 className="flex min-h-7 items-center gap-2 text-base font-semibold text-foreground">
