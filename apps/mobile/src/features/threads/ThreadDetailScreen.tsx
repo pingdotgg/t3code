@@ -183,6 +183,7 @@ import { ManagedRuntimeModeNotice } from "./ManagedRuntimeModeNotice";
 import { FreshSessionNotice } from "./FreshSessionNotice";
 import { Notice } from "../../components/ui/Notice";
 import { formatTokens } from "@t3tools/shared/usageFormat";
+import { isBackgroundWorkRefusal } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { ComposerFeedback } from "./ComposerFeedback";
 import { ComposerUsageLimits } from "./ComposerUsageLimits";
 import { PendingUserInputCard } from "./PendingUserInputCard";
@@ -696,7 +697,7 @@ function ThreadDetailBody(
     latestRunCompletedAt: props.selectedThread.latestRun?.completedAt ?? null,
   });
   const runStatusAction = async (action: "stop" | "wake" | "unsettle" | "dismiss") => {
-    if (statusPending || !props.canOperateThread) return;
+    if (statusPending || !props.canOperateThread) return false;
     const request: BackgroundWorkStopRequest = {
       threadKey: selectedThreadKey,
       taskIds:
@@ -757,6 +758,7 @@ function ThreadDetailBody(
         error instanceof Error ? error.message : "Try again.",
       );
     }
+    return result._tag !== "Failure";
   };
   const pendingBackgroundWork = presentPendingBackgroundWork(
     props.selectedThread.pendingBackgroundTasks,
@@ -1748,6 +1750,16 @@ function ThreadDetailBody(
                         <ComposerErrorNotice
                           message={composerError}
                           onDismiss={() => clearThreadComposerError(selectedThreadKey)}
+                          onStop={
+                            // The refusal says "press Stop"; work only the provider sees has no other Stop.
+                            props.canOperateThread && isBackgroundWorkRefusal(composerError)
+                              ? () =>
+                                  // A failed or skipped Stop keeps the notice, so Stop can be retried.
+                                  void runStatusAction("stop").then((stopped) => {
+                                    if (stopped) clearThreadComposerError(selectedThreadKey);
+                                  })
+                              : undefined
+                          }
                         />
                       </Animated.View>
                     ) : null}

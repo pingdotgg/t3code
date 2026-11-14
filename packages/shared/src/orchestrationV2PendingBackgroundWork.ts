@@ -48,6 +48,11 @@ void TERMINAL_RUN_STATUSES;
 
 export type PendingBackgroundWorkTask = OrchestrationV2PendingBackgroundTask;
 
+/** Matches the server's refusal when a switch would end background work, which may be visible only to the adapter. */
+export function isBackgroundWorkRefusal(message: string): boolean {
+  return message.includes("is still running background agents or commands");
+}
+
 export function turnItemUpdateCanEndBackgroundWork(
   item: Pick<OrchestrationV2TurnItem, "type" | "status">,
 ): boolean {

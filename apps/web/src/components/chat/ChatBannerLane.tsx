@@ -28,6 +28,7 @@ export function ChatBannerLane(props: {
   threadErrorBannerKey: string | null;
   setThreadError: (threadId: ThreadId | null, error: string | null) => void;
   setThreadErrorBannerDismissTick: Dispatch<SetStateAction<number>>;
+  onStop: (() => void) | undefined;
 }) {
   const {
     providerStatus,
@@ -40,6 +41,7 @@ export function ChatBannerLane(props: {
     threadErrorBannerKey,
     setThreadError,
     setThreadErrorBannerDismissTick,
+    onStop,
   } = props;
   return (
     <div className="chat-banner-lane pointer-events-none absolute top-0 z-30 flex flex-col">
@@ -53,6 +55,15 @@ export function ChatBannerLane(props: {
         error={threadError}
         errorClass={threadErrorClass}
         errorCode={threadErrorCode}
+        onStop={
+          onStop === undefined
+            ? undefined
+            : () => {
+                // Not a session dismissal: a repeated refusal must show again.
+                setThreadError(threadId, null);
+                onStop();
+              }
+        }
         onDismiss={() => {
           setThreadError(threadId, null);
           dismissThreadErrorBannerForSession(threadErrorBannerKey);
