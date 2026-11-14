@@ -409,6 +409,8 @@ export function routeProviderEvent(
         },
       ];
     }
+    case "thread_model_selection.updated":
+      return [event.threadId === input.threadId, state];
     case "provider_thread.updated": {
       const belongs =
         state.ownedProviderThreadIds.has(event.providerThread.id) ||

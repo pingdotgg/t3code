@@ -2239,6 +2239,60 @@ layer("ProviderEventIngestorV2", (it) => {
     }),
   );
 
+  it.effect("applies an agent's mode change without undoing newer thread settings", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const rootEvent = yield* threadCreatedEvent(now);
+      if (rootEvent.type !== "thread.created") throw new Error("Expected thread fixture");
+      // Saved mid-turn: a newer model and effort the reporting turn never saw.
+      const saved = {
+        ...modelSelection,
+        model: "gpt-6.1-sol",
+        options: [
+          { id: "effort", value: "high" },
+          { id: "mode", value: "plan" },
+        ],
+      };
+      yield* eventSink.write({
+        events: [{ ...rootEvent, payload: { ...rootEvent.payload, modelSelection: saved } }],
+      });
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId: rootEvent.threadId,
+      });
+      const ingest = (instanceId: ProviderInstanceId, from: string) =>
+        ingestor.ingestNormalized({
+          providerSessionId,
+          providerInstanceId: modelSelection.instanceId,
+          threadId: rootEvent.threadId,
+          event: {
+            type: "thread_model_selection.updated",
+            driver: CODEX_DRIVER,
+            threadId: rootEvent.threadId,
+            instanceId,
+            changes: [{ id: "mode", from, to: "default" }],
+          },
+        });
+      assert.deepEqual(
+        (yield* ingest(modelSelection.instanceId, "plan")).map((stored) => stored.event.type),
+        ["thread.model-selection-updated"],
+      );
+      assert.deepEqual((yield* projectionStore.getThread(rootEvent.threadId)).modelSelection, {
+        ...saved,
+        options: [
+          { id: "effort", value: "high" },
+          { id: "mode", value: "default" },
+        ],
+      });
+      assert.deepEqual(yield* ingest(modelSelection.instanceId, "plan"), []);
+      assert.deepEqual(yield* ingest(ProviderInstanceId.make("other-instance"), "default"), []);
+    }),
+  );
+
   it.effect(
     "recovers a missing Claude child once and preserves saved metadata on later recovery",
     () =>

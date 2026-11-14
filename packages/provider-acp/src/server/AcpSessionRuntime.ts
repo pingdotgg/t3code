@@ -2845,10 +2845,25 @@ const handleSessionUpdate =
       );
     }
     const parsed = parseSessionUpdateEvent(params);
-    if (parsed.modeId) {
+    const modeId = parsed.modeId;
+    if (modeId) {
       yield* Ref.update(modeStateRef, (current) =>
-        current === undefined ? current : updateModeState(current, parsed.modeId!),
+        current === undefined ? current : updateModeState(current, modeId),
       );
+      // A mode-only update would otherwise leave the mode option showing the old mode.
+      const configOptions = yield* SubscriptionRef.get(configOptionsRef);
+      const isStaleMode = (option: (typeof configOptions)[number]) =>
+        option.category === "mode" && option.type === "select" && option.currentValue !== modeId;
+      if (configOptions.some(isStaleMode)) {
+        yield* SubscriptionRef.set(
+          configOptionsRef,
+          configOptions.map((option) =>
+            option.category === "mode" && option.type === "select"
+              ? { ...option, currentValue: modeId }
+              : option,
+          ),
+        );
+      }
     }
     for (const event of parsed.events) {
       if (event._tag === "ToolCallUpdated") {
