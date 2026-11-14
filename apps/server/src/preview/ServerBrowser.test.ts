@@ -143,11 +143,25 @@ function makeSession(
         if (focusedFrame) focusedFrame.copy = keyCopy;
         else pageCopy = keyCopy;
       }
+      if (method === "Input.dispatchMouseEvent") {
+        const { type, button } = input as { type?: unknown; button?: unknown };
+        // The recorder ignores what was copied before a left press.
+        if (type === "mousePressed" && button === "left") pageClickCopy = "";
+        if (type === "mouseReleased") pageClickCopy = clickCopy || pageClickCopy;
+      }
+      if (
+        method === "Runtime.evaluate" &&
+        (input as { expression?: string }).expression?.startsWith("globalThis.takeCopy?.(true,")
+      ) {
+        const value = pageClickCopy;
+        pageClickCopy = "";
+        return { result: { value: { text: value, host: "other.example" } } };
+      }
       if (method === "Runtime.evaluate" && (input as { contextId?: number }).contextId === 7) {
         const value = frame ? frame.copy : pageCopy;
         if (frame) frame.copy = "";
         else pageCopy = "";
-        return { result: { value } };
+        return { result: { value: { text: value, host: "other.example" } } };
       }
       if (method === "Runtime.evaluate" && (input as { contextId?: number }).contextId === 9)
         return desktopSizeAnswer?.() ?? { result: { value: { ...viewport } } };
@@ -288,6 +302,7 @@ function makeContext(onClose?: (context: BrowserContext) => void, initialUrl = "
     cssViewport,
     newPage: async () => page as unknown as Page,
     grantPermissions: vi.fn(async () => {}),
+    addInitScript: vi.fn(async () => {}),
     newCDPSession: async (target: unknown) => {
       const session = makeSession(
         target === page ? undefined : (target as ReturnType<typeof makeFrame>),
@@ -390,6 +405,8 @@ let contextGate: PromiseWithResolvers<void> | null = null;
 let heldStill: (() => Promise<void>) | null = null;
 let pageCopy = "";
 let keyCopy = "";
+let clickCopy = "";
+let pageClickCopy = "";
 let focusedFrame: ReturnType<typeof makeFrame> | null = null;
 let contextFailure: Error | null = null;
 let pageSetupFailure: Error | null = null;
@@ -579,6 +596,8 @@ beforeEach(() => {
   initialNavigation = null;
   pageCopy = "";
   keyCopy = "";
+  clickCopy = "";
+  pageClickCopy = "";
   focusedFrame = null;
   desktopTabs.clear();
   shownDesktopTabs.clear();
@@ -2262,7 +2281,113 @@ it.effect("only the controlling viewer's copy and cut keys reach its clipboard",
   ).pipe(Effect.provide(layer)),
 );
 
-it.effect("a busy embedded frame does not hold a copy key back from the page", () =>
+it.effect("text the page copies after the controlling viewer's click is only offered to it", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
+      const watcher = yield* browser.attachViewer(viewerInput(tabId, false));
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* viewer.input({ type: "takeControl" });
+      yield* viewer.input({ type: "navigate", url: "https://copy.example/app" });
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      yield* Effect.addFinalizer(() => Effect.sync(() => vi.useRealTimers()));
+      const copies = () =>
+        Queue.clear(viewer.output).pipe(
+          Effect.map((items) =>
+            items.filter((item) => item._tag === "clipboard" || item._tag === "copyOffer"),
+          ),
+        );
+      const advance = (ms: number) => Effect.promise(() => vi.advanceTimersByTimeAsync(ms));
+      const mouse = (button: string, action: string, buttons: number) =>
+        viewer.input({ type: "mouse", action, x: 10, y: 10, button, buttons });
+      const click = (button: string) =>
+        Effect.forEach(["down", "up"], (action) =>
+          mouse(
+            button,
+            action,
+            action === "up" ? 0 : button === "left" ? 1 : button === "right" ? 2 : 4,
+          ),
+        );
+      const offer = (text: string) => ({ _tag: "copyOffer", text, host: "other.example" });
+      pageClickCopy = "before the click";
+      yield* click("left");
+      yield* advance(5_000);
+      expect(yield* copies()).toEqual([]);
+      for (const button of ["right", "middle"]) {
+        clickCopy = `${button} button`;
+        yield* click(button);
+        yield* advance(5_000);
+        expect(yield* copies()).toEqual([]);
+        for (const sequence of [
+          ["left", button, "left", button],
+          ["left", button, button, "left"],
+          [button, "left", "left", button],
+          [button, "left", button, "left"],
+        ]) {
+          let buttons = 0;
+          for (const [index, pressed] of sequence.entries()) {
+            const down = index < 2;
+            const bit = pressed === "left" ? 1 : pressed === "right" ? 2 : 4;
+            buttons = down ? buttons | bit : buttons & ~bit;
+            yield* mouse(pressed, down ? "down" : "up", buttons);
+          }
+          yield* advance(5_000);
+          expect(yield* copies()).toEqual([]);
+        }
+      }
+      yield* mouse("left", "down", 1);
+      yield* viewer.input({ type: "releaseControl" });
+      yield* viewer.input({ type: "takeControl" });
+      yield* mouse("left", "up", 0);
+      yield* advance(5_000);
+      expect(yield* copies()).toEqual([]);
+      clickCopy = "before the handoff";
+      yield* mouse("left", "down", 1);
+      const session = contexts[0]!.sessions.at(-1)!;
+      const send = session.send.getMockImplementation()!;
+      const started = Promise.withResolvers<void>();
+      const finish = Promise.withResolvers<void>();
+      yield* Effect.addFinalizer(() => Effect.sync(() => finish.resolve()));
+      session.send.mockImplementationOnce(async (method, input) => {
+        started.resolve();
+        await finish.promise;
+        return send(method, input);
+      });
+      const releasingMouse = yield* mouse("left", "up", 0).pipe(
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* Effect.promise(() => started.promise);
+      const releasingControl = yield* viewer
+        .input({ type: "releaseControl" })
+        .pipe(Effect.forkScoped({ startImmediately: true }));
+      const retakingControl = yield* viewer
+        .input({ type: "takeControl" })
+        .pipe(Effect.forkScoped({ startImmediately: true }));
+      finish.resolve();
+      yield* Effect.forEach([releasingMouse, releasingControl, retakingControl], Fiber.join);
+      yield* advance(5_000);
+      expect(yield* copies()).toEqual([]);
+      clickCopy = "secret";
+      yield* click("left");
+      yield* advance(0);
+      expect(yield* copies()).toEqual([offer("secret")]);
+      clickCopy = "";
+      yield* click("left");
+      yield* advance(0);
+      expect(yield* copies()).toEqual([]);
+      pageClickCopy = "after awaiting";
+      yield* advance(250);
+      expect(yield* copies()).toEqual([offer("after awaiting")]);
+      keyCopy = "keys";
+      yield* viewer.input({ type: "key", action: "down", key: "c", code: "KeyC", modifiers: 4 });
+      expect(yield* copies()).toEqual([{ _tag: "clipboard", text: "keys" }]);
+      const watched = yield* Queue.clear(watcher.output);
+      expect(watched.filter((item) => item._tag === "copyOffer")).toEqual([]);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("a busy embedded frame does not hold a copy key or a click back from the page", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const { browser, tabId } = yield* ready;
@@ -2274,20 +2399,20 @@ it.effect("a busy embedded frame does not hold a copy key back from the page", (
       context.page.emit("framenavigated", frame);
       yield* Effect.promise(() => frame.recording.promise);
 
-      // The frame answers its copy read only once the page has the key and the
-      // input after it, like a frame busy for longer than the user waits.
-      const keyReached = Promise.withResolvers<void>();
+      // The frame answers its copy read only once the page has the key or press and
+      // the release after it, like a frame busy for longer than the user waits.
+      let released = Promise.withResolvers<void>();
       const pageSend = pageSession.send.getMockImplementation()!;
       pageSession.send.mockImplementation(async (method, input) => {
-        if (method === "Input.dispatchKeyEvent" && (input as { type?: string }).type === "keyUp")
-          keyReached.resolve();
+        const { type } = input as { type?: string };
+        if (type === "keyUp" || type === "mouseReleased") released.resolve();
         return pageSend(method, input);
       });
       const frameSession = context.sessions.at(-1)!;
       const frameSend = frameSession.send.getMockImplementation()!;
       frameSession.send.mockImplementation(async (method, input) => {
         if (method === "Runtime.evaluate" && (input as { contextId?: number }).contextId === 7) {
-          await keyReached.promise;
+          await released.promise;
         }
         return frameSend(method, input);
       });
@@ -2306,6 +2431,24 @@ it.effect("a busy embedded frame does not hold a copy key back from the page", (
       expect(clipboard.filter((item) => item._tag === "clipboard")).toEqual([
         { _tag: "clipboard", text: "copied" },
       ]);
+
+      released = Promise.withResolvers<void>();
+      clickCopy = "clicked";
+      const pressing = yield* viewer
+        .input({ type: "mouse", action: "down", x: 10, y: 10, button: "left", buttons: 1 })
+        .pipe(Effect.forkScoped({ startImmediately: true }));
+      yield* viewer.input({
+        type: "mouse",
+        action: "up",
+        x: 10,
+        y: 10,
+        button: "left",
+        buttons: 0,
+      });
+      yield* Fiber.join(pressing);
+      let offered = yield* Queue.take(viewer.output);
+      while (offered._tag !== "copyOffer") offered = yield* Queue.take(viewer.output);
+      expect(offered).toEqual({ _tag: "copyOffer", text: "clicked", host: "other.example" });
     }),
   ).pipe(Effect.provide(layer)),
 );

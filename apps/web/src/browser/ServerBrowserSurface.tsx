@@ -5,6 +5,7 @@ import {
   previewStreamModifiers,
   type PreviewStreamClient,
   type PreviewStreamControl,
+  type PreviewStreamCopyOffer,
   type PreviewStreamDownload,
   type PreviewStreamFileChooser,
   uploadPreviewStreamFiles,
@@ -38,6 +39,7 @@ import { CommandBlock } from "~/components/CommandBlock";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { toastManager } from "~/components/ui/toast";
+import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { cn } from "~/lib/utils";
 import { refreshPreviewStreamAccess, usePreviewStreamAccess } from "~/state/previewStream";
 import { observeResize } from "~/lib/observeResize";
@@ -121,6 +123,27 @@ async function copyPageText(text: string) {
       },
     });
   }
+}
+
+/** Only this click writes a page's own copy to the clipboard. */
+function offerPageCopy({ text, host }: PreviewStreamCopyOffer) {
+  const id = toastManager.add({
+    type: "info",
+    title: `${host || "This page"} wants to copy text`,
+    actionProps: {
+      children: "Copy",
+      onClick: () => {
+        toastManager.close(id);
+        void writeTextToClipboard(text).catch((cause: unknown) =>
+          toastManager.add({
+            type: "error",
+            title: "Could not copy the text",
+            description: cause instanceof Error ? cause.message : undefined,
+          }),
+        );
+      },
+    },
+  });
 }
 
 function offerDownload(download: PreviewStreamDownload) {
@@ -399,6 +422,7 @@ export function ServerBrowserSurface(props: {
           if (placed) setAgentCursor(placed);
         },
         onClipboard: (text) => void copyPageText(text),
+        onCopyOffer: offerPageCopy,
         onDownload: offerDownload,
         onPopup: popupOpened,
         onFileChooser: setFileChooser,

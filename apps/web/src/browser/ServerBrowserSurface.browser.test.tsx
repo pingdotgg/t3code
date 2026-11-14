@@ -5,9 +5,10 @@ import type {
   PreviewStreamInput,
 } from "@t3tools/client-runtime/preview/server-browser-stream";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../test/render";
+import { ToastProvider } from "~/components/ui/toast";
 
 const mocks = vi.hoisted(() => ({
   createClient: vi.fn<(target: unknown, handlers: PreviewStreamEvents) => unknown>(),
@@ -73,6 +74,35 @@ async function renderSurface(controller: PreviewStreamControl["controller"]) {
 const keys = () => mocks.sent.filter((input) => input.type === "key");
 
 describe("ServerBrowserSurface clipboard commands", () => {
+  it("copies an offered value only on acceptance, or says it could not, without the Clipboard API", async () => {
+    setup();
+    const { screen } = await renderSurface("you");
+    await using _screen = screen;
+    await using _toasts = await render(<ToastProvider timeout={0}>{null}</ToastProvider>);
+    using _clipboard = vi.spyOn(navigator, "clipboard", "get").mockReturnValue(undefined as never);
+    const copied: string[] = [];
+    const onCopy = (event: ClipboardEvent) => {
+      const target = event.target;
+      if (event.isTrusted && target instanceof HTMLTextAreaElement)
+        copied.push(target.value.slice(target.selectionStart, target.selectionEnd));
+    };
+    document.addEventListener("copy", onCopy);
+    using _listener = { [Symbol.dispose]: () => document.removeEventListener("copy", onCopy) };
+    const handlers = mocks.createClient.mock.calls.at(-1)![1];
+    await act(() => handlers.onCopyOffer?.({ text: "offered value", host: "copy.example" }));
+    await expect.element(page.getByText("copy.example wants to copy text")).toBeVisible();
+    expect(copied).toEqual([]);
+
+    await userEvent.click(page.getByRole("button", { name: "Copy", exact: true }));
+    expect(copied).toEqual(["offered value"]);
+    expect(keys()).toEqual([]);
+
+    using _refused = vi.spyOn(document, "execCommand").mockReturnValue(false);
+    await act(() => handlers.onCopyOffer?.({ text: "refused value", host: "copy.example" }));
+    await userEvent.click(page.getByRole("button", { name: "Copy", exact: true }));
+    await expect.element(page.getByText("Could not copy the text")).toBeVisible();
+  });
+
   it("sends a native Copy or Cut menu command to the page once", async () => {
     setup();
     const { screen, input, canvas } = await renderSurface("you");
