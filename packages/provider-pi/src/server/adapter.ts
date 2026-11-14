@@ -70,6 +70,7 @@ import {
   piRecordNumber as recordNumber,
   piRecordString as recordString,
   type PiRpcConnection,
+  type PiRpcError,
   type PiRpcRecord,
 } from "./rpc.ts";
 import {
@@ -833,29 +834,28 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         initialRequestStarted = true;
         return yield* connection.request(record, timeoutMs).pipe(
           Effect.catchTags({
-            PiRpcError: (error) =>
-              Effect.gen(function* () {
-                if (
-                  closed ||
-                  stopRequested ||
-                  (error.operation !== "read" && error.operation !== "write")
-                )
-                  return yield* error;
-                // Pi can exit on an unusable --session before RPC starts.
-                // Finish failing its queue before retiring the readers.
-                yield* Queue.fail(connection.events, error);
-                yield* Scope.close(started.scope, Exit.void);
-                yield* sessionEventPermit.withPermits(1)(cancelPendingPrompts(yield* DateTime.now));
-                started = yield* startConnection().pipe(
-                  Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-                );
-                connection = started.connection;
-                if (closed || stopRequested) {
-                  yield* connection.terminate;
-                  return yield* error;
-                }
-                return yield* connection.request(record, timeoutMs);
-              }),
+            PiRpcError: Effect.fn("PiAdapter.recoverSpawnSession")(function* (error: PiRpcError) {
+              if (
+                closed ||
+                stopRequested ||
+                (error.operation !== "read" && error.operation !== "write")
+              )
+                return yield* error;
+              // Pi can exit on an unusable --session before RPC starts.
+              // Finish failing its queue before retiring the readers.
+              yield* Queue.fail(connection.events, error);
+              yield* Scope.close(started.scope, Exit.void);
+              yield* sessionEventPermit.withPermits(1)(cancelPendingPrompts(yield* DateTime.now));
+              started = yield* startConnection().pipe(
+                Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+              );
+              connection = started.connection;
+              if (closed || stopRequested) {
+                yield* connection.terminate;
+                return yield* error;
+              }
+              return yield* connection.request(record, timeoutMs);
+            }),
           }),
           Effect.ensuring(
             Effect.gen(function* () {
@@ -2688,13 +2688,13 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           const activeConnection = connection;
           const event = yield* Queue.take(activeConnection.events).pipe(
             Effect.catchTags({
-              PiRpcError: (error) =>
-                Effect.gen(function* () {
-                  // Let activation replace the failed startup before publishing its transport error.
-                  if (initialActivationPending) yield* Deferred.await(initialActivationDone);
-                  if (activeConnection !== connection) return undefined;
-                  return yield* error;
-                }),
+              // Untraced: this runs inside the per-event pump loop.
+              PiRpcError: Effect.fnUntraced(function* (error: PiRpcError) {
+                // Let activation replace the failed startup before publishing its transport error.
+                if (initialActivationPending) yield* Deferred.await(initialActivationDone);
+                if (activeConnection !== connection) return undefined;
+                return yield* error;
+              }),
             }),
           );
           if (event === undefined || activeConnection !== connection) continue;
