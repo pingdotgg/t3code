@@ -17,6 +17,7 @@ import {
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2RuntimeRequest,
+  type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
   type OrchestrationV2UserInputQuestion,
   type ProviderApprovalDecision,
@@ -85,6 +86,8 @@ const PI_INHERIT_MODEL_SLUG = "default";
 
 const STREAM_FLUSH_MS = 50;
 const PI_REQUEST_TIMEOUT_MS = 15_000;
+const PI_SUBAGENT_ASYNC_PREFIX = "PI_SUBAGENT_ASYNC_JSON:";
+const decodePiJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 const PI_SESSION_TIMEOUT_MS = 60_000;
 const MAX_EXTENSION_STATUSES = 32;
 const MAX_EXTENSION_STATUS_KEY_LENGTH = 256;
@@ -545,6 +548,17 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       >();
       const pendingPrompts = new Map<string, PendingPiPrompt>();
       const sessionApprovals = new Set<string>();
+      // Async pi-subagents runs launched in this session, by async id, until they settle.
+      const piAsyncRuns = new Map<
+        string,
+        {
+          readonly turn: ActivePiTurn;
+          readonly toolCallId: string;
+          readonly emitted: Map<string, string>;
+        }
+      >();
+      // The launch snapshot arrives before the tool result that names its run.
+      let latestAsyncSnapshotRuns: ReadonlyArray<unknown> = [];
       // Pi can settle immediately after dialog response; serialize so terminal cannot overtake request resolution.
       const sessionEventPermit = yield* Semaphore.make(1);
       let threadState: PiThreadState | null = null;
@@ -1333,24 +1347,15 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         resultRecord: unknown,
         completed: boolean,
       ) {
-        const results = recordField(recordField(resultRecord, "details"), "results");
+        const details = recordField(resultRecord, "details");
+        const results = recordField(details, "results");
         if (!Array.isArray(results)) return;
-        const emittedAt = yield* DateTime.now;
-        const parentNodeId = idAllocator.derive.nodeFromProviderItem({
-          driver: PI_PROVIDER,
-          nativeItemId: toolCallId,
-        });
+        let emitted = false;
         for (const [index, result] of results.entries()) {
           const agent = recordString(result, "agent");
           const task = recordString(result, "task");
           if (agent === undefined || task === undefined) continue;
-          const nativeTaskId = `${toolCallId}:subagent:${recordNumber(result, "step") ?? index}`;
-          const subagentId = idAllocator.derive.nodeFromProviderItem({
-            driver: PI_PROVIDER,
-            nativeItemId: nativeTaskId,
-          });
-          const startedAt = turn.toolStartedAt.get(nativeTaskId) ?? emittedAt;
-          turn.toolStartedAt.set(nativeTaskId, startedAt);
+          emitted = true;
           const finished = completed || recordField(result, "finished") === true;
           const stopReason = recordString(result, "stopReason");
           const interrupted = finished && stopReason === "aborted";
@@ -1358,62 +1363,174 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             finished &&
             !interrupted &&
             ((recordNumber(result, "exitCode") ?? 0) !== 0 || stopReason === "error");
-          const status = interrupted
-            ? "interrupted"
-            : failed
-              ? "failed"
-              : finished
-                ? "completed"
-                : "running";
           const outputText = piSubagentOutput(result);
-          const progress =
-            !finished && outputText.length > 0 ? { progress: outputText.slice(0, 200) } : {};
-          const resultText = finished && outputText.length > 0 ? outputText.slice(0, 10_000) : null;
-          yield* emit({
-            type: "subagent.updated",
-            driver: PI_PROVIDER,
-            subagent: {
-              id: subagentId,
-              threadId: turn.turnInput.threadId,
-              runId: turn.turnInput.runId,
-              parentNodeId,
-              origin: "provider_native",
-              createdBy: "agent",
-              driver: PI_PROVIDER,
-              providerInstanceId: options.instanceId,
-              providerThreadId: turn.turnInput.providerThread.id,
-              childThreadId: null,
-              nativeTaskRef: providerRef(nativeTaskId),
-              prompt: task,
-              title: agent,
-              model: recordString(result, "model") ?? null,
-              status,
-              ...progress,
-              result: resultText,
-              startedAt,
-              completedAt: finished ? emittedAt : null,
-              updatedAt: emittedAt,
-            },
+          yield* emitSubagent(turn, toolCallId, `${recordNumber(result, "step") ?? index}`, {
+            agent,
+            task,
+            model: recordString(result, "model") ?? null,
+            status: interrupted
+              ? "interrupted"
+              : failed
+                ? "failed"
+                : finished
+                  ? "completed"
+                  : "running",
+            progress: !finished && outputText.length > 0 ? outputText.slice(0, 200) : undefined,
+            result: finished && outputText.length > 0 ? outputText.slice(0, 10_000) : null,
           });
+        }
+        // Async launches return no results; their members arrive in the subagent-async widget.
+        const asyncId = recordString(details, "asyncId");
+        if (!emitted && asyncId !== undefined && !piAsyncRuns.has(asyncId)) {
+          const tracked = { turn, toolCallId, emitted: new Map<string, string>() };
+          piAsyncRuns.set(asyncId, tracked);
+          // Keeps the run ingesting after the coordinator's turn ends, until the run settles.
           yield* emit({
-            type: "turn_item.updated",
+            type: "background_work.updated",
             driver: PI_PROVIDER,
-            turnItem: {
-              ...baseItemFields(turn, nativeTaskId, startedAt, emittedAt),
-              status,
-              title: agent,
-              completedAt: finished ? emittedAt : null,
-              type: "subagent",
-              subagentId,
-              origin: "provider_native",
-              driver: PI_PROVIDER,
-              providerInstanceId: options.instanceId,
-              childThreadId: null,
-              prompt: task,
-              ...progress,
-              result: resultText,
-            },
+            providerTurnId: turn.providerTurn.id,
+            pending: true,
           });
+          const run = latestAsyncSnapshotRuns.find((run) => recordString(run, "id") === asyncId);
+          if (run !== undefined) yield* updateAsyncRun(asyncId, tracked, run);
+        }
+      });
+
+      const emitSubagent = Effect.fnUntraced(function* (
+        turn: ActivePiTurn,
+        toolCallId: string,
+        taskKey: string,
+        task: {
+          readonly agent: string;
+          readonly task: string;
+          readonly model: string | null;
+          readonly status: OrchestrationV2Subagent["status"];
+          readonly progress?: string | undefined;
+          readonly result: string | null;
+        },
+      ) {
+        const emittedAt = yield* DateTime.now;
+        const parentNodeId = idAllocator.derive.nodeFromProviderItem({
+          driver: PI_PROVIDER,
+          nativeItemId: toolCallId,
+        });
+        const nativeTaskId = `${toolCallId}:subagent:${taskKey}`;
+        const subagentId = idAllocator.derive.nodeFromProviderItem({
+          driver: PI_PROVIDER,
+          nativeItemId: nativeTaskId,
+        });
+        const startedAt = turn.toolStartedAt.get(nativeTaskId) ?? emittedAt;
+        turn.toolStartedAt.set(nativeTaskId, startedAt);
+        const finished =
+          task.status !== "running" && task.status !== "pending" && task.status !== "waiting";
+        const progress = task.progress === undefined ? {} : { progress: task.progress };
+        yield* emit({
+          type: "subagent.updated",
+          driver: PI_PROVIDER,
+          subagent: {
+            id: subagentId,
+            threadId: turn.turnInput.threadId,
+            runId: turn.turnInput.runId,
+            parentNodeId,
+            origin: "provider_native",
+            createdBy: "agent",
+            driver: PI_PROVIDER,
+            providerInstanceId: options.instanceId,
+            providerThreadId: turn.turnInput.providerThread.id,
+            childThreadId: null,
+            nativeTaskRef: providerRef(nativeTaskId),
+            prompt: task.task,
+            title: task.agent,
+            model: task.model,
+            status: task.status,
+            ...progress,
+            result: task.result,
+            startedAt,
+            completedAt: finished ? emittedAt : null,
+            updatedAt: emittedAt,
+          },
+        });
+        yield* emit({
+          type: "turn_item.updated",
+          driver: PI_PROVIDER,
+          turnItem: {
+            ...baseItemFields(turn, nativeTaskId, startedAt, emittedAt),
+            status: task.status,
+            title: task.agent,
+            completedAt: finished ? emittedAt : null,
+            type: "subagent",
+            subagentId,
+            origin: "provider_native",
+            driver: PI_PROVIDER,
+            providerInstanceId: options.instanceId,
+            childThreadId: null,
+            prompt: task.task,
+            ...progress,
+            result: task.result,
+          },
+        });
+      });
+
+      const updateAsyncRun = Effect.fnUntraced(function* (
+        runId: string,
+        tracked: {
+          readonly turn: ActivePiTurn;
+          readonly toolCallId: string;
+          readonly emitted: Map<string, string>;
+        },
+        run: unknown,
+      ) {
+        const children = recordField(run, "children");
+        for (const child of Array.isArray(children) ? children : []) {
+          const id = recordString(child, "id");
+          const agent = recordString(child, "agent");
+          const status = piAsyncSubagentStatus(recordString(child, "state"));
+          if (recordString(child, "kind") !== "step" || id === undefined) continue;
+          if (agent === undefined || status === undefined) continue;
+          const model = recordString(child, "model") ?? null;
+          const key = `${status}:${model}`;
+          if (tracked.emitted.get(id) === key) continue;
+          tracked.emitted.set(id, key);
+          yield* emitSubagent(tracked.turn, tracked.toolCallId, id, {
+            agent,
+            task: "",
+            model,
+            status,
+            result: null,
+          });
+        }
+        const runStatus = piAsyncSubagentStatus(recordString(run, "state"));
+        if (runStatus === undefined || runStatus === "running" || runStatus === "pending") return;
+        piAsyncRuns.delete(runId);
+        const providerTurnId = tracked.turn.providerTurn.id;
+        for (const other of piAsyncRuns.values()) {
+          if (other.turn.providerTurn.id === providerTurnId) return;
+        }
+        yield* emit({
+          type: "background_work.updated",
+          driver: PI_PROVIDER,
+          providerTurnId,
+          pending: false,
+        });
+      });
+
+      const updateAsyncSubagents = Effect.fnUntraced(function* (event: PiRpcRecord) {
+        const lines = recordField(event, "widgetLines");
+        if (!Array.isArray(lines)) return;
+        for (const line of lines) {
+          if (typeof line !== "string" || !line.startsWith(PI_SUBAGENT_ASYNC_PREFIX)) continue;
+          const snapshot = Option.getOrUndefined(
+            decodePiJson(line.slice(PI_SUBAGENT_ASYNC_PREFIX.length)),
+          );
+          const runs = recordField(snapshot, "runs");
+          if (!Array.isArray(runs)) continue;
+          latestAsyncSnapshotRuns = runs;
+          for (const run of runs) {
+            const runId = recordString(run, "id");
+            const tracked = runId === undefined ? undefined : piAsyncRuns.get(runId);
+            if (runId === undefined || tracked === undefined) continue;
+            yield* updateAsyncRun(runId, tracked, run);
+          }
         }
       });
 
@@ -1471,6 +1588,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         turn: ActivePiTurn,
         nativeItemId: string,
         message: string,
+        level?: "info" | "warning" | "error",
       ) {
         const emittedAt = yield* DateTime.now;
         yield* emitItemNode(turn, nativeItemId, "system", "completed", emittedAt, emittedAt);
@@ -1484,6 +1602,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             title: message,
             type: "system_notice",
             message,
+            ...(level === undefined ? {} : { level }),
           },
         });
       });
@@ -1529,11 +1648,17 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           const turn = state?.activeTurn ?? null;
           const message = recordString(event, "message") ?? "";
           if (turn === null || message.length === 0) return;
+          const notifyType = recordString(event, "notifyType");
           yield* emitSystemNotice(
             turn,
             `notify:${turn.providerTurn.id}:${turn.nextItemOrdinal}`,
             message,
+            notifyType === "warning" || notifyType === "error" ? notifyType : "info",
           );
+          return;
+        }
+        if (method === "setWidget" && recordString(event, "widgetKey") === "subagent-async") {
+          yield* updateAsyncSubagents(event);
           return;
         }
         if (
@@ -2578,6 +2703,82 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         }
       });
 
+      // CLI --fork uses Pi's own session format and sets the destination cwd. RPC
+      // switch_session/clone alone would retain the source cwd.
+      const forkSessionIntoCwd = Effect.fnUntraced(function* (
+        sourceFile: string,
+        boundary: PiForkBoundary,
+        providerThreadCreatedAt: DateTime.Utc,
+      ) {
+        const forkLaunch = buildPiRpcLaunch({
+          launchArgs: resolvedLaunchArgs.args,
+          environment: options.environment,
+          mcpSession: undefined,
+          extensionPath: undefined,
+          shortLived: true,
+          disableExtensions: true,
+          disableTools: true,
+        });
+        return yield* Effect.scoped(
+          Effect.gen(function* () {
+            const forkConnection = yield* makePiRpcConnection({
+              command: options.settings.binaryPath || "pi",
+              args: [...forkLaunch.args, "--fork", sourceFile],
+              cwd,
+              env: forkLaunch.env,
+            });
+            yield* Stream.fromQueue(forkConnection.events).pipe(
+              Stream.runDrain,
+              Effect.ignore,
+              Effect.forkScoped,
+            );
+            const beforeEntry =
+              boundary.type === "nothing"
+                ? null
+                : yield* piForkEntry(
+                    boundary,
+                    providerThreadCreatedAt,
+                    forkConnection.request({ type: "get_entries" }),
+                  );
+            if (beforeEntry !== null) {
+              const result = yield* forkConnection.request({
+                type: "fork",
+                entryId: beforeEntry,
+              });
+              if (recordField(result, "cancelled") === true) {
+                return yield* protocolError("A Pi extension cancelled the session fork");
+              }
+            }
+            const state = yield* forkConnection.request({ type: "get_state" });
+            const file = recordString(state, "sessionFile");
+            if (file === undefined || file === sourceFile) {
+              return yield* protocolError("Pi fork did not create a distinct session file");
+            }
+            return file;
+          }),
+        ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+      });
+
+      // A workspace handoff restarts Pi in a new cwd, but the session header still names the old one.
+      const sessionFileInCwd = Effect.fnUntraced(function* (
+        sessionFile: string,
+        providerThreadCreatedAt: DateTime.Utc,
+      ) {
+        const header = yield* fileSystem.stream(sessionFile).pipe(
+          Stream.decodeText(),
+          Stream.splitLines,
+          Stream.runHead,
+          Effect.map(Option.getOrUndefined),
+          Effect.orElseSucceed(() => undefined),
+        );
+        if (header === undefined) return sessionFile;
+        const sessionCwd = recordString(Option.getOrUndefined(decodeSessionHeader(header)), "cwd");
+        if (sessionCwd === undefined || sessionCwd === cwd) return sessionFile;
+        const realCwd = yield* fileSystem.realPath(cwd).pipe(Effect.orElseSucceed(() => cwd));
+        if (sessionCwd === realCwd) return sessionFile;
+        return yield* forkSessionIntoCwd(sessionFile, { type: "nothing" }, providerThreadCreatedAt);
+      });
+
       const registerThread = Effect.fnUntraced(function* (
         threadInput: ProviderAdapter.ProviderAdapterV2EnsureThreadInput,
         publish = true,
@@ -2617,8 +2818,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           baselineThinking = null;
           contextWindow = null;
           const result = yield* lifecycleRequest(
-            resumeId != null
-              ? { type: "switch_session", sessionPath: resumeId }
+            resumeId != null && existing !== undefined
+              ? {
+                  type: "switch_session",
+                  sessionPath: yield* sessionFileInCwd(resumeId, existing.createdAt),
+                }
               : { type: "new_session" },
           );
           if (recordField(result, "cancelled") === true) {
@@ -3470,55 +3674,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                     target: { type: "provider_turn", providerTurn: target },
                     providerThreadTurns: sourceTurns,
                   });
-            // CLI --fork uses Pi's own session format and sets the destination cwd. RPC
-            // switch_session/clone alone would retain the source cwd.
-            const forkLaunch = buildPiRpcLaunch({
-              launchArgs: resolvedLaunchArgs.args,
-              environment: options.environment,
-              mcpSession: undefined,
-              extensionPath: undefined,
-              shortLived: true,
-              disableExtensions: true,
-              disableTools: true,
-            });
-            const nativeId = yield* Effect.scoped(
-              Effect.gen(function* () {
-                const forkConnection = yield* makePiRpcConnection({
-                  command: options.settings.binaryPath || "pi",
-                  args: [...forkLaunch.args, "--fork", sourceFile],
-                  cwd,
-                  env: forkLaunch.env,
-                });
-                yield* Stream.fromQueue(forkConnection.events).pipe(
-                  Stream.runDrain,
-                  Effect.ignore,
-                  Effect.forkScoped,
-                );
-                const beforeEntry =
-                  boundary.type === "nothing"
-                    ? null
-                    : yield* piForkEntry(
-                        boundary,
-                        source.createdAt,
-                        forkConnection.request({ type: "get_entries" }),
-                      );
-                if (beforeEntry !== null) {
-                  const result = yield* forkConnection.request({
-                    type: "fork",
-                    entryId: beforeEntry,
-                  });
-                  if (recordField(result, "cancelled") === true) {
-                    return yield* protocolError("A Pi extension cancelled the session fork");
-                  }
-                }
-                const state = yield* forkConnection.request({ type: "get_state" });
-                const file = recordString(state, "sessionFile");
-                if (file === undefined || file === sourceFile) {
-                  return yield* protocolError("Pi fork did not create a distinct session file");
-                }
-                return file;
-              }),
-            ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+            const nativeId = yield* forkSessionIntoCwd(sourceFile, boundary, source.createdAt);
             const now = yield* DateTime.now;
             return yield* registerThread(
               {
@@ -3571,6 +3727,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
     }),
   });
 });
+
+const decodeSessionHeader = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
 interface PiSessionEntry {
   readonly parentId: string | null;
@@ -3725,6 +3883,29 @@ function piUncapturedForkEntry(
     if (timestamp >= from && timestamp <= to) earliest = id;
   }
   return earliest;
+}
+
+function piAsyncSubagentStatus(
+  state: string | undefined,
+): OrchestrationV2Subagent["status"] | undefined {
+  switch (state) {
+    case "queued":
+      return "pending";
+    case "running":
+      return "running";
+    case "paused":
+      return "waiting";
+    case "complete":
+    case "partial":
+      return "completed";
+    case "failed":
+    case "rejected":
+      return "failed";
+    case "stopped":
+      return "interrupted";
+    default:
+      return undefined;
+  }
 }
 
 function piSubagentOutput(result: unknown): string {
