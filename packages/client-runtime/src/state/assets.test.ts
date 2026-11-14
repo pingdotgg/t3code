@@ -184,58 +184,52 @@ describe("asset URL requests", () => {
   const other = EnvironmentId.make("asset-other");
 
   it.effect("keeps a thread of images from flooding one environment with requests", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const harness = yield* makeAssetUrlHarness([remote]);
-        const total = ASSET_URL_MAX_IN_FLIGHT * 3;
-        harness.mountImages(remote, total);
+    Effect.gen(function* () {
+      const harness = yield* makeAssetUrlHarness([remote]);
+      const total = ASSET_URL_MAX_IN_FLIGHT * 3;
+      harness.mountImages(remote, total);
 
-        for (let call = 0; call < ASSET_URL_MAX_IN_FLIGHT; call += 1) {
-          yield* Queue.take(harness.started);
-        }
-        expect(harness.inFlight(remote)).toBe(ASSET_URL_MAX_IN_FLIGHT);
+      for (let call = 0; call < ASSET_URL_MAX_IN_FLIGHT; call += 1) {
+        yield* Queue.take(harness.started);
+      }
+      expect(harness.inFlight(remote)).toBe(ASSET_URL_MAX_IN_FLIGHT);
 
-        // Each answer admits the next waiting request.
-        for (let call = 0; call < total; call += 1) {
-          yield* harness.release(remote);
-          if (call < total - ASSET_URL_MAX_IN_FLIGHT) yield* Queue.take(harness.started);
-        }
-        expect(harness.maxInFlight(remote)).toBe(ASSET_URL_MAX_IN_FLIGHT);
-      }),
-    ),
+      // Each answer admits the next waiting request.
+      for (let call = 0; call < total; call += 1) {
+        yield* harness.release(remote);
+        if (call < total - ASSET_URL_MAX_IN_FLIGHT) yield* Queue.take(harness.started);
+      }
+      expect(harness.maxInFlight(remote)).toBe(ASSET_URL_MAX_IN_FLIGHT);
+    }),
   );
 
   it.effect("limits each environment on its own", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const harness = yield* makeAssetUrlHarness([remote, other]);
-        harness.mountImages(remote, ASSET_URL_MAX_IN_FLIGHT + 2);
-        for (let call = 0; call < ASSET_URL_MAX_IN_FLIGHT; call += 1) {
-          yield* Queue.take(harness.started);
-        }
-        harness.mountImages(other, 1);
-        expect(yield* Queue.take(harness.started)).toBe(other);
-        expect(harness.inFlight(remote)).toBe(ASSET_URL_MAX_IN_FLIGHT);
-      }),
-    ),
+    Effect.gen(function* () {
+      const harness = yield* makeAssetUrlHarness([remote, other]);
+      harness.mountImages(remote, ASSET_URL_MAX_IN_FLIGHT + 2);
+      for (let call = 0; call < ASSET_URL_MAX_IN_FLIGHT; call += 1) {
+        yield* Queue.take(harness.started);
+      }
+      harness.mountImages(other, 1);
+      expect(yield* Queue.take(harness.started)).toBe(other);
+      expect(harness.inFlight(remote)).toBe(ASSET_URL_MAX_IN_FLIGHT);
+    }),
   );
 
   it.effect("frees the limit when the session behind the requests is replaced", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const harness = yield* makeAssetUrlHarness([remote]);
-        harness.mountImages(remote, ASSET_URL_MAX_IN_FLIGHT * 2);
-        for (let call = 0; call < ASSET_URL_MAX_IN_FLIGHT; call += 1) {
-          yield* Queue.take(harness.started);
-        }
+    Effect.gen(function* () {
+      const harness = yield* makeAssetUrlHarness([remote]);
+      harness.mountImages(remote, ASSET_URL_MAX_IN_FLIGHT * 2);
+      for (let call = 0; call < ASSET_URL_MAX_IN_FLIGHT; call += 1) {
+        yield* Queue.take(harness.started);
+      }
 
-        yield* harness.replaceSession(remote);
-        for (let call = 0; call < ASSET_URL_MAX_IN_FLIGHT; call += 1) {
-          yield* Queue.take(harness.started);
-        }
-        expect(harness.maxInFlight(remote)).toBe(ASSET_URL_MAX_IN_FLIGHT);
-      }),
-    ),
+      yield* harness.replaceSession(remote);
+      for (let call = 0; call < ASSET_URL_MAX_IN_FLIGHT; call += 1) {
+        yield* Queue.take(harness.started);
+      }
+      expect(harness.maxInFlight(remote)).toBe(ASSET_URL_MAX_IN_FLIGHT);
+    }),
   );
 });
 
@@ -325,17 +319,15 @@ describe("desktop-local media fallback", () => {
   });
 
   it.effect("keeps a relative Markdown image on the thread's environment", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const { load } = yield* makeFallback();
-        expect(yield* load("docs/report.png")).toEqual({ loaded: false, calls: [remote] });
-        // The same resolved path written absolute still falls back, and shares no cached result.
-        expect(yield* load("/tmp/repo/docs/report.png")).toEqual({
-          loaded: true,
-          calls: [remote, local],
-        });
-      }),
-    ),
+    Effect.gen(function* () {
+      const { load } = yield* makeFallback();
+      expect(yield* load("docs/report.png")).toEqual({ loaded: false, calls: [remote] });
+      // The same resolved path written absolute still falls back, and shares no cached result.
+      expect(yield* load("/tmp/repo/docs/report.png")).toEqual({
+        loaded: true,
+        calls: [remote, local],
+      });
+    }),
   );
 });
 
