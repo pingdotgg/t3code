@@ -11451,7 +11451,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       );
     });
 
-  it.effect.each(["closed", "unconfirmed", "close-hangs", "synthetic"] as const)(
+  it.effect.each(["closed", "interrupt-hangs", "unconfirmed", "close-hangs", "synthetic"] as const)(
     "fails a turn whose API retries outlast the retry budget: %s",
     (response) =>
       Effect.gen(function* () {
@@ -11459,7 +11459,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const closeRequested = yield* Deferred.make<void>();
         const releaseClose = yield* Deferred.make<void>();
         const harness = yield* makeWakeHarnessWithOptions({
-          interrupt: Deferred.succeed(interruptSent, undefined).pipe(Effect.asVoid),
+          interrupt: Deferred.succeed(interruptSent, undefined).pipe(
+            Effect.andThen(response === "interrupt-hangs" ? Effect.never : Effect.void),
+          ),
           close: (sdkMessages) =>
             Deferred.succeed(closeRequested, undefined).pipe(
               Effect.andThen(
@@ -11520,7 +11522,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.lengthOf(harness.terminalEvents(), 0);
         yield* TestClock.adjust("1 minute");
         yield* Deferred.await(interruptSent);
-        if (response === "unconfirmed" || response === "close-hangs") {
+        if (response !== "closed" && response !== "synthetic") {
           yield* TestClock.adjust("20 seconds");
         }
         const terminal = yield* Queue.take(harness.terminalReceipts);
