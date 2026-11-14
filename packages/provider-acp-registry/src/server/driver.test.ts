@@ -4,6 +4,7 @@ import {
   AcpRegistryOperationError,
   ProviderInstanceId,
   type ServerProvider,
+  type ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -11,24 +12,31 @@ import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEve
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import { AcpRegistrySettings } from "../settings.ts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
+import type { GlmUsageRead } from "./zaiUsageLimits.ts";
 import {
   AcpRegistryDriver,
   applyAcpRegistryAvailableCommands,
   applyAcpRegistryLiveConfiguration,
   buildCheckedAcpRegistrySnapshot,
+  checkAcpRegistryProvider,
   checkAcpRegistryProviderReadiness,
   checkAcpRegistryProviderStatus,
+  makeGlmUsageLimitsCache,
+  scopedGlmUsageLimitsReader,
 } from "./driver.ts";
 import { normalizeAcpRegistryLiveConfiguration } from "./probe.ts";
 
@@ -496,6 +504,213 @@ describe("acpRegistrySnapshotReadiness", () => {
       });
     }),
   );
+
+  it.effect(
+    "reattaches cached GLM usage limits only to a ready registry glm-acp-agent instance",
+    () =>
+      Effect.gen(function* () {
+        const glmLimits: ServerProviderUsageLimits = {
+          checkedAt: "2026-11-05T22:29:01.960Z",
+          windows: [
+            {
+              id: "tokens_limit-3-5",
+              kind: "session",
+              label: "5-hour Model quota",
+              usedPercent: 27,
+              windowDurationMins: 300,
+            },
+          ],
+        };
+        const readyCatalog = catalogWithInspection({
+          status: "ready",
+          agentId: "glm-acp-agent",
+          version: "1.17.0",
+          distribution: "npx",
+        });
+        const unpreparedCatalog = catalogWithInspection({
+          status: "unprepared",
+          agentId: "glm-acp-agent",
+          version: "1.17.0",
+          distribution: "binary",
+        });
+        const check = (settings: ReturnType<typeof decodeSettings>, catalog = readyCatalog) =>
+          checkAcpRegistryProvider({
+            ...identity,
+            settings,
+            environment: {},
+            usageLimits: glmLimits,
+          }).pipe(Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog));
+
+        const glm = yield* check(decodeSettings({ agentId: "glm-acp-agent" }));
+        expect(glm.usageLimits).toEqual(glmLimits);
+
+        const kimi = yield* check(decodeSettings({ agentId: "kimi-acp" }));
+        expect(kimi.usageLimits).toBeUndefined();
+
+        const local = yield* check(
+          decodeSettings({ source: "local", commandPath: "glm-acp-agent" }),
+        );
+        expect(local.usageLimits).toBeUndefined();
+
+        const disabled = yield* check(decodeSettings({ agentId: "glm-acp-agent", enabled: false }));
+        expect(disabled.usageLimits).toBeUndefined();
+
+        const unprepared = yield* check(
+          decodeSettings({ agentId: "glm-acp-agent" }),
+          unpreparedCatalog,
+        );
+        expect(unprepared.usageLimits).toBeUndefined();
+      }),
+  );
+
+  it.effect("scopes GLM limits to the instance and sets sign-in from the agent's reply", () =>
+    Effect.gen(function* () {
+      const signIns: boolean[] = [];
+      const read = (result: GlmUsageRead) =>
+        scopedGlmUsageLimitsReader({
+          instanceId: identity.instanceId,
+          displayName: "  Z.ai  ",
+          setAuthentication: (confirmed) => Effect.sync(() => signIns.push(confirmed)),
+          read: () => Effect.succeed(result),
+        })({
+          instanceId: identity.instanceId,
+          settings: decodeSettings({ agentId: "glm-acp-agent" }),
+          cwd: "/worktree",
+          environment: {},
+        });
+      const group = { id: "acpRegistry:acpRegistry_test", label: "Z.ai" };
+      const checkedAt = "2026-11-05T22:29:01.960Z";
+
+      const usable = yield* read({
+        limits: {
+          checkedAt,
+          windows: [
+            {
+              id: "tokens_limit-3-5",
+              kind: "session",
+              label: "5-hour Model quota",
+              usedPercent: 27,
+            },
+          ],
+        },
+        signedIn: true,
+      });
+      const failed = yield* read({
+        limits: { checkedAt, windows: [], unavailable: { reason: "probeFailed" } },
+      });
+      const signedOut = yield* read({
+        limits: { checkedAt, windows: [], unavailable: { reason: "unsupported" } },
+        signedIn: false,
+      });
+      expect([usable.group, failed.group, signedOut.group]).toEqual([group, group, group]);
+      expect(signIns).toEqual([true, false]);
+    }),
+  );
+});
+
+describe("glmUsageLimitsCache", () => {
+  const limits = (checkedAt: string): ServerProviderUsageLimits => ({
+    checkedAt,
+    windows: [
+      {
+        id: "tokens_limit-3-5",
+        kind: "session",
+        label: "5-hour Model quota",
+        usedPercent: 27,
+      },
+    ],
+  });
+
+  it.effect("reattaches a fresh reading without reading again until the TTL expires", () =>
+    Effect.gen(function* () {
+      const readings = [limits("2026-11-05T22:20:00.000Z"), limits("2026-11-05T22:40:00.000Z")];
+      const cache = yield* makeGlmUsageLimitsCache({
+        read: () => Effect.sync(() => readings.shift()!),
+      });
+
+      expect(yield* cache.readFresh).toEqual(limits("2026-11-05T22:20:00.000Z"));
+      expect(yield* cache.get).toEqual({
+        limits: limits("2026-11-05T22:20:00.000Z"),
+        expired: false,
+      });
+      expect(yield* cache.get).toEqual({
+        limits: limits("2026-11-05T22:20:00.000Z"),
+        expired: false,
+      });
+      expect(readings).toHaveLength(1);
+
+      yield* TestClock.adjust("10 minutes");
+      expect(yield* cache.get).toEqual({
+        limits: limits("2026-11-05T22:20:00.000Z"),
+        expired: true,
+      });
+
+      expect(yield* cache.readFresh).toEqual(limits("2026-11-05T22:40:00.000Z"));
+      expect(yield* cache.get).toEqual({
+        limits: limits("2026-11-05T22:40:00.000Z"),
+        expired: false,
+      });
+    }),
+  );
+
+  it.effect("keeps the last reading through a forced refresh and drops it on clear", () =>
+    Effect.gen(function* () {
+      const reads = yield* Ref.make(0);
+      const cache = yield* makeGlmUsageLimitsCache({
+        read: () =>
+          Ref.updateAndGet(reads, (count) => count + 1).pipe(
+            Effect.map((count) =>
+              limits(`2026-11-05T22:${String(count).padStart(2, "0")}:00.000Z`),
+            ),
+          ),
+      });
+
+      yield* cache.readFresh;
+      expect(yield* cache.get).toEqual({
+        limits: limits("2026-11-05T22:01:00.000Z"),
+        expired: false,
+      });
+
+      yield* cache.invalidate;
+      expect(yield* cache.get).toEqual({
+        limits: limits("2026-11-05T22:01:00.000Z"),
+        expired: true,
+      });
+      yield* cache.readFresh;
+      expect(yield* Ref.get(reads)).toBe(2);
+
+      yield* cache.clear;
+      expect(yield* cache.get).toEqual({ limits: undefined, expired: true });
+    }),
+  );
+
+  it.effect("drops a read that an account change overtook", () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const currents: boolean[] = [];
+      const cache = yield* makeGlmUsageLimitsCache({
+        read: (current) =>
+          Deferred.succeed(started, undefined).pipe(
+            Effect.andThen(Deferred.await(release)),
+            Effect.andThen(current),
+            Effect.map((isCurrent) => {
+              currents.push(isCurrent);
+              return limits("2026-11-05T22:20:00.000Z");
+            }),
+          ),
+      });
+
+      const stale = yield* cache.readFresh.pipe(Effect.forkChild);
+      yield* Deferred.await(started);
+      yield* cache.clear;
+      yield* Deferred.succeed(release, undefined);
+
+      expect(yield* Fiber.join(stale)).toBeUndefined();
+      expect(currents).toEqual([false]);
+      expect(yield* cache.get).toEqual({ limits: undefined, expired: true });
+    }),
+  );
 });
 
 const fakeAgentSource = `
@@ -506,7 +721,18 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   const { id, method } = JSON.parse(line);
   if (id === undefined) return;
   if (method === "initialize") {
-    send({ id, result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [] } });
+    send({
+      id,
+      result: {
+        protocolVersion: 1,
+        agentCapabilities: {
+          _meta: { "glm-acp-agent/usage": { version: 1, method: "_glm/usage" } },
+        },
+        authMethods: [],
+      },
+    });
+  } else if (method === "_glm/usage") {
+    send({ id, result: JSON.parse(readFileSync(process.argv[3], "utf8")) });
   } else if (method === "session/new") {
     const modelIds = JSON.parse(readFileSync(process.argv[2], "utf8"));
     send({
@@ -695,6 +921,73 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
       expect(effortBySlug(yield* instance.snapshot.getSnapshot)).toBe(
         "model-a:effort,model-b:effort",
       );
+    }),
+  );
+
+  it.effect("rereads GLM usage when the snapshot refreshes", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "acp-driver-glm-" });
+      const agentPath = path.join(directory, "agent.mjs");
+      const modelsPath = path.join(directory, "models.json");
+      const usagePath = path.join(directory, "usage.json");
+      yield* fileSystem.writeFileString(agentPath, fakeAgentSource);
+      yield* fileSystem.writeFileString(modelsPath, JSON.stringify(["glm-4.7"]));
+      const writeUsage = (percent: number) =>
+        fileSystem.writeFileString(
+          usagePath,
+          JSON.stringify({
+            checkedAt: "2026-11-05T22:29:01.960Z",
+            windows: [
+              {
+                id: "tokens_limit-3-5",
+                label: "5-hour Model quota",
+                kind: "session",
+                usedPercent: percent,
+                windowDurationMins: 300,
+              },
+            ],
+          }),
+        );
+      yield* writeUsage(27);
+      const instance = yield* AcpRegistryDriver.create({
+        instanceId: identity.instanceId,
+        displayName: identity.displayName,
+        enabled: true,
+        environment: [],
+        config: decodeSettings({ agentId: "glm-acp-agent" }),
+      }).pipe(
+        Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, {
+          ...catalogWithInspection({
+            status: "ready",
+            agentId: "glm-acp-agent",
+            version: "1.17.0",
+            distribution: "npx",
+          }),
+          resolve: () =>
+            Effect.succeed({
+              distribution: "npx" as const,
+              spawn: { command: process.execPath, args: [agentPath, modelsPath, usagePath] },
+            }),
+        }),
+      );
+      const usedPercent = (provider: ServerProvider) =>
+        provider.usageLimits?.windows[0]?.usedPercent;
+      const waitForUsage = (expected: number) =>
+        instance.snapshot.streamChanges.pipe(
+          Stream.filter((provider) => usedPercent(provider) === expected),
+          Stream.runHead,
+        );
+
+      const first = yield* waitForUsage(27).pipe(Effect.forkScoped({ startImmediately: true }));
+      yield* instance.snapshot.refresh;
+      yield* Fiber.join(first);
+
+      yield* writeUsage(41);
+      const reread = yield* waitForUsage(41).pipe(Effect.forkScoped({ startImmediately: true }));
+      yield* instance.snapshot.refresh;
+      yield* Fiber.join(reread);
     }),
   );
 });

@@ -20,6 +20,8 @@ export const ServerProviderUsageWindow = Schema.Struct({
   usedPercent: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
   resetsAt: Schema.optional(IsoDateTime),
   windowDurationMins: Schema.optional(NonNegativeInt),
+  /** False when exhausting this window still leaves the model usable. */
+  blocksModel: Schema.optional(Schema.Boolean),
 });
 export type ServerProviderUsageWindow = typeof ServerProviderUsageWindow.Type;
 
@@ -49,6 +51,13 @@ export const ServerProviderUsageLimits = Schema.Struct({
   windows: ForwardCompatibleArray(ServerProviderUsageWindow),
   /** A $0 monthly spend cap has no percentage, so it cannot be a window. */
   zeroSpendCap: Schema.optional(Schema.Boolean),
+  /** Limits with the same group id pool and scope together under this label. */
+  group: Schema.optional(
+    Schema.Struct({
+      id: TrimmedNonEmptyString,
+      label: TrimmedNonEmptyString,
+    }),
+  ),
   credentialFingerprint: Schema.optional(TrimmedNonEmptyString),
   resetCredits: Schema.optional(ServerProviderResetCredits),
   externalUsage: Schema.optional(

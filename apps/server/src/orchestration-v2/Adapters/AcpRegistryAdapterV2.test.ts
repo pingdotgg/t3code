@@ -61,6 +61,7 @@ import {
   makeAcpRegistryAdapterV2,
   acpRegistryPromptFailure,
   acpRegistryProbeResult,
+  isFailedPromptRequest,
 } from "@t3tools/provider-acp-registry/testing";
 
 const decodeAcpRegistryAdapterSettings = Schema.decodeUnknownEffect(
@@ -448,6 +449,17 @@ describe("AcpRegistryAdapterV2", () => {
     assert.include(rejected.message, "Request rejected.");
     assert.notInclude(rejected.message, "private-key");
     assert.notInclude(rejected.message, "token=secret");
+    assert.isTrue(
+      isFailedPromptRequest(
+        new EffectAcpErrors.AcpRequestError({ code: -32603, errorMessage: "Internal error" }),
+      ),
+    );
+    assert.isFalse(
+      isFailedPromptRequest(
+        new EffectAcpErrors.AcpRequestError({ code: -32800, errorMessage: "Request cancelled" }),
+      ),
+    );
+    assert.isFalse(isFailedPromptRequest(new Error("private defect")));
   });
 
   describe("the agent's own pickers", () => {

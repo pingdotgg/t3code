@@ -6,6 +6,7 @@ import {
   type AcpRegistryOperationError,
   type ServerProvider,
   type ServerProviderModel,
+  type ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import { AcpRegistrySettings } from "../settings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -15,6 +16,7 @@ import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FiberSet from "effect/FiberSet";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
@@ -23,7 +25,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
-import { AcpRegistryAdapterV2Driver, type AcpRegistryAdapterV2DriverEnv } from "./adapter.ts";
+import { createAcpRegistryAdapterV2, type AcpRegistryAdapterV2DriverEnv } from "./adapter.ts";
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
@@ -33,6 +35,7 @@ import {
   type ProviderDriver,
   type ProviderInstance,
 } from "@t3tools/provider-core/server/driver";
+import type { ManagedServerProvider } from "@t3tools/provider-core/server/snapshot";
 import {
   providerModelsFromSettings,
   providerProbeEnvironment,
@@ -48,18 +51,22 @@ import {
   type AcpRegistryConfigurationProbe,
   type AcpRegistryConfigurationProbeResult,
   type AcpRegistryLiveConfiguration,
+  type AcpRegistryUsageLimitsReader,
+  type GlmUsageReader,
   deleteAcpRegistrySession,
   disableAcpRegistryProvider,
   listAcpRegistrySessions,
   listAcpRegistryProviders,
   logoutAcpRegistry,
   probeAcpRegistryConfiguration,
+  readAcpRegistryGlmUsageLimits,
   setAcpRegistryProvider,
 } from "./probe.ts";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
 import * as AcpRegistryAuth from "./auth.ts";
 import * as AcpRegistryAuthenticationState from "./authenticationState.ts";
+import { isZaiUsageLimitsInstance } from "./zaiUsageLimits.ts";
 
 const DRIVER_KIND = ProviderDriverKind.make("acpRegistry");
 const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
@@ -494,6 +501,111 @@ export const checkAcpRegistryProviderReadiness = Effect.fn(
     : snapshot;
 });
 
+export const checkAcpRegistryProvider = Effect.fn("AcpRegistryDriver.checkProvider")(function* (
+  input: SnapshotIdentity & {
+    readonly settings: AcpRegistrySettings;
+    readonly environment: NodeJS.ProcessEnv;
+    /** The last GLM reading, attached without I/O; fresh readings fill in off the refresh path. */
+    readonly usageLimits?: ServerProviderUsageLimits;
+  },
+): Effect.fn.Return<ServerProvider, never, AcpRegistrySupport.AcpRegistryCatalog> {
+  const provider = yield* checkAcpRegistryProviderReadiness(input);
+  // Only a ready agent's reading is trustworthy enough to keep attaching.
+  if (
+    input.usageLimits === undefined ||
+    !isZaiUsageLimitsInstance(input.settings) ||
+    !provider.installed ||
+    provider.status !== "ready"
+  ) {
+    return provider;
+  }
+  return { ...provider, usageLimits: input.usageLimits };
+});
+
+export interface GlmUsageLimitsCache {
+  /** The last reading and whether it expired; the caller decides when to read fresh. */
+  readonly get: Effect.Effect<{
+    readonly limits: ServerProviderUsageLimits | undefined;
+    readonly expired: boolean;
+  }>;
+  /** Reads past the cache and stores the result; undefined when an account change overtook the read. */
+  readonly readFresh: Effect.Effect<ServerProviderUsageLimits | undefined>;
+  readonly invalidate: Effect.Effect<void>;
+  /** Drops the reading; another account's limits must not show even briefly. */
+  readonly clear: Effect.Effect<void>;
+}
+
+// Twice the default provider-health refresh, so routine refreshes reattach a cached reading
+// as often as they spawn the agent, and quota windows move far slower than this.
+const GLM_USAGE_CACHE_TTL_MS = 10 * 60_000;
+
+export const makeGlmUsageLimitsCache = Effect.fn("AcpRegistryDriver.makeGlmUsageLimitsCache")(
+  (input: {
+    /** `current` turns false once an account change has overtaken this read. */
+    readonly read: (current: Effect.Effect<boolean>) => Effect.Effect<ServerProviderUsageLimits>;
+  }): Effect.Effect<GlmUsageLimitsCache> =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make<{
+        readonly generation: number;
+        readonly entry: {
+          readonly limits: ServerProviderUsageLimits;
+          readonly expiresAt: number;
+        } | null;
+      }>({ generation: 0, entry: null });
+      const readFresh = Effect.gen(function* () {
+        const { generation } = yield* Ref.get(state);
+        const limits = yield* input.read(
+          Ref.get(state).pipe(Effect.map((current) => current.generation === generation)),
+        );
+        const expiresAt = (yield* Clock.currentTimeMillis) + GLM_USAGE_CACHE_TTL_MS;
+        // A read that outlived an account change belongs to the previous account.
+        return yield* Ref.modify(state, (current) =>
+          current.generation === generation
+            ? ([limits, { ...current, entry: { limits, expiresAt } }] as const)
+            : ([undefined, current] as const),
+        );
+      });
+      return {
+        get: Effect.gen(function* () {
+          const { entry } = yield* Ref.get(state);
+          const now = yield* Clock.currentTimeMillis;
+          return { limits: entry?.limits, expired: entry === null || entry.expiresAt <= now };
+        }),
+        readFresh,
+        // A forced refresh keeps showing the last reading until the fresh one lands.
+        invalidate: Ref.update(state, (current) =>
+          current.entry === null
+            ? current
+            : { ...current, entry: { ...current.entry, expiresAt: 0 } },
+        ),
+        clear: Ref.update(state, (current) => ({
+          generation: current.generation + 1,
+          entry: null,
+        })),
+      };
+    }),
+);
+
+export function scopedGlmUsageLimitsReader(input: {
+  readonly instanceId: ProviderInstance["instanceId"];
+  readonly displayName: string | undefined;
+  readonly setAuthentication: (confirmed: boolean) => Effect.Effect<void>;
+  readonly read: GlmUsageReader;
+}): AcpRegistryUsageLimitsReader {
+  const group = {
+    id: `acpRegistry:${input.instanceId}`,
+    label: input.displayName?.trim() || "GLM Agent",
+  };
+  return (probeInput) =>
+    input.read(probeInput).pipe(
+      // The agent's quota reply proves or disproves its own sign-in.
+      Effect.tap(({ signedIn }) =>
+        signedIn === undefined ? Effect.void : input.setAuthentication(signedIn),
+      ),
+      Effect.map(({ limits }) => ({ ...limits, group })),
+    );
+}
+
 export type AcpRegistryDriverEnv =
   | AcpRegistryAdapterV2DriverEnv
   | Digest.Digest
@@ -548,13 +660,22 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       environment,
       hostEnvironment,
     );
-    const orchestrationAdapter = yield* AcpRegistryAdapterV2Driver.create({
+    const runInInstanceScope = yield* FiberSet.makeRuntime<never>();
+    const orchestrationAdapter = yield* createAcpRegistryAdapterV2({
       instanceId,
       displayName,
       accentColor,
       environment,
       enabled,
       config,
+      // Z.ai quota errors arrive as generic request errors, so any failed GLM prompt rereads usage.
+      ...(isZaiUsageLimitsInstance(effectiveConfig)
+        ? {
+            onPromptRequestError: () => {
+              runInInstanceScope(rereadGlmUsage.pipe(Effect.ignoreCause({ log: true })));
+            },
+          }
+        : {}),
     }).pipe(
       Effect.mapError(
         (cause) =>
@@ -628,7 +749,80 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             }),
           );
     });
-    const checkProvider = checkAcpRegistryProviderReadiness(readinessInput).pipe(
+    const refreshScope = yield* Effect.scope;
+    const setGlmAuthentication = (confirmed: boolean) =>
+      confirmedAuthentication.set(confirmed).pipe(
+        Effect.andThen(
+          confirmed
+            ? Effect.void
+            : // A signed-out reading is stale by definition, so refresh everything it came from.
+              Effect.suspend(() =>
+                clearLiveState.pipe(
+                  Effect.andThen(liveSnapshotSemaphore.withPermit(invalidateEnrichmentCache)),
+                  Effect.andThen(snapshot.refresh),
+                ),
+              ).pipe(Effect.forkIn(refreshScope), Effect.asVoid),
+        ),
+      );
+    const glmUsageCache = isZaiUsageLimitsInstance(effectiveConfig)
+      ? yield* makeGlmUsageLimitsCache({
+          read: (current) =>
+            scopedGlmUsageLimitsReader({
+              instanceId,
+              displayName,
+              setAuthentication: (confirmed) =>
+                Effect.flatMap(current, (isCurrent) =>
+                  isCurrent ? setGlmAuthentication(confirmed) : Effect.void,
+                ),
+              read: (input) =>
+                readAcpRegistryGlmUsageLimits(input).pipe(
+                  Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
+                  Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+                  Effect.provideService(SecureRandom.SecureRandom, random),
+                ),
+            })({
+              instanceId,
+              settings: effectiveConfig,
+              cwd: host.paths.cwd,
+              environment: processEnvironment,
+            }),
+        })
+      : null;
+    const applyGlmReading = (limits: ServerProviderUsageLimits) =>
+      Effect.suspend(() =>
+        snapshot.applyUsageLimits({
+          checkedAt: limits.checkedAt,
+          windows: limits.windows,
+          complete: true,
+          ...(limits.group === undefined ? {} : { group: limits.group }),
+          ...(limits.externalUsage === undefined ? {} : { externalUsage: limits.externalUsage }),
+          ...(limits.unavailable === undefined ? {} : { unavailable: limits.unavailable }),
+        }),
+      );
+    const glmRereadSemaphore = yield* Semaphore.make(1);
+    // Reads directly: refreshUsage skips limits a missing-credentials read marked unsupported.
+    // Failures that land together share one read.
+    const rereadGlmUsage =
+      glmUsageCache === null
+        ? Effect.void
+        : glmUsageCache.readFresh.pipe(
+            Effect.flatMap((limits) =>
+              limits === undefined ? Effect.void : applyGlmReading(limits),
+            ),
+            glmRereadSemaphore.withPermitsIfAvailable(1),
+            Effect.asVoid,
+          );
+    const checkProvider = Effect.gen(function* () {
+      const cached = glmUsageCache === null ? { limits: undefined } : yield* glmUsageCache.get;
+      return yield* checkAcpRegistryProvider({
+        ...readinessInput,
+        ...(cached.limits === undefined ? {} : { usageLimits: cached.limits }),
+      }).pipe(
+        Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
+        Effect.flatMap(withLiveRuntimeState),
+      );
+    });
+    const initialProvider = checkAcpRegistryProviderReadiness(readinessInput).pipe(
       Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
       Effect.flatMap(withLiveRuntimeState),
     );
@@ -655,6 +849,11 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       generation: current.generation + 1,
       entry: null,
     }));
+    // Account and endpoint changes also drop the GLM reading. The signed-out reader path must
+    // not: its own refresh would read again and loop.
+    const invalidateAccountCaches = invalidateEnrichmentCache.pipe(
+      Effect.andThen(glmUsageCache === null ? Effect.void : glmUsageCache.clear),
+    );
     const enrichProviderCached = Effect.fn("AcpRegistryDriver.enrichProviderCached")(function* (
       baseSnapshot: ServerProvider,
     ) {
@@ -688,15 +887,22 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       return { provider: enriched, generation: cacheState.generation };
     });
     const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
-    const snapshot = yield* makeManagedServerProvider<
+    const snapshot: ManagedServerProvider = yield* makeManagedServerProvider<
       ProviderSnapshotSettings<AcpRegistrySettings>
     >({
       resolveMaintenance: () => Effect.succeed(MAINTENANCE),
       getSettings: snapshotSettings.getSettings,
       streamSettings: snapshotSettings.streamSettings,
       haveSettingsChanged: haveProviderSnapshotSettingsChanged,
-      initialSnapshot: () => checkProvider,
+      initialSnapshot: () => initialProvider,
       checkProvider,
+      ...(glmUsageCache === null
+        ? {}
+        : {
+            // Recovery reads fresh, and a forced usage refresh bypasses the cache entirely.
+            checkUsageLimits: glmUsageCache.readFresh,
+            invalidateUsageCache: glmUsageCache.invalidate,
+          }),
       enrichSnapshot: Effect.fn("enrichSnapshot")(function ({
         snapshot,
         getSnapshot,
@@ -729,7 +935,32 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             }),
           ),
         );
-        if (Option.isNone(runtimeCoordinator)) return publishEnrichment;
+        const publishGlmUsage =
+          glmUsageCache === null
+            ? null
+            : Effect.gen(function* () {
+                const { expired } = yield* glmUsageCache.get;
+                // Reading limits resolves the agent, which can install packages; only a ready agent is safe to spawn.
+                if (!expired || !snapshot.installed || snapshot.status !== "ready") return;
+                const limits = yield* glmUsageCache.readFresh;
+                if (limits === undefined) return;
+                yield* applyGlmReading(limits);
+                // A successful read confirms the sign-in; live state shows it without another refresh.
+                yield* liveSnapshotSemaphore.withPermit(
+                  getSnapshot.pipe(
+                    Effect.flatMap(withLiveRuntimeState),
+                    Effect.flatMap(publishSnapshot),
+                  ),
+                );
+              });
+        if (Option.isNone(runtimeCoordinator)) {
+          return publishGlmUsage === null
+            ? publishEnrichment
+            : Effect.all([publishEnrichment, publishGlmUsage], {
+                concurrency: "unbounded",
+                discard: true,
+              });
+        }
 
         const publishLiveCommands = runtimeCoordinator.value.watchAvailableCommands(
           instanceId,
@@ -770,7 +1001,13 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             ),
         );
         return Effect.all(
-          [publishEnrichment, publishLiveCommands, publishLiveConfiguration, publishUrlAuthAction],
+          [
+            publishEnrichment,
+            publishLiveCommands,
+            publishLiveConfiguration,
+            publishUrlAuthAction,
+            ...(publishGlmUsage === null ? [] : [publishGlmUsage]),
+          ],
           {
             concurrency: "unbounded",
             discard: true,
@@ -830,7 +1067,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           .set(authenticated)
           .pipe(
             Effect.andThen(authenticated ? Effect.void : clearLiveState),
-            Effect.andThen(liveSnapshotSemaphore.withPermit(invalidateEnrichmentCache)),
+            Effect.andThen(liveSnapshotSemaphore.withPermit(invalidateAccountCaches)),
             Effect.andThen(snapshot.refresh),
             Effect.asVoid,
           ),
@@ -844,7 +1081,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       invalidate: (controller.invalidate ?? Effect.void).pipe(
         Effect.andThen(confirmedAuthentication.set(false)),
         Effect.andThen(clearLiveState),
-        Effect.andThen(liveSnapshotSemaphore.withPermit(invalidateEnrichmentCache)),
+        Effect.andThen(liveSnapshotSemaphore.withPermit(invalidateAccountCaches)),
         Effect.andThen(snapshot.refresh),
         Effect.asVoid,
       ),
@@ -860,7 +1097,12 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       auth,
       snapshot: {
         ...snapshot,
-        refresh: snapshot.refresh.pipe(Effect.tap(() => controller.refreshMethods ?? Effect.void)),
+        refresh:
+          // A manual refresh must re-read GLM usage; the enrichment it restarts then reads past the cache.
+          (glmUsageCache === null ? Effect.void : glmUsageCache.invalidate).pipe(
+            Effect.andThen(snapshot.refresh),
+            Effect.tap(() => controller.refreshMethods ?? Effect.void),
+          ),
       },
       invalidateCaches: (Option.isSome(runtimeCoordinator)
         ? runtimeCoordinator.value.clearLiveConfiguration(instanceId)
@@ -913,7 +1155,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
               baseUrl,
               ...(headers === undefined ? {} : { headers }),
             }),
-          ).pipe(Effect.tap(() => liveSnapshotSemaphore.withPermit(invalidateEnrichmentCache))),
+          ).pipe(Effect.tap(() => liveSnapshotSemaphore.withPermit(invalidateAccountCaches))),
         disableProvider: ({ cwd, providerId }) =>
           provideAcpManagementServices(
             disableAcpRegistryProvider({
@@ -923,7 +1165,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
               environment: processEnvironment,
               providerId,
             }),
-          ).pipe(Effect.tap(() => liveSnapshotSemaphore.withPermit(invalidateEnrichmentCache))),
+          ).pipe(Effect.tap(() => liveSnapshotSemaphore.withPermit(invalidateAccountCaches))),
         logout: (cwd) => {
           const logout = logoutAcpRegistry({
             instanceId,
@@ -937,7 +1179,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             Effect.tap(() => confirmedAuthentication.set(false)),
             Effect.tap(() =>
               liveSnapshotSemaphore.withPermit(
-                invalidateEnrichmentCache.pipe(
+                invalidateAccountCaches.pipe(
                   Effect.andThen(
                     Option.isSome(runtimeCoordinator)
                       ? Effect.all(
