@@ -202,7 +202,8 @@ describe("question answer paths", () => {
       Effect.promise(async () => {
         const { execFile } = await vi.importActual<typeof NodeChildProcess>("node:child_process");
         const worker = vi.spyOn(NodeChildProcess, "execFile");
-        worker.mockImplementationOnce(((
+        let failDocumentTextCall = true;
+        worker.mockImplementation(((
           file: string,
           args: readonly string[],
           options: NodeChildProcess.ExecFileOptionsWithStringEncoding,
@@ -212,6 +213,10 @@ describe("question answer paths", () => {
             stderr: string,
           ) => void,
         ) => {
+          if (!args.includes("__document-text") || !failDocumentTextCall) {
+            return execFile(file, args, options, callback);
+          }
+          failDocumentTextCall = false;
           if (failure === "spawn") {
             throw Object.assign(new Error("spawn EAGAIN"), { code: "EAGAIN" });
           }
@@ -230,20 +235,24 @@ describe("question answer paths", () => {
       }),
       (worker) =>
         Effect.gen(function* () {
+          const documentTextCalls = () =>
+            worker.mock.calls.filter(
+              ([, args]) => Array.isArray(args) && args.includes("__document-text"),
+            ).length;
           const config = yield* ServerConfig.ServerConfig;
           const path = NodePath.join(config.attachmentsDir, "retry.rtf");
           NodeFS.writeFileSync(path, String.raw`{\rtf1 Available}`);
           const documents = yield* DocumentText.DocumentText;
           expect(yield* documents.ensure(path)).toBeUndefined();
           expect(yield* documents.ensure(path)).toBeUndefined();
-          expect(worker).toHaveBeenCalledTimes(1);
+          expect(documentTextCalls()).toBe(1);
           expect(NodeFS.existsSync(path + ".txt")).toBe(false);
           yield* TestClock.adjust("1 second");
           expect(yield* documents.ensure(path)).toBe(path + ".txt");
           expect(NodeFS.readFileSync(path + ".txt", "utf8")).toBe("Available");
-          expect(worker).toHaveBeenCalledTimes(2);
+          expect(documentTextCalls()).toBe(2);
           expect(yield* documents.ensure(path)).toBe(path + ".txt");
-          expect(worker).toHaveBeenCalledTimes(2);
+          expect(documentTextCalls()).toBe(2);
         }).pipe(Effect.provide(layer)),
       (worker) => Effect.sync(() => worker.mockRestore()),
     ),
@@ -259,6 +268,10 @@ describe("question answer paths", () => {
       Effect.sync(() => vi.spyOn(NodeChildProcess, "execFile")),
       (worker) =>
         Effect.gen(function* () {
+          const documentTextCalls = () =>
+            worker.mock.calls.filter(
+              ([, args]) => Array.isArray(args) && args.includes("__document-text"),
+            ).length;
           const config = yield* ServerConfig.ServerConfig;
           const path = NodePath.join(config.attachmentsDir, `invalid.${extension}`);
           NodeFS.writeFileSync(path, source);
@@ -266,7 +279,7 @@ describe("question answer paths", () => {
           for (const seconds of [0, 1, 60]) {
             yield* TestClock.adjust(`${seconds} seconds`);
             expect(yield* documents.ensure(path)).toBeUndefined();
-            expect(worker).toHaveBeenCalledTimes(1);
+            expect(documentTextCalls()).toBe(1);
             expect(NodeFS.existsSync(path + ".txt")).toBe(false);
           }
         }).pipe(Effect.provide(layer)),
