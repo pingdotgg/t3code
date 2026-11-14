@@ -2244,6 +2244,12 @@ describe("PreviewManager", () => {
         yield* manager.createTab("tab_1", { serverTab });
         yield* manager.registerWebview("tab_1", 42);
         yield* Deferred.await(attached);
+        const setBackgroundThrottling = vi.fn();
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          once: vi.fn(),
+          webContents: { setBackgroundThrottling },
+        } as never);
         // Navigating rebuilds the tab's state, which must keep the server tab it answers for.
         yield* manager.navigate("tab_1", "https://example.com/next");
         yield* Queue.clear(capturing);
@@ -2262,6 +2268,8 @@ describe("PreviewManager", () => {
         expect(yield* Queue.take(capturing)).toBe(true);
         screenshot.resolve({ data: "" });
         expect(yield* Queue.take(capturing)).toBe(false);
+        // A hidden, minimized or covered main window commits no frames while throttled.
+        expect(setBackgroundThrottling.mock.calls).toEqual([[false], [true]]);
       }).pipe(Effect.provide(managerLayer())),
   );
 
