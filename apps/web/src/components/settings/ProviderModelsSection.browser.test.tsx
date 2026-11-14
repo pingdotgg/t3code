@@ -78,3 +78,25 @@ it("keeps custom model drafts until they save, so a failed save can be retried",
   await act(() => saves[4]!(true));
   await expect.element(displayName).not.toBeInTheDocument();
 });
+
+it("keeps a reopened edit draft when an earlier save for the same model succeeds", async () => {
+  let reply: (saved: boolean) => void = () => {};
+  const onChange = () =>
+    new Promise<boolean>((resolve) => {
+      reply = resolve;
+    });
+  const kept = { slug: "kept-model", name: "kept-model", capabilities: null };
+  await using screen = await render(
+    section({ onChange, models: [{ ...kept, isCustom: true }], customModels: [kept] }),
+  );
+  const edit = screen.getByRole("button", { name: "Edit kept-model", exact: true });
+  const displayName = screen.getByRole("textbox", { name: "Display name", exact: true });
+  await edit.click();
+  await userEvent.fill(displayName, "First save");
+  await screen.getByRole("button", { name: "Save", exact: true }).click();
+  await screen.getByRole("button", { name: "Cancel", exact: true }).click();
+  await edit.click();
+  await userEvent.fill(displayName, "New draft");
+  await act(() => reply(true));
+  await expect.element(displayName).toHaveValue("New draft");
+});

@@ -341,6 +341,56 @@ describe("EnvironmentProviderSettings routing", () => {
     },
   );
 
+  it.each([false, true])(
+    "retires acknowledged custom model saves across external refreshes (reply before echo %s)",
+    async (replyBeforeEcho) => {
+      await setup();
+      const first = { slug: "model-a", name: "Original A" };
+      const second = { slug: "model-b", name: "Original B" };
+      const stored = (customModels: ReadonlyArray<{ slug: string; name: string }>) => ({
+        ...DEFAULT_UNIFIED_SETTINGS,
+        providerInstances: {
+          [customId]: { driver: ProviderDriverKind.make("codex"), config: { customModels } },
+        },
+      });
+      state.settings = stored([first, second]);
+      const replies: Array<() => void> = [];
+      state.mutateProviderInstance.mockImplementation(
+        () => new Promise((resolve) => replies.push(() => resolve(AsyncResult.success({})))),
+      );
+      await using screen = await render(panel({ targetInstanceId: customId }));
+      const rename = async (slug: string, name: string) => {
+        await screen.getByRole("button", { name: `Edit ${slug}`, exact: true }).click();
+        await userEvent.fill(
+          screen.getByRole("textbox", { name: "Display name", exact: true }),
+          name,
+        );
+        await screen.getByRole("button", { name: "Save", exact: true }).click();
+      };
+      await rename("model-a", "Entered A");
+      if (replyBeforeEcho) await act(() => replies[0]!());
+      await rename("model-b", "Entered B");
+      if (replyBeforeEcho) await act(() => replies[1]!());
+      state.settings = stored([
+        { ...first, name: "Entered A" },
+        { ...second, name: "Entered B" },
+      ]);
+      await screen.rerender(panel({ targetInstanceId: customId }));
+      // An external writer restores an earlier list after the complete echo.
+      state.settings = stored([{ ...first, name: "Entered A" }, second]);
+      await screen.rerender(panel({ targetInstanceId: customId }));
+      if (!replyBeforeEcho) await act(() => replies.forEach((reply) => reply()));
+      await expect
+        .element(screen.getByRole("button", { name: "Edit model-b", exact: true }))
+        .toBeVisible();
+      await rename("model-a", "Again A");
+      expect(state.mutateProviderInstance.mock.calls[2]?.[0].instance.config.customModels).toEqual([
+        { ...first, name: "Again A" },
+        second,
+      ]);
+    },
+  );
+
   it("routes explicit ACP browser authentication consent to the selected environment", async () => {
     await setup();
     const instanceId = ProviderInstanceId.make("acpRegistry_antigravity");

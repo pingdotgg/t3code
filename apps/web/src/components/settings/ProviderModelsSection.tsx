@@ -143,6 +143,7 @@ export function ProviderModelsSection({
   const [filter, setFilter] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [editingSlug, setEditingSlug] = useState<string | null>(null);
+  const editAttemptRef = useRef(0);
   const listRef = useRef<HTMLDivElement>(null);
   const scrollToSlugRef = useRef<string | null>(null);
   const hiddenModelSet = new Set(hiddenModels);
@@ -238,7 +239,10 @@ export function ProviderModelsSection({
 
   const handleRemove = (slug: string) => {
     if (!canManageCustomModels) return;
-    if (editingSlug === slug) setEditingSlug(null);
+    if (editingSlug === slug) {
+      editAttemptRef.current += 1;
+      setEditingSlug(null);
+    }
     void onChange(customModels.filter((entry) => entry.slug !== slug));
     onModelOrderChange(modelOrder.filter((model) => model !== slug));
     onFavoriteModelsChange(favoriteModels.filter((model) => model !== slug));
@@ -247,10 +251,11 @@ export function ProviderModelsSection({
 
   const handleSaveEdit = async (next: CustomModelDefinition) => {
     if (!canManageCustomModels) return;
+    const attempt = ++editAttemptRef.current;
     const saved = await onChange(
       customModels.map((entry) => (entry.slug === next.slug ? next : entry)),
     );
-    if (saved) setEditingSlug((current) => (current === next.slug ? null : current));
+    if (saved && attempt === editAttemptRef.current) setEditingSlug(null);
   };
 
   const setHidden = (slug: string, hidden: boolean) => {
@@ -285,6 +290,7 @@ export function ProviderModelsSection({
 
   const handleToggleEdit = useStableCallback((slug: string) => {
     if (!canManageCustomModels) return;
+    editAttemptRef.current += 1;
     setEditingSlug((current) => (current === slug ? null : slug));
   });
   const rowHandlers = {
@@ -412,7 +418,10 @@ export function ProviderModelsSection({
                   entry={editingEntry}
                   builtInModels={builtInModels}
                   onSave={(next) => void handleSaveEdit(next)}
-                  onCancel={() => setEditingSlug(null)}
+                  onCancel={() => {
+                    editAttemptRef.current += 1;
+                    setEditingSlug(null);
+                  }}
                 />
               ) : null}
             </div>

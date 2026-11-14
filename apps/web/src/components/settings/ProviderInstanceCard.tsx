@@ -749,6 +749,11 @@ function useCustomModelSaves(
 ) {
   const [saves, setSaves] = useState<ReadonlyArray<CustomModelSave>>([]);
   const storedKey = JSON.stringify(stored);
+  const [previousStoredKey, setPreviousStoredKey] = useState(storedKey);
+  if (previousStoredKey !== storedKey) {
+    setPreviousStoredKey(storedKey);
+    setSaves((list) => pendingCustomModelSaves(list, storedKey));
+  }
   const current = pendingCustomModelSaves(saves, storedKey).at(-1)?.models ?? stored;
   const settle = useStableCallback((sent: CustomModelSave, saved: boolean) =>
     setSaves((list) =>
