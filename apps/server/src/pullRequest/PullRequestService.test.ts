@@ -2134,6 +2134,7 @@ it.effect("routes matching HTTP authorities and rejects a different web port", (
         ],
         providers: [
           fakePullRequestProvider(SourceControlProviderKind.make(kind), {
+            servesHost: (host) => host !== "code.example:6000",
             getChangeRequestPreview: (input) => {
               reads.push(input.host);
               return Effect.succeed(changeRequest(42, "2026-07-02T00:00:00Z"));
@@ -2184,10 +2185,11 @@ it.effect("routes matching HTTP authorities and rejects a different web port", (
         yield* service.detail(onOtherPort);
         assert.deepStrictEqual(reads.slice(-2), ["code.example:5000", "code.example:5000"]);
       }
-      const otherHostname = yield* service
-        .preview({ ...fromSsh, host: "other.example:5000" })
-        .pipe(Effect.flip);
-      assert.strictEqual(otherHostname._tag, "PullRequestUnavailableError");
+      // Neither another hostname nor an authority the provider does not serve is borrowed.
+      for (const unserved of ["other.example:5000", "code.example:6000"]) {
+        const failure = yield* service.preview({ ...fromSsh, host: unserved }).pipe(Effect.flip);
+        assert.strictEqual(failure._tag, "PullRequestUnavailableError");
+      }
     }
   }),
 );

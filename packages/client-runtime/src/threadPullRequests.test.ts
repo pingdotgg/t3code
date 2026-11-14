@@ -129,6 +129,14 @@ describe("threadPullRequestKeysEqual", () => {
           false,
         );
       }
+      // A request naming its own URL is that URL's pull request, not the saved one.
+      expect(
+        storedThreadPullRequestKey([saved], {
+          ...key,
+          host: "code.example",
+          url: `https://code.example/team/repo/${route}/1`,
+        }).host,
+      ).toBe("code.example");
       // A link saved on the default port is not taken for the same path on another port.
       const defaultPort = link(1, {
         host: "code.example",
