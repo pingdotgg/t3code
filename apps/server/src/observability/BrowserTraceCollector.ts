@@ -10,15 +10,16 @@ export class BrowserTraceCollector extends Context.Service<
   }
 >()("t3/observability/BrowserTraceCollector") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = (sink: TraceSink): BrowserTraceCollector["Service"] =>
   BrowserTraceCollector.of({
-    record: (records) =>
-      Effect.sync(() => {
+    record: Effect.fn("BrowserTraceCollector.record")(function (records) {
+      return Effect.sync(() => {
         for (const record of records) {
           sink.push(record);
         }
-      }),
+      });
+    }),
   });
 
 export const layer = (sink: TraceSink) => Layer.succeed(BrowserTraceCollector, make(sink));

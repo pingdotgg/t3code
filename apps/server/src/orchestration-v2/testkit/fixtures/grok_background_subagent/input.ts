@@ -6,8 +6,7 @@ export const GROK_BACKGROUND_SUBAGENT_PROMPT =
 const GROK_SUBAGENT_WAKE_LABEL =
   "notification:session/update:agent_message_chunk:subagent-completed-00000000-0000-4000-8000-000000000002";
 
-// The root prompt settles while the subagent still runs, so run 1 is held open
-// until `subagent_finished`, then finishes through the adapter's debounce.
+// Hold run 1 until subagent_finished and the adapter's settlement debounce.
 export function grokBackgroundSubagentInput(): OrchestratorFixtureInput {
   return {
     steps: [

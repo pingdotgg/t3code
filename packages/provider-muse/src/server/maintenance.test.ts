@@ -78,42 +78,40 @@ it.layer(NodeServices.layer)("Muse maintenance", (it) => {
   );
 
   it.effect("updates only a recognized launcher at the resolved instance path", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "muse-maintenance-" });
-        const binaryPath = `${directory}/custom muse`;
-        const context = {
-          binaryPath,
-          resolvedCommandPath: binaryPath,
-          realCommandPath: binaryPath,
-          platform: "linux" as const,
-          env: { MUSE_CHANNEL: "muse-canary" },
-        };
-        yield* fs.writeFileString(
-          binaryPath,
-          "#!/bin/bash\n# muse-code/launcher-2\n# MUSE_SYNC_UPDATE\n",
-        );
-        const result = yield* museMaintenance.resolve(context);
-        expect(result.update).toMatchObject({
-          executable: binaryPath,
-          args: ["--version"],
-          lockKey: `muse:${binaryPath}`,
-          env: {
-            MUSE_CHANNEL: "muse-canary",
-            MUSE_NO_AUTO_UPDATE: "0",
-            MUSE_SYNC_UPDATE: "1",
-            MUSE_UPDATE_INTERVAL_SECONDS: "0",
-          },
-        });
-        expect(result.update?.command).toBe(
-          `MUSE_CHANNEL=muse-canary MUSE_NO_AUTO_UPDATE=0 MUSE_SYNC_UPDATE=1 MUSE_UPDATE_INTERVAL_SECONDS=0 '${binaryPath}' --version`,
-        );
-        expect(result.compareVersions).toBe(compareMuseVersions);
-        yield* fs.writeFileString(binaryPath, "standalone binary");
-        expect((yield* museMaintenance.resolve(context)).update).toBeNull();
-        expect((yield* museMaintenance.resolve(null)).update).toBeNull();
-      }),
-    ),
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "muse-maintenance-" });
+      const binaryPath = `${directory}/custom muse`;
+      const context = {
+        binaryPath,
+        resolvedCommandPath: binaryPath,
+        realCommandPath: binaryPath,
+        platform: "linux" as const,
+        env: { MUSE_CHANNEL: "muse-canary" },
+      };
+      yield* fs.writeFileString(
+        binaryPath,
+        "#!/bin/bash\n# muse-code/launcher-2\n# MUSE_SYNC_UPDATE\n",
+      );
+      const result = yield* museMaintenance.resolve(context);
+      expect(result.update).toMatchObject({
+        executable: binaryPath,
+        args: ["--version"],
+        lockKey: `muse:${binaryPath}`,
+        env: {
+          MUSE_CHANNEL: "muse-canary",
+          MUSE_NO_AUTO_UPDATE: "0",
+          MUSE_SYNC_UPDATE: "1",
+          MUSE_UPDATE_INTERVAL_SECONDS: "0",
+        },
+      });
+      expect(result.update?.command).toBe(
+        `MUSE_CHANNEL=muse-canary MUSE_NO_AUTO_UPDATE=0 MUSE_SYNC_UPDATE=1 MUSE_UPDATE_INTERVAL_SECONDS=0 '${binaryPath}' --version`,
+      );
+      expect(result.compareVersions).toBe(compareMuseVersions);
+      yield* fs.writeFileString(binaryPath, "standalone binary");
+      expect((yield* museMaintenance.resolve(context)).update).toBeNull();
+      expect((yield* museMaintenance.resolve(null)).update).toBeNull();
+    }),
   );
 });

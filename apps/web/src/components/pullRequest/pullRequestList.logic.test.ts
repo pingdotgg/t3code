@@ -4,6 +4,7 @@ import type {
   ProjectId,
   PullRequestAction,
   PullRequestListEntry,
+  PullRequestSummary,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -22,8 +23,9 @@ import {
   pullRequestStatsRefreshBatches,
   mergePullRequestDiffStats,
   partitionPullRequestsWithPriority,
-  readPullRequestListSnapshot,
-  writePullRequestListSnapshot,
+  pullRequestAuthorChoices,
+  selectedPullRequestAuthor,
+  pullRequestLabelChoices,
   rankPullRequestMatches,
   rankPullRequestsBlockedOnAuthor,
   rankPullRequestsByMergeReadiness,
@@ -32,9 +34,11 @@ import {
   resolveSelectedEnvironmentId,
   type EnvironmentPullRequestEntry,
   applyPullRequestOverrides,
+  pullRequestOverrideAfterAction,
   reusePullRequestEntries,
   settlePullRequestOverrides,
 } from "./pullRequestList.logic";
+import { pullRequestGroups } from "./pullRequestListGroups.logic";
 import {
   readPullRequestListPreferences,
   writePullRequestListPreferences,
@@ -47,7 +51,7 @@ function entry(
 ) {
   return {
     environmentId: "env-1",
-    provider: "github",
+    provider: SourceControlProviderKind.make("github"),
     host: "github.com",
     projectId: "project-1",
     projectTitle: "t3code",
@@ -173,6 +177,43 @@ describe("ranking what a search found", () => {
     expect(
       rankPullRequestMatches([mentioned, titled], "welcome wizard").map((entry) => entry.number),
     ).toEqual([1, 2]);
+  });
+
+  it("keeps loaded partial-word matches the host's whole-word search missed, after its answer", () => {
+    const bilal = { login: "bilal", name: null, avatarUrl: null };
+    const hosted = row({ number: 1, title: "Notifications match the body text", author: bilal });
+    const toast = row({ number: 2, title: "Threads show a completed toast", author: bilal });
+    const toaster = row({ number: 3, title: "Toaster fixtures cover retries", author: bilal });
+    const theirs = row({ number: 4, title: "Toasted sidebar" });
+    const unrelated = row({ number: 5, title: "Cursor no longer adds attribution", author: bilal });
+
+    const { entries } = pullRequestGroups({
+      known: [hosted, toast],
+      baseline: [theirs, unrelated, toaster, toast],
+      providers: [
+        {
+          host: "github.com",
+          kind: SourceControlProviderKind.make("github"),
+          searchesOnHost: true,
+          projectCount: 1,
+          configured: true,
+          detail: null,
+        },
+      ],
+      viewers: VIEWERS,
+      involvement: "all",
+      localFilters: { author: "bilal" },
+      hasLocalFilters: true,
+      text: "toa",
+      answeredLocally: true,
+      baselineEmpty: false,
+      held: undefined,
+      authored: undefined,
+      reviewing: undefined,
+      partitionsWanted: false,
+    });
+
+    expect(entries.map((entry) => entry.number)).toEqual([1, 2, 3]);
   });
 });
 
@@ -347,69 +388,6 @@ describe("partitioning with the hosts' own priority reads", () => {
   });
 });
 
-describe("the list snapshot across a reload", () => {
-  const makeStorage = () => {
-    const held = new Map<string, string>();
-    return {
-      getItem: (key: string) => held.get(key) ?? null,
-      setItem: (key: string, value: string) => void held.set(key, value),
-    };
-  };
-  const data = {
-    entries: [entry({ number: 1 })],
-    viewers: { "github.com": "Bilal" },
-    providers: [],
-    errors: [{ projectId: "project-1", message: "boom" }],
-    truncated: true,
-    nextCursors: { "pingdotgg/t3code": "cursor-1" },
-  } as never;
-
-  it("carries neither stale failures nor stale cursors", () => {
-    const storage = makeStorage();
-    writePullRequestListSnapshot(storage, "env-1", { scope: "s", data });
-    const snapshot = readPullRequestListSnapshot(storage, "env-1");
-    expect(snapshot?.data.errors).toEqual([]);
-    expect(snapshot?.data.nextCursors).toEqual({});
-  });
-
-  it("caps the accumulated rows but keeps the whole host set", () => {
-    const storage = makeStorage();
-    const manyEntries = Array.from({ length: 120 }, (_, index) => entry({ number: index + 1 }));
-    const viewers = { "github.com": "Bilal", "gitlab.com": "Bilal" };
-    const providers = [
-      {
-        host: "github.com",
-        kind: "github",
-        searchesOnHost: true,
-        projectCount: 1,
-        configured: true,
-        detail: null,
-      },
-      {
-        host: "gitlab.com",
-        kind: "gitlab",
-        searchesOnHost: true,
-        projectCount: 1,
-        configured: true,
-        detail: null,
-      },
-    ];
-    const accumulated = {
-      entries: manyEntries,
-      viewers,
-      providers,
-      errors: [],
-      truncated: true,
-      nextCursors: {},
-    } as never;
-    writePullRequestListSnapshot(storage, "env-1", { scope: "s", data: accumulated });
-    const snapshot = readPullRequestListSnapshot(storage, "env-1");
-    expect(snapshot?.data.entries).toHaveLength(99);
-    expect(snapshot?.data.viewers).toEqual(viewers);
-    expect(snapshot?.data.providers).toEqual(providers);
-  });
-});
-
 describe("remembered pull request list controls", () => {
   const makeStorage = () => {
     const held = new Map<string, string>();
@@ -468,6 +446,20 @@ describe("merging the environments' own listings", () => {
       ...overrides,
     }) as Parameters<typeof mergePullRequestLists>[0][number][1];
 
+  it("orders host timestamps by instant across offsets and fractional seconds", () => {
+    const entries = [
+      entry({ number: 1, updatedAt: "2026-07-05T01:00:00+02:00" }),
+      entry({ number: 2, updatedAt: "2026-07-05T00:30:00Z" }),
+      entry({ number: 3, updatedAt: "2026-07-05T00:30:00.5Z" }),
+    ];
+    const merged = mergePullRequestLists([
+      [ENV_1, answer({ entries: entries.slice(0, 2) })],
+      [ENV_2, answer({ entries: entries.slice(2) })],
+    ]);
+
+    expect(merged?.entries.map((row) => row.number)).toEqual([3, 2, 1]);
+  });
+
   it("tags every row with the environment that read it, newest first", () => {
     const merged = mergePullRequestLists([
       [ENV_1, answer({ entries: [entry({ number: 1, updatedAt: "2026-07-01T00:00:00Z" })] })],
@@ -477,6 +469,51 @@ describe("merging the environments' own listings", () => {
       [ENV_2, 2],
       [ENV_1, 1],
     ]);
+  });
+
+  it.each([false, true])(
+    "merges worktree batches without duplicate rows (reversed: %s)",
+    (reverse) => {
+      const older = entry({
+        projectId: "worktree-1" as ProjectId,
+        number: 4,
+        updatedAt: "2026-07-01T00:00:00Z",
+      });
+      const newer = entry({
+        projectId: "worktree-101" as ProjectId,
+        number: 4,
+        updatedAt: "2026-07-02T00:00:00Z",
+      });
+      const rows = reverse ? [newer, older] : [older, newer];
+      const merged = mergePullRequestLists([
+        ...rows.map((row) => [ENV_1, answer({ entries: [row] })] as const),
+        [ENV_2, answer({ entries: [older] })],
+      ]);
+      expect(merged?.entries).toEqual([
+        { ...newer, environmentId: ENV_1 },
+        { ...older, environmentId: ENV_2 },
+      ]);
+    },
+  );
+
+  it("keeps Azure pull requests from distinct projects with the same repository name and number", () => {
+    const first = entry({
+      provider: SourceControlProviderKind.make("azure-devops"),
+      host: "dev.azure.com",
+      repository: "web",
+      number: 4,
+      projectId: "azure-first" as ProjectId,
+      url: "https://dev.azure.com/acme/first/_git/web/pullrequest/4",
+    });
+    const second = {
+      ...first,
+      projectId: "azure-second" as ProjectId,
+      url: "https://dev.azure.com/acme/second/_git/web/pullrequest/4",
+    };
+    const merged = mergePullRequestLists([[ENV_1, answer({ entries: [first, second] })]]);
+    expect(merged?.entries).toEqual(
+      [first, second].map((entry) => ({ ...entry, environmentId: ENV_1 })),
+    );
   });
 
   // regression: #6490 one environment's error showed on every environment
@@ -523,6 +560,17 @@ describe("merging the environments' own listings", () => {
         detail: null,
       },
     ]);
+  });
+
+  it("keeps continuations from every project batch on the same environment", () => {
+    const merged = mergePullRequestLists([
+      [ENV_1, answer({ truncated: true, nextCursors: { "github.com acme/first": "cursor-1" } })],
+      [ENV_1, answer({ truncated: true, nextCursors: { "github.com acme/second": "cursor-2" } })],
+    ]);
+    expect(merged?.nextCursors).toEqual({
+      [ENV_1]: { "github.com acme/first": "cursor-1", "github.com acme/second": "cursor-2" },
+    });
+    expect(merged?.truncatedEnvironments).toEqual([ENV_1]);
   });
 });
 
@@ -644,6 +692,26 @@ describe("pull request list overrides", () => {
     expect(applyPullRequestOverrides(rows, new Map(), key, "open")).toBe(rows);
   });
 
+  it("shows a reply's queued merge as open and never un-merges a merged row", () => {
+    const reply = { state: "open", updatedAt: "2026-07-03T00:00:00Z", observedAt: 300 } as const;
+    const override = pullRequestOverrideAfterAction(
+      entry(1, "open"),
+      "merge",
+      new Date(900),
+      1,
+      reply as unknown as PullRequestSummary,
+    )!;
+    const overrides = new Map([["#1", override]]);
+    expect(applyPullRequestOverrides([entry(1, "open")], overrides, key, "open")).toMatchObject([
+      { state: "open", updatedAt: reply.updatedAt, observedAt: 300 },
+    ]);
+    expect(
+      applyPullRequestOverrides([entry(1, "merged")], overrides, key, "all").map(
+        (row) => row.state,
+      ),
+    ).toEqual(["merged"]);
+  });
+
   it("keeps a confirmed close hidden when its override is cleared", () => {
     const at = 1_000_000;
     const rows = [entry(1, "closed"), entry(2, "open"), entry(3, "merged")];
@@ -698,10 +766,11 @@ describe("pull request quick actions", () => {
     ...(actions === undefined ? {} : { actions }),
   });
 
-  it("offers what each host reports, and GitHub's legacy set when a server reports none", () => {
+  it("offers what each host reports, and the host's own set when a server reports none", () => {
     const actionsOf = pullRequestHostActions([
       summary("bitbucket.org", "bitbucket", ["merge", "close"]),
       summary("github.com", "github"),
+      summary("gitlab.com", "gitlab"),
     ]);
     const bitbucket = actionsOf({
       host: "bitbucket.org",
@@ -716,6 +785,11 @@ describe("pull request quick actions", () => {
       "close",
       "ready",
     ]);
+    const gitlab = actionsOf({
+      host: "gitlab.com",
+      provider: SourceControlProviderKind.make("gitlab"),
+    });
+    expect(pullRequestQuickActions({ state: "open", isDraft: false }, gitlab)).toEqual([]);
   });
 });
 
@@ -749,7 +823,7 @@ describe("findProjectForRepository", () => {
       repositoryIdentity: {
         canonicalKey: `dev.azure.com/${path}`,
         locator: { source: "git-remote" as const, remoteName: "origin", remoteUrl: "" },
-        provider: "azure-devops",
+        provider: SourceControlProviderKind.make("azure-devops"),
         displayName: path,
         owner: "contoso",
         name: path.split("/").at(-1)!,
@@ -785,7 +859,7 @@ describe("findProjectForRepository", () => {
       repositoryIdentity: {
         canonicalKey: `github.com/${repository}`,
         locator: { source: "git-remote" as const, remoteName: "origin", remoteUrl: "" },
-        provider: "github",
+        provider: SourceControlProviderKind.make("github"),
         displayName: repository,
       },
     });
@@ -813,5 +887,69 @@ describe("findProjectForRepository", () => {
         selectedEnvironmentId: "env-connecting",
       }),
     ).toBeUndefined();
+  });
+});
+
+describe("filter picker choices", () => {
+  const actor = (login: string, name: string | null = null) => ({ login, name, avatarUrl: null });
+
+  it("offers authors the host found that no loaded row carries, after the loaded ones", () => {
+    const loaded = [
+      { actor: actor("julius", "Julius"), count: 4, mergedCount: 3 },
+      { actor: actor("theo"), count: 1, mergedCount: 0 },
+    ];
+
+    const choices = pullRequestAuthorChoices(
+      loaded,
+      [actor("Julius"), actor("juliana", "Juliana")],
+      "jul",
+    );
+
+    expect(choices.map((choice) => [choice.actor.login, choice.count])).toEqual([
+      ["julius", 4],
+      ["juliana", 0],
+    ]);
+  });
+
+  it("keeps showing an author picked from the host's search once the search clears", () => {
+    const loaded = [{ actor: actor("julius"), count: 4, mergedCount: 3 }];
+    const hosted = [actor("Juliana", "Juliana")];
+
+    expect(selectedPullRequestAuthor(loaded, hosted, "juliana")?.actor).toEqual(
+      actor("Juliana", "Juliana"),
+    );
+    expect(selectedPullRequestAuthor(loaded, [], "juliana")?.actor.login).toBe("juliana");
+    expect(selectedPullRequestAuthor(loaded, hosted, "JULIUS")?.count).toBe(4);
+    expect(selectedPullRequestAuthor(loaded, hosted, undefined)).toBeUndefined();
+  });
+
+  it("puts the host's authors after the first loaded matches rather than after all of them", () => {
+    const loaded = Array.from({ length: 40 }, (_, index) => ({
+      actor: actor(`dev-${index}`),
+      count: 1,
+      mergedCount: 0,
+    }));
+
+    const choices = pullRequestAuthorChoices(loaded, [actor("dev-from-host")], "dev");
+
+    expect(choices.slice(0, 30).map((choice) => choice.actor.login)).toContain("dev-from-host");
+  });
+
+  it("keeps a loaded label's count when only the host's search found it", () => {
+    const loaded = [{ name: "size:XL", color: "d93f0b", count: 7 }];
+
+    const choices = pullRequestLabelChoices(
+      loaded,
+      [
+        { name: "size:XL", color: "d93f0b" },
+        { name: "bug", color: null },
+      ],
+      "xl-ish",
+    );
+
+    expect(choices).toEqual([
+      { name: "size:XL", color: "d93f0b", count: 7 },
+      { name: "bug", color: null, count: 0 },
+    ]);
   });
 });

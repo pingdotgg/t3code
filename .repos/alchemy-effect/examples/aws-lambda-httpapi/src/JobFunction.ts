@@ -1,9 +1,9 @@
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Etag from "effect/http/Etag";
 import * as HttpPlatform from "effect/http/HttpPlatform";
 import * as HttpRouter from "effect/http/HttpRouter";
+import * as Layer from "effect/Layer";
 import { JobApiLive } from "./JobApi.ts";
 import { JobNotificationsSNS } from "./JobNotifications.ts";
 import { JobStorageDynamoDB } from "./JobStorage.ts";
