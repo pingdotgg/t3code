@@ -9,7 +9,9 @@ import {
   ThreadId,
   ProviderInstanceId,
   ProviderDriverKind,
+  SecretProviderId,
 } from "@t3tools/contracts";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { it as effectIt } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -47,13 +49,16 @@ afterAll(() => {
 
 const customHome = NodePath.join(sandbox, "custom");
 const envHome = NodePath.join(sandbox, "environment");
+const secretHome = NodePath.join(sandbox, "secret");
 const checkout = NodePath.join(sandbox, "checkout");
 const customScript = NodePath.join(customHome, "projects", "test", "run.js");
 const envScript = NodePath.join(envHome, "projects", "test", "run.js");
+const secretScript = NodePath.join(secretHome, "projects", "test", "run.js");
 const relativeScript = NodePath.join(checkout, "claude-config", "projects", "test", "run.js");
 for (const [file, contents] of [
   [customScript, "custom home"],
   [envScript, "environment home"],
+  [secretScript, "secret home"],
   [relativeScript, "thread checkout home"],
 ] as const) {
   NodeFS.mkdirSync(NodePath.dirname(file), { recursive: true });
@@ -120,6 +125,16 @@ const providerInstances = {
     driver: claude,
     environment: [{ name: "CLAUDE_CONFIG_DIR", value: envHome, sensitive: false }],
   },
+  [ProviderInstanceId.make("claude-secret")]: {
+    driver: claude,
+    environment: [
+      {
+        name: "CLAUDE_CONFIG_DIR",
+        value: { provider: SecretProviderId.make("vault"), reference: "claude-home" },
+        sensitive: true,
+      },
+    ],
+  },
   // Inherited relative config dirs resolve against the thread checkout, as Claude Code does.
   [ProviderInstanceId.make("claude-relative")]: {
     driver: claude,
@@ -140,6 +155,11 @@ const read = (scriptPath: string) =>
 effectIt.layer(
   WorkflowScriptQuery.layer.pipe(
     Layer.provideMerge(Settings.layerTest({ providerInstances })),
+    Layer.provideMerge(
+      Layer.mock(SecretResolver.SecretResolver)({
+        read: (references) => Effect.succeed(references.map(() => secretHome)),
+      }),
+    ),
     Layer.provideMerge(Layer.succeed(HostProcess.HomeDirectory, home)),
     Layer.provideMerge(Layer.succeed(HostProcess.Environment, {})),
     Layer.provideMerge(NodePathService.layer),
@@ -151,6 +171,7 @@ effectIt.layer(
     Effect.gen(function* () {
       assert.equal((yield* read(customScript)).contents, "custom home");
       assert.equal((yield* read(envScript)).contents, "environment home");
+      assert.equal((yield* read(secretScript)).contents, "secret home");
       assert.equal((yield* read(relativeScript)).contents, "thread checkout home");
       const result = yield* read(scriptPath);
       assert.include(result.contents, "export const meta");
