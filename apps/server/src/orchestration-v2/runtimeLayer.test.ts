@@ -9937,7 +9937,7 @@ it.layer(layerTest)("snooze queued runs", (it) => {
       }),
   );
 
-  it.effect.each(["notification", "user"] as const)(
+  it.effect.each(["notification", "scheduled task", "user"] as const)(
     "a %s message on a snoozed thread keeps the snooze only when automatic",
     (kind) =>
       Effect.gen(function* () {
@@ -9973,8 +9973,12 @@ it.layer(layerTest)("snooze queued runs", (it) => {
           attachments: [],
           modelSelection,
           dispatchMode: { type: "queue_after_active" },
-          createdBy: kind === "user" ? "user" : "agent",
-          creationSource: kind === "user" ? "web" : "provider",
+          // A scheduled delivery keeps its creator's provenance, whatever triggered it.
+          createdBy: kind === "notification" ? "agent" : "user",
+          creationSource: kind === "notification" ? "provider" : "web",
+          ...(kind === "scheduled task"
+            ? { scheduledTaskId: ScheduledTaskId.make("snooze-wake-task") }
+            : {}),
           ...(kind === "notification"
             ? {
                 notification: {
