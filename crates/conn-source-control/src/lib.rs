@@ -7,6 +7,7 @@ pub mod cli;
 pub mod discovery;
 pub mod hosts;
 pub mod http;
+pub mod registry;
 pub mod remote;
 pub mod repository;
 pub mod secret;

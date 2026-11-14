@@ -85,6 +85,7 @@ monorepo_checks=(
   "decode coverage"
   "settings-diff"
   "textgen-diff"
+  "registry-diff"
   "limits-diff"
   "parity"
   "codex instructions --check"
@@ -128,6 +129,9 @@ else
   run "settings-diff" node crates/conn-server/tools/settings-diff.mjs "$release/conn-server"
   # Text generators and thread titles against T3's own code, on a loopback stub (no model).
   run "textgen-diff" node crates/conn-server/tools/textgen-diff.mjs "$release/examples/text_generation"
+  # The host definition registry against T3's own, on T3's test literals and a fixed grid.
+  run "registry-diff" \
+    node crates/conn-source-control/tools/registry-diff.mjs "$release/examples/registry_cases"
   run "limits-diff" node crates/conn-server/tools/limits-diff.mjs
   run "parity" \
     node crates/conn-mcp/tools/parity.mjs "$release/examples/replay_server"
