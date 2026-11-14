@@ -8,6 +8,8 @@ import {
   DEFAULT_SERVER_SETTINGS,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProjectId,
+  IssueTrackerKind,
   SecretProviderId,
   ThreadId,
   AuthOrchestrationOperateScope,
@@ -139,6 +141,57 @@ describe("RPC scope middleware", () => {
     }),
   );
 });
+
+it.effect("allows issue reads but requires a source-control grant before commenting", () =>
+  Effect.gen(function* () {
+    const tested = [WS_METHODS.issuesList, WS_METHODS.issuesComment] as const;
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, (typeof tested)[number]> =>
+          !(tested as ReadonlyArray<string>).includes(tag),
+      ),
+    );
+    const comments: string[] = [];
+    const handlers = Layer.mergeAll(
+      group.toLayerHandler(WS_METHODS.issuesList, () =>
+        Effect.succeed({ entries: [], trackers: [], errors: [], viewers: {}, nextCursors: {} }),
+      ),
+      group.toLayerHandler(WS_METHODS.issuesComment, ({ body }) =>
+        Effect.sync(() => {
+          comments.push(body);
+        }),
+      ),
+    );
+    const reader = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(Layer.merge(handlers, RpcAuthorization.layer([AuthOrchestrationReadScope]))),
+    );
+    const comment = {
+      projectId: ProjectId.make("web"),
+      tracker: IssueTrackerKind.make("github"),
+      scope: "acme/web",
+      key: "42",
+      body: "Repro attached.",
+    };
+
+    expect((yield* reader[WS_METHODS.issuesList]({ state: "open" })).entries).toEqual([]);
+    expect(yield* reader[WS_METHODS.issuesComment](comment).pipe(Effect.flip)).toMatchObject({
+      _tag: "EnvironmentAuthorizationError",
+      requiredPermission: AuthSourceControlWriteScope,
+    });
+    expect(comments).toEqual([]);
+
+    const writer = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(
+        Layer.merge(
+          handlers,
+          RpcAuthorization.layer([AuthOrchestrationReadScope, AuthSourceControlWriteScope]),
+        ),
+      ),
+    );
+    yield* writer[WS_METHODS.issuesComment](comment);
+    expect(comments).toEqual(["Repro attached."]);
+  }).pipe(Effect.scoped),
+);
 
 it.effect.each([WS_METHODS.subscribeVcsBranch, WS_METHODS.subscribeVcsStatus] as const)(
   "enforces read permission on stream %s",
