@@ -146,12 +146,11 @@ Not proven:
   replay matches their events (12 of 17 Grok replays equal) and the stub conformance check
   matches their stdin (12 of 12).
 - **Grok in the fixture replay**: the driver runs Grok on a stub `grok` that runs T3's own ACP
-  replay agent. Frames are equal for the 10 non-background variants; T3's assertions fail all
-  15. 9 fail on one engine difference: T3's buffered delivery never stores a running assistant
-  node or a streaming message or turn item, this engine writes them and deletes them at the
-  turn end (gaps in the stored sequence). 1 (`turn_interrupt`): T3's orchestrator leaves the
-  provider thread `idle` after Stop. 5 need Grok's background work or subagents and T3's
-  replay gate. Each is listed in `expected-failures.txt`.
+  replay agent. Frames are equal for the 10 non-background variants; T3's assertions pass 1
+  of 15 (`turn_interrupt`, since the engine writes `idle` after a Stop). 9 fail on one engine
+  difference: T3's buffered delivery never stores a running assistant node or a streaming
+  message or turn item, this engine writes them and deletes them at the turn end (gaps in the
+  stored sequence). 5 need Grok's background work or subagents and T3's replay gate. Each is listed in `expected-failures.txt`.
 - **A command on a disabled provider instance is refused at dispatch**, as T3's
   `assertDispatchTargetEnabled` does ("Provider instance "grok" is disabled for project …";
   nothing is written). Before, the message was stored and the provider refused the session.
@@ -305,9 +304,9 @@ fixture, as T3's own replay does. The fixtures, steps and assertions come from t
 so an upstream change shows. `tools/check.sh` runs it ("t3 fixture replay", about 3 min);
 `expected-failures.txt` lists every failing variant with its cause.
 
-Result at the pin: 33 of 159 variants pass (the testkit has 159 fixture variants over 170
-transcripts). Claude 17 of 34, Codex 16 of 25, Grok 0 of 15 (it runs since ACP part 3; see
-"ACP provider, part 3"). The 85 variants of Kiro, the ACP registry, fx, Cursor, OpenCode,
+Result at the pin: 36 of 159 variants pass (the testkit has 159 fixture variants over 170
+transcripts). Claude 18 of 34, Codex 17 of 25, Grok 1 of 15 (it runs since ACP part 3; see
+"ACP provider, part 3"; the counts were 17, 16 and 0 before the Codex work below). The 85 variants of Kiro, the ACP registry, fx, Cursor, OpenCode,
 Muse and Pi fail because the server does not offer those providers. Of the 26 Claude and Codex failures: 6 are Codex subagents (not built), 9 the
 Claude background roster, monitors and wakes (not built), 5 Claude event mapping, 3 steps the
 driver cannot run (T3's replay gate), 2 T3's test clock, 1 the engine (below).

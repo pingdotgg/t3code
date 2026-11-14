@@ -26,7 +26,6 @@ plan_questions/grok                  engine: buffered delivery stores streaming 
 grok_prompt_error/grok               engine: buffered delivery stores streaming assistant rows
 grok_auto_blocked_command/grok       engine: buffered delivery stores streaming assistant rows
 queued_turn/grok                     engine: buffered delivery stores streaming assistant rows; then clock: as queued_turn/codex
-turn_interrupt/grok                  engine: after Stop T3's orchestrator leaves the provider thread idle; ours keeps the adapter's last status (active), which equals T3's adapter
 grok_subagent_lineage/grok           provider: Grok subagents are not built (crates/conn-provider-acp README)
 grok_background_bash/grok            driver: finish_held_run (no replay gate in acp-stub.mjs); provider: Grok background tasks are not built
 grok_background_bash_fast_wake/grok  driver: finish_held_run; provider: Grok background tasks are not built
