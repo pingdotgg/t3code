@@ -68,6 +68,12 @@ it("stamps authoritative provenance on commands that create threads or messages"
       threadId: ThreadId.make("thread:elsewhere"),
       title: "Somewhere else",
     },
+    // A client's message goes through intake; only the server folds one into the creation.
+    initialMessage: {
+      messageId: MessageId.make("message:thread-management:forged"),
+      text: "Forged",
+      attachments: [],
+    },
   };
 
   const stamped = ThreadManagementService.withCreationProvenance(command, {
@@ -80,6 +86,7 @@ it("stamps authoritative provenance on commands that create threads or messages"
   });
   expect(stamped).not.toHaveProperty("linkOrigin");
   expect(stamped).not.toHaveProperty("delegatedFrom");
+  expect(stamped).not.toHaveProperty("initialMessage");
 });
 
 const layerReceiptsTest = CommandReceiptStore.layer.pipe(

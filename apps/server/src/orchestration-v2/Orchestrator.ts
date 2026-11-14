@@ -795,6 +795,28 @@ function metadataUpdateContinuation(
       };
 }
 
+// A later command for the first message would leave the new thread committed with no run,
+// and every client would show it idle until that command landed.
+function threadCreateInitialMessage(
+  command: Extract<OrchestrationV2Command, { readonly type: "thread.create" }>,
+): Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }> | undefined {
+  if (command.initialMessage === undefined) return undefined;
+  const { workspaceStrategy, ...message } = command.initialMessage;
+  return {
+    ...message,
+    type: "message.dispatch",
+    commandId: command.commandId,
+    threadId: command.threadId,
+    modelSelection: command.modelSelection,
+    dispatchMode:
+      workspaceStrategy === undefined
+        ? { type: "start_immediately" }
+        : { type: "defer_start", workspaceStrategy },
+    createdBy: command.createdBy,
+    creationSource: command.creationSource,
+  };
+}
+
 // Provider wakes can start follow-up work; monitor updates only report progress.
 // Dispatch takes the parent's lock for follow-ups because intake writes the parent.
 function mayStartSubagentFollowup(
@@ -2763,6 +2785,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 runs: projection.runs,
                 strategy: handoffStrategy,
                 items: [
+                  ...(needsFullContext && contextBoundary === 0
+                    ? yield* readInheritedItems(projection.thread)
+                    : []),
                   ...(needsFullContext && latestCompletedRun !== undefined
                     ? legacyImportItems
                     : []),
@@ -4454,10 +4479,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: "The reset time has passed. Retry the thread manually.",
         });
       }
+      if (thread.settledOverride === "settled") {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "The thread is settled. Un-settle it to resume at the reset.",
+        });
+      }
       if (
         !Number.isFinite(resetMs) ||
         thread.archivedAt !== null ||
-        thread.settledOverride === "settled" ||
         run?.id !== command.limitRecovery.runId ||
         failure?.class !== "usage_limit" ||
         failure.resetAt !== command.limitRecovery.resetAt ||
@@ -4470,6 +4501,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: "The provider limit changed before recovery could be configured.",
         });
       }
+    }
+    let restoredUnsettledAt: DateTime.Utc | null | undefined;
+    if (command.type === "thread.unsettle" && command.restoreUnsettledAt !== undefined) {
+      const parsed =
+        command.restoreUnsettledAt === null
+          ? Option.some(null)
+          : DateTime.make(command.restoreUnsettledAt);
+      if (Option.isNone(parsed)) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} unsettle anchor ${command.restoreUnsettledAt} is not a valid time.`,
+        });
+      }
+      restoredUnsettledAt = parsed.value;
     }
     let snoozedUntil: DateTime.Utc | null = null;
     if (command.type === "thread.snooze") {
@@ -4577,6 +4623,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...thread,
             settledOverride: "settled",
             settledAt: alreadySettled ? thread.settledAt : (command.settledAt ?? now),
+            // Settled threads refuse recovery, so an armed resume would stay hidden until un-settled.
+            limitRecovery: thread.limitRecovery
+              ? { ...thread.limitRecovery, autoResume: false, snooze: false }
+              : thread.limitRecovery,
             pullRequests: thread.pullRequests?.map((link) => withPullRequestWatch(link, undefined)),
             unsettledAt: null,
             pinnedAt: null,
@@ -4596,7 +4646,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...thread,
             settledOverride: "active",
             settledAt: null,
-            unsettledAt: alreadyPinnedActive ? (thread.unsettledAt ?? null) : now,
+            unsettledAt: alreadyPinnedActive
+              ? (thread.unsettledAt ?? null)
+              : restoredUnsettledAt === undefined
+                ? now
+                : restoredUnsettledAt,
             updatedAt: alreadyPinnedActive ? thread.updatedAt : now,
           };
         }
@@ -6882,6 +6936,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ? projectionStore
           .getThreadRecords(command.threadId, ["messages"], { messageRoles: ["user"] })
           .pipe(
+            // A thread this command creates has no stored messages yet.
+            Effect.catchTags({
+              ProjectionStoreThreadNotFoundError: () => Effect.succeed({ messages: [] }),
+            }),
             Effect.map(({ messages }) => [...messages, ...userMessages]),
             Effect.map((all) => all.length > 0 && all.every(isNativeMaintenanceCommand)),
             mapDispatchError(command),
@@ -8464,12 +8522,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 (requiresFullProviderSwitchContext ? 0 : (targetLastCompletedRun?.ordinal ?? 0)) &&
               run.ordinal <= latestHandoffRun.ordinal,
           );
+    const providerSwitchNeedsFullContext =
+      targetProviderThread === undefined ||
+      targetProviderThread.nativeThreadRef === null ||
+      requiresFullProviderSwitchContext;
     const providerSwitchItems =
       providerSwitchCoveredRuns.length === 0
         ? []
         : [
-            ...(latestCompletedRun !== undefined &&
-            (targetProviderThread === undefined || requiresFullProviderSwitchContext)
+            ...(providerSwitchNeedsFullContext && contextBoundary === 0
+              ? yield* readInheritedItems(projection.thread)
+              : []),
+            ...(latestCompletedRun !== undefined && providerSwitchNeedsFullContext
               ? legacyImportItems
               : []),
             ...(yield* readHandoffItems(
@@ -8494,10 +8558,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           threadId: command.threadId,
           providerInstanceId: modelSelection.instanceId,
           capabilities,
-          strategy:
-            targetProviderThread === undefined || requiresFullProviderSwitchContext
-              ? "full_thread_summary"
-              : "delta_context",
+          strategy: providerSwitchNeedsFullContext ? "full_thread_summary" : "delta_context",
         }),
       );
     }
@@ -8523,10 +8584,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 from: providerSwitchCoveredRuns[0]!.ordinal,
                 to: providerSwitchCoveredRuns.at(-1)!.ordinal,
               },
-              strategy:
-                targetProviderThread === undefined || requiresFullProviderSwitchContext
-                  ? "full_thread_summary"
-                  : "delta_since_target_last_seen",
+              strategy: providerSwitchNeedsFullContext
+                ? "full_thread_summary"
+                : "delta_since_target_last_seen",
               items: providerSwitchItems,
               runs: projection.runs,
               createdAt: now,
@@ -11503,6 +11563,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const dispatchQueuedRunEdit = Effect.fn("Orchestrator.dispatchQueuedRunEdit")(function* (
     command: Extract<OrchestrationV2Command, { readonly type: "queued-run.edit" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
     if (command.text.trim().length === 0) {
       return yield* new OrchestratorDispatchError({
@@ -11595,6 +11656,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           updatedAt: now,
         }),
       });
+    }
+    // Thread deletion only cleans files the thread still references.
+    const keptAttachmentIds = new Set(
+      (command.attachments ?? queuedMessage.attachments).map((attachment) => attachment.id),
+    );
+    const droppedAttachmentIds = queuedMessage.attachments
+      .map((attachment) => attachment.id)
+      .filter((id) => !keptAttachmentIds.has(id));
+    if (droppedAttachmentIds.length > 0) {
+      yield* Ref.update(effects, (existing) => [
+        ...existing,
+        {
+          id: `effect:${command.commandId}:attachment.cleanup`,
+          commandId: command.commandId,
+          threadId: command.threadId,
+          request: {
+            type: "attachment.cleanup",
+            attachmentIds: droppedAttachmentIds,
+            skipReferenced: true,
+          },
+        } satisfies PendingOrchestrationEffectV2,
+      ]);
     }
   });
 
@@ -14760,9 +14843,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       | undefined;
     let updateDelegatedCompletionOnlyRunId: RunId | undefined;
     switch (command.type) {
-      case "thread.create":
+      case "thread.create": {
         yield* dispatchThreadCreate(command, events);
+        const initialMessage = threadCreateInitialMessage(command);
+        if (initialMessage !== undefined) {
+          cancelUnsettledEffects = yield* dispatchMessage(
+            withoutGuestAttribution(initialMessage),
+            events,
+            effects,
+          );
+        }
         break;
+      }
       case "thread.visit":
         yield* dispatchThreadVisit(command, events);
         break;
@@ -15078,7 +15170,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* dispatchQueuedRunCancel(command, events);
         break;
       case "queued-run.edit":
-        yield* dispatchQueuedRunEdit(command, events);
+        yield* dispatchQueuedRunEdit(command, events, effects);
         break;
       case "checkpoint.rollback":
         yield* dispatchCheckpointRollback(command, events, effects);

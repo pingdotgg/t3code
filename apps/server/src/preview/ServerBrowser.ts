@@ -13,6 +13,7 @@ import {
   isBuiltInBrowserProfileId,
   resolveBrowserProfiles,
   type PreviewReportProfilesInput,
+  type PreviewReportStatusInput,
   PREVIEW_AUTOMATION_SERVER_OPERATIONS,
   PreviewViewportSetting as PreviewViewportSettingSchema,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
@@ -55,6 +56,7 @@ import { resolvePreviewViewport } from "@t3tools/shared/previewViewport";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import * as NodeUtil from "node:util";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -387,6 +389,9 @@ interface ServerTab {
   pendingInitialRequestUrl: string | null;
   navigationGeneration: number;
   stoppedGeneration: number | null;
+  /** The reported title a watch in the main document's isolated world waits to change from. */
+  titleWatch: { readonly contextId: number; readonly title: string } | null;
+  lastReport: PreviewReportStatusInput | null;
 
   abortedNavigation: {
     readonly url: string;
@@ -476,6 +481,41 @@ const editingCommand = (key: string, modifiers: number) => {
               : null;
   return command ? { commands: [command] } : null;
 };
+
+const TITLE_LIMIT = 512;
+const TITLE_WORLD = "t3-preview-title";
+// Observe root replacement without subscribing to body subtree mutations.
+const titleChange = (reported: string) => `new Promise((resolve) => {
+  const changed = () => document.title.slice(0, ${TITLE_LIMIT}) !== ${JSON.stringify(reported)};
+  if (changed()) return resolve();
+  let head;
+  let root;
+  let title;
+  const observer = new MutationObserver(() => {
+    if (changed()) {
+      observer.disconnect();
+      resolve();
+    } else if (head !== document.head || root !== document.documentElement || title !== document.querySelector('title')) {
+      observe();
+    }
+  });
+  const observe = () => {
+    observer.disconnect();
+    observer.observe(document, { childList: true });
+    root = document.documentElement;
+    head = document.head;
+    title = document.querySelector('title');
+    if (root) observer.observe(root, { childList: true });
+    if (head) observer.observe(head, { subtree: true, childList: true, characterData: true });
+    if (title && !head?.contains(title)) {
+      observer.observe(title, { subtree: true, childList: true, characterData: true });
+      for (let ancestor = title.parentElement; ancestor; ancestor = ancestor.parentElement) {
+        observer.observe(ancestor, { childList: true });
+      }
+    }
+  };
+  observe();
+})`;
 
 const CLIPBOARD_TEXT_LIMIT = 1024 * 1024;
 const CLIPBOARD_WORLD = "t3-preview-clipboard";
@@ -683,26 +723,32 @@ const make = Effect.gen(function* () {
   };
 
   const report = (tab: ServerTab, navStatus: PreviewNavStatus) => {
+    const generation = tab.navigationGeneration;
+    const loadError = tab.loadError;
     void tab.cdp
       .send("Page.getNavigationHistory")
       .catch(() => null)
       .then((history) => {
         // A status the dead page still had in flight must not replace the crash.
         if (tab.crash) return;
+        if (
+          navStatus._tag === "Success" &&
+          (tab.navigationGeneration !== generation || tab.loadError !== loadError)
+        )
+          return;
         const index = history?.currentIndex ?? 0;
         const count = history?.entries.length ?? 0;
-        runFork(
-          manager
-            .reportStatus({
-              threadId: tab.threadId,
-              tabId: tab.tabId,
-              serverControlled: true,
-              navStatus,
-              canGoBack: index > 0,
-              canGoForward: index < count - 1,
-            })
-            .pipe(Effect.ignore),
-        );
+        const input = {
+          threadId: tab.threadId,
+          tabId: tab.tabId,
+          serverControlled: true,
+          navStatus,
+          canGoBack: index > 0,
+          canGoForward: index < count - 1,
+        };
+        if (NodeUtil.isDeepStrictEqual(tab.lastReport, input)) return;
+        tab.lastReport = input;
+        runFork(manager.reportStatus(input).pipe(Effect.ignore));
       });
   };
 
@@ -712,13 +758,53 @@ const make = Effect.gen(function* () {
     if (url === "about:blank" || url.startsWith("chrome-error://")) return;
     // A navigation that starts and fails during the title read leaves the URL unchanged.
     const generation = tab.navigationGeneration;
-    const title = (await tab.page.title().catch(() => "")).slice(0, 512);
-    if (tab.navigationGeneration !== generation || tab.loading || tab.page.url() !== url) return;
+    const loadError = tab.loadError;
+    const title = (await tab.page.title().catch(() => "")).slice(0, TITLE_LIMIT);
+    if (
+      tab.navigationGeneration !== generation ||
+      tab.loadError !== loadError ||
+      tab.loading ||
+      tab.page.url() !== url
+    )
+      return;
     report(tab, {
       _tag: "Success",
       url: ServerBrowserPage.withoutDataPayload(url).slice(0, 2048),
       title,
     });
+    void watchTitle(tab, title);
+  };
+
+  // A title change fires no page event, so one watch per document reports the next one.
+  const watchTitle = async (tab: ServerTab, title: string) => {
+    // Chromium keeps one world per name and document, so a new document gets a new context.
+    const world = await tab.cdp
+      .send("Page.getFrameTree")
+      .then(({ frameTree }) =>
+        tab.cdp.send("Page.createIsolatedWorld", {
+          frameId: frameTree.frame.id,
+          worldName: TITLE_WORLD,
+        }),
+      )
+      .catch(() => null);
+    if (!world) return;
+    const watch = { contextId: world.executionContextId, title };
+    if (tab.titleWatch?.contextId === watch.contextId && tab.titleWatch.title === title) return;
+    tab.titleWatch = watch;
+    const changed = await tab.cdp
+      .send("Runtime.evaluate", {
+        contextId: watch.contextId,
+        expression: titleChange(title),
+        awaitPromise: true,
+      })
+      .then(
+        ({ exceptionDetails }) => exceptionDetails === undefined,
+        () => false,
+      );
+    if (tab.titleWatch !== watch) return;
+    tab.titleWatch = null;
+    // A dropped tab's page can still change its title while it unloads.
+    if (changed && !tab.closing && !tab.loadError) await reportLoaded(tab);
   };
 
   const reportLiveTabs = () => {
@@ -1083,6 +1169,8 @@ const make = Effect.gen(function* () {
       pendingInitialRequestUrl: null,
       navigationGeneration: 0,
       stoppedGeneration: null,
+      titleWatch: null,
+      lastReport: null,
       abortedNavigation: null,
       captureLock: Promise.resolve(),
       capturing: 0,

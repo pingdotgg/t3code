@@ -227,6 +227,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
   makeProviderFailure,
   makeProviderRetryTurnItem,
+  PROVIDER_RETRY_BUDGET_MS,
 } from "@t3tools/provider-core/server/failure";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import { providerMessageTextWithAttachmentPaths } from "@t3tools/provider-core/server/attachmentPrompt";
@@ -4813,6 +4814,7 @@ function formatClaudeUsageLimitWait(waitMs: number): string {
 }
 
 interface ActiveClaudeTurnContext {
+  retryBudgetFailure?: OrchestrationV2ProviderFailure;
   readonly queryPolicy: ClaudeRuntimeQueryPolicy;
   readonly input: ProviderAdapter.ProviderAdapterV2TurnInput;
   readonly autoCompactWindow: string;
@@ -4997,6 +4999,7 @@ interface ClaudeSubagentProjectionTarget {
   readonly childRootNodeId: OrchestrationV2ExecutionNode["id"];
   readonly nextOrdinal: () => number;
   readonly toolCalls: Map<string, ActiveClaudeToolCall>;
+  readonly stopRequestedAt?: number | undefined;
 }
 
 /** Claude writes blocks separately with stop_reason null until the last.
@@ -5792,6 +5795,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           string,
           Deferred.Deferred<ProviderAdapter.ProviderAdapterV2SubagentOutcome>
         >();
+        // Claude reports a stopped workflow's members as failed; this is the only evidence it was Stop.
+        const workflowStopRequestedAt = new Map<string, number>();
         // Buffered idle outcomes must not settle a resumed child again.
         const appliedSubagentOutcomes = new WeakSet<SDKMessage>();
         // Subagent frames can precede the task_started that registers their owner.
@@ -6212,6 +6217,51 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }),
           }).pipe(Effect.withSpan("ClaudeAdapterV2.completeProviderRetry"));
         });
+
+        // A hung request can take many minutes per attempt, so the budget spans the
+        // whole retry window rather than counting attempts.
+        const failExpiredProviderRetry = Effect.fn("ClaudeAdapterV2.failExpiredProviderRetry")(
+          function* (context: ActiveClaudeTurnContext, startedAt: DateTime.Utc) {
+            const isCurrentRetry = Effect.gen(function* () {
+              const retry = (yield* Ref.get(providerRetries)).get(context.providerTurnId);
+              return retry?.startedAt === startedAt && (yield* Ref.get(activeTurn)) === context
+                ? retry
+                : undefined;
+            });
+            const retry = yield* isCurrentRetry;
+            // A user Stop already in flight keeps its interrupted outcome.
+            if (
+              retry === undefined ||
+              (yield* Ref.get(interruptedTurns)).has(context.providerTurnId)
+            )
+              return;
+            context.retryBudgetFailure = { ...retry.failure, retryable: false };
+            const liveQuery = yield* Ref.get(queryContext);
+            yield* interruptTurn({
+              providerThread: context.input.providerThread,
+              providerTurnId: context.providerTurnId,
+            }).pipe(
+              Effect.timeoutOption(CLAUDE_STOP_CONFIRM_TIMEOUT_MS),
+              Effect.catch((cause) =>
+                Effect.logWarning("orchestration-v2.claude-retry-budget-stop-failed", { cause }),
+              ),
+            );
+            if (liveQuery === null || (yield* isCurrentRetry) === undefined) return;
+            // The CLI did not confirm the stop; settle the turn without it.
+            const ownedLiveQuery = yield* Ref.modify(queryContext, (current) =>
+              current?.query === liveQuery.query ? [true, null] : [false, current],
+            );
+            if (!ownedLiveQuery) return;
+            liveQuery.stopping = true;
+            yield* liveQuery.query.close.pipe(
+              Effect.timeoutOption(CLAUDE_STOP_CONFIRM_TIMEOUT_MS),
+              Effect.ignore,
+            );
+            yield* finalizeActiveTurnAfterQueryExit(liveQuery);
+            yield* endSubagentCallsOfClosedQuery(liveQuery.nativeThreadId, "interrupted");
+            yield* Deferred.succeed(liveQuery.closed, undefined);
+          },
+        );
 
         const rememberProviderThread =
           /* Provider events include streaming deltas; avoid a span for each update. */
@@ -7139,13 +7189,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               return;
             const memberKey = `${input.coordinator.childThreadId}:agent:${member.index}`;
             const previous = seen.get(memberKey);
+            const stopRequestedAt = workflowStopRequestedAt.get(taskId);
             const status =
               (member.state === "queued" || member.state === "running") &&
               input.coordinator.task.status !== "running"
                 ? input.coordinator.task.status
                 : member.state === "queued"
                   ? "pending"
-                  : member.state;
+                  : member.state === "failed" &&
+                      stopRequestedAt !== undefined &&
+                      // lastProgressAt (completedAt) is the last tick, often before Stop for a blocked tool.
+                      previous?.status !== "failed"
+                    ? "cancelled"
+                    : member.state;
             const settled = status !== "pending" && status !== "running";
             const prompt = member.prompt ?? member.label;
             const model = member.model ?? parentThread.modelSelection.model;
@@ -7303,6 +7359,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               childRootNodeId,
               nextOrdinal: () => ++nextItemOrdinal,
               toolCalls,
+              stopRequestedAt,
             };
             const endOpenToolCalls = Effect.fnUntraced(function* () {
               if (toolCalls.size === 0) return;
@@ -8383,12 +8440,20 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly toolResult: ClaudeToolResultContentBlock;
           readonly output: ClaudeNativeToolOutput;
           readonly completedAt: DateTime.Utc;
+          readonly stopped?: boolean;
         }) {
           const { toolCall } = input;
           const toolNonExecutionKind = claudeToolNonExecutionKind(
             input.message,
             input.toolResult.tool_use_id,
           );
+          // Stop denial metadata distinguishes cancelled work from a real error
+          // that happens to arrive after the turn was interrupted.
+          const stopped =
+            input.stopped === true ||
+            (toolNonExecutionKind === "user-rejected" &&
+              input.context !== null &&
+              (yield* Ref.get(interruptedTurns)).has(input.context.providerTurnId));
           yield* stopTaskOutputTail(toolCall.nativeItemId);
           yield* emitToolCallArtifacts(
             buildToolCallArtifacts({
@@ -8407,7 +8472,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 toolNonExecutionKind === "cancelled" || toolNonExecutionKind === "interrupted"
                   ? toolNonExecutionKind
                   : isClaudeToolResultError(input.toolResult)
-                    ? "failed"
+                    ? stopped
+                      ? "interrupted"
+                      : "failed"
                     : "completed",
               ...(toolNonExecutionKind === undefined ? {} : { toolNonExecutionKind }),
               startedAt: toolCall.startedAt,
@@ -8502,6 +8569,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               toolResult,
               output,
               completedAt: at,
+              // A denial written before Stop (a declined approval) is not the Stop's.
+              stopped:
+                target.stopRequestedAt !== undefined &&
+                field(line, "toolDenialKind") !== undefined &&
+                DateTime.toEpochMillis(at) >= target.stopRequestedAt,
             });
           }
           if (line.type !== "assistant") return false;
@@ -8879,7 +8951,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
         });
 
-        const finalizeActiveTurn = Effect.fnUntraced(function* (input: {
+        const finalizeActiveTurn = Effect.fnUntraced(function* (requested: {
           readonly context: ActiveClaudeTurnContext;
           readonly status: Extract<
             OrchestrationV2ProviderTurn["status"],
@@ -8890,6 +8962,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly threadDisposition?: "reusable" | "broken";
           readonly result?: SDKResultMessage;
         }) {
+          // A turn stopped by the retry budget settles as failed with the retry's error.
+          const retryBudgetFailure = requested.context.retryBudgetFailure;
+          const input =
+            requested.status === "interrupted" && retryBudgetFailure !== undefined
+              ? { ...requested, status: "failed" as const, failure: retryBudgetFailure }
+              : requested;
           input.context.steersClosed = true;
           yield* reasoningDeltas.flushTurn(input.context.nativeTurnId);
           if (input.status === "completed") {
@@ -10747,12 +10825,20 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 updatedAt,
               }),
             });
+            if (previous === undefined) {
+              yield* failExpiredProviderRetry(context, state.startedAt).pipe(
+                Effect.delay(PROVIDER_RETRY_BUDGET_MS),
+                Effect.forkIn(sessionScope),
+              );
+            }
             return;
           }
 
           if (message.type === "assistant" && input.replayed !== true) {
-            const now = yield* DateTime.now;
-            yield* completeProviderRetry(context, now);
+            if (message.message.model !== "<synthetic>") {
+              const now = yield* DateTime.now;
+              yield* completeProviderRetry(context, now);
+            }
             // CLI-generated <synthetic> frames report zero usage, not context usage.
             if (
               message.parent_tool_use_id === null &&
@@ -13717,6 +13803,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 detail: "No running workflow task belongs to this provider thread",
               });
             }
+            workflowStopRequestedAt.set(taskId, DateTime.toEpochMillis(yield* DateTime.now));
             yield* liveQuery.query.stopTask(taskId).pipe(
               Effect.mapError(
                 (cause) =>
@@ -13726,6 +13813,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     cause,
                   }),
               ),
+              Effect.onError(() => Effect.sync(() => workflowStopRequestedAt.delete(taskId))),
             );
           }),
           awaitBackgroundTasks: Effect.fn("ClaudeAdapterV2.awaitBackgroundTasks")(

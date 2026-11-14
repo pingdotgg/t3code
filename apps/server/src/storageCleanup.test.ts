@@ -1080,6 +1080,8 @@ describe("subagent worktree ownership", () => {
   it.effect.each([
     "idle",
     "grandchild",
+    "branchless",
+    "branchless-running",
     "null-branch",
     "stale-branch",
     "isolated-owner",
@@ -1111,7 +1113,7 @@ describe("subagent worktree ownership", () => {
         },
       });
       const root = shell({
-        branch: "feature",
+        branch: ["branchless", "branchless-running"].includes(scenario) ? null : "feature",
         worktreePath: fixture.worktree,
         settledAt: scenario === "child-settled-only" ? null : at(-20 * DAY_MS),
         ...(scenario === "isolated-owner" || scenario === "fork-owner"
@@ -1153,7 +1155,7 @@ describe("subagent worktree ownership", () => {
                 : "subagent",
           ...(scenario === "side-chat" ? { sideChat: true } : {}),
         },
-        status: scenario === "running" ? "running" : "completed",
+        status: ["running", "branchless-running"].includes(scenario) ? "running" : "completed",
         pendingBackgroundTasks: scenario === "pending" ? [{ taskId: "task", kind: "command" }] : [],
         latestRunCompletedAt:
           scenario === "recent-activity" || scenario === "recent-inactive"
@@ -1202,7 +1204,7 @@ describe("subagent worktree ownership", () => {
         outcome: removed ? "removed" : "kept",
         reason: removed
           ? "Settled for 20 days"
-          : scenario === "running" || scenario === "pending"
+          : ["running", "pending", "branchless-running"].includes(scenario)
             ? "Thread is running or has pending work"
             : shared
               ? "Shared by 2 threads"
@@ -1214,7 +1216,9 @@ describe("subagent worktree ownership", () => {
                     ? "Inactive for 2 of 8 days"
                     : ["recent-grace", "recent-settle", "child-settled-now"].includes(scenario)
                       ? "Settled moments ago"
-                      : "Not settled",
+                      : scenario === "branchless"
+                        ? "Thread has no branch"
+                        : "Not settled",
       });
     }).pipe(Effect.provide(cleanupTestLayer)),
   );
@@ -2697,6 +2701,36 @@ describe("storage cleanup reports and local file policies", () => {
         });
         expect(report.bytesFreed).toBe(0);
         expect(yield* fs.exists(worktree)).toBe(true);
+      }),
+    ),
+  );
+  it.effect("removes a worktree owned by a repository other than the project root", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MS);
+        const fixture = yield* cleanupFixture();
+        const { fs, command, config } = fixture;
+        const oldRepo = yield* fs.realPath(
+          yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-old-repo-" }),
+        );
+        yield* command(oldRepo, ["init", "-b", "main"]);
+        yield* command(oldRepo, ["config", "user.email", "cleanup@example.test"]);
+        yield* command(oldRepo, ["config", "user.name", "Cleanup test"]);
+        yield* fs.writeFileString(`${oldRepo}/tracked.txt`, "original\n");
+        yield* command(oldRepo, ["add", "."]);
+        yield* command(oldRepo, ["commit", "-m", "initial"]);
+        yield* fs.makeDirectory(`${config.worktreesDir}/old-repo`, { recursive: true });
+        const oldWorktree = `${config.worktreesDir}/old-repo/feature`;
+        yield* command(oldRepo, ["worktree", "add", "-b", "feature", oldWorktree]);
+        fixture.setThreads([shell({ branch: "feature", worktreePath: oldWorktree })]);
+        const report = yield* fixture.service.runNow;
+        expect(report.entries.find((entry) => entry.path === oldWorktree)).toMatchObject({
+          outcome: "removed",
+        });
+        expect(yield* fs.exists(oldWorktree)).toBe(false);
+        expect((yield* command(oldRepo, ["worktree", "list", "--porcelain"])).stdout).not.toContain(
+          oldWorktree,
+        );
       }),
     ),
   );
