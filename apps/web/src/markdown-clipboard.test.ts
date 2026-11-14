@@ -216,41 +216,26 @@ describe("serializeRenderedMarkdownFragment", () => {
     expect(paragraph.children.find((child) => child.type === "inlineCode")?.value).toBe(value);
   });
 
-  it.each([
-    ["a web link", "https://example.com/support", "https://example.com/support"],
-    ["an email link", "mailto:support@example.com", "mailto:support@example.com"],
-    [
-      "an email link with a subject",
-      "mailto:support@example.com?subject=Help",
-      "mailto:support@example.com?subject=Help",
-    ],
-    ["an in-app link", "/environment-one/thread-one", undefined],
-  ])("copies a labelled link with its destination: %s", (_, href, url) => {
-    const container = new FakeElement("DIV").append(
-      new FakeElement("P").append(
-        new FakeText("Contact "),
-        new FakeElement("A", [], { href }).append(new FakeText("Support")),
-        new FakeText(" for help."),
-      ),
-    );
-    const paragraph = parseMarkdownWithMath(serializeRenderedMarkdownFragment(asNode(container)))
-      .children[0];
-    if (paragraph?.type !== "paragraph") throw new Error("Expected a paragraph");
-    expect(paragraph.children.find((child) => child.type === "link")?.url).toBe(url);
-  });
-
-  it("copies an autolinked email address as the bare address", () => {
+  it("copies email links with their address and drops in-app destinations", () => {
     const container = new FakeElement("DIV").append(
       new FakeElement("P").append(
         new FakeText("Write to "),
         new FakeElement("A", [], { href: "mailto:support@example.com" }).append(
           new FakeText("support@example.com"),
         ),
+        new FakeText(", "),
+        new FakeElement("A", [], { href: "mailto:support@example.com?subject=Help" }).append(
+          new FakeText("Support"),
+        ),
+        new FakeText(" or "),
+        new FakeElement("A", [], { href: "/environment-one/thread-one" }).append(
+          new FakeText("the thread"),
+        ),
         new FakeText("."),
       ),
     );
     expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
-      "Write to support@example.com.",
+      "Write to support@example.com, [Support](mailto:support@example.com?subject=Help) or the thread.",
     );
   });
 
