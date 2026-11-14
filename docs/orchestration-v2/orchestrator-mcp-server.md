@@ -481,8 +481,22 @@ idempotent retries.
 
 Waits for a selected run to become `completed`, `failed`, `cancelled`,
 `interrupted`, or `rolled_back`. Without `runId`, it pins the latest run at call
-time; an idle thread returns immediately. A timeout reports the latest durable
-status and does not cancel work.
+time. An idle thread returns immediately.
+
+For agents in a T3 thread, the wait also returns on blocking input. Waits from
+other MCP clients, the `t3 thread` CLI and linked environments stay
+terminal-only, because those callers read any wait that did not time out as a
+finished run; the CLI checks for pending requests between short waits instead.
+
+An input-aware wait returns `timedOut: false` and `hasPendingQuestion` or
+`pendingApproval` for live input on the selected run or an earlier unfinished run
+blocking it. The run keeps its current status. Asynchronous message-based
+questions leave the wait active. Read a fresh question with `t3_pending_request`.
+Secret cards appear in thread activity. Ask the user to answer secret cards and
+approvals in the thread. The result grants no approval authority.
+
+A timeout reports the latest durable status and leaves the work running. A `next`
+hint on a timed-out wait tells the caller to end its turn.
 
 ### `t3_thread_interrupt`
 

@@ -44,6 +44,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
+import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 import * as EffectWorker from "../orchestration-v2/EffectWorker.ts";
 import * as LegacyV1ThreadImporter from "../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
@@ -357,7 +358,12 @@ describe("OrchestratorMcpService", () => {
       const childThreadId = ThreadId.make("thread:mcp-next-child");
       const taskId = NodeId.make("node:mcp-next-task");
       let finished = false;
+      let queued = false;
       let pendingRequest = false;
+      let requestOwner: "task" | "finished" | "unrelated" | "blocker" = "task";
+      let pendingSecret = false;
+      let secretCompleted = false;
+      let secretOwner: "task" | "finished" | "unrelated" = "task";
       const parentProjection = () =>
         ({
           thread: { id: parentThreadId },
@@ -379,22 +385,55 @@ describe("OrchestratorMcpService", () => {
         }) as unknown as OrchestrationV2ThreadProjection;
       const childRun = () => ({
         id: RunId.make("run:mcp-next-child"),
-        ordinal: 1,
-        status: finished ? ("completed" as const) : ("running" as const),
+        ordinal: 2,
+        status: finished
+          ? ("completed" as const)
+          : queued
+            ? ("queued" as const)
+            : ("running" as const),
         delegatedTaskId: taskId,
       });
       const childProjection = () =>
         ({
           thread: { id: childThreadId, title: "Child task" },
-          runs: [childRun()],
+          runs: [
+            childRun(),
+            { id: "run:finished", ordinal: 0, status: "completed" },
+            { id: "run:unrelated", ordinal: 3, status: "running" },
+            ...(queued ? [{ id: "run:blocker", ordinal: 1, status: "running" }] : []),
+          ],
           contextTransfers: [],
           messages: [],
           subagents: [],
           providerThreads: [],
           providerTurns: [],
-          runtimeRequests: pendingRequest ? [{ status: "pending" }] : [],
-          nodes: [],
-          turnItems: [],
+          runtimeRequests: pendingRequest
+            ? [
+                {
+                  nodeId: "node:question",
+                  kind: "user_input",
+                  status: "pending",
+                  responseCapability: { type: "live" },
+                },
+              ]
+            : [],
+          nodes: [
+            {
+              id: "node:question",
+              runId: requestOwner === "task" ? childRun().id : `run:${requestOwner}`,
+            },
+          ],
+          turnItems: pendingSecret
+            ? [
+                {
+                  type: "secret_request",
+                  runId: secretOwner === "task" ? childRun().id : `run:${secretOwner}`,
+                  nodeId: "node:secret",
+                  status: secretCompleted ? "completed" : "waiting",
+                  label: "Private credential request",
+                },
+              ]
+            : [],
         }) as unknown as OrchestrationV2ThreadProjection;
       const layerDependencies = Layer.mergeAll(
         NodeServices.layer,
@@ -409,6 +448,8 @@ describe("OrchestratorMcpService", () => {
               threadId: childThreadId,
               run: childRun() as unknown as OrchestrationV2ThreadProjection["runs"][number],
               timedOut: !finished,
+              hasPendingQuestion: false,
+              pendingApproval: null,
             }),
           dispatch: () => Effect.succeed({} as never),
         }),
@@ -449,11 +490,49 @@ describe("OrchestratorMcpService", () => {
         const asking = yield* service.waitForThread(scope, { threadId: childThreadId });
         assert.isTrue(asking.timedOut);
         assert.notProperty(asking, "next");
+        const question = yield* service.taskStatus(scope, taskId);
+        assert.isTrue(question.hasPendingQuestion);
+        assert.notProperty(question, "next");
+        for (const owner of ["finished", "unrelated"] as const) {
+          requestOwner = owner;
+          const unrelated = yield* service.taskStatus(scope, taskId);
+          assert.isFalse(unrelated.hasPendingQuestion);
+          assert.equal(unrelated.next, ORCHESTRATOR_MCP_RUNNING_TASK_NEXT);
+        }
+        queued = true;
+        requestOwner = "blocker";
+        const blocked = yield* service.taskStatus(scope, taskId);
+        assert.isTrue(blocked.hasPendingQuestion);
+        assert.notProperty(blocked, "next");
+        requestOwner = "unrelated";
+        assert.isFalse((yield* service.taskStatus(scope, taskId)).hasPendingQuestion);
+        queued = false;
+        requestOwner = "task";
         pendingRequest = false;
 
+        pendingSecret = true;
+        const secret = yield* service.taskStatus(scope, taskId);
+        assert.isTrue(secret.hasPendingQuestion);
+        assert.notProperty(secret, "next");
+        assert.notInclude(JSON.stringify(secret), "Private credential request");
+        secretCompleted = true;
+        assert.isFalse((yield* service.taskStatus(scope, taskId)).hasPendingQuestion);
+        secretCompleted = false;
+        for (const owner of ["finished", "unrelated"] as const) {
+          secretOwner = owner;
+          const unrelated = yield* service.taskStatus(scope, taskId);
+          assert.isFalse(unrelated.hasPendingQuestion);
+          assert.equal(unrelated.next, ORCHESTRATOR_MCP_RUNNING_TASK_NEXT);
+        }
+        secretOwner = "task";
+        pendingSecret = false;
+        assert.isFalse((yield* service.taskStatus(scope, taskId)).hasPendingQuestion);
+
         finished = true;
+        pendingSecret = true;
         const completed = yield* service.taskStatus(scope, taskId);
         assert.equal(completed.status, "completed");
+        assert.isFalse(completed.hasPendingQuestion);
         assert.notProperty(completed, "next");
         const waited = yield* service.waitForThread(scope, { threadId: childThreadId });
         assert.equal(waited.status, "completed");
@@ -494,6 +573,7 @@ describe("OrchestratorMcpService", () => {
         providerThreads: [],
         providerTurns: [],
         runtimeRequests: [],
+        turnItems: [],
       } as unknown as OrchestrationV2ThreadProjection;
       const layerDependencies = Layer.mergeAll(
         NodeServices.layer,
@@ -691,6 +771,7 @@ describe("OrchestratorMcpService", () => {
         providerThreads: [],
         providerTurns: [],
         runtimeRequests: [],
+        turnItems: [],
       } as unknown as OrchestrationV2ThreadProjection;
       const layerDependencies = Layer.mergeAll(
         NodeServices.layer,
@@ -793,6 +874,7 @@ describe("OrchestratorMcpService", () => {
         providerThreads: [],
         providerTurns: [],
         runtimeRequests: [],
+        turnItems: [],
       } as unknown as OrchestrationV2ThreadProjection;
       const layerDependencies = Layer.mergeAll(
         NodeServices.layer,
@@ -979,6 +1061,7 @@ describe("OrchestratorMcpService", () => {
         providerThreads: [],
         providerTurns: [],
         runtimeRequests: [],
+        turnItems: [],
       } as unknown as OrchestrationV2ThreadProjection;
       const layerDependencies = Layer.mergeAll(
         NodeServices.layer,
@@ -1107,6 +1190,7 @@ describe("OrchestratorMcpService", () => {
             providerThreads: [],
             providerTurns: [],
             runtimeRequests: [],
+            turnItems: [],
           },
         ],
         [
@@ -1132,6 +1216,7 @@ describe("OrchestratorMcpService", () => {
             providerThreads: [],
             providerTurns: [],
             runtimeRequests: [],
+            turnItems: [],
           },
         ],
       ]) as unknown as ReadonlyMap<ThreadId, OrchestrationV2ThreadProjection>;
@@ -1375,6 +1460,132 @@ describe("OrchestratorMcpService provider resolution", () => {
     runtimeRequests: [],
     turnItems: [],
   } as unknown as OrchestrationV2ThreadProjection;
+
+  it.effect("wakes a task wait for a newly posted secret card, not transcript updates", () =>
+    Effect.gen(function* () {
+      let pendingSecret = false;
+      let childReads = 0;
+      const task = {
+        id: taskId,
+        threadId: parentThreadId,
+        origin: "app_owned",
+        childThreadId,
+        driver: "codex",
+        model: "gpt-5.4",
+        status: "running",
+        result: null,
+        completionDelivery: { state: "pending" },
+      };
+      const child = () =>
+        ({
+          ...childProjection,
+          runs: [
+            {
+              id: RunId.make("run:secret-child"),
+              ordinal: 1,
+              status: "running",
+              delegatedTaskId: taskId,
+            },
+          ],
+          nodes: [],
+          turnItems: pendingSecret
+            ? [
+                {
+                  type: "secret_request",
+                  runId: RunId.make("run:secret-child"),
+                  nodeId: "node:secret",
+                  status: "waiting",
+                  label: "Private credential request",
+                },
+              ]
+            : [],
+        }) as unknown as OrchestrationV2ThreadProjection;
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          hasReceipt: () => Effect.succeed(false),
+          assertProviderInstanceEnabled: () => Effect.void,
+          delegatedTaskResultPending: () => Effect.succeed(false),
+          getThreadRecords: (threadId) =>
+            Effect.sync(() => {
+              if (threadId === parentThreadId) return parentProjection([task]);
+              childReads++;
+              return child();
+            }),
+          getThreadShell: (threadId) => Effect.succeed(liveThreadShell(threadId)),
+          getThreadEventSequence: () => Effect.succeed(1),
+          isProviderInstanceEnabledForProject: () => Effect.succeed(true),
+          dispatch: () =>
+            Effect.succeed({
+              sequence: 1,
+              storedEvents: [
+                {
+                  sequence: 1,
+                  commandId: null,
+                  event: { type: "subagent.updated", payload: task },
+                },
+              ],
+            } as never),
+          streamStoredEventsFrom: (input) => {
+            if (input?.threadId !== childThreadId || input.eventType !== "turn-item.updated")
+              return Stream.empty;
+            let beforeTranscript = 0;
+            return Stream.fromEffect(
+              Effect.sync(() => {
+                beforeTranscript = childReads;
+                return {
+                  event: { type: "turn-item.updated", payload: { type: "assistant_message" } },
+                } as never;
+              }),
+            ).pipe(
+              Stream.concat(
+                Stream.fromEffect(
+                  Effect.sync(() => {
+                    assert.equal(
+                      childReads,
+                      beforeTranscript,
+                      "transcript updates must not reload the projection",
+                    );
+                    pendingSecret = true;
+                    return {
+                      event: { type: "turn-item.updated", payload: { type: "secret_request" } },
+                    } as never;
+                  }),
+                ),
+              ),
+            );
+          },
+        }),
+        providerRegistryLayer([
+          providerSnapshot({
+            instanceId: codexInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            model: "gpt-5.4",
+          }),
+        ]),
+        adapterRegistryLayer([codexInstanceId]),
+        ServerSettings.layerTest(),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const waited = yield* service.delegateTask(scope, {
+          task: "Wait for credentials",
+          mode: "wait",
+          clientRequestId: "secret-wait",
+        });
+        assert.isTrue(waited.hasPendingQuestion);
+        assert.isFalse(waited.waitTimedOut);
+        assert.equal(waited.status, "running");
+        assert.notProperty(waited, "next");
+        assert.notInclude(JSON.stringify(waited), "Private credential request");
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+    }),
+  );
 
   it.effect.each([
     "parent completion",
@@ -4161,6 +4372,100 @@ describe("OrchestratorMcpService thread lookup", () => {
     }),
   );
 
+  it.effect.each([
+    { name: "client", agent: false, pending: false },
+    { name: "linked peer", linked: true, pending: false },
+    { name: "thread caller", agent: true, pending: true },
+  ])("preserves wait semantics for $name", (scenario) =>
+    Effect.gen(function* () {
+      const runId = RunId.make("run:compat-wait");
+      const projection = {
+        ...idleThreadProjection(launched),
+        runs: [{ id: runId, ordinal: 1, status: "running" }],
+        nodes: [{ id: "node:compat-wait", runId }],
+        runtimeRequests: [
+          {
+            id: "request:compat-wait",
+            nodeId: "node:compat-wait",
+            kind: "command",
+            status: "pending",
+            responseCapability: { type: "live" },
+            createdAt: DateTime.makeUnsafe(0),
+          },
+        ],
+      } as unknown as OrchestrationV2ThreadProjection;
+      const management = yield* ThreadManagementService.ThreadManagementService.pipe(
+        Effect.provide(
+          ThreadManagementService.layer.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({}),
+                Layer.mock(CommandReceiptStore.CommandReceiptStoreV2)({}),
+                ServerSettings.layerTest(),
+                Layer.mock(Orchestrator.OrchestratorV2)({
+                  getThreadEventSequence: () => Effect.succeed(0),
+                  getThreadRecords: () => Effect.succeed(projection),
+                  streamStoredEventsFrom: () => Stream.never,
+                }),
+              ),
+            ),
+          ),
+        ),
+      );
+      const sent = yield* Ref.make(0);
+      yield* Effect.gen(function* () {
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const waiting = yield* mcp
+          .waitForThread(
+            {
+              ...client,
+              ...(scenario.linked
+                ? {
+                    client: {
+                      sessionId: "link-compat",
+                      label: "A",
+                      access: "full-access",
+                      linked: true,
+                    },
+                  }
+                : {}),
+              ...(scenario.agent
+                ? {
+                    thread: {
+                      threadId: launched.id,
+                      providerSessionId: "session:compat-wait",
+                      providerInstanceId: ProviderInstanceId.make("codex"),
+                    },
+                  }
+                : {}),
+            },
+            {
+              threadId: launched.id,
+              runId,
+              timeoutMs: 60_000,
+            },
+          )
+          .pipe(Effect.forkChild);
+        yield* TestClock.adjust("1 minute");
+        const result = yield* Fiber.join(waiting);
+        assert.equal(result.timedOut, !scenario.pending);
+        assert.equal(result.status, "running");
+        assert.equal(
+          result.pendingApproval?.requestId ?? null,
+          scenario.pending ? "request:compat-wait" : null,
+        );
+      }).pipe(
+        Effect.provide(
+          service([launched], sent, {
+            getThreadRecords: () => Effect.succeed(projection),
+            getProjectThreadRecords: () => Effect.succeed(projection),
+            waitForThread: management.waitForThread,
+          }),
+        ),
+      );
+    }),
+  );
+
   it.effect("waits on the caller's own thread without a separate shell lookup", () =>
     Effect.gen(function* () {
       const sent = yield* Ref.make(0);
@@ -4182,6 +4487,8 @@ describe("OrchestratorMcpService thread lookup", () => {
           runId: null,
           status: "idle",
           timedOut: false,
+          hasPendingQuestion: false,
+          pendingApproval: null,
         });
       }).pipe(
         Effect.provide(
@@ -4189,7 +4496,13 @@ describe("OrchestratorMcpService thread lookup", () => {
             getThreadShell: () => Effect.die("Unexpected shell lookup for the caller"),
             getThreadRecords: () => Effect.succeed(idleThreadProjection(launched)),
             waitForThread: () =>
-              Effect.succeed({ threadId: launched.id, run: null, timedOut: false }),
+              Effect.succeed({
+                threadId: launched.id,
+                run: null,
+                timedOut: false,
+                hasPendingQuestion: false,
+                pendingApproval: null,
+              }),
           }),
         ),
       );

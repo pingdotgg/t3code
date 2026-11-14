@@ -2045,6 +2045,8 @@ const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
     ["settled-run-live-tool", settledRun, "tool_call", "running"],
     ["settled-run-todo", settledRun, "todo_list", "running"],
     ["active-run-done-tool", activeRun, "tool_call", "completed"],
+    ["active-approval", activeRun, "approval_request", "waiting"],
+    ["active-question", activeRun, "user_input_request", "waiting"],
     ["active-run-todo", activeRun, "todo_list", "running"],
   ] as const;
   for (const [name, run, kind, status] of nodes) {
@@ -2127,6 +2129,8 @@ const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
   assert.deepEqual(
     nodeNames(yield* store.getThreadRecords(threadId, ["nodes"], { omitSettledLeafNodes: true })),
     [
+      "active-approval",
+      "active-question",
       "active-run-done-tool",
       "active-run-todo",
       "settled-root",
@@ -2142,7 +2146,12 @@ const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
   // A todo list stays running after its run ends. Counted as live work, every old run of a
   // long thread would ride along with each window, with its nodes and subagents.
   const liveWindow = (yield* store.getThreadSnapshotWindow(threadId, { rowLimit: 1 })).projection;
-  assert.deepEqual(nodeNames(liveWindow), ["active-run-todo", "settled-run-live-tool"]);
+  assert.deepEqual(nodeNames(liveWindow), [
+    "active-approval",
+    "active-question",
+    "active-run-todo",
+    "settled-run-live-tool",
+  ]);
   assert.deepEqual(
     liveWindow.plans.map((plan) => plan.id),
     [PlanId.make("plan:settled-leaf-nodes:active-run-todo")],

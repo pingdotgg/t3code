@@ -529,22 +529,38 @@ function endsTaskWait(result: OrchestratorMcpDelegateTaskResult): boolean {
 
 const isApprovalRequestKind = Schema.is(ProviderRequestKind);
 
-function pendingTaskApproval(
-  child: Pick<OrchestrationV2ThreadProjection, "runs" | "nodes" | "runtimeRequests">,
+function activeTaskRunIds(
+  child: Pick<OrchestrationV2ThreadProjection, "runs">,
   taskId: NodeId,
   originalRun: OrchestrationV2Run | undefined,
 ) {
-  const taskRunIds = new Set(
+  const queuedOrdinal = child.runs.reduce(
+    (last, run) =>
+      run.status === "queued" &&
+      (run.delegatedTaskId === taskId ||
+        (run.delegatedTaskId === undefined && run.id === originalRun?.id))
+        ? Math.max(last, run.ordinal)
+        : last,
+    -1,
+  );
+  return new Set(
     child.runs
       .filter(
         (run) =>
           !ThreadManagementService.isTerminalRunStatus(run.status) &&
           (run.delegatedTaskId === taskId ||
             // Legacy tasks own only their original run, not later turns in the child thread.
-            (run.delegatedTaskId === undefined && run.id === originalRun?.id)),
+            (run.delegatedTaskId === undefined && run.id === originalRun?.id) ||
+            (run.status !== "queued" && run.ordinal < queuedOrdinal)),
       )
       .map((run) => run.id),
   );
+}
+
+function pendingTaskApproval(
+  child: Pick<OrchestrationV2ThreadProjection, "nodes" | "runtimeRequests">,
+  taskRunIds: ReadonlySet<RunId>,
+) {
   let approval: OrchestratorMcpDelegateTaskResult["pendingApproval"] = null;
   let oldestCreatedAt = Infinity;
   for (const request of child.runtimeRequests) {
@@ -1623,9 +1639,14 @@ const make = Effect.gen(function* () {
           "providerTurns",
           "runtimeRequests",
           "nodes",
+          "turnItems",
         ],
-        // Progress reads only active or undelivered tasks under the child.
-        { messageRoles: ["user"], omitSettledLeafNodes: true, omitSettledSubagents: true },
+        {
+          messageRoles: ["user"],
+          omitSettledLeafNodes: true,
+          omitSettledSubagents: true,
+          turnItemTypes: ["secret_request"],
+        },
       )
       .pipe(Effect.mapError(threadManagementFailure));
     const childRun = delegatedTaskRun(childControls, task);
@@ -1727,6 +1748,7 @@ const make = Effect.gen(function* () {
         instanceId: task.providerInstanceId,
         model: task.model,
       };
+    const taskRunIds = activeTaskRunIds(childControls, task.id, childRun);
     const result = {
       taskId: task.id,
       childThreadId: task.childThreadId,
@@ -1755,16 +1777,30 @@ const make = Effect.gen(function* () {
           : latestTerminalResultContextTransferId,
       hasPendingQuestion:
         !isTerminalTaskStatus(status) &&
-        childControls.runtimeRequests.some(
-          (request) =>
-            request.kind === "user_input" &&
-            request.status === "pending" &&
-            request.responseCapability.type === "live",
-        ),
+        (childControls.turnItems.some(
+          (item) =>
+            item.type === "secret_request" &&
+            item.status === "waiting" &&
+            item.nodeId !== null &&
+            item.runId !== null &&
+            taskRunIds.has(item.runId),
+        ) ||
+          childControls.runtimeRequests.some((request) => {
+            const requestRunId = childControls.nodes.find(
+              (node) => node.id === request.nodeId,
+            )?.runId;
+            return (
+              request.kind === "user_input" &&
+              request.status === "pending" &&
+              request.responseCapability.type === "live" &&
+              requestRunId != null &&
+              taskRunIds.has(requestRunId)
+            );
+          })),
       pendingApproval:
         isTerminalTaskStatus(status) || task.completionDelivery?.state === "disposed"
           ? null
-          : pendingTaskApproval(childControls, task.id, childRun),
+          : pendingTaskApproval(childControls, taskRunIds),
       waitTimedOut,
     } satisfies OrchestratorMcpDelegateTaskResult;
     const response: OrchestratorMcpDelegateTaskResult =
@@ -1972,28 +2008,41 @@ const make = Effect.gen(function* () {
         childThreadId === null
           ? TASK_WAKE_EVENTS.filter(({ thread }) => thread === "parent")
           : TASK_WAKE_EVENTS;
-      return yield* Stream.mergeAll(
-        wakeEvents.map(({ thread, eventType }) =>
+      const streams = wakeEvents.map(({ thread, eventType }) =>
+        threadManagement
+          .streamStoredEventsFrom({
+            threadId:
+              thread === "parent" || childThreadId === null ? scope.thread.threadId : childThreadId,
+            afterSequence,
+            eventType,
+          })
+          .pipe(
+            Stream.filter(
+              ({ event }) =>
+                thread === "child" ||
+                event.type !== "subagent.updated" ||
+                event.payload.id === taskId,
+            ),
+          ),
+      );
+      if (childThreadId !== null) {
+        streams.push(
           threadManagement
             .streamStoredEventsFrom({
-              threadId:
-                thread === "parent" || childThreadId === null
-                  ? scope.thread.threadId
-                  : childThreadId,
+              threadId: childThreadId,
               afterSequence,
-              eventType,
+              eventType: "turn-item.updated",
             })
             .pipe(
               Stream.filter(
-                ({ event }) =>
-                  thread === "child" ||
-                  event.type !== "subagent.updated" ||
-                  event.payload.id === taskId,
+                (stored) =>
+                  stored.event.type === "turn-item.updated" &&
+                  stored.event.payload.type === "secret_request",
               ),
             ),
-        ),
-        { concurrency: "unbounded" },
-      ).pipe(
+        );
+      }
+      return yield* Stream.mergeAll(streams, { concurrency: "unbounded" }).pipe(
         Stream.mapError(streamError),
         Stream.mapEffect(() => readTask(scope, taskId, false, true)),
         Stream.filter(endsTaskWait),
@@ -3356,6 +3405,8 @@ const make = Effect.gen(function* () {
           projectId: target.thread.projectId,
           threadId: input.threadId,
           ...(input.runId === undefined ? {} : { runId: input.runId }),
+          // CLIs and linked peers' followers read every early return as a finished run.
+          returnOnInput: scope.thread !== undefined,
           timeoutMs: Math.min(
             MAX_WAIT_TIMEOUT_MS,
             Math.max(1, input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS),
@@ -3391,6 +3442,8 @@ const make = Effect.gen(function* () {
         runId: result.run?.id ?? null,
         status,
         timedOut: result.timedOut,
+        hasPendingQuestion: result.hasPendingQuestion,
+        pendingApproval: result.pendingApproval,
         ...(wakesCaller ? { next: ORCHESTRATOR_MCP_RUNNING_TASK_NEXT } : {}),
         ...(result.resultRun === undefined
           ? {}
