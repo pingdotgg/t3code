@@ -43,6 +43,7 @@ import {
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { parseGitCloneProgressLine } from "../project/gitCloneProgress.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
@@ -220,6 +221,11 @@ export class ThreadLaunchService extends Context.Service<
     >;
     /** True only when the project's folder is known not to be a Git repository. */
     readonly isNonGitProject: (projectId: ProjectId) => Effect.Effect<boolean>;
+    /** The base a new worktree gets when none was chosen; null when the project is unknown. */
+    readonly defaultWorktreeBaseRef: (
+      projectId: ProjectId,
+      startFromOrigin: boolean,
+    ) => Effect.Effect<string | null, ProjectService.ProjectOperationError>;
     readonly retryPreparation: (
       input: ThreadLaunchPreparationInput,
     ) => Effect.Effect<
@@ -232,6 +238,50 @@ export class ThreadLaunchService extends Context.Service<
 >()("t3/orchestration-v2/ThreadLaunchService") {}
 
 const isThreadLaunchError = Schema.is(ThreadLaunchError);
+
+/**
+ * The primary remote's default branch, else a conventional `main` or `master`, else the
+ * checked-out branch. A detached or empty repository gets `main`.
+ */
+const resolveDefaultWorktreeBaseRef = Effect.fn(
+  "ThreadLaunchService.resolveDefaultWorktreeBaseRef",
+)(function* (
+  git: Pick<
+    GitVcsDriver.GitVcsDriver["Service"],
+    "resolvePrimaryRemoteName" | "resolveDefaultBranchName" | "resolveCommit" | "resolveBranchName"
+  >,
+  cwd: string,
+  startFromOrigin: boolean,
+) {
+  const refExists = (revision: string) =>
+    git.resolveCommit({ cwd, revision }).pipe(
+      Effect.as(true),
+      Effect.orElseSucceed(() => false),
+    );
+  const remoteName = yield* git
+    .resolvePrimaryRemoteName(cwd)
+    .pipe(Effect.orElseSucceed(() => null));
+  const conventional = ["main", "master"];
+  if (remoteName !== null) {
+    const remoteDefault = yield* git
+      .resolveDefaultBranchName(cwd, remoteName)
+      .pipe(Effect.orElseSucceed(() => null));
+    // Fetch does not update a recorded HEAD, so it can outlive the branch it names.
+    for (const branch of remoteDefault === null ? conventional : [remoteDefault, ...conventional]) {
+      if (!startFromOrigin && (yield* refExists(`refs/heads/${branch}`))) return branch;
+      // Launch resolves a bare name through a local branch's upstream, or else assumes `origin`.
+      if (yield* refExists(`refs/remotes/${remoteName}/${branch}`)) {
+        return `${remoteName}/${branch}`;
+      }
+    }
+  }
+  // Local-only repositories, or a remote with neither a usable HEAD nor a conventional branch.
+  for (const branch of conventional) {
+    if (yield* refExists(`refs/heads/${branch}`)) return branch;
+  }
+  const current = yield* git.resolveBranchName(cwd, "HEAD").pipe(Effect.orElseSucceed(() => null));
+  return current ?? "main";
+});
 
 function failureDetail(error: unknown): string {
   if (isThreadLaunchError(error)) {
@@ -248,6 +298,7 @@ const make = Effect.gen(function* () {
   const cloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
   const terminals = yield* TerminalManager.TerminalManager;
   const git = yield* GitWorkflow.GitWorkflowService;
+  const gitDriver = yield* GitVcsDriver.GitVcsDriver;
   const checkpointStore = yield* CheckpointStore.CheckpointStore;
   const setupScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
@@ -446,6 +497,17 @@ const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => false),
     );
   });
+
+  const defaultWorktreeBaseRef: ThreadLaunchService["Service"]["defaultWorktreeBaseRef"] =
+    Effect.fn("ThreadLaunchService.defaultWorktreeBaseRef")(function* (projectId, startFromOrigin) {
+      const project = yield* projects.getById(projectId);
+      if (Option.isNone(project)) return null;
+      return yield* resolveDefaultWorktreeBaseRef(
+        gitDriver,
+        project.value.workspaceRoot,
+        startFromOrigin,
+      );
+    });
 
   const prepareInBackground = Effect.fn("ThreadLaunchService.prepareInBackground")(function* (
     input: PreparationInput,
@@ -1421,6 +1483,7 @@ const make = Effect.gen(function* () {
     launch,
     checkWorktreeBase,
     isNonGitProject,
+    defaultWorktreeBaseRef,
     retryPreparation,
     prepareRun,
   });

@@ -9,7 +9,7 @@ import { BranchPicker, BranchPickerRefItem } from "./BranchPicker";
 import { resolveBranchTriggerLabel, sanitizeNewRefName } from "./BranchToolbar.logic";
 import { MiddleTruncate } from "./ui/middle-truncate";
 import { Button } from "./ui/button";
-import { ComboboxTrigger } from "./ui/combobox";
+import { ComboboxItem, ComboboxTrigger } from "./ui/combobox";
 
 export function WorktreeBaseBranchPicker({
   environmentId,
@@ -41,22 +41,35 @@ export function WorktreeBaseBranchPicker({
     cwd && value
       ? vcsEnvironment.listRefs({
           environmentId,
-          input: { cwd, query: value, limit: 10 },
+          input: { cwd, query: value, limit: 10, includeMatchingRemoteRefs: true },
         })
       : null,
   );
   const selectedRef =
     branches.refs.find((branch) => branch.name === value) ??
     selectedRefQuery.data?.refs.find((branch) => branch.name === value);
-  const label = resolveBranchTriggerLabel({
-    activeWorktreePath: null,
-    effectiveEnvMode: "worktree",
-    resolvedActiveBranch: value || null,
-    resolvedActiveBranchIsRemote: selectedRef ? selectedRef.isRemote === true : null,
-    startFromOrigin,
-  });
+  // A blank value saves as the project's default branch, which the server resolves.
+  const label = value
+    ? resolveBranchTriggerLabel({
+        activeWorktreePath: null,
+        effectiveEnvMode: "worktree",
+        resolvedActiveBranch: value,
+        resolvedActiveBranchIsRemote: selectedRef ? selectedRef.isRemote === true : null,
+        startFromOrigin,
+      })
+    : "Default branch";
   const branchByName = new Map(branches.refs.map((branch) => [branch.name, branch]));
+  if (selectedRef && selectedRef.name.toLowerCase().includes(query.trim().toLowerCase())) {
+    branchByName.set(selectedRef.name, selectedRef);
+  }
   const items = [...branchByName.keys()];
+  if (
+    value &&
+    !branchByName.has(value) &&
+    value.toLowerCase().includes(query.trim().toLowerCase())
+  ) {
+    items.unshift(value);
+  }
   const hasNextPage = branches.data?.nextCursor != null;
   const statusText =
     branches.error ??
@@ -88,6 +101,18 @@ export function WorktreeBaseBranchPicker({
       isFetchingNextPage={branches.isFetchingNextPage}
       onLoadNext={branches.loadNext}
       statusText={statusText}
+      actions={
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            onValueChange("");
+            handleOpenChange(false);
+          }}
+        >
+          Default branch
+        </Button>
+      }
       originControl={{ checked: startFromOrigin, onCheckedChange: onStartFromOriginChange }}
       popupProps={{ align: "start", side: "bottom", className: "flex w-80 flex-col" }}
       renderItem={(name, index) => {
@@ -102,7 +127,18 @@ export function WorktreeBaseBranchPicker({
               handleOpenChange(false);
             }}
           />
-        ) : null;
+        ) : (
+          <ComboboxItem
+            index={index}
+            value={name}
+            onClick={() => {
+              onValueChange(name);
+              handleOpenChange(false);
+            }}
+          >
+            <MiddleTruncate value={name} />
+          </ComboboxItem>
+        );
       }}
     >
       <ComboboxTrigger

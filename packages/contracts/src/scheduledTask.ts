@@ -291,6 +291,8 @@ export const ScheduledTaskUpsertInput = Schema.Struct({
   /** Omitted: keep the stored mode, or derive it from `threadId` for a new or rebound task. */
   threadMode: Schema.optional(ScheduledTaskThreadMode),
   workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
+  /** The worktree base was left unchosen: save the project's default branch. Older servers keep `baseRef`. */
+  defaultBaseRef: Schema.optional(Schema.Boolean),
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,

@@ -38,6 +38,27 @@ function setup() {
 }
 
 describe("WorktreeBaseBranchPicker", () => {
+  it("keeps the saved ref selectable when lookup metadata is absent", async () => {
+    setup();
+    const onValueChange = vi.fn();
+    await using screen = await render(
+      <WorktreeBaseBranchPicker
+        environmentId={EnvironmentId.make("primary")}
+        cwd="/repo"
+        value="origin/master"
+        onValueChange={onValueChange}
+        startFromOrigin={false}
+        onStartFromOriginChange={() => {}}
+      />,
+    );
+    await userEvent.click(screen.getByRole("combobox"));
+    const saved = page.getByRole("option", { name: "origin/ master", exact: true });
+    await expect.element(saved).toBeVisible();
+    await expect.element(saved).toHaveAttribute("aria-selected", "true");
+    await userEvent.click(saved);
+    expect(onValueChange).toHaveBeenCalledExactlyOnceWith("origin/master");
+  });
+
   it.each([
     { keys: "{Enter}", selected: "main" },
     { keys: "{ArrowDown}{Enter}", selected: "origin/main" },

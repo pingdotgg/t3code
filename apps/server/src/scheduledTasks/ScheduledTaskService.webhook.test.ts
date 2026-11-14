@@ -23,6 +23,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 
+import * as ProjectService from "../project/ProjectService.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
@@ -163,6 +164,7 @@ const withService = <A, E>(
     readonly secretsByRef: Map<string, string>;
   }) => Effect.Effect<A, E, never>,
   options: {
+    readonly defaultWorktreeBaseRef?: ThreadLaunchService.ThreadLaunchService["Service"]["defaultWorktreeBaseRef"];
     readonly onFrame?: () => void;
     readonly frameGate?: {
       readonly started: Deferred.Deferred<void>;
@@ -215,6 +217,10 @@ const withService = <A, E>(
               }),
           }),
       Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+        isNonGitProject: () => Effect.succeed(false),
+        ...(options.defaultWorktreeBaseRef
+          ? { defaultWorktreeBaseRef: options.defaultWorktreeBaseRef }
+          : {}),
         launch: (input) =>
           Effect.suspend(() => {
             if (options.completedLaunches?.has(input.commandId))
@@ -846,53 +852,84 @@ it.effect("a signature can take the user's secret by ref, which works only once"
   ),
 );
 
-it.effect("a retried save with an already used secretRef keeps the stored secret", () =>
-  withService(({ service, launches, secretsByRef }) =>
-    Effect.gen(function* () {
-      secretsByRef.set("secret-ref:00000000000000000000000000000002", "github-secret");
-      const save = webhookTaskInput({
-        id: undefined,
-        commandId: "command:mcp:schedule-task:release-hook",
-        schedule: {
-          type: "webhook",
-          signature: {
-            header: "x-hub-signature-256",
-            encoding: "hex",
-            prefix: "sha256=",
-            secretRef: "secret-ref:00000000000000000000000000000002",
-          },
-        },
-      });
-      const first = yield* service.upsert(yield* save);
-      const retried = yield* service.upsert(
-        yield* webhookTaskInput({
-          id: undefined,
-          commandId: "command:mcp:schedule-task:release-hook",
-          schedule: {
-            type: "webhook",
-            signature: {
-              header: "x-hub-signature-256",
-              encoding: "hex",
-              prefix: "sha256=",
-              secretRef: "secret-ref:00000000000000000000000000000002",
-              secret: "made-up-secret",
+it.effect.each([false, true])(
+  "a retried save keeps the signing secret (project lookup failed: %s)",
+  (lookupFails) => {
+    let failLookup = lookupFails;
+    return withService(
+      ({ service, launches, secretsByRef }) =>
+        Effect.gen(function* () {
+          secretsByRef.set("secret-ref:00000000000000000000000000000002", "github-secret");
+          const save = webhookTaskInput({
+            id: undefined,
+            commandId: "command:mcp:schedule-task:release-hook",
+            ...(lookupFails
+              ? {
+                  defaultBaseRef: true,
+                  workspaceStrategy: { type: "worktree", baseRef: "main", startFromOrigin: true },
+                }
+              : {}),
+            schedule: {
+              type: "webhook",
+              signature: {
+                header: "x-hub-signature-256",
+                encoding: "hex",
+                prefix: "sha256=",
+                secretRef: "secret-ref:00000000000000000000000000000002",
+              },
             },
-          },
+          });
+          if (lookupFails) {
+            const failure = yield* service.upsert(yield* save).pipe(Effect.flip);
+            assert.include(failure.message, "Could not resolve");
+            assert.deepEqual((yield* service.list()).tasks, []);
+            failLookup = false;
+          }
+          const first = yield* service.upsert(yield* save);
+          const retried = yield* service.upsert(
+            yield* webhookTaskInput({
+              id: undefined,
+              commandId: "command:mcp:schedule-task:release-hook",
+              schedule: {
+                type: "webhook",
+                signature: {
+                  header: "x-hub-signature-256",
+                  encoding: "hex",
+                  prefix: "sha256=",
+                  secretRef: "secret-ref:00000000000000000000000000000002",
+                  secret: "made-up-secret",
+                },
+              },
+            }),
+          );
+          assert.equal(retried.task.id, first.task.id);
+          const signed = yield* service.triggerWebhook(
+            requestFor(retried.task, {
+              headers: {
+                "content-type": "application/json",
+                "x-hub-signature-256": githubSignature("github-secret"),
+              },
+            }),
+          );
+          assert.equal(signed._tag, "accepted");
+          yield* Queue.take(launches);
         }),
-      );
-      assert.equal(retried.task.id, first.task.id);
-      const signed = yield* service.triggerWebhook(
-        requestFor(retried.task, {
-          headers: {
-            "content-type": "application/json",
-            "x-hub-signature-256": githubSignature("github-secret"),
-          },
-        }),
-      );
-      assert.equal(signed._tag, "accepted");
-      yield* Queue.take(launches);
-    }),
-  ),
+      {
+        defaultWorktreeBaseRef: (projectId) =>
+          Effect.suspend(() =>
+            failLookup
+              ? Effect.fail(
+                  new ProjectService.ProjectOperationError({
+                    operation: "read-project",
+                    projectId,
+                    cause: "unavailable",
+                  }),
+                )
+              : Effect.succeed("master"),
+          ),
+      },
+    );
+  },
 );
 
 it.effect("a signature without any secret is refused", () =>

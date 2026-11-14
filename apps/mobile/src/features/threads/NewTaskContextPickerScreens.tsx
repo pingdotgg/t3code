@@ -345,6 +345,8 @@ export function BranchPickerScreen(props: {
   readonly onRefresh: () => void;
   readonly onLoadMore: () => void;
   readonly selectionDisabled?: boolean;
+  readonly savedBranchChoice?: { readonly name: string; readonly onSelect: () => void };
+  readonly defaultBranchChoice?: { readonly selected: boolean; readonly onSelect: () => void };
   readonly onSelect: (branch: VcsRef) => void;
   readonly worktree?: {
     readonly startFromOrigin: boolean;
@@ -390,20 +392,43 @@ export function BranchPickerScreen(props: {
     />
   );
 
-  const branchListHeader = props.worktree ? (
-    <View
-      className={cn(
-        "mb-3 overflow-hidden",
-        Platform.OS === "android" ? "rounded-[28px]" : "rounded-2xl",
-      )}
-    >
-      <ToggleRow
-        onValueChange={props.worktree.onChangeStartFromOrigin}
-        title="Start from remote"
-        value={props.worktree.startFromOrigin}
-      />
-    </View>
-  ) : null;
+  const branchListHeader = (
+    <>
+      {props.defaultBranchChoice ? (
+        <SelectionRow
+          isFirst
+          isLast
+          title="Default branch"
+          selected={props.defaultBranchChoice.selected}
+          onPress={props.defaultBranchChoice.onSelect}
+        />
+      ) : null}
+      {props.worktree ? (
+        <View
+          className={cn(
+            "mb-3 overflow-hidden",
+            Platform.OS === "android" ? "rounded-[28px]" : "rounded-2xl",
+          )}
+        >
+          <ToggleRow
+            onValueChange={props.worktree.onChangeStartFromOrigin}
+            title="Start from remote"
+            value={props.worktree.startFromOrigin}
+          />
+        </View>
+      ) : null}
+      {props.savedBranchChoice ? (
+        <SelectionRow
+          icon="arrow.triangle.branch"
+          isFirst
+          isLast
+          title={props.savedBranchChoice.name}
+          selected
+          onPress={props.savedBranchChoice.onSelect}
+        />
+      ) : null}
+    </>
+  );
 
   const branchContent =
     props.branches.length === 0 ? (

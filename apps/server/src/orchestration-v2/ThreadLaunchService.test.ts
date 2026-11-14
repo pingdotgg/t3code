@@ -122,6 +122,8 @@ const claudeAdapter = {
 } as ProviderAdapter.ProviderAdapterV2["Service"];
 
 interface HarnessOptions {
+  readonly projectRoot?: string;
+  readonly gitDriver?: Layer.Layer<GitVcsDriver.GitVcsDriver>;
   readonly closeTerminal?: TerminalManager.TerminalManager["Service"]["close"];
   readonly adapters?: ReadonlyArray<ProviderAdapter.ProviderAdapterV2["Service"]>;
   readonly managedFolders?: Layer.Layer<ManagedProjectFolders.ManagedProjectFolders>;
@@ -191,6 +193,7 @@ function makeHarness(options: HarnessOptions = {}) {
     Layer.mock(CheckpointStore.CheckpointStore)({
       isGitRepository: options.isGitRepository ?? (() => Effect.succeed(true)),
     }),
+    options.gitDriver ?? Layer.mock(GitVcsDriver.GitVcsDriver)({}),
     Layer.succeed(ProjectService.ProjectService, {
       create: () => Effect.die("unused"),
       bootstrap: () => Effect.die("unused"),
@@ -200,7 +203,10 @@ function makeHarness(options: HarnessOptions = {}) {
       getById: (id) =>
         Effect.succeed(
           id === projectId
-            ? Option.some(project)
+            ? Option.some({
+                ...project,
+                workspaceRoot: options.projectRoot ?? project.workspaceRoot,
+              })
             : id === otherProjectId
               ? Option.some(otherProject)
               : Option.none(),
@@ -1329,6 +1335,125 @@ it.effect.each(["stable", "upstream/release"])(
     ),
 );
 
+it.effect.each([
+  {
+    name: "a Settings default",
+    branch: "trunk",
+    remote: true,
+    defaultBaseRef: true,
+    baseRef: "main",
+    saved: "origin/trunk",
+  },
+  {
+    name: "a Settings local default",
+    branch: "master",
+    remote: true,
+    startFromOrigin: false,
+    defaultBaseRef: true,
+    baseRef: "main",
+    saved: "master",
+  },
+  // An explicit base that does not exist is kept, so its runs fail rather than silently moving.
+  {
+    name: "an explicit missing main",
+    branch: "master",
+    remote: false,
+    defaultBaseRef: undefined,
+    baseRef: "main",
+    saved: "main",
+  },
+])("a scheduled task saved with $name on $branch (remote: $remote) saves $saved", (row) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const git = yield* GitVcsDriver.GitVcsDriver;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "scheduled-default-base-" });
+    const cwd = `${directory}/repo`;
+    const worktreePath = `${directory}/worktree`;
+    yield* fs.makeDirectory(cwd);
+    const command = (at: string, args: string[]) =>
+      git.execute({ operation: "launch-test", cwd: at, args });
+    yield* command(cwd, ["init", "-b", row.branch]);
+    yield* command(cwd, ["config", "user.name", "Test"]);
+    yield* command(cwd, ["config", "user.email", "test@example.test"]);
+    yield* command(cwd, ["commit", "--allow-empty", "-m", "initial"]);
+    let head = (yield* command(cwd, ["rev-parse", "HEAD"])).stdout.trim();
+    if (row.remote) {
+      yield* command(cwd, ["init", "--bare", `${directory}/remote.git`]);
+      yield* command(cwd, ["remote", "add", "origin", `${directory}/remote.git`]);
+      yield* command(cwd, ["push", "-u", "origin", row.branch]);
+      yield* command(cwd, ["remote", "set-head", "origin", row.branch]);
+    }
+    if (row.startFromOrigin === false) {
+      yield* command(cwd, ["commit", "--allow-empty", "-m", "local ahead of tracking"]);
+      head = (yield* command(cwd, ["rev-parse", "HEAD"])).stdout.trim();
+      assert.notEqual(head, (yield* command(cwd, ["rev-parse", "origin/master"])).stdout.trim());
+    }
+    const harness = makeHarness({
+      projectRoot: cwd,
+      gitDriver: Layer.succeed(GitVcsDriver.GitVcsDriver, git),
+      hasCommit: ({ refName }) =>
+        command(cwd, ["rev-parse", "--verify", `${refName}^{commit}`]).pipe(
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        ),
+      remoteExists: (input) => git.remoteExists({ ...input, cwd }),
+      fetchWorktreeBaseCommit: (input) => git.fetchWorktreeBaseCommit({ ...input, cwd }),
+      createWorktree: (input, options) =>
+        git.createWorktree({ ...input, cwd, path: worktreePath }, options),
+      git: {
+        repositoryRoot: () => Effect.succeed(cwd),
+        resolveWorktreeBaseRemote: (input) => git.resolveWorktreeBaseRemote({ ...input, cwd }),
+      },
+    });
+    const layerScheduledTasks = ScheduledTasks.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          harness.layer,
+          NodeCrypto.layer,
+          Scheduler.layer,
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          ManagedPolicy.layerTest(),
+          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const tasks = yield* ScheduledTasks.ScheduledTaskService;
+      const save = tasks.upsert({
+        ...scheduledTaskInput("scheduled-task:default-base", projectId),
+        workspaceStrategy: {
+          type: "worktree",
+          baseRef: row.baseRef,
+          startFromOrigin: row.startFromOrigin ?? true,
+        },
+        ...(row.defaultBaseRef === undefined ? {} : { defaultBaseRef: row.defaultBaseRef }),
+      });
+      const { task } = yield* save;
+      assert.deepEqual(task.workspaceStrategy, {
+        type: "worktree",
+        baseRef: row.saved,
+        startFromOrigin: row.startFromOrigin ?? true,
+      });
+      const { threadId } = yield* tasks.runNow({ id: task.id });
+      const prepared = yield* preparationSettled(threadId!);
+      if (row.saved === "main") {
+        assert.equal(prepared.runs[0]?.status, "failed");
+        return;
+      }
+      assert.notEqual(prepared.runs[0]?.status, "failed");
+      assert.equal(prepared.thread.worktreePath, worktreePath);
+      assert.equal((yield* command(worktreePath, ["rev-parse", "HEAD"])).stdout.trim(), head);
+    }).pipe(Effect.provide(Layer.mergeAll(harness.layer, layerScheduledTasks)));
+  }).pipe(
+    Effect.provide(
+      GitVcsDriver.layer.pipe(
+        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "scheduled-default-git-" })),
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      ),
+    ),
+  ),
+);
+
 it.effect("fetches the origin base from the remote it already resolved", () => {
   let fetchInput: Deferred.Deferred<unknown> | null = null;
   const harness = makeHarness({
@@ -2314,6 +2439,7 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
           ),
         checkWorktreeBase: launches.checkWorktreeBase,
         isNonGitProject: launches.isNonGitProject,
+        defaultWorktreeBaseRef: launches.defaultWorktreeBaseRef,
         retryPreparation: launches.retryPreparation,
         prepareRun: launches.prepareRun,
       }),
@@ -3030,3 +3156,111 @@ it.effect("replays an accepted send after the project disables the instance", ()
     }
   }).pipe(Effect.provide(Layer.mergeAll(harness.layer, layerFiles)));
 });
+
+it.effect.each([
+  {
+    name: "no remote, only master",
+    remote: null,
+    remoteDefault: null,
+    refs: ["refs/heads/master"],
+    baseRef: "master",
+  },
+  {
+    name: "no remote, main and master",
+    remote: null,
+    remoteDefault: null,
+    refs: ["refs/heads/master", "refs/heads/main"],
+    baseRef: "main",
+  },
+  {
+    name: "no remote, neither main nor master",
+    remote: null,
+    remoteDefault: null,
+    refs: ["refs/heads/develop"],
+    current: "develop",
+    baseRef: "develop",
+  },
+  {
+    name: "no remote, nothing conventional, detached",
+    remote: null,
+    remoteDefault: null,
+    refs: [],
+    baseRef: "main",
+  },
+  {
+    name: "no recorded HEAD, remote main and a stale local master",
+    remote: "origin",
+    remoteDefault: null,
+    refs: ["refs/heads/master", "refs/remotes/origin/main"],
+    baseRef: "origin/main",
+  },
+  {
+    name: "no recorded HEAD, master only on the remote",
+    remote: "origin",
+    remoteDefault: null,
+    refs: ["refs/remotes/origin/master"],
+    baseRef: "origin/master",
+  },
+  {
+    name: "no recorded HEAD, local main and master only on the remote",
+    remote: "origin",
+    remoteDefault: null,
+    refs: ["refs/heads/main", "refs/remotes/origin/master"],
+    baseRef: "origin/master",
+  },
+  {
+    name: "no recorded HEAD, nothing conventional on the remote, local main",
+    remote: "origin",
+    remoteDefault: null,
+    refs: ["refs/heads/main", "refs/remotes/origin/develop"],
+    baseRef: "main",
+  },
+  {
+    name: "a recorded HEAD whose branch is gone",
+    remote: "origin",
+    remoteDefault: "main",
+    refs: ["refs/heads/main", "refs/remotes/origin/master"],
+    baseRef: "origin/master",
+  },
+  {
+    name: "a remote not called origin",
+    remote: "upstream",
+    remoteDefault: "develop",
+    refs: ["refs/remotes/upstream/develop"],
+    baseRef: "upstream/develop",
+  },
+  {
+    name: "a remote not called origin, no recorded HEAD",
+    remote: "upstream",
+    remoteDefault: null,
+    refs: ["refs/remotes/upstream/main"],
+    baseRef: "upstream/main",
+  },
+])("$name defaults to $baseRef", ({ remote, remoteDefault, refs, current, baseRef }) =>
+  Effect.gen(function* () {
+    const gitFailure = (cwd: string) =>
+      new GitCommandError({
+        operation: "GitVcsDriver.test",
+        command: "git",
+        cwd,
+        detail: "Unknown revision or remote",
+      });
+    const harness = makeHarness({
+      gitDriver: Layer.mock(GitVcsDriver.GitVcsDriver)({
+        resolvePrimaryRemoteName: (cwd) =>
+          remote === null ? Effect.fail(gitFailure(cwd)) : Effect.succeed(remote),
+        resolveDefaultBranchName: () => Effect.succeed(remoteDefault),
+        resolveBranchName: () => Effect.succeed(current ?? null),
+        resolveCommit: ({ cwd, revision }) =>
+          refs.includes(revision)
+            ? Effect.succeed({ commitSha: "abc123" })
+            : Effect.fail(gitFailure(cwd)),
+      }),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      assert.equal(yield* launches.defaultWorktreeBaseRef(projectId, true), baseRef);
+      assert.isNull(yield* launches.defaultWorktreeBaseRef(ProjectId.make("unknown"), true));
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);

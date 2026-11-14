@@ -18,6 +18,8 @@ import {
   useVisibleThreadShells,
 } from "../../state/entities";
 import { useDebouncedValue, usePaginatedBranches, useThreadSearch } from "../../state/queries";
+import { useEnvironmentQuery } from "../../state/query";
+import { vcsEnvironment } from "../../state/vcs";
 import { BranchPickerScreen } from "../threads/NewTaskContextPickerScreens";
 import { ThreadSettingsPickerScreen } from "../threads/ThreadSettingsSheet";
 import { SettingsScreen } from "./components/SettingsScreen";
@@ -137,15 +139,59 @@ export function ScheduledTaskBranchPickerRouteScreen() {
     cwd: project?.workspaceRoot ?? null,
     query: debouncedQuery,
   });
+  const selectedRefQuery = useEnvironmentQuery(
+    editor && project && editor.draft.baseRef
+      ? vcsEnvironment.listRefs({
+          environmentId: editor.environmentId,
+          input: {
+            cwd: project.workspaceRoot,
+            query: editor.draft.baseRef,
+            limit: 10,
+            includeMatchingRemoteRefs: true,
+          },
+        })
+      : null,
+  );
+  const selectedRef = selectedRefQuery.data?.refs.find((ref) => ref.name === editor?.draft.baseRef);
   const visibleBranches = branches.refs.filter(
     (branch) => !branch.isRemote && branch.name.toLowerCase().includes(query.trim().toLowerCase()),
   );
+
+  if (
+    selectedRef &&
+    !visibleBranches.some((ref) => ref.name === selectedRef.name) &&
+    selectedRef.name.toLowerCase().includes(query.trim().toLowerCase())
+  )
+    visibleBranches.unshift(selectedRef);
 
   if (!editor) return <MissingTaskDraft />;
 
   return (
     <BranchPickerScreen
       title="Base branch"
+      savedBranchChoice={
+        editor.draft.baseRef &&
+        !visibleBranches.some((ref) => ref.name === editor.draft.baseRef) &&
+        editor.draft.baseRef.toLowerCase().includes(query.trim().toLowerCase())
+          ? {
+              name: editor.draft.baseRef,
+              onSelect: () => {
+                void Haptics.selectionAsync();
+                navigation.goBack();
+              },
+            }
+          : undefined
+      }
+      defaultBranchChoice={{
+        selected: editor.draft.baseRef === "",
+        onSelect: () => {
+          void Haptics.selectionAsync();
+          setEditor((current) =>
+            current ? { ...current, draft: { ...current.draft, baseRef: "" } } : current,
+          );
+          navigation.goBack();
+        },
+      }}
       project={project}
       branches={visibleBranches}
       selectedBranchName={editor.draft.baseRef}
