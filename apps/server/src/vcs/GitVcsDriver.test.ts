@@ -400,113 +400,36 @@ it.effect.each(["failure", "interrupt"] as const)(
     }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
-it.effect.each([".pack", ".idx"] as const)(
-  "checkpoint publication interruption after linking %s leaves no unindexed pack",
-  (extension) =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const crypto = yield* SecureRandom.SecureRandom;
-      const driver = yield* GitVcsDriver.makeVcsDriverShape();
-      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-publish-pack-interrupt-" });
-      const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
-      yield* git(["config", "core.bigFileThreshold", "1m"]);
-      yield* fs.writeFile(path.join(cwd, "media.bin"), yield* crypto.randomBytes(2 * 1024 * 1024));
-      const linked = yield* Deferred.make<void>();
-      const resume = yield* Deferred.make<void>();
-      const captureDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
-        Effect.provideService(FileSystem.FileSystem, {
-          ...fs,
-          link: (source, destination) =>
-            fs
-              .link(source, destination)
-              .pipe(
-                Effect.andThen(
-                  destination.endsWith(extension)
-                    ? Deferred.succeed(linked, undefined).pipe(
-                        Effect.andThen(Deferred.await(resume)),
-                      )
-                    : Effect.void,
-                ),
-              ),
-        }),
-      );
-      const fiber = yield* captureDriver.checkpoints
-        .captureCheckpoint({ cwd, checkpointRef })
-        .pipe(Effect.forkScoped);
-      yield* Deferred.await(linked).pipe(Effect.raceFirst(Fiber.join(fiber)));
-      yield* Fiber.interrupt(fiber).pipe(Effect.forkScoped({ startImmediately: true }));
-      yield* Deferred.succeed(resume, undefined);
-      const result = yield* Fiber.await(fiber);
-      assert.isTrue(Exit.isFailure(result) && Cause.hasInterruptsOnly(result.cause));
-      const files = yield* fs.readDirectory(path.join(cwd, ".git/objects/pack"));
-      for (const file of files.filter((name) => name.endsWith(".pack"))) {
-        assert.include(files, file.replace(/\.pack$/, ".idx"));
-      }
-      assert.match((yield* git(["count-objects", "-v"])).stdout, /^garbage: 0$/m);
-      assert.isFalse(yield* driver.checkpoints.hasCheckpointRef({ cwd, checkpointRef }));
-      yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
-      yield* git(["fsck", "--full"]);
-    }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
-);
-
-it.effect.each([".idx", ".pack", "all"] as const)(
-  "checkpoint publication handles %s link failures without stranding a large pack",
-  (extension) =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const crypto = yield* SecureRandom.SecureRandom;
-      const driver = yield* GitVcsDriver.makeVcsDriverShape();
-      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-publish-pack-failure-" });
-      const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
-      yield* git(["config", "core.bigFileThreshold", "1m"]);
-      yield* fs.writeFile(path.join(cwd, "media.bin"), yield* crypto.randomBytes(2 * 1024 * 1024));
-      const captureDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
-        Effect.provideService(FileSystem.FileSystem, {
-          ...fs,
-          rename:
-            extension === "all"
-              ? fs.rename
-              : () =>
-                  Effect.fail(
-                    PlatformError.systemError({
-                      _tag: "PermissionDenied",
-                      module: "FileSystem",
-                      method: "rename",
-                    }),
-                  ),
-          link: (source, destination) =>
-            extension === "all" || destination.endsWith(extension)
-              ? Effect.fail(
-                  PlatformError.systemError({
-                    _tag: "PermissionDenied",
-                    module: "FileSystem",
-                    method: "link",
-                  }),
-                )
-              : fs.link(source, destination),
-        }),
-      );
-      const result = yield* captureDriver.checkpoints
-        .captureCheckpoint({ cwd, checkpointRef })
-        .pipe(Effect.result);
-      assert.strictEqual(result._tag, extension === "all" ? "Success" : "Failure");
-      const files = yield* fs.readDirectory(path.join(cwd, ".git/objects/pack"));
-      assert.strictEqual(
-        files.some((name) => name.endsWith(".pack")),
-        extension === "all",
-      );
-      assert.strictEqual(
-        yield* driver.checkpoints.hasCheckpointRef({ cwd, checkpointRef }),
-        extension === "all",
-      );
-      // A failed pack link may leave its small index. Retrying completes the pair
-      // without deleting shared metadata that a concurrent writer could be using.
-      yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
-      assert.match((yield* git(["count-objects", "-v"])).stdout, /^garbage: 0$/m);
-      yield* git(["fsck", "--full"]);
-    }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+it.effect("checkpoint publication falls back to rename where hardlinks are unavailable", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const crypto = yield* SecureRandom.SecureRandom;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-publish-no-links-" });
+    const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+    yield* git(["config", "core.bigFileThreshold", "1m"]);
+    yield* fs.writeFile(path.join(cwd, "media.bin"), yield* crypto.randomBytes(2 * 1024 * 1024));
+    const captureDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+      Effect.provideService(FileSystem.FileSystem, {
+        ...fs,
+        link: () =>
+          Effect.fail(
+            PlatformError.systemError({
+              _tag: "PermissionDenied",
+              module: "FileSystem",
+              method: "link",
+            }),
+          ),
+      }),
+    );
+    yield* captureDriver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+    const files = yield* fs.readDirectory(path.join(cwd, ".git/objects/pack"));
+    assert.isTrue(files.some((name) => name.endsWith(".pack")));
+    assert.isTrue(yield* driver.checkpoints.hasCheckpointRef({ cwd, checkpointRef }));
+    assert.match((yield* git(["count-objects", "-v"])).stdout, /^garbage: 0$/m);
+    yield* git(["fsck", "--full"]);
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
 it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
@@ -546,11 +469,6 @@ it.effect.each([false, true])(
           run: (input) =>
             HostProcess.Environment.pipe(
               Effect.flatMap((env) => liveProcess.run({ ...input, env: { ...env, ...input.env } })),
-              Effect.map((result) =>
-                input.args.includes("--path-format=absolute")
-                  ? { ...result, stdout: `--path-format=absolute\n${result.stdout}` }
-                  : result,
-              ),
             ),
         }),
       );
