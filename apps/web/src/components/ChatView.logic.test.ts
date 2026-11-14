@@ -1517,6 +1517,7 @@ describe("Open in for the host environment", () => {
           primaryEnvironmentId,
           hostEnvironmentId,
           remoteOpenMode: "local-exec",
+          isDesktopWslBackend: false,
         }),
       ).toBe(visible);
     }
