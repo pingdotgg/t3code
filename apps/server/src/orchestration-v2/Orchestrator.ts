@@ -116,7 +116,12 @@ import {
   isNativeMaintenanceCommand,
   resolveMessageDispatchIntent,
 } from "./CommandPolicy.ts";
-import { CommandReceiptStoreV2, type CommandReceiptV2 } from "./CommandReceiptStore.ts";
+import {
+  archivedByCascade,
+  CommandReceiptStoreV2,
+  type CommandReceiptV2,
+  supersedesCascade,
+} from "./CommandReceiptStore.ts";
 import {
   ContextHandoffServiceV2,
   readForkHistoryItems,
@@ -460,6 +465,9 @@ export interface OrchestratorV2Shape {
   readonly getThreadProjection: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadProjection, OrchestratorV2Error>;
+  readonly getSubagentChildThreads: (
+    ...args: Parameters<ProjectionStoreV2["Service"]["getSubagentChildThreads"]>
+  ) => Effect.Effect<ReadonlyArray<OrchestrationV2AppThread>, OrchestratorV2Error>;
   readonly getCheckpointContext: (
     threadId: ThreadId,
   ) => Effect.Effect<ProjectionCheckpointContext, OrchestratorV2Error>;
@@ -1772,6 +1780,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }),
       Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
     );
+
+  // A cascade walks the whole subtree itself, so its own commands start none.
+  const subagentCascadeEffects = Effect.fn("Orchestrator.subagentCascadeEffects")(function* (
+    { commandId, threadId }: { readonly commandId: CommandId; readonly threadId: ThreadId },
+    operation: "thread.archive" | "thread.unarchive" | "thread.delete",
+  ) {
+    if (yield* EffectOutbox.SubagentCascade) return [];
+    if ((yield* projectionStore.getSubagentChildThreads(threadId)).length === 0) return [];
+    // The outbox schema persists only the caller's runtime and interaction modes.
+    const limit = yield* DispatchModeLimit;
+    const request = { type: "subagent-threads.cascade", operation, limit } as const;
+    const id = `effect:${commandId}:subagent-threads.cascade`;
+    return [{ id, commandId, threadId, request } satisfies PendingOrchestrationEffectV2];
+  });
 
   /** Side chats live inside their parent, so deleting the parent deletes them too. */
   const liveSideChatIds = Effect.fn("Orchestrator.liveSideChatIds")(
@@ -5162,6 +5184,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ]);
         }
       }
+    }
+
+    if (command.type === "thread.archive" || command.type === "thread.unarchive") {
+      const cascade = yield* subagentCascadeEffects(command, command.type).pipe(
+        mapDispatchError(command),
+      );
+      yield* Ref.update(effects, (existing) => [...existing, ...cascade]);
     }
 
     if (command.type === "thread.metadata.update" && command.regenerateTitle === true) {
@@ -14768,7 +14797,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 (cause) => new OrchestratorProjectionError({ threadId: deletion.threadId, cause }),
               ),
             );
-          return yield* mapDispatchError(command)(
+          const plan = yield* mapDispatchError(command)(
             planThreadDeletion({
               command: deletion,
               projection,
@@ -14779,6 +14808,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               idAllocator,
             }),
           );
+          const cascade = yield* subagentCascadeEffects(deletion, deletion.type).pipe(
+            mapDispatchError(command),
+          );
+          return { ...plan, effects: [...plan.effects, ...cascade] };
         });
         // Checked under the thread lock: a message sent since the client looked keeps the thread.
         if (command.onlyIfUnused === true) {
@@ -15182,6 +15215,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .getThreadShell(threadId)
         .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
       if (shell !== null) yield* refuseAboveDispatchModeLimit(command, threadId, shell);
+    }
+
+    // Decided under the child's lock, so a newer independent choice on it always wins.
+    const cascade = yield* EffectOutbox.SubagentCascade;
+    if (
+      cascade?.source !== undefined &&
+      (command.type === "thread.archive" || command.type === "thread.unarchive")
+    ) {
+      const { source, path } = cascade;
+      const read = mapDispatchError(command);
+      const thread = yield* projectionStore.getThread(command.threadId).pipe(read);
+      const latest = yield* commandReceipts.getLatestLifecycle(command.threadId).pipe(read);
+      const applies =
+        thread.deletedAt === null &&
+        (command.type === "thread.archive"
+          ? thread.archivedAt === null && !supersedesCascade(latest, source, command.commandId)
+          : thread.archivedAt !== null &&
+            (yield* archivedByCascade(commandReceipts, latest, source.threadId, path).pipe(read)));
+      if (!applies) return { sequence: source.resultSequence, storedEvents: [] };
     }
 
     const plan = yield* dispatchOnce(command, sideChatIds).pipe(
@@ -16019,6 +16071,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           .listAppOwnedChildThreadIds(threadId)
           .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
       },
+    ),
+    getSubagentChildThreads: Effect.fn("OrchestratorV2.getSubagentChildThreads")((threadId) =>
+      projectionStore
+        .getSubagentChildThreads(threadId)
+        .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause }))),
     ),
     getThreadProjection: Effect.fn("OrchestratorV2.getThreadProjection")(function (threadId) {
       return projectionStore

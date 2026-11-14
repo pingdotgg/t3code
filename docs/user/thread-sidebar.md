@@ -276,6 +276,8 @@ fill the screen; close the full-screen view to return to the parent and inspecto
 Stop on a thread also stops the subagents it delegated to.
 Before archiving the parent, wait for its delegated tasks to finish or cancel them.
 
+Archiving, restoring or deleting a thread also applies to its subagent descendants, but not to forks. Restoring brings back only what the parent's archive archived, so independent archives and newer changes on a descendant stay as they are.
+
 Subagent threads started by the agent can't take messages; message the parent
 thread instead. When such a subagent needs an approval or an answer, the parent
 thread asks for it.
