@@ -320,6 +320,31 @@ describe("buildProjectGroups", () => {
     });
     expect(groups).toHaveLength(1);
     expect(groups[0]?.label).toBe("T3 Code");
+
+    // A subfolder group in repository_path mode keeps its own title.
+    const localIdentity = { ...repositoryIdentity, rootPath: "/work/t3code" };
+    const pathGroups = buildProjectGroups({
+      projects: [
+        makeProject("design", "/work/t3code/design", {
+          title: "Design docs",
+          hasCustomTitle: true,
+          repositoryIdentity: localIdentity,
+        }),
+        makeProject("design", "/remote/t3code/design", {
+          environmentId: EnvironmentId.make("remote"),
+          repositoryIdentity: {
+            ...repositoryIdentity,
+            rootPath: "/remote/t3code",
+            name: "T3CODE",
+            displayName: "t3 code",
+          },
+        }),
+        makeProject("t3code", "/work/t3code", { repositoryIdentity: localIdentity }),
+      ],
+      settings: settings("repository_path"),
+      preferredEnvironmentId: environmentId,
+    });
+    expect(pathGroups.map((group) => group.label)).toEqual(["Design docs", "t3code"]);
   });
 
   it("applies a physical-project override without dropping its siblings", () => {

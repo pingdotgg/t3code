@@ -199,6 +199,7 @@ export function resolveScratchProjectScopeKey(
 }
 
 export function deriveProjectGroupLabel(input: {
+  readonly groupKey: string;
   readonly representative: Pick<EnvironmentProject, "title" | "repositoryIdentity">;
   readonly members: ReadonlyArray<
     Pick<EnvironmentProject, "title" | "hasCustomTitle" | "repositoryIdentity">
@@ -230,15 +231,20 @@ export function deriveProjectGroupLabel(input: {
     return sharedRepositoryNames[0]!;
   }
 
-  // Members share a repository, so its name describes the whole group. Clones
-  // can disagree on its casing (each keeps its own remote URL's), and one
-  // member's title would label every thread with that one folder's name.
+  // A whole-repository group is named for the repository, not one member's folder:
+  // clones can disagree on its casing. A subfolder group keeps its own title.
   const representativeIdentity = input.representative.repositoryIdentity;
-  return (
-    (representativeIdentity ? repositoryGroupingDisplayNameOf(representativeIdentity) : null) ??
-    representativeIdentity?.name ??
-    input.representative.title
-  );
+  if (
+    representativeIdentity &&
+    input.groupKey === repositoryGroupingKeyOf(representativeIdentity)
+  ) {
+    return (
+      repositoryGroupingDisplayNameOf(representativeIdentity) ??
+      representativeIdentity.name ??
+      input.representative.title
+    );
+  }
+  return input.representative.title;
 }
 
 export interface ProjectGroupMember<TProject extends EnvironmentProject = EnvironmentProject> {
@@ -377,6 +383,7 @@ export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
           ? "No project"
           : members.length > 1
             ? deriveProjectGroupLabel({
+                groupKey: key,
                 representative,
                 members: members.map((member) => member.project),
               })
