@@ -124,7 +124,11 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
   }, []);
 
   return (
-    <ComposerBanner.Root ref={drawerRef} data-composer-stash-drawer="true">
+    <ComposerBanner.Root
+      ref={drawerRef}
+      className="flex min-h-0 flex-col after:shrink-0"
+      data-composer-stash-drawer="true"
+    >
       <ComposerBanner.Row
         render={<button type="button" />}
         aria-label="Close stash"
@@ -141,7 +145,7 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
           <ComposerBanner.ToggleIcon expanded />
         </ComposerBanner.Actions>
       </ComposerBanner.Row>
-      <ComposerBanner.Scroll>
+      <ComposerBanner.Scroll className="flex flex-col">
         <ComposerBanner.Children render={<ul role="list" />} aria-label="Stashed prompts">
           {entries.length === 0 ? (
             <ComposerBanner.Row render={<li />}>

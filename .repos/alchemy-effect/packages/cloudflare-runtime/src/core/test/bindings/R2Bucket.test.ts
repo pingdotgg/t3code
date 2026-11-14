@@ -28,9 +28,9 @@ import { describe, expect, it, layer } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as R2Bucket from "../../bindings/r2-bucket/index.ts";
 import * as Docker from "../../Docker.ts";
 import * as Globals from "../../globals/Globals.ts";
@@ -42,11 +42,7 @@ import * as Runtime from "../../Runtime.ts";
 import * as RuntimeServices from "../../RuntimeServices.ts";
 import * as Workerd from "../../workerd/Workerd.ts";
 import type { TestWorker } from "../helpers/runtime.ts";
-import {
-  localRuntimeLayer,
-  makeTempDirectory,
-  startTestWorker,
-} from "../helpers/runtime.ts";
+import { localRuntimeLayer, makeTempDirectory, startTestWorker } from "../helpers/runtime.ts";
 
 const WITHIN_EPSILON = 10_000;
 
@@ -221,9 +217,7 @@ export default {
 // Node-side R2 client and control stub
 // -----------------------------------------------------------------------------
 
-type EncodedValue =
-  | { kind: "text"; data: string }
-  | { kind: "arrayBuffer"; base64: string };
+type EncodedValue = { kind: "text"; data: string } | { kind: "arrayBuffer"; base64: string };
 
 type PutValue = string | ArrayBuffer | ArrayBufferView;
 
@@ -237,11 +231,7 @@ function encodeValue(value: PutValue): EncodedValue {
   }
   return {
     kind: "arrayBuffer",
-    base64: Buffer.from(
-      value.buffer,
-      value.byteOffset,
-      value.byteLength,
-    ).toString("base64"),
+    base64: Buffer.from(value.buffer, value.byteOffset, value.byteLength).toString("base64"),
   };
 }
 
@@ -334,9 +324,7 @@ class R2ObjectLike {
     const { cacheExpiry, ...httpMetadata } = data.httpMetadata;
     this.httpMetadata = {
       ...httpMetadata,
-      ...(cacheExpiry === undefined
-        ? {}
-        : { cacheExpiry: new Date(cacheExpiry) }),
+      ...(cacheExpiry === undefined ? {} : { cacheExpiry: new Date(cacheExpiry) }),
     };
     this.customMetadata = data.customMetadata;
     this.range = data.range ?? undefined;
@@ -345,8 +333,7 @@ class R2ObjectLike {
   }
 
   writeHttpMetadata(headers: Headers): void {
-    for (const [key, value] of this.#writeHttpMetadataEntries)
-      headers.set(key, value);
+    for (const [key, value] of this.#writeHttpMetadataEntries) headers.set(key, value);
   }
 }
 
@@ -437,9 +424,7 @@ class MultipartUpload {
     })) as { partNumber: number; etag: string };
   }
 
-  async complete(
-    parts: Array<{ partNumber: number; etag: string }>,
-  ): Promise<R2ObjectLike> {
+  async complete(parts: Array<{ partNumber: number; etag: string }>): Promise<R2ObjectLike> {
     const result = await this.bucket.call({
       method: "completeMultipartUpload",
       key: this.key,
@@ -484,9 +469,7 @@ class NamespacedR2 {
       | { ok: false; name?: string; message: string };
     if (!body.ok) {
       // Rethrow with the original constructor so error type assertions hold
-      throw body.name === "TypeError"
-        ? new TypeError(body.message)
-        : new Error(body.message);
+      throw body.name === "TypeError" ? new TypeError(body.message) : new Error(body.message);
     }
     return body.result;
   }
@@ -496,10 +479,7 @@ class NamespacedR2 {
     return decodeObject(result as EncodedR2Object | null);
   }
 
-  async get(
-    key: string,
-    options?: R2GetOptions,
-  ): Promise<R2ObjectBodyLike | R2ObjectLike | null> {
+  async get(key: string, options?: R2GetOptions): Promise<R2ObjectBodyLike | R2ObjectLike | null> {
     const result = await this.call({
       method: "get",
       key: this.ns + key,
@@ -508,11 +488,7 @@ class NamespacedR2 {
     return decodeObject(result as EncodedR2Object | null);
   }
 
-  async put(
-    key: string,
-    value: PutValue,
-    options?: R2PutOptions,
-  ): Promise<R2ObjectLike | null> {
+  async put(key: string, value: PutValue, options?: R2PutOptions): Promise<R2ObjectLike | null> {
     const result = await this.call({
       method: "put",
       key: this.ns + key,
@@ -534,10 +510,7 @@ class NamespacedR2 {
   }
 
   async list(options?: R2ListOptions): Promise<ListResult> {
-    const result = (await this.call({ method: "list", options })) as Omit<
-      ListResult,
-      "objects"
-    > & {
+    const result = (await this.call({ method: "list", options })) as Omit<ListResult, "objects"> & {
       objects: Array<EncodedR2Object>;
     };
     return {
@@ -546,10 +519,7 @@ class NamespacedR2 {
     };
   }
 
-  async createMultipartUpload(
-    key: string,
-    options?: R2PutOptions,
-  ): Promise<MultipartUpload> {
+  async createMultipartUpload(key: string, options?: R2PutOptions): Promise<MultipartUpload> {
     const result = (await this.call({
       method: "createMultipartUpload",
       key: this.ns + key,
@@ -576,10 +546,7 @@ class ControlStub {
       method: "POST",
       body: JSON.stringify({ name, args }),
     });
-    assert(
-      res.status === 200 || res.status === 404,
-      `Control op ${name} failed: ${res.status}`,
-    );
+    assert(res.status === 200 || res.status === 404, `Control op ${name} failed: ${res.status}`);
     return res;
   }
 
@@ -591,10 +558,7 @@ class ControlStub {
     await this.#op("waitForFakeTasks");
   }
 
-  async sqlQuery<Row>(
-    query: string,
-    ...params: Array<unknown>
-  ): Promise<Array<Row>> {
+  async sqlQuery<Row>(query: string, ...params: Array<unknown>): Promise<Array<Row>> {
     const res = await this.#op("sqlQuery", query, ...params);
     return (await res.json()) as Array<Row>;
   }
@@ -631,12 +595,7 @@ interface MultipartPartRow {
 function sqlStmts(object: ControlStub) {
   return {
     getObjectByKey: async (key: string): Promise<ObjectRow | undefined> =>
-      (
-        await object.sqlQuery<ObjectRow>(
-          "SELECT * FROM _mf_objects WHERE key = ?",
-          key,
-        )
-      )[0],
+      (await object.sqlQuery<ObjectRow>("SELECT * FROM _mf_objects WHERE key = ?", key))[0],
     getPartsByUploadId: (uploadId: string) =>
       object.sqlQuery<MultipartPartRow>(
         "SELECT * FROM _mf_multipart_parts WHERE upload_id = ? ORDER BY part_number",
@@ -649,9 +608,7 @@ function sqlStmts(object: ControlStub) {
 // Shared test worker
 // -----------------------------------------------------------------------------
 
-class R2TestWorker extends Context.Service<R2TestWorker, TestWorker>()(
-  "test/R2TestWorker",
-) {}
+class R2TestWorker extends Context.Service<R2TestWorker, TestWorker>()("test/R2TestWorker") {}
 
 // Raw binding to the `r2` service for the test bucket, used to send control
 // operations (fake timers, storage inspection) to its Durable Object. The
@@ -676,10 +633,7 @@ const R2TestWorkerLive = Layer.effect(
     compatibilityDate: "2026-03-10",
     compatibilityFlags: [],
     modules: [{ name: "main.js", type: "ESModule", content: TEST_SCRIPT }],
-    bindings: [
-      R2Bucket.local({ binding: "BUCKET", id: "bucket" }),
-      controlBinding,
-    ],
+    bindings: [R2Bucket.local({ binding: "BUCKET", id: "bucket" }), controlBinding],
   }),
 );
 
@@ -689,17 +643,15 @@ interface R2TestContext {
   object: ControlStub;
 }
 
-const setup: Effect.Effect<R2TestContext, never, R2TestWorker> = Effect.gen(
-  function* () {
-    const worker = yield* R2TestWorker;
-    // Namespace keys so tests accessing the same bucket don't have races from
-    // key collisions
-    const ns = `${Date.now()}_${Math.floor(Math.random() * Number.MAX_SAFE_INTEGER)}`;
-    const object = new ControlStub(worker.baseUrl);
-    yield* Effect.promise(() => object.enableFakeTimers(1_000_000));
-    return { ns, r2: new NamespacedR2(worker.baseUrl, ns), object };
-  },
-);
+const setup: Effect.Effect<R2TestContext, never, R2TestWorker> = Effect.gen(function* () {
+  const worker = yield* R2TestWorker;
+  // Namespace keys so tests accessing the same bucket don't have races from
+  // key collisions
+  const ns = `${Date.now()}_${Math.floor(Math.random() * Number.MAX_SAFE_INTEGER)}`;
+  const object = new ControlStub(worker.baseUrl);
+  yield* Effect.promise(() => object.enableFakeTimers(1_000_000));
+  return { ns, r2: new NamespacedR2(worker.baseUrl, ns), object };
+});
 
 // -----------------------------------------------------------------------------
 // Tests
@@ -714,13 +666,9 @@ const R2TestLayer = R2TestWorkerLive.pipe(
 
 layer(R2TestLayer)("R2Bucket binding", (it) => {
   const r2Test = (name: string, fn: (ctx: R2TestContext) => Promise<void>) =>
-    it.effect(
-      name,
-      () => setup.pipe(Effect.flatMap((ctx) => Effect.promise(() => fn(ctx)))),
-      {
-        timeout: 30_000,
-      },
-    );
+    it.effect(name, () => setup.pipe(Effect.flatMap((ctx) => Effect.promise(() => fn(ctx)))), {
+      timeout: 30_000,
+    });
 
   async function testValidatesKey(
     ctx: R2TestContext,
@@ -770,9 +718,7 @@ layer(R2TestLayer)("R2Bucket binding", (it) => {
     expect(object.customMetadata).toEqual({ key: "value" });
     expect(object.range).toEqual({ offset: 0, length: 5 });
     expect(object.uploaded.getTime()).toBeGreaterThanOrEqual(start);
-    expect(object.uploaded.getTime()).toBeLessThanOrEqual(
-      start + WITHIN_EPSILON,
-    );
+    expect(object.uploaded.getTime()).toBeLessThanOrEqual(start + WITHIN_EPSILON);
 
     // Test proxying of `writeHttpMetadata()`
     const headers = new Headers({ "X-Key": "value" });
@@ -789,53 +735,48 @@ layer(R2TestLayer)("R2Bucket binding", (it) => {
     expect(await r2.get("key")).toBe(null);
   });
 
-  r2Test(
-    "get: returns metadata and body for existing keys",
-    async ({ r2, ns }) => {
-      const start = Date.now();
-      await r2.put("key", "value", {
-        httpMetadata: {
-          contentType: "text/plain",
-          contentLanguage: "en-GB",
-          contentDisposition: 'attachment; filename="value.txt"',
-          contentEncoding: "gzip",
-          cacheControl: "max-age=3600",
-          cacheExpiry: new Date("Fri, 24 Feb 2023 00:00:00 GMT"),
-        },
-        customMetadata: { key: "value" },
-      });
-      const body = await r2.get("key");
-      assert(body !== null);
-      expect(body.key).toBe(`${ns}key`);
-      expect(body.version).toMatch(/^[0-9a-f]{32}$/);
-      expect(body.size).toBe("value".length);
-      expect(body.etag).toBe("2063c1608d6e0baf80249c42e2be5804");
-      expect(body.httpEtag).toBe(`"2063c1608d6e0baf80249c42e2be5804"`);
-      expect(body.checksums.toJSON()).toEqual({
-        md5: "2063c1608d6e0baf80249c42e2be5804",
-      });
-      expect(body.httpMetadata).toEqual({
+  r2Test("get: returns metadata and body for existing keys", async ({ r2, ns }) => {
+    const start = Date.now();
+    await r2.put("key", "value", {
+      httpMetadata: {
         contentType: "text/plain",
         contentLanguage: "en-GB",
         contentDisposition: 'attachment; filename="value.txt"',
         contentEncoding: "gzip",
         cacheControl: "max-age=3600",
         cacheExpiry: new Date("Fri, 24 Feb 2023 00:00:00 GMT"),
-      });
-      expect(body.customMetadata).toEqual({ key: "value" });
-      expect(body.range).toEqual({ offset: 0, length: 5 });
-      expect(body.uploaded.getTime()).toBeGreaterThanOrEqual(start);
-      expect(body.uploaded.getTime()).toBeLessThanOrEqual(
-        start + WITHIN_EPSILON,
-      );
+      },
+      customMetadata: { key: "value" },
+    });
+    const body = await r2.get("key");
+    assert(body !== null);
+    expect(body.key).toBe(`${ns}key`);
+    expect(body.version).toMatch(/^[0-9a-f]{32}$/);
+    expect(body.size).toBe("value".length);
+    expect(body.etag).toBe("2063c1608d6e0baf80249c42e2be5804");
+    expect(body.httpEtag).toBe(`"2063c1608d6e0baf80249c42e2be5804"`);
+    expect(body.checksums.toJSON()).toEqual({
+      md5: "2063c1608d6e0baf80249c42e2be5804",
+    });
+    expect(body.httpMetadata).toEqual({
+      contentType: "text/plain",
+      contentLanguage: "en-GB",
+      contentDisposition: 'attachment; filename="value.txt"',
+      contentEncoding: "gzip",
+      cacheControl: "max-age=3600",
+      cacheExpiry: new Date("Fri, 24 Feb 2023 00:00:00 GMT"),
+    });
+    expect(body.customMetadata).toEqual({ key: "value" });
+    expect(body.range).toEqual({ offset: 0, length: 5 });
+    expect(body.uploaded.getTime()).toBeGreaterThanOrEqual(start);
+    expect(body.uploaded.getTime()).toBeLessThanOrEqual(start + WITHIN_EPSILON);
 
-      // Test proxying of `writeHttpMetadata()`
-      const headers = new Headers({ "X-Key": "value" });
-      expect(body.writeHttpMetadata(headers)).toBeUndefined();
-      expect(headers.get("Content-Type")).toBe("text/plain");
-      expect(headers.get("X-Key")).toBe("value");
-    },
-  );
+    // Test proxying of `writeHttpMetadata()`
+    const headers = new Headers({ "X-Key": "value" });
+    expect(body.writeHttpMetadata(headers)).toBeUndefined();
+    expect(headers.get("Content-Type")).toBe("text/plain");
+    expect(headers.get("X-Key")).toBe("value");
+  });
 
   r2Test("get: validates key", async (ctx) => {
     await testValidatesKey(ctx, "get", (key) => ctx.r2.get(key));
@@ -948,9 +889,7 @@ layer(R2TestLayer)("R2Bucket binding", (it) => {
     const pass = async (cond: R2Conditional) => {
       const object = await r2.get("key", { onlyIf: cond });
       // R2ObjectBody
-      expect(
-        object !== null && "body" in object && object?.body !== undefined,
-      ).toBe(true);
+      expect(object !== null && "body" in object && object?.body !== undefined).toBe(true);
     };
     const fail = async (cond: R2Conditional) => {
       const object = await r2.get("key", { onlyIf: cond });
@@ -1007,9 +946,7 @@ layer(R2TestLayer)("R2Bucket binding", (it) => {
     expect(object.customMetadata).toEqual({ key: "value" });
     expect(object.range).toBeUndefined();
     expect(object.uploaded.getTime()).toBeGreaterThanOrEqual(start);
-    expect(object.uploaded.getTime()).toBeLessThanOrEqual(
-      start + WITHIN_EPSILON,
-    );
+    expect(object.uploaded.getTime()).toBeLessThanOrEqual(start + WITHIN_EPSILON);
   });
 
   r2Test("put: puts empty value", async ({ r2 }) => {
@@ -1155,23 +1092,25 @@ layer(R2TestLayer)("R2Bucket binding", (it) => {
     );
 
     // Check with ASCII characters
-    await r2.put("key", "value", { customMetadata: { key: "x".repeat(2045) } });
+    await r2.put("key", "value", { customMetadata: { key: "x".repeat(8189) } });
     await expect(
-      r2.put("key", "value", { customMetadata: { key: "x".repeat(2046) } }),
+      r2.put("key", "value", { customMetadata: { key: "x".repeat(8190) } }),
     ).rejects.toThrow(metadataError);
-    await r2.put("key", "value", { customMetadata: { hi: "x".repeat(2046) } });
+    await r2.put("key", "value", { customMetadata: { hi: "x".repeat(8190) } });
 
     // Check with extended characters: note "🙂" is 2 UTF-16 code units, so
     // `"🙂".length === 2`, and it requires 4 bytes to store
-    await r2.put("key", "value", { customMetadata: { key: "🙂".repeat(511) } }); // 3 + 4*511 = 2047
     await r2.put("key", "value", {
-      customMetadata: { key1: "🙂".repeat(511) },
-    }); // 4 + 4*511 = 2048
+      customMetadata: { key: "🙂".repeat(2047) },
+    }); // 3 + 4*2047 = 8191
+    await r2.put("key", "value", {
+      customMetadata: { key1: "🙂".repeat(2047) },
+    }); // 4 + 4*2047 = 8192
     await expect(
-      r2.put("key", "value", { customMetadata: { key12: "🙂".repeat(511) } }),
+      r2.put("key", "value", { customMetadata: { key12: "🙂".repeat(2047) } }),
     ).rejects.toThrow(metadataError);
     await expect(
-      r2.put("key", "value", { customMetadata: { key: "🙂".repeat(512) } }),
+      r2.put("key", "value", { customMetadata: { key: "🙂".repeat(2048) } }),
     ).rejects.toThrow(metadataError);
   });
 
@@ -1263,9 +1202,7 @@ layer(R2TestLayer)("R2Bucket binding", (it) => {
   });
 
   r2Test("delete: validates keys", async (ctx) => {
-    await testValidatesKey(ctx, "delete", (key) =>
-      ctx.r2.delete(["valid key", key]),
-    );
+    await testValidatesKey(ctx, "delete", (key) => ctx.r2.delete(["valid key", key]));
   });
 
   async function testList(
@@ -1279,8 +1216,7 @@ layer(R2TestLayer)("R2Bucket binding", (it) => {
     const { r2, ns } = ctx;
 
     // Seed bucket
-    for (let i = 0; i < opts.keys.length; i++)
-      await r2.put(opts.keys[i], `value${i}`);
+    for (let i = 0; i < opts.keys.length; i++) await r2.put(opts.keys[i], `value${i}`);
 
     let lastCursor: string | undefined;
     for (let pageIndex = 0; pageIndex < opts.pages.length; pageIndex++) {
@@ -1288,9 +1224,7 @@ layer(R2TestLayer)("R2Bucket binding", (it) => {
         ...opts.options,
         prefix: ns + (opts.options?.prefix ?? ""),
         cursor: opts.options?.cursor ?? lastCursor,
-        startAfter: opts.options?.startAfter
-          ? ns + opts.options.startAfter
-          : undefined,
+        startAfter: opts.options?.startAfter ? ns + opts.options.startAfter : undefined,
       });
       const { objects, truncated } = result;
       const cursor = truncated ? result.cursor : undefined;
@@ -1427,9 +1361,7 @@ layer(R2TestLayer)("R2Bucket binding", (it) => {
     expect(object.customMetadata).toEqual({});
     expect(object.range).toBeUndefined();
     expect(object.uploaded.getTime()).toBeGreaterThanOrEqual(start);
-    expect(object.uploaded.getTime()).toBeLessThanOrEqual(
-      start + WITHIN_EPSILON,
-    );
+    expect(object.uploaded.getTime()).toBeLessThanOrEqual(start + WITHIN_EPSILON);
   });
 
   r2Test("list: paginates with variable limit", async ({ r2, ns }) => {
@@ -1451,198 +1383,183 @@ layer(R2TestLayer)("R2Bucket binding", (it) => {
     expect(result.truncated && result.cursor === undefined).toBe(false);
   });
 
-  r2Test(
-    "list: returns keys inserted whilst paginating",
-    async ({ r2, ns }) => {
-      await r2.put("key1", "value1");
-      await r2.put("key3", "value3");
-      await r2.put("key5", "value5");
+  r2Test("list: returns keys inserted whilst paginating", async ({ r2, ns }) => {
+    await r2.put("key1", "value1");
+    await r2.put("key3", "value3");
+    await r2.put("key5", "value5");
 
-      // Get first page
-      let result = await r2.list({ prefix: ns, limit: 2 });
-      expect(result.objects.length).toBe(2);
-      expect(result.objects[0].key).toBe(`${ns}key1`);
-      expect(result.objects[1].key).toBe(`${ns}key3`);
-      assert(result.truncated && result.cursor !== undefined);
+    // Get first page
+    let result = await r2.list({ prefix: ns, limit: 2 });
+    expect(result.objects.length).toBe(2);
+    expect(result.objects[0].key).toBe(`${ns}key1`);
+    expect(result.objects[1].key).toBe(`${ns}key3`);
+    assert(result.truncated && result.cursor !== undefined);
 
-      // Insert key2 and key4
-      await r2.put("key2", "value2");
-      await r2.put("key4", "value4");
+    // Insert key2 and key4
+    await r2.put("key2", "value2");
+    await r2.put("key4", "value4");
 
-      // Get second page, expecting to see key4 but not key2
-      result = await r2.list({ prefix: ns, limit: 2, cursor: result.cursor });
-      expect(result.objects.length).toBe(2);
-      expect(result.objects[0].key).toBe(`${ns}key4`);
-      expect(result.objects[1].key).toBe(`${ns}key5`);
-      expect(result.truncated && result.cursor === undefined).toBe(false);
-    },
-  );
+    // Get second page, expecting to see key4 but not key2
+    result = await r2.list({ prefix: ns, limit: 2, cursor: result.cursor });
+    expect(result.objects.length).toBe(2);
+    expect(result.objects[0].key).toBe(`${ns}key4`);
+    expect(result.objects[1].key).toBe(`${ns}key5`);
+    expect(result.truncated && result.cursor === undefined).toBe(false);
+  });
 
   r2Test("list: validates limit", async ({ r2 }) => {
     // R2 actually accepts 0 and -1 as valid limits, but this is probably a bug
     await expect(r2.list({ limit: 0 })).rejects.toThrow(
-      new Error(
-        "list: MaxKeys params must be positive integer <= 1000. (10022)",
-      ),
+      new Error("list: MaxKeys params must be positive integer <= 1000. (10022)"),
     );
     await expect(r2.list({ limit: 1001 })).rejects.toThrow(
-      new Error(
-        "list: MaxKeys params must be positive integer <= 1000. (10022)",
-      ),
+      new Error("list: MaxKeys params must be positive integer <= 1000. (10022)"),
     );
   });
 
-  r2Test(
-    "list: includes httpMetadata and customMetadata if specified",
-    async ({ r2, ns }) => {
-      await r2.put("key1", "value1", {
-        httpMetadata: { contentEncoding: "gzip" },
-        customMetadata: { foo: "bar" },
-      });
-      await r2.put("key2", "value2", {
-        httpMetadata: { contentType: "dinosaur" },
-        customMetadata: { bar: "fiz" },
-      });
-      await r2.put("key3", "value3", {
-        httpMetadata: { contentLanguage: "en" },
-        customMetadata: { fiz: "bang" },
-      });
+  r2Test("list: includes httpMetadata and customMetadata if specified", async ({ r2, ns }) => {
+    await r2.put("key1", "value1", {
+      httpMetadata: { contentEncoding: "gzip" },
+      customMetadata: { foo: "bar" },
+    });
+    await r2.put("key2", "value2", {
+      httpMetadata: { contentType: "dinosaur" },
+      customMetadata: { bar: "fiz" },
+    });
+    await r2.put("key3", "value3", {
+      httpMetadata: { contentLanguage: "en" },
+      customMetadata: { fiz: "bang" },
+    });
 
-      // Check no metadata included by default
-      let result = await r2.list({ prefix: ns });
-      expect(result.objects.length).toEqual(3);
-      expect(result.objects[0].httpMetadata).toEqual({});
-      expect(result.objects[0].customMetadata).toEqual({});
-      expect(result.objects[1].httpMetadata).toEqual({});
-      expect(result.objects[1].customMetadata).toEqual({});
-      expect(result.objects[2].httpMetadata).toEqual({});
-      expect(result.objects[2].customMetadata).toEqual({});
+    // Check no metadata included by default
+    let result = await r2.list({ prefix: ns });
+    expect(result.objects.length).toEqual(3);
+    expect(result.objects[0].httpMetadata).toEqual({});
+    expect(result.objects[0].customMetadata).toEqual({});
+    expect(result.objects[1].httpMetadata).toEqual({});
+    expect(result.objects[1].customMetadata).toEqual({});
+    expect(result.objects[2].httpMetadata).toEqual({});
+    expect(result.objects[2].customMetadata).toEqual({});
 
-      // Check httpMetadata included if specified
-      result = await r2.list({ prefix: ns, include: ["httpMetadata"] });
-      expect(result.objects.length).toEqual(3);
-      expect(result.objects[0].httpMetadata).toEqual({
-        contentEncoding: "gzip",
-      });
-      expect(result.objects[0].customMetadata).toEqual({});
-      expect(result.objects[1].httpMetadata).toEqual({
-        contentType: "dinosaur",
-      });
-      expect(result.objects[1].customMetadata).toEqual({});
-      expect(result.objects[2].httpMetadata).toEqual({ contentLanguage: "en" });
-      expect(result.objects[2].customMetadata).toEqual({});
+    // Check httpMetadata included if specified
+    result = await r2.list({ prefix: ns, include: ["httpMetadata"] });
+    expect(result.objects.length).toEqual(3);
+    expect(result.objects[0].httpMetadata).toEqual({
+      contentEncoding: "gzip",
+    });
+    expect(result.objects[0].customMetadata).toEqual({});
+    expect(result.objects[1].httpMetadata).toEqual({
+      contentType: "dinosaur",
+    });
+    expect(result.objects[1].customMetadata).toEqual({});
+    expect(result.objects[2].httpMetadata).toEqual({ contentLanguage: "en" });
+    expect(result.objects[2].customMetadata).toEqual({});
 
-      // Check customMetadata included if specified
-      result = await r2.list({ prefix: ns, include: ["customMetadata"] });
-      expect(result.objects.length).toEqual(3);
-      expect(result.objects[0].httpMetadata).toEqual({});
-      expect(result.objects[0].customMetadata).toEqual({ foo: "bar" });
-      expect(result.objects[1].httpMetadata).toEqual({});
-      expect(result.objects[1].customMetadata).toEqual({ bar: "fiz" });
-      expect(result.objects[2].httpMetadata).toEqual({});
-      expect(result.objects[2].customMetadata).toEqual({ fiz: "bang" });
+    // Check customMetadata included if specified
+    result = await r2.list({ prefix: ns, include: ["customMetadata"] });
+    expect(result.objects.length).toEqual(3);
+    expect(result.objects[0].httpMetadata).toEqual({});
+    expect(result.objects[0].customMetadata).toEqual({ foo: "bar" });
+    expect(result.objects[1].httpMetadata).toEqual({});
+    expect(result.objects[1].customMetadata).toEqual({ bar: "fiz" });
+    expect(result.objects[2].httpMetadata).toEqual({});
+    expect(result.objects[2].customMetadata).toEqual({ fiz: "bang" });
 
-      // Check both included if specified
-      result = await r2.list({
-        prefix: ns,
-        include: ["httpMetadata", "customMetadata"],
-      });
-      expect(result.objects.length).toEqual(3);
-      expect(result.objects[0].httpMetadata).toEqual({
-        contentEncoding: "gzip",
-      });
-      expect(result.objects[0].customMetadata).toEqual({ foo: "bar" });
-      expect(result.objects[1].httpMetadata).toEqual({
-        contentType: "dinosaur",
-      });
-      expect(result.objects[1].customMetadata).toEqual({ bar: "fiz" });
-      expect(result.objects[2].httpMetadata).toEqual({ contentLanguage: "en" });
-      expect(result.objects[2].customMetadata).toEqual({ fiz: "bang" });
+    // Check both included if specified
+    result = await r2.list({
+      prefix: ns,
+      include: ["httpMetadata", "customMetadata"],
+    });
+    expect(result.objects.length).toEqual(3);
+    expect(result.objects[0].httpMetadata).toEqual({
+      contentEncoding: "gzip",
+    });
+    expect(result.objects[0].customMetadata).toEqual({ foo: "bar" });
+    expect(result.objects[1].httpMetadata).toEqual({
+      contentType: "dinosaur",
+    });
+    expect(result.objects[1].customMetadata).toEqual({ bar: "fiz" });
+    expect(result.objects[2].httpMetadata).toEqual({ contentLanguage: "en" });
+    expect(result.objects[2].customMetadata).toEqual({ fiz: "bang" });
 
-      // `workerd` will validate the `include` array:
-      // https://github.com/cloudflare/workerd/blob/44907df95f231a2411d4e9767400951e55c6eb4c/src/workerd/api/r2-bucket.c%2B%2B#L737
-    },
-  );
+    // `workerd` will validate the `include` array:
+    // https://github.com/cloudflare/workerd/blob/44907df95f231a2411d4e9767400951e55c6eb4c/src/workerd/api/r2-bucket.c%2B%2B#L737
+  });
 
-  r2Test(
-    "list: returns correct delimitedPrefixes for delimiter and prefix",
-    async ({ r2, ns }) => {
-      const values: Record<string, string> = {
-        // In lexicographic key order, so `allKeys` is sorted
-        "dir0/file0": "value0",
-        "dir0/file1": "value1",
-        "dir0/sub0/file2": "value2",
-        "dir0/sub0/file3": "value3",
-        "dir0/sub1/file4": "value4",
-        "dir0/sub1/file5": "value5",
-        "dir1/file6": "value6",
-        "dir1/file7": "value7",
-        file8: "value8",
-        file9: "value9",
-      };
-      const allKeys = Object.keys(values);
-      for (const [key, value] of Object.entries(values))
-        await r2.put(key, value);
+  r2Test("list: returns correct delimitedPrefixes for delimiter and prefix", async ({ r2, ns }) => {
+    const values: Record<string, string> = {
+      // In lexicographic key order, so `allKeys` is sorted
+      "dir0/file0": "value0",
+      "dir0/file1": "value1",
+      "dir0/sub0/file2": "value2",
+      "dir0/sub0/file3": "value3",
+      "dir0/sub1/file4": "value4",
+      "dir0/sub1/file5": "value5",
+      "dir1/file6": "value6",
+      "dir1/file7": "value7",
+      file8: "value8",
+      file9: "value9",
+    };
+    const allKeys = Object.keys(values);
+    for (const [key, value] of Object.entries(values)) await r2.put(key, value);
 
-      const keys = (result: ListResult) =>
-        result.objects.map(({ key }) => key.substring(ns.length));
-      const delimitedPrefixes = (result: ListResult) =>
-        result.delimitedPrefixes.map((prefix) => prefix.substring(ns.length));
-      const allKeysWithout = (...exclude: Array<string>) =>
-        allKeys.filter((value) => !exclude.includes(value));
+    const keys = (result: ListResult) => result.objects.map(({ key }) => key.substring(ns.length));
+    const delimitedPrefixes = (result: ListResult) =>
+      result.delimitedPrefixes.map((prefix) => prefix.substring(ns.length));
+    const allKeysWithout = (...exclude: Array<string>) =>
+      allKeys.filter((value) => !exclude.includes(value));
 
-      // Check no/empty delimiter
-      let result = await r2.list({ prefix: ns });
-      expect(result.truncated).toBe(false);
-      expect(keys(result)).toEqual(allKeys);
-      expect(delimitedPrefixes(result)).toEqual([]);
-      result = await r2.list({ prefix: ns, delimiter: "" });
-      expect(result.truncated).toBe(false);
-      expect(keys(result)).toEqual(allKeys);
-      expect(delimitedPrefixes(result)).toEqual([]);
+    // Check no/empty delimiter
+    let result = await r2.list({ prefix: ns });
+    expect(result.truncated).toBe(false);
+    expect(keys(result)).toEqual(allKeys);
+    expect(delimitedPrefixes(result)).toEqual([]);
+    result = await r2.list({ prefix: ns, delimiter: "" });
+    expect(result.truncated).toBe(false);
+    expect(keys(result)).toEqual(allKeys);
+    expect(delimitedPrefixes(result)).toEqual([]);
 
-      // Check with file delimiter
-      result = await r2.list({ prefix: ns, delimiter: "file8" });
-      expect(result.truncated).toBe(false);
-      expect(keys(result)).toEqual(allKeysWithout("file8"));
-      expect(delimitedPrefixes(result)).toEqual(["file8"]);
-      // ...and prefix
-      result = await r2.list({ prefix: `${ns}dir1/`, delimiter: "file6" });
-      expect(result.truncated).toBe(false);
-      expect(keys(result)).toEqual(["dir1/file7"]);
-      expect(delimitedPrefixes(result)).toEqual(["dir1/file6"]);
+    // Check with file delimiter
+    result = await r2.list({ prefix: ns, delimiter: "file8" });
+    expect(result.truncated).toBe(false);
+    expect(keys(result)).toEqual(allKeysWithout("file8"));
+    expect(delimitedPrefixes(result)).toEqual(["file8"]);
+    // ...and prefix
+    result = await r2.list({ prefix: `${ns}dir1/`, delimiter: "file6" });
+    expect(result.truncated).toBe(false);
+    expect(keys(result)).toEqual(["dir1/file7"]);
+    expect(delimitedPrefixes(result)).toEqual(["dir1/file6"]);
 
-      // Check with "/" delimiter
-      result = await r2.list({ prefix: ns, delimiter: "/" });
-      expect(result.truncated).toBe(false);
-      expect(keys(result)).toEqual(["file8", "file9"]);
-      expect(delimitedPrefixes(result)).toEqual(["dir0/", "dir1/"]);
-      // ...and prefix
-      result = await r2.list({ prefix: `${ns}dir0/`, delimiter: "/" });
-      expect(result.truncated).toBe(false);
-      expect(keys(result)).toEqual(["dir0/file0", "dir0/file1"]);
-      expect(delimitedPrefixes(result)).toEqual(["dir0/sub0/", "dir0/sub1/"]);
-      result = await r2.list({ prefix: `${ns}dir0`, delimiter: "/" });
-      expect(result.truncated).toBe(false);
-      expect(keys(result)).toEqual([]);
-      expect(delimitedPrefixes(result)).toEqual(["dir0/"]);
+    // Check with "/" delimiter
+    result = await r2.list({ prefix: ns, delimiter: "/" });
+    expect(result.truncated).toBe(false);
+    expect(keys(result)).toEqual(["file8", "file9"]);
+    expect(delimitedPrefixes(result)).toEqual(["dir0/", "dir1/"]);
+    // ...and prefix
+    result = await r2.list({ prefix: `${ns}dir0/`, delimiter: "/" });
+    expect(result.truncated).toBe(false);
+    expect(keys(result)).toEqual(["dir0/file0", "dir0/file1"]);
+    expect(delimitedPrefixes(result)).toEqual(["dir0/sub0/", "dir0/sub1/"]);
+    result = await r2.list({ prefix: `${ns}dir0`, delimiter: "/" });
+    expect(result.truncated).toBe(false);
+    expect(keys(result)).toEqual([]);
+    expect(delimitedPrefixes(result)).toEqual(["dir0/"]);
 
-      // Check with limit (limit includes returned objects and delimitedPrefixes)
-      const opt: R2ListOptions = {
-        prefix: `${ns}dir0/`,
-        delimiter: "/",
-        limit: 2,
-      };
-      result = await r2.list(opt);
-      assert(result.truncated);
-      expect(keys(result)).toEqual(["dir0/file0", "dir0/file1"]);
-      expect(delimitedPrefixes(result)).toEqual([]);
-      result = await r2.list({ ...opt, cursor: result.cursor });
-      expect(result.truncated).toBe(false);
-      expect(keys(result)).toEqual([]);
-      expect(delimitedPrefixes(result)).toEqual(["dir0/sub0/", "dir0/sub1/"]);
-    },
-  );
+    // Check with limit (limit includes returned objects and delimitedPrefixes)
+    const opt: R2ListOptions = {
+      prefix: `${ns}dir0/`,
+      delimiter: "/",
+      limit: 2,
+    };
+    result = await r2.list(opt);
+    assert(result.truncated);
+    expect(keys(result)).toEqual(["dir0/file0", "dir0/file1"]);
+    expect(delimitedPrefixes(result)).toEqual([]);
+    result = await r2.list({ ...opt, cursor: result.cursor });
+    expect(result.truncated).toBe(false);
+    expect(keys(result)).toEqual([]);
+    expect(delimitedPrefixes(result)).toEqual(["dir0/sub0/", "dir0/sub1/"]);
+  });
 
   r2Test("operations permit empty key", async ({ r2 }) => {
     // Explicitly testing empty string key, so cannot prefix with namespace
@@ -1680,9 +1597,7 @@ layer(R2TestLayer)("R2Bucket binding", (it) => {
           name: "r2-strange-name-test",
           compatibilityDate: "2026-03-10",
           compatibilityFlags: [],
-          modules: [
-            { name: "main.js", type: "ESModule", content: TEST_SCRIPT },
-          ],
+          modules: [{ name: "main.js", type: "ESModule", content: TEST_SCRIPT }],
           bindings: [R2Bucket.local({ binding: "BUCKET", id: "my/ Bucket" })],
         });
         const r2 = new NamespacedR2(worker.baseUrl, "");
@@ -1718,9 +1633,7 @@ layer(R2TestLayer)("R2Bucket binding", (it) => {
     // Check validates key
     r2.ns = "";
     await expect(r2.createMultipartUpload("x".repeat(1025))).rejects.toThrow(
-      new Error(
-        `createMultipartUpload: The specified object name is not valid. (10020)`,
-      ),
+      new Error(`createMultipartUpload: The specified object name is not valid. (10020)`),
     );
   });
 
@@ -1759,15 +1672,11 @@ layer(R2TestLayer)("R2Bucket binding", (it) => {
     // Check validates key and uploadId
     let nonExistentUpload = r2.resumeMultipartUpload("key", "bad");
     await expect(nonExistentUpload.uploadPart(1, "value")).rejects.toThrow(
-      new Error(
-        `uploadPart: The specified multipart upload does not exist. (10024)`,
-      ),
+      new Error(`uploadPart: The specified multipart upload does not exist. (10024)`),
     );
     nonExistentUpload = r2.resumeMultipartUpload("badkey", upload.uploadId);
     await expect(nonExistentUpload.uploadPart(1, "value")).rejects.toThrow(
-      new Error(
-        `uploadPart: The specified multipart upload does not exist. (10024)`,
-      ),
+      new Error(`uploadPart: The specified multipart upload does not exist. (10024)`),
     );
     nonExistentUpload = r2.resumeMultipartUpload("x".repeat(1025), "bad");
     await expect(nonExistentUpload.uploadPart(1, "value")).rejects.toThrow(
@@ -1789,14 +1698,11 @@ layer(R2TestLayer)("R2Bucket binding", (it) => {
     expect((await stmts.getPartsByUploadId(upload1.uploadId)).length).toBe(0);
     // Check blobs deleted
     await object.waitForFakeTasks();
-    for (const part of parts)
-      expect(await object.getBlob(part.blob_id)).toBe(null);
+    for (const part of parts) expect(await object.getBlob(part.blob_id)).toBe(null);
 
     // Check cannot upload after abort
     await expect(upload1.uploadPart(4, "value4")).rejects.toThrow(
-      new Error(
-        `uploadPart: The specified multipart upload does not exist. (10024)`,
-      ),
+      new Error(`uploadPart: The specified multipart upload does not exist. (10024)`),
     );
 
     // Check can abort already aborted upload
@@ -1827,9 +1733,7 @@ layer(R2TestLayer)("R2Bucket binding", (it) => {
     );
     nonExistentUpload = r2.resumeMultipartUpload("x".repeat(1025), "bad");
     await expect(nonExistentUpload.abort()).rejects.toThrow(
-      new Error(
-        "abortMultipartUpload: The specified object name is not valid. (10020)",
-      ),
+      new Error("abortMultipartUpload: The specified object name is not valid. (10020)"),
     );
   });
 
@@ -1855,9 +1759,7 @@ layer(R2TestLayer)("R2Bucket binding", (it) => {
     expect(object.httpMetadata).toEqual({ contentType: "text/plain" });
     let objectBody = await r2.get("key");
     assert(objectBody instanceof R2ObjectBodyLike);
-    expect(await objectBody.text()).toBe(
-      `${"1".repeat(PART_SIZE)}${"2".repeat(PART_SIZE)}3`,
-    );
+    expect(await objectBody.text()).toBe(`${"1".repeat(PART_SIZE)}${"2".repeat(PART_SIZE)}3`);
 
     const stmts = sqlStmts(objectStub);
     const parts = await stmts.getPartsByUploadId(upload1.uploadId);
@@ -1870,17 +1772,14 @@ layer(R2TestLayer)("R2Bucket binding", (it) => {
     const sizeError = new Error(
       "completeMultipartUpload: Your proposed upload is smaller than the minimum allowed object size. (10011)",
     );
-    await expect(upload2.complete([part1, part2, part3])).rejects.toThrow(
-      sizeError,
-    );
+    await expect(upload2.complete([part1, part2, part3])).rejects.toThrow(sizeError);
     await expect(upload2.complete([part1, part2])).rejects.toThrow(sizeError);
     object = await upload2.complete([part1]);
     expect(object.size).toBe(1);
     expect(object.etag).toBe("46d1741e8075da4ac72c71d8130fcb71-1");
     // Check previous multipart uploads blobs deleted
     await objectStub.waitForFakeTasks();
-    for (const part of parts)
-      expect(await objectStub.getBlob(part.blob_id)).toBe(null);
+    for (const part of parts) expect(await objectStub.getBlob(part.blob_id)).toBe(null);
 
     // Check completing multiple uploads overrides existing, deleting all parts
     expect((await stmts.getPartsByUploadId(upload1.uploadId)).length).toBe(0);
@@ -1933,9 +1832,7 @@ layer(R2TestLayer)("R2Bucket binding", (it) => {
     // Check part size checking happens in argument order (part1's size isn't
     // checked until too late, as it's the last argument so ignored...)
     await expect(upload5b.complete([part2, part3, part1])).rejects.toThrow(
-      new Error(
-        "completeMultipartUpload: There was a problem with the multipart upload. (10048)",
-      ),
+      new Error("completeMultipartUpload: There was a problem with the multipart upload. (10048)"),
     );
     const upload5c = await r2.createMultipartUpload("key");
     part1 = await upload5c.uploadPart(1, "1".repeat(PART_SIZE));
@@ -1943,9 +1840,7 @@ layer(R2TestLayer)("R2Bucket binding", (it) => {
     part3 = await upload5c.uploadPart(3, "3");
     // (...but here, part3 isn't the last argument, so get a regular size
     // error)
-    await expect(upload5c.complete([part2, part3, part1])).rejects.toThrow(
-      sizeError,
-    );
+    await expect(upload5c.complete([part2, part3, part1])).rejects.toThrow(sizeError);
 
     // Check completing with missing parts
     const upload6 = await r2.createMultipartUpload("key");
@@ -2008,9 +1903,7 @@ layer(R2TestLayer)("R2Bucket binding", (it) => {
     );
     nonExistentUpload = r2.resumeMultipartUpload("x".repeat(1025), "bad");
     await expect(nonExistentUpload.complete([])).rejects.toThrow(
-      new Error(
-        `completeMultipartUpload: The specified object name is not valid. (10020)`,
-      ),
+      new Error(`completeMultipartUpload: The specified object name is not valid. (10020)`),
     );
 
     // Check requires all but last part to have same size
@@ -2021,15 +1914,11 @@ layer(R2TestLayer)("R2Bucket binding", (it) => {
     const multipartError = new Error(
       "completeMultipartUpload: There was a problem with the multipart upload. (10048)",
     );
-    await expect(upload13.complete([part1, part2, part3])).rejects.toThrow(
-      multipartError,
-    );
+    await expect(upload13.complete([part1, part2, part3])).rejects.toThrow(multipartError);
     part2 = await upload13.uploadPart(2, "2".repeat(PART_SIZE));
     // Check allows last part to have different size, only if <= others
     part3 = await upload13.uploadPart(3, "3".repeat(PART_SIZE + 1));
-    await expect(upload13.complete([part1, part2, part3])).rejects.toThrow(
-      multipartError,
-    );
+    await expect(upload13.complete([part1, part2, part3])).rejects.toThrow(multipartError);
     part3 = await upload13.uploadPart(3, "3".repeat(PART_SIZE - 1));
     object = await upload13.complete([part1, part2, part3]);
     expect(object.size).toBe(3 * PART_SIZE - 1);
@@ -2038,15 +1927,15 @@ layer(R2TestLayer)("R2Bucket binding", (it) => {
     const upload14 = await r2.createMultipartUpload("key");
     part1 = await upload14.uploadPart(1, "1".repeat(PART_SIZE));
     part2 = await upload14.uploadPart(2, "2");
-    await expect(
-      upload14.complete([part1, { partNumber: 3, etag: part2.etag }]),
-    ).rejects.toThrow(notFoundError);
-    await expect(
-      upload14.complete([part1, { partNumber: 2, etag: "bad" }]),
-    ).rejects.toThrow(notFoundError);
-    await expect(
-      upload14.complete([part1, { partNumber: 4, etag: "very bad" }]),
-    ).rejects.toThrow(notFoundError);
+    await expect(upload14.complete([part1, { partNumber: 3, etag: part2.etag }])).rejects.toThrow(
+      notFoundError,
+    );
+    await expect(upload14.complete([part1, { partNumber: 2, etag: "bad" }])).rejects.toThrow(
+      notFoundError,
+    );
+    await expect(upload14.complete([part1, { partNumber: 4, etag: "very bad" }])).rejects.toThrow(
+      notFoundError,
+    );
   });
 
   // Check regular operations on buckets with existing multipart keys
@@ -2129,9 +2018,7 @@ layer(R2TestLayer)("R2Bucket binding", (it) => {
       range: { suffix: quarterPartSize + PART_SIZE },
     });
     assert(object instanceof R2ObjectBodyLike);
-    expect(await object?.text()).toBe(
-      `${"b".repeat(quarterPartSize)}${"c".repeat(PART_SIZE)}`,
-    );
+    expect(await object?.text()).toBe(`${"b".repeat(quarterPartSize)}${"c".repeat(PART_SIZE)}`);
   });
 
   r2Test("put: is multipart aware", async ({ r2, object: objectStub }) => {
@@ -2155,8 +2042,7 @@ layer(R2TestLayer)("R2Bucket binding", (it) => {
     expect((await stmts.getPartsByUploadId(upload.uploadId)).length).toBe(0);
     // Check deletes all previous blobs
     await objectStub.waitForFakeTasks();
-    for (const part of parts)
-      expect(await objectStub.getBlob(part.blob_id)).toBe(null);
+    for (const part of parts) expect(await objectStub.getBlob(part.blob_id)).toBe(null);
   });
 
   r2Test("delete: is multipart aware", async ({ r2, object: objectStub }) => {
@@ -2177,8 +2063,7 @@ layer(R2TestLayer)("R2Bucket binding", (it) => {
     expect((await stmts.getPartsByUploadId(upload.uploadId)).length).toBe(0);
     // Check deletes all previous blobs
     await objectStub.waitForFakeTasks();
-    for (const part of parts)
-      expect(await objectStub.getBlob(part.blob_id)).toBe(null);
+    for (const part of parts) expect(await objectStub.getBlob(part.blob_id)).toBe(null);
   });
 
   r2Test(
@@ -2201,13 +2086,10 @@ layer(R2TestLayer)("R2Bucket binding", (it) => {
       expect(await objectBody1.text()).toBe(
         `${"1".repeat(PART_SIZE)}${"2".repeat(PART_SIZE)}${"3".repeat(PART_SIZE)}`,
       );
-      expect(await objectBody2.text()).toBe(
-        `${"2".repeat(PART_SIZE)}${"3".repeat(PART_SIZE)}`,
-      );
+      expect(await objectBody2.text()).toBe(`${"2".repeat(PART_SIZE)}${"3".repeat(PART_SIZE)}`);
 
       await objectStub.waitForFakeTasks();
-      for (const part of parts)
-        expect(await objectStub.getBlob(part.blob_id)).toBe(null);
+      for (const part of parts) expect(await objectStub.getBlob(part.blob_id)).toBe(null);
     },
   );
 
@@ -2270,9 +2152,7 @@ describe("R2Bucket binding persistence", () => {
           Layer.provide(Paths.PathsLive),
           Layer.provide(Docker.DockerLive),
           Layer.provide(Workerd.WorkerdLive),
-          Layer.provideMerge(
-            Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer),
-          ),
+          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)),
         );
 
         const runAgainstStorage = Effect.fn(
@@ -2281,17 +2161,12 @@ describe("R2Bucket binding persistence", () => {
               name: "r2-persist-test",
               compatibilityDate: "2026-03-10",
               compatibilityFlags: [],
-              modules: [
-                { name: "main.js", type: "ESModule", content: TEST_SCRIPT },
-              ],
+              modules: [{ name: "main.js", type: "ESModule", content: TEST_SCRIPT }],
               bindings: [R2Bucket.local({ binding: "BUCKET", id: "bucket" })],
             });
-            yield* Effect.promise(() =>
-              run(new NamespacedR2(worker.baseUrl, "")),
-            );
+            yield* Effect.promise(() => run(new NamespacedR2(worker.baseUrl, "")));
           },
-          (self) =>
-            self.pipe(Effect.provide(runtimeLayerTempDir), Effect.scoped),
+          (self) => self.pipe(Effect.provide(runtimeLayerTempDir), Effect.scoped),
         );
 
         yield* runAgainstStorage(async (r2) => {
@@ -2354,25 +2229,15 @@ describe("testR2Conditional", () => {
 
     const metadata = { etag, uploaded: uploadedDate.getTime() };
 
-    const using = (cond: R2Bucket.R2Conditional) =>
-      R2Bucket.testR2Conditional(cond, metadata);
-    const usingMissing = (cond: R2Bucket.R2Conditional) =>
-      R2Bucket.testR2Conditional(cond);
+    const using = (cond: R2Bucket.R2Conditional) => R2Bucket.testR2Conditional(cond, metadata);
+    const usingMissing = (cond: R2Bucket.R2Conditional) => R2Bucket.testR2Conditional(cond);
 
     // Check single conditions
-    expect(using({ etagMatches: [{ type: "strong", value: etag }] })).toBe(
-      true,
-    );
-    expect(using({ etagMatches: [{ type: "strong", value: badEtag }] })).toBe(
-      false,
-    );
+    expect(using({ etagMatches: [{ type: "strong", value: etag }] })).toBe(true);
+    expect(using({ etagMatches: [{ type: "strong", value: badEtag }] })).toBe(false);
 
-    expect(
-      using({ etagDoesNotMatch: [{ type: "strong", value: badEtag }] }),
-    ).toBe(true);
-    expect(using({ etagDoesNotMatch: [{ type: "strong", value: etag }] })).toBe(
-      false,
-    );
+    expect(using({ etagDoesNotMatch: [{ type: "strong", value: badEtag }] })).toBe(true);
+    expect(using({ etagDoesNotMatch: [{ type: "strong", value: etag }] })).toBe(false);
 
     expect(using({ uploadedBefore: pastDate })).toBe(false);
     expect(using({ uploadedBefore: futureDate })).toBe(true);
@@ -2382,12 +2247,8 @@ describe("testR2Conditional", () => {
 
     // Check with weaker etags
     expect(using({ etagMatches: [{ type: "weak", value: etag }] })).toBe(false);
-    expect(using({ etagDoesNotMatch: [{ type: "weak", value: etag }] })).toBe(
-      false,
-    );
-    expect(
-      using({ etagDoesNotMatch: [{ type: "weak", value: badEtag }] }),
-    ).toBe(true);
+    expect(using({ etagDoesNotMatch: [{ type: "weak", value: etag }] })).toBe(false);
+    expect(using({ etagDoesNotMatch: [{ type: "weak", value: badEtag }] })).toBe(true);
     expect(using({ etagMatches: [{ type: "wildcard" }] })).toBe(true);
     expect(using({ etagDoesNotMatch: [{ type: "wildcard" }] })).toBe(false);
 
@@ -2487,9 +2348,7 @@ describe("testR2Conditional", () => {
 
     // Check missing metadata fails with either `etagMatches` and
     // `uploadedAfter`
-    expect(
-      usingMissing({ etagMatches: [{ type: "strong", value: etag }] }),
-    ).toBe(false);
+    expect(usingMissing({ etagMatches: [{ type: "strong", value: etag }] })).toBe(false);
     expect(usingMissing({ uploadedAfter: pastDate })).toBe(false);
     expect(
       usingMissing({
@@ -2497,9 +2356,7 @@ describe("testR2Conditional", () => {
         uploadedAfter: pastDate,
       }),
     ).toBe(false);
-    expect(
-      usingMissing({ etagDoesNotMatch: [{ type: "strong", value: etag }] }),
-    ).toBe(true);
+    expect(usingMissing({ etagDoesNotMatch: [{ type: "strong", value: etag }] })).toBe(true);
     expect(usingMissing({ uploadedBefore: pastDate })).toBe(true);
     expect(
       usingMissing({
@@ -2524,12 +2381,8 @@ describe("testR2Conditional", () => {
     const justPastDate = new Date(uploadedDate.getTime() - 250);
     const justFutureDate = new Date(uploadedDate.getTime() + 250);
     expect(using({ uploadedAfter: justPastDate })).toBe(true);
-    expect(
-      using({ uploadedAfter: justPastDate, secondsGranularity: true }),
-    ).toBe(false);
+    expect(using({ uploadedAfter: justPastDate, secondsGranularity: true })).toBe(false);
     expect(using({ uploadedBefore: justFutureDate })).toBe(true);
-    expect(
-      using({ uploadedBefore: justFutureDate, secondsGranularity: true }),
-    ).toBe(false);
+    expect(using({ uploadedBefore: justFutureDate, secondsGranularity: true })).toBe(false);
   });
 });

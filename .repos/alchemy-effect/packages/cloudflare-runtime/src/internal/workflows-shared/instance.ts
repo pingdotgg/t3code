@@ -1,12 +1,8 @@
+import type { WorkflowEvent } from "cloudflare:workers";
 // Alchemy modifications are licensed under Apache-2.0.
 // This file includes third-party code; see /THIRD_PARTY_LICENSES.md.
 import type { ResolvedStepConfig } from "./context.ts";
-import type {
-  DatabaseInstance,
-  DatabaseVersion,
-  DatabaseWorkflow,
-} from "./engine.ts";
-import type { WorkflowEvent } from "cloudflare:workers";
+import type { DatabaseInstance, DatabaseVersion, DatabaseWorkflow } from "./engine.ts";
 
 export type Instance = {
   id: string;
@@ -96,9 +92,7 @@ export function toInstanceStatus(status: string): InstanceStatus {
     case "unknown":
       throw new Error("unknown cannot be parsed into a InstanceStatus");
     default:
-      throw new Error(
-        `${status} was not handled because it's not a valid InstanceStatus`,
-      );
+      throw new Error(`${status} was not handled because it's not a valid InstanceStatus`);
   }
 }
 

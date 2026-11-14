@@ -1,15 +1,15 @@
-import * as SDK from "@distilled.cloud/neon";
-import * as Alchemy from "alchemy";
-import * as Neon from "alchemy/Neon";
+import { expect } from "bun:test";
+import * as Neon from "@alchemy.run/neon";
+import * as SQL from "@alchemy.run/sql/Postgres";
+import * as Test from "@alchemy.run/test/Bun";
 import {
   DeleteObjectCommand,
   ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
-import * as SQL from "alchemy/SQL/Postgres";
-import * as Test from "alchemy/Test/Bun";
-import { expect } from "bun:test";
+import * as SDK from "@distilled.cloud/neon";
+import * as Alchemy from "alchemy";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 
@@ -55,15 +55,11 @@ const makeStorageClient = Effect.fn(function* (
   return {
     metadata: (key: string) =>
       Effect.tryPromise(() =>
-        client.send(
-          new ListObjectsV2Command({ Bucket: bucket, Prefix: key, MaxKeys: 1 }),
-        ),
+        client.send(new ListObjectsV2Command({ Bucket: bucket, Prefix: key, MaxKeys: 1 })),
       ).pipe(
         Effect.map((page) => {
           const object = page.Contents?.find((object) => object.Key === key);
-          return object
-            ? { ETag: object.ETag, ContentLength: object.Size }
-            : undefined;
+          return object ? { ETag: object.ETag, ContentLength: object.Size } : undefined;
         }),
       ),
     put: (key: string, body: string, options: { ContentType: string }) =>
@@ -78,22 +74,14 @@ const makeStorageClient = Effect.fn(function* (
         ),
       ),
     delete: (key: string) =>
-      Effect.tryPromise(() =>
-        client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key })),
-      ),
+      Effect.tryPromise(() => client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }))),
   };
 });
 
-const database = Effect.fn(function* (scope: {
-  project_id: string;
-  branch_id: string;
-}) {
+const database = Effect.fn(function* (scope: { project_id: string; branch_id: string }) {
   const databases = yield* SDK.listProjectBranchDatabases(scope);
   const db = databases.databases.find((db) => db.name === "neondb");
-  if (!db)
-    return yield* Effect.fail(
-      new Error("Expected the tutorial neondb database"),
-    );
+  if (!db) return yield* Effect.fail(new Error("Expected the tutorial neondb database"));
   const connection = yield* SDK.getConnectionURI({
     ...scope,
     database_name: db.name,
@@ -113,10 +101,7 @@ test.provider.skipIf(!configured)(
       });
       expect(
         childTriggers.triggers.some(
-          (trigger) =>
-            trigger.name === "PreviewUploads" &&
-            trigger.enabled &&
-            !trigger.inherited,
+          (trigger) => trigger.name === "PreviewUploads" && trigger.enabled && !trigger.inherited,
         ),
       ).toBe(true);
       yield* stack.destroy();
@@ -150,16 +135,10 @@ test.provider.skipIf(!configured)(
       expect(parentFunctions.pagination?.next).toBeUndefined();
       expect(childFunctions.pagination?.next).toBeUndefined();
       for (const fn of parentFunctions.functions)
-        expect(
-          childFunctions.functions.some(
-            (inherited) => inherited.slug === fn.slug,
-          ),
-        ).toBe(true);
+        expect(childFunctions.functions.some((inherited) => inherited.slug === fn.slug)).toBe(true);
       const parentTriggers = yield* SDK.listProjectBranchTriggers(parent);
       const childTriggers = yield* SDK.listProjectBranchTriggers(child);
-      const inherited = childTriggers.triggers.filter(
-        (trigger) => trigger.inherited,
-      );
+      const inherited = childTriggers.triggers.filter((trigger) => trigger.inherited);
       expect(inherited.length).toBeGreaterThan(0);
       expect(inherited.every((trigger) => !trigger.enabled)).toBe(true);
       const parentDomains = yield* SDK.listProjectBranchCustomDomains(parent);
@@ -213,40 +192,27 @@ test.provider.skipIf(!configured)(
             "Process a parent upload before forking; inherited file coverage must not be vacuous",
           ),
         );
-      expect(
-        (yield* childSql`SELECT id FROM uploads WHERE id = ${sample.id}`)
-          .length,
-      ).toBe(1);
+      expect((yield* childSql`SELECT id FROM uploads WHERE id = ${sample.id}`).length).toBe(1);
       const original = yield* parentFiles.metadata(sample.object_key);
       expect(original).toBeDefined();
-      expect((yield* childFiles.metadata(sample.object_key))?.ETag).toBe(
-        original?.ETag,
-      );
+      expect((yield* childFiles.metadata(sample.object_key))?.ETag).toBe(original?.ETag);
       const key = "tutorial-preview/isolation-probe.txt";
       const id = "20000000-0000-4000-8000-000000000002";
       expect(yield* parentFiles.metadata(key)).toBeUndefined();
       expect(yield* childFiles.metadata(key)).toBeUndefined();
-      expect(
-        (yield* childSql`SELECT id FROM uploads WHERE id = ${id}`).length,
-      ).toBe(0);
+      expect((yield* childSql`SELECT id FROM uploads WHERE id = ${id}`).length).toBe(0);
       yield* Effect.gen(function* () {
         yield* childFiles.put(key, "child only", { ContentType: "text/plain" });
         yield* childSql`INSERT INTO uploads (id, owner_id, object_key, filename, content_type, expected_bytes)
     VALUES (${id}, 'preview-isolation-probe', ${key}, 'isolation-probe.txt', 'text/plain', 10)`;
         expect((yield* childFiles.metadata(key))?.ContentLength).toBe(10);
-        expect(
-          (yield* childSql`SELECT id FROM uploads WHERE id = ${id}`).length,
-        ).toBe(1);
+        expect((yield* childSql`SELECT id FROM uploads WHERE id = ${id}`).length).toBe(1);
         expect(yield* parentFiles.metadata(key)).toBeUndefined();
-        expect(
-          yield* parentSql`SELECT id, object_key, status FROM uploads ORDER BY id`,
-        ).toEqual(baseline);
-        expect(yield* SDK.listProjectBranchTriggers(parent)).toEqual(
-          parentTriggers,
+        expect(yield* parentSql`SELECT id, object_key, status FROM uploads ORDER BY id`).toEqual(
+          baseline,
         );
-        expect(yield* SDK.listProjectBranchCustomDomains(parent)).toEqual(
-          parentDomains,
-        );
+        expect(yield* SDK.listProjectBranchTriggers(parent)).toEqual(parentTriggers);
+        expect(yield* SDK.listProjectBranchCustomDomains(parent)).toEqual(parentDomains);
       }).pipe(
         Effect.ensuring(
           Effect.gen(function* () {
@@ -259,11 +225,9 @@ test.provider.skipIf(!configured)(
       const active = (yield* SDK.listCredentials(child)).credentials.filter(
         (credential) => !credential.revoked_at,
       );
-      expect(
-        active.some(
-          (credential) => credential.token_id === credentials.child.tokenId,
-        ),
-      ).toBe(false);
+      expect(active.some((credential) => credential.token_id === credentials.child.tokenId)).toBe(
+        false,
+      );
     }).pipe(Effect.ensuring(stack.destroy().pipe(Effect.orDie))),
   { timeout: 120_000 },
 );

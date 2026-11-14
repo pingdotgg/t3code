@@ -145,6 +145,8 @@ const ManualSchemas: Record<string, Schema.Json> = {
 // `account/read` decode and take the provider down with it.
 const DefinitionOverrides: Record<string, Schema.Json> = {
   PlanType: { type: "string" },
+  // Newer Codex releases add hook events (e.g. `preModelRequest`); a closed enum drops their notifications.
+  HookEventName: { type: "string" },
   // Newer custom Codex binaries emit partial answers before additional tools or text.
   MessagePhase: {
     description:
@@ -170,6 +172,48 @@ const DefinitionOverrides: Record<string, Schema.Json> = {
   },
 };
 
+// Codex sends error codes this ref does not list yet (e.g. `modelNotFound`). A closed enum
+// fails the whole notification decode, which drops a failed `turn/completed` and leaves the turn running.
+const OpenStringEnumDefinitions = new Set(["CodexErrorInfo"]);
+
+function openStringEnum(schema: Schema.Json): Schema.Json {
+  if (!isJsonSchemaNode(schema) || !Array.isArray(schema.oneOf)) return schema;
+  return {
+    ...schema,
+    oneOf: schema.oneOf.map((variant: Schema.Json) =>
+      isJsonSchemaNode(variant) && variant.type === "string" && Array.isArray(variant.enum)
+        ? { type: "string" }
+        : variant,
+    ),
+  };
+}
+
+// Newer Codex identifies a generated image by `fileId` and omits the inline `result`.
+// Requiring `result` fails the whole notification decode and drops the finished image.
+function acceptImageFileIds(schema: Schema.Json): Schema.Json {
+  if (!isJsonSchemaNode(schema) || !Array.isArray(schema.oneOf)) return schema;
+  return {
+    ...schema,
+    oneOf: schema.oneOf.map((variant: Schema.Json) => {
+      if (
+        !isJsonSchemaNode(variant) ||
+        !isJsonSchemaNode(variant.properties) ||
+        !isJsonSchemaNode(variant.properties.type) ||
+        !Array.isArray(variant.properties.type.enum) ||
+        !variant.properties.type.enum.includes("imageGeneration") ||
+        !Array.isArray(variant.required)
+      ) {
+        return variant;
+      }
+      return {
+        ...variant,
+        properties: { ...variant.properties, fileId: { type: "string" } },
+        required: variant.required.filter((key: Schema.Json) => key !== "result"),
+      };
+    }),
+  };
+}
+
 const getGeneratedPaths = Effect.fn("getGeneratedPaths")(function* () {
   const path = yield* Path.Path;
   const generatedDir = path.join(import.meta.dirname, "..", "src", "_generated");
@@ -187,12 +231,13 @@ const ensureGeneratedDir = Effect.fn("ensureGeneratedDir")(function* () {
   yield* fs.makeDirectory(generatedDir, { recursive: true });
 });
 
+const githubToken = process.env.GITHUB_TOKEN;
+
 const fetchText = Effect.fn("fetchText")(function* (url: string) {
-  const token = process.env.GITHUB_TOKEN;
   return yield* HttpClientRequest.get(url).pipe(
     HttpClientRequest.setHeader("user-agent", USER_AGENT),
-    token && url.startsWith("https://api.github.com/")
-      ? HttpClientRequest.bearerToken(token)
+    githubToken && url.startsWith("https://api.github.com/")
+      ? HttpClientRequest.bearerToken(githubToken)
       : (request) => request,
     HttpClient.execute,
     Effect.flatMap(HttpClientResponse.filterStatusOk),
@@ -662,7 +707,12 @@ const generateFiles = Effect.fn("generateFiles")(function* () {
     for (const [definitionName, definitionSchema] of Object.entries(parsed.definitions ?? {})) {
       aggregateSchemas[localDefinitionNames.get(definitionName)!] = pipe(
         rewriteExternalRefs(
-          DefinitionOverrides[definitionName] ?? definitionSchema,
+          DefinitionOverrides[definitionName] ??
+            (OpenStringEnumDefinitions.has(definitionName)
+              ? openStringEnum(definitionSchema)
+              : definitionName === "ThreadItem"
+                ? acceptImageFileIds(definitionSchema)
+                : definitionSchema),
           localDefinitionNames,
           file.namespace,
           exportNameByQualifiedName,

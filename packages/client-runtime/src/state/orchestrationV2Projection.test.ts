@@ -3,6 +3,7 @@ import {
   type ThreadPullRequestLink,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
+  type OrchestrationV2ProviderThread,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
   MessageId,
@@ -483,6 +484,105 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     });
   });
 
+  it("hides a steer that fell back to the queue until its run starts", () => {
+    const queuedRunId = RunId.make("run-requeued-steer");
+    const queuedRun = { ...run, id: queuedRunId, ordinal: 2, status: "queued" } as const;
+    const reply = commandItem("item-reply", "reply", 102);
+    const steer: OrchestrationV2TurnItem = {
+      id: TurnItemId.make("item-steer"),
+      threadId,
+      runId,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 101,
+      status: "completed",
+      title: null,
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+      type: "user_message",
+      messageId: MessageId.make("message-steer"),
+      inputIntent: "steer",
+      text: "steer",
+      attachments: [],
+      createdBy: "user",
+      creationSource: "web",
+    };
+    const event = (type: "run.updated" | "turn-item.updated", payload: unknown) =>
+      ({
+        id: `event-${type}`,
+        type,
+        threadId,
+        occurredAt: now,
+        payload,
+      }) as OrchestrationV2DomainEvent;
+    const apply = (
+      projection: OrchestrationV2ThreadProjection | null,
+      events: ReadonlyArray<OrchestrationV2DomainEvent>,
+      options?: Parameters<typeof applyOrchestrationV2ProjectionEvent>[2],
+    ) =>
+      events.reduce(
+        (next, item) => applyOrchestrationV2ProjectionEvent(next, item, options),
+        projection,
+      );
+    const visibleIds = (projection: OrchestrationV2ThreadProjection | null) =>
+      projection?.visibleTurnItems.map((row) => row.item.id);
+
+    const accepted = apply(emptyProjection, [
+      event("run.updated", { ...run, status: "running" }),
+      event("turn-item.updated", steer),
+      event("turn-item.updated", reply),
+    ]);
+    expect(visibleIds(accepted)).toEqual([steer.id, reply.id]);
+
+    const queuedSteer = event("turn-item.updated", {
+      ...steer,
+      runId: queuedRunId,
+      inputIntent: "queued_turn",
+      status: "pending",
+      startedAt: null,
+      completedAt: null,
+    });
+    const requeued = apply(accepted, [event("run.updated", queuedRun), queuedSteer]);
+    expect(visibleIds(requeued)).toEqual([reply.id]);
+
+    // Servers publish the start's user item and run update in either order.
+    const starting = event("run.updated", { ...queuedRun, status: "starting" });
+    const dispatchedSteer = event("turn-item.updated", {
+      ...steer,
+      runId: queuedRunId,
+      inputIntent: "queued_turn",
+    });
+    expect(visibleIds(apply(requeued, [dispatchedSteer, starting]))).toEqual([steer.id, reply.id]);
+    expect(visibleIds(apply(requeued, [starting, dispatchedSteer]))).toEqual([steer.id, reply.id]);
+    const cancelled = event("run.updated", { ...queuedRun, status: "cancelled" });
+    expect(visibleIds(apply(requeued, [cancelled]))).toEqual([reply.id]);
+
+    // A bounded snapshot taken while queued omits the hidden item, and the
+    // newer reply puts it below the watermark.
+    const bounded = {
+      ...requeued!,
+      turnItems: requeued!.turnItems.filter((item) => item.id !== steer.id),
+    };
+    const partial = { partialTimeline: true, latestLocalTurnOrdinal: reply.ordinal };
+    const failed = event("run.updated", { ...queuedRun, status: "failed" });
+    const failedSteer = event("turn-item.updated", {
+      ...steer,
+      runId: queuedRunId,
+      inputIntent: "queued_turn",
+      status: "failed",
+      startedAt: null,
+    });
+    const retained = apply(bounded, [failedSteer], partial);
+    expect(visibleIds(retained)).toEqual([reply.id]);
+    expect(visibleIds(apply(retained, [failed], partial))).toEqual([steer.id, reply.id]);
+    // Leaving the queue never invents an item the client did not receive.
+    expect(visibleIds(apply(bounded, [failed], partial))).toEqual([reply.id]);
+  });
+
   it("removes only hidden local items while preserving inherited rows", () => {
     const inherited = commandItem("item-inherited");
     const local = commandItem("item-local");
@@ -717,4 +817,79 @@ it("restores deduped bodies from the records it already holds, also in a partial
     event("subagent.updated", { ...subagent, prompt: "", promptOmitted: true, progress: "step 2" }),
   );
   expect(progressed?.subagents).toEqual([{ ...subagent, progress: "step 2" }]);
+});
+
+describe("provider-thread.updated", () => {
+  const providerThread = (
+    id: string,
+    overrides: Partial<OrchestrationV2ProviderThread> = {},
+  ): OrchestrationV2ProviderThread =>
+    ({
+      id: ProviderThreadId.make(id),
+      driver: "codex",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      providerSessionId: null,
+      appThreadId: threadId,
+      ownerNodeId: null,
+      nativeThreadRef: null,
+      nativeConversationHeadRef: null,
+      status: "active",
+      firstRunOrdinal: 1,
+      lastRunOrdinal: 1,
+      handoffIds: [],
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+      ...overrides,
+    }) as OrchestrationV2ProviderThread;
+  const apply = (payload: unknown) =>
+    applyOrchestrationV2ProjectionEvent(emptyProjection, {
+      id: "event-provider-thread",
+      type: "provider-thread.updated",
+      threadId,
+      occurredAt: now,
+      payload,
+    } as OrchestrationV2DomainEvent);
+
+  it("moves the thread's active provider thread to the new one", () => {
+    // The shell already knows the old thread, as it would after a provider switch.
+    const projection = applyOrchestrationV2ProjectionEvent(emptyProjection, {
+      id: "event-previous-thread",
+      type: "provider-thread.updated",
+      threadId,
+      occurredAt: now,
+      payload: providerThread("provider-thread-previous"),
+    } as OrchestrationV2DomainEvent);
+    expect(projection?.thread.activeProviderThreadId).toBe(
+      ProviderThreadId.make("provider-thread-previous"),
+    );
+
+    const next = applyOrchestrationV2ProjectionEvent(projection, {
+      id: "event-next-thread",
+      type: "provider-thread.updated",
+      threadId,
+      occurredAt: now,
+      payload: providerThread("provider-thread-next"),
+    } as OrchestrationV2DomainEvent);
+    expect(next?.thread.activeProviderThreadId).toBe(ProviderThreadId.make("provider-thread-next"));
+  });
+
+  it("keeps the active provider thread for queued placeholders and other threads", () => {
+    const queued = apply(
+      providerThread("provider-thread-queued", {
+        status: "not_loaded",
+        firstRunOrdinal: null,
+        providerSessionId: null,
+      }),
+    );
+    expect(queued?.thread.activeProviderThreadId).toBeNull();
+
+    const foreign = apply(
+      providerThread("provider-thread-foreign", { appThreadId: ThreadId.make("other-thread") }),
+    );
+    expect(foreign?.thread.activeProviderThreadId).toBeNull();
+    expect(foreign?.providerThreads.map((thread) => thread.id)).toEqual([
+      ProviderThreadId.make("provider-thread-foreign"),
+    ]);
+  });
 });

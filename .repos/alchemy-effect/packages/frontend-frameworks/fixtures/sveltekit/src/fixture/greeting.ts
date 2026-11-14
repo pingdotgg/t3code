@@ -1,6 +1,6 @@
 /**
- * Imported as `$fixture/greeting` — the `$fixture` alias is declared in the
- * user's `vite.config.ts` (`sveltekit({ alias })`), so this import only
- * resolves when the user's config file is honored.
+ * Imported as `#fixture/greeting.js` — a `package.json` subpath import (kit
+ * v3 deprecates `alias` in favor of these), resolved natively by Vite in
+ * both the dev server and the production build.
  */
-export const greeting = "greeting-via-user-alias";
+export const greeting = "greeting-via-subpath-import";
