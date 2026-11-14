@@ -31,8 +31,16 @@ export function buildCommitMessagePrompt(input: CommitMessagePromptInput) {
       ? "Return a JSON object with keys: subject, body, branch."
       : "Return a JSON object with keys: subject, body.",
     "Rules:",
-    "- subject must be imperative, <= 72 chars, and no trailing period",
-    "- body can be empty string or short bullet points",
+    ...(input.policy?.kind === "repo_conventions"
+      ? [
+          "- follow the repository commit conventions under Additional instructions; for message format, they take precedence over the defaults below",
+          "- by default, subject is imperative, <= 72 chars, and has no trailing period",
+          "- by default, body is empty or short bullet points",
+        ]
+      : [
+          "- subject must be imperative, <= 72 chars, and no trailing period",
+          "- body can be empty string or short bullet points",
+        ]),
     ...(wantsBranch
       ? ["- branch must be a short semantic git branch fragment for this change"]
       : []),

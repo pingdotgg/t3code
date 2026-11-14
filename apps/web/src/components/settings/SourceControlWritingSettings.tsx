@@ -50,7 +50,7 @@ const MODE_OPTIONS: Record<SourceControlWritingStyleMode, { label: string; descr
     repo_conventions: {
       label: "Repository conventions",
       description:
-        "Commit messages and pull request titles and descriptions match each project's history.",
+        "Commit messages and pull request titles and descriptions follow each project's AGENTS.md, then its history.",
     },
     conventional_commits: {
       label: "Conventional Commits",

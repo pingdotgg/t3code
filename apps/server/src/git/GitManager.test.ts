@@ -3057,14 +3057,16 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
-  it.effect("includes CLAUDE.md for Claude writers only when it differs from AGENTS.md", () =>
+  it.effect("puts repository instructions ahead of history and keeps their subject format", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
       NodeFS.writeFileSync(NodePath.join(repoDir, "AGENTS.md"), "Use imperative subjects.\n");
       NodeFS.copyFileSync(NodePath.join(repoDir, "AGENTS.md"), NodePath.join(repoDir, "CLAUDE.md"));
       NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\n");
-      const commitInstructions: Array<string | undefined> = [];
+      const subject =
+        "[docs] Added the project readme so that new contributors can find the setup steps quickly.";
+      const commitInstructions: Array<string> = [];
 
       const { manager } = yield* makeManager({
         serverSettings: {
@@ -3075,21 +3077,26 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         },
         textGeneration: {
           generateCommitMessage: (input) => {
-            commitInstructions.push(input.policy?.commitInstructions);
-            return Effect.succeed({ subject: "Update readme", body: "" });
+            commitInstructions.push(input.policy?.commitInstructions ?? "");
+            return Effect.succeed({ subject, body: "" });
           },
         },
       });
 
       yield* runStackedAction(manager, { cwd: repoDir, action: "commit" });
+      expect((yield* runGit(repoDir, ["log", "-1", "--pretty=%s"])).stdout.trim()).toBe(subject);
 
       NodeFS.writeFileSync(NodePath.join(repoDir, "CLAUDE.md"), "Mention the Claude provider.\n");
       NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello again\n");
       yield* runStackedAction(manager, { cwd: repoDir, action: "commit" });
 
-      expect(commitInstructions[0]).toContain("Local AGENTS.md:\nUse imperative subjects.");
-      expect(commitInstructions[0]).not.toContain("Local CLAUDE.md:");
-      expect(commitInstructions[1]).toContain("Local CLAUDE.md:\nMention the Claude provider.");
+      const [first = "", second = ""] = commitInstructions;
+      expect(first).toContain(
+        "AGENTS.md (take precedence over the examples below):\nUse imperative",
+      );
+      expect(first).not.toContain("repository's CLAUDE.md");
+      expect(second).toContain("CLAUDE.md (take precedence over the examples below):\nMention");
+      expect(second.indexOf("Use imperative subjects.")).toBeLessThan(second.indexOf(subject));
     }),
   );
 

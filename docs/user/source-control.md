@@ -186,9 +186,10 @@ If its badge is missing because several remotes hold that branch, set the branch
 the intended remote with `git branch --set-upstream-to=<remote>/<branch>`.
 
 Choose how commit messages and pull request titles and descriptions are written in
-**Settings → Source control → Commits & pull requests**. **Repository conventions** uses the
-project's instructions and recent commit subjects. **Custom instructions** applies your own
-instructions to commits and pull requests.
+**Settings → Source control → Commits & pull requests**. **Repository conventions** follows the
+project's root `AGENTS.md` (and root `CLAUDE.md` for Claude writers), then the style of recent
+commit subjects. Conventions kept only in `README.md` or `CONTRIBUTING.md` are not read; copy them
+into `AGENTS.md`. **Custom instructions** applies your own instructions to commits and pull requests.
 
 ## Review and merge
 

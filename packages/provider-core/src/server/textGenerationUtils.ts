@@ -2,6 +2,8 @@ import { TextGenerationError } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import type { TextGenerationPolicyKind } from "./textGenerationPolicy.ts";
+
 const isTextGenerationError = Schema.is(TextGenerationError);
 const decodeJsonThreadTitle = Schema.decodeOption(
   Schema.fromJsonString(Schema.Struct({ title: Schema.String })),
@@ -25,8 +27,11 @@ export function limitSection(value: string, maxChars: number): string {
   return `${truncated}\n\n[truncated]`;
 }
 
-export function sanitizeCommitSubject(raw: string): string {
+export function sanitizeCommitSubject(raw: string, policyKind?: TextGenerationPolicyKind): string {
   const singleLine = raw.trim().split(/\r?\n/g)[0]?.trim() ?? "";
+  if (policyKind === "repo_conventions") {
+    return singleLine || "Update project files";
+  }
   const withoutTrailingPeriod = singleLine.replace(/[.]+$/g, "").trim();
   if (withoutTrailingPeriod.length === 0) {
     return "Update project files";
