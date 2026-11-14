@@ -300,7 +300,7 @@ keeps the explicit flush needed when Windows force-kills the backend.
 ### Linux AppImage prerequisites
 
 Build on Linux because the browser-secret helper links against the host's libsecret. Install
-C/C++ build tools, libsecret development headers, pkg-config, and ImageMagick.
+C/C++ build tools, libsecret and libudev development headers, pkg-config, and ImageMagick.
 Bytecode preparation also runs packaged Electron and requires GTK, NSS, ALSA, and GBM runtime libraries.
 Install Rust 1.95 or newer through [rustup](https://rust-lang.org/install), using the stable
 toolchain as release CI does.
@@ -309,7 +309,7 @@ Ubuntu 24.04 and Debian 13:
 
 ```sh
 sudo apt-get update
-sudo apt-get install build-essential libsecret-1-dev pkg-config imagemagick libgtk-3-0t64 libnss3 libasound2t64 libgbm1
+sudo apt-get install build-essential libsecret-1-dev libudev-dev pkg-config imagemagick libgtk-3-0t64 libnss3 libasound2t64 libgbm1
 ```
 
 On Ubuntu 22.04 and Debian 12, use `libgtk-3-0` and `libasound2` instead of the `t64` packages.
@@ -317,7 +317,7 @@ On Ubuntu 22.04 and Debian 12, use `libgtk-3-0` and `libasound2` instead of the 
 Fedora:
 
 ```sh
-sudo dnf install gcc gcc-c++ make libsecret-devel pkgconf-pkg-config ImageMagick gtk3 nss alsa-lib mesa-libgbm
+sudo dnf install gcc gcc-c++ make libsecret-devel systemd-devel pkgconf-pkg-config ImageMagick gtk3 nss alsa-lib mesa-libgbm
 ```
 
 Arch Linux:
@@ -326,7 +326,9 @@ Arch Linux:
 sudo pacman -S base-devel libsecret pkgconf imagemagick gtk3 nss alsa-lib mesa
 ```
 
-The C toolchain, pkg-config, and libsecret headers are also needed for Linux desktop development.
+Linux desktop development needs the C toolchain, pkg-config, and libsecret headers. Phone passkeys
+additionally need Rust 1.88 or newer and libudev development headers. Helper build failures warn
+without stopping development; when no helper is available, Chromium handles WebAuthn.
 
 ### macOS DMG prerequisites
 

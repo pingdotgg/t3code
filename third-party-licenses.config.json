@@ -226,6 +226,14 @@
           ]
         }
       ]
+    },
+    {
+      "name": "libwebauthn (phone passkeys)",
+      "version": "0.11.0",
+      "bundles": ["desktop"],
+      "license": "LGPL-2.1-or-later",
+      "sourceUrl": "https://github.com/linux-credentials/libwebauthn",
+      "noticeFiles": ["native/phone-passkeys/LICENSE.libwebauthn"]
     }
   ],
   "packageOverrides": [
