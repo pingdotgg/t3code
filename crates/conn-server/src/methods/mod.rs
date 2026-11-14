@@ -14,6 +14,7 @@ mod orchestration;
 mod projects;
 pub mod provider;
 pub mod server;
+mod source_control;
 pub mod terminal;
 pub mod vcs;
 
@@ -50,4 +51,5 @@ pub fn register_all(table: &mut MethodTable, deps: &Deps) {
     vcs::register(table, deps);
     files::register(table, deps);
     terminal::register(table, deps);
+    source_control::register(table, deps);
 }

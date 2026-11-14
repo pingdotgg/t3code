@@ -9,6 +9,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { importSource, packageImporter } from "../../../tools/monorepo.mjs";
+import { sealedEnv } from "../../../tools/sealed-env.mjs";
 
 // Packages resolve as packages/contracts sees them, so the sources share one `effect`.
 const load = packageImporter("packages/contracts");
@@ -43,7 +44,7 @@ const stateDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "conn-server-
 const server = NodeChildProcess.spawn(
   binary,
   fixture ? [stateDir] : ["--listen", "127.0.0.1:0", "--state-dir", stateDir],
-  { stdio: ["ignore", "pipe", "pipe"] },
+  { stdio: ["ignore", "pipe", "pipe"], env: sealedEnv(stateDir) },
 );
 const stderr = [];
 server.stderr.on("data", (data) => stderr.push(String(data)));
@@ -285,6 +286,17 @@ const decodeEach = (client) =>
     yield* call("terminal.clear", { threadId: none, terminalId: "default" });
     yield* call("terminal.observe", { threadId: none, terminalId: "default" });
     yield* call("panels.requests", {});
+    // Source control: every host probed, with no login or token of this machine (sealedEnv).
+    yield* call("server.discoverSourceControl", {});
+    // As a T3 server without an app client id: typed refusals, signed-out, not starred.
+    const signIn = { provider: "github", host: "github.com" };
+    yield* call("sourceControl.signInStart", signIn);
+    yield* call("sourceControl.signInWait", signIn);
+    yield* call("sourceControl.signInCancel", signIn);
+    const repository = { ...signIn, repository: "pingdotgg/t3code" };
+    yield* call("sourceControl.appAccess", repository);
+    yield* call("sourceControl.starred", repository);
+    yield* call("sourceControl.star", { ...repository, provider: "gitlab" });
   });
 
 const result = await Effect.runPromiseExit(program);

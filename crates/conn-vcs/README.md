@@ -17,7 +17,7 @@ why the CLI and not `gix` or `git2`, with numbers.
 | `review.rs`               | `review.getDiffPreview`, `getDiffFileContents`, `getBranchCommits`                   |
 | `checkpoint.rs`           | Turn checkpoints: capture, restore, diff, authored paths, refs (`GitVcsDriver.ts` `checkpoints`) |
 | `setup.rs`                | Worktree setup progress (`subscribeWorktreeSetup`) and `provision` for thread launch |
-| `discovery.rs`            | `server.discoverSourceControl`: `git`, `jj`, `gh`, `glab`                            |
+| `discovery.rs`            | The `git` and `jj` half of `server.discoverSourceControl` (hosts: `conn-source-control`) |
 
 ## Costs
 
@@ -58,7 +58,7 @@ ignored workspace folders, the embedded-repository retry).
   script into a thread terminal (`setup-<script id>`) and watches for a completion marker
   (`ProjectSetupScriptRunner.ts`). Doing the same needs the terminal manager and the project's
   scripts at launch.
-- `pullRequests.*` and `sourceControl.*`; forges other than GitHub and GitLab in discovery.
+- `pullRequests.*` and `sourceControl.*` live in `conn-source-control`.
 
 ## Check
 

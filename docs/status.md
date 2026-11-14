@@ -54,7 +54,7 @@ settings; about 140 MiB for the `claude` program alone).
 
 | Part | State |
 | --- | --- |
-| RPC methods | 83 of 236 served; 82 have a run that the real client's decoders accept |
+| RPC methods | 89 of 236 served; 88 have a run that the real client's decoders accept |
 | Engine commands | 43 of 56 |
 | HTTP routes | 13 of 57 |
 | `/mcp` tools | 20 of 87 |
@@ -219,7 +219,13 @@ methods. Not proven: T3's recorded `thread_rollback`, `thread_fork_native*` and
    3.5 s on a cold start; the T3 server marks it at once), so the client offers "Send now" on
    a queued message later; no title generation, so a thread
    keeps its first message as title.
-6. **Features.** `pullRequests.*` (34), `sourceControl.*` and `git.*`; the Conn-only methods
+6. **Features.** Pull requests and source control: `crates/conn-source-control/README.md` maps
+   the area (48 methods, 7 engine commands, 9 `/mcp` tools, 7 hosts). Served (2026-11-14):
+   `server.discoverSourceControl` for all 7 hosts, and 6 of 9 `sourceControl.*` (sign-in as a
+   T3 server without an app client id; GitHub stars). Next: each host's repository operations
+   (`lookupRepository`, `cloneRepository`, `publishRepository`), then `git.*`, `pr` in VCS
+   status, `pullRequests.*` (35), the linked pull request commands and the `/mcp` tools.
+   Also: the Conn-only methods
    (annotations, panels, scheduled tasks, peer links, test logins, credentials, secrets, guest
    share); 67 more `/mcp` tools (11 need nothing new: `crates/conn-mcp/README.md`, "All 87 tools"); Codex subagents and MCP elicitation; worktree setup scripts
    the T3 way (typed into a thread terminal, with a completion marker).

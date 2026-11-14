@@ -41,6 +41,12 @@ allow = [
   "BSD-3-Clause",
   "Unicode-3.0",
   "Zlib",
+  # ring (TLS for host APIs, conn-source-control): "Apache-2.0 AND ISC". ISC is a short
+  # permissive licence, like MIT. Read 2026-11-14.
+  "ISC",
+  # webpki-roots (Mozilla's CA list as data): CDLA-Permissive-2.0, a permissive data licence
+  # that asks only to keep the licence text with the data. Read 2026-11-14.
+  "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.9
 # The list names the licences of the crates CRATES.md plans to adopt, too.

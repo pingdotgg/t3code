@@ -141,6 +141,7 @@ See [`fixtures/README.md`](fixtures/README.md) for every scenario and which need
 | `conn-vcs`              | Git status, refs, review diffs, worktrees and their setup             |
 | `conn-files`            | Project files, search, asset URLs, attachments                        |
 | `conn-terminal`         | Shells on PTYs: sessions, scrollback, viewers (`terminal.*`)          |
+| `conn-source-control`   | Source control hosts (GitHub, GitLab, ...): discovery, sign-in, stars; later pull requests |
 | `conn-server`           | Binary: HTTP, `/ws` session, pairing, method table, handlers          |
 | `conn-support`          | Helpers several crates share: time, hex, base64, HMAC, atomic writes, v4 ids |
 
@@ -383,7 +384,7 @@ to the socket.
 
 ## Status
 
-**Coverage:** 83 of 236 methods (20 of 33 streams), from the method table at startup. Every
+**Coverage:** 89 of 236 methods (20 of 33 streams), from the method table at startup. Every
 registered method checks the scope the T3 server requires (`src/scopes.rs`, its table
 generated). Every registered method but two has a run that decodes its answer with the real
 client (`tools/decode-coverage.mjs`; the rest are in `decode-coverage.pending`). The engine's
@@ -397,6 +398,7 @@ lists what it serves.
 | Agents          | `conn-provider-claude`, `conn-provider-codex`; `/mcp` (`conn-mcp`, 20 tools)                    |
 | Workspace       | `conn-vcs` (status, refs, review, worktrees), `conn-files` (files, search, assets, uploads)     |
 | Terminals       | `conn-terminal`                                                                                 |
+| Source control  | `conn-source-control`: discovery of 7 hosts, `sourceControl.*` sign-in and stars (6 of 9)       |
 
 The server joins them in `src/host.rs`: each provider session gets a `/mcp` credential, messages
 claim their uploads, a `worktree` launch provisions a worktree, archive and delete close the
