@@ -3,6 +3,7 @@ import { useRender } from "@base-ui/react/use-render";
 import { XIcon } from "lucide-react";
 import { type ComponentProps, createContext, type ReactNode, use, useRef, useState } from "react";
 import { cn } from "~/lib/utils";
+import { useNativeTitlebarHeight } from "~/lib/windowControlsOverlay";
 import { Button, type ButtonVariant } from "~/components/ui/button";
 import {
   DIALOG_BACKDROP_CLASS,
@@ -110,12 +111,15 @@ function DialogPopup({
   variant?: "default" | "media";
 }) {
   const { popupRef, initialFocus } = useDialogActionInitialFocus();
+  const nativeTitlebarHeight = useNativeTitlebarHeight();
   const popup = useRender({
     ref: popupRef,
     render: (
       <DialogPrimitive.Popup
         className={cn(
-          variant === "media" ? DIALOG_MEDIA_POPUP_CLASS : DIALOG_POPUP_CLASS,
+          variant === "media"
+            ? cn(DIALOG_MEDIA_POPUP_CLASS, "[-webkit-app-region:no-drag]")
+            : DIALOG_POPUP_CLASS,
           "row-start-2 text-popover-foreground",
           variant === "default" && "max-h-full max-w-lg",
           bottomStickOnMobile && DIALOG_MOBILE_SHEET_CLASS,
@@ -150,6 +154,15 @@ function DialogPopup({
             "z-[60] grid-rows-1 place-items-center px-4 pb-6 pt-[calc(var(--native-titlebar-height,0px)+1.5rem)]",
         )}
       >
+        {variant === "media" && nativeTitlebarHeight > 0 ? (
+          // The titlebar keeps moving the window instead of closing the media. Electron applies
+          // regions in DOM order, so this follows the no-drag viewport and precedes the popup.
+          <div
+            aria-hidden
+            className="absolute inset-x-0 top-0 [-webkit-app-region:drag]"
+            style={{ height: nativeTitlebarHeight }}
+          />
+        ) : null}
         {popup}
       </DialogViewport>
     </DialogPortal>
