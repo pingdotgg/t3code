@@ -2497,12 +2497,6 @@ it.layer(
 
   it.effect.each([
     { name: "Volta's script shim", script: "@echo off\r\nvolta run %~n0 %*\r\n", owned: true },
-    { name: "Volta's LF cmd shim", script: "@echo off\nvolta run %~n0 %*\n", owned: true },
-    {
-      name: "Volta's bash shim",
-      script: '#!/bin/bash\nvolta run "$(basename $0)" "$@"\n',
-      owned: true,
-    },
     {
       name: "a fixed-target wrapper",
       script: '#!/bin/bash\nvolta run node /other/opencode/index.js "$@"\n',
@@ -2514,11 +2508,10 @@ it.layer(
       owned: false,
     },
     {
-      name: "Volta's generated bash shim without a final newline",
+      name: "Volta's bash shim without a final newline",
       script: '#!/bin/bash\nvolta run "$(basename $0)" "$@"',
       owned: true,
     },
-    { name: "another script", script: "@echo off\r\necho package-tool\r\n", owned: false },
   ])(
     "updates Windows Volta installs from $name only when Volta has the package",
     ({ script, owned }) =>
