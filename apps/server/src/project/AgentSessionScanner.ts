@@ -116,10 +116,6 @@ const TranscriptMessage = Schema.Struct({
   model: Schema.optional(Schema.String),
 });
 
-const CodexTurnMetadata = Schema.Struct({
-  turn_id: Schema.optional(Schema.Union([Schema.String, Schema.Null])),
-});
-
 const TranscriptRecord = Schema.Struct({
   type: Schema.optional(Schema.String),
   // Pi entries form a tree through id/parentId; session_info entries carry its name.
@@ -142,13 +138,25 @@ const TranscriptRecord = Schema.Struct({
       type: Schema.optional(Schema.String),
       role: Schema.optional(Schema.String),
       message: Schema.optional(Schema.String),
+      local_images: Schema.optional(Schema.Unknown),
       model: Schema.optional(Schema.String),
       cwd: Schema.optional(Schema.String),
       history_base: Schema.optional(Schema.Unknown),
       content: Schema.optional(Schema.Array(TranscriptContentBlock)),
-      internal_chat_message_metadata_passthrough: Schema.optional(Schema.Unknown),
+      item: Schema.optional(
+        Schema.Struct({
+          type: Schema.optional(Schema.String),
+          content: Schema.optional(Schema.Array(TranscriptContentBlock)),
+        }),
+      ),
     }),
   ),
+});
+
+const CodexQuestionReply = Schema.Struct({
+  questionItemId: Schema.String,
+  question: Schema.String,
+  answer: Schema.String,
 });
 
 const CodexSessionIndexEntry = Schema.Struct({
@@ -168,7 +176,11 @@ const decodePiEntryLinks = Schema.decodeUnknownOption(
   }),
 );
 const selectTranscriptPath = createTranscriptJsonSelector(TranscriptRecord);
-const decodeCodexTurnMetadata = Schema.decodeUnknownOption(CodexTurnMetadata);
+const decodeCodexQuestionReplies = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Union([CodexQuestionReply, Schema.NonEmptyArray(CodexQuestionReply)]),
+  ),
+);
 export const decodeImportedTranscriptPayload = Schema.decodeUnknownOption(
   Schema.Struct({
     cwd: Schema.optional(Schema.String),
@@ -320,18 +332,6 @@ function normalizeTimestamp(value: string | undefined, fallback: string): string
   return Option.isSome(parsed) ? DateTime.formatIso(parsed.value) : fallback;
 }
 
-function codexTurnId(metadata: unknown): string | null {
-  const decoded = decodeCodexTurnMetadata(metadata);
-  if (
-    Option.isNone(decoded) ||
-    typeof decoded.value.turn_id !== "string" ||
-    decoded.value.turn_id.trim().length === 0
-  ) {
-    return null;
-  }
-  return decoded.value.turn_id;
-}
-
 function isHiddenClaudeRecord(record: DecodedTranscriptRecord): boolean {
   return record.isSidechain === true || record.isMeta === true || record.isCompactSummary === true;
 }
@@ -370,6 +370,122 @@ function foldClaudeFields(fields: ClaudeFields, record: DecodedTranscriptRecord)
 // these leading blocks when deriving a title; imported messages keep them.
 const CODEX_TITLE_PREAMBLE =
   /^(?:\s*(?:<(recommended_plugins|environment_context|user_instructions|INSTRUCTIONS|in-app-browser-context)(?:\s[^>]*)?>[\s\S]*?<\/\1>|# AGENTS\.md instructions\b[^\n]*|## My request for Codex:))+/;
+
+// Codex prompts that open with generated context end it at the request line.
+// When that line appears more than once, either side may quote it, so keep the text.
+const CODEX_CONTEXT_OPENERS = [
+  "# Context from my IDE setup:",
+  "# Files mentioned by the user:",
+  "<in-app-browser-context",
+  "## Referenced chats with Codex:",
+];
+const CODEX_REQUEST_MARKER = /\n## My request for Codex:(?=\n|$)/g;
+
+function codexRequestText(text: string): string {
+  const opening = text.trimStart();
+  if (!CODEX_CONTEXT_OPENERS.some((opener) => opening.startsWith(opener))) return text;
+  const markers = Array.from(text.matchAll(CODEX_REQUEST_MARKER));
+  const marker = markers.length === 1 ? markers[0] : undefined;
+  const request = marker === undefined ? "" : text.slice(marker.index + marker[0].length).trim();
+  // An attachment sent without text has an empty request; keep the turn as recorded.
+  return request || text;
+}
+
+const CODEX_QUESTION_REPLY_OPEN = "<send_user_message_question_reply>";
+const CODEX_QUESTION_REPLY_CLOSE = "</send_user_message_question_reply>";
+
+// Mirrors Codex's async_question_reply display: answered questions are sent as this envelope.
+function codexUserText(text: string): string {
+  const request = codexRequestText(text);
+  const envelope = request.trim();
+  if (
+    !envelope.startsWith(CODEX_QUESTION_REPLY_OPEN) ||
+    !envelope.endsWith(CODEX_QUESTION_REPLY_CLOSE)
+  ) {
+    return request;
+  }
+  const replies = decodeCodexQuestionReplies(
+    envelope.slice(CODEX_QUESTION_REPLY_OPEN.length, -CODEX_QUESTION_REPLY_CLOSE.length),
+  );
+  if (Option.isNone(replies)) return request;
+  return (Array.isArray(replies.value) ? replies.value : [replies.value])
+    .map((reply) => `> ${reply.question}\n\n${reply.answer}`)
+    .join("\n\n");
+}
+
+// An interrupted turn ends without an assistant message.
+function isCodexTurnEnd(record: DecodedTranscriptRecord): boolean {
+  return (
+    record.type === "event_msg" &&
+    (record.payload?.type === "turn_aborted" || record.payload?.type === "task_complete")
+  );
+}
+
+// Codex shows a prompt's images as these placeholders; an image-only prompt is only them.
+function codexImagePlaceholders(text: string, imageCount: number): string {
+  if (text.trim().length > 0) return text;
+  return Array.from({ length: imageCount }, (_, index) => `[Image #${index + 1}]`).join(" ");
+}
+
+// Legacy rollouts record user_message events; paginated ones record completed UserMessage items.
+function codexUserEventText(record: DecodedTranscriptRecord): string | null {
+  if (record.type !== "event_msg") return null;
+  const payload = record.payload;
+  if (payload?.type === "user_message") {
+    // Only local image paths are read: inline `images` hold whole data URLs.
+    const imageCount = Array.isArray(payload.local_images) ? payload.local_images.length : 0;
+    return codexImagePlaceholders(payload.message ?? "", imageCount);
+  }
+  if (payload?.type === "item_completed" && payload.item?.type === "UserMessage") {
+    const content = payload.item.content ?? [];
+    const imageCount = content.filter(
+      (block) => block.type === "image" || block.type === "local_image",
+    ).length;
+    return codexImagePlaceholders(extractText(content), imageCount);
+  }
+  return null;
+}
+
+const CLAUDE_LOCAL_COMMAND_TAGS = new Set([
+  "command-name",
+  "command-message",
+  "command-args",
+  "local-command-stdout",
+  "local-command-stderr",
+]);
+
+// Claude stores local slash commands and their output as user text made only of these tags.
+function parseClaudeLocalCommandTags(text: string): Map<string, string> | null {
+  const tags = new Map<string, string>();
+  const whitespace = /\s*/y;
+  let position = 0;
+  while (true) {
+    whitespace.lastIndex = position;
+    whitespace.test(text);
+    position = whitespace.lastIndex;
+    if (position === text.length) return tags;
+    if (text[position] !== "<") return null;
+    const nameEnd = text.indexOf(">", position);
+    if (nameEnd === -1) return null;
+    const name = text.slice(position + 1, nameEnd);
+    if (!CLAUDE_LOCAL_COMMAND_TAGS.has(name)) return null;
+    const closingTag = `</${name}>`;
+    const contentEnd = text.indexOf(closingTag, nameEnd + 1);
+    if (contentEnd === -1) return null;
+    tags.set(name, text.slice(nameEnd + 1, contentEnd));
+    position = contentEnd + closingTag.length;
+  }
+}
+
+// Mirrors the Claude transcript view: the command as typed, never its local output.
+function claudeUserText(text: string): string | null {
+  const tags = parseClaudeLocalCommandTags(text);
+  if (tags === null) return text;
+  const command = tags.get("command-name")?.trim();
+  if (!command) return null;
+  const args = tags.get("command-args")?.trim();
+  return args ? `${command} ${args}` : command;
+}
 
 // Codex appends an entry per rename; like Codex, the newest nonempty name wins.
 function parseCodexThreadNames(contents: string): ReadonlyMap<string, string> {
@@ -473,120 +589,67 @@ function parseAgentSessionRecords(
   let model = claudeFields.model ?? null;
   let derivedTitle: string | undefined;
   let hasCodexSessionId = false;
-  const messages: Array<AgentSessionThreadMessage & { readonly codexResponseUser: boolean }> = [];
-  let firstUserMessage:
-    | (AgentSessionThreadMessage & { readonly codexResponseUser: boolean })
-    | undefined;
-  const canonicalCodexResponseUserIndices = new Set<number>();
-  let canonicalUserTextsInTurn = new Set<string>();
-  let responseUsersInTurn: Array<{
-    readonly index: number;
-    readonly turnId: string;
-    readonly text: string;
-  }> = [];
-  const finishCodexTurn = () => {
-    const canonicalTurnIds = new Set(
-      responseUsersInTurn.flatMap((responseUser) =>
-        canonicalUserTextsInTurn.has(responseUser.text) ? [responseUser.turnId] : [],
-      ),
-    );
-    for (const responseUser of responseUsersInTurn) {
-      if (canonicalTurnIds.has(responseUser.turnId)) {
-        canonicalCodexResponseUserIndices.add(responseUser.index);
-      }
-    }
-    canonicalUserTextsInTurn = new Set();
-    responseUsersInTurn = [];
-  };
+  const messages: Array<AgentSessionThreadMessage> = [];
+  let firstUserMessage: AgentSessionThreadMessage | undefined;
+  // Like Codex's own history, a turn with a user event shows only that; its response
+  // copies add injected context. Turns without one, as in older rollouts, only have responses.
+  const codexEventBackedResponseUsers = new Set<DecodedTranscriptRecord>();
   if (input.source === "codex") {
-    let recordIndex = -1;
+    let turnResponseUsers: Array<DecodedTranscriptRecord> = [];
+    let turnHasUserEvent = false;
+    const finishTurn = () => {
+      if (turnHasUserEvent) {
+        for (const record of turnResponseUsers) codexEventBackedResponseUsers.add(record);
+      }
+      turnResponseUsers = [];
+      turnHasUserEvent = false;
+    };
     for (const record of records) {
-      recordIndex += 1;
-      if (
-        record.type === "response_item" &&
-        record.payload?.type === "message" &&
-        record.payload.role === "assistant"
-      ) {
-        finishCodexTurn();
-        continue;
-      }
-      if (record.type === "event_msg" && record.payload?.type === "user_message") {
-        const text = record.payload.message?.trim() ?? "";
-        if (text.length > 0) canonicalUserTextsInTurn.add(text);
-        continue;
-      }
-      if (
-        record.type === "response_item" &&
-        record.payload?.type === "message" &&
-        record.payload.role === "user"
-      ) {
-        const turnId = codexTurnId(record.payload.internal_chat_message_metadata_passthrough);
-        const text = extractText(record.payload.content);
-        if (turnId !== null && text.length > 0) {
-          responseUsersInTurn.push({ index: recordIndex, turnId, text });
-        }
+      const eventText = codexUserEventText(record);
+      if (eventText !== null) {
+        // An event with nothing to show, like an inline image alone, cannot stand in for its copies.
+        if (eventText.trim().length > 0) turnHasUserEvent = true;
+      } else if (isCodexTurnEnd(record)) {
+        finishTurn();
+      } else if (record.type === "response_item" && record.payload?.type === "message") {
+        if (record.payload.role === "assistant") finishTurn();
+        else if (record.payload.role === "user") turnResponseUsers.push(record);
       }
     }
-    finishCodexTurn();
+    finishTurn();
   }
+  let codexTurnUserEvents: Array<{ readonly type: string | undefined; readonly text: string }> = [];
 
   let conversationMessageCount = 0;
   const retainMessage = (
-    message: AgentSessionThreadMessage & { readonly codexResponseUser: boolean },
+    role: AgentSessionThreadMessage["role"],
+    text: string,
+    timestamp: string | undefined,
   ) => {
-    if (firstUserMessage === undefined && message.role === "user") {
-      firstUserMessage = message;
-    }
-    if (derivedTitle === undefined && message.role === "user") {
-      derivedTitle = deriveTitle(input.source, message.text);
+    if (text.trim().length === 0) return;
+    const message = { role, text, createdAt: normalizeTimestamp(timestamp, fallbackTimestamp) };
+    if (role === "user") {
+      firstUserMessage ??= message;
+      derivedTitle ??= deriveTitle(input.source, text);
     }
     conversationMessageCount += 1;
     messages.push(message);
     if (messages.length > MAX_IMPORTED_MESSAGES) messages.shift();
   };
 
-  const hasMatchingCodexEventInTurn = (text: string) => {
-    const comparisonText = text.trim();
-    for (let index = messages.length - 1; index >= 0; index--) {
-      const message = messages[index];
-      if (message?.role === "assistant") return false;
-      if (
-        message?.role === "user" &&
-        !message.codexResponseUser &&
-        message.text.trim() === comparisonText
-      ) {
-        return true;
-      }
-    }
-    return false;
-  };
-
-  let recordIndex = -1;
   for (const record of input.source === "pi" ? activePiBranch(records) : records) {
-    recordIndex += 1;
     if (input.source === "pi") {
-      if (!isPiConversationRecord(record)) continue;
-      const text = extractText(record.message.content);
-      if (text.length === 0) continue;
-      retainMessage({
-        role: record.message.role,
-        text,
-        createdAt: normalizeTimestamp(record.timestamp, fallbackTimestamp),
-        codexResponseUser: false,
-      });
+      if (isPiConversationRecord(record)) {
+        retainMessage(record.message.role, extractText(record.message.content), record.timestamp);
+      }
       continue;
     }
     if (input.source === "claudeAgent") {
       if (isHiddenClaudeRecord(record)) continue;
       if (record.type !== "user" && record.type !== "assistant") continue;
       const text = extractText(record.message?.content);
-      if (text.length === 0) continue;
-      retainMessage({
-        role: record.type,
-        text,
-        createdAt: normalizeTimestamp(record.timestamp, fallbackTimestamp),
-        codexResponseUser: false,
-      });
+      const visibleText = record.type === "user" ? claudeUserText(text) : text;
+      if (visibleText !== null) retainMessage(record.type, visibleText, record.timestamp);
       continue;
     }
 
@@ -602,61 +665,34 @@ function parseAgentSessionRecords(
       model = record.payload.model.trim();
       continue;
     }
-    if (record.type === "event_msg" && record.payload?.type === "user_message") {
-      const text = record.payload.message ?? "";
-      if (text.trim().length === 0) continue;
-      // Codex can duplicate prompts across formats; remove only matching response copies.
-      for (let index = messages.length - 1; index >= 0; index--) {
-        const message = messages[index];
-        if (message?.role === "assistant") break;
-        if (message?.codexResponseUser === true && message.text.trim() === text.trim()) {
-          if (firstUserMessage === message) firstUserMessage = undefined;
-          messages.splice(index, 1);
-          conversationMessageCount -= 1;
-          break;
-        }
+    const userEventText = codexUserEventText(record);
+    if (userEventText !== null) {
+      const eventType = record.payload?.type;
+      // A rollout that records a prompt in both event forms shows it once.
+      const copy = codexTurnUserEvents.findIndex(
+        (event) => event.type !== eventType && event.text === userEventText,
+      );
+      if (copy !== -1) {
+        codexTurnUserEvents.splice(copy, 1);
+        continue;
       }
-      retainMessage({
-        role: "user",
-        text,
-        createdAt: normalizeTimestamp(record.timestamp, fallbackTimestamp),
-        codexResponseUser: false,
-      });
+      codexTurnUserEvents.push({ type: eventType, text: userEventText });
+      retainMessage("user", codexUserText(userEventText), record.timestamp);
       continue;
     }
-    if (
-      record.type !== "response_item" ||
-      record.payload?.type !== "message" ||
-      (record.payload.role !== "user" && record.payload.role !== "assistant")
-    ) {
-      continue;
+    if (record.type !== "response_item" || record.payload?.type !== "message") continue;
+    if (record.payload.role === "assistant") {
+      codexTurnUserEvents = [];
+      retainMessage("assistant", extractText(record.payload.content), record.timestamp);
+    } else if (record.payload.role === "user" && !codexEventBackedResponseUsers.has(record)) {
+      retainMessage("user", codexUserText(extractText(record.payload.content)), record.timestamp);
     }
-
-    const extractedText = extractText(record.payload.content);
-    if (extractedText.length === 0) continue;
-    if (record.payload.role === "user" && canonicalCodexResponseUserIndices.has(recordIndex)) {
-      continue;
-    }
-    if (record.payload.role === "user" && hasMatchingCodexEventInTurn(extractedText)) {
-      continue;
-    }
-    retainMessage({
-      role: record.payload.role,
-      text: extractedText,
-      createdAt: normalizeTimestamp(record.timestamp, fallbackTimestamp),
-      codexResponseUser: record.payload.role === "user",
-    });
   }
 
-  const visibleMessages = messages.map(
-    ({ codexResponseUser: _codexResponseUser, ...message }) => message,
-  );
   if (providerSessionId.trim().length === 0 || firstUserMessage === undefined) return null;
-  const firstUserMessageRetained = messages.includes(firstUserMessage);
-  const { codexResponseUser: _codexResponseUser, ...visibleFirstUserMessage } = firstUserMessage;
-  const retainedMessages = firstUserMessageRetained
-    ? visibleMessages
-    : [visibleFirstUserMessage, ...visibleMessages.slice(-(MAX_IMPORTED_MESSAGES - 1))];
+  const retainedMessages = messages.includes(firstUserMessage)
+    ? messages
+    : [firstUserMessage, ...messages.slice(-(MAX_IMPORTED_MESSAGES - 1))];
 
   return {
     source: input.source,
@@ -697,7 +733,8 @@ function shouldRetainDecodedRecord(
   return (
     record.type === "session_meta" ||
     record.type === "turn_context" ||
-    (record.type === "event_msg" && record.payload?.type === "user_message") ||
+    codexUserEventText(record) !== null ||
+    isCodexTurnEnd(record) ||
     (record.type === "response_item" &&
       record.payload?.type === "message" &&
       (record.payload.role === "user" || record.payload.role === "assistant"))
