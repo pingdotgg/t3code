@@ -4559,8 +4559,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* finish;
 
         yield* start("/restricted-worktree");
-        assert.equal(harness.getOpenedOptions()?.permissionMode, "default");
-        assert.isUndefined(harness.getOpenedOptions()?.allowDangerouslySkipPermissions);
+        assert.strictEqual(harness.getOpenedOptions(), openedOptions);
+        assert.deepEqual(harness.permissionModeChanges, ["auto", "default"]);
         assert.equal(resolveSettings.mock.calls.length, 2);
         yield* finish;
 
@@ -4657,7 +4657,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.strictEqual(harness.getOpenedOptions(), unrestrictedOptions);
         assert.deepEqual(
           harness.permissionModeChanges,
-          ["auto"],
+          ["auto", "default"],
           "A CLI policy downgrade must not be restored to bypass on the next turn",
         );
         assert.equal(resolveSettings.mock.calls.length, 3);
@@ -4681,7 +4681,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             `A rejected bypass restore must not fail the ${phase} turn`,
           );
           assert.strictEqual(harness.getOpenedOptions(), unrestrictedOptions);
-          assert.deepEqual(harness.permissionModeChanges, ["auto", "bypassPermissions", "default"]);
+          assert.deepEqual(harness.permissionModeChanges, [
+            "auto",
+            "default",
+            "bypassPermissions",
+            "default",
+          ]);
           assert.equal(harness.offeredMessages.length, ordinal);
           const restoredDecision = yield* Effect.promise(() =>
             harness.getOpenedOptions()!.canUseTool!(
@@ -7048,6 +7053,302 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         ),
       ),
+  );
+
+  it.effect.each([
+    { runtimeMode: "auto", modelHasAuto: true, changes: ["auto", "plan"] },
+    { runtimeMode: "full-access", modelHasAuto: true, changes: ["bypassPermissions", "plan"] },
+    {
+      runtimeMode: "full-access",
+      modelHasAuto: true,
+      changes: ["default", "default"],
+      launchArgs: "--permission-mode default",
+      openedMode: "default",
+    },
+    // Like the CLI at launch, a model without Auto runs in default.
+    { runtimeMode: "auto", modelHasAuto: false, changes: ["auto", "default", "plan"] },
+  ] as const)(
+    "switches $runtimeMode Plan in and out on a process running a background shell (Auto: $modelHasAuto)",
+    (scenario) => {
+      const { runtimeMode, modelHasAuto, changes } = scenario;
+      const launchArgs = "launchArgs" in scenario ? scenario.launchArgs : "";
+      return Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarnessWithOptions({
+            settings: { ...DEFAULT_CLAUDE_SETTINGS, launchArgs },
+            setPermissionMode: (mode) =>
+              mode === "auto" && !modelHasAuto
+                ? Effect.fail(
+                    new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+                      method: "setPermissionMode",
+                      cause: new Error("auto mode is not available for this model"),
+                    }),
+                  )
+                : Effect.void,
+          });
+          const now = yield* DateTime.now;
+          const turn = (ordinal: number, interactionMode: "plan" | "default") => {
+            const input = makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make(`attempt-plan-background:${ordinal}`),
+              text: `Request ${ordinal}`,
+              attachments: [],
+              providerTurnOrdinal: ordinal,
+              runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+                runtimeMode,
+                interactionMode,
+                cwd: "/workspace",
+              }),
+            });
+            return { ...input, appThread: { ...input.appThread, runtimeMode, interactionMode } };
+          };
+          const settle = Effect.gen(function* () {
+            yield* harness.offerAndWait(turnOneResult);
+            yield* Queue.take(harness.terminalReceipts);
+          });
+          yield* harness.runtime.startTurn(turn(1, "plan"));
+          const originalOptions = harness.getOpenedOptions();
+          assert.equal(
+            originalOptions?.permissionMode,
+            "openedMode" in scenario ? scenario.openedMode : "plan",
+          );
+          // Leaving Plan for Full access needs the bypass allowance from launch.
+          assert.equal(
+            originalOptions?.allowDangerouslySkipPermissions,
+            runtimeMode === "full-access" ? true : undefined,
+          );
+          yield* harness.offerAndWait(wakeTaskStarted);
+          yield* settle;
+          assert.isTrue(yield* harness.hasPendingBackgroundWork);
+
+          yield* harness.runtime.startTurn(turn(2, "default"));
+          const decision = yield* Effect.promise(() =>
+            originalOptions!.canUseTool!(
+              "Bash",
+              { command: "git status" },
+              {
+                signal: new AbortController().signal,
+                toolUseID: "tool-after-plan",
+                requestId: "request-after-plan",
+              },
+            ),
+          ).pipe(Effect.forkScoped);
+          const first = yield* Effect.raceFirst(
+            Queue.take(harness.runtimeRequestReceipts).pipe(
+              Effect.map((event) => ({ type: "request", event }) as const),
+            ),
+            Fiber.join(decision).pipe(Effect.map(() => ({ type: "decision" }) as const)),
+          );
+          // Every mode asks about a request Claude forwards once the thread has left Plan.
+          assert.equal(first.type, "request");
+          if (first.type !== "request") return;
+          yield* harness.runtime.respondToRuntimeRequest({
+            requestId: first.event.runtimeRequest.id,
+            decision: "decline",
+          });
+          yield* Fiber.join(decision);
+          yield* settle;
+          yield* harness.runtime.startTurn(turn(3, "plan"));
+          yield* settle;
+
+          assert.deepEqual(harness.permissionModeChanges, [...changes]);
+          assert.strictEqual(harness.getOpenedOptions(), originalOptions);
+          assert.lengthOf(harness.offeredMessages, 3);
+          assert.isTrue(yield* harness.hasPendingBackgroundWork);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
+          ),
+        ),
+      );
+    },
+  );
+
+  it.effect("asks for approvals after restoring Claude's own Plan falls back to default", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({
+          setPermissionMode: (mode) =>
+            mode === "auto"
+              ? Effect.fail(
+                  new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+                    method: "setPermissionMode",
+                    cause: new Error("auto mode is not available for this model"),
+                  }),
+                )
+              : Effect.void,
+        });
+        const now = yield* DateTime.now;
+        const turn = (ordinal: number) =>
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make(`attempt-restore-plan:${ordinal}`),
+            text: `Request ${ordinal}`,
+            attachments: [],
+            providerTurnOrdinal: ordinal,
+            runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              runtimeMode: "auto",
+              interactionMode: "default",
+              cwd: "/workspace",
+            }),
+          });
+        yield* harness.runtime.startTurn(turn(1));
+        // Claude enters Plan on its own, and the model no longer offers Auto to return to.
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "status",
+            status: null,
+            permissionMode: "plan",
+            uuid: "restore-enter-plan",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+
+        yield* harness.runtime.startTurn(turn(2));
+        assert.deepEqual(harness.permissionModeChanges, ["auto", "default"]);
+        const decision = yield* Effect.promise(() =>
+          harness.getOpenedOptions()!.canUseTool!(
+            "Bash",
+            { command: "git status" },
+            {
+              signal: new AbortController().signal,
+              toolUseID: "tool-after-restore",
+              requestId: "request-after-restore",
+            },
+          ),
+        ).pipe(Effect.forkScoped);
+        const first = yield* Effect.raceFirst(
+          Queue.take(harness.runtimeRequestReceipts).pipe(
+            Effect.map((event) => ({ type: "request", event }) as const),
+          ),
+          Fiber.join(decision).pipe(Effect.map(() => ({ type: "decision" }) as const)),
+        );
+        assert.equal(first.type, "request");
+        if (first.type !== "request") return;
+        yield* harness.runtime.respondToRuntimeRequest({
+          requestId: first.event.runtimeRequest.id,
+          decision: "decline",
+        });
+        yield* Fiber.join(decision);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
+  // regression: an Auto turn answered forwarded requests from the mode it asked for, so a
+  // process that had fallen back to default ran them unasked.
+  it.effect.each([
+    { name: "a status frame reports default mid-turn", downgrade: "status", planFirst: false },
+    { name: "a delayed init frame reports default", downgrade: "init", planFirst: false },
+    { name: "a process reused from Plan reports default", downgrade: "status", planFirst: true },
+    { name: "the downgrade frame is still queued", downgrade: "queued", planFirst: false },
+  ] as const)("asks before a forwarded Bash command in Auto when $name", (scenario) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const turn = (ordinal: number, interactionMode: "plan" | "default") => {
+          const input = makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make(`attempt-auto-downgrade:${ordinal}`),
+            text: `Request ${ordinal}`,
+            attachments: [],
+            providerTurnOrdinal: ordinal,
+            runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              runtimeMode: "auto",
+              interactionMode,
+              cwd: "/workspace",
+            }),
+          });
+          return {
+            ...input,
+            appThread: { ...input.appThread, runtimeMode: "auto" as const, interactionMode },
+          };
+        };
+        if (scenario.planFirst) {
+          yield* harness.runtime.startTurn(turn(1, "plan"));
+          yield* harness.offerAndWait(turnOneResult);
+          yield* Queue.take(harness.terminalReceipts);
+        }
+        const openedOptions = harness.getOpenedOptions();
+        yield* harness.runtime.startTurn(turn(scenario.planFirst ? 2 : 1, "default"));
+        if (scenario.planFirst) {
+          assert.strictEqual(harness.getOpenedOptions(), openedOptions);
+          assert.deepEqual(harness.permissionModeChanges, ["auto"]);
+        }
+        if (scenario.downgrade !== "queued") {
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "system",
+              subtype: scenario.downgrade,
+              ...(scenario.downgrade === "status" ? { status: null } : {}),
+              permissionMode: "default",
+              uuid: "auto-downgrade",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+        }
+
+        const decision = yield* Effect.promise(() =>
+          harness.getOpenedOptions()!.canUseTool!(
+            "Bash",
+            { command: "git push" },
+            {
+              signal: new AbortController().signal,
+              toolUseID: "tool-auto-downgrade",
+              requestId: "request-auto-downgrade",
+            },
+          ),
+        ).pipe(Effect.forkScoped);
+        const first = yield* Effect.raceFirst(
+          Queue.take(harness.runtimeRequestReceipts).pipe(
+            Effect.map((event) => ({ type: "request", event }) as const),
+          ),
+          Fiber.join(decision).pipe(
+            Effect.map((result) => ({ type: "decision", result }) as const),
+          ),
+        );
+        assert.equal(first.type, "request", "the forwarded command ran without an approval");
+        if (first.type !== "request") return;
+        assert.equal(first.event.runtimeRequest.kind, "command");
+        yield* harness.runtime.respondToRuntimeRequest({
+          requestId: first.event.runtimeRequest.id,
+          decision: "decline",
+        });
+        assert.equal((yield* Fiber.join(decision))?.behavior, "deny");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
   );
 
   // regression: #34549 a model change sent with a steer was shown but never applied to the turn.
