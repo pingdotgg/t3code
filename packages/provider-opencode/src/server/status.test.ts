@@ -801,37 +801,35 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
   );
 
   it.effect("reports the upgraded CLI without restarting a borrowed OpenCode server", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const settings = makeOpenCodeSettings();
-        const owner = yield* OpenCodeServerOwner.make({
-          binaryPath: settings.binaryPath,
-          directory: process.cwd(),
-        });
-        yield* owner.withServer(() =>
-          Effect.gen(function* () {
-            runtimeMock.state.versionStdout = "opencode 1.14.20\n";
-            const snapshot = yield* checkOpenCodeProviderStatus(
-              settings,
-              process.cwd(),
-              probeOpenCodeRuntime(settings).pipe(
-                Effect.provideService(
-                  HttpClient.HttpClient,
-                  replayOpenCodeServer(OPENCODE_1_RESPONSES, settings.serverPassword),
-                ),
-                Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, OpenCodeRuntimeTestDouble),
+    Effect.gen(function* () {
+      const settings = makeOpenCodeSettings();
+      const owner = yield* OpenCodeServerOwner.make({
+        binaryPath: settings.binaryPath,
+        directory: process.cwd(),
+      });
+      yield* owner.withServer(() =>
+        Effect.gen(function* () {
+          runtimeMock.state.versionStdout = "opencode 1.14.20\n";
+          const snapshot = yield* checkOpenCodeProviderStatus(
+            settings,
+            process.cwd(),
+            probeOpenCodeRuntime(settings).pipe(
+              Effect.provideService(
+                HttpClient.HttpClient,
+                replayOpenCodeServer(OPENCODE_1_RESPONSES, settings.serverPassword),
               ),
-              Effect.succeed([]),
-            ).pipe(Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, owner));
+              Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, OpenCodeRuntimeTestDouble),
+            ),
+            Effect.succeed([]),
+          ).pipe(Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, owner));
 
-            NodeAssert.equal(snapshot.version, "1.14.19");
-            NodeAssert.equal(snapshot.installedVersion, "1.14.20");
-            NodeAssert.equal(runtimeMock.state.startCalls, 1);
-            NodeAssert.equal(runtimeMock.state.closeCalls, 0);
-          }),
-        );
-      }),
-    ),
+          NodeAssert.equal(snapshot.version, "1.14.19");
+          NodeAssert.equal(snapshot.installedVersion, "1.14.20");
+          NodeAssert.equal(runtimeMock.state.startCalls, 1);
+          NodeAssert.equal(runtimeMock.state.closeCalls, 0);
+        }),
+      );
+    }),
   );
 
   it.effect("lists a local OpenCode 2 binary's models in Full access only, never via 1.x", () =>
@@ -849,6 +847,12 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
             id: "space-bunny-free",
             name: "Space Bunny Free",
             variants: [{ id: "low" }, { id: "medium" }, { id: "high" }],
+          },
+          {
+            providerID: "opencode-go",
+            id: "deepseek-v4.1-flash",
+            name: "DeepSeek V4.1 Flash",
+            variants: [{ id: "low" }, { id: "high" }, { id: "max" }],
           },
         ]),
       );
@@ -869,13 +873,25 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
       );
       NodeAssert.deepEqual(
         snapshot.models.map((model) => model.slug),
-        ["opencode/big-pickle", "opencode/space-bunny-free"],
+        ["opencode/big-pickle", "opencode-go/deepseek-v4.1-flash", "opencode/space-bunny-free"],
       );
       const variant = snapshot.models.find((model) => model.slug === "opencode/space-bunny-free")
         ?.capabilities?.optionDescriptors?.[0];
       NodeAssert.deepEqual(
         variant?.type === "select" ? variant.options.map((option) => option.id) : [],
         ["low", "medium", "high"],
+      );
+      const goVariant = snapshot.models.find(
+        (model) => model.slug === "opencode-go/deepseek-v4.1-flash",
+      )?.capabilities?.optionDescriptors?.[0];
+      const goVariantIds =
+        goVariant?.type === "select" ? goVariant.options.map((option) => option.id) : [];
+      NodeAssert.deepEqual(goVariantIds, ["low", "high", "max"]);
+      NodeAssert.ok(
+        goVariant?.type === "select" &&
+          goVariant.currentValue !== undefined &&
+          goVariantIds.includes(goVariant.currentValue),
+        "an OpenCode Go model gets a default reasoning variant it lists",
       );
       NodeAssert.equal(runtimeMock.state.sdkClientInputs.length, 0);
     }),

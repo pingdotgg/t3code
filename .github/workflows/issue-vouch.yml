@@ -1,0 +1,77 @@
+name: Issue Vouch
+
+on:
+  issues:
+    types: [opened, reopened]
+  push:
+    branches:
+      - main
+    paths:
+      - .github/VOUCHED.td
+      - .github/workflows/issue-vouch.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: issue-vouch-${{ github.event.issue.number || 'all' }}
+  cancel-in-progress: true
+
+jobs:
+  label:
+    name: Label issues by author trust
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            // Only listed authors get a label; open issues number in the thousands,
+            // so unvouched is the default and stays unlabelled.
+            const labelByStatus = { vouched: "vouch:trusted", denounced: "vouch:denounced" };
+            const managedLabelNames = new Set(["vouch:trusted", "vouch:unvouched", "vouch:denounced"]);
+
+            const { data: file } = await github.rest.repos.getContent({
+              owner,
+              repo,
+              path: ".github/VOUCHED.td",
+              ref: context.payload.repository.default_branch,
+            });
+            const statusByUser = new Map();
+            for (const raw of Buffer.from(file.content, "base64").toString("utf8").split("\n")) {
+              const match = /^(-?)github:(\S+)/.exec(raw.trim());
+              if (match) statusByUser.set(match[2].toLowerCase(), match[1] ? "denounced" : "vouched");
+            }
+
+            const issues =
+              context.eventName === "issues"
+                ? [context.payload.issue]
+                : (
+                    await github.paginate(github.rest.issues.listForRepo, {
+                      owner,
+                      repo,
+                      state: "open",
+                      per_page: 100,
+                    })
+                  ).filter((issue) => !issue.pull_request);
+
+            for (const issue of issues) {
+              const status = statusByUser.get(issue.user.login.toLowerCase());
+              const next = labelByStatus[status];
+              const current = issue.labels.map((label) => label.name).filter((name) => managedLabelNames.has(name));
+
+              for (const name of current) {
+                if (name === next) continue;
+                try {
+                  await github.rest.issues.removeLabel({ owner, repo, issue_number: issue.number, name });
+                } catch (error) {
+                  if (error.status !== 404) throw error;
+                }
+              }
+              if (next && !current.includes(next)) {
+                await github.rest.issues.addLabels({ owner, repo, issue_number: issue.number, labels: [next] });
+                core.info(`Issue #${issue.number} (${issue.user.login}): ${status} -> ${next}`);
+              }
+            }

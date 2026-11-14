@@ -293,7 +293,15 @@ type DelegateTaskResult = {
   childThreadId: string;
   childRunId: string | null;
   childNodeId: string;
-  status: "queued" | "running" | "waiting" | "completed" | "failed" | "cancelled" | "interrupted";
+  status:
+    | "queued"
+    | "starting"
+    | "running"
+    | "waiting"
+    | "completed"
+    | "failed"
+    | "cancelled"
+    | "interrupted";
   workState: "working" | "waiting_for_children" | "result_available";
   hasPendingChildRuns: boolean;
   providerInstanceId: string;
@@ -318,12 +326,15 @@ type DelegateTaskResult = {
 
 Reads a delegated task from the parent thread's durable projection. A task ID
 from another parent thread is rejected. `childRunId` identifies the original
-run. `workState` distinguishes active work, a finished turn waiting for children,
-and an available result. The task remains nonterminal until its known work
-finishes. Its published `summary` and result transfer then remain stable across
-later follow-ups. `hasPendingChildRuns` reports later queued or executing turns;
-`latestTerminal*` exposes later executed, non-monitor results without replacing
-the published task result.
+run. `status: "starting"` means the child's provider has not started its turn
+yet, so a task that stays there has not begun work. A task in a linked
+environment reads its run's status there for this. `workState` distinguishes
+active work, a finished turn waiting for children, and an available result. The
+task remains nonterminal until its known work finishes. Its published `summary`
+and result transfer then remain stable across later follow-ups.
+`hasPendingChildRuns` reports later queued or executing turns; `latestTerminal*`
+exposes later executed, non-monitor results without replacing the published task
+result.
 
 ### `task_cancel`
 
@@ -400,8 +411,16 @@ the environment by thread ID. A deleted thread returns `thread_not_found`. The
 default `messages` view returns user messages, assistant
 messages, and proposed plans. The `activity` view also returns summarized tool,
 reasoning, checkpoint, handoff, and runtime-request items. Large item text is
-bounded and reports whether it was truncated. `afterPosition` and
-`nextPosition` support incremental reads.
+bounded and reports whether it was truncated. An agent in a T3 thread that
+reads without a cursor gets the newest items, and `beforePosition=earlierPosition`
+reads older ones. Client callers (the CLI, linked environments, outside MCP
+clients) start at the oldest item instead, because the CLI and linked
+environments on older versions read that way and follow only `hasMore`.
+`afterPosition=-1` starts any read at the oldest item, and
+`afterPosition=nextPosition` reads newer items. The server stops adding items once the result reaches about 30,000 characters and
+reports the rest through `earlierPosition` or `hasMore`. Claude Code saves MCP
+results over its token limit to a file instead of showing them, so a read has
+to fit whatever `limit` an agent asks for.
 
 Thread and message results include required `createdBy` and `creationSource`
 provenance. MCP-created threads and user-role messages use `createdBy: "agent"`
@@ -428,6 +447,12 @@ List and read results report `snoozed` and `snoozedUntil`, and
 client's `effectiveSnoozed`, so agents and the sidebar agree: a snoozed thread
 wakes early only when it has a pending request or fails after snoozing. Completed
 runs, background wakes, and delegated completions keep it snoozed.
+
+They also report `blockedOnThreadWait` and `pendingBackgroundTasks`, the shell
+fields behind the sidebar's Waiting label, so an agent can see what a thread
+still waits on after its run completed. A subagent or `background_task` holds
+the thread. A command or monitor holds it only with `awaited: true`, since agents
+often leave a dev server running.
 
 ### `t3_thread_update`
 
