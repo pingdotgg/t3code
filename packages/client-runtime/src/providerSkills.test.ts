@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   createProviderWorkspaceSnapshotRefreshAtomFamily,
+  filterProviderSystemSkills,
   getProviderSkillsForSlashMenu,
   hasCompleteProviderWorkspaceSnapshot,
   isProviderWorkspaceSnapshotScanning,
@@ -82,6 +83,43 @@ describe("getProviderSkillsForSlashMenu", () => {
     ];
 
     expect(getProviderSkillsForSlashMenu(skills, true)).toEqual([enabledSkill]);
+  });
+});
+
+describe("filterProviderSystemSkills", () => {
+  const personal = {
+    name: "my-skill",
+    path: "/Users/matt/.cursor/skills/my-skill/SKILL.md",
+    scope: "user",
+    enabled: true,
+  };
+  const builtIn = {
+    name: "create-rule",
+    path: "/Users/matt/.cursor/skills-cursor/create-rule/SKILL.md",
+    scope: "system",
+    enabled: true,
+  };
+
+  it("keeps every skill while system skills are shown", () => {
+    expect(filterProviderSystemSkills([personal, builtIn], true)).toEqual([personal, builtIn]);
+  });
+
+  it("drops only system skills while they are hidden", () => {
+    const project = { ...personal, name: "project-skill", scope: "project" };
+    const unscoped = { name: "plain", path: "/skills/plain/SKILL.md", enabled: true };
+    expect(
+      filterProviderSystemSkills(
+        [personal, builtIn, project, { ...builtIn, scope: " System " }, unscoped],
+        false,
+      ),
+    ).toEqual([personal, project, unscoped]);
+  });
+
+  it("keeps a same-name skill that a hidden system skill would shadow in the slash menu", () => {
+    const shadowed = { ...personal, name: builtIn.name };
+    expect(
+      getProviderSkillsForSlashMenu(filterProviderSystemSkills([builtIn, shadowed], false), true),
+    ).toEqual([shadowed]);
   });
 });
 

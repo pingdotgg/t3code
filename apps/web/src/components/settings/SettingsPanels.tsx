@@ -534,6 +534,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.showSkillsInSlashMenu !== DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu
       ? ["Show skills in slash menu"]
       : []),
+    ...(settings.showSystemSkills !== DEFAULT_UNIFIED_SETTINGS.showSystemSkills
+      ? ["Show built-in skills"]
+      : []),
     ...(settings.composerRichTextEnabled !== DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled
       ? ["Rich text composer"]
       : []),
@@ -665,6 +668,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       diffLayout: DEFAULT_UNIFIED_SETTINGS.diffLayout,
       proactivePanelsEnabled: DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled,
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
+      showSystemSkills: DEFAULT_UNIFIED_SETTINGS.showSystemSkills,
       composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
       sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
@@ -1235,7 +1239,12 @@ export function ChatSettingsPanel() {
             </Select>
           }
         />
-        <AdvancedSettings targetIds={[searchableSetting("skills-in-slash-menu").id]}>
+        <AdvancedSettings
+          targetIds={[
+            searchableSetting("skills-in-slash-menu").id,
+            searchableSetting("system-skills").id,
+          ]}
+        >
           <SettingsRow
             {...searchableSetting("skills-in-slash-menu")}
             description="Also include skills in the / command menu. Skills always appear when you type $."
@@ -1258,6 +1267,31 @@ export function ChatSettingsPanel() {
                   updateSettings({ showSkillsInSlashMenu: Boolean(checked) })
                 }
                 aria-label="Show skills in slash menu"
+              />
+            }
+          />
+          <SettingsRow
+            {...searchableSetting("system-skills")}
+            description="List skills that ship with a provider, such as Cursor's, in the / and $ menus. You can still type them by name."
+            resetAction={
+              settings.showSystemSkills !== DEFAULT_UNIFIED_SETTINGS.showSystemSkills ? (
+                <SettingResetButton
+                  label="built-in skills"
+                  onClick={() =>
+                    updateSettings({
+                      showSystemSkills: DEFAULT_UNIFIED_SETTINGS.showSystemSkills,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                checked={settings.showSystemSkills}
+                onCheckedChange={(checked) =>
+                  updateSettings({ showSystemSkills: Boolean(checked) })
+                }
+                aria-label="Show built-in skills"
               />
             }
           />
