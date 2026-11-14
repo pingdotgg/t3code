@@ -453,3 +453,20 @@ it("opening a thread closes only its in-app toasts, and disabling notifications 
     "two-completed",
   ]);
 });
+
+it("removing an environment closes its in-app notifications and preserves other environments", async () => {
+  await using app = setup();
+  state.inApp = true;
+  focused = true;
+  state.toast.mockReturnValueOnce("one-completed").mockReturnValueOnce("two-completed");
+  app.start();
+  const completed = {
+    latestTurn: { turnId: "turn", state: "completed", completedAt: "2026-09-13T07:01:00Z" },
+  };
+  state.shells.set("one", shell(completed));
+  state.shells.set("two", shell(completed));
+  expect(state.toast).toHaveBeenCalledTimes(2);
+
+  app.setEnvironmentIds(["two"]);
+  expect(state.closeToast.mock.calls).toEqual([["one-completed"]]);
+});
