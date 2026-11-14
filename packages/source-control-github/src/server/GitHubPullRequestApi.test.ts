@@ -1638,10 +1638,18 @@ layer("GitHubPullRequestApi.layer", (it) => {
           ),
         )
         .mockReturnValueOnce(
-          Effect.succeed(searchPage([searchItem(1, "acme/web", "2026-07-03T00:00:00Z")], true)),
+          // Search pages hold at most 100 rows, so a limit of 100 leaves no room for the extra one.
+          Effect.succeed(
+            searchPage(
+              Array.from({ length: 100 }, (_, index) =>
+                searchItem(index + 1, "acme/web", "2026-07-03T00:00:00Z"),
+              ),
+              true,
+            ),
+          ),
         );
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-      const read = () =>
+      const read = (limit: number) =>
         cli.searchPullRequests({
           cwd: "/w",
           host: "github.com",
@@ -1649,15 +1657,113 @@ layer("GitHubPullRequestApi.layer", (it) => {
           state: "open",
           involvement: "all",
           viewer: "bilal",
-          limit: 2,
+          limit,
         });
 
-      const overflowing = yield* read();
-      const capped = yield* read();
+      const overflowing = yield* read(2);
+      const capped = yield* read(100);
 
       assert.strictEqual(overflowing.items.length, 2);
       assert.isTrue(overflowing.truncated);
       assert.isTrue(capped.truncated);
+    }),
+  );
+
+  /** Answers searches like GitHub: rows at or before `updated:<=`, newest first, paged by `after`. */
+  const searchIndex = (indexed: ReadonlyArray<ReturnType<typeof searchItem>>) =>
+    mockedExecute.mockImplementation((call) => {
+      const variables = call.kind === "graphql" ? (call.variables ?? {}) : {};
+      const before = /updated:<=(\S+)/.exec(String(variables["q"]))?.[1];
+      const matching = indexed.filter((row) => before === undefined || row.updatedAt <= before);
+      const start = Number(variables["after"] ?? 0);
+      const end = start + Number(variables["first"]);
+      const hasNextPage = end < matching.length;
+      return Effect.succeed(
+        output(
+          encodeJson({
+            data: {
+              search: {
+                pageInfo: { hasNextPage, endCursor: hasNextPage ? String(end) : null },
+                nodes: matching.slice(start, end),
+              },
+            },
+          }),
+        ),
+      );
+    });
+
+  it.effect.each([
+    {
+      name: "a run of equal times longer than a page",
+      indexed: [1, 2, 3, 4, 5].map((n) => searchItem(n, "acme/web", "2026-07-02T00:00:00Z")),
+      seenAt: [1, 2],
+      expected: { numbers: [3, 4], truncated: true },
+    },
+    {
+      name: "older rows behind a page's worth of delivered ones",
+      indexed: [
+        searchItem(1, "acme/web", "2026-07-02T00:00:00Z"),
+        searchItem(2, "acme/web", "2026-07-02T00:00:00Z"),
+        searchItem(1, "pingdotgg/t3code", "2026-07-02T00:00:00Z"),
+        searchItem(4, "acme/web", "2026-07-01T00:00:00Z"),
+      ],
+      seenAt: [1, 2],
+      expected: { numbers: [1, 4], truncated: false },
+    },
+    {
+      name: "nothing left but delivered rows",
+      indexed: [1, 2].map((n) => searchItem(n, "acme/web", "2026-07-02T00:00:00Z")),
+      seenAt: [1, 2],
+      expected: { numbers: [], truncated: false },
+    },
+  ])("pages past the rows a cursor already delivered: $name", ({ indexed, seenAt, expected }) =>
+    Effect.gen(function* () {
+      searchIndex(indexed);
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const batch = yield* cli.searchPullRequests({
+        cwd: "/w",
+        host: "github.com",
+        repositories: ["acme/web", "pingdotgg/t3code"],
+        state: "open",
+        involvement: "all",
+        viewer: "bilal",
+        limit: 2,
+        cursor: {
+          updatedBefore: "2026-07-02T00:00:00Z",
+          delivered: seenAt.length,
+          seenAt: seenAt.map((number) => ({ repository: "Acme/Web", number })),
+        },
+      });
+
+      assert.deepStrictEqual(
+        { numbers: batch.items.map((item) => item.number), truncated: batch.truncated },
+        expected,
+      );
+    }),
+  );
+
+  it.effect("pages a repository's listing past the rows its cursor already delivered", () =>
+    Effect.gen(function* () {
+      searchIndex([1, 2, 3, 4].map((n) => searchItem(n, "acme/web", "2026-07-02T00:00:00Z")));
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const batch = yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        state: "open",
+        involvement: "all",
+        viewer: "bilal",
+        limit: 2,
+        cursor: { updatedBefore: "2026-07-02T00:00:00Z", delivered: 2, seenAt: [1, 2] },
+      });
+
+      assert.deepStrictEqual(
+        batch.items.map((item) => item.number),
+        [3, 4],
+      );
+      assert.isFalse(batch.truncated);
     }),
   );
 

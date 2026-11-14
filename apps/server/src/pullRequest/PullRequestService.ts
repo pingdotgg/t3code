@@ -1550,7 +1550,19 @@ export const make = Effect.gen(function* () {
         filters: input.filters,
         ...(cursor === undefined
           ? {}
-          : { cursor: { updatedBefore: cursor.updatedBefore, delivered: cursor.delivered } }),
+          : {
+              // A chunk shares one boundary, so every repository's rows at it are skipped there.
+              cursor: {
+                updatedBefore: cursor.updatedBefore,
+                delivered: cursor.delivered,
+                seenAt: chunk.flatMap((project) =>
+                  (cursorOf(project)?.seenAt ?? []).map((number) => ({
+                    repository: project.repository,
+                    number,
+                  })),
+                ),
+              },
+            }),
       }).pipe(
         observeRead,
         Effect.flatMap(({ value: page, observedAt }) => {

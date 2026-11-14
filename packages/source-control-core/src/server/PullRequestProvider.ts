@@ -176,6 +176,16 @@ export interface ProviderListCursor {
   readonly resumeAfter?: string | undefined;
 }
 
+/** One boundary shared by every repository of a batched read. */
+export interface ProviderListAcrossCursor {
+  readonly updatedBefore: string;
+  readonly delivered: number;
+  /** Rows already handed over at `updatedBefore`; the host skips them before applying its limit. */
+  readonly seenAt?:
+    | ReadonlyArray<{ readonly repository: string; readonly number: number }>
+    | undefined;
+}
+
 export interface ProviderBatchedChangeRequest extends ProviderChangeRequest {
   readonly repository: string;
 }
@@ -357,7 +367,7 @@ export interface PullRequestProviderApi {
     readonly viewer: string;
     readonly limit: number;
     readonly query?: string | undefined;
-    readonly cursor?: ProviderListCursor | undefined;
+    readonly cursor?: ProviderListAcrossCursor | undefined;
     readonly filters?: PullRequestListFilters | undefined;
   }) => Effect.Effect<ProviderBatchedChangeRequestPage, PullRequestProviderError>;
 
