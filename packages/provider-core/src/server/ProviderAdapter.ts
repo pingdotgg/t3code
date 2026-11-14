@@ -439,6 +439,8 @@ export class ProviderAdapterEventStreamError extends Schema.TaggedError<Provider
   {
     driver: ProviderDriverKind,
     providerSessionId: ProviderSessionId,
+    /** Set when T3 closed the session because this thread detached from it, not the provider. */
+    detachedThreadId: Schema.optional(ThreadId),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
@@ -535,6 +537,8 @@ export interface ProviderAdapterV2TurnInput {
   readonly rootNodeId: NodeId;
   readonly providerThread: OrchestrationV2ProviderThread;
   readonly message: ProviderAdapterV2TurnMessage;
+  /** Leading characters of `message.text` that are inline handoff context, not the user's words. */
+  readonly inlineContextLength?: number;
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
   readonly appContext?: ReadonlyArray<{ readonly key: string; readonly text: string }>;
