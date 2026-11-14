@@ -11042,7 +11042,6 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           .pipe(Effect.flip);
         assert(error._tag === "OrchestratorDispatchError");
         assert.equal(error.cause, "The thread is settled. Un-settle it to resume at the reset.");
-        // Settling disarms the resume armed before it, so nothing is left pending out of sight.
         assert.deepInclude(
           (yield* orchestrator.getThreadProjection(threadId)).thread.limitRecovery,
           {
