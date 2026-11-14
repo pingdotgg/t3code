@@ -815,14 +815,20 @@ const make = Effect.gen(function* () {
     ensureCommandTranscripts(command).pipe(
       Effect.andThen(assertDispatchTargetEnabled(command)),
       Effect.andThen(orchestrator.dispatch(command)),
-      Effect.tap(() => cascadeBeforeReply(command)),
+      Effect.tap((result) => cascadeBeforeReply(command, result)),
     );
 
   // Clients read archive snapshots as soon as this returns; the outbox effect only backs it up.
-  const cascadeBeforeReply = (command: OrchestrationV2ServerCommand) =>
-    command.type === "thread.archive" ||
-    command.type === "thread.unarchive" ||
-    command.type === "thread.delete"
+  // A replay or a no-op (an unused-only delete that kept the thread) leaves it to that effect.
+  const cascadeBeforeReply = (
+    command: OrchestrationV2ServerCommand,
+    result: Orchestrator.OrchestratorV2DispatchResult,
+  ) =>
+    (command.type === "thread.archive" ||
+      command.type === "thread.unarchive" ||
+      command.type === "thread.delete") &&
+    result.replayed !== true &&
+    result.storedEvents.length > 0
       ? cascadeSubagentLifecycle({
           commandId: command.commandId,
           threadId: command.threadId,

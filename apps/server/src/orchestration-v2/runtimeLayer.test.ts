@@ -11744,6 +11744,18 @@ describe("subagent lifecycle cascade", () => {
       }
     }).pipe(Effect.provide(layerTest)),
   );
+  it.effect("leaves a replayed parent command's descendants to its committed cascade", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const limit = { runtimeMode: "approval-required", interactionMode: "plan" } as const;
+      yield* f.set(parent, limit);
+      yield* f.run("archive").pipe(Effect.provideService(DispatchModeLimit, limit));
+      assert.equal(yield* f.archived(parent, native, app), "100");
+      // A retry without the caller's limit must not walk the subtree under its own.
+      yield* f.run("archive");
+      assert.equal(yield* f.archived(native, app), "00");
+    }).pipe(Effect.provide(layerTest)),
+  );
   it.effect("restores only what a parent archive cascaded, through independent archives", () =>
     Effect.gen(function* () {
       const f = yield* fixture;
