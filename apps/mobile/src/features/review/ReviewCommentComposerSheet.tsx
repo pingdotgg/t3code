@@ -112,16 +112,17 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
   };
   const handleNativePaste = useNativePaste((uris) => {
     void (async () => {
-      try {
-        const result = await convertPastedImagesToAttachments({
-          uris,
-          existingCount: attachmentsRef.current.length,
-        });
-        appendImages(result.attachments);
-        if (result.error && isMountedRef.current)
-          Dialog.alert("Could not paste image", result.error);
-      } catch (error) {
+      const result = await convertPastedImagesToAttachments({
+        uris,
+        existingCount: attachmentsRef.current.length,
+      }).catch((error: unknown) => {
         console.error("[review comment] error converting pasted images", error);
+        return null;
+      });
+      if (result === null) return;
+      appendImages(result.attachments);
+      if (result.error && isMountedRef.current) {
+        Dialog.alert("Could not paste image", result.error);
       }
     })();
   });
