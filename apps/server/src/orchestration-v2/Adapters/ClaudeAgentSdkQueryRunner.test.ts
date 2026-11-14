@@ -748,6 +748,38 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
     }),
   );
 
+  // A native cwd makes libuv wait for chdir, which a hung mount stalls with the whole server.
+  it.effect("enters the cwd in the child, so a missing one fails the CLI and not the spawn", () =>
+    Effect.gen(function* () {
+      const cli = fakeClaudeCli('pwd -P > "$(dirname "$0")/cwd"');
+      const dir = NodePath.dirname(cli);
+      const workspace = NodePath.join(dir, "work space");
+      NodeFS.mkdirSync(workspace);
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(dir, { recursive: true, force: true })),
+      );
+      const exitCode = (cwd: string) =>
+        Effect.promise(
+          () =>
+            new Promise<number | null>((resolve) =>
+              spawnClaudeProcessGroup({
+                command: cli,
+                args: [],
+                cwd,
+                env: process.env,
+                signal: new AbortController().signal,
+              }).once("exit", resolve),
+            ),
+        );
+      assert.equal(yield* exitCode(workspace), 0);
+      assert.equal(
+        NodeFS.readFileSync(NodePath.join(dir, "cwd"), "utf8"),
+        `${NodeFS.realpathSync(workspace)}\n`,
+      );
+      assert.equal(yield* exitCode(NodePath.join(dir, "missing")), 125);
+    }),
+  );
+
   // A restarted server reaps recorded CLIs, so a CLI must never run before its record exists.
   it.effect("records the CLI before it runs and forgets it once it exits", () =>
     Effect.gen(function* () {

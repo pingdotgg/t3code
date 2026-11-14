@@ -5,10 +5,12 @@ the project and environment a change applies to. Pages that only hold device pre
 Appearance, don't show it. They start at **All projects** and **All environments**
 and stay selected as you move between categories or search for a setting.
 
-Preferences saved on this device, such as appearance, confirmations and browser profiles, always
-show and ignore the selection. Everything else is stored on a server. Choose one environment to
-edit its settings, or leave **All environments** to edit every connected environment at once.
-Offline environments keep their current values; this is a bulk edit, not a synced global default.
+Preferences saved on this device, such as appearance, confirmations and browser profiles, ignore
+the environment selection. On the Browser page they are read-only while a project is selected,
+though profiles can still be added, renamed and removed. Everything else is stored on a server.
+Choose one environment to edit its settings, or leave **All environments** to edit every connected
+environment at once. Offline environments keep their current values; this is a bulk edit, not a
+synced global default.
 
 Choose a project to override settings for it on the selected environments. A layers icon beside
 each server row's title shows where the value comes from: the built-in default, the environment,
@@ -249,6 +251,15 @@ Existing prompts for deleting a worktree manually remain available when this pol
 Choose **Delete now** to run the enabled rules immediately. The latest results show which
 worktrees were removed or kept and why, plus any failures.
 Results also list folders in the worktree folder that no thread uses, with their sizes; cleanup never removes them, so remove them manually if you want.
+
+The inactive and settled retention periods also apply to the folders of
+[threads without a project](./thread-sidebar.md#start-without-a-project). Those folders are not
+Git repositories, so their files are deleted with them and cannot be recovered; the thread stays,
+and its next turn starts in a new, empty folder. A folder is kept when it has a Git repository
+anywhere inside it or when its thread has an enabled scheduled task. Every file in such a folder
+counts as untracked, so only **Edited tracked files** removes a folder that holds anything other
+than `node_modules`; the other two rules remove only empty folders. Folders that no thread uses
+are listed here too.
 
 Browser captures and rotated logs have separate retention periods. Expired capture links stop
 working. Current logs, message attachments, and browser profiles are kept.

@@ -336,7 +336,9 @@ export default function DiffPanel({
     diffSelection.kind === "branch" || diffSelection.kind === "commit"
       ? diffSelection.baseRef
       : null;
-  const selectedFilePath = diffSelection.kind === "turn" ? diffSelection.filePath : null;
+  // @pierre/diffs trims trailing whitespace from parsed file names; leading whitespace survives.
+  const selectedFilePath =
+    diffSelection.kind === "turn" ? diffSelection.filePath?.trimEnd() || null : null;
   const selectedFileRevealRequestId =
     diffSelection.kind === "turn" ? diffSelection.revealRequestId : 0;
   const selectedTurn =
@@ -652,7 +654,7 @@ export default function DiffPanel({
   const renderableFileEntries = renderableFiles.map((fileDiff) => {
     const entry = getCachedFileEntry(fileDiff);
     if (!isGitSelection) return entry;
-    // Metadata has no change type; keep each path's identity when its patch arrives.
+    // Metadata's change type can be missing or differ from the patch's; key each path's identity by path.
     const pathKey = JSON.stringify([fileDiff.prevName ?? fileDiff.name, fileDiff.name]);
     const occurrence = pathOccurrences.get(pathKey) ?? 0;
     pathOccurrences.set(pathKey, occurrence + 1);
