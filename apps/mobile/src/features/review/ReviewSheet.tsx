@@ -12,7 +12,7 @@ import { type Ref, type ReactElement, useImperativeHandle, useRef, useState } fr
 import { Pressable, ScrollView, type NativeSyntheticEvent, StyleSheet, View } from "react-native";
 import { RefreshControl } from "../../components/ui/RefreshControl";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useReduceMotionEnabled } from "../../lib/appState";
+import { useReduceMotionEnabled, useScreenReaderEnabled } from "../../lib/appState";
 import { useContentTopInset, useSheetContentBottomInset } from "../../components/ui/useBarInset";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 
@@ -42,7 +42,7 @@ import { useReviewCacheForThread } from "./reviewState";
 import {
   isNativeReviewDiffDrawEvent,
   type NativeReviewDiffViewHandle,
-  resolveNativeReviewDiffView,
+  resolveReadableReviewDiffView,
 } from "../diffs/nativeReviewDiffSurface";
 import { NATIVE_REVIEW_DIFF_CONTENT_WIDTH } from "./nativeReviewDiffAdapter";
 import { useAppearanceCodeSurface } from "../settings/appearance/useAppearanceCodeSurface";
@@ -202,6 +202,8 @@ function ReviewSelectionActionBar(props: {
       )}
 
       <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Clear selection"
         className="h-12 w-12 items-center justify-center rounded-full bg-primary"
         onPress={props.onClear}
       >
@@ -393,7 +395,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
     draftContext,
   });
   // Expo may return null before registration or in older binaries; use the fallback.
-  const NativeReviewDiffView = resolveNativeReviewDiffView();
+  const NativeReviewDiffView = resolveReadableReviewDiffView(useScreenReaderEnabled());
   const nativeReviewDiffViewRef = useRef<NativeReviewDiffViewHandle>(null);
   const showcasedReviewDrawRef = useRef<string | null>(null);
   const [isPullRefreshing, setIsPullRefreshing] = useState(false);
@@ -721,7 +723,9 @@ export function ReviewSheet(props: ReviewSheetProps) {
               ) : parsedDiff.kind === "files" ? (
                 <ContentBand spacing="roomy">
                   <Text className="text-xs leading-normal text-foreground-muted">
-                    Native diff view unavailable. Showing the raw patch.
+                    {selectedSection.truncated
+                      ? "This preview exceeds the size limit. Showing the raw excerpt; changes shown are incomplete."
+                      : "Native diff view unavailable. Showing the raw patch."}
                   </Text>
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} bounces={false}>
                     <Text selectable className="font-mono text-xs leading-relaxed text-foreground">
