@@ -7721,6 +7721,15 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* witness.end("active", "completed");
       assert.equal(yield* Queue.take(witness.startedRunIds), (yield* witness.runFor("queued")).id);
       assert.isTrue((yield* dispatcher.runFor("issue")).queueHeld);
+      const resume = yield* orchestrator
+        .dispatch({
+          type: "queue.resume",
+          commandId: CommandId.make(`${dispatcherId}:resume`),
+          threadId: dispatcherId,
+        })
+        .pipe(Effect.flip);
+      assert.include(String(resume.cause), "Retry worktree setup");
+      assert.isTrue((yield* dispatcher.runFor("issue")).queueHeld);
     }),
   );
 

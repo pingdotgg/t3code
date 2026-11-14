@@ -14995,6 +14995,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             cause: "Continue the limited thread before resuming its queue.",
           });
         }
+        if (worktreeSetupPending(projection)) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "Retry worktree setup or choose a workspace before resuming the queue.",
+          });
+        }
         const now = yield* DateTime.now;
         const queued = projection.runs.filter((run) => run.status === "queued");
         for (const run of queued) {
