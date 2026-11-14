@@ -558,19 +558,26 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
         const executable = path.join(cwd, "audit-command.cmd");
         yield* fs.writeFileString(executable, "@echo off\n");
 
-        const resolved = yield* resolveCommandPath(command, {
-          env: { PATH: cwd, PATHEXT: ".CMD" },
-        }).pipe(
-          Effect.provideService(HostProcess.Platform, "win32"),
-          Effect.provideService(CommandResolutionCache, new Map()),
-          Effect.provideService(FileSystem.FileSystem, {
-            ...fs,
-            stat: (filePath) =>
-              fs.stat(filePath === executable ? filePath : path.join(cwd, "missing")),
-          }),
-        );
-
-        expect(resolved).toBe(executable);
+        const decoy = path.join(cwd, "audit-command.exe");
+        yield* fs.writeFileString(decoy, "");
+        for (const key of ["PATHEXT", "PathExt", "pathext"]) {
+          const resolved = yield* resolveCommandPath(command, {
+            env: { PATH: cwd, [key]: ".CMD" },
+          }).pipe(
+            Effect.provideService(HostProcess.Platform, "win32"),
+            Effect.provideService(CommandResolutionCache, new Map()),
+            Effect.provideService(FileSystem.FileSystem, {
+              ...fs,
+              stat: (filePath) =>
+                fs.stat(
+                  filePath === executable || filePath === decoy
+                    ? filePath
+                    : path.join(cwd, "missing"),
+                ),
+            }),
+          );
+          expect(resolved).toBe(executable);
+        }
       }),
   );
 

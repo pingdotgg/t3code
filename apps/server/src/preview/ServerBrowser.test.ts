@@ -32,7 +32,7 @@ import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import type { BrowserContext, Page } from "playwright-core";
+import { chromium, type BrowserContext, type Page } from "playwright-core";
 import { beforeEach, expect, vi } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
@@ -52,6 +52,7 @@ vi.mock("./ServerBrowserContexts.ts", () => ({
       this.onClose = options.onContextClose;
     }
     async contextFor(profileId: string, isolationKey?: string) {
+      if (realContextOverride) return realContextOverride;
       contextRequests.push({ profileId, isolated: isolationKey !== undefined });
       if (contextFailure) throw contextFailure;
       await contextGate?.promise;
@@ -122,15 +123,18 @@ function makeSession(
       if (method === "Runtime.callFunctionOn") return { result: { value: PNG_HEADER } };
       if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "main" } } };
       if (method === "Page.createIsolatedWorld") {
+        const worldContexts: Record<string, number> = {
+          "t3-preview-viewport": 9,
+          "t3-preview-title": 11,
+          "t3-preview": 1,
+        };
         return {
-          executionContextId:
-            (input as { worldName?: string }).worldName === "t3-preview-viewport"
-              ? 9
-              : (input as { worldName?: string }).worldName === "t3-preview"
-                ? 1
-                : 7,
+          executionContextId: worldContexts[(input as { worldName: string }).worldName] ?? 7,
         };
       }
+      // A title watch settles only when the document's title changes.
+      if (method === "Runtime.evaluate" && (input as { contextId?: number }).contextId === 11)
+        return new Promise(() => {});
       if (method === "Runtime.evaluate" && (input as { contextId?: number }).contextId === 1) {
         return { result: { value: [] } };
       }
@@ -383,6 +387,7 @@ function makeEncoderPage() {
 
 const contexts: ReturnType<typeof makeContext>[] = [];
 let encoderPageOverride: Page | undefined;
+let realContextOverride: BrowserContext | undefined;
 const encoderStreams: Array<{ frameRate: number | undefined; bitsPerSecond: number }> = [];
 let decodeGate: PromiseWithResolvers<void> | null = null;
 const contextRequests: Array<{ profileId: string; isolated: boolean }> = [];
@@ -569,6 +574,7 @@ const openDesktopViewer = Effect.gen(function* () {
 beforeEach(() => {
   contexts.length = 0;
   encoderPageOverride = undefined;
+  realContextOverride = undefined;
   encoderStreams.length = 0;
   decodeGate = null;
   contextRequests.length = 0;
@@ -2018,47 +2024,50 @@ it.effect(
     ).pipe(Effect.provide(layer)),
 );
 
-it.effect("a navigation that fails while a load reads its title keeps its failure", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const { tabId } = yield* ready;
-      const manager = yield* Manager.PreviewManager;
-      const events = yield* manager.subscribeEvents;
-      const page = contexts[0]!.page;
-      const heldTitle = Promise.withResolvers<string>();
-      page.title.mockImplementationOnce(() => heldTitle.promise);
-      yield* Effect.promise(() => page.goto("https://example.com/first"));
-      const failing = {
-        url: () => "https://example.com/missing",
-        method: () => "GET",
-        isNavigationRequest: () => true,
-        frame: () => page,
-        failure: () => ({ errorText: "net::ERR_NAME_NOT_RESOLVED" }),
-      };
-      page.emit("request", failing);
-      page.emit("requestfailed", failing);
-      heldTitle.resolve("Held");
-      // A load at the same await depth reports after the held one, so its Success marks the end.
-      page.emit("load");
+it.effect.each(["before", "during"] as const)(
+  "a navigation that fails while a load reads its title keeps its failure (request %s read)",
+  (requestTiming) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { tabId } = yield* ready;
+        const manager = yield* Manager.PreviewManager;
+        const events = yield* manager.subscribeEvents;
+        const page = contexts[0]!.page;
+        const heldTitle = Promise.withResolvers<string>();
+        page.title.mockImplementationOnce(() => heldTitle.promise);
+        const failing = {
+          url: () => "https://example.com/missing",
+          method: () => "GET",
+          isNavigationRequest: () => true,
+          frame: () => page,
+          failure: () => ({ errorText: "net::ERR_NAME_NOT_RESOLVED" }),
+        };
+        if (requestTiming === "before") page.emit("request", failing);
+        yield* Effect.promise(() => page.goto("https://example.com/first"));
+        if (requestTiming === "during") page.emit("request", failing);
+        page.emit("requestfailed", failing);
+        heldTitle.resolve("Held");
+        // A load at the same await depth reports after the held one, so its Success marks the end.
+        page.emit("load");
 
-      const statuses: Array<string> = [];
-      while (!statuses.at(-1)?.startsWith("Success")) {
-        const event = yield* PubSub.take(events);
-        if (event.type === "failed" && event.tabId === tabId) {
-          statuses.push(`LoadFailed ${event.url}`);
-        } else if (event.type === "navigated" && event.tabId === tabId) {
-          const status = event.snapshot.navStatus;
-          if (status._tag === "Success") statuses.push(`Success ${status.title}`);
-          else if (status._tag === "Loading") statuses.push(`Loading ${status.url}`);
+        const statuses: Array<string> = [];
+        while (!statuses.at(-1)?.startsWith("Success")) {
+          const event = yield* PubSub.take(events);
+          if (event.type === "failed" && event.tabId === tabId) {
+            statuses.push(`LoadFailed ${event.url}`);
+          } else if (event.type === "navigated" && event.tabId === tabId) {
+            const status = event.snapshot.navStatus;
+            if (status._tag === "Success") statuses.push(`Success ${status.title}`);
+            else if (status._tag === "Loading") statuses.push(`Loading ${status.url}`);
+          }
         }
-      }
-      expect(statuses).toEqual([
-        "Loading https://example.com/missing",
-        "LoadFailed https://example.com/missing",
-        "Success test page",
-      ]);
-    }),
-  ).pipe(Effect.provide(layer)),
+        expect(statuses).toEqual([
+          "Loading https://example.com/missing",
+          "LoadFailed https://example.com/missing",
+          "Success test page",
+        ]);
+      }),
+    ).pipe(Effect.provide(layer)),
 );
 
 it.effect.each([
@@ -3964,4 +3973,117 @@ it.effect("a popup opens in its opener's appearance", () =>
       expect(event.snapshot.colorScheme).toBe("dark");
     }),
   ).pipe(Effect.provide(layer)),
+);
+
+it.live("a page's title change without navigation reaches its session", () =>
+  Effect.gen(function* () {
+    const native = yield* Effect.acquireRelease(
+      Effect.promise(() => chromium.launch({ headless: true })),
+      (browser) => Effect.promise(() => browser.close()),
+    );
+    const context = yield* Effect.promise(() => native.newContext());
+    yield* Effect.promise(() =>
+      context.route("**/*", (route) =>
+        route.fulfill({ contentType: "text/html", body: "<title>Original</title>" }),
+      ),
+    );
+    let watched = Promise.withResolvers<void>();
+    const newSession = context.newCDPSession.bind(context);
+    vi.spyOn(context, "newCDPSession").mockImplementation(async (page) => {
+      const cdp = await newSession(page);
+      const send = cdp.send.bind(cdp);
+      vi.spyOn(cdp, "send").mockImplementation((...args) => {
+        const result = send(...args);
+        if (
+          args[0] === "Runtime.evaluate" &&
+          args[1] &&
+          "awaitPromise" in args[1] &&
+          args[1].awaitPromise
+        ) {
+          void send("Runtime.evaluate", { expression: "0" }).then(() => {
+            watched.resolve();
+          });
+        }
+        return result;
+      });
+      return cdp;
+    });
+    realContextOverride = context;
+    yield* Effect.gen(function* () {
+      yield* ServerBrowser.ServerBrowser;
+      const manager = yield* Manager.PreviewManager;
+      const events = yield* manager.subscribeEvents;
+      yield* manager.open({
+        threadId: testThread.threadId,
+        runtime: "server",
+        url: "https://fixture.test/",
+      });
+      const successes: Array<{ title: string; url: string; back: boolean; forward: boolean }> = [];
+      const navigatedTo = Effect.fn(function* (title: string) {
+        for (;;) {
+          const event = yield* PubSub.take(events);
+          if (event.type !== "navigated") continue;
+          const { navStatus } = event.snapshot;
+          if (navStatus._tag === "Success") {
+            successes.push({
+              title: navStatus.title,
+              url: navStatus.url,
+              back: event.snapshot.canGoBack,
+              forward: event.snapshot.canGoForward,
+            });
+            if (navStatus.title === title) return navStatus;
+          }
+        }
+      });
+      expect((yield* navigatedTo("Original"))._tag).toBe("Success");
+      const page = context.pages()[0]!;
+      yield* Effect.promise(() => watched.promise);
+      watched = Promise.withResolvers<void>();
+      yield* Effect.promise(() =>
+        page.evaluate("document.head.replaceWith(document.head.cloneNode(true))"),
+      );
+      for (const title of ["Replaced", "Updated", "Final"]) {
+        if (title === "Final")
+          yield* Effect.promise(() =>
+            page.evaluate(
+              "document.documentElement.replaceWith(document.documentElement.cloneNode(true))",
+            ),
+          );
+        yield* Effect.promise(() =>
+          page.evaluate(
+            `document.title = ${JSON.stringify(title)}; ${title === "Updated" ? "history.pushState({}, '', '/next')" : ""}`,
+          ),
+        );
+        expect(yield* navigatedTo(title)).toEqual({
+          _tag: "Success",
+          url: title === "Replaced" ? "https://fixture.test/" : "https://fixture.test/next",
+          title,
+        });
+        yield* Effect.promise(() => watched.promise);
+        watched = Promise.withResolvers<void>();
+      }
+      expect(successes.filter(({ title }) => title === "Updated")).toEqual([
+        { title: "Updated", url: "https://fixture.test/next", back: true, forward: false },
+      ]);
+      yield* Effect.promise(() =>
+        context.route("**/drawing.svg", (route) =>
+          route.fulfill({
+            contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg"><title>Drawing</title></svg>',
+          }),
+        ),
+      );
+      yield* Effect.promise(() => page.goto("https://fixture.test/drawing.svg"));
+      yield* navigatedTo("Drawing");
+      yield* Effect.promise(() => watched.promise);
+      yield* Effect.promise(() =>
+        page.evaluate("document.querySelector('title').textContent = 'Renamed drawing'"),
+      );
+      expect(yield* navigatedTo("Renamed drawing")).toEqual({
+        _tag: "Success",
+        url: "https://fixture.test/drawing.svg",
+        title: "Renamed drawing",
+      });
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.scoped),
 );
