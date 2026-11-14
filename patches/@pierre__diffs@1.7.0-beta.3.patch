@@ -399,10 +399,10 @@ index 19934176d0787ae1304e771c707230d5c8837e83..298b3386eac5126a7c1ec985674e799a
  		}));
  	}
 diff --git a/package.json b/package.json
-index 0a0acc4c8734a61cf2d684162914002adf74960d..935937d68f52ed96b7af6b1dbb890dbf512eb0fe 100644
+index 0a0acc4c8734a61cf2d684162914002adf74960d..57d52cd55a9d0098693806b089752d20043fe5ca 100644
 --- a/package.json
 +++ b/package.json
-@@ -60,6 +60,18 @@
+@@ -60,6 +60,22 @@
      "./worker/worker-portable.js": {
        "types": "./dist/worker/worker-portable.d.ts",
        "import": "./dist/worker/worker-portable.js"
@@ -418,6 +418,10 @@ index 0a0acc4c8734a61cf2d684162914002adf74960d..935937d68f52ed96b7af6b1dbb890dbf
 +    "./utils/parsePatchFiles": {
 +      "types": "./dist/utils/parsePatchFiles.d.ts",
 +      "import": "./dist/utils/parsePatchFiles.js"
++    },
++    "./utils/iterateOverDiff": {
++      "types": "./dist/utils/iterateOverDiff.d.ts",
++      "import": "./dist/utils/iterateOverDiff.js"
      }
    },
    "publishConfig": {

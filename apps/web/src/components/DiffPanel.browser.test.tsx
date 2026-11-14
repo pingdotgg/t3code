@@ -40,9 +40,13 @@ const state = vi.hoisted(() => ({
   checkpointDiff: null as { diff: string } | null,
 }));
 
-vi.mock("~/state/server", () => ({
-  serverEnvironment: { configValueAtom: () => state.config },
-}));
+vi.mock("~/state/server", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return {
+    serverEnvironment: { configValueAtom: () => state.config },
+    primaryServerKeybindingsAtom: Atom.make([]),
+  };
+});
 vi.mock("~/state/review", () => ({
   reviewEnvironment: {
     diffPreview: ({ input }: { input: { baseRef?: string } }) =>

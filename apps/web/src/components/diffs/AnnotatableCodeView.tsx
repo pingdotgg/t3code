@@ -2,15 +2,24 @@ import type {
   AnnotationSide,
   CodeViewDiffItem,
   CodeViewItem,
+  CodeViewLineSelection,
   DiffLineAnnotation,
   FileDiffMetadata,
   SelectedLineRange,
 } from "@pierre/diffs";
 import type { CodeViewHandle, CodeViewProps } from "@pierre/diffs/react";
 import type { EnvironmentId, ProjectId, ScopedThreadRef } from "@t3tools/contracts";
-import { useState, type ReactNode, type Ref } from "react";
+import {
+  useEffect,
+  useEffectEvent,
+  useImperativeHandle,
+  useState,
+  type ReactNode,
+  type Ref,
+} from "react";
 
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { fnv1a32, resolveFileDiffPath, resolveFileDiffPreviousPath } from "~/lib/diffRendering";
 import {
   buildDiffReviewComment,
@@ -36,6 +45,10 @@ interface DiffCommentAnnotationGroup {
 
 type DiffCommentLineAnnotation = DiffLineAnnotation<DiffCommentAnnotationGroup>;
 export type AnnotatableCodeViewHandle = CodeViewHandle<DiffCommentAnnotationGroup, undefined>;
+export interface AnnotatableCodeViewReview {
+  /** Opens a comment draft on the range; false while another draft is open. */
+  beginComment(fileKey: string, range: SelectedLineRange): boolean;
+}
 const EMPTY_REVIEW_COMMENTS: ReadonlyArray<ReviewCommentContext> = [];
 
 function annotationSide(range: SelectedLineRange): AnnotationSide {
@@ -88,11 +101,16 @@ interface AnnotatableCodeViewProps {
   composerDraftTarget: ScopedThreadRef | DraftId;
   options: StyledDiffCodeViewOptions<DiffCommentAnnotationGroup>;
   viewerRef?: Ref<AnnotatableCodeViewHandle>;
+  reviewRef?: Ref<AnnotatableCodeViewReview>;
+  selectedLines: CodeViewLineSelection | null;
+  onSelectedLinesChange: (selection: CodeViewLineSelection | null) => void;
+  onDraftClose?: () => void;
+  commentShortcutLabel?: string | null;
   onScroll?: CodeViewProps<DiffCommentAnnotationGroup, undefined>["onScroll"];
   className?: string;
   renderCodeViewFooter?: () => ReactNode;
   unsafeCSSExtra?: string;
-  renderHeaderMetadata?: (fileDiff: FileDiffMetadata) => ReactNode;
+  renderHeaderMetadata?: (fileDiff: FileDiffMetadata, fileKey: string) => ReactNode;
   renderHeaderFilenameSuffix: (fileDiff: FileDiffMetadata) => ReactNode;
   renderHeaderPrefix: (
     fileDiff: FileDiffMetadata,
@@ -100,10 +118,6 @@ interface AnnotatableCodeViewProps {
     collapsed: boolean,
   ) => ReactNode;
   onRevealSearchMatch: (fileKey: string) => void;
-}
-
-interface DiffSelectionContext {
-  item: CodeViewItem<DiffCommentAnnotationGroup>;
 }
 
 export function AnnotatableCodeView({
@@ -117,6 +131,11 @@ export function AnnotatableCodeView({
   composerDraftTarget,
   options,
   viewerRef,
+  reviewRef,
+  selectedLines,
+  onSelectedLinesChange,
+  onDraftClose,
+  commentShortcutLabel,
   onScroll,
   className,
   renderCodeViewFooter,
@@ -131,10 +150,6 @@ export function AnnotatableCodeView({
   const reviewComments = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.reviewComments ?? EMPTY_REVIEW_COMMENTS,
   );
-  const [selectedLines, setSelectedLines] = useState<{
-    id: string;
-    range: SelectedLineRange;
-  } | null>(null);
   const [draft, setDraft] = useState<{
     fileKey: string;
     filePath: string;
@@ -142,6 +157,14 @@ export function AnnotatableCodeView({
     annotation: DiffCommentLineAnnotation;
   } | null>(null);
   const [draftText, setDraftText] = useState("");
+  const [droppedDraftCount, setDroppedDraftCount] = useState(0);
+  const draftDropped = useEffectEvent(() => {
+    if (document.activeElement === document.body) onDraftClose?.();
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a refresh that drops the draft's file unmounts its focused textarea, and focus must not fall to the page
+  useEffect(() => {
+    if (droppedDraftCount > 0) draftDropped();
+  }, [droppedDraftCount]);
 
   const filesByKey = new Map(files.map((file) => [file.fileKey, file]));
   if (
@@ -156,7 +179,7 @@ export function AnnotatableCodeView({
   ) {
     setDraft(null);
     setDraftText("");
-    setSelectedLines(null);
+    setDroppedDraftCount((count) => count + 1);
   }
   const items: CodeViewDiffItem<DiffCommentAnnotationGroup>[] = files.map(
     ({ fileDiff, filePath, fileKey, fileVersion, collapsed }) => {
@@ -198,12 +221,17 @@ export function AnnotatableCodeView({
     },
   );
 
+  const closeDraft = () => {
+    setDraft(null);
+    setDraftText("");
+    onDraftClose?.();
+  };
+
   const removeEntry = (entryId: string) => {
-    setSelectedLines(null);
     if (draft?.annotation.metadata.entries.some((entry) => entry.id === entryId)) {
-      setDraft(null);
-      setDraftText("");
+      closeDraft();
     } else {
+      onSelectedLinesChange(null);
       removeReviewComment(composerDraftTarget, entryId);
     }
   };
@@ -222,32 +250,28 @@ export function AnnotatableCodeView({
       text,
     });
     if (comment) addReviewComment(composerDraftTarget, comment);
-    setSelectedLines(null);
-    setDraft(null);
-    setDraftText("");
+    closeDraft();
   };
 
-  const beginComment = (range: SelectedLineRange | null, context: DiffSelectionContext) => {
-    if (!range) return;
-    const item = context.item;
-    if (item.type !== "diff") return;
+  const beginComment = (fileKey: string, range: SelectedLineRange) => {
+    const file = filesByKey.get(fileKey);
+    if (draft !== null || !file) return false;
     const id = nextFileCommentId();
-    const filePath = resolveFileDiffPath(item.fileDiff);
     const comment = buildDiffReviewComment({
       id,
       sectionId,
       sectionTitle,
-      filePath,
-      fileDiff: item.fileDiff,
+      filePath: file.filePath,
+      fileDiff: file.fileDiff,
       range,
       text: "",
     });
-    if (!comment) return;
+    if (!comment) return false;
     setDraftText("");
     setDraft({
-      fileKey: item.id,
-      filePath,
-      previousFilePath: resolveFileDiffPreviousPath(item.fileDiff),
+      fileKey,
+      filePath: file.filePath,
+      previousFilePath: resolveFileDiffPreviousPath(file.fileDiff),
       annotation: {
         side: annotationSide(range),
         lineNumber: range.end,
@@ -256,11 +280,24 @@ export function AnnotatableCodeView({
         },
       },
     });
+    return true;
   };
+  useImperativeHandle(reviewRef, () => ({ beginComment }));
+  const onGutterUtilityClick = useStableCallback(
+    (
+      range: SelectedLineRange | null,
+      { item }: { item: CodeViewItem<DiffCommentAnnotationGroup> },
+    ) => {
+      if (range) beginComment(item.id, range);
+    },
+  );
 
   return (
     <StyledDiffCodeView<DiffCommentAnnotationGroup>
       key={codeViewKey}
+      gutterUtilityLabel={
+        commentShortcutLabel ? `Add comment (${commentShortcutLabel})` : "Add comment"
+      }
       {...(viewerRef ? { viewerRef } : {})}
       {...(onScroll ? { onScroll } : {})}
       {...(className ? { className } : {})}
@@ -268,18 +305,18 @@ export function AnnotatableCodeView({
       {...(renderHeaderMetadata
         ? {
             renderHeaderMetadata: (item: CodeViewItem<DiffCommentAnnotationGroup>) =>
-              item.type === "diff" ? renderHeaderMetadata(item.fileDiff) : null,
+              item.type === "diff" ? renderHeaderMetadata(item.fileDiff, item.id) : null,
           }
         : {})}
       {...(renderCodeViewFooter ? { renderCodeViewFooter } : {})}
       items={items}
       selectedLines={selectedLines}
-      onSelectedLinesChange={setSelectedLines}
+      onSelectedLinesChange={onSelectedLinesChange}
       options={{
         ...options,
         enableGutterUtility: draft === null,
         enableLineSelection: draft === null,
-        onGutterUtilityClick: beginComment,
+        onGutterUtilityClick,
         onRevealSearchMatch: (item) => onRevealSearchMatch(item.id),
       }}
       renderHeaderFilenameSuffix={(item) =>

@@ -10,10 +10,11 @@ import {
 import type {
   CodeViewItem,
   DiffLineAnnotation,
+  FileDiffContentsLoader,
   FileDiffMetadata,
   SelectedLineRange,
 } from "@pierre/diffs";
-import type { CodeViewAnnotationArgs, CodeViewDiffItem } from "@pierre/diffs/react";
+import type { CodeViewAnnotationArgs, CodeViewDiffItem, CodeViewHandle } from "@pierre/diffs/react";
 import type {
   EnvironmentId,
   PullRequestDetailView,
@@ -51,11 +52,13 @@ import {
   useEffectEvent,
   useRef,
   useState,
+  type ComponentProps,
   type ReactNode,
 } from "react";
 
 import { observeIntersection } from "~/lib/observeIntersection";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { useClientSettings, updateClientSettings } from "~/hooks/useSettings";
 import { useRenderedAppearance } from "~/hooks/useTheme";
 import { areAllDiffFilesCollapsed } from "~/lib/diffCollapse";
@@ -102,11 +105,21 @@ import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
 import { DiffFileTree } from "../diffs/DiffFileTree";
 import { FileExplorerPane } from "../files/FileExplorerPane";
 import { useCodeViewFileReveal } from "../diffs/useCodeViewFileReveal";
+import {
+  DiffCursorOutline,
+  DiffSingleFileToggle,
+  DiffViewedCount,
+  DiffViewedToggle,
+} from "../diffs/DiffReviewControls";
+import {
+  DiffReviewCursorContext,
+  useDiffReviewKeyboard,
+  useDiffReviewSelectedLines,
+} from "../diffs/useDiffReviewKeyboard";
 import { useHideTestFiles } from "../diffs/useHideTestFiles";
 import { diffFileTreeEntries, orderDiffFilesLikeTree } from "../diffs/diffFileTree.logic";
 import { StyledDiffCodeView } from "../diffs/StyledDiffCodeView";
 import { Button } from "../ui/button";
-import { Checkbox } from "../ui/checkbox";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import {
   DropdownMenu,
@@ -273,6 +286,13 @@ interface FileViewedToggleState {
   readonly isViewed: (path: string) => boolean;
   readonly isStale: (path: string) => boolean;
   readonly setFileViewed: (fileKey: string, viewed: boolean, extendRange: boolean) => void;
+  readonly shortcutLabel: string | null;
+}
+
+/** The viewer with the review cursor's lines selected; a cursor move redraws only this. */
+function ReviewCodeView(props: ComponentProps<typeof StyledDiffCodeView<ReviewAnnotationGroup>>) {
+  const selectedLines = useDiffReviewSelectedLines();
+  return <StyledDiffCodeView<ReviewAnnotationGroup> {...props} selectedLines={selectedLines} />;
 }
 
 // Context updates viewed toggles without invalidating memoized header portals.
@@ -289,40 +309,18 @@ function FileViewedToggle({
 }) {
   const viewedFiles = use(FileViewedToggleContext);
   if (viewedFiles === null || !viewedFiles.enabled) return stat;
-  const viewed = viewedFiles.isViewed(path);
-  const stale = viewedFiles.isStale(path);
   return (
     <span className="flex items-center gap-3">
       {stat}
-      <label
-        data-viewed-toggle=""
-        className="flex w-18 shrink-0 cursor-pointer select-none items-center gap-1.5 text-2xs text-muted-foreground"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <Checkbox
-          aria-label={stale ? "Changed" : "Viewed"}
-          checked={viewed}
-          onCheckedChange={(next, details) =>
-            viewedFiles.setFileViewed(
-              fileKey,
-              next === true,
-              "shiftKey" in details.event && details.event.shiftKey === true,
-            )
-          }
-        />
-        {stale ? (
-          <Tooltip>
-            <TooltipTrigger render={<span className="text-warning-foreground" />}>
-              Changed
-            </TooltipTrigger>
-            <TooltipPopup side="bottom">
-              This file has been pushed to since you marked it viewed.
-            </TooltipPopup>
-          </Tooltip>
-        ) : (
-          <span className="@max-xs:hidden">Viewed</span>
-        )}
-      </label>
+      <DiffViewedToggle
+        filePath={path}
+        viewed={viewedFiles.isViewed(path)}
+        stale={viewedFiles.isStale(path)}
+        shortcutLabel={viewedFiles.shortcutLabel}
+        onViewedChange={(viewed, extendRange) =>
+          viewedFiles.setFileViewed(fileKey, viewed, extendRange)
+        }
+      />
     </span>
   );
 }
@@ -393,6 +391,7 @@ function PullRequestCodeTab({
   useDiffWorkerPool();
   const settings = useClientSettings((settings) => ({
     diffFilesCollapsed: settings.diffFilesCollapsed,
+    diffAutoAdvanceOnViewed: settings.diffAutoAdvanceOnViewed,
     diffIgnoreWhitespace: settings.diffIgnoreWhitespace,
     diffLayout: settings.diffLayout,
     wordWrap: settings.wordWrap,
@@ -413,10 +412,6 @@ function PullRequestCodeTab({
     Schema.Boolean,
   );
   const [hideTestFiles, setHideTestFiles] = useHideTestFiles();
-  const [selectedLines, setSelectedLines] = useState<{
-    id: string;
-    range: SelectedLineRange;
-  } | null>(null);
   const [draft, setDraft] = useState<DraftAnchor | null>(null);
   const [threadPending, setThreadPending] = useState(false);
   const [orphansOpen, setOrphansOpen] = useState(false);
@@ -442,7 +437,6 @@ function PullRequestCodeTab({
     setStateScopeKey(scopeKey);
     setLastViewedFileKey(null);
     setDraft(null);
-    setSelectedLines(null);
     setFoldChoices(new Map());
     setFoldOverride(null);
     setVisibleCommitCount(COMMIT_PAGE_SIZE);
@@ -575,12 +569,15 @@ function PullRequestCodeTab({
   const codeViewReveal = useCodeViewFileReveal();
   const answeredRevealNonce = useRef<number | null>(null);
 
-  const loadDiffFiles = createPullRequestDiffFileContentsLoader(getDiffFileContents, {
+  const currentLoadDiffFiles = createPullRequestDiffFileContentsLoader(getDiffFileContents, {
     environmentId,
     reference,
     commit,
     cacheKey: `pull-request:${referenceKey}:${detail.updatedAt}:${commit ?? "all"}`,
   });
+  const loadDiffFiles: FileDiffContentsLoader = useStableCallback((fileDiff) =>
+    currentLoadDiffFiles(fileDiff),
+  );
   const completionScope = pullRequestCompletionScope(detail, environmentId, reference);
   const hostReview = detail.capabilities.review;
   const review = {
@@ -790,14 +787,72 @@ function PullRequestCodeTab({
   // A stale mark means the file changed since it was viewed; Fold all and Expand all outrank marks.
   const foldsAsViewed = (path: string) =>
     foldOverride === null && filesViewedEnabled && isFileViewed(path) && !isFileViewedStale(path);
-  const items: CodeViewDiffItem<ReviewAnnotationGroup>[] = annotatedFiles.map(
-    ({ fileKey, path, fileDiff, annotations, annotationsVersion }) => {
-      const collapsed = isFileDiffCollapsed(
-        fileKey,
-        effectiveFoldOverride,
-        foldChoices,
-        foldsAsViewed(path),
-      );
+  const pathByFileKey = new Map(annotatedFiles.map((file) => [file.fileKey, file.path]));
+  const isCollapsed = (fileKey: string) => {
+    const path = pathByFileKey.get(fileKey);
+    return isFileDiffCollapsed(
+      fileKey,
+      effectiveFoldOverride,
+      foldChoices,
+      path !== undefined && foldsAsViewed(path),
+    );
+  };
+  const setCollapsed = (fileKey: string, collapsed: boolean) =>
+    setFoldChoices((current) => withFileDiffFold(current, fileKey, collapsed));
+  const setFileViewed = (fileKey: string, viewed: boolean, extendRange: boolean) => {
+    const range = getFileViewedRange(
+      annotatedFiles,
+      fileKey,
+      extendRange ? lastViewedFileKey : null,
+    );
+    setLastViewedFileKey(fileKey);
+    for (const file of range) {
+      // A commit's diff names that commit's version of the file, not the head's.
+      setViewed(file.path, viewed, commit === null ? file.fileDiff.newObjectId : undefined);
+    }
+    setFoldChoices((current) =>
+      range.reduce((next, file) => withFileDiffFold(next, file.fileKey, viewed), current),
+    );
+  };
+  const viewerHandleRef = useRef<CodeViewHandle<ReviewAnnotationGroup, undefined> | null>(null);
+  const attachViewer = useStableCallback(
+    (handle: CodeViewHandle<ReviewAnnotationGroup, undefined> | null) => {
+      viewerHandleRef.current = handle;
+      codeViewReveal.attach(handle);
+    },
+  );
+  const { rootRef: reviewRootRef, ...diffReview } = useDiffReviewKeyboard({
+    scopeKey,
+    files: annotatedFiles.map(({ fileKey, path, fileDiff }) => ({
+      fileKey,
+      filePath: path,
+      fileDiff,
+      rendered: true,
+    })),
+    diffStyle: diffLayout === "split" ? "split" : "unified",
+    canLoadFullFiles: true,
+    autoAdvanceOnViewed: settings.diffAutoAdvanceOnViewed,
+    getViewer: () => viewerHandleRef.current,
+    isCollapsed,
+    setCollapsed,
+    isViewed: (file) => filesViewedEnabled && isFileViewed(file.filePath),
+    setViewed: filesViewedEnabled
+      ? (file, viewed) => setFileViewed(file.fileKey, viewed, false)
+      : null,
+    revealFile: (file, align) => codeViewReveal.request(file.fileKey, undefined, align),
+    beginComment: (fileKey, range) => {
+      const item = items.find((candidate) => candidate.id === fileKey);
+      if (item) beginComment(range, { item });
+    },
+  });
+
+  const items: CodeViewDiffItem<ReviewAnnotationGroup>[] = annotatedFiles
+    .filter(
+      ({ fileKey }) =>
+        diffReview.singleFileKey === undefined || fileKey === diffReview.singleFileKey,
+    )
+    .map(({ fileKey, path, fileDiff, annotations, annotationsVersion }) => {
+      const collapsed = fileKey !== diffReview.singleFileKey && isCollapsed(fileKey);
       const viewedMark = filesViewedEnabled
         ? `e${isFileViewed(path) ? "v" : ""}${isFileViewedStale(path) ? "s" : ""}`
         : "";
@@ -809,8 +864,7 @@ function PullRequestCodeTab({
         collapsed,
         version: fnv1a32(`${collapsed ? "1" : "0"}:${viewedMark}:${annotationsVersion}`),
       };
-    },
-  );
+    });
   const fileKeys = items.map((item) => item.id);
   const collapsedFileKeys = new Set(
     items.filter((item) => item.collapsed === true).map((item) => item.id),
@@ -838,50 +892,26 @@ function PullRequestCodeTab({
     );
   };
 
-  const toggleFile = (fileKey: string) => {
-    const path = annotatedFiles.find((file) => file.fileKey === fileKey)?.path;
-    const viewed = path !== undefined && foldsAsViewed(path);
-    setFoldChoices((current) =>
-      withFileDiffFold(
-        current,
-        fileKey,
-        !isFileDiffCollapsed(fileKey, effectiveFoldOverride, current, viewed),
-      ),
-    );
-  };
-
-  const setFileViewed = (fileKey: string, viewed: boolean, extendRange: boolean) => {
-    const range = getFileViewedRange(
-      annotatedFiles,
-      fileKey,
-      extendRange ? lastViewedFileKey : null,
-    );
-    setLastViewedFileKey(fileKey);
-    for (const file of range) {
-      // A commit's diff names that commit's version of the file, not the head's.
-      setViewed(file.path, viewed, commit === null ? file.fileDiff.newObjectId : undefined);
-    }
-    setFoldChoices((current) =>
-      range.reduce((next, file) => withFileDiffFold(next, file.fileKey, viewed), current),
-    );
-  };
   const fileViewedToggle = {
     enabled: filesViewedEnabled,
     isViewed: isFileViewed,
     isStale: isFileViewedStale,
     setFileViewed,
+    shortcutLabel: diffReview.shortcutLabels.viewed,
   };
 
   const revealFile = (path: string, range?: SelectedLineRange) => {
-    const item = items.find((candidate) => resolveFileDiffPath(candidate.fileDiff) === path);
-    if (item === undefined) return;
+    const file = annotatedFiles.find((candidate) => candidate.path === path);
+    if (file === undefined) return;
+    if (range) diffReview.onSelectedLinesChange({ id: file.fileKey, range });
+    else diffReview.selectFile(path);
     // Record the unfold even when already open, so a Viewed mark that loads later cannot fold it.
-    setFoldChoices((current) => withFileDiffFold(current, item.id, false));
-    if (range) setSelectedLines({ id: item.id, range });
-    codeViewReveal.request(item.id, range);
+    setCollapsed(file.fileKey, false);
+    codeViewReveal.request(file.fileKey, range);
   };
 
   const toggleAllFiles = () => {
+    diffReview.showAllFiles();
     setFoldOverride(areAllDiffFilesCollapsed(fileKeys, collapsedFileKeys) ? "expanded" : "folded");
     setFoldChoices(new Map());
   };
@@ -891,33 +921,37 @@ function PullRequestCodeTab({
       (left, right) => Date.parse(right.committedDate) - Date.parse(left.committedDate),
     );
 
-  const beginComment = (
-    range: SelectedLineRange | null,
-    context: { item: CodeViewItem<ReviewAnnotationGroup> },
-  ) => {
-    if (!range || !canSelectLines) return;
-    const item = context.item;
-    if (item.type !== "diff") return;
-    const file = files.find((candidate) => buildFileDiffRenderKey(candidate) === item.id);
-    if (!file) return;
-    // On a host without ranged comments a range collapses to its last line: one that silently
-    // lost its first line there would be worse than one line.
-    const path = resolveFileDiffPath(file);
-    const previousPath = resolveFileDiffPreviousPath(file);
-    const sourceFile = parsedSlices
-      .flatMap((slice) => (slice?.kind === "files" ? slice.sourceFiles : []))
-      .find((candidate) => resolveFileDiffPath(candidate) === path);
-    const anchor =
-      (sourceFile && resolveDiffReviewAnchor(sourceFile, range, rangeComments)) ??
-      resolveDiffReviewAnchor(file, range, rangeComments);
-    if (anchor === null) return;
-    setDraft({
-      fileKey: item.id,
-      path,
-      oldPath: previousPath === path ? null : previousPath,
-      ...anchor,
-      range,
-    });
+  const beginComment = useStableCallback(
+    (range: SelectedLineRange | null, context: { item: CodeViewItem<ReviewAnnotationGroup> }) => {
+      if (!range || !canSelectLines || draft !== null) return;
+      const item = context.item;
+      if (item.type !== "diff") return;
+      const file = files.find((candidate) => buildFileDiffRenderKey(candidate) === item.id);
+      if (!file) return;
+      // On a host without ranged comments a range collapses to its last line: one that silently
+      // lost its first line there would be worse than one line.
+      const path = resolveFileDiffPath(file);
+      const previousPath = resolveFileDiffPreviousPath(file);
+      const sourceFile = parsedSlices
+        .flatMap((slice) => (slice?.kind === "files" ? slice.sourceFiles : []))
+        .find((candidate) => resolveFileDiffPath(candidate) === path);
+      const anchor =
+        (sourceFile && resolveDiffReviewAnchor(sourceFile, range, rangeComments)) ??
+        resolveDiffReviewAnchor(file, range, rangeComments);
+      if (anchor === null) return;
+      setDraft({
+        fileKey: item.id,
+        path,
+        oldPath: previousPath === path ? null : previousPath,
+        ...anchor,
+        range,
+      });
+    },
+  );
+
+  const closeDraft = () => {
+    setDraft(null);
+    diffReview.onDraftClose();
   };
 
   const finishSelection = (
@@ -938,8 +972,7 @@ function PullRequestCodeTab({
             range: anchor.range,
             text,
           });
-    setDraft(null);
-    setSelectedLines(null);
+    closeDraft();
     if (comment !== null) onFinish(comment);
   };
 
@@ -966,23 +999,28 @@ function PullRequestCodeTab({
   const renderHeaderPrefix = (item: CodeViewItem<ReviewAnnotationGroup>) => {
     const collapsed = item.collapsed === true;
     return (
-      <Button
-        size="icon-micro"
-        variant="ghost-muted"
-        aria-expanded={!collapsed}
-        aria-label={collapsed ? "Expand diff" : "Collapse diff"}
-        className="mr-1"
-        onClick={(event) => {
-          event.stopPropagation();
-          toggleFile(item.id);
-        }}
-      >
-        {collapsed ? (
-          <ChevronRightIcon className="size-4" />
-        ) : (
-          <ChevronDownIcon className="size-4" />
-        )}
-      </Button>
+      <>
+        {item.type === "diff" ? (
+          <DiffCursorOutline filePath={resolveFileDiffPath(item.fileDiff)} />
+        ) : null}
+        <Button
+          size="icon-micro"
+          variant="ghost-muted"
+          aria-expanded={!collapsed}
+          aria-label={collapsed ? "Expand diff" : "Collapse diff"}
+          className="mr-1"
+          onClick={(event) => {
+            event.stopPropagation();
+            diffReview.toggleFileCollapsed(item.id);
+          }}
+        >
+          {collapsed ? (
+            <ChevronRightIcon className="size-4" />
+          ) : (
+            <ChevronDownIcon className="size-4" />
+          )}
+        </Button>
+      </>
     );
   };
 
@@ -1009,6 +1047,10 @@ function PullRequestCodeTab({
     );
   };
 
+  const onPostRender = useStableCallback(() => {
+    codeViewReveal.flush();
+    diffReview.flushScroll();
+  });
   const diffViewOptions = {
     diffStyle: diffLayout === "split" ? ("split" as const) : ("unified" as const),
     lineDiffType: "none" as const,
@@ -1022,7 +1064,7 @@ function PullRequestCodeTab({
     enableLineSelection: canSelectLines && draft === null,
     onGutterUtilityClick: beginComment,
     onLineSelectionEnd: beginComment,
-    onPostRender: codeViewReveal.flush,
+    onPostRender,
     // Find may repeat requests before render; only unfold, never toggle.
     onRevealSearchMatch: (item: CodeViewItem<ReviewAnnotationGroup>) =>
       setFoldChoices((current) => withFileDiffFold(current, item.id, false)),
@@ -1159,10 +1201,7 @@ function PullRequestCodeTab({
                 },
               }
             : {})}
-          onCancel={() => {
-            setDraft(null);
-            setSelectedLines(null);
-          }}
+          onCancel={closeDraft}
           onComment={(body) => {
             if (!canCommentOnLines) {
               if (onAddToAgentSelection) {
@@ -1180,8 +1219,7 @@ function PullRequestCodeTab({
               position: draft.position,
               body,
             });
-            setDraft(null);
-            setSelectedLines(null);
+            closeDraft();
           }}
         />
       ) : null}
@@ -1193,7 +1231,7 @@ function PullRequestCodeTab({
   const changeIgnoreWhitespace = (next: boolean) => {
     setIgnoreWhitespace(next);
     setDraft(null);
-    setSelectedLines(null);
+    diffReview.onSelectedLinesChange(null);
   };
   const toolbar = (
     <div className="@container flex h-10 min-h-10 shrink-0 items-center justify-between gap-2 border-b border-border/60 bg-background px-4 text-xs text-muted-foreground">
@@ -1258,7 +1296,10 @@ function PullRequestCodeTab({
           {filesViewed.enabled && files.length > 0 ? (
             <span className="flex min-w-0 items-center gap-1 tabular-nums">
               <span className="shrink-0">
-                {filePaths.filter(isFileViewed).length} / {files.length}
+                <DiffViewedCount
+                  viewed={filePaths.filter(isFileViewed).length}
+                  total={files.length}
+                />
               </span>
               <span className="truncate">
                 {viewedFilesStore === "environment" ? `viewed in ${APP_BASE_NAME}` : "viewed"}
@@ -1488,6 +1529,13 @@ function PullRequestCodeTab({
             </TooltipPopup>
           </Tooltip>
         ) : null}
+        {annotatedFiles.length > 0 ? (
+          <DiffSingleFileToggle
+            singleFile={diffReview.singleFile}
+            shortcutLabel={diffReview.shortcutLabels.singleFile}
+            onToggle={diffReview.toggleSingleFile}
+          />
+        ) : null}
         {fileKeys.length > 0 ? (
           <Tooltip>
             <TooltipTrigger
@@ -1515,7 +1563,7 @@ function PullRequestCodeTab({
   // positions it when it renders it.
   const answerReveal = useEffectEvent(() => {
     if (revealRequest === null || answeredRevealNonce.current === revealRequest.nonce) return;
-    if (!items.some((item) => resolveFileDiffPath(item.fileDiff) === revealRequest.path)) {
+    if (!annotatedFiles.some((file) => file.path === revealRequest.path)) {
       if (canLoadNextSlice) loadNextSlice();
       return;
     }
@@ -1541,10 +1589,7 @@ function PullRequestCodeTab({
     }
     const key = `${scopeKey}:${revealUrl}`;
     if (answeredLink.current === key) return;
-    if (
-      !pendingLinkPath ||
-      !items.some((item) => resolveFileDiffPath(item.fileDiff) === pendingLinkPath)
-    ) {
+    if (!pendingLinkPath || !annotatedFiles.some((file) => file.path === pendingLinkPath)) {
       if (canLoadNextSlice) loadNextSlice();
       // Every page is loaded and none has the file.
       else if (!pendingLinkPath && loadedSlices.length > 0 && nextCursor === null) {
@@ -1621,7 +1666,13 @@ function PullRequestCodeTab({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    // Focusable so a click anywhere in the tab, toolbar included, gives it the review keys.
+    <div
+      ref={reviewRootRef}
+      data-diff-panel
+      tabIndex={-1}
+      className="flex h-full min-h-0 flex-col outline-none"
+    >
       {toolbar}
       {orphanFiles.size > 0 ? (
         <div className="shrink-0 border-b border-border/60">
@@ -1698,7 +1749,7 @@ function PullRequestCodeTab({
                 const item = items.find(
                   (candidate) => resolveFileDiffPath(candidate.fileDiff) === filePath,
                 );
-                if (item !== undefined) toggleFile(item.id);
+                if (item !== undefined) diffReview.toggleFileCollapsed(item.id);
                 return;
               }
             }
@@ -1706,20 +1757,26 @@ function PullRequestCodeTab({
         >
           {/* The viewer must own its scroll element to position virtual rows within it. */}
           <FileViewedToggleContext value={fileViewedToggle}>
-            <StyledDiffCodeView<ReviewAnnotationGroup>
-              className="@container h-full overflow-auto [scrollbar-gutter:stable]"
-              containerRef={scrollerRef}
-              viewerRef={codeViewReveal.attach}
-              items={items}
-              selectedLines={selectedLines}
-              onSelectedLinesChange={setSelectedLines}
-              options={diffViewOptions}
-              renderCodeViewFooter={renderCodeViewFooter}
-              renderHeaderPrefix={renderHeaderPrefix}
-              renderHeaderMetadata={renderHeaderMetadata}
-              renderAnnotation={renderAnnotation}
-              unsafeCSSExtra={REPLACE_FILE_COUNTS_CSS}
-            />
+            <DiffReviewCursorContext value={diffReview.cursorStore}>
+              <ReviewCodeView
+                className="@container h-full overflow-auto [scrollbar-gutter:stable]"
+                containerRef={scrollerRef}
+                viewerRef={attachViewer}
+                items={items}
+                onSelectedLinesChange={diffReview.onSelectedLinesChange}
+                gutterUtilityLabel={
+                  diffReview.shortcutLabels.comment
+                    ? `Add comment (${diffReview.shortcutLabels.comment})`
+                    : "Add comment"
+                }
+                options={diffViewOptions}
+                renderCodeViewFooter={renderCodeViewFooter}
+                renderHeaderPrefix={renderHeaderPrefix}
+                renderHeaderMetadata={renderHeaderMetadata}
+                renderAnnotation={renderAnnotation}
+                unsafeCSSExtra={REPLACE_FILE_COUNTS_CSS}
+              />
+            </DiffReviewCursorContext>
           </FileViewedToggleContext>
         </div>
         {fileTreeOpen ? (

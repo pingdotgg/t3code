@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ReactNode, Ref } from "react";
 
 import { isElectron } from "~/env";
 import { cn } from "~/lib/utils";
@@ -18,17 +18,25 @@ function getDiffPanelHeaderRowClassName(mode: DiffPanelMode) {
   );
 }
 
-export function DiffPanelShell(props: {
+export function DiffPanelShell({
+  ref,
+  ...props
+}: {
   mode: DiffPanelMode;
   header: ReactNode;
   children: ReactNode;
+  ref?: Ref<HTMLDivElement>;
 }) {
   const shouldUseDragRegion = isElectron && props.mode !== "sheet" && props.mode !== "embedded";
 
   return (
+    // Focusable so a click anywhere in the panel, header included, gives it the review keys.
     <div
+      ref={ref}
+      data-diff-panel
+      tabIndex={-1}
       className={cn(
-        "flex h-full min-w-0 flex-col bg-background",
+        "flex h-full min-w-0 flex-col bg-background outline-none",
         props.mode === "inline"
           ? "w-[42vw] min-w-[360px] max-w-[560px] shrink-0 border-l border-border"
           : "w-full",

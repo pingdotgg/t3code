@@ -217,7 +217,8 @@ const KEYBINDING_GROUPS = [
   { id: "threads", title: "Threads", prefixes: ["thread", "chat", "pullRequest"] },
   { id: "composer", title: "Composer", prefixes: ["composer", "modelPicker"] },
   { id: "terminal", title: "Terminal", prefixes: ["terminal"] },
-  { id: "preview", title: "Preview & diff", prefixes: ["preview", "diff"] },
+  { id: "preview", title: "Preview", prefixes: ["preview"] },
+  { id: "diff", title: "Diff", prefixes: ["diff"] },
   { id: "appearance", title: "Appearance", prefixes: ["theme", "appearance", "themeEditor"] },
   { id: "scripts", title: "Project scripts", prefixes: ["script"] },
 ] as const;
