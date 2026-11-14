@@ -517,21 +517,9 @@ export function collectLimitPools(
     else byDriver.set(account.driver, [account]);
   }
   return [...byDriver].map(([driver, members]) => {
-    const orderWindow = members
-      .flatMap((account) => account.limits.windows)
-      .sort((left, right) => WINDOW_KIND_ORDER[left.kind] - WINDOW_KIND_ORDER[right.kind])[0];
-    const orderReset = (account: LimitAccount) => {
-      const window = account.limits.windows.find(
-        (window) => orderWindow && poolKey(driver, window) === poolKey(driver, orderWindow),
-      );
-      return (
-        (window ? resetMillis(poolMember(account, window, now).window) : null) ??
-        Number.POSITIVE_INFINITY
-      );
-    };
+    // Account columns must not jump when refreshes change their reset timestamps.
     const sorted = [...members].sort(
       (left, right) =>
-        orderReset(left) - orderReset(right) ||
         accountSortName(left).localeCompare(accountSortName(right)) ||
         left.key.localeCompare(right.key),
     );
@@ -683,6 +671,20 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
     };
   });
   return pools.sort((left, right) => WINDOW_KIND_ORDER[left.kind] - WINDOW_KIND_ORDER[right.kind]);
+}
+
+/**
+ * Pool refills with nearly identical clocks land together in the displayed minute.
+ * The first positive reset alone would understate how much quota becomes usable.
+ */
+export function nextPoolRefillPercent(pool: LimitPoolWindow): number | null {
+  const first = pool.resets.find((reset) => reset.restoresPercent > 0);
+  if (!first) return null;
+  const oneMinuteLater = first.at + 60_000;
+  return pool.resets.reduce(
+    (total, reset) => (reset.at < oneMinuteLater ? total + reset.restoresPercent : total),
+    0,
+  );
 }
 
 export function limitsNotice(limits: ServerProviderUsageLimits): string | null {
