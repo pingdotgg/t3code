@@ -496,6 +496,10 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.sidebarWorkingShelfEnabled !== DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
       ? ["Working section"]
       : []),
+    ...(settings.sidebarSectionDividersEnabled !==
+    DEFAULT_UNIFIED_SETTINGS.sidebarSectionDividersEnabled
+      ? ["Thread section dividers"]
+      : []),
     ...(settings.sidebarAutoSettleAfterDays !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays
       ? ["Auto-settle inactive threads"]
       : []),
@@ -677,6 +681,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
+      sidebarSectionDividersEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarSectionDividersEnabled,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleKeepPullRequests: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
@@ -927,6 +932,33 @@ export function GeneralSettingsPanel() {
                 updateSettings({ sidebarWorkingShelfEnabled: Boolean(checked) })
               }
               aria-label={gt("Working section")}
+            />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("sidebar-section-dividers")}
+          description="Keep the Pinned and Active labels and lines visible when you're not dragging a thread."
+          resetAction={
+            settings.sidebarSectionDividersEnabled !==
+            DEFAULT_UNIFIED_SETTINGS.sidebarSectionDividersEnabled ? (
+              <SettingResetButton
+                label="thread section dividers"
+                onClick={() =>
+                  updateSettings({
+                    sidebarSectionDividersEnabled:
+                      DEFAULT_UNIFIED_SETTINGS.sidebarSectionDividersEnabled,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.sidebarSectionDividersEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ sidebarSectionDividersEnabled: Boolean(checked) })
+              }
+              aria-label="Always show thread section dividers"
             />
           }
         />
