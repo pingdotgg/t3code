@@ -75,7 +75,7 @@ export const make = Effect.fn("RelayClientLedger.make")(function* (input: {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const platform = yield* HostProcess.Platform;
   const directory = path.join(input.stateDir, ENTRY_DIRECTORY);
-  const recordable = platform === "linux" || platform === "darwin" || platform === "win32";
+  const recordable = platform === "linux" || platform === "darwin";
 
   const observeLinux = Effect.fnUntraced(function* (pid: number) {
     const stat = yield* fs.readFileString(`/proc/${pid}/stat`);
@@ -119,40 +119,10 @@ export const make = Effect.fn("RelayClientLedger.make")(function* (input: {
         }),
       );
 
-  const observeWindows = (pid: number) =>
-    spawner
-      .string(
-        ChildProcess.make(
-          "powershell.exe",
-          [
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            `Get-CimInstance Win32_Process -Filter "ProcessId=${pid}" -ErrorAction Stop | ForEach-Object { Write-Output "$($_.CreationDate.ToUniversalTime().Ticks)|$($_.CommandLine)" }`,
-          ],
-          { stdin: "ignore", stderr: "ignore" },
-        ),
-      )
-      .pipe(
-        Effect.timeout("10 seconds"),
-        Effect.map((output) => {
-          const line = output.trim();
-          const separator = line.indexOf("|");
-          if (separator <= 0) return undefined;
-          return {
-            startTime: line.slice(0, separator),
-            command: line.slice(separator + 1),
-            zombie: false,
-          } satisfies ObservedProcess;
-        }),
-      );
-
   const observe = (pid: number): Effect.Effect<ObservedProcess | undefined> => {
     if (platform === "linux") return observeLinux(pid).pipe(Effect.orElseSucceed(() => undefined));
     if (platform === "darwin")
       return observeDarwin(pid).pipe(Effect.orElseSucceed(() => undefined));
-    if (platform === "win32")
-      return observeWindows(pid).pipe(Effect.orElseSucceed(() => undefined));
     return Effect.undefined;
   };
 
