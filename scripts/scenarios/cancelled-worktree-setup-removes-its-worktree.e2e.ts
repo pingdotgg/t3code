@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 
 import { APP_DIR, T3_HOME } from "../e2e.config.ts";
 import { run } from "./shell.ts";
+import { REPLAY } from "./start-app.ts";
 import { runPromise, test, WEB } from "./t3.ts";
 
 const decodeLaunched = Schema.decodeUnknownEffect(
@@ -65,7 +66,7 @@ test(
           "--worktree",
           "main",
           "--provider",
-          "devReplay",
+          REPLAY.instanceId,
           "--model",
           "showcase",
           "--json",
