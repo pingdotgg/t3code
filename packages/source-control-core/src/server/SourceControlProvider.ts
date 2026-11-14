@@ -100,13 +100,14 @@ export function sourceControlRefFromInput(input: {
 }
 
 export function repositoryPathFromRemoteUrl(url: string | null): string | null {
-  const trimmed = url?.trim() ?? "";
+  const remote = url?.trim() ?? "";
+  const trimmed = /^(?:ssh|https?|git):\/\//iu.test(remote) ? remote.split(/[?#]/u, 1)[0]! : remote;
   if (trimmed.length === 0) {
     return null;
   }
 
   const match =
-    /^(?:[^@/\s]+@[^:/\s]+:|(?:ssh|https?|git):\/\/[^/]+\/)((?:[^/\s]+\/)+[^/\s]+?)(?:\.git)?\/?$/iu.exec(
+    /^(?:[^@/\s]+@[^:/\s]+:|[^@:/\\\s]{2,}:(?!:)|(?:ssh|https?|git):\/\/[^/]+\/)((?:[^/\s]+\/)+[^/\s]+?)(?:\.git)?\/?$/iu.exec(
       trimmed,
     );
   const path = match?.[1]?.trim() ?? "";
@@ -117,22 +118,18 @@ export class SourceControlProvider extends Context.Service<
   SourceControlProvider,
   {
     readonly kind: SourceControlProviderKind;
-    /**
-     * The caller checks the owner against what comes back, so a host that cannot search
-     * `owner:branch` can drop those selectors without losing anything.
-     */
+    /** The caller verifies owners, so hosts may drop unsupported `owner:branch` selectors. */
     readonly headBranchProbe?: (input: {
       readonly headSelectors: ReadonlyArray<string>;
       readonly state: "open" | "all";
+      /** `owner:branch` when the head is the default branch, a name most forks share. */
+      readonly defaultBranchHeadSelector?: string | undefined;
     }) => { readonly headSelectors: ReadonlyArray<string>; readonly limit: number };
     readonly readChangeRequestTemplate?: (input: {
       readonly cwd: string;
       readonly treeish: string;
     }) => Effect.Effect<Option.Option<string>>;
-    /**
-     * The repository's `owner/name` from a remote URL, for a host whose remote paths can carry
-     * more than that (Forgejo's HTTP installation mount). Absent means the whole path.
-     */
+    /** Strip installation mounts from remote paths; absent means use the whole path. */
     readonly repositoryNameFromRemoteUrl?: (url: string) => string | null;
     readonly refineRepositoryIdentity?: (input: {
       readonly identity: RepositoryIdentity;
@@ -201,6 +198,8 @@ export class SourceControlProvider extends Context.Service<
       readonly cwd: string;
       readonly context?: SourceControlProviderContext;
       readonly repository: string;
+      /** The host the repository is on. Without it, the checkout's host. */
+      readonly host?: string;
     }) => Effect.Effect<SourceControlRepositoryCloneUrls, SourceControlProviderError>;
     readonly createRepository: (input: {
       readonly cwd: string;

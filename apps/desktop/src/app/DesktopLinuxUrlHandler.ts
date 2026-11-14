@@ -12,12 +12,7 @@ import * as DesktopAssets from "./DesktopAssets.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
 
-// Linux ships as an AppImage, so the .desktop entry users end up with is
-// created by whatever integration tool they use (AppImageLauncher names it
-// appimagekit_<hash>-….desktop) and its filename is not under our control.
-// Electron's app.setAsDefaultProtocolClient resolves the desktop id from
-// setDesktopName, which cannot match those files — so the browser keeps
-// prompting "Choose an application" for every OAuth callback.
+// AppImage integrators choose the .desktop filename, so setDesktopName cannot identify it for protocol registration.
 const { logInfo, logWarning } = makeComponentLogger("desktop-linux-url-handler");
 
 export class DesktopLinuxUrlHandlerRegistrationError extends Schema.TaggedError<DesktopLinuxUrlHandlerRegistrationError>()(
@@ -62,9 +57,7 @@ const escapeDesktopEntryString = (value: string): string =>
     .replaceAll("\r", "\\r")
     .replaceAll("\t", "\\t");
 
-// Exec values are unescaped twice by implementations: first the general
-// string-value rules, then the Exec quoting rules — so writing composes the
-// layers in reverse.
+// Exec values undergo general unescaping then Exec unquoting; escape in reverse order.
 export function escapeDesktopEntryExecArgument(value: string): string {
   const quoted = value
     .replaceAll("\\", () => "\\\\")
@@ -103,9 +96,39 @@ export function renderUrlHandlerDesktopEntry(input: {
   ].join("\n");
 }
 
-// Some docks and bars look the Wayland app id up in the icon theme when no
-// visible desktop entry matches the window, for example an AppImage run without
-// integration. Theme lookups are case-sensitive, so install both spellings.
+function parseUrlHandlerExecTarget(entry: string): string | null {
+  const exec = /^Exec=(.*) %U$/mu.exec(entry)?.[1];
+  if (exec === undefined) return null;
+  const unescaped = exec.replace(/\\([\\nrt])/gu, (_, char: string) =>
+    char === "n" ? "\n" : char === "r" ? "\r" : char === "t" ? "\t" : char,
+  );
+  const quoted = /^"(.*)"$/su.exec(unescaped)?.[1];
+  return (
+    quoted === undefined ? unescaped : quoted.replace(/\\([\\`$"])/gu, (_, char: string) => char)
+  ).replaceAll("%%", "%");
+}
+
+const APPIMAGE_NAME_VERSION = /\d+\.\d+\.\d+/u;
+
+// An updater from before version-free AppImage names deletes its own file and installs the update
+// beside it under the new name. The previous launch's entry still names the path launchers use.
+export function replacedVersionedAppImagePath(input: {
+  readonly previousEntry: string;
+  readonly appImagePath: string;
+}): string | null {
+  const previous = parseUrlHandlerExecTarget(input.previousEntry);
+  if (previous === null) return null;
+  const previousName = previous.slice(previous.lastIndexOf("/") + 1);
+  const currentName = input.appImagePath.slice(input.appImagePath.lastIndexOf("/") + 1);
+  return previous.startsWith("/") &&
+    previous.slice(0, -previousName.length) === input.appImagePath.slice(0, -currentName.length) &&
+    APPIMAGE_NAME_VERSION.test(previousName) &&
+    !APPIMAGE_NAME_VERSION.test(currentName)
+    ? previous
+    : null;
+}
+
+// Docks may look up the Wayland app id without a desktop entry; icon theme lookups are case-sensitive.
 const LINUX_THEME_ICON_SIZE = "256x256";
 
 function linuxThemeIconNames(desktopEntryName: string): readonly string[] {
@@ -123,7 +146,7 @@ export class DesktopLinuxUrlHandler extends Context.Service<
   }
 >()("@t3tools/desktop/app/DesktopLinuxUrlHandler") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -155,8 +178,7 @@ export const make = Effect.gen(function* () {
       scheme,
       ...(environment.isPackaged ? { iconPath } : {}),
     });
-    // Pre-ready setup normally wrote this already. Avoid truncating a valid
-    // entry while the portal may be reading it during startup.
+    // Avoid truncating the pre-ready entry while the portal may be reading it.
     const existing = yield* fileSystem
       .readFileString(desktopEntryPath)
       .pipe(Effect.orElseSucceed(() => null));
@@ -184,6 +206,7 @@ export const make = Effect.gen(function* () {
           stdin: "ignore",
           stdout: "ignore",
           stderr: "ignore",
+          forceKillAfter: "1 second",
         },
       );
       const handle = yield* spawner.spawn(command);
@@ -240,10 +263,8 @@ export const make = Effect.gen(function* () {
       yield* fileSystem.writeFile(target, icon);
       changed = true;
     }
-    // Only keep an existing cache current. Creating one would leave GTK reading
-    // a cache that other tools installing user icons do not update. An icon
-    // newer than the cache also retries a refresh that failed on an earlier
-    // launch.
+    // Creating a cache would leave GTK reading stale icons from other installers.
+    // A newer icon retries a refresh that failed on an earlier launch.
     const cachePath = environment.path.join(hicolorDir, "icon-theme.cache");
     const cachedAt = yield* modifiedAt(cachePath).pipe(Effect.option);
     if (Option.isNone(cachedAt)) return;
@@ -272,15 +293,16 @@ export const make = Effect.gen(function* () {
           stdin: "ignore",
           stdout: "ignore",
           stderr: "ignore",
+          forceKillAfter: "1 second",
         },
       );
       const handle = yield* spawner.spawn(command);
-      const exitCode = yield* handle.exitCode;
-      if ((exitCode as unknown as number) !== 0) {
+      const exitCode = yield* handle.exitCode.pipe(Effect.timeout("5 seconds"));
+      if (exitCode !== 0) {
         return yield* new DesktopLinuxUrlHandlerRegistrationError({
           step: "set-default-handler",
           scheme,
-          exitCode: Number(exitCode),
+          exitCode,
         });
       }
     }),
@@ -308,20 +330,18 @@ export const make = Effect.gen(function* () {
       if (Option.isNone(png)) return;
       // The AppImage mount is temporary; the chooser needs the icon after exit.
       yield* fileSystem.makeDirectory(iconsDir, { recursive: true });
-      yield* fileSystem.copyFile(png.value, iconPath);
+      // Electron's copyFile from app.asar extracts to a temp file it never deletes.
+      yield* fileSystem.writeFile(iconPath, yield* fileSystem.readFile(png.value));
     }).pipe(
       Effect.catch((error) =>
-        logWarning("URL handler icon copy failed", { iconPath, category: error.reason._tag }),
+        logWarning("URL handler icon install failed", { iconPath, category: error.reason._tag }),
       ),
     );
 
     yield* installThemeIcons;
 
     yield* updateDesktopDatabase.pipe(
-      // Some MIME implementations, including GIO, use mimeinfo.cache to verify
-      // that a desktop entry is associated with a scheme. Cache refresh is
-      // independently best-effort so a missing update-desktop-database executable
-      // does not prevent xdg-mime from recording the requested default.
+      // GIO verifies scheme associations through mimeinfo.cache. A missing cache updater must not block xdg-mime.
       Effect.catch((error) =>
         logWarning("desktop MIME cache refresh failed", {
           applicationsDir: environment.linuxApplicationsDir,

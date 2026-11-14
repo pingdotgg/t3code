@@ -118,7 +118,7 @@ const GitCafeComment = Schema.Struct({
   body: Schema.NullOr(Schema.String),
   createdAt: IsoDateTime,
   path: Schema.NullOr(Schema.String),
-  // The API allows any integer here; only a positive line anchors a review thread.
+  // Only positive lines anchor review threads; the API allows any integer.
   line: Schema.NullOr(Schema.Int),
   side: Schema.NullOr(Schema.Literals(["left", "right"])),
   commitOid: Schema.NullOr(Schema.String),
@@ -235,7 +235,7 @@ const GitCafeDiffFile = Schema.Struct({
   isSubmodule: Schema.optional(Schema.Boolean),
   oldOid: Schema.optional(Schema.String),
   newOid: Schema.optional(Schema.String),
-  // Structural pages (`/changes`, `/compare`) list files without hunks; the batched reads fill them.
+  // `/changes` and `/compare` omit hunks; batched reads fill them.
   hunks: Schema.optional(
     Schema.Array(
       Schema.Struct({
@@ -567,6 +567,10 @@ export function toStack(stack: GitCafeStack, target: RepositoryOnHost): Provider
   };
 }
 
+function isEOFMarker(origin: string | undefined) {
+  return origin === "=" || origin === ">" || origin === "<";
+}
+
 export function toDiff(diff: typeof GitCafeDiff.Type): ProviderDiffSlice {
   const chunks: Array<string> = [];
   const omittedFileStats: Array<{ path: string; additions: number; deletions: number }> = [];
@@ -582,7 +586,16 @@ export function toDiff(diff: typeof GitCafeDiff.Type): ProviderDiffSlice {
     if (file.status === "deleted") lines.push(`deleted file mode ${mode}`);
     if (file.status === "renamed" || file.status === "copied") {
       const action = file.status === "renamed" ? "rename" : "copy";
+      const hasChanges =
+        (file.hunks?.length ?? 0) > 0 ||
+        (file.additions ?? 0) > 0 ||
+        (file.deletions ?? 0) > 0 ||
+        file.binary ||
+        file.tooLarge ||
+        file.hunksOmitted;
+      // GitCafe has no similarity score; Pierre needs this header to retain rename metadata.
       lines.push(
+        `similarity index ${hasChanges ? 0 : 100}%`,
         `${action} from ${quoteGitPatchPath(oldPath)}`,
         `${action} to ${quoteGitPatchPath(file.path)}`,
       );
@@ -607,10 +620,19 @@ export function toDiff(diff: typeof GitCafeDiff.Type): ProviderDiffSlice {
       if (hunks.length > 0) lines.push(`--- ${before}`, `+++ ${after}`);
       for (const hunk of hunks) {
         lines.push(`@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`);
-        for (const line of hunk.lines) {
-          // GitCafe marks a missing final newline with libgit2's own origins.
-          if (["=", ">", "<"].includes(line.origin)) lines.push("\\ No newline at end of file");
-          else lines.push(`${line.origin}${line.content.replace(/\n$/u, "")}`);
+        for (const [index, line] of hunk.lines.entries()) {
+          if (isEOFMarker(line.origin)) {
+            lines.push("\\ No newline at end of file");
+          } else {
+            lines.push(`${line.origin}${line.content.replace(/\n$/u, "")}`);
+            if (
+              ["+", "-", " "].includes(line.origin) &&
+              !line.content.endsWith("\n") &&
+              !isEOFMarker(hunk.lines[index + 1]?.origin)
+            ) {
+              lines.push("\\ No newline at end of file");
+            }
+          }
         }
       }
     }

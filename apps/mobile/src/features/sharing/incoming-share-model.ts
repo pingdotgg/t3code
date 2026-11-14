@@ -52,11 +52,7 @@ export function decodeIncomingShareDraft(value: unknown): IncomingShareDraft {
   return decodeIncomingShareDraftSync(value);
 }
 
-/**
- * `file:` path with the iOS `/private` prefix stripped, so URIs that reach the
- * same file through the `/var` symlink and through `/private/var` compare
- * equal.
- */
+/** Strip iOS /private so /var and /private/var paths compare equally. */
 function normalizedFileUriPath(uri: string): string | null {
   try {
     const url = new URL(uri);
@@ -64,9 +60,7 @@ function normalizedFileUriPath(uri: string): string | null {
       return null;
     }
     const path = decodeURIComponent(url.pathname);
-    // URL parsing collapses literal ".." segments, but an encoded separator
-    // survives it: "..%2F.." decodes to "../..", which the filesystem would
-    // resolve outside the root the lexical containment check accepted.
+    // URL parsing leaves encoded separators; reject decoded .. segments before lexical containment checks.
     if (path.split("/").includes("..")) {
       return null;
     }
@@ -76,13 +70,7 @@ function normalizedFileUriPath(uri: string): string | null {
   }
 }
 
-/**
- * Whether a shared `file:` URI points strictly inside one of the directories
- * this app owns (its sandbox and its share-extension App Group container).
- * Share cleanup must never delete anything else: an iOS open-in-place share
- * hands over the sender's own file URL, and deleting it destroys the user's
- * document.
- */
+/** Delete only inside app-owned roots; iOS shares may reference the sender's original. */
 export function isShareFileUriUnderOwnedRoots(
   uri: string,
   ownedRootUris: ReadonlyArray<string>,
@@ -143,7 +131,6 @@ export function selectIncomingShareAttachmentsForServer(input: {
   readonly serverConfig: {
     readonly environment: {
       readonly capabilities: {
-        readonly attachmentUploads?: boolean;
         readonly fileAttachments?: { readonly maxUploadBytes: number };
       };
     };
@@ -160,10 +147,7 @@ export function selectIncomingShareAttachmentsForServer(input: {
     return { status: "pending" };
   }
   const capabilities = input.serverConfig?.environment.capabilities;
-  const maxFileAttachmentBytes =
-    capabilities?.attachmentUploads === true
-      ? (capabilities.fileAttachments?.maxUploadBytes ?? null)
-      : null;
+  const maxFileAttachmentBytes = capabilities?.fileAttachments?.maxUploadBytes ?? null;
   return {
     status: "ready",
     ...selectIncomingShareAttachments({
@@ -331,9 +315,7 @@ export async function buildIncomingShareDraft(input: {
         }
         if (persistedFileUri === undefined && input.fileReader.persistFile) {
           persistedFileUri = await input.fileReader.persistFile(uri, name);
-          // An Android content: source can misreport its size while the stored
-          // copy is what uploads, so the copy's measured size is what the
-          // attachment must record.
+          // Android content sources can misreport size; record the stored copy's measured size.
           const storedSize = (await input.fileReader.readSize?.(persistedFileUri)) ?? null;
           if (storedSize !== null) {
             sizeBytes = storedSize;
@@ -397,8 +379,7 @@ export async function buildIncomingShareDraft(input: {
 
     try {
       const sharedBase64 = await input.fileReader.readBase64(uri);
-      // Rendered from the bytes already read, since the provider's file may not be readable
-      // by the native image loader.
+      // Use already-read bytes because native image loaders may not read the provider's file.
       const fitted = await fitComposerImage({
         uri: `data:${mimeType};base64,${sharedBase64}`,
         mimeType,
@@ -422,8 +403,7 @@ export async function buildIncomingShareDraft(input: {
         mimeType,
         sizeBytes,
         dataUrl,
-        // The share provider's file is temporary. A data-backed preview keeps
-        // the composer valid after its source file and App Group entry are gone.
+        // Data-backed previews outlive temporary share files and App Group entries.
         previewUri: dataUrl,
       });
     } catch {

@@ -7,7 +7,6 @@ func check(_ passed: Bool, _ message: String = "Failed layout check") {
   }
 }
 
-// Runs the production layout against UIKit through Mac Catalyst, without launching an app.
 let font = UIFont.monospacedSystemFont(ofSize: 14, weight: .regular)
 let characterWidth = ("M" as NSString).size(withAttributes: [.font: font]).width
 let fixtures = ["漢字表示", "e\u{301}", "👨‍👩‍👧‍👦", "مرحبا بالعالم ", "\tvalue "]
@@ -40,13 +39,11 @@ for fixture in fixtures {
         check(bytes[y * bitmap.bytesPerRow + x * 4 + 3] == 0, "Ink outside viewport: \(fixture) x=\(x) y=\(y) bpp=\(bitmap.bitsPerPixel) alpha=\(bitmap.alphaInfo.rawValue)")
       }
     }
-    // Updating highlights and syntax colors must preserve measured geometry.
     layout.decorate(text: attributed, highlights: [fullRange], color: .green, version: 1)
     check(layout.firstLineHeight + layout.extraHeight == height)
     cases += 1
   }
 }
-// Unwrapped rows stay on one line, and their measured width covers every drawn glyph.
 for text in ["\t\t\"extends\": \"@riptech/tsconfig/tsconfig.test.json\",", "漢字\tvalue", "مرحبا\tvalue"] {
   let layout = ReviewDiffCodeLayout(
     text: text, font: font, width: ReviewDiffCodeLayout.unboundedWidth, characterWidth: characterWidth
@@ -77,7 +74,7 @@ for text in ["\t\t\"extends\": \"@riptech/tsconfig/tsconfig.test.json\",", "漢�
 let unwrappedAscii = ReviewDiffCodeLayout(
   text: "const value = 123;", font: font, width: ReviewDiffCodeLayout.unboundedWidth, characterWidth: characterWidth
 )
-check(unwrappedAscii.starts == [0] && unwrappedAscii.usedWidth == 18 * characterWidth)
+check(Array(unwrappedAscii.starts) == [0] && unwrappedAscii.usedWidth == 18 * characterWidth)
 
 let ascii = String(repeating: "const value = 123; ", count: 100)
 let layout = ReviewDiffCodeLayout(text: ascii, font: font, width: 280, characterWidth: characterWidth)

@@ -1,5 +1,6 @@
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import type { EnvironmentThreadStatus } from "@t3tools/client-runtime/state/threads";
+import type { EnvironmentId } from "@t3tools/contracts";
 
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 
@@ -11,7 +12,7 @@ export interface FloatingStatusAction {
 }
 
 export type FloatingWorkingStatus =
-  | { readonly kind: "working"; readonly startedAt: string }
+  | { readonly kind: "working"; readonly environmentId: EnvironmentId; readonly startedAt: string }
   | { readonly kind: "syncing"; readonly label: string }
   | { readonly kind: "compacting" }
   | {
@@ -34,7 +35,14 @@ export type FloatingWorkingStatus =
       readonly label: string;
       readonly action: FloatingStatusAction;
     }
+  | {
+      readonly kind: "stop";
+      readonly label: string;
+      readonly unresponsive: boolean;
+      readonly action: FloatingStatusAction | null;
+    }
   | { readonly kind: "goal"; readonly label: string; readonly accessibilityLabel: string }
+  | { readonly kind: "extension"; readonly label: string; readonly onPress: () => void }
   | { readonly kind: "preparing"; readonly label: string }
   | {
       readonly kind: "connection";
@@ -46,6 +54,7 @@ export type FloatingWorkingStatus =
 export function connectionFloatingStatus(input: {
   readonly connectionError: string | null;
   readonly connectionState: EnvironmentConnectionPhase;
+  readonly connectionAwaitingApproval?: boolean;
   readonly environmentLabel: string | null;
   readonly onReconnect: () => void;
 }): FloatingWorkingStatus | null {
@@ -57,6 +66,14 @@ export function connectionFloatingStatus(input: {
     onPress: input.onReconnect,
   });
 
+  if (input.connectionState === "reconnecting" && input.connectionAwaitingApproval) {
+    return {
+      kind: "connection",
+      tone: "reconnecting",
+      label: `Waiting for ${environmentLabel} to approve this device`,
+      onPress: input.onReconnect,
+    };
+  }
   switch (input.connectionState) {
     case "connecting":
     case "reconnecting":
@@ -114,9 +131,8 @@ export function threadSyncFloatingStatus(phase: ThreadSyncPhase): FloatingWorkin
       return {
         kind: "connection",
         tone: "unavailable",
-        // Not tappable: reconnecting a connected environment only health-checks
-        // the socket and does not resubscribe. A new session or returning to
-        // the foreground retries the sync.
+        // Not tappable: reconnecting a connected environment does not
+        // resubscribe the thread. The sync retries on its own.
         label: "Could not sync messages",
       };
   }
