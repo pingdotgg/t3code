@@ -332,6 +332,7 @@ export async function openDocument(
               find(cell, "text:p", "office:annotation").map(text).join("\n") ||
               cell.attrs["office:value"] ||
               cell.attrs["office:date-value"] ||
+              cell.attrs["office:time-value"] ||
               cell.attrs["office:boolean-value"] ||
               cell.attrs["office:string-value"] ||
               "";
