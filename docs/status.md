@@ -87,11 +87,12 @@ Proven:
   otherwise did not come back in 1,050 runs under load); the terminal label follows the
   foreground command's name, as in T3; and the SDK host build installs esbuild from a
   lockfile only. Also proven: the process group kill reaches grandchildren; `--bootstrap-fd`
-  reads a socket pair as Electron passes it; the musl binary is static (15.6 MB) and starts;
+  reads a socket pair as Electron passes it; the musl binary is static (15.7 MB) and starts;
   the CI command for the recordings decode passes with `--locked`; the SDK host builds as a
   Node 26.12.1 single executable (152 MB) and exits after the last session; 10 of the 11
-  live Claude tests pass on Haiku through that executable. Memory (the table in
-  `README.md`): the server holds 4.4 MiB `Pss_Anon` after 20 turns in 3 threads on the fake
+  live Claude tests pass on Haiku through that executable (before the 2026-11-14 pin bump;
+  after it, the provider's 42 tests and the memory run pass through the rebuilt executable). Memory (the table in
+  `README.md`): the server holds 4.3 MiB `Pss_Anon` after 20 turns in 3 threads on the fake
   provider, against about 301 MiB for each of five container T3 servers at the same moments.
 
 Not proven:

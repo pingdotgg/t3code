@@ -408,7 +408,7 @@ search, VCS views and the diff, files and uploads, terminals, a launch into a ne
 a turn that calls `/mcp`. `crates/conn-server/tools/orbit-flow.mjs` runs Orbit's container
 flow against a binary.
 
-**Memory on Linux**, measured 2026-11-14 on the Orbit container host (x86_64, Ubuntu, kernel
+**Memory on Linux**, measured 2026-11-14 (Conn pin `b12470dcad`) on the Orbit container host (x86_64, Ubuntu, kernel
 7.0). Figures are MiB from `/proc/<pid>/smaps_rollup`. The server is the musl release build of
 `examples/replay_server` (`conn-server` with the engine's fake provider, so no model and no
 `claude` process), with the binary on ext4. `crates/conn-server/tools/memory-flow.mjs` drives
@@ -417,27 +417,29 @@ thread, and runs turns through `/mcp`.
 
 | Server (musl, fake provider) | Rss  | Pss  | Pss_Anon | Private_Dirty |
 | ---------------------------- | ---- | ---- | -------- | ------------- |
-| Just started                 | 8.3  | 8.3  | 1.4      | 1.4           |
-| Client connected, streams open | 9.8 | 9.8 | 1.9     | 1.9           |
-| After 20 turns in 3 threads  | 13.1 | 13.1 | 4.4      | 4.4           |
-| After 2 idle minutes         | 12.8 | 12.8 | 4.2      | 4.2           |
+| Just started                 | 8.7  | 8.7  | 1.4      | 1.4           |
+| Client connected, streams open | 10.0 | 10.0 | 1.9    | 1.9           |
+| After 20 turns in 3 threads  | 13.1 | 13.1 | 4.3      | 4.3           |
+| After 2 idle minutes         | 12.3 | 12.3 | 4.1      | 4.2           |
 
 Five container T3 servers (`/opt/orbit-agent/current/agent/bin/t3 serve`), read at the same
-moments: `Pss_Anon` 354, 284, 284, 299 and 286 MiB (mean 301), unchanged through the run. The
+moments: `Pss_Anon` 354, 283, 285, 299 and 285 MiB (mean 301), unchanged through the run. The
 server's anonymous memory after 20 turns is about 70 times smaller. The rest of its `Rss` is the
 binary's file pages, which every container on the host shares through the page cache.
 
 | SDK host (Node 26.12.1 single executable, stub `claude`) | Rss   | Pss   | Pss_Anon | Private_Dirty |
 | -------------------------------------------------------- | ----- | ----- | -------- | ------------- |
-| Idle after start, no driver loaded                       | 93.7  | 87.5  | 20.8     | 20.9          |
-| In a session, turn 1 running                             | 105.2 | 98.7  | 31.9     | 31.9          |
-| After 10 turns                                           | 117.1 | 110.7 | 41.3     | 41.3          |
+| Idle after start, no driver loaded                       | 66.3  | 60.3  | 20.9     | 20.9          |
+| In a session, turn 1 running                             | 81.1  | 74.9  | 32.0     | 32.0          |
+| After 10 turns                                           | 91.7  | 85.5  | 38.5     | 38.5          |
 | After the last session closed                            | gone  | gone  | gone     | gone          |
 
 The SDK host runs only while a Claude session is open. Measured with
 `crates/conn-provider-claude/examples/helper_memory` and
 `crates/conn-provider-claude/tools/conformance/stub-claude` replaying a 10-turn transcript. Its
-152 MB executable is mostly file pages; only `Pss_Anon` is private to one container. A real
+152 MB executable is mostly file pages, and how many are resident varies: a run before the
+2026-11-14 pin bump read 94 to 117 MiB `Rss` with the same `Pss_Anon` (21 to 41). Only
+`Pss_Anon` is private to one container. A real
 session also has the `claude` CLI (about 140 MiB `Pss_Anon` in an earlier run) and the MCP
 helpers from the user's Claude settings. The T3 figures do not count those either.
 
@@ -450,7 +452,7 @@ On macOS arm64 (release, `ps` RSS / `footprint`, one Haiku turn): `opt-level = "
 
 **Linux build:** on a Linux host, `cargo build --release -p conn-server` takes about a minute
 from clean with 4 jobs; add `--target x86_64-unknown-linux-musl` (with `musl-gcc` installed)
-for a static binary (15.6 MB on 2026-11-14; 7.2 MB in the early spike). From macOS the build needs a C
+for a static binary (15.7 MB on 2026-11-14; 7.2 MB in the early spike). From macOS the build needs a C
 cross-compiler for bundled SQLite, such as `cargo zigbuild`.
 
 ## Known gaps
