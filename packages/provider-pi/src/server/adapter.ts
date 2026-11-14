@@ -3773,6 +3773,7 @@ function piQuestion(
   title: string,
   event: PiRpcRecord,
 ): OrchestrationV2UserInputQuestion {
+  // Input and editor dialogs are free text; only select dialogs carry preset options.
   const options =
     method === "select" && Array.isArray(event["options"])
       ? event["options"]
@@ -3782,25 +3783,12 @@ function piQuestion(
             description: option || "Empty value",
             value: option,
           }))
-      : method === "editor"
-        ? []
-        : [
-            {
-              label: "Submit empty value",
-              description: "Send an empty string to the extension.",
-              value: "",
-            },
-          ];
-  // Pi's select and editor dialogs carry only a title, so show it once, as the question.
-  // Extensions may send a blank placeholder, which is not a valid question.
-  const detail = [recordString(event, "message"), recordString(event, "placeholder")].find(
-    (text) => text !== undefined && text.trim().length > 0,
-  );
-  const questionTitle = title.trim() ? title : "Question";
+      : [];
+  // The title is the question; an input's placeholder is only a hint that the card cannot show.
   return {
     id: questionId,
-    header: detail === undefined ? "Question" : questionTitle,
-    question: detail ?? questionTitle,
+    header: "Question",
+    question: title.trim() ? title : "Question",
     ...(method === "editor" ? { initialAnswer: recordString(event, "prefill") ?? "" } : {}),
     options,
   };
