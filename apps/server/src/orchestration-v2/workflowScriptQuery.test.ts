@@ -15,7 +15,7 @@ import { it as effectIt } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { afterAll, assert } from "vite-plus/test";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
-import { readWorkflowScript } from "./workflowScriptQuery.ts";
+import * as WorkflowScriptQuery from "./workflowScriptQuery.ts";
 import * as Settings from "../serverSettings.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectStore from "./ProjectStore.ts";
@@ -61,6 +61,7 @@ for (const [file, contents] of [
 }
 
 const threadId = ThreadId.make("workflow-script-fixture");
+const orphanThreadId = ThreadId.make("workflow-script-orphan");
 const fixture = Layer.effectDiscard(
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -75,6 +76,20 @@ const fixture = Layer.effectDiscard(
       interactionMode: "default",
       branch: null,
       worktreePath: checkout,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("workflow-script-orphan:create"),
+      threadId: orphanThreadId,
+      projectId: ProjectId.make("workflow-missing-project"),
+      title: "Orphan",
+      modelSelection: { instanceId: ProviderInstanceId.make("claudeAgent"), model: "default" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
       createdBy: "user",
       creationSource: "web",
     });
@@ -117,15 +132,19 @@ const providerInstances = {
   },
 };
 
-const read = (scriptPath: string) => readWorkflowScript({ threadId, scriptPath });
+const read = (scriptPath: string) =>
+  WorkflowScriptQuery.WorkflowScriptQuery.use((query) =>
+    query.readWorkflowScript({ threadId, scriptPath }),
+  );
 
 effectIt.layer(
-  Settings.layerTest({ providerInstances }).pipe(
+  WorkflowScriptQuery.layer.pipe(
+    Layer.provideMerge(Settings.layerTest({ providerInstances })),
     Layer.provideMerge(Layer.succeed(HostProcess.HomeDirectory, home)),
     Layer.provideMerge(Layer.succeed(HostProcess.Environment, {})),
     Layer.provideMerge(NodePathService.layer),
     Layer.provideMerge(fixture),
-    Layer.provideMerge(Layer.mock(ProjectStore.ProjectStoreV2)({})),
+    Layer.provideMerge(Layer.mock(ProjectStore.ProjectStoreV2)({ get: () => Effect.succeedNone })),
   ),
 )("workflow script containment", (effectIt) => {
   effectIt.effect("reads scripts from every configured Claude home", () =>
@@ -136,6 +155,10 @@ effectIt.layer(
       const result = yield* read(scriptPath);
       assert.include(result.contents, "export const meta");
       assert.equal(result.truncated, false);
+      const orphan = yield* WorkflowScriptQuery.WorkflowScriptQuery.use((query) =>
+        query.readWorkflowScript({ threadId: orphanThreadId, scriptPath }),
+      ).pipe(Effect.flip);
+      assert.equal(orphan.reason, "root-unavailable");
     }),
   );
 
