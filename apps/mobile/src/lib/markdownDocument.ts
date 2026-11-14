@@ -446,23 +446,17 @@ export function markdownWithTableBreaks(markdown: string): string {
 const BLOCK_MARKER =
   /^(?:\d{1,9}(?=[.)])|(?=[#>+-]|\*(?:[ \t\r\n]|$)|([*_])(?:[ \t]*\1){2,}[ \t]*(?:\r?\n|$)))/;
 
-/** md4c draws an image that follows text on its line as a 20pt glyph; give each its own paragraph. */
+/**
+ * md4c draws an image that follows text on its line as a 20pt glyph; give each its own paragraph.
+ * List items are skipped: the renderer places no block slot there, so a split image would render
+ * natively instead of through `renderers.image`.
+ */
 export function markdownWithBlockImages(markdown: string): string {
   if (!markdown.includes("![")) return markdown;
   const edits: MarkdownEdit[] = [];
-  const visit = (node: MarkdownNode, listIndentations: readonly number[] = [], quoteDepth = 0) => {
-    if (!("children" in node)) return;
-    if (node.type !== "paragraph") {
-      const indentations = [...listIndentations];
-      if (node.type === "listItem") {
-        const indentation =
-          (node.children[0]?.position?.start.column ?? 1) - (node.position?.start.column ?? 1);
-        indentations[quoteDepth] = (indentations[quoteDepth] ?? 0) + indentation;
-      }
-      return node.children.forEach((child) =>
-        visit(child, indentations, quoteDepth + (node.type === "blockquote" ? 1 : 0)),
-      );
-    }
+  const visit = (node: MarkdownNode) => {
+    if (!("children" in node) || node.type === "listItem") return;
+    if (node.type !== "paragraph") return node.children.forEach(visit);
     const start = node.position?.start.offset;
     const end = node.position?.end.offset;
     if (start === undefined || end === undefined) return;
@@ -477,19 +471,14 @@ export function markdownWithBlockImages(markdown: string): string {
       )
     )
       return;
-    // Container markers become spaces, except ">", so the new paragraphs stay in the list or quote.
-    const prefix = markdown
-      .slice(markdown.lastIndexOf("\n", start - 1) + 1, start)
-      .replace(/\[[ xX]\]\s*$/, "");
+    // Repeating the quote markers keeps the new paragraphs inside the quote.
+    const prefix = markdown.slice(markdown.lastIndexOf("\n", start - 1) + 1, start);
     const markers = prefix.replace(/[^>\s]/g, " ");
     const paragraphBreak = `\n${markers.trimEnd()}\n${markers}`;
     const quotePrefix = prefix
       .split(">")
       .slice(0, -1)
-      .reduceRight((suffix, _part, index) => {
-        const indentation = (listIndentations[index] ?? 0) + (index > 0 ? 1 : 0);
-        return `(?: {0,${indentation + 3}}>${suffix})?`;
-      }, "");
+      .reduceRight((suffix, _part, index) => `(?: {0,${index > 0 ? 4 : 3}}>${suffix})?`, "");
     const separator = `[ \\t]*(?:\\\\?\\r?\\n${quotePrefix}[ \\t]*)?`;
     const beforeImage = new RegExp(`(?:^|[^ \\t])(${separator})$`);
     const afterImage = new RegExp(`^${separator}`);

@@ -14,15 +14,8 @@ describe("images inside running text", () => {
     );
   });
 
-  it("keeps the new paragraphs inside lists and blockquotes", () => {
-    expect(markdownWithBlockImages("1. **Imports.** Done. ![a](a.png)")).toBe(
-      "1. **Imports.** Done.\n\n   ![a](a.png)",
-    );
-    expect(markdownWithBlockImages("- One ![a](a.png)\nnext")).toBe(
-      "- One\n\n  ![a](a.png)\n\n  next",
-    );
+  it("keeps the new paragraphs inside blockquotes", () => {
     expect(markdownWithBlockImages("> Quoted ![a](a.png)")).toBe("> Quoted\n>\n> ![a](a.png)");
-    expect(markdownWithBlockImages("- [x] Done ![a](a.png)")).toBe("- [x] Done\n\n  ![a](a.png)");
     const continued = parseMarkdownDocument(markdownWithBlockImages("See ![a](a.png)\n    > keep"));
     expect(continued.children.at(-1)).toMatchObject({
       type: "paragraph",
@@ -41,12 +34,6 @@ describe("images inside running text", () => {
     );
     expect(markdownWithBlockImages("> See\n    > ![a](a.png)")).toBe(
       "> See\n    >\n>\n> ![a](a.png)",
-    );
-    expect(markdownWithBlockImages("10. > See ![a](a.png)\n    > keep")).toBe(
-      "10. > See\n    >\n    > ![a](a.png)\n    >\n    > keep",
-    );
-    expect(markdownWithBlockImages("10. intro\n\n    > See ![a](a.png)\n    > keep")).toBe(
-      "10. intro\n\n    > See\n    >\n    > ![a](a.png)\n    >\n    > keep",
     );
   });
 
@@ -95,8 +82,10 @@ describe("images inside running text", () => {
     expect(markdownWithBlockImages(multiline)).toBe(multiline);
   });
 
-  it("leaves images that already start their own line", () => {
+  it("leaves images that already start their own line or sit in a list", () => {
     for (const markdown of [
+      "1. **Imports.** Done. ![a](a.png)",
+      "> - One ![a](a.png)",
       "Text\n\n![a](a.png)",
       "- ![a](a.png)",
       "See [![badge](b.svg)](https://example.com) here",
