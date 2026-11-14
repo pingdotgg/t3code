@@ -15,6 +15,7 @@ import {
   parseCommitPath,
   projectChangeRequestHost,
   repositoryUrlFromPagePath,
+  type SourceControlMediaUrl,
 } from "@t3tools/source-control-core/shared/definition";
 import { icon } from "./icon.ts";
 
@@ -25,6 +26,18 @@ const GITCAFE_HOSTS = new Set(["git.cafe", "staging.git.cafe"]);
 const CHANGE_REQUEST_PATH = /^\/([^/]+\/[^/]+)\/pulls?\/(\d+)(?:\/|$)/u;
 const COMMIT_PATH = /^\/([^/]+\/[^/]+)\/commit\/([0-9a-f]+)\/?$/iu;
 const REPOSITORY_PAGE_PATH = /^\/([^/]+\/[^/]+)\/(?:tree|blob)\/[^/]/u;
+
+const ATTACHMENT_PATH = /^\/api\/attachments\/([\w-]+)$/u;
+
+/** A private repository's attachments answer 404 to a request without the viewer's token. */
+function mediaUrl(url: URL): SourceControlMediaUrl | null {
+  const host = url.hostname.toLowerCase();
+  if (url.protocol !== "https:" || url.port !== "" || !GITCAFE_HOSTS.has(host)) return null;
+  const id = ATTACHMENT_PATH.exec(url.pathname)?.[1];
+  return id === undefined
+    ? null
+    : { fetchUrl: `https://${host}/api/attachments/${id}`, fileName: id, immutable: true };
+}
 
 function parseChangeRequestUrl(url: URL) {
   return GITCAFE_HOSTS.has(url.hostname.toLowerCase())
@@ -102,6 +115,7 @@ export const definition = defineSourceControl({
     isChangeRequestInProjectRepository(projectChangeRequestHost(identity, KIND), identity, link),
   canReadChangeRequestOnHost: (identity, link) =>
     isChangeRequestOnProjectHost(projectChangeRequestHost(identity, KIND), identity, link),
+  mediaUrl,
   settings,
 });
 

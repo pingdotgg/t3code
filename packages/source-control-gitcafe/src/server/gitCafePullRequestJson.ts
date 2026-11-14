@@ -1,3 +1,4 @@
+import { parseMarkdownWithMath } from "@t3tools/shared/markdownMath";
 import { quoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import { sortChecks } from "@t3tools/source-control-core/server/pullRequestChecks";
 import * as DateTime from "effect/DateTime";
@@ -295,6 +296,36 @@ export function toPeople(
   }));
 }
 
+// A markdown destination, a reference definition, or an HTML `src` that starts the path.
+const ATTACHMENT_LINK =
+  /(\]\(\s*<?|^ {0,3}\[[^\]\n]+\]:\s*<?|\bsrc\s*=\s*["']?)\/api\/attachments\//gimu;
+
+/**
+ * GitCafe links uploads by path from its own origin. Clients render a body away from that
+ * origin, so the attachments are made absolute here, where they become credentialed media.
+ */
+export function toBody(text: string | null, host: string): string {
+  const body = text ?? "";
+  if (!body.includes("/api/attachments/")) return body;
+  const codeRanges: Array<{ start: number; end: number }> = [];
+  const tree = parseMarkdownWithMath(body);
+  const visit = (node: typeof tree | (typeof tree.children)[number]): void => {
+    if (node.type === "code" || node.type === "inlineCode") {
+      const start = node.position?.start.offset;
+      const end = node.position?.end.offset;
+      if (start !== undefined && end !== undefined) codeRanges.push({ start, end });
+    } else if ("children" in node) {
+      node.children.forEach(visit);
+    }
+  };
+  visit(tree);
+  return body.replace(ATTACHMENT_LINK, (match, prefix: string, offset: number) =>
+    codeRanges.some(({ start, end }) => offset >= start && offset < end)
+      ? match
+      : `${prefix}https://${host}/api/attachments/`,
+  );
+}
+
 interface RepositoryOnHost {
   readonly repository: string;
   readonly host: string;
@@ -480,7 +511,7 @@ export function toActivity(input: {
   const remark = (comment: GitCafeComment) => ({
     id: comment.id,
     author: toActor(comment.author, host),
-    body: comment.body ?? "",
+    body: toBody(comment.body, host),
     createdAt: comment.createdAt,
     url: null,
     ...(comment.capabilities === undefined ? {} : { canEdit: comment.capabilities.edit }),
@@ -527,7 +558,7 @@ export function toActivity(input: {
       id: review.id,
       kind: "review" as const,
       author: toActor(review.author, host),
-      body: review.body ?? "",
+      body: toBody(review.body, host),
       createdAt: review.createdAt,
       url: null,
       path: null,

@@ -217,6 +217,44 @@ describe("toActivity", () => {
     );
   });
 
+  it("makes attachment links absolute on the repository's host and leaves other paths", () => {
+    const body = [
+      "![Before: centered profile card](/api/attachments/attach_01m6hzm1mhene8zncba8bn5fb2)",
+      "![After](</api/attachments/attach_after> 'title')",
+      '<img src="/api/attachments/attach_html" width="400">',
+      "[shot]: /api/attachments/attach_reference",
+      "![Docs](/docs/shot.png) and plain text /api/attachments/attach_text",
+      "",
+      '`<img src="/api/attachments/attach_inline">`',
+      "~~~html",
+      '<img src="/api/attachments/attach_fenced">',
+      "~~~",
+      "",
+      "    ![example](/api/attachments/attach_indented)",
+    ].join("\n");
+    const result = activity(
+      [{ ...lineComment, id: "c", threadId: "c", path: null, line: null, side: null, body }],
+      { host: "staging.git.cafe" },
+    );
+    assert.strictEqual(
+      result.comments[0]?.body,
+      [
+        "![Before: centered profile card](https://staging.git.cafe/api/attachments/attach_01m6hzm1mhene8zncba8bn5fb2)",
+        "![After](<https://staging.git.cafe/api/attachments/attach_after> 'title')",
+        '<img src="https://staging.git.cafe/api/attachments/attach_html" width="400">',
+        "[shot]: https://staging.git.cafe/api/attachments/attach_reference",
+        "![Docs](/docs/shot.png) and plain text /api/attachments/attach_text",
+        "",
+        '`<img src="/api/attachments/attach_inline">`',
+        "~~~html",
+        '<img src="/api/attachments/attach_fenced">',
+        "~~~",
+        "",
+        "    ![example](/api/attachments/attach_indented)",
+      ].join("\n"),
+    );
+  });
+
   it("maps supported reactions to the pull request and to matching comments in both views", () => {
     const result = activity(
       [
