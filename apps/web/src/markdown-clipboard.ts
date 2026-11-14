@@ -207,10 +207,11 @@ function serializeAnchor(anchor: Element, inTableCell: boolean): string {
   if (markdownCopy !== null) return escapeTablePipes(markdownCopy, inTableCell);
   const content = serializeChildren(anchor, inTableCell);
   const href = escapeTablePipes(anchor.getAttribute("href") ?? "", inTableCell);
-  if (!/^https?:\/\//i.test(href)) return content;
+  if (!/^(?:https?:\/\/|mailto:)/i.test(href)) return content;
   const label = content.trim();
   if (!label) return "";
-  if (label === href) return href;
+  // GFM autolinks a bare URL or email address back to the same destination.
+  if (href === label || href === `mailto:${label}`) return label;
   return `[${label}](${href})`;
 }
 
