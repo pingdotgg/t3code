@@ -11,7 +11,6 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
-import * as Metric from "effect/Metric";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -676,14 +675,6 @@ const unavailableWarning = "SQLite reader worker unavailable; reads use the writ
 
 const notWal = "database uses journal_mode delete, not wal";
 
-const readerPoolAvailable = Effect.map(Metric.snapshot, (snapshots) =>
-  snapshots.flatMap((snapshot) =>
-    snapshot.id === "t3_sqlite_reader_pool_available" && snapshot.type === "Gauge"
-      ? [snapshot.state.value]
-      : [],
-  ),
-);
-
 it.effect.each([
   {
     failure: "a crash",
@@ -703,8 +694,6 @@ it.effect.each([
     withLogLines((lines) =>
       withReaderClient((sql) =>
         Effect.gen(function* () {
-          assert.deepEqual(yield* readerPoolAvailable, [1]);
-          // The failed read's own metric attributes must not label the pool's gauge.
           const failed = yield* withWorkers(
             workers,
             Effect.gen(function* () {
@@ -713,14 +702,13 @@ it.effect.each([
               });
               yield* TestClock.adjust(startup);
               return yield* Fiber.join(read);
-            }).pipe(Effect.provideService(Metric.CurrentMetricAttributes, { read: "failed" })),
+            }),
           );
           assert.deepEqual(failed, { count: 1, connection: ["writer"] });
           const startedBefore = startedWorkers.length;
           assert.deepEqual(yield* readConnection(sql), { count: 1, connection: ["writer"] });
           assert.equal(startedWorkers.length, startedBefore);
           assert.deepEqual(yield* Queue.take(lines), ["Warn", unavailableWarning, { reason }]);
-          assert.deepEqual(yield* readerPoolAvailable, [0]);
 
           yield* TestClock.adjust("1 second");
           assert.equal(startedWorkers.length, startedBefore + 1);
@@ -728,12 +716,11 @@ it.effect.each([
             "Info",
             "SQLite reader worker available again; reads use the reader workers",
           ]);
-          assert.deepEqual(yield* readerPoolAvailable, [1]);
           assert.deepEqual(yield* readConnection(sql), { count: 1, connection: ["reader"] });
           assert.equal(Queue.sizeUnsafe(lines), 0);
         }),
       ),
-    ).pipe(Effect.provideService(Metric.MetricRegistry, new Map())),
+    ),
 );
 
 it.effect("backs off a reader that never starts without logging each retry", () =>
@@ -824,10 +811,9 @@ it.effect.each([
           assert.deepEqual(yield* readConnection(sql), { count: 1, connection: ["writer"] });
           assert.equal(startedWorkers.length, startedBefore + starts);
           assert.deepEqual(yield* Queue.clear(lines), logged);
-          assert.deepEqual(yield* readerPoolAvailable, [0]);
         }),
       ),
-    ).pipe(Effect.provideService(Metric.MetricRegistry, new Map())),
+    ),
 );
 
 it.effect("fails with a typed SqlError when the database file is not SQLite", () =>

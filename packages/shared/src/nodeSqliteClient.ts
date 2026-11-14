@@ -11,7 +11,6 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import { identity } from "effect/Function";
 import * as Layer from "effect/Layer";
-import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as References from "effect/References";
@@ -354,10 +353,6 @@ const READER_STARTUP_TIMEOUT = Duration.seconds(10);
 const READER_RETRY_DELAY = Duration.seconds(1);
 const READER_RETRY_MAX_DELAY = Duration.minutes(1);
 
-const readerPoolAvailable = Metric.gauge("t3_sqlite_reader_pool_available", {
-  description: "1 while SQLite reads can use reader workers, 0 while they use the writer.",
-});
-
 // Bind transactions to one worker; fail after its exit instead of resuming outside the transaction on a replacement.
 const makeWorkerConnection = Effect.fnUntraced(function* (options: {
   readonly filename: string;
@@ -600,12 +595,8 @@ const makeReader = Effect.fnUntraced(function* (filename: string, pool: { unavai
         onSuccess: () =>
           Effect.suspend(() => {
             pool.unavailable = false;
-            return Metric.update(readerPoolAvailable, 1).pipe(
-              Effect.andThen(
-                Effect.logInfo(
-                  "SQLite reader worker available again; reads use the reader workers",
-                ),
-              ),
+            return Effect.logInfo(
+              "SQLite reader worker available again; reads use the reader workers",
             );
           }),
         onFailure: (error) => {
@@ -629,11 +620,10 @@ const makeReader = Effect.fnUntraced(function* (filename: string, pool: { unavai
             if (pool.unavailable) return Effect.undefined;
             pool.unavailable = true;
             const { reason, permanent } = startFailure(error);
-            // Pool state belongs to the client: never log, meter or retry with the failed read's services.
+            // Pool state belongs to the client: never log or retry with the failed read's services.
             return Effect.logWarning("SQLite reader worker unavailable; reads use the writer", {
               reason,
             }).pipe(
-              Effect.andThen(Metric.update(readerPoolAvailable, 0)),
               Effect.andThen(
                 permanent ? Effect.void : Effect.forkIn(recover(READER_RETRY_DELAY), scope),
               ),
@@ -939,7 +929,6 @@ const make = Effect.fn("makeWithDatabase")(function* (
           ),
         )
       : [];
-  if (readers.length > 0) yield* Metric.update(readerPoolAvailable, 1);
   // One permit per slot, so a queued read waits for any reader, not one it picked while all were busy.
   const readerAdmission = yield* Semaphore.make(readers.length);
 
