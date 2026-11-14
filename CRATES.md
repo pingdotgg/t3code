@@ -152,7 +152,7 @@ Line counts are from `rust/base`, tests included where they sit in the same file
    (files track), each as its track lands. `tower-http` + `multipart` for assets: re-decide
    (see the inventory row).
 6. Merge the six ISO-8601 formatters, four hex encoders and two HMAC copies into
-   `crates/conn-support` (std only, no async, no state). `conn-contract` keeps only contract
+   `crates/conn-support` (no async, no state; it uses `sha2`, `uuid` and `getrandom`). `conn-contract` keeps only contract
    types.
 7. Later, with numbers from Linux: `insta`, `notify` on demand, and an allocator only if a
    musl load test shows mallocng costs.
