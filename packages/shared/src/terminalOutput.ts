@@ -432,7 +432,7 @@ class Terminal {
   moveTo(row: number, col: number): void {
     this.row = Math.max(0, Math.min(this.lines.length - 1, row));
     // A huge column (ESC[999999999C) would otherwise pad a line past any string limit.
-    this.col = Math.max(0, Math.min(TERMINAL_OUTPUT_TAIL_CHARS, col));
+    this.col = Math.max(0, Math.min(this.maxChars, col));
   }
 
   csi(params: string, final: string): void {
