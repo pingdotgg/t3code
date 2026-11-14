@@ -226,6 +226,7 @@ interface OpenCodeTurnTokenUsageAccumulator {
   reasoningTokens: number;
   hasSubagents: boolean;
   complete: boolean;
+  lastStep: OpenCodeStepUsage | null;
 }
 
 function makeOpenCodeTurnTokenUsageAccumulator(): OpenCodeTurnTokenUsageAccumulator {
@@ -241,6 +242,7 @@ function makeOpenCodeTurnTokenUsageAccumulator(): OpenCodeTurnTokenUsageAccumula
     reasoningTokens: 0,
     hasSubagents: false,
     complete: true,
+    lastStep: null,
   };
 }
 
@@ -255,6 +257,29 @@ function accumulateOpenCodeStepUsage(
   accumulator.cacheCreationTokens += part.tokens.cache.write;
   accumulator.outputTokens += part.tokens.output + part.tokens.reasoning;
   accumulator.reasoningTokens += part.tokens.reasoning;
+  accumulator.lastStep = part;
+}
+
+// The last step's prompt plus output is the context the next request starts from.
+function openCodeContextUsage(
+  lastStep: OpenCodeStepUsage | null,
+  contextWindow: number | undefined,
+  completedAt: DateTime.Utc,
+): Pick<OrchestrationV2ProviderTurn, "tokenUsage"> {
+  if (lastStep === null) return {};
+  const { tokens } = lastStep;
+  const inputTokens = tokens.input + tokens.cache.read + tokens.cache.write;
+  return {
+    tokenUsage: {
+      usedTokens: inputTokens + tokens.output,
+      maxTokens: contextWindow ?? null,
+      inputTokens,
+      cachedInputTokens: tokens.cache.read,
+      outputTokens: tokens.output,
+      reasoningOutputTokens: tokens.reasoning,
+      updatedAt: DateTime.formatIso(completedAt),
+    },
+  };
 }
 
 interface ActiveOpenCodeTurn {
@@ -1179,6 +1204,11 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                           reasoningTokens: turn.usage.reasoningTokens,
                           hasSubagents: turn.usage.hasSubagents,
                         },
+                  ...openCodeContextUsage(
+                    turn.usage.lastStep,
+                    variantCache.get(turn.modelSelection.model.trim())?.contextWindow,
+                    completedAt,
+                  ),
                 }),
           };
           Object.assign(turn.providerTurn, providerTurn);
@@ -2093,6 +2123,16 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             ) {
               yield* resolveRuntimeRequest(pending.nativeRequestId, "cancelled");
             }
+          }
+          // Prompts read the catalog only for variants; a completed turn needs its context window.
+          const parsedModel = OpenCodeRuntime.parseOpenCodeModelSlug(turn.modelSelection.model);
+          if (status === "completed" && turn.usage.lastStep !== null && parsedModel !== null) {
+            yield* OpenCodeRuntime.readOpenCodeCatalogModel(
+              client,
+              parsedModel,
+              undefined,
+              variantCache,
+            );
           }
           yield* emitProviderTurn(state, turn, status, completedAt);
           const threadDisposition = terminal?.threadDisposition ?? "reusable";

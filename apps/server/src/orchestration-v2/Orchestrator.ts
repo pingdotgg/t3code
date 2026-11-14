@@ -4,6 +4,7 @@ import type {
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
   OrchestrationV2ThreadHistoryPage,
+  ProjectId,
 } from "@t3tools/contracts";
 import {
   latestExecutedRun,
@@ -128,7 +129,7 @@ import {
   cancelledBeforeStart,
   continuationFailedBeforePrompt,
   continuationStartRetryDelayMs,
-  delegatedTaskAwaitsSubagents,
+  delegatedTaskAwaitsWork,
   delegatedTaskResultRun,
   delegatedTaskRuns,
   isRestartContinuationSource,
@@ -173,6 +174,7 @@ import {
   type ProjectionCheckpointContext,
   type OlderSettledThreadsListing,
   type ActiveShellIndexEntry,
+  type ActiveThreadListEntry,
   type OlderSettledThreadsQuery,
   type ShellSnapshotOptions,
 } from "./ProjectionStore.ts";
@@ -504,6 +506,9 @@ export interface OrchestratorV2Shape {
     ReadonlyArray<ActiveShellIndexEntry>,
     OrchestratorV2Error
   >;
+  readonly listActiveThreads: (
+    projectId?: ProjectId,
+  ) => Effect.Effect<ReadonlyArray<ActiveThreadListEntry>, OrchestratorV2Error>;
   readonly listOlderSettledThreads: (
     query: OlderSettledThreadsQuery,
   ) => Effect.Effect<OlderSettledThreadsListing, OrchestratorV2Error>;
@@ -785,7 +790,10 @@ function mayStartSubagentFollowup(
 ): boolean {
   if (command.scheduledTaskId !== undefined || command.restartContinuationOfRunId !== undefined)
     return false;
-  if (command.notification !== undefined) return command.notification.source.kind !== "monitor";
+  if (command.notification !== undefined)
+    return (
+      command.notification.source.kind !== "monitor" || command.notification.outcome !== "updated"
+    );
   return (
     command.createdBy === "user" ||
     command.creationSource === "mcp" ||
@@ -9486,9 +9494,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         (row) => row.id === message.runId,
       );
     if (run === undefined || run.delegatedTaskId !== undefined) return;
+    // A wake continues the latest follow-up while it is open, as it continues the original task.
+    const latestFollowupId =
+      command.notification === undefined
+        ? undefined
+        : (yield* projectionStore
+            .getThreadRecords(command.threadId, ["runs"])
+            .pipe(mapDispatchError(command))).runs
+            .filter((row) => row.id !== run.id && row.delegatedTaskId !== undefined)
+            .toSorted((a, b) => b.ordinal - a.ordinal)[0]?.delegatedTaskId;
     const parent = yield* projectionStore
       .getThreadRecords(parentThreadId, ["runs", "subagents", "providerTurns", "attempts"], {
-        subagentIds: child.forkedFrom?.type === "node" ? [child.forkedFrom.nodeId] : [],
+        subagentIds: [
+          ...(child.forkedFrom?.type === "node" ? [child.forkedFrom.nodeId] : []),
+          ...(latestFollowupId === undefined ? [] : [latestFollowupId]),
+        ],
       })
       .pipe(mapDispatchError(command));
     const original = parent.subagents.find(
@@ -9498,6 +9518,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         task.id === (child.forkedFrom?.type === "node" ? child.forkedFrom.nodeId : undefined),
     );
     if (original === undefined || original.result === null) return;
+    const openFollowup = parent.subagents.find(
+      (task) =>
+        task.id === latestFollowupId &&
+        task.origin === "app_owned" &&
+        task.childThreadId === child.id &&
+        task.cancelledRunId === undefined &&
+        task.result === null,
+    );
+    if (openFollowup !== undefined) {
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "run.updated",
+        threadId: child.id,
+        runId: run.id,
+        occurredAt: message.createdAt,
+        payload: { ...run, delegatedTaskId: openFollowup.id },
+      });
+      return;
+    }
     const owner = followUpOwnerRun(parent.runs);
     if (owner === null || owner.rootNodeId === null) return;
     const now = message.createdAt;
@@ -14112,8 +14153,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ]);
         return;
       }
-      // A follow-up ends with the subagents its turns started, as the original task does.
-      if (delegatedTaskAwaitsSubagents(taskRuns, childControls.subagents)) return;
+      // A follow-up ends with the work it awaits, as the original task does. A cancelled task
+      // does not wait for the background work its cancel is stopping.
+      if (
+        delegatedTaskAwaitsWork(
+          taskRuns,
+          options.task.cancelledRunId === undefined
+            ? childControls
+            : { subagents: childControls.subagents, providerThreads: [] },
+        )
+      )
+        return;
       if (
         yield* childAwaitsRestartContinuation(
           taskRuns.length === 0 ? childControls.runs : taskRuns,
@@ -15688,7 +15738,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         if (
           run === undefined ||
           delegatedTaskTerminalStatus(run.status) === null ||
-          delegatedTaskAwaitsSubagents(runs, child.subagents)
+          delegatedTaskAwaitsWork(runs, child)
         )
           return true;
         return yield* childAwaitsRestartContinuation(runs, run);
@@ -15783,7 +15833,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ? child.thread.forkedFrom?.type === "node" &&
               child.thread.forkedFrom.nodeId === input.taskId &&
               progressAfterTurn(child).state !== "result_available"
-            : delegatedTaskTerminalStatus(runOutcome(followUpRun)) === null;
+            : delegatedTaskTerminalStatus(runOutcome(followUpRun)) === null ||
+              delegatedTaskAwaitsWork(delegatedTaskRuns(child, input.taskId), child);
         yield* threadDispatch.withLock(
           command.threadId,
           Effect.gen(function* () {
@@ -15993,6 +16044,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }),
     listActiveShellIndex: Effect.fn("OrchestratorV2.listActiveShellIndex")(function () {
       return projectionStore.listActiveShellIndex().pipe(Effect.mapError(shellProjectionError));
+    }),
+    listActiveThreads: Effect.fn("OrchestratorV2.listActiveThreads")(function (projectId) {
+      return projectionStore
+        .listActiveThreads(projectId)
+        .pipe(Effect.mapError(shellProjectionError));
     }),
     listOlderSettledThreads: Effect.fn("OrchestratorV2.listOlderSettledThreads")(function (query) {
       return projectionStore
