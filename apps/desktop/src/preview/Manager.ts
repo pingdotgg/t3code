@@ -1877,8 +1877,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       );
     }
     const updatedAt = yield* currentIso;
+    const { dialog: _dialog, ...closedWithoutDialog } = closedTab;
     const closed: PreviewTabState = {
-      ...closedTab,
+      ...closedWithoutDialog,
       webContentsId: null,
       navStatus: { kind: "Idle" },
       canGoBack: false,

@@ -1852,13 +1852,29 @@ describe("PreviewManager", () => {
           yield* manager.answerDialog("tab_dialog", true, undefined);
           expect(answeredByAgent).not.toHaveBeenCalled();
 
-          guest.emit("-run-dialog", dialogInfo, vi.fn());
+          const replacedAnswer = vi.fn();
+          guest.emit("-run-dialog", dialogInfo, replacedAnswer);
           yield* Effect.yieldNow;
           const replacement = makeAudioWebContents(43);
           fromId.mockReturnValue(replacement.wc);
           yield* manager.prepareWebview(replacement.wc);
           yield* manager.registerWebview("tab_dialog", 43);
           yield* Effect.yieldNow;
+          expect(states.at(-1)?.dialog).toBeUndefined();
+          expect(replacedAnswer).toHaveBeenCalledExactlyOnceWith(false, "");
+
+          const closing = makeAudioWebContents(46);
+          fromId.mockReturnValue(closing.wc);
+          const closingAnswer = vi.fn();
+          yield* manager.createTab("tab_dialog_closed");
+          yield* manager.prepareWebview(closing.wc);
+          yield* manager.registerWebview("tab_dialog_closed", 46);
+          yield* Effect.yieldNow;
+          closing.emit("-run-dialog", dialogInfo, closingAnswer);
+          yield* Effect.yieldNow;
+          yield* manager.closeTab("tab_dialog_closed");
+          yield* Effect.yieldNow;
+          expect(closingAnswer).toHaveBeenCalledExactlyOnceWith(false, "");
           expect(states.at(-1)?.dialog).toBeUndefined();
 
           const doomed = makeAudioWebContents(44);
