@@ -549,38 +549,38 @@ it.effect("pages past empty time-budget pages to a late match", () =>
   ).pipe(Effect.provide(testLayer)),
 );
 
-it.effect("reruns an enforced page whose path constraint filtered every file", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const grep = vi.fn(async (_query: string, options?: GrepOptions) => {
-        const fellBack = options?.enforceTimeBudget === false;
-        const items = fellBack
-          ? [grepMatch("arch/x86/kernel/head64.c", "asmlinkage __visible void start_kernel(void)")]
-          : [];
-        const value: GrepResult = {
-          items,
-          totalMatched: items.length,
-          totalFilesSearched: fellBack ? 3 : 0,
-          totalFiles: 3,
-          filteredFileCount: fellBack ? 3 : 0,
-          nextCursor: null,
-        };
-        return { ok: true as const, value };
-      });
-      contentFinder(grep);
+it.effect.each([0, 1])(
+  "reruns an empty enforced fallback page whose constraint matched %i files",
+  (constrainedFileCount) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const grep = vi.fn(async (_query: string, options?: GrepOptions) => {
+          const fellBack = options?.enforceTimeBudget === false;
+          const items = fellBack ? [grepMatch("zzzz.txt", "*.ts needle")] : [];
+          const value: GrepResult = {
+            items,
+            totalMatched: items.length,
+            totalFilesSearched: fellBack ? 3 : constrainedFileCount,
+            totalFiles: 3,
+            filteredFileCount: fellBack ? 3 : constrainedFileCount,
+            nextCursor: null,
+          };
+          return { ok: true as const, value };
+        });
+        contentFinder(grep);
 
-      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project", "content");
-      const result = yield* searchIndex.searchContents({
-        query: "[a-z]{90}[-+*/]{5}|asmlinkage __visible.*start_kernel",
-        limit: 10,
-        caseSensitive: true,
-        wholeWord: false,
-        useRegex: true,
-      });
+        const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project", "content");
+        const result = yield* searchIndex.searchContents({
+          query: "*.ts needle",
+          limit: 10,
+          caseSensitive: true,
+          wholeWord: false,
+          useRegex: false,
+        });
 
-      expect(result.matches.map((match) => match.path)).toEqual(["arch/x86/kernel/head64.c"]);
-    }),
-  ).pipe(Effect.provide(testLayer)),
+        expect(result.matches.map((match) => match.path)).toEqual(["zzzz.txt"]);
+      }),
+    ).pipe(Effect.provide(testLayer)),
 );
 
 // fff reads HOME on Linux and macOS but the user profile on Windows, so a temp HOME cannot stand in there.
