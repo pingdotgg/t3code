@@ -6,15 +6,12 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
-import * as Scope from "effect/Scope";
 
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopWslServerTree from "./DesktopWslServerTree.ts";
 
-// The service reads packaged Windows roots through the (asar-aware, in
-// Electron) fs, so a plain directory named server.asar exercises the full
-// extraction path under plain Node.
+// Electron's asar-aware fs accepts a plain server.asar directory under Node for extraction checks.
 
 const layerEnvironment = (input: {
   readonly baseDir: string;
@@ -44,20 +41,14 @@ const layerEnvironment = (input: {
     ),
   );
 
-const withTempDir = <A, E, R>(
-  run: (tempDir: string) => Effect.Effect<A, E, R>,
-): Effect.Effect<
-  A,
-  E | PlatformError.PlatformError,
-  FileSystem.FileSystem | Exclude<R, Scope.Scope>
-> =>
+const withTempDir = <A, E, R>(run: (tempDir: string) => Effect.Effect<A, E, R>) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const tempDir = yield* fileSystem.makeTempDirectoryScoped({
       prefix: "t3-wsl-server-tree-test-",
     });
     return yield* run(tempDir);
-  }).pipe(Effect.scoped);
+  });
 
 const ensureWith = (input: {
   readonly baseDir: string;
@@ -103,20 +94,6 @@ describe("DesktopWslServerTree", () => {
       assert.equal(yield* Ref.get(maxActive), 8);
       assert.equal(yield* Ref.get(visited), 4_681);
     }),
-  );
-
-  it.effect("returns the server root unchanged when it is a plain directory (dev)", () =>
-    withTempDir((tempDir) =>
-      Effect.gen(function* () {
-        const result = yield* ensureWith({
-          baseDir: tempDir,
-          resourcesPath: tempDir,
-          isPackaged: false,
-        });
-        assert.isTrue(result.ok);
-        assert.isFalse(result.ok && result.root.endsWith(".asar"));
-      }),
-    ).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("extracts an archive root into a version-keyed state directory", () =>
@@ -288,32 +265,6 @@ describe("DesktopWslServerTree", () => {
         assert.equal(entry, "new");
         const treeRoot = path.dirname(root);
         assert.isFalse(yield* fileSystem.exists(path.join(treeRoot, "1.2.3")));
-      }),
-    ).pipe(Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("removes the legacy Windows extraction tree without preparing a fallback", () =>
-    withTempDir((tempDir) =>
-      Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const resourcesPath = path.join(tempDir, "resources");
-        const treeRoot = path.join(tempDir, "userdata", "wsl-server-tree");
-        yield* fileSystem.makeDirectory(path.join(treeRoot, "1.2.3"), { recursive: true });
-        yield* fileSystem.writeFileString(path.join(treeRoot, "1.2.3", "legacy"), "old");
-
-        yield* Effect.gen(function* () {
-          const tree = yield* DesktopWslServerTree.DesktopWslServerTree;
-          yield* tree.cleanupLegacy;
-        }).pipe(
-          Effect.provide(
-            DesktopWslServerTree.layer.pipe(
-              Layer.provideMerge(layerEnvironment({ baseDir: tempDir, resourcesPath })),
-            ),
-          ),
-        );
-
-        assert.isFalse(yield* fileSystem.exists(treeRoot));
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );

@@ -249,7 +249,7 @@ export function GuideStop({
                   >
                     <MessageCircleQuestionIcon
                       aria-hidden
-                      className="mt-0.5 size-3.5 shrink-0 text-muted-foreground"
+                      className="size-3.5 h-lh shrink-0 text-muted-foreground"
                     />
                     <span className="sr-only">Ask an agent: </span>
                     <span>
@@ -270,8 +270,8 @@ export function GuideStop({
 
         <footer className="flex flex-wrap items-center justify-end gap-3 border-t border-border/60 pt-4">
           {nextTitle !== null ? (
-            <Button className="min-w-0" onClick={() => onStep(1)}>
-              <span className="min-w-0 truncate">Next: {nextTitle}</span>
+            <Button size="multiline" className="max-w-full" onClick={() => onStep(1)}>
+              <span className="min-w-0 break-words">Next: {nextTitle}</span>
               <ArrowRightIcon aria-hidden />
             </Button>
           ) : onFinish !== null ? (

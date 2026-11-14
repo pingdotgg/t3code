@@ -1,6 +1,5 @@
 import type { EnvironmentId as EnvironmentIdType } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -10,13 +9,14 @@ import type { ConnectionCatalogEntry } from "../connection/catalog.ts";
 import { AVAILABLE_CONNECTION_STATE } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import {
-  GitHubRoutingPermissions,
-  type GitHubRoutingPermission,
-  type StoredGitHubRoutingPermission,
-} from "../connection/githubRoutingPermissions.ts";
+  PullRequestRoutingPermissions,
+  type PullRequestRoutingPermission,
+  type StoredPullRequestRoutingPermission,
+} from "../connection/pullRequestRoutingPermissions.ts";
 import {
   createAtomCommandScheduler,
   createRuntimeCommand,
+  environmentSessionGenerationAtom,
   followStreamInEnvironment,
 } from "./runtime.ts";
 
@@ -29,7 +29,7 @@ export function* enabledEnvironmentIds(
   catalog: EnvironmentCatalogState,
 ): Generator<EnvironmentIdType> {
   for (const [environmentId, entry] of catalog.entries) {
-    if (entry.enabled) {
+    if (entry.enabled && entry.unsupportedReason === undefined) {
       yield environmentId;
     }
   }
@@ -62,23 +62,25 @@ export function createEnvironmentCatalogAtoms<R, E>(
   );
 
   const catalogValueAtom = Atom.make((get) =>
-    Option.getOrElse(AsyncResult.value(get(catalogAtom)), () => EMPTY_ENVIRONMENT_CATALOG_STATE),
+    AsyncResult.getOrElse(get(catalogAtom), () => EMPTY_ENVIRONMENT_CATALOG_STATE),
   ).pipe(Atom.withLabel("environment-catalog-value"));
 
-  const githubRoutingPermissionsAtom = runtime.atom(
-    Stream.unwrap(GitHubRoutingPermissions.pipe(Effect.map((permissions) => permissions.changes))),
-    { initialValue: [] as ReadonlyArray<StoredGitHubRoutingPermission> },
+  const pullRequestRoutingPermissionsAtom = runtime.atom(
+    Stream.unwrap(
+      PullRequestRoutingPermissions.pipe(Effect.map((permissions) => permissions.changes)),
+    ),
+    { initialValue: [] as ReadonlyArray<StoredPullRequestRoutingPermission> },
   );
-  const githubRoutingPermissionsValueAtom = Atom.make((get) =>
-    Option.getOrElse(AsyncResult.value(get(githubRoutingPermissionsAtom)), () => []),
-  ).pipe(Atom.withLabel("environment-github-routing-permissions"));
-  const setGitHubRoutingPermission = createRuntimeCommand(runtime, {
-    label: "environment-catalog:github-routing-permission",
+  const pullRequestRoutingPermissionsValueAtom = Atom.make((get) =>
+    AsyncResult.getOrElse(get(pullRequestRoutingPermissionsAtom), () => []),
+  ).pipe(Atom.withLabel("environment-pull-request-routing-permissions"));
+  const setPullRequestRoutingPermission = createRuntimeCommand(runtime, {
+    label: "environment-catalog:pull-request-routing-permission",
     scheduler: commandScheduler,
     concurrency: serial,
     execute: Effect.fn(function* (input: {
       readonly environmentId: EnvironmentIdType;
-      readonly permission: GitHubRoutingPermission;
+      readonly permission: PullRequestRoutingPermission;
     }) {
       const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
       const entry = (yield* SubscriptionRef.get(registry.entries)).get(input.environmentId);
@@ -86,7 +88,7 @@ export function createEnvironmentCatalogAtoms<R, E>(
         return yield* new EnvironmentRegistry.EnvironmentNotRegisteredError({
           environmentId: input.environmentId,
         });
-      const permissions = yield* GitHubRoutingPermissions;
+      const permissions = yield* PullRequestRoutingPermissions;
       yield* permissions.set(entry, input.permission);
     }),
   });
@@ -101,7 +103,7 @@ export function createEnvironmentCatalogAtoms<R, E>(
   );
 
   const networkStatusValueAtom = Atom.make((get) =>
-    Option.getOrElse(AsyncResult.value(get(networkStatusAtom)), () => "unknown" as const),
+    AsyncResult.getOrElse(get(networkStatusAtom), () => "unknown" as const),
   ).pipe(Atom.withLabel("environment-network-status-value"));
 
   const stateAtom = Atom.family((environmentId: EnvironmentIdType) =>
@@ -117,6 +119,9 @@ export function createEnvironmentCatalogAtoms<R, E>(
       { initialValue: AVAILABLE_CONNECTION_STATE },
     ),
   );
+
+  const sessionGenerationAtom = (environmentId: EnvironmentIdType) =>
+    environmentSessionGenerationAtom(runtime, environmentId);
 
   const register = createRuntimeCommand(runtime, {
     label: "environment-catalog:register",
@@ -190,11 +195,12 @@ export function createEnvironmentCatalogAtoms<R, E>(
   return {
     catalogAtom,
     catalogValueAtom,
-    githubRoutingPermissionsValueAtom,
-    setGitHubRoutingPermission,
+    pullRequestRoutingPermissionsValueAtom,
+    setPullRequestRoutingPermission,
     networkStatusAtom,
     networkStatusValueAtom,
     stateAtom,
+    sessionGenerationAtom,
     register,
     remove,
     removeRoute,
