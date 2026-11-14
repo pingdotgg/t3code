@@ -7,15 +7,17 @@ import { isValidElement, useEffect, useRef } from "react";
 import { StyleSheet } from "react-native";
 import { KeyboardController, useKeyboardState } from "react-native-keyboard-controller";
 import { isDuoDevice } from "../lib/device-type";
+import { useEnabledNavigationTabs } from "../features/layout/workspace/navigation-tabs";
+import { nativeWorkspaceTabCount } from "../features/layout/workspace/workspace-tabs-state";
 import { useMobileNavigationTheme } from "../lib/useMobileNavigationTheme";
 import { useDeviceType, useNativeLayoutMetrics } from "./native-layout-metrics";
 import { HeaderItemsWidthContext } from "./header-items-width";
+import { fitColumnVerticalBarItems, type HeaderItem } from "./vertical-bar-items";
 import {
   SearchBar,
   Stack,
   type HeaderBarButtonMailSearchToolbarItem,
   type SearchBarCommands,
-  type StackHeaderConfigProps,
   type StackHeaderMinimizationBehaviorIOS,
   type StackHeaderMenuElementIOS,
   type StackHeaderMenuIOS,
@@ -27,7 +29,6 @@ import {
 const BAR_MARGINS = 32;
 const BAR_BUTTON_WIDTH = 44;
 
-type HeaderItem = NonNullable<NonNullable<StackHeaderConfigProps["ios"]>["leadingItems"]>[number];
 type ToolbarItem =
   | NativeStackHeaderItem
   | HeaderBarButtonMailSearchToolbarItem
@@ -163,6 +164,7 @@ export function V5StackHeader(props: {
   const theme = useMobileNavigationTheme();
   const nativeMetrics = useNativeLayoutMetrics();
   const deviceType = useDeviceType();
+  const workspaceTabCount = nativeWorkspaceTabCount(useEnabledNavigationTabs());
   const keyboardVisible = useKeyboardState((state) => state.isVisible);
   const searchRef = useRef<SearchBarCommands>(null);
   const itemProps = { tintColor: options.headerTintColor, canGoBack: props.canGoBack };
@@ -199,6 +201,7 @@ export function V5StackHeader(props: {
       bottom.push({
         type: "item",
         id: mailSearch.filterButtonId ?? "filter",
+        title: mailSearch.filterMenu.title ?? "Filter",
         icon: {
           type: "sfSymbol",
           name: mailSearch.filterSystemImageName ?? "line.3.horizontal.decrease",
@@ -241,6 +244,22 @@ export function V5StackHeader(props: {
       trailing.push({ type: "spacer", id: "toolbar-group", sizing: "fixed", width: 8 });
     trailing.push(...bottom);
     bottom.length = 0;
+  }
+  if (
+    props.column &&
+    nativeMetrics &&
+    nativeMetrics.verticalBarEdge !== "none" &&
+    nativeMetrics.horizontalSizeClass === "compact" &&
+    // A menu opened above the keyboard has too little room for folded submenus.
+    !keyboardVisible
+  ) {
+    const fitted = fitColumnVerticalBarItems(nativeMetrics, workspaceTabCount, {
+      backButtonVisible: props.canGoBack && options.headerBackVisible !== false,
+      leading,
+      trailing,
+      compose: Boolean(props.onCompose),
+    });
+    trailing.splice(0, trailing.length, ...fitted);
   }
   if (props.onCompose) {
     const compose: HeaderItem = {
