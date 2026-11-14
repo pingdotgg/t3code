@@ -155,7 +155,8 @@ export const PreviewAutomationOpenInput = Schema.Struct({
   }),
   open: Schema.optional(
     Schema.Boolean.annotate({
-      description: "Show the preview to the user. Default true. False for background only.",
+      description:
+        "Leave out for your own checks and screenshots: the user's auto-show setting then decides, and preview tools work on a hidden tab. True only when the user asks to see or use the page; it shows the preview even with that setting off. False for background only.",
     }),
   ),
   show: Schema.optional(
