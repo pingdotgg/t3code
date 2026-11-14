@@ -2,10 +2,14 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { FileCode2Icon } from "lucide-react";
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useState, type MouseEvent } from "react";
 
 import { isElectron } from "~/env";
+import { type FileContextMenuAction, useFileContextMenu } from "../../fileContextMenu";
 import { cn } from "../../lib/utils";
+import { readLocalApi } from "../../localApi";
+import { useEnvironmentQuery } from "../../state/query";
+import { serverEnvironment } from "../../state/server";
 import {
   useConnectedEnvironmentIds,
   useEnvironments,
@@ -23,6 +27,8 @@ import {
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { WorkflowRunsView, WorkflowsEmpty } from "./WorkflowRunsView";
 import WorkflowThreadPane from "./WorkflowThreadPane";
+
+const COPY_PATH = "copy-path";
 
 // The editor brings the code view's highlighter with it, which the run list has no use for.
 const WorkflowDefinitionEditor = lazy(() => import("./WorkflowDefinitionEditor"));
@@ -61,6 +67,32 @@ export function WorkflowsPage() {
   const env = search.env === undefined ? {} : { env: search.env };
   const run = search.run === undefined ? {} : { run: search.run };
   const editing = search.definitions === true || search.file !== undefined;
+  const [fileActions, setFileActions] = useState<HTMLElement | null>(null);
+  const definitions = useEnvironmentQuery(
+    environmentId === null || search.file === undefined
+      ? null
+      : serverEnvironment.workflowDefinition({ environmentId, input: {} }),
+  );
+  const fileMenu = useFileContextMenu(environmentId);
+  /** What a right click on the open file's name offers: its path, and the editors on that machine. */
+  const showFileMenu = (event: MouseEvent) => {
+    const api = readLocalApi();
+    const directory = definitions.data?.directory;
+    if (api === undefined || directory === undefined || search.file === undefined) return;
+    event.preventDefault();
+    const path = `${directory}/${search.file}`;
+    const target = { environmentId, filePath: path, workspaceRoot: undefined };
+    void api.contextMenu
+      .show([{ id: COPY_PATH, label: "Copy path" }, ...fileMenu.buildItems(target)], {
+        x: event.clientX,
+        y: event.clientY,
+      })
+      .then((picked) => {
+        if (picked === null) return;
+        if (picked === COPY_PATH) return void navigator.clipboard.writeText(path);
+        return fileMenu.activate(picked as FileContextMenuAction, target);
+      });
+  };
   const openDefinitions = (file: string | null) =>
     go({ ...env, definitions: true, ...(file === null ? {} : { file }) });
   const threadRef =
@@ -126,7 +158,7 @@ export function WorkflowsPage() {
                     <WorkspaceBreadcrumbText>/</WorkspaceBreadcrumbText>
                   </WorkspaceBreadcrumbSeparator>
                   <WorkspaceBreadcrumbItem current className="min-w-10 flex-1">
-                    <h1 className="min-w-0">
+                    <h1 className="min-w-0" onContextMenu={showFileMenu}>
                       <WorkspaceBreadcrumbText className="font-mono">
                         {search.file}
                       </WorkspaceBreadcrumbText>
@@ -157,6 +189,9 @@ export function WorkflowsPage() {
                 </SelectPopup>
               </Select>
             ) : null}
+            {search.file === undefined ? null : (
+              <div ref={setFileActions} className="flex shrink-0 items-center gap-2" />
+            )}
             {environmentId === null || editing ? null : (
               <Button size="sm" variant="outline" onClick={() => openDefinitions(null)}>
                 <FileCode2Icon />
@@ -182,6 +217,7 @@ export function WorkflowsPage() {
                 environmentId={environmentId}
                 file={search.file ?? null}
                 onOpen={openDefinitions}
+                actions={fileActions}
               />
             </Suspense>
           ) : (

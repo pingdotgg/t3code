@@ -116,7 +116,7 @@ export function WorkflowChip({ name }: { readonly name: string }) {
 }
 
 // The thread list's own colours for the same states, so a run reads like a thread does.
-export const WORKFLOW_TONE_CLASS: Record<WorkflowRunTone, string> = {
+const WORKFLOW_TONE_CLASS: Record<WorkflowRunTone, string> = {
   input: "text-primary",
   failed: "text-destructive",
   working: "text-info-foreground",
