@@ -691,6 +691,12 @@ function UsageOverview({
             </span>
           </div>
 
+          {providersWithData.has("antigravity") ? (
+            <p className="text-xs text-muted-foreground">
+              Antigravity totals leave out subagent calls recorded only in transcripts.
+            </p>
+          ) : null}
+
           {showChatGptSharing ? (
             <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
               <span>ChatGPT shared usage</span>
