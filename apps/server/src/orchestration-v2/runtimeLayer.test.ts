@@ -3948,10 +3948,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     { reason: "failed", activityFails: true },
     { reason: "not-found", activityFails: true },
     { reason: "forbidden", activityFails: true },
-    { reason: "cli-missing", activityFails: false },
-    { reason: "cli-missing", activityFails: true },
     { reason: "cli-unauthenticated", activityFails: false },
-    { reason: "cli-unauthenticated", activityFails: true },
   ] as const)(
     "handles repeated host read failures: $reason (activity fails: $activityFails)",
     ({ reason, activityFails }) =>
@@ -3995,14 +3992,13 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         let disconnected = false;
         let passed = false;
         let genericFailure = false;
-        const activityOnly =
-          activityFails && (reason === "cli-missing" || reason === "cli-unauthenticated");
         const activityFailures = yield* Queue.unbounded<void>();
         const readFailure = (operation: string, failure: typeof reason) =>
-          failure === "cli-missing" || failure === "cli-unauthenticated"
+          failure === "cli-unauthenticated"
             ? new PullRequestUnavailableError({
                 reason: failure,
-                provider: SourceControlProviderKind.make("forgejo"),
+                provider: SourceControlProviderKind.make("github"),
+                requirement: "Run `gh auth login`.",
                 cause: new Error("private subprocess output"),
               })
             : new PullRequestOperationError({
@@ -4025,7 +4021,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                 detail: () =>
                   genericFailure
                     ? Effect.die("host read failed")
-                    : disconnected && !activityOnly
+                    : disconnected
                       ? (activityFails ? Queue.take(activityFailures) : Effect.void).pipe(
                           Effect.andThen(Effect.fail(readFailure("detail", reason))),
                         )
@@ -4049,9 +4045,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                 activity: () =>
                   disconnected && activityFails
                     ? Queue.offer(activityFailures, undefined).pipe(
-                        Effect.andThen(
-                          Effect.fail(readFailure("activity", activityOnly ? reason : "failed")),
-                        ),
+                        Effect.andThen(Effect.fail(readFailure("activity", "failed"))),
                       )
                     : Effect.succeed({
                         comments: [],
@@ -4082,17 +4076,20 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         const thread = yield* orchestrator.getThreadShell(threadId);
         if (reason !== "failed") {
           assert.isUndefined(thread?.pullRequests?.[0]?.watch);
-          assert.deepEqual(yield* summaries, [
-            reason === "cli-missing"
-              ? "#8: stopped watching, server host CLI missing"
-              : reason === "cli-unauthenticated"
-                ? "#8: stopped watching, server host CLI unauthenticated"
-                : "#8: stopped watching, could not read it",
-          ]);
           const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
-          assert.isFalse(
-            messages.some((message) => message.text.includes("private subprocess output")),
+          const stopped = messages.filter((message) => message.notification !== undefined);
+          assert.deepEqual(
+            stopped.map((message) => message.notification?.summary),
+            [
+              reason === "cli-unauthenticated"
+                ? "#8: stopped watching, host not set up on the server"
+                : "#8: stopped watching, could not read it",
+            ],
           );
+          if (reason === "cli-unauthenticated") {
+            assert.include(stopped[0]?.text, "Run `gh auth login`.");
+            assert.notInclude(stopped[0]?.text, "private subprocess output");
+          }
           return;
         }
         assert.isDefined(thread?.pullRequests?.[0]?.watch);

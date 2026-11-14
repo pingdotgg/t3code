@@ -331,29 +331,20 @@ export const make = Effect.gen(function* () {
 
   const giveUp = (target: WatchTarget, cause: Cause.Cause<PullRequestService.PullRequestError>) => {
     const error = Option.getOrUndefined(Cause.findErrorOption(cause));
-    const cliReason =
-      error?._tag === "PullRequestUnavailableError" &&
-      (error.reason === "cli-missing" || error.reason === "cli-unauthenticated")
-        ? error.reason
+    // The message is the host's own setup instruction, never the subprocess output in `cause`.
+    const unusable =
+      error?._tag === "PullRequestUnavailableError" && error.reason !== "provider-unsupported"
+        ? error.message
         : null;
-    const problem =
-      cliReason === "cli-missing"
-        ? "server host CLI missing"
-        : cliReason === "cli-unauthenticated"
-          ? "server host CLI unauthenticated"
-          : "could not read it";
-    const recovery =
-      cliReason === "cli-missing"
-        ? "The host CLI is missing in the T3 Code server environment. Install it on that server, then call watch_pull_request only if the pull request is still open."
-        : cliReason === "cli-unauthenticated"
-          ? "The host CLI has no working credentials in the T3 Code server environment. Authenticate it on that server, then call watch_pull_request only if the pull request is still open."
-          : "Check it yourself, and call watch_pull_request only if it is still open.";
     return record(target, null, {
-      text: `T3 Code stopped watching pull request #${target.link.number} (${target.link.url}) because it failed to read it from the host ${READ_FAILURE_LIMIT} times in a row. ${recovery}`,
+      text:
+        unusable === null
+          ? `T3 Code stopped watching pull request #${target.link.number} (${target.link.url}) because it failed to read it from the host ${READ_FAILURE_LIMIT} times in a row. Check it yourself, and call watch_pull_request only if it is still open.`
+          : `T3 Code stopped watching pull request #${target.link.number} (${target.link.url}) because the T3 Code server cannot use the host: ${unusable} Fix that on the server, then call watch_pull_request only if it is still open.`,
       notification: {
         source: { kind: "monitor" },
         outcome: "failed",
-        summary: `#${target.link.number}: stopped watching, ${problem}`,
+        summary: `#${target.link.number}: stopped watching, ${unusable === null ? "could not read it" : "host not set up on the server"}`,
       },
     }).pipe(
       Effect.tap(() => woke(target)),
