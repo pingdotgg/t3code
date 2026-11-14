@@ -549,7 +549,7 @@ export const make = Effect.gen(function* () {
   });
 
   // Best-effort cleanup releases disabled instances kept alive by overrides; crashes have no replay to revisit deletion.
-  // The worktree cleanup policy stays: storage cleanup still applies it to the deleted threads' retained worktrees.
+  // worktreeCleanup stays for the deleted threads' worktrees; an omitted providerInstances would be kept by the merge.
   const clearProjectSettingsOverrides = (projectId: ProjectId) =>
     serverSettings.getSettings.pipe(
       Effect.flatMap(({ projectSettingsOverrides }) => {
