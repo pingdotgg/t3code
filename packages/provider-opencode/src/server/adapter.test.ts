@@ -3508,7 +3508,12 @@ describe("OpenCodeAdapterV2", () => {
         startOpenCodeServerProcess: unused("startOpenCodeServerProcess"),
         connectToOpenCodeServer: (input) => {
           connectInputs.push(input);
-          return Effect.succeed({ url: "test://opencode", version: "test", exitCode: null });
+          return Effect.succeed({
+            url: "test://opencode",
+            version: "test",
+            exitCode: null,
+            external: false,
+          });
         },
         runOpenCodeCommand: unused("runOpenCodeCommand"),
         createOpenCodeSdkClient: () =>

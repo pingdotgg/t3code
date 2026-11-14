@@ -1012,7 +1012,9 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           ...(settingsSecretLiteral(options.settings.serverPassword)
             ? { serverPassword: settingsSecretLiteral(options.settings.serverPassword) }
             : {}),
-          environment: options.environment,
+          // Each session runs its own `opencode serve`, so its shells inherit this thread's id
+          // (PortScanner.AGENT_THREAD_ENV; a literal because this package cannot reach apps/server).
+          environment: { ...options.environment, T3CODE_THREAD_ID: input.threadId },
         });
         const client = runtime.createOpenCodeSdkClient({
           baseUrl: connection.url,
