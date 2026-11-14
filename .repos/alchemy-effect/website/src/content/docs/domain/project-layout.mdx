@@ -1,0 +1,113 @@
+---
+title: Project layout
+description: How to lay out an @alchemy.run/domain project. One file per building block, named after its noun and its kind; folders per subdomain; a pure domain package, a server package that hosts it, and a foldkit web package, wired in one stack.
+---
+
+A domain grows into many small pieces: commands, events, rejections, views, policies. Lay them out so a file's name tells you what it holds before you open it, and so the model never depends on how it's hosted.
+
+## Name a file after its noun and its kind
+
+Every file holds one building block, and its name is the block's name followed by its kind:
+
+```text
+WithdrawMoney.command.ts
+Account.aggregate.ts
+AccountSummary.view.ts
+TransferExecution.policy.ts
+ExecuteTransfer.saga.ts
+Ledger.projection.ts
+AccountCard.stream.ts
+FraudCheck.external.ts
+CustomerApi.api.ts
+Bank.model.ts
+```
+
+A model's other pieces follow the same rule: `Session.middleware.ts`, `CurrentActor.context.ts`, `Forbidden.rejection.ts`. Plain values, like `Money.ts`, and helpers, like `mustOwn.ts`, keep plain names.
+
+## Keep a command with its events and rejections
+
+A command, the events it records and the rejections only it returns change together, so they share the command's file:
+
+```typescript title="packages/domain/src/Account/WithdrawMoney.command.ts"
+export class DailyLimitExceeded extends Domain.Rejection("DailyLimitExceeded", {
+  remaining: Cents,
+}) {}
+
+export class MoneyWithdrawn extends Domain.Event("MoneyWithdrawn", {
+  amount: Cents,
+  balanceAfter: Cents,
+}) {}
+
+/** Take money out of an account, within the balance and the daily limit. */
+export class WithdrawMoney extends Domain.Command("WithdrawMoney", {
+```
+
+## Give shared pieces their own file
+
+A rejection several commands return gets its own file, and so does an aggregate's id, next to the aggregate:
+
+```typescript title="packages/domain/src/Account/WithdrawMoney.command.ts"
+import { AccountId } from "./Account.id.ts";
+import { Frozen } from "./Frozen.rejection.ts";
+import { InsufficientFunds } from "./InsufficientFunds.rejection.ts";
+```
+
+## Group files by subdomain
+
+Each folder is one part of the business, holding its aggregates and everything about them. The model sits beside the folders and lists what they hold:
+
+```text
+src/
+  Account/      Account.aggregate.ts, WithdrawMoney.command.ts, Statement.view.ts, ...
+  Customer/     Customer.aggregate.ts, RegisterCustomer.command.ts, UsernameReservation.policy.ts, ...
+  Transfer/     Transfer.aggregate.ts, ExecuteTransfer.saga.ts, TransferExecution.policy.ts, ...
+  Fraud/        FraudCheck.external.ts, DailyOutflow.view.ts, FraudReview.policy.ts
+  Bank.model.ts
+  CustomerApi.api.ts
+```
+
+## Keep the model in its own package
+
+The domain package imports only `@alchemy.run/domain` and `effect`. Its stories run the whole model in memory, so it never needs a cloud account to test:
+
+```text
+packages/
+  domain/   @bank/domain   the model, its Apis and its stories
+  server/   @bank/server   hosts the model and implements what it depends on
+  web/      @bank/web      the foldkit app
+alchemy.run.ts             deploys the server and the web app together
+```
+
+Other packages import its files by path, through its `exports`:
+
+```typescript title="packages/server/src/BankWorker.ts"
+import { Bank, BankHandlers } from "@bank/domain/Bank.model";
+```
+
+## Host it from a server package
+
+The server package hosts the model on Durable Objects and implements what the domain only declares: middleware, external systems, stores, and where its telemetry goes. Swapping one implementation never touches the model:
+
+```typescript title="packages/server/src/BankWorker.ts"
+const BankLive = Layer.mergeAll(
+  SessionLive,
+  MfaChallengeLive,
+  Stripe.ConsumeEventsLive,
+  Observability,
+).pipe(
+  Layer.provideMerge(Bank.layer(BankHandlers)),
+  Layer.provideMerge(D1LedgerStore),
+```
+
+## Build the frontend in a web package
+
+The foldkit app imports the Api and its ids from the domain package, so the browser gets typed commands and live views with no hand-written client:
+
+```typescript title="packages/web/src/entry.ts"
+import { CustomerId } from "@bank/domain/Customer/Customer.id";
+import { CustomerApi } from "@bank/domain/CustomerApi.api";
+```
+
+## Add a package per model
+
+A second bounded context, like lending next to banking, is a second domain package with its own model. The same server package can host both. See [`examples/cloudflare-domain`](https://github.com/alchemy-run/alchemy/tree/main/examples/cloudflare-domain) for the whole project.
