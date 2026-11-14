@@ -2795,6 +2795,14 @@ it.effect("SQL shells read a subagent family and a worktree's threads", () =>
     yield* createThread({ name: "archived-child", parent: "root", root: "root", archived: true });
     yield* createThread({ name: "other", worktreePath: "/repo" });
     yield* createThread({ name: "other-child", parent: "other", root: "other", worktreePath });
+    yield* createThread({
+      name: "aliased-child",
+      parent: "other",
+      root: "other",
+      worktreePath: `${worktreePath}/`,
+    });
+    yield* createThread({ name: "cased", worktreePath: worktreePath.toUpperCase() });
+    yield* createThread({ name: "windows", worktreePath: "C:\\RÉPO\\wt" });
 
     const family = (threadId: ThreadId) =>
       store
@@ -2806,14 +2814,23 @@ it.effect("SQL shells read a subagent family and a worktree's threads", () =>
     assert.sameMembers([...(yield* family(id("grandchild")))], tree);
     assert.deepEqual([...(yield* family(id("missing")))], []);
 
-    // Includes another root's idle child on the same path, which a shell may leave out.
+    // Includes another root's idle child on the same path, which a shell may leave out, under any
+    // spelling of that path. POSIX paths keep their case.
     const { statements, tracer } = traceSqlStatements();
     const onWorktree = yield* store
       .getShellSnapshot({ location: "active", worktreePath })
       .pipe(Effect.withTracer(tracer));
     assert.sameMembers(
       onWorktree.threads.map((thread) => thread.id),
-      [id("root"), id("child"), id("other-child")],
+      [id("root"), id("child"), id("other-child"), id("aliased-child")],
+    );
+    const onWindowsWorktree = yield* store.getShellSnapshot({
+      location: "active",
+      worktreePath: "c:/répo/wt/",
+    });
+    assert.deepEqual(
+      onWindowsWorktree.threads.map((thread) => thread.id),
+      [id("windows")],
     );
     // A path names a few threads; scanning every thread parses every payload.
     const sql = yield* SqlClient.SqlClient;

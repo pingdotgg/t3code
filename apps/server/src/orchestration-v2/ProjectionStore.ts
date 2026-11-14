@@ -93,6 +93,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type * as Statement from "effect/sql/Statement";
 
 import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
+import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import { threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
 import { readableSearchText } from "./messageSearchIndex.ts";
 import {
@@ -1097,6 +1098,7 @@ type ShellThreadRow = {
   readonly thread_id: string;
   readonly payload_json: string;
   readonly forked_from_run_source_thread_id: string | null;
+  readonly worktree_path: string | null;
   readonly latest_run_id: string | null;
   readonly latest_run_status: string | null;
   readonly latest_run_requested_at: string | null;
@@ -7663,6 +7665,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   THEN json_extract(t.payload_json, '$.forkedFrom.threadId')
                 ELSE NULL
               END AS forked_from_run_source_thread_id,
+              json_extract(t.payload_json, '$.worktreePath') AS worktree_path,
               presented.run_id AS latest_run_id,
               presented.status AS latest_run_status,
               presented.requested_at AS latest_run_requested_at,
@@ -7859,8 +7862,20 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             }${
               worktreePath === undefined
                 ? sql``
-                : sql` AND CASE WHEN json_valid(t.payload_json)
-                    THEN json_extract(t.payload_json, '$.worktreePath') END = ${worktreePath}`
+                : // The key matches orchestration_v2_projection_threads_worktree_path_key_idx, so an
+                  // ASCII path does not scan the table. SQLite lower() folds only ASCII, so a query
+                  // that itself contains another character also admits those stored paths;
+                  // readShellSnapshotRows keeps the exact comparison.
+                  sql` AND (CASE WHEN json_valid(t.payload_json)
+                    THEN lower(rtrim(replace(trim(json_extract(t.payload_json, '$.worktreePath')), '\\', '/'), '/'))
+                  END = lower(rtrim(replace(trim(${worktreePath}), '\\', '/'), '/'))${
+                    /^[\u0000-\u007e]*$/u.test(worktreePath)
+                      ? sql``
+                      : sql` OR (
+                          json_valid(t.payload_json)
+                          AND json_extract(t.payload_json, '$.worktreePath') GLOB '*[^ -~]*'
+                        )`
+                  })`
             }${threadIds === undefined ? sql`` : sql` AND t.thread_id IN (SELECT value FROM json_each(${encodeIdList(threadIds)}))`}
             ORDER BY t.updated_at ASC, t.thread_id ASC
           `;
@@ -8474,7 +8489,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     const readShellSnapshotRows = Effect.fn("ProjectionStore.readShellSnapshotRows")(function* (
       options: ShellSnapshotOptions | undefined,
     ) {
-      const targetThreadRows = yield* selectShellThreadRows(undefined, options);
+      const worktreeKey =
+        options?.worktreePath === undefined
+          ? undefined
+          : normalizeProjectPathForComparison(options.worktreePath);
+      const targetThreadRows = (yield* selectShellThreadRows(undefined, options)).filter(
+        (row) =>
+          worktreeKey === undefined ||
+          (row.worktree_path !== null &&
+            normalizeProjectPathForComparison(row.worktree_path) === worktreeKey),
+      );
       const targetThreadIds = new Set(targetThreadRows.map((row) => ThreadId.make(row.thread_id)));
       const rowsByThreadId = new Map(
         targetThreadRows.map((row) => [ThreadId.make(row.thread_id), row] as const),
