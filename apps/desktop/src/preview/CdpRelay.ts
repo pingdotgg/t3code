@@ -105,6 +105,12 @@ export function createCdpRelayConnection(
   const sessions = new Map<string, "browser" | "page">([[PAGE_SESSION_ID, "page"]]);
   // The manager acks native frames at once, so each page session waits on its own ack instead.
   const unackedFrames = new Map<string, number>();
+  // The newest frame skipped meanwhile, sent on the ack; Chromium sends none until the next repaint.
+  const skippedFrames = new Map<string, Record<string, unknown>>();
+  const sendFrame = (sessionId: string, params: Record<string, unknown>) => {
+    unackedFrames.set(sessionId, params["sessionId"] as number);
+    send({ method: "Page.screencastFrame", params, sessionId });
+  };
   let sessionSequence = 0;
   const newSession = (kind: "browser" | "page") => {
     const sessionId = `t3-preview-${kind}-${++sessionSequence}`;
@@ -173,6 +179,7 @@ export function createCdpRelayConnection(
         if (typeof sessionId === "string" && sessionId !== PAGE_SESSION_ID) {
           sessions.delete(sessionId);
           unackedFrames.delete(sessionId);
+          skippedFrames.delete(sessionId);
           target.sessionDetached?.(sessionId);
         }
         return {};
@@ -207,8 +214,16 @@ export function createCdpRelayConnection(
     if (command.method === "Emulation.setFocusEmulationEnabled") return Promise.resolve({});
     if (command.method === "Page.screencastFrameAck" && child === undefined) {
       // A restart keeps the slot too, or restarting would let frames past an unacknowledged one.
-      if (unackedFrames.get(command.sessionId!) === command.params?.["sessionId"]) {
-        unackedFrames.delete(command.sessionId!);
+      const sessionId = command.sessionId!;
+      if (unackedFrames.get(sessionId) === command.params?.["sessionId"]) {
+        unackedFrames.delete(sessionId);
+        const skipped = skippedFrames.get(sessionId);
+        skippedFrames.delete(sessionId);
+        if (
+          skipped &&
+          target.receivesScreencast(sessionId === PAGE_SESSION_ID ? undefined : sessionId)
+        )
+          sendFrame(sessionId, skipped);
       }
       return Promise.resolve({});
     }
@@ -272,19 +287,19 @@ export function createCdpRelayConnection(
         send({ method, params, sessionId });
         return;
       }
-      const frameId =
-        method === "Page.screencastFrame"
-          ? (params as { sessionId?: unknown } | null)?.sessionId
-          : undefined;
-      for (const [id, kind] of sessions) {
-        if (kind !== "page") continue;
-        if (method === "Page.screencastFrame") {
-          if (typeof frameId !== "number" || unackedFrames.has(id)) continue;
+      if (method === "Page.screencastFrame") {
+        const frame = params as Record<string, unknown> | null;
+        if (typeof frame?.["sessionId"] !== "number") return;
+        for (const [id, kind] of sessions) {
+          if (kind !== "page") continue;
           if (!target.receivesScreencast(id === PAGE_SESSION_ID ? undefined : id)) continue;
-          unackedFrames.set(id, frameId);
+          if (unackedFrames.has(id)) skippedFrames.set(id, frame);
+          else sendFrame(id, frame);
         }
-        send({ method, params, sessionId: id });
+        return;
       }
+      for (const [id, kind] of sessions)
+        if (kind === "page") send({ method, params, sessionId: id });
     },
   };
 }

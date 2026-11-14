@@ -182,24 +182,31 @@ describe("CDP relay extra sessions", () => {
         }),
       );
     const delivered = () => {
-      const sessions = written.map((m) => m["sessionId"]);
+      const frames = written
+        .filter((m) => m["method"])
+        .map((m) => [m["sessionId"], (m["params"] as { sessionId?: number }).sessionId]);
       written.length = 0;
-      return sessions;
+      return frames;
     };
     frame(1);
-    expect(delivered()).toEqual(["t3-preview-page", extra]);
-    // A session that has not acknowledged its frame gets no more, however many arrive.
+    expect(delivered()).toEqual([
+      ["t3-preview-page", 1],
+      [extra, 1],
+    ]);
+    // A session that has not acknowledged its frame gets only the newest one, on its ack.
     for (let i = 2; i < 100; i++) frame(i);
     expect(delivered()).toEqual([]);
     ack(extra, 1);
     await settle();
-    delivered();
-    frame(2);
-    expect(delivered()).toEqual([extra]);
-    ack(extra, 1);
+    expect(delivered()).toEqual([[extra, 99]]);
+    ack(extra, 99);
     await settle();
-    delivered();
-    frame(3);
+    expect(delivered()).toEqual([]);
+    frame(100);
+    expect(delivered()).toEqual([[extra, 100]]);
+    ack(extra, 99);
+    await settle();
+    frame(101);
     expect(delivered()).toEqual([]);
     expect(send.mock.calls.some(([method]) => method === "Page.screencastFrameAck")).toBe(false);
     // A restart keeps the unacknowledged frame's slot until its own acknowledgement.
@@ -207,16 +214,14 @@ describe("CDP relay extra sessions", () => {
     relay.receive(JSON.stringify({ id: 8, method: "Page.startScreencast", sessionId: extra }));
     await settle();
     delivered();
-    frame(4);
+    frame(102);
     expect(delivered()).toEqual([]);
-    ack(extra, 2);
+    ack(extra, 100);
     await settle();
-    delivered();
-    frame(5);
-    expect(delivered()).toEqual([extra]);
+    expect(delivered()).toEqual([[extra, 102]]);
     // Other events still reach a session while its frame is unacknowledged.
     relay.event("Page.loadEventFired", { timestamp: 1 }, undefined);
-    expect(delivered()).toEqual(["t3-preview-page", extra]);
+    expect(delivered().map(([session]) => session)).toEqual(["t3-preview-page", extra]);
   });
 });
 
