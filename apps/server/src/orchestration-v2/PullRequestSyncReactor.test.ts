@@ -1241,6 +1241,28 @@ describe("PullRequestSyncReactor", () => {
     }),
   );
 
+  // Each unbatched read is a CLI process (`az` on Azure DevOps), so a one-minute cadence floods it.
+  it.effect("does not reread an active open pull request on an unbatched host every minute", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(NOW));
+      const fixture = yield* makeHarness({
+        snapshot: makeSnapshot([
+          makeThread("one", {
+            pullRequests: [makeLink(42, { updatedAt: NOW }, { host: "dev.azure.com" })],
+          }),
+        ]),
+        batchesReads: () => false,
+        summary: (input) => Effect.succeed(makeSummary(input, { updatedAt: NOW })),
+      });
+      yield* Effect.gen(function* () {
+        const reactor = yield* startAndSweep(fixture);
+        assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 1);
+        yield* sweepAgain(fixture, reactor);
+        assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 1);
+      }).pipe(Effect.provide(fixture.layer));
+    }),
+  );
+
   it.effect("reads a member a sibling flags while the sweep is full", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(Date.parse(NOW));
