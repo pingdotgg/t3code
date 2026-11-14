@@ -348,7 +348,7 @@ The check is the one to trust; several review findings did not hold.
 
 ## Branches
 
-- `main`: verified. All 27 checks pass on macOS (2026-11-14, with the ACP provider, scheduled
+- `main`: verified. All 29 checks pass on macOS (2026-11-14, with the ACP provider, scheduled
   tasks and annotations). The last Linux pass (all tests, 20 runs on the gnu target and 5 on
   musl, 2026-11-14) is older than those merges.
 - Fixed on 2026-11-14: the T3 adapter closes the Claude query after an interrupt, and the next
