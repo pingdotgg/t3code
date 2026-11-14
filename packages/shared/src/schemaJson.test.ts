@@ -46,6 +46,10 @@ Done.`),
     },
   );
 
+  it("decodes a file that starts with a UTF-8 BOM", () => {
+    expect(decodeLenientJson('\uFEFF{"enabled":true,}')).toEqual({ enabled: true });
+  });
+
   it("preserves comment markers and commas before brackets inside string values", () => {
     expect(decodeLenientJson('"1/* https://example.com */2"')).toBe("1/* https://example.com */2");
     expect(decodeLenientJson('{"note":"a,]"}')).toEqual({ note: "a,]" });
