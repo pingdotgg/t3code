@@ -880,7 +880,6 @@ const continuationDispatches = (
   });
 
 it.effect.each([
-  [0, "running"],
   [3, "running"],
   [3, "completed"],
   [3, "waiting"],

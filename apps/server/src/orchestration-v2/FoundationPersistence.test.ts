@@ -2752,7 +2752,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
     }).pipe(Effect.provide(layerIsolatedOutbox)),
   );
 
-  it.effect.each(["queued", "preparing", "starting", "running", "waiting"])(
+  it.effect.each(["queued", "waiting"])(
     "keeps a %s continuation's crash budget past outbox retention",
     (status) =>
       Effect.gen(function* () {

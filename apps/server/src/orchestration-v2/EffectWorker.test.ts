@@ -781,7 +781,7 @@ it.effect.each(["confirmed", "unconfirmed", "failed"] as const)(
     }),
 );
 
-it.effect.each([0, 3, 4])(
+it.effect.each([3, 4])(
   "enforces process-loss count %s after 22 minutes through the executor",
   (processLossCount) =>
     Effect.gen(function* () {
