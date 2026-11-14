@@ -783,6 +783,52 @@ describe("AgentAwarenessRelay", () => {
     }),
   );
 
+  it.effect("clears a snoozed thread's completion without alerting, until it asks", () =>
+    Effect.gen(function* () {
+      const snoozed = {
+        snoozedUntil: DateTime.makeUnsafe("2999-01-01T00:00:00.000Z"),
+        snoozedAt: DateTime.makeUnsafe(NOW),
+      };
+      const { relay, currentShell, publications } = yield* makeTestRelay();
+      yield* Ref.set(currentShell, shell(snoozed));
+      yield* relay.publishThread(THREAD_ID);
+      const completed = {
+        status: "completed" as const,
+        latestRunCompletedAt: DateTime.makeUnsafe("2026-09-04T12:01:00.000Z"),
+      };
+      yield* Ref.set(currentShell, shell({ ...snoozed, ...completed }));
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.deepEqual(
+        publications.map((publication) => publication.state?.phase ?? null),
+        ["running", null],
+      );
+
+      // Waking must not alert the completion that the snooze hid.
+      yield* Ref.set(currentShell, shell(completed));
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.equal(publications.length, 2);
+
+      yield* Ref.set(
+        currentShell,
+        shell({
+          ...snoozed,
+          ...completed,
+          pendingRuntimeRequest: {
+            id: RuntimeRequestId.make("request-after-snooze"),
+            kind: "command",
+            createdAt: DateTime.makeUnsafe("2026-09-04T12:05:00.000Z"),
+          },
+        }),
+      );
+      yield* relay.publishThread(THREAD_ID);
+      assert.equal(publications.at(-1)?.state?.phase, "waiting_for_approval");
+    }),
+  );
+
   it.effect("publishes a cleared thread's tombstone once while it stays cleared", () =>
     Effect.gen(function* () {
       const { relay, currentShell, publications } = yield* makeTestRelay();
