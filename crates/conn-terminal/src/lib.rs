@@ -843,10 +843,12 @@ impl Inner {
         });
     }
 
-    /// Checks each running terminal's foreground job and publishes `activity` when it
-    /// changes. Returns `false`, and stops polling, when no terminal runs.
+    /// Checks each running terminal's foreground job and its command name, and publishes
+    /// `activity` when either changes, as T3 does. The name is read again on every poll while
+    /// a job runs: a poll between the shell's `fork` and `exec` sees the shell's own name.
+    /// Returns `false`, and stops polling, when no terminal runs.
     async fn poll(&self) -> bool {
-        let changed: Vec<(Key, u64, Option<i32>)> = {
+        let checked: Vec<(Key, u64, Option<i32>)> = {
             let mut state = self.lock();
             let running = state.sessions.values().any(|s| s.proc.is_some());
             if !running {
@@ -859,24 +861,24 @@ impl Inner {
                 .filter_map(|(key, s)| {
                     let proc = s.proc.as_ref()?;
                     let job = pty::foreground_job(&proc.control, proc.pid);
-                    (job != s.job.as_ref().map(|(group, _)| *group))
-                        .then(|| (key.clone(), s.generation, job))
+                    (job.is_some() || s.job.is_some()).then(|| (key.clone(), s.generation, job))
                 })
                 .collect()
         };
-        for (key, generation, job) in changed {
+        for (key, generation, job) in checked {
             let label = match job {
                 Some(group) => Some(process_name(group).await.unwrap_or_default()),
                 None => None,
             };
+            let job = job.zip(label);
             let mut state = self.lock();
             let Some(session) = state.sessions.get_mut(&key) else {
                 continue;
             };
-            if session.generation != generation || session.proc.is_none() {
+            if session.generation != generation || session.proc.is_none() || session.job == job {
                 continue;
             }
-            session.job = job.zip(label);
+            session.job = job;
             session.advance();
             let event = TerminalAttachStreamEvent::Activity(TerminalAttachStreamEventActivity {
                 thread_id: key.0.clone(),

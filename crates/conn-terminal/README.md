@@ -65,7 +65,8 @@ The T3 server gives agents and MCP tools no terminal access. For a later MCP too
 ## Differences from the T3 server
 
 - `hasRunningSubprocess` and the label come from the PTY's foreground process group
-  (`tcgetpgrp`), not from `ps` every second. A background job (`sleep 10 &`) does not count.
+  (`tcgetpgrp`) and its leader's name, not from `ps` every second. A background job
+  (`sleep 10 &`) does not count. As in T3, a change of the name alone also sends `activity`.
 - `providerInstanceId` is ignored: no provider instance adds environment variables here.
 - No cwd recovery: a missing worktree is `TerminalCwdNotFoundError`; T3 recreates it first.
 - No `closeIdle` (setup scripts) and no `ProjectSetupScriptRunner` callers yet.

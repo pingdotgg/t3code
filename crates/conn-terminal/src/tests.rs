@@ -426,6 +426,44 @@ async fn clears_and_reports_the_foreground_command() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn relabels_a_foreground_command_that_execs_another() {
+    // The job keeps its process group when `sh` execs `sleep`: only the name changes, as when
+    // a poll lands between the shell's `fork` and `exec`.
+    let manager = TerminalManager::new(config());
+    let mut metadata = manager.subscribe_metadata();
+    let mut sub = manager.attach(attach_input("t12", "term-1"), 1).unwrap();
+    assert!(matches!(sub.next().await, E::Snapshot(_)));
+    write(
+        &manager,
+        "t12",
+        "term-1",
+        "sh -c 'sleep 1; exec sleep 30'\n",
+    )
+    .await;
+    let mut labels = Vec::new();
+    tokio::time::timeout(WAIT, async {
+        loop {
+            if let TerminalMetadataStreamEvent::Upsert(u) = metadata.next().await
+                && u.terminal.has_running_subprocess
+            {
+                labels.push(u.terminal.label.clone());
+                if u.terminal.label == "sleep" {
+                    return;
+                }
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("no upsert with the new name; labels {labels:?}"));
+    assert_eq!(labels, ["sh", "sleep"]);
+    manager.close(TerminalCloseInput {
+        thread_id: "t12".into(),
+        terminal_id: Some("term-1".into()),
+        delete_history: Some(true),
+    });
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn keeps_scrollback_across_a_restart() {
     let dir = temp_dir("restart");
     let with_dir = || TerminalConfig {
