@@ -3,16 +3,21 @@ import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
 import type * as Electron from "electron";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
+
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import { stopChildProcessesBeforeExit, stopZygotesBeforeExit } from "./DesktopExitChildren.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
+import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopState from "./DesktopState.ts";
@@ -66,15 +71,18 @@ function addScopedListener<Args extends ReadonlyArray<unknown>>(
   target: unknown,
   eventName: string,
   listener: (...args: Args) => void,
+  options: { readonly prepend?: boolean } = {},
 ): Effect.Effect<void, never, Scope.Scope> {
   const eventTarget = target as {
     on: (eventName: string, listener: (...args: Array<unknown>) => void) => unknown;
+    prependListener: (eventName: string, listener: (...args: Array<unknown>) => void) => unknown;
     removeListener: (eventName: string, listener: (...args: Array<unknown>) => void) => unknown;
   };
   const untypedListener = listener as unknown as (...args: Array<unknown>) => void;
   return Effect.acquireRelease(
     Effect.sync(() => {
-      eventTarget.on(eventName, untypedListener);
+      if (options.prepend) eventTarget.prependListener(eventName, untypedListener);
+      else eventTarget.on(eventName, untypedListener);
     }),
     () =>
       Effect.sync(() => {
@@ -208,7 +216,7 @@ function quitFromSignal(
   );
 }
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = DesktopLifecycle.of({
   relaunch: Effect.fn("desktop.lifecycle.relaunch")(function* (reason) {
     const electronApp = yield* ElectronApp.ElectronApp;
@@ -223,9 +231,12 @@ export const make = DesktopLifecycle.of({
         yield* electronApp.exit(75);
         return;
       }
+      // Startup already acted on the app link that launched it; passing it on replays it.
+      const appLinkPrefix = `${ElectronProtocol.getDesktopScheme(environment.isDevelopment)}:`;
+      const args = yield* HostProcess.Arguments;
       yield* electronApp.relaunch({
-        execPath: process.execPath,
-        args: process.argv.slice(1),
+        execPath: yield* HostProcess.ExecutablePath,
+        args: args.slice(1).filter((arg) => !arg.toLowerCase().startsWith(appLinkPrefix)),
       });
       yield* electronApp.exit(0);
     }).pipe(
@@ -294,12 +305,47 @@ export const make = DesktopLifecycle.of({
       );
     });
 
+    // Electron can exit without before-quit, e.g. when the X11/Wayland connection drops.
+    // Children (the backend too) get SIGTERM while main still holds an AppImage mount open.
+    // Prepended so the record is buffered before the trace sink's own exit flush runs.
+    yield* addScopedListener(
+      process,
+      "exit",
+      (exitCode: number) => {
+        Effect.runSyncWith(context)(
+          Effect.gen(function* () {
+            const shutdown = yield* DesktopShutdown.DesktopShutdown;
+            // "allowed" without a finished shutdown is the updater's quit; its relaunched app is a child.
+            if (quit.phase === "allowed" || (yield* shutdown.isComplete)) return;
+            const attributes = { exitCode, quitPhase: quit.phase };
+            yield* Effect.gen(function* () {
+              yield* logLifecycleError(
+                "desktop main process exiting before shutdown completed",
+                attributes,
+              );
+              if (environment.platform !== "linux") return;
+              const killed = stopChildProcessesBeforeExit(process.pid);
+              yield* Effect.annotateCurrentSpan({ killedChildPids: killed });
+            }).pipe(Effect.withSpan("desktop.lifecycle.exit", { attributes }));
+          }),
+        );
+      },
+      { prepend: true },
+    );
+
     if (environment.platform !== "win32") {
       yield* addScopedListener(process, "SIGINT", () => {
         quitFromSignal("SIGINT", runEffect, quit);
       });
       yield* addScopedListener(process, "SIGTERM", () => {
         quitFromSignal("SIGTERM", runEffect, quit);
+      });
+    }
+
+    // Unscoped: the app scope closes before Electron exits, and every exit path must run this.
+    if (environment.platform === "linux" && Option.isSome(environment.appImagePath)) {
+      yield* Effect.sync(() => {
+        process.once("exit", () => stopZygotesBeforeExit(process.pid));
       });
     }
   }).pipe(Effect.withSpan("desktop.lifecycle.register")),

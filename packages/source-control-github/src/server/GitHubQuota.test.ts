@@ -60,7 +60,6 @@ describe("GitHubQuota", () => {
     Effect.gen(function* () {
       const quota = yield* GitHubQuota.GitHubQuota;
       yield* quota.observe("github.com", headers(501, "core"));
-      // Conditional reads answer 304 with the balance unchanged, however many are sent.
       for (let index = 0; index < 5; index++) {
         yield* quota.admit("github.com", "core");
         yield* quota.observe("github.com", headers(501, "core"));

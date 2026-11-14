@@ -24,9 +24,7 @@ export function fromProviders(
   };
 }
 
-/**
- * @public Service construction is part of the canonical Effect module API.
- */
+/** @public */
 export const make = Effect.gen(function* () {
   const drivers = yield* BuiltInDrivers.SourceControlDrivers;
   return fromProviders(drivers.flatMap(({ instance }) => instance.pullRequests ?? []));

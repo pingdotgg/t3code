@@ -77,11 +77,7 @@ export function createAssistantTextSelector(
   };
 }
 
-/**
- * All positions and context lengths use UTF-16 units in that normalized stream,
- * not markdown offsets or Unicode code points. Even matching saved offsets cannot
- * break a context tie, since those offsets may have drifted.
- */
+/** Offsets use normalized UTF-16 units. Saved offsets may drift, so they cannot break context ties. */
 export function findAssistantCitationText(
   text: string,
   selector: AssistantTextSelector,
@@ -199,8 +195,7 @@ function selectedTextBoundary(range: Range, node: Node, last: boolean): Text | n
     const text = node as Text;
     const start = node === range.startContainer ? range.startOffset : 0;
     const end = node === range.endContainer ? range.endOffset : text.length;
-    // Triple-click ranges run through unselectable rows (tool calls, timestamps,
-    // author headings) into the next response; that text is not selected.
+    // Triple-click ranges include unselected text from unselectable rows and the next response.
     return start < end && !isUnselectable(text) ? text : null;
   }
   for (
@@ -251,6 +246,23 @@ export function captureAssistantTextSelection(
   if (rawStart === null) return null;
   const selector = createAssistantTextSelector(stream.text, rawStart, rawEnd);
   return selector === null ? null : { source, selector, range };
+}
+
+/** How much of a response a reply carries: enough to recognise it, not to resend it. */
+const RESPONSE_OPENING_LENGTH = 300;
+
+/** The opening of a response. Falls back to the raw text when the source is virtualized away or
+ * renders no text, as in an image-only response. */
+export function captureAssistantMessageOpening(
+  source: HTMLElement | null,
+  fallbackText: string,
+): AssistantTextSelector | null {
+  const rendered = source ? readAssistantText(source).text : "";
+  const text = rendered.trim() ? rendered : fallbackText;
+  const rawStart = text.length - text.trimStart().length;
+  let rawEnd = Math.min(text.trimEnd().length, rawStart + RESPONSE_OPENING_LENGTH);
+  if (splitsSurrogatePair(text, rawEnd)) rawEnd -= 1;
+  return createAssistantTextSelector(text, rawStart, rawEnd);
 }
 
 function rawTextOffset(text: string, normalizedOffset: number): number {

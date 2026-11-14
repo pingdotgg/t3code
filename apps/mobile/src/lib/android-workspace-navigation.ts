@@ -1,81 +1,25 @@
-import type { CommonActions, NavigationState } from "@react-navigation/native";
+import type { NavigationState } from "@react-navigation/native";
+import { isSettingsRoute } from "../features/settings/settings-navigation";
+import { resetRootStack, type RootStackNavigation } from "./root-stack-reset";
 
-export type AndroidWorkspaceDestination =
-  | { readonly name: "Thread"; readonly params: ReactNavigation.RootParamList["Thread"] }
-  | { readonly name: "PullRequest"; readonly params: ReactNavigation.RootParamList["PullRequest"] };
-
-export type AndroidWorkspaceResetAction = ReturnType<typeof CommonActions.reset> & {
-  readonly target: string;
-};
-
-interface WorkspaceNavigation {
-  readonly dispatch: (action: AndroidWorkspaceResetAction) => void;
-  readonly getParent: () => WorkspaceNavigation | undefined;
-  readonly getState: () => NavigationState | undefined;
-  /** Only on the navigation container, whose `getState` stays empty until the first action. */
-  readonly getRootState?: () => NavigationState | undefined;
+// Back follows history; Git confirmations can stack copies of the current thread, so skip those too.
+function androidWorkspaceBackTarget(state: NavigationState) {
+  let index = state.index;
+  const params = state.routes[index]?.params as ReactNavigation.RootParamList["Thread"] | undefined;
+  if (state.routes[index]?.name === "Thread" && params) {
+    while (parentThreadIsBelow({ ...state, index }, params)) index -= 1;
+  }
+  return index - 1;
 }
 
-function androidWorkspaceBackReturnsToThread(state: NavigationState) {
-  const current = state.routes[state.index];
-  const params = current?.params as ReactNavigation.RootParamList["Thread"] | undefined;
-  return (
-    current?.name === "Thread" &&
-    state.routes[state.index - 1]?.name === "Thread" &&
-    params !== undefined &&
-    !parentThreadIsBelow(state, params)
-  );
-}
-
-export function androidWorkspaceNavigationState(
-  state: NavigationState,
-  destination?: AndroidWorkspaceDestination,
-  reviewers?: ReactNavigation.RootParamList["PullRequestReviewers"],
-) {
+/** The root stack with only the workspace list. */
+export function androidWorkspaceNavigationState(state: NavigationState) {
   const home = state.routes.find((route) => route.name === "Home") ?? { name: "Home" };
-  if (!destination) return { ...state, index: 0, routes: [home] };
-  const identity =
-    destination.name === "Thread"
-      ? ["environmentId", "threadId"]
-      : ["environmentId", "projectId", "repository", "number", "host"];
-  const params = destination.params as Readonly<Record<string, unknown>>;
-  const existing = state.routes.findLast((route) => {
-    if (route.name !== destination.name) return false;
-    const current = route.params as Readonly<Record<string, unknown>> | undefined;
-    return identity.every((key) => current?.[key] === params[key]);
-  });
-  return {
-    ...state,
-    index: reviewers ? 2 : 1,
-    routes: [
-      home,
-      { ...existing, ...destination },
-      ...(reviewers ? [{ name: "PullRequestReviewers", params: reviewers }] : []),
-    ],
-  };
+  return { ...state, index: 0, routes: [home] };
 }
 
-/**
- * Resets the root stack to a workspace list or detail. Always reads and targets the root
- * navigator: the sidebar and rail render in the root layout, where `useNavigation()` is the
- * container, and a container dispatch runs on the deepest focused navigator. With Settings
- * or New task open, that is their nested stack, which rejects the reset.
- */
-export function resetAndroidWorkspace(
-  navigation: WorkspaceNavigation,
-  destination?: AndroidWorkspaceDestination,
-  reviewers?: ReactNavigation.RootParamList["PullRequestReviewers"],
-) {
-  let root = navigation;
-  for (let parent = root.getParent(); parent; parent = root.getParent()) root = parent;
-  const state = root.getRootState?.() ?? root.getState();
-  if (!state) return;
-  // Same shape as `CommonActions.reset`, which would pull React Native into node tests.
-  navigation.dispatch({
-    type: "RESET",
-    payload: androidWorkspaceNavigationState(state, destination, reviewers),
-    target: state.key,
-  });
+export function resetAndroidWorkspace(navigation: RootStackNavigation) {
+  resetRootStack(navigation, androidWorkspaceNavigationState);
 }
 
 export function parentThreadIsBelow(
@@ -114,19 +58,26 @@ export function linkedThreadStep(
 }
 
 export function returnToAndroidWorkspaceList(
-  navigation: WorkspaceNavigation & { readonly goBack: () => void },
-  selectTab: () => void,
+  navigation: RootStackNavigation & { readonly goBack: () => void },
 ) {
   const state = navigation.getState();
-  if (state && androidWorkspaceBackReturnsToThread(state)) return navigation.goBack();
-  selectTab();
-  resetAndroidWorkspace(navigation);
+  const index = state ? androidWorkspaceBackTarget(state) : -1;
+  if (!state || index < 0) return resetAndroidWorkspace(navigation);
+  if (index === state.index - 1) return navigation.goBack();
+  resetRootStack(navigation, () => ({ ...state, index, routes: state.routes.slice(0, index + 1) }));
 }
 
-// In the split view these destinations swap the detail pane beside the sidebar instead of
-// stacking over Home, so the default slide-in would show a layer that is not there.
-export function androidWorkspaceDestinationAnimation(routeName: string, usesSplitView: boolean) {
-  return usesSplitView && (routeName === "Thread" || routeName === "PullRequest")
-    ? ("none" as const)
-    : undefined;
+// Split view: Thread, PullRequest, and a Settings page picked from the list swap the detail pane
+// rather than stack, so they don't animate. Pages opened from a Settings page crossfade inside the
+// pane's card; the default push edge-extends the incoming page, bleeding a stripe beside the list.
+export function androidWorkspaceDestinationAnimation(
+  route: { readonly key: string; readonly name: string },
+  routes: readonly { readonly key: string; readonly name: string }[],
+  usesSplitView: boolean,
+) {
+  if (!usesSplitView) return undefined;
+  if (route.name === "Thread" || route.name === "PullRequest") return "none" as const;
+  if (route.name === "Settings" || !isSettingsRoute(route.name)) return undefined;
+  const below = routes[routes.findIndex((candidate) => candidate.key === route.key) - 1];
+  return below?.name === "Settings" ? ("none" as const) : ("fade" as const);
 }

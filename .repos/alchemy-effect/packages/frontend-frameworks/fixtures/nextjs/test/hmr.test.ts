@@ -1,3 +1,7 @@
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFs from "node:fs/promises";
+import * as NodePath from "node:path";
+import { fileURLToPath } from "node:url";
 /**
  * Dev v2 ("hmr" mode) spec: spawns `scripts/hmr-server.mjs` — the Framework
  * service driving the real `next dev` (Turbopack) with proxied Cloudflare
@@ -13,10 +17,6 @@
  *   retry; the file is restored in a finally)
  */
 import { expect, test } from "@playwright/test";
-import * as NodeChildProcess from "node:child_process";
-import * as NodeFs from "node:fs/promises";
-import * as NodePath from "node:path";
-import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const probePage = NodePath.join(root, "app", "hmr-probe", "page.jsx");
@@ -61,20 +61,14 @@ test.beforeAll(async () => {
       if (match !== null) resolve(new URL(match[1]!));
     });
     child.once("exit", (code) =>
-      reject(
-        new Error(
-          `hmr-server exited before reporting a URL (code ${code}): ${buffer}`,
-        ),
-      ),
+      reject(new Error(`hmr-server exited before reporting a URL (code ${code}): ${buffer}`)),
     );
   });
 });
 
 test.afterAll(async () => {
   if (child !== undefined && child.exitCode === null) {
-    const exited = new Promise<void>((resolve) =>
-      child.once("exit", () => resolve()),
-    );
+    const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
     child.kill("SIGTERM");
     // The driver closes the Next app + binding proxy on SIGTERM; escalate
     // if it wedges so the suite never hangs on teardown.
@@ -86,16 +80,12 @@ test.afterAll(async () => {
 
 test.describe("hmr dev mode", () => {
   test("serves the SSR page through next dev", async () => {
-    const body = await pollText("/", (b) =>
-      b.includes("fixtures-nextjs SSR page"),
-    );
+    const body = await pollText("/", (b) => b.includes("fixtures-nextjs SSR page"));
     expect(body).toContain("rendered-at:");
   });
 
   test("getCloudflareContext().env binding is visible in SSR output", async () => {
-    const body = await pollText("/hmr-probe", (b) =>
-      b.includes("hmr-binding:"),
-    );
+    const body = await pollText("/hmr-probe", (b) => b.includes("hmr-binding:"));
     // React may render an empty comment between adjacent text nodes.
     expect(body).toMatch(/hmr-binding:(?:<!-- -->)?hello-from-binding/);
     expect(body).toContain("marker:v1");
@@ -114,16 +104,8 @@ test.describe("hmr dev mode", () => {
     await pollText("/hmr-probe", (b) => b.includes("marker:v1"));
     const original = await NodeFs.readFile(probePage, "utf8");
     try {
-      await NodeFs.writeFile(
-        probePage,
-        original.replace("marker:v1", "marker:v2"),
-        "utf8",
-      );
-      const body = await pollText(
-        "/hmr-probe",
-        (b) => b.includes("marker:v2"),
-        { times: 120 },
-      );
+      await NodeFs.writeFile(probePage, original.replace("marker:v1", "marker:v2"), "utf8");
+      const body = await pollText("/hmr-probe", (b) => b.includes("marker:v2"), { times: 120 });
       expect(body).toContain("marker:v2");
     } finally {
       await NodeFs.writeFile(probePage, original, "utf8");
