@@ -156,6 +156,9 @@ const snapshotFingerprint = ({ link }: WatchTarget) => {
       ].join(" ");
 };
 
+const holdsEdits = (group: WatchGroup) =>
+  group.targets.some(({ watch }) => (watch.pendingEdits?.length ?? 0) > 0);
+
 function planRead(
   group: WatchGroup,
   last: LastRead | undefined,
@@ -173,8 +176,11 @@ function planRead(
       (watch.checksAwaitedSince != null &&
         now - Date.parse(watch.checksAwaitedSince) >= PULL_REQUEST_WATCH_NO_CHECKS_MS),
   );
+  // A held edit is delivered by the next read that finds it unchanged, which a quiet fingerprint skips.
+  const editsHeld = holdsEdits(group);
   if (fingerprint === null) {
     const read =
+      editsHeld ||
       last.inFlight ||
       !last.remarksComplete ||
       last.fingerprint !== group.fingerprint ||
@@ -182,6 +188,7 @@ function planRead(
     return { detail: read || checksDue, activity: read };
   }
   const activity =
+    editsHeld ||
     last.remarks !== fingerprint.remarks ||
     !last.remarksComplete ||
     now - last.at >= FINGERPRINT_REREAD_MS;
@@ -207,6 +214,7 @@ function watchesEqual(left: ThreadPullRequestWatch, right: ThreadPullRequestWatc
     (left.approvalAnnounced ?? false) === (right.approvalAnnounced ?? false) &&
     left.remarksThrough === right.remarksThrough &&
     left.remarkIds.join("\n") === right.remarkIds.join("\n") &&
+    JSON.stringify(left.pendingEdits ?? []) === JSON.stringify(right.pendingEdits ?? []) &&
     left.conflicting === right.conflicting &&
     left.mergeQueueRemovalId === right.mergeQueueRemovalId &&
     left.wakes === right.wakes &&
@@ -590,14 +598,15 @@ export const make = Effect.gen(function* () {
     if (
       last === undefined ||
       group.targets.some((target) => !last.watches.has(watchKey(target))) ||
-      (fingerprint !== null && last.remarks !== fingerprint.remarks)
+      (fingerprint !== null && last.remarks !== fingerprint.remarks) ||
+      holdsEdits(group)
     ) {
-      // A new watch or changed host remarks needs a fresh view of every tail.
+      // A new watch, changed host remarks, or a held edit needs a fresh view of every tail.
       threadTails.delete(group.key);
     }
     const reference = referenceOf(group);
     // Invalidate cached reads before using the newer fingerprint; clients receive no notification.
-    if (fingerprint !== null) yield* pullRequests.invalidate({ reference });
+    if (fingerprint !== null || holdsEdits(group)) yield* pullRequests.invalidate({ reference });
     const [detailRead, activityRead] = yield* Effect.all(
       [
         Effect.exit(pullRequests.detail({ ...reference, allowStale: false })),
