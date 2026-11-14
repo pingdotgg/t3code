@@ -6415,8 +6415,13 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           }
           const remoteBranch = "feature/example-change";
           const branch = "review/example-change";
-          const mapping = `+refs/heads/${remoteBranch}:refs/remotes/origin/${remoteBranch}`;
-          yield* git(cwd, ["push", remote, `HEAD:refs/heads/${remoteBranch}`]);
+          const mapping = `+refs/heads/${remoteBranch}*:refs/remotes/origin/${remoteBranch}*`;
+          yield* git(cwd, [
+            "push",
+            remote,
+            "HEAD:refs/heads/main",
+            `HEAD:refs/heads/${remoteBranch}`,
+          ]);
           const driver = yield* GitVcsDriver.GitVcsDriver;
           yield* driver.fetchRemoteTrackingBranch({ cwd, remoteName: "origin", remoteBranch });
           yield* git(cwd, ["checkout", "--no-track", "-b", branch, `origin/${remoteBranch}`]);
@@ -6438,6 +6443,9 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             (yield* git(cwd, ["config", "--get-all", "remote.origin.fetch"])).split("\n"),
             addsMapping ? [...fetchRefspecs, mapping] : fetchRefspecs,
           );
+          // A merged PR's head is deleted; later fetches of the remote must keep working.
+          yield* git(remote, ["--git-dir", remote, "branch", "-D", remoteBranch]);
+          yield* git(cwd, ["fetch", "origin"]);
         }),
     );
 

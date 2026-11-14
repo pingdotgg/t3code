@@ -5219,7 +5219,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         { allowNonZeroExit: true },
       );
       if (result.exitCode === 0) return;
-      // Git requires a configured fetch mapping even when the tracking ref already exists.
+      // Git requires a configured fetch mapping even when the tracking ref already exists. The
+      // mapping is a glob because an exact source fails every later fetch once the branch is deleted.
       if (
         /^fatal: cannot set up tracking information; starting point '.+' is not a branch$/m.test(
           result.stderr,
@@ -5232,7 +5233,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             "config",
             "--add",
             `remote.${input.remoteName}.fetch`,
-            `+refs/heads/${input.remoteBranch}:refs/remotes/${input.remoteName}/${input.remoteBranch}`,
+            `+refs/heads/${input.remoteBranch}*:refs/remotes/${input.remoteName}/${input.remoteBranch}*`,
           ],
         ).pipe(retryWhileConfigLocked);
       }
