@@ -2538,7 +2538,7 @@ function replaceStreamingMessageRows(
   }
   const replacements = new Map<ChatMessage, Extract<TimelineEntry, { kind: "message" }>>();
   const thoughts = new Map<string, WorkLogEntry>();
-  const plans = new Map<string, ProposedPlan>();
+  const plans = new Map<string, Extract<TimelineEntry, { kind: "proposed-plan" }>>();
   for (let index = 0; index < timelineEntries.length; index += 1) {
     const entry = timelineEntries[index]!;
     const previousEntry = previousEntries[index]!;
@@ -2560,7 +2560,7 @@ function replaceStreamingMessageRows(
       const { planMarkdown: _before, updatedAt: _beforeAt, ...before } = previousEntry.proposedPlan;
       const { planMarkdown: _after, updatedAt: _afterAt, ...after } = entry.proposedPlan;
       if (!shallow(before, after)) return null;
-      plans.set(entry.id, entry.proposedPlan);
+      plans.set(entry.id, entry);
       continue;
     }
     if (entry.kind !== "message" || previousEntry.kind !== "message") return null;
@@ -2608,8 +2608,8 @@ function replaceStreamingMessageRows(
   const patchedLiveThoughtIds = new Set<string>();
   const rows = previous.rows.map((row): MessagesTimelineRow => {
     if (row.kind === "proposed-plan") {
-      const proposedPlan = plans.get(row.id);
-      return proposedPlan ? { ...row, proposedPlan } : row;
+      const plan = plans.get(row.id);
+      return plan ? { ...row, streaming: plan.streaming, proposedPlan: plan.proposedPlan } : row;
     }
     if (row.kind === "work-live") {
       const groupedEntries = patchGroup(row.groupedEntries);
