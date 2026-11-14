@@ -8,6 +8,7 @@ import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { threadSteersDuringCompaction } from "@t3tools/client-runtime/state/thread-workflows";
 import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
+import { autoLevelSelection } from "@t3tools/shared/autoModel";
 import {
   announcedRun,
   isDetailBehindShell,
@@ -319,7 +320,8 @@ export function useThreadComposerState(input: {
   const selectedDraft = useComposerDraftSettings(selectedThreadKey);
   const selectedThreadQueueCount = selectedThreadQueuedMessages.length;
   const selectedThread = selectedThreadShell;
-  const modelSelection = selectedDraft.modelSelection ?? selectedThread?.modelSelection ?? null;
+  const modelSelection =
+    selectedDraft.modelSelection ?? autoLevelSelection(selectedThread?.modelSelection) ?? null;
   const serverConfig = selectedEnvironmentRuntime?.serverConfig;
   const nowMinuteMs = useNowMinuteMs();
   const pendingHandoff = resolvePendingHandoff(

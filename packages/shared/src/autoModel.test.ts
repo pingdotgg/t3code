@@ -6,7 +6,13 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { AUTO_LEVEL_MODELS, isAutoModelSlug, resolveAutoModelSelection } from "./autoModel.ts";
+import {
+  AUTO_LEVEL_MODELS,
+  autoLevelSelection,
+  isAutoModelSelection,
+  isAutoModelSlug,
+  resolveAutoModelSelection,
+} from "./autoModel.ts";
 
 const now = Date.parse("2026-11-12T12:00:00.000Z");
 const resetsAt = "2026-11-12T15:00:00.000Z";
@@ -77,7 +83,10 @@ describe("resolveAutoModelSelection", () => {
     ).toEqual({
       instanceId: "claudeAuto",
       model: "claude-fable-5-2",
-      options: [{ id: "effort", value: "high" }],
+      options: [
+        { id: "effort", value: "high" },
+        { id: "auto", value: "high" },
+      ],
     });
     expect(resolveAutoModelSelection({ selection: auto(), providers, now })?.selection.model).toBe(
       "claude-opus-5-5",
@@ -87,7 +96,10 @@ describe("resolveAutoModelSelection", () => {
     ).toEqual({
       instanceId: "claudeAuto",
       model: "claude-sonnet-5-5",
-      options: [{ id: "effort", value: "low" }],
+      options: [
+        { id: "effort", value: "low" },
+        { id: "auto", value: "low" },
+      ],
     });
   });
 
@@ -126,7 +138,9 @@ describe("resolveAutoModelSelection", () => {
       usageLimits: undefined,
     } as unknown as ServerProvider;
     const providers = [claude("claudeAuto", 100), claude("claudeAutoB", 100), grok];
-    expect(resolveAutoModelSelection({ selection: auto(), providers, now })?.selection).toEqual({
+    expect(
+      resolveAutoModelSelection({ selection: auto(), providers, now })?.selection,
+    ).toMatchObject({
       instanceId: "grok",
       model: "grok-4.7",
     });
@@ -199,10 +213,15 @@ describe("resolveAutoModelSelection", () => {
       })),
     } as unknown as ServerProvider;
     const providers = [claude("claudeAuto", 100), claude("claudeAutoB", 100), antigravity];
-    expect(resolveAutoModelSelection({ selection: auto(), providers, now })?.selection).toEqual({
+    expect(
+      resolveAutoModelSelection({ selection: auto(), providers, now })?.selection,
+    ).toMatchObject({
       instanceId: "antigravity",
       model: "claude-opus-4-6-thinking",
-      options: [{ id: "thinking_level", value: "medium" }],
+      options: [
+        { id: "thinking_level", value: "medium" },
+        { id: "auto", value: "medium" },
+      ],
     });
   });
 
@@ -237,16 +256,22 @@ describe("resolveAutoModelSelection", () => {
     const route = (providers: ServerProvider[]) =>
       resolveAutoModelSelection({ selection: auto("high"), providers, now })?.selection;
 
-    expect(route([...claudeOut, gemini, grok, codex])).toEqual({
+    expect(route([...claudeOut, gemini, grok, codex])).toMatchObject({
       instanceId: "codex",
       model: "gpt-6-luna",
-      options: [{ id: "reasoningEffort", value: "high" }],
+      options: [
+        { id: "reasoningEffort", value: "high" },
+        { id: "auto", value: "high" },
+      ],
     });
     expect(route([...claudeOut, gemini, grok])?.instanceId).toBe("grok");
-    expect(route([...claudeOut, gemini])).toEqual({
+    expect(route([...claudeOut, gemini])).toMatchObject({
       instanceId: "antigravity",
       model: "gemini-3.8-flash",
-      options: [{ id: "thinking_level", value: "high" }],
+      options: [
+        { id: "thinking_level", value: "high" },
+        { id: "auto", value: "high" },
+      ],
     });
   });
 
@@ -263,6 +288,20 @@ describe("resolveAutoModelSelection", () => {
     expect(pick("auto-low")).toBe("claude-sonnet-5-5");
     expect(isAutoModelSlug("auto-low")).toBe(true);
     expect(isAutoModelSlug("auto-max")).toBe(false);
+
+    // The routed model keeps its level, so the thread stays on Auto and clients show it.
+    const routed = resolveAutoModelSelection({
+      selection: auto("low"),
+      providers,
+      now,
+    })!.selection;
+    expect(isAutoModelSelection(routed)).toBe(true);
+    expect(autoLevelSelection(routed)).toEqual({ instanceId: "claudeAuto", model: "auto-low" });
+    expect(
+      resolveAutoModelSelection({ selection: routed, providers, now, current: routed }),
+    ).toMatchObject({ sticky: true, level: "low", selection: routed });
+    const plain = { instanceId: ProviderInstanceId.make("claudeAuto"), model: "claude-opus-5-5" };
+    expect(autoLevelSelection(plain)).toBe(plain);
   });
 
   it("returns null when nothing is usable", () => {
