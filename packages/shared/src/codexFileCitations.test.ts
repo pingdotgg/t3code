@@ -26,7 +26,7 @@ describe("resolveCodexFileCitationLink", () => {
       }),
     ).toEqual({
       path: "src/main.ts",
-      href: "./src/main.ts#L42",
+      href: "src/main.ts#L42",
       label: "main.ts",
       lineRangeStart: 42,
     });
@@ -38,7 +38,7 @@ describe("resolveCodexFileCitationLink", () => {
       resolveCodexFileCitationLink({ path: "src/main.ts", line_range_start: "not-a-line" }),
     ).toEqual({
       path: "src/main.ts",
-      href: "./src/main.ts",
+      href: "src/main.ts",
       label: "main.ts",
     });
   });

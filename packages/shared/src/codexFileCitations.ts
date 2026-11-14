@@ -1,4 +1,4 @@
-import { isExplicitRelativePath, isHostPath } from "./path.ts";
+import { parseMarkdownFileLink } from "./markdownLinks.ts";
 
 export interface CodexFileCitationLink {
   readonly path: string;
@@ -20,11 +20,12 @@ function citationLabel(path: string): string {
   return normalized.slice(normalized.lastIndexOf("/") + 1) || normalized || "File";
 }
 
-// Codex's own renderer also writes `./` before a bare relative path, so it reads as a file link
-// whatever punctuation its names carry (`reports/100% #1?.md`).
 function markdownDestinationPath(path: string): string {
-  const destination = isHostPath(path) || isExplicitRelativePath(path) ? path : `./${path}`;
-  return destination.replaceAll("%", "%25").replaceAll("#", "%23").replaceAll("?", "%3F");
+  const destination = path.replaceAll("%", "%25").replaceAll("#", "%23").replaceAll("?", "%3F");
+  // Only disambiguate rejected relative paths; recognized links keep workspace lookup behavior.
+  return parseMarkdownFileLink(destination) || /^(?:[a-z][a-z\d+.-]*:|[\\/])/i.test(path)
+    ? destination
+    : `./${destination}`;
 }
 
 export function resolveCodexFileCitationLink(

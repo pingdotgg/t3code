@@ -47,7 +47,7 @@ describe("remarkCodexDirectives", () => {
 
     expect(link).toMatchObject({
       type: "link",
-      url: "./outputs/report.xlsx",
+      url: "outputs/report.xlsx",
       children: [{ type: "text", value: "report.xlsx" }],
       position: {
         start: { offset: markdown.indexOf(FILE_CITATION) },
@@ -99,6 +99,7 @@ describe.each([
     ["C:\\Users\\test\\[draft]\\report.md", "C:\\Users\\test\\[draft]\\report.md"],
     ["\\\\server\\share\\report.md", "\\\\server\\share\\report.md"],
     ["/tmp/report%5C.md", "/tmp/report%5C.md"],
+    ["~\\reports\\draft.md", "~/reports/draft.md"],
     ["reports/100% #1? draft.md", "./reports/100% #1? draft.md"],
     ["./reports/draft.md", "./reports/draft.md"],
   ])("preserves the literal path and line: %s", (path, linkPath) => {
@@ -177,7 +178,7 @@ describe("directive copy adapter", () => {
         `Created ${FILE_CITATION}.\n\n${ARTIFACT_TEMPLATE}\n\n- ${FOLLOW_UP}`,
       ),
     ).toBe(
-      "Created [report.xlsx](<./outputs/report.xlsx>).\n\nHello World (Document template)\n\n- Prepare print version",
+      "Created [report.xlsx](<outputs/report.xlsx>).\n\nHello World (Document template)\n\n- Prepare print version",
     );
   });
 });
