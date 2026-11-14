@@ -1,0 +1,388 @@
+fragment IssueRow on Issue {
+  number
+  title
+  url
+  state
+  stateReason
+  createdAt
+  updatedAt
+  closedAt
+  author {
+    login
+    avatarUrl
+    ... on User {
+      name
+    }
+  }
+}
+
+query IssueSearch($q: String!, $cursor: String, $rows: Int!) {
+  search(query: $q, type: ISSUE, first: $rows, after: $cursor) {
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
+    nodes {
+      ... on Issue {
+        ...IssueRow
+        assignees(first: 20) {
+          nodes {
+            login
+            name
+            avatarUrl
+          }
+        }
+        labels(first: 20) {
+          nodes {
+            name
+            color
+          }
+        }
+        comments {
+          totalCount
+        }
+      }
+    }
+  }
+}
+
+query IssueDetail($owner: String!, $name: String!, $number: Int!) {
+  viewer {
+    login
+  }
+  repository(owner: $owner, name: $name) {
+    viewerPermission
+    issue(number: $number) {
+      ...IssueRow
+      assignees(first: 100) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          login
+          name
+          avatarUrl
+        }
+      }
+      labels(first: 100) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          name
+          color
+        }
+      }
+      body
+      viewerCanUpdate
+      ...Reactions
+      comments(last: 100) {
+        totalCount
+        pageInfo {
+          hasPreviousPage
+          startCursor
+        }
+        nodes {
+          id
+          author {
+            login
+            avatarUrl
+          }
+          body
+          createdAt
+          url
+          ...Reactions
+        }
+      }
+      closedByPullRequestsReferences(first: 20, includeClosedPrs: true) {
+        nodes {
+          number
+          title
+          url
+          state
+          isDraft
+          repository {
+            nameWithOwner
+          }
+        }
+      }
+      timelineItems(
+        last: 100
+        itemTypes: [
+          CLOSED_EVENT
+          REOPENED_EVENT
+          LABELED_EVENT
+          UNLABELED_EVENT
+          ASSIGNED_EVENT
+          UNASSIGNED_EVENT
+          RENAMED_TITLE_EVENT
+          CROSS_REFERENCED_EVENT
+        ]
+      ) {
+        nodes {
+          __typename
+          ... on ClosedEvent {
+            id
+            createdAt
+            actor {
+              login
+              avatarUrl
+            }
+          }
+          ... on ReopenedEvent {
+            id
+            createdAt
+            actor {
+              login
+              avatarUrl
+            }
+          }
+          ... on LabeledEvent {
+            id
+            createdAt
+            actor {
+              login
+              avatarUrl
+            }
+            label {
+              name
+            }
+          }
+          ... on UnlabeledEvent {
+            id
+            createdAt
+            actor {
+              login
+              avatarUrl
+            }
+            label {
+              name
+            }
+          }
+          ... on AssignedEvent {
+            id
+            createdAt
+            actor {
+              login
+              avatarUrl
+            }
+            assignee {
+              ... on User {
+                login
+                name
+              }
+              ... on Bot {
+                login
+              }
+            }
+          }
+          ... on UnassignedEvent {
+            id
+            createdAt
+            actor {
+              login
+              avatarUrl
+            }
+            assignee {
+              ... on User {
+                login
+                name
+              }
+              ... on Bot {
+                login
+              }
+            }
+          }
+          ... on RenamedTitleEvent {
+            id
+            createdAt
+            actor {
+              login
+              avatarUrl
+            }
+            currentTitle
+          }
+          ... on CrossReferencedEvent {
+            id
+            createdAt
+            actor {
+              login
+              avatarUrl
+            }
+            source {
+              __typename
+              ... on PullRequest {
+                number
+                title
+                url
+                state
+                isDraft
+                repository {
+                  nameWithOwner
+                }
+              }
+              ... on Issue {
+                number
+                repository {
+                  nameWithOwner
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+query IssueComments($owner: String!, $name: String!, $number: Int!, $cursor: String!) {
+  viewer {
+    login
+  }
+  repository(owner: $owner, name: $name) {
+    issue(number: $number) {
+      comments(last: 100, before: $cursor) {
+        pageInfo {
+          hasPreviousPage
+          startCursor
+        }
+        nodes {
+          id
+          author {
+            login
+            avatarUrl
+          }
+          body
+          createdAt
+          url
+          ...Reactions
+        }
+      }
+    }
+  }
+}
+
+query IssueNodeId($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    issue(number: $number) {
+      id
+    }
+  }
+}
+
+query IssueCommentScope($owner: String!, $name: String!, $number: Int!, $commentId: ID!) {
+  repository(owner: $owner, name: $name) {
+    issue(number: $number) {
+      id
+    }
+  }
+  node(id: $commentId) {
+    ... on IssueComment {
+      issue {
+        id
+      }
+    }
+  }
+}
+
+query IssueCandidates($owner: String!, $name: String!) {
+  repository(owner: $owner, name: $name) {
+    labels(first: 100) {
+      pageInfo {
+        hasNextPage
+      }
+      nodes {
+        name
+        color
+        description
+      }
+    }
+    assignableUsers(first: 100) {
+      pageInfo {
+        hasNextPage
+      }
+      nodes {
+        login
+        name
+        avatarUrl
+      }
+    }
+  }
+}
+
+query IssueTemplates($owner: String!, $name: String!) {
+  repository(owner: $owner, name: $name) {
+    templateDirectory: object(expression: "HEAD:.github/ISSUE_TEMPLATE") {
+      ... on Tree {
+        entries {
+          name
+          object {
+            ... on Blob {
+              text
+              isTruncated
+            }
+          }
+        }
+      }
+    }
+    issueTemplates {
+      filename
+      name
+      about
+      title
+      body
+      assignees(first: 25) {
+        nodes {
+          login
+        }
+      }
+      labels(first: 50) {
+        nodes {
+          name
+        }
+      }
+    }
+  }
+}
+
+query IssueViewer {
+  viewer {
+    login
+  }
+}
+
+query IssueCollections(
+  $owner: String!
+  $name: String!
+  $number: Int!
+  $labelsCursor: String
+  $assigneesCursor: String
+) {
+  repository(owner: $owner, name: $name) {
+    issue(number: $number) {
+      labels(first: 100, after: $labelsCursor) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          name
+          color
+        }
+      }
+      assignees(first: 100, after: $assigneesCursor) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          login
+          name
+          avatarUrl
+        }
+      }
+    }
+  }
+}
