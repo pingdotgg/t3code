@@ -31,6 +31,9 @@ const KNOWN_SHARED_DIRECTORIES = [
 
 // auth.lock guards the shadow home's private auth.json.
 const PRIVATE_ENTRY_NAMES = new Set(["auth.json", "auth.lock", "models_cache.json"]);
+// Credential backups and alternate auth files (auth.json.bak, auth-work.json) stay per-home,
+// but unrelated names such as author.json remain shared.
+const AUTH_LIKE_ENTRY_NAME = /^auth(?:$|[._-])/i;
 // Finder maintains metadata separately for each directory, including shadow homes.
 const SHADOW_LOCAL_ENTRY_NAMES = new Set(["log", "memories", "tmp", ".DS_Store"]);
 // Shadow homes may create local runtime locks first; replace them with shared links because they guard shared state.
@@ -329,21 +332,54 @@ const ensureShadowAuthIsPrivate = Effect.fn("CodexHomeLayout.ensureShadowAuthIsP
     readonly effectiveHomePath: string;
   }): Effect.fn.Return<void, CodexShadowHomeError, Path.Path> {
     const path = yield* Path.Path;
-    const entryName = "auth.json";
-    const authPath = path.join(input.effectiveHomePath, entryName);
-    const state = yield* readLinkState({
-      ...input,
-      entryName,
-      linkPath: authPath,
-    });
-    if (state._tag === "Symlink") {
-      return yield* new CodexShadowHomePrivateEntrySymlinkError({
-        sharedHomePath: input.sharedHomePath,
-        effectiveHomePath: input.effectiveHomePath,
-        entryName,
-        path: authPath,
-      });
-    }
+    const shadowEntryNames = yield* input.fileSystem.readDirectory(input.effectiveHomePath).pipe(
+      Effect.catchTags({
+        PlatformError: (cause) =>
+          new CodexShadowHomeFileSystemError({
+            sharedHomePath: input.sharedHomePath,
+            effectiveHomePath: input.effectiveHomePath,
+            operation: "readDirectory",
+            path: input.effectiveHomePath,
+            cause,
+          }),
+      }),
+    );
+    yield* Effect.forEach(
+      shadowEntryNames.filter((entryName) => AUTH_LIKE_ENTRY_NAME.test(entryName)),
+      Effect.fnUntraced(function* (entryName) {
+        const authPath = path.join(input.effectiveHomePath, entryName);
+        const state = yield* readLinkState({
+          ...input,
+          entryName,
+          linkPath: authPath,
+        });
+        if (state._tag !== "Symlink") return;
+        // Older versions linked auth-like backups into shadow homes. A link holds no data,
+        // so drop it; only a linked auth.json means the shadow home has no credentials of its own.
+        if (entryName !== "auth.json") {
+          return yield* input.fileSystem.remove(authPath).pipe(
+            Effect.catchTags({
+              PlatformError: (cause) =>
+                new CodexShadowHomeFileSystemError({
+                  sharedHomePath: input.sharedHomePath,
+                  effectiveHomePath: input.effectiveHomePath,
+                  operation: "remove",
+                  path: authPath,
+                  entryName,
+                  cause,
+                }),
+            }),
+          );
+        }
+        return yield* new CodexShadowHomePrivateEntrySymlinkError({
+          sharedHomePath: input.sharedHomePath,
+          effectiveHomePath: input.effectiveHomePath,
+          entryName,
+          path: authPath,
+        });
+      }),
+      { discard: true },
+    );
   },
 );
 
@@ -402,7 +438,11 @@ export const materializeCodexShadowHome = Effect.fn("materializeCodexShadowHome"
   );
   const entries = new Set<string>(KNOWN_SHARED_DIRECTORIES);
   for (const entryName of sharedEntryNames) {
-    if (!PRIVATE_ENTRY_NAMES.has(entryName) && !SHADOW_LOCAL_ENTRY_NAMES.has(entryName)) {
+    if (
+      !PRIVATE_ENTRY_NAMES.has(entryName) &&
+      !SHADOW_LOCAL_ENTRY_NAMES.has(entryName) &&
+      !AUTH_LIKE_ENTRY_NAME.test(entryName)
+    ) {
       entries.add(entryName);
     }
   }
