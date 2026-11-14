@@ -21,6 +21,13 @@ function Panel({ defaultWidth }: { defaultWidth: number }) {
   );
 }
 
+function dragLeftBy(handle: Element, distance: number) {
+  const init = { bubbles: true, button: 0, pointerId: 1 };
+  handle.dispatchEvent(new PointerEvent("pointerdown", { ...init, clientX: 500 }));
+  handle.dispatchEvent(new PointerEvent("pointermove", { ...init, clientX: 500 - distance }));
+  handle.dispatchEvent(new PointerEvent("pointerup", { ...init, clientX: 500 - distance }));
+}
+
 describe("useResizableWidth", () => {
   it("follows a responsive default until the user saves a width", async () => {
     const previous = localStorage.getItem(STORAGE_KEY);
@@ -81,5 +88,43 @@ describe("useResizableWidth", () => {
       if (previous === null) localStorage.removeItem(STORAGE_KEY);
       else localStorage.setItem(STORAGE_KEY, previous);
     }
+  });
+
+  it("follows a width another tab stores under the same key", async () => {
+    using _storage = { [Symbol.dispose]: () => localStorage.removeItem(STORAGE_KEY) };
+    // This hook only needs browser storage and React; no navigation is involved.
+    await using screen = await render(<Panel defaultWidth={400} />, { router: false });
+    await expect.element(screen.getByText("400")).toBeInTheDocument();
+
+    // Another tab's write reaches this one only as a storage event.
+    await act(() => {
+      localStorage.setItem(STORAGE_KEY, "500");
+      window.dispatchEvent(new StorageEvent("storage", { key: STORAGE_KEY }));
+    });
+    await expect.element(screen.getByText("500")).toBeInTheDocument();
+  });
+
+  it("keeps a width storage rejected for the next drag and a new default", async () => {
+    using _storage = { [Symbol.dispose]: () => localStorage.removeItem(STORAGE_KEY) };
+    // This hook only needs browser storage and React; no navigation is involved.
+    await using screen = await render(<Panel defaultWidth={400} />, { router: false });
+    // Synthetic pointer ids are not active pointers, so the browser would reject capture.
+    using _capture = vi
+      .spyOn(HTMLElement.prototype, "setPointerCapture")
+      .mockImplementation(() => {});
+    using _write = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new DOMException("Storage is full.", "QuotaExceededError");
+    });
+    using _log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const handle = screen.getByRole("separator").element();
+
+    await act(() => dragLeftBy(handle, 100));
+    await expect.element(screen.getByText("500")).toBeInTheDocument();
+
+    await act(() => dragLeftBy(handle, 50));
+    await expect.element(screen.getByText("550")).toBeInTheDocument();
+
+    await screen.rerender(<Panel defaultWidth={200} />);
+    await expect.element(screen.getByText("550")).toBeInTheDocument();
   });
 });
