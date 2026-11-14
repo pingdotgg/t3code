@@ -39,4 +39,14 @@
       WinShell::SetLnkAUMI "$newStartMenuLink" "${APP_ID}"
     ${EndIf}
   !endif
+
+  ; The AppContainer-sandboxed GPU process must read the install dir (electron/electron#51761).
+  ; Not fatal: the app still runs where the GPU sandbox does not need the grant.
+  Push $0
+  nsExec::Exec `"$SYSDIR\icacls.exe" "$INSTDIR" /grant "*S-1-15-2-2:(OI)(CI)(RX)"`
+  Pop $0
+  ${If} $0 != 0
+    DetailPrint "Could not grant sandboxed processes read access to $INSTDIR (icacls exit $0)"
+  ${EndIf}
+  Pop $0
 !macroend
