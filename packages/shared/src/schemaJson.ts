@@ -22,12 +22,10 @@ const decodeJsonString = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknow
 
 const parseLenientJsonGetter = SchemaGetter.transformEffect((input: string) => {
   // Match comments together so URLs stay inside blocks; whitespace keeps adjacent tokens apart.
-  let stripped = input
-    .replace(/^\uFEFF/, "")
-    .replace(
-      /("(?:[^"\\]|\\.)*")|\/\/[^\r\n]*|\/\*[\s\S]*?\*\//g,
-      (match, stringLiteral: string | undefined) => (stringLiteral ? match : " "),
-    );
+  let stripped = input.replace(
+    /("(?:[^"\\]|\\.)*")|\/\/[^\r\n]*|\/\*[\s\S]*?\*\//g,
+    (match, stringLiteral: string | undefined) => (stringLiteral ? match : " "),
+  );
 
   stripped = stripped.replace(
     /("(?:[^"\\]|\\.)*")|,(\s*[}\]])/g,
