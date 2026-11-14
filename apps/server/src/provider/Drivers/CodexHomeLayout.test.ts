@@ -25,33 +25,17 @@ const decodeCodexSettings = (input: {
 }): CodexSettings => decodeCodexSettingsValue(input);
 
 describe("withCodexEnvironmentHome", () => {
-  it("fills blank settings homes from the environment CODEX_HOME", () => {
-    const config = decodeCodexSettings({
-      homePath: "",
-      shadowHomePath: "",
-    });
-
-    expect(withCodexEnvironmentHome(config, "/tmp/env-home").homePath).toBe("/tmp/env-home");
-    expect(withCodexEnvironmentHome(config, "  /tmp/padded  ").homePath).toBe("  /tmp/padded  ");
-  });
-
-  it("keeps instance settings and blank/absent environment homes untouched", () => {
-    const envHome = "/tmp/env-home";
-
-    const withHome = decodeCodexSettings({ homePath: "/tmp/instance-home" });
-    expect(withCodexEnvironmentHome(withHome, envHome)).toStrictEqual(withHome);
-
-    const withShadow = decodeCodexSettings({ shadowHomePath: "/tmp/shadow-home" });
-    expect(withCodexEnvironmentHome(withShadow, envHome)).toStrictEqual(withShadow);
-
-    const blank = decodeCodexSettings({ homePath: "", shadowHomePath: "" });
-    expect(withCodexEnvironmentHome(blank, undefined)).toStrictEqual(blank);
+  it("fills only a blank settings home, keeping the environment value verbatim", () => {
+    const blank = decodeCodexSettings({});
+    expect(withCodexEnvironmentHome(blank, "  /tmp/padded  ").homePath).toBe("  /tmp/padded  ");
     expect(withCodexEnvironmentHome(blank, "   ")).toStrictEqual(blank);
-  });
+    expect(withCodexEnvironmentHome(blank, undefined)).toStrictEqual(blank);
 
-  it("preserves a blank homePath when only the shadow home is blank", () => {
-    const config = decodeCodexSettings({ homePath: "/tmp/instance-home", shadowHomePath: "" });
-    expect(withCodexEnvironmentHome(config, "/tmp/env-home").homePath).toBe("/tmp/instance-home");
+    const shadow = decodeCodexSettings({ shadowHomePath: "/tmp/shadow-home" });
+    expect(withCodexEnvironmentHome(shadow, "/tmp/env-home").homePath).toBe("/tmp/env-home");
+
+    const configured = decodeCodexSettings({ homePath: "/tmp/instance-home" });
+    expect(withCodexEnvironmentHome(configured, "/tmp/env-home")).toStrictEqual(configured);
   });
 });
 

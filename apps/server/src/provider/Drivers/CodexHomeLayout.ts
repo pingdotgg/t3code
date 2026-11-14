@@ -46,22 +46,15 @@ function resolveHomePath(path: Path.Path, home: string, value: string | undefine
   return path.resolve(expanded);
 }
 
-/**
- * CODEX_HOME in the provider environment stands in for blank settings homes. A shadow home is
- * the process's own identity, so it never defers to the environment.
- */
+// CODEX_HOME in the provider environment stands in for a blank settings home; a shadow home
+// overlays it. The raw value is kept: the process receives it verbatim, so "work " is its own home.
 export const withCodexEnvironmentHome = (
   config: CodexSettings,
   environmentHome: string | undefined,
-): CodexSettings => {
-  const blankSettingsHomes =
-    config.homePath.trim().length === 0 && config.shadowHomePath.trim().length === 0;
-  // Assign the raw value: the spawned process receives it verbatim, so a padding-bearing
-  // path is a distinct user home ("work" vs "work "), not whitespace noise to normalize.
-  return blankSettingsHomes && environmentHome !== undefined && environmentHome.trim().length > 0
+): CodexSettings =>
+  config.homePath.trim().length === 0 && environmentHome !== undefined && environmentHome.trim()
     ? { ...config, homePath: environmentHome }
     : config;
-};
 
 export const resolveCodexHomeLayout = Effect.fn("resolveCodexHomeLayout")(function* (
   config: CodexSettings,
