@@ -51,7 +51,7 @@ const run = <A, E>(
     E,
     FileSystem.FileSystem | Path.Path | Scope.Scope | ChildProcessSpawner.ChildProcessSpawner
   >,
-) => effect.pipe(Effect.provide(NodeServices.layer), Effect.scoped);
+) => effect.pipe(Effect.provide(NodeServices.layer));
 
 const writeCookieDatabase = (file: string, count: number) =>
   Effect.sync(() => {
