@@ -124,7 +124,10 @@ export interface ExecuteGitProgress {
 }
 
 export interface CreateWorktreeProgress {
-  /** Git refuses existing paths; claimed paths belong to this call and can be removed on cancel. */
+  /**
+   * Runs uninterruptibly once the worktree exists; from then on the caller owns its cleanup.
+   * For new-branch calls on Git supporting add --reason, cancellation before the claim removes what it made.
+   */
   readonly onWorktreeClaimed?: (path: string) => Effect.Effect<void, never>;
   readonly onCheckoutProgress?: (input: {
     percent: number;
