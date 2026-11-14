@@ -30,3 +30,25 @@ export function resolveThreadFeedSubmissionAnchor<AnchorId>(input: {
 
   return input.queuedMessageCount > 0 ? null : input.submittedMessageId;
 }
+
+const JUMP_LANDING_LIMIT = 6;
+
+/**
+ * Lands on a message until it stops moving. Rows above an unvisited target are
+ * estimates, so the first landing stops well away from it, and measuring the
+ * rows there moves the target while the list holds the visible content still.
+ */
+export async function settleThreadFeedJump(input: {
+  readonly land: () => Promise<void>;
+  readonly position: () => number | undefined;
+  readonly cancelled: () => boolean;
+}): Promise<void> {
+  let previous = input.position();
+  for (let landing = 0; landing < JUMP_LANDING_LIMIT; landing += 1) {
+    await input.land();
+    if (input.cancelled()) return;
+    const next = input.position();
+    if (previous !== undefined && next !== undefined && Math.abs(next - previous) <= 1) return;
+    previous = next;
+  }
+}

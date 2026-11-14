@@ -208,7 +208,10 @@ import {
   messageFoldRunId,
 } from "../../lib/threadActivity";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
-import { type ThreadWorkGroupScrollPosition } from "./thread-feed-scroll-position";
+import {
+  settleThreadFeedJump,
+  type ThreadWorkGroupScrollPosition,
+} from "./thread-feed-scroll-position";
 import {
   collapsedWorkLogHeight,
   ThreadDisclosureChevron,
@@ -294,6 +297,16 @@ const WIDE_MARKDOWN_BLOCK_OPTIONS = {
   includeBlockquotes: Platform.OS === "ios",
   includeOrderedLists: Platform.OS === "android",
 } as const;
+
+function nextFrames(count: number): Promise<void> {
+  return new Promise((resolve) => {
+    const tick = (remaining: number) => {
+      if (remaining === 0) resolve();
+      else requestAnimationFrame(() => tick(remaining - 1));
+    };
+    tick(count);
+  });
+}
 
 const TURN_FOLD_HEIGHT = 42;
 const FEED_PADDING_TOP = 12;
@@ -3433,12 +3446,30 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const jumpIndex = jumpReady
     ? presentedFeed.findIndex((entry) => entry.type === "message" && entry.id === jumpToMessageId)
     : null;
+  const jumpOverriddenRef = useRef(false);
   const landJump = useEffectEvent((index: number) => {
     const list = listRef.current;
     if (!list) return;
     let cancelled = false;
+    jumpOverriddenRef.current = false;
     const positioning =
-      index === -1 ? undefined : list.scrollToIndex({ index, viewPosition: 0.2, animated: false });
+      index === -1
+        ? undefined
+        : settleThreadFeedJump({
+            land: async () => {
+              // A fractional viewPosition scales with the row, so a message taller
+              // than the screen would open past its first lines.
+              await list.scrollToIndex({
+                index,
+                viewPosition: 0,
+                viewOffset: anchorTopInset + CHAT_LIST_ANCHOR_OFFSET,
+                animated: false,
+              });
+              await nextFrames(4);
+            },
+            position: () => list.getState().positionAtIndex(index),
+            cancelled: () => cancelled || jumpOverriddenRef.current,
+          });
     void Promise.resolve(positioning).then(() => {
       if (!cancelled && listRef.current === list) props.onJumpedToMessage?.();
     });
@@ -3881,6 +3912,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             onLayout={handleMetricsChange}
             onItemSizeChanged={handleItemSizeChanged}
             onScroll={handleScroll}
+            onScrollBeginDrag={() => {
+              jumpOverriddenRef.current = true;
+            }}
             scrollEventThrottle={16}
             ListHeaderComponent={
               <>
