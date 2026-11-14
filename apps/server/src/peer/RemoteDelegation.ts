@@ -112,7 +112,7 @@ export class RemoteDelegation extends Context.Service<
      * Stops the task's work there, then completes it here as cancelled: a
      * queued run alone, else its thread. A task that already has its result
      * keeps it; a run that ended unstarted needs no Stop unless promoted into
-     * another run. Started or promoted work stops its thread, including follow-up work.
+     * another run. Started work, or promotion reported by the peer, stops its thread.
      */
     readonly cancel: (
       scope: ThreadScope,
