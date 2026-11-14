@@ -410,7 +410,6 @@ describe("ACP Registry probe", () => {
     }).pipe(
       Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
       Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-      Effect.scoped,
     );
   });
 

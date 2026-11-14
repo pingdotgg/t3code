@@ -451,7 +451,30 @@ export const make = Effect.gen(function* () {
     "VcsStatusBroadcaster.refreshLocalStatus",
   )(function* (rawCwd) {
     const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
-    return yield* refreshLocalStatusCore(cwd);
+    const local = yield* refreshLocalStatusCore(cwd);
+    const cached = yield* getCachedStatus(cwd);
+    // Divergence is local Git data; a slow forge lookup must not delay turn-end updates.
+    if (cached?.remote?.value?.hasUpstream) {
+      const divergence = yield* workflow.upstreamDivergence(cwd);
+      const latest = yield* getCachedStatus(cwd);
+      if (divergence && latest?.remote?.value && latest.remote.branch === divergence.refName) {
+        const value = {
+          ...latest.remote.value,
+          aheadCount: divergence.aheadCount,
+          behindCount: divergence.behindCount,
+        };
+        yield* updateCachedRemoteStatus(
+          cwd,
+          {
+            branch: divergence.refName,
+            value,
+            fingerprint: fingerprintStatusPart(value),
+          },
+          { publish: true },
+        );
+      }
+    }
+    return local;
   });
 
   const readRemoteStatus = Effect.fn("VcsStatusBroadcaster.readRemoteStatus")(function* (
@@ -461,7 +484,18 @@ export const make = Effect.gen(function* () {
     const branch = yield* workflow.currentBranch(cwd);
     // GitManager's remote TTL cache is keyed by cwd, not the checked-out branch.
     yield* workflow.invalidateRemoteStatus(cwd);
-    const value = yield* workflow.remoteStatus({ cwd }, options);
+    const previousRemote = (yield* getCachedStatus(cwd))?.remote;
+    const remote = yield* workflow.remoteStatus({ cwd }, options);
+    const latest = yield* getCachedStatus(cwd);
+    // An overlapping turn refresh and fetch can both move divergence during the forge lookup.
+    const refreshed =
+      remote?.hasUpstream && latest?.remote !== previousRemote && latest?.remote?.branch === branch
+        ? yield* workflow.upstreamDivergence(cwd)
+        : null;
+    const value =
+      remote && refreshed?.refName === branch
+        ? { ...remote, aheadCount: refreshed.aheadCount, behindCount: refreshed.behindCount }
+        : remote;
     const currentBranch = yield* workflow.currentBranch(cwd);
     const cached = yield* getCachedStatus(cwd);
     if (branch !== currentBranch || cached?.local?.value.refName !== currentBranch) {
@@ -765,6 +799,57 @@ export const make = Effect.gen(function* () {
     }
   });
 
+  // A request made during a refresh needs a read that starts after it, so overlapping requests
+  // share one follow-up. Keyed by raw cwd because auto-pull policy depends on it.
+  // Missing means idle; null means running with no follow-up queued.
+  type SharedRefresh = Deferred.Deferred<VcsStatusResult, GitManagerServiceError>;
+  const queuedRefreshesRef = yield* Ref.make(new Map<string, SharedRefresh | null>());
+
+  const runQueuedRefreshes = Effect.fn("VcsStatusBroadcaster.runQueuedRefreshes")(function* (
+    rawCwd: string,
+    first: SharedRefresh,
+  ) {
+    let next: SharedRefresh | null = first;
+    while (next !== null) {
+      yield* Deferred.into(refreshStatus(rawCwd), next);
+      next = yield* Ref.modify(queuedRefreshesRef, (queued) => {
+        const followUp = queued.get(rawCwd) ?? null;
+        const nextQueued = new Map(queued);
+        if (followUp === null) {
+          nextQueued.delete(rawCwd);
+        } else {
+          nextQueued.set(rawCwd, null);
+        }
+        return [followUp, nextQueued] as const;
+      });
+    }
+  });
+
+  const shareQueuedRefreshStatus: VcsStatusBroadcaster["Service"]["refreshStatus"] = Effect.fn(
+    "VcsStatusBroadcaster.shareQueuedRefreshStatus",
+  )(function* (rawCwd, options) {
+    if (options?.localOnly) return yield* refreshStatus(rawCwd, options);
+    const requested = yield* Deferred.make<VcsStatusResult, GitManagerServiceError>();
+    // Registering and forking together keeps an interrupt from leaving an entry with no worker.
+    const shared = yield* Effect.uninterruptible(
+      Effect.gen(function* () {
+        const followUp = yield* Ref.modify(
+          queuedRefreshesRef,
+          (queued): readonly [SharedRefresh | undefined, Map<string, SharedRefresh | null>] => {
+            if (!queued.has(rawCwd)) return [undefined, new Map(queued).set(rawCwd, null)];
+            const followUp = queued.get(rawCwd) ?? requested;
+            return [followUp, new Map(queued).set(rawCwd, followUp)];
+          },
+        );
+        if (followUp !== undefined) return followUp;
+        // The broadcaster scope owns the work, so one caller's interrupt does not cancel it for the rest.
+        yield* runQueuedRefreshes(rawCwd, requested).pipe(Effect.forkIn(broadcasterScope));
+        return requested;
+      }),
+    );
+    return yield* Deferred.await(shared);
+  });
+
   // Serialize branch publication and cache invalidation with detailed reads and refreshes.
   const refreshBranchStatusCore = Effect.fn("VcsStatusBroadcaster.refreshBranchStatusCore")(
     (cwd: string) =>
@@ -994,7 +1079,7 @@ export const make = Effect.gen(function* () {
     ),
     getStatus,
     refreshLocalStatus,
-    refreshStatus,
+    refreshStatus: shareQueuedRefreshStatus,
     refreshPullRequestStatus,
     streamStatus,
   });
