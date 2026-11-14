@@ -196,7 +196,6 @@ import {
   resolveSidebarReorderableThreadKeys,
   searchSidebarThreads,
   shouldCreateNewThreadInCurrentProject,
-  shouldNavigateAfterThreadPark,
   sidebarListItemId,
   sidebarThreadKeyAtY,
   sortInboxThreadsByReturn,
@@ -1595,7 +1594,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       currentIndex === -1
         ? null
         : ([...orderedKeys.slice(currentIndex + 1), ...orderedKeys.slice(0, currentIndex)].find(
-            (key) => !settledKeys.has(key) && !snoozedKeys.has(key) && !coParkingKeys?.has(key),
+            (key) =>
+              !settledKeys.has(key) &&
+              !snoozedKeys.has(key) &&
+              !settlingThreadKeysRef.current.has(key) &&
+              !snoozingThreadKeysRef.current.has(key) &&
+              !coParkingKeys?.has(key),
           ) ?? null);
     const nextThread = nextCardKey ? threadByKeyRef.current.get(nextCardKey) : null;
     return nextThread
@@ -1614,31 +1618,19 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       if (settlingThreadKeysRef.current.has(threadKey)) return;
       settlingThreadKeysRef.current.add(threadKey);
       const navigateAfterSettle = planForwardNavigation(threadKey, opts.coSettlingKeys);
-      const result = await settleThread(threadRef);
+      const settling = settleThread(threadRef);
+      navigateAfterSettle?.();
+      const result = await settling;
       settlingThreadKeysRef.current.delete(threadKey);
-      if (result._tag === "Failure") {
-        if (!isAtomCommandInterrupted(result)) {
-          const error = squashAtomCommandFailure(result);
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Failed to settle thread",
-              description: error instanceof Error ? error.message : "An error occurred.",
-            }),
-          );
-        }
-        return;
-      }
-      if (
-        shouldNavigateAfterThreadPark({
-          threadKey,
-          currentThreadKey: readRouteThreadKey(router),
-          action: "settle",
-          now: new Date().toISOString(),
-          thread: readThreadShell(threadRef),
-        })
-      ) {
-        navigateAfterSettle?.();
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to settle thread",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
       }
     })();
   };
@@ -2171,20 +2163,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         case "settle": {
           settlingThreadKeysRef.current.add(activeKey);
           const navigateAfterSettle = planForwardNavigation(activeKey);
-          const settled = await run(settleThread(threadRef), "Failed to settle thread").finally(
-            () => settlingThreadKeysRef.current.delete(activeKey),
+          const settling = settleThread(threadRef);
+          navigateAfterSettle?.();
+          await run(settling, "Failed to settle thread").finally(() =>
+            settlingThreadKeysRef.current.delete(activeKey),
           );
-          if (
-            settled &&
-            shouldNavigateAfterThreadPark({
-              threadKey: activeKey,
-              currentThreadKey: readRouteThreadKey(router),
-              action: "settle",
-              now: new Date().toISOString(),
-              thread: readThreadShell(threadRef),
-            })
-          )
-            navigateAfterSettle?.();
           return;
         }
         case "move-active":
@@ -2239,23 +2222,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     }
     snoozingThreadKeysRef.current.add(threadKey);
     const navigateAfterSnooze = planForwardNavigation(threadKey, opts.coSnoozingKeys);
-    const result = await snoozeThread(threadRef, preset.snoozedUntil);
+    const snoozing = snoozeThread(threadRef, preset.snoozedUntil);
+    navigateAfterSnooze?.();
+    const result = await snoozing;
     snoozingThreadKeysRef.current.delete(threadKey);
     if (result._tag === "Failure") {
       return isAtomCommandInterrupted(result)
         ? ({ status: "interrupted" } as const)
         : ({ status: "failure", error: squashAtomCommandFailure(result) } as const);
-    }
-    if (
-      shouldNavigateAfterThreadPark({
-        threadKey,
-        currentThreadKey: readRouteThreadKey(router),
-        action: "snooze",
-        now: new Date().toISOString(),
-        thread: readThreadShell(threadRef),
-      })
-    ) {
-      navigateAfterSnooze?.();
     }
     return { status: "success" } as const;
   };
