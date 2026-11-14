@@ -38,7 +38,7 @@ export function readWindowsGenericCredential(
     retType: DataType.I32,
     paramsType: [DataType.WString, DataType.U32, DataType.U32, DataType.U8Array],
     paramsValue: [target, CRED_TYPE_GENERIC, 0, out],
-    errno: true,
+    errno: true as const,
   });
   if (read.value === 0) {
     if (read.errnoCode === ERROR_NOT_FOUND) return undefined;
