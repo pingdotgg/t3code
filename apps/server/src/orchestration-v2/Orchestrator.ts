@@ -93,6 +93,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
@@ -1425,6 +1426,7 @@ function sessionsReleasedByFreshContext(
 }
 
 const FRESH_CONTEXT_DETACH_REASON = "Started a fresh session.";
+const VISIT_RESPONSE_WAIT = "500 millis";
 
 function uniqueSessions(
   sessions: ReadonlyArray<OrchestrationV2ProviderSession>,
@@ -1530,6 +1532,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const threadForkService = yield* ThreadForkServiceV2;
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   const messageIntake = yield* KeyedLock.make<ThreadId>();
+  const layerScope = yield* Effect.scope;
   // Read once: the policy is fixed for the server's life, and dispatch takes it as an input.
   const { managedPolicy } = serverSettings;
   const runtimeModeCeiling: RuntimeModeCeiling | undefined =
@@ -15440,6 +15443,36 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       : dispatch;
   });
 
+  // A visit only moves a read watermark, so its request must not wait while an agent write
+  // holds the SQLite writer. It keeps its place under the thread lock and commits later.
+  const dispatchVisit = Effect.fnUntraced(function* (
+    command: Extract<OrchestrationV2ServerCommand, { readonly type: "thread.visit" }>,
+  ) {
+    const visit = yield* dispatchWithReceipt(command).pipe(Effect.forkIn(layerScope));
+    const settled = yield* Fiber.join(visit).pipe(Effect.timeoutOption(VISIT_RESPONSE_WAIT));
+    if (Option.isSome(settled)) return settled.value;
+    yield* Fiber.await(visit).pipe(
+      Effect.flatMap((exit) =>
+        Exit.isFailure(exit)
+          ? Effect.logWarning("A thread visit failed after its request returned", {
+              threadId: command.threadId,
+              commandId: command.commandId,
+              cause: exit.cause,
+            })
+          : Effect.void,
+      ),
+      Effect.forkIn(layerScope),
+    );
+    // Not committed yet; clients ignore a visit's sequence.
+    return { sequence: 0, storedEvents: [] } satisfies OrchestratorV2DispatchResult;
+  });
+
+  const dispatchCommand = Effect.fnUntraced(function* (command: OrchestrationV2ServerCommand) {
+    return yield* command.type === "thread.visit"
+      ? dispatchVisit(command)
+      : dispatchWithReceipt(command);
+  });
+
   const handleRunUpdate = Effect.fn("Orchestrator.handleRunUpdate")(
     function* (stored: OrchestrationV2StoredEvent) {
       if (stored.event.type !== "run.updated") return;
@@ -15897,7 +15930,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     awaitRestartContinuation: Effect.fn("OrchestratorV2.awaitRestartContinuation")(function (run) {
       return effectOutbox.awaitSettled(`effect:restart-continuation:${run.id}`).pipe(Effect.ignore);
     }),
-    dispatch: dispatchWithReceipt,
+    dispatch: dispatchCommand,
     autoArmLimitRecovery: Effect.fn("OrchestratorV2.autoArmLimitRecovery")(function (input) {
       return threadDispatch.withLock(
         input.threadId,
