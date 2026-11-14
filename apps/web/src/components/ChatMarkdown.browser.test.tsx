@@ -712,6 +712,53 @@ describe("ChatMarkdown copy", () => {
     selection.addRange(range);
     expect(chatMarkdownClipboardPayload(selection)?.text).toBe("items[0]*_");
   });
+
+  it.each([
+    {
+      source: "10. First\n11. Second\n12. Third\n\nAfter.",
+      from: "Second",
+      text: "11. Second\n12. Third\n\nAfter.",
+    },
+    {
+      source: "1. A\n2. B\n7. C\n8. D\n\nAfter.",
+      from: "D",
+      userMessage: true,
+      text: "8. D\n\nAfter.",
+    },
+    {
+      source: "1. Outer\n2. Next\n   1. Inner\n   2. Deeper\n\nAfter.",
+      from: "Deeper",
+      text: "2. 2. Deeper\n\nAfter.",
+    },
+  ])(
+    "keeps the shown numbers when a copy starts at $from and ends past the list",
+    async ({ source, from, userMessage, text }) => {
+      setup();
+      await using screen = await renderText(
+        source,
+        userMessage ? { extraRemarkPlugins: SOURCE_NUMBER_PLUGINS } : {},
+      );
+      const start = [...screen.container.querySelectorAll("li")]
+        .flatMap((item) => [...item.childNodes])
+        .find((node) => node.nodeType === Node.TEXT_NODE && node.textContent === from)!;
+      const after = [...screen.container.querySelectorAll("p")].at(-1)!.firstChild!;
+      const range = document.createRange();
+      range.setStart(start, 0);
+      range.setEnd(after, after.textContent!.length);
+      const selection = window.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+      const payload = chatMarkdownClipboardPayload(selection);
+      expect(payload?.text).toBe(text);
+      // Rich paste numbers its list from the same start.
+      expect(
+        new DOMParser()
+          .parseFromString(payload!.html, "text/html")
+          .querySelector("li")
+          ?.closest("ol")?.start,
+      ).toBe(Number(text.split(".")[0]));
+    },
+  );
 });
 
 describe("ChatMarkdown file chip tooltips", () => {
