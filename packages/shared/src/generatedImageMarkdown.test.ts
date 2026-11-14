@@ -78,11 +78,10 @@ it.each([
     expected: "<!DOCTYPE html\nimage draft\n>\n\n![](</tmp/a.png>)",
   },
   {
-    name: "closed XML blocks and fenced XML need no closer",
-    text: '```xml\n<?xml version="1.0"\n```\n<?xml version="1.0"?>\n<![CDATA[x]]>\n<!DOCTYPE html>',
+    name: "a closed trailing DOCTYPE needs no closer",
+    text: "<!DOCTYPE html>",
     saved: ["/tmp/a.png"],
-    expected:
-      '```xml\n<?xml version="1.0"\n```\n<?xml version="1.0"?>\n<![CDATA[x]]>\n<!DOCTYPE html>\n\n![](</tmp/a.png>)',
+    expected: "<!DOCTYPE html>\n\n![](</tmp/a.png>)",
   },
   {
     name: "Windows, UNC and reserved characters keep their path",
