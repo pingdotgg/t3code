@@ -292,7 +292,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     const target = logicalProjectEnvironments.find(
       (env) => env.environmentId === nextEnvironmentId,
     );
-    if (!target) return;
+    if (!target || target.unavailableReason !== undefined) return;
     const request = { environmentId: target.environmentId, scope: environmentChangeScope };
     environmentChangeRef.current = request;
     setBusyEnvironmentChange(null);

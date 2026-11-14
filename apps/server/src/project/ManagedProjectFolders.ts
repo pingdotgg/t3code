@@ -112,6 +112,8 @@ export class ManagedProjectFolders extends Context.Service<
   ManagedProjectFolders,
   {
     readonly scratchRoot: Effect.Effect<Option.Option<string>>;
+    /** Why threads without a project are off, when they are. */
+    readonly scratchUnavailableReason: Effect.Effect<Option.Option<string>>;
     readonly ensureScratchProject: Effect.Effect<{ readonly projectId: ProjectId }, ScratchError>;
     readonly isScratchProject: (projectId: ProjectId) => Effect.Effect<boolean>;
     readonly folderForThread: (input: {
@@ -298,6 +300,9 @@ const make = Effect.gen(function* () {
         ? scratchProjectRoot(probed.success).pipe(Effect.asSome)
         : Effect.succeedNone,
     ),
+  );
+  const scratchUnavailableReason = scratchProbe.pipe(
+    Effect.map((result) => Option.map(Result.getFailure(result), (error) => error.message)),
   );
 
   const makeScratchFolder = (folder: string) =>
@@ -510,6 +515,7 @@ const make = Effect.gen(function* () {
 
   return ManagedProjectFolders.of({
     scratchRoot,
+    scratchUnavailableReason,
     ensureScratchProject,
     isScratchProject,
     folderForThread,

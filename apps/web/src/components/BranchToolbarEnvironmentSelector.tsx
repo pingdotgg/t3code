@@ -35,6 +35,22 @@ const AUTO_VALUE = "action:auto";
 const ADD_MACHINE_VALUE = "action:add-machine";
 const environmentValue = (id: EnvironmentId) => `env:${id}`;
 
+export function EnvironmentOptionLabel({ env }: { env: EnvironmentOption }) {
+  return (
+    <span className="flex min-w-0 flex-col">
+      <span className="flex min-w-0 items-center gap-1.5">
+        <EnvironmentMachineIcon kind={env.machine} className="size-3" />
+        <span className="min-w-0 truncate">{env.label}</span>
+      </span>
+      {env.unavailableReason === undefined ? null : (
+        <span className="max-w-72 whitespace-normal text-muted-foreground text-xs">
+          {env.unavailableReason}
+        </span>
+      )}
+    </span>
+  );
+}
+
 export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvironmentSelector({
   autoEnvironmentLabel,
   onAutoEnvironment,
@@ -150,12 +166,12 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
             <SelectItem
               key={env.environmentId}
               value={environmentValue(env.environmentId)}
-              disabled={onEnvironmentChange === undefined && env.environmentId !== environmentId}
+              disabled={
+                env.unavailableReason !== undefined ||
+                (onEnvironmentChange === undefined && env.environmentId !== environmentId)
+              }
             >
-              <span className="inline-flex items-center gap-1.5">
-                <EnvironmentMachineIcon kind={env.machine} className="size-3" />
-                {env.label}
-              </span>
+              <EnvironmentOptionLabel env={env} />
             </SelectItem>
           ))}
           {onAddToMachine ? (

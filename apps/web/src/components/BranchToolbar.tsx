@@ -36,7 +36,10 @@ import {
   BranchToolbarBranchSelector,
   type BranchToolbarBranchSelectorHandle,
 } from "./BranchToolbarBranchSelector";
-import { BranchToolbarEnvironmentSelector } from "./BranchToolbarEnvironmentSelector";
+import {
+  BranchToolbarEnvironmentSelector,
+  EnvironmentOptionLabel,
+} from "./BranchToolbarEnvironmentSelector";
 import { openAddProjectToMachine } from "./AddProjectToMachineDialog";
 import { type AddProjectTarget, useAddProjectTargets } from "../hooks/useAddProjectTargets";
 import { BranchToolbarEnvModeSelector } from "./BranchToolbarEnvModeSelector";
@@ -344,15 +347,14 @@ const RunContextSelector = memo(function RunContextSelector({
                   <MenuRadioItem
                     key={env.environmentId}
                     disabled={
-                      envLocked || (!onEnvironmentChange && env.environmentId !== environmentId)
+                      envLocked ||
+                      env.unavailableReason !== undefined ||
+                      (!onEnvironmentChange && env.environmentId !== environmentId)
                     }
                     value={env.environmentId}
                     closeOnClick
                   >
-                    <span className="flex min-w-0 items-center gap-1.5">
-                      <EnvironmentMachineIcon kind={env.machine} className="size-3" />
-                      <span className="min-w-0 truncate">{env.label}</span>
-                    </span>
+                    <EnvironmentOptionLabel env={env} />
                   </MenuRadioItem>
                 ))}
               </MenuRadioGroup>
