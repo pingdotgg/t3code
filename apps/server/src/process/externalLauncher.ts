@@ -752,6 +752,7 @@ const GRAPHICAL_SESSION_ENV_KEYS: ReadonlySet<string> = new Set([
   "DISPLAY",
   "WAYLAND_DISPLAY",
   "XAUTHORITY",
+  "XDG_SESSION_TYPE",
 ]);
 
 // The user manager's environment over D-Bus. `systemctl show-environment` would
