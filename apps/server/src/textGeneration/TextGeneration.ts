@@ -83,7 +83,8 @@ interface ShortPromptInput {
 // A prompt of a few words names itself; a model call would only add latency and cost.
 const shortPromptText = ({ message, attachments }: ShortPromptInput) => {
   const text = message.trim();
-  if (text.length === 0 || (attachments?.length ?? 0) > 0 || text.includes("://")) return undefined;
+  if (text.length === 0 || (attachments?.length ?? 0) > 0 || /:\/\/|\n/.test(text))
+    return undefined;
   return text.split(/\s+/).length <= 4 ? text : undefined;
 };
 

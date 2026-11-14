@@ -732,6 +732,7 @@ it.effect("names a short prompt from its own text without calling a provider", (
     yield* service.generateThreadTitle({ ...base, message: "Fix the login bug today" });
     yield* service.generateThreadTitle({ ...base, message: "hi", instructions: "Use French." });
     yield* service.generateThreadTitle({ ...base, message: "https://example.com/pr/1" });
+    yield* service.generateThreadTitle({ ...base, message: "Fix\nlogin bug" });
     yield* service.generateBranchName({
       ...base,
       message: "Fix login bug",
@@ -739,6 +740,7 @@ it.effect("names a short prompt from its own text without calling a provider", (
     });
     yield* service.generateBranchName({ ...base, message: "你好", naming });
     expect(calls).toEqual([
+      "generateThreadTitle",
       "generateThreadTitle",
       "generateThreadTitle",
       "generateThreadTitle",

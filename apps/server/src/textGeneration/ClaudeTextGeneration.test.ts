@@ -122,7 +122,7 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
             },
           }),
           argsMustContain: `--model ${SYNTHETIC_CLAUDE_CAPABLE_MODEL}[expanded] --effort max --settings {"disableAllHooks":true,"fastMode":true}`,
-          argsMustNotContain: "--setting-sources",
+          argsMustNotContain: "--system-prompt",
           claudeConfig: { customModels: [SYNTHETIC_CLAUDE_COLLIDING_ALIAS] },
         },
         (textGeneration) =>
@@ -152,7 +152,7 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
   );
 
   it.effect(
-    "generates thread titles outside the project without tools, skills, hooks, or project settings",
+    "generates thread titles outside the project with tools, skills, and hooks disabled",
     () =>
       withFakeClaudeEnv(
         {
@@ -164,7 +164,7 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
           }),
           cwdMustNotBe: process.cwd(),
           stdinMustContain: "/call-script",
-          argsMustContain: "--setting-sources user",
+          argsMustContain: "--system-prompt You write short titles",
         },
         (textGeneration) =>
           Effect.gen(function* () {
