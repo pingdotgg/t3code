@@ -458,6 +458,59 @@ describe("V2 environment commands", () => {
     }).pipe(Effect.provide(layerTestRandom)),
   );
 
+  it.effect("fails a first-message launch the host never answers without cancelling it", () =>
+    Effect.gen(function* () {
+      const supervisor = yield* makeSupervisor({ commands: [], projects: [] });
+      const healthySession = Option.getOrThrow(yield* SubscriptionRef.get(supervisor.session));
+      let interrupted = false;
+      const silentClient = {
+        ...healthySession.client,
+        [ORCHESTRATION_V2_WS_METHODS.launchThread]: () =>
+          Effect.never.pipe(Effect.onInterrupt(() => Effect.sync(() => (interrupted = true)))),
+      } as unknown as WsRpcProtocolClient;
+      yield* SubscriptionRef.set(
+        supervisor.session,
+        Option.some({ ...healthySession, client: silentClient }),
+      );
+
+      const sendFiber = yield* startThreadTurn({
+        commandId: CommandId.make("command-launch-unanswered"),
+        threadId: v2ThreadId,
+        message: {
+          messageId: MessageId.make("message-launch-unanswered"),
+          role: "user",
+          text: "hello",
+          attachments: [],
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        bootstrap: {
+          createThread: {
+            projectId: ProjectId.make("project-1"),
+            title: "Thread",
+            modelSelection: v2Projection.thread.modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt: "2026-06-20T00:00:00.000Z",
+          },
+        },
+      }).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.flip,
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust("119 seconds");
+      expect(sendFiber.pollUnsafe()).toBeUndefined();
+      yield* TestClock.adjust("1 second");
+
+      expect((yield* Fiber.join(sendFiber))._tag).toBe("ThreadLaunchUnansweredError");
+      // The server commits a launch in several steps, so the late request keeps running.
+      expect(interrupted).toBe(false);
+    }).pipe(Effect.provide(layerTestRandom)),
+  );
+
   it.effect("holds a lost message through reconnect backoff until disconnect", () =>
     Effect.gen(function* () {
       const commands: OrchestrationV2Command[] = [];

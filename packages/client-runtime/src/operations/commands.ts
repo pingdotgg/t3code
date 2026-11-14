@@ -34,13 +34,16 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import {
   EnvironmentRpcUnavailableError,
+  type EnvironmentRpcInput,
   getInitialServerConfig,
   isRpcClientError,
   request,
@@ -346,6 +349,38 @@ const dispatchMessage = Effect.fn("EnvironmentCommands.dispatchMessage")(functio
     );
     if (Option.isNone(replacement)) return yield* exit;
   }
+});
+
+export class ThreadLaunchUnansweredError extends Schema.TaggedError<ThreadLaunchUnansweredError>()(
+  "ThreadLaunchUnansweredError",
+  { message: Schema.String },
+) {}
+
+// Interrupting a launch would cancel the server handler mid-launch, so the deadline bounds only
+// the wait and the launch keeps running; the server may still create the thread.
+const THREAD_LAUNCH_TIMEOUT = "2 minutes";
+
+const launchThread = Effect.fn("EnvironmentCommands.launchThread")(function* (
+  input: EnvironmentRpcInput<typeof ORCHESTRATION_V2_WS_METHODS.launchThread>,
+) {
+  const answer = yield* Effect.forkDetach(
+    request(ORCHESTRATION_V2_WS_METHODS.launchThread, input),
+    {
+      startImmediately: true,
+    },
+  );
+  return yield* Fiber.join(answer).pipe(
+    Effect.timeoutOrElse({
+      duration: THREAD_LAUNCH_TIMEOUT,
+      orElse: () =>
+        Effect.fail(
+          new ThreadLaunchUnansweredError({
+            message:
+              "The server did not confirm this message. It may still arrive; check the thread before sending it again.",
+          }),
+        ),
+    }),
+  );
 });
 
 const getProjection = (threadId: ThreadId) =>
@@ -780,7 +815,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
                 ? {}
                 : { branch: bootstrap.branch }),
             };
-    return yield* request(ORCHESTRATION_V2_WS_METHODS.launchThread, {
+    return yield* launchThread({
       commandId,
       creationSource: input.creationSource ?? "web",
       threadId: input.threadId,

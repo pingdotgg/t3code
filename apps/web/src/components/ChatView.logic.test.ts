@@ -61,6 +61,10 @@ import {
   deriveLockedProvider,
   hasServerAcknowledgedLocalDispatch,
   waitForRevertedMessage,
+  composerDraftContentUnchanged,
+  queueComposerSubmitBehind,
+  resolveQueuedComposerSubmit,
+  settleQueuedComposerSubmit,
 } from "./ChatView.logic";
 
 const environmentId = EnvironmentId.make("environment-local");
@@ -1126,6 +1130,127 @@ describe("snapshotComposerSend", () => {
     expect(snapshot.messageText).toContain(`t3-context://v1/response/${replyTo.contextId}`);
     expect(snapshot.draftText).toBe("why there?");
     expect(snapshot.replyTo).toBe(replyTo);
+  });
+});
+
+describe("composerDraftContentUnchanged", () => {
+  const image = {
+    id: "img-1",
+    type: "image" as const,
+    name: "shot.png",
+    mimeType: "image/png",
+    sizeBytes: 1,
+    previewUrl: "blob:one",
+    file: new File([], "shot.png"),
+  };
+  const submitted = {
+    prompt: "and then the tests",
+    images: [image],
+    files: [],
+    nonPersistedImageIds: [],
+    persistedAttachments: [],
+    terminalContexts: [],
+    previewAnnotations: [],
+    reviewComments: [],
+    threadContexts: [],
+    environmentContexts: [],
+    replyTo: null,
+    modelSelectionByProvider: {},
+    activeProvider: null,
+    runtimeMode: null,
+    interactionMode: null,
+  };
+
+  it("ignores attachment bookkeeping and model changes the user did not make to the message", () => {
+    expect(
+      composerDraftContentUnchanged(submitted, {
+        ...submitted,
+        images: [{ ...image, previewUrl: "blob:two" }],
+        persistedAttachments: [{ ...image, dataUrl: "data:" }],
+        activeProvider: ProviderInstanceId.make("codex"),
+      }),
+    ).toBe(true);
+  });
+
+  it("treats an edited prompt, attachment set, or cleared draft as a different message", () => {
+    expect(composerDraftContentUnchanged(submitted, { ...submitted, prompt: "and then" })).toBe(
+      false,
+    );
+    expect(composerDraftContentUnchanged(submitted, { ...submitted, images: [] })).toBe(false);
+    expect(composerDraftContentUnchanged(submitted, { ...submitted, terminalContexts: [] })).toBe(
+      false,
+    );
+    expect(composerDraftContentUnchanged(submitted, null)).toBe(false);
+  });
+});
+
+describe("settleQueuedComposerSubmit", () => {
+  it("only lets the send it waits behind, on its own thread, release or cancel it", () => {
+    // A started on thread A (generation 1); the user moved to B, started B (generation 2), and
+    // pressed Enter again while B was sending.
+    const waiting = { routeThreadKey: "thread-b", afterSend: 2, ready: false };
+    const settle = (sendRouteThreadKey: string, sendGeneration: number | null, started: boolean) =>
+      settleQueuedComposerSubmit({ waiting, sendRouteThreadKey, sendGeneration, started });
+    expect(settle("thread-a", 1, true)).toBe("unrelated");
+    expect(settle("thread-b", null, false)).toBe("unrelated");
+    expect(settle("thread-b", 2, false)).toBe("cancel");
+    expect(settle("thread-b", 2, true)).toBe("ready");
+  });
+});
+
+describe("queueComposerSubmitBehind", () => {
+  it("waits behind the send running on its own thread, not the one started last", () => {
+    expect(
+      queueComposerSubmitBehind({
+        routeThreadKey: "thread-x",
+        sendInFlight: true,
+        runningSends: new Map([
+          ["thread-x", 1],
+          ["thread-y", 2],
+        ]),
+        queued: null,
+      }),
+    ).toEqual({ afterSend: 1, ready: false });
+  });
+
+  it("lets a new Enter send once no send on this thread can settle the queued one", () => {
+    const stale = { afterSend: 2, ready: false };
+    expect(
+      queueComposerSubmitBehind({
+        routeThreadKey: "thread-x",
+        sendInFlight: false,
+        runningSends: new Map(),
+        queued: stale,
+      }),
+    ).toBeNull();
+    expect(
+      queueComposerSubmitBehind({
+        routeThreadKey: "thread-x",
+        sendInFlight: true,
+        runningSends: new Map([["thread-y", 2]]),
+        queued: stale,
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("resolveQueuedComposerSubmit", () => {
+  it("sends only the unedited message on its own thread, and never as an answer", () => {
+    const ready = {
+      ready: true,
+      leftThread: false,
+      sendBlocked: false,
+      pendingRequest: false,
+      draftUnchanged: true,
+    };
+    expect(resolveQueuedComposerSubmit(ready)).toBe("send");
+    expect(resolveQueuedComposerSubmit({ ...ready, sendBlocked: true })).toBe("wait");
+    expect(resolveQueuedComposerSubmit({ ...ready, pendingRequest: true })).toBe("cancel");
+    expect(resolveQueuedComposerSubmit({ ...ready, ready: false, pendingRequest: true })).toBe(
+      "cancel",
+    );
+    expect(resolveQueuedComposerSubmit({ ...ready, draftUnchanged: false })).toBe("cancel");
+    expect(resolveQueuedComposerSubmit({ ...ready, ready: false, leftThread: true })).toBe("drop");
   });
 });
 
