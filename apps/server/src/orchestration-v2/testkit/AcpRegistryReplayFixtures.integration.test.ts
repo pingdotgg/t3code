@@ -31,6 +31,8 @@ describe("ACP registry replay fixtures", () => {
   it.effect.each([
     { name: "open", firstTurn: false, code: -32602 },
     { name: "switch", firstTurn: true, code: -32602 },
+    // glm-acp-agent refuses a text-only model for a session holding native images this way.
+    { name: "switch_internal", firstTurn: true, code: -32603 },
     { name: "authentication", firstTurn: false, code: -32000 },
   ])("preserves the ACP model-write $name failure through orchestration", (testCase) =>
     Effect.gen(function* () {
@@ -99,7 +101,12 @@ describe("ACP registry replay fixtures", () => {
               method: "session/set_config_option",
               error: {
                 code: testCase.code,
-                message: testCase.code === -32602 ? "Invalid provider" : "Authentication required",
+                message:
+                  testCase.code === -32000
+                    ? "Authentication required"
+                    : testCase.code === -32603
+                      ? "This session retains native images that the selected model cannot accept."
+                      : "Invalid provider",
               },
             },
           },
@@ -182,7 +189,7 @@ describe("ACP registry replay fixtures", () => {
         const errors = projection.turnItems.filter((item) => item.type === "error");
         assert.lengthOf(errors, 1);
         assert.equal(errors[0]?.failure.class, "provider_error");
-        if (testCase.code === -32602) {
+        if (testCase.code !== -32000) {
           assert.equal(
             errors[0]?.failure.message,
             'The agent did not accept the model "replay-model-b". Choose another model for this provider, then retry.',
