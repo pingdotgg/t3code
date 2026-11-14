@@ -2,7 +2,7 @@
 // The T3 server's own replay fixtures (`apps/server/src/orchestration-v2/testkit`) through
 // this engine and our providers, judged by T3's own assertions.
 //
-//   CONN_MONOREPO=/path/to/conn node crates/conn-engine/tools/t3-fixture-replay/check.mjs [--keep] [--only <fixture>/<driver>]
+//   CONN_MONOREPO=/path/to/conn node crates/conn-engine/tools/t3-fixture-replay/check.mjs [--keep] [--only <fixture>/<driver> | --only '*/<driver>']
 //
 // How: one temporary vitest file in that testkit folder registers T3's fixture tests
 // (`itRunsReplayFixtures`, one per fixture and driver) and runs each with T3's own
@@ -224,6 +224,13 @@ vi.mock("./ProviderReplayHarness.ts", async (importOriginal) => {
       fs.mkdirSync(path.join(dir, "home"), { recursive: true });
       fs.mkdirSync(path.join(dir, "state"), { recursive: true });
       const provider = standIn(harness.driver, dir, scenario.transcript, scenario.runtimePolicyOverride?.cwd);
+      // T3's makeProviderReplayGate: the labels the steps release. The stand-in waits at them.
+      const gateLabels = (scenario.steps ?? []).flatMap((step: any) =>
+        step.type === "release_replay_gate" || step.type === "release_replay_gate_after_waiting" ? [step.label] : [],
+      );
+      const gateDir = path.join(dir, "gates");
+      fs.mkdirSync(gateDir, { recursive: true });
+      fs.writeFileSync(path.join(gateDir, "labels.json"), JSON.stringify(gateLabels));
       const create = scenario.commands.find((c: any) => c.type === "thread.create");
       const out = path.join(dir, "result.json");
       const plan = {
@@ -236,6 +243,7 @@ vi.mock("./ProviderReplayHarness.ts", async (importOriginal) => {
         runtimePolicyOverride: scenario.runtimePolicyOverride ?? {},
         steps: ourIds(scenario.steps ?? scenario.commands.map((command: any) => ({ type: "dispatch", command, await: true }))),
         projectionThreadIds: scenario.projectionThreadIds ?? [],
+        replayGates: { dir: gateDir, labels: gateLabels },
         out,
       };
       fs.writeFileSync(path.join(dir, "plan.json"), JSON.stringify(plan, null, 2));
@@ -300,7 +308,7 @@ fs.writeFileSync(
 describe("conn engine: T3 replay fixtures", () => {
   for (const driver of drivers) {
     itRunsReplayFixtures(driver, (input: any) => {
-      if (CONFIG.only !== null && CONFIG.only !== input.fixtureName + "/" + driver) {
+      if (CONFIG.only !== null && CONFIG.only !== input.fixtureName + "/" + driver && CONFIG.only !== "*/" + driver) {
         return Effect.void;
       }
       // Each driver as its own T3 test file runs it.
@@ -395,7 +403,7 @@ const byDriver = new Map();
 let open = 0;
 const lines = [];
 for (const variant of variants) {
-  if (only !== null && variant !== only) continue;
+  if (only !== null && variant !== only && only !== `*/${variant.split("/").at(-1)}`) continue;
   const driver = variant.split("/").at(-1);
   const counts = byDriver.get(driver) ?? { passed: 0, total: 0 };
   counts.total += 1;

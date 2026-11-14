@@ -10,8 +10,14 @@
 //! model is called. The result file holds every stored event (the log is never pruned), each
 //! thread's projection, the shell snapshot and the snapshots the steps captured.
 //!
-//! A step this driver cannot run (the replay gate, a held run) ends the run with an error
-//! that names it; the check then reports the fixture as failed for that reason.
+//! The replay gate (T3's `makeProviderReplayGate`): the plan's `replayGates` names a folder and
+//! the gated transcript labels. The stand-in writes `reached-<index>` when it stops before a
+//! gated frame and goes on once `released-<index>` exists; `release_replay_gate` and
+//! `release_replay_gate_after_waiting` write that file as T3's scenario runner releases the gate.
+//! Today only the fake SDK host of the Claude replay reads the folder.
+//!
+//! A step this driver cannot run (a held run) ends the run with an error that names it; the
+//! check then reports the fixture as failed for that reason.
 
 #![expect(
     clippy::print_stderr,
@@ -111,6 +117,53 @@ struct Run {
     background: HashMap<String, JoinHandle<Result<(), Failure>>>,
     anonymous: usize,
     captured: Map<String, Value>,
+    gates: Gates,
+}
+
+/// The replay gate's folder and labels (`replayGates` in the plan).
+#[derive(Default)]
+struct Gates {
+    dir: Option<PathBuf>,
+    labels: Vec<String>,
+}
+
+impl Gates {
+    fn from_plan(plan: &Value) -> Self {
+        let gates = &plan["replayGates"];
+        Self {
+            dir: gates["dir"].as_str().map(PathBuf::from),
+            labels: gates["labels"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|l| l.as_str().map(str::to_owned))
+                .collect(),
+        }
+    }
+
+    fn marker(&self, label: &str, kind: &str) -> Option<PathBuf> {
+        let index = self.labels.iter().position(|l| l == label)?;
+        Some(self.dir.as_ref()?.join(format!("{kind}-{index}")))
+    }
+
+    fn reached(&self, label: &str) -> bool {
+        self.marker(label, "reached").is_some_and(|p| p.exists())
+    }
+
+    /// `ProviderReplayGate.release`.
+    fn release(&self, label: &str) -> Result<(), Failure> {
+        let Some(path) = self.marker(label, "released") else {
+            return Err(format!("release_replay_gate:{label}:not_configured"));
+        };
+        std::fs::write(&path, b"").map_err(|e| format!("{}: {e}", path.display()))
+    }
+
+    /// `releaseAll`, as T3's harness does when the scenario ends.
+    fn release_all(&self) {
+        for label in &self.labels {
+            let _ = self.release(label);
+        }
+    }
 }
 
 const ACTIVE: [&str; 5] = ["preparing", "queued", "starting", "running", "waiting"];
@@ -347,6 +400,63 @@ impl Run {
                 }
                 Self::dispatch(&self.engine, &command).await
             }
+            // `releaseReplayGate`: wait until the stand-in reached the label, then release it.
+            "release_replay_gate" => {
+                let label = text(step, "label")?;
+                let deadline = tokio::time::Instant::now() + WAIT;
+                while !self.gates.reached(label) {
+                    if tokio::time::Instant::now() >= deadline {
+                        return Err(format!("release_replay_gate:{label}:not_configured"));
+                    }
+                    tokio::time::sleep(POLL).await;
+                }
+                self.gates.release(label)
+            }
+            // `releaseReplayGateAfterWaiting`: release once the gate is reached, the run
+            // completed and its provider thread lists background work; then wait until the
+            // provider thread lists none.
+            "release_replay_gate_after_waiting" => {
+                let label = text(step, "label")?;
+                let tid = thread()?.to_owned();
+                let rid = run_id()?.to_owned();
+                let deadline = tokio::time::Instant::now() + WAIT;
+                let provider_thread_id = loop {
+                    let projection = self.projection(&tid).await?;
+                    let run = rows(&projection, "runs").find(|r| r["id"] == rid.as_str());
+                    let provider_thread = run.and_then(|run| {
+                        rows(&projection, "providerThreads")
+                            .find(|t| t["id"] == run["providerThreadId"])
+                    });
+                    let pending = provider_thread
+                        .and_then(|t| t["pendingBackgroundTasks"].as_array())
+                        .map_or(0, Vec::len);
+                    let reached = self.gates.reached(label);
+                    if reached
+                        && run.is_some_and(|r| r["status"] == "completed")
+                        && pending > 0
+                        && let Some(id) = provider_thread.and_then(|t| t["id"].as_str())
+                    {
+                        break id.to_owned();
+                    }
+                    if tokio::time::Instant::now() >= deadline {
+                        self.gates.release(label)?;
+                        return Err(format!(
+                            "release_replay_gate_after_waiting:{label}:reached={reached}:run={}:pending={pending}",
+                            run.map_or("missing".into(), |r| r["status"].to_string())
+                        ));
+                    }
+                    tokio::time::sleep(POLL).await;
+                };
+                self.gates.release(label)?;
+                self.wait_for(&tid, &format!("await_provider_background_tasks_cleared:{tid}"), |p| {
+                    rows(p, "providerThreads")
+                        .find(|t| t["id"] == provider_thread_id.as_str())
+                        .and_then(|t| t["pendingBackgroundTasks"].as_array())
+                        .is_none_or(Vec::is_empty)
+                })
+                .await
+                .map(|_| ())
+            }
             other => Err(format!("{other}: not run by this replay driver")),
         }
     }
@@ -413,6 +523,7 @@ async fn replay(plan: &Value) -> Result<Value, Value> {
         background: HashMap::new(),
         anonymous: 0,
         captured: Map::new(),
+        gates: Gates::from_plan(plan),
     };
     let steps = field(plan, "steps").map_err(Value::String)?.clone();
     let mut failure = None;
@@ -439,6 +550,8 @@ async fn replay(plan: &Value) -> Result<Value, Value> {
             .map(|o| Value::Object(o.clone()))
             .unwrap_or_default();
     }
+    // T3 releases every gate when the scenario's layer closes, after the result was read.
+    run.gates.release_all();
     engine.shutdown().await;
     match (failure, result) {
         (None, Ok(result)) => Ok(result),
