@@ -1827,8 +1827,8 @@ it.effect("cancels a slow submodule checkout without reporting best-effort succe
     const spawner = ChildProcessSpawner.make((command) => {
       if (
         ChildProcess.isStandardCommand(command) &&
-        command.args[0] === "submodule" &&
-        command.args[1] === "update"
+        command.args.includes("submodule") &&
+        command.args.includes("update")
       ) {
         return Effect.acquireRelease(
           Effect.succeed(
@@ -5739,6 +5739,71 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }),
     );
 
+    it.effect.each([false, true])(
+      "checks out submodules in a new worktree with borrowing failure %s",
+      (failBorrowing) =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const pathService = yield* Path.Path;
+
+          const submoduleRepo = yield* makeTmpDir("git-submodule-");
+          yield* initRepoWithCommit(submoduleRepo);
+          yield* writeTextFile(submoduleRepo, "SHARED.md", "# shared\n");
+          yield* git(submoduleRepo, ["add", "."]);
+          yield* git(submoduleRepo, ["commit", "-m", "shared"]);
+
+          const cwd = yield* makeTmpDir();
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          yield* git(cwd, ["submodule", "add", submoduleRepo, "shared"]);
+          yield* git(cwd, ["commit", "-m", "add submodule"]);
+          // The remote still advertises its refs but can no longer serve objects, so the
+          // worktree can only populate the submodule from the source's `.git/modules`.
+          const remoteObjects = pathService.join(submoduleRepo, ".git", "objects");
+          if (!failBorrowing) {
+            yield* fileSystem.remove(remoteObjects, { recursive: true });
+            yield* fileSystem.makeDirectory(pathService.join(remoteObjects, "pack"), {
+              recursive: true,
+            });
+          }
+
+          const worktreePath = pathService.join(
+            yield* makeTmpDir("git-worktrees-"),
+            "submodule-worktree",
+          );
+          const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+          let borrowingFailed = false;
+          const spawner = ChildProcessSpawner.make((command) => {
+            if (
+              failBorrowing &&
+              ChildProcess.isStandardCommand(command) &&
+              command.args.includes("--dissociate")
+            ) {
+              borrowingFailed = true;
+              return Effect.succeed(makeFailedHandle("error: unknown option 'dissociate'"));
+            }
+            return delegate.spawn(command);
+          });
+          const driver = yield* makeGitVcsDriverCore().pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          );
+          yield* driver.createWorktree({
+            cwd,
+            path: worktreePath,
+            refName: initialBranch,
+            newRefName: "feature/submodules",
+          });
+
+          assert.equal(
+            yield* fileSystem.exists(pathService.join(worktreePath, "shared", "SHARED.md")),
+            true,
+          );
+          assert.equal(borrowingFailed, failBorrowing);
+          // The borrowed objects were copied, so the worktree survives the source losing them.
+          yield* fileSystem.remove(pathService.join(cwd, ".git", "modules"), { recursive: true });
+          yield* git(pathService.join(worktreePath, "shared"), ["fsck", "--no-progress"]);
+        }).pipe(withGitFileProtocol),
+    );
+
     it.effect.each([
       ["recursive", false],
       ["recursive", true],
@@ -5772,8 +5837,8 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           Effect.gen(function* () {
             if (
               ChildProcess.isStandardCommand(command) &&
-              command.args[0] === "submodule" &&
-              command.args[1] === "update"
+              command.args.includes("submodule") &&
+              command.args.includes("update")
             ) {
               yield* Deferred.succeed(updateStarted, undefined);
               yield* Deferred.await(releaseUpdate);
