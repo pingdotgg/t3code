@@ -51,7 +51,6 @@ interface UpdateEverythingDialogProps {
   readonly title?: string;
   readonly confirmLabel?: string;
   readonly notes?: ReadonlyArray<string>;
-  /** Release notes within the modal remain reachable to assistive technologies. */
   readonly releaseNotes?: ReactNode;
   /** Shown in place of running-thread counts; disables the confirm button. */
   readonly disabledReason?: string | null;
@@ -155,7 +154,7 @@ function UpdateEverythingDialogContent({
       <ScrollArea scrollFade>
         <div className="flex flex-col gap-3 px-6 pb-4">
           {releaseNotes ? (
-            <section aria-label="Nightly release notes" className="min-w-0 rounded-md border p-3">
+            <section aria-label="Release notes" className="min-w-0 rounded-md border p-3">
               {releaseNotes}
             </section>
           ) : null}
