@@ -291,6 +291,7 @@ export class ProviderSessionManagerV2 extends Context.Service<
 >()("t3/orchestration-v2/ProviderSessionManager/ProviderSessionManagerV2") {}
 
 interface LiveSessionEntry {
+  readonly instanceRevision: unknown;
   readonly attachedThreadIds: ReadonlySet<ThreadId>;
   readonly loadedProviderThreadKeyByThread: ReadonlyMap<ThreadId, string>;
   /** null marks an unknown catalog; undefined means MCP refresh is not configured. */
@@ -2187,47 +2188,72 @@ export const layerWithOptions = (
         ) {
           return;
         }
-        const providerSessionId = entry.runtime.providerSessionId;
-        // Any activity during these reads bumps the generation and keeps the runtime.
-        const generation = entry.idleGeneration;
-        const hasPendingWork =
-          entry.runtime.hasPendingBackgroundWork === undefined
-            ? false
-            : yield* entry.runtime.hasPendingBackgroundWork.pipe(
-                Effect.catchCause(() => Effect.succeed(true)),
-              );
-        if (hasPendingWork) return;
-        // Checked under the request permit so a runless request mid-persist is not cancelled.
-        const hasUnfinishedRecords = Effect.forEach(entry.attachedThreadIds, (threadId) =>
-          projectionStore.getThreadRecords(threadId, ["runtimeRequests", "providerThreads"], {
-            runtimeRequestStatuses: ["pending"],
-          }),
-        ).pipe(
-          Effect.map((projections) =>
-            projections.some(
-              (projection) =>
-                projection.runtimeRequests.some(
-                  (request) =>
-                    request.responseCapability.type === "live" &&
-                    request.responseCapability.providerSessionId === providerSessionId,
-                ) ||
-                projection.providerThreads.some(
-                  (providerThread) =>
-                    providerThread.providerSessionId === providerSessionId &&
-                    (providerThread.pendingBackgroundTasks ?? []).length > 0,
-                ),
-            ),
-          ),
-          Effect.orElseSucceed(() => true),
+        yield* releaseIdleForReopen(
+          entry,
+          "Linked environments changed; reopening the provider session.",
         );
-        yield* releaseEntry({
-          providerSessionId,
-          reason: "idle_timeout",
-          detail: "Linked environments changed; reopening the provider session.",
-          onlyIfIdleGeneration: generation,
-          keepIf: hasUnfinishedRecords,
-        }).pipe(logReleaseFailure(providerSessionId));
       });
+
+      const readInstanceRevision = (instanceId: ProviderInstanceId) =>
+        registry.revision === undefined ? Effect.undefined : registry.revision(instanceId);
+
+      // A session opened before its instance was rebuilt would keep the old settings.
+      const releaseForRebuiltInstance = Effect.fn(
+        "ProviderSessionManager.releaseForRebuiltInstance",
+      )(function* (entry: LiveSessionEntry) {
+        if (entry.runtime.canResumeAfterRestart === false || entry.busyTurns.size > 0) return;
+        const current = yield* readInstanceRevision(entry.runtime.instanceId);
+        if (current === undefined || current === entry.instanceRevision) return;
+        yield* releaseIdleForReopen(
+          entry,
+          "Provider instance settings changed; reopening the provider session.",
+        );
+      });
+
+      const releaseIdleForReopen = Effect.fn("ProviderSessionManager.releaseIdleForReopen")(
+        function* (entry: LiveSessionEntry, detail: string) {
+          const providerSessionId = entry.runtime.providerSessionId;
+          // Any activity during these reads bumps the generation and keeps the runtime.
+          const generation = entry.idleGeneration;
+          const hasPendingWork =
+            entry.runtime.hasPendingBackgroundWork === undefined
+              ? false
+              : yield* entry.runtime.hasPendingBackgroundWork.pipe(
+                  Effect.catchCause(() => Effect.succeed(true)),
+                );
+          if (hasPendingWork) return;
+          // Checked under the request permit so a runless request mid-persist is not cancelled.
+          const hasUnfinishedRecords = Effect.forEach(entry.attachedThreadIds, (threadId) =>
+            projectionStore.getThreadRecords(threadId, ["runtimeRequests", "providerThreads"], {
+              runtimeRequestStatuses: ["pending"],
+            }),
+          ).pipe(
+            Effect.map((projections) =>
+              projections.some(
+                (projection) =>
+                  projection.runtimeRequests.some(
+                    (request) =>
+                      request.responseCapability.type === "live" &&
+                      request.responseCapability.providerSessionId === providerSessionId,
+                  ) ||
+                  projection.providerThreads.some(
+                    (providerThread) =>
+                      providerThread.providerSessionId === providerSessionId &&
+                      (providerThread.pendingBackgroundTasks ?? []).length > 0,
+                  ),
+              ),
+            ),
+            Effect.orElseSucceed(() => true),
+          );
+          yield* releaseEntry({
+            providerSessionId,
+            reason: "idle_timeout",
+            detail,
+            onlyIfIdleGeneration: generation,
+            keepIf: hasUnfinishedRecords,
+          }).pipe(logReleaseFailure(providerSessionId));
+        },
+      );
 
       const observeActivity = (
         providerSessionId: ProviderSessionId,
@@ -2961,6 +2987,8 @@ export const layerWithOptions = (
               const key = sessionKey(input.providerSessionId);
               const live = (yield* Ref.get(sessions)).get(key);
               if (live !== undefined) yield* releaseForLinkedEnvironments(live);
+              const unchanged = (yield* Ref.get(sessions)).get(key);
+              if (unchanged !== undefined) yield* releaseForRebuiltInstance(unchanged);
               const existing = (yield* Ref.get(sessions)).get(key);
               if (existing !== undefined) {
                 const attached = existing.attachedThreadIds.has(input.threadId);
@@ -2981,6 +3009,8 @@ export const layerWithOptions = (
                 return existing.exposedRuntime;
               }
 
+              // Before get: a rebuild in between costs one extra reopen, not a missed one.
+              const instanceRevision = yield* readInstanceRevision(input.modelSelection.instanceId);
               const adapter = yield* registry.get(input.modelSelection.instanceId).pipe(
                 Effect.mapError(
                   (cause) =>
@@ -3065,6 +3095,7 @@ export const layerWithOptions = (
               >(new Map());
               const exposedRuntime = decorateRuntime(runtime, eventSubscribers);
               const entry: LiveSessionEntry = {
+                instanceRevision,
                 attachedThreadIds: new Set([input.threadId]),
                 loadedProviderThreadKeyByThread: new Map(),
                 openedWithLinkedEnvironments,

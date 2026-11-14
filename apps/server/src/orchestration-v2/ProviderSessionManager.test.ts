@@ -31,6 +31,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
@@ -62,6 +63,7 @@ import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as CommandOutputHub from "./CommandOutputHub.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import {
   makeProviderFailure,
   makeProviderRetryTurnItem,
@@ -651,6 +653,12 @@ function layerTest(input: {
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
   readonly installationGateLayer?: Layer.Layer<ProviderInstallationGate.ProviderInstallationGate>;
+  /** Serves the adapter through an instance registry that a settings save can rebuild. */
+  readonly instanceRebuild?: {
+    readonly rebuiltState: Ref.Ref<TestProviderRuntimeState>;
+    readonly rebuilt: Ref.Ref<boolean>;
+    readonly changes: PubSub.PubSub<void>;
+  };
 }) {
   const layerConfiguredEventSink =
     input.flakyReleaseWrites !== undefined
@@ -698,7 +706,47 @@ function layerTest(input: {
       ...(input.scopeCloseReached === undefined
         ? {}
         : { scopeCloseReached: input.scopeCloseReached }),
-    }).pipe(Effect.map(ProviderAdapterRegistry.layerSingle)),
+    }).pipe(
+      Effect.flatMap((adapter) => {
+        const rebuild = input.instanceRebuild;
+        if (rebuild === undefined)
+          return Effect.succeed(ProviderAdapterRegistry.layerSingle(adapter));
+        return makeProviderAdapter(rebuild.rebuiltState).pipe(
+          Effect.map((rebuiltAdapter) => {
+            const instanceFor = (rebuilt: boolean): ProviderInstance => ({
+              instanceId: modelSelection.instanceId,
+              driverKind: CODEX_DRIVER,
+              continuationIdentity: {
+                driverKind: CODEX_DRIVER,
+                continuationKey: `codex:test:${modelSelection.instanceId}`,
+              },
+              displayName: "Codex",
+              enabled: true,
+              snapshot: {} as ProviderInstance["snapshot"],
+              orchestrationAdapter: rebuilt ? rebuiltAdapter : adapter,
+              textGeneration: {} as ProviderInstance["textGeneration"],
+            });
+            const current = Ref.get(rebuild.rebuilt).pipe(Effect.map(instanceFor));
+            return ProviderAdapterRegistry.layerFromProviderInstanceRegistry.pipe(
+              Layer.provideMerge(
+                Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
+                  getInstance: (instanceId) =>
+                    instanceId === modelSelection.instanceId ? current : Effect.undefined,
+                  listInstances: current.pipe(Effect.map((instance) => [instance])),
+                  listUnavailable: Effect.succeed([]),
+                  get streamChanges() {
+                    return Stream.fromPubSub(rebuild.changes);
+                  },
+                  get subscribeChanges() {
+                    return PubSub.subscribe(rebuild.changes);
+                  },
+                }),
+              ),
+            );
+          }),
+        );
+      }),
+    ),
   );
   const layerConfiguredMcpRegistry =
     input.pauseResolve === undefined
@@ -1142,6 +1190,52 @@ it.effect("ProviderSessionManagerV2 closes every live session for a provider ins
       ),
     );
   }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 starts the next turn on an instance rebuilt by a settings save",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const rebuiltState = yield* Ref.make(emptyState);
+      const rebuilt = yield* Ref.make(false);
+      const changes = yield* PubSub.unbounded<void>();
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-provider-session-manager-instance-rebuild");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const openInput = { threadId, providerSessionId, modelSelection, runtimePolicy };
+        const before = yield* manager.open(openInput);
+
+        // What ProviderInstanceRegistry does when the instance's settings change.
+        yield* Ref.set(rebuilt, true);
+        yield* PubSub.publish(changes, undefined);
+
+        const after = yield* manager.open(openInput);
+        assert.notStrictEqual(after, before);
+        assert.equal((yield* Ref.get(rebuiltState)).openCount, 1);
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            instanceRebuild: { rebuiltState, rebuilt, changes },
+          }),
+        ),
+      );
+    }),
 );
 
 it.effect("ProviderSessionManagerV2 opens provider sessions inside the installation gate", () =>
