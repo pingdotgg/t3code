@@ -1,3 +1,8 @@
+import type { Root, RootContent } from "mdast";
+import remarkGfm from "remark-gfm";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
+
 import { sourceControlClients, type ReferenceAutolink } from "./sourceControlClients.ts";
 
 /** `id` is positional on purpose: the same attachment can be embedded twice in one body. */
@@ -6,7 +11,10 @@ export type PullRequestBodySegment =
       readonly id: string;
       readonly kind: "markdown";
       readonly text: string;
-      /** Where `text` starts in the body, so an edit made to it can be written back. */
+      /**
+       * `sourceOffset + i` is where `text[i]` sits in the body, so an edit can be written back.
+       * Holds past the body's reference definitions, which `text` may lead with.
+       */
       readonly sourceOffset: number;
     }
   | {
@@ -162,8 +170,64 @@ function mediaTableAt(
   return { end, rows: hasMedia ? rows : null };
 }
 
+const definitionParser = unified().use(remarkParse).use(remarkGfm);
+
+/**
+ * The first definition of each label in the body, as authored, each joined onto one line so it
+ * stands outside the quote or list it was written in.
+ */
+function referenceDefinitions(body: string): string[] {
+  const definitions = new Map<string, string>();
+  const visit = (node: Root | RootContent, quotes: number) => {
+    if (node.type === "definition" && !definitions.has(node.identifier)) {
+      const wrap = new RegExp(`(?:\\r\\n|\\r|\\n)(?:[ \\t]*>){0,${quotes}}[ \\t]*`, "gu");
+      const source = body.slice(node.position?.start.offset, node.position?.end.offset);
+      definitions.set(node.identifier, source.replace(wrap, " "));
+    }
+    if (!("children" in node)) return;
+    for (const child of node.children) visit(child, quotes + (node.type === "blockquote" ? 1 : 0));
+  };
+  visit(definitionParser.parse(body), 0);
+  return [...definitions.values()];
+}
+
+/**
+ * Each markdown segment renders as its own document, so it leads with the body's definitions.
+ * Leading, they win over a later redefinition in the segment, as the first one does in the body.
+ */
+function withDefinitions(
+  segment: PullRequestBodySegment,
+  definitions: string,
+): PullRequestBodySegment {
+  if (segment.kind === "attachment") return segment;
+  if (segment.kind === "table") {
+    return {
+      ...segment,
+      rows: segment.rows.map((cells) =>
+        cells.map((cell) => ({
+          ...cell,
+          segments: cell.segments.map((inner) => withDefinitions(inner, definitions)),
+        })),
+      ),
+    };
+  }
+  if (!segment.text.includes("[")) return segment;
+  return {
+    ...segment,
+    text: definitions + segment.text,
+    sourceOffset: segment.sourceOffset - definitions.length,
+  };
+}
+
 export function splitPullRequestBody(body: string): ReadonlyArray<PullRequestBodySegment> {
-  return splitBodyAt(body, 0);
+  const segments = splitBodyAt(body, 0);
+  // One markdown segment is the whole body, which resolves its own references.
+  const whole = segments.length === 1 && segments[0]!.kind === "markdown";
+  if (whole || !body.includes("]:")) return segments;
+  const definitions = referenceDefinitions(body);
+  if (definitions.length === 0) return segments;
+  const leading = `${definitions.join("\n")}\n\n`;
+  return segments.map((segment) => withDefinitions(segment, leading));
 }
 
 /** `baseOffset` is where `body` starts in the whole body, so a table cell's edits write back. */

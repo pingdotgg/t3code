@@ -1,8 +1,8 @@
 import { Toolbar } from "./Toolbar";
 import { AppActivityIndicator } from "./AppActivityIndicator";
 import type { HeaderBarButtonMailSearchToolbarItem, SearchBarCommands } from "react-native-screens";
-import { NavigationContext } from "@react-navigation/native";
-import { use, useId, useLayoutEffect, useRef } from "react";
+import { NavigationContext, NavigationRouteContext } from "@react-navigation/native";
+import { use, useId, useLayoutEffect, useRef, useSyncExternalStore } from "react";
 import { View } from "react-native";
 import { createNativeHeaderMenu } from "./nativeHeaderMenu.ios";
 import { ScreenHeaderButton } from "./ScreenHeaderButton";
@@ -63,6 +63,17 @@ export function AppBar(props: AppBarProps) {
       ? { ...props.backInSplitView, onPress: splitBackPress }
       : null;
   const navigation = use(NavigationContext);
+  const route = use(NavigationRouteContext);
+  // A thread opened from another thread sits on it, not beside the list, so it keeps Back.
+  const threadBelow = useSyncExternalStore(
+    (onChange) => navigation?.addListener("state", onChange) ?? (() => {}),
+    () => {
+      const routes = navigation?.getState()?.routes;
+      const index = routes?.findIndex((candidate) => candidate.key === route?.key) ?? -1;
+      return route?.name === "Thread" && index > 0 && routes?.[index - 1]?.name === "Thread";
+    },
+  );
+  const listBeside = layout.usesSplitView && props.onBackToList !== undefined && !threadBelow;
   const rootBack =
     !layout.usesSplitView && props.onBackToList && navigation?.canGoBack() === false
       ? props.onBackToList
@@ -113,7 +124,7 @@ export function AppBar(props: AppBarProps) {
           headerBackVisible:
             props.onClose === undefined &&
             splitBack === null &&
-            !(layout.usesSplitView && props.onBackToList) &&
+            !listBeside &&
             !(props.guardBack && props.onBack),
           ...(props.guardBack ? { gestureEnabled: false } : undefined),
           title: props.title,

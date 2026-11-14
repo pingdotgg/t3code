@@ -1254,6 +1254,7 @@ it.effect("keeps delegated child pull-request links independent of the parent", 
       creationSource: "mcp",
     });
     const updatedParent = yield* projections.getThreadProjection(parentThreadId);
+    assert.deepEqual(updatedParent.subagents[0]!.modelSelection, modelSelection);
     const childThreadId = updatedParent.subagents[0]!.childThreadId!;
     const child = yield* projections.getThreadProjection(childThreadId);
     assert.isNull(child.thread.linkedPullRequest);
