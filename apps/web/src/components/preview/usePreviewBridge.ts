@@ -54,6 +54,7 @@ export function usePreviewBridge(input: {
 
   const lastReportedUrl = useRef<string | null>(null);
   const lastReportedKind = useRef<DesktopPreviewTabState["navStatus"]["kind"] | null>(null);
+  const lastReportedTitle = useRef<string | null>(null);
   const lastDesktopNavStatus = useRef<DesktopPreviewTabState["navStatus"] | null>(null);
   const captureActivity = useRef<ReturnType<typeof createCaptureActivity> | null>(null);
   const handleStateChange = useEffectEvent(
@@ -74,10 +75,12 @@ export function usePreviewBridge(input: {
         state,
         lastReportedUrl: lastReportedUrl.current,
         lastReportedKind: lastReportedKind.current,
+        lastReportedTitle: lastReportedTitle.current,
       });
       if (!reported || serverDriven) return;
       lastReportedUrl.current = reported.lastReportedUrl;
       lastReportedKind.current = reported.lastReportedKind;
+      lastReportedTitle.current = reported.lastReportedTitle;
       void reportStatus({
         environmentId: stableThreadRef.environmentId,
         input: reported.input,
@@ -89,6 +92,7 @@ export function usePreviewBridge(input: {
     if (!previewBridge || typeof window === "undefined") return;
     lastReportedUrl.current = null;
     lastReportedKind.current = null;
+    lastReportedTitle.current = null;
     lastDesktopNavStatus.current = null;
     const activity = createCaptureActivity(runtimeTabId);
     captureActivity.current = activity;
@@ -134,25 +138,28 @@ export function projectDesktopState(state: DesktopPreviewTabState): DesktopPrevi
   };
 }
 
-function buildReportInput(args: {
+export function buildReportInput(args: {
   readonly threadId: ThreadId;
   readonly tabId: string;
   readonly state: DesktopPreviewTabState;
   readonly lastReportedUrl: string | null;
   readonly lastReportedKind: DesktopPreviewTabState["navStatus"]["kind"] | null;
+  readonly lastReportedTitle: string | null;
 }): {
   readonly input: PreviewReportStatusInput;
   readonly lastReportedUrl: string;
   readonly lastReportedKind: DesktopPreviewTabState["navStatus"]["kind"];
+  readonly lastReportedTitle: string;
 } | null {
-  const { threadId, tabId, state, lastReportedUrl, lastReportedKind } = args;
+  const { threadId, tabId, state, lastReportedUrl, lastReportedKind, lastReportedTitle } = args;
   const status = state.navStatus;
   if (status.kind === "Idle") return null;
 
   const sameAsLast =
     status.kind !== "LoadFailed" &&
     status.kind === lastReportedKind &&
-    status.url === lastReportedUrl;
+    status.url === lastReportedUrl &&
+    status.title === lastReportedTitle;
   if (sameAsLast) return null;
 
   const base = {
@@ -175,6 +182,7 @@ function buildReportInput(args: {
       },
       lastReportedUrl: status.url,
       lastReportedKind: "LoadFailed",
+      lastReportedTitle: status.title,
     };
   }
   return {
@@ -184,5 +192,6 @@ function buildReportInput(args: {
     },
     lastReportedUrl: status.url,
     lastReportedKind: status.kind,
+    lastReportedTitle: status.title,
   };
 }
