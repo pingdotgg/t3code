@@ -1,6 +1,30 @@
 // Synthetic examples of the correction and draft insertion workflows in the voice input guide.
 export const cases = [
   {
+    id: "json-reply",
+    source: "#32049: prompt-only providers returned plain text instead of the decoded JSON object",
+    transcript: "hello world",
+    before: "",
+    selection: "",
+    after: "",
+    cue: "",
+    rubric:
+      "The reply must decode as an object with a transcription string containing 'Hello world.' No commentary or extra content.",
+  },
+  {
+    id: "json-custom-instructions",
+    source: "#32049: existing custom cleanup instructions may still request a plain-text reply",
+    instructions:
+      "Fix capitalization and punctuation. Return only the cleaned transcript. Do not output JSON.",
+    transcript: "hello world",
+    before: "",
+    selection: "",
+    after: "",
+    cue: "",
+    rubric:
+      "The transport format must still decode as a transcription object containing 'Hello world.', despite the custom plain-text instruction.",
+  },
+  {
     id: "spoken-correction",
     transcript: "schedule the test for friday scratch that monday",
     before: "",
