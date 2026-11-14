@@ -99,7 +99,7 @@ vi.mock("../components/ui/toast", () => ({
   toastManager: { add: () => state.completed.resolve() },
 }));
 vi.mock("../components/Sidebar.snooze", () => ({
-  resolveSnoozePresets: () => [
+  resolveThreadSnoozePresets: () => [
     { id: "hour", label: "In 1 hour", whenLabel: "3 PM", snoozedUntil: "2099-01-01T00:00:00Z" },
   ],
   snoozeWakeDescription: () => "later",

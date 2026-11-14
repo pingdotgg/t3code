@@ -1,12 +1,15 @@
 import { useState } from "react";
+import { PullRequestSnoozeTrigger } from "@t3tools/contracts";
 import {
   DEFAULT_SNOOZE_PRESETS,
+  DEFAULT_SNOOZE_PULL_REQUEST_PRESETS,
   MAX_SNOOZE_PRESET_MINUTES,
   MAX_SNOOZE_PRESETS,
   SnoozePresetDay,
   type SnoozePresetSetting,
 } from "@t3tools/contracts/settings";
 import {
+  PULL_REQUEST_SNOOZE_LABELS,
   resolveSnoozePreset,
   resolveSnoozePresets,
   snoozePresetId,
@@ -217,6 +220,96 @@ export function SnoozePresetsRow() {
         onAdd={() => save([...presets, nextCandidate(presets)], [...keys, ...freshKeys(1)])}
         onSettle={() => setRows((current) => sortSnoozeRows(current.presets, current.keys, now))}
       />
+    </SettingsRow>
+  );
+}
+
+/** Edits which pull request snoozes the menu offers. Rows keep the canonical order. */
+export function SnoozePullRequestPresetsRow() {
+  const updateSettings = useUpdateScopedSettings();
+  const saved = useScopedSettings((settings) => settings.snoozePullRequestPresets);
+  const mixed = useScopedSettingsMixed(["snoozePullRequestPresets"]);
+  // Same draft as the time presets: a second click before the first save echoes builds on it.
+  const [draft, setDraft] = useState(saved);
+  const [savedSource, setSavedSource] = useState<typeof saved | null>(saved);
+  const [written, setWritten] = useState<ReadonlyArray<typeof saved>>([]);
+  if (!Equal.equals(savedSource, saved)) {
+    setSavedSource(saved);
+    const reconciled = reconcileSnoozeDraft(written, saved);
+    if (reconciled.adopt) {
+      setWritten([]);
+      setDraft(saved);
+    } else {
+      setWritten(reconciled.pending);
+    }
+  }
+  const save = (enabled: ReadonlyArray<PullRequestSnoozeTrigger>) => {
+    const next = PullRequestSnoozeTrigger.literals.filter((trigger) => enabled.includes(trigger));
+    if (!mixed && Equal.equals(next, draft)) return;
+    setDraft(next);
+    setWritten((previous) => [...previous, next]);
+    updateSettings(
+      { snoozePullRequestPresets: next },
+      {
+        onFailed: () => {
+          setWritten([]);
+          setSavedSource(null);
+        },
+      },
+    );
+  };
+  const missing = PullRequestSnoozeTrigger.literals.filter((trigger) => !draft.includes(trigger));
+
+  return (
+    <SettingsRow
+      serverScoped
+      settingKeys={["snoozePullRequestPresets"]}
+      {...searchableSetting("snooze-pull-request-options")}
+      description="Offered after the times when a thread has an open pull request. Each also ends when the pull request merges or closes, and after 30 days at most."
+      resetAction={
+        !mixed && Equal.equals(draft, DEFAULT_SNOOZE_PULL_REQUEST_PRESETS) ? null : (
+          <SettingResetButton
+            label="pull request snoozes"
+            onClick={() => save(DEFAULT_SNOOZE_PULL_REQUEST_PRESETS)}
+          />
+        )
+      }
+    >
+      <div className="flex flex-col gap-1.5 pt-3 pb-2">
+        {draft.map((trigger) => (
+          <div key={trigger} className="flex items-center gap-2 text-xs">
+            <span className="truncate text-foreground">{PULL_REQUEST_SNOOZE_LABELS[trigger]}</span>
+            <div className="ml-auto">
+              <Button
+                variant="ghost-muted"
+                size="icon-sm"
+                aria-label={`Remove ${PULL_REQUEST_SNOOZE_LABELS[trigger]}`}
+                onClick={() => save(draft.filter((candidate) => candidate !== trigger))}
+              >
+                <XIcon />
+              </Button>
+            </div>
+          </div>
+        ))}
+        {draft.length === 0 ? (
+          <p className="text-xs text-muted-foreground">Menus offer no pull request snoozes</p>
+        ) : null}
+        {missing.length > 0 ? (
+          <div className="flex flex-wrap gap-1">
+            {missing.map((trigger) => (
+              <Button
+                key={trigger}
+                variant="ghost-muted"
+                size="compact"
+                onClick={() => save([...draft, trigger])}
+              >
+                <PlusIcon />
+                {PULL_REQUEST_SNOOZE_LABELS[trigger]}
+              </Button>
+            ))}
+          </div>
+        ) : null}
+      </div>
     </SettingsRow>
   );
 }

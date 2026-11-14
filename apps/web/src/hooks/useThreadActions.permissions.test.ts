@@ -237,7 +237,7 @@ const operations = [
   {
     name: "snooze",
     run: (actions: ThreadActions, ref: ScopedThreadRef) =>
-      actions.snoozeThread(ref, "2099-01-01T00:00:00Z"),
+      actions.snoozeThread(ref, { snoozedUntil: "2099-01-01T00:00:00Z" }),
   },
   {
     name: "unsnooze",

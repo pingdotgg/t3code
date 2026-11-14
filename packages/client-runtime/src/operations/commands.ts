@@ -20,6 +20,7 @@ import {
   type ProviderApprovalDecision,
   type ProviderInteractionMode,
   type ProviderUserInputAnswers,
+  type PullRequestSnoozeTrigger,
   type RunId,
   type RuntimeMode,
   type RuntimeRequestId,
@@ -122,6 +123,7 @@ export interface ReorderActiveThreadInput extends ThreadCommandInput {
 
 export interface SnoozeThreadInput extends ThreadCommandInput {
   readonly snoozedUntil: string;
+  readonly untilPullRequest?: PullRequestSnoozeTrigger;
 }
 
 export interface UnsnoozeThreadInput extends ThreadCommandInput {
@@ -640,6 +642,7 @@ export const snoozeThread = Effect.fn("EnvironmentCommands.snoozeThread")(functi
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
     snoozedUntil: input.snoozedUntil,
+    ...(input.untilPullRequest === undefined ? {} : { untilPullRequest: input.untilPullRequest }),
   });
 });
 

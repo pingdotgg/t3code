@@ -7,6 +7,7 @@ import {
   type AuthEnvironmentScope,
 } from "./auth.ts";
 import * as Effect from "effect/Effect";
+import { PullRequestSnoozeTrigger } from "./threadPullRequest.ts";
 import * as Option from "effect/Option";
 import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
@@ -134,6 +135,13 @@ export const DEFAULT_SNOOZE_PRESETS: ReadonlyArray<SnoozePresetSetting> = [
   { kind: "at", day: "today", time: "18:00" },
   { kind: "at", day: "tomorrow", time: "09:00" },
   { kind: "at", day: "monday", time: "09:00" },
+];
+/** Pull request snoozes the menu offers on a thread with an open pull request, in this order. */
+export const SnoozePullRequestPresetSettings = Schema.Array(PullRequestSnoozeTrigger).check(
+  Schema.isMaxLength(PullRequestSnoozeTrigger.literals.length),
+);
+export const DEFAULT_SNOOZE_PULL_REQUEST_PRESETS: ReadonlyArray<PullRequestSnoozeTrigger> = [
+  "update",
 ];
 
 export const MIN_GLASS_OPACITY = 40;
@@ -1456,6 +1464,9 @@ export const ServerSettings = Schema.Struct({
   snoozePresets: SnoozePresetSettings.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SNOOZE_PRESETS)),
   ),
+  snoozePullRequestPresets: SnoozePullRequestPresetSettings.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SNOOZE_PULL_REQUEST_PRESETS)),
+  ),
   /** Clients hide threads with these tags while `hideTaggedThreads` is on. Bad entries drop alone, so a hand edit cannot reset settings. */
   hiddenThreadTags: Schema.Array(Schema.Unknown).pipe(
     Schema.decodeTo(
@@ -1902,6 +1913,7 @@ export const ServerSettingsPatch = Schema.Struct({
   autoResumeLimitedThreads: Schema.optionalKey(Schema.Boolean),
   snoozeLimitedThreads: Schema.optionalKey(Schema.Boolean),
   snoozePresets: Schema.optionalKey(SnoozePresetSettings),
+  snoozePullRequestPresets: Schema.optionalKey(SnoozePullRequestPresetSettings),
   hiddenThreadTags: Schema.optionalKey(Schema.Array(Schema.String)),
   hideTaggedThreads: Schema.optionalKey(Schema.Boolean),
   guestSharingEnabled: Schema.optionalKey(Schema.Boolean),

@@ -25,6 +25,7 @@ import {
   RunId,
   RuntimeRequestId,
   ThreadId,
+  ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -40,6 +41,8 @@ import {
   resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2SwipeActions,
   resolveThreadListV2SnoozePresets,
+  threadSnoozeStatusLabel,
+  threadSnoozeWakeLabel,
   resolveThreadListV2Status,
   resolveThreadListV2WokeAt,
   threadListV2ListItemsAreEqual,
@@ -83,6 +86,42 @@ describe("resolveThreadListV2SnoozeMenuSelection", () => {
 });
 
 describe("resolveThreadListV2SnoozePresets", () => {
+  it("adds pull request rows after the time presets only for a thread with an open pull request", () => {
+    const link = {
+      host: "github.com",
+      repository: "t3/code",
+      number: 1234,
+      url: "https://github.com/t3/code/pull/1234",
+      source: "agent",
+      linkedAt: NOW,
+      snapshot: null,
+      stack: null,
+    } as unknown as ThreadPullRequestLink;
+    const input = {
+      secondary: "snooze",
+      now: NOW,
+      presets: undefined,
+      pullRequestPresets: ["update", "checks"],
+    } as const;
+
+    const withPr = resolveThreadListV2SnoozePresets({ ...input, pullRequests: [link] });
+    expect(withPr.slice(-2).map((preset) => [preset.id, preset.whenLabel])).toEqual([
+      ["pr:update", "#1234"],
+      ["pr:checks", "#1234"],
+    ]);
+    expect(resolveThreadListV2SnoozePresets({ ...input, pullRequests: [] })).toEqual(
+      resolveThreadListV2SnoozePresets({ ...input, pullRequestPresets: [] }),
+    );
+
+    const selection = resolveThreadListV2SnoozeMenuSelection({
+      event: "snooze:pr:checks",
+      displayedPresets: withPr,
+      now: new Date(NOW),
+      presets: undefined,
+    });
+    expect(selection._tag === "selected" && selection.preset.untilPullRequest).toBe("checks");
+  });
+
   it("reads preset times from the list minute, not the clock at first render", () => {
     using _timers = { [Symbol.dispose]: () => vi.useRealTimers() };
     vi.useFakeTimers({ now: new Date(2026, 4, 8, 10) });
@@ -1400,6 +1439,21 @@ describe("threadListV2ListItemsAreEqual", () => {
     };
     expect(rows(earlier).snoozeWakeLabelText).toBe("2h");
     expect(rows(later).snoozeWakeLabelText).toBe("1h");
+    expect(
+      threadSnoozeWakeLabel(
+        {
+          snoozedUntil: isoAt(BASE_MS + 30 * 24 * 60 * MINUTE_MS),
+          snoozeUntilPullRequest: "update",
+        },
+        { now: NOW },
+      ),
+    ).toBe("PR");
+    expect(
+      threadSnoozeStatusLabel(
+        { snoozedUntil: NOW, snoozeUntilPullRequest: "checks" },
+        { now: NOW },
+      ),
+    ).toBe("Snoozed until checks finish");
     expect(threadListV2ListItemsAreEqual(rows(earlier), rows(later))).toBe(false);
   });
 

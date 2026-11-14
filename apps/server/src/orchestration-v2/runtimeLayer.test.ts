@@ -10482,6 +10482,81 @@ it.layer(Layer.fresh(layerSharedApplicationDataPlaneTest))("thread opens", (it) 
 });
 
 it.layer(Layer.fresh(layerSharedApplicationDataPlaneTest))("PR link events", (it) => {
+  it.effect("wakes a pull request snooze when a synced snapshot meets its trigger", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = ThreadId.make("pr-snooze");
+      const key = { host: "github.com", repository: "acme/app", number: 7 };
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("pr-snooze-create"),
+        threadId,
+        projectId: ProjectId.make("pr-snooze-project"),
+        title: "PR snooze",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const snooze = (suffix: string) =>
+        orchestrator.dispatch({
+          type: "thread.snooze",
+          commandId: CommandId.make(`pr-snooze-snooze-${suffix}`),
+          threadId,
+          snoozedUntil: "2099-01-01T00:00:00.000Z",
+          untilPullRequest: "review",
+        });
+      const refused = yield* Effect.flip(snooze("without-pr"));
+      assert.include(String(refused.cause), "no open pull request");
+
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.link",
+        commandId: CommandId.make("pr-snooze-link"),
+        threadId,
+        ...key,
+        url: "https://github.com/acme/app/pull/7",
+        source: "manual",
+      });
+      const sync = (suffix: string, reviewDecision: "review-required" | "approved") =>
+        orchestrator.dispatch({
+          type: "thread.pull-request-link.sync",
+          commandId: CommandId.make(`pr-snooze-sync-${suffix}`),
+          threadId,
+          ...key,
+          snapshot: {
+            state: "open",
+            title: "Add things",
+            headBranch: "feature",
+            baseBranch: "main",
+            isDraft: false,
+            updatedAt: null,
+            syncedAt: "2026-11-13T12:00:00.000Z",
+            reviewDecision,
+          },
+          stack: null,
+        });
+      yield* sync("baseline", "review-required");
+      yield* snooze("with-pr");
+      assert.equal(
+        (yield* orchestrator.getThreadShell(threadId))?.snoozeUntilPullRequest,
+        "review",
+      );
+
+      yield* sync("approved", "approved");
+      const [row] = yield* sql<{ event_type: string }>`
+        SELECT event_type FROM orchestration_events WHERE command_id = ${"pr-snooze-sync-approved"}
+      `;
+      assert.equal(row?.event_type, "thread.pull-request-synced");
+      const woken = yield* orchestrator.getThreadShell(threadId);
+      assert.deepEqual(woken?.snoozedUntil, yield* DateTime.now);
+      assert.isNull(woken?.snoozeUntilPullRequest);
+    }),
+  );
+
   it.effect("persists only the changed PR link and replays it without losing other links", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

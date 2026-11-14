@@ -3,7 +3,9 @@ import {
   effectiveSnoozed,
   hasQueuedTurnStart,
   pickSnoozePreset,
+  PULL_REQUEST_SNOOZE_STATUS,
   QUEUED_TURN_START_GRACE_MS,
+  resolvePullRequestSnoozePresets,
   resolveSnoozePresets,
   snoozeWakeLabel,
   threadWokeAt,
@@ -29,7 +31,13 @@ import {
   sortPinnedThreadsByOrderKey,
   sortSettledThreads,
 } from "@t3tools/client-runtime/state/thread-sort";
-import { isListedThreadLineage, type EnvironmentId, type ProjectId } from "@t3tools/contracts";
+import {
+  isListedThreadLineage,
+  type EnvironmentId,
+  type ProjectId,
+  type PullRequestSnoozeTrigger,
+  type ThreadPullRequestLink,
+} from "@t3tools/contracts";
 import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
 import type { MenuAction } from "@react-native-menu/menu";
 
@@ -83,10 +91,35 @@ export function resolveThreadListV2SnoozePresets(input: {
   readonly secondary: "snooze" | null;
   readonly now: string;
   readonly presets: ReadonlyArray<SnoozePresetSetting> | undefined;
+  readonly pullRequestPresets?: ReadonlyArray<PullRequestSnoozeTrigger> | undefined;
+  readonly pullRequests?: ReadonlyArray<ThreadPullRequestLink> | undefined;
 }): ReadonlyArray<SnoozePreset> {
-  return input.secondary === "snooze"
-    ? resolveSnoozePresets(new Date(input.now), presetOptions(input.presets))
-    : [];
+  if (input.secondary !== "snooze") return [];
+  const now = new Date(input.now);
+  return [
+    ...resolveSnoozePresets(now, presetOptions(input.presets)),
+    ...resolvePullRequestSnoozePresets(input.pullRequestPresets, input.pullRequests, now),
+  ];
+}
+
+/** The wake label for a snoozed thread: "PR" while it waits on its pull request. */
+export function threadSnoozeWakeLabel(
+  thread: Pick<EnvironmentThreadShell, "snoozedUntil" | "snoozeUntilPullRequest">,
+  options: { readonly now: string },
+): string | undefined {
+  if (thread.snoozedUntil == null) return undefined;
+  return thread.snoozeUntilPullRequest ? "PR" : snoozeWakeLabel(thread.snoozedUntil, options);
+}
+
+/** Sentence form, completing "Snoozed, wakes in …" or "Snoozed until the PR updates". */
+export function threadSnoozeStatusLabel(
+  thread: Pick<EnvironmentThreadShell, "snoozedUntil" | "snoozeUntilPullRequest">,
+  options: { readonly now: string },
+): string | undefined {
+  if (thread.snoozedUntil == null) return undefined;
+  return thread.snoozeUntilPullRequest
+    ? `Snoozed ${PULL_REQUEST_SNOOZE_STATUS[thread.snoozeUntilPullRequest]}`
+    : `Snoozed, wakes in ${snoozeWakeLabel(thread.snoozedUntil, options)}`;
 }
 
 function presetOptions(presets: ReadonlyArray<SnoozePresetSetting> | undefined) {
@@ -540,7 +573,7 @@ export function buildThreadListV2ListItems(input: {
   const threadItems = input.items.map((item): ThreadListV2ListItem => {
     const snoozeWakeLabelText =
       item.snoozed && item.thread.snoozedUntil != null && input.snoozeLabelNow !== undefined
-        ? snoozeWakeLabel(item.thread.snoozedUntil, { now: input.snoozeLabelNow })
+        ? threadSnoozeWakeLabel(item.thread, { now: input.snoozeLabelNow })
         : undefined;
     // Put the clock on items so recycler equality limits ticks to rows displaying snooze preset times.
     const snoozePresetMinute =

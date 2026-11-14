@@ -7,7 +7,9 @@ import {
   OrchestratorMcpFailure,
   type OrchestrationV2Command,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import { MAX_SNOOZE_PRESET_MINUTES } from "@t3tools/contracts/settings";
 import { modelSelectionCommandType } from "@t3tools/shared/model";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -354,13 +356,24 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       let command: OrchestrationV2Command;
       switch (input.action) {
         case "snooze":
-          if (input.snoozedUntil === undefined) {
+          if (input.snoozedUntil === undefined && input.untilPullRequest === undefined) {
             return yield* new OrchestratorMcpFailure({
               code: "invalid_request",
-              message: "snooze requires snoozedUntil.",
+              message: "snooze requires snoozedUntil or untilPullRequest.",
             });
           }
-          command = { ...common, type: "thread.snooze", snoozedUntil: input.snoozedUntil };
+          command = {
+            ...common,
+            type: "thread.snooze",
+            snoozedUntil:
+              input.snoozedUntil ??
+              DateTime.formatIso(
+                DateTime.add(yield* DateTime.now, { minutes: MAX_SNOOZE_PRESET_MINUTES }),
+              ),
+            ...(input.untilPullRequest === undefined
+              ? {}
+              : { untilPullRequest: input.untilPullRequest }),
+          };
           break;
         case "unsnooze":
         case "unsettle":

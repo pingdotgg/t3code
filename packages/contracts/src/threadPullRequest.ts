@@ -119,6 +119,14 @@ export const ThreadPullRequestWatch = Schema.Struct({
 });
 export type ThreadPullRequestWatch = typeof ThreadPullRequestWatch.Type;
 
+/**
+ * What ends a snooze on a thread's open pull requests, besides its time cap. `update` is any of
+ * the others, with checks only while no agent watches the pull request. Merging or closing the
+ * last open one always ends it, so auto-settle can take over.
+ */
+export const PullRequestSnoozeTrigger = Schema.Literals(["update", "review", "checks", "conflict"]);
+export type PullRequestSnoozeTrigger = typeof PullRequestSnoozeTrigger.Type;
+
 export const ThreadPullRequestLink = Schema.Struct({
   ...ThreadPullRequestKey.fields,
   url: TrimmedNonEmptyString,
