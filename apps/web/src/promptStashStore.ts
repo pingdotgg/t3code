@@ -84,6 +84,8 @@ function resolveBaseStorage(): { storage: StateStorage; durable: boolean } {
 
 const { storage: baseStashStorage, durable: storageIsDurable } = resolveBaseStorage();
 
+const unpersistedFinalizedEntryIds = new Set<string>();
+
 // Clear the composer only after a durable write; debounce cannot confirm durability.
 function persistEntries(entries: ReadonlyArray<PromptStashEntry>): {
   written: boolean;
@@ -97,6 +99,7 @@ function persistEntries(entries: ReadonlyArray<PromptStashEntry>): {
         state: { entries },
       }),
     );
+    unpersistedFinalizedEntryIds.clear();
     return { written: true, durable: storageIsDurable };
   } catch (error) {
     console.error("[PROMPT-STASH] Could not persist stash (storage quota?).", error);
@@ -123,16 +126,26 @@ function readPersistedEntries(): ReadonlyArray<PromptStashEntry> | null {
 
 /**
  * Starts each write from storage so other tabs' stashes, takes and finalized images survive.
- * This tab's copy wins only while either side is still pending: storage has no images to keep
- * yet, and a finalize whose write failed must stay restorable here.
+ * Local encoding and failed finalize writes retain ownership while the stored entry exists.
  */
 function latestEntries(memory: ReadonlyArray<PromptStashEntry>): ReadonlyArray<PromptStashEntry> {
   const stored = readStoredEntries();
   if (!stored) return memory;
+  const storedIds = new Set(stored.map((entry) => entry.id));
+  for (const id of unpersistedFinalizedEntryIds) {
+    if (!storedIds.has(id)) unpersistedFinalizedEntryIds.delete(id);
+  }
   const memoryById = new Map(memory.map((entry) => [entry.id, entry]));
   return stored.map((entry) => {
     const local = memoryById.get(entry.id);
-    if (local && (local.pendingImageCount || entry.pendingImageCount)) return local;
+    if (
+      local &&
+      (local.pendingImageCount ||
+        entry.pendingImageCount ||
+        unpersistedFinalizedEntryIds.has(entry.id))
+    ) {
+      return local;
+    }
     return clearOrphanedPendingImages(entry);
   });
 }
@@ -178,6 +191,7 @@ export const usePromptStashStore = create<PromptStashStoreState>()((set, get) =>
     if (!entry) return { entry: null, durable: true };
     const nextEntries = entries.filter((candidate) => candidate.id !== entryId);
     const { durable } = persistEntries(nextEntries);
+    unpersistedFinalizedEntryIds.delete(entryId);
     set(() => ({ entries: nextEntries }));
     return { entry, durable };
   },
@@ -194,7 +208,8 @@ export const usePromptStashStore = create<PromptStashStoreState>()((set, get) =>
       unreadableImageNames: images.unreadableImageNames,
       pendingImageCount: 0,
     };
-    const { durable } = persistEntries(nextEntries);
+    const { written, durable } = persistEntries(nextEntries);
+    if (!written) unpersistedFinalizedEntryIds.add(entryId);
     set(() => ({ entries: nextEntries }));
     return { attached: true, durable };
   },

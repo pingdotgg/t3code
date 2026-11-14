@@ -292,38 +292,94 @@ describe("promptStashStore", () => {
     }
   });
 
-  it("restores images in this tab when storage rejected their finalize write", async () => {
-    const storage = createMemoryStorage();
-    const rejectImages = {
-      ...storage,
-      setItem: (key: string, value: string) => {
-        if (value.includes("rejected-image")) throw new Error("QuotaExceededError");
-        storage.setItem(key, value);
-      },
-    };
-    vi.stubGlobal("localStorage", rejectImages);
-    vi.resetModules();
-    try {
-      const { usePromptStashStore: store } = await import("./promptStashStore");
-      store.getState().stashEntry({ ...makeEntry({ id: "too-big" }), pendingImageCount: 1 });
-      const { attachments } = makeEntry({ id: "rejected-image", attachmentChars: 4 });
-      expect(
-        store.getState().finalizeEntryImages("too-big", {
-          attachments,
-          droppedImageNames: [],
-          unreadableImageNames: [],
-        }),
-      ).toEqual({ attached: true, durable: false });
-
-      expect(store.getState().takeEntry("too-big").entry).toMatchObject({
-        attachments,
-        unreadableImageNames: [],
-      });
-    } finally {
-      vi.unstubAllGlobals();
+  it.each([
+    ["before", "restore"],
+    ["after", "restore"],
+    ["after", "take"],
+    ["after", "evict"],
+    ["after", "persist"],
+  ] as const)(
+    "handles another tab stashing %s a failed finalize, followed by %s",
+    async (stashOrder, action) => {
+      const storage = createMemoryStorage();
+      let rejectImageWrites = true;
+      const rejectImages = {
+        ...storage,
+        setItem: (key: string, value: string) => {
+          if (rejectImageWrites && value.includes("rejected-image")) {
+            throw new Error("QuotaExceededError");
+          }
+          storage.setItem(key, value);
+        },
+      };
+      vi.stubGlobal("localStorage", rejectImages);
       vi.resetModules();
-    }
-  });
+      try {
+        const { usePromptStashStore: store } = await import("./promptStashStore");
+        store.getState().stashEntry({ ...makeEntry({ id: "too-big" }), pendingImageCount: 1 });
+        vi.resetModules();
+        const { usePromptStashStore: otherTab } = await import("./promptStashStore");
+        if (stashOrder === "before") {
+          otherTab.getState().stashEntry(makeEntry({ id: "unrelated" }));
+          expect(store.getState().entries[0]?.pendingImageCount).toBe(1);
+        }
+        const { attachments } = makeEntry({ id: "rejected-image", attachmentChars: 4 });
+        expect(
+          store.getState().finalizeEntryImages("too-big", {
+            attachments,
+            droppedImageNames: [],
+            unreadableImageNames: [],
+          }),
+        ).toEqual({ attached: true, durable: false });
+
+        if (stashOrder === "after") {
+          otherTab.getState().stashEntry(makeEntry({ id: "unrelated" }));
+        }
+
+        if (action === "take" || action === "evict") {
+          if (action === "take") {
+            otherTab.getState().takeEntry("too-big");
+          } else {
+            for (let index = 0; index < MAX_STASH_ENTRIES; index += 1) {
+              otherTab.getState().stashEntry(makeEntry({ id: `evict-${index}` }));
+            }
+          }
+          expect(
+            store.getState().finalizeEntryImages("too-big", {
+              attachments,
+              droppedImageNames: [],
+              unreadableImageNames: [],
+            }),
+          ).toEqual({ attached: false, durable: true });
+          expect(store.getState().takeEntry("too-big").entry).toBeNull();
+          return;
+        }
+
+        if (action === "persist") {
+          rejectImageWrites = false;
+          expect(store.getState().stashEntry(makeEntry({ id: "retry" }))).toMatchObject({
+            written: true,
+            durable: true,
+          });
+          expect(otherTab.getState().takeEntry("too-big").entry?.attachments).toEqual(attachments);
+          const replacement = makeEntry({ id: "too-big", attachmentChars: 8 });
+          otherTab.getState().stashEntry(replacement);
+          expect(store.getState().takeEntry("too-big").entry?.attachments).toEqual(
+            replacement.attachments,
+          );
+          return;
+        }
+
+        expect(store.getState().takeEntry("too-big").entry).toMatchObject({
+          attachments,
+          unreadableImageNames: [],
+        });
+      } finally {
+        vi.unstubAllGlobals();
+        vi.resetModules();
+      }
+    },
+  );
 });
 
 describe("prompt stash context records", () => {
