@@ -66,7 +66,8 @@ export const sourceControlMediaResponse = Effect.fn(
     headers: forwarded,
     ...(repository === undefined ? {} : { repository }),
   });
-  if (response === null) return HttpServerResponse.empty({ status: 502, headers });
+  // Where the server holds no credential for it, the client loads the URL as it would unproxied.
+  if (response === null) return HttpServerResponse.redirect(asset.url, { status: 302, headers });
   // It carries none of the upstream entity headers: a `content-length` with no body behind it
   // holds the connection open until the browser gives up on it.
   if (response.status >= 400) {

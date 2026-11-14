@@ -1599,6 +1599,37 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(Layer.mergeAll(layerTest, layerDrivers, layerIdentities)));
   });
 
+  it.effect("sends the client to media its host's driver will not fetch", () => {
+    const url = `https://gitlab.example.test/team/app/uploads/${"0".repeat(32)}/demo.mp4`;
+    const media = sourceControlDefinitions.mediaUrl(url)!;
+    const layerDrivers = Layer.succeed(BuiltInDrivers.SourceControlDrivers, [
+      {
+        driver: { kind: media.definition.kind, definition: media.definition },
+        instance: fakeSourceControlDriverInstance(media.definition.kind, {
+          pullRequests: null,
+          fetchMedia: () => Effect.succeed(null),
+        }),
+      },
+    ]);
+    return Effect.gen(function* () {
+      const response = yield* sourceControlMediaResponse(
+        { url: media.fetchUrl, cwd: "/repo", repository: "team/app", expiresAt: 0 },
+        {},
+      );
+      expect(response.status).toBe(302);
+      expect(response.headers.location).toBe(url);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerTest,
+          layerDrivers,
+          Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({}),
+        ),
+      ),
+      Effect.scoped,
+    );
+  });
+
   it.effect("refuses media no host keeps behind a credential, without echoing the URL", () =>
     Effect.gen(function* () {
       const encodeAssetAccessError = Schema.encodeEffect(Schema.fromJsonString(AssetAccessError));

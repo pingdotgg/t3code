@@ -298,6 +298,11 @@ export interface SourceControlDefinition {
   ) => ReadonlyArray<ReferenceAutolink>;
   /** True when the host renders a single newline in change request text as a line break. */
   readonly hardLineBreaks?: boolean;
+  /**
+   * True for a root-relative path in change request text that the host resolves against the
+   * repository's web URL rather than its origin.
+   */
+  readonly isRepositoryRelativePath?: (path: string) => boolean;
   /** Where the host lists a change request's checks. Absent means the change request's own page. */
   readonly changeRequestChecksUrl?: (changeRequestUrl: string) => string;
   /**

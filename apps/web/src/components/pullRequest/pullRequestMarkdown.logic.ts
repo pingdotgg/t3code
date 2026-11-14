@@ -68,10 +68,14 @@ export function remarkPullRequestAutolinks(options: {
   return (tree: MarkdownNode) => visit(tree);
 }
 
-function remarkChangeRequestMediaUrls(options: { readonly changeRequestUrl: string }) {
+const FORGE_RELATIVE_URL_TYPES = new Set(["image", "link", "definition"]);
+
+function remarkChangeRequestMediaUrls(options: {
+  readonly changeRequest: { readonly provider: string; readonly url: string };
+}) {
   const visit = (node: MarkdownNode): void => {
-    if ((node.type === "image" || node.type === "definition") && node.url !== undefined) {
-      node.url = resolveChangeRequestMediaUrl(node.url, options.changeRequestUrl);
+    if (FORGE_RELATIVE_URL_TYPES.has(node.type) && node.url !== undefined) {
+      node.url = resolveChangeRequestMediaUrl(node.url, options.changeRequest);
     }
     node.children?.forEach(visit);
   };
@@ -96,7 +100,12 @@ export function pullRequestMarkdownPlugins(
   let plugins = markdownPlugins.get(key);
   if (plugins === undefined) {
     const autolinks = changeRequestReferenceAutolinker(changeRequest);
-    plugins = [[remarkChangeRequestMediaUrls, { changeRequestUrl: repositoryUrl }]];
+    plugins = [
+      [
+        remarkChangeRequestMediaUrls,
+        { changeRequest: { provider: changeRequest.provider, url: changeRequest.url } },
+      ],
+    ];
     if (autolinks) plugins.push([remarkPullRequestAutolinks, { autolinks }]);
     markdownPlugins.set(key, plugins);
   }

@@ -72,6 +72,9 @@ Install [GitLab CLI](https://gitlab.com/gitlab-org/cli), then sign in:
 glab auth login
 ```
 
+Images and videos uploaded to a private project's merge requests load through this login on
+GitLab 17.4 or later. On older versions they show as unavailable.
+
 ### Bitbucket
 
 Open **Settings → Source control**, expand **Bitbucket**, and enter one of:

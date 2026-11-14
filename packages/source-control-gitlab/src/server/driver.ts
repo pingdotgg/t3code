@@ -8,16 +8,22 @@ import * as Layer from "effect/Layer";
 import { definition } from "../shared/definition.ts";
 
 import * as GitLabCli from "./GitLabCli.ts";
+import * as GitLabCredentials from "./GitLabCredentials.ts";
+import * as GitLabMediaFetch from "./gitLabMediaFetch.ts";
 import * as GitLabPullRequestCli from "./GitLabPullRequestCli.ts";
 import * as GitLabPullRequestProvider from "./GitLabPullRequestProvider.ts";
 import * as GitLabSourceControlProvider from "./GitLabSourceControlProvider.ts";
 
-const services = GitLabPullRequestCli.layer.pipe(Layer.provideMerge(GitLabCli.layer));
+const services = Layer.merge(
+  GitLabPullRequestCli.layer.pipe(Layer.provideMerge(GitLabCli.layer)),
+  GitLabCredentials.layer,
+);
 
 const makeInstance = Effect.all({
   sourceControl: GitLabSourceControlProvider.make,
   discovery: Effect.succeed(GitLabSourceControlProvider.discovery),
   pullRequests: GitLabPullRequestProvider.make,
+  fetchMedia: GitLabMediaFetch.make,
 });
 
 export const driver = defineSourceControlDriver({
