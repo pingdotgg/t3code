@@ -19,6 +19,7 @@ import {
   CHAT_MARKDOWN_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
   CHAT_MARKDOWN_REHYPE_PLUGINS,
+  decodeMarkdownLinkEscapes,
   remarkAssistantInsights,
 } from "@t3tools/shared/markdownPipeline";
 import { useAtomValue } from "@effect/atom-react";
@@ -80,6 +81,7 @@ import React, {
   type MouseEvent as ReactMouseEvent,
   use,
   memo,
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -471,6 +473,7 @@ function fileLinkSourcesKey(
 ): string {
   const hrefs = extractMarkdownLinkHrefs(renderCodexInlineDirectivesAsMarkdown(text))
     .filter((href) => !parseComposerContextHref(href))
+    .map(decodeMarkdownLinkEscapes)
     .map(normalizeMarkdownLinkHrefKey)
     .filter((href) => resolveMarkdownFileLinkMeta(href, cwd, imageBaseDir ?? cwd));
   const spans = extractInlineCodeSpans(text).filter((span) =>
@@ -1820,9 +1823,12 @@ const MarkdownSource = memo(function MarkdownSource({
         components: CHAT_MARKDOWN_COMPONENTS,
         urlTransform: markdownUrlTransform,
       });
-  return (
-    <ChatMarkdownTextContext value={text}>{render(text, shared && cache)}</ChatMarkdownTextContext>
-  );
+  const element = render(text);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Caching during render would make React Compiler rebuild the element when `cache` flips.
+  useEffect(() => {
+    if (shared && cache) render.remember(text, element);
+  }, [render, text, element, shared, cache]);
+  return <ChatMarkdownTextContext value={text}>{element}</ChatMarkdownTextContext>;
 });
 
 function ChatMarkdown({

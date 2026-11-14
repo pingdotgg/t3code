@@ -4453,9 +4453,15 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
 
         const preview = yield* driver.getReviewDiffPreview({ cwd: worktreePath });
         const changes = preview.sources.find((source) => source.kind === "branch-range")!;
-        expect
-          .soft(changes.files)
-          .toEqual([{ path: "feature.txt", previousPath: null, additions: 1, deletions: 0 }]);
+        expect.soft(changes.files).toEqual([
+          {
+            path: "feature.txt",
+            previousPath: null,
+            changeType: "new",
+            additions: 1,
+            deletions: 0,
+          },
+        ]);
         yield* runGit(worktreePath, ["push", "-u", "origin", "feature/remote-base"]);
 
         const generatedInputs: TextGeneration.PrContentGenerationInput[] = [];
@@ -4757,6 +4763,57 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         ),
       ).toBe(true);
     }),
+  );
+
+  it.effect(
+    "create_pr publishes to the push remote when the tracked upstream already has HEAD",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const originDir = yield* createBareRemote();
+        const forkDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+        yield* runGit(repoDir, ["remote", "add", "fork", forkDir]);
+        yield* runGit(repoDir, ["checkout", "-b", "topic"]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "changes.txt"), "change\n");
+        yield* runGit(repoDir, ["add", "changes.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "Topic change"]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "topic"]);
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "origin",
+          "git@github.com:pingdotgg/codething-mvp.git",
+          originDir,
+        );
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "fork",
+          "git@github.com:octocat/codething-mvp.git",
+          forkDir,
+        );
+        yield* runGit(repoDir, ["config", "remote.pushDefault", "fork"]);
+
+        const { manager, providerCalls } = yield* makeManager();
+        const result = yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action: "create_pr",
+        });
+
+        expect(result.push).toMatchObject({ status: "pushed", upstreamBranch: "fork/topic" });
+        expect(result.pr.status).toBe("created");
+        expect(
+          yield* runGit(forkDir, ["--git-dir=.", "log", "-1", "--pretty=%s", "topic"]),
+        ).toMatchObject({
+          stdout: "Topic change\n",
+        });
+        expect(created(providerCalls)).toEqual([
+          { baseRefName: "main", headSelector: "octocat:topic" },
+        ]);
+        expect(yield* runGit(repoDir, ["rev-parse", "--abbrev-ref", "@{upstream}"])).toMatchObject({
+          stdout: "origin/topic\n",
+        });
+      }),
   );
 
   it.effect("rejects push/pr actions from detached HEAD", () =>

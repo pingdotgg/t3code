@@ -590,6 +590,17 @@ const claudeUsageLimit = (message: string | undefined) =>
     ? { resetAt: /\bResets at (\d{4}-\d\d-\d\dT[\d:.]+Z)\.?\s*$/.exec(message)?.[1] ?? null }
     : undefined;
 
+// OpenCode types an empty balance as provider.quota too, but it answers
+// that with HTTP 402 and it never resets. Usage windows and budgets are 429.
+const isUsageLimit = (error: {
+  readonly type: string;
+  readonly status?: number | undefined;
+  readonly message: string;
+}) =>
+  (error.type === "provider.quota" && error.status !== 402) ||
+  error.type === "provider.rate-limit" ||
+  claudeUsageLimit(error.message) !== undefined;
+
 const INTERRUPT_TIMEOUT = 10_000;
 const INSTRUCTIONS_KEY = "t3-code";
 const RECONNECT_ATTEMPTS = 5;
@@ -1465,7 +1476,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         failure: makeProviderFailure({
           message: readableProviderErrorMessage(error.message, error.status, error.response?.body),
           code: error.type,
-          class: "provider_error",
+          class: isUsageLimit(error) ? "usage_limit" : "provider_error",
           retryable: true,
         }),
         startedAt: turn.retry?.startedAt ?? (yield* DateTime.now),
@@ -2839,20 +2850,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           return yield* endExecution(state, turn, { status: "interrupted" });
         case "session.execution.failed": {
           const { type, message, status, response } = event.data.error;
-          // OpenCode types an empty balance as provider.quota too, but it answers
-          // that with HTTP 402 and it never resets. Usage windows and budgets are 429.
-          const claudeLimit = claudeUsageLimit(message);
-          const usageLimit =
-            (type === "provider.quota" && status !== 402) ||
-            type === "provider.rate-limit" ||
-            claudeLimit !== undefined;
           return yield* endExecution(state, turn, {
             status: "failed",
             failure: makeProviderFailure({
               message: readableProviderErrorMessage(message, status, response?.body),
               code: type,
-              class: usageLimit ? "usage_limit" : "provider_error",
-              resetAt: claudeLimit?.resetAt ?? null,
+              class: isUsageLimit(event.data.error) ? "usage_limit" : "provider_error",
+              resetAt: claudeUsageLimit(message)?.resetAt ?? null,
             }),
           });
         }
@@ -4540,7 +4544,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const mentions = skillMentions(text);
       const skills = mentions.length === 0 ? [] : yield* skillsMentioned(location, mentions);
       const files = yield* promptFiles(turnInput.message.attachments);
-      const messageText = yield* promptText(turnInput);
+      const messageText = turnInput.resume ? "" : yield* promptText(turnInput);
       if (!sending()) return;
       return yield* client.session
         .prompt({
@@ -4704,6 +4708,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       ),
       compactThread: (turnInput) =>
         runtime.startTurn({ ...turnInput, message: { ...turnInput.message, text: "/compact" } }),
+      resumeTurn: (input) => runtime.startTurn(ProviderAdapter.resumeTurnInput(input)),
       startTurn: Effect.fn("OpenCode2Adapter.startTurn")(
         function* (turnInput) {
           // Waited out before the session's gate, so a rollback or fork is not
