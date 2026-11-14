@@ -262,6 +262,8 @@ it("app-type-in-composer", async () => {
     await userEvent.type(editor, TYPED_TEXT);
     await expect.element(editor).toHaveTextContent(TYPED_TEXT);
   });
+  // The footer controls re-render for the first character only, not per keystroke.
+  expect(counted.components.ComposerControlsBar).toBe(1);
   await report("app-type-in-composer", [counted]);
 });
 
