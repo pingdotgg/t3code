@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - a plain Node server streams the fake OpenCode SSE feed.
 import * as NodeFSP from "node:fs/promises";
 import * as NodeHttp from "node:http";
 import type * as NodeNet from "node:net";
