@@ -25,6 +25,7 @@ import {
   paceRemainingPercent,
   usesChatGptSharing,
   resolveNewThreadModelSelection,
+  suggestResetCredit,
 } from "./usageLimits.ts";
 
 const now = Date.parse("2026-09-03T12:00:00.000Z");
@@ -1835,5 +1836,107 @@ describe("ChatGPT sharing presentation", () => {
         auth: { status: "unauthenticated", subscriptionSharing: true },
       }),
     ).toBe(false);
+  });
+});
+
+describe("suggestResetCredit advice", () => {
+  const baseAccount: LimitAccount = {
+    key: "claude_a",
+    driver: ProviderDriverKind.make("claudeAgent"),
+    displayName: "Claude A",
+    email: undefined,
+    plan: "Max",
+    accentColor: undefined,
+    sourceLabel: "Desk",
+    environments: [],
+    limits: {
+      checkedAt: "2026-09-03T11:00:00.000Z",
+      windows: [],
+      resetCredits: {
+        availableCount: 1,
+      },
+    },
+    redeem: null,
+  };
+
+  const depletedWindow = {
+    id: "five_hour",
+    kind: "session" as const,
+    label: "Session",
+    usedPercent: 100,
+    windowDurationMins: 300,
+    resetsAt: "2026-09-03T15:00:00.000Z",
+  };
+
+  it("returns null when no reset credits are available", () => {
+    const acc = {
+      ...baseAccount,
+      limits: { ...baseAccount.limits, resetCredits: { availableCount: 0 } },
+    };
+    expect(suggestResetCredit(acc, depletedWindow, [], now)).toBeNull();
+  });
+
+  it("suggests waiting when natural reset is within 45 minutes", () => {
+    const imminentWindow = { ...depletedWindow, resetsAt: "2026-09-03T12:20:00.000Z" }; // 20 mins from now
+    const advice = suggestResetCredit(baseAccount, imminentWindow, [], now);
+    expect(advice?.recommendation).toBe("wait");
+    expect(advice?.actionLabel).toBe("Wait for natural reset");
+    expect(advice?.reason).toContain("20m");
+  });
+
+  it("suggests saving when account still has >20% remaining", () => {
+    const healthyWindow = { ...depletedWindow, usedPercent: 40 }; // 60% remaining
+    const advice = suggestResetCredit(baseAccount, healthyWindow, [], now);
+    expect(advice?.recommendation).toBe("save");
+    expect(advice?.actionLabel).toBe("Save for later");
+  });
+
+  it("suggests holding when another account in pool has healthy quota", () => {
+    const otherAccount: LimitAccount = {
+      ...baseAccount,
+      key: "claude_b",
+    };
+    const otherWindow = { ...depletedWindow, usedPercent: 30 }; // 70% remaining
+    const advice = suggestResetCredit(
+      baseAccount,
+      depletedWindow,
+      [
+        { account: baseAccount, window: depletedWindow },
+        { account: otherAccount, window: otherWindow },
+      ],
+      now,
+    );
+    expect(advice?.recommendation).toBe("hold");
+    expect(advice?.actionLabel).toContain("Hold off");
+    expect(advice?.reason).toContain("70%");
+  });
+
+  it("recommends using reset when depleted and next reset is hours away", () => {
+    const advice = suggestResetCredit(
+      baseAccount,
+      depletedWindow,
+      [{ account: baseAccount, window: depletedWindow }],
+      now,
+    );
+    expect(advice?.recommendation).toBe("recommended");
+    expect(advice?.actionLabel).toBe("Recommended to use now");
+    expect(advice?.reason).toContain("in 3h");
+  });
+
+  it("warns when reset credit expires within 24h", () => {
+    const expiringAccount: LimitAccount = {
+      ...baseAccount,
+      limits: {
+        ...baseAccount.limits,
+        resetCredits: {
+          availableCount: 1,
+          nextExpiresAt: "2026-09-03T18:00:00.000Z", // 6h from now
+        },
+      },
+    };
+    const advice = suggestResetCredit(expiringAccount, depletedWindow, [], now);
+    expect(advice?.recommendation).toBe("expiring_soon");
+    expect(advice?.actionLabel).toBe("Use before expiry");
+    expect(advice?.reason).toContain("6h");
   });
 });

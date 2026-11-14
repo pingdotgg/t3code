@@ -824,6 +824,87 @@ export function formatResetsIn(window: ServerProviderUsageWindow, now: number): 
   return `resets in ${formatDuration(resetsAt - now)}`;
 }
 
+export interface ResetCreditSuggestion {
+  readonly recommendation: "recommended" | "wait" | "save" | "hold" | "expiring_soon";
+  readonly actionLabel: string;
+  readonly reason: string;
+}
+
+export function suggestResetCredit(
+  account: LimitAccount,
+  window: ServerProviderUsageWindow,
+  poolMembers: ReadonlyArray<{
+    readonly account: LimitAccount;
+    readonly window?: ServerProviderUsageWindow | null;
+  }>,
+  now: number,
+): ResetCreditSuggestion | null {
+  const credits = account.limits.resetCredits;
+  if (!credits || credits.availableCount <= 0) return null;
+
+  const remaining = remainingPercent(window);
+  const resetsAt = resetMillis(window);
+  const resetsInMs = resetsAt !== null ? resetsAt - now : null;
+
+  // 1. Expiring soon: credit expires within 24 hours
+  const optionExpiries = (credits.options ?? [])
+    .filter((opt) => opt.availableCount > 0 && opt.expiresAt)
+    .map((opt) => Date.parse(opt.expiresAt!))
+    .filter(Number.isFinite);
+  const nextExpires = credits.nextExpiresAt ? Date.parse(credits.nextExpiresAt) : null;
+  if (nextExpires && Number.isFinite(nextExpires)) {
+    optionExpiries.push(nextExpires);
+  }
+  const soonestExpiry = optionExpiries.length > 0 ? Math.min(...optionExpiries) : null;
+  if (soonestExpiry !== null) {
+    const timeUntilExpiry = soonestExpiry - now;
+    if (timeUntilExpiry > 0 && timeUntilExpiry <= 24 * 3600 * 1000) {
+      return {
+        recommendation: "expiring_soon",
+        actionLabel: "Use before expiry",
+        reason: `Banked reset credit expires in ${formatDuration(timeUntilExpiry)}. Use it before it expires.`,
+      };
+    }
+  }
+
+  // 2. Natural reset is imminent (within 45 minutes)
+  if (resetsInMs !== null && resetsInMs > 0 && resetsInMs <= 45 * 60 * 1000) {
+    return {
+      recommendation: "wait",
+      actionLabel: "Wait for natural reset",
+      reason: `Window resets naturally in ${formatDuration(resetsInMs)}. Save your banked credit.`,
+    };
+  }
+
+  // 3. This account still has plenty of quota (> 20% remaining)
+  if (remaining > 20) {
+    return {
+      recommendation: "save",
+      actionLabel: "Save for later",
+      reason: `${remaining}% quota remaining. Reset only when depleted.`,
+    };
+  }
+
+  // 4. Other account in the same pool has plenty of quota (> 25% remaining)
+  const otherMembers = poolMembers.filter((m) => m.account.key !== account.key && m.window);
+  const otherMaxRemaining =
+    otherMembers.length > 0 ? Math.max(...otherMembers.map((m) => remainingPercent(m.window!))) : 0;
+  if (otherMaxRemaining > 25) {
+    return {
+      recommendation: "hold",
+      actionLabel: "Hold off (other account active)",
+      reason: `Auto mode has another account with ${otherMaxRemaining}% quota left. Save credit until both are depleted.`,
+    };
+  }
+
+  // 5. Recommended: Account is depleted and next reset is far away (or not soon)
+  return {
+    recommendation: "recommended",
+    actionLabel: "Recommended to use now",
+    reason: `Quota depleted and next natural reset is ${resetsInMs !== null && resetsInMs > 0 ? `in ${formatDuration(resetsInMs)}` : "hours away"}. Good time to reset.`,
+  };
+}
+
 export const USAGE_LIMITS_COMMAND = {
   name: "usage-limits",
   description: "Show this provider's usage limits",
