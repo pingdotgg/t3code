@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import { ThreadId, TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
+import { SettingsSecretValue } from "./settingsSecretValue.ts";
 
 export const DevicePlatform = Schema.Literals(["ios", "android"]);
 export type DevicePlatform = typeof DevicePlatform.Type;
@@ -40,11 +41,11 @@ export const EasDeviceHostConfig = Schema.Struct({
   /** EAS project that sessions run under, when the project's app config does not name one. */
   appId: Schema.optional(TrimmedNonEmptyString),
   /**
-   * Expo access token, kept in the secret store. When empty the server uses
-   * EXPO_TOKEN, then the `eas login` session. This is `secretSetting` from
-   * settings.ts, which imports this module.
+   * Expo access token, kept in the secret store, or the secret provider to read
+   * it from. When empty the server uses EXPO_TOKEN, then the `eas login` session.
+   * This is `secretSetting` from settings.ts, which imports this module.
    */
-  accessToken: TrimmedString.pipe(
+  accessToken: SettingsSecretValue.pipe(
     Schema.withDecodingDefaultKey(Effect.succeed("")),
     Schema.annotateKey({ settingsSecret: true }),
   ),
@@ -78,8 +79,11 @@ export const SimlockDeviceHostConfig = Schema.Struct({
   label: TrimmedNonEmptyString,
   /** The gateway's origin, such as https://gateway.example.ts.net:4700. */
   gatewayUrl: TrimmedNonEmptyString.check(Schema.isPattern(/^https?:\/\/[^\s/]+\/?$/)),
-  /** Leases, drives, watches, and takes input on its own leases. Kept in the secret store. */
-  agentToken: TrimmedString.pipe(
+  /**
+   * Leases, drives, watches, and takes input on its own leases. Kept in the secret store, or the
+   * secret provider to read it from.
+   */
+  agentToken: SettingsSecretValue.pipe(
     Schema.withDecodingDefaultKey(Effect.succeed("")),
     Schema.annotateKey({ settingsSecret: true }),
   ),
@@ -116,7 +120,7 @@ export const SimlockDeviceHostConfigs = Schema.Array(SimlockDeviceHostConfig).ch
 export const DeviceEasAccountInput = Schema.Struct({
   /** A saved EAS host whose stored token is checked when no new token is given. */
   hostId: Schema.optional(DeviceHostId),
-  accessToken: Schema.optional(TrimmedString),
+  accessToken: Schema.optional(SettingsSecretValue),
 });
 export type DeviceEasAccountInput = typeof DeviceEasAccountInput.Type;
 
@@ -126,6 +130,33 @@ export const DeviceEasAccount = Schema.Struct({
   apps: Schema.Array(Schema.Struct({ id: Schema.String, fullName: Schema.String })),
 });
 export type DeviceEasAccount = typeof DeviceEasAccount.Type;
+
+export const DeviceSimlockIdentityInput = Schema.Struct({
+  /** Without one, the gateway this machine's agent-device points at. */
+  gatewayUrl: Schema.optional(TrimmedString),
+  /** A saved Simlock host whose stored token is checked when no new token is given. */
+  hostId: Schema.optional(DeviceHostId),
+  agentToken: Schema.optional(SettingsSecretValue),
+});
+export type DeviceSimlockIdentityInput = typeof DeviceSimlockIdentityInput.Type;
+
+export const DeviceSimlockIdentity = Schema.Struct({
+  gatewayUrl: Schema.String,
+  /** The label the gateway gave the token. */
+  signedInAs: Schema.String,
+  /** `env`: this machine's AGENT_DEVICE_DAEMON_AUTH_TOKEN, used because it targets this gateway. */
+  tokenSource: Schema.Literals(["entered", "settings", "env"]),
+});
+export type DeviceSimlockIdentity = typeof DeviceSimlockIdentity.Type;
+
+export class DeviceSimlockIdentityError extends Schema.TaggedError<DeviceSimlockIdentityError>()(
+  "DeviceSimlockIdentityError",
+  { reason: Schema.String },
+) {
+  override get message(): string {
+    return this.reason;
+  }
+}
 
 /** Checking an Expo credential failed; no device host is involved yet. */
 export class DeviceEasAccountError extends Schema.TaggedError<DeviceEasAccountError>()(
@@ -225,6 +256,7 @@ export const DeviceHostStatuses = Schema.Record(
     status: DeviceHostStatus,
     detail: Schema.optional(Schema.String),
     androidDiscoveryIncomplete: Schema.optional(Schema.Boolean),
+    incompletePlatforms: Schema.optional(Schema.Array(DevicePlatform)),
   }),
 );
 

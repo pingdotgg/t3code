@@ -5,31 +5,30 @@ import * as NodeTty from "node:tty";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 /**
- * Electron's Windows executable is a GUI program, so `t3.cmd` under
- * `ELECTRON_RUN_AS_NODE` gets the console for stdout and stderr but no stdin.
- * Piped or redirected input and runs whose output is not a console are left alone.
+ * Electron's Windows launcher has no stdin; Node substitutes a non-console NUL device.
+ * Preserve pipes, files, console input, and runs without console output.
+ * Explicit `< NUL` is indistinguishable from missing launcher stdin and also reattaches.
  */
 function needsConsoleStdin(input: {
   readonly platform: NodeJS.Platform;
   readonly env: NodeJS.ProcessEnv;
-  readonly stdinOpen: boolean;
+  readonly stdinMissing: boolean;
   readonly stdoutIsConsole: boolean;
 }): boolean {
   return (
     input.platform === "win32" &&
     // Set only by the launcher (DesktopCliShim), never for the desktop backend.
     input.env.T3CODE_DESKTOP_CLI_LAUNCHER === "1" &&
-    !input.stdinOpen &&
+    input.stdinMissing &&
     input.stdoutIsConsole
   );
 }
 
-const isOpen = (fd: number) => {
+const isMissingInput = (fd: number) => {
   try {
-    NodeFS.fstatSync(fd);
-    return true;
+    return NodeFS.fstatSync(fd).isCharacterDevice() && !NodeTty.isatty(fd);
   } catch {
-    return false;
+    return true;
   }
 };
 
@@ -38,7 +37,7 @@ export function attachConsoleStdin(): number | undefined {
   const needed = needsConsoleStdin({
     platform: HostProcess.Platform.defaultValue(),
     env: process.env,
-    stdinOpen: isOpen(0),
+    stdinMissing: isMissingInput(0),
     stdoutIsConsole: NodeTty.isatty(1),
   });
   // The launcher marker must not propagate to child shells or t3 processes.
@@ -55,6 +54,18 @@ export function attachConsoleStdin(): number | undefined {
     return undefined;
   }
   const stdin = new NodeTty.ReadStream(fd);
+  // Like Node's built-in stdin, release pending console reads before a child takes over.
+  stdin.on("pause", () => {
+    const internal = stdin as unknown as {
+      _handle?: { reading: boolean; readStop(): void };
+      _readableState: { reading: boolean };
+    };
+    const handle = internal._handle;
+    if (!handle) return;
+    internal._readableState.reading = false;
+    handle.reading = false;
+    handle.readStop();
+  });
   Object.defineProperty(process, "stdin", { value: stdin, configurable: true, enumerable: true });
   consoleStdinFd = fd;
   return fd;

@@ -165,7 +165,7 @@ function route() {
     require("../../lib/rootNavigation") as typeof import("../../lib/rootNavigation");
   if (!rootNavigationRef.isReady()) return null;
   const current = rootNavigationRef.getCurrentRoute();
-  const { workspaceHasColumns } = require("../workspace/workspace-selection-store") as {
+  const { workspaceHasColumns } = require("../layout/workspace/workspace-selection-store") as {
     workspaceHasColumns: () => boolean;
   };
   return {

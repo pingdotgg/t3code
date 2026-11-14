@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import { page } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
-import { render } from "../../../test/render";
+import { act, render } from "../../../test/render";
+import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
 import { ThemeEditorPanel } from "./ThemeEditorPanel";
 
 function dragHeader(panel: HTMLElement, toX: number, toY: number) {
@@ -32,6 +33,19 @@ function dragResizeHandle(panel: HTMLElement, byX: number) {
   handle.dispatchEvent(new PointerEvent("pointerup", init));
 }
 
+function pointerAt(target: HTMLElement, type: string, xFraction: number) {
+  const rect = target.getBoundingClientRect();
+  target.dispatchEvent(
+    new PointerEvent(type, {
+      bubbles: true,
+      button: 0,
+      pointerId: 3,
+      clientX: rect.left + rect.width * xFraction,
+      clientY: rect.top + rect.height / 2,
+    }),
+  );
+}
+
 async function renderPanel() {
   await page.viewport(1280, 900);
   const stack = new AsyncDisposableStack();
@@ -59,6 +73,41 @@ async function renderPanel() {
     panel: panel.element() as HTMLElement,
     [Symbol.asyncDispose]: () => stack.disposeAsync(),
   };
+}
+
+// The editor floats beside the Settings dialog, whose Esc handler sits on the document.
+async function renderBesideSettings() {
+  const onSettingsOpenChange = vi.fn();
+  const onEditorOpenChange = vi.fn();
+  const screen = await render(
+    <>
+      <Dialog onOpenChange={onSettingsOpenChange} open>
+        <DialogPopup>
+          <DialogTitle>Settings</DialogTitle>
+        </DialogPopup>
+      </Dialog>
+      <ThemeEditorPanel
+        open
+        onOpenChange={onEditorOpenChange}
+        onSaved={() => true}
+        editingTheme={null}
+        initialAppearance="light"
+        restoreTheme={() => {}}
+      />
+    </>,
+  );
+  return {
+    onSettingsOpenChange,
+    onEditorOpenChange,
+    [Symbol.asyncDispose]: () => screen[Symbol.asyncDispose](),
+  };
+}
+
+// The modal Settings dialog marks the editor inert, hiding it from role queries and pointer input.
+async function editorElement(selector: string) {
+  const query = () => document.querySelector<HTMLElement>(`[data-theme-editor-panel] ${selector}`);
+  await expect.poll(query).toBeTruthy();
+  return query()!;
 }
 
 describe("ThemeEditorPanel", () => {
@@ -109,5 +158,50 @@ describe("ThemeEditorPanel", () => {
 
     await page.viewport(1280, 900);
     await expect.poll(() => (panel.element() as HTMLElement).style.left).toBe("700px");
+  });
+
+  it("restores the colors from before the picker opened when Escape closes it", async () => {
+    await using _view = await renderPanel();
+    const hex = page.getByRole("textbox", { name: "Accent hex value" });
+    const original = (hex.element() as HTMLInputElement).value;
+    await userEvent.click(page.getByRole("button", { name: "Choose Accent color" }));
+    const hue = page.getByRole("slider", { name: "Accent hue" });
+    await expect.element(hue).toBeInTheDocument();
+    const hueSlider = hue.element() as HTMLElement;
+
+    await act(async () => {
+      pointerAt(hueSlider, "pointerdown", 0.5);
+      pointerAt(hueSlider, "pointerup", 0.5);
+    });
+    await expect.element(hex).not.toHaveValue(original);
+
+    await act(async () => {
+      pointerAt(hueSlider, "pointerdown", 0.25);
+      hueSlider.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" }));
+      // The drag keeps going while the picker animates out.
+      pointerAt(hueSlider, "pointermove", 0.75);
+      pointerAt(hueSlider, "pointerup", 0.75);
+    });
+    expect((hex.element() as HTMLInputElement).value).toBe(original);
+  });
+
+  it("closes on Escape without closing Settings", async () => {
+    await using view = await renderBesideSettings();
+    (await editorElement("input")).focus();
+    await userEvent.keyboard("{Escape}");
+
+    expect(view.onEditorOpenChange).toHaveBeenCalledWith(false);
+    expect(view.onSettingsOpenChange).not.toHaveBeenCalled();
+  });
+
+  it("leaves inspection on Escape without closing the editor or Settings", async () => {
+    await using view = await renderBesideSettings();
+    (await editorElement('[aria-label="Inspect app colors"]')).click();
+    await editorElement('[aria-label="Cancel inspecting app colors"]');
+    await userEvent.keyboard("{Escape}");
+
+    await editorElement('[aria-label="Inspect app colors"]');
+    expect(view.onEditorOpenChange).not.toHaveBeenCalled();
+    expect(view.onSettingsOpenChange).not.toHaveBeenCalled();
   });
 });

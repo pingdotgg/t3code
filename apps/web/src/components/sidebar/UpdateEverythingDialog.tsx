@@ -47,6 +47,16 @@ interface UpdateEverythingDialogProps {
   readonly rows: ReadonlyArray<UpdateEverythingRow>;
   readonly restarts: ReadonlyArray<RestartingMachine>;
   readonly onConfirm: () => void;
+  /** Overrides the "Update N machines?" title, for an update-track switch. */
+  readonly title?: string;
+  readonly confirmLabel?: string;
+  readonly notes?: ReadonlyArray<string>;
+  /** Shown in place of running-thread counts; disables the confirm button. */
+  readonly disabledReason?: string | null;
+  /** The confirmed work is starting; it cannot be cancelled from here. */
+  readonly busy?: boolean;
+  /** Machines are still looking for provider updates, so more rows can appear. */
+  readonly checking?: boolean;
 }
 
 type UpdateEverythingDialogContentProps = Omit<
@@ -89,6 +99,12 @@ function UpdateEverythingDialogContent({
   restarts,
   onConfirm,
   cancelRef,
+  title,
+  confirmLabel = "Update",
+  notes = [],
+  disabledReason = null,
+  busy = false,
+  checking = false,
 }: UpdateEverythingDialogContentProps) {
   const stopped = useAtomValue(
     runningThreadCountAtom(
@@ -116,7 +132,7 @@ function UpdateEverythingDialogContent({
     <>
       <AlertDialogHeader className="shrink-0">
         <AlertDialogTitle>
-          Update {updating.length} {updating.length === 1 ? "machine" : "machines"}?
+          {title ?? `Update ${updating.length} ${updating.length === 1 ? "machine" : "machines"}?`}
         </AlertDialogTitle>
         <AlertDialogDescription>
           {version !== null ? (
@@ -128,27 +144,43 @@ function UpdateEverythingDialogContent({
           {providerCount > 0
             ? `${providerCount} provider ${providerCount === 1 ? "update" : "updates"}`
             : null}
+          {checking
+            ? `${version !== null || providerCount > 0 ? " · " : ""}Checking for more…`
+            : null}
         </AlertDialogDescription>
       </AlertDialogHeader>
       <ScrollArea scrollFade>
         <div className="flex flex-col gap-3 px-6 pb-4">
+          {notes.map((note) => (
+            <p key={note} className="text-muted-foreground text-sm">
+              {note}
+            </p>
+          ))}
           {/* Machine names truncate first. Provider lists wrap between names, never inside one. */}
-          <div className="grid grid-cols-[minmax(4rem,max-content)_max-content_minmax(min-content,1fr)_max-content] gap-x-4 text-sm">
-            <div className="col-span-full grid grid-cols-subgrid border-b pb-1.5 text-muted-foreground text-xs">
-              <span>Machine</span>
-              <span>T3 Code</span>
-              <span>Providers</span>
-              <span />
+          <div
+            role="table"
+            className="grid grid-cols-[minmax(4rem,max-content)_max-content_minmax(min-content,1fr)_max-content] gap-x-4 text-sm"
+          >
+            <div
+              role="row"
+              className="col-span-full grid grid-cols-subgrid border-b pb-1.5 text-muted-foreground text-xs"
+            >
+              <span role="columnheader">Machine</span>
+              <span role="columnheader">T3 Code</span>
+              <span role="columnheader">Providers</span>
+              <span role="columnheader" />
             </div>
             {updating.map((row) => (
               <div
                 key={row.environmentId ?? "this-app"}
+                role="row"
                 className="col-span-full grid grid-cols-subgrid border-b border-border/50 py-1.5 last:border-b-0"
               >
-                <span className="max-w-32 min-w-0">
-                  <MiddleTruncate value={row.label} />
+                <span role="cell" className="max-w-32 min-w-0">
+                  <span className="sr-only">{row.label}</span>
+                  <MiddleTruncate value={row.label} aria-hidden />
                 </span>
-                <span>
+                <span role="cell">
                   {row.app !== null ? APP_LABELS[row.app] : null}
                   {row.app === null && row.skipped !== null ? (
                     <span className="text-muted-foreground">Skipped</span>
@@ -157,7 +189,7 @@ function UpdateEverythingDialogContent({
                     <span className="block text-muted-foreground text-xs">restarts last</span>
                   ) : null}
                 </span>
-                <span>
+                <span role="cell">
                   {row.providers.map((provider, index) => (
                     <Fragment key={provider}>
                       <span className="whitespace-nowrap">{provider}</span>
@@ -165,7 +197,7 @@ function UpdateEverythingDialogContent({
                     </Fragment>
                   ))}
                 </span>
-                <span className="text-right">
+                <span role="cell" className="text-right">
                   {row.environmentId !== null && restarting.has(row.environmentId) ? (
                     <RunningThreads environmentId={row.environmentId} />
                   ) : null}
@@ -196,7 +228,11 @@ function UpdateEverythingDialogContent({
         </div>
       </ScrollArea>
       <AlertDialogFooter>
-        {running > 0 ? (
+        {disabledReason !== null ? (
+          <p className="self-center text-sm max-sm:order-1 max-sm:text-center sm:mr-auto">
+            {disabledReason}
+          </p>
+        ) : running > 0 ? (
           <p className="self-center text-muted-foreground text-sm max-sm:order-1 max-sm:text-center sm:mr-auto">
             {stopped === 0
               ? `${threads} will be interrupted and can resume after the restart.`
@@ -205,10 +241,12 @@ function UpdateEverythingDialogContent({
                 : `${threads} will be interrupted. ${continuing} can resume after the restart.`}
           </p>
         ) : null}
-        <AlertDialogClose ref={cancelRef} render={<Button variant="outline" />}>
+        <AlertDialogClose ref={cancelRef} render={<Button variant="outline" disabled={busy} />}>
           Cancel
         </AlertDialogClose>
-        <Button onClick={onConfirm}>Update</Button>
+        <Button disabled={disabledReason !== null || busy} onClick={onConfirm}>
+          {confirmLabel}
+        </Button>
       </AlertDialogFooter>
     </>
   );
