@@ -1768,6 +1768,95 @@ describe("AcpRegistryAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  // Copilot holds session/prompt while an attached async shell runs (github/copilot-cli#5293);
+  // its documented foreground-done signal is the opt-in assistant.idle session event.
+  it.effect("settles Copilot's reply on assistant.idle while an async shell holds the prompt", () =>
+    Effect.gen(function* () {
+      const sessionId = "copilot-session";
+      const sessionEvent = (type: string) => ({
+        type: "emit_inbound",
+        frame: {
+          kind: "notification",
+          method: "github.com/copilot/sessionEvent",
+          params: { sessionId, type, data: {} },
+        },
+      });
+      const update = (sessionUpdate: Record<string, unknown>) =>
+        claudeFrames.update(sessionId, sessionUpdate);
+      const session = yield* openClaudeReplaySession(
+        [
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "initialize", params: "<any>" },
+          },
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "response",
+              method: "initialize",
+              result: {
+                protocolVersion: 1,
+                agentInfo: { name: "Copilot", version: "1.0.110" },
+                agentCapabilities: { loadSession: true },
+                authMethods: [],
+              },
+            },
+          },
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "session/new", params: "<any>" },
+          },
+          {
+            type: "emit_inbound",
+            frame: { kind: "response", method: "session/new", result: { sessionId } },
+          },
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "session/prompt", params: "<any>" },
+          },
+          // A previous prompt's idle can land before this prompt's turn starts.
+          sessionEvent("assistant.idle"),
+          update({ sessionUpdate: "session_info_update", title: "after stale idle" }),
+          sessionEvent("assistant.turn_start"),
+          update({
+            sessionUpdate: "tool_call",
+            toolCallId: "shell-1",
+            title: "sleep 120",
+            kind: "execute",
+            status: "completed",
+            rawInput: { command: "sleep 120", mode: "async", detach: false },
+          }),
+          update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "ok" } }),
+          sessionEvent("assistant.idle"),
+          update({ sessionUpdate: "session_info_update", title: "after foreground idle" }),
+          // The shell never exits, so the first session/prompt is never answered.
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "session/prompt", params: "<any>" },
+          },
+          sessionEvent("assistant.turn_start"),
+          update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "two" } }),
+          sessionEvent("assistant.idle"),
+          update({ sessionUpdate: "session_info_update", title: "after second idle" }),
+        ],
+        undefined,
+        false,
+        "github-copilot-cli",
+      );
+      yield* session.runtime.startTurn(session.turnInput(1));
+      const stale = yield* session.throughMarker("after stale idle");
+      assert.isFalse(stale.some((event) => event.type === "turn.terminal"));
+      const foreground = yield* session.throughMarker("after foreground idle");
+      const terminal = foreground.find((event) => event.type === "turn.terminal");
+      assert.isDefined(terminal, "the run settles once Copilot's foreground work is idle");
+      assert.equal(terminal?.type === "turn.terminal" ? terminal.status : null, "completed");
+      yield* session.runtime.startTurn(session.turnInput(2));
+      const second = yield* session.throughMarker("after second idle");
+      const secondTerminal = second.find((event) => event.type === "turn.terminal");
+      assert.equal(secondTerminal?.type === "turn.terminal" ? secondTerminal.runOrdinal : null, 2);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect.each([
     { kind: "approval", stopReason: "end_turn", status: "completed" },
     { kind: "question", stopReason: "error", status: "failed" },
