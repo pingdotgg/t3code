@@ -119,19 +119,22 @@ impl AppServer {
 
     /// Forgets a session; stops the process when it was the last one.
     pub async fn remove_session(&self, session_id: &str) {
-        let live = {
-            let mut state = self.lock();
-            if let Some(inbox) = state.sessions.remove(session_id) {
-                state.routes.retain(|_, r| !r.same_channel(&inbox));
-            }
-            if state.sessions.is_empty() {
-                state.live.take()
-            } else {
-                None
-            }
-        };
-        if let Some(live) = live {
-            live.process.terminate(FORCE_KILL_AFTER).await;
+        if let Some(process) = self.detach_session(session_id) {
+            process.terminate(FORCE_KILL_AFTER).await;
+        }
+    }
+
+    /// Forgets a session without waiting: the sync half of [`Self::remove_session`]. Returns
+    /// the process to stop when no session is left.
+    pub(crate) fn detach_session(&self, session_id: &str) -> Option<Process> {
+        let mut state = self.lock();
+        if let Some(inbox) = state.sessions.remove(session_id) {
+            state.routes.retain(|_, r| !r.same_channel(&inbox));
+        }
+        if state.sessions.is_empty() {
+            state.live.take().map(|live| live.process)
+        } else {
+            None
         }
     }
 

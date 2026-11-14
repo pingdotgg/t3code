@@ -485,8 +485,11 @@ impl Store {
             }
         }
         let active = if input.get("index").is_none() && total > 0 {
+            // The offset comes from the client: add in i128, where no `i64` can overflow.
             let offset = input["offset"].as_i64().unwrap_or(0);
-            (requested as i64 + offset).rem_euclid(total as i64) as u64
+            let moved = (i128::from(requested) + i128::from(offset)).rem_euclid(i128::from(total));
+            // `rem_euclid` by a `u64` total leaves a value in `0..total`.
+            u64::try_from(moved).unwrap_or(0)
         } else {
             requested.min(total.saturating_sub(1))
         };
