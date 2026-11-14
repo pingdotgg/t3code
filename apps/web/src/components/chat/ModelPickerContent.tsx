@@ -9,7 +9,10 @@ import {
 } from "@t3tools/contracts";
 import { resolveSelectableModel } from "@t3tools/shared/model";
 import { useAtomValue } from "@effect/atom-react";
-import { formatProviderUpdateRequiredNotice } from "@t3tools/client-runtime/providerUpdateRequiredModels";
+import {
+  formatProviderRestrictedModelsNotice,
+  formatProviderUpdateRequiredNotice,
+} from "@t3tools/client-runtime/providerUpdateRequiredModels";
 import { useNavigate } from "@tanstack/react-router";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import {
@@ -198,14 +201,14 @@ function modelJumpLabelsByKey(
 
 function ModelPickerProviderNotices({
   setupEntries,
-  updateRequiredNotices,
+  modelNotices,
   emptyLabel,
   onRequestClose,
   onOpenProviderSetup,
 }: {
   setupEntries: ReadonlyArray<ProviderInstanceEntry>;
   emptyLabel: string;
-  updateRequiredNotices: ReadonlyArray<{ instanceId: ProviderInstanceId; notice: string }>;
+  modelNotices: ReadonlyArray<{ key: string; notice: string; opensProviderSettings: boolean }>;
   onRequestClose: (() => void) | undefined;
   onOpenProviderSetup: ((instanceId: ProviderInstanceId) => void) | undefined;
 }) {
@@ -234,22 +237,29 @@ function ModelPickerProviderNotices({
       ) : (
         <ComboboxEmpty className="empty:h-0">{emptyLabel}</ComboboxEmpty>
       )}
-      {updateRequiredNotices.map(({ instanceId, notice }) => (
-        <p
-          key={instanceId}
-          className="shrink-0 border-t border-border/70 px-3 py-2 text-xs leading-snug text-muted-foreground"
-        >
-          {notice}{" "}
-          <InlineButton
-            onClick={() => {
-              onRequestClose?.();
-              void navigate({ to: "/settings/providers" });
-            }}
+      <div className="max-h-[40%] shrink-0 overflow-y-auto">
+        {modelNotices.map(({ key, notice, opensProviderSettings }) => (
+          <p
+            key={key}
+            className="shrink-0 border-t border-border/70 px-3 py-2 text-xs leading-snug text-muted-foreground"
           >
-            Provider settings
-          </InlineButton>
-        </p>
-      ))}
+            {notice}
+            {opensProviderSettings ? (
+              <>
+                {" "}
+                <InlineButton
+                  onClick={() => {
+                    onRequestClose?.();
+                    void navigate({ to: "/settings/providers" });
+                  }}
+                >
+                  Provider settings
+                </InlineButton>
+              </>
+            ) : null}
+          </p>
+        ))}
+      </div>
     </>
   );
 }
@@ -728,13 +738,27 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         )
       : [];
 
-  const updateRequiredNotices = instanceEntries.flatMap((entry) => {
+  // Models a provider never offers. A search can span instances; then each line names its own.
+  const noticesByEntry = instanceEntries.flatMap((entry) => {
     const shown = isSearching
       ? matchesLockedProvider(entry)
       : entry.instanceId === selectedEntry?.instanceId;
-    const notice = shown ? formatProviderUpdateRequiredNotice(entry.snapshot, searchQuery) : null;
-    return notice ? [{ instanceId: entry.instanceId, notice }] : [];
+    if (!shown || !isProviderInstancePickerVisible(entry)) return [];
+    const updateRequired = formatProviderUpdateRequiredNotice(entry.snapshot, searchQuery);
+    const restricted = formatProviderRestrictedModelsNotice(entry.snapshot, searchQuery);
+    const notices = [
+      ...(updateRequired ? [{ kind: "update", text: updateRequired }] : []),
+      ...(restricted ? [{ kind: "restricted", text: restricted }] : []),
+    ];
+    return notices.length > 0 ? [{ entry, notices }] : [];
   });
+  const modelNotices = noticesByEntry.flatMap(({ entry, notices }) =>
+    notices.map(({ kind, text }) => ({
+      key: `${kind}:${entry.instanceId}`,
+      notice: isSearching ? `${entry.displayName}: ${text}` : text,
+      opensProviderSettings: kind === "update",
+    })),
+  );
 
   const modelJumpModelKeys = visibleModels
     .filter((model) => !getModelDisabledReason?.(model.instanceId, model.slug))
@@ -1069,7 +1093,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             />
             <ModelPickerProviderNotices
               setupEntries={providerSetupEntries}
-              updateRequiredNotices={updateRequiredNotices}
+              modelNotices={modelNotices}
               emptyLabel={
                 selectedInstanceId === "favorites" && !isSearching
                   ? "No favorites yet"

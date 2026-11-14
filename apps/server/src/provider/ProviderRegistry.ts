@@ -252,17 +252,27 @@ const mergeProviderModels = (
   nextModels: ReadonlyArray<ServerProvider["models"][number]>,
 ): ReadonlyArray<ServerProvider["models"][number]> => {
   const shouldRetainMissingModels = shouldRetainMissingProviderModels(provider);
-  const updateRequiredSlugs = new Set(provider.updateRequiredModels?.map((model) => model.slug));
+  const restrictedSlugs = new Set(provider.restrictedModels?.map((model) => model.slug));
+  // The pending snapshot lists every catalog model; retaining a gated one would make it selectable.
+  const withheldSlugs = new Set([
+    ...restrictedSlugs,
+    ...(provider.updateRequiredModels ?? []).map((model) => model.slug),
+  ]);
   const retainablePreviousModels = previousModels.filter(
-    (model) => !model.isCustom && !updateRequiredSlugs.has(model.slug),
+    (model) => !model.isCustom && !withheldSlugs.has(model.slug),
   );
+  const entitledNextModels = nextModels.filter((model) => !restrictedSlugs.has(model.slug));
 
-  if (shouldRetainMissingModels && nextModels.length === 0 && retainablePreviousModels.length > 0) {
+  if (
+    shouldRetainMissingModels &&
+    entitledNextModels.length === 0 &&
+    retainablePreviousModels.length > 0
+  ) {
     return retainablePreviousModels;
   }
 
   const previousBySlug = new Map(previousModels.map((model) => [model.slug, model] as const));
-  const mergedModels = nextModels.map((model) => {
+  const mergedModels = entitledNextModels.map((model) => {
     const previousModel = previousBySlug.get(model.slug);
     if (!previousModel || hasModelCapabilities(model) || !hasModelCapabilities(previousModel)) {
       return model;
@@ -272,7 +282,7 @@ const mergeProviderModels = (
       capabilities: previousModel.capabilities,
     };
   });
-  const nextSlugs = new Set(nextModels.map((model) => model.slug));
+  const nextSlugs = new Set(entitledNextModels.map((model) => model.slug));
   return shouldRetainMissingModels
     ? [...mergedModels, ...retainablePreviousModels.filter((model) => !nextSlugs.has(model.slug))]
     : mergedModels;
@@ -309,8 +319,14 @@ export const mergeProviderSnapshot = (
     return nextProvider;
   }
   const savedAccount = carrySavedAntigravityAccount(previousProvider, nextProvider);
-  const { message: _uncheckedMessage, ...nextWithoutMessage } = nextProvider;
-  const models = mergeProviderModels(nextProvider, previousProvider.models, nextProvider.models);
+  // A snapshot that never reached the account, like the pending one at boot,
+  // keeps the last known restrictions.
+  const restrictedModels =
+    nextProvider.restrictedModels ??
+    (nextProvider.auth.status === "unknown" ? previousProvider.restrictedModels : undefined);
+  const next = restrictedModels ? { ...nextProvider, restrictedModels } : nextProvider;
+  const { message: _uncheckedMessage, ...nextWithoutMessage } = next;
+  const models = mergeProviderModels(next, previousProvider.models, next.models);
   // Folder catalogs were compared with the old machine catalog, so every folder rescans.
   const previousWorkspaceSnapshots = Equal.equals(models, previousProvider.models)
     ? previousProvider.workspaceSnapshots
@@ -319,7 +335,7 @@ export const mergeProviderSnapshot = (
         modelsPending: true,
       }));
   return {
-    ...(savedAccount?.status === "ready" ? nextWithoutMessage : nextProvider),
+    ...(savedAccount?.status === "ready" ? nextWithoutMessage : next),
     ...savedAccount,
     models,
     ...(nextProvider.workspaceSnapshots !== undefined

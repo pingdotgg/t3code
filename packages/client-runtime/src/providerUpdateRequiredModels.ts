@@ -34,3 +34,19 @@ export function formatProviderUpdateRequiredNotice(
   const names = formatModelList(models.map((model) => model.name));
   return `Update ${providerName} to ${version} or newer to use ${names}.`;
 }
+
+/** Explains models the account's organization turned off, which pickers never list. */
+export function formatProviderRestrictedModelsNotice(
+  provider: Pick<ServerProvider, "restrictedModels">,
+  searchQuery = "",
+): string | null {
+  const query = searchQuery.trim().toLocaleLowerCase();
+  const models = (provider.restrictedModels ?? []).filter(
+    (model) =>
+      query.length === 0 ||
+      model.name.toLocaleLowerCase().includes(query) ||
+      model.slug.toLocaleLowerCase().includes(query),
+  );
+  if (models.length === 0) return null;
+  return `Your organization has turned off ${formatModelList(models.map((model) => model.name))}.`;
+}
