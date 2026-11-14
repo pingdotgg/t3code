@@ -140,6 +140,7 @@ it.effect.each([
               specs: [GitLabSourceControlProvider.discovery],
               process: {
                 run: ({ command, args, cwd }) => {
+                  if (args[0] === "config") return Effect.succeed(processOutput(""));
                   authCalls++;
                   assert.deepStrictEqual(
                     { command, args, cwd },
