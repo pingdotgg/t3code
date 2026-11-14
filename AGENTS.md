@@ -36,7 +36,12 @@ Engine, method table), the wire, and the checks. Each crate has its own `README.
 7. **Drift must fail a check.** When upstream can change something, generate it from the Conn
    monorepo or test it against the monorepo. Do not copy a list, a text or a default by hand
    when a generator or a check can hold it.
-8. **Checks stay green.** Run `tools/check.sh` before you say that work is done.
+8. **Checks stay green.** Run `tools/check.sh` before you say that work is done. On a Mac it
+   proves macOS only: the compiler and clippy never see code marked for Linux
+   (`#[cfg(target_os = "linux")]`). CI runs the same checks on Linux, so read the CI result
+   after a push. To run them on a Linux host that has the pinned Rust version as its own
+   toolchain, set `RUSTUP_TOOLCHAIN=stable RUSTUP_AUTO_INSTALL=0`, or `rustup` installs a
+   second copy.
 9. **Commit locally.** The remote is `hardimpactdev/conn-server` (private). Push or open a
    pull request only when Nick asks.
 
