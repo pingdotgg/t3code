@@ -4540,7 +4540,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const mentions = skillMentions(text);
       const skills = mentions.length === 0 ? [] : yield* skillsMentioned(location, mentions);
       const files = yield* promptFiles(turnInput.message.attachments);
-      const messageText = yield* promptText(turnInput);
+      const messageText = turnInput.resume ? "" : yield* promptText(turnInput);
       if (!sending()) return;
       return yield* client.session
         .prompt({
@@ -4704,6 +4704,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       ),
       compactThread: (turnInput) =>
         runtime.startTurn({ ...turnInput, message: { ...turnInput.message, text: "/compact" } }),
+      resumeTurn: (input) => runtime.startTurn(ProviderAdapter.resumeTurnInput(input)),
       startTurn: Effect.fn("OpenCode2Adapter.startTurn")(
         function* (turnInput) {
           // Waited out before the session's gate, so a rollback or fork is not
