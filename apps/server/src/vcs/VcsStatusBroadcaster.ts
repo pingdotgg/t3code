@@ -286,17 +286,29 @@ export const make = Effect.gen(function* () {
   const detailedSubscribers = new Map<string, number>();
   const branches = new Map<
     string,
-    { readonly refName: string | null; readonly isRepo: boolean; readonly revision: number }
+    {
+      readonly refName: string | null;
+      readonly isRepo: boolean;
+      readonly revision: number;
+      readonly observation: number;
+    }
   >();
   let branchRevision = 0;
+  // A slow detailed read must not replace a newer HEAD-only observation.
+  let branchObservation = 0;
   const publishBranch = Effect.fn("VcsStatusBroadcaster.publishBranch")(function* (
     cwd: string,
     { refName, isRepo }: { readonly refName: string | null; readonly isRepo: boolean },
+    observation: number,
   ) {
     const previous = branches.get(cwd);
-    if (previous?.refName === refName && previous.isRepo === isRepo) return;
+    if (previous && previous.observation > observation) return;
+    if (previous?.refName === refName && previous.isRepo === isRepo) {
+      branches.set(cwd, { ...previous, observation });
+      return;
+    }
     const revision = ++branchRevision;
-    branches.set(cwd, { refName, isRepo, revision });
+    branches.set(cwd, { refName, isRepo, revision, observation });
     yield* PubSub.publish(branchChangesPubSub, { cwd, refName, isRepo, revision });
   });
   const localRefreshLocks = yield* KeyedLock.make<string>();
@@ -317,7 +329,12 @@ export const make = Effect.gen(function* () {
   });
 
   const updateCachedLocalStatus = Effect.fn("VcsStatusBroadcaster.updateCachedLocalStatus")(
-    function* (cwd: string, local: VcsStatusLocalResult, options?: { publish?: boolean }) {
+    function* (
+      cwd: string,
+      local: VcsStatusLocalResult,
+      observation: number,
+      options?: { publish?: boolean },
+    ) {
       const nextLocal = { fingerprint: fingerprintStatusPart(local), value: local };
       const [localChanged, remoteCleared] = yield* Ref.modify(cacheRef, (cache) => {
         const previous = cache.get(cwd) ?? { local: null, remote: null };
@@ -327,7 +344,7 @@ export const make = Effect.gen(function* () {
           new Map(cache).set(cwd, { local: nextLocal, remote }),
         ] as const;
       });
-      yield* publishBranch(cwd, local);
+      yield* publishBranch(cwd, local, observation);
       if (options?.publish && remoteCleared) {
         yield* PubSub.publish(changesPubSub, {
           cwd,
@@ -366,9 +383,11 @@ export const make = Effect.gen(function* () {
 
   const loadLocalStatus = Effect.fn("VcsStatusBroadcaster.loadLocalStatus")(function* (
     cwd: string,
+    options?: { publish?: boolean },
   ) {
+    const observation = ++branchObservation;
     const local = yield* workflow.localStatus({ cwd });
-    return yield* updateCachedLocalStatus(cwd, local);
+    return yield* updateCachedLocalStatus(cwd, local, observation, options);
   });
 
   const getOrLoadLocalStatusUnlocked = Effect.fn("VcsStatusBroadcaster.getOrLoadLocalStatus")(
@@ -378,9 +397,7 @@ export const make = Effect.gen(function* () {
         const branch = yield* workflow.currentBranch(cwd);
         if (branch === cached.local.value.refName) return cached.local.value;
         yield* workflow.invalidateLocalStatus(cwd);
-        return yield* updateCachedLocalStatus(cwd, yield* workflow.localStatus({ cwd }), {
-          publish: true,
-        });
+        return yield* loadLocalStatus(cwd, { publish: true });
       }
       return yield* loadLocalStatus(cwd);
     },
@@ -439,9 +456,10 @@ export const make = Effect.gen(function* () {
           if (shared !== undefined && shared.startedAt >= requestedAt) return shared.local;
           const startedAt = localRefreshRequests.get(cwd) ?? requestedAt;
           yield* workflow.invalidateLocalStatus(cwd);
+          const observation = ++branchObservation;
           const local = yield* workflow.localStatus({ cwd });
           localRefreshResults.set(cwd, { startedAt, local });
-          return yield* updateCachedLocalStatus(cwd, local, { publish: true });
+          return yield* updateCachedLocalStatus(cwd, local, observation, { publish: true });
         }),
       );
     },
@@ -850,7 +868,15 @@ export const make = Effect.gen(function* () {
     return yield* Deferred.await(shared);
   });
 
-  // Serialize branch publication and cache invalidation with detailed reads and refreshes.
+  const readHeadBranch = Effect.fn("VcsStatusBroadcaster.readHeadBranch")(function* (cwd: string) {
+    const observation = ++branchObservation;
+    const refName = yield* workflow.currentBranch(cwd);
+    // A null branch is a detached HEAD or a checkout that is gone, such as a removed worktree.
+    const isRepo = refName !== null || (yield* workflow.repositoryRoot(cwd)) !== null;
+    return { observation, refName, isRepo };
+  });
+
+  // Keep cache invalidation serialized with detailed reads and refreshes.
   const refreshBranchStatusCore = Effect.fn("VcsStatusBroadcaster.refreshBranchStatusCore")(
     (cwd: string) =>
       localRefreshLocks.withLock(
@@ -858,15 +884,11 @@ export const make = Effect.gen(function* () {
         Effect.gen(function* () {
           if (detailedSubscribers.has(cwd)) {
             const local = yield* getOrLoadLocalStatusUnlocked(cwd);
-            return {
-              refName: local.refName,
-              isRepo: local.isRepo,
-              revision: branches.get(cwd)?.revision ?? 0,
-            };
+            return (
+              branches.get(cwd) ?? { refName: local.refName, isRepo: local.isRepo, revision: 0 }
+            );
           }
-          const refName = yield* workflow.currentBranch(cwd);
-          // A null branch is a detached HEAD or a checkout that is gone, such as a removed worktree.
-          const isRepo = refName !== null || (yield* workflow.repositoryRoot(cwd)) !== null;
+          const { observation, refName, isRepo } = yield* readHeadBranch(cwd);
           // HEAD cannot certify working-tree totals, even when it has not moved.
           localRefreshResults.delete(cwd);
           yield* workflow.invalidateLocalStatus(cwd);
@@ -875,33 +897,48 @@ export const make = Effect.gen(function* () {
             return previous ? new Map(cache).set(cwd, { ...previous, local: null }) : cache;
           });
           if (detailedSubscribers.has(cwd)) {
-            const local = yield* workflow.localStatus({ cwd });
-            yield* updateCachedLocalStatus(cwd, local, { publish: true });
-            return {
-              refName: local.refName,
-              isRepo: local.isRepo,
-              revision: branches.get(cwd)?.revision ?? 0,
-            };
+            const local = yield* loadLocalStatus(cwd, { publish: true });
+            return (
+              branches.get(cwd) ?? { refName: local.refName, isRepo: local.isRepo, revision: 0 }
+            );
           }
-          yield* publishBranch(cwd, { refName, isRepo });
-          return { refName, isRepo, revision: branches.get(cwd)?.revision ?? 0 };
+          yield* publishBranch(cwd, { refName, isRepo }, observation);
+          return branches.get(cwd) ?? { refName, isRepo, revision: 0 };
         }),
       ),
   );
 
   // A checkout outside T3 Code, such as `git switch` in the terminal, calls no refresh RPC.
   // Rereading remote too, without a fetch, sends the new branch with its own PR and counts.
-  const refreshCheckedOutRef = Effect.fn("VcsStatusBroadcaster.refreshCheckedOutRef")(function* (
+  const publishCheckedOutRef = Effect.fn("VcsStatusBroadcaster.publishCheckedOutRef")(function* (
     cwd: string,
   ) {
-    if (!detailedSubscribers.has(cwd)) {
-      yield* refreshBranchStatusCore(cwd);
-    } else if ((yield* getCachedStatus(cwd))?.remote) {
-      yield* refreshRemoteStatus(cwd, { refreshUpstream: false });
-    } else {
-      yield* refreshLocalStatusCore(cwd);
-    }
+    if (!detailedSubscribers.has(cwd)) return yield* refreshBranchStatusCore(cwd);
+    const { observation, refName, isRepo } = yield* readHeadBranch(cwd);
+    yield* publishBranch(cwd, { refName, isRepo }, observation);
   });
+
+  const reconcileCheckedOutRef = Effect.fn("VcsStatusBroadcaster.reconcileCheckedOutRef")(
+    function* (cwd: string) {
+      if (!detailedSubscribers.has(cwd)) return;
+      if ((yield* getCachedStatus(cwd))?.remote) {
+        yield* refreshRemoteStatus(cwd, { refreshUpstream: false });
+      } else {
+        yield* refreshLocalStatusCore(cwd);
+      }
+    },
+  );
+
+  const retryCheckedOutRef = <E>(cwd: string, refresh: Effect.Effect<unknown, E>) =>
+    refresh.pipe(
+      Effect.retry(CHECKOUT_REFRESH_RETRY),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("VCS checked-out ref refresh failed", {
+          cwdLength: cwd.length,
+          ...remoteRefreshFailureDiagnostics(cause),
+        }),
+      ),
+    );
 
   // Runs for the subscription lifetime, so tracing would leave a span open indefinitely.
   const watchHead = Effect.fnUntraced(function* (cwd: string, ready: Deferred.Deferred<void>) {
@@ -923,17 +960,10 @@ export const make = Effect.gen(function* () {
         Stream.filter((event) => path.basename(event.path) === "HEAD"),
         // A rebase moves HEAD many times; refresh once for whatever arrived during a refresh.
         Stream.buffer({ capacity: 1, strategy: "sliding" }),
-        Stream.runForEach(() =>
-          refreshCheckedOutRef(cwd).pipe(
-            Effect.retry(CHECKOUT_REFRESH_RETRY),
-            Effect.catchCause((cause) =>
-              Effect.logWarning("VCS checked-out ref refresh failed", {
-                cwdLength: cwd.length,
-                ...remoteRefreshFailureDiagnostics(cause),
-              }),
-            ),
-          ),
-        ),
+        Stream.mapEffect(() => retryCheckedOutRef(cwd, publishCheckedOutRef(cwd))),
+        // Detailed status waits behind its own reads; the branch keeps up on the stage above.
+        Stream.buffer({ capacity: 1, strategy: "sliding" }),
+        Stream.runForEach(() => retryCheckedOutRef(cwd, reconcileCheckedOutRef(cwd))),
       );
   });
 
@@ -1044,8 +1074,21 @@ export const make = Effect.gen(function* () {
   const refreshBranchStatus: VcsStatusBroadcaster["Service"]["refreshBranchStatus"] = Effect.fn(
     "VcsStatusBroadcaster.refreshBranchStatus",
   )(function* (input) {
-    const { refName, isRepo } = yield* refreshBranchStatusCore(
-      yield* withFileSystem(normalizeCwd(input.cwd)),
+    const cwd = yield* withFileSystem(normalizeCwd(input.cwd));
+    if (!detailedSubscribers.has(cwd)) {
+      const { refName, isRepo } = yield* refreshBranchStatusCore(cwd);
+      return { refName, isRepo };
+    }
+    const { observation, refName, isRepo } = yield* readHeadBranch(cwd);
+    yield* publishBranch(cwd, { refName, isRepo }, observation);
+    yield* refreshBranchStatusCore(cwd).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("VCS branch refresh failed", {
+          cwdLength: cwd.length,
+          ...remoteRefreshFailureDiagnostics(cause),
+        }),
+      ),
+      Effect.forkIn(broadcasterScope),
     );
     return { refName, isRepo };
   });
