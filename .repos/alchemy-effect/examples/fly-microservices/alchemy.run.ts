@@ -1,3 +1,4 @@
+import * as Fly from "@alchemy.run/fly";
 /**
  * Three Services connected over a private Fly network:
  *
@@ -12,7 +13,6 @@
  * receives its caller token, so it can call its methods.
  */
 import * as Alchemy from "alchemy";
-import * as Fly from "alchemy/Fly";
 import * as Effect from "effect/Effect";
 import Gateway from "./src/gateway.ts";
 import Orders from "./src/orders.ts";

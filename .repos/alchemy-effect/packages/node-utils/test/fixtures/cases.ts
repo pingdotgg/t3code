@@ -380,13 +380,7 @@ const caseDefinitions = [
   ],
   [
     "#26: .gitignore man page sample",
-    [
-      "# exclude everything except directory foo/bar",
-      "/*",
-      "!/foo",
-      "/foo/*",
-      "!/foo/bar",
-    ],
+    ["# exclude everything except directory foo/bar", "/*", "!/foo", "/foo/*", "!/foo/bar"],
     {
       "no.js": 1,
       "foo/no.js": 1,
@@ -954,20 +948,12 @@ if (!SHOULD_TEST_WINDOWS) {
 
 const cases_to_test_only = caseDefinitions.filter((c) => c[3]);
 
-const real_cases = cases_to_test_only.length
-  ? cases_to_test_only
-  : caseDefinitions;
+const real_cases = cases_to_test_only.length ? cases_to_test_only : caseDefinitions;
 
 export const cases = (iteratee) => {
   real_cases.forEach((single) => {
-    const [
-      description,
-      patterns,
-      paths_object,
-      test_only,
-      skip_test_fixture,
-      scopes = false,
-    ] = single;
+    const [description, patterns, paths_object, test_only, skip_test_fixture, scopes = false] =
+      single;
 
     // All paths to test
     const paths = Object.keys(paths_object);

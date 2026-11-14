@@ -29,11 +29,7 @@
 import * as Effect from "effect/Effect";
 import { runBuildChild } from "../core/BuildChild.ts";
 import { DeployTargetError, makeDeployTarget } from "../core/index.ts";
-import {
-  make,
-  type SolidStartTarget,
-  type SolidStartTargetConfig,
-} from "./SolidStart.ts";
+import { make, type SolidStartTarget, type SolidStartTargetConfig } from "./SolidStart.ts";
 
 /** The nitro deployment preset this target builds with. */
 export const NITRO_PRESET = "aws-lambda";
@@ -42,8 +38,7 @@ export const NITRO_PRESET = "aws-lambda";
  * The importable specifier of nitro's aws-lambda streaming runtime handler —
  * the module a custom entry would re-export to wrap the framework's handler.
  */
-export const NITRO_HANDLER_SPECIFIER =
-  "nitropack/presets/aws-lambda/runtime/aws-lambda-streaming";
+export const NITRO_HANDLER_SPECIFIER = "nitropack/presets/aws-lambda/runtime/aws-lambda-streaming";
 
 /** AWS-specific knobs carried on the shared {@link SolidStartTargetConfig}. */
 export interface SolidStartAwsTargetConfig extends SolidStartTargetConfig {
@@ -66,9 +61,7 @@ const fail = (message: string, cause?: unknown) =>
  * `cwd === root` holds); {@link makeAwsTarget} wraps it with the wholesale
  * `build` hook that spawns the child.
  */
-const makeAwsAdapterTarget = (
-  config: SolidStartAwsTargetConfig = {},
-): SolidStartTarget =>
+const makeAwsAdapterTarget = (config: SolidStartAwsTargetConfig = {}): SolidStartTarget =>
   makeDeployTarget({
     platform: "aws",
     config,
@@ -79,8 +72,7 @@ const makeAwsAdapterTarget = (
     nitroPreset: NITRO_PRESET,
     configureNitro: (nitroConfig) => {
       const awsLambda =
-        nitroConfig.awsLambda !== null &&
-        typeof nitroConfig.awsLambda === "object"
+        nitroConfig.awsLambda !== null && typeof nitroConfig.awsLambda === "object"
           ? (nitroConfig.awsLambda as Record<string, unknown>)
           : {};
       nitroConfig.awsLambda = {
@@ -122,14 +114,13 @@ export const buildInChild = (config: SolidStartAwsBuildChildConfig) =>
  * Create the AWS Lambda {@link SolidStartTarget}. See the module doc for the
  * seams.
  */
-export const makeAwsTarget = (
-  config: SolidStartAwsTargetConfig = {},
-): SolidStartTarget => ({
+export const makeAwsTarget = (config: SolidStartAwsTargetConfig = {}): SolidStartTarget => ({
   ...makeAwsAdapterTarget(config),
   build: (context) =>
     runBuildChild({
       module: import.meta.url,
       rootDir: context.root,
+      env: context.env,
       framework: "solidstart",
       config: {
         rootDir: context.root,
