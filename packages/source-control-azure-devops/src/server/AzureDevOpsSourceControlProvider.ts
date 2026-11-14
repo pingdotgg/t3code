@@ -244,10 +244,10 @@ export const make = Effect.gen(function* () {
     ),
     getDefaultBranch: Effect.fn("AzureDevOpsSourceControlProvider.getDefaultBranch")(
       function (input) {
-        const repository =
-          input.context === undefined ? null : repositoryNameFromRemote(input.context.remoteUrl);
-        if (repository === null) return Effect.succeed(null);
-        return azure.getDefaultBranch({ cwd: input.cwd, repository }).pipe(
+        const remoteUrl = input.context?.remoteUrl;
+        const repository = remoteUrl === undefined ? null : repositoryNameFromRemote(remoteUrl);
+        if (remoteUrl === undefined || repository === null) return Effect.succeed(null);
+        return azure.getDefaultBranch({ cwd: input.cwd, repository, remoteUrl }).pipe(
           Effect.mapError(
             (error) =>
               new SourceControlProviderError({

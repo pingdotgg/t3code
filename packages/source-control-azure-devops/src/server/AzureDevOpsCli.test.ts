@@ -411,19 +411,16 @@ describe("scopeAzureCliArgs", () => {
   it.each([
     [
       ["repos", "show"],
-      ["--project", "Project", "--repository", "Repo"],
+      ["--project=Project", "--repository=Repo"],
     ],
-    [
-      ["repos", "create", "--name", "New"],
-      ["--project", "Project"],
-    ],
+    [["repos", "create", "--name", "New"], ["--project=Project"]],
     [
       ["repos", "pr", "list"],
-      ["--project", "Project", "--repository", "Repo"],
+      ["--project=Project", "--repository=Repo"],
     ],
     [
       ["repos", "pr", "create"],
-      ["--project", "Project", "--repository", "Repo"],
+      ["--project=Project", "--repository=Repo"],
     ],
     [["repos", "pr", "show", "--id", "42"], []],
     [["devops", "invoke", "--area", "git"], []],
@@ -459,10 +456,8 @@ describe("scopeAzureCliArgs", () => {
       "false",
       "--organization",
       organization,
-      "--project",
-      "My Project",
-      "--repository",
-      "My Repo",
+      "--project=My Project",
+      "--repository=My Repo",
     ]);
   });
 
@@ -481,6 +476,15 @@ describe("scopeAzureCliArgs", () => {
     expect(organizationOf(remotes(azure("zebra"), azure("alpha")))).toBe(
       "https://dev.azure.com/alpha",
     );
+  });
+
+  it("joins names starting with `-` to their options", () => {
+    expect(
+      scopeAzureCliArgs(
+        ["repos", "pr", "list", "--detect", "true"],
+        remotes(["origin", "https://dev.azure.com/acme/-Project/_git/-Repo"]),
+      ),
+    ).toEqual(expect.arrayContaining(["--project=-Project", "--repository=-Repo"]));
   });
 
   it("keeps the caller's project and repository", () => {
@@ -522,6 +526,11 @@ describe("scopeAzureCliArgs", () => {
     [
       ["repos", "show", "--detect", "true"],
       remotes(["origin", "git@vs-ssh.visualstudio.com:v3/acme.invalid/Project/Repo"]),
+    ],
+    // az would replace the value with the contents of a local file.
+    [
+      ["repos", "show", "--detect", "true"],
+      remotes(["origin", "https://dev.azure.com/acme/Project/_git/%40.env"]),
     ],
   ])("leaves %j to az when the checkout gives no scope", (args, output) => {
     expect(scopeAzureCliArgs(args, output)).toEqual(args);

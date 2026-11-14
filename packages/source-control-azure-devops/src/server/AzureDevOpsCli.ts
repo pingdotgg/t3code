@@ -260,6 +260,8 @@ export class AzureDevOpsCli extends Context.Service<
     readonly getDefaultBranch: (input: {
       readonly cwd: string;
       readonly repository: string;
+      /** The selected remote, which names the project when the checkout has several. */
+      readonly remoteUrl?: string;
     }) => Effect.Effect<string | null, AzureDevOpsCliError>;
   }
 >()("@t3tools/source-control-azure-devops/server/AzureDevOpsCli") {}
@@ -349,7 +351,7 @@ function decodeAzureDevOpsJson<S extends Schema.Top>(
   );
 }
 
-function checkoutScopeFromRemotes(output: string) {
+function primaryRemoteUrl(output: string) {
   if (!output.endsWith("\n")) return null;
   const remotes = new Map<string, string>();
   for (const line of output.split("\n")) {
@@ -365,9 +367,10 @@ function checkoutScopeFromRemotes(output: string) {
     : remotes.has("origin")
       ? "origin"
       : [...remotes.keys()].toSorted((left, right) => left.localeCompare(right))[0];
-  const remote = selected === undefined ? undefined : remotes.get(selected);
-  if (!remote) return null;
+  return selected === undefined ? null : (remotes.get(selected) ?? null);
+}
 
+function scopeFromRemoteUrl(remote: string) {
   try {
     const scp = /^(?:[^@/]+@)?([^/:]+):(.+)$/u.exec(remote);
     const url = new URL(
@@ -395,7 +398,8 @@ function checkoutScopeFromRemotes(output: string) {
     } else return null;
     const [project, repository] = parts;
     if (!organization || !project || !repository) return null;
-    if ([organization, project, repository].some((part) => /[\p{Cc}/\\]/u.test(part))) {
+    // `az` replaces a value starting with `@` by the contents of that local file.
+    if ([organization, project, repository].some((part) => /^@|[\p{Cc}/\\]/u.test(part))) {
       return null;
     }
     if (legacy && !/^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$/u.test(organization))
@@ -432,7 +436,8 @@ export function scopeAzureCliArgs(
   args: ReadonlyArray<string>,
   remotes: string,
 ): ReadonlyArray<string> {
-  const scope = detectsScope(args) ? checkoutScopeFromRemotes(remotes) : null;
+  const remote = detectsScope(args) ? primaryRemoteUrl(remotes) : null;
+  const scope = remote === null ? null : scopeFromRemoteUrl(remote);
   if (!scope) return args;
   const scoped = [...args, "--organization", scope.organization];
   scoped[args.indexOf("--detect") + 1] = "false";
@@ -443,9 +448,10 @@ export function scopeAzureCliArgs(
       args[1] === "create" ||
       (args[1] === "pr" && (args[2] === "list" || args[2] === "create")));
   if (!acceptsProject) return scoped;
-  if (!hasOption(args, /^(?:--project|-p)(?:=|$)/u)) scoped.push("--project", scope.project);
+  // Joined so a name starting with `-` stays the option's value.
+  if (!hasOption(args, /^(?:--project|-p)(?:=|$)/u)) scoped.push(`--project=${scope.project}`);
   if (args[1] !== "create" && !hasOption(args, /^(?:--repository|-r)(?:=|$)/u)) {
-    scoped.push("--repository", scope.repository);
+    scoped.push(`--repository=${scope.repository}`);
   }
   return scoped;
 }
@@ -716,16 +722,28 @@ export const make = Effect.gen(function* () {
     }),
     getDefaultBranch: Effect.fn("AzureDevOpsCli.getDefaultBranch")(function (input) {
       const repository = parseRepositorySpecifier(input.repository);
+      const scope = input.remoteUrl === undefined ? null : scopeFromRemoteUrl(input.remoteUrl);
       return executeJson({
         cwd: input.cwd,
         args: [
           "repos",
           "show",
-          "--detect",
-          "true",
           // Joined so a name starting with `-` stays the option's value.
-          `--repository=${repository.name}`,
-          ...(repository.project ? ["--project", repository.project] : []),
+          ...(scope
+            ? [
+                "--detect",
+                "false",
+                "--organization",
+                scope.organization,
+                `--project=${scope.project}`,
+                `--repository=${scope.repository}`,
+              ]
+            : [
+                "--detect",
+                "true",
+                `--repository=${repository.name}`,
+                ...(repository.project ? ["--project", repository.project] : []),
+              ]),
         ],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
