@@ -22,9 +22,7 @@ export {
  * alias as fallback.
  */
 interface HarnessOptions {
-  readonly target?:
-    | { readonly cloudflare?: { readonly worker?: unknown } | undefined }
-    | undefined;
+  readonly target?: { readonly cloudflare?: { readonly worker?: unknown } | undefined } | undefined;
   readonly vite?: unknown;
 }
 
