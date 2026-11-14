@@ -68,7 +68,10 @@ confirmed in 10 s reports an interrupt timeout), usage-limit and provider failur
 thread resume after a restart, rollback (`CodexThreadRevert.ts`), fork (native, inclusive
 `lastTurnId`, or reverted to the boundary; the fork's own model and cwd, as
 `codexThreadRuntimeParams`), requests Codex resolved itself
-(`serverRequest/resolved`).
+(`serverRequest/resolved`), MCP form elicitations as approvals with the app name and
+persistence choices (`CodexMcpElicitation.ts`, in `src/elicitation.rs`). The engine resumes a
+thread when its load changes (`thread_load_model_selection` drops the effort, as T3's
+`normalizeCodexThreadLoadModelSelection`).
 
 ## Not implemented
 
@@ -84,7 +87,8 @@ thread resume after a restart, rollback (`CodexThreadRevert.ts`), fork (native, 
   the engine has no MCP apps and passes none. Snap-shot window context of image
   attachments is not added.
 - **Tool rows:** MCP presentation (titles, icons, surfaces) and MCP apps.
-- **Elicitations:** declined. `item/tool/call` and auth-refresh requests get an error reply.
+- **Elicitations:** URL elicitations and forms an approval cannot fill are declined, as in T3.
+  `item/tool/call` and auth-refresh requests get an error reply.
 - **Image generation**, prompt suggestions, async questions in agent messages, and the Linux
   systemd agent scope (see `PROTOCOL.md`, Launch).
 
@@ -139,7 +143,11 @@ CONN_MONOREPO=/path/to/conn node tools/capture-ts-events.mjs   # regenerate test
   (`examples/conformance.rs` replays the TS adapter's calls). It compares argv, the
   environment, every frame, shutdown order and timing, and rollback and fork answers; for
   every fixture with a Codex recording it also asserts each `expect_outbound` frame with the
-  TS replay driver's normalization. Known differences are listed in it with their reason.
+  TS replay driver's normalization. `elicitation` runs T3's approval recording with the
+  command approval swapped for a form elicitation. `login` starts each side with a stand-in
+  login shell (TS: `fixPath`; Rust: the start-up `hydrate`) and checks the `codex` found on its
+  `PATH` and the `PATH`, `__MISE_DIFF` and `JAVA_HOME` the child got. Known differences are
+  listed in it with their reason.
   Rerun on every Codex CLI or pinned-commit change.
 - `src/replay_tests.rs` replays 15 of the TS test kit's 25 Codex recordings (all that do not
   need subagents, rollback, fork or a transformed transcript) and compares every event with

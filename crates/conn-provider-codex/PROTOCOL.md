@@ -135,7 +135,7 @@ marks the request resolved.
 | `item/fileChange/requestApproval`       | `file-change`; prompt from reason or changes | same                                                                             |
 | `item/permissions/requestApproval`      | `file-change`, `file-read` or `command`      | `{"permissions": <granted or {}>, "scope": "turn" \| "session"}`                 |
 | `item/tool/requestUserInput`            | `user_input` with questions                  | `{"answers": {"<question id>": {"answers": ["…"]}}}`                             |
-| `mcpServer/elicitation/request`         | `mcp-elicitation` (simple forms only)        | `{"action": "accept" \| "decline", ...}`                                         |
+| `mcpServer/elicitation/request`         | `mcp-elicitation` with `appName`, `options`  | the form's option: `{"action": "accept", "_meta"?: {"persist"}, "content"?}`, or `decline` / `cancel`; a URL or an unfillable form is declined at once |
 | `execCommandApproval` (legacy)          | `command`                                    | `{"decision": "approved" \| "approved_for_session" \| {"denied": …} \| "abort"}` |
 | `applyPatchApproval` (legacy)           | `file-change`                                | same                                                                             |
 

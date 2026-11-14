@@ -77,8 +77,8 @@ all 23 are.
   accepted. The effect rolls the provider thread back (only when later runs exist), restores
   the files, deletes the stale refs, then commits the provider thread, the `stale`
   checkpoints and the `rolled_back` runs and nodes at once. A failure commits none of that and
-  sets `rollbackFailure` with T3's client message. T3 retries the effect up to 5 times; this
-  server tries once.
+  sets `rollbackFailure` with T3's client message, after T3's retries: up to 5 attempts, 100 ms
+  after the first failure and doubling, at most 30 s (`EffectWorker`).
 - **Fork** (`src/fork.rs`). `thread.fork` makes the fork thread and a pending `fork` transfer
   (`ThreadForkService.plan`). Its first turn forks the source's native thread from the source
   run's turn (`Session::fork_thread`) and consumes the transfer (`native_fork`). T3's portable
@@ -95,14 +95,21 @@ all 23 are.
   background work (unless a schedule sent it), releases the live session and starts a new
   provider thread. A schedule's fresh run is a side conversation: the next plain message
   continues the thread's own provider thread (`conversationProviderThread`).
-- **Provider thread at turn start.** The engine writes `firstRunOrdinal` and `lastRunOrdinal`
-  and hands that row to the provider (T3's `runningProviderThread`). T3 also marks it
-  `active`; our Codex provider sends no thread updates to mark it `idle` again, so the status
-  stays the provider's.
+- **Provider thread at turn start.** The engine writes `firstRunOrdinal`, `lastRunOrdinal`
+  and `status: active` and hands that row to the provider (T3's `runningProviderThread`). The
+  run's end marks it `idle`, or `error` when the terminal says the thread is broken
+  (`finalProviderThreadStatus`), while the run is the thread's last.
+- **Loading the native thread.** Each live session keeps a load key: the native thread, the
+  provider's load part of the model selection (`Session::thread_load_model_selection`) and
+  the runtime policy (T3's `providerThreadLoadKey`). A turn start resumes the thread when the
+  key differs: a new session, a changed model or policy, or after a rollback on a new process
+  (a rollback's own resume does not count). An `error` thread update forgets the key.
 - **Session release.** A closed session (idle, provider switch, fresh start) writes its row as
   `stopped` and expires the requests only it could answer (`writeReleasedSessionEvents`).
-- **Rollback order.** A turn start waits while a rollback of its thread is in flight, as T3's
-  effect outbox runs them in order.
+- **Effect order.** A thread's effects (turn start, Stop, steer, answer, rollback, capture,
+  close) run one at a time, in the order they were made, as T3's effect outbox claims them
+  (`EffectOutbox.ts`); title generation runs outside, as T3 gives it its own lane. A lane
+  entry exists only while its thread has an effect waiting or running.
 - **Busy thread.** While a run is active, a message queues (`queue_after_active`, or any start)
   or steers (`steer_active`, or the client's `deliveryIntent` steer). A steer before the
   provider turn runs waits as a queued run with `steerWhenReadyRunId`; a steer the provider
@@ -177,7 +184,7 @@ server crate and an `Engine` method for a page.
 - `cargo test -p conn-engine`: commands, streams, restart, families, reads, titles, observer.
 - `tools/t3-fixture-replay/check.mjs`: T3's own testkit fixtures through this engine and the
   Claude and Codex providers on stand-ins, judged by T3's own assertions (the vitest file is
-  placed in the monorepo for the run and removed; only the scenario runner is mocked). 33 of
+  placed in the monorepo for the run and removed; only the scenario runner is mocked). 35 of
   159 variants pass; `expected-failures.txt` lists the rest by cause. The Rust half is
   `examples/t3_fixture_replay.rs`. About 3 minutes; `--only <fixture>/<driver>` runs one,
   `--keep` keeps the work folder (each fixture's plan, stub log, database and result).
