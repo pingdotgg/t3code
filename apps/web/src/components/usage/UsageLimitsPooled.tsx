@@ -31,6 +31,7 @@ import {
 } from "react";
 
 import { ensureLocalApi } from "../../localApi";
+import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
@@ -42,6 +43,14 @@ import { OpenAI } from "../Icons";
 import { Alert, AlertTitle } from "../ui/alert";
 import { Popover, PopoverCreateHandle, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { PaceIcon, ResetCreditDialog, barColor, usePaceMark, useResetCredit } from "./UsageLimits";
+import { UsageLimitLayoutDialog } from "./UsageLimitLayoutDialog";
+import {
+  DEFAULT_LIMIT_LAYOUT,
+  limitWindowKey,
+  orderLimitItems,
+  USAGE_LIMIT_LAYOUT_KEY,
+  UsageLimitLayoutSchema,
+} from "./usageLimitLayout";
 
 function accountInitials(email: string): string {
   const [local = "", domain = ""] = email.split("@");
@@ -585,10 +594,17 @@ function PoolWindowCard({
   );
 }
 
-function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: number }) {
+function PoolSection({
+  pool,
+  windows,
+  now,
+}: {
+  readonly pool: LimitPool;
+  readonly windows: readonly LimitPoolWindow[];
+  readonly now: number;
+}) {
   const color = barColor(pool.driver);
   const label = providerClients.get(pool.driver)?.label ?? String(pool.driver);
-  const windows = displayLimitWindows(pool);
   return (
     <section className="flex flex-col gap-3">
       <h2 className="flex items-center gap-2 text-sm font-medium text-foreground">
@@ -627,21 +643,58 @@ export function UsageLimitsPooled({
   readonly now: number;
 }) {
   const [segmentPopover] = useState(() => PopoverCreateHandle<SegmentPayload>());
+  const [customizing, setCustomizing] = useState(false);
+  const [layout, setLayout] = useLocalStorage(
+    USAGE_LIMIT_LAYOUT_KEY,
+    DEFAULT_LIMIT_LAYOUT,
+    UsageLimitLayoutSchema,
+  );
   const segmentPopoverActions = useRef<PopoverPrimitive.Root.Actions | null>(null);
-  const pools = collectLimitPools(collectLimitAccounts(presentations), now);
+  const pools = orderLimitItems(
+    collectLimitPools(collectLimitAccounts(presentations), now),
+    layout.providerOrder,
+    (pool) => pool.driver,
+  );
+  const visiblePools = pools
+    .map((pool) => ({
+      pool,
+      windows: orderLimitItems(displayLimitWindows(pool), layout.windowOrder, (window) =>
+        limitWindowKey(pool.driver, window),
+      ).filter((window) => !layout.hiddenWindows.includes(limitWindowKey(pool.driver, window))),
+    }))
+    .filter(({ windows }) => windows.length > 0);
   const notices = collectLimitNotices(presentations);
   const externalLinks = collectExternalUsageLinks(presentations);
   return (
     <div className="flex flex-col gap-8">
+      {pools.length > 0 ? (
+        <div className="flex justify-end">
+          <Button variant="outline" size="sm" onClick={() => setCustomizing(true)}>
+            Customize limits
+          </Button>
+          <UsageLimitLayoutDialog
+            pools={pools}
+            layout={layout}
+            onChange={setLayout}
+            open={customizing}
+            onOpenChange={setCustomizing}
+          />
+        </div>
+      ) : null}
+      {pools.length > 0 && visiblePools.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          All limits are hidden. Choose Customize limits to show them again.
+        </p>
+      ) : null}
       {pools.length === 0 && notices.length === 0 && externalLinks.length === 0 ? (
         <p className="text-sm text-muted-foreground">
           No provider on the selected environments reports subscription limits.
         </p>
       ) : null}
       <SegmentPopoverContext value={segmentPopover}>
-        {pools.map((pool) => (
+        {visiblePools.map(({ pool, windows }) => (
           <Fragment key={pool.driver}>
-            <PoolSection pool={pool} now={now} />
+            <PoolSection pool={pool} windows={windows} now={now} />
           </Fragment>
         ))}
       </SegmentPopoverContext>
@@ -652,7 +705,7 @@ export function UsageLimitsPooled({
               handle={segmentPopover}
               actions={segmentPopoverActions}
               payload={payload}
-              pools={pools}
+              pools={visiblePools.map(({ pool, windows }) => ({ ...pool, windows }))}
               now={now}
             />
           ) : null

@@ -127,6 +127,9 @@ the bar show each account's quota, countdown, and credits. Tap a row to open its
 
 The same account signed in on more than one environment, or reported by a hub as well, counts once.
 Filter with the environment dropdown to see what a single machine has.
+On web and desktop, choose **Customize limits** to hide individual windows or reorder providers
+and their windows. Recheck a hidden window to restore it, or choose **Reset layout** to restore
+the default arrangement. These preferences are saved on this device.
 
 When a Claude or Codex account has no overall weekly quota left, its pooled session contribution
 shows 0% left. The next refill depends on both reset times: an exhausted session must also reset,
