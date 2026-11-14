@@ -601,11 +601,11 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
       );
       // Oversized items are skipped, so how far back selection reaches depends on their sizes.
       while (selected.missingItemIds !== undefined) {
-        const requested = new Set(selected.missingItemIds);
+        // Selection walks newest first, so the newest page of what it might still take comes first.
+        const fetched = selected.missingItemIds.slice(-HANDOFF_HISTORY_PAGE);
+        const requested = new Set(fetched);
         const more = historical(
-          yield* input
-            .readHistory!.items(selected.missingItemIds)
-            .pipe(Effect.mapError(readFailed)),
+          yield* input.readHistory!.items(fetched).pipe(Effect.mapError(readFailed)),
         );
         const found = new Set(more.map((message) => message.itemId));
         // An item removed since the first read drops out instead of being requested again.
