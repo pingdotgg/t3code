@@ -106,6 +106,14 @@ function parseSkillFrontmatter(contents: string): SkillFrontmatter {
   };
 }
 
+// A caller-supplied environment is a plain object, without Windows' case-insensitive keys.
+function windowsEnvironmentValue(environment: NodeJS.ProcessEnv, name: string) {
+  const key = name.toLowerCase();
+  return Object.entries(environment)
+    .find(([candidate]) => candidate.toLowerCase() === key)?.[1]
+    ?.trim();
+}
+
 function claudeManagedDirectory(
   path: Path.Path,
   platform: NodeJS.Platform,
@@ -115,9 +123,7 @@ function claudeManagedDirectory(
     return "/Library/Application Support/ClaudeCode";
   }
   if (platform === "win32") {
-    const programFiles = Object.entries(environment)
-      .find(([key]) => key.toLowerCase() === "programfiles")?.[1]
-      ?.trim();
+    const programFiles = windowsEnvironmentValue(environment, "ProgramFiles");
     return programFiles ? path.join(programFiles, "ClaudeCode") : undefined;
   }
   return "/etc/claude-code";
@@ -133,7 +139,8 @@ function claudeSettingsPaths(
   repositoryRoot?: string,
 ): ReadonlyArray<string> {
   const managedDirectory = claudeManagedDirectory(path, platform, environment);
-  const programData = platform === "win32" ? environment.PROGRAMDATA?.trim() : undefined;
+  const programData =
+    platform === "win32" ? windowsEnvironmentValue(environment, "ProgramData") : undefined;
   const root = repositoryRoot !== undefined && repositoryRoot !== cwd ? repositoryRoot : undefined;
   return [
     path.join(configDirPath, "settings.json"),
