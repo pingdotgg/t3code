@@ -547,8 +547,8 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
 });
 
 // Replacement managers can register under Directory, Drive, or Folder. Explorer
-// needs its /select argument passed verbatim through
-// PowerShell because Node's argument quoting changes how Explorer parses it.
+// needs its /select argument passed verbatim through PowerShell because Node's
+// argument quoting changes how Explorer parses it.
 function buildFileManagerRevealPowerShellSource(target: string, parent: string): string {
   const literal = escapePowerShellStringLiteral(target);
   const folderClass = /^[a-z]:\\$/i.test(parent) ? "Drive" : "Directory";
