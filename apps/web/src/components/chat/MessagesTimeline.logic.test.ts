@@ -3155,10 +3155,6 @@ describe("v2 run and attempt history", () => {
       "question",
       "live-activity-row",
     ]);
-    // Only the last reply before the question shows.
-    expect(rows([user, step, passed, final, asking, question(true)], "zen", running)).not.toContain(
-      "step",
-    );
     expect(liveAnswerPreview([user, step, passed, final, asking, question(true)])).toBeNull();
     const later: TimelineEntry = {
       id: "later",

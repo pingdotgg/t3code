@@ -1629,7 +1629,7 @@ function liveAnswerPreview(feed: ReadonlyArray<ThreadFeedEntry>): string | null 
             )
           : [];
     for (let textIndex = texts.length - 1; textIndex >= 0; textIndex -= 1) {
-      const text = texts[textIndex] as string | null;
+      const text = texts[textIndex]!;
       if (text === null) return null;
       const line = compactWorkEntryText(liveThoughtLine(text));
       if (line !== "") return line;
