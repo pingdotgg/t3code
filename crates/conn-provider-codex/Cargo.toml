@@ -14,6 +14,8 @@ conn-provider.workspace = true
 conn-provider-support.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+# `IdAllocator.derive.subagentThread` (a sha256); already linked for the Claude provider.
+sha2.workspace = true
 thiserror.workspace = true
 # `net`: the Orbit MCP network wait probes TCP before the first spawn (network_gate.rs).
 tokio = { workspace = true, features = ["sync", "process", "io-util", "time", "rt", "macros", "net"] }

@@ -57,10 +57,14 @@ impl Seen {
         wanted.iter().all(|w| have.contains(w))
     }
 
+    /// The running root turn. A subagent's turn runs outside the run (`runAttemptId` null).
     fn running_turn(&self) -> Option<String> {
         let mut running = None;
         for e in &self.events {
-            if e["type"] == "provider_turn.updated" && e["providerTurn"]["status"] == "running" {
+            if e["type"] == "provider_turn.updated"
+                && e["providerTurn"]["status"] == "running"
+                && !e["providerTurn"]["runAttemptId"].is_null()
+            {
                 running = e["providerTurn"]["id"].as_str().map(str::to_owned);
             }
             if e["type"] == "turn.terminal" {
@@ -76,6 +80,7 @@ impl Seen {
         for e in &self.events {
             if e["type"] == "provider_turn.updated"
                 && e["providerTurn"]["status"] == "running"
+                && !e["providerTurn"]["runAttemptId"].is_null()
                 && !running
             {
                 started += 1;
@@ -401,6 +406,9 @@ async fn run_scenario(
             "interruptTurn" => {
                 run.wait_until("a running turn", |s| s.running_turn().is_some())
                     .await;
+                // T3 stops after the stub sent what comes before the Stop (a subagent's turn
+                // among it), so the lineage it interrupts is complete; wait the same way.
+                quiet(&dir.join("rust/stub.ndjson")).await;
                 let turn = run.seen.lock().await.running_turn().unwrap_or_default();
                 let s = session.as_ref().ok_or("no session")?;
                 s.interrupt_turn(InterruptInput {
@@ -506,6 +514,10 @@ async fn run_scenario(
     let done = turns;
     run.wait_until("every turn to end", |s| s.terminals() >= done)
         .await;
+    // The TS harness tears its session down about 150 ms after the last turn, so requests a
+    // server sends in the background (a subagent's model read) reach the stub first. Give
+    // ours the same chance.
+    quiet(&dir.join("rust/stub.ndjson")).await;
     for s in parked.into_iter().chain(session.take()) {
         s.close().await;
     }
@@ -554,4 +566,18 @@ fn main() {
         }
     }
     std::process::exit(i32::from(failed));
+}
+
+/// Returns once the stub's log has not grown for 100 ms (at most 4 s).
+async fn quiet(log: &std::path::Path) {
+    let size = || std::fs::metadata(log).map(|m| m.len()).unwrap_or(0);
+    let mut last = size();
+    for _ in 0..40 {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let now = size();
+        if now == last {
+            return;
+        }
+        last = now;
+    }
 }

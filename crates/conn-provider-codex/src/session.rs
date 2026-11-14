@@ -29,6 +29,10 @@ pub const EVENT_CAPACITY: usize = 256;
 const CODEX_THREAD_IN_USE_MESSAGE: &str = "This conversation is open in another Codex client, such as the Codex app, the Codex CLI, or an IDE extension. Codex lets one client write to a conversation at a time. Quit that client, then send your message again.";
 const FLUSH_INTERVAL: Duration = Duration::from_millis(50);
 const PLAN_FLUSH_INTERVAL: Duration = Duration::from_millis(400);
+/// T3 gives up on a child's model read after this (`Effect.timeout("5 seconds")`).
+const CHILD_METADATA_TIMEOUT: Duration = Duration::from_secs(5);
+/// T3's wait on a late child's `turn/interrupt`.
+const CHILD_INTERRUPT_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct CodexSession {
     id: ProviderSessionId,
@@ -165,6 +169,39 @@ impl Inner {
                         let _ = self.server.write(generation, line).await;
                     }
                 }
+                Out::ChildMetadata(thread) => {
+                    let server = Arc::clone(&self.server);
+                    let inbox = self.inbox.clone();
+                    tokio::spawn(async move {
+                        let response = tokio::time::timeout(
+                            CHILD_METADATA_TIMEOUT,
+                            child_metadata(&server, &thread),
+                        )
+                        .await
+                        .ok()
+                        .flatten()
+                        .unwrap_or(Value::Null);
+                        let _ = inbox
+                            .send(SessionMsg::ChildMetadata { thread, response })
+                            .await;
+                    });
+                }
+                Out::InterruptChild { thread, turn } => {
+                    let server = Arc::clone(&self.server);
+                    tokio::spawn(async move {
+                        let request = server.request(
+                            "turn/interrupt",
+                            json!({"threadId": thread, "turnId": turn}),
+                        );
+                        if let Ok(Err(e)) =
+                            tokio::time::timeout(CHILD_INTERRUPT_TIMEOUT, request).await
+                        {
+                            eprintln!(
+                                "conn-provider-codex: a late subagent turn did not stop: {e}"
+                            );
+                        }
+                    });
+                }
                 Out::Skipped(kind) => {
                     let key: String = kind.chars().take(80).collect();
                     // At most 64 kinds are remembered, as in the Claude crate; past that a
@@ -299,6 +336,9 @@ async fn drive(inner: std::sync::Weak<Inner>, mut rx: mpsc::Receiver<SessionMsg>
             let mut state = inner.lock();
             match msg {
                 SessionMsg::Frame(frame) => state.mapper.handle(frame),
+                SessionMsg::ChildMetadata { thread, response } => {
+                    state.mapper.child_metadata(&thread, &response)
+                }
                 SessionMsg::Exited(detail) => {
                     if let Some(thread) = &mut state.thread {
                         thread.1 = None;
@@ -310,6 +350,69 @@ async fn drive(inner: std::sync::Weak<Inner>, mut rx: mpsc::Receiver<SessionMsg>
         };
         inner.deliver(outs).await;
     }
+}
+
+/// After a confirmed Stop: subagent turns of the lineage that started meanwhile get
+/// `turn/interrupt` (`interruptLateDescendants`), and any still open end as interrupted
+/// (`finalizeRemainingInterruptLineage`).
+async fn settle_lineage(inner: &Inner, root: &str, targets: &[(String, String, Vec<String>)]) {
+    let late: Vec<(String, String)> = inner
+        .lock()
+        .mapper
+        .lineage(root)
+        .into_iter()
+        .filter(|(_, native)| !targets.iter().any(|(_, t, _)| t == native))
+        .collect();
+    for (thread, native) in &late {
+        inner.lock().mapper.mark_interrupting(native);
+        let request = inner.server.request(
+            "turn/interrupt",
+            json!({"threadId": thread, "turnId": native}),
+        );
+        let _ = tokio::time::timeout(CHILD_INTERRUPT_TIMEOUT, request).await;
+    }
+    let outs: Vec<Out> = {
+        let mut state = inner.lock();
+        let open = state.mapper.lineage(root);
+        open.into_iter()
+            .flat_map(|(_, native)| state.mapper.end_interrupted(&native))
+            .collect()
+    };
+    inner.deliver(outs).await;
+}
+
+/// T3's child model read: `thread/read` without turns; when that names no model,
+/// `thread/resume` without turns. The answer as `{thread, model, reasoningEffort?,
+/// serviceTier?}`, or `None`.
+async fn child_metadata(server: &Arc<AppServer>, thread: &str) -> Option<Value> {
+    let read = server
+        .request(
+            "thread/read",
+            json!({"threadId": thread, "includeTurns": false}),
+        )
+        .await
+        .ok();
+    if let Some(read) = read
+        && read["thread"]["id"] == thread
+        && read["thread"]["model"]
+            .as_str()
+            .is_some_and(|m| !m.trim().is_empty())
+    {
+        let mut answer = json!({"thread": read["thread"], "model": read["thread"]["model"]});
+        if let Some(effort) = read["thread"].get("reasoningEffort") {
+            answer["reasoningEffort"] = effort.clone();
+        }
+        return Some(answer);
+    }
+    let resumed = server
+        .request(
+            "thread/resume",
+            json!({"threadId": thread, "excludeTurns": true}),
+        )
+        .await
+        .ok()?;
+    // `CodexChildSelection`: the model is a string or null.
+    (resumed["model"].is_string() || resumed["model"].is_null()).then_some(resumed)
 }
 
 fn failed(operation: &'static str, detail: impl Into<String>) -> ProviderError {
@@ -680,40 +783,64 @@ impl Session for CodexSession {
     fn interrupt_turn(&self, input: InterruptInput) -> BoxFuture<'_, ProviderResult<()>> {
         Box::pin(async move {
             let inner = &self.inner;
-            let (native_turn, thread, processes) = {
+            // The turn and its running subagent turns (`interruptTargetContexts`), the turn
+            // first; each gets `turn/interrupt`, as in T3.
+            let (native_turn, targets) = {
                 let mut state = inner.lock();
                 let Some(turn) = state.mapper.native_turn(input.provider_turn_id.as_str()) else {
                     return Ok(());
                 };
-                state.mapper.mark_interrupting(&turn);
-                let processes = state.mapper.running_processes(&turn);
-                let thread = state
-                    .thread
-                    .as_ref()
-                    .map(|(t, _)| t.clone())
-                    .unwrap_or_default();
-                (turn, thread, processes)
+                let targets: Vec<(String, String, Vec<String>)> = state
+                    .mapper
+                    .lineage(&turn)
+                    .into_iter()
+                    .map(|(thread, native)| {
+                        let processes = state.mapper.running_processes(&native);
+                        (thread, native, processes)
+                    })
+                    .collect();
+                for (_, native, _) in &targets {
+                    state.mapper.mark_interrupting(native);
+                }
+                (turn, targets)
             };
-            let sent = inner
-                .server
-                .request(
-                    "turn/interrupt",
-                    json!({"threadId": thread, "turnId": native_turn}),
-                )
-                .await;
-            for process in processes {
-                let _ = inner
+            let mut sent = Ok(Value::Null);
+            for (thread, native, _) in &targets {
+                if !inner.lock().mapper.is_active(native) {
+                    continue;
+                }
+                let result = inner
                     .server
                     .request(
-                        "thread/backgroundTerminals/terminate",
-                        json!({"threadId": thread, "processId": process}),
+                        "turn/interrupt",
+                        json!({"threadId": thread, "turnId": native}),
                     )
                     .await;
+                if *native == native_turn {
+                    sent = result;
+                }
+            }
+            for (thread, _, processes) in &targets {
+                for process in processes {
+                    let _ = inner
+                        .server
+                        .request(
+                            "thread/backgroundTerminals/terminate",
+                            json!({"threadId": thread, "processId": process}),
+                        )
+                        .await;
+                }
             }
             let wait = async {
                 loop {
                     let progressed = inner.progressed.notified();
-                    if !inner.lock().mapper.is_active(&native_turn) {
+                    let open = {
+                        let state = inner.lock();
+                        targets
+                            .iter()
+                            .any(|(_, native, _)| state.mapper.is_active(native))
+                    };
+                    if !open {
                         return;
                     }
                     progressed.await;
@@ -725,6 +852,9 @@ impl Session for CodexSession {
             match sent {
                 Ok(_) | Err(CallError::Stopped) => {}
                 Err(e) => return Err(failed("interrupt_turn", e.to_string())),
+            }
+            if confirmed {
+                settle_lineage(inner, &native_turn, &targets).await;
             }
             // Codex may still be working: the turn stays open and marked interrupting, and
             // whatever ends it later (Codex's `turn/completed`, a close, Force stop) settles it

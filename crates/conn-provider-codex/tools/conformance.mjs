@@ -55,6 +55,12 @@ const SCENARIOS = {
     covers: "an MCP form elicitation shown as an approval, and its answer",
   },
   interrupt: { fixture: "turn_interrupt", covers: "an interrupt" },
+  subagentStop: {
+    fixture: "subagent_v2",
+    derive: "subagentStop",
+    addInterrupt: true,
+    covers: "Stop while a subagent's turn runs: turn/interrupt to the root, then the child",
+  },
   model: {
     fixture: "multi_turn",
     setModelBefore: { index: 1, model: "gpt-6-astra" },
@@ -109,14 +115,6 @@ const KNOWN = [
     match: (d) =>
       d.kind === "shutdown" && d.process === 0 && /SIGTERM@\d+ms > killed@0ms$/.test(d.ts),
   },
-  ...["subagent_v2", "subagent_v2_approval", "subagent_v2_nested", "subagent_v2_nested_approval"].map(
-    (fixture) => ({
-      scenario: `rec-${fixture}`,
-      reason:
-        "OPEN GAP: subagents are not implemented in conn-provider-codex (TS reads and resumes child threads and answers their approvals; Conn Server answers a child's request with an error)",
-      match: () => true,
-    }),
-  ),
 ];
 
 // Every fixture variant in the T3 test kit that replays a Codex recording runs as
@@ -252,6 +250,57 @@ function deriveElicitation(fixture, dir) {
   return file;
 }
 
+/**
+ * T3's `subagent_v2` recording cut after the child's `turn/started`: Stop then sends
+ * `turn/interrupt` to the root turn and to the running child turn (T3's `interruptTurn`
+ * targets the lineage), and Codex ends both as interrupted. The two servers' frames are
+ * compared; the recording holds the order T3 sends them in.
+ */
+function deriveSubagentStop(fixture, dir) {
+  const source = NodePath.join(
+    MONOREPO,
+    `apps/server/src/orchestration-v2/testkit/fixtures/${fixture}/codex_transcript.ndjson`,
+  );
+  const entries = NodeFS.readFileSync(source, "utf8")
+    .split("\n")
+    .filter((line) => line.trim() !== "")
+    .map((line) => JSON.parse(line));
+  const rootStart = entries.find((e) => e.type === "expect_outbound" && e.frame?.method === "turn/start");
+  const rootThread = rootStart.frame.params.threadId;
+  const turnStarts = entries.filter((e) => e.type === "emit_inbound" && e.frame?.method === "turn/started");
+  const root = turnStarts.find((e) => e.frame.params.threadId === rootThread).frame.params;
+  const child = turnStarts.find((e) => e.frame.params.threadId !== rootThread).frame.params;
+  const cut = entries.findIndex((e) => e.type === "emit_inbound" && e.frame?.params === child) + 1;
+  const ended = (params, completedAt) => ({
+    type: "emit_inbound",
+    label: "turn/completed",
+    frame: {
+      method: "turn/completed",
+      params: {
+        threadId: params.threadId,
+        turn: { ...params.turn, items: [], itemsView: "notLoaded", status: "interrupted", error: null, completedAt },
+      },
+    },
+  });
+  const interrupt = (params, id) => [
+    { type: "expect_outbound", label: "turn/interrupt", frame: { id, method: "turn/interrupt", params: { threadId: params.threadId, turnId: params.turn.id } } },
+    { type: "emit_inbound", label: "turn/interrupt", frame: { id, result: {} } },
+  ];
+  const at = (root.turn.startedAt ?? 0) + 2;
+  const lines = [
+    ...entries.slice(0, cut),
+    ...interrupt(root, 900),
+    ...interrupt(child, 901),
+    ended(child, at),
+    ended(root, at),
+    { type: "runtime_exit", status: "success" },
+  ].map((e) => JSON.stringify(e));
+  const file = NodePath.join(dir, "derived_transcript.ndjson");
+  NodeFS.mkdirSync(dir, { recursive: true });
+  NodeFS.writeFileSync(file, lines.join("\n") + "\n");
+  return file;
+}
+
 /** The executable name the `login` scenario starts: only the stand-in shell's PATH has it. */
 const LOGIN_CODEX = "codex-conn-login";
 
@@ -307,6 +356,9 @@ const plan = selected.map((name) => {
       : {}),
     ...(scenario.derive === "elicitation"
       ? { transcriptFile: deriveElicitation(scenario.fixture, dir) }
+      : {}),
+    ...(scenario.derive === "subagentStop"
+      ? { transcriptFile: deriveSubagentStop(scenario.fixture, dir) }
       : {}),
     tsCodex: login ? LOGIN_CODEX : tsCodex,
     rustCodex: login ? LOGIN_CODEX : rustCodex,
@@ -365,6 +417,8 @@ const changedInput = (scenario: any, base: any) => {
     const first = steps.findIndex((s: any) => s.type === "message");
     steps[first] = { ...steps[first], attachments };
   }
+  // Stop the first run after its message (\`subagentStop\`).
+  if (scenario.addInterrupt) steps = [...steps, { type: "interrupt", targetRunIndex: 1 }];
   if (scenario.setModelBefore) {
     let seen = -1;
     const at = steps.findIndex((s: any) => s.type === "message" && ++seen === scenario.setModelBefore.index);
@@ -598,10 +652,17 @@ const readLog = (path) =>
 const processes = (log) => {
   const out = [];
   for (const entry of log) {
-    if (entry.kind === "start") out.push({ start: entry, frames: [], extra: [], missing: [], end: [] });
+    if (entry.kind === "start") out.push({ start: entry, frames: [], childReads: [], extra: [], missing: [], end: [] });
     const current = out.at(-1);
     if (current === undefined) continue;
     if (entry.kind === "in") current.frames.push(entry.frame ?? { invalid: entry.line });
+    // A subagent's model read (the stub logs it as \`child-metadata\` right after its \`in\`):
+    // both servers send it from a background task, so it is compared as a set, not in order.
+    if (entry.kind === "child-metadata") {
+      const at = current.frames.findLastIndex((f) => f.id === entry.frame.id && f.method === entry.frame.method);
+      if (at !== -1) current.frames.splice(at, 1);
+      current.childReads.push(entry.frame);
+    }
     if (entry.kind === "extra") current.extra.push(entry.frame);
     if (entry.kind === "missing") current.missing.push(entry.expected);
     if (entry.kind === "alive") current.lastAlive = entry.afterMs;
@@ -803,6 +864,11 @@ for (const scenario of plan) {
         add("ts-only-frame", { process: p, method: label(x), frame: x });
         i += 1;
       }
+    }
+    // Child model reads: the same requests on both sides, in any order.
+    const reads = (list) => list.map(({ id: _id, ...frame }) => JSON.stringify(stable(frame))).sort();
+    if (JSON.stringify(reads(a.childReads)) !== JSON.stringify(reads(b.childReads))) {
+      add("child-reads", { process: p, ts: reads(a.childReads), rust: reads(b.childReads) });
     }
     // Shutdown: the same steps in the same order, each within 500 ms of the other side's.
     const steps = (end) => end.map((e) => e.kind).join(" > ");

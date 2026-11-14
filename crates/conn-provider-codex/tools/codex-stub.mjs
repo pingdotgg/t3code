@@ -17,6 +17,10 @@
 //   the id the client used.
 // - A request that matches nothing gets a canned answer (`model/list`) or a -32601 error, and
 //   is logged as `extra`.
+// - A subagent's metadata read (`thread/read` without turns, or `thread/resume` without
+//   turns, for a child thread the recording names) is answered `{thread: {id}, model: null}`
+//   and logged as `child-metadata`, not `extra`: the TS test kit answers these itself
+//   (`withCodexReplayChildMetadata`), so its recordings never hold them.
 // - `runtime_exit` marks where the recorded process ended. The stub stops replaying and waits
 //   for the client to end it (end of stdin or a signal), so the client's shutdown is
 //   recorded. A later start of the stub (a new process) continues after that point; the
@@ -46,6 +50,26 @@ const readTranscript = (path) => {
 };
 
 const entries = readTranscript(config.transcript);
+// `withCodexReplayChildMetadata`: the child threads the recording names.
+const childThreadIds = new Set(
+  entries.flatMap((entry) => {
+    const item = entry.type === "emit_inbound" ? entry.frame?.params?.item : undefined;
+    if (item?.type === "subAgentActivity" && typeof item.agentThreadId === "string") {
+      return [item.agentThreadId];
+    }
+    return item?.type === "collabAgentToolCall" && Array.isArray(item.receiverThreadIds)
+      ? item.receiverThreadIds.filter((id) => typeof id === "string")
+      : [];
+  }),
+);
+const isChildMetadataRead = (frame) => {
+  const params = frame.params ?? {};
+  return (
+    (frame.method === "thread/read" ? params.includeTurns === false : frame.method === "thread/resume" && params.excludeTurns === true) &&
+    typeof params.threadId === "string" &&
+    childThreadIds.has(params.threadId)
+  );
+};
 const cursorFile = `${config.log}.cursor`;
 let cursor = NodeFS.existsSync(cursorFile) ? Number(NodeFS.readFileSync(cursorFile, "utf8")) : 0;
 let ended = false;
@@ -129,6 +153,12 @@ const canned = (frame) => {
 };
 
 const onFrame = (frame) => {
+  // Answered the same before and after the recorded end: when it comes is timing.
+  if (frame.id !== undefined && isChildMetadataRead(frame)) {
+    log({ kind: "child-metadata", frame });
+    send({ id: frame.id, result: { thread: { id: frame.params.threadId }, model: null } });
+    return;
+  }
   if (ended) {
     // Past the recorded end: answer requests with an empty result so the client is not left
     // waiting on its request timeout.

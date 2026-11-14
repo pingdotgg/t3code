@@ -259,6 +259,7 @@ dependencies = [
  "conn-support",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror",
  "tokio",
 ]

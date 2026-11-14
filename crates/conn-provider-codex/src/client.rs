@@ -7,7 +7,7 @@
 //! resume their thread on it (see `generation`).
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     sync::{Arc, Mutex, MutexGuard},
     time::Duration,
 };
@@ -32,12 +32,41 @@ pub const FORCE_KILL_AFTER: Duration = Duration::from_secs(2);
 /// names; unknown methods and items are skipped and logged.
 pub const TESTED_CLI_VERSION: &str = "0.167.0";
 const SESSION_INBOX: usize = 256;
+/// Frames of threads no session owns yet, kept for the session whose frame names the thread
+/// later: a subagent's `turn/started` and MCP start-up status can come before the frame that
+/// names the child (T3 sees every frame and holds such turns in `pendingSubagentTurns`).
+const UNROUTED_KEPT: usize = 32;
+
+/// The child threads a frame names (`withCodexReplayChildMetadata` reads the same fields): a
+/// `subAgentActivity` item's agent thread, a `collabAgentToolCall` item's receivers.
+fn named_children(params: &Value) -> Vec<String> {
+    let item = &params["item"];
+    match item["type"].as_str() {
+        Some("subAgentActivity") => item["agentThreadId"]
+            .as_str()
+            .map(str::to_owned)
+            .into_iter()
+            .collect(),
+        Some("collabAgentToolCall") => item["receiverThreadIds"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|t| t.as_str().map(str::to_owned))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
 
 #[derive(Debug)]
 pub enum SessionMsg {
     Frame(Inbound),
     /// The app-server exited; open turns end.
     Exited(String),
+    /// The answer to a child thread's metadata read (`Value::Null` when none came).
+    ChildMetadata {
+        thread: String,
+        response: Value,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -74,6 +103,8 @@ struct State {
     dropped_deltas: u64,
     /// Native threads loaded on a process (started, resumed or forked there), by generation.
     loaded: HashMap<String, u64>,
+    /// At most [`UNROUTED_KEPT`] frames, oldest first, with the native thread they name.
+    unrouted: VecDeque<(String, Inbound)>,
 }
 
 pub struct AppServer {
@@ -358,6 +389,8 @@ impl AppServer {
     }
 
     async fn dispatch(&self, generation: u64, inbound: Inbound) {
+        // Frames of child threads that came before this frame named them.
+        let mut early = Vec::new();
         let target = match &inbound {
             Inbound::Response { id, result } => {
                 if let Some(tx) = self.lock().pending.remove(id) {
@@ -365,7 +398,50 @@ impl AppServer {
                 }
                 return;
             }
-            Inbound::Notification { params, .. } | Inbound::Request { params, .. } => {
+            Inbound::Notification { method, params } => {
+                let Some(thread) = params["threadId"]
+                    .as_str()
+                    .or_else(|| params["conversationId"].as_str())
+                else {
+                    return;
+                };
+                let mut state = self.lock();
+                let route = state.routes.get(thread).cloned();
+                match &route {
+                    // A subagent's child thread belongs to the session of the thread that
+                    // names it, from this frame on, so its frames keep their order.
+                    Some(inbox) => {
+                        for child in named_children(params) {
+                            if state.routes.contains_key(&child) {
+                                continue;
+                            }
+                            state.routes.insert(child.clone(), inbox.clone());
+                            state.unrouted.retain(|(t, frame)| {
+                                let take = *t == child;
+                                if take {
+                                    early.push(frame.clone());
+                                }
+                                !take
+                            });
+                        }
+                    }
+                    None if matches!(
+                        method.as_str(),
+                        "turn/started" | "mcpServer/startupStatus/updated"
+                    ) =>
+                    {
+                        if state.unrouted.len() >= UNROUTED_KEPT {
+                            state.unrouted.pop_front();
+                        }
+                        state
+                            .unrouted
+                            .push_back((thread.to_owned(), inbound.clone()));
+                    }
+                    None => {}
+                }
+                route
+            }
+            Inbound::Request { params, .. } => {
                 let thread = params["threadId"]
                     .as_str()
                     .or_else(|| params["conversationId"].as_str());
@@ -375,6 +451,7 @@ impl AppServer {
         };
         match (target, inbound) {
             (Some(inbox), inbound) => {
+                let early_inbox = (!early.is_empty()).then(|| inbox.clone());
                 // One reader serves every session: a session whose inbox is full must not
                 // hold back the others' frames and responses. Streamed deltas are dropped
                 // then (the item's completion carries the whole text, and command output
@@ -396,6 +473,11 @@ impl AppServer {
                         let _ = inbox.send(msg).await;
                     }
                     Err(mpsc::error::TrySendError::Closed(_)) => {}
+                }
+                if let Some(inbox) = early_inbox {
+                    for frame in early {
+                        let _ = inbox.send(SessionMsg::Frame(frame)).await;
+                    }
                 }
             }
             (None, Inbound::Request { id, method, .. }) => {

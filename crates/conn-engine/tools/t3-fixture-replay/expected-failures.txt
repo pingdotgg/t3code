@@ -32,14 +32,6 @@ grok_background_bash_fast_wake/grok  driver: finish_held_run; provider: Grok bac
 grok_background_subagent/grok        driver: finish_held_run; provider: Grok background tasks and subagents are not built
 grok_monitor/grok                    driver: finish_held_run; provider: Grok monitors are not built
 
-# --- Codex provider: subagents are not built (conn-provider-codex README) ---
-subagent/codex                      provider: Codex subagents (collabAgentToolCall, child threads) are not built
-subagent_continue/codex             provider: Codex subagents are not built
-subagent_v2/codex                   provider: Codex subagents are not built
-subagent_v2_approval/codex          provider: Codex subagents are not built (a child's approval gets an error reply)
-subagent_v2_nested/codex            provider: Codex subagents are not built
-subagent_v2_nested_approval/codex   provider: Codex subagents are not built
-
 # --- Claude provider: background roster, monitors and wakes are not built ---
 claude_background_subagent_after_root/claudeAgent    provider: no background_work.updated roster for Claude subagents; the subagent item never shows
 claude_background_monitor_wake/claudeAgent           provider: Claude Monitor wakes are not built

@@ -43,6 +43,12 @@ pub(crate) const FIXTURES: &[&str] = &[
     "todo_list",
     "plan_questions",
     "proposed_plan",
+    "subagent",
+    "subagent_continue",
+    "subagent_v2",
+    "subagent_v2_approval",
+    "subagent_v2_nested",
+    "subagent_v2_nested_approval",
 ];
 
 fn read(path: String) -> String {
@@ -84,6 +90,9 @@ pub(crate) fn replay(name: &str) -> (Replay, Vec<Value>, String) {
                     assert_eq!(Some(&line), expected_write, "{name}: reply differs");
                 }
                 Out::Skipped(kind) => skipped.push(kind),
+                // One mapper sees every frame here; the TS test kit answers child reads
+                // itself (`withCodexReplayChildMetadata`) with no model.
+                Out::ChildMetadata(_) | Out::InterruptChild { .. } => {}
             }
         }
     };
@@ -449,6 +458,26 @@ fn mapper_state_stays_bounded_over_many_turns() {
         for frame in frames {
             let _ = mapper.handle(Inbound::from_value(frame));
         }
+        // A subagent each round (it runs a turn and ends), and a child turn of a thread no
+        // frame ever names.
+        let child = format!("child{round}");
+        let child_frames = [
+            json!({"method": "item/started", "params": {"threadId": "th", "turnId": turn,
+                "item": {"type": "subAgentActivity", "id": format!("a{round}"), "kind": "started",
+                    "agentThreadId": child, "agentPath": "/root/x"}}}),
+            json!({"method": "turn/started", "params": {"threadId": child,
+                "turn": {"id": format!("ct{round}"), "status": "inProgress", "startedAt": 1}}}),
+            json!({"method": "turn/completed", "params": {"threadId": child,
+                "turn": {"id": format!("ct{round}"), "status": "completed", "completedAt": 2}}}),
+            json!({"method": "item/completed", "params": {"threadId": "th", "turnId": turn,
+                "item": {"type": "subAgentActivity", "id": format!("d{round}"), "kind": "completed",
+                    "agentThreadId": child, "agentPath": "/root/x"}}}),
+            json!({"method": "turn/started", "params": {"threadId": format!("stray{round}"),
+                "turn": {"id": format!("st{round}"), "status": "inProgress", "startedAt": 1}}}),
+        ];
+        for frame in child_frames {
+            let _ = mapper.handle(Inbound::from_value(frame));
+        }
         let _ = mapper.flush(true);
         if round % 3 == 0 {
             mapper.mark_interrupting(&turn);
@@ -465,9 +494,12 @@ fn mapper_state_stays_bounded_over_many_turns() {
         sizes[0], sizes[1],
         "mapper state grew between turn 100 and 300"
     );
+    // Tables keyed by native thread hold the root thread and at most 64 subagents' threads.
     for (name, size) in &sizes[1] {
-        assert!(*size <= 64, "{name} holds {size} entries");
+        assert!(*size <= 65, "{name} holds {size} entries");
     }
+    let subagents = sizes[1].iter().find(|(name, _)| *name == "subagents");
+    assert_eq!(subagents.map(|(_, n)| *n), Some(64), "settled subagents are forgotten at 64");
 }
 
 #[test]
