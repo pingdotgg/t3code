@@ -411,28 +411,61 @@ function markdownLinkDestinationScanner(markdown: string) {
 // unit, so every source offset the renderers read stays where it was.
 const DESTINATION_SPACE = "\uE020";
 
-// `](C:\Users\Jo Doe\shot.png)` or with a title. Parentheses inside the path must balance.
-const SPACED_DRIVE_DESTINATION =
-  /\]\([ \t]*([A-Za-z]:[\\/](?:[^()\n]|\([^()\n]*\))*?)(?=(?:[ \t]+"[^"\n]*")?[ \t]*\))/g;
-const HAS_SPACED_DRIVE_DESTINATION = /\]\([ \t]*[A-Za-z]:[\\/][^)\n]* [^)\n]*\)/;
+const HAS_DRIVE_DESTINATION = /\]\([ \t]*[A-Za-z]:[\\/]/;
+const DRIVE_DESTINATION_START = new RegExp(HAS_DRIVE_DESTINATION.source, "g");
+// Bounds the scan from each start so a long line stays linear; real paths are far shorter.
+const MAX_DRIVE_DESTINATION_LENGTH = 1024;
 const CODE_FENCE = /^ {0,3}(`{3,}|~{3,})/;
 const INLINE_CODE = /(`+)[^`]*?\1/g;
+
+const isBlank = (char: string | undefined) => char === " " || char === "\t";
+
+// End of the drive path in `C:\Jo Doe\a.png "Title")`, or -1 when no `)` closes it. Parentheses
+// inside the path must balance.
+function driveDestinationEnd(text: string, start: number): number {
+  const limit = Math.min(text.length, start + MAX_DRIVE_DESTINATION_LENGTH);
+  let depth = 0;
+  let close = -1;
+  for (let index = start; index < limit && close === -1; index += 1) {
+    if (text[index] === "(") depth += 1;
+    else if (text[index] === ")" && depth-- === 0) close = index;
+  }
+  if (close === -1) return -1;
+  let end = close;
+  while (isBlank(text[end - 1])) end -= 1;
+  if (text[end - 1] === '"') {
+    const titleStart = text.lastIndexOf('"', end - 2);
+    if (titleStart > start && isBlank(text[titleStart - 1])) {
+      end = titleStart;
+      while (isBlank(text[end - 1])) end -= 1;
+    }
+  }
+  return end;
+}
+
+function protectDriveDestinations(segment: string): string {
+  let result = "";
+  let cursor = 0;
+  for (const match of segment.matchAll(DRIVE_DESTINATION_START)) {
+    const start = match.index + match[0].length - 3;
+    if (start < cursor) continue;
+    const end = driveDestinationEnd(segment, start);
+    if (end === -1) continue;
+    result +=
+      segment.slice(cursor, start) + segment.slice(start, end).replaceAll(" ", DESTINATION_SPACE);
+    cursor = end;
+  }
+  return result + segment.slice(cursor);
+}
 
 function protectDestinationsOutsideInlineCode(line: string): string {
   let result = "";
   let cursor = 0;
-  const protect = (segment: string) =>
-    segment.replace(
-      SPACED_DRIVE_DESTINATION,
-      (match: string, destination: string) =>
-        match.slice(0, match.length - destination.length) +
-        destination.replaceAll(" ", DESTINATION_SPACE),
-    );
   for (const code of line.matchAll(INLINE_CODE)) {
-    result += protect(line.slice(cursor, code.index)) + code[0];
+    result += protectDriveDestinations(line.slice(cursor, code.index)) + code[0];
     cursor = code.index + code[0].length;
   }
-  return result + protect(line.slice(cursor));
+  return result + protectDriveDestinations(line.slice(cursor));
 }
 
 /**
@@ -441,7 +474,7 @@ function protectDestinationsOutsideInlineCode(line: string): string {
  * spaces until the parser has read it. Code stays as written.
  */
 export function protectSpacedWindowsDestinations(markdown: string): string {
-  if (!HAS_SPACED_DRIVE_DESTINATION.test(markdown)) return markdown;
+  if (!HAS_DRIVE_DESTINATION.test(markdown)) return markdown;
   let fence: string | null = null;
   return markdown
     .split("\n")
