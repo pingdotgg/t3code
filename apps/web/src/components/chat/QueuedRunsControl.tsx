@@ -495,22 +495,24 @@ function QueuedMessage(props: {
                     type="button"
                     aria-label={`Preview ${thumbnail.name}`}
                     disabled={!thumbnail.previewUrl}
-                    className="size-8 overflow-hidden rounded-md border border-border/70 bg-background enabled:cursor-zoom-in"
+                    className="size-8 enabled:cursor-zoom-in"
                     onPointerDown={(event) => event.preventDefault()}
                     onClick={() => {
                       const preview = buildExpandedImagePreview(props.thumbnails, thumbnail.id);
                       if (preview) props.onImageExpand(preview);
                     }}
                   >
-                    {thumbnail.previewUrl ? (
-                      <img
-                        src={thumbnail.previewUrl}
-                        alt={thumbnail.name}
-                        className="size-full object-cover"
-                      />
-                    ) : (
-                      <span aria-label={thumbnail.name} className="block size-full bg-muted/60" />
-                    )}
+                    <span className="block size-full overflow-hidden rounded-md border border-border/70 bg-background">
+                      {thumbnail.previewUrl ? (
+                        <img
+                          src={thumbnail.previewUrl}
+                          alt={thumbnail.name}
+                          className="size-full object-cover"
+                        />
+                      ) : (
+                        <span aria-label={thumbnail.name} className="block size-full bg-muted/60" />
+                      )}
+                    </span>
                   </button>
                 ))}
               </span>

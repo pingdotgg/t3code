@@ -669,7 +669,7 @@ export function UsageLimitsPooled({
                 {link.accounts.join(", ")}
               </p>
               {link.url === CHATGPT_USAGE_URL ? (
-                <p className="text-xs text-muted-foreground">
+                <p className="text-meta text-muted-foreground">
                   View usage in ChatGPT with your connected account.
                 </p>
               ) : link.message ? (
